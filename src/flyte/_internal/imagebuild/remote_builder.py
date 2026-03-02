@@ -37,6 +37,7 @@ from flyte._image import (
 )
 from flyte._internal.imagebuild.image_builder import ImageBuilder, ImageChecker
 from flyte._internal.imagebuild.utils import (
+    copy_code_bundle_to_context,
     copy_files_to_context,
     get_and_list_dockerignore,
     get_uv_project_editable_dependencies,
@@ -392,22 +393,12 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
             shutil.copy(layer.path, context_path)
         elif isinstance(layer, CodeBundleLayer):
             if layer.root_dir is None:
-                raise RuntimeError(
-                    "CodeBundleLayer layer was not resolved before building. "
-                    "Call resolve_code_bundle_layer() before building images."
-                )
-            import sys
-
-            from flyte._code_bundle._utils import list_imported_modules_as_files
-
-            dst_path = context_path / "_flyte_abs_context" / "code_bundle"
-            files = list_imported_modules_as_files(str(layer.root_dir), list(sys.modules.values()))
-            for abs_path in files:
-                rel = Path(abs_path).relative_to(layer.root_dir)
-                dest = dst_path / rel
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(abs_path, dest)
-
+                # It should not be possible to have a CodeBundleLayer with a None root_dir since sdk
+                # should already have resolved it.
+                raise flyte.errors.ImageBuildError("CodeBundleLayer requires a root_dir to be specified.")
+            dst_path = copy_code_bundle_to_context(
+                layer.root_dir, layer.copy_style, context_path, docker_ignore_patterns
+            )
             copy_layer = image_definition_pb2.Layer(
                 copy_config=image_definition_pb2.CopyConfig(
                     src=str(dst_path.relative_to(context_path)),

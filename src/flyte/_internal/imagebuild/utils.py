@@ -57,6 +57,38 @@ def copy_files_to_context(src: Path, context_path: Path, ignore_patterns: list[s
     return dst_path
 
 
+def copy_code_bundle_to_context(
+    root_dir: Path,
+    copy_style: str,
+    context_path: Path,
+    docker_ignore_patterns: list[str] = STANDARD_IGNORE_PATTERNS,
+) -> Path:
+    """Copy source files for a CodeBundleLayer into the docker build context.
+
+    :param root_dir: The root directory to copy files from.
+    :param copy_style: "loaded_modules" to copy only imported modules, "all" to copy everything.
+    :param context_path: The docker build context directory.
+    :param docker_ignore_patterns: Ignore patterns for the "all" case.
+    :return: The path within context_path where files were copied.
+    """
+    if copy_style == "loaded_modules":
+        import sys
+
+        from flyte._code_bundle._utils import list_imported_modules_as_files
+
+        dst_path = context_path / "_flyte_abs_context" / "code_bundle"
+        files = list_imported_modules_as_files(str(root_dir), list(sys.modules.values()))
+        for abs_path in files:
+            rel = Path(abs_path).relative_to(root_dir)
+            dest = dst_path / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(abs_path, dest)
+        return dst_path
+    else:
+        # "all" — copy entire root_dir into context
+        return copy_files_to_context(root_dir, context_path, docker_ignore_patterns)
+
+
 def get_and_list_dockerignore(image: Image) -> List[str]:
     """
     Get and parse dockerignore patterns from .dockerignore file.

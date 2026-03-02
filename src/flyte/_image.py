@@ -387,13 +387,17 @@ class CodeBundleLayer(Layer):
     def update_hash(self, hasher: hashlib._Hash):
         hasher.update(f"code_bundle:{self.copy_style}:{self.dst}".encode("utf-8"))
         if self.root_dir is not None:
-            from flyte._code_bundle._utils import list_imported_modules_as_files
-
             from ._utils import update_hasher_for_source
 
-            files = list_imported_modules_as_files(str(self.root_dir), list(sys.modules.values()))
-            files.sort()
-            update_hasher_for_source([Path(f) for f in files], hasher)
+            if self.copy_style == "loaded_modules":
+                from flyte._code_bundle._utils import list_imported_modules_as_files
+
+                files = list_imported_modules_as_files(str(self.root_dir), list(sys.modules.values()))
+                files.sort()
+                update_hasher_for_source([Path(f) for f in files], hasher)
+            else:
+                # "all" — hash the entire root_dir
+                update_hasher_for_source(self.root_dir, hasher)
         else:
             raise ValueError("root_dir not set for CodeBundleLayer")
 
