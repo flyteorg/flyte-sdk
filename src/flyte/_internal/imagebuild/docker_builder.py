@@ -395,6 +395,29 @@ class CopyConfigHandler:
         return dockerfile
 
 
+class _CodeBundleHandler:
+    @staticmethod
+    async def handle(layer: CodeBundleLayer, context_path: Path, dockerfile: str) -> str:
+        import sys
+
+        from flyte._code_bundle._utils import list_imported_modules_as_files
+
+        assert layer.root_dir is not None
+        root_dir = layer.root_dir
+
+        files = list_imported_modules_as_files(str(root_dir), list(sys.modules.values()))
+        # Determine a unique subdirectory within context for these files
+        dst_path = context_path / "_flyte_abs_context" / "code_bundle"
+        for abs_path in files:
+            rel = Path(abs_path).relative_to(root_dir)
+            dest = dst_path / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(abs_path, dest)
+
+        dockerfile += f"\nCOPY {dst_path.relative_to(context_path)} {layer.dst}\n"
+        return dockerfile
+
+
 class CommandsHandler:
     @staticmethod
     async def handle(layer: Commands, _: Path, dockerfile: str) -> str:
@@ -546,6 +569,10 @@ async def _process_layer(
         case _DockerLines():
             # Only for internal use
             dockerfile = await _DockerLinesHandler.handle(layer, context_path, dockerfile)
+
+        case CodeBundleLayer(root_dir=root_dir) if root_dir is not None:
+            # Resolved CodeBundleLayer — copy filtered files from root_dir into context
+            dockerfile = await _CodeBundleHandler.handle(layer, context_path, dockerfile)
 
         case CodeBundleLayer():
             raise RuntimeError(

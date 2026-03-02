@@ -205,7 +205,9 @@ class _Runner:
                 from flyte._image import Image, resolve_code_bundle_layer
 
                 if isinstance(parent_env.image, Image):
-                    parent_env.image = resolve_code_bundle_layer(parent_env.image, self._copy_files, pathlib.Path(cfg.root_dir))
+                    parent_env.image = resolve_code_bundle_layer(
+                        parent_env.image, self._copy_files, pathlib.Path(cfg.root_dir)
+                    )
 
                 if not self._dry_run:
                     image_cache = await build_images.aio(parent_env)

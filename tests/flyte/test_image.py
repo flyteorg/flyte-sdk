@@ -438,14 +438,13 @@ def test_resolve_code_bundle_all_copy_style_none(tmp_path):
 
 
 def test_resolve_code_bundle_loaded_modules_copy_style_none(tmp_path):
-    """resolve_code_bundle_layer creates staging dir for 'loaded_modules' when runner is 'none'."""
+    """resolve_code_bundle_layer resolves 'loaded_modules' with root_dir set when runner is 'none'."""
     img = Image.from_debian_base(registry="localhost", name="test-image").with_code_bundle(copy_style="loaded_modules")
     result = resolve_code_bundle_layer(img, "none", tmp_path)
 
-    # The CodeBundleLayer should be replaced with a CopyConfig
-    assert not any(isinstance(layer, CodeBundleLayer) for layer in result._layers)
-    copy_layers = [layer for layer in result._layers if isinstance(layer, CopyConfig)]
-    assert len(copy_layers) == 1
-    assert copy_layers[0].path_type == 1
-    # The src should be a temp staging dir
-    assert "flyte_auto_copy_" in str(copy_layers[0].src)
+    # The CodeBundleLayer should be kept but with root_dir set
+    bundle_layers = [layer for layer in result._layers if isinstance(layer, CodeBundleLayer)]
+    assert len(bundle_layers) == 1
+    assert bundle_layers[0].root_dir == tmp_path
+    assert bundle_layers[0].copy_style == "loaded_modules"
+    assert bundle_layers[0].dst == "."

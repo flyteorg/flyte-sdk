@@ -21,6 +21,7 @@ from flyte._image import (
     _BASE_REGISTRY,
     AptPackages,
     Architecture,
+    CodeBundleLayer,
     Commands,
     CopyConfig,
     DockerIgnore,
@@ -389,6 +390,31 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
             layers.append(commands_layer)
         elif isinstance(layer, DockerIgnore):
             shutil.copy(layer.path, context_path)
+        elif isinstance(layer, CodeBundleLayer):
+            if layer.root_dir is None:
+                raise RuntimeError(
+                    "CodeBundleLayer layer was not resolved before building. "
+                    "Call resolve_code_bundle_layer() before building images."
+                )
+            import sys
+
+            from flyte._code_bundle._utils import list_imported_modules_as_files
+
+            dst_path = context_path / "_flyte_abs_context" / "code_bundle"
+            files = list_imported_modules_as_files(str(layer.root_dir), list(sys.modules.values()))
+            for abs_path in files:
+                rel = Path(abs_path).relative_to(layer.root_dir)
+                dest = dst_path / rel
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(abs_path, dest)
+
+            copy_layer = image_definition_pb2.Layer(
+                copy_config=image_definition_pb2.CopyConfig(
+                    src=str(dst_path.relative_to(context_path)),
+                    dst=str(layer.dst),
+                )
+            )
+            layers.append(copy_layer)
         elif isinstance(layer, CopyConfig):
             dst_path = copy_files_to_context(layer.src, context_path, docker_ignore_patterns)
 

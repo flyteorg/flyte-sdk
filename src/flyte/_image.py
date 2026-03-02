@@ -374,13 +374,28 @@ class CopyConfig(Layer):
 @dataclass(frozen=True, repr=True)
 class CodeBundleLayer(Layer):
     """Deferred layer resolved at runtime to copy source code into the image.
-    Only activates when the runner's copy_style is "none"."""
+    Only activates when the runner's copy_style is "none".
+
+    Before resolution, root_dir is None. After resolve_code_bundle_layer() sets
+    root_dir, the docker builder handles the actual file copying into the build context.
+    """
 
     copy_style: Literal["loaded_modules", "all"]
     dst: str = "."
+    root_dir: Optional[Path] = None
 
     def update_hash(self, hasher: hashlib._Hash):
         hasher.update(f"code_bundle:{self.copy_style}:{self.dst}".encode("utf-8"))
+        if self.root_dir is not None:
+            from flyte._code_bundle._utils import list_imported_modules_as_files
+
+            from ._utils import update_hasher_for_source
+
+            files = list_imported_modules_as_files(str(self.root_dir), list(sys.modules.values()))
+            files.sort()
+            update_hasher_for_source([Path(f) for f in files], hasher)
+        else:
+            raise ValueError("root_dir not set for CodeBundleLayer")
 
     def validate(self):
         pass  # root_dir not known at creation time
@@ -1185,14 +1200,17 @@ def resolve_code_bundle_layer(image: Image, copy_style: str, root_dir: Path) -> 
             _image_registry_secret=image._image_registry_secret,
         )
 
-    # copy_style == "none" — resolve each CodeBundleLayer into a CopyConfig
+    # copy_style == "none" — resolve each CodeBundleLayer by setting root_dir.
+    # "all" can be directly converted to CopyConfig. "loaded_modules" keeps
+    # the CodeBundleLayer with root_dir set so the builder can filter files
+    # into the docker context.
     resolved_layers = list(non_bundle_layers)
     for cb_layer in code_bundle_layers:
         if cb_layer.copy_style == "all":
             resolved_layers.append(CopyConfig(path_type=1, src=root_dir, dst=cb_layer.dst))
         else:
-            # "loaded_modules" — stage only imported files into a temp dir
-            resolved_layers.append(CopyConfig(path_type=1, src=_stage_loaded_modules(root_dir), dst=cb_layer.dst))
+            # "loaded_modules" — set root_dir so builder copies only imported modules to context
+            resolved_layers.append(CodeBundleLayer(copy_style=cb_layer.copy_style, dst=cb_layer.dst, root_dir=root_dir))
 
     return Image._new(
         base_image=image.base_image,
@@ -1206,24 +1224,3 @@ def resolve_code_bundle_layer(image: Image, copy_style: str, root_dir: Path) -> 
         _layers=tuple(resolved_layers),
         _image_registry_secret=image._image_registry_secret,
     )
-
-
-def _stage_loaded_modules(root_dir: Path) -> Path:
-    """Create a temp directory containing only the imported module files from root_dir."""
-    import atexit
-    import shutil
-    import tempfile
-
-    from flyte._code_bundle._utils import list_imported_modules_as_files
-
-    staging_dir = Path(tempfile.mkdtemp(prefix="flyte_auto_copy_"))
-    atexit.register(shutil.rmtree, str(staging_dir), True)
-
-    files = list_imported_modules_as_files(str(root_dir), list(sys.modules.values()))
-    for abs_path in files:
-        rel = Path(abs_path).relative_to(root_dir)
-        dest = staging_dir / rel
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(abs_path, dest)
-
-    return staging_dir
