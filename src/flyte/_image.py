@@ -1192,9 +1192,7 @@ def resolve_code_bundle_layer(image: Image, copy_style: str, root_dir: Path) -> 
             resolved_layers.append(CopyConfig(path_type=1, src=root_dir, dst=cb_layer.dst))
         else:
             # "loaded_modules" — stage only imported files into a temp dir
-            resolved_layers.append(
-                CopyConfig(path_type=1, src=_stage_loaded_modules(root_dir), dst=cb_layer.dst)
-            )
+            resolved_layers.append(CopyConfig(path_type=1, src=_stage_loaded_modules(root_dir), dst=cb_layer.dst))
 
     return Image._new(
         base_image=image.base_image,
