@@ -257,8 +257,16 @@ class ImageBuildEngine:
         )
 
 
+class RunIdentifierData(BaseModel):
+    org: str
+    project: str
+    domain: str
+    name: str
+
+
 class ImageCache(BaseModel):
     image_lookup: Dict[str, str]
+    build_run_ids: Dict[str, RunIdentifierData] = {}
     serialized_form: str | None = None
 
     @property
