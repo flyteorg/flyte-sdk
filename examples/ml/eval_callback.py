@@ -193,7 +193,6 @@ class EvalModelCheckpoint(ModelCheckpoint):
         super().__init__(*args, dirpath=checkpoint_dir, **kwargs)
         self.checkpoint_dir = checkpoint_dir
         self.training_run_name = training_run_name
-        self._last_submitted_path = None
 
     def _remove_checkpoint(self, trainer, filepath):
         pass
@@ -205,8 +204,7 @@ class EvalModelCheckpoint(ModelCheckpoint):
         # Launch eval on global rank 0 if a new checkpoint was saved
         if trainer.is_global_zero:
             current_path = self.best_model_path
-            if current_path and current_path != self._last_submitted_path:
-                self._last_submitted_path = current_path
+            if current_path:
                 try:
                     result = flyte.run(
                         run_eval,
