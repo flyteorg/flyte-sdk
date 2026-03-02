@@ -172,16 +172,10 @@ class TrainingLoggingCallback(L.Callback):
         if loss is not None:
             loss = loss.item()
 
-        log_rank0(
-            f"[train] Epoch {trainer.current_epoch} finished "
-            f"| loss={loss} | global_step={trainer.global_step}"
-        )
+        log_rank0(f"[train] Epoch {trainer.current_epoch} finished | loss={loss} | global_step={trainer.global_step}")
 
     def on_save_checkpoint(self, trainer, pl_module, checkpoint):
-        log_rank0(
-            f"[train] Checkpoint saved | epoch={trainer.current_epoch} "
-            f"| step={trainer.global_step}"
-        )
+        log_rank0(f"[train] Checkpoint saved | epoch={trainer.current_epoch} | step={trainer.global_step}")
 
     def on_fit_end(self, trainer, pl_module):
         log_rank0("[train] Training finished")
@@ -283,7 +277,7 @@ def run_eval(
 
     Launched by ``EvalOnCheckpointCallback`` inside the training task.
     """
-    checkpoint_name = checkpoint_path.split("/")[-1]
+    checkpoint_name = checkpoint_path.rsplit("/", maxsplit=1)[-1]
     print(f"[eval] Evaluating checkpoint: {checkpoint_name}")
 
     # Check if already evaluated
@@ -330,10 +324,7 @@ def run_eval(
 
     # If converged, write stop signal
     if val_loss < convergence_threshold:
-        print(
-            f"[eval] Converged! val_loss={val_loss:.4f} < {convergence_threshold}. "
-            f"Writing stop signal."
-        )
+        print(f"[eval] Converged! val_loss={val_loss:.4f} < {convergence_threshold}. Writing stop signal.")
 
         _write_json_to_remote(
             f"{checkpoint_dir}/stop_signal.json",
@@ -353,9 +344,7 @@ def run_eval(
 if __name__ == "__main__":
     flyte.init_from_config()
 
-    result = flyte.run(
-        train, checkpoint_dir="s3://bert-trainium-aws/training-run-002/checkpoints"
-    )
+    result = flyte.run(train, checkpoint_dir="s3://bert-trainium-aws/training-run-002/checkpoints")
     print(f"Training run: {result.url}")
 
     flyte.deploy(eval_env)

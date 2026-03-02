@@ -179,16 +179,10 @@ class TrainingLoggingCallback(L.Callback):
         if loss is not None:
             loss = loss.item()
 
-        log_rank0(
-            f"[train] Epoch {trainer.current_epoch} finished "
-            f"| loss={loss} | global_step={trainer.global_step}"
-        )
+        log_rank0(f"[train] Epoch {trainer.current_epoch} finished | loss={loss} | global_step={trainer.global_step}")
 
     def on_save_checkpoint(self, trainer, pl_module, checkpoint):
-        log_rank0(
-            f"[train] Checkpoint saved | epoch={trainer.current_epoch} "
-            f"| step={trainer.global_step}"
-        )
+        log_rank0(f"[train] Checkpoint saved | epoch={trainer.current_epoch} | step={trainer.global_step}")
 
     def on_fit_end(self, trainer, pl_module):
         log_rank0("[train] Training finished")
@@ -235,11 +229,7 @@ def train(checkpoint_dir: str, max_epochs: int = 20) -> str | None:
     return "Training completed!"
 
 
-@eval_env.task(
-    triggers=flyte.Trigger.minutely(
-        name="lightning-eval", trigger_time_input_key="trigger_time"
-    )
-)
+@eval_env.task(triggers=flyte.Trigger.minutely(name="lightning-eval", trigger_time_input_key="trigger_time"))
 def run_eval(
     trigger_time: datetime,
     training_run_name: str,
@@ -257,16 +247,11 @@ def run_eval(
     training_run = flyte.remote.Run.get(name=training_run_name)
 
     if training_run.phase.is_terminal:
-        print(
-            f"[eval] Training run has reached a terminal state — "
-            f"deactivating eval trigger."
-        )
-        flyte.remote.Trigger.update(
-            name="lightning-eval", task_name=f"{eval_env.name}.run_eval", active=False
-        )
+        print("[eval] Training run has reached a terminal state — deactivating eval trigger.")
+        flyte.remote.Trigger.update(name="lightning-eval", task_name=f"{eval_env.name}.run_eval", active=False)
         return "training_failed"
     elif training_run.phase != ActionPhase.RUNNING:
-        print(f"[eval] Training run is still initializing.")
+        print("[eval] Training run is still initializing.")
         return "training_initializing"
 
     # 2. Read the checkpoint_dir from the training run's inputs
@@ -277,9 +262,7 @@ def run_eval(
     # 3. List checkpoint files uploaded by ModelCheckpoint
     ckpt_dir = Dir.from_existing_remote(checkpoint_dir)
     if not ckpt_dir.exists_sync():
-        print(
-            "[eval] Checkpoint directory does not exist yet — training may not have written one."
-        )
+        print("[eval] Checkpoint directory does not exist yet — training may not have written one.")
         return "no_checkpoint"
 
     ckpt_files = [f for f in ckpt_dir.list_files_sync() if f.path.endswith(".ckpt")]
@@ -340,10 +323,7 @@ def run_eval(
 
     # 7. If converged, write stop signal
     if val_loss < convergence_threshold:
-        print(
-            f"[eval] Converged! val_loss={val_loss:.4f} < {convergence_threshold}. "
-            f"Writing stop signal."
-        )
+        print(f"[eval] Converged! val_loss={val_loss:.4f} < {convergence_threshold}. Writing stop signal.")
 
         stop_path = f"{checkpoint_dir}/stop_signal.json"
         _write_json_to_remote(
@@ -364,9 +344,7 @@ def run_eval(
 if __name__ == "__main__":
     flyte.init_from_config()
 
-    result = flyte.run(
-        train, checkpoint_dir="s3://lightning/training-run-001/checkpoints"
-    )
+    result = flyte.run(train, checkpoint_dir="s3://lightning/training-run-001/checkpoints")
     print(f"Training run URL: {result.url}")
 
     inputs = dict(run_eval.interface.inputs)
