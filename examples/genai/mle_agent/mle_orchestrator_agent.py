@@ -21,8 +21,9 @@ tool_env = flyte.TaskEnvironment(
     "mle-tools",
     resources=flyte.Resources(cpu=2, memory="2Gi"),
     image=(
-        flyte.Image.from_debian_base(name="mle-tools-image")
-        .with_pip_packages("pandas", "scikit-learn", "numpy", "matplotlib")
+        flyte.Image.from_debian_base(name="mle-tools-image").with_pip_packages(
+            "pandas", "scikit-learn", "numpy", "matplotlib"
+        )
     ),
 )
 
@@ -30,10 +31,7 @@ agent_env = flyte.TaskEnvironment(
     "mle-orchestrator",
     resources=flyte.Resources(cpu=1, memory="1Gi"),
     secrets=[flyte.Secret(key="niels-anthropic-api-key", as_env_var="ANTHROPIC_API_KEY")],
-    image=(
-        flyte.Image.from_debian_base(name="mle-orchestrator-image")
-        .with_pip_packages("httpx", "pydantic-monty")
-    ),
+    image=(flyte.Image.from_debian_base(name="mle-orchestrator-image").with_pip_packages("httpx", "pydantic-monty")),
     depends_on=[tool_env],
 )
 
@@ -50,7 +48,7 @@ async def load_data(data_path: File) -> list:
     """
     import pandas as pd
 
-    with open(await data_path.download(), "rb") as f:
+    with open(await data_path.download(), "rb") as f:  # noqa: ASYNC230
         df = pd.read_csv(f)
     return df.to_dict(orient="records")
 
@@ -175,6 +173,7 @@ async def create_visualization_report(model_results: list) -> dict:
     """
     import base64
     import io
+
     import matplotlib.pyplot as plt
 
     n_models = len(model_results)
@@ -185,7 +184,7 @@ async def create_visualization_report(model_results: list) -> dict:
     model_names = []
     r2_scores = []
     for i, result in enumerate(model_results):
-        model_type = result.get("model_type", f"Model {i+1}")
+        model_type = result.get("model_type", f"Model {i + 1}")
         params = result.get("params", {})
         if params:
             param_str = ", ".join(f"{k}={v}" for k, v in list(params.items())[:2])
@@ -203,21 +202,33 @@ async def create_visualization_report(model_results: list) -> dict:
     ax1.set_title("Model Performance Comparison")
     ax1.set_ylim(0, 1.1)
     for bar, score in zip(bars, r2_scores):
-        ax1.annotate(f"{score:.3f}", xy=(bar.get_x() + bar.get_width() / 2, bar.get_height()),
-                     ha="center", va="bottom", fontsize=9)
+        ax1.annotate(
+            f"{score:.3f}",
+            xy=(bar.get_x() + bar.get_width() / 2, bar.get_height()),
+            ha="center",
+            va="bottom",
+            fontsize=9,
+        )
 
     ax2 = axes[0, 1]
     rf_results = [r for r in model_results if "feature_importances" in r]
     if rf_results:
         best_rf = max(rf_results, key=lambda x: x.get("r2_score", 0))
         importances = best_rf["feature_importances"]
-        feature_names = [f"Feature {i+1}" for i in range(len(importances))]
+        feature_names = [f"Feature {i + 1}" for i in range(len(importances))]
         ax2.barh(feature_names, importances, color="steelblue")
         ax2.set_xlabel("Importance")
         ax2.set_title("Feature Importances (Best RF)")
     else:
-        ax2.text(0.5, 0.5, "No Random Forest\nmodels to display",
-                 ha="center", va="center", transform=ax2.transAxes, fontsize=12)
+        ax2.text(
+            0.5,
+            0.5,
+            "No Random Forest\nmodels to display",
+            ha="center",
+            va="center",
+            transform=ax2.transAxes,
+            fontsize=12,
+        )
         ax2.set_title("Feature Importances")
 
     ax3 = axes[1, 0]
@@ -225,34 +236,42 @@ async def create_visualization_report(model_results: list) -> dict:
     if linear_results:
         best_linear = max(linear_results, key=lambda x: x.get("r2_score", 0))
         coeffs = best_linear["coefficients"]
-        feature_names = [f"Feature {i+1}" for i in range(len(coeffs))]
+        feature_names = [f"Feature {i + 1}" for i in range(len(coeffs))]
         colors_coef = ["green" if c >= 0 else "red" for c in coeffs]
         ax3.barh(feature_names, coeffs, color=colors_coef)
         ax3.axvline(x=0, color="black", linestyle="-", linewidth=0.5)
         ax3.set_xlabel("Coefficient Value")
         ax3.set_title("Linear Model Coefficients (Best)")
     else:
-        ax3.text(0.5, 0.5, "No Linear\nmodels to display",
-                 ha="center", va="center", transform=ax3.transAxes, fontsize=12)
+        ax3.text(
+            0.5, 0.5, "No Linear\nmodels to display", ha="center", va="center", transform=ax3.transAxes, fontsize=12
+        )
         ax3.set_title("Linear Model Coefficients")
 
     ax4 = axes[1, 1]
     summary_text = "Model Summary\n" + "=" * 40 + "\n\n"
     sorted_results = sorted(model_results, key=lambda x: x.get("r2_score", 0), reverse=True)
     for i, result in enumerate(sorted_results[:5]):
-        model_type = result.get("model_type", f"Model {i+1}")
+        model_type = result.get("model_type", f"Model {i + 1}")
         r2 = result.get("r2_score", 0)
         params = result.get("params", {})
-        rank = "🥇" if i == 0 else ("🥈" if i == 1 else ("🥉" if i == 2 else f"#{i+1}"))
+        rank = "🥇" if i == 0 else ("🥈" if i == 1 else ("🥉" if i == 2 else f"#{i + 1}"))
         summary_text += f"{rank} {model_type}: R²={r2:.4f}\n"
         if params:
             param_str = ", ".join(f"{k}={v}" for k, v in params.items())
             summary_text += f"   Params: {param_str}\n"
         summary_text += "\n"
 
-    ax4.text(0.05, 0.95, summary_text, transform=ax4.transAxes, fontsize=10,
-             verticalalignment="top", fontfamily="monospace",
-             bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.5))
+    ax4.text(
+        0.05,
+        0.95,
+        summary_text,
+        transform=ax4.transAxes,
+        fontsize=10,
+        verticalalignment="top",
+        fontfamily="monospace",
+        bbox={"boxstyle": "round", "facecolor": "wheat", "alpha": 0.5},
+    )
     ax4.axis("off")
     ax4.set_title("Rankings & Summary")
 
@@ -333,16 +352,16 @@ async def create_visualization_report(model_results: list) -> dict:
                 <div class="stat-label">Models Compared</div>
             </div>
             <div class="stat">
-                <div class="stat-value">{best_model.get('r2_score', 0):.4f}</div>
+                <div class="stat-value">{best_model.get("r2_score", 0):.4f}</div>
                 <div class="stat-label">Best R² Score</div>
             </div>
             <div class="stat">
-                <div class="stat-value">{best_model.get('model_type', 'N/A')}</div>
+                <div class="stat-value">{best_model.get("model_type", "N/A")}</div>
                 <div class="stat-label">Best Model Type</div>
             </div>
         </div>
     </div>
-    
+
     <div class="chart-container">
         <img src="data:image/png;base64,{img_base64}" alt="Model Comparison Charts">
     </div>
@@ -500,7 +519,7 @@ async def _build_report(code: str, attempt: int, error: str | None = None) -> st
     """Build an HTML report showing the orchestration code and status."""
     status_color = "red" if error else "green"
     status_text = f"Error: {error}" if error else "Success"
-    
+
     return f"""
 <!DOCTYPE html>
 <html lang="en">
@@ -574,12 +593,12 @@ async def _build_report(code: str, attempt: int, error: str | None = None) -> st
         <p>Attempt: {attempt + 1}</p>
         <span class="status">{status_text}</span>
     </div>
-    
+
     <div class="code-section">
         <h2>Generated Orchestration Code</h2>
         <pre><code class="language-python">{code}</code></pre>
     </div>
-    
+
     {"<div class='error-section'><h3>Error Details</h3><pre>" + error + "</pre></div>" if error else ""}
 </body>
 </html>
@@ -628,7 +647,7 @@ async def mle_orchestrator_agent(
         if attempt == 3:
             # 🔥 monty sandbox error: try to use network
             code = f"import httpx\nhttpx.get('https://www.google.com')\n\n{code}\n"  # network access
-        
+
         try:
             tab.replace(await _build_report(code, attempt, error=None))
             await flyte.report.flush.aio()
@@ -647,7 +666,7 @@ async def mle_orchestrator_agent(
             error_msg = str(exc)
             tab.replace(await _build_report(code, attempt, error=error_msg))
             await flyte.report.flush.aio()
-            
+
             if attempt < max_iter - 1:
                 code = await fix_pipeline_code(
                     prompt=prompt,
@@ -657,8 +676,7 @@ async def mle_orchestrator_agent(
                 )
             else:
                 raise RuntimeError(
-                    f"Failed to generate working orchestration code after {max_iter} attempts. "
-                    f"Last error: {error_msg}"
+                    f"Failed to generate working orchestration code after {max_iter} attempts. Last error: {error_msg}"
                 ) from exc
 
     await flyte.report.replace.aio(await _build_report(code, attempt, error=None))
@@ -674,7 +692,7 @@ if __name__ == "__main__":
     with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
         f.write("feature1,feature2,target\n")
         for i in range(100):
-            f.write(f"{i},{i*2},{i*3 + 5}\n")
+            f.write(f"{i},{i * 2},{i * 3 + 5}\n")
         data_path = f.name
 
     async def main():

@@ -25,8 +25,9 @@ agent_env = flyte.TaskEnvironment(
     resources=flyte.Resources(cpu=1, memory="1Gi"),
     secrets=[flyte.Secret(key="niels-anthropic-api-key", as_env_var="ANTHROPIC_API_KEY")],
     image=(
-        flyte.Image.from_debian_base(name="mle-tool-builder-image")
-        .with_pip_packages("httpx", "pandas", "scikit-learn", "numpy")
+        flyte.Image.from_debian_base(name="mle-tool-builder-image").with_pip_packages(
+            "httpx", "pandas", "scikit-learn", "numpy"
+        )
     ),
     depends_on=[flyte.sandbox.sandbox_environment],
 )
@@ -152,6 +153,7 @@ The output should be a list of Python dependencies in the format of:
 ]
 ```
 """
+
 
 @flyte.trace
 async def write_code(
@@ -324,10 +326,7 @@ async def mle_tool_builder_agent(
                 )
                 resources = flyte.Resources(**json.loads(resources_str))
             else:
-                raise RuntimeError(
-                    f"Failed to run code after {max_iter} attempts. "
-                    f"Last error: {error}"
-                ) from exc
+                raise RuntimeError(f"Failed to run code after {max_iter} attempts. Last error: {error}") from exc
         except Exception as exc:
             error = str(exc)
             if attempt < max_iter - 1:
@@ -338,8 +337,7 @@ async def mle_tool_builder_agent(
                 )
             else:
                 raise RuntimeError(
-                    f"Failed to generate working code after {max_iter} attempts. "
-                    f"Last error: {error}"
+                    f"Failed to generate working code after {max_iter} attempts. Last error: {error}"
                 ) from exc
 
     await flyte.report.replace.aio(await _build_report(code))
@@ -357,7 +355,7 @@ if __name__ == "__main__":
     with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
         f.write("feature1,feature2,target\n")
         for i in range(10_000):
-            f.write(f"{i},{i*2},{i*3}\n")
+            f.write(f"{i},{i * 2},{i * 3}\n")
         data_path = f.name
 
     async def main():
