@@ -69,16 +69,20 @@ def project(cfg: common.CLIConfig, name: str | None = None):
     "--created-after",
     type=_params.DateTimeType(),
     default=None,
-    help="Show runs created at or after this datetime (UTC). Accepts ISO dates, 'now', 'today', or relative expressions like 'now - 1 day'.",
+    help="Show runs created at or after this datetime (UTC). Accepts ISO dates, 'now', 'today', or 'now - 1 day'.",
 )
-@click.option("--created-before", type=_params.DateTimeType(), default=None, help="Show runs created before this datetime (UTC).")
+@click.option(
+    "--created-before", type=_params.DateTimeType(), default=None, help="Show runs created before this datetime (UTC)."
+)
 @click.option(
     "--updated-after",
     type=_params.DateTimeType(),
     default=None,
-    help="Show runs updated at or after this datetime (UTC). Accepts ISO dates, 'now', 'today', or relative expressions like 'now - 1 day'.",
+    help="Show runs updated at or after this datetime (UTC). Accepts ISO dates, 'now', 'today', or 'now - 1 day'.",
 )
-@click.option("--updated-before", type=_params.DateTimeType(), default=None, help="Show runs updated before this datetime (UTC).")
+@click.option(
+    "--updated-before", type=_params.DateTimeType(), default=None, help="Show runs updated before this datetime (UTC)."
+)
 @click.pass_obj
 def run(
     cfg: common.CLIConfig,
