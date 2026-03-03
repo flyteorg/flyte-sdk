@@ -13,6 +13,11 @@ from flyte.io._file import File
 
 logger = logging.getLogger(__name__)
 
+_PYARROW_INSTALL_MSG = (
+    "pyarrow is required for Arrow batch iteration. "
+    "Install it with: pip install 'flyteplugins-jsonl[arrow]'"
+)
+
 # Default buffer flush threshold: 1 MB
 _DEFAULT_FLUSH_BYTES = 1 << 20
 
@@ -287,7 +292,10 @@ class JsonlFile(File):
 
         Memory usage is bounded by batch_size.
         """
-        import pyarrow as pa
+        try:
+            import pyarrow as pa
+        except ModuleNotFoundError:
+            raise ModuleNotFoundError(_PYARROW_INSTALL_MSG) from None
 
         if batch_size <= 0:
             raise ValueError("batch_size must be > 0")
@@ -321,7 +329,10 @@ class JsonlFile(File):
 
         Memory usage is bounded by batch_size.
         """
-        import pyarrow as pa
+        try:
+            import pyarrow as pa
+        except ModuleNotFoundError:
+            raise ModuleNotFoundError(_PYARROW_INSTALL_MSG) from None
 
         if batch_size <= 0:
             raise ValueError("batch_size must be > 0")

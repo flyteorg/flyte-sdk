@@ -1,9 +1,14 @@
 """Arrow RecordBatch iteration for JsonlFile and JsonlDir."""
 
-import flyte
-from flyteplugins.jsonl import JsonlDir, JsonlFile
-from flyte._image import PythonWheels
 from pathlib import Path
+
+import nest_asyncio
+from flyteplugins.jsonl import JsonlDir, JsonlFile
+
+import flyte
+from flyte._image import PythonWheels
+
+nest_asyncio.apply()
 
 env = flyte.TaskEnvironment(
     name="jsonl-arrow",
@@ -23,17 +28,14 @@ env = flyte.TaskEnvironment(
                 pre=True,
             ),
         )
-    ),
+    ).with_pip_packages("nest-asyncio", "pyarrow"),
 )
 
 
-# --- Setup: create test data ---
-
-
 @env.task
-async def create_file(base_dir: str) -> JsonlFile:
+async def create_file() -> JsonlFile:
     """Create a single JSONL file with sample data."""
-    f = JsonlFile.new_remote(f"{base_dir}/metrics.jsonl")
+    f = JsonlFile.new_remote(f"metrics.jsonl")
     async with f.writer() as w:
         for i in range(10_000):
             await w.write({
@@ -58,9 +60,6 @@ async def create_dir() -> JsonlDir:
                 "host": f"node-{i % 5}",
             })
     return d
-
-
-# --- Async Arrow batches ---
 
 
 @env.task
@@ -106,11 +105,8 @@ async def arrow_from_dir(d: JsonlDir) -> int:
     return total_rows
 
 
-# --- Sync Arrow batches ---
-
-
 @env.task
-async def arrow_from_file_sync(f: JsonlFile) -> int:
+def arrow_from_file_sync(f: JsonlFile) -> int:
     """Sync Arrow batch iteration for a single file."""
     total_rows = 0
     for batch in f.iter_arrow_batches_sync(batch_size=2048):
@@ -120,16 +116,13 @@ async def arrow_from_file_sync(f: JsonlFile) -> int:
 
 
 @env.task
-async def arrow_from_dir_sync(d: JsonlDir) -> int:
+def arrow_from_dir_sync(d: JsonlDir) -> int:
     """Sync Arrow batch iteration across shards."""
     total_rows = 0
     for batch in d.iter_arrow_batches_sync(batch_size=2048):
         total_rows += batch.num_rows
     print(f"Sync dir -> {total_rows} rows")
     return total_rows
-
-
-# --- Batch iteration (list-of-dicts) ---
 
 
 @env.task
@@ -139,12 +132,12 @@ async def batches_from_dir(d: JsonlDir) -> int:
     async for batch in d.iter_batches(batch_size=500):
         total += len(batch)
         # Each batch is a list[dict]
-        print(f"  batch of {len(batch)} records (first id={batch[0]['timestamp']})")
+        print(f"batch of {len(batch)} records (first id={batch[0]['timestamp']})")
     return total
 
 
 @env.task
-async def batches_from_dir_sync(d: JsonlDir) -> int:
+def batches_from_dir_sync(d: JsonlDir) -> int:
     """Sync list-of-dict batch iteration across shards."""
     total = 0
     for batch in d.iter_batches_sync(batch_size=500):
@@ -153,15 +146,10 @@ async def batches_from_dir_sync(d: JsonlDir) -> int:
     return total
 
 
-# --- Main ---
-
-
 @env.task
 async def main() -> None:
-    base = flyte.ctx().run_base_dir
-
     # Create test data
-    f = await create_file(f"{base}/arrow")
+    f = await create_file()
     d = await create_dir()
 
     # Async Arrow batches
@@ -172,17 +160,17 @@ async def main() -> None:
     print(f"Async dir arrow: {n} rows")  # 10000
 
     # Sync Arrow batches
-    n = await arrow_from_file_sync(f)
+    n = await arrow_from_file_sync.aio(f)
     print(f"Sync file arrow: {n} rows")  # 10000
 
-    n = await arrow_from_dir_sync(d)
+    n = await arrow_from_dir_sync.aio(d)
     print(f"Sync dir arrow: {n} rows")  # 10000
 
     # List-of-dict batches
     n = await batches_from_dir(d)
     print(f"Async batches: {n} rows")  # 10000
 
-    n = await batches_from_dir_sync(d)
+    n = await batches_from_dir_sync.aio(d)
     print(f"Sync batches: {n} rows")  # 10000
 
 

@@ -1,14 +1,21 @@
-# flyteplugins-jsonl
+# JSONL
 
 JSONL (JSON Lines) file and directory types for Flyte, backed by `orjson` for
 fast serialization and optional `zstd` compression.
+
+```bash
+pip install flyteplugins-jsonl
+
+# For Arrow RecordBatch support
+pip install 'flyteplugins-jsonl[arrow]'
+```
 
 ## Types
 
 ### `JsonlFile`
 
 A single JSONL file. Inherits from `flyte.io.File` so it works with remote
-storage, upload/download, and the Flyte type engine out of the box.
+storage, upload/download and the Flyte type engine out of the box.
 
 ```python
 from flyteplugins.jsonl import JsonlFile
@@ -88,6 +95,8 @@ async for record in d.iter_records(prefetch=True, queue_size=8192):
     process(record)
 ```
 
+`queue_size` is the memory safety bound on the read-ahead buffer.
+
 ### Batch iteration
 
 Both types support batched iteration for bulk processing:
@@ -120,7 +129,7 @@ async for record in f.iter_records(on_error="skip"):
 
 ### Shard rotation
 
-The directory writer rotates shards based on record count, byte size, or both:
+The directory writer rotates shards based on record count, byte size or both:
 
 ```python
 async with d.writer(
