@@ -1,40 +1,145 @@
-"""Sandboxed tasks powered by Monty (Pydantic's Rust-based sandboxed Python interpreter).
+"""Sandbox utilities for running isolated code inside Flyte tasks.
 
 .. warning:: Experimental feature: alpha — APIs may change without notice.
 
-Sandboxed tasks are:
-- **Side-effect free**: No filesystem, network, or OS access
-- **Super fast**: Microsecond startup for pure Python
-- **Multiplexable**: Many tasks run safely on the same Python process
+``flyte.sandbox`` provides two distinct sandboxing approaches:
 
-Usage::
+---
 
-    import flyte
-    import flyte.sandbox
+**1. Orchestration sandbox** — powered by Monty
+    Runs pure Python *orchestration logic* (control flow, routing, aggregation)
+    with zero overhead. The Monty runtime enforces strong restrictions:
+    no imports, no IO, no network access, microsecond startup.  Used via
+    ``@env.sandbox.orchestrator`` or ``flyte.sandbox.orchestrator_from_str()``.
 
-    # Environment-based approach (preferred for ``flyte run``)
-    env = flyte.TaskEnvironment(name="my-env")
+    Sandboxed orchestrators are:
 
-    @env.sandbox.orchestrator
-    def my_orchestrator(x: int, y: int) -> int:
-        return add(x, y)
+    - **Side-effect free**: No filesystem, network, or OS access
+    - **Microsecond startup**: No container spin-up — runs in the same process
+    - **Multiplexable**: Many orchestrators run safely on the same Python process
 
-    # Create a reusable task from a code string
-    pipeline = flyte.sandbox.orchestrator_from_str(
-        "add(x, y) * 2",
-        inputs={"x": int, "y": int},
-        output=int,
-        tasks=[add],
-    )
+    Example::
 
-    # One-shot execution of a code string (local only)
-    result = await flyte.sandbox.orchestrate_local(
-        "x + y",
-        inputs={"x": 1, "y": 2},
-    )
+        env = flyte.TaskEnvironment(name="my-env")
+
+        @env.sandbox.orchestrator
+        def route(x: int, y: int) -> int:
+            return add(x, y)   # calls a worker task
+
+        pipeline = flyte.sandbox.orchestrator_from_str(
+            "add(x, y) * 2",
+            inputs={"x": int, "y": int},
+            output=int,
+            tasks=[add],
+        )
+
+---
+
+**2. Code sandbox** — arbitrary code in an isolated container
+    Runs arbitrary Python scripts or shell commands inside an ephemeral Docker
+    container. The image is built on demand from declared ``packages`` and
+    ``system_packages``, executed once, then discarded. Network is blocked by
+    default (``block_network=True``), preventing outbound calls from untrusted
+    code.  Used via ``flyte.sandbox.create()``.
+
+    Three execution modes are supported:
+
+    - Code mode — provide Python source that runs with automatic input/output wiring.
+    - Verbatim mode — run a script that manages its own I/O via /var/inputs and /var/outputs.
+    - Command mode — execute an arbitrary command or entrypoint.
+
+    Examples
+    --------
+
+    Code mode
+    ~~~~~~~~~
+
+    Provide Python code that uses inputs as variables and assigns
+    outputs as Python values.
+
+        _stats_code = \"""
+        import numpy as np
+        nums = np.array([float(v) for v in values.split(",")])
+        mean = float(np.mean(nums))
+        std  = float(np.std(nums))
+
+        window_end = dt + delta
+        \"""
+
+        stats_sandbox = flyte.sandbox.create(
+            name="numpy-stats",
+            code=_stats_code,
+            inputs={
+                "values": str,
+                "dt": datetime.datetime,
+                "delta": datetime.timedelta,
+            },
+            outputs={
+                "mean": float,
+                "std": float,
+                "window_end": datetime.datetime,
+            },
+            packages=["numpy"],
+        )
+
+        mean, std, window_end = await stats_sandbox.run.aio(
+            values="1,2,3,4,5",
+            dt=datetime.datetime(2024, 1, 1),
+            delta=datetime.timedelta(days=1),
+        )
+
+
+    Verbatim mode
+    ~~~~~~~~~~~~~
+
+    Run a script that explicitly reads inputs from /var/inputs and
+    writes outputs to /var/outputs.
+
+        _etl_script = \"\"\"\
+        import json, pathlib
+
+        payload = json.loads(
+            pathlib.Path("/var/inputs/payload").read_text()
+        )
+        total = sum(payload["values"])
+
+        pathlib.Path("/var/outputs/total").write_text(str(total))
+        \"\"\"
+
+        etl_sandbox = flyte.sandbox.create(
+            name="etl-script",
+            code=_etl_script,
+            inputs={"payload": File},
+            outputs={"total": int},
+            auto_io=False,
+        )
+
+
+    Command mode
+    ~~~~~~~~~~~~
+
+    Execute an arbitrary command inside the sandbox environment.
+
+        sandbox = flyte.sandbox.create(
+            name="test-runner",
+            command=["/bin/bash", "-c", "pytest /var/inputs/tests.py -q"],
+            inputs={"tests.py": File},
+            outputs={"exit_code": str},
+        )
+
+    Notes
+    -----
+
+    • Inputs are materialized under /var/inputs.
+    • Outputs must be written to /var/outputs.
+    • In code mode, inputs are available as Python variables and
+    scalar outputs are captured automatically.
+    • Additional Python dependencies can be specified via the
+    `packages` argument.
 """
 
 from ._api import orchestrate_local, orchestrator_from_str
+from ._code_sandbox import ImageConfig, create, sandbox_environment
 from ._code_task import CodeTaskTemplate
 from ._config import SandboxedConfig
 from ._task import SandboxedTaskTemplate
@@ -71,8 +176,11 @@ set comprehensions are not supported in code."""
 __all__ = [
     "ORCHESTRATOR_SYNTAX_PROMPT",
     "CodeTaskTemplate",
+    "ImageConfig",
     "SandboxedConfig",
     "SandboxedTaskTemplate",
+    "create",
     "orchestrate_local",
     "orchestrator_from_str",
+    "sandbox_environment",
 ]

@@ -51,6 +51,7 @@ class RunRecorder:
         has_report: bool = False,
         cache_enabled: bool = False,
         cache_hit: bool = False,
+        disable_run_cache: bool = False,
         context: dict | None = None,
         group: str | None = None,
         log_links: list[tuple[str, str]] | None = None,
@@ -66,6 +67,7 @@ class RunRecorder:
                 has_report=has_report,
                 cache_enabled=cache_enabled,
                 cache_hit=cache_hit,
+                disable_run_cache=disable_run_cache,
                 context=context,
                 group=group,
                 log_links=log_links,
@@ -86,6 +88,7 @@ class RunRecorder:
                 has_report=bool(has_report),
                 cache_enabled=cache_enabled,
                 cache_hit=cache_hit,
+                disable_run_cache=disable_run_cache,
                 context=context,
                 group_name=group,
                 log_links=log_links,
@@ -140,6 +143,59 @@ class RunRecorder:
             RunStore.record_failure_sync(
                 run_name=self._run_name,
                 action_name=action_id,
+                error=error,
+            )
+
+    def record_attempt_start(self, *, action_id: str, attempt_num: int) -> None:
+        if self._tracker is not None and hasattr(self._tracker, "record_attempt_start"):
+            self._tracker.record_attempt_start(action_id=action_id, attempt_num=attempt_num)
+
+        if self._persist:
+            from flyte._persistence._run_store import RunStore
+
+            RunStore.record_attempt_start_sync(
+                run_name=self._run_name,
+                action_name=action_id,
+                attempt_num=attempt_num,
+            )
+
+    def record_attempt_complete(self, *, action_id: str, attempt_num: int, outputs: Any = None) -> None:
+        display: Any = None
+        if outputs is not None:
+            display = self._to_display(outputs)
+
+        if self._tracker is not None and hasattr(self._tracker, "record_attempt_complete"):
+            self._tracker.record_attempt_complete(
+                action_id=action_id,
+                attempt_num=attempt_num,
+                outputs=display,
+            )
+
+        if self._persist:
+            from flyte._persistence._run_store import RunStore
+
+            RunStore.record_attempt_complete_sync(
+                run_name=self._run_name,
+                action_name=action_id,
+                attempt_num=attempt_num,
+                outputs=repr(display) if display is not None else None,
+            )
+
+    def record_attempt_failure(self, *, action_id: str, attempt_num: int, error: str) -> None:
+        if self._tracker is not None and hasattr(self._tracker, "record_attempt_failure"):
+            self._tracker.record_attempt_failure(
+                action_id=action_id,
+                attempt_num=attempt_num,
+                error=error,
+            )
+
+        if self._persist:
+            from flyte._persistence._run_store import RunStore
+
+            RunStore.record_attempt_failure_sync(
+                run_name=self._run_name,
+                action_name=action_id,
+                attempt_num=attempt_num,
                 error=error,
             )
 

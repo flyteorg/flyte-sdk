@@ -86,6 +86,7 @@ class TestActionNode:
         assert not node.has_report
         assert not node.cache_enabled
         assert not node.cache_hit
+        assert not node.disable_run_cache
         assert node.context is None
         assert node.end_time is None
         assert isinstance(node.start_time, float)
@@ -166,6 +167,20 @@ class TestTrackerRecordStart:
         node = t.get_action("a1")
         assert node.cache_enabled is True
         assert node.cache_hit is True
+
+    def test_disable_run_cache_stored(self):
+        t = ActionTracker()
+        t.record_start(
+            action_id="a1",
+            task_name="t",
+            cache_enabled=True,
+            cache_hit=True,
+            disable_run_cache=True,
+        )
+        node = t.get_action("a1")
+        assert node.cache_enabled is True
+        assert node.cache_hit is True
+        assert node.disable_run_cache is True
 
     def test_context_stored(self):
         t = ActionTracker()

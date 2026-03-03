@@ -33,12 +33,11 @@ from ._secret import SecretRequest
 from ._task import AsyncFunctionTaskTemplate, TaskTemplate
 from ._trigger import Trigger
 from .models import MAX_INLINE_IO_BYTES, NativeInterface
-from .sandbox._config import SandboxedConfig
-from .sandbox._task import SandboxedTaskTemplate
 
 if TYPE_CHECKING:
     from ._task import F, P, R
     from .sandbox._code_task import CodeTaskTemplate
+    from .sandbox._task import SandboxedTaskTemplate
 
 
 @rich.repr.auto
@@ -353,7 +352,7 @@ class _SandboxNamespace:
         self,
         _func_or_source: Callable,
         /,
-    ) -> SandboxedTaskTemplate: ...
+    ) -> "SandboxedTaskTemplate": ...
 
     @overload
     def orchestrator(
@@ -381,7 +380,7 @@ class _SandboxNamespace:
         name: str | None = None,
         cache: CacheRequest | None = None,
         retries: int = 0,
-    ) -> Callable[[Callable], SandboxedTaskTemplate]: ...
+    ) -> "Callable[[Callable], SandboxedTaskTemplate]": ...
 
     def orchestrator(  # type: ignore[misc]
         self,
@@ -422,6 +421,9 @@ class _SandboxNamespace:
             @env.sandbox.orchestrator(timeout_ms=5000)
             def pipeline(n: int) -> dict: ...
         """
+        from .sandbox._config import SandboxedConfig
+        from .sandbox._task import SandboxedTaskTemplate
+
         env = self._env
 
         if _func_or_source is None:

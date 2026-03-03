@@ -170,3 +170,32 @@ def test_copy_files_to_context_ignores_egg_info():
         # Verify .egg-info directories are NOT copied
         assert not (dst_path / "seeds.egg-info").exists(), "seeds.egg-info should be ignored"
         assert not (dst_path / "subdir" / "nested.egg-info").exists(), "nested.egg-info should be ignored"
+
+
+def test_copy_files_to_context_basic():
+    """Test copy behavior for absolute dirs and single files."""
+    with tempfile.TemporaryDirectory() as tmp:
+        src_dir = Path(tmp) / "project"
+        context_dir = Path(tmp) / "context"
+        src_dir.mkdir()
+        context_dir.mkdir()
+
+        # Create some source files
+        (src_dir / "app.py").write_text("print('app')")
+        (src_dir / "lib").mkdir()
+        (src_dir / "lib" / "helper.py").write_text("def h(): pass")
+
+        # Create a .git directory with some contents
+        (src_dir / ".git").mkdir()
+        (src_dir / ".git" / "HEAD").write_text("ref: refs/heads/main")
+        (src_dir / ".git" / "config").write_text("[core]\n\tbare = false")
+
+        dst = copy_files_to_context(src_dir, context_dir)
+        assert "_flyte_abs_context" in str(dst)
+        assert (dst / "app.py").exists()
+        assert (dst / "app.py").read_text() == "print('app')"
+        assert (dst / "lib" / "helper.py").exists()
+        assert (dst / "lib" / "helper.py").read_text() == "def h(): pass"
+
+        # --- .git/ should NOT be copied ---
+        assert not (dst / ".git").exists(), ".git directory should be ignored"

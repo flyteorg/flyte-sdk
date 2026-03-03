@@ -108,6 +108,22 @@ async def test_pip_package_handling(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_pip_package_handling_with_version_constraints():
+    """Package specs containing shell metacharacters (<, >) must be quoted in the generated Dockerfile
+    so that the shell does not interpret them as redirection operators."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        context_path = Path(tmpdir)
+
+        pip_packages = PipPackages(packages=("apache-airflow<=3.0.0", "requests>=2.0,<3"))
+        docker_update = await PipAndRequirementsHandler.handle(
+            layer=pip_packages, context_path=context_path, dockerfile=""
+        )
+        # Each spec with a shell metacharacter must be single-quoted
+        assert "'apache-airflow<=3.0.0'" in docker_update
+        assert "'requests>=2.0,<3'" in docker_update
+
+
+@pytest.mark.asyncio
 async def test_requirements_handler(monkeypatch):
     secret_mounts = (Secret("my-secret"), Secret("my-secret2"))
     monkeypatch.setenv("MY_SECRET", "test-value")

@@ -15,7 +15,7 @@ from flyte.syncify import syncify
 
 from . import Action, ActionDetails, ActionInputs, ActionOutputs
 from ._action import _action_details_rich_repr, _action_rich_repr
-from ._common import ToJSONMixin, filtering, sorting
+from ._common import TimeFilter, ToJSONMixin, filtering, sorting, time_filtering
 
 
 @dataclass
@@ -48,6 +48,10 @@ class Run(ToJSONMixin):
         created_by_subject: str | None = None,
         sort_by: Tuple[str, Literal["asc", "desc"]] | None = None,
         limit: int = 100,
+        project: str | None = None,
+        domain: str | None = None,
+        created_at: TimeFilter | None = None,
+        updated_at: TimeFilter | None = None,
     ) -> AsyncIterator[Run]:
         """
         Get all runs for the current project and domain.
@@ -58,6 +62,10 @@ class Run(ToJSONMixin):
         :param created_by_subject: Filter runs by the subject that created them. (this is not username, but the subject)
         :param sort_by: The sorting criteria for the Run list, in the format (field, order).
         :param limit: The maximum number of runs to return.
+        :param project: The project to list runs for. Defaults to the globally configured project.
+        :param domain: The domain to list runs for. Defaults to the globally configured domain.
+        :param created_at: Filter runs by creation time range.
+        :param updated_at: Filter runs by last-update time range.
         :return: An iterator of runs.
         """
         ensure_client()
@@ -108,6 +116,11 @@ class Run(ToJSONMixin):
 
         filters = filtering(created_by_subject, *filters)
 
+        if created_at:
+            filters.extend(time_filtering("created_at", created_at))
+        if updated_at:
+            filters.extend(time_filtering("updated_at", updated_at))
+
         cfg = get_init_config()
         i = 0
         while True:
@@ -123,8 +136,8 @@ class Run(ToJSONMixin):
                     org=cfg.org,
                     project_id=identifier_pb2.ProjectIdentifier(
                         organization=cfg.org,
-                        domain=cfg.domain,
-                        name=cfg.project,
+                        domain=domain or cfg.domain,
+                        name=project or cfg.project,
                     ),
                 )
             )
