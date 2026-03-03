@@ -2,11 +2,11 @@
 
 from pathlib import Path
 
-import nest_asyncio
-from flyteplugins.jsonl import JsonlDir, JsonlFile
-
 import flyte
+import nest_asyncio
 from flyte._image import PythonWheels
+
+from flyteplugins.jsonl import JsonlDir, JsonlFile
 
 nest_asyncio.apply()
 
@@ -35,15 +35,17 @@ env = flyte.TaskEnvironment(
 @env.task
 async def create_file() -> JsonlFile:
     """Create a single JSONL file with sample data."""
-    f = JsonlFile.new_remote(f"metrics.jsonl")
+    f = JsonlFile.new_remote("metrics.jsonl")
     async with f.writer() as w:
         for i in range(10_000):
-            await w.write({
-                "timestamp": i,
-                "cpu": 50.0 + (i % 30),
-                "memory_mb": 1024 + (i % 512),
-                "host": f"node-{i % 5}",
-            })
+            await w.write(
+                {
+                    "timestamp": i,
+                    "cpu": 50.0 + (i % 30),
+                    "memory_mb": 1024 + (i % 512),
+                    "host": f"node-{i % 5}",
+                }
+            )
     return f
 
 
@@ -53,12 +55,14 @@ async def create_dir() -> JsonlDir:
     d = JsonlDir.new_remote("metrics_sharded")
     async with d.writer(max_records_per_shard=2000) as w:
         for i in range(10_000):
-            await w.write({
-                "timestamp": i,
-                "cpu": 50.0 + (i % 30),
-                "memory_mb": 1024 + (i % 512),
-                "host": f"node-{i % 5}",
-            })
+            await w.write(
+                {
+                    "timestamp": i,
+                    "cpu": 50.0 + (i % 30),
+                    "memory_mb": 1024 + (i % 512),
+                    "host": f"node-{i % 5}",
+                }
+            )
     return d
 
 

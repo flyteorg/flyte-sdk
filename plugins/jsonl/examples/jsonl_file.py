@@ -1,13 +1,12 @@
 """JsonlFile: single-file JSONL read/write with compression, error handling and large files."""
 
-import asyncio
 from pathlib import Path
 
-import nest_asyncio
-from flyteplugins.jsonl import JsonlFile
-
 import flyte
+import nest_asyncio
 from flyte._image import PythonWheels
+
+from flyteplugins.jsonl import JsonlFile
 
 nest_asyncio.apply()
 
@@ -179,9 +178,7 @@ async def verify_large(f: JsonlFile, expected: int) -> bool:
     count = 0
     prev_id = -1
     async for record in f.iter_records():
-        assert (
-            record["id"] == prev_id + 1
-        ), f"Out-of-order: expected {prev_id + 1}, got {record['id']}"
+        assert record["id"] == prev_id + 1, f"Out-of-order: expected {prev_id + 1}, got {record['id']}"
         prev_id = record["id"]
         count += 1
     assert count == expected, f"Count mismatch: expected {expected}, got {count}"
@@ -195,9 +192,7 @@ def verify_large_sync(f: JsonlFile, expected: int) -> bool:
     count = 0
     prev_id = -1
     for record in f.iter_records_sync():
-        assert (
-            record["id"] == prev_id + 1
-        ), f"Out-of-order: expected {prev_id + 1}, got {record['id']}"
+        assert record["id"] == prev_id + 1, f"Out-of-order: expected {prev_id + 1}, got {record['id']}"
         prev_id = record["id"]
         count += 1
     assert count == expected, f"Count mismatch: expected {expected}, got {count}"

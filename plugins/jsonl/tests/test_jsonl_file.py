@@ -10,11 +10,10 @@ import pytest
 
 from flyteplugins.jsonl._jsonl_file import (
     JsonlFile,
-    _JsonlBuffer,
     _is_zstd_path,
+    _JsonlBuffer,
     _parse_line,
 )
-
 
 # ---------------------------------------------------------------------------
 # _is_zstd_path
@@ -127,7 +126,10 @@ def test_resolve_error_handler_skip():
 
 
 def test_resolve_error_handler_callable():
-    fn = lambda ln, raw, exc: None
+
+    def fn(ln, raw, exc):
+        pass
+
     assert JsonlFile._resolve_error_handler(fn) is fn
 
 
@@ -289,7 +291,7 @@ async def test_iter_arrow_batches_async(tmp_path):
 
 
 def test_iter_arrow_batches_sync(tmp_path):
-    pa = pytest.importorskip("pyarrow")
+    pytest.importorskip("pyarrow")
     path = str(tmp_path / "test.jsonl")
     f = JsonlFile(path=path)
 

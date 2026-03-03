@@ -757,9 +757,7 @@ class Dir(BaseModel, Generic[T], SerializableType):
         return cls(path=resolved_remote_path, name=dirname, hash=dir_cache_key)
 
     @classmethod
-    def new_remote(
-        cls, dir_name: Optional[str] = None, hash: Optional[str] = None
-    ) -> Dir[T]:
+    def new_remote(cls, dir_name: Optional[str] = None, hash: Optional[str] = None) -> Dir[T]:
         """Create a new Dir reference for a remote directory that will be written to.
 
         Use this when you want to create a new directory and write files into it
@@ -1001,7 +999,9 @@ class DirTransformer(TypeTransformer[Dir]):
         uri = lv.scalar.blob.uri
         filename = Path(uri).name
         hash_value = lv.hash or None
-        f: Dir = expected_python_type(path=uri, name=filename, format=lv.scalar.blob.metadata.type.format, hash=hash_value)
+        f: Dir = expected_python_type(
+            path=uri, name=filename, format=lv.scalar.blob.metadata.type.format, hash=hash_value
+        )
         return f
 
     def guess_python_type(self, literal_type: types_pb2.LiteralType) -> Type[Dir]:

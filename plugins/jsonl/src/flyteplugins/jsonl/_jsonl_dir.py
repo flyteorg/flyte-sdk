@@ -20,9 +20,9 @@ from contextlib import asynccontextmanager, contextmanager, suppress
 from typing import Any, AsyncGenerator, Generator, Literal
 
 import orjson
-from ._jsonl_file import _DEFAULT_FLUSH_BYTES, _ZSTD_EXTENSIONS, ErrorHandler, JsonlFile
-
 from flyte.io._dir import Dir
+
+from ._jsonl_file import _DEFAULT_FLUSH_BYTES, _ZSTD_EXTENSIONS, ErrorHandler, JsonlFile
 
 logger = logging.getLogger(__name__)
 
@@ -263,21 +263,13 @@ class JsonlDir(Dir):
 
     async def _get_sorted_shards(self) -> list[JsonlFile]:
         """Walk the directory and return JSONL files sorted by filename."""
-        shards = [
-            JsonlFile(path=f.path)
-            async for f in self.walk(recursive=False)
-            if _is_jsonl_path(f.path)
-        ]
+        shards = [JsonlFile(path=f.path) async for f in self.walk(recursive=False) if _is_jsonl_path(f.path)]
         shards.sort(key=lambda s: os.path.basename(s.path))
         return shards
 
     def _get_sorted_shards_sync(self) -> list[JsonlFile]:
         """Sync variant of :meth:`_get_sorted_shards`."""
-        shards = [
-            JsonlFile(path=f.path)
-            for f in self.walk_sync(recursive=False)
-            if _is_jsonl_path(f.path)
-        ]
+        shards = [JsonlFile(path=f.path) for f in self.walk_sync(recursive=False) if _is_jsonl_path(f.path)]
         shards.sort(key=lambda s: os.path.basename(s.path))
         return shards
 
@@ -365,9 +357,7 @@ class JsonlDir(Dir):
                 # processes the records we just yielded.
                 if i + 1 < len(shards):
                     queue = asyncio.Queue(queue_size)
-                    task = asyncio.create_task(
-                        _prefetch_shard(shards[i + 1], on_error, queue)
-                    )
+                    task = asyncio.create_task(_prefetch_shard(shards[i + 1], on_error, queue))
         finally:
             # Clean up if the consumer exits early (break, exception, etc.)
             if task:
@@ -399,9 +389,7 @@ class JsonlDir(Dir):
             queue_size: Memory safety bound on the read-ahead buffer.
         """
         batch: list[dict[str, Any]] = []
-        async for r in self.iter_records(
-            on_error=on_error, prefetch=prefetch, queue_size=queue_size
-        ):
+        async for r in self.iter_records(on_error=on_error, prefetch=prefetch, queue_size=queue_size):
             batch.append(r)
             if len(batch) >= batch_size:
                 yield batch
@@ -442,9 +430,7 @@ class JsonlDir(Dir):
         """
         shards = await self._get_sorted_shards()
         for s in shards:
-            async for batch in s.iter_arrow_batches(
-                batch_size=batch_size, on_error=on_error
-            ):
+            async for batch in s.iter_arrow_batches(batch_size=batch_size, on_error=on_error):
                 yield batch
 
     def iter_arrow_batches_sync(
@@ -459,9 +445,7 @@ class JsonlDir(Dir):
             on_error: ``"raise"`` (default), ``"skip"``, or a callable.
         """
         for s in self._get_sorted_shards_sync():
-            yield from s.iter_arrow_batches_sync(
-                batch_size=batch_size, on_error=on_error
-            )
+            yield from s.iter_arrow_batches_sync(batch_size=batch_size, on_error=on_error)
 
     @asynccontextmanager
     async def writer(

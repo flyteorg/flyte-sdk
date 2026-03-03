@@ -8,14 +8,12 @@ from typing import Any, AsyncGenerator, Callable, Generator, Literal
 
 import orjson
 import zstandard as zstd
-
 from flyte.io._file import File
 
 logger = logging.getLogger(__name__)
 
 _PYARROW_INSTALL_MSG = (
-    "pyarrow is required for Arrow batch iteration. "
-    "Install it with: pip install 'flyteplugins-jsonl[arrow]'"
+    "pyarrow is required for Arrow batch iteration. Install it with: pip install 'flyteplugins-jsonl[arrow]'"
 )
 
 # Default buffer flush threshold: 1 MB
@@ -115,17 +113,13 @@ class JsonlWriterSync:
 class _ZstdJsonlWriter(JsonlWriter):
     """Async JSONL writer that compresses via zstd before writing."""
 
-    def __init__(
-        self, file_handle, compressor, flush_bytes: int = _DEFAULT_FLUSH_BYTES
-    ):
+    def __init__(self, file_handle, compressor, flush_bytes: int = _DEFAULT_FLUSH_BYTES):
         super().__init__(file_handle, flush_bytes)
         self._compressor = compressor
 
     async def flush(self) -> None:
         if self._buf.has_data():
-            compressed = await asyncio.to_thread(
-                self._compressor.compress, bytes(self._buf.data())
-            )
+            compressed = await asyncio.to_thread(self._compressor.compress, bytes(self._buf.data()))
             if compressed:
                 await self._fh.write(compressed)
             self._buf.clear()
@@ -143,9 +137,7 @@ def _default_error_handler(line_number: int, raw_line: bytes, exc: Exception) ->
     )
 
 
-def _parse_line(
-    line: bytes, line_number: int, handler: ErrorHandler | None
-) -> dict[str, Any] | None:
+def _parse_line(line: bytes, line_number: int, handler: ErrorHandler | None) -> dict[str, Any] | None:
     """Parse a single JSONL line, delegating errors to *handler*.
 
     Returns the parsed dict or ``None`` if the line was skipped.
@@ -382,9 +374,7 @@ class JsonlFile(File):
                 await w.flush()
 
     @asynccontextmanager
-    async def _writer_zstd(
-        self, flush_bytes: int, compression_level: int
-    ) -> AsyncGenerator[JsonlWriter, None]:
+    async def _writer_zstd(self, flush_bytes: int, compression_level: int) -> AsyncGenerator[JsonlWriter, None]:
         """Buffer uncompressed JSONL, compress with zstd on flush, write to storage."""
         cctx = zstd.ZstdCompressor(level=compression_level)
         compressor = cctx.compressobj()
@@ -427,9 +417,7 @@ class JsonlFile(File):
                 w.flush()
 
     @contextmanager
-    def _writer_zstd_sync(
-        self, flush_bytes: int, compression_level: int
-    ) -> Generator[JsonlWriterSync, None, None]:
+    def _writer_zstd_sync(self, flush_bytes: int, compression_level: int) -> Generator[JsonlWriterSync, None, None]:
         """Sync zstd-compressed writer using zstd.stream_writer."""
         with self.open_sync("wb") as fh:
             cctx = zstd.ZstdCompressor(level=compression_level)
@@ -451,6 +439,4 @@ class JsonlFile(File):
             return _default_error_handler
         if callable(on_error):
             return on_error
-        raise ValueError(
-            f"on_error must be 'raise', 'skip', or a callable, got {on_error!r}"
-        )
+        raise ValueError(f"on_error must be 'raise', 'skip', or a callable, got {on_error!r}")

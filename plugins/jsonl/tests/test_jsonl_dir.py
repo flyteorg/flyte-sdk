@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 
+import orjson
 import pytest
 
 from flyteplugins.jsonl._jsonl_dir import (
@@ -14,10 +15,10 @@ from flyteplugins.jsonl._jsonl_dir import (
 )
 from flyteplugins.jsonl._jsonl_file import JsonlFile
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.parametrize(
     "path,expected",
@@ -72,6 +73,7 @@ def test_next_index():
 # ---------------------------------------------------------------------------
 # Async write / read
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_write_single_shard(tmp_path):
@@ -156,6 +158,34 @@ async def test_iter_records_empty_dir(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_read_user_created_shards(tmp_path):
+    """JsonlDir can read .jsonl files the user wrote manually (not via the plugin)."""
+    # Write files with non-standard names — any .jsonl file should be picked up
+    (tmp_path / "events-2024-01.jsonl").write_bytes(
+        b"".join(orjson.dumps({"month": 1, "id": i}) + b"\n" for i in range(5))
+    )
+    (tmp_path / "events-2024-02.jsonl").write_bytes(
+        b"".join(orjson.dumps({"month": 2, "id": i}) + b"\n" for i in range(3))
+    )
+    # A non-jsonl file should be ignored
+    (tmp_path / "readme.txt").write_text("ignore me")
+
+    d = JsonlDir(path=str(tmp_path))
+    result = [r async for r in d.iter_records()]
+    assert len(result) == 8
+
+
+def test_read_user_created_shards_sync(tmp_path):
+    """Sync variant: reads user-created .jsonl files."""
+    (tmp_path / "batch_a.jsonl").write_bytes(b"".join(orjson.dumps({"src": "a", "i": i}) + b"\n" for i in range(4)))
+    (tmp_path / "batch_b.jsonl").write_bytes(b"".join(orjson.dumps({"src": "b", "i": i}) + b"\n" for i in range(6)))
+
+    d = JsonlDir(path=str(tmp_path))
+    result = list(d.iter_records_sync())
+    assert len(result) == 10
+
+
+@pytest.mark.asyncio
 async def test_ordering_across_shards(tmp_path):
     d = JsonlDir(path=str(tmp_path))
 
@@ -171,6 +201,7 @@ async def test_ordering_across_shards(tmp_path):
 # ---------------------------------------------------------------------------
 # Sync write / read
 # ---------------------------------------------------------------------------
+
 
 def test_write_and_read_sync(tmp_path):
     d = JsonlDir(path=str(tmp_path))
@@ -203,6 +234,7 @@ def test_write_sync_rotation(tmp_path):
 # Append
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_append_to_existing(tmp_path):
     d = JsonlDir(path=str(tmp_path))
@@ -230,6 +262,7 @@ async def test_append_to_existing(tmp_path):
 # ---------------------------------------------------------------------------
 # Batch iteration
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_iter_batches_async(tmp_path):
@@ -265,6 +298,7 @@ def test_iter_batches_sync(tmp_path):
 # Arrow batches
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_iter_arrow_batches_async(tmp_path):
     pa = pytest.importorskip("pyarrow")
@@ -282,7 +316,7 @@ async def test_iter_arrow_batches_async(tmp_path):
 
 
 def test_iter_arrow_batches_sync(tmp_path):
-    pa = pytest.importorskip("pyarrow")
+    pytest.importorskip("pyarrow")
     d = JsonlDir(path=str(tmp_path))
 
     records = [{"id": i} for i in range(50)]
