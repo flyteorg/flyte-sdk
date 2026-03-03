@@ -32,7 +32,7 @@ from flyte import types
 from flyte._initialize import ensure_client, get_client, get_init_config
 from flyte._interface import default_output_name
 from flyte.models import ActionPhase
-from flyte.remote._common import ToJSONMixin
+from flyte.remote._common import TimeFilter, ToJSONMixin, time_filtering
 from flyte.remote._logs import Logs
 from flyte.syncify import syncify
 
@@ -154,8 +154,9 @@ class Action(ToJSONMixin):
         cls,
         for_run_name: str,
         in_phase: Tuple[ActionPhase | str, ...] | None = None,
-        filters: str | None = None,
         sort_by: Tuple[str, Literal["asc", "desc"]] | None = None,
+        created_at: TimeFilter | None = None,
+        updated_at: TimeFilter | None = None,
     ) -> Union[Iterator[Action], AsyncIterator[Action]]:
         """
         Get all actions for a given run.
@@ -164,6 +165,8 @@ class Action(ToJSONMixin):
         :param in_phase: Filter actions by one or more phases.
         :param filters: The filters to apply to the project list.
         :param sort_by: The sorting criteria for the project list, in the format (field, order).
+        :param created_at: Filter actions by creation time range.
+        :param updated_at: Filter actions by last-update time range.
         :return: An iterator of actions.
         """
         ensure_client()
@@ -204,6 +207,11 @@ class Action(ToJSONMixin):
                         values=phases[0],
                     ),
                 )
+
+        if created_at:
+            filter_list.extend(time_filtering("created_at", created_at))
+        if updated_at:
+            filter_list.extend(time_filtering("updated_at", updated_at))
 
         cfg = get_init_config()
         while True:
