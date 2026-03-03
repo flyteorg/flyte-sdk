@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Dict, List, Literal, Optional, Tuple, TypeVar, Union
 
 import rich.repr
-from packaging.version import Version
 
 if TYPE_CHECKING:
     from flyte import Secret, SecretRequest
@@ -21,6 +20,7 @@ PYTHON_3_10 = (3, 10)
 PYTHON_3_11 = (3, 11)
 PYTHON_3_12 = (3, 12)
 PYTHON_3_13 = (3, 13)
+PYTHON_3_14 = (3, 14)
 
 # 0 is a file, 1 is a directory
 CopyConfigType = Literal[0, 1]
@@ -50,6 +50,28 @@ class Layer:
     This is an abstract representation of Container Image Layers, which can be used to create
      layered images programmatically.
     """
+
+    def __post_init__(self):
+        """
+        Validate that no fields in the layer contain lists.
+        Lists are not allowed because Layer objects must be hashable for caching.
+        """
+        import dataclasses
+
+        for f in dataclasses.fields(self):
+            value = getattr(self, f.name)
+            if isinstance(value, list):
+                raise TypeError(
+                    f"{self.__class__.__name__} field '{f.name}' is a list: {value!r}. "
+                    f"Hint: Pass items as separate arguments, e.g., 'vim', 'git' instead of ['vim', 'git']."
+                )
+            elif isinstance(value, tuple):
+                for i, item in enumerate(value):
+                    if isinstance(item, list):
+                        raise TypeError(
+                            f"{self.__class__.__name__} field '{f.name}' contains a list at index {i}: {item!r}. "
+                            f"Hint: Pass items as separate arguments, e.g., 'vim', 'git' instead of ['vim', 'git']."
+                        )
 
     @abstractmethod
     def update_hash(self, hasher: hashlib._Hash):
@@ -116,6 +138,9 @@ class PipOption:
 class PipPackages(PipOption, Layer):
     packages: Optional[Tuple[str, ...]] = None
 
+    def __post_init__(self):
+        super().__post_init__()
+
     def update_hash(self, hasher: hashlib._Hash):
         """
         Update the hash with the pip packages
@@ -167,7 +192,7 @@ class Requirements(PipPackages):
 @dataclass(frozen=True, repr=True)
 class UVProject(PipOption, Layer):
     pyproject: Path
-    uvlock: Path
+    uvlock: Optional[Path] = None
     project_install_mode: typing.Literal["dependencies_only", "install_project"] = "dependencies_only"
 
     def validate(self):
@@ -175,7 +200,7 @@ class UVProject(PipOption, Layer):
             raise FileNotFoundError(f"pyproject.toml file {self.pyproject.resolve()} does not exist")
         if not self.pyproject.is_file():
             raise ValueError(f"Pyproject file {self.pyproject.resolve()} is not a file")
-        if not self.uvlock.exists():
+        if self.uvlock is not None and not self.uvlock.exists():
             raise ValueError(f"UVLock file {self.uvlock.resolve()} does not exist")
         super().validate()
 
@@ -184,7 +209,8 @@ class UVProject(PipOption, Layer):
 
         super().update_hash(hasher)
         if self.project_install_mode == "dependencies_only":
-            filehash_update(self.uvlock, hasher)
+            if self.uvlock is not None:
+                filehash_update(self.uvlock, hasher)
             filehash_update(self.pyproject, hasher)
         else:
             update_hasher_for_source(self.pyproject.parent, hasher)
@@ -258,8 +284,11 @@ class UVScript(PipOption, Layer):
         super().update_hash(hasher)
         if header.pyprojects:
             for pyproject in header.pyprojects:
+                uvlock_path = Path(pyproject) / "uv.lock"
                 UVProject(
-                    Path(pyproject) / "pyproject.toml", Path(pyproject) / "uv.lock", "install_project"
+                    pyproject=Path(pyproject) / "pyproject.toml",
+                    uvlock=uvlock_path if uvlock_path.exists() else None,
+                    project_install_mode="install_project",
                 ).update_hash(hasher)
 
 
@@ -268,6 +297,9 @@ class UVScript(PipOption, Layer):
 class AptPackages(Layer):
     packages: Tuple[str, ...]
     secret_mounts: Optional[Tuple[str | Secret, ...]] = None
+
+    def __post_init__(self):
+        super().__post_init__()
 
     def update_hash(self, hasher: hashlib._Hash):
         hash_input = "".join(self.packages)
@@ -409,6 +441,7 @@ class Image:
     name: Optional[str] = field(default=None)
     platform: Tuple[Architecture, ...] = field(default=("linux/amd64",))
     python_version: Tuple[int, int] = field(default_factory=_detect_python_version)
+    extendable: bool = field(default=False)
     # Refer to the image_refs (name:image-uri) set in CLI or config
     _ref_name: Optional[str] = field(default=None)
 
@@ -423,6 +456,7 @@ class Image:
         PYTHON_3_11: "py3.11-",
         PYTHON_3_12: "py3.12-",
         PYTHON_3_13: "py3.13-",
+        PYTHON_3_14: "py3.14-",
     }
 
     # class-level token not included in __init__
@@ -462,6 +496,8 @@ class Image:
     ) -> Image:
         # Would love a way to move this outside of this class (but still needs to be accessible via Image.auto())
         # this default image definition may need to be updated once there is a released pypi version
+        from packaging.version import Version
+
         from flyte._version import __version__
 
         dev_mode = (__version__ and "dev" in __version__) and not flyte_version and install_flyte
@@ -478,6 +514,7 @@ class Image:
             name=_DEFAULT_IMAGE_NAME,
             python_version=python_version,
             platform=("linux/amd64", "linux/arm64") if platform is None else platform,
+            extendable=True,
         )
         labels_and_user = _DockerLines(
             (
@@ -551,7 +588,7 @@ class Image:
         )
 
         if registry or name:
-            return base_image.clone(registry=registry, name=name, registry_secret=registry_secret)
+            return base_image.clone(registry=registry, name=name, registry_secret=registry_secret, extendable=True)
 
         return base_image
 
@@ -654,6 +691,7 @@ class Image:
         base_image: Optional[str] = None,
         python_version: Optional[Tuple[int, int]] = None,
         addl_layer: Optional[Layer] = None,
+        extendable: Optional[bool] = None,
     ) -> Image:
         """
         Use this method to clone the current image and change the registry and name
@@ -661,12 +699,22 @@ class Image:
         :param registry: Registry to use for the image
         :param registry_secret: Secret to use to pull/push the private image.
         :param name: Name of the image
+        :param base_image: Base image to use for the image
         :param python_version: Python version for the image, if not specified, will use the current Python version
         :param addl_layer: Additional layer to add to the image. This will be added to the end of the layers.
+        :param extendable: Whether the image is extendable by other images. If True, the image can be used as a base
+         image for other images, and additional layers can be added on top of it. If False, the image cannot be
+          used as a base image for other images, and additional layers cannot be added on top of it. If None (default),
+          defaults to False for safety.
         :return:
         """
         from flyte import Secret
 
+        if addl_layer and not self.extendable:
+            raise ValueError(
+                "Cannot add additional layers to a non-extendable image. "
+                "Please create the image with extendable=True in the clone() call."
+            )
         if addl_layer and self.dockerfile:
             # We don't know how to inspect dockerfiles to know what kind it is (OS, python version, uv vs poetry, etc)
             # so there's no guarantee any of the layering logic will work.
@@ -674,10 +722,10 @@ class Image:
                 "Flyte current cannot add additional layers to a Dockerfile-based Image."
                 " Please amend the dockerfile directly."
             )
-        registry = registry if registry else self.registry
-        name = name if name else self.name
-        registry_secret = registry_secret if registry_secret else self._image_registry_secret
-        base_image = base_image if base_image else self.base_image
+        registry = registry or self.registry
+        name = name or self.name
+        registry_secret = registry_secret or self._image_registry_secret
+        base_image = base_image or self.base_image
         if addl_layer and (not name):
             raise ValueError(
                 f"Cannot add additional layer {addl_layer} to an image without name. Please first clone()."
@@ -690,6 +738,7 @@ class Image:
             name=name,
             platform=self.platform,
             python_version=python_version or self.python_version,
+            extendable=extendable if extendable is not None else self.extendable,
             _layers=new_layers,
             _image_registry_secret=Secret(key=registry_secret) if isinstance(registry_secret, str) else registry_secret,
             _ref_name=self._ref_name,
@@ -722,6 +771,7 @@ class Image:
             "dockerfile": file,
             "registry": registry,
             "name": name,
+            "extendable": False,  # Dockerfile-based images cannot have additional layers
         }
         if platform:
             kwargs["platform"] = platform
@@ -750,7 +800,7 @@ class Image:
 
     @property
     def _final_tag(self) -> str:
-        t = self._tag if self._tag else self._get_hash_digest()
+        t = self._tag or self._get_hash_digest()
         return t or "latest"
 
     @cached_property
@@ -928,9 +978,9 @@ class Image:
         If `project_install_mode` is "install_project", it will also copy directory
          where the pyproject.toml file is located into the image.
 
-        :param pyproject_file: path to the pyproject.toml file, needs to have a corresponding uv.lock file
+        :param pyproject_file: path to the pyproject.toml file
         :param uvlock: path to the uv.lock file, if not specified, will use the default uv.lock file in the same
-        directory as the pyproject.toml file. (pyproject.parent / uv.lock)
+        directory as the pyproject.toml file if it exists. (pyproject.parent / uv.lock)
         :param index_url: index url to use for pip install, default is None
         :param extra_index_urls: extra index urls to use for pip install, default is None
         :param pre: whether to allow pre-release versions, default is False
@@ -942,10 +992,14 @@ class Image:
         """
         if isinstance(pyproject_file, str):
             pyproject_file = Path(pyproject_file)
+        # If uvlock is not provided, use the default uv.lock file in the same directory if it exists
+        if uvlock is None:
+            default_uvlock = pyproject_file.parent / "uv.lock"
+            uvlock = default_uvlock if default_uvlock.exists() else None
         new_image = self.clone(
             addl_layer=UVProject(
                 pyproject=pyproject_file,
-                uvlock=uvlock or (pyproject_file.parent / "uv.lock"),
+                uvlock=uvlock,
                 index_url=index_url,
                 extra_index_urls=extra_index_urls,
                 pre=pre,

@@ -8,6 +8,10 @@ on:
     paths:
       - 'examples/integration_tests.py'
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   integration-tests:
     runs-on: ubuntu-latest
@@ -32,15 +36,16 @@ jobs:
           key: uv-${{ runner.os }}-${{ matrix.python-version }}
       - name: Install flyte & Build wheel
         run: |
+          export SETUPTOOLS_SCM_PRETEND_VERSION="9.9.9"
           make dist
-      - name: Install plugins
+      - name: Install plugins and example dependencies
         working-directory: plugins
         run: |
-          uv pip install ./ray ./pytorch ./dask ./spark
-          uv pip install ../  # Make sure the flyte sdk is installed from the current branch
+          uv pip install --pre ./ray ./pytorch ./dask ./spark ./vllm ./sglang
+          uv pip install --pre "../[examples-test]"  # Install flyte with example test dependencies
           uv pip list
       - name: Run integration tests
         env:
           FLYTE_SDK_CI_TOKEN: "${{ secrets.FLYTE_SDK_CI_TOKEN }}"
         run: |
-          uv run python -m pytest -n auto -v examples/integration_tests.py
+          uv run python -m pytest -n 10 -v examples/integration_tests.py

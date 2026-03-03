@@ -1,6 +1,9 @@
+import functools
+
 import flyte
 import pyspark
-from flyte.io import PARQUET, DataFrame, DataFrameDecoder, DataFrameEncoder, DataFrameTransformerEngine
+from flyte.io import PARQUET, DataFrame
+from flyte.io.extend import DataFrameDecoder, DataFrameEncoder, DataFrameTransformerEngine
 from flyteidl2.core import literals_pb2, types_pb2
 from typing_extensions import cast
 
@@ -50,5 +53,16 @@ class ParquetToSparkDecoder(DataFrameDecoder):
         return spark.read.parquet(path)
 
 
-DataFrameTransformerEngine.register(SparkToParquetEncoder(), default_format_for_type=True)
-DataFrameTransformerEngine.register(ParquetToSparkDecoder(), default_format_for_type=True)
+@functools.lru_cache(maxsize=None)
+def register_spark_df_transformers():
+    """Register Spark DataFrame encoders and decoders with the DataFrameTransformerEngine.
+
+    This function is called automatically via the flyte.plugins.types entry point
+    when flyte.init() is called with load_plugin_type_transformers=True (the default).
+    """
+    DataFrameTransformerEngine.register(SparkToParquetEncoder(), default_format_for_type=True)
+    DataFrameTransformerEngine.register(ParquetToSparkDecoder(), default_format_for_type=True)
+
+
+# Also register at module import time for backwards compatibility
+register_spark_df_transformers()

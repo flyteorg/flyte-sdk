@@ -28,6 +28,7 @@ class Run(ToJSONMixin):
     pb2: run_definition_pb2.Run
     action: Action = field(init=False)
     _details: RunDetails | None = None
+    _preserve_original_types: bool = False
 
     def __post_init__(self):
         """
@@ -220,6 +221,8 @@ class Run(ToJSONMixin):
         """
         if self._details is None or not self._details.done():
             self._details = await RunDetails.get_details.aio(self.pb2.action.id.run)
+        self._details._preserve_original_types = self._preserve_original_types
+        self._details.action_details._preserve_original_types = self._preserve_original_types
         return self._details
 
     @syncify
@@ -251,7 +254,7 @@ class Run(ToJSONMixin):
         )
 
     @syncify
-    async def abort(self):
+    async def abort(self, reason: str = "Manually aborted from the SDK api."):
         """
         Aborts / Terminates the run.
         """
@@ -259,6 +262,7 @@ class Run(ToJSONMixin):
             await get_client().run_service.AbortRun(
                 run_service_pb2.AbortRunRequest(
                     run_id=self.pb2.action.id.run,
+                    reason=reason,
                 )
             )
         except grpc.aio.AioRpcError as e:
@@ -305,12 +309,13 @@ class RunDetails(ToJSONMixin):
 
     pb2: run_definition_pb2.RunDetails
     action_details: ActionDetails = field(init=False)
+    _preserve_original_types: bool = False
 
     def __post_init__(self):
         """
         Initialize the RunDetails object with the given run definition.
         """
-        self.action_details = ActionDetails(self.pb2.action)
+        self.action_details = ActionDetails(self.pb2.action, _preserve_original_types=self._preserve_original_types)
 
     @syncify
     @classmethod

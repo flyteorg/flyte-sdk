@@ -51,7 +51,7 @@ async def test_basic_dc_in_task(local_dummy_file, local_dummy_directory):
 
     flyte.init()
     primitive = PrimitiveDC(int_field=42, float_field=3.14, list_field=[1, 2, 3], generic_list_field=["hello"])
-    result = flyte.with_runcontext(mode="local").run(t1, dc=primitive).outputs()
+    result = flyte.with_runcontext(mode="local").run(t1, dc=primitive).outputs()[0]
 
     assert result.int_field == 42
     assert result.float_field == 3.14

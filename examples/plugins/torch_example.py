@@ -9,8 +9,12 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, DistributedSampler, TensorDataset
 
 import flyte
+from flyte._image import DIST_FOLDER, PythonWheels
 
-image = flyte.Image.from_debian_base(name="torch").with_pip_packages("flyteplugins-pytorch", pre=True)
+image = flyte.Image.from_debian_base(name="torch").clone(
+    addl_layer=PythonWheels(wheel_dir=DIST_FOLDER, package_name="flyteplugins-pytorch", pre=True)
+)
+
 
 torch_env = flyte.TaskEnvironment(
     name="torch_env",

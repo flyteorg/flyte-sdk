@@ -126,7 +126,8 @@ def ls_files(
     all_files.sort()
     hasher = hashlib.md5()
     for abspath in all_files:
-        relpath = os.path.relpath(abspath, source_path)
+        # Use POSIX-style path for hashing to ensure consistent hashes across platforms
+        relpath = pathlib.Path(abspath).relative_to(source_path).as_posix()
         _filehash_update(abspath, hasher)
         _pathhash_update(relpath, hasher)
 
@@ -156,9 +157,12 @@ def ls_relative_files(relative_paths: list[str], source_path: pathlib.Path) -> t
             else:
                 raise ValueError(f"File {path} is not a valid file, directory, or glob pattern")
 
+    all_files.sort()
     for p in all_files:
         _filehash_update(p, hasher)
-        _pathhash_update(p, hasher)
+        # Use POSIX-style path for hashing to ensure consistent hashes across platforms
+        rel_path = pathlib.Path(p).relative_to(source_path).as_posix()
+        _pathhash_update(rel_path, hasher)
 
     digest = hasher.hexdigest()
     return all_files, digest
@@ -183,11 +187,17 @@ EXCLUDE_DIRS = {".git"}
 
 def list_all_files(source_path: pathlib.Path, deref_symlinks, ignore_group: Optional[IgnoreGroup] = None) -> List[str]:
     all_files = []
+    source_path_str = str(source_path.absolute())
 
     # This is needed to prevent infinite recursion when walking with followlinks
     visited_inodes = set()
-    for root, dirnames, files in os.walk(source_path, topdown=True, followlinks=deref_symlinks):
+    for root, dirnames, files in os.walk(source_path_str, topdown=True, followlinks=deref_symlinks):
         dirnames[:] = [d for d in dirnames if d not in EXCLUDE_DIRS]
+
+        # Filter out ignored directories to avoid walking into them
+        if ignore_group:
+            dirnames[:] = [d for d in dirnames if not ignore_group.is_ignored(pathlib.Path(os.path.join(root, d)))]
+
         if deref_symlinks:
             inode = os.stat(root).st_ino
             if inode in visited_inodes:
@@ -197,7 +207,7 @@ def list_all_files(source_path: pathlib.Path, deref_symlinks, ignore_group: Opti
         ff = []
         files.sort()
         for fname in files:
-            abspath = (pathlib.Path(root) / fname).absolute()
+            abspath = os.path.join(root, fname)
             # Only consider files that exist (e.g. disregard symlinks that point to non-existent files)
             if not os.path.exists(abspath):
                 logger.info(f"Skipping non-existent file {abspath}")
@@ -207,10 +217,10 @@ def list_all_files(source_path: pathlib.Path, deref_symlinks, ignore_group: Opti
                 logger.info(f"Skip socket file {abspath}")
                 continue
             if ignore_group:
-                if ignore_group.is_ignored(abspath):
+                if ignore_group.is_ignored(pathlib.Path(abspath)):
                     continue
 
-            ff.append(str(abspath))
+            ff.append(abspath)
         all_files.extend(ff)
 
         # Remove directories that we've already visited from dirnames
@@ -262,7 +272,9 @@ def list_imported_modules_as_files(source_path: str, modules: List[ModuleType]) 
             except AttributeError:
                 continue
 
-        if mod_file is None:
+        # skip if mod_file is (a) None or (b) not a string. (b) can happen if a third-party package overrides
+        # sys.modules[mod.__name__] with a custom object.
+        if mod_file is None or not isinstance(mod_file, str):
             continue
 
         if any(_file_is_in_directory(mod_file, directory) for directory in invalid_directories):

@@ -4,6 +4,7 @@ import asyncio
 from collections import UserDict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from functools import cached_property
 from typing import (
     Any,
     AsyncGenerator,
@@ -29,6 +30,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
 from flyte import types
 from flyte._initialize import ensure_client, get_client, get_init_config
+from flyte._interface import default_output_name
 from flyte.models import ActionPhase
 from flyte.remote._common import ToJSONMixin
 from flyte.remote._logs import Logs
@@ -126,7 +128,21 @@ def _action_done_check(phase: phase_pb2.ActionPhase) -> bool:
 @dataclass
 class Action(ToJSONMixin):
     """
-    A class representing an action. It is used to manage the run of a task and its state on the remote Union API.
+    A class representing an action. It is used to manage the "execution" of a task and its state on the remote API.
+
+    From a datamodel perspective, a Run consists of actions. All actions are linearly nested under a parent action.
+     Actions have unique auto-generated identifiers, that are unique within a parent action.
+
+     <pre>
+     run
+      - a0
+        - action1 under a0
+        - action2 under a0
+            - action1 under action2 under a0
+            - action2 under action1 under action2 under a0
+            - ...
+        - ...
+    </pre>
     """
 
     pb2: run_definition_pb2.Action
@@ -195,7 +211,7 @@ class Action(ToJSONMixin):
                 limit=100,
                 token=token,
                 sort_by=sort_pb2,
-                filters=filter_list if filter_list else None,
+                filters=filter_list or None,
             )
             resp = await get_client().run_service.ListActions(
                 run_service_pb2.ListActionsRequest(
@@ -307,6 +323,23 @@ class Action(ToJSONMixin):
         return self.pb2.status.start_time.ToDatetime().replace(tzinfo=timezone.utc)
 
     @syncify
+    async def abort(self, reason: str = "Manually aborted from the SDK."):
+        """
+        Aborts / Terminates the action.
+        """
+        try:
+            await get_client().run_service.AbortAction(
+                run_service_pb2.AbortActionRequest(
+                    action_id=self.pb2.id,
+                    reason=reason,
+                )
+            )
+        except grpc.aio.AioRpcError as e:
+            if e.code() == grpc.StatusCode.NOT_FOUND:
+                return
+            raise
+
+    @syncify
     async def show_logs(
         self,
         attempt: int | None = None,
@@ -315,6 +348,15 @@ class Action(ToJSONMixin):
         raw: bool = False,
         filter_system: bool = False,
     ):
+        """
+        Display logs for the action.
+
+        :param attempt: The attempt number to show logs for (defaults to latest attempt).
+        :param max_lines: Maximum number of log lines to display in the viewer.
+        :param show_ts: Whether to show timestamps with each log line.
+        :param raw: If True, print logs directly without the interactive viewer.
+        :param filter_system: If True, filter out system-generated log lines.
+        """
         details = await self.details()
         if not details.is_running and not details.done():
             # TODO we can short circuit here if the attempt is not the last one and it is done!
@@ -371,74 +413,128 @@ class Action(ToJSONMixin):
         Wait for the run to complete, displaying a rich progress panel with status transitions,
         time elapsed, and error details in case of failure.
         """
-        console = Console()
+        from flyte._status import get_output_mode, status
+
         if self.done():
             if not quiet:
-                if self.pb2.status.phase == phase_pb2.ACTION_PHASE_SUCCEEDED:
-                    console.print(
-                        f"[bold green]Action '{self.name}' in Run '{self.run_name}'"
-                        f" completed successfully.[/bold green]"
-                    )
+                if get_output_mode() == "rich":
+                    console = Console()
+                    if self.pb2.status.phase == phase_pb2.ACTION_PHASE_SUCCEEDED:
+                        console.print(
+                            f"[bold green]Action '{self.name}' in Run '{self.run_name}'"
+                            f" completed successfully.[/bold green]"
+                        )
+                    else:
+                        details = await self.details()
+                        error_message = details.error_info.message if details.error_info else ""
+                        console.print(
+                            f"[bold red]Action '{self.name}' in Run '{self.run_name}'"
+                            f" exited unsuccessfully in state {self.phase} with error: {error_message}[/bold red]"
+                        )
                 else:
-                    details = await self.details()
-                    error_message = details.error_info.message if details.error_info else ""
-                    console.print(
-                        f"[bold red]Action '{self.name}' in Run '{self.run_name}'"
-                        f" exited unsuccessfully in state {self.phase} with error: {error_message}[/bold red]"
-                    )
+                    if self.pb2.status.phase == phase_pb2.ACTION_PHASE_SUCCEEDED:
+                        status.success(f"Action '{self.name}' in Run '{self.run_name}' completed successfully")
+                    else:
+                        details = await self.details()
+                        error_message = details.error_info.message if details.error_info else ""
+                        status.warn(f"Action '{self.name}' in Run '{self.run_name}' failed: {error_message}")
             return
 
         try:
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[progress.description]{task.description}"),
-                TimeElapsedColumn(),
-                console=console,
-                transient=True,
-                disable=quiet,
-            ) as progress:
-                task_id = progress.add_task(f"Waiting for run '{self.name}'...", start=False)
-                progress.start_task(task_id)
-
-                async for ad in self.watch(cache_data_on_done=True, wait_for=wait_for):
-                    if ad is None:
-                        progress.stop_task(task_id)
-                        break
-
-                    if ad.is_running and wait_for == "running":
-                        progress.start_task(task_id)
-                        break
-
-                    if ad.logs_available() and wait_for == "logs-ready":
-                        progress.start_task(task_id)
-                        break
-
-                    # Update progress description with the current phase
-                    progress.update(
-                        task_id,
-                        description=f"Run: {self.run_name} in {ad.phase}, Runtime: {ad.runtime} secs "
-                        f"Attempts[{ad.attempts}]",
-                    )
-
-                    # If the action is done, handle the final state
-                    if ad.done():
-                        progress.stop_task(task_id)
-                        if not quiet:
-                            if ad.pb2.status.phase == phase_pb2.ACTION_PHASE_SUCCEEDED:
-                                console.print(f"[bold green]Run '{self.run_name}' completed successfully.[/bold green]")
-                            else:
-                                error_message = ad.error_info.message if ad.error_info else ""
-                                console.print(
-                                    f"[bold red]Run '{self.run_name}' exited unsuccessfully in state {ad.phase}"
-                                    f" with error: {error_message}[/bold red]"
-                                )
-                        break
-        except asyncio.CancelledError:
-            # Handle cancellation gracefully
+            if get_output_mode() == "rich":
+                await self._wait_rich(quiet=quiet, wait_for=wait_for)
+            else:
+                await self._wait_plain(quiet=quiet, wait_for=wait_for)
+        except (asyncio.CancelledError, KeyboardInterrupt):
             pass
-        except KeyboardInterrupt:
-            # Handle keyboard interrupt gracefully
-            pass
+
+    async def _wait_rich(self, quiet: bool, wait_for: WaitFor) -> None:
+        """Wait with Rich spinner (interactive/Jupyter)."""
+        console = Console()
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            TimeElapsedColumn(),
+            console=console,
+            transient=True,
+            disable=quiet,
+        ) as progress:
+            task_id = progress.add_task(f"Waiting for run '{self.name}'...", start=False)
+            progress.start_task(task_id)
+
+            async for ad in self.watch(cache_data_on_done=True, wait_for=wait_for):
+                if ad is None:
+                    progress.stop_task(task_id)
+                    break
+
+                if ad.is_running and wait_for == "running":
+                    break
+
+                if ad.logs_available() and wait_for == "logs-ready":
+                    break
+
+                progress.update(
+                    task_id,
+                    description=f"Run: {self.run_name} in {ad.phase}, Runtime: {ad.runtime} secs "
+                    f"Attempts[{ad.attempts}]",
+                )
+
+                if ad.done():
+                    progress.stop_task(task_id)
+                    if not quiet:
+                        self._report_done_rich(ad, console)
+                    break
+
+    async def _wait_plain(self, quiet: bool, wait_for: WaitFor) -> None:
+        """Wait with plain status lines (CI/non-interactive)."""
+        from flyte._status import status
+
+        if not quiet:
+            status.step(f"Waiting for run '{self.run_name}'...")
+
+        last_phase = None
+        async for ad in self.watch(cache_data_on_done=True, wait_for=wait_for):
+            if ad is None:
+                break
+
+            if ad.is_running and wait_for == "running":
+                if not quiet:
+                    status.info(f"Run '{self.run_name}' is now running")
+                break
+
+            if ad.logs_available() and wait_for == "logs-ready":
+                break
+
+            if ad.phase != last_phase:
+                last_phase = ad.phase
+                if not quiet:
+                    status.info(f"Run '{self.run_name}': {ad.phase} ({ad.runtime} secs, attempt {ad.attempts})")
+
+            if ad.done():
+                if not quiet:
+                    self._report_done_plain(ad)
+                break
+
+    def _report_done_rich(self, ad: ActionDetails, console: Console) -> None:
+        """Report terminal state with Rich formatting."""
+        if ad.pb2.status.phase == phase_pb2.ACTION_PHASE_SUCCEEDED:
+            console.print(f"[bold green]Run '{self.run_name}' completed successfully.[/bold green]")
+        else:
+            error_message = ad.error_info.message if ad.error_info else ""
+            console.print(
+                f"[bold red]Run '{self.run_name}' exited unsuccessfully in state {ad.phase}"
+                f" with error: {error_message}[/bold red]"
+            )
+
+    def _report_done_plain(self, ad: ActionDetails) -> None:
+        """Report terminal state with plain status lines."""
+        from flyte._status import status
+
+        if ad.pb2.status.phase == phase_pb2.ACTION_PHASE_SUCCEEDED:
+            status.success(f"Run '{self.run_name}' completed successfully")
+        else:
+            error_message = ad.error_info.message if ad.error_info else ""
+            status.warn(f"Run '{self.run_name}' failed in state {ad.phase}: {error_message}")
 
     def done(self) -> bool:
         """
@@ -478,6 +574,7 @@ class ActionDetails(ToJSONMixin):
     pb2: run_definition_pb2.ActionDetails
     _inputs: ActionInputs | None = None
     _outputs: ActionOutputs | None = None
+    _preserve_original_types: bool = False
 
     @syncify
     @classmethod
@@ -556,6 +653,11 @@ class ActionDetails(ToJSONMixin):
                 raise e
 
     async def watch_updates(self, cache_data_on_done: bool = False) -> AsyncGenerator[ActionDetails, None]:
+        """
+        Watch for updates to the action details, yielding each update until the action is done.
+
+        :param cache_data_on_done: If True, cache inputs and outputs when the action completes.
+        """
         async for d in self.watch.aio(action_id=self.pb2.id):
             yield d
             if d.done():
@@ -621,20 +723,32 @@ class ActionDetails(ToJSONMixin):
 
     @property
     def metadata(self) -> run_definition_pb2.ActionMetadata:
+        """
+        Get the metadata of the action.
+        """
         return self.pb2.metadata
 
     @property
     def status(self) -> run_definition_pb2.ActionStatus:
+        """
+        Get the status of the action.
+        """
         return self.pb2.status
 
     @property
     def error_info(self) -> run_definition_pb2.ErrorInfo | None:
+        """
+        Get the error information if the action failed, otherwise returns None.
+        """
         if self.pb2.HasField("error_info"):
             return self.pb2.error_info
         return None
 
     @property
     def abort_info(self) -> run_definition_pb2.AbortInfo | None:
+        """
+        Get the abort information if the action was aborted, otherwise returns None.
+        """
         if self.pb2.HasField("abort_info"):
             return self.pb2.abort_info
         return None
@@ -675,6 +789,7 @@ class ActionDetails(ToJSONMixin):
         Cache the inputs and outputs of the action.
         :return: Returns True if Action is terminal and all data is cached else False.
         """
+        from flyte._context import internal_ctx
         from flyte._internal.runtime import convert
 
         if self._inputs and self._outputs:
@@ -686,37 +801,40 @@ class ActionDetails(ToJSONMixin):
                 action_id=self.pb2.id,
             )
         )
-        native_iface = None
-        if self.pb2.HasField("task"):
-            iface = self.pb2.task.task_template.interface
-            native_iface = types.guess_interface(iface)
-        elif self.pb2.HasField("trace"):
-            iface = self.pb2.trace.interface
-            native_iface = types.guess_interface(iface)
 
-        if resp.inputs:
-            data_dict = (
-                await convert.convert_from_inputs_to_native(native_iface, convert.Inputs(resp.inputs))
-                if native_iface
-                else {}
-            )
-            self._inputs = ActionInputs(pb2=resp.inputs, data=data_dict)
+        with internal_ctx().new_preserve_original_types(self._preserve_original_types):
+            native_iface = None
+            if self.pb2.HasField("task"):
+                iface = self.pb2.task.task_template.interface
+                native_iface = types.guess_interface(iface)
+            elif self.pb2.HasField("trace"):
+                iface = self.pb2.trace.interface
+                native_iface = types.guess_interface(iface)
 
-        if resp.outputs:
-            data_tuple = (
-                await convert.convert_outputs_to_native(native_iface, convert.Outputs(resp.outputs))
-                if native_iface
-                else ()
-            )
-            if not isinstance(data_tuple, tuple):
-                data_tuple = (data_tuple,)
-            self._outputs = ActionOutputs(pb2=resp.outputs, data=data_tuple)
+            if resp.inputs:
+                data_dict = (
+                    await convert.convert_from_inputs_to_native(native_iface, convert.Inputs(resp.inputs))
+                    if native_iface
+                    else {}
+                )
+                self._inputs = ActionInputs(pb2=resp.inputs, data=data_dict)
+
+            if resp.outputs:
+                data_tuple = (
+                    await convert.convert_outputs_to_native(native_iface, convert.Outputs(resp.outputs))
+                    if native_iface
+                    else ()
+                )
+                if not isinstance(data_tuple, tuple):
+                    data_tuple = (data_tuple,)
+                self._outputs = ActionOutputs(pb2=resp.outputs, data=data_tuple)
 
         return self._outputs is not None
 
     async def inputs(self) -> ActionInputs:
         """
-        Placeholder for inputs. This can be extended to handle inputs from the run context.
+        Return the inputs of the action.
+        Will return instantly if inputs are available else will fetch and return.
         """
         if not self._inputs:
             await self._cache_data.aio()
@@ -724,7 +842,10 @@ class ActionDetails(ToJSONMixin):
 
     async def outputs(self) -> ActionOutputs:
         """
-        Placeholder for outputs. This can be extended to handle outputs from the run context.
+        Returns the outputs of the action, returns instantly if outputs are already cached, else fetches them and
+        returns. If Action is not in a terminal state, raise a RuntimeError.
+
+        :return: ActionOutputs
         """
         if not self._outputs:
             if not await self._cache_data.aio():
@@ -761,6 +882,21 @@ class ActionInputs(UserDict, ToJSONMixin):
     """
     A class representing the inputs of an action. It is used to manage the inputs of a task and its state on the
     remote Union API.
+
+    ActionInputs extends from a `UserDict` and hence is accessible like a dictionary
+
+    Example Usage:
+    ```python
+    action = Action.get(...)
+    print(action.inputs())
+    ```
+    Output:
+    ```bash
+    {
+      "x": ...,
+      "y": ...,
+    }
+    ```
     """
 
     pb2: common_pb2.Inputs
@@ -776,18 +912,53 @@ class ActionInputs(UserDict, ToJSONMixin):
 
 class ActionOutputs(tuple, ToJSONMixin):
     """
-    A class representing the outputs of an action. It is used to manage the outputs of a task and its state on the
-    remote Union API.
+    A class representing the outputs of an action. The outputs are by default represented as a Tuple. To access them,
+    you can simply read them as a tuple (assign to individual variables, use index to access) or you can use the
+    property `named_outputs` to retrieve a dictionary of outputs with keys that represent output names
+    which are usually auto-generated `o0, o1, o2, o3, ...`.
+
+    Example Usage:
+    ```python
+    action = Action.get(...)
+    print(action.outputs())
+    ```
+    Output:
+    ```python
+    ("val1", "val2", ...)
+    ```
+    OR
+    ```python
+    action = Action.get(...)
+    print(action.outputs().named_outputs)
+    ```
+    Output:
+    ```bash
+    {"o0": "val1", "o1": "val2", ...}
+    ```
     """
 
-    def __new__(cls, pb2: common_pb2.Outputs, data: Tuple[Any, ...]):
+    pb2: common_pb2.Outputs
+    _fields: list[str]
+
+    def __new__(cls, pb2: common_pb2.Outputs, data: Tuple[Any, ...], fields: List[str] | None = None):
         # Create the tuple part
         obj = super().__new__(cls, data)
-        # Store extra data (you can't do this here directly since it's immutable)
+        # Store extra attributes on the tuple instance
         obj.pb2 = pb2
+        obj._fields = fields or [default_output_name(i) for i in range(len(data))]
+        for name, value in zip(obj._fields, obj):
+            setattr(obj, name, value)
         return obj
 
-    def __init__(self, pb2: common_pb2.Outputs, data: Tuple[Any, ...]):
-        # Normally you'd set instance attributes here,
-        # but we've already set `pb2` in `__new__`
-        self.pb2 = pb2
+    def __init__(self, pb2: common_pb2.Outputs, data: Tuple[Any, ...], fields: List[str] | None = None): ...
+
+    @cached_property
+    def named_outputs(self) -> dict[str, Any]:
+        return dict(zip(self._fields, self))
+
+    def __repr__(self) -> str:
+        _repr = []
+        for name, value in zip(self._fields, self):
+            v = f'"{value}"' if isinstance(value, str) else f"{value}"
+            _repr.append(f"{name}={v}")
+        return f"ActionOutputs({', '.join(_repr)})"

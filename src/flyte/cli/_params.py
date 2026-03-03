@@ -10,7 +10,7 @@ import re
 import sys
 import typing
 import typing as t
-from typing import get_args
+from typing import Any, get_args
 
 import rich_click as click
 import yaml
@@ -24,13 +24,6 @@ from mashumaro.codecs.json import JSONEncoder
 from flyte._logging import logger
 from flyte.io import Dir, File
 from flyte.types._pickle import FlytePickleTransformer
-
-
-class StructuredDataset:
-    def __init__(self, uri: str | None = None, dataframe: typing.Any = None):
-        self.uri = uri
-        self.dataframe = dataframe
-
 
 # ---------------------------------------------------
 
@@ -75,13 +68,21 @@ class DirParamType(click.ParamType):
     def convert(
         self, value: typing.Any, param: typing.Optional[click.Parameter], ctx: typing.Optional[click.Context]
     ) -> typing.Any:
+        import flyte.remote as remote
         from flyte.storage import is_remote
+
+        # Check if we're in local mode (when run_args is available and local=True)
+        run_args = getattr(ctx.obj, "run_args", None) if ctx and ctx.obj else None
+        if run_args is not None and run_args.local:
+            return Dir(path=value)
 
         if not is_remote(value):
             p = pathlib.Path(value)
             if not p.exists() or not p.is_dir():
                 raise click.BadParameter(f"parameter should be a valid flytedirectory path, {value}")
-        return Dir(path=value)
+            uri = remote.upload_dir(p)
+            return Dir.from_existing_remote(remote_path=uri)
+        return Dir.from_existing_remote(remote_path=value)
 
 
 class StructuredDatasetParamType(click.ParamType):
@@ -89,19 +90,48 @@ class StructuredDatasetParamType(click.ParamType):
     TODO handle column types
     """
 
-    name = "structured dataset path (dir/file)"
+    name = "dataframe path (dir/file) (with parquet or csv)"
 
     def get_metavar(self, param: Parameter, ctx: Context) -> str | None:
-        return "Remote parquet URI"
+        return "Remote or Local parquet or csv File path"
 
     def convert(
         self, value: typing.Any, param: typing.Optional[click.Parameter], ctx: typing.Optional[click.Context]
     ) -> typing.Any:
+        import flyte.io as io
+        import flyte.remote as remote
+        import flyte.storage as storage
+
+        # Check if we're in local mode (when run_args is available and local=True)
+        run_args = getattr(ctx.obj, "run_args", None) if ctx and ctx.obj else None
+        if run_args is not None and run_args.local:
+            # In local mode, create DataFrame from the file path (not upload)
+            path = pathlib.Path(value)
+            if not path.exists():
+                raise click.BadParameter(f"Dataframe input path does not exist: {value}")
+            format = "parquet"
+            if path.suffix == ".csv":
+                format = "csv"
+            return io.DataFrame.from_existing_remote(remote_path=str(path), format=format)
+
         if isinstance(value, str):
-            return StructuredDataset(uri=value)
-        elif isinstance(value, StructuredDataset):
-            return value
-        return StructuredDataset(dataframe=value)
+            if storage.is_remote(value):
+                return io.DataFrame.from_existing_remote(remote_path=value)
+            path = pathlib.Path(value)
+            if not path.exists():
+                raise click.BadParameter(f"Dataframe input path does not exist: {value}")
+            if path.is_file():
+                fname = None
+                format = "parquet"
+                if path.suffix == ".csv":
+                    format = "csv"
+                    fname = "data.csv"
+                _, uri = remote.upload_file(path, fname=fname)
+                return io.DataFrame.from_existing_remote(remote_path=uri, format=format)
+            uri = remote.upload_dir(path)
+            return io.DataFrame.from_existing_remote(remote_path=uri)
+        else:
+            raise click.BadParameter(f"Only files / directory paths are supported for dataframe inputs, got {value}.")
 
 
 class FileParamType(click.ParamType):
@@ -113,13 +143,20 @@ class FileParamType(click.ParamType):
     def convert(
         self, value: typing.Any, param: typing.Optional[click.Parameter], ctx: typing.Optional[click.Context]
     ) -> typing.Any:
+        import flyte.remote as remote
         from flyte.storage import is_remote
+
+        # Check if we're in local mode (when run_args is available and local=True)
+        run_args = getattr(ctx.obj, "run_args", None) if ctx and ctx.obj else None
+        if run_args is not None and run_args.local:
+            return File(path=value)
 
         if not is_remote(value):
             p = pathlib.Path(value)
             if not p.exists() or not p.is_file():
                 raise click.BadParameter(f"parameter should be a valid file path, {value}")
-            raise click.BadParameter(f"Only remote paths are supported currently, {value}")
+            md5, uri = remote.upload_file(p)
+            return File.from_existing_remote(uri, md5)
         return File.from_existing_remote(value)
 
 
@@ -396,7 +433,22 @@ class JsonParamType(click.ParamType):
 
         from pydantic import BaseModel
 
-        if issubclass(self._python_type, BaseModel):
+        from flyte.types._type_engine import _is_named_tuple, _is_typed_dict, _is_typed_tuple
+
+        # Handle tuple types - convert JSON to tuple using the wrapper model
+        if _is_typed_tuple(self._python_type):
+            return self._convert_to_tuple(parsed_value, self._python_type)
+
+        # Handle NamedTuple types - convert JSON to NamedTuple
+        if _is_named_tuple(self._python_type):
+            return self._convert_to_namedtuple(parsed_value, self._python_type)
+
+        # Handle TypedDict types - convert JSON to TypedDict
+        if _is_typed_dict(self._python_type):
+            return self._convert_to_typeddict(parsed_value, self._python_type)
+
+        # Only call issubclass if the type is a class (not a generic type)
+        if isinstance(self._python_type, type) and issubclass(self._python_type, BaseModel):
             return typing.cast(BaseModel, self._python_type).model_validate_json(
                 json.dumps(parsed_value), strict=False, context={"deserialize": True}
             )
@@ -407,6 +459,162 @@ class JsonParamType(click.ParamType):
             return decoder.decode(value)
 
         return parsed_value
+
+    def _convert_to_tuple(self, parsed_value: typing.Any, tuple_type: typing.Type) -> tuple:
+        """Convert a parsed JSON value to a typed tuple."""
+        from flyte.types._type_engine import _is_named_tuple, _is_typed_tuple
+
+        args = typing.get_args(tuple_type)
+        if not args:
+            raise click.BadParameter(f"Tuple type must have type arguments: {tuple_type}")
+
+        # Handle as a dict with item_0, item_1, etc. keys
+        if isinstance(parsed_value, dict):
+            result = []
+            for i, arg in enumerate(args):
+                field_name = f"item_{i}"
+                if field_name not in parsed_value:
+                    raise click.BadParameter(f"Missing field '{field_name}' in tuple input")
+                field_value = parsed_value[field_name]
+
+                # Recursively convert nested tuples and namedtuples
+                if _is_typed_tuple(arg):
+                    field_value = self._convert_to_tuple(field_value, arg)
+                elif _is_named_tuple(arg):
+                    field_value = self._convert_to_namedtuple(field_value, arg)
+                elif dataclasses.is_dataclass(arg):
+                    from mashumaro.codecs.json import JSONDecoder
+
+                    decoder: JSONDecoder[Any] = JSONDecoder(arg)
+                    field_value = decoder.decode(json.dumps(field_value))
+
+                result.append(field_value)
+            return tuple(result)
+
+        # Handle as a list/tuple (direct values)
+        elif isinstance(parsed_value, (list, tuple)):
+            if len(parsed_value) != len(args):
+                raise click.BadParameter(f"Expected {len(args)} elements for tuple, got {len(parsed_value)}")
+            result = []
+            for arg, val in zip(args, parsed_value):
+                if _is_typed_tuple(arg):
+                    _val = self._convert_to_tuple(val, arg)
+                elif _is_named_tuple(arg):
+                    _val = self._convert_to_namedtuple(val, arg)
+                elif dataclasses.is_dataclass(arg):
+                    from mashumaro.codecs.json import JSONDecoder
+
+                    decoder = JSONDecoder(arg)
+                    _val = decoder.decode(json.dumps(val))
+                else:
+                    _val = val
+                result.append(_val)
+            return tuple(result)
+        else:
+            raise click.BadParameter(f"Expected dict or list for tuple type, got {type(parsed_value)}")
+
+    def _convert_to_namedtuple(self, parsed_value: typing.Any, namedtuple_type: typing.Type) -> tuple:
+        """Convert a parsed JSON value to a NamedTuple."""
+        from pydantic import create_model
+
+        # Get field names and types from the NamedTuple
+        annotations = getattr(namedtuple_type, "__annotations__", {})
+        field_definitions: typing.Dict[str, typing.Any] = {}
+
+        for field_name, field_type in annotations.items():
+            default = getattr(namedtuple_type, field_name, ...)
+            field_definitions[field_name] = (field_type, default)
+
+        # Create a Pydantic model to validate and convert the data
+        model_class = create_model(f"NamedTupleWrapper_{namedtuple_type.__name__}", **field_definitions)
+        model_instance = model_class.model_validate(parsed_value, strict=False, context={"deserialize": True})
+
+        # Convert back to NamedTuple
+        field_names = namedtuple_type._fields
+        return namedtuple_type(*(getattr(model_instance, name) for name in field_names))
+
+    def _convert_to_typeddict(self, parsed_value: typing.Any, typeddict_type: typing.Type) -> dict:
+        """Convert a parsed JSON value to a TypedDict."""
+        from pydantic import create_model
+        from typing_extensions import NotRequired, Required, get_args, get_origin
+
+        if not isinstance(parsed_value, dict):
+            raise click.BadParameter(f"Expected dict for TypedDict type, got {type(parsed_value)}")
+
+        # Get field names and types from the TypedDict
+        annotations = getattr(typeddict_type, "__annotations__", {})
+        required_keys = getattr(typeddict_type, "__required_keys__", frozenset(annotations.keys()))
+        field_definitions: typing.Dict[str, typing.Any] = {}
+
+        for field_name, field_type in annotations.items():
+            # Unwrap NotRequired[T] and Required[T] type hints before passing to Pydantic
+            # These are TypedDict-specific markers that Pydantic doesn't understand
+            origin = get_origin(field_type)
+            if origin is NotRequired or origin is Required:
+                args = get_args(field_type)
+                inner_type = args[0] if args else field_type
+            else:
+                inner_type = field_type
+
+            if field_name in required_keys:
+                field_definitions[field_name] = (inner_type, ...)
+            else:
+                # Optional fields get a default of None
+                field_definitions[field_name] = (typing.Optional[inner_type], None)
+
+        # Create a Pydantic model to validate and convert the data
+        model_class = create_model(f"TypedDictWrapper_{typeddict_type.__name__}", **field_definitions)
+        model_instance = model_class.model_validate(parsed_value, strict=False, context={"deserialize": True})
+
+        # Convert back to dict (TypedDict is just a dict with type hints)
+        result = {}
+        for field_name in annotations.keys():
+            if hasattr(model_instance, field_name):
+                value = getattr(model_instance, field_name)
+                # Skip NotRequired fields when value is None
+                # This ensures optional fields not provided in input are absent from output
+                if field_name not in required_keys and value is None:
+                    continue
+                # Recursively convert nested TypedDicts back to dicts
+                result[field_name] = self._convert_model_to_dict(value, annotations.get(field_name))
+        return result
+
+    def _convert_model_to_dict(
+        self, value: typing.Any, expected_type: typing.Optional[typing.Type] = None
+    ) -> typing.Any:
+        """Recursively convert Pydantic model instances back to dicts for TypedDict compatibility."""
+        from pydantic import BaseModel
+        from typing_extensions import NotRequired, Required, get_args, get_origin
+
+        from flyte.types._type_engine import _is_typed_dict
+
+        # Unwrap NotRequired/Required type hints
+        if expected_type is not None:
+            origin = get_origin(expected_type)
+            if origin is NotRequired or origin is Required:
+                args = get_args(expected_type)
+                expected_type = args[0] if args else expected_type
+
+        if isinstance(value, BaseModel):
+            # Convert Pydantic model to dict
+            return {k: self._convert_model_to_dict(v) for k, v in value.model_dump().items()}
+        elif isinstance(value, dict):
+            # Handle nested TypedDicts
+            if expected_type is not None and _is_typed_dict(expected_type):
+                annotations = getattr(expected_type, "__annotations__", {})
+                return {k: self._convert_model_to_dict(v, annotations.get(k)) for k, v in value.items()}
+            return {k: self._convert_model_to_dict(v) for k, v in value.items()}
+        elif isinstance(value, list):
+            # Get the element type if expected_type is a List[T]
+            element_type = None
+            if expected_type is not None:
+                origin = get_origin(expected_type)
+                if origin is list:
+                    args = get_args(expected_type)
+                    if args:
+                        element_type = args[0]
+            return [self._convert_model_to_dict(v, element_type) for v in value]
+        return value
 
 
 SIMPLE_TYPE_CONVERTER = {
@@ -514,8 +722,7 @@ class FlyteLiteralConverter(object):
             raise
         except Exception as e:
             raise click.BadParameter(
-                f"Failed to convert param: {param if param else 'NA'}, value: {value} to type: {self._python_type}."
-                f" Reason {e}"
+                f"Failed to convert param: {param or 'NA'}, value: {value} to type: {self._python_type}. Reason {e}"
             ) from e
 
 

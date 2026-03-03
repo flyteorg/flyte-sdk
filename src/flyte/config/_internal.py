@@ -64,6 +64,10 @@ class Task(object):
     DOMAIN = ConfigEntry(YamlConfigEntry("task.domain"))
 
 
+class Local(object):
+    PERSISTENCE = ConfigEntry(YamlConfigEntry("local.persistence", bool))
+
+
 class Image(object):
     """
     Defines the configuration for the image builder.
