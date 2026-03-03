@@ -154,7 +154,6 @@ class Action(ToJSONMixin):
         cls,
         for_run_name: str,
         in_phase: Tuple[ActionPhase | str, ...] | None = None,
-        filters: str | None = None,
         sort_by: Tuple[str, Literal["asc", "desc"]] | None = None,
         created_at: TimeFilter | None = None,
         updated_at: TimeFilter | None = None,
