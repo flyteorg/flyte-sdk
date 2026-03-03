@@ -7,19 +7,20 @@ Supports Email, Slack, Teams, and custom Webhooks.
 Quick Start:
     ```python
     import flyte
+    import flyte.models
     import flyte.notify as notify
 
     @flyte.task(
         trigger=flyte.Trigger(
             name="daily_report",
             automation=flyte.Cron("0 0 * * *"),
-            notify=[
+            notifications=[
                 notify.Email(
-                    on_phase="FAILED",
+                    on_phase=flyte.models.ActionPhase.FAILED,
                     recipients=["oncall@example.com"]
                 ),
                 notify.Slack(
-                    on_phase="SUCCEEDED",
+                    on_phase=flyte.models.ActionPhase.SUCCEEDED,
                     webhook_url="https://hooks.slack.com/...",
                     message="Daily report completed! {run.url}"
                 )
@@ -38,12 +39,10 @@ Available Notification Types:
     - Webhook: Send custom HTTP requests (most flexible)
 
 Supported Phases:
-    - "SUCCEEDED": Task completed successfully
-    - "FAILED": Task failed
-    - "TIMED_OUT": Task timed out
-    - "ABORTED": Task was aborted
-    - "QUEUED": Task was queued
-    - "RUNNING": Task started running
+    - SUCCEEDED: Task completed successfully
+    - FAILED: Task failed
+    - TIMED_OUT: Task timed out
+    - ABORTED: Task was aborted
 
 Template Variables:
     All notification messages support template variables:
@@ -61,7 +60,6 @@ Template Variables:
 from flyte.notify._notifiers import (
     Email,
     Notification,
-    Phase,
     Slack,
     Teams,
     Webhook,
@@ -70,7 +68,6 @@ from flyte.notify._notifiers import (
 __all__ = [
     "Email",
     "Notification",
-    "Phase",
     "Slack",
     "Teams",
     "Webhook",

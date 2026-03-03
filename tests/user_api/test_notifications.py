@@ -425,15 +425,13 @@ class TestNotificationIntegration:
         assert isinstance(notifications[1], notify.Webhook)
         assert isinstance(notifications[2], notify.Email)
 
-    def test_all_action_phases(self):
-        """Test notifications can use all available action phases"""
+    def test_all_supported_phases(self):
+        """Test notifications can use all supported action phases"""
         phases = [
             ActionPhase.SUCCEEDED,
             ActionPhase.FAILED,
             ActionPhase.TIMED_OUT,
             ActionPhase.ABORTED,
-            ActionPhase.QUEUED,
-            ActionPhase.RUNNING,
         ]
 
         for phase in phases:
@@ -442,3 +440,17 @@ class TestNotificationIntegration:
                 recipients=("test@example.com",),
             )
             assert email.on_phase == (phase,)
+
+    def test_unsupported_phases_raise_error(self):
+        """Test that unsupported phases raise ValueError"""
+        unsupported_phases = [
+            ActionPhase.QUEUED,
+            ActionPhase.RUNNING,
+        ]
+
+        for phase in unsupported_phases:
+            with pytest.raises(ValueError, match="not supported"):
+                notify.Email(
+                    on_phase=phase,
+                    recipients=("test@example.com",),
+                )

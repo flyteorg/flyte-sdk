@@ -1,7 +1,7 @@
 """
 Task Notifications API for Flyte 2.0
 
-Supports multiple notification channels (Email, Slack, Teams, PagerDuty, Webhook)
+Supports multiple notification channels (Email, Slack, Teams, Webhook)
 with customizable messages and template variables.
 
 Template Variables:
@@ -21,8 +21,7 @@ from typing import Any, Dict, Literal, Optional, Tuple, Union
 
 from flyte.models import ActionPhase
 
-# Alias for convenience
-Phase = ActionPhase
+_SUPPORTED_PHASES = {ActionPhase.FAILED, ActionPhase.SUCCEEDED, ActionPhase.ABORTED, ActionPhase.TIMED_OUT}
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -45,6 +44,10 @@ class Notification:
         if not self.on_phase:
             raise ValueError("At least one phase must be specified")
 
+        for p in self.on_phase:
+            if p not in _SUPPORTED_PHASES:
+                raise ValueError(f"Notification on phase {p} is not supported.")
+
 
 @dataclass(frozen=True, kw_only=True)
 class Email(Notification):
@@ -53,7 +56,7 @@ class Email(Notification):
     Example:
         ```python
         Email(
-            on_phase="FAILED",
+            on_phase=ActionPhase.FAILED,
             recipients=["oncall@example.com"],
             subject="Alert: Task {task.name} failed",
             body="Error: {run.error}\nDetails: {run.url}"
@@ -61,7 +64,7 @@ class Email(Notification):
         ```
 
     Args:
-        on_phase: Phase(s) to trigger notification (e.g., "FAILED" or ("FAILED", "TIMED_OUT"))
+        on_phase: ActionPhase(s) to trigger notification (e.g., ActionPhase.FAILED or (ActionPhase.FAILED, ActionPhase.TIMED_OUT))
         recipients: Tuple of email addresses
         subject: Email subject template (supports template variables)
         body: Email body template (supports template variables)
@@ -95,14 +98,14 @@ class Slack(Notification):
     Example:
         ```python
         Slack(
-            on_phase="FAILED",
+            on_phase=ActionPhase.FAILED,
             webhook_url="https://hooks.slack.com/services/YOUR/WEBHOOK/URL",
             message="🚨 Task {task.name} failed: {run.error}\n{run.url}",
         )
         ```
 
     Args:
-        on_phase: Phase(s) to trigger notification
+        on_phase:ActionPhase(s) to trigger notification
         webhook_url: Slack webhook URL
         message: Simple text message (supports template variables)
         blocks: Optional Slack Block Kit blocks for rich formatting
@@ -138,7 +141,7 @@ class Teams(Notification):
     Example:
         ```python
         Teams(
-            on_phase="SUCCEEDED",
+            on_phase=ActionPhase.SUCCEEDED,
             webhook_url="https://outlook.office.com/webhook/YOUR_WEBHOOK_URL",
             title="✅ Task Complete",
             message="Task {task.name} completed in {run.duration}\n[View Details]({run.url})"
@@ -146,7 +149,7 @@ class Teams(Notification):
         ```
 
     Args:
-        on_phase: Phase(s) to trigger notification
+        on_phase:ActionPhase(s) to trigger notification
         webhook_url: Microsoft Teams webhook URL
         title: Message card title (supports template variables)
         message: Simple text message (supports template variables)
@@ -187,7 +190,7 @@ class Webhook(Notification):
     Example:
         ```python
         Webhook(
-            on_phase="FAILED",
+            on_phase=ActionPhase.FAILED,
             url="https://api.example.com/alerts",
             method="POST",
             headers={"Content-Type": "application/json", "X-API-Key": "secret"},
@@ -204,7 +207,7 @@ class Webhook(Notification):
         ```
 
     Args:
-        on_phase: Phase(s) to trigger notification
+        on_phase:ActionPhase(s) to trigger notification
         url: Webhook URL (supports template variables)
         method: HTTP method (default: "POST")
         headers: Optional HTTP headers (values support template variables)
