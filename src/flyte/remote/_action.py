@@ -39,6 +39,31 @@ from flyte.syncify import syncify
 WaitFor = Literal["terminal", "running", "logs-ready"]
 
 
+@rich.repr.auto
+@dataclass
+class PhaseTransitionInfo:
+    """
+    Information about a single phase transition in an action attempt.
+
+    Attributes:
+        phase: The action phase (e.g., QUEUED, INITIALIZING, RUNNING)
+        start_time: When this phase started
+        end_time: When this phase ended (None if still in this phase)
+        duration: Duration spent in this phase
+    """
+
+    phase: ActionPhase
+    start_time: datetime
+    end_time: datetime | None
+
+    @property
+    def duration(self) -> timedelta:
+        """Calculate the duration spent in this phase."""
+        if self.end_time:
+            return abs(self.end_time - self.start_time)
+        return datetime.now(timezone.utc) - self.start_time
+
+
 def _action_time_phase(
     action: run_definition_pb2.Action | run_definition_pb2.ActionDetails,
 ) -> rich.repr.Result:
@@ -772,6 +797,109 @@ class ActionDetails(ToJSONMixin):
             return end_time - start_time
         return datetime.now(timezone.utc) - start_time
 
+    def get_phase_transitions(self, attempt: int | None = None) -> List[PhaseTransitionInfo]:
+        """
+        Get the phase transitions for a specific attempt, showing the granular breakdown
+        of time spent in each phase (queued, initializing, running, etc.).
+
+        Args:
+            attempt: The attempt number (1-indexed). If None, uses the latest attempt.
+
+        Returns:
+            List of PhaseTransitionInfo objects, one for each phase the action went through.
+
+        Example:
+            >>> action = Action.get(run_name="my-run", name="my-action")
+            >>> details = action.details()
+            >>> transitions = details.get_phase_transitions()
+            >>> for t in transitions:
+            ...     print(f"{t.phase}: {t.duration.total_seconds()}s")
+        """
+        if attempt is None:
+            attempt = self.pb2.status.attempts
+
+        attempts = self.pb2.attempts
+        if not attempts or len(attempts) < attempt:
+            return []
+
+        attempt_obj = attempts[attempt - 1]
+        transitions = []
+
+        for pt in attempt_obj.phase_transitions:
+            start_time = pt.start_time.ToDatetime().replace(tzinfo=timezone.utc)
+            end_time = pt.end_time.ToDatetime().replace(tzinfo=timezone.utc) if pt.HasField("end_time") else None
+
+            transitions.append(
+                PhaseTransitionInfo(
+                    phase=ActionPhase.from_protobuf(pt.phase),
+                    start_time=start_time,
+                    end_time=end_time,
+                )
+            )
+
+        return transitions
+
+    @property
+    def phase_durations(self) -> Dict[ActionPhase, timedelta]:
+        """
+        Get the duration spent in each phase as a dictionary.
+
+        Returns a mapping of ActionPhase to timedelta for the latest attempt.
+        This provides an easy way to see how long was spent queued, initializing, running, etc.
+
+        Returns:
+            Dictionary mapping ActionPhase enum values to timedelta durations.
+
+        Example:
+            >>> action = Action.get(run_name="my-run", name="my-action")
+            >>> details = action.details()
+            >>> durations = details.phase_durations
+            >>> print(f"Queued: {durations.get(ActionPhase.QUEUED, timedelta(0)).total_seconds()}s")
+            >>> print(f"Running: {durations.get(ActionPhase.RUNNING, timedelta(0)).total_seconds()}s")
+        """
+        transitions = self.get_phase_transitions()
+        return {t.phase: t.duration for t in transitions}
+
+    @property
+    def queued_time(self) -> timedelta | None:
+        """
+        Get the time spent in the QUEUED phase for the latest attempt.
+
+        Returns:
+            timedelta if the action went through the QUEUED phase, None otherwise.
+        """
+        return self.phase_durations.get(ActionPhase.QUEUED)
+
+    @property
+    def waiting_for_resources_time(self) -> timedelta | None:
+        """
+        Get the time spent in the WAITING_FOR_RESOURCES phase for the latest attempt.
+
+        Returns:
+            timedelta if the action went through the WAITING_FOR_RESOURCES phase, None otherwise.
+        """
+        return self.phase_durations.get(ActionPhase.WAITING_FOR_RESOURCES)
+
+    @property
+    def initializing_time(self) -> timedelta | None:
+        """
+        Get the time spent in the INITIALIZING phase for the latest attempt.
+
+        Returns:
+            timedelta if the action went through the INITIALIZING phase, None otherwise.
+        """
+        return self.phase_durations.get(ActionPhase.INITIALIZING)
+
+    @property
+    def running_time(self) -> timedelta | None:
+        """
+        Get the time spent in the RUNNING phase for the latest attempt.
+
+        Returns:
+            timedelta if the action went through the RUNNING phase, None otherwise.
+        """
+        return self.phase_durations.get(ActionPhase.RUNNING)
+
     @property
     def attempts(self) -> int:
         """
@@ -875,6 +1003,14 @@ class ActionDetails(ToJSONMixin):
         Rich representation of the Action object.
         """
         yield from _action_details_rich_repr(self.pb2)
+
+        # Show phase breakdown if available
+        transitions = self.get_phase_transitions()
+        if transitions:
+            phase_breakdown = {}
+            for t in transitions:
+                phase_breakdown[t.phase.value] = f"{t.duration.total_seconds():.2f}s"
+            yield "phase_breakdown", phase_breakdown
 
     def __repr__(self) -> str:
         """
