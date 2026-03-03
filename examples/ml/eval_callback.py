@@ -342,7 +342,7 @@ def run_eval(
 if __name__ == "__main__":
     flyte.init_from_config()
 
-    result = flyte.run(train, checkpoint_dir="s3://bert-trainium-aws/training-run-002/checkpoints")
+    result = flyte.run(train, checkpoint_dir="s3://lightning/training-run-002/checkpoints")
     print(f"Training run: {result.url}")
 
     flyte.deploy(eval_env)
