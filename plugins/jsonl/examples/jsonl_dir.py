@@ -28,9 +28,9 @@ env = flyte.TaskEnvironment(
 
 
 @env.task
-async def write_sharded(base_dir: str) -> JsonlDir:
+async def write_sharded() -> JsonlDir:
     """Write 500 records across shards of 100 records each."""
-    d = JsonlDir.from_existing_remote(base_dir)
+    d = JsonlDir.new_remote("sharded")
     async with d.writer(max_records_per_shard=100) as w:
         for i in range(500):
             await w.write({"id": i, "value": f"record-{i}"})
@@ -38,9 +38,9 @@ async def write_sharded(base_dir: str) -> JsonlDir:
 
 
 @env.task
-async def write_compressed(base_dir: str) -> JsonlDir:
+async def write_compressed() -> JsonlDir:
     """Write zstd-compressed shards."""
-    d = JsonlDir.from_existing_remote(base_dir)
+    d = JsonlDir.new_remote("compressed")
     async with d.writer(
         shard_extension=".jsonl.zst",
         max_records_per_shard=100,
@@ -84,10 +84,8 @@ async def append_to_existing(d: JsonlDir) -> JsonlDir:
 
 @env.task
 async def main() -> None:
-    base = flyte.ctx().run_base_dir
-
     # Write 500 records across 5 shards (100 each)
-    d = await write_sharded(f"{base}/sharded")
+    d = await write_sharded()
     count = await read_all(d)
     print(f"Sharded: {count} records")  # 500
 
@@ -97,7 +95,7 @@ async def main() -> None:
     print(f"After append: {count} records")  # 700
 
     # Write compressed shards
-    d_zst = await write_compressed(f"{base}/compressed")
+    d_zst = await write_compressed()
     count = await read_all(d_zst)
     print(f"Compressed: {count} records")  # 300
 

@@ -42,6 +42,11 @@ class _JsonlBuffer:
             self._buf += orjson.dumps(r) + b"\n"
         return len(self._buf) >= self._flush_bytes
 
+    def append_raw(self, data: bytes) -> bool:
+        """Append pre-serialized bytes. Returns True if flush is needed."""
+        self._buf.extend(data)
+        return len(self._buf) >= self._flush_bytes
+
     def data(self) -> bytearray:
         return self._buf
 
@@ -64,8 +69,7 @@ class JsonlWriter:
             await self.flush()
 
     async def write_raw(self, data: bytes) -> None:
-        self._buf.data().extend(data)
-        if len(self._buf.data()) >= self._buf._flush_bytes:
+        if self._buf.append_raw(data):
             await self.flush()
 
     async def write_many(self, records: list[dict[str, Any]]) -> None:
@@ -90,8 +94,7 @@ class JsonlWriterSync:
             self.flush()
 
     def write_raw(self, data: bytes) -> None:
-        self._buf.data().extend(data)
-        if len(self._buf.data()) >= self._buf._flush_bytes:
+        if self._buf.append_raw(data):
             self.flush()
 
     def write_many(self, records: list[dict[str, Any]]) -> None:
@@ -101,6 +104,25 @@ class JsonlWriterSync:
     def flush(self) -> None:
         if self._buf.has_data():
             self._fh.write(self._buf.data())
+            self._buf.clear()
+
+
+class _ZstdJsonlWriter(JsonlWriter):
+    """Async JSONL writer that compresses via zstd before writing."""
+
+    def __init__(
+        self, file_handle, compressor, flush_bytes: int = _DEFAULT_FLUSH_BYTES
+    ):
+        super().__init__(file_handle, flush_bytes)
+        self._compressor = compressor
+
+    async def flush(self) -> None:
+        if self._buf.has_data():
+            compressed = await asyncio.to_thread(
+                self._compressor.compress, bytes(self._buf.data())
+            )
+            if compressed:
+                await self._fh.write(compressed)
             self._buf.clear()
 
 
@@ -171,7 +193,7 @@ class JsonlFile(File):
 
     ```python
     @env.task
-    async def create() -> JsonlFile:
+    def create() -> JsonlFile:
         f = JsonlFile.new_remote("data.jsonl")
         with f.writer_sync() as w:
             w.write({"key": "value"})
@@ -256,6 +278,71 @@ class JsonlFile(File):
             with self.open_sync("rb") as fh:
                 yield from fh
 
+    async def iter_arrow_batches(
+        self,
+        batch_size: int = 65536,
+        on_error: Literal["raise", "skip"] | ErrorHandler = "raise",
+    ) -> AsyncGenerator[Any, None]:
+        """Stream JSONL as Arrow RecordBatches.
+
+        Memory usage is bounded by batch_size.
+        """
+        import pyarrow as pa
+
+        if batch_size <= 0:
+            raise ValueError("batch_size must be > 0")
+
+        handler = self._resolve_error_handler(on_error)
+
+        rows: list[dict[str, Any]] = []
+        line_number = 0
+
+        async for line in self._iter_lines_async():
+            line_number += 1
+            record = _parse_line(line, line_number, handler)
+            if record is None:
+                continue
+
+            rows.append(record)
+
+            if len(rows) >= batch_size:
+                yield pa.RecordBatch.from_pylist(rows)
+                rows.clear()
+
+        if rows:
+            yield pa.RecordBatch.from_pylist(rows)
+
+    def iter_arrow_batches_sync(
+        self,
+        batch_size: int = 65536,
+        on_error: Literal["raise", "skip"] | ErrorHandler = "raise",
+    ) -> Generator[Any, None, None]:
+        """Sync generator that yields Arrow RecordBatches.
+
+        Memory usage is bounded by batch_size.
+        """
+        import pyarrow as pa
+
+        if batch_size <= 0:
+            raise ValueError("batch_size must be > 0")
+
+        handler = self._resolve_error_handler(on_error)
+
+        rows: list[dict[str, Any]] = []
+        for line_number, line in enumerate(self._iter_lines_sync(), 1):
+            record = _parse_line(line, line_number, handler)
+            if record is None:
+                continue
+
+            rows.append(record)
+
+            if len(rows) >= batch_size:
+                yield pa.RecordBatch.from_pylist(rows)
+                rows.clear()
+
+        if rows:
+            yield pa.RecordBatch.from_pylist(rows)
+
     @asynccontextmanager
     async def writer(
         self,
@@ -292,18 +379,7 @@ class JsonlFile(File):
         compressor = cctx.compressobj()
 
         async with self.open("wb") as fh:
-
-            class _ZstdJsonlWriter(JsonlWriter):
-                async def flush(self) -> None:
-                    if self._buf.has_data():
-                        compressed = await asyncio.to_thread(
-                            compressor.compress, bytes(self._buf.data())
-                        )
-                        if compressed:
-                            await fh.write(compressed)
-                        self._buf.clear()
-
-            w = _ZstdJsonlWriter(fh, flush_bytes=flush_bytes)
+            w = _ZstdJsonlWriter(fh, compressor, flush_bytes=flush_bytes)
             try:
                 yield w
             finally:

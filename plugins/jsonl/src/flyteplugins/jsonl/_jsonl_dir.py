@@ -91,7 +91,7 @@ class _BaseJsonlDirWriter:
     - ``_bytes``   — uncompressed bytes written to the current shard
 
     ``_writer`` / ``_ctx`` hold the underlying ``JsonlFile`` writer and its
-    context manager so we can close+reopen on rotation.
+    context manager so we can close and reopen on rotation.
     """
 
     def __init__(
@@ -145,7 +145,7 @@ class JsonlDirWriter(_BaseJsonlDirWriter):
 
     Serializes each record with orjson, then delegates to ``_write_bytes``
     which handles rotation and passes pre-serialized bytes to the underlying
-    ``JsonlWriter.write_raw()`` (avoiding double-serialization).
+    ``JsonlWriter.write_raw()``.
     """
 
     async def write(self, record: dict[str, Any]) -> None:
@@ -252,8 +252,7 @@ class JsonlDir(Dir):
 
         @env.task
         async def create() -> JsonlDir:
-            base_dir = os.path.join(flyte.ctx().run_base_dir, "output_shards")
-            d = JsonlDir.from_existing_remote(base_dir)
+            d = JsonlDir.new_remote("output_shards")
             async with d.writer(max_records_per_shard=1000) as w:
                 for i in range(5000):
                     await w.write({"id": i})
@@ -383,6 +382,86 @@ class JsonlDir(Dir):
         """Sync generator that yields records from all shards in sorted order."""
         for s in self._get_sorted_shards_sync():
             yield from s.iter_records_sync(on_error=on_error)
+
+    async def iter_batches(
+        self,
+        batch_size: int = 1000,
+        on_error: Literal["raise", "skip"] | ErrorHandler = "raise",
+        prefetch: bool = True,
+        queue_size: int = _DEFAULT_PREFETCH_QUEUE_SIZE,
+    ) -> AsyncGenerator[list[dict[str, Any]], None]:
+        """Async generator that yields lists of records in batches.
+
+        Args:
+            batch_size: Max records per batch (default 1000).
+            on_error: ``"raise"`` (default), ``"skip"``, or a callable.
+            prefetch: Overlap next-shard I/O with current-shard processing.
+            queue_size: Memory safety bound on the read-ahead buffer.
+        """
+        batch: list[dict[str, Any]] = []
+        async for r in self.iter_records(
+            on_error=on_error, prefetch=prefetch, queue_size=queue_size
+        ):
+            batch.append(r)
+            if len(batch) >= batch_size:
+                yield batch
+                batch = []
+        if batch:
+            yield batch
+
+    def iter_batches_sync(
+        self,
+        batch_size: int = 1000,
+        on_error: Literal["raise", "skip"] | ErrorHandler = "raise",
+    ) -> Generator[list[dict[str, Any]], None, None]:
+        """Sync generator that yields lists of records in batches.
+
+        Args:
+            batch_size: Max records per batch (default 1000).
+            on_error: ``"raise"`` (default), ``"skip"``, or a callable.
+        """
+        batch: list[dict[str, Any]] = []
+        for r in self.iter_records_sync(on_error=on_error):
+            batch.append(r)
+            if len(batch) >= batch_size:
+                yield batch
+                batch = []
+        if batch:
+            yield batch
+
+    async def iter_arrow_batches(
+        self,
+        batch_size: int = 65536,
+        on_error: Literal["raise", "skip"] | ErrorHandler = "raise",
+    ) -> AsyncGenerator[Any, None]:
+        """Async generator that yields Arrow RecordBatches across all shards.
+
+        Args:
+            batch_size: Max records per RecordBatch (default 65536).
+            on_error: ``"raise"`` (default), ``"skip"``, or a callable.
+        """
+        shards = await self._get_sorted_shards()
+        for s in shards:
+            async for batch in s.iter_arrow_batches(
+                batch_size=batch_size, on_error=on_error
+            ):
+                yield batch
+
+    def iter_arrow_batches_sync(
+        self,
+        batch_size: int = 65536,
+        on_error: Literal["raise", "skip"] | ErrorHandler = "raise",
+    ) -> Generator[Any, None, None]:
+        """Sync generator that yields Arrow RecordBatches across all shards.
+
+        Args:
+            batch_size: Max records per RecordBatch (default 65536).
+            on_error: ``"raise"`` (default), ``"skip"``, or a callable.
+        """
+        for s in self._get_sorted_shards_sync():
+            yield from s.iter_arrow_batches_sync(
+                batch_size=batch_size, on_error=on_error
+            )
 
     @asynccontextmanager
     async def writer(

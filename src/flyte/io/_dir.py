@@ -757,6 +757,33 @@ class Dir(BaseModel, Generic[T], SerializableType):
         return cls(path=resolved_remote_path, name=dirname, hash=dir_cache_key)
 
     @classmethod
+    def new_remote(cls, dir_name: Optional[str] = None) -> Dir[T]:
+        """Create a new Dir reference for a remote directory that will be written to.
+
+        Use this when you want to create a new directory and write files into it
+        directly without creating a local directory first.
+
+        Example::
+
+            @env.task
+            async def create() -> Dir:
+                d = Dir.new_remote("output")
+                # write files into d ...
+                return d
+
+        Args:
+            dir_name: Optional name for the remote directory. If not set, a
+                generated name will be used.
+
+        Returns:
+            A new Dir instance with a generated remote path.
+        """
+        ctx = internal_ctx()
+        remote_path = ctx.raw_data.get_random_remote_path(dir_name)
+        name = dir_name or os.path.basename(remote_path)
+        return cls(path=remote_path, name=name)
+
+    @classmethod
     def from_existing_remote(cls, remote_path: str, dir_cache_key: Optional[str] = None) -> Dir[T]:
         """
         Create a Dir reference from an existing remote directory.

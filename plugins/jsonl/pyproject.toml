@@ -9,6 +9,7 @@ dependencies = [
     "orjson",
     "zstandard",
     "flyte",
+    "pyarrow",
 ]
 
 [dependency-groups]
