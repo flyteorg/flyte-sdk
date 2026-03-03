@@ -229,6 +229,7 @@ class TaskContext:
     mode: Literal["local", "remote", "hybrid"] = "remote"
     interactive_mode: bool = False
     custom_context: Dict[str, str] = field(default_factory=dict)
+    disable_run_cache: bool = False
 
     def replace(self, **kwargs) -> TaskContext:
         if "data" in kwargs:
@@ -427,6 +428,34 @@ class NativeInterface:
         Get the input types for the task. This is used to get the types of the inputs for the task execution.
         """
         return {k: v[0] for k, v in self.inputs.items()}
+
+    @property
+    def json_schema(self) -> Dict[str, Any]:
+        """Convert task inputs to a JSON schema dict.
+
+        Uses the Flyte type engine to produce a LiteralType for each input, then
+        converts to JSON schema.
+        """
+        # Deferred imports: TypeEngine is heavyweight and _json_schema depends on
+        # flyteidl2 protobuf, so we avoid pulling them in at module load time.
+        from flyte._json_schema import literal_type_to_json_schema
+        from flyte.types._type_engine import TypeEngine
+
+        properties: Dict[str, Any] = {}
+        required: List[str] = []
+
+        for name, (py_type, default) in self.inputs.items():
+            if py_type is inspect.Parameter.empty:
+                # No annotation — fall back to a plain string schema
+                properties[name] = {"type": "string"}
+            else:
+                lt = TypeEngine.to_literal_type(py_type)
+                properties[name] = literal_type_to_json_schema(lt)
+
+            if default is inspect.Parameter.empty:
+                required.append(name)
+
+        return {"type": "object", "properties": properties, "required": required}
 
     def __repr__(self):
         """

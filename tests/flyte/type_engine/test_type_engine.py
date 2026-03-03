@@ -42,6 +42,7 @@ from flyte.types._type_engine import (
     ListTransformer,
     LiteralsResolver,
     NoneTransformer,
+    PydanticTransformer,
     SimpleTransformer,
     StrTransformer,
     TimedeltaTransformer,
@@ -50,6 +51,7 @@ from flyte.types._type_engine import (
     TypeTransformerFailedError,
     UnionTransformer,
     _check_and_covert_float,
+    _create_pydantic_model_from_schema,
     convert_mashumaro_json_schema_to_python_class,
     strict_type_hint_matching,
 )
@@ -2470,3 +2472,424 @@ async def test_typeddict_with_list():
 
     assert result["accuracy"] == pytest.approx(0.95)
     assert result["scores"] == pytest.approx([0.9, 0.92, 0.97])
+
+
+# ---------------------------------------------------------------------------
+# PydanticTransformer.guess_python_type tests
+# ---------------------------------------------------------------------------
+
+
+class _SimplePydanticModel(BaseModel):
+    name: str
+    count: int = 10
+    rate: float = 0.5
+    enabled: bool = True
+
+
+class _OptionalFieldModel(BaseModel):
+    value: typing.Optional[int] = None
+    label: typing.Optional[str] = None
+
+
+class _InnerModel(BaseModel):
+    threshold: float = 0.5
+    tags: typing.List[str] = []
+
+
+class _ComplexPydanticModel(BaseModel):
+    name: str
+    inner: _InnerModel = _InnerModel()
+    metadata: typing.Dict[str, int] = {}
+    counts: typing.List[int] = []
+    optional_val: typing.Optional[str] = None
+
+
+def test_pydantic_guess_python_type_with_tag():
+    """PydanticTransformer.guess_python_type should match when structure.tag is set."""
+    transformer = PydanticTransformer()
+    lt = TypeEngine.to_literal_type(typing.Optional[_SimplePydanticModel])
+    # The union type has two variants; the non-None variant carries the tag.
+    for variant in lt.union_type.variants:
+        if variant.HasField("structure") and variant.structure.tag == "Pydantic Transformer":
+            guessed = transformer.guess_python_type(variant)
+            assert issubclass(guessed, BaseModel)
+            assert guessed.__name__ == "_SimplePydanticModel"
+            return
+    pytest.fail("No variant with Pydantic Transformer tag found")
+
+
+def test_pydantic_guess_python_type_without_tag():
+    """PydanticTransformer.guess_python_type should NOT match a bare STRUCT (no tag)."""
+    transformer = PydanticTransformer()
+    # A standalone Pydantic literal type has no structure.tag
+    lt = TypeEngine.to_literal_type(_SimplePydanticModel)
+    with pytest.raises(ValueError):
+        transformer.guess_python_type(lt)
+
+
+@pytest.mark.asyncio
+async def test_optional_pydantic_roundtrip_via_guessed_type():
+    """Full roundtrip: serialize Optional[PydanticModel], guess type, deserialize."""
+    cfg = _SimplePydanticModel(name="test", count=42, rate=3.14, enabled=False)
+    optional_type = typing.Optional[_SimplePydanticModel]
+    lt = TypeEngine.to_literal_type(optional_type)
+    literal = await TypeEngine.to_literal(cfg, optional_type, lt)
+
+    guessed = TypeEngine.guess_python_type(lt)
+    result = await TypeEngine.to_python_value(literal, guessed)
+
+    assert result.name == "test"
+    assert result.count == 42
+    assert result.rate == pytest.approx(3.14)
+    assert result.enabled is False
+
+
+@pytest.mark.asyncio
+async def test_optional_pydantic_none_roundtrip():
+    """Optional[PydanticModel] with None value should roundtrip correctly."""
+    optional_type = typing.Optional[_SimplePydanticModel]
+    lt = TypeEngine.to_literal_type(optional_type)
+    literal = await TypeEngine.to_literal(None, optional_type, lt)
+
+    guessed = TypeEngine.guess_python_type(lt)
+    result = await TypeEngine.to_python_value(literal, guessed)
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_optional_pydantic_with_optional_fields():
+    """Optional fields inside a Pydantic model should deserialize correctly."""
+    cfg = _OptionalFieldModel(value=99, label=None)
+    optional_type = typing.Optional[_OptionalFieldModel]
+    lt = TypeEngine.to_literal_type(optional_type)
+    literal = await TypeEngine.to_literal(cfg, optional_type, lt)
+
+    guessed = TypeEngine.guess_python_type(lt)
+    result = await TypeEngine.to_python_value(literal, guessed)
+
+    assert result.value == 99
+    assert result.label is None
+
+
+@pytest.mark.asyncio
+async def test_optional_pydantic_complex_model():
+    """Complex model with nested objects, lists, dicts should roundtrip."""
+    cfg = _ComplexPydanticModel(
+        name="complex",
+        inner=_InnerModel(threshold=0.9, tags=["a", "b"]),
+        metadata={"x": 1, "y": 2},
+        counts=[10, 20, 30],
+        optional_val="hello",
+    )
+    optional_type = typing.Optional[_ComplexPydanticModel]
+    lt = TypeEngine.to_literal_type(optional_type)
+    literal = await TypeEngine.to_literal(cfg, optional_type, lt)
+
+    guessed = TypeEngine.guess_python_type(lt)
+    result = await TypeEngine.to_python_value(literal, guessed)
+
+    assert result.name == "complex"
+    assert result.counts == [10, 20, 30]
+    assert result.metadata == {"x": 1, "y": 2}
+    assert result.optional_val == "hello"
+    # Nested model comes back as a dict or model depending on schema resolution
+    inner = result.inner
+    if isinstance(inner, dict):
+        assert inner["threshold"] == pytest.approx(0.9)
+        assert inner["tags"] == ["a", "b"]
+    else:
+        assert inner.threshold == pytest.approx(0.9)
+        assert inner.tags == ["a", "b"]
+
+
+def test_create_pydantic_model_from_schema_basic():
+    """_create_pydantic_model_from_schema should produce a BaseModel with correct fields."""
+    schema = {
+        "title": "MyModel",
+        "type": "object",
+        "properties": {
+            "name": {"type": "string"},
+            "count": {"type": "integer", "default": 5},
+            "rate": {"type": "number", "default": 1.0},
+            "flag": {"type": "boolean", "default": True},
+        },
+    }
+    model_cls = _create_pydantic_model_from_schema(schema)
+    assert issubclass(model_cls, BaseModel)
+    assert model_cls.__name__ == "MyModel"
+
+    instance = model_cls(name="test")
+    assert instance.name == "test"
+    assert instance.count == 5
+    assert instance.rate == pytest.approx(1.0)
+    assert instance.flag is True
+
+
+def test_create_pydantic_model_from_schema_optional():
+    """Schema with anyOf (Optional pattern) should produce Optional fields."""
+    schema = {
+        "title": "OptModel",
+        "type": "object",
+        "properties": {
+            "value": {
+                "anyOf": [{"type": "integer"}, {"type": "null"}],
+                "default": None,
+            },
+        },
+    }
+    model_cls = _create_pydantic_model_from_schema(schema)
+    instance = model_cls(value=None)
+    assert instance.value is None
+    instance2 = model_cls(value=42)
+    assert instance2.value == 42
+
+
+@pytest.mark.asyncio
+async def test_guessed_pydantic_transformer_tag_matches_in_union():
+    """The guessed type's transformer name must match the union tag for deserialization."""
+    cfg = _SimplePydanticModel(name="tag_test")
+    optional_type = typing.Optional[_SimplePydanticModel]
+    lt = TypeEngine.to_literal_type(optional_type)
+    literal = await TypeEngine.to_literal(cfg, optional_type, lt)
+
+    # Verify the literal has the expected tag
+    assert literal.scalar.union.type.structure.tag == "Pydantic Transformer"
+
+    # Verify the guessed type's transformer matches that tag
+    guessed = TypeEngine.guess_python_type(lt)
+    for arg in typing.get_args(guessed):
+        if arg is not type(None):
+            trans = TypeEngine.get_transformer(arg)
+            assert trans.name == "Pydantic Transformer"
+
+
+# ---------------------------------------------------------------------------
+# Complex type coverage for PydanticTransformer.guess_python_type
+# ---------------------------------------------------------------------------
+
+
+class _BatchMode(str, Enum):
+    LINES = "lines"
+    BYTES = "bytes"
+
+
+class _RetryPolicy(BaseModel):
+    max_retries: int = 3
+    backoff_seconds: float = 1.0
+    retryable_codes: typing.List[int] = [429, 500]
+
+
+class _FullModel(BaseModel):
+    # enum
+    mode: _BatchMode = _BatchMode.LINES
+    # list of primitives
+    tags: typing.List[str] = []
+    weights: typing.List[float] = []
+    # dict
+    metadata: typing.Dict[str, str] = {}
+    limits: typing.Dict[str, int] = {}
+    # nested model
+    retry: _RetryPolicy = _RetryPolicy()
+    # optional nested model
+    fallback_retry: typing.Optional[_RetryPolicy] = None
+    # list of nested models
+    extra_retries: typing.List[_RetryPolicy] = []
+    # dict with nested model values
+    per_stage: typing.Dict[str, _RetryPolicy] = {}
+
+
+@pytest.mark.asyncio
+async def test_optional_pydantic_with_enum():
+    """Enum fields should roundtrip through the guessed type."""
+
+    class _EnumModel(BaseModel):
+        mode: _BatchMode = _BatchMode.LINES
+
+    cfg = _EnumModel(mode=_BatchMode.BYTES)
+    optional_type = typing.Optional[_EnumModel]
+    lt = TypeEngine.to_literal_type(optional_type)
+    literal = await TypeEngine.to_literal(cfg, optional_type, lt)
+
+    guessed = TypeEngine.guess_python_type(lt)
+    result = await TypeEngine.to_python_value(literal, guessed)
+    # Enum may come back as its string value via the guessed model
+    assert result.mode in (_BatchMode.BYTES, "BYTES", "bytes")
+
+
+@pytest.mark.asyncio
+async def test_optional_pydantic_with_list_of_primitives():
+    """List[str] and List[float] fields should roundtrip."""
+
+    class _ListModel(BaseModel):
+        tags: typing.List[str] = []
+        weights: typing.List[float] = []
+
+    cfg = _ListModel(tags=["a", "b", "c"], weights=[0.1, 0.2, 0.7])
+    optional_type = typing.Optional[_ListModel]
+    lt = TypeEngine.to_literal_type(optional_type)
+    literal = await TypeEngine.to_literal(cfg, optional_type, lt)
+
+    guessed = TypeEngine.guess_python_type(lt)
+    result = await TypeEngine.to_python_value(literal, guessed)
+
+    assert result.tags == ["a", "b", "c"]
+    assert result.weights == pytest.approx([0.1, 0.2, 0.7])
+
+
+@pytest.mark.asyncio
+async def test_optional_pydantic_with_dict():
+    """Dict[str, str] and Dict[str, int] fields should roundtrip."""
+
+    class _DictModel(BaseModel):
+        metadata: typing.Dict[str, str] = {}
+        limits: typing.Dict[str, int] = {}
+
+    cfg = _DictModel(metadata={"team": "infra"}, limits={"cpu": 4, "mem": 8192})
+    optional_type = typing.Optional[_DictModel]
+    lt = TypeEngine.to_literal_type(optional_type)
+    literal = await TypeEngine.to_literal(cfg, optional_type, lt)
+
+    guessed = TypeEngine.guess_python_type(lt)
+    result = await TypeEngine.to_python_value(literal, guessed)
+
+    assert result.metadata == {"team": "infra"}
+    assert result.limits == {"cpu": 4, "mem": 8192}
+
+
+@pytest.mark.asyncio
+async def test_optional_pydantic_with_nested_model():
+    """Nested BaseModel field should roundtrip (may deserialize as dict)."""
+
+    class _Nested(BaseModel):
+        retries: int = 3
+        backoff: float = 1.0
+
+    class _Outer(BaseModel):
+        retry: _Nested = _Nested()
+
+    cfg = _Outer(retry=_Nested(retries=5, backoff=2.5))
+    optional_type = typing.Optional[_Outer]
+    lt = TypeEngine.to_literal_type(optional_type)
+    literal = await TypeEngine.to_literal(cfg, optional_type, lt)
+
+    guessed = TypeEngine.guess_python_type(lt)
+    result = await TypeEngine.to_python_value(literal, guessed)
+
+    inner = result.retry
+    if isinstance(inner, dict):
+        assert inner["retries"] == 5
+        assert inner["backoff"] == pytest.approx(2.5)
+    else:
+        assert inner.retries == 5
+        assert inner.backoff == pytest.approx(2.5)
+
+
+@pytest.mark.asyncio
+async def test_optional_pydantic_with_optional_nested_model():
+    """Optional[NestedModel] field — both None and non-None."""
+
+    class _Nested(BaseModel):
+        value: int = 0
+
+    class _Outer(BaseModel):
+        nested: typing.Optional[_Nested] = None
+
+    # Non-None case
+    cfg = _Outer(nested=_Nested(value=42))
+    optional_type = typing.Optional[_Outer]
+    lt = TypeEngine.to_literal_type(optional_type)
+    literal = await TypeEngine.to_literal(cfg, optional_type, lt)
+
+    guessed = TypeEngine.guess_python_type(lt)
+    result = await TypeEngine.to_python_value(literal, guessed)
+
+    inner = result.nested
+    if isinstance(inner, dict):
+        assert inner["value"] == 42
+    else:
+        assert inner.value == 42
+
+    # None case
+    cfg_none = _Outer(nested=None)
+    literal_none = await TypeEngine.to_literal(cfg_none, optional_type, lt)
+    result_none = await TypeEngine.to_python_value(literal_none, guessed)
+    assert result_none.nested is None
+
+
+@pytest.mark.asyncio
+async def test_optional_pydantic_with_list_of_nested_models():
+    """List[BaseModel] field should roundtrip."""
+
+    class _Item(BaseModel):
+        name: str
+        score: float = 0.0
+
+    class _Container(BaseModel):
+        items: typing.List[_Item] = []
+
+    cfg = _Container(items=[_Item(name="a", score=1.0), _Item(name="b", score=2.0)])
+    optional_type = typing.Optional[_Container]
+    lt = TypeEngine.to_literal_type(optional_type)
+    literal = await TypeEngine.to_literal(cfg, optional_type, lt)
+
+    guessed = TypeEngine.guess_python_type(lt)
+    result = await TypeEngine.to_python_value(literal, guessed)
+
+    assert len(result.items) == 2
+    for item in result.items:
+        if isinstance(item, dict):
+            assert item["name"] in ("a", "b")
+        else:
+            assert item.name in ("a", "b")
+
+
+@pytest.mark.asyncio
+async def test_optional_pydantic_full_model():
+    """Full model with every complex type should roundtrip."""
+    cfg = _FullModel(
+        mode=_BatchMode.BYTES,
+        tags=["prod", "v2"],
+        weights=[0.6, 0.4],
+        metadata={"team": "infra"},
+        limits={"cpu": 4},
+        retry=_RetryPolicy(max_retries=5, backoff_seconds=2.0, retryable_codes=[429]),
+        fallback_retry=_RetryPolicy(max_retries=1),
+        extra_retries=[
+            _RetryPolicy(max_retries=2, backoff_seconds=0.5),
+        ],
+        per_stage={
+            "fetch": _RetryPolicy(max_retries=3),
+        },
+    )
+    optional_type = typing.Optional[_FullModel]
+    lt = TypeEngine.to_literal_type(optional_type)
+    literal = await TypeEngine.to_literal(cfg, optional_type, lt)
+
+    guessed = TypeEngine.guess_python_type(lt)
+    result = await TypeEngine.to_python_value(literal, guessed)
+
+    assert result.tags == ["prod", "v2"]
+    assert result.weights == pytest.approx([0.6, 0.4])
+    assert result.metadata == {"team": "infra"}
+    assert result.limits == {"cpu": 4}
+
+    # nested model
+    retry = result.retry
+    if isinstance(retry, dict):
+        assert retry["max_retries"] == 5
+    else:
+        assert retry.max_retries == 5
+
+    # optional nested model (non-None)
+    fb = result.fallback_retry
+    assert fb is not None
+    if isinstance(fb, dict):
+        assert fb["max_retries"] == 1
+    else:
+        assert fb.max_retries == 1
+
+    # list of nested models
+    assert len(result.extra_retries) == 1
+
+    # dict of nested models
+    assert "fetch" in result.per_stage

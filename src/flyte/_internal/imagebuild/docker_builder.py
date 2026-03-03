@@ -1,4 +1,5 @@
 import os
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -197,7 +198,7 @@ class PipAndRequirementsHandler:
         else:
             mount = ""
             requirements = list(layer.packages) if layer.packages else []
-            reqs = " ".join(requirements)
+            reqs = " ".join(shlex.quote(r) for r in requirements)
             pip_install_args = layer.get_pip_install_args()
             pip_install_args.append(reqs)
 
