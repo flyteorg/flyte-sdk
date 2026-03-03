@@ -330,6 +330,7 @@ def main(
 
     os.environ[RUNTIME_PARAMETERS_FILE] = parameters_file
 
+    logger.info(f"RAW DATA PATH: {raw_data_path}")
     if raw_data_path:
         from flyte.app._context import set_raw_data_path
 
