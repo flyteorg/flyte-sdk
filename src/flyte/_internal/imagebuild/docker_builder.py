@@ -13,6 +13,7 @@ import click
 
 from flyte import Secret
 from flyte._code_bundle._ignore import STANDARD_IGNORE_PATTERNS
+from flyte._code_bundle._utils import copy_code_bundle_to_context
 from flyte._image import (
     AptPackages,
     CodeBundleLayer,
@@ -41,7 +42,6 @@ from flyte._internal.imagebuild.image_builder import (
     LocalPodmanCommandImageChecker,
 )
 from flyte._internal.imagebuild.utils import (
-    copy_code_bundle_to_context,
     copy_files_to_context,
     get_and_list_dockerignore,
     get_uv_editable_install_mounts,

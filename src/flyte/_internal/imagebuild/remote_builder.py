@@ -16,7 +16,7 @@ import flyte
 import flyte.errors
 from flyte import Image, remote
 from flyte._code_bundle._ignore import STANDARD_IGNORE_PATTERNS
-from flyte._code_bundle._utils import tar_strip_file_attributes
+from flyte._code_bundle._utils import copy_code_bundle_to_context, tar_strip_file_attributes
 from flyte._image import (
     _BASE_REGISTRY,
     AptPackages,
@@ -37,7 +37,6 @@ from flyte._image import (
 )
 from flyte._internal.imagebuild.image_builder import ImageBuilder, ImageChecker
 from flyte._internal.imagebuild.utils import (
-    copy_code_bundle_to_context,
     copy_files_to_context,
     get_and_list_dockerignore,
     get_uv_project_editable_dependencies,
@@ -397,7 +396,7 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
                 # should already have resolved it.
                 raise flyte.errors.ImageBuildError("CodeBundleLayer requires a root_dir to be specified.")
             dst_path = copy_code_bundle_to_context(
-                layer.root_dir, layer.copy_style, context_path, docker_ignore_patterns
+                layer.root_dir, layer.copy_style, context_path, ignore_patterns=docker_ignore_patterns
             )
             copy_layer = image_definition_pb2.Layer(
                 copy_config=image_definition_pb2.CopyConfig(
