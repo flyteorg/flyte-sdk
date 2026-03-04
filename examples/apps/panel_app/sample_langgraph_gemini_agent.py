@@ -95,12 +95,14 @@ def _create_model() -> ChatGoogleGenerativeAI:
     return llm.bind_tools(TOOLS)
 
 
+@env.task(cache="auto")
 def call_model(state: AgentState, config: RunnableConfig) -> dict:
     model = _create_model()
     response = model.invoke(state["messages"], config=config)
     return {"messages": [response]}
 
 
+@env.task(cache="auto")
 async def call_tool(state: AgentState) -> dict:
     outputs = []
     for tool_call in state["messages"][-1].tool_calls:
@@ -115,6 +117,7 @@ async def call_tool(state: AgentState) -> dict:
     return {"messages": outputs}
 
 
+@env.task(cache="auto")
 def should_continue(state: AgentState) -> str:
     if not state["messages"][-1].tool_calls:
         return "end"

@@ -29,7 +29,8 @@ from flyte.cli._tui._explore import ExploreScreen
 
 app_env = AppEnvironment(
     name="panel-textual-app-test-1",
-    image=flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages(
+    image=flyte.Image.from_debian_base(install_flyte=False).with_pip_packages(
+        "flyte==2.0.2",
         "panel",
         "textual",
         "scikit-learn",
@@ -204,6 +205,7 @@ def create_panel_app():
     example_description = pn.pane.Markdown(
         f"*{EXAMPLES['Hello World']['description']}*",
         styles={"color": "#d4d4d4", "font-size": "14px"},
+        stylesheets=[":host p { margin-top: 0 !important; margin-bottom: 0 !important; }"],
     )
 
     code_editor = pn.widgets.CodeEditor(
@@ -292,13 +294,13 @@ def create_panel_app():
         styles={"padding": "0", "margin": "0", "background": "#050310", "overflow": "hidden"},
     )
 
-    def refresh_textual_app():
+    def refresh_textual_app(time_to_sleep: float = 0.5):
         import threading
 
         def _do_refresh():
             import time
 
-            time.sleep(0.5)
+            time.sleep(time_to_sleep)
             if flyte_tui_app._running:
                 flyte_tui_app.call_from_thread(lambda: flyte_tui_app.screen.query_one("#runs-table").populate())
 
@@ -307,48 +309,66 @@ def create_panel_app():
 
     def run_code(event):
         output_area.object = "▶️ Running code locally...\n"
-        try:
-            selected_example = example_selector.value
-            selected_config = EXAMPLES[selected_example]
-            module = _load_example_module(selected_config["script"])
 
-            if not hasattr(module, "main"):
-                output_area.object = "Error: Could not find 'main' task in the code."
-                return
+        # Capture context on main thread before spawning worker
+        doc = getattr(pn.state, "curdoc", None)
+        selected_example = example_selector.value
+        selected_config = EXAMPLES[selected_example]
+        disable_cache = (
+            selected_example == "Caching and Retries" and disable_cache_toggle.value
+        )
 
-            flyte.init(local_persistence=True)
-            env_vars = None
-            if "env_vars" in selected_config:
-                env_vars = {}
-                for env_var in selected_config["env_vars"]:
-                    env_vars[env_var] = os.getenv(env_var)
+        def update_output(text: str) -> None:
+            """Schedule UI update on main thread (thread-safe)."""
+            def _do_update():
+                output_area.object = text
+            if doc is not None:
+                doc.add_next_tick_callback(_do_update)
+            else:
+                output_area.object = text
 
-            run_kwargs = selected_config["run_kwargs"]
-            runcontext_kwargs = {"mode": "local", "env_vars": env_vars}
-            if selected_example == "Caching and Retries" and disable_cache_toggle.value:
-                output_area.object = "🔄 Disabling run cache..."
-                runcontext_kwargs["disable_run_cache"] = True
+        def _run_in_thread() -> None:
+            try:
+                module = _load_example_module(selected_config["script"])
+                if not hasattr(module, "main"):
+                    update_output("Error: Could not find 'main' task in the code.")
+                    return
 
-            run = flyte.with_runcontext(**runcontext_kwargs).run(
-                module.main,
-                **run_kwargs,
-            )
-            result = run.outputs()
-            output_area.object = (
-                f"✅ Run completed!\nResult: {result}\nSee the 'Explore Runs' pane on the right for more details."
-            )
+                flyte.init(local_persistence=True)
+                env_vars = None
+                if "env_vars" in selected_config:
+                    env_vars = {}
+                    for env_var in selected_config["env_vars"]:
+                        env_vars[env_var] = os.getenv(env_var)
 
-            # Refresh the Textual app to show the new run
-            refresh_textual_app()
-        except Exception as e:
-            output_area.object = f"Error: {e}"
+                run_kwargs = selected_config["run_kwargs"]
+                runcontext_kwargs = {"mode": "local", "env_vars": env_vars}
+                if disable_cache:
+                    update_output("🔄 Disabling run cache...\n")
+                    runcontext_kwargs["disable_run_cache"] = True
+
+                refresh_textual_app(time_to_sleep=0.1)
+                run = flyte.with_runcontext(**runcontext_kwargs).run(
+                    module.main,
+                    **run_kwargs,
+                )
+                result = run.outputs()
+                update_output(
+                    f"✅ Run completed!\nResult: {result}\nSee the 'Explore Runs' pane on the right for more details."
+                )
+                refresh_textual_app()
+            except Exception as e:
+                update_output(f"Error: {e}")
+
+        thread = threading.Thread(target=_run_in_thread, daemon=True)
+        thread.start()
 
     play_button = pn.widgets.Button(
         name="▶ Run",
         button_type="primary",
         width=150,
         stylesheets=[
-            ":host .bk-btn { background-color: #7652a2 !important; font-size: 14px !important; "
+            ":host .bk-btn { background-color: #8C4FFF !important; font-size: 14px !important; "
             "border: none !important; line-height: 28px !important;}",
         ],
     )
@@ -407,7 +427,17 @@ def create_panel_app():
             stylesheets=[
                 ":host p { margin-top: 0 !important; margin-bottom: 5px !important; }",
                 ":host a, :host a:visited { color: #8C4FFF !important; }",
-                ":host code { background-color: #8C4FFF !important; color: #f7f5fd !important; padding: 2px 6px !important; border-radius: 4px !important; }",
+                """
+                :host code {
+                    background-color: #8C4FFF !important;
+                    color: #f7f5fd !important;
+                    padding: 2px 6px !important;
+                    margin: 2px 4px !important;
+                    border-radius: 4px !important;
+                    font-size: 14px !important;
+                    font-weight: bold !important;
+                }
+                """,
             ],
         ),
         example_selector,
@@ -489,7 +519,8 @@ def create_panel_app():
                 </div>
                 <div style="position: absolute; right: 0; top: 50%; transform: translateY(-50%); display: flex; align-items: center; gap: 15px;">
                     <a href="https://www.union.ai/docs/v2/flyte/user-guide/running-locally/" target="_blank"
-                       title="Docs" style="color: #f7f5fd; display: flex; align-items: center;">
+                       title="Docs" style="color: #f7f5fd; display: flex; align-items: center; text-decoration: none;">
+                        <span style="color: #f7f5fd; font-size: 14px; margin-right: 5px;">Try locally</span>
                         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path><path d="M8 7h8"></path><path d="M8 11h8"></path></svg>
                     </a>
                     <a href="https://github.com/flyteorg/flyte-sdk" target="_blank"
@@ -521,7 +552,7 @@ def create_panel_app():
     tmpl.add_panel("main", layout)
     tmpl.add_variable(
         "app_favicon",
-        "https://cdn.prod.website-files.com/63bc5f38147eb46b4951579a/63bca1b93a6aa708cb0bba32_Flyte-logo-favicon-32.png",
+        "https://cdn.prod.website-files.com/690e2a44303093ad8549854b/69123f033bc348f79cd2d7a4_flyte-logo-32.png",
     )
     return tmpl
 
