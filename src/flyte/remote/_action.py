@@ -406,6 +406,36 @@ class Action(ToJSONMixin):
             filter_system=filter_system,
         )
 
+    @syncify
+    async def get_logs(
+        self,
+        attempt: int | None = None,
+        filter_system: bool = False,
+        show_ts: bool = False,
+    ) -> AsyncGenerator[str, None]:
+        """
+        Get logs for the action as an iterator of strings.
+
+        Can be called synchronously (returns ``Iterator[str]``) or asynchronously
+        via ``.aio()`` (returns ``AsyncIterator[str]``).
+
+        :param attempt: The attempt number to retrieve logs for (defaults to latest attempt).
+        :param filter_system: If True, filter out system-generated log lines.
+        :param show_ts: If True, prefix each line with an ISO-8601 timestamp.
+        """
+        from flyte.remote._logs import _format_line
+
+        details = await self.details()
+        if not details.is_running and not details.done():
+            await self.wait(wait_for="logs-ready")
+            details = await self.details()
+        if not attempt:
+            attempt = details.attempts
+        async for logline in Logs.tail.aio(action_id=self.action_id, attempt=attempt):
+            formatted = _format_line(logline, show_ts=show_ts, filter_system=filter_system)
+            if formatted is not None:
+                yield formatted.plain
+
     async def details(self) -> ActionDetails:
         """
         Get the details of the action. This is a placeholder for getting the action details.
