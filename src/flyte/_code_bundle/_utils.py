@@ -323,7 +323,7 @@ def add_imported_modules_from_source(source_path: str, destination: str, modules
 
 def copy_code_bundle_to_context(
     root_dir: pathlib.Path,
-    copy_style: str,
+    copy_style: CopyFiles,
     context_path: pathlib.Path,
     ignore_patterns: Optional[List[str]] = None,
 ) -> pathlib.Path:
