@@ -3,8 +3,7 @@ Distributed Training with Callback-Driven Evaluation on Checkpoints
 ===================================================================
 
 This example demonstrates a pattern for distributed training where
-evaluation is triggered directly from a Lightning checkpoint callback,
-rather than via an independent Flyte trigger.
+evaluation is triggered directly from a Lightning checkpoint callback.
 
 How it works:
 - Training saves checkpoints to a remote directory via ``ModelCheckpoint``.
