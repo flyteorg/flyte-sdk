@@ -941,17 +941,28 @@ class Image:
         new_image = self.clone(addl_layer=CopyConfig(path_type=1, src=src, dst=dst))
         return new_image
 
-    def with_source_file(self, src: Path, dst: str = ".") -> Image:
+    def with_source_file(self, src: typing.Union[Path, typing.List[Path]], dst: str = ".") -> Image:
         """
-        Use this method to create a new image with the specified local file layered on top of the current image.
+        Use this method to create a new image with the specified local file(s) layered on top of the current image.
         If dest is not specified, it will be copied to the working directory of the image
 
-        :param src: root folder of the source code from the build context to be copied
+        :param src: file or list of files from the build context to be copied
         :param dst: destination folder in the image
         :return: Image
         """
-        new_image = self.clone(addl_layer=CopyConfig(path_type=0, src=src, dst=dst))
-        return new_image
+        if isinstance(src, list):
+            names = [p.name for p in src]
+            duplicates = {name for name in names if names.count(name) > 1}
+            if duplicates:
+                raise ValueError(
+                    f"Multiple files with the same name would overwrite each other at destination '{dst}': "
+                    f"{sorted(duplicates)}"
+                )
+            image = self
+            for path in src:
+                image = image.clone(addl_layer=CopyConfig(path_type=0, src=path, dst=dst))
+            return image
+        return self.clone(addl_layer=CopyConfig(path_type=0, src=src, dst=dst))
 
     def with_dockerignore(self, path: Path) -> Image:
         new_image = self.clone(addl_layer=DockerIgnore(path=str(path)))

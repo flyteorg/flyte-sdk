@@ -54,6 +54,25 @@ def test_with_source(tmp_path):
     file.touch()
     img.validate()
 
+    # list of paths — each becomes its own layer
+    file2 = tmp_path / "helper.py"
+    file2.touch()
+    img2 = Image.from_debian_base(registry="localhost", name="test-image", flyte_version="0.2.0b14").with_source_file(
+        [file, file2]
+    )
+    assert img2._layers[-2].src == file
+    assert img2._layers[-1].src == file2
+    img2.validate()
+
+    # duplicate filenames at the same dst must raise immediately
+    subdir = tmp_path / "sub"
+    subdir.mkdir()
+    file3 = subdir / "my_code.py"  # same name as file
+    with pytest.raises(ValueError, match="overwrite"):
+        Image.from_debian_base(registry="localhost", name="test-image", flyte_version="0.2.0b14").with_source_file(
+            [file, file3]
+        )
+
 
 def test_with_apt_packages():
     packages = ("curl", "vim")
