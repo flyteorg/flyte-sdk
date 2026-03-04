@@ -35,7 +35,7 @@ env = flyte.TaskEnvironment(
     ],
     resources=flyte.Resources(cpu=1, memory="1Gi"),
     image=(
-        flyte.Image.from_debian_base()
+        flyte.Image.from_debian_base(name="multi-input")
         .clone(
             addl_layer=PythonWheels(
                 wheel_dir=Path(__file__).parent.parent / "dist",
@@ -43,15 +43,8 @@ env = flyte.TaskEnvironment(
                 pre=True,
             ),
         )
-        .clone(
-            addl_layer=PythonWheels(
-                wheel_dir=Path(__file__).parent.parent.parent / "dist",
-                package_name="flyte",
-                pre=True,
-            ),
-            name="multi-input",
-        )
-    ).with_pip_packages("pyarrow"),
+        .with_pip_packages("pyarrow")
+    ),
     depends_on=[sandbox_environment],
 )
 

@@ -240,7 +240,6 @@ async def code_gen_eval_agent(
         """
         restored: list[str] = []
         for filename in _CHECKPOINT_FILES:
-            logger.info(f"Checking for checkpoint file in remote: {_task_hash}-{filename}")
             remote = File.named_remote(f"{_task_hash}-{filename}")
             logger.info(f"Path: {remote.path}, exists: {await remote.exists()}")
 

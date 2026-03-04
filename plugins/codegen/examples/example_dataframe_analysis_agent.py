@@ -39,7 +39,7 @@ env = flyte.TaskEnvironment(
     ],
     resources=flyte.Resources(cpu=2, memory="5Gi"),
     image=(
-        flyte.Image.from_debian_base()
+        flyte.Image.from_debian_base(name="sensor-analysis-agent")
         .clone(
             addl_layer=PythonWheels(
                 wheel_dir=Path(__file__).parent.parent / "dist",
@@ -47,9 +47,8 @@ env = flyte.TaskEnvironment(
                 pre=True,
             ),
         )
-        .with_apt_packages("git")
-        .with_pip_packages("git+https://github.com/flyteorg/flyte-sdk.git@86f88fece16d956e28667d3f0d8d49108c8cdd68")
-    ).with_pip_packages("pyarrow"),
+        .with_pip_packages("pyarrow", "claude-agent-sdk")
+    ),
     depends_on=[sandbox_environment],
 )
 
