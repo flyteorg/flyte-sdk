@@ -84,6 +84,10 @@ env = FastAPIAppEnvironment(
 @app.get("/predict")
 async def predict(x: float) -> dict:
     return {"result": x * 2 + 5}
+
+if __name__ == "__main__":
+    flyte.init_from_config()
+    flyte.serve(env)
 ```
 
 <table>
