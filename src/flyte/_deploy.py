@@ -403,7 +403,7 @@ async def _build_images(deployment: DeploymentPlan, image_refs: Dict[str, str] |
     if images:
         with status.group(f"Building {len(images)} image{'s' if len(images) > 1 else ''}..."):
             final_images = await asyncio.gather(*images)
-        for env_name, image_uri, _ in final_images:
+        for env_name, image_uri in final_images:
             status.success(f"Built image for environment {env_name}: {image_uri}")
             image_identifier_map[env_name] = image_uri
     else:
