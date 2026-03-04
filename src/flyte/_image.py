@@ -372,6 +372,41 @@ class CopyConfig(Layer):
 
 @rich.repr.auto
 @dataclass(frozen=True, repr=True)
+class CodeBundleLayer(Layer):
+    """Deferred layer resolved at runtime to copy source code into the image.
+    Only activates when the runner's copy_style is "none".
+
+    Before resolution, root_dir is None. After resolve_code_bundle_layer() sets
+    root_dir, the docker builder handles the actual file copying into the build context.
+    """
+
+    copy_style: Literal["loaded_modules", "all"]
+    dst: str = "."
+    root_dir: Optional[Path] = None
+
+    def update_hash(self, hasher: hashlib._Hash):
+        hasher.update(f"code_bundle:{self.copy_style}:{self.dst}".encode("utf-8"))
+        if self.root_dir is not None:
+            from ._utils import update_hasher_for_source
+
+            if self.copy_style == "loaded_modules":
+                from flyte._code_bundle._utils import list_imported_modules_as_files
+
+                files = list_imported_modules_as_files(str(self.root_dir), list(sys.modules.values()))
+                files.sort()
+                update_hasher_for_source([Path(f) for f in files], hasher)
+            else:
+                # "all" — hash the entire root_dir
+                update_hasher_for_source(self.root_dir, hasher)
+        else:
+            raise ValueError("root_dir not set for CodeBundleLayer")
+
+    def validate(self):
+        pass  # root_dir not known at creation time
+
+
+@rich.repr.auto
+@dataclass(frozen=True, repr=True)
 class _DockerLines(Layer):
     """
     This is an internal class and should only be used by the default images. It is not supported by most
@@ -964,6 +999,25 @@ class Image:
             return image
         return self.clone(addl_layer=CopyConfig(path_type=0, src=src, dst=dst))
 
+    def with_code_bundle(
+        self,
+        copy_style: Literal["loaded_modules", "all"] = "loaded_modules",
+        dst: str = ".",
+    ) -> Image:
+        """
+        Configure this image to automatically copy source code from root_dir
+        when the runner's copy_style is "none".
+
+        When the runner's copy_style is not "none", this is a no-op.
+
+        :param copy_style: Which files to copy into the image.
+            "loaded_modules" copies only imported Python modules.
+            "all" copies all files from root_dir.
+        :param dst: Destination directory in the container. Defaults to working dir.
+        :return: Image
+        """
+        return self.clone(addl_layer=CodeBundleLayer(copy_style=copy_style, dst=dst))
+
     def with_dockerignore(self, path: Path) -> Image:
         new_image = self.clone(addl_layer=DockerIgnore(path=str(path)))
         return new_image
@@ -1131,3 +1185,57 @@ class Image:
                 details.append(f"Layer: {layer}")
 
         return "\n".join(details)
+
+
+def resolve_code_bundle_layer(image: Image, copy_style: str, root_dir: Path) -> Image:
+    """Resolve any CodeBundleLayer layers in the image based on the runner's copy_style.
+
+    - If no CodeBundleLayer layers exist, returns the same image object.
+    - If copy_style != "none", strips CodeBundleLayer layers (no-op behavior).
+    - If copy_style == "none", replaces CodeBundleLayer with CopyConfig to bake source into image.
+    """
+    code_bundle_layers = [layer for layer in image._layers if isinstance(layer, CodeBundleLayer)]
+    if not code_bundle_layers:
+        return image
+
+    non_bundle_layers = tuple(layer for layer in image._layers if not isinstance(layer, CodeBundleLayer))
+
+    if copy_style != "none":
+        # Strip CodeBundleLayer layers — code is bundled separately
+        return Image._new(
+            base_image=image.base_image,
+            dockerfile=image.dockerfile,
+            registry=image.registry,
+            name=image.name,
+            platform=image.platform,
+            python_version=image.python_version,
+            extendable=image.extendable,
+            _ref_name=image._ref_name,
+            _layers=non_bundle_layers,
+            _image_registry_secret=image._image_registry_secret,
+        )
+
+    # copy_style == "none" — resolve each CodeBundleLayer by setting root_dir.
+    # "all" can be directly converted to CopyConfig. "loaded_modules" keeps
+    # the CodeBundleLayer with root_dir set so the builder can filter files
+    # into the docker context.
+    resolved_layers = list(non_bundle_layers)
+    for cb_layer in code_bundle_layers:
+        if cb_layer.copy_style == "all":
+            resolved_layers.append(CopyConfig(path_type=1, src=root_dir, dst=cb_layer.dst))
+        else:
+            # "loaded_modules" — set root_dir so builder copies only imported modules to context
+            resolved_layers.append(CodeBundleLayer(copy_style=cb_layer.copy_style, dst=cb_layer.dst, root_dir=root_dir))
+
+    return Image._new(
+        base_image=image.base_image,
+        dockerfile=image.dockerfile,
+        registry=image.registry,
+        name=image.name,
+        platform=image.platform,
+        python_version=image.python_version,
+        extendable=image.extendable,
+        _ref_name=image._ref_name,
+        _layers=tuple(resolved_layers),
+        _image_registry_secret=image._image_registry_secret,
+    )

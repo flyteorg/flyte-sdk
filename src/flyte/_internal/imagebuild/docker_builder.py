@@ -13,8 +13,10 @@ import click
 
 from flyte import Secret
 from flyte._code_bundle._ignore import STANDARD_IGNORE_PATTERNS
+from flyte._code_bundle._utils import copy_code_bundle_to_context
 from flyte._image import (
     AptPackages,
+    CodeBundleLayer,
     Commands,
     CopyConfig,
     DockerIgnore,
@@ -394,6 +396,15 @@ class CopyConfigHandler:
         return dockerfile
 
 
+class _CodeBundleHandler:
+    @staticmethod
+    async def handle(layer: CodeBundleLayer, context_path: Path, dockerfile: str) -> str:
+        assert layer.root_dir is not None
+        dst_path = copy_code_bundle_to_context(layer.root_dir, layer.copy_style, context_path)
+        dockerfile += f"\nCOPY {dst_path.relative_to(context_path)} {layer.dst}\n"
+        return dockerfile
+
+
 class CommandsHandler:
     @staticmethod
     async def handle(layer: Commands, _: Path, dockerfile: str) -> str:
@@ -545,6 +556,10 @@ async def _process_layer(
         case _DockerLines():
             # Only for internal use
             dockerfile = await _DockerLinesHandler.handle(layer, context_path, dockerfile)
+
+        case CodeBundleLayer():
+            # Resolved CodeBundleLayer — copy filtered files from root_dir into context
+            dockerfile = await _CodeBundleHandler.handle(layer, context_path, dockerfile)
 
         case _:
             raise NotImplementedError(f"Layer type {type(layer)} not supported")

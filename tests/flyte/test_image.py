@@ -3,7 +3,7 @@ from typing import cast
 
 import pytest
 
-from flyte._image import AptPackages, Image, UVScript
+from flyte._image import AptPackages, CodeBundleLayer, CopyConfig, Image, UVScript, resolve_code_bundle_layer
 from flyte._internal.imagebuild.docker_builder import PipAndRequirementsHandler
 
 
@@ -380,3 +380,90 @@ def test_from_dockerfile_is_not_extendable():
         assert img.extendable is False
     finally:
         dockerfile_path.unlink()
+
+
+def test_with_code_bundle_defaults():
+    """with_code_bundle() creates a CodeBundleLayer with default values."""
+    img = Image.from_debian_base(registry="localhost", name="test-image").with_code_bundle()
+    layer = img._layers[-1]
+    assert isinstance(layer, CodeBundleLayer)
+    assert layer.copy_style == "loaded_modules"
+    assert layer.dst == "."
+
+
+def test_with_code_bundle_all():
+    """with_code_bundle(copy_style='all') stores the correct style."""
+    img = Image.from_debian_base(registry="localhost", name="test-image").with_code_bundle(copy_style="all")
+    layer = img._layers[-1]
+    assert isinstance(layer, CodeBundleLayer)
+    assert layer.copy_style == "all"
+
+
+def test_with_code_bundle_custom_dst():
+    """with_code_bundle(dst='/app') stores the custom destination."""
+    img = Image.from_debian_base(registry="localhost", name="test-image").with_code_bundle(dst="/app")
+    layer = img._layers[-1]
+    assert isinstance(layer, CodeBundleLayer)
+    assert layer.dst == "/app"
+
+
+def test_resolve_code_bundle_no_layers():
+    """resolve_code_bundle_layer returns the same object when no CodeBundleLayer layers present."""
+    img = Image.from_debian_base(registry="localhost", name="test-image")
+    result = resolve_code_bundle_layer(img, "loaded_modules", Path("/tmp"))
+    assert result is img
+
+
+def test_resolve_code_bundle_strips_when_not_none():
+    """resolve_code_bundle_layer strips CodeBundleLayer when copy_style != 'none'."""
+    img = Image.from_debian_base(registry="localhost", name="test-image").with_code_bundle()
+    result = resolve_code_bundle_layer(img, "loaded_modules", Path("/tmp"))
+    # Should have no CodeBundleLayer layers
+    assert not any(isinstance(layer, CodeBundleLayer) for layer in result._layers)
+
+
+def test_resolve_code_bundle_strips_when_all():
+    """resolve_code_bundle_layer strips CodeBundleLayer when copy_style is 'all'."""
+    img = Image.from_debian_base(registry="localhost", name="test-image").with_code_bundle()
+    result = resolve_code_bundle_layer(img, "all", Path("/tmp"))
+    assert not any(isinstance(layer, CodeBundleLayer) for layer in result._layers)
+
+
+def test_resolve_code_bundle_hash_stability():
+    """Stripped image should have the same hash as image without with_code_bundle()."""
+    base = Image.from_debian_base(registry="localhost", name="test-image")
+    with_bundle = base.with_code_bundle()
+    stripped = resolve_code_bundle_layer(with_bundle, "loaded_modules", Path("/tmp"))
+    assert base.uri == stripped.uri
+
+
+def test_resolve_code_bundle_all_copy_style_none(tmp_path):
+    """resolve_code_bundle_layer replaces with CopyConfig for copy_style='all' when runner is 'none'."""
+    # Create a source directory with some files
+    src_dir = tmp_path / "project"
+    src_dir.mkdir()
+    (src_dir / "main.py").write_text("print('hello')")
+
+    img = Image.from_debian_base(registry="localhost", name="test-image").with_code_bundle(copy_style="all")
+    result = resolve_code_bundle_layer(img, "none", src_dir)
+
+    # The CodeBundleLayer should be replaced with a CopyConfig
+    assert not any(isinstance(layer, CodeBundleLayer) for layer in result._layers)
+    copy_layers = [layer for layer in result._layers if isinstance(layer, CopyConfig)]
+    assert len(copy_layers) == 1
+    assert copy_layers[0].path_type == 1
+    assert copy_layers[0].src == src_dir
+    assert copy_layers[0].dst == "."
+
+
+def test_resolve_code_bundle_loaded_modules_copy_style_none(tmp_path):
+    """resolve_code_bundle_layer resolves 'loaded_modules' with root_dir set when runner is 'none'."""
+    img = Image.from_debian_base(registry="localhost", name="test-image").with_code_bundle(copy_style="loaded_modules")
+    result = resolve_code_bundle_layer(img, "none", tmp_path)
+
+    # The CodeBundleLayer should be kept but with root_dir set
+    bundle_layers = [layer for layer in result._layers if isinstance(layer, CodeBundleLayer)]
+    assert len(bundle_layers) == 1
+    assert bundle_layers[0].root_dir == tmp_path
+    assert bundle_layers[0].copy_style == "loaded_modules"
+    assert bundle_layers[0].dst == "."

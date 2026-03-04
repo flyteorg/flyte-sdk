@@ -20,7 +20,7 @@ from typing import List, Literal, Optional, Tuple, Union
 
 from flyte._logging import logger
 
-from ._ignore import IgnoreGroup
+from ._ignore import Ignore, IgnoreGroup, StandardIgnore
 
 CopyFiles = Literal["loaded_modules", "all", "none"]
 
@@ -185,7 +185,7 @@ def _pathhash_update(path: Union[os.PathLike, str], hasher: hashlib._Hash) -> No
 EXCLUDE_DIRS = {".git"}
 
 
-def list_all_files(source_path: pathlib.Path, deref_symlinks, ignore_group: Optional[IgnoreGroup] = None) -> List[str]:
+def list_all_files(source_path: pathlib.Path, deref_symlinks, ignore_group: Optional[Ignore] = None) -> List[str]:
     all_files = []
     source_path_str = str(source_path.absolute())
 
@@ -319,6 +319,46 @@ def add_imported_modules_from_source(source_path: str, destination: str, modules
 
         os.makedirs(os.path.dirname(new_destination), exist_ok=True)
         shutil.copy(file, new_destination)
+
+
+def copy_code_bundle_to_context(
+    root_dir: pathlib.Path,
+    copy_style: CopyFiles,
+    context_path: pathlib.Path,
+    ignore_patterns: Optional[List[str]] = None,
+) -> pathlib.Path:
+    """Copy source files for a CodeBundleLayer into a build context directory.
+
+    :param root_dir: The root directory to copy files from.
+    :param copy_style: "loaded_modules" to copy only imported modules, "all" to copy everything.
+    :param context_path: The build context directory.
+    :param ignore_patterns: Ignore patterns for the "all" case.  When *None* the
+        ``STANDARD_IGNORE_PATTERNS`` are used.
+    :return: The path within context_path where files were copied.
+    """
+    resolved_root = root_dir.resolve()
+
+    # Determine destination path (absolute roots go under _flyte_abs_context)
+    if root_dir.is_absolute():
+        rel_path = pathlib.PurePath(*root_dir.parts[1:])
+        dst_path = context_path / "_flyte_abs_context" / rel_path
+    else:
+        dst_path = context_path / root_dir
+
+    # Reuse ls_files to list files (handles both "loaded_modules" and "all")
+    ignore = IgnoreGroup(resolved_root, StandardIgnore)
+    if ignore_patterns is not None:
+        ignore.ignores = [StandardIgnore(resolved_root, ignore_patterns)]
+    all_files, _ = ls_files(resolved_root, copy_style, deref_symlinks=False, ignore_group=ignore)
+
+    # Copy listed files into the context
+    for abs_path in all_files:
+        rel = pathlib.Path(abs_path).relative_to(resolved_root)
+        dest = dst_path / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(abs_path, dest)
+
+    return dst_path
 
 
 def import_module_from_file(module_name, file):
