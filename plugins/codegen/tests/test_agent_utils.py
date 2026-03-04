@@ -1,6 +1,6 @@
-"""Tests for agent SDK utility functions in flyteplugins.codegen.execution.agent_sdk."""
+"""Tests for agent utility functions in flyteplugins.codegen.execution.agent."""
 
-from flyteplugins.codegen.execution.agent_sdk import _classify_bash_command
+from flyteplugins.codegen.execution.agent import _classify_bash_command
 
 
 class TestClassifyBashCommand:

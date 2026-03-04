@@ -17,7 +17,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-agent-sdk = [
+agent = [
     "claude-agent-sdk",
 ]
 

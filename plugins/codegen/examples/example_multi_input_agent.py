@@ -4,7 +4,7 @@ Demonstrates:
 - Multiple data inputs in a single call (two DataFrames)
 - Explicit inputs mixing data (File) with primitives (float, bool)
 - image_config for custom image settings
-- Agent SDK mode (use_agent_sdk=True)
+- Agent SDK mode (backend="claude")
 """
 
 import logging
@@ -24,7 +24,7 @@ logging.getLogger("flyteplugins.codegen.auto_coder_agent").setLevel(logging.INFO
 agent = AutoCoderAgent(
     name="multi-input-join-agent",
     model="claude-sonnet-4-5-20250929",
-    use_agent_sdk=True,
+    backend="claude",
     image_config=ImageConfig(python_version=(3, 11)),
 )
 

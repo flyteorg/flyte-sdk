@@ -6,7 +6,7 @@ Demonstrates:
 - Using base_packages for specific libraries
 - Using as_task() for reusable execution
 - Multiple typed outputs including File
-- Agent SDK mode (use_agent_sdk=True)
+- Agent SDK mode (backend="claude")
 - max_sample_rows to control data sampling size
 """
 
@@ -27,7 +27,7 @@ logging.getLogger("flyteplugins.codegen.auto_coder_agent").setLevel(logging.INFO
 agent = AutoCoderAgent(
     name="sensor-analysis-agent",
     model="claude-sonnet-4-5-20250929",
-    use_agent_sdk=True,
+    backend="claude",
     base_packages=["numpy"],
     max_sample_rows=30,
 )

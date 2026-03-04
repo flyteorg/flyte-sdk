@@ -27,7 +27,7 @@ logging.getLogger("flyteplugins.codegen.auto_coder_agent").setLevel(logging.INFO
 agent = AutoCoderAgent(
     name="log-parser-agent",
     model="claude-sonnet-4-5-20250929",
-    use_agent_sdk=True,
+    backend="claude",
 )
 
 env = flyte.TaskEnvironment(

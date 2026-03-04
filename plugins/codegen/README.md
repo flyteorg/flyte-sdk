@@ -107,7 +107,7 @@ Uses the Claude Agent SDK to autonomously generate, test and fix code. The agent
 agent = AutoCoderAgent(
     name="my-task",
     model="claude-sonnet-4-5-20250929",
-    use_agent_sdk=True,         # Requires ANTHROPIC_API_KEY as a Flyte secret
+    backend="claude",        # Requires ANTHROPIC_API_KEY as a Flyte secret
 )
 
 result = await agent.generate.aio(
@@ -163,8 +163,8 @@ result = await agent.generate.aio(prompt="...")
 | `env_vars`            | `dict[str, str]`  | `None`         | Environment variables to pass to sandboxes                |
 | `secrets`             | `list`            | `None`         | `flyte.Secret` objects to make available to sandboxes      |
 | `cache`               | `str`             | `"auto"`       | CacheRequest for sandboxes: `"auto"`, `"override"`, or `"disable"` |
-| `use_agent_sdk`       | `bool`            | `False`        | Use Claude Agent SDK instead of LiteLLM                       |
-| `agent_sdk_max_turns` | `int`             | `50`           | Max turns for Claude Agent SDK                                |
+| `backend`             | `str`             | `"litellm"`    | Execution backend: `"litellm"` or `"claude"`               |
+| `agent_max_turns`     | `int`             | `50`           | Max turns when `backend="claude"`                          |
 
 **`generate()` parameters (per-call):**
 
@@ -343,7 +343,7 @@ codegen/
 │   ├── extraction.py        # Extract context from DataFrames/Files (stats, patterns, samples)
 │   └── schema.py            # Pandera schema inference, constraint parsing via LLM
 ├── execution/
-│   ├── agent_sdk.py         # Claude Agent SDK path with hooks and sandbox test interception
+│   ├── agent.py             # Claude Agent SDK path with hooks and sandbox test interception
 │   ├── docker.py            # Image building (create_image_spec, incremental builds)
 │   └── testing.py           # Test execution in sandboxes
 ├── generation/
@@ -362,7 +362,7 @@ User calls agent.generate(prompt, samples, outputs, ...)
 │  ├─ Apply user constraints (LLM-parsed)
 │  └─ Extract data context (stats, patterns, samples)
 │
-├─ LiteLLM Path (default)                 ├─ Agent SDK Path (use_agent_sdk=True)
+├─ LiteLLM Path (default)                 ├─ Agent SDK Path (backend="claude")
 │  ├─ generate_plan()                     │  ├─ Build prompt with all context
 │  ├─ generate_code()                     │  ├─ Launch Claude agent with hooks:
 │  ├─ detect_packages()                   │  │  ├─ PreToolUse: trace + classify commands
@@ -416,7 +416,7 @@ See the `examples/` directory:
 
 - **`example_csv_processing.py`** — Process CSVs with different schemas using LiteLLM. Shows batch processing with multiple CSV formats.
 - **`example_csv_processing_sync.py`** — Synchronous version of CSV processing. Shows `agent.generate()` and `result.run()` without async.
-- **`example_csv_processing_agent.py`** — CSV processing using Agent SDK with `use_agent_sdk=True`.
+- **`example_csv_processing_agent.py`** — CSV processing using Agent SDK with `backend="claude"`.
 - **`example_dataframe_analysis.py`** — DataFrame analysis with constraints, `base_packages`, and `as_task()` for reusable execution.
 - **`example_dataframe_analysis_agent.py`** — Same DataFrame analysis using Agent SDK.
 - **`example_prompt_only.py`** — Log file analysis with `schema`, `constraints`, `samples`, and explicit `inputs`/`outputs`.

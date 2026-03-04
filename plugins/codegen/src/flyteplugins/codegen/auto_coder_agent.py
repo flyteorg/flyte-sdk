@@ -6,7 +6,7 @@ import os
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 import flyte
 import litellm
@@ -18,7 +18,7 @@ from flyte.syncify import syncify
 
 from flyteplugins.codegen.core.types import CodeGenEvalResult, CodePlan, CodeSolution
 from flyteplugins.codegen.data.extraction import extract_data_context, is_dataframe
-from flyteplugins.codegen.execution.agent_sdk import code_gen_eval_agent_sdk
+from flyteplugins.codegen.execution.agent import code_gen_eval_agent
 from flyteplugins.codegen.execution.docker import build_image, run_tests
 from flyteplugins.codegen.generation.llm import (
     detect_and_track_packages,
@@ -53,8 +53,8 @@ class AutoCoderAgent:
     Args:
         name: Name for the agent (used in image naming and logging).
         model: LLM model to use (required). Must support structured outputs.
-            For LiteLLM mode (default): e.g. "gpt-4.1", "claude-sonnet-4-20250514".
-            For Agent SDK mode: a Claude model ("sonnet", "opus", "haiku").
+            For backend="litellm" (default): e.g. "gpt-4.1", "claude-sonnet-4-20250514".
+            For backend="claude": a Claude model ("sonnet", "opus", "haiku").
         system_prompt: Optional system prompt to use for LLM. If not provided,
             a default prompt with structured output requirements is used.
         api_key: Optional environment variable name for LLM API key.
@@ -71,8 +71,8 @@ class AutoCoderAgent:
         env_vars: Environment variables to pass to sandboxes.
         secrets: flyte.Secret objects to make available to sandboxes.
         cache: CacheRequest for sandboxes: "auto", "override", or "disable". Defaults to "auto".
-        use_agent_sdk: Optional flag to use the agent SDK. Defaults to False.
-        agent_sdk_max_turns: Maximum agent turns when use_agent_sdk=True. Defaults to 50.
+        backend: Execution backend: "litellm" (default) or "claude".
+        agent_max_turns: Maximum agent turns when backend="claude". Defaults to 50.
 
     Example::
 
@@ -117,8 +117,8 @@ class AutoCoderAgent:
     env_vars: Optional[dict[str, str]] = None
     secrets: Optional[list] = None
     cache: str = "auto"
-    use_agent_sdk: bool = False
-    agent_sdk_max_turns: int = 50
+    backend: Literal["litellm", "claude"] = "litellm"
+    agent_max_turns: int = 50
 
     @syncify
     async def generate(
@@ -243,13 +243,13 @@ class AutoCoderAgent:
                     )
 
         # Agent SDK routing
-        if self.use_agent_sdk:
+        if self.backend == "claude":
             if self.skip_tests:
                 logger.warning(
                     "skip_tests is not supported with Agent SDK mode. The agent autonomously decides when to test."
                 )
             logger.info("Using Claude Agent SDK approach")
-            return await code_gen_eval_agent_sdk(
+            return await code_gen_eval_agent(
                 name=self.name,
                 model=self.model,
                 prompt=prompt,
@@ -268,7 +268,7 @@ class AutoCoderAgent:
                 env_vars=self.env_vars,
                 secrets=self.secrets,
                 cache=self.cache,
-                max_turns=self.agent_sdk_max_turns,
+                max_turns=self.agent_max_turns,
             )
 
         logger.info(

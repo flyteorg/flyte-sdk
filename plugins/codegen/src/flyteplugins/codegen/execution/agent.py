@@ -58,7 +58,7 @@ def _classify_bash_command(cmd: str) -> str:
     return "deny"
 
 
-async def code_gen_eval_agent_sdk(
+async def code_gen_eval_agent(
     name: str,
     model: str,
     prompt: str,

@@ -3,6 +3,7 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from flyte.io import File
 
 from flyteplugins.codegen.core.types import (
     CodeGenEvalResult,
@@ -120,7 +121,7 @@ class TestAsTask:
         mock_flyte.sandbox.create.return_value = mock_sandbox
         mock_flyte.Resources = MagicMock
 
-        mock_file = MagicMock()
+        mock_file = MagicMock(spec=File)
         result = CodeGenEvalResult(
             solution=CodeSolution(code="pass"),
             success=True,

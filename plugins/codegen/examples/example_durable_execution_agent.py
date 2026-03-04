@@ -1,6 +1,6 @@
 """Example: Durable execution with mid-pipeline failure and cached recovery (Agent SDK).
 
-Same pattern as example_durable_execution.py, but using the Agent SDK path (use_agent_sdk=True).
+Same pattern as example_durable_execution.py, but using the Agent SDK path (backend="claude").
 The Agent SDK autonomously generates, tests, and fixes code — all sandboxes created during
 this process are cached, and traces can be replayed on retries if called in the same sequence.
 The plugin checkpoints all intermediate artifacts (generated code, test code, test results,
@@ -56,7 +56,7 @@ env = flyte.TaskEnvironment(
 agent = AutoCoderAgent(
     model="claude-sonnet-4-5-20250929",
     name="durable-csv-agent",
-    use_agent_sdk=True,
+    backend="claude",
     resources=flyte.Resources(cpu=1, memory="512Mi"),
     sandbox_retries=2,
     timeout=600,

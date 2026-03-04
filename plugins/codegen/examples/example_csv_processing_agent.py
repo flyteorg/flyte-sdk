@@ -78,7 +78,7 @@ async def generate_and_run_with_agent(
 
     agent = AutoCoderAgent(
         name=f"sales-agent-{index}",
-        use_agent_sdk=True,
+        backend="claude",
         resources=flyte.Resources(cpu=1, memory="512Mi"),
         model="claude-sonnet-4-5-20250929",
     )

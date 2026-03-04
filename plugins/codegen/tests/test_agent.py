@@ -30,7 +30,7 @@ class TestAutoCoderAgentConstruction:
         assert agent.env_vars is None
         assert agent.secrets is None
         assert agent.cache == "auto"
-        assert agent.use_agent_sdk is False
+        assert agent.backend == "litellm"
 
     def test_max_iterations_default(self):
         agent = AutoCoderAgent(model="test")
@@ -44,9 +44,9 @@ class TestAutoCoderAgentConstruction:
         agent = AutoCoderAgent(model="test")
         assert agent.max_sample_rows == 100
 
-    def test_agent_sdk_max_turns_default(self):
+    def test_agent_max_turns_default(self):
         agent = AutoCoderAgent(model="test")
-        assert agent.agent_sdk_max_turns == 50
+        assert agent.agent_max_turns == 50
 
     def test_custom_values(self):
         agent = AutoCoderAgent(
@@ -57,8 +57,8 @@ class TestAutoCoderAgentConstruction:
             skip_tests=True,
             base_packages=["pandas", "numpy"],
             cache="disable",
-            use_agent_sdk=True,
-            agent_sdk_max_turns=100,
+            backend="claude",
+            agent_max_turns=100,
         )
         assert agent.model == "claude-sonnet-4-20250514"
         assert agent.name == "my-agent"
@@ -67,5 +67,5 @@ class TestAutoCoderAgentConstruction:
         assert agent.skip_tests is True
         assert agent.base_packages == ["pandas", "numpy"]
         assert agent.cache == "disable"
-        assert agent.use_agent_sdk is True
-        assert agent.agent_sdk_max_turns == 100
+        assert agent.backend == "claude"
+        assert agent.agent_max_turns == 100
