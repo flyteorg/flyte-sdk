@@ -17,6 +17,8 @@ Usage (CLI):
 
 import importlib.util
 import os
+import threading
+import time
 from pathlib import Path
 
 from textual.app import App
@@ -43,7 +45,7 @@ app_env = AppEnvironment(
     port=8080,
     resources=flyte.Resources(cpu="1", memory="1Gi", disk="32Gi"),
     scaling=Scaling(
-        replicas=(0, 5),
+        replicas=(1, 5),
         metric=Scaling.RequestRate(3),
         scaledown_after=300,  # 5 minutes
     ),
@@ -151,13 +153,13 @@ EXAMPLES = {
     },
     "LangGraph Gemini Agent": {
         "script": "sample_langgraph_gemini_agent.py",
-        "description": "A LangGraph ReAct-style agent using Google Gemini tool calling to get the weather forecast.",
+        "description": "A LangGraph agent using Google Gemini tool calling to get the weather forecast.",
         "run_kwargs": {"prompt": "What is the weather forecast in Berlin tomorrow, and should I bring a jacket?"},
         "env_vars": ["GOOGLE_GEMINI_API_KEY"],
     },
     "Distributed Random Forest": {
         "script": "sample_distributed_random_forest.py",
-        "description": "A simple distributed random forest training implementation with scikit-learn.",
+        "description": "A simple distributed random forest training implementation with sc ikit-learn.",
         "run_kwargs": {"n_estimators": 8},
     },
     "MNIST Training": {
@@ -182,7 +184,6 @@ def create_panel_app():
 
     # Example selector tabs
     example_selector = pn.widgets.Select(
-        name="Select an example",
         groups={
             "Basics": ["Hello World", "Async Python", "Caching and Retries"],
             "AI Agents": ["PBJ Sandwich Dummy Agent", "LangGraph Gemini Agent"],
@@ -190,7 +191,7 @@ def create_panel_app():
         },
         value="Hello World",
         stylesheets=[
-            ":host .bk-input { background-color: #171020 !important; color: #f7f5fd !important; font-size: 14px "
+            ":host .bk-input { background-color: #050310 !important; color: #f7f5fd !important; font-size: 14px "
             "!important; border: 1px solid #7652a2 !important; background-image: url('data:image/svg+xml,%3Csvg "
             "xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 12 12%27%3E%3Cpath d=%27M2 4l4 4 4-4%27 "
             "fill=%27none%27 stroke=%27%237652a2%27 stroke-width=%271.5%27 stroke-linecap=%27round%27 "
@@ -252,7 +253,7 @@ def create_panel_app():
         button_type="default",
         width=100,
         stylesheets=[
-            ":host .bk-btn { background-color: #171020 !important; color: #f7f5fd !important; "
+            ":host .bk-btn { background-color: #050310 !important; color: #f7f5fd !important; "
             "font-size: 12px !important; border: 1px solid #7652a2 !important; line-height: 26px !important; }",
             ":host .bk-active { background-color: #7652a2 !important; color: #f7f5fd !important; }",
         ],
@@ -275,6 +276,8 @@ def create_panel_app():
     example_selector.param.watch(on_example_change, "value")
 
     flyte_tui_app = CustomExploreTUIApp()
+    _start_periodic_runs_clear(flyte_tui_app)
+
     textual_pane = pn.pane.Textual(
         flyte_tui_app,
         sizing_mode="stretch_both",
@@ -286,7 +289,7 @@ def create_panel_app():
             ":host .xterm-viewport::-webkit-scrollbar { display: none !important; width: 0 !important; }",
             ":host .xterm { overflow: hidden !important; }",
         ],
-        styles={"padding": "0", "margin": "0", "background": "#171020", "overflow": "hidden"},
+        styles={"padding": "0", "margin": "0", "background": "#050310", "overflow": "hidden"},
     )
 
     def refresh_textual_app():
@@ -391,19 +394,20 @@ def create_panel_app():
 
     left_panel = pn.Column(
         pn.pane.Markdown(
-            "## Introduction to Flyte 2",
+            "## Flyte 2 Live Demo",
             styles={"color": "white", "font-size": "18px"},
             stylesheets=[":host h2 { margin-top: 0 !important; margin-bottom: 5px !important; }"],
         ),
         pn.pane.Markdown(
             "<a href='https://www.union.ai/docs/v2/flyte/' target='_blank'>Flyte 2</a> is a type-safe, "
-            "distributed orchestrator for agents, AI, ML, and data workloads.<br>This demo walks you through how "
-            "Flyte 2 works with code you can run in the browser without having to install anything. Select an example "
-            "below and `▶ Run` it to see it in action. Explore runs with the TUI on the right 👉.",
+            "distributed orchestrator for agents, AI, ML, and data workloads. This in-browser demo lets you run "
+            "real Flyte code - no installs required.<br><br>Select an example below, hit `▶ Run`, and explore your results "
+            "in the TUI on the right 👉",
             styles={"color": "white", "font-size": "16px"},
             stylesheets=[
                 ":host p { margin-top: 0 !important; margin-bottom: 5px !important; }",
-                ":host a, :host a:visited { color: #a082c4 !important; }",
+                ":host a, :host a:visited { color: #8C4FFF !important; }",
+                ":host code { background-color: #8C4FFF !important; color: #f7f5fd !important; padding: 2px 6px !important; border-radius: 4px !important; }",
             ],
         ),
         example_selector,
@@ -423,7 +427,7 @@ def create_panel_app():
         output_area,
         sizing_mode="stretch_both",
         min_height=800,
-        styles={"background": "#2d2d2d", "padding": "10px", "height": "100vh"},
+        styles={"background": "#050310", "padding": "10px", "height": "100vh"},
     )
 
     # Toggle button for maximizing/minimizing the right panel
@@ -444,11 +448,11 @@ def create_panel_app():
             pn.Spacer(sizing_mode="stretch_width"),
             is_maximized,
             sizing_mode="stretch_width",
-            styles={"background": "#2d2d2d"},
+            styles={"background": "#050310"},
         ),
         textual_pane,
         sizing_mode="stretch_width",
-        styles={"background": "#2d2d2d", "padding": "10px", "height": "100vh"},
+        styles={"background": "#050310", "padding": "10px", "height": "100vh"},
     )
 
     def update_layout(maximized):
@@ -471,25 +475,37 @@ def create_panel_app():
     header = pn.Row(
         pn.pane.HTML(
             """
-            <div style="display: flex; justify-content: center; align-items: center; gap: 20px; width: 100%;">
-                <span style="color: #d4d4d4; font-size: 14px;">
-                    Flyte 2 available now for local execution - cloud execution coming to OSS soon.
-                </span>
-                <a href="https://www.union.ai/try-flyte-2" target="_blank"
-                   style="background-color: #171020; color: #f7f5fd; padding: 5px 10px;
-                          border-radius: 5px; text-decoration: none; font-weight: bold;
-                          font-size: 14px; transition: background-color 0.2s; border: 1px solid #f7f5fd;">
-                    Join Flyte 2 production trial ↗
-                </a>
+            <div style="display: flex; justify-content: center; align-items: center; width: 100%; position: relative;">
+                <div style="display: flex; align-items: center; gap: 20px;">
+                    <span style="color: #d4d4d4; font-size: 14px;">
+                        Flyte 2 is available locally today, cloud execution coming to OSS soon.
+                    </span>
+                    <a href="https://www.union.ai/try-flyte-2" target="_blank"
+                       style="background-color: #12052a; color: #f7f5fd; padding: 5px 10px;
+                              border-radius: 5px; text-decoration: none; font-weight: bold;
+                              font-size: 14px; transition: background-color 0.2s; border: 1px solid #f7f5fd;">
+                        Join Flyte 2 production preview ↗
+                    </a>
+                </div>
+                <div style="position: absolute; right: 0; top: 50%; transform: translateY(-50%); display: flex; align-items: center; gap: 15px;">
+                    <a href="https://www.union.ai/docs/v2/flyte/user-guide/running-locally/" target="_blank"
+                       title="Docs" style="color: #f7f5fd; display: flex; align-items: center;">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path><path d="M8 7h8"></path><path d="M8 11h8"></path></svg>
+                    </a>
+                    <a href="https://github.com/flyteorg/flyte-sdk" target="_blank"
+                       title="GitHub" style="color: #f7f5fd; display: flex; align-items: center;">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+                    </a>
+                </div>
             </div>
             """,
             sizing_mode="stretch_width",
         ),
         sizing_mode="stretch_width",
         styles={
-            "background": "#171020",
+            "background": "#12052a",
             "padding": "5px",
-            "border-top": "1px solid #171020",
+            "border-top": "1px solid #12052a",
         },
     )
 
@@ -497,7 +513,7 @@ def create_panel_app():
         header,
         main_content,
         sizing_mode="stretch_both",
-        styles={"height": "100vh"},
+        styles={"height": "100vh", "background": "#050310"},
     )
 
     template = _load_template_html().replace("{{client_id}}", os.getenv("REO_CLIENT_ID"))
@@ -508,6 +524,30 @@ def create_panel_app():
         "https://cdn.prod.website-files.com/63bc5f38147eb46b4951579a/63bca1b93a6aa708cb0bba32_Flyte-logo-favicon-32.png",
     )
     return tmpl
+
+
+def _start_periodic_runs_clear(flyte_tui_app):
+    """Clear runs (RunStore) and re-render the TUI table every 24 hours per session."""
+
+    CACHE_CLEAR_INTERVAL_SECONDS = 24 * 60 * 60  # 24 hours
+
+    def _clear_and_refresh():
+        from flyte._persistence._run_store import RunStore
+
+        RunStore.clear_sync()
+        flyte_tui_app.screen.query_one("#runs-table").populate()
+
+    def _clear_loop():
+        while True:
+            time.sleep(CACHE_CLEAR_INTERVAL_SECONDS)
+            try:
+                if flyte_tui_app._running:
+                    flyte_tui_app.call_from_thread(_clear_and_refresh)
+            except Exception:
+                pass
+
+    thread = threading.Thread(target=_clear_loop, daemon=True)
+    thread.start()
 
 
 @app_env.server
@@ -532,7 +572,7 @@ def serve():
     static_dirs = {"": str(Path(__file__).parent)}
     pn.serve(
         create_panel_app,
-        title="Flyte 2 Intro",
+        title="Flyte 2 | Live Demo",
         port=port,
         show=False,
         websocket_origin=origin,
