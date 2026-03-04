@@ -1,5 +1,4 @@
 import enum
-from enum import StrEnum
 
 import click
 import pytest
@@ -15,7 +14,7 @@ class Color(str, enum.Enum):
     BLUE = "blue-value"
 
 
-class Size(StrEnum):
+class Size(str, enum.Enum):
     SMALL = "sm-value"
     MEDIUM = "md-value"
     LARGE = "lg-value"
