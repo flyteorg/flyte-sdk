@@ -520,6 +520,61 @@ def test_get_proto_task_no_image_build_url_when_env_not_in_build_run_urls():
     assert not proto_task.metadata.HasField("image_build_run")
 
 
+def test_reusable_task_disables_debuggable():
+    """When a task has reusable set, debuggable should be forced to False."""
+    env = flyte.TaskEnvironment(
+        name="test_env_reusable",
+        image="python:3.10",
+        resources=flyte.Resources(cpu="1", memory="2Gi"),
+        reusable=flyte.ReusePolicy(replicas=1, idle_ttl=300, concurrency=5),
+    )
+
+    @env.task()
+    async def reusable_task(x: int) -> int:
+        return x
+
+    # AsyncFunctionTaskTemplate defaults debuggable=True
+    assert reusable_task.debuggable is True
+
+    context = SerializationContext(
+        project="test-project",
+        domain="test-domain",
+        version="test-version",
+        image_cache=None,
+        code_bundle=None,
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    proto_task = get_proto_task(reusable_task, context)
+    assert proto_task.metadata.debuggable is False
+
+
+def test_non_reusable_task_preserves_debuggable():
+    """When a task is not reusable, debuggable should remain as set on the task."""
+    env = flyte.TaskEnvironment(
+        name="test_env_non_reusable",
+        image="python:3.10",
+    )
+
+    @env.task()
+    async def debuggable_task(x: int) -> int:
+        return x
+
+    assert debuggable_task.debuggable is True
+
+    context = SerializationContext(
+        project="test-project",
+        domain="test-domain",
+        version="test-version",
+        image_cache=None,
+        code_bundle=None,
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    proto_task = get_proto_task(debuggable_task, context)
+    assert proto_task.metadata.debuggable is True
+
+
 def test_lookup_image_in_cache_with_ref_name_not_in_cache():
     """Test lookup_image_in_cache when image has ref_name but not found in cache"""
     from flyte._internal.imagebuild.image_builder import ImageCache
