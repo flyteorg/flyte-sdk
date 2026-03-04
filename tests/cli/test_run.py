@@ -5,6 +5,7 @@ import pathlib
 import tempfile
 from pathlib import Path
 
+import click
 import pytest
 from click.testing import CliRunner
 
@@ -22,6 +23,7 @@ COMPLEX_INPUTS_PY = RUN_TESTDATA / "complex_inputs.py"
 DATAFRAME_INPUTS_PY = RUN_TESTDATA / "dataframe_inputs.py"
 TUPLE_INPUTS_PY = RUN_TESTDATA / "tuple_inputs.py"
 TYPEDDICT_INPUTS_PY = RUN_TESTDATA / "typeddict_inputs.py"
+FILE_INPUT_PY = RUN_TESTDATA / "file_input.py"
 PARQUET_FILE = RUN_TESTDATA / "df.parquet"
 
 
@@ -1058,3 +1060,93 @@ def test_cli_run_with_typeddict_multiple_notrequired_fields_all(runner):
         if "I/O operation on closed file" in str(ve):
             return
         raise ve
+
+
+# ============================================================================
+# Tests for TaskPerFileGroup initialize_config
+# ============================================================================
+
+
+def test_task_per_file_group_list_commands_initializes_config(runner):
+    """Test that TaskPerFileGroup.list_commands calls initialize_config.
+
+    This ensures config is initialized before loading task modules that may
+    depend on config (e.g., tasks with File inputs that need project set).
+    """
+    from unittest.mock import patch
+
+    from flyte.cli._run import RunArguments, TaskPerFileGroup
+
+    run_args = RunArguments(project="test", domain="development")
+    group = TaskPerFileGroup(filename=FILE_INPUT_PY, run_args=run_args)
+
+    with patch("flyte.cli._common.initialize_config") as mock_init_config:
+        ctx = click.Context(click.Command("test"))
+        group.list_commands(ctx)
+
+        mock_init_config.assert_called_once_with(
+            ctx,
+            "test",
+            "development",
+            None,
+            sync_local_sys_paths=False,
+        )
+
+
+def test_task_per_file_group_get_command_initializes_config(runner):
+    """Test that TaskPerFileGroup.get_command calls initialize_config.
+
+    This ensures config is initialized before resolving a specific task command,
+    which is needed for tasks with config-dependent types like File.
+    """
+    from unittest.mock import patch
+
+    from flyte.cli._run import RunArguments, TaskPerFileGroup
+
+    run_args = RunArguments(project="test", domain="development")
+    group = TaskPerFileGroup(filename=FILE_INPUT_PY, run_args=run_args)
+
+    with patch("flyte.cli._common.initialize_config") as mock_init_config:
+        ctx = click.Context(click.Command("test"))
+        group.get_command(ctx, "test_file")
+
+        mock_init_config.assert_called_once_with(
+            ctx,
+            "test",
+            "development",
+            None,
+            sync_local_sys_paths=False,
+        )
+
+
+def test_run_task_with_file_input_and_project(runner):
+    """Test running a task with File input and --project flag via CLI.
+
+    Regression test: without initialize_config in TaskPerFileGroup.list_commands
+    and get_command, tasks with File inputs would fail when --project is specified
+    because config was not initialized before the task module was loaded.
+    """
+    with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".txt") as tmp:
+        tmp.write("test content")
+        tmp_path = tmp.name
+
+    try:
+        cmd = [
+            "--local",
+            "--project",
+            "test",
+            str(FILE_INPUT_PY),
+            "test_file",
+            "--project",
+            "test",
+            "--input_file",
+            tmp_path,
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise ve
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
