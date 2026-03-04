@@ -10,7 +10,8 @@ from torch.utils.data import DataLoader, DistributedSampler, TensorDataset
 
 import flyte
 
-# Install flyteplugins-torch from the wheel for development. In production, you would just specify the package name and version.
+# Install flyteplugins-torch from the wheel for development.
+# In production, you would just specify the package name and version.
 # from flyte._image import DIST_FOLDER, PythonWheels
 # image = flyte.Image.from_debian_base(name="torch").clone(
 #     addl_layer=PythonWheels(wheel_dir=DIST_FOLDER, package_name="flyteplugins-pytorch", pre=True)
