@@ -9,7 +9,7 @@ image = (
     .with_pip_packages("mypy", "httpx", pre=True)
     .with_env_vars({"hello": "world1"})
     .with_dockerignore(Path(__file__).parent / ".dockerignore")
-    .with_local_v2()
+    .with_local_v2().with_workdir("/app")
 )
 
 env = flyte.TaskEnvironment(name="t1", image=image)
