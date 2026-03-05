@@ -29,8 +29,7 @@ from flyte.cli._tui._explore import ExploreScreen
 
 app_env = AppEnvironment(
     name="panel-textual-app-test-1",
-    image=flyte.Image.from_debian_base(install_flyte=False).with_pip_packages(
-        "flyte==2.0.2",
+    image=flyte.Image.from_debian_base().with_pip_packages(
         "panel",
         "textual",
         "scikit-learn",
@@ -608,6 +607,7 @@ def serve():
         show=False,
         websocket_origin=origin,
         static_dirs=static_dirs,
+        session_token_expiration=3600,  # 1 hour (default 300s); avoids "Token is expired" on slow loads
     )
 
 
