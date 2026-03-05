@@ -100,6 +100,109 @@ class TestS3Config:
 
         assert "config" not in result or "virtual_hosted_style_request" not in result.get("config", {})
 
+    def test_get_fsspec_kwargs_with_profile_uses_credential_provider(self, monkeypatch):
+        s3 = S3(endpoint="http://test-endpoint", addressing_style="virtual")
+        monkeypatch.setenv("AWS_PROFILE", "dev-profile")
+        monkeypatch.setenv("AWS_CONFIG_FILE", "/tmp/config")
+
+        def _fake_provider(self, aws_profile, aws_config_file, region):
+            assert aws_profile == "dev-profile"
+            assert aws_config_file == "/tmp/config"
+            assert region is None
+            return "provider"
+
+        monkeypatch.setattr(S3, "_build_s3_credential_provider_from_config_file", _fake_provider)
+        result = s3.get_fsspec_kwargs()
+
+        assert result["credential_provider"] == "provider"
+        cfg = result.get("config", {})
+        assert "access_key_id" not in cfg
+        assert "secret_access_key" not in cfg
+        assert cfg.get("endpoint") == "http://test-endpoint"
+        assert cfg.get("virtual_hosted_style_request") is True
+
+    def test_get_fsspec_kwargs_profile_not_used_when_static_credentials_present(self, monkeypatch):
+        s3 = S3(access_key_id="test-key", secret_access_key="test-secret")
+        monkeypatch.setenv("AWS_PROFILE", "dev-profile")
+        monkeypatch.setenv("AWS_CONFIG_FILE", "/tmp/config")
+        monkeypatch.setattr(
+            S3,
+            "_build_s3_credential_provider_from_config_file",
+            lambda self, aws_profile, aws_config_file, region: (_ for _ in ()).throw(
+                AssertionError("provider should not be called")
+            ),
+        )
+        result = s3.get_fsspec_kwargs()
+
+        assert result["config"]["access_key_id"] == "test-key"
+        assert result["config"]["secret_access_key"] == "test-secret"
+        assert "credential_provider" not in result
+
+    def test_get_fsspec_kwargs_profile_from_env(self, monkeypatch):
+        s3 = S3()
+        monkeypatch.setenv("AWS_PROFILE", "default-profile")
+        monkeypatch.setenv("AWS_CONFIG_FILE", "/tmp/config")
+
+        def _fake_provider(self, aws_profile, aws_config_file, region):
+            assert aws_profile == "default-profile"
+            assert aws_config_file == "/tmp/config"
+            assert region is None
+            return "provider"
+
+        monkeypatch.setattr(S3, "_build_s3_credential_provider_from_config_file", _fake_provider)
+        result = s3.get_fsspec_kwargs()
+
+        assert result["credential_provider"] == "provider"
+
+    def test_get_fsspec_kwargs_anonymous_does_not_use_profile_provider(self, monkeypatch):
+        s3 = S3()
+        monkeypatch.setenv("AWS_PROFILE", "dev-profile")
+        monkeypatch.setenv("AWS_CONFIG_FILE", "/tmp/config")
+        monkeypatch.setattr(
+            S3,
+            "_build_s3_credential_provider_from_config_file",
+            lambda self, aws_profile, aws_config_file, region: (_ for _ in ()).throw(
+                AssertionError("provider should not be called for anonymous")
+            ),
+        )
+        result = s3.get_fsspec_kwargs(anonymous=True)
+
+        assert result["config"]["skip_signature"] is True
+        assert "credential_provider" not in result
+
+    def test_get_fsspec_kwargs_profile_provider_receives_region(self, monkeypatch):
+        s3 = S3(region="us-west-2")
+        monkeypatch.setenv("AWS_PROFILE", "dev-profile")
+        monkeypatch.setenv("AWS_CONFIG_FILE", "/tmp/config")
+
+        def _fake_provider(self, aws_profile, aws_config_file, region):
+            assert aws_profile == "dev-profile"
+            assert aws_config_file == "/tmp/config"
+            assert region == "us-west-2"
+            return "provider"
+
+        monkeypatch.setattr(S3, "_build_s3_credential_provider_from_config_file", _fake_provider)
+        result = s3.get_fsspec_kwargs()
+
+        assert result["credential_provider"] == "provider"
+        assert result["region"] == "us-west-2"
+
+    def test_get_fsspec_kwargs_profile_provider_failure_falls_back(self, monkeypatch):
+        s3 = S3()
+        monkeypatch.setenv("AWS_PROFILE", "dev-profile")
+        monkeypatch.setenv("AWS_CONFIG_FILE", "/tmp/config")
+        monkeypatch.setattr(
+            S3,
+            "_build_s3_credential_provider_from_config_file",
+            lambda self, aws_profile, aws_config_file, region: (_ for _ in ()).throw(
+                ModuleNotFoundError("boto3 missing")
+            ),
+        )
+        result = s3.get_fsspec_kwargs()
+
+        assert "credential_provider" not in result
+
+
 
 class TestGCSConfig:
     def test_get_fsspec_kwargs_default(self):

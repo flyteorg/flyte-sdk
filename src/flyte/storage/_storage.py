@@ -10,6 +10,7 @@ from uuid import UUID
 
 import fsspec
 import obstore
+import obstore.fsspec
 from fsspec.asyn import AsyncFileSystem
 from fsspec.utils import get_protocol
 from obstore.exceptions import GenericError
@@ -160,7 +161,7 @@ async def _get_obstore_bypass(
 ) -> str:
     from flyte.storage._parallel_reader import ObstoreParallelReader
 
-    fs = get_underlying_filesystem(path=from_path)
+    fs: obstore.fsspec.FsspecStore = get_underlying_filesystem(path=from_path)  # type: ignore[assignment]
     bucket, prefix = fs._split_path(from_path)  # pylint: disable=W0212
     store: ObjectStore = fs._construct_store(bucket)
 
