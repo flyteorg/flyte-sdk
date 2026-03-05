@@ -203,7 +203,6 @@ class TestS3Config:
         assert "credential_provider" not in result
 
 
-
 class TestGCSConfig:
     def test_get_fsspec_kwargs_default(self):
         gcs = GCS()
