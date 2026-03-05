@@ -113,7 +113,7 @@ class RemoteImageBuilder(ImageBuilder):
         """Return the image checker."""
         return [RemoteImageChecker]
 
-    async def build_image(self, image: Image, dry_run: bool = False, wait: bool = True) -> "ImageBuild":
+    async def build_image(self, image: Image, dry_run: bool = False, wait: bool = True, force: bool = False) -> "ImageBuild":
         from flyte._build import ImageBuild
 
         image_name = f"{image.name}:{image._final_tag}"
@@ -145,7 +145,8 @@ class RemoteImageBuilder(ImageBuilder):
         run = cast(
             Run,
             await flyte.with_runcontext(
-                project=cfg.project, domain=cfg.domain, cache_lookup_scope="project-domain"
+                project=cfg.project, domain=cfg.domain, cache_lookup_scope="project-domain",
+                overwrite_cache=force,
             ).run.aio(entity, spec=spec, context=context, target_image=target_image),
         )
 
