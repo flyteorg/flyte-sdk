@@ -5,6 +5,11 @@ application using the @app_env.server decorator pattern. The app has:
 - Left side: A read-only code editor with a "Play" button to run the code locally
 - Right side: The ExploreTUIApp for browsing Flyte entities
 
+Reo.Dev tracking uses the reodotdev npm package (no CDN). To rebuild after
+editing reo_component.py or reo_init.js:
+    cd examples/apps/panel_app && npm run build:reo
+Requires: node, npm, esbuild (npm install in that directory).
+
 Create the Gemini API key:
     flyte create secret GOOGLE_GEMINI_API_KEY
 
@@ -17,10 +22,12 @@ Usage (CLI):
 
 import importlib.util
 import os
+import param
 import threading
 import time
 from pathlib import Path
 
+from panel.custom import JSComponent
 from textual.app import App
 
 import flyte
@@ -125,6 +132,45 @@ class CustomExploreTUIApp(App[None]):
 
     def on_mount(self) -> None:
         self.push_screen(CustomExploreScreen())
+
+
+class ReoInitializer(JSComponent):
+    """Invisible component that initializes Reo.Dev tracking via the reodotdev npm package."""
+
+    client_id = param.String(
+        doc="Reo.Dev client ID. Pass from REO_CLIENT_ID env var in production.",
+    )
+
+    _importmap = {
+        "imports": {
+            "reodotdev": "https://esm.sh/reodotdev@1.1.0",
+        }
+    }
+
+    _esm = """
+    /* reo_init.js - Reo.Dev initialization via npm package */
+    import { loadReoScript } from "reodotdev";
+
+    export function render({ model }) {
+    const clientID = model.client_id
+
+    const reoPromise = loadReoScript({ clientID });
+    reoPromise
+        .then((Reo) => {
+        Reo.init({ clientID });
+        console.log("Reo initialized");
+        })
+        .catch((error) => {
+        console.error("Error loading Reo", error);
+        });
+
+    // Return minimal invisible container - Reo init is a side effect
+    const el = document.createElement("div");
+    el.style.cssText = "position:absolute;width:0;height:0;overflow:hidden;pointer-events:none;";
+    return el;
+    }
+    """
+
 
 
 EXAMPLES = {
@@ -538,15 +584,18 @@ def create_panel_app():
             "border-top": "1px solid #12052a",
         },
     )
+    reo_client_id = os.getenv("REO_CLIENT_ID")
+    reo_initializer = ReoInitializer(client_id=reo_client_id)
 
     layout = pn.Column(
+        reo_initializer,
         header,
         main_content,
         sizing_mode="stretch_both",
         styles={"height": "100vh", "background": "#050310"},
     )
 
-    template = _load_template_html().replace("{{client_id}}", os.getenv("REO_CLIENT_ID"))
+    template = _load_template_html()
     tmpl = pn.Template(template)
     tmpl.add_panel("main", layout)
     tmpl.add_variable(
