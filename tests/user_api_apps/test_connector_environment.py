@@ -34,49 +34,35 @@ def test_connector_custom_port_object():
 
 def test_connector_default_args():
     conn = ConnectorEnvironment(name="my-connector", image=Image.from_base("python:3.11"))
-    ctx = SerializationContext(
-        org="org", project="proj", domain="dev", version="v1", root_dir=pathlib.Path.cwd()
-    )
+    ctx = SerializationContext(org="org", project="proj", domain="dev", version="v1", root_dir=pathlib.Path.cwd())
     args = conn.container_args(ctx)
     assert args == ["c0", "--port", "8080", "--prometheus_port", "9092"]
 
 
 def test_connector_default_args_custom_port():
     conn = ConnectorEnvironment(name="my-connector", image=Image.from_base("python:3.11"), port=9999)
-    ctx = SerializationContext(
-        org="org", project="proj", domain="dev", version="v1", root_dir=pathlib.Path.cwd()
-    )
+    ctx = SerializationContext(org="org", project="proj", domain="dev", version="v1", root_dir=pathlib.Path.cwd())
     args = conn.container_args(ctx)
     assert args == ["c0", "--port", "9999", "--prometheus_port", "9092"]
 
 
 def test_connector_custom_args_list():
-    conn = ConnectorEnvironment(
-        name="my-connector", image=Image.from_base("python:3.11"), args=["--custom", "arg"]
-    )
-    ctx = SerializationContext(
-        org="org", project="proj", domain="dev", version="v1", root_dir=pathlib.Path.cwd()
-    )
+    conn = ConnectorEnvironment(name="my-connector", image=Image.from_base("python:3.11"), args=["--custom", "arg"])
+    ctx = SerializationContext(org="org", project="proj", domain="dev", version="v1", root_dir=pathlib.Path.cwd())
     args = conn.container_args(ctx)
     assert args == ["--custom", "arg"]
 
 
 def test_connector_custom_args_string():
-    conn = ConnectorEnvironment(
-        name="my-connector", image=Image.from_base("python:3.11"), args="--host 0.0.0.0"
-    )
-    ctx = SerializationContext(
-        org="org", project="proj", domain="dev", version="v1", root_dir=pathlib.Path.cwd()
-    )
+    conn = ConnectorEnvironment(name="my-connector", image=Image.from_base("python:3.11"), args="--host 0.0.0.0")
+    ctx = SerializationContext(org="org", project="proj", domain="dev", version="v1", root_dir=pathlib.Path.cwd())
     args = conn.container_args(ctx)
     assert args == ["--host", "0.0.0.0"]
 
 
 def test_connector_empty_args():
     conn = ConnectorEnvironment(name="my-connector", image=Image.from_base("python:3.11"), args=[])
-    ctx = SerializationContext(
-        org="org", project="proj", domain="dev", version="v1", root_dir=pathlib.Path.cwd()
-    )
+    ctx = SerializationContext(org="org", project="proj", domain="dev", version="v1", root_dir=pathlib.Path.cwd())
     assert conn.container_args(ctx) == []
 
 
@@ -84,9 +70,7 @@ def test_connector_string_command():
     conn = ConnectorEnvironment(
         name="my-connector", image=Image.from_base("python:3.11"), command="python app.py --debug"
     )
-    ctx = SerializationContext(
-        org="org", project="proj", domain="dev", version="v1", root_dir=pathlib.Path.cwd()
-    )
+    ctx = SerializationContext(org="org", project="proj", domain="dev", version="v1", root_dir=pathlib.Path.cwd())
     cmd = conn.container_cmd(ctx)
     assert cmd == ["python", "app.py", "--debug"]
 
@@ -95,9 +79,7 @@ def test_connector_list_command():
     conn = ConnectorEnvironment(
         name="my-connector", image=Image.from_base("python:3.11"), command=["python", "-m", "main"]
     )
-    ctx = SerializationContext(
-        org="org", project="proj", domain="dev", version="v1", root_dir=pathlib.Path.cwd()
-    )
+    ctx = SerializationContext(org="org", project="proj", domain="dev", version="v1", root_dir=pathlib.Path.cwd())
     cmd = conn.container_cmd(ctx)
     assert cmd == ["python", "-m", "main"]
 

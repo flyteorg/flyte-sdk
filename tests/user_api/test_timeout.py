@@ -3,7 +3,7 @@ from datetime import timedelta
 import pytest
 
 import flyte
-from flyte._timeout import Timeout, TimeoutType, timeout_from_request
+from flyte._timeout import Timeout, timeout_from_request
 
 
 def test_timeout_with_int():

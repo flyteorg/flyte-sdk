@@ -2,7 +2,6 @@ import pytest
 
 import flyte
 
-
 env = flyte.TaskEnvironment(name="custom_ctx_test")
 
 

@@ -1,4 +1,3 @@
-import pytest
 
 from flyte.app import RunOutput
 

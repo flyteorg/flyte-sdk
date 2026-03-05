@@ -1,7 +1,6 @@
 import pytest
 
-import flyte
-from flyte._cache import Cache, CacheRequest
+from flyte._cache import Cache
 from flyte._cache.cache import cache_from_request
 
 

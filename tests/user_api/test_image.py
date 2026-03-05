@@ -1,4 +1,3 @@
-import pytest
 
 from flyte._image import Image
 
@@ -50,12 +49,7 @@ def test_image_with_workdir():
 
 
 def test_image_chaining():
-    img = (
-        Image.from_debian_base()
-        .with_pip_packages("numpy")
-        .with_env_vars({"KEY": "VAL"})
-        .with_workdir("/workspace")
-    )
+    img = Image.from_debian_base().with_pip_packages("numpy").with_env_vars({"KEY": "VAL"}).with_workdir("/workspace")
     assert len(img._layers) >= 3
 
 
