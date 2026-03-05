@@ -470,7 +470,7 @@ def generate_benchmark_report(
 @env.task(report=True)
 async def benchmark_all(test_file: bool = True, test_dir: bool = True):
     """Comprehensive benchmark comparing all download methods"""
-    iterations = 1
+    iterations = 2
     print("=" * 80)
     print(f"Starting comprehensive I/O benchmarks ({iterations} runs each)")
     print("=" * 80)
@@ -485,7 +485,7 @@ async def benchmark_all(test_file: bool = True, test_dir: bool = True):
     if test_file:
         # Test 1: Large single file (5GB)
         print("\n--- Test 1: Single 5GB file (10 runs) ---")
-        large_file = await create_file(1024)
+        large_file = await create_file(5120)
 
         print("Running all downloads in parallel (each method runs 10 iterations)...")
         # Run the native tasks (they handle 10 iterations internally)
@@ -571,5 +571,5 @@ async def benchmark_all(test_file: bool = True, test_dir: bool = True):
 # $ flyte -c ~/.flyte/builder.remote.demo.yaml run -p flytesnacks -d development stress/benchmark/large_io_comparison.py benchmark_all  # noqa: E501
 if __name__ == "__main__":
     flyte.init_from_config()
-    r = flyte.run(benchmark_all, test_file=True, test_dir=False)
+    r = flyte.run(benchmark_all, test_file=True, test_dir=True)
     print(r.url)
