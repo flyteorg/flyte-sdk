@@ -28,7 +28,7 @@ below, if you drop the `.clone(...)` call, you can also drop the `secrets` argum
 """
 image = (
     Image.from_base("pingsutw/private:d1742efed83fc4b18c7751e53e771bbe")
-    .clone(registry="docker.io/pingsutw", name="private", registry_secret="pingsutw")
+    .clone(registry="docker.io/pingsutw", name="private", registry_secret="pingsutw", extendable=True)
     .with_apt_packages("vim")
     .with_local_v2()
 )

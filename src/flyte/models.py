@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import enum
 import inspect
 import os
 import pathlib
@@ -75,6 +76,20 @@ class ActionID:
         bytes_digest = hashlib.md5(components.encode()).digest()
         new_name = base36_encode(bytes_digest)
         return self.new_sub_action(new_name)
+
+    def unique_id_str(self, salt: str | None = None) -> str:
+        """
+        Generate a unique ID string for this action in the format:
+        {project}-{domain}-{run_name}-{action_name}
+
+        This is optimized for performance assuming all fields are available.
+
+        :return: A unique ID string
+        """
+        v = f"{self.project}-{self.domain}-{self.run_name}-{self.name}"
+        if salt is not None:
+            return f"{v}-{salt}"
+        return v
 
 
 @rich.repr.auto
@@ -214,6 +229,7 @@ class TaskContext:
     mode: Literal["local", "remote", "hybrid"] = "remote"
     interactive_mode: bool = False
     custom_context: Dict[str, str] = field(default_factory=dict)
+    disable_run_cache: bool = False
 
     def replace(self, **kwargs) -> TaskContext:
         if "data" in kwargs:
@@ -258,6 +274,7 @@ class CodeBundle:
     tgz: str | None = None
     pkl: str | None = None
     downloaded_path: pathlib.Path | None = None
+    files: List[str] | None = None
 
     # runtime_dependencies: Tuple[str, ...] = field(default_factory=tuple)  In the future if we want we could add this
     # but this messes up actors, spark etc
@@ -412,10 +429,52 @@ class NativeInterface:
         """
         return {k: v[0] for k, v in self.inputs.items()}
 
+    @property
+    def json_schema(self) -> Dict[str, Any]:
+        """Convert task inputs to a JSON schema dict.
+
+        Uses the Flyte type engine to produce a LiteralType for each input, then
+        converts to JSON schema.
+        """
+        # Deferred imports: TypeEngine is heavyweight and _json_schema depends on
+        # flyteidl2 protobuf, so we avoid pulling them in at module load time.
+        from flyte._json_schema import literal_type_to_json_schema
+        from flyte.types._type_engine import TypeEngine
+
+        properties: Dict[str, Any] = {}
+        required: List[str] = []
+
+        for name, (py_type, default) in self.inputs.items():
+            if py_type is inspect.Parameter.empty:
+                # No annotation — fall back to a plain string schema
+                properties[name] = {"type": "string"}
+            else:
+                lt = TypeEngine.to_literal_type(py_type)
+                properties[name] = literal_type_to_json_schema(lt)
+
+            if default is inspect.Parameter.empty:
+                required.append(name)
+
+        return {"type": "object", "properties": properties, "required": required}
+
     def __repr__(self):
         """
         Returns a string representation of the task interface.
         """
+
+        def format_type(tpe):
+            """Format a type for display in the interface repr."""
+            if isinstance(tpe, str):
+                return tpe
+            # For simple types (int, str, etc.) use __name__
+            # For generic types (list[str], dict[str, int]) use repr()
+            # For union types (int | str) use repr()
+            if isinstance(tpe, type) and not hasattr(tpe, "__origin__"):
+                # Simple type like int, str
+                return tpe.__name__
+            # Generic types, unions, or other complex types - use repr
+            return repr(tpe)
+
         i = "("
         if self.inputs:
             initial = True
@@ -423,7 +482,7 @@ class NativeInterface:
                 if not initial:
                     i += ", "
                 initial = False
-                tp = tpe[0] if isinstance(tpe[0], str) else getattr(tpe[0], "__name__", str(tpe[0]))
+                tp = format_type(tpe[0])
                 i += f"{key}: {tp}"
                 if tpe[1] is not inspect.Parameter.empty:
                     if tpe[1] is self.has_default:
@@ -441,7 +500,7 @@ class NativeInterface:
                 if not initial:
                     i += ", "
                 initial = False
-                tp = tpe.__name__ if isinstance(tpe, type) else tpe
+                tp = format_type(tpe)
                 i += f"{key}: {tp}"
             if multi:
                 i += ")"
@@ -481,3 +540,139 @@ class SerializationContext:
         if interpreter_path is None:
             interpreter_path = self.interpreter_path
         return os.path.join(os.path.dirname(interpreter_path), "runtime.py")
+
+
+# --- Phase Enum ---
+
+
+class ActionPhase(str, enum.Enum):
+    """
+    Represents the execution phase of a Flyte action (run).
+
+    Actions progress through different phases during their lifecycle:
+    - Queued: Action is waiting to be scheduled
+    - Waiting for resources: Action is waiting for compute resources
+    - Initializing: Action is being initialized
+    - Running: Action is currently executing
+    - Succeeded: Action completed successfully
+    - Failed: Action failed during execution
+    - Aborted: Action was manually aborted
+    - Timed out: Action exceeded its timeout limit
+
+    This enum can be used for filtering runs and checking execution status.
+
+    Example:
+        >>> from flyte.models import ActionPhase
+        >>> from flyte.remote import Run
+        >>>
+        >>> # Filter runs by phase
+        >>> runs = Run.listall(in_phase=(ActionPhase.SUCCEEDED, ActionPhase.FAILED))
+        >>>
+        >>> # Check if a run succeeded
+        >>> run = Run.get("my-run")
+        >>> if run.phase == ActionPhase.SUCCEEDED:
+        ...     print("Success!")
+        >>>
+        >>> # Check if phase is terminal
+        >>> if run.phase.is_terminal:
+        ...     print("Run completed")
+    """
+
+    QUEUED = "queued"
+    """Action is waiting to be scheduled."""
+
+    WAITING_FOR_RESOURCES = "waiting_for_resources"
+    """Action is waiting for compute resources to become available."""
+
+    INITIALIZING = "initializing"
+    """Action is being initialized and prepared for execution."""
+
+    RUNNING = "running"
+    """Action is currently executing."""
+
+    SUCCEEDED = "succeeded"
+    """Action completed successfully."""
+
+    FAILED = "failed"
+    """Action failed during execution."""
+
+    ABORTED = "aborted"
+    """Action was manually aborted by a user."""
+
+    TIMED_OUT = "timed_out"
+    """Action exceeded its timeout limit and was terminated."""
+
+    @property
+    def is_terminal(self) -> bool:
+        """
+        Check if this phase represents a terminal (final) state.
+
+        Terminal phases are: SUCCEEDED, FAILED, ABORTED, TIMED_OUT.
+        Once an action reaches a terminal phase, it will not transition to any other phase.
+
+        Returns:
+            True if this is a terminal phase, False otherwise
+        """
+        return self in (
+            ActionPhase.SUCCEEDED,
+            ActionPhase.FAILED,
+            ActionPhase.ABORTED,
+            ActionPhase.TIMED_OUT,
+        )
+
+    def to_protobuf_name(self) -> str:
+        """
+        Convert to protobuf enum name format.
+
+        Returns:
+            Protobuf enum name (e.g., "ACTION_PHASE_QUEUED")
+
+        Example:
+            >>> ActionPhase.QUEUED.to_protobuf_name()
+            'ACTION_PHASE_QUEUED'
+        """
+        return f"ACTION_PHASE_{self.value.upper()}"
+
+    def to_protobuf_value(self) -> int:
+        """
+        Convert to protobuf enum integer value.
+
+        Returns:
+            Protobuf enum integer value
+
+        Example:
+            >>> ActionPhase.QUEUED.to_protobuf_value()
+            1
+        """
+        from flyteidl2.common import phase_pb2
+
+        return phase_pb2.ActionPhase.Value(self.to_protobuf_name())
+
+    @classmethod
+    def from_protobuf(cls, pb_phase: Any) -> "ActionPhase":
+        """
+        Create ActionPhase from protobuf phase value.
+
+        Args:
+            pb_phase: Protobuf ActionPhase enum value
+
+        Returns:
+            Corresponding ActionPhase enum member
+
+        Raises:
+            ValueError: If protobuf phase is UNSPECIFIED or unknown
+
+        Example:
+            >>> from flyteidl2.common import phase_pb2
+            >>> ActionPhase.from_protobuf(phase_pb2.ACTION_PHASE_QUEUED)
+            <ActionPhase.QUEUED: 'queued'>
+        """
+        from flyteidl2.common import phase_pb2
+
+        name = phase_pb2.ActionPhase.Name(pb_phase)
+        if name == "ACTION_PHASE_UNSPECIFIED":
+            raise ValueError("Cannot convert UNSPECIFIED phase to ActionPhase")
+
+        # Remove "ACTION_PHASE_" prefix and convert to lowercase
+        phase_value = name.replace("ACTION_PHASE_", "").lower()
+        return cls(phase_value)

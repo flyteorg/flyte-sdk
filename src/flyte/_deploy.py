@@ -2,19 +2,23 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import os
+import pathlib
+import sys
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 import cloudpickle
 import rich.repr
 
-from flyte.models import NativeInterface, SerializationContext
+from flyte.models import ActionID, NativeInterface, RawDataPath, SerializationContext, TaskContext
 from flyte.syncify import syncify
 
 from ._environment import Environment
 from ._image import Image
 from ._initialize import ensure_client, get_client, get_init_config, requires_initialization
 from ._logging import logger
+from ._status import status
 from ._task import TaskTemplate
 from ._task_environment import TaskEnvironment
 
@@ -60,11 +64,30 @@ class DeployedTask:
         """
         Returns a table representation of the deployed task.
         """
+        from flyte._initialize import get_client
+
+        client = get_client()
+        task_id = self.deployed_task.task_template.id
+        task_url = client.console.task_url(
+            project=task_id.project,
+            domain=task_id.domain,
+            task_name=task_id.name,
+        )
+        triggers = []
+        for t in self.deployed_triggers:
+            trigger_url = client.console.trigger_url(
+                project=task_id.project,
+                domain=task_id.domain,
+                task_name=task_id.name,
+                trigger_name=t.name,
+            )
+            triggers.append(f"[link={trigger_url}]{t.name}[/link]")
+
         return [
             ("type", "task"),
-            ("name", self.deployed_task.task_template.id.name),
-            ("version", self.deployed_task.task_template.id.version),
-            ("triggers", ",".join([t.name for t in self.deployed_triggers])),
+            ("name", f"[link={task_url}]{task_id.name}[/link]"),
+            ("version", task_id.version),
+            ("triggers", ",".join(triggers)),
         ]
 
 
@@ -150,19 +173,43 @@ async def _deploy_task(
     from flyteidl2.task import task_definition_pb2, task_service_pb2
 
     import flyte.errors
+    import flyte.report
 
     from ._internal.runtime.convert import convert_upload_default_inputs
-    from ._internal.runtime.task_serde import translate_task_to_wire
+    from ._internal.runtime.task_serde import lookup_image_in_cache, translate_task_to_wire
     from ._internal.runtime.trigger_serde import to_task_trigger
 
-    image_uri = task.image.uri if isinstance(task.image, Image) else task.image
+    assert task.parent_env_name is not None
+    if isinstance(task.image, Image):
+        image_uri: str | None = lookup_image_in_cache(serialization_context, task.parent_env_name, task.image)
+    else:
+        image_uri = task.image
 
     try:
         if dryrun:
             return DeployedTask(translate_task_to_wire(task, serialization_context), [])
 
         default_inputs = await convert_upload_default_inputs(task.interface)
-        spec = translate_task_to_wire(task, serialization_context, default_inputs=default_inputs)
+        # Create a TaskContext for the task translation to serialize log links properly.
+        # Callee should not use raw_data_path or run_base_dir, so we set them to empty strings.
+        action = ActionID(
+            name="{{.actionName}}",
+            run_name="{{.runName}}",
+            project="{{.executionProject}}",
+            domain="{{.executionDomain}}",
+            org="{{.executionOrg}}",
+        )
+        tctx = TaskContext(
+            action=action,
+            output_path=serialization_context.output_path,
+            version=serialization_context.version,
+            raw_data_path=RawDataPath(path=""),
+            compiled_image_cache=serialization_context.image_cache,
+            run_base_dir="",
+            report=flyte.report.Report(name=action.name),
+            custom_context={},
+        )
+        spec = translate_task_to_wire(task, serialization_context, default_inputs=default_inputs, task_context=tctx)
         # Insert ENV description into spec
         env = task.parent_env() if task.parent_env else None
         if env and env.description:
@@ -181,7 +228,7 @@ async def _deploy_task(
         msg = f"Deploying task {task.name}, with image {image_uri} version {serialization_context.version}"
         if spec.task_template.HasField("container") and spec.task_template.container.args:
             msg += f" from {spec.task_template.container.args[-3]}.{spec.task_template.container.args[-1]}"
-        logger.info(msg)
+        status.step(msg)
         task_id = task_definition_pb2.TaskIdentifier(
             org=spec.task_template.id.org,
             project=spec.task_template.id.project,
@@ -208,10 +255,10 @@ async def _deploy_task(
                     triggers=deployable_triggers,
                 )
             )
-            logger.info(f"Deployed task {task.name} with version {task_id.version}")
+            status.success(f"Deployed task {task.name} (version {task_id.version})")
         except grpc.aio.AioRpcError as e:
             if e.code() == grpc.StatusCode.ALREADY_EXISTS:
-                logger.info(f"Task {task.name} with image {image_uri} already exists, skipping deployment.")
+                status.info(f"Task {task.name} already exists, skipping")
                 return DeployedTask(spec, deployable_triggers)
             raise
 
@@ -289,27 +336,35 @@ def _update_interface_inputs_and_outputs_docstring(
 
     # Update input variable descriptions
     if updated_interface.inputs and updated_interface.inputs.variables:
-        for var_name, desc in input_descriptions.items():
-            if var_name in updated_interface.inputs.variables:
-                updated_interface.inputs.variables[var_name].description = desc
+        for var_entry in updated_interface.inputs.variables:
+            if var_entry.key in input_descriptions:
+                var_entry.value.description = input_descriptions[var_entry.key]
 
     # Update output variable descriptions
     if updated_interface.outputs and updated_interface.outputs.variables:
-        for var_name, desc in output_descriptions.items():
-            if var_name in updated_interface.outputs.variables:
-                updated_interface.outputs.variables[var_name].description = desc
+        for var_entry in updated_interface.outputs.variables:
+            if var_entry.key in output_descriptions:
+                var_entry.value.description = output_descriptions[var_entry.key]
 
     return updated_interface
 
 
-async def _build_image_bg(env_name: str, image: Image) -> Tuple[str, str]:
+async def _build_image_bg(env_name: str, image: Image) -> Tuple[str, str, Optional[Any]]:
     """
-    Build the image in the background and return the environment name and the built image.
+    Build the image in the background and return the environment name, the built image URI,
+    and the RunIdentifierData (if built by the remote image builder).
     """
     from ._build import build
+    from ._internal.imagebuild.image_builder import RunIdentifierData
 
-    logger.info(f"Building image {image.name} for environment {env_name}")
-    return env_name, await build.aio(image)
+    status.step(f"Building image {image.name} for environment {env_name}")
+    result = await build.aio(image)
+    assert result.uri is not None, "Image build result URI is None, make sure to wait for the build to complete"
+    run_id_data = None
+    if result.remote_run:
+        run_id = result.remote_run.pb2.action.id.run
+        run_id_data = RunIdentifierData(org=run_id.org, project=run_id.project, domain=run_id.domain, name=run_id.name)
+    return env_name, result.uri, run_id_data
 
 
 async def _build_images(deployment: DeploymentPlan, image_refs: Dict[str, str] | None = None) -> ImageCache:
@@ -324,9 +379,10 @@ async def _build_images(deployment: DeploymentPlan, image_refs: Dict[str, str] |
         image_refs = {}
 
     images = []
-    image_identifier_map = {}
+    image_identifier_map: Dict[str, str] = {}
+    build_run_ids: Dict[str, Any] = {}
     for env_name, env in deployment.envs.items():
-        if not isinstance(env.image, str):
+        if env.image and not isinstance(env.image, str):
             if env.image._ref_name is not None:
                 if env.image._ref_name in image_refs:
                     # If the image is set in the config, set it as the base_image
@@ -351,13 +407,19 @@ async def _build_images(deployment: DeploymentPlan, image_refs: Dict[str, str] |
                 continue
             auto_image = Image.from_debian_base()
             images.append(_build_image_bg(env_name, auto_image))
-    final_images = await asyncio.gather(*images)
 
-    for env_name, image_uri in final_images:
-        logger.warning(f"Built Image for environment {env_name}, image: {image_uri}")
-        image_identifier_map[env_name] = image_uri
+    if images:
+        with status.group(f"Building {len(images)} image{'s' if len(images) > 1 else ''}..."):
+            final_images = await asyncio.gather(*images)
+        for env_name, image_uri, run_id_data in final_images:
+            status.success(f"Built image for environment {env_name}: {image_uri}")
+            image_identifier_map[env_name] = image_uri
+            if run_id_data is not None:
+                build_run_ids[env_name] = run_id_data
+    else:
+        final_images = []
 
-    return ImageCache(image_lookup=image_identifier_map)
+    return ImageCache(image_lookup=image_identifier_map, build_run_ids=build_run_ids)
 
 
 async def _deploy_task_env(context: DeploymentContext) -> DeployedTaskEnvironment:
@@ -388,10 +450,22 @@ async def apply(deployment_plan: DeploymentPlan, copy_style: CopyFiles, dryrun: 
 
     cfg = get_init_config()
 
+    # Resolve any CodeBundleLayer layers before building images
+    from flyte._image import resolve_code_bundle_layer
+
+    for env_name, env in deployment_plan.envs.items():
+        if isinstance(env.image, Image):
+            env.image = resolve_code_bundle_layer(env.image, copy_style, pathlib.Path(cfg.root_dir))
+
     image_cache = await _build_images(deployment_plan, cfg.images)
 
     if copy_style == "none" and not deployment_plan.version:
         raise flyte.errors.DeploymentError("Version must be set when copy_style is none")
+    elif copy_style == "none":
+        code_bundle = None
+        # safe because we would've caught None's above
+        assert deployment_plan.version is not None
+        version = deployment_plan.version
     else:
         # if this is an AppEnvironment.include, skip code bundling here and build a code bundle at the
         # app._deploy._deploy_app function
@@ -417,7 +491,7 @@ async def apply(deployment_plan: DeploymentPlan, copy_style: CopyFiles, dryrun: 
 
     deployment_coros = []
     for env_name, env in deployment_plan.envs.items():
-        logger.info(f"Deploying environment {env_name}")
+        status.step(f"Deploying environment {env_name}")
         deployer = get_deployer(type(env))
         context = DeploymentContext(environment=env, serialization_context=sc, dryrun=dryrun)
         deployment_coros.append(deployer(context))
@@ -429,6 +503,44 @@ async def apply(deployment_plan: DeploymentPlan, copy_style: CopyFiles, dryrun: 
     return Deployment(envs)
 
 
+def _find_env_module(env: Environment):
+    """Scan sys.modules to find the module that contains this env as a top-level variable."""
+    for module in list(sys.modules.values()):
+        if module is None:
+            continue
+        try:
+            # search for at least one value inside this module that is the same object as env and return it
+            if any(v is env for v in vars(module).values()):
+                return module
+        except TypeError:
+            continue
+    return None
+
+
+def _check_duplicate_env(existing_env: Environment, env: Environment) -> None:
+    """Raise an appropriate error when the same environment name is encountered twice."""
+    existing_module = _find_env_module(existing_env)
+    new_module = _find_env_module(env)
+    existing_file = getattr(existing_module, "__file__", None)
+    new_file = getattr(new_module, "__file__", None)
+
+    if existing_file and new_file and os.path.samefile(existing_file, new_file):
+        # Same file, different module names — classic dual-import caused by
+        # the module being loaded twice under different names (e.g.
+        # `my_module.envs` and `src.my_module.envs`).
+        raise ValueError(
+            f"Environment '{env.name}' is defined in '{existing_file}' but was imported "
+            f"twice under different module names ('{existing_module.__name__}' and "
+            f"'{new_module.__name__}'). This is usually caused by running `flyte deploy` "
+            f"from the project root of a src/ layout project without --root-dir. "
+            f"Try adding --root-dir src (or your source root directory)."
+        )
+    else:
+        raise ValueError(
+            f"Duplicate environment name '{env.name}' found. Each TaskEnvironment must have a unique name."
+        )
+
+
 def _recursive_discover(planned_envs: Dict[str, Environment], env: Environment) -> Dict[str, Environment]:
     """
     Recursively deploy the environment and its dependencies, if not already deployed (present in env_tasks) and
@@ -436,8 +548,7 @@ def _recursive_discover(planned_envs: Dict[str, Environment], env: Environment) 
     """
     if env.name in planned_envs:
         if planned_envs[env.name] is not env:
-            # Raise error if different TaskEnvironment objects have the same name
-            raise ValueError(f"Duplicate environment name '{env.name}' found")
+            _check_duplicate_env(planned_envs[env.name], env)
     # Add the environment to the existing envs
     planned_envs[env.name] = env
 
@@ -451,13 +562,13 @@ def plan_deploy(*envs: Environment, version: Optional[str] = None) -> List[Deplo
     if envs is None:
         return [DeploymentPlan({})]
     deployment_plans = []
-    visited_envs: Set[str] = set()
+    visited_envs: Dict[str, Environment] = {}
     for env in envs:
         if env.name in visited_envs:
-            raise ValueError(f"Duplicate environment name '{env.name}' found")
+            _check_duplicate_env(visited_envs[env.name], env)
         planned_envs = _recursive_discover({}, env)
         deployment_plans.append(DeploymentPlan(planned_envs, version=version))
-        visited_envs.update(planned_envs.keys())
+        visited_envs.update(planned_envs)
     return deployment_plans
 
 

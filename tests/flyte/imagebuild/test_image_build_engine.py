@@ -1,6 +1,7 @@
 import mock
 import pytest
 
+from flyte._build import ImageBuild
 from flyte._image import Image
 from flyte._internal.imagebuild.image_builder import (
     DockerAPIImageChecker,
@@ -33,11 +34,14 @@ async def test_cached(mock_checker_cli, mock_checker_api):
 async def test_cached_2(mock_image_exists, mock_get_builder):
     mock_image_exists.return_value = False
     mock_builder = mock.AsyncMock()
-    mock_builder.build_image.return_value = "docker.io/test-image:v1.0"
+    mock_builder.build_image.return_value = ImageBuild(uri="docker.io/test-image:v1.0", remote_run=None)
     mock_get_builder.return_value = mock_builder
 
     img = Image.from_debian_base()
-    await ImageBuildEngine.build(image=img)
+    result = await ImageBuildEngine.build(image=img)
+    assert isinstance(result, ImageBuild)
+    assert result.uri == "docker.io/test-image:v1.0"
+    assert result.remote_run is None
     await ImageBuildEngine.build(image=img)
     mock_builder.build_image.assert_called_once()
 

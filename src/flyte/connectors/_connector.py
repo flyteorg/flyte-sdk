@@ -6,16 +6,16 @@ from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Optional
 
-from flyteidl2.core import tasks_pb2
-from flyteidl2.core.execution_pb2 import TaskExecution, TaskLog
-from flyteidl2.plugins import connector_pb2
-from flyteidl2.plugins.connector_pb2 import Connector as ConnectorProto
-from flyteidl2.plugins.connector_pb2 import (
+from flyteidl2.connector import connector_pb2
+from flyteidl2.connector.connector_pb2 import Connector as ConnectorProto
+from flyteidl2.connector.connector_pb2 import (
     GetTaskLogsResponse,
     GetTaskMetricsResponse,
     TaskCategory,
     TaskExecutionMetadata,
 )
+from flyteidl2.core import tasks_pb2
+from flyteidl2.core.execution_pb2 import TaskExecution, TaskLog
 from google.protobuf import json_format
 from google.protobuf.struct_pb2 import Struct
 
@@ -256,7 +256,7 @@ class AsyncConnectorExecutorMixin:
                     image_cache=await build_images.aio(task.parent_env()) if task.parent_env else None,
                     root_dir=cfg.root_dir,
                 )
-                tt = get_proto_task(task, sc)
+                tt = get_proto_task(task, sc, tctx)
 
                 tt = _render_task_template(tt, prefix)
                 inputs = await convert_from_native_to_inputs(task.native_interface, **kwargs)
@@ -272,7 +272,7 @@ class AsyncConnectorExecutorMixin:
                 image_cache=tctx.compiled_image_cache,
                 root_dir=cfg.root_dir,
             )
-            tt = get_proto_task(task, sc)
+            tt = get_proto_task(task, sc, tctx)
 
         custom = json_format.MessageToDict(tt.custom)
         secrets = custom["secrets"] if "secrets" in custom else {}
@@ -292,6 +292,12 @@ class AsyncConnectorExecutorMixin:
             if resource.log_links:
                 for link in resource.log_links:
                     logger.info(f"{link.name}: {link.uri}")
+                tracker = internal_ctx().data.tracker
+                if tracker is not None:
+                    tracker.record_log_links(
+                        action_id=tctx.action.name,
+                        log_links=[(link.name, link.uri) for link in resource.log_links],
+                    )
             await asyncio.sleep(3)
 
         if resource.phase != TaskExecution.SUCCEEDED:

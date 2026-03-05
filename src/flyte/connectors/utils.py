@@ -5,13 +5,13 @@ from typing import List
 
 import click
 import grpc
-from flyteidl2.core.execution_pb2 import TaskExecution
-from flyteidl2.core.tasks_pb2 import TaskTemplate
-from flyteidl2.service import connector_pb2
-from flyteidl2.service.connector_pb2_grpc import (
+from flyteidl2.connector import service_pb2
+from flyteidl2.connector.service_pb2_grpc import (
     add_AsyncConnectorServiceServicer_to_server,
     add_ConnectorMetadataServiceServicer_to_server,
 )
+from flyteidl2.core.execution_pb2 import TaskExecution
+from flyteidl2.core.tasks_pb2 import TaskTemplate
 from rich.console import Console
 from rich.table import Table
 
@@ -33,13 +33,13 @@ def convert_to_flyte_phase(state: str) -> TaskExecution.Phase:
     state = state.lower()
     if state in ["failed", "timeout", "timedout", "canceled", "cancelled", "skipped"]:
         return TaskExecution.FAILED
-    if state in ["internal_error"]:
+    if state == "internal_error":
         return TaskExecution.RETRYABLE_FAILED
     elif state in ["done", "succeeded", "success", "completed"]:
         return TaskExecution.SUCCEEDED
     elif state in ["running", "terminating"]:
         return TaskExecution.RUNNING
-    elif state in ["pending"]:
+    elif state == "pending":
         return TaskExecution.INITIALIZING
     raise ValueError(f"Unrecognized state: {state}")
 
@@ -94,7 +94,7 @@ def _start_health_check_server(server: grpc.Server, worker: int):
             experimental_thread_pool=futures.ThreadPoolExecutor(max_workers=worker),
         )
 
-        for service in connector_pb2.DESCRIPTOR.services_by_name.values():
+        for service in service_pb2.DESCRIPTOR.services_by_name.values():
             health_servicer.set(service.full_name, health_pb2.HealthCheckResponse.SERVING)
         health_servicer.set(health.SERVICE_NAME, health_pb2.HealthCheckResponse.SERVING)
 

@@ -4,7 +4,8 @@ from dataclasses import dataclass
 from typing import AsyncIterator, Iterator, Literal, Tuple, Union
 
 import rich.repr
-from flyteidl.admin import common_pb2, project_pb2
+from flyteidl2.common import list_pb2
+from flyteidl2.project import project_service_pb2
 
 from flyte._initialize import ensure_client, get_client
 from flyte.syncify import syncify
@@ -19,7 +20,7 @@ class Project(ToJSONMixin):
     A class representing a project in the Union API.
     """
 
-    pb2: project_pb2.Project
+    pb2: project_service_pb2.Project
 
     @syncify
     @classmethod
@@ -33,12 +34,12 @@ class Project(ToJSONMixin):
         ensure_client()
         service = get_client().project_domain_service  # type: ignore
         resp = await service.GetProject(
-            project_pb2.ProjectGetRequest(
+            project_service_pb2.GetProjectRequest(
                 id=name,
                 # org=org,
             )
         )
-        return cls(resp)
+        return cls(resp.project)
 
     @syncify
     @classmethod
@@ -57,13 +58,13 @@ class Project(ToJSONMixin):
         ensure_client()
         token = None
         sort_by = sort_by or ("created_at", "asc")
-        sort_pb2 = common_pb2.Sort(
-            key=sort_by[0], direction=common_pb2.Sort.ASCENDING if sort_by[1] == "asc" else common_pb2.Sort.DESCENDING
+        sort_pb2 = list_pb2.Sort(
+            key=sort_by[0], direction=list_pb2.Sort.ASCENDING if sort_by[1] == "asc" else list_pb2.Sort.DESCENDING
         )
         # org = get_common_config().org
         while True:
             resp = await get_client().project_domain_service.ListProjects(  # type: ignore
-                project_pb2.ProjectListRequest(
+                project_service_pb2.ListProjectsRequest(
                     limit=100,
                     token=token,
                     filters=filters,
@@ -71,8 +72,8 @@ class Project(ToJSONMixin):
                     # org=org,
                 )
             )
-            token = resp.token
-            for p in resp.projects:
+            token = resp.projects.token
+            for p in resp.projects.projects:
                 yield cls(p)
             if not token:
                 break
@@ -81,7 +82,7 @@ class Project(ToJSONMixin):
         yield "name", self.pb2.name
         yield "id", self.pb2.id
         yield "description", self.pb2.description
-        yield "state", project_pb2.Project.ProjectState.Name(self.pb2.state)
+        yield "state", project_service_pb2.ProjectState.Name(self.pb2.state)
         yield (
             "labels",
             ", ".join([f"{k}: {v}" for k, v in self.pb2.labels.values.items()]) if self.pb2.labels else None,

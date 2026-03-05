@@ -30,7 +30,7 @@ def test_run_local_controller():
     flyte.init_from_config(None)
 
     result = flyte.with_runcontext(mode="local").run(say_hello_nested, data="hello world")
-    assert result.outputs() == "Hello hello world [0, 1, 4]"
+    assert result.outputs()[0] == "Hello hello world [0, 1, 4]"
 
 
 def test_run_pure_function():

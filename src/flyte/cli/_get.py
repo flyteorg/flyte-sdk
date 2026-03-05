@@ -1,12 +1,17 @@
 import asyncio
-from typing import Tuple, Union, get_args
+import datetime as dt
+import os
+from typing import Tuple, Union
 
 import rich_click as click
 from rich.pretty import pretty_repr
 
 import flyte.remote as remote
+from flyte.models import ActionPhase
+from flyte.remote._common import TimeFilter
 
 from . import _common as common
+from . import _params
 
 
 @click.group(name="get")
@@ -46,6 +51,7 @@ def project(cfg: common.CLIConfig, name: str | None = None):
         console.print(pretty_repr(remote.Project.get(name)))
     else:
         console.print(common.format("Projects", remote.Project.listall(), cfg.output_format))
+    os._exit(0)
 
 
 @get.command(cls=common.CommandBase)
@@ -53,10 +59,30 @@ def project(cfg: common.CLIConfig, name: str | None = None):
 @click.option("--limit", type=int, default=100, help="Limit the number of runs to fetch when listing.")
 @click.option(
     "--in-phase",  # multiple=True, TODO support multiple phases once values in works
-    type=click.Choice(get_args(remote.Phase), case_sensitive=False),
+    type=click.Choice([p.value for p in ActionPhase], case_sensitive=False),
     help="Filter runs by their status.",
 )
 @click.option("--only-mine", is_flag=True, default=False, help="Show only runs created by the current user (you).")
+@click.option("--task-name", type=str, default=None, help="Filter runs by task name.")
+@click.option("--task-version", type=str, default=None, help="Filter runs by task version.")
+@click.option(
+    "--created-after",
+    type=_params.DateTimeType(),
+    default=None,
+    help="Show runs created at or after this datetime (UTC). Accepts ISO dates, 'now', 'today', or 'now - 1 day'.",
+)
+@click.option(
+    "--created-before", type=_params.DateTimeType(), default=None, help="Show runs created before this datetime (UTC)."
+)
+@click.option(
+    "--updated-after",
+    type=_params.DateTimeType(),
+    default=None,
+    help="Show runs updated at or after this datetime (UTC). Accepts ISO dates, 'now', 'today', or 'now - 1 day'.",
+)
+@click.option(
+    "--updated-before", type=_params.DateTimeType(), default=None, help="Show runs updated before this datetime (UTC)."
+)
 @click.pass_obj
 def run(
     cfg: common.CLIConfig,
@@ -66,6 +92,12 @@ def run(
     limit: int = 100,
     in_phase: str | Tuple[str, ...] | None = None,
     only_mine: bool = False,
+    task_name: str | None = None,
+    task_version: str | None = None,
+    created_after: dt.datetime | None = None,
+    created_before: dt.datetime | None = None,
+    updated_after: dt.datetime | None = None,
+    updated_before: dt.datetime | None = None,
 ):
     """
     Get a list of all runs, or details of a specific run by name.
@@ -73,6 +105,13 @@ def run(
     The run details will include information about the run, its status, but only the root action will be shown.
 
     If you want to see the actions for a run, use `get action <run_name>`.
+
+    You can filter runs by task name and optionally task version:
+
+    ```bash
+    $ flyte get run --task-name my_task
+    $ flyte get run --task-name my_task --task-version v1.0
+    ```
     """
 
     cfg.init(project=project, domain=domain)
@@ -83,17 +122,39 @@ def run(
         console.print(common.format(f"Run {name}", [details], "json"))
     else:
         if in_phase and isinstance(in_phase, str):
-            in_phase = (in_phase,)
+            in_phase = (ActionPhase(in_phase),)
 
         subject = None
         if only_mine:
             usr = remote.User.get()
             subject = usr.subject()
 
+        def _utc(d: dt.datetime | None) -> dt.datetime | None:
+            return d.replace(tzinfo=dt.timezone.utc) if d is not None and d.tzinfo is None else d
+
+        created_at = (
+            TimeFilter(after=_utc(created_after), before=_utc(created_before))
+            if created_after or created_before
+            else None
+        )
+        updated_at = (
+            TimeFilter(after=_utc(updated_after), before=_utc(updated_before))
+            if updated_after or updated_before
+            else None
+        )
+
         console.print(
             common.format(
                 "Runs",
-                remote.Run.listall(limit=limit, in_phase=in_phase, created_by_subject=subject),
+                remote.Run.listall(
+                    limit=limit,
+                    in_phase=in_phase,
+                    created_by_subject=subject,
+                    task_name=task_name,
+                    task_version=task_version,
+                    created_at=created_at,
+                    updated_at=updated_at,
+                ),
                 cfg.output_format,
             )
         )
@@ -138,11 +199,17 @@ def task(
 @get.command(cls=common.CommandBase)
 @click.argument("run_name", type=str, required=True)
 @click.argument("action_name", type=str, required=False)
+@click.option(
+    "--in-phase",
+    type=click.Choice([p.value for p in ActionPhase], case_sensitive=False),
+    help="Filter actions by their phase.",
+)
 @click.pass_obj
 def action(
     cfg: common.CLIConfig,
     run_name: str,
     action_name: str | None = None,
+    in_phase: str | None = None,
     project: str | None = None,
     domain: str | None = None,
 ):
@@ -160,8 +227,17 @@ def action(
         )
     else:
         # List all actions for the run
+        if in_phase:
+            in_phase_tuple = (ActionPhase(in_phase),)
+        else:
+            in_phase_tuple = None
+
         console.print(
-            common.format(f"Actions for {run_name}", remote.Action.listall(for_run_name=run_name), cfg.output_format)
+            common.format(
+                f"Actions for {run_name}",
+                remote.Action.listall(for_run_name=run_name, in_phase=in_phase_tuple),
+                cfg.output_format,
+            )
         )
 
 

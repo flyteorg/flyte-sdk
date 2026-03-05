@@ -31,7 +31,7 @@ async def test_create_image_cache_lookup(python_version, expected_py_version):
     deployment_plan = DeploymentPlan(envs={env_name: mock_env})
 
     with patch("flyte._deploy._build_image_bg", new_callable=AsyncMock) as mock_build:
-        mock_build.return_value = (env_name, fake_image_uri)
+        mock_build.return_value = (env_name, fake_image_uri, None)
 
         image_cache = await _build_images(deployment_plan)
 

@@ -4,7 +4,7 @@ import datetime
 import os
 import typing
 from dataclasses import dataclass
-from typing import ClassVar
+from typing import ClassVar, Literal
 
 from flyte.config import set_if_exists
 
@@ -21,9 +21,9 @@ class Storage(object):
     attach_execution_metadata: bool = True
 
     _KEY_ENV_VAR_MAPPING: ClassVar[typing.Dict[str, str]] = {
-        "enable_debug": "UNION_STORAGE_DEBUG",
-        "retries": "UNION_STORAGE_RETRIES",
-        "backoff": "UNION_STORAGE_BACKOFF_SECONDS",
+        "enable_debug": "FLYTE_STORAGE_DEBUG",
+        "retries": "FLYTE_STORAGE_RETRIES",
+        "backoff": "FLYTE_STORAGE_BACKOFF_SECONDS",
     }
 
     def get_fsspec_kwargs(self, anonymous: bool = False, **kwargs) -> typing.Dict[str, typing.Any]:
@@ -62,16 +62,18 @@ class S3(Storage):
     access_key_id: typing.Optional[str] = None
     secret_access_key: typing.Optional[str] = None
     region: typing.Optional[str] = None
+    addressing_style: typing.Optional[str] = None
 
     _KEY_ENV_VAR_MAPPING: ClassVar[typing.Dict[str, str]] = {
         "endpoint": "FLYTE_AWS_ENDPOINT",
         "access_key_id": "FLYTE_AWS_ACCESS_KEY_ID",
         "secret_access_key": "FLYTE_AWS_SECRET_ACCESS_KEY",
+        "addressing_style": "FLYTE_AWS_S3_ADDRESSING_STYLE",
     } | Storage._KEY_ENV_VAR_MAPPING
 
     # Refer to https://github.com/developmentseed/obstore/blob/33654fc37f19a657689eb93327b621e9f9e01494/obstore/python/obstore/store/_aws.pyi#L11
     # for key and secret
-    _CONFIG_KEY_FSSPEC_S3_KEY_ID: ClassVar = "access_key_id"
+    _CONFIG_KEY_FSSPEC_S3_KEY_ID: ClassVar[Literal["access_key_id"]] = "access_key_id"
     _CONFIG_KEY_FSSPEC_S3_SECRET: ClassVar = "secret_access_key"
     _CONFIG_KEY_ENDPOINT: ClassVar = "endpoint_url"
     _KEY_SKIP_SIGNATURE: ClassVar = "skip_signature"
@@ -84,12 +86,14 @@ class S3(Storage):
         endpoint = os.getenv(cls._KEY_ENV_VAR_MAPPING["endpoint"], None)
         access_key_id = os.getenv(cls._KEY_ENV_VAR_MAPPING["access_key_id"], None)
         secret_access_key = os.getenv(cls._KEY_ENV_VAR_MAPPING["secret_access_key"], None)
+        addressing_style = os.getenv(cls._KEY_ENV_VAR_MAPPING["addressing_style"], None)
 
         kwargs = super()._auto_as_kwargs()
         kwargs = set_if_exists(kwargs, "endpoint", endpoint)
         kwargs = set_if_exists(kwargs, "access_key_id", access_key_id)
         kwargs = set_if_exists(kwargs, "secret_access_key", secret_access_key)
         kwargs = set_if_exists(kwargs, "region", region)
+        kwargs = set_if_exists(kwargs, "addressing_style", addressing_style)
 
         return S3(**kwargs)
 
@@ -119,10 +123,13 @@ class S3(Storage):
                 self._CONFIG_KEY_FSSPEC_S3_SECRET, self.secret_access_key
             )
         if self._CONFIG_KEY_ENDPOINT in kwargs or self.endpoint:
-            config["endpoint_url"] = kwargs.pop(self._CONFIG_KEY_ENDPOINT, self.endpoint)
+            config["endpoint"] = kwargs.pop(self._CONFIG_KEY_ENDPOINT, self.endpoint)
 
         retries = kwargs.pop("retries", self.retries)
         backoff = kwargs.pop("backoff", self.backoff)
+
+        if self.addressing_style:
+            config["virtual_hosted_style_request"] = self.addressing_style == "virtual"
 
         if anonymous:
             config[self._KEY_SKIP_SIGNATURE] = True
@@ -141,8 +148,8 @@ class S3(Storage):
 
         if config:
             kwargs["config"] = config
-        kwargs["client_options"] = client_options or None
-        kwargs["retry_config"] = retry_config or None
+        kwargs["client_options"] = client_options
+        kwargs["retry_config"] = retry_config
         if self.region:
             kwargs["region"] = self.region
 
@@ -228,7 +235,7 @@ class ABFS(Storage):
         if anonymous:
             config[self._KEY_SKIP_SIGNATURE] = True
 
-        client_options = {"timeout": "99999s", "allow_http": "true"}
+        client_options = {"timeout": "99999s", "allow_http": True}
 
         if config:
             kwargs["config"] = config

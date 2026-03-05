@@ -2,6 +2,7 @@ from datetime import datetime
 
 import pytest
 from flyteidl2.core import interface_pb2, literals_pb2, types_pb2
+from flyteidl2.core.interface_pb2 import VariableEntry
 from flyteidl2.task import common_pb2
 
 from flyte import Cron, FixedRate, TaskEnvironment, Trigger, TriggerTime
@@ -100,10 +101,16 @@ class TestProcessDefaultInputs:
         """Test with valid default inputs"""
         # Create task inputs with int and string variables
         task_inputs = interface_pb2.VariableMap(
-            variables={
-                "num": interface_pb2.Variable(type=types_pb2.LiteralType(simple=types_pb2.SimpleType.INTEGER)),
-                "text": interface_pb2.Variable(type=types_pb2.LiteralType(simple=types_pb2.SimpleType.STRING)),
-            }
+            variables=[
+                VariableEntry(
+                    key="num",
+                    value=interface_pb2.Variable(type=types_pb2.LiteralType(simple=types_pb2.SimpleType.INTEGER)),
+                ),
+                VariableEntry(
+                    key="text",
+                    value=interface_pb2.Variable(type=types_pb2.LiteralType(simple=types_pb2.SimpleType.STRING)),
+                ),
+            ]
         )
 
         default_inputs = {"num": 42, "text": "hello"}
@@ -120,9 +127,12 @@ class TestProcessDefaultInputs:
     async def test_invalid_input_name(self):
         """Test with input name not in task inputs"""
         task_inputs = interface_pb2.VariableMap(
-            variables={
-                "valid_input": interface_pb2.Variable(type=types_pb2.LiteralType(simple=types_pb2.SimpleType.INTEGER))
-            }
+            variables=[
+                VariableEntry(
+                    key="valid_input",
+                    value=interface_pb2.Variable(type=types_pb2.LiteralType(simple=types_pb2.SimpleType.INTEGER)),
+                )
+            ]
         )
 
         default_inputs = {"invalid_input": 42}
@@ -135,10 +145,16 @@ class TestProcessDefaultInputs:
         """Test that task default inputs are merged with trigger defaults"""
         # Create task inputs
         task_inputs = interface_pb2.VariableMap(
-            variables={
-                "a": interface_pb2.Variable(type=types_pb2.LiteralType(simple=types_pb2.SimpleType.INTEGER)),
-                "b": interface_pb2.Variable(type=types_pb2.LiteralType(simple=types_pb2.SimpleType.STRING)),
-            }
+            variables=[
+                VariableEntry(
+                    key="a",
+                    value=interface_pb2.Variable(type=types_pb2.LiteralType(simple=types_pb2.SimpleType.INTEGER)),
+                ),
+                VariableEntry(
+                    key="b",
+                    value=interface_pb2.Variable(type=types_pb2.LiteralType(simple=types_pb2.SimpleType.STRING)),
+                ),
+            ]
         )
 
         # Create task default input for 'b'
@@ -168,9 +184,12 @@ class TestProcessDefaultInputs:
     async def test_trigger_defaults_override_task_defaults(self):
         """Test that trigger defaults override task defaults"""
         task_inputs = interface_pb2.VariableMap(
-            variables={
-                "x": interface_pb2.Variable(type=types_pb2.LiteralType(simple=types_pb2.SimpleType.INTEGER)),
-            }
+            variables=[
+                VariableEntry(
+                    key="x",
+                    value=interface_pb2.Variable(type=types_pb2.LiteralType(simple=types_pb2.SimpleType.INTEGER)),
+                )
+            ]
         )
 
         task_default_inputs = [
@@ -329,11 +348,12 @@ class TestToTaskTrigger:
         )
 
         task_inputs = interface_pb2.VariableMap(
-            variables={
-                "trigger_time": interface_pb2.Variable(
-                    type=types_pb2.LiteralType(simple=types_pb2.SimpleType.DATETIME)
-                ),
-            }
+            variables=[
+                VariableEntry(
+                    key="trigger_time",
+                    value=interface_pb2.Variable(type=types_pb2.LiteralType(simple=types_pb2.SimpleType.DATETIME)),
+                )
+            ]
         )
         task_default_inputs = []
 
@@ -351,9 +371,12 @@ class TestToTaskTrigger:
         )
 
         task_inputs = interface_pb2.VariableMap(
-            variables={
-                "valid_input": interface_pb2.Variable(type=types_pb2.LiteralType(simple=types_pb2.SimpleType.DATETIME)),
-            }
+            variables=[
+                VariableEntry(
+                    key="valid_input",
+                    value=interface_pb2.Variable(type=types_pb2.LiteralType(simple=types_pb2.SimpleType.DATETIME)),
+                )
+            ]
         )
         task_default_inputs = []
 
@@ -370,10 +393,16 @@ class TestToTaskTrigger:
         )
 
         task_inputs = interface_pb2.VariableMap(
-            variables={
-                "num": interface_pb2.Variable(type=types_pb2.LiteralType(simple=types_pb2.SimpleType.INTEGER)),
-                "text": interface_pb2.Variable(type=types_pb2.LiteralType(simple=types_pb2.SimpleType.STRING)),
-            }
+            variables=[
+                VariableEntry(
+                    key="num",
+                    value=interface_pb2.Variable(type=types_pb2.LiteralType(simple=types_pb2.SimpleType.INTEGER)),
+                ),
+                VariableEntry(
+                    key="text",
+                    value=interface_pb2.Variable(type=types_pb2.LiteralType(simple=types_pb2.SimpleType.STRING)),
+                ),
+            ]
         )
         task_default_inputs = []
 
@@ -394,12 +423,16 @@ class TestToTaskTrigger:
         )
 
         task_inputs = interface_pb2.VariableMap(
-            variables={
-                "trigger_time": interface_pb2.Variable(
-                    type=types_pb2.LiteralType(simple=types_pb2.SimpleType.DATETIME)
+            variables=[
+                VariableEntry(
+                    key="trigger_time",
+                    value=interface_pb2.Variable(type=types_pb2.LiteralType(simple=types_pb2.SimpleType.DATETIME)),
                 ),
-                "count": interface_pb2.Variable(type=types_pb2.LiteralType(simple=types_pb2.SimpleType.INTEGER)),
-            }
+                VariableEntry(
+                    key="count",
+                    value=interface_pb2.Variable(type=types_pb2.LiteralType(simple=types_pb2.SimpleType.INTEGER)),
+                ),
+            ]
         )
         task_default_inputs = []
 
@@ -501,11 +534,12 @@ class TestAutomationSpec:
         )
 
         task_inputs = interface_pb2.VariableMap(
-            variables={
-                "scheduled_at": interface_pb2.Variable(
-                    type=types_pb2.LiteralType(simple=types_pb2.SimpleType.DATETIME)
-                ),
-            }
+            variables=[
+                VariableEntry(
+                    key="scheduled_at",
+                    value=interface_pb2.Variable(type=types_pb2.LiteralType(simple=types_pb2.SimpleType.DATETIME)),
+                )
+            ]
         )
 
         result = await to_task_trigger(trigger, "test_task", task_inputs, [])
@@ -552,10 +586,11 @@ async def test_task_with_trigger_all_options():
     task_template = comprehensive_task
 
     # Convert native interface inputs to protobuf VariableMap
-    task_inputs = interface_pb2.VariableMap()
+    variables_list = []
     for input_name, (input_type, _) in task_template.interface.inputs.items():
         lt = TypeEngine.to_literal_type(input_type)
-        task_inputs.variables[input_name].CopyFrom(interface_pb2.Variable(type=lt))
+        variables_list.append(VariableEntry(key=input_name, value=interface_pb2.Variable(type=lt)))
+    task_inputs = interface_pb2.VariableMap(variables=variables_list)
 
     # Convert default inputs to NamedParameters
     task_default_inputs = await convert_upload_default_inputs(task_template.interface)

@@ -257,3 +257,56 @@ def test_extract_task_module_site_packages_case_sensitivity(mock_task, tmp_path)
     with patch("inspect.getmodule", return_value=mock_module):
         with pytest.raises(ValueError, match="is not relative to"):
             extract_task_module(mock_task, tmp_path)
+
+
+def test_extract_task_module_local_venv_site_packages(mock_task, tmp_path):
+    """Test that modules in local venv site-packages are treated as installed packages.
+
+    Even if the virtual environment is inside the source directory (e.g., source_dir/.venv),
+    modules installed in site-packages should use the package name, not the relative path.
+    """
+    mock_func = MagicMock()
+    mock_func.__name__ = "venv_task_func"
+    mock_task.func = mock_func
+
+    # Create a mock module that appears to be in a local venv site-packages
+    # This path is relative to tmp_path but contains "site-packages"
+    venv_path = tmp_path / ".venv" / "lib" / "python3.9" / "site-packages" / "my_task_library" / "tasks.py"
+
+    mock_module = MagicMock()
+    mock_module.__name__ = "my_task_library.tasks"
+    mock_module.__file__ = str(venv_path)
+
+    with patch("inspect.getmodule", return_value=mock_module):
+        entity_name, module_name = extract_task_module(mock_task, tmp_path)
+
+        # Should extract only the package name and entity name, not the full venv path
+        assert entity_name == "venv_task_func"
+        assert module_name == "my_task_library.tasks"
+        # Should NOT be something like ".venv.lib.python3.9.site-packages.my_task_library.tasks"
+
+
+def test_extract_task_module_local_venv_dist_packages(mock_task, tmp_path):
+    """Test that modules in local venv dist-packages are treated as installed packages.
+
+    Similar to site-packages, dist-packages in a local venv should also use the package name.
+    """
+    mock_func = MagicMock()
+    mock_func.__name__ = "dist_venv_func"
+    mock_task.func = mock_func
+
+    # Create a mock module that appears to be in a local venv dist-packages
+    # This path is relative to tmp_path but contains "dist-packages"
+    venv_path = tmp_path / "venv" / "lib" / "python3.10" / "dist-packages" / "published_lib" / "module.py"
+
+    mock_module = MagicMock()
+    mock_module.__name__ = "published_lib.module"
+    mock_module.__file__ = str(venv_path)
+
+    with patch("inspect.getmodule", return_value=mock_module):
+        entity_name, module_name = extract_task_module(mock_task, tmp_path)
+
+        # Should extract only the package name and entity name, not the full venv path
+        assert entity_name == "dist_venv_func"
+        assert module_name == "published_lib.module"
+        # Should NOT be something like "venv.lib.python3.10.dist-packages.published_lib.module"

@@ -143,7 +143,7 @@ def test_native_interface_int_literal():
     if sys.version_info >= (3, 11):
         assert interface.__repr__() == "(i: Any) -> (o0: Any, o1: str):"
     else:
-        assert interface.__repr__() == "(i: Any) -> (o0: typing.Any, o1: str):"
+        assert interface.__repr__() == "(i: typing.Any) -> (o0: typing.Any, o1: str):"
     assert interface.inputs is not None
     assert "i" in interface.inputs
     assert get_origin(interface.inputs["i"][0]) is None

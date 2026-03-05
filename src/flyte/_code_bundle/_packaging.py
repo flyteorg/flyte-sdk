@@ -146,12 +146,14 @@ def create_bundle(
     tar_path = output_dir / "tmp.tar"
     with tarfile.open(str(tar_path), "w", dereference=deref_symlinks) as tar:
         for ws_file in ls:
-            rel_path = os.path.relpath(ws_file, start=source)
+            # Use pathlib to compute relative path and convert to POSIX format
+            # This ensures tarball entries use forward slashes on all platforms (including Windows)
+            rel_path = pathlib.Path(ws_file).relative_to(source).as_posix()
             tar.add(
                 os.path.join(source, ws_file),
                 recursive=False,
                 arcname=rel_path,
-                filter=lambda x: tar_strip_file_attributes(x),
+                filter=tar_strip_file_attributes,
             )
 
     size_mbs = tar_path.stat().st_size / 1024 / 1024

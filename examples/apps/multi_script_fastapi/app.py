@@ -10,19 +10,24 @@ from flyte.app.extras import FastAPIAppEnvironment
 app = FastAPI(title="Multi-file FastAPI Demo", description="A FastAPI app with multiple files", version="1.0.0")
 
 app_env = FastAPIAppEnvironment(
-    name="fastapi-multi-file",
+    name="fastapi-multi-script-file",
     app=app,
     description="A FastAPI app demonstrating multi-file deployments.",
     image=flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages("fastapi", "uvicorn"),
     resources=flyte.Resources(cpu=1, memory="512Mi"),
     requires_auth=False,
+    include=["utils/*.py"],
 )
 
 
 @app.get("/")
 async def root() -> str:
     """Root endpoint returning a welcome message."""
-    return function()
+    # support for local function imports, but any import here requires specifying
+    # the include argument.
+    from utils.helpers import helper
+
+    return helper(function())
 
 
 if __name__ == "__main__":

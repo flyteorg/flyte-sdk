@@ -12,7 +12,7 @@ from typing import Tuple
 import aiofiles
 import grpc
 import httpx
-from flyteidl.service import dataproxy_pb2
+from flyteidl2.dataproxy import dataproxy_service_pb2
 from google.protobuf import duration_pb2
 
 from flyte._initialize import CommonInit, ensure_client, get_client, get_init_config, require_project_and_domain
@@ -54,10 +54,90 @@ def hash_file(file_path: typing.Union[os.PathLike, str]) -> Tuple[bytes, str, in
     return h.digest(), h.hexdigest(), size
 
 
+async def _upload_with_retry(
+    fp: Path,
+    signed_url: str,
+    extra_headers: dict,
+    verify: bool,
+    max_retries: int = 3,
+    min_backoff_sec: float = 0.5,
+    max_backoff_sec: float = 10.0,
+):
+    """
+    Upload file to signed URL with exponential backoff retry.
+
+    Retries on transient network errors and 5xx/429/408 HTTP errors.
+    Does not retry on 4xx client errors (except 408/429).
+
+    Args:
+        fp: Path to file to upload
+        signed_url: Pre-signed URL for upload
+        extra_headers: Headers including Content-MD5, Content-Length
+        verify: Whether to verify SSL certificates
+        max_retries: Maximum retry attempts (default: 3)
+        min_backoff_sec: Initial backoff delay (default: 0.5)
+        max_backoff_sec: Maximum backoff delay (default: 10.0)
+
+    Raises:
+        RuntimeSystemError: If upload fails after all retries
+    """
+    from flyte._logging import logger
+
+    retry_attempt = 0
+    last_error = None
+
+    while retry_attempt <= max_retries:
+        async with aiofiles.open(str(fp), "rb") as file:
+            async with httpx.AsyncClient(verify=verify) as aclient:
+                put_resp = await aclient.put(signed_url, headers=extra_headers, content=file)
+
+                # Success
+                if put_resp.status_code in [200, 201, 204]:
+                    if retry_attempt > 0:
+                        logger.info(f"Upload succeeded after {retry_attempt} retries for {fp.name}")
+                    return put_resp
+
+                # Check if retryable status code
+                if put_resp.status_code in [408, 429, 500, 502, 503, 504]:
+                    if retry_attempt >= max_retries:
+                        raise RuntimeSystemError(
+                            "UploadFailed",
+                            f"Failed to upload {fp} after {max_retries} retries: {put_resp.text}",
+                        )
+
+                    # Backoff and retry
+                    retry_attempt += 1
+                    if retry_attempt <= max_retries:
+                        backoff_delay = min(min_backoff_sec * (2 ** (retry_attempt - 1)), max_backoff_sec)
+                        logger.warning(
+                            f"Upload failed for {fp.name}, backing off for {backoff_delay:.2f}s "
+                            f"[retry {retry_attempt}/{max_retries}]: {last_error}"
+                        )
+                        await asyncio.sleep(backoff_delay)
+                else:
+                    # Non-retryable HTTP error
+                    raise RuntimeSystemError(
+                        "UploadFailed",
+                        f"Failed to upload {fp} to {signed_url}, status code: {put_resp.status_code}, "
+                        f"response: {put_resp.text}",
+                    )
+    return None
+
+
 @require_project_and_domain
 async def _upload_single_file(
-    cfg: CommonInit, fp: Path, verify: bool = True, basedir: str | None = None
+    cfg: CommonInit, fp: Path, verify: bool = True, basedir: str | None = None, fname: str | None = None
 ) -> Tuple[str, str]:
+    """
+    Upload a single file to remote storage using a signed URL.
+
+    :param cfg: Configuration containing project and domain information.
+    :param fp: Path to the file to upload.
+    :param verify: Whether to verify SSL certificates.
+    :param basedir: Optional base directory prefix for the remote path.
+    :param fname: Optional file name for the remote path.
+    :return: Tuple of (MD5 digest hex string, remote native URL).
+    """
     md5_bytes, str_digest, _ = hash_file(fp)
     from flyte._logging import logger
 
@@ -66,11 +146,11 @@ async def _upload_single_file(
         expires_in_pb.FromTimedelta(_UPLOAD_EXPIRES_IN)
         client = get_client()
         resp = await client.dataproxy_service.CreateUploadLocation(  # type: ignore
-            dataproxy_pb2.CreateUploadLocationRequest(
+            dataproxy_service_pb2.CreateUploadLocationRequest(
                 project=cfg.project,
                 domain=cfg.domain,
                 content_md5=md5_bytes,
-                filename=fp.name,
+                filename=fname or fp.name,
                 expires_in=expires_in_pb,
                 filename_root=basedir,
                 add_content_md5_metadata=True,
@@ -97,41 +177,42 @@ async def _upload_single_file(
     encoded_md5 = b64encode(md5_bytes)
     content_length = fp.stat().st_size
 
-    async with aiofiles.open(str(fp), "rb") as file:
-        extra_headers.update({"Content-Length": str(content_length), "Content-MD5": encoded_md5.decode("utf-8")})
-        async with httpx.AsyncClient(verify=verify) as aclient:
-            put_resp = await aclient.put(resp.signed_url, headers=extra_headers, content=file)
-            if put_resp.status_code not in [200, 201, 204]:
-                raise RuntimeSystemError(
-                    "UploadFailed",
-                    f"Failed to upload {fp} to {resp.signed_url}, status code: {put_resp.status_code}, "
-                    f"response: {put_resp.text}",
-                )
-        # TODO in old code we did this
-        #             if self._config.platform.insecure_skip_verify is True
-        #             else self._config.platform.ca_cert_file_path,
+    # Update headers with MD5 and content length
+    extra_headers.update({"Content-Length": str(content_length), "Content-MD5": encoded_md5.decode("utf-8")})
+
+    await _upload_with_retry(
+        fp=fp,
+        signed_url=resp.signed_url,
+        extra_headers=extra_headers,
+        verify=verify,
+        max_retries=3,
+        min_backoff_sec=0.5,
+        max_backoff_sec=10.0,
+    )
+
     logger.debug(f"Uploaded with digest {str_digest}, blob location is {resp.native_url}")
     return str_digest, resp.native_url
 
 
 @syncify
-async def upload_file(fp: Path, verify: bool = True) -> Tuple[str, str]:
+async def upload_file(fp: Path, verify: bool = True, fname: str | None = None) -> Tuple[str, str]:
     """
     Uploads a file to a remote location and returns the remote URI.
 
     :param fp: The file path to upload.
     :param verify: Whether to verify the certificate for HTTPS requests.
-    :return: A tuple containing the MD5 digest and the remote URI.
+    :param fname: Optional file name for the remote path.
+    :return: Tuple of (MD5 digest hex string, remote native URL).
     """
-    # This is a placeholder implementation. Replace with actual upload logic.
     ensure_client()
     cfg = get_init_config()
     if not fp.is_file():
         raise ValueError(f"{fp} is not a single file, upload arg must be a single file.")
-    return await _upload_single_file(cfg, fp, verify=verify)
+    return await _upload_single_file(cfg, fp, verify=verify, fname=fname)
 
 
-async def upload_dir(dir_path: Path, verify: bool = True) -> str:
+@syncify
+async def upload_dir(dir_path: Path, verify: bool = True, prefix: str | None = None) -> str:
     """
     Uploads a directory to a remote location and returns the remote URI.
 
@@ -139,13 +220,13 @@ async def upload_dir(dir_path: Path, verify: bool = True) -> str:
     :param verify: Whether to verify the certificate for HTTPS requests.
     :return: The remote URI of the uploaded directory.
     """
-    # This is a placeholder implementation. Replace with actual upload logic.
     ensure_client()
     cfg = get_init_config()
     if not dir_path.is_dir():
         raise ValueError(f"{dir_path} is not a directory, upload arg must be a directory.")
 
-    prefix = uuid.uuid4().hex
+    if prefix is None:
+        prefix = uuid.uuid4().hex
 
     files = dir_path.rglob("*")
     uploaded_files = []
@@ -156,6 +237,9 @@ async def upload_dir(dir_path: Path, verify: bool = True) -> str:
     urls = await asyncio.gather(*uploaded_files)
     native_url = urls[0][1]  # Assuming all files are uploaded to the same prefix
     # native_url is of the form s3://my-s3-bucket/flytesnacks/development/{prefix}/source/empty.md
-    uri = native_url.split(prefix)[0] + "/" + prefix
+    uri = native_url.split(prefix)[0]
+    if not uri.endswith("/"):
+        uri += "/"
+    uri += prefix
 
     return uri

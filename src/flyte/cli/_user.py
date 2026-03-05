@@ -1,3 +1,5 @@
+import os
+
 import rich_click as click
 
 import flyte.remote as remote
@@ -15,3 +17,4 @@ def whoami(
     console = common.get_console()
     user_info = remote.User.get()
     console.print(user_info.to_json())
+    os._exit(0)

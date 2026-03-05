@@ -1,0 +1,10 @@
+[project]
+name = "my-flyte-project"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "my-task-library>=0.4.0",
+    "flyte>=2.0.0b43",
+]

@@ -1,9 +1,36 @@
+import random
+import string
 import typing
+from uuid import uuid4
 
 import grpc.aio
 from grpc.aio import ClientCallDetails, Metadata
 
+import flyte
+
 _default_metadata = Metadata(("accept", "application/grpc"))
+ALPHABET = string.ascii_lowercase + string.digits
+
+
+def fast_short_id():
+    return "".join(random.choices(ALPHABET, k=4))
+
+
+def _generate_request_id() -> str:
+    """
+    Generate a request ID based on the current Flyte context.
+
+    If running within a Flyte task context, creates a request ID using the action's unique_id_str method.
+    Otherwise, falls back to a UUID4.
+
+    :return: The generated request ID string
+    """
+    ctx = flyte.ctx()
+    if ctx and ctx.action:
+        return ctx.action.unique_id_str(salt=fast_short_id())
+
+    # Fall back to UUID4 if context is not available
+    return str(uuid4())
 
 
 def with_metadata(call_details: ClientCallDetails, new_metadata: Metadata) -> ClientCallDetails:
@@ -27,20 +54,27 @@ def with_metadata(call_details: ClientCallDetails, new_metadata: Metadata) -> Cl
 class _BaseDefaultMetadataInterceptor:
     """
     Base class for all default metadata interceptors that provides common functionality.
+    Injects both default metadata (accept header) and x-request-id.
     """
 
     async def _inject_default_metadata(self, call_details: grpc.aio.ClientCallDetails):
         """
-        Injects default metadata into the client call details.
+        Injects default metadata and request ID into the client call details.
 
-        This method adds all key-value pairs from the default metadata dictionary to the
-        client call details metadata. If the client call details don't have metadata,
-        a new Metadata object is created.
+        This method adds:
+        - Default metadata (accept: application/grpc)
+        - x-request-id header with context-based or UUID4 value
 
         :param call_details: The client call details to inject metadata into
         :return: A new ClientCallDetails object with the injected metadata
         """
-        return with_metadata(call_details, _default_metadata)
+        # Generate request ID and combine with default metadata
+        request_id = _generate_request_id()
+        combined_metadata = Metadata(
+            ("accept", "application/grpc"),
+            ("x-request-id", request_id),
+        )
+        return with_metadata(call_details, combined_metadata)
 
 
 class DefaultMetadataUnaryUnaryInterceptor(_BaseDefaultMetadataInterceptor, grpc.aio.UnaryUnaryClientInterceptor):

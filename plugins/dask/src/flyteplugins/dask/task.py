@@ -52,8 +52,8 @@ class Dask:
     :param workers: Configuration for the pods of the default worker group. Optional, defaults to ``WorkerGroup()``.
     """
 
-    scheduler: Scheduler = field(default_factory=lambda: Scheduler())
-    workers: WorkerGroup = field(default_factory=lambda: WorkerGroup())
+    scheduler: Scheduler = field(default_factory=Scheduler)
+    workers: WorkerGroup = field(default_factory=WorkerGroup)
 
 
 class DownloadCodeBundleSchedulerPlugin(SchedulerPlugin):

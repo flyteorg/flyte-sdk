@@ -237,7 +237,7 @@ def test_with_runcontext_basic():
 
     # Simulate main block: with_runcontext().run() to trigger execution
     result = with_runcontext(mode="local", custom_context={"project": "my-project", "env": "prod"}).run(test_task)
-    assert result.outputs() == {"project": "my-project", "env": "prod"}
+    assert result.outputs()[0] == {"project": "my-project", "env": "prod"}
 
 
 def test_with_runcontext_child_task_propagation():
@@ -264,7 +264,7 @@ def test_with_runcontext_child_task_propagation():
     result = with_runcontext(mode="local", custom_context={"project": "test-proj", "entity": "test-entity"}).run(
         parent_task
     )
-    outputs = result.outputs()
+    outputs = result.outputs()[0]
     assert outputs["parent"] == {"project": "test-proj", "entity": "test-entity"}
     assert outputs["child"] == {"project": "test-proj", "entity": "test-entity"}
 
@@ -294,7 +294,7 @@ def test_with_runcontext_multiple_levels():
 
     # Main block: context should propagate through all levels
     result = with_runcontext(mode="local", custom_context={"project": "test", "region": "us-west-2"}).run(parent_task)
-    outputs = result.outputs()
+    outputs = result.outputs()[0]
     expected = {"project": "test", "region": "us-west-2"}
     assert outputs["parent"] == expected
     assert outputs["child"] == expected
@@ -326,7 +326,7 @@ def test_with_runcontext_and_context_manager():
     result = with_runcontext(mode="local", custom_context={"project": "base-project", "entity": "base-entity"}).run(
         parent_task
     )
-    outputs = result.outputs()
+    outputs = result.outputs()[0]
 
     # Without override should have base context
     assert outputs["without_override"] == {"project": "base-project", "entity": "base-entity"}
@@ -349,7 +349,7 @@ def test_with_runcontext_empty():
 
     # Main block: no context provided
     result = with_runcontext(mode="local").run(test_task)
-    assert result.outputs() == {}
+    assert result.outputs()[0] == {}
 
 
 def test_with_runcontext_parallel_tasks():
@@ -375,7 +375,7 @@ def test_with_runcontext_parallel_tasks():
 
     # Main block: context should propagate to both parallel tasks
     result = with_runcontext(mode="local", custom_context={"project": "parallel-test", "batch": "123"}).run(parent_task)
-    outputs = result.outputs()
+    outputs = result.outputs()[0]
 
     # Both tasks should have the same context
     expected = {"project": "parallel-test", "batch": "123"}
@@ -395,12 +395,12 @@ def test_with_runcontext_isolation():
 
     # First execution with context
     result1 = with_runcontext(mode="local", custom_context={"project": "project1"}).run(test_task)
-    assert result1.outputs() == {"project": "project1"}
+    assert result1.outputs()[0] == {"project": "project1"}
 
     # Second execution with different context - should not have first context
     result2 = with_runcontext(mode="local", custom_context={"project": "project2", "env": "staging"}).run(test_task)
-    assert result2.outputs() == {"project": "project2", "env": "staging"}
+    assert result2.outputs()[0] == {"project": "project2", "env": "staging"}
 
     # Third execution without context
     result3 = with_runcontext(mode="local").run(test_task)
-    assert result3.outputs() == {}
+    assert result3.outputs()[0] == {}

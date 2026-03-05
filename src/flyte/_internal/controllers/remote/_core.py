@@ -9,6 +9,7 @@ from typing import Awaitable, Coroutine, Optional
 
 import grpc.aio
 from aiolimiter import AsyncLimiter
+from flyteidl2.actions import actions_service_pb2
 from flyteidl2.common import identifier_pb2
 from flyteidl2.task import task_definition_pb2
 from flyteidl2.workflow import queue_service_pb2, run_definition_pb2
@@ -19,7 +20,7 @@ from flyte._logging import log, logger
 
 from ._action import Action
 from ._informer import InformerCache
-from ._service_protocol import ClientSet, QueueService, StateService
+from ._service_protocol import ActionsService, ClientSet, QueueService, StateService
 
 
 class Controller:
@@ -149,7 +150,6 @@ class Controller:
         with self._thread_com_lock:
             return self._thread_exception
 
-    @log
     def _start(self):
         """Start the controller in a separate thread"""
         if self._thread and self._thread.is_alive():
@@ -194,6 +194,7 @@ class Controller:
         client_set = await self._client_coro
         self._state_service: StateService = client_set.state_service
         self._queue_service: QueueService = client_set.queue_service
+        self._actions_service: ActionsService | None = client_set.actions_service
         self._resource_log_task = asyncio.create_task(self._bg_log_stats())
         # We will wait for this to signal that the thread is ready
         # Signal the main thread that we're ready
@@ -214,9 +215,10 @@ class Controller:
         """Target function for the controller thread that creates and manages its own event loop"""
         try:
             # Create a new event loop for this thread
-            self._loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(self._loop)
-            self._loop.set_exception_handler(flyte.errors.silence_grpc_polling_error)
+            with self._thread_com_lock:
+                self._loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(self._loop)
+                self._loop.set_exception_handler(flyte.errors.silence_grpc_polling_error)
             logger.debug(f"Controller thread started with new event loop: {threading.current_thread().name}")
 
             # Create an event to signal the errors were observed in the thread's loop
@@ -244,6 +246,7 @@ class Controller:
             self._state_service,
             fn=self._bg_handle_informer_error,
             timeout=self._informer_start_wait_timeout,
+            actions_service=self._actions_service,
         )
         if informer:
             return await informer.get(action_id.name)
@@ -259,7 +262,6 @@ class Controller:
         if informer:
             await informer.stop()
 
-    @log
     async def _bg_submit_action(self, action: Action) -> Action:
         """Submit a resource and await its completion, returning the final state"""
         logger.debug(f"{threading.current_thread().name} Submitting action {action.name}")
@@ -270,6 +272,7 @@ class Controller:
             self._state_service,
             fn=self._bg_handle_informer_error,
             timeout=self._informer_start_wait_timeout,
+            actions_service=self._actions_service,
         )
         await informer.submit(action)
 
@@ -284,7 +287,7 @@ class Controller:
             raise ValueError(f"Action {action.name} not found")
         logger.debug(f"{threading.current_thread().name} Removed completion event for action {action.name}")
         await informer.remove(action.name)  # TODO we should not remove maybe, we should keep a record of completed?
-        logger.debug(f"{threading.current_thread().name} Removed action {action.name}, final={final_resource}")
+        logger.debug(f"{threading.current_thread().name} Removed action {action.name}")
         return final_resource
 
     async def _bg_cancel_action(self, action: Action):
@@ -301,10 +304,16 @@ class Controller:
             async with self._rate_limiter:
                 logger.info(f"Cancelling action: {action.name}")
                 try:
-                    await self._queue_service.AbortQueuedAction(
-                        queue_service_pb2.AbortQueuedActionRequest(action_id=action.action_id),
-                        wait_for_ready=True,
-                    )
+                    if self._actions_service:
+                        await self._actions_service.Abort(
+                            actions_service_pb2.AbortRequest(action_id=action.action_id),
+                            wait_for_ready=True,
+                        )
+                    else:
+                        await self._queue_service.AbortQueuedAction(
+                            queue_service_pb2.AbortQueuedActionRequest(action_id=action.action_id),
+                            wait_for_ready=True,
+                        )
                     logger.info(f"Successfully cancelled action: {action.name}")
                 except grpc.aio.AioRpcError as e:
                     if e.code() in [
@@ -356,20 +365,36 @@ class Controller:
 
                 logger.debug(f"Attempting to launch action: {action.name}")
                 try:
-                    await self._queue_service.EnqueueAction(
-                        queue_service_pb2.EnqueueActionRequest(
-                            action_id=action.action_id,
-                            parent_action_name=action.parent_action_name,
-                            task=task,
-                            trace=trace,
-                            input_uri=action.inputs_uri,
-                            run_output_base=action.run_output_base,
-                            group=action.group.name if action.group else None,
-                            # Subject is not used in the current implementation
-                        ),
-                        wait_for_ready=True,
-                        timeout=self._enqueue_timeout,
-                    )
+                    if self._actions_service:
+                        await self._actions_service.Enqueue(
+                            actions_service_pb2.EnqueueRequest(
+                                action=actions_service_pb2.Action(
+                                    action_id=action.action_id,
+                                    parent_action_name=action.parent_action_name,
+                                    task=task,
+                                    trace=trace,
+                                    input_uri=action.inputs_uri,
+                                    run_output_base=action.run_output_base,
+                                    group=action.group.name if action.group else None,
+                                ),
+                            ),
+                            wait_for_ready=True,
+                            timeout=self._enqueue_timeout,
+                        )
+                    else:
+                        await self._queue_service.EnqueueAction(
+                            queue_service_pb2.EnqueueActionRequest(
+                                action_id=action.action_id,
+                                parent_action_name=action.parent_action_name,
+                                task=task,
+                                trace=trace,
+                                input_uri=action.inputs_uri,
+                                run_output_base=action.run_output_base,
+                                group=action.group.name if action.group else None,
+                            ),
+                            wait_for_ready=True,
+                            timeout=self._enqueue_timeout,
+                        )
                     logger.info(f"Successfully launched action: {action.name}")
                 except grpc.aio.AioRpcError as e:
                     if e.code() == grpc.StatusCode.ALREADY_EXISTS:
@@ -384,14 +409,13 @@ class Controller:
                             e.code().name, f"Precondition failed: {e.details()}"
                         ) from e
                     # For all other errors, we will retry with backoff
-                    logger.exception(
+                    logger.error(
                         f"Failed to launch action: {action.name}, Code: {e.code()}, "
                         f"Details {e.details()} backing off..."
                     )
                     logger.debug(f"Action details: {action}")
                     raise flyte.errors.SlowDownError(f"Failed to launch action: {e.details()}") from e
 
-    @log
     async def _bg_process(self, action: Action):
         """Process resource updates"""
         logger.debug(f"Processing action: name={action.name}, started={action.is_started()}")
@@ -416,7 +440,6 @@ class Controller:
                 logger.info(f"Resource stats: Started={started}, Pending={pending}, Terminal={terminal}")
             await asyncio.sleep(self._resource_log_interval)
 
-    @log
     async def _bg_run(self, worker_id: str):
         """Run loop with resource status logging"""
         logger.info(f"Worker {worker_id} started")

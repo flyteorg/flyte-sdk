@@ -14,8 +14,10 @@ from ._deploy import deploy
 from ._gen import gen
 from ._get import get
 from ._plugins import discover_and_register_plugins
+from ._prefetch import prefetch
 from ._run import run
 from ._serve import serve
+from ._start import start
 from ._update import update
 from ._user import whoami
 
@@ -39,6 +41,10 @@ help_config = click.RichHelpConfiguration(
             {
                 "name": "Build and deploy environments, tasks and images.",
                 "commands": ["build", "deploy"],
+            },
+            {
+                "name": "Prefetch artifacts from remote registries.",
+                "commands": ["prefetch"],
             },
             {
                 "name": "Documentation generation",
@@ -120,7 +126,7 @@ def _verbosity_to_loglevel(verbosity: int) -> int | None:
     "--config",
     "config_file",
     required=False,
-    type=click.Path(exists=True),
+    type=click.Path(exists=True, dir_okay=False),
     help="Path to the configuration file to use. If not specified, the default configuration file is used.",
 )
 @click.option(
@@ -142,6 +148,15 @@ def _verbosity_to_loglevel(verbosity: int) -> int | None:
     show_default=True,
     required=False,
 )
+@click.option(
+    "--reset-root-logger",
+    is_flag=True,
+    required=False,
+    help="If set, the root logger will be reset to use Flyte logging style",
+    type=bool,
+    default=False,
+    show_default=True,
+)
 @click.rich_config(help_config=help_config)
 @click.pass_context
 def main(
@@ -150,6 +165,7 @@ def main(
     insecure: bool,
     verbose: int,
     log_format: LogFormat,
+    reset_root_logger: bool,
     org: str | None,
     config_file: str | None,
     auth_type: str | None = None,
@@ -193,8 +209,10 @@ def main(
     import flyte.config as config
 
     log_level = _verbosity_to_loglevel(verbose)
-    if log_level is not None or log_format != "console":
-        initialize_logger(log_level=log_level, log_format=log_format)
+    if log_level is not None or log_format != "console" or reset_root_logger:
+        initialize_logger(
+            log_level=log_level, log_format=log_format, enable_rich=True, reset_root_logger=reset_root_logger
+        )
 
     cfg = config.auto(config_file=config_file)
     if cfg.source:
@@ -203,6 +221,7 @@ def main(
     ctx.obj = CLIConfig(
         log_level=log_level,
         log_format=log_format,
+        reset_root_logger=reset_root_logger,
         endpoint=endpoint,
         insecure=insecure,
         org=org,
@@ -211,6 +230,10 @@ def main(
         auth_type=auth_type,
         output_format=output_format,
     )
+
+    from flyte._status import set_output_mode
+
+    set_output_mode("rich" if output_format == "table" else "plain")
 
 
 main.add_command(run)
@@ -224,6 +247,8 @@ main.add_command(build)
 main.add_command(whoami)  # type: ignore
 main.add_command(update)  # type: ignore
 main.add_command(serve)  # type: ignore
+main.add_command(start)  # type: ignore
+main.add_command(prefetch)  # type: ignore
 
 # Discover and register CLI plugins from installed packages
 discover_and_register_plugins(main)
