@@ -255,8 +255,8 @@ def create_panel_app():
         width=100,
         stylesheets=[
             ":host .bk-btn { background-color: #050310 !important; color: #f7f5fd !important; "
-            "font-size: 12px !important; border: 1px solid #7652a2 !important; line-height: 26px !important; }",
-            ":host .bk-active { background-color: #7652a2 !important; color: #f7f5fd !important; }",
+            "font-size: 12px !important; border: 1px solid #8C4FFF !important; line-height: 26px !important; }",
+            ":host .bk-active { background-color: #8C4FFF !important; color: #f7f5fd !important; }",
         ],
     )
 
@@ -466,7 +466,7 @@ def create_panel_app():
         button_type="default",
         width=40,
         stylesheets=[
-            ":host .bk-btn { background-color: #7652a2 !important; color: #f7f5fd !important; "
+            ":host .bk-btn { background-color: #8C4FFF !important; color: #f7f5fd !important; "
             "font-size: 16px !important; border: none !important; padding: 2px 8px !important; "
             "margin-right: 10px !important; }"
         ],
