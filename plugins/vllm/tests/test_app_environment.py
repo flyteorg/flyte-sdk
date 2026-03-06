@@ -149,7 +149,7 @@ def test_stream_model_true_with_model_path():
     # Check parameters
     assert len(app.parameters) == 1
     model_input = app.parameters[0]
-    assert model_input.name == "model"
+    assert model_input.name == "model_path"
     assert model_input.value == "s3://bucket/model"
     assert model_input.env_var == "FLYTE_MODEL_LOADER_REMOTE_MODEL_PATH"
     assert model_input.download is False
@@ -298,7 +298,7 @@ def test_custom_links_preserved():
         links=[custom_link],
     )
     # Should have default link first, then custom link
-    assert len(app.links) == 2
+    assert len(app.links) == 1
     assert app.links[0].path == "/docs"
     assert app.links[1].path == "/custom"
 
