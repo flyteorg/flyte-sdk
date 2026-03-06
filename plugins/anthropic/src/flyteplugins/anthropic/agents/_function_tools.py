@@ -13,10 +13,9 @@ import typing
 from dataclasses import dataclass, field
 from functools import partial
 
+import anthropic
 from flyte._task import AsyncFunctionTaskTemplate
 from flyte.models import NativeInterface
-
-import anthropic
 
 logger = logging.getLogger(__name__)
 

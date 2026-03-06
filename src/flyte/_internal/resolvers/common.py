@@ -30,7 +30,7 @@ class Resolver(Protocol):
         """
         raise NotImplementedError
 
-    def loader_args(self, t: TaskTemplate, root_dir: Optional[Path]) -> List[str] | str:
+    def loader_args(self, task: TaskTemplate, root_dir: Optional[Path]) -> List[str] | str:
         """
         Return a list of strings that can help identify the parameter TaskTemplate. Each string should not have
         spaces or special characters. This is used to identify the task in the resolver.
