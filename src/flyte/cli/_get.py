@@ -39,10 +39,14 @@ def get():
 
 @get.command()
 @click.argument("name", type=str, required=False)
+@click.option("--archived", is_flag=True, default=False, help="Show archived projects instead of active ones.")
 @click.pass_obj
-def project(cfg: common.CLIConfig, name: str | None = None):
+def project(cfg: common.CLIConfig, name: str | None = None, archived: bool = False):
     """
     Get a list of all projects, or details of a specific project by name.
+
+    By default, only active (unarchived) projects are shown. Use `--archived` to
+    show archived projects instead.
     """
     cfg.init()
 
@@ -50,7 +54,7 @@ def project(cfg: common.CLIConfig, name: str | None = None):
     if name:
         console.print(pretty_repr(remote.Project.get(name)))
     else:
-        console.print(common.format("Projects", remote.Project.listall(), cfg.output_format))
+        console.print(common.format("Projects", remote.Project.listall(archived=archived), cfg.output_format))
     os._exit(0)
 
 
