@@ -31,6 +31,7 @@ from flyte.models import (
 from flyte.syncify import syncify
 
 from ._constants import FLYTE_SYS_PATH
+from ._internal.controllers.remote._service_protocol import ACTIONS_SERVICE_CHECK_ENV_VAR, use_actions_service
 
 if TYPE_CHECKING:
     from flyte.remote import Run
@@ -286,6 +287,10 @@ class _Runner:
                 if pathlib.Path(p).is_relative_to(root_dir_abs)
             ]
             env[FLYTE_SYS_PATH] = ":".join(added_paths)
+
+        # TODO: Remove once the actions service is the default and this env var is no longer needed.
+        if use_actions_service():
+            env[ACTIONS_SERVICE_CHECK_ENV_VAR] = "1"
 
         if not self._dry_run:
             if get_client() is None:
