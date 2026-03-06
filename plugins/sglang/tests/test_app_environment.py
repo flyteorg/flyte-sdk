@@ -22,7 +22,7 @@ def test_basic_init_with_model_path():
     assert app.name == "test-app"
     assert app.model_path == "s3://bucket/model"
     assert app.model_id == "test-model"
-    assert app.port.port == 8000
+    assert app.port.port == 8080
     assert app.type == "SGLang"
     assert app.stream_model is True
     assert app.image == DEFAULT_SGLANG_IMAGE
@@ -38,7 +38,7 @@ def test_basic_init_with_model_hf_path():
     assert app.name == "test-app"
     assert app.model_hf_path == "Qwen/Qwen3-0.6B"
     assert app.model_id == "test-model"
-    assert app.port.port == 8000
+    assert app.port.port == 8080
     assert app.type == "SGLang"
     assert app.image == DEFAULT_SGLANG_IMAGE
     # When using model_hf_path, no parameters should be created
