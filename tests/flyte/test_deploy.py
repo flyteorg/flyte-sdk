@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import inspect
+import sys
+import types
 from dataclasses import replace
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -12,8 +14,11 @@ from flyte._deploy import (
     DeploymentPlan,
     _build_image_bg,
     _build_images,
+    _check_duplicate_env,
     _get_documentation_entity,
+    _recursive_discover,
     _update_interface_inputs_and_outputs_docstring,
+    plan_deploy,
 )
 from flyte._docstring import Docstring
 from flyte._internal.imagebuild.image_builder import ImageCache
@@ -191,6 +196,77 @@ def test_update_interface_mismatched_names():
     result_inputs = {entry.key: entry.value for entry in result.inputs.variables}
     assert result_inputs["x"].description == ""
     assert result_inputs["y"].description == ""
+
+
+# ---------------------------------------------------------------------------
+# _check_duplicate_env / plan_deploy — duplicate detection tests
+# ---------------------------------------------------------------------------
+
+
+def _make_module(name: str, file: str, env: flyte.TaskEnvironment) -> types.ModuleType:
+    mod = types.ModuleType(name)
+    mod.__file__ = file
+    mod.env = env
+    return mod
+
+
+@pytest.fixture()
+def dual_import_envs():
+    """Two distinct env objects with the same name, each registered to a module
+    that points at the same physical file (the classic src/ dual-import scenario)."""
+    env1 = flyte.TaskEnvironment(name="my_env", image="python:3.10")
+    env2 = flyte.TaskEnvironment(name="my_env", image="python:3.10")
+    mod1 = _make_module("my_module.envs", "/project/src/my_module/envs.py", env1)
+    mod2 = _make_module("src.my_module.envs", "/project/src/my_module/envs.py", env2)
+    modules = {"my_module.envs": mod1, "src.my_module.envs": mod2}
+    return env1, env2, modules
+
+
+def test_check_duplicate_env_dual_import(dual_import_envs):
+    """Same physical file imported under two module names → dual-import hint."""
+    env1, env2, modules = dual_import_envs
+    with (
+        patch.dict(sys.modules, modules),
+        patch("flyte._deploy.os.path.samefile", return_value=True),
+        pytest.raises(ValueError, match="imported twice under different module names"),
+    ):
+        _check_duplicate_env(env1, env2)
+
+
+def test_check_duplicate_env_true_duplicate():
+    """Two envs with the same name from genuinely different files → plain duplicate error."""
+    env1 = flyte.TaskEnvironment(name="my_env", image="python:3.10")
+    env2 = flyte.TaskEnvironment(name="my_env", image="python:3.10")
+    mod1 = _make_module("module_a.envs", "/project/module_a/envs.py", env1)
+    mod2 = _make_module("module_b.envs", "/project/module_b/envs.py", env2)
+    with (
+        patch.dict(sys.modules, {"module_a.envs": mod1, "module_b.envs": mod2}),
+        patch("flyte._deploy.os.path.samefile", return_value=False),
+        pytest.raises(ValueError, match="Duplicate environment name 'my_env'"),
+    ):
+        _check_duplicate_env(env1, env2)
+
+
+def test_plan_deploy_dual_import_raises(dual_import_envs):
+    """plan_deploy surfaces the dual-import error when the same env name appears twice."""
+    env1, env2, modules = dual_import_envs
+    with (
+        patch.dict(sys.modules, modules),
+        patch("flyte._deploy.os.path.samefile", return_value=True),
+        pytest.raises(ValueError, match="imported twice under different module names"),
+    ):
+        plan_deploy(env1, env2)
+
+
+def test_recursive_discover_dual_import_raises(dual_import_envs):
+    """_recursive_discover surfaces the dual-import error via the identity guard."""
+    env1, env2, modules = dual_import_envs
+    with (
+        patch.dict(sys.modules, modules),
+        patch("flyte._deploy.os.path.samefile", return_value=True),
+        pytest.raises(ValueError, match="imported twice under different module names"),
+    ):
+        _recursive_discover({"my_env": env1}, env2)
 
 
 # ---------------------------------------------------------------------------

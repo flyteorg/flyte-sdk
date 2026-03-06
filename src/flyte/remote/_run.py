@@ -228,6 +228,26 @@ class Run(ToJSONMixin):
         await self.action.show_logs.aio(attempt, max_lines, show_ts, raw, filter_system=filter_system)
 
     @syncify
+    async def get_logs(
+        self,
+        attempt: int | None = None,
+        filter_system: bool = False,
+        show_ts: bool = False,
+    ) -> AsyncGenerator[str, None]:
+        """
+        Get logs for the run as an iterator of strings.
+
+        Can be called synchronously (returns ``Iterator[str]``) or asynchronously
+        via ``.aio()`` (returns ``AsyncIterator[str]``).
+
+        :param attempt: The attempt number to retrieve logs for (defaults to latest attempt).
+        :param filter_system: If True, filter out system-generated log lines.
+        :param show_ts: If True, prefix each line with an ISO-8601 timestamp.
+        """
+        async for line in self.action.get_logs.aio(attempt, filter_system=filter_system, show_ts=show_ts):
+            yield line
+
+    @syncify
     async def details(self) -> RunDetails:
         """
         Get the details of the run. This is a placeholder for getting the run details.
