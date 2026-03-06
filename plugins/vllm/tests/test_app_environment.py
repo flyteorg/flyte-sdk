@@ -22,7 +22,7 @@ def test_basic_init_with_model_path():
     assert app.name == "test-app"
     assert app.model_path == "s3://bucket/model"
     assert app.model_id == "test-model"
-    assert app.port.port == 8000
+    assert app.port.port == 8080
     assert app.type == "vLLM"
     assert app.stream_model is True
     assert app.image == DEFAULT_VLLM_IMAGE
