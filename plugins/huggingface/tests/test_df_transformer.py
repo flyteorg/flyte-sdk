@@ -1,6 +1,6 @@
 import typing
 from collections import OrderedDict
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import flyte
 import pytest
