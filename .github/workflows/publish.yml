@@ -81,6 +81,8 @@ jobs:
           - "plugins/vllm"
           - "plugins/wandb"
           - "plugins/polars"
+          - "plugins/hitl"
+          - "plugins/jsonl"
         include:
           - workdir: "plugins/sglang"
             image-type: sglang

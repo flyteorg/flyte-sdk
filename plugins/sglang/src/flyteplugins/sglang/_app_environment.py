@@ -137,7 +137,7 @@ class SGLangAppEnvironment(flyte.app.AppEnvironment):
             self.parameters = [Parameter(name="model_path", value=self.model_path, **input_kwargs)]
 
         self.env_vars["FLYTE_MODEL_LOADER_LOCAL_MODEL_PATH"] = self._model_mount_path
-        self.links = [flyte.app.Link(path="/docs", title="SGLang OpenAPI Docs", is_relative=True)]
+        self.links = [flyte.app.Link(path="/docs", title="SGLang OpenAPI Docs", is_relative=True), *self.links]
 
         if self.image is None or self.image == "auto":
             self.image = DEFAULT_SGLANG_IMAGE
