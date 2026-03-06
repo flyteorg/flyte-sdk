@@ -298,7 +298,7 @@ def test_custom_links_preserved():
         links=[custom_link],
     )
     # Should have default link first, then custom link
-    assert len(app.links) == 1
+    assert len(app.links) == 2
     assert app.links[0].path == "/docs"
     assert app.links[1].path == "/custom"
 
