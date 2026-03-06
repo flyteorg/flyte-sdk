@@ -6,7 +6,7 @@ from pathlib import Path
 import flyte.storage as storage
 from flyte import logger
 from flyte._utils import lazy_module
-from flyte.io._dataframe.dataframe import PARQUET, DataFrame
+from flyte.io import PARQUET, DataFrame
 from flyte.io.extend import (
     DataFrameDecoder,
     DataFrameEncoder,
