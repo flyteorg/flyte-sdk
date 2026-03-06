@@ -234,7 +234,6 @@ class Informer:
                     run=self._run_id,
                 )
                 metadata = (
-                    ("x-actions-org", self._run_id.org),
                     ("x-actions-project", self._run_id.project),
                     ("x-actions-domain", self._run_id.domain),
                     ("x-actions-run", self._run_id.name),

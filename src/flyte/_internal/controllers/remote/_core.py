@@ -27,7 +27,6 @@ def _actions_metadata(action: Action) -> tuple:
     """Build gRPC metadata headers for Actions service calls."""
     run = action.action_id.run
     return (
-        ("x-actions-org", run.org),  # todo: remove org
         ("x-actions-project", run.project),
         ("x-actions-domain", run.domain),
         ("x-actions-run", run.name),
