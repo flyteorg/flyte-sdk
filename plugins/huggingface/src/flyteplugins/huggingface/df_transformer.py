@@ -23,66 +23,12 @@ else:
 def get_hf_storage_options(protocol: typing.Optional[str], anonymous: bool = False) -> typing.Dict[str, typing.Any]:
     """Get fsspec-compatible storage options for HuggingFace datasets.
 
-    HuggingFace datasets uses fsspec for remote I/O, so storage options
-    follow the fsspec/s3fs/gcsfs/adlfs conventions.
+    HuggingFace datasets uses fsspec for remote I/O. Options are taken from
+    the public flyte.storage API so plugins do not depend on internal APIs.
     """
-    from flyte._initialize import get_storage
-    from flyte.errors import InitializationError
-
     if not protocol:
         return {}
-
-    try:
-        storage_config = get_storage()
-    except InitializationError:
-        storage_config = None
-
-    match protocol:
-        case "s3":
-            from flyte.storage import S3
-
-            if storage_config and isinstance(storage_config, S3):
-                s3_config = storage_config
-            else:
-                s3_config = S3.auto()
-
-            opts: typing.Dict[str, typing.Any] = {}
-            if s3_config.access_key_id:
-                opts["key"] = s3_config.access_key_id
-            if s3_config.secret_access_key:
-                opts["secret"] = s3_config.secret_access_key
-            if s3_config.endpoint:
-                opts["client_kwargs"] = {"endpoint_url": s3_config.endpoint}
-            if anonymous:
-                opts["anon"] = "true"
-            return opts
-
-        case "gs":
-            return {}
-
-        case "abfs" | "abfss":
-            from flyte.storage import ABFS
-
-            if storage_config and isinstance(storage_config, ABFS):
-                abfs_config = storage_config
-            else:
-                abfs_config = ABFS.auto()
-
-            opts = {}
-            if abfs_config.account_name:
-                opts["account_name"] = abfs_config.account_name
-            if abfs_config.account_key:
-                opts["account_key"] = abfs_config.account_key
-            if abfs_config.tenant_id:
-                opts["tenant_id"] = abfs_config.tenant_id
-            if abfs_config.client_id:
-                opts["client_id"] = abfs_config.client_id
-            if abfs_config.client_secret:
-                opts["client_secret"] = abfs_config.client_secret
-            return opts
-
-        case _:
-            return {}
+    return storage.get_configured_fsspec_kwargs(protocol=protocol, anonymous=anonymous)
 
 
 class HuggingFaceDatasetToParquetEncodingHandler(DataFrameEncoder):
