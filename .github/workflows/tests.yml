@@ -44,6 +44,7 @@ jobs:
       - name: Find plugins with tests
         id: find
         run: |
+          # Auto-discover all plugins that have a tests/ directory
           plugins=$(find plugins -mindepth 1 -maxdepth 1 -type d -exec test -d '{}/tests' \; -print \
             | xargs -n1 basename | sort | jq -R -s -c 'split("\n") | map(select(. != ""))')
           echo "plugins=$plugins" >> "$GITHUB_OUTPUT"
