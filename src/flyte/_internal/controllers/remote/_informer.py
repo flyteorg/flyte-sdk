@@ -233,12 +233,19 @@ class Informer:
                     name=self.parent_action_name,
                     run=self._run_id,
                 )
+                metadata = (
+                    ("x-actions-project", self._run_id.project),
+                    ("x-actions-domain", self._run_id.domain),
+                    ("x-actions-run", self._run_id.name),
+                    ("x-actions-parent-action", self.parent_action_name),
+                )
                 if self._actions_client:
                     watcher = self._actions_client.WatchForUpdates(
                         actions_service_pb2.WatchForUpdatesRequest(
                             parent_action_id=parent_action_id,
                         ),
                         wait_for_ready=True,
+                        metadata=metadata,
                     )
                 else:
                     watcher = self._client.Watch(

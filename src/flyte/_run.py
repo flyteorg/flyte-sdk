@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import os
 import pathlib
 import sys
 import uuid
@@ -286,6 +287,10 @@ class _Runner:
                 if pathlib.Path(p).is_relative_to(root_dir_abs)
             ]
             env[FLYTE_SYS_PATH] = ":".join(added_paths)
+
+        # TODO: Remove once the actions service is the default and this env var is no longer needed.
+        if os.getenv("_U_USE_ACTIONS") == "1":
+            env["_U_USE_ACTIONS"] = "1"
 
         if not self._dry_run:
             if get_client() is None:
