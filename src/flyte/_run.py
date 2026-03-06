@@ -200,8 +200,17 @@ class _Runner:
                 code_bundle = cached_value.code_bundle
                 image_cache = cached_value.image_cache
             else:
+                # Resolve any CodeBundleLayer layers before building images
+                parent_env = cast(Environment, obj.parent_env())
+                from flyte._image import Image, resolve_code_bundle_layer
+
+                if isinstance(parent_env.image, Image):
+                    parent_env.image = resolve_code_bundle_layer(
+                        parent_env.image, self._copy_files, pathlib.Path(cfg.root_dir)
+                    )
+
                 if not self._dry_run:
-                    image_cache = await build_images.aio(cast(Environment, obj.parent_env()))
+                    image_cache = await build_images.aio(parent_env)
                 else:
                     image_cache = None
 
@@ -270,11 +279,13 @@ class _Runner:
 
         # These paths will be appended to sys.path at runtime.
         if cfg.sync_local_sys_paths:
-            env[FLYTE_SYS_PATH] = ":".join(
-                f"./{pathlib.Path(p).relative_to(cfg.root_dir)}"
+            root_dir_abs = pathlib.Path(cfg.root_dir).resolve()
+            added_paths = [
+                f"./{pathlib.Path(p).relative_to(root_dir_abs)}"
                 for p in sys.path
-                if pathlib.Path(p).is_relative_to(cfg.root_dir)
-            )
+                if pathlib.Path(p).is_relative_to(root_dir_abs)
+            ]
+            env[FLYTE_SYS_PATH] = ":".join(added_paths)
 
         if not self._dry_run:
             if get_client() is None:
@@ -428,6 +439,13 @@ class _Runner:
         if obj.parent_env is None:
             raise ValueError("Task is not attached to an environment. Please attach the task to an environment.")
 
+        # Resolve any CodeBundleLayer layers before building images
+        env = cast(Environment, obj.parent_env())
+        from flyte._image import Image, resolve_code_bundle_layer
+
+        if isinstance(env.image, Image):
+            env.image = resolve_code_bundle_layer(env.image, self._copy_files, pathlib.Path(cfg.root_dir))
+
         image_cache = await build_images.aio(cast(Environment, obj.parent_env()))
 
         code_bundle = None
@@ -555,19 +573,40 @@ class _Runner:
             report=Report(name=action.name),
             mode="local",
             custom_context=self._custom_context,
+            disable_run_cache=self._disable_run_cache,
         )
 
         if self._tracker is not None:
             ctx = Context(ctx.data.replace(tracker=self._tracker))
 
-        with ctx.replace_task_context(tctx):
-            # make the local version always runs on a different thread, returns a wrapped future.
-            if obj._call_as_synchronous:
-                fut = controller.submit_sync(obj, *args, **kwargs)
-                awaitable = asyncio.wrap_future(fut)
-                outputs = await awaitable
-            else:
-                outputs = await controller.submit(obj, *args, **kwargs)
+        from flyte._initialize import is_persistence_enabled
+        from flyte._persistence._recorder import RunRecorder
+
+        persist = is_persistence_enabled()
+        run_name = action.run_name or action.name
+
+        if persist:
+            RunRecorder.initialize_persistence()
+
+        recorder = RunRecorder(tracker=self._tracker, persist=persist, run_name=run_name)
+        controller.set_recorder(recorder)
+
+        recorder.record_root_start(task_name=obj.name)
+
+        try:
+            with ctx.replace_task_context(tctx):
+                # make the local version always runs on a different thread, returns a wrapped future.
+                if obj._call_as_synchronous:
+                    fut = controller.submit_sync(obj, *args, **kwargs)
+                    awaitable = asyncio.wrap_future(fut)
+                    outputs = await awaitable
+                else:
+                    outputs = await controller.submit(obj, *args, **kwargs)
+        except Exception as e:
+            recorder.record_root_failure(error=str(e))
+            raise
+        else:
+            recorder.record_root_complete()
 
         class _LocalRun(Run):
             def __init__(self, outputs: Tuple[Any, ...] | Any):

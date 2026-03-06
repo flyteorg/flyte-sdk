@@ -62,11 +62,13 @@ class S3(Storage):
     access_key_id: typing.Optional[str] = None
     secret_access_key: typing.Optional[str] = None
     region: typing.Optional[str] = None
+    addressing_style: typing.Optional[str] = None
 
     _KEY_ENV_VAR_MAPPING: ClassVar[typing.Dict[str, str]] = {
         "endpoint": "FLYTE_AWS_ENDPOINT",
         "access_key_id": "FLYTE_AWS_ACCESS_KEY_ID",
         "secret_access_key": "FLYTE_AWS_SECRET_ACCESS_KEY",
+        "addressing_style": "FLYTE_AWS_S3_ADDRESSING_STYLE",
     } | Storage._KEY_ENV_VAR_MAPPING
 
     # Refer to https://github.com/developmentseed/obstore/blob/33654fc37f19a657689eb93327b621e9f9e01494/obstore/python/obstore/store/_aws.pyi#L11
@@ -84,12 +86,14 @@ class S3(Storage):
         endpoint = os.getenv(cls._KEY_ENV_VAR_MAPPING["endpoint"], None)
         access_key_id = os.getenv(cls._KEY_ENV_VAR_MAPPING["access_key_id"], None)
         secret_access_key = os.getenv(cls._KEY_ENV_VAR_MAPPING["secret_access_key"], None)
+        addressing_style = os.getenv(cls._KEY_ENV_VAR_MAPPING["addressing_style"], None)
 
         kwargs = super()._auto_as_kwargs()
         kwargs = set_if_exists(kwargs, "endpoint", endpoint)
         kwargs = set_if_exists(kwargs, "access_key_id", access_key_id)
         kwargs = set_if_exists(kwargs, "secret_access_key", secret_access_key)
         kwargs = set_if_exists(kwargs, "region", region)
+        kwargs = set_if_exists(kwargs, "addressing_style", addressing_style)
 
         return S3(**kwargs)
 
@@ -123,6 +127,9 @@ class S3(Storage):
 
         retries = kwargs.pop("retries", self.retries)
         backoff = kwargs.pop("backoff", self.backoff)
+
+        if self.addressing_style:
+            config["virtual_hosted_style_request"] = self.addressing_style == "virtual"
 
         if anonymous:
             config[self._KEY_SKIP_SIGNATURE] = True

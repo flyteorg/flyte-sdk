@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import signal
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 from types import ModuleType
@@ -113,6 +114,18 @@ class ServeArguments:
             )
         },
     )
+    local: bool = field(
+        default=False,
+        metadata={
+            "click.option": click.Option(
+                ["--local"],
+                is_flag=True,
+                default=False,
+                help="Serve the app locally on localhost instead of deploying to the Flyte backend. "
+                "The app will be served on the port defined in the AppEnvironment.",
+            )
+        },
+    )
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> ServeArguments:
@@ -136,6 +149,59 @@ class ServeAppCommand(click.RichCommand):
         super().__init__(obj_name, *args, **kwargs)
 
     def invoke(self, ctx: click.Context):
+        if self.serve_args.local:
+            self._invoke_local(ctx)
+        else:
+            self._invoke_remote(ctx)
+
+    def _invoke_local(self, ctx: click.Context):
+        """Serve the app locally (blocking for CLI usage)."""
+        import flyte
+
+        console = common.get_console()
+
+        # Parse env vars from CLI (format: KEY=VALUE)
+        env_vars = self._parse_env_vars(console)
+
+        local_app = flyte.with_servecontext(
+            mode="local",
+            env_vars=env_vars or None,
+        ).serve(self.obj)
+
+        console.print(
+            common.get_panel(
+                "Serve (local)",
+                f"[green bold]App '{local_app.name}' is being served locally[/green bold]\n"
+                f"➡️  [blue bold][link={local_app.endpoint}]{local_app.endpoint}[/link][/blue bold]",
+                ctx.find_root().obj.output_format if ctx.find_root().obj else "table",
+            )
+        )
+
+        console.print("[dim]Waiting for app to be ready...[/dim]")
+        local_app.activate(wait=True)
+        console.print("[green]App is ready![/green]")
+        console.print("[dim]Press Ctrl+C to stop the app.[/dim]")
+
+        # Block until Ctrl+C
+        try:
+            signal.signal(signal.SIGINT, lambda *_: None)
+            signal.pause()
+        except (KeyboardInterrupt, AttributeError):
+            # AttributeError on Windows where signal.pause() doesn't exist
+            try:
+                while True:
+                    import time
+
+                    time.sleep(1)
+            except KeyboardInterrupt:
+                pass
+        finally:
+            console.print("\n[yellow]Shutting down local app...[/yellow]")
+            local_app.deactivate()
+            console.print("[green]App stopped.[/green]")
+
+    def _invoke_remote(self, ctx: click.Context):
+        """Serve the app remotely (original behavior)."""
         obj: CLIConfig = common.initialize_config(
             ctx,
             self.serve_args.project,
@@ -151,18 +217,11 @@ class ServeAppCommand(click.RichCommand):
             console = common.get_console()
 
             # Parse env vars from CLI (format: KEY=VALUE)
-            env_vars = {}
-            for env_var in self.serve_args.env_var:
-                if "=" in env_var:
-                    key, value = env_var.split("=", 1)
-                    env_vars[key] = value
-                else:
-                    console.print(
-                        f"[yellow]Warning: Ignoring invalid env var format: {env_var} (expected KEY=VALUE)[/yellow]"
-                    )
+            env_vars = self._parse_env_vars(console)
 
             # Use with_servecontext to configure the serve operation
             app = await flyte.with_servecontext(
+                mode="remote",
                 copy_style=self.serve_args.copy_style,
                 project=self.serve_args.project or None,
                 domain=self.serve_args.domain or None,
@@ -188,6 +247,19 @@ class ServeAppCommand(click.RichCommand):
                 )
 
         asyncio.run(_serve())
+
+    def _parse_env_vars(self, console) -> dict[str, str]:
+        """Parse environment variables from CLI arguments."""
+        env_vars: dict[str, str] = {}
+        for env_var in self.serve_args.env_var:
+            if "=" in env_var:
+                key, value = env_var.split("=", 1)
+                env_vars[key] = value
+            else:
+                console.print(
+                    f"[yellow]Warning: Ignoring invalid env var format: {env_var} (expected KEY=VALUE)[/yellow]"
+                )
+        return env_vars
 
 
 class AppPerFileGroup(common.ObjectsPerFileGroup):
@@ -284,6 +356,13 @@ Example usage:
 
 ```bash
 flyte serve examples/apps/basic_app.py app_env
+```
+
+**Local serving:** Use the `--local` flag to serve the app on localhost without
+deploying to the Flyte backend. This is useful for local development and testing:
+
+```bash
+flyte serve --local examples/apps/single_script_fastapi.py env
 ```
 
 Arguments to the serve command are provided right after the `serve` command and before the file name.

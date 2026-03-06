@@ -15,7 +15,15 @@ from ._environment import Environment
 from ._excepthook import custom_excepthook
 from ._group import group
 from ._image import Image
-from ._initialize import current_domain, init, init_from_api_key, init_from_config, init_in_cluster, init_passthrough
+from ._initialize import (
+    current_domain,
+    current_project,
+    init,
+    init_from_api_key,
+    init_from_config,
+    init_in_cluster,
+    init_passthrough,
+)
 from ._link import Link
 from ._logging import logger
 from ._map import map
@@ -25,7 +33,7 @@ from ._retry import RetryStrategy
 from ._reusable_environment import ReusePolicy
 from ._run import run, with_runcontext
 from ._secret import Secret, SecretRequest
-from ._serve import serve, with_servecontext
+from ._serve import AppHandle, serve, with_servecontext
 from ._task_environment import TaskEnvironment
 from ._timeout import Timeout, TimeoutType
 from ._trace import trace
@@ -68,6 +76,7 @@ __all__ = [
     "GPU",
     "HABANA_GAUDI",
     "TPU",
+    "AppHandle",
     "Cache",
     "CachePolicy",
     "CacheRequest",
@@ -96,6 +105,7 @@ __all__ = [
     "build_images",
     "ctx",
     "current_domain",
+    "current_project",
     "custom_context",
     "deploy",
     "get_custom_context",

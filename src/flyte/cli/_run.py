@@ -242,25 +242,23 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
     async def _execute_and_render(self, ctx: click.Context, config: common.CLIConfig):
         """Separate execution logic from the Click entry point for better testability."""
         import flyte
+        from flyte._status import status
 
         console = common.get_console()
 
-        # 2. Execute with a UX Status Spinner (disabled for json/table-simple)
+        # 2. Execute — status messages are emitted by the subsystems (image builder, deployer, etc.)
         try:
-            with common.cli_status(
-                config.output_format,
-                f"[bold blue]Launching {'local' if self.run_args.local else 'remote'} execution...",
-            ):
-                execution_context = flyte.with_runcontext(
-                    copy_style=self.run_args.copy_style,
-                    mode="local" if self.run_args.local else "remote",
-                    name=self.run_args.name,
-                    raw_data_path=self.run_args.raw_data_path,
-                    service_account=self.run_args.service_account,
-                    log_format=config.log_format,
-                    reset_root_logger=config.reset_root_logger,
-                )
-                result = await execution_context.run.aio(self.obj, **ctx.params)
+            status.step(f"Launching {'local' if self.run_args.local else 'remote'} execution...")
+            execution_context = flyte.with_runcontext(
+                copy_style=self.run_args.copy_style,
+                mode="local" if self.run_args.local else "remote",
+                name=self.run_args.name,
+                raw_data_path=self.run_args.raw_data_path,
+                service_account=self.run_args.service_account,
+                log_format=config.log_format,
+                reset_root_logger=config.reset_root_logger,
+            )
+            result = await execution_context.run.aio(self.obj, **ctx.params)
         except Exception as e:
             console.print(common.get_panel("Exception", f"[red]✕ Execution failed:[/red] {e}", config.output_format))
             exit(1)
@@ -292,7 +290,9 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
         console.print(common.get_panel("Remote Run", run_info, config.output_format))
 
         if self.run_args.follow:
-            console.print("[dim]Waiting for log stream...[/dim]")
+            from flyte._status import status
+
+            status.step("Waiting for log stream...")
             await result.show_logs.aio(max_lines=30, show_ts=True, raw=False)
 
     def _run_with_tui(self, ctx: click.Context, config: common.CLIConfig) -> None:
@@ -452,28 +452,26 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
     async def _execute_and_render(self, ctx: click.Context, config: common.CLIConfig):
         """Separate execution logic from the Click entry point for better testability."""
         import flyte.remote
+        from flyte._status import status
 
         task = flyte.remote.Task.get(self.task_name, version=self.version, auto_version="latest")
         console = common.get_console()
         if self.run_args.run_project or self.run_args.run_domain:
-            console.print(
+            status.info(
                 f"Separate Run project/domain set, using {self.run_args.run_project} and {self.run_args.run_domain}"
             )
 
-        # 2. Execute with a UX Status Spinner (disabled for json/table-simple)
+        # 2. Execute — status messages are emitted by the subsystems (image builder, deployer, etc.)
         try:
-            with common.cli_status(
-                config.output_format,
-                f"[bold blue]Launching {'local' if self.run_args.local else 'remote'} execution...",
-            ):
-                execution_context = flyte.with_runcontext(
-                    copy_style=self.run_args.copy_style,
-                    mode="local" if self.run_args.local else "remote",
-                    name=self.run_args.name,
-                    project=self.run_args.run_project,
-                    domain=self.run_args.run_domain,
-                )
-                result = await execution_context.run.aio(task, **ctx.params)
+            status.step(f"Launching {'local' if self.run_args.local else 'remote'} execution...")
+            execution_context = flyte.with_runcontext(
+                copy_style=self.run_args.copy_style,
+                mode="local" if self.run_args.local else "remote",
+                name=self.run_args.name,
+                project=self.run_args.run_project,
+                domain=self.run_args.run_domain,
+            )
+            result = await execution_context.run.aio(task, **ctx.params)
         except Exception as e:
             console.print(f"[red]✕ Execution failed:[/red] {e}")
             return
@@ -510,9 +508,9 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
         console.print(common.get_panel("Remote Run", run_info, config.output_format))
 
         if self.run_args.follow:
-            console.print(
-                "[dim]Log streaming enabled, will wait for task to start running and log stream to be available[/dim]"
-            )
+            from flyte._status import status
+
+            status.step("Waiting for log stream...")
             await result.show_logs.aio(max_lines=30, show_ts=True, raw=False)
 
     def invoke(self, ctx: click.Context):

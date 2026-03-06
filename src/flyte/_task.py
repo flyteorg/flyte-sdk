@@ -24,8 +24,7 @@ from typing import (
 )
 
 from flyte._pod import PodTemplate
-from flyte._utils.asyncify import run_sync_with_loop
-from flyte.errors import RuntimeSystemError, RuntimeUserError
+from flyte.errors import RuntimeSystemError, RuntimeUserError, TraceDoesNotAllowNestedTasksError
 
 from ._cache import Cache, CacheRequest
 from ._context import internal_ctx
@@ -265,6 +264,12 @@ class TaskTemplate(Generic[P, R, F]):
         """
         ctx = internal_ctx()
         if ctx.is_task_context():
+            if ctx.is_in_trace():
+                raise TraceDoesNotAllowNestedTasksError(
+                    f"Task {self.name} is invoked from inside a `flyte.trace`. "
+                    "You can continue using the task function, as a regular"
+                    "python function using `task`.forward(...) facade."
+                )
             from ._internal.controllers import get_controller
 
             # If we are in a task context, that implies we are executing a Run.
@@ -308,6 +313,12 @@ class TaskTemplate(Generic[P, R, F]):
         try:
             ctx = internal_ctx()
             if ctx.is_task_context():
+                if ctx.is_in_trace():
+                    raise TraceDoesNotAllowNestedTasksError(
+                        f"Task {self.name} is invoked from inside a `flyte.trace`. "
+                        "You can continue using the task function, as a regular"
+                        "python function using `task`.forward(...) facade."
+                    )
                 # If we are in a task context, that implies we are executing a Run.
                 # In this scenario, we should submit the task to the controller.
                 # We will also check if we are not initialized, It is not expected to be not initialized
@@ -441,7 +452,7 @@ class TaskTemplate(Generic[P, R, F]):
             env_vars=env_vars,
             secrets=secrets,
             max_inline_io_bytes=max_inline_io_bytes,
-            pod_template=pod_template,
+            pod_template=pod_template or self.pod_template,
             interruptible=interruptible,
             queue=queue or self.queue,
             links=links or self.links,
@@ -474,6 +485,15 @@ class AsyncFunctionTaskTemplate(TaskTemplate[P, R, F]):
             return self.func.__code__.co_filename
         return None
 
+    @property
+    def json_schema(self) -> Dict[str, Any]:
+        """JSON schema for the task inputs, following the Flyte standard.
+
+        Delegates to NativeInterface.json_schema, which uses the type engine to
+        produce a LiteralType per input and converts to JSON schema.
+        """
+        return self.interface.json_schema
+
     def forward(self, *args: P.args, **kwargs: P.kwargs) -> Coroutine[Any, Any, R] | R:
         # In local execution, we want to just call the function. Note we're not awaiting anything here.
         # If the function was a coroutine function, the coroutine is returned and the await that the caller has
@@ -485,6 +505,7 @@ class AsyncFunctionTaskTemplate(TaskTemplate[P, R, F]):
         This is the execute method that will be called when the task is invoked. It will call the actual function.
         # TODO We may need to keep this as the bare func execute, and need a pre and post execute some other func.
         """
+        from flyte._utils.asyncify import run_sync_with_loop
 
         ctx = internal_ctx()
         assert ctx.data.task_context is not None, "Function should have already returned if not in a task context"

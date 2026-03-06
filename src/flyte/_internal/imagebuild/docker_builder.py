@@ -1,4 +1,5 @@
 import os
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -12,8 +13,10 @@ import click
 
 from flyte import Secret
 from flyte._code_bundle._ignore import STANDARD_IGNORE_PATTERNS
+from flyte._code_bundle._utils import copy_code_bundle_to_context
 from flyte._image import (
     AptPackages,
+    CodeBundleLayer,
     Commands,
     CopyConfig,
     DockerIgnore,
@@ -197,7 +200,7 @@ class PipAndRequirementsHandler:
         else:
             mount = ""
             requirements = list(layer.packages) if layer.packages else []
-            reqs = " ".join(requirements)
+            reqs = " ".join(shlex.quote(r) for r in requirements)
             pip_install_args = layer.get_pip_install_args()
             pip_install_args.append(reqs)
 
@@ -393,6 +396,15 @@ class CopyConfigHandler:
         return dockerfile
 
 
+class _CodeBundleHandler:
+    @staticmethod
+    async def handle(layer: CodeBundleLayer, context_path: Path, dockerfile: str) -> str:
+        assert layer.root_dir is not None
+        dst_path = copy_code_bundle_to_context(layer.root_dir, layer.copy_style, context_path)
+        dockerfile += f"\nCOPY {dst_path.relative_to(context_path)} {layer.dst}\n"
+        return dockerfile
+
+
 class CommandsHandler:
     @staticmethod
     async def handle(layer: Commands, _: Path, dockerfile: str) -> str:
@@ -545,6 +557,10 @@ async def _process_layer(
             # Only for internal use
             dockerfile = await _DockerLinesHandler.handle(layer, context_path, dockerfile)
 
+        case CodeBundleLayer():
+            # Resolved CodeBundleLayer — copy filtered files from root_dir into context
+            dockerfile = await _CodeBundleHandler.handle(layer, context_path, dockerfile)
+
         case _:
             raise NotImplementedError(f"Layer type {type(layer)} not supported")
 
@@ -568,10 +584,6 @@ class DockerImageBuilder(ImageBuilder):
             # If a dockerfile is provided, use it directly
             uri = await self._build_from_dockerfile(image, push=True, wait=wait)
             return ImageBuild(uri=uri, remote_run=None)
-
-        if len(image._layers) == 0:
-            logger.warning("No layers to build, returning the image URI as is.")
-            return ImageBuild(uri=image.uri, remote_run=None)
 
         uri = await self._build_image(
             image,

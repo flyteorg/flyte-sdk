@@ -6,6 +6,7 @@ focusing on container_cmd, container_args, and Parameter handling.
 """
 
 import pathlib
+from datetime import timedelta
 
 import pytest
 
@@ -14,7 +15,7 @@ from flyte._internal.imagebuild.image_builder import ImageCache
 from flyte._resources import Resources
 from flyte.app import AppEnvironment
 from flyte.app._parameter import Parameter
-from flyte.app._types import Domain, Link, Port, Scaling
+from flyte.app._types import Domain, Link, Port, Scaling, Timeouts
 from flyte.models import CodeBundle, SerializationContext
 
 # Import flyte.io first and inject into app._input module to fix NameError bug
@@ -1171,3 +1172,111 @@ def test_app_environment_decorators_with_async_functions():
     assert app._server == async_server
     assert app._on_shutdown is not None
     assert app._on_shutdown == async_shutdown
+
+
+@pytest.mark.parametrize(
+    "request_timeout_val, expected_seconds",
+    [
+        (None, None),
+        (30, 30),
+        (3600, 3600),
+        (timedelta(minutes=5), 300),
+        (timedelta(hours=1), 3600),
+    ],
+)
+def test_timeouts_request_valid(request_timeout_val, expected_seconds):
+    """
+    GOAL: Validate that Timeouts.request accepts int, timedelta, and None, and normalizes int to timedelta.
+
+    Tests that:
+    - None is preserved as None
+    - int values are converted to timedelta(seconds=N)
+    - timedelta values are preserved
+    - Values up to 1 hour are accepted
+    """
+    app_env = AppEnvironment(
+        name="timeout-app",
+        image="python:3.11",
+        timeouts=Timeouts(request=request_timeout_val),
+    )
+    if expected_seconds is None:
+        assert app_env.timeouts.request is None
+    else:
+        assert isinstance(app_env.timeouts.request, timedelta)
+        assert app_env.timeouts.request.total_seconds() == expected_seconds
+
+
+@pytest.mark.parametrize(
+    "request_timeout_val, expected_error",
+    [
+        (-1, "request timeout must be non-negative"),
+        (timedelta(seconds=-1), "request timeout must be non-negative"),
+        (3601, "request timeout must not exceed"),
+        (timedelta(hours=1, seconds=1), "request timeout must not exceed"),
+        (timedelta(hours=2), "request timeout must not exceed"),
+    ],
+)
+def test_timeouts_request_invalid(request_timeout_val, expected_error):
+    """
+    GOAL: Validate that Timeouts.request rejects negative values and values exceeding 1 hour.
+
+    Tests that ValueError is raised with a clear message.
+    """
+    with pytest.raises(ValueError, match=expected_error):
+        AppEnvironment(
+            name="timeout-app",
+            image="python:3.11",
+            timeouts=Timeouts(request=request_timeout_val),
+        )
+
+
+def test_timeouts_request_invalid_type():
+    """
+    GOAL: Validate that Timeouts.request rejects invalid types.
+    """
+    with pytest.raises(TypeError, match="Expected request to be of type int or timedelta"):
+        AppEnvironment(
+            name="timeout-app",
+            image="python:3.11",
+            timeouts=Timeouts(request=30.5),
+        )
+
+
+def test_app_environment_timeouts_invalid_type():
+    """
+    GOAL: Validate that AppEnvironment rejects a non-Timeouts value for the timeouts field.
+    """
+    with pytest.raises(TypeError, match="Expected timeouts to be of type Timeouts"):
+        AppEnvironment(
+            name="timeout-app",
+            image="python:3.11",
+            timeouts="invalid",  # type: ignore
+        )
+
+
+def test_app_environment_clone_with_timeouts():
+    """
+    GOAL: Validate that clone_with can override timeouts.
+
+    Tests that:
+    - A cloned app inherits timeouts from the original when not overridden
+    - A cloned app can override timeouts with a new Timeouts object
+    - A cloned app can clear timeouts by passing Timeouts() (the default)
+    """
+    original = AppEnvironment(
+        name="original-app",
+        image="python:3.11",
+        timeouts=Timeouts(request=30),
+    )
+
+    # Clone without overriding timeouts - should inherit
+    cloned = original.clone_with(name="cloned-app")
+    assert cloned.timeouts.request == timedelta(seconds=30)
+
+    # Clone with overriding timeouts
+    cloned_override = original.clone_with(name="cloned-override", timeouts=Timeouts(request=60))
+    assert cloned_override.timeouts.request == timedelta(seconds=60)
+
+    # Clone clearing timeouts back to the default (no timeout)
+    cloned_cleared = original.clone_with(name="cloned-cleared", timeouts=Timeouts())
+    assert cloned_cleared.timeouts.request is None

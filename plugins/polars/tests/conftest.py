@@ -7,6 +7,7 @@ import pytest
 import pytest_asyncio
 from flyte._cache.local_cache import LocalTaskCache
 from flyte._context import RawDataPath, internal_ctx
+from flyte._persistence._db import LocalDB
 from flyte.models import SerializationContext
 
 
@@ -47,8 +48,10 @@ async def isolate_local_cache(tmp_path):
     Global fixture to isolate LocalTaskCache for each test.
     Uses temporary directory to avoid polluting local development cache.
     """
-    with patch.object(LocalTaskCache, "_get_cache_path", return_value=str(tmp_path / "test_cache.db")):
-        LocalTaskCache._initialized = False
+    with patch.object(LocalDB, "_get_db_path", staticmethod(lambda: str(tmp_path / "test_cache.db"))):
+        LocalDB._initialized = False
+        LocalDB._conn = None
+        LocalDB._conn_sync = None
         yield
         await LocalTaskCache.close()
 

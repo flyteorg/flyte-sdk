@@ -22,9 +22,15 @@ It also demonstrates types that contain TypedDicts, such as:
 """
 
 import os
+import sys
 import tempfile
 from dataclasses import dataclass
-from typing import Dict, List, NamedTuple, TypedDict
+from typing import Dict, List, NamedTuple
+
+if sys.version_info >= (3, 12):
+    from typing import TypedDict
+else:
+    from typing_extensions import TypedDict
 
 import pandas as pd
 from pydantic import BaseModel

@@ -9,6 +9,7 @@ from typing import Awaitable, Coroutine, Optional
 
 import grpc.aio
 from aiolimiter import AsyncLimiter
+from flyteidl2.actions import actions_service_pb2
 from flyteidl2.common import identifier_pb2
 from flyteidl2.task import task_definition_pb2
 from flyteidl2.workflow import queue_service_pb2, run_definition_pb2
@@ -19,7 +20,7 @@ from flyte._logging import log, logger
 
 from ._action import Action
 from ._informer import InformerCache
-from ._service_protocol import ClientSet, QueueService, StateService
+from ._service_protocol import ActionsService, ClientSet, QueueService, StateService
 
 
 class Controller:
@@ -193,6 +194,7 @@ class Controller:
         client_set = await self._client_coro
         self._state_service: StateService = client_set.state_service
         self._queue_service: QueueService = client_set.queue_service
+        self._actions_service: ActionsService | None = client_set.actions_service
         self._resource_log_task = asyncio.create_task(self._bg_log_stats())
         # We will wait for this to signal that the thread is ready
         # Signal the main thread that we're ready
@@ -244,6 +246,7 @@ class Controller:
             self._state_service,
             fn=self._bg_handle_informer_error,
             timeout=self._informer_start_wait_timeout,
+            actions_service=self._actions_service,
         )
         if informer:
             return await informer.get(action_id.name)
@@ -269,6 +272,7 @@ class Controller:
             self._state_service,
             fn=self._bg_handle_informer_error,
             timeout=self._informer_start_wait_timeout,
+            actions_service=self._actions_service,
         )
         await informer.submit(action)
 
@@ -300,10 +304,16 @@ class Controller:
             async with self._rate_limiter:
                 logger.info(f"Cancelling action: {action.name}")
                 try:
-                    await self._queue_service.AbortQueuedAction(
-                        queue_service_pb2.AbortQueuedActionRequest(action_id=action.action_id),
-                        wait_for_ready=True,
-                    )
+                    if self._actions_service:
+                        await self._actions_service.Abort(
+                            actions_service_pb2.AbortRequest(action_id=action.action_id),
+                            wait_for_ready=True,
+                        )
+                    else:
+                        await self._queue_service.AbortQueuedAction(
+                            queue_service_pb2.AbortQueuedActionRequest(action_id=action.action_id),
+                            wait_for_ready=True,
+                        )
                     logger.info(f"Successfully cancelled action: {action.name}")
                 except grpc.aio.AioRpcError as e:
                     if e.code() in [
@@ -355,20 +365,36 @@ class Controller:
 
                 logger.debug(f"Attempting to launch action: {action.name}")
                 try:
-                    await self._queue_service.EnqueueAction(
-                        queue_service_pb2.EnqueueActionRequest(
-                            action_id=action.action_id,
-                            parent_action_name=action.parent_action_name,
-                            task=task,
-                            trace=trace,
-                            input_uri=action.inputs_uri,
-                            run_output_base=action.run_output_base,
-                            group=action.group.name if action.group else None,
-                            # Subject is not used in the current implementation
-                        ),
-                        wait_for_ready=True,
-                        timeout=self._enqueue_timeout,
-                    )
+                    if self._actions_service:
+                        await self._actions_service.Enqueue(
+                            actions_service_pb2.EnqueueRequest(
+                                action=actions_service_pb2.Action(
+                                    action_id=action.action_id,
+                                    parent_action_name=action.parent_action_name,
+                                    task=task,
+                                    trace=trace,
+                                    input_uri=action.inputs_uri,
+                                    run_output_base=action.run_output_base,
+                                    group=action.group.name if action.group else None,
+                                ),
+                            ),
+                            wait_for_ready=True,
+                            timeout=self._enqueue_timeout,
+                        )
+                    else:
+                        await self._queue_service.EnqueueAction(
+                            queue_service_pb2.EnqueueActionRequest(
+                                action_id=action.action_id,
+                                parent_action_name=action.parent_action_name,
+                                task=task,
+                                trace=trace,
+                                input_uri=action.inputs_uri,
+                                run_output_base=action.run_output_base,
+                                group=action.group.name if action.group else None,
+                            ),
+                            wait_for_ready=True,
+                            timeout=self._enqueue_timeout,
+                        )
                     logger.info(f"Successfully launched action: {action.name}")
                 except grpc.aio.AioRpcError as e:
                     if e.code() == grpc.StatusCode.ALREADY_EXISTS:

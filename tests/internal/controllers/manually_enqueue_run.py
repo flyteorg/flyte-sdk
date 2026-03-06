@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
+from flyteidl2.actions import actions_service_pb2
 from flyteidl2.common import identifier_pb2
 from flyteidl2.task import task_definition_pb2
 from flyteidl2.workflow import (
@@ -11,6 +12,7 @@ from flyteidl2.workflow import (
 
 import flyte
 from flyte._internal.controllers.remote._client import ControllerClient
+from flyte._internal.controllers.remote._service_protocol import use_actions_service
 from flyte._internal.runtime.task_serde import translate_task_to_wire
 from flyte.models import SerializationContext
 
@@ -45,28 +47,43 @@ async def enqueue_run(client: ControllerClient):
 
     task_spec = translate_task_to_wire(say_hello, sc)
 
-    enqueue_request = queue_service_pb2.EnqueueActionRequest(
-        action_id=identifier_pb2.ActionIdentifier(
-            name="subrun-1",
-            run=run_id,
+    task_action = run_definition_pb2.TaskAction(
+        id=task_definition_pb2.TaskIdentifier(
+            org="testorg",
+            project="project",
+            domain="development",
+            name="say_hello",
+            version="abc123",
         ),
-        parent_action_name="root_run",
-        task=run_definition_pb2.TaskAction(
-            id=task_definition_pb2.TaskIdentifier(
-                org="testorg",
-                project="project",
-                domain="development",
-                name="say_hello",
-                version="abc123",
-            ),
-            spec=task_spec,
-        ),
-        input_uri="s3://bucket/test/run/inputs.pb",
-        output_uri="s3://bucket/outputs/0/jfkljfa/0",
-        group="",
+        spec=task_spec,
+    )
+    action_id = identifier_pb2.ActionIdentifier(
+        name="subrun-1",
+        run=run_id,
     )
 
-    await client.queue_service.EnqueueAction(enqueue_request)
+    if use_actions_service():
+        enqueue_request = actions_service_pb2.EnqueueRequest(
+            action=actions_service_pb2.Action(
+                action_id=action_id,
+                parent_action_name="root_run",
+                task=task_action,
+                input_uri="s3://bucket/test/run/inputs.pb",
+                run_output_base="s3://bucket/outputs/0/jfkljfa/0",
+                group="",
+            ),
+        )
+        await client.actions_service.Enqueue(enqueue_request)
+    else:
+        enqueue_request = queue_service_pb2.EnqueueActionRequest(
+            action_id=action_id,
+            parent_action_name="root_run",
+            task=task_action,
+            input_uri="s3://bucket/test/run/inputs.pb",
+            output_uri="s3://bucket/outputs/0/jfkljfa/0",
+            group="",
+        )
+        await client.queue_service.EnqueueAction(enqueue_request)
 
 
 async def main():

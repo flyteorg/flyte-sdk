@@ -18,3 +18,17 @@ def launch_tui(tracker: ActionTracker, execute_fn: Callable[[], Awaitable[Any]])
 
     app = FlyteTUIApp(tracker=tracker, execute_fn=execute_fn)
     app.run()
+
+
+def launch_tui_explore() -> None:
+    """Launch the TUI explore mode to browse past local runs.
+
+    Raises a helpful ``ImportError`` when ``textual`` is not installed.
+    """
+    try:
+        from ._explore import ExploreTUIApp
+    except ImportError as exc:
+        raise ImportError("The TUI requires the 'textual' package. Install it with:  pip install flyte[tui]") from exc
+
+    app = ExploreTUIApp()
+    app.run()

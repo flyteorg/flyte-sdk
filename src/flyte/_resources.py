@@ -25,6 +25,11 @@ A100_80GBParts = Literal["1g.10gb", "2g.20gb", "3g.40gb", "4g.40gb", "7g.80gb"]
 Partitions for NVIDIA A100 80GB GPU.
 """
 
+H100Parts = Literal["1g.10gb", "1g.20gb", "2g.20gb", "3g.40gb", "4g.40gb", "7g.80gb"]
+"""
+Partitions for NVIDIA H100 GPU (80GB HBM3).
+"""
+
 H200Parts = Literal["1g.18gb", "1g.35gb", "2g.35gb", "3g.71gb", "4g.71gb", "7g.141gb"]
 """
 Partitions for NVIDIA H200 GPU (141GB HBM3e).
@@ -259,7 +264,7 @@ class Device:
 
 
 def GPU(
-    device: GPUType, quantity: GPUQuantity, partition: A100Parts | A100_80GBParts | H200Parts | None = None
+    device: GPUType, quantity: GPUQuantity, partition: A100Parts | A100_80GBParts | H100Parts | H200Parts | None = None
 ) -> Device:
     """
     Create a GPU device instance.
@@ -278,6 +283,9 @@ def GPU(
     elif partition is not None and device == "A100 80G":
         if partition not in get_args(A100_80GBParts):
             raise ValueError(f"Invalid partition for A100 80G: {partition}. Must be one of {get_args(A100_80GBParts)}")
+    elif partition is not None and device == "H100":
+        if partition not in get_args(H100Parts):
+            raise ValueError(f"Invalid partition for H100: {partition}. Must be one of {get_args(H100Parts)}")
     elif partition is not None and device == "H200":
         if partition not in get_args(H200Parts):
             raise ValueError(f"Invalid partition for H200: {partition}. Must be one of {get_args(H200Parts)}")

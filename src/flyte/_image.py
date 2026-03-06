@@ -372,6 +372,41 @@ class CopyConfig(Layer):
 
 @rich.repr.auto
 @dataclass(frozen=True, repr=True)
+class CodeBundleLayer(Layer):
+    """Deferred layer resolved at runtime to copy source code into the image.
+    Only activates when the runner's copy_style is "none".
+
+    Before resolution, root_dir is None. After resolve_code_bundle_layer() sets
+    root_dir, the docker builder handles the actual file copying into the build context.
+    """
+
+    copy_style: Literal["loaded_modules", "all"]
+    dst: str = "."
+    root_dir: Optional[Path] = None
+
+    def update_hash(self, hasher: hashlib._Hash):
+        hasher.update(f"code_bundle:{self.copy_style}:{self.dst}".encode("utf-8"))
+        if self.root_dir is not None:
+            from ._utils import update_hasher_for_source
+
+            if self.copy_style == "loaded_modules":
+                from flyte._code_bundle._utils import list_imported_modules_as_files
+
+                files = list_imported_modules_as_files(str(self.root_dir), list(sys.modules.values()))
+                files.sort()
+                update_hasher_for_source([Path(f) for f in files], hasher)
+            else:
+                # "all" — hash the entire root_dir
+                update_hasher_for_source(self.root_dir, hasher)
+        else:
+            raise ValueError("root_dir not set for CodeBundleLayer")
+
+    def validate(self):
+        pass  # root_dir not known at creation time
+
+
+@rich.repr.auto
+@dataclass(frozen=True, repr=True)
 class _DockerLines(Layer):
     """
     This is an internal class and should only be used by the default images. It is not supported by most
@@ -441,6 +476,7 @@ class Image:
     name: Optional[str] = field(default=None)
     platform: Tuple[Architecture, ...] = field(default=("linux/amd64",))
     python_version: Tuple[int, int] = field(default_factory=_detect_python_version)
+    extendable: bool = field(default=False)
     # Refer to the image_refs (name:image-uri) set in CLI or config
     _ref_name: Optional[str] = field(default=None)
 
@@ -513,6 +549,7 @@ class Image:
             name=_DEFAULT_IMAGE_NAME,
             python_version=python_version,
             platform=("linux/amd64", "linux/arm64") if platform is None else platform,
+            extendable=True,
         )
         labels_and_user = _DockerLines(
             (
@@ -586,7 +623,7 @@ class Image:
         )
 
         if registry or name:
-            return base_image.clone(registry=registry, name=name, registry_secret=registry_secret)
+            return base_image.clone(registry=registry, name=name, registry_secret=registry_secret, extendable=True)
 
         return base_image
 
@@ -689,6 +726,7 @@ class Image:
         base_image: Optional[str] = None,
         python_version: Optional[Tuple[int, int]] = None,
         addl_layer: Optional[Layer] = None,
+        extendable: Optional[bool] = None,
     ) -> Image:
         """
         Use this method to clone the current image and change the registry and name
@@ -696,12 +734,22 @@ class Image:
         :param registry: Registry to use for the image
         :param registry_secret: Secret to use to pull/push the private image.
         :param name: Name of the image
+        :param base_image: Base image to use for the image
         :param python_version: Python version for the image, if not specified, will use the current Python version
         :param addl_layer: Additional layer to add to the image. This will be added to the end of the layers.
+        :param extendable: Whether the image is extendable by other images. If True, the image can be used as a base
+         image for other images, and additional layers can be added on top of it. If False, the image cannot be
+          used as a base image for other images, and additional layers cannot be added on top of it. If None (default),
+          defaults to False for safety.
         :return:
         """
         from flyte import Secret
 
+        if addl_layer and not self.extendable:
+            raise ValueError(
+                "Cannot add additional layers to a non-extendable image. "
+                "Please create the image with extendable=True in the clone() call."
+            )
         if addl_layer and self.dockerfile:
             # We don't know how to inspect dockerfiles to know what kind it is (OS, python version, uv vs poetry, etc)
             # so there's no guarantee any of the layering logic will work.
@@ -725,6 +773,7 @@ class Image:
             name=name,
             platform=self.platform,
             python_version=python_version or self.python_version,
+            extendable=extendable if extendable is not None else self.extendable,
             _layers=new_layers,
             _image_registry_secret=Secret(key=registry_secret) if isinstance(registry_secret, str) else registry_secret,
             _ref_name=self._ref_name,
@@ -757,6 +806,7 @@ class Image:
             "dockerfile": file,
             "registry": registry,
             "name": name,
+            "extendable": False,  # Dockerfile-based images cannot have additional layers
         }
         if platform:
             kwargs["platform"] = platform
@@ -926,17 +976,47 @@ class Image:
         new_image = self.clone(addl_layer=CopyConfig(path_type=1, src=src, dst=dst))
         return new_image
 
-    def with_source_file(self, src: Path, dst: str = ".") -> Image:
+    def with_source_file(self, src: typing.Union[Path, typing.List[Path]], dst: str = ".") -> Image:
         """
-        Use this method to create a new image with the specified local file layered on top of the current image.
+        Use this method to create a new image with the specified local file(s) layered on top of the current image.
         If dest is not specified, it will be copied to the working directory of the image
 
-        :param src: root folder of the source code from the build context to be copied
+        :param src: file or list of files from the build context to be copied
         :param dst: destination folder in the image
         :return: Image
         """
-        new_image = self.clone(addl_layer=CopyConfig(path_type=0, src=src, dst=dst))
-        return new_image
+        if isinstance(src, list):
+            names = [p.name for p in src]
+            duplicates = {name for name in names if names.count(name) > 1}
+            if duplicates:
+                raise ValueError(
+                    f"Multiple files with the same name would overwrite each other at destination '{dst}': "
+                    f"{sorted(duplicates)}"
+                )
+            image = self
+            for path in src:
+                image = image.clone(addl_layer=CopyConfig(path_type=0, src=path, dst=dst))
+            return image
+        return self.clone(addl_layer=CopyConfig(path_type=0, src=src, dst=dst))
+
+    def with_code_bundle(
+        self,
+        copy_style: Literal["loaded_modules", "all"] = "loaded_modules",
+        dst: str = ".",
+    ) -> Image:
+        """
+        Configure this image to automatically copy source code from root_dir
+        when the runner's copy_style is "none".
+
+        When the runner's copy_style is not "none", this is a no-op.
+
+        :param copy_style: Which files to copy into the image.
+            "loaded_modules" copies only imported Python modules.
+            "all" copies all files from root_dir.
+        :param dst: Destination directory in the container. Defaults to working dir.
+        :return: Image
+        """
+        return self.clone(addl_layer=CodeBundleLayer(copy_style=copy_style, dst=dst))
 
     def with_dockerignore(self, path: Path) -> Image:
         new_image = self.clone(addl_layer=DockerIgnore(path=str(path)))
@@ -1105,3 +1185,57 @@ class Image:
                 details.append(f"Layer: {layer}")
 
         return "\n".join(details)
+
+
+def resolve_code_bundle_layer(image: Image, copy_style: str, root_dir: Path) -> Image:
+    """Resolve any CodeBundleLayer layers in the image based on the runner's copy_style.
+
+    - If no CodeBundleLayer layers exist, returns the same image object.
+    - If copy_style != "none", strips CodeBundleLayer layers (no-op behavior).
+    - If copy_style == "none", replaces CodeBundleLayer with CopyConfig to bake source into image.
+    """
+    code_bundle_layers = [layer for layer in image._layers if isinstance(layer, CodeBundleLayer)]
+    if not code_bundle_layers:
+        return image
+
+    non_bundle_layers = tuple(layer for layer in image._layers if not isinstance(layer, CodeBundleLayer))
+
+    if copy_style != "none":
+        # Strip CodeBundleLayer layers — code is bundled separately
+        return Image._new(
+            base_image=image.base_image,
+            dockerfile=image.dockerfile,
+            registry=image.registry,
+            name=image.name,
+            platform=image.platform,
+            python_version=image.python_version,
+            extendable=image.extendable,
+            _ref_name=image._ref_name,
+            _layers=non_bundle_layers,
+            _image_registry_secret=image._image_registry_secret,
+        )
+
+    # copy_style == "none" — resolve each CodeBundleLayer by setting root_dir.
+    # "all" can be directly converted to CopyConfig. "loaded_modules" keeps
+    # the CodeBundleLayer with root_dir set so the builder can filter files
+    # into the docker context.
+    resolved_layers = list(non_bundle_layers)
+    for cb_layer in code_bundle_layers:
+        if cb_layer.copy_style == "all":
+            resolved_layers.append(CopyConfig(path_type=1, src=root_dir, dst=cb_layer.dst))
+        else:
+            # "loaded_modules" — set root_dir so builder copies only imported modules to context
+            resolved_layers.append(CodeBundleLayer(copy_style=cb_layer.copy_style, dst=cb_layer.dst, root_dir=root_dir))
+
+    return Image._new(
+        base_image=image.base_image,
+        dockerfile=image.dockerfile,
+        registry=image.registry,
+        name=image.name,
+        platform=image.platform,
+        python_version=image.python_version,
+        extendable=image.extendable,
+        _ref_name=image._ref_name,
+        _layers=tuple(resolved_layers),
+        _image_registry_secret=image._image_registry_secret,
+    )

@@ -38,12 +38,21 @@ jobs:
     strategy:
       matrix:
         plugin:
+          - ray
+          - spark
+          - openai
+          - dask
+          - pytorch
           - bigquery
           - databricks
-          - openai
-          - polars
           - snowflake
+          - sglang
+          - vllm
           - wandb
+          - polars
+          - hitl
+          - jsonl
+          - anthropic
         python-version: ["3.12"]
       fail-fast: false
     defaults:
@@ -60,5 +69,5 @@ jobs:
 
       - name: Run tests
         env:
-          FLYTE_PLUGINS: ${{ matrix.plugin }}
+          FLYTE_PLUGIN: plugins/${{ matrix.plugin }}
         run: make unit_test_plugins

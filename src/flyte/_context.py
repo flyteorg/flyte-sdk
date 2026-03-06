@@ -32,6 +32,7 @@ class ContextData:
     metadata: Optional[Tuple[Tuple[str, str], ...]] = None
     preserve_original_types: bool = False
     tracker: Any = None  # ActionTracker instance (optional, set for TUI runs)
+    in_trace: bool = False  # True when executing inside a @trace decorated function
 
     def replace(self, **kwargs) -> ContextData:
         return replace(self, **kwargs)
@@ -123,6 +124,13 @@ class Context:
         :return: bool
         """
         return self.data.task_context is not None
+
+    def is_in_trace(self) -> bool:
+        """
+        Returns true if the context is in a trace context, else False
+        Returns: bool
+        """
+        return self.data.in_trace
 
     def __enter__(self):
         """Enter the context, setting it as the current context."""

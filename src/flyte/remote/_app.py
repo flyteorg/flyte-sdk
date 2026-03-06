@@ -1,7 +1,10 @@
 from __future__ import annotations
 
-from typing import AsyncIterator, Literal, Mapping, Tuple, cast
+import asyncio
+from contextlib import asynccontextmanager, contextmanager
+from typing import AsyncGenerator, AsyncIterator, Generator, Literal, Mapping, Tuple, cast
 
+import google.protobuf.json_format
 import grpc
 import rich.repr
 from flyteidl2.app import app_definition_pb2, app_payload_pb2
@@ -14,6 +17,7 @@ from flyte.syncify import syncify
 from ._common import ToJSONMixin, filtering, sorting
 
 WaitFor = Literal["activated", "deactivated"]
+wait_for_interval = 1  # seconds
 
 
 def _is_active(state: app_definition_pb2.Status.DeploymentStatus) -> bool:
@@ -126,6 +130,9 @@ class App(ToJSONMixin):
         async for resp in call:
             if resp.update_event:
                 updated_app = resp.update_event.updated_app
+                if not updated_app.status.conditions:
+                    await asyncio.sleep(wait_for_interval)
+                    continue
                 current_status = updated_app.status.conditions[-1].deployment_status
                 if current_status == app_definition_pb2.Status.DeploymentStatus.DEPLOYMENT_STATUS_FAILED:
                     raise RuntimeError(f"App deployment for app {self.name} has failed!")
@@ -162,7 +169,7 @@ class App(ToJSONMixin):
     async def activate(self, wait: bool = False) -> App:
         """
         Start the app
-        :param wait: Wait for the app to reach started state
+        :param wait: Wait for the app to reach activated state
 
         """
         if self.is_active():
@@ -174,18 +181,40 @@ class App(ToJSONMixin):
         )
 
     @syncify
-    async def deactivate(self, wait: bool = False):
+    async def deactivate(self, wait: bool = False) -> App:
         """
         Stop the app
         :param wait: Wait for the app to reach the deactivated state
         """
         if self.is_deactivated():
-            return
+            return self
         return await self._update(
             app_definition_pb2.Spec.DESIRED_STATE_STOPPED,
             "User requested to deactivate app from flyte-sdk",
             "deactivated" if wait else None,
         )
+
+    @asynccontextmanager
+    async def ephemeral_ctx(self) -> AsyncGenerator[None, None]:
+        """
+        Async context manager that activates the app and deactivates it when the context is exited.
+        """
+        try:
+            await self.activate.aio(wait=True)
+            yield
+        finally:
+            await self.deactivate.aio(wait=True)
+
+    @contextmanager
+    def ephemeral_ctx_sync(self) -> Generator[None, None, None]:
+        """
+        Context manager that activates the app and deactivates it when the context is exited.
+        """
+        try:
+            self.activate(wait=True)
+            yield
+        finally:
+            self.deactivate(wait=True)
 
     def __rich_repr__(self) -> rich.repr.Result:
         """
@@ -245,6 +274,23 @@ class App(ToJSONMixin):
                 return
             raise
 
+    @staticmethod
+    async def _app_specs_are_equal(
+        old_app_spec: app_definition_pb2.Spec, updated_app_spec: app_definition_pb2.Spec
+    ) -> bool:
+        """
+        Compare two app specs and return True if they are the same.
+
+        If the updated_app_spec doesn't have any ingress defined, use the old app spec's ingress.
+        """
+        old_app_spec_json = google.protobuf.json_format.MessageToDict(old_app_spec)
+        updated_app_spec_json = google.protobuf.json_format.MessageToDict(updated_app_spec)
+        old_ingress = old_app_spec_json.get("ingress")
+        assert old_ingress is not None
+        if not updated_app_spec_json.get("ingress"):
+            updated_app_spec_json["ingress"] = old_ingress
+        return old_app_spec_json == updated_app_spec_json
+
     @syncify
     @classmethod
     async def replace(
@@ -267,7 +313,13 @@ class App(ToJSONMixin):
         """
         ensure_client()
         app = await cls.get.aio(name=name, project=project, domain=domain)
+
         updated_app_spec.creator.CopyFrom(app.pb2.spec.creator)
+
+        if await cls._app_specs_are_equal(app.pb2.spec, updated_app_spec):
+            logger.warning(f"No changes in the App spec for '{name}', skipping update")
+            return app
+
         new_app = app_definition_pb2.App(
             metadata=app_definition_pb2.Meta(
                 id=app.pb2.metadata.id,

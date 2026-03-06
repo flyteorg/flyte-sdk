@@ -78,6 +78,28 @@ class TestS3Config:
         assert result["retry_config"]["backoff"]["init_backoff"] == custom_backoff
         assert "anonymous" not in result
 
+    def test_get_fsspec_kwargs_addressing_style_virtual(self):
+        s3 = S3(addressing_style="virtual")
+        result = s3.get_fsspec_kwargs()
+
+        assert "config" in result
+        assert result["config"]["virtual_hosted_style_request"] is True
+        assert "anonymous" not in result
+
+    def test_get_fsspec_kwargs_addressing_style_path(self):
+        s3 = S3(addressing_style="path")
+        result = s3.get_fsspec_kwargs()
+
+        assert "config" in result
+        assert result["config"]["virtual_hosted_style_request"] is False
+        assert "anonymous" not in result
+
+    def test_get_fsspec_kwargs_no_addressing_style(self):
+        s3 = S3()
+        result = s3.get_fsspec_kwargs()
+
+        assert "config" not in result or "virtual_hosted_style_request" not in result.get("config", {})
+
 
 class TestGCSConfig:
     def test_get_fsspec_kwargs_default(self):

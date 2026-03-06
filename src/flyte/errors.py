@@ -283,3 +283,27 @@ class CodeBundleError(RuntimeUserError):
 
     def __init__(self, message: str):
         super().__init__("CodeBundleError", message, "user")
+
+
+class TraceDoesNotAllowNestedTasksError(RuntimeUserError):
+    """
+    This error is raised when the user tries to use a task from within a trace. Tasks can be nested under tasks
+    not traces.
+    """
+
+    def __init__(self, message: str):
+        super().__init__("TraceDoesNotAllowNestedTasksError", message)
+
+
+class InvalidPackageError(RuntimeUserError):
+    """Raised when an invalid system package is detected during image build."""
+
+    def __init__(self, package_name: str, original_error: str):
+        self.package_name = package_name
+        self.original_error = original_error
+        super().__init__(
+            "InvalidPackageError",
+            f"Invalid system package detected: '{package_name}'. "
+            f"This package does not exist in apt repositories. "
+            f"Error: {original_error}",
+        )

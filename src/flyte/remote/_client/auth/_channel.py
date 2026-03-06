@@ -1,3 +1,4 @@
+import json
 import ssl
 import typing
 
@@ -59,6 +60,7 @@ async def create_channel(
     compression: typing.Optional[grpc.Compression] = None,
     http_session: httpx.AsyncClient | None = None,
     proxy_command: typing.List[str] | None = None,
+    rpc_retries: typing.Optional[int] = None,
     **kwargs,
 ) -> grpc.aio.Channel:
     """
@@ -81,6 +83,8 @@ async def create_channel(
     :param compression: Compression method for the channel
     :param http_session: Pre-configured HTTP session to use for requests
     :param proxy_command: List of strings for proxy command configuration
+    :param rpc_retries: Number of times to retry gRPC calls (flyte.init defaults to 3). None means do not install
+      the interceptor at all.
     :param kwargs: Additional arguments passed to various functions:
         - For grpc.aio.insecure_channel/secure_channel:
             - root_certificates: Root certificates for SSL credentials
@@ -124,10 +128,34 @@ async def create_channel(
 
     assert endpoint, "Endpoint must be specified by this point"
 
+    # Configure gRPC-native retry via service config for transient failures
+    if rpc_retries is not None and rpc_retries > 0:
+        service_config = {
+            "methodConfig": [
+                {
+                    "name": [{}],
+                    "retryPolicy": {
+                        "maxAttempts": rpc_retries + 1,
+                        "initialBackoff": "0.5s",
+                        "maxBackoff": "10s",
+                        "backoffMultiplier": 2,
+                        "retryableStatusCodes": ["UNAVAILABLE", "RESOURCE_EXHAUSTED", "INTERNAL"],
+                    },
+                }
+            ]
+        }
+        retry_option = ("grpc.service_config", json.dumps(service_config))
+        if grpc_options:
+            grpc_options = [*list(grpc_options), retry_option]
+        else:
+            grpc_options = [retry_option]
+
     # Create an unauthenticated channel first to use to get the server metadata
     if insecure:
         insecure_kwargs = {}
-        if kw_opts := kwargs.get("options"):
+        if grpc_options:
+            insecure_kwargs["options"] = grpc_options
+        elif kw_opts := kwargs.get("options"):
             insecure_kwargs["options"] = kw_opts
         if compression:
             insecure_kwargs["compression"] = compression
@@ -198,7 +226,9 @@ async def create_channel(
 
     if insecure:
         insecure_kwargs = {}
-        if kw_opts := kwargs.get("options"):
+        if grpc_options:
+            insecure_kwargs["options"] = grpc_options
+        elif kw_opts := kwargs.get("options"):
             insecure_kwargs["options"] = kw_opts
         if compression:
             insecure_kwargs["compression"] = compression
