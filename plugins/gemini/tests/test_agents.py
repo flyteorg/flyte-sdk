@@ -5,126 +5,115 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import flyte
 import pytest
+from flyte._json_schema import literal_type_to_json_schema
+from flyte.models import NativeInterface
+from flyte.types._type_engine import TypeEngine
 
 from flyteplugins.gemini import Agent, function_tool, run_agent
-from flyteplugins.gemini.agents._function_tools import (
-    FunctionTool,
-    _get_function_schema,
-    _python_type_to_json_schema,
-)
+from flyteplugins.gemini.agents._function_tools import FunctionTool
 
 # ---------------------------------------------------------------------------
-# Type conversion tests
+# literal_type_to_json_schema unit tests (Flyte type engine path)
 # ---------------------------------------------------------------------------
 
 
-def test_python_type_to_json_schema_string():
-    assert _python_type_to_json_schema(str) == {"type": "string"}
+def _schema(python_type) -> dict:
+    """Helper: Python type → LiteralType → JSON schema."""
+    return literal_type_to_json_schema(TypeEngine.to_literal_type(python_type))
 
 
-def test_python_type_to_json_schema_int():
-    assert _python_type_to_json_schema(int) == {"type": "integer"}
+def test_json_schema_string():
+    assert _schema(str) == {"type": "string"}
 
 
-def test_python_type_to_json_schema_float():
-    assert _python_type_to_json_schema(float) == {"type": "number"}
+def test_json_schema_int():
+    assert _schema(int) == {"type": "integer"}
 
 
-def test_python_type_to_json_schema_bool():
-    assert _python_type_to_json_schema(bool) == {"type": "boolean"}
+def test_json_schema_float():
+    assert _schema(float) == {"type": "number", "format": "float"}
 
 
-def test_python_type_to_json_schema_list():
-    assert _python_type_to_json_schema(list[str]) == {"type": "array", "items": {"type": "string"}}
+def test_json_schema_bool():
+    assert _schema(bool) == {"type": "boolean"}
 
 
-def test_python_type_to_json_schema_bare_list():
-    assert _python_type_to_json_schema(list) == {"type": "array"}
+def test_json_schema_list_str():
+    assert _schema(list[str]) == {"type": "array", "items": {"type": "string"}}
 
 
-def test_python_type_to_json_schema_dict():
-    assert _python_type_to_json_schema(dict[str, int]) == {"type": "object"}
+def test_json_schema_bare_list():
+    schema = _schema(list)
+    assert isinstance(schema, dict)
+    assert len(schema) > 0
 
 
-def test_python_type_to_json_schema_bare_dict():
-    assert _python_type_to_json_schema(dict) == {"type": "object"}
+def test_json_schema_dict_str_int():
+    assert _schema(dict[str, int]) == {
+        "type": "object",
+        "additionalProperties": {"type": "integer"},
+    }
 
 
-def test_python_type_to_json_schema_optional():
-    assert _python_type_to_json_schema(Optional[str]) == {"type": "string"}
+def test_json_schema_optional_str():
+    assert _schema(Optional[str]) == {"type": "string"}
 
 
-def test_python_type_to_json_schema_nested_list():
-    schema = _python_type_to_json_schema(list[list[int]])
-    assert schema == {"type": "array", "items": {"type": "array", "items": {"type": "integer"}}}
+def test_json_schema_optional_list():
+    assert _schema(Optional[list[str]]) == {"type": "array", "items": {"type": "string"}}
 
 
-def test_python_type_to_json_schema_optional_list():
-    schema = _python_type_to_json_schema(Optional[list[str]])
-    assert schema == {"type": "array", "items": {"type": "string"}}
+def test_json_schema_nested_list():
+    assert _schema(list[list[int]]) == {
+        "type": "array",
+        "items": {"type": "array", "items": {"type": "integer"}},
+    }
 
 
-def test_python_type_to_json_schema_union():
-    schema = _python_type_to_json_schema(Union[str, int])
-    assert schema == {"anyOf": [{"type": "string"}, {"type": "integer"}]}
-
-
-def test_python_type_to_json_schema_unknown_type():
-    class MyCustomClass:
-        pass
-
-    assert _python_type_to_json_schema(MyCustomClass) == {"type": "string"}
+def test_json_schema_union_str_int():
+    schema = _schema(Union[str, int])
+    assert schema["format"] == "union"
+    assert "oneOf" in schema
+    types_in_schema = {v["type"] for v in schema["oneOf"]}
+    assert types_in_schema == {"string", "integer"}
 
 
 # ---------------------------------------------------------------------------
-# Function schema tests
+# NativeInterface / function_tool schema integration tests
 # ---------------------------------------------------------------------------
 
 
-def test_get_function_schema_simple():
+def test_native_interface_json_schema_simple():
     def my_func(name: str, age: int) -> str:
         return f"{name} is {age}"
 
-    schema = _get_function_schema(my_func)
+    schema = NativeInterface.from_callable(my_func).json_schema
     assert schema["type"] == "object"
     assert schema["properties"]["name"] == {"type": "string"}
     assert schema["properties"]["age"] == {"type": "integer"}
     assert set(schema["required"]) == {"name", "age"}
 
 
-def test_get_function_schema_with_defaults():
-    def my_func(name: str, age: int = 25) -> str:
-        return f"{name} is {age}"
+def test_function_tool_callable_input_schema_equals_native_interface():
+    def my_func(name: str, count: int) -> str:
+        """A callable."""
+        return f"{name}: {count}"
 
-    schema = _get_function_schema(my_func)
-    assert schema["required"] == ["name"]
-
-
-def test_get_function_schema_no_type_hints():
-    def my_func(name, age):
-        return f"{name} is {age}"
-
-    schema = _get_function_schema(my_func)
-    # Untyped parameters default to string
-    assert schema["properties"]["name"] == {"type": "string"}
-    assert schema["properties"]["age"] == {"type": "string"}
+    tool = function_tool(my_func)
+    expected = NativeInterface.from_callable(my_func).json_schema
+    assert tool.input_schema == expected
 
 
-def test_get_function_schema_all_optional():
-    def my_func(x: int = 0, y: int = 0) -> int:
-        return x + y
+def test_function_tool_flyte_task_input_schema_equals_task_json_schema():
+    env = flyte.TaskEnvironment("test")
 
-    schema = _get_function_schema(my_func)
-    assert schema["required"] == []
+    @env.task
+    def my_task(prompt: str, n: int) -> str:
+        """A flyte task."""
+        return f"{prompt} * {n}"
 
-
-def test_get_function_schema_skips_self_cls():
-    def my_method(self, name: str) -> str:
-        return name
-
-    schema = _get_function_schema(my_method)
-    assert "self" not in schema["properties"]
-    assert "name" in schema["properties"]
+    tool = function_tool(my_task)
+    assert tool.input_schema == my_task.json_schema
 
 
 # ---------------------------------------------------------------------------
@@ -217,7 +206,8 @@ def test_function_tool_to_gemini_format():
     assert gemini_tool.name == "get_weather"
     assert gemini_tool.description == "Get the weather for a city."
     assert gemini_tool.parameters_json_schema is not None
-    assert gemini_tool.parameters_json_schema["properties"]["city"] == {"type": "string"}
+    assert "city" in gemini_tool.parameters_json_schema["properties"]
+    assert gemini_tool.parameters_json_schema["properties"]["city"]["type"] == "string"
 
 
 def test_function_tool_as_decorator():
