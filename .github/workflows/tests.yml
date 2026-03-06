@@ -52,6 +52,7 @@ jobs:
           - polars
           - hitl
           - jsonl
+          - anthropic
         python-version: ["3.12"]
       fail-fast: false
     defaults:

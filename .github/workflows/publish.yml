@@ -83,6 +83,7 @@ jobs:
           - "plugins/polars"
           - "plugins/hitl"
           - "plugins/jsonl"
+          - "plugins/anthropic"
         include:
           - workdir: "plugins/sglang"
             image-type: sglang
