@@ -38,13 +38,20 @@ jobs:
     strategy:
       matrix:
         plugin:
+          - ray
+          - spark
+          - openai
+          - dask
+          - pytorch
           - bigquery
           - databricks
-          - openai
-          - polars
           - snowflake
+          - sglang
+          - vllm
           - wandb
+          - polars
           - hitl
+          - jsonl
         python-version: ["3.12"]
       fail-fast: false
     defaults:
