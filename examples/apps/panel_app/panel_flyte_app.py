@@ -631,7 +631,6 @@ def serve():
         show=False,
         websocket_origin=origin,
         static_dirs=static_dirs,
-        session_token_expiration=3600,  # 1 hour (default 300s); avoids "Token is expired" on slow loads
     )
 
 
