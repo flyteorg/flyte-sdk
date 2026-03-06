@@ -138,7 +138,7 @@ def build_graph():
     return workflow.compile()
 
 
-@env.task
+@env.task(cache="auto")
 async def main(prompt: str) -> str:
     graph = build_graph()
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")

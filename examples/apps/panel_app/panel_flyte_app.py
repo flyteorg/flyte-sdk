@@ -5,6 +5,11 @@ application using the @app_env.server decorator pattern. The app has:
 - Left side: A read-only code editor with a "Play" button to run the code locally
 - Right side: The ExploreTUIApp for browsing Flyte entities
 
+Reo.Dev tracking uses the reodotdev npm package (no CDN). To rebuild after
+editing reo_component.py or reo_init.js:
+    cd examples/apps/panel_app && npm run build:reo
+Requires: node, npm, esbuild (npm install in that directory).
+
 Create the Gemini API key:
     flyte create secret GOOGLE_GEMINI_API_KEY
 
@@ -17,8 +22,12 @@ Usage (CLI):
 
 import importlib.util
 import os
+import threading
+import time
 from pathlib import Path
 
+import param
+from panel.custom import JSComponent
 from textual.app import App
 
 import flyte
@@ -27,7 +36,7 @@ from flyte.cli._tui._explore import ExploreScreen
 
 app_env = AppEnvironment(
     name="panel-textual-app-test-1",
-    image=flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages(
+    image=flyte.Image.from_debian_base().with_pip_packages(
         "panel",
         "textual",
         "scikit-learn",
@@ -43,7 +52,7 @@ app_env = AppEnvironment(
     port=8080,
     resources=flyte.Resources(cpu="1", memory="1Gi", disk="32Gi"),
     scaling=Scaling(
-        replicas=(0, 5),
+        replicas=(1, 5),
         metric=Scaling.RequestRate(3),
         scaledown_after=300,  # 5 minutes
     ),
@@ -55,6 +64,7 @@ app_env = AppEnvironment(
     include=[
         "explore.tcss",
         "template.html",
+        "header.html",
         "sample_hello_world.py",
         "sample_async.py",
         "sample_caching_and_retries.py",
@@ -125,6 +135,44 @@ class CustomExploreTUIApp(App[None]):
         self.push_screen(CustomExploreScreen())
 
 
+class ReoInitializer(JSComponent):
+    """Invisible component that initializes Reo.Dev tracking via the reodotdev npm package."""
+
+    client_id = param.String(
+        doc="Reo.Dev client ID. Pass from REO_CLIENT_ID env var in production.",
+    )
+
+    _importmap = {  # noqa: RUF012
+        "imports": {
+            "reodotdev": "https://esm.sh/reodotdev@1.1.0",
+        }
+    }
+
+    _esm = """
+    /* reo_init.js - Reo.Dev initialization via npm package */
+    import { loadReoScript } from "reodotdev";
+
+    export function render({ model }) {
+    const clientID = model.client_id
+
+    const reoPromise = loadReoScript({ clientID });
+    reoPromise
+        .then((Reo) => {
+        Reo.init({ clientID });
+        console.log("Reo initialized");
+        })
+        .catch((error) => {
+        console.error("Error loading Reo", error);
+        });
+
+    // Return minimal invisible container - Reo init is a side effect
+    const el = document.createElement("div");
+    el.style.cssText = "position:absolute;width:0;height:0;overflow:hidden;pointer-events:none;";
+    return el;
+    }
+    """
+
+
 EXAMPLES = {
     "Hello World": {
         "script": "sample_hello_world.py",
@@ -151,13 +199,13 @@ EXAMPLES = {
     },
     "LangGraph Gemini Agent": {
         "script": "sample_langgraph_gemini_agent.py",
-        "description": "A LangGraph ReAct-style agent using Google Gemini tool calling to get the weather forecast.",
+        "description": "A LangGraph agent using Google Gemini tool calling to get the weather forecast.",
         "run_kwargs": {"prompt": "What is the weather forecast in Berlin tomorrow, and should I bring a jacket?"},
         "env_vars": ["GOOGLE_GEMINI_API_KEY"],
     },
     "Distributed Random Forest": {
         "script": "sample_distributed_random_forest.py",
-        "description": "A simple distributed random forest training implementation with scikit-learn.",
+        "description": "A simple distributed random forest training implementation with sc ikit-learn.",
         "run_kwargs": {"n_estimators": 8},
     },
     "MNIST Training": {
@@ -182,7 +230,6 @@ def create_panel_app():
 
     # Example selector tabs
     example_selector = pn.widgets.Select(
-        name="Select an example",
         groups={
             "Basics": ["Hello World", "Async Python", "Caching and Retries"],
             "AI Agents": ["PBJ Sandwich Dummy Agent", "LangGraph Gemini Agent"],
@@ -190,7 +237,7 @@ def create_panel_app():
         },
         value="Hello World",
         stylesheets=[
-            ":host .bk-input { background-color: #171020 !important; color: #f7f5fd !important; font-size: 14px "
+            ":host .bk-input { background-color: #050310 !important; color: #f7f5fd !important; font-size: 14px "
             "!important; border: 1px solid #7652a2 !important; background-image: url('data:image/svg+xml,%3Csvg "
             "xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 12 12%27%3E%3Cpath d=%27M2 4l4 4 4-4%27 "
             "fill=%27none%27 stroke=%27%237652a2%27 stroke-width=%271.5%27 stroke-linecap=%27round%27 "
@@ -203,6 +250,7 @@ def create_panel_app():
     example_description = pn.pane.Markdown(
         f"*{EXAMPLES['Hello World']['description']}*",
         styles={"color": "#d4d4d4", "font-size": "14px"},
+        stylesheets=[":host p { margin-top: 0 !important; margin-bottom: 0 !important; }"],
     )
 
     code_editor = pn.widgets.CodeEditor(
@@ -252,9 +300,9 @@ def create_panel_app():
         button_type="default",
         width=100,
         stylesheets=[
-            ":host .bk-btn { background-color: #171020 !important; color: #f7f5fd !important; "
-            "font-size: 12px !important; border: 1px solid #7652a2 !important; line-height: 26px !important; }",
-            ":host .bk-active { background-color: #7652a2 !important; color: #f7f5fd !important; }",
+            ":host .bk-btn { background-color: #050310 !important; color: #f7f5fd !important; "
+            "font-size: 12px !important; border: 1px solid #8C4FFF !important; line-height: 26px !important; }",
+            ":host .bk-active { background-color: #8C4FFF !important; color: #f7f5fd !important; }",
         ],
     )
 
@@ -275,6 +323,8 @@ def create_panel_app():
     example_selector.param.watch(on_example_change, "value")
 
     flyte_tui_app = CustomExploreTUIApp()
+    _start_periodic_runs_clear(flyte_tui_app)
+
     textual_pane = pn.pane.Textual(
         flyte_tui_app,
         sizing_mode="stretch_both",
@@ -286,16 +336,16 @@ def create_panel_app():
             ":host .xterm-viewport::-webkit-scrollbar { display: none !important; width: 0 !important; }",
             ":host .xterm { overflow: hidden !important; }",
         ],
-        styles={"padding": "0", "margin": "0", "background": "#171020", "overflow": "hidden"},
+        styles={"padding": "0", "margin": "0", "background": "#050310", "overflow": "hidden"},
     )
 
-    def refresh_textual_app():
+    def refresh_textual_app(time_to_sleep: float = 0.5):
         import threading
 
         def _do_refresh():
             import time
 
-            time.sleep(0.5)
+            time.sleep(time_to_sleep)
             if flyte_tui_app._running:
                 flyte_tui_app.call_from_thread(lambda: flyte_tui_app.screen.query_one("#runs-table").populate())
 
@@ -304,48 +354,66 @@ def create_panel_app():
 
     def run_code(event):
         output_area.object = "▶️ Running code locally...\n"
-        try:
-            selected_example = example_selector.value
-            selected_config = EXAMPLES[selected_example]
-            module = _load_example_module(selected_config["script"])
 
-            if not hasattr(module, "main"):
-                output_area.object = "Error: Could not find 'main' task in the code."
-                return
+        # Capture context on main thread before spawning worker
+        doc = getattr(pn.state, "curdoc", None)
+        selected_example = example_selector.value
+        selected_config = EXAMPLES[selected_example]
+        disable_cache = selected_example == "Caching and Retries" and disable_cache_toggle.value
 
-            flyte.init(local_persistence=True)
-            env_vars = None
-            if "env_vars" in selected_config:
-                env_vars = {}
-                for env_var in selected_config["env_vars"]:
-                    env_vars[env_var] = os.getenv(env_var)
+        def update_output(text: str) -> None:
+            """Schedule UI update on main thread (thread-safe)."""
 
-            run_kwargs = selected_config["run_kwargs"]
-            runcontext_kwargs = {"mode": "local", "env_vars": env_vars}
-            if selected_example == "Caching and Retries" and disable_cache_toggle.value:
-                output_area.object = "🔄 Disabling run cache..."
-                runcontext_kwargs["disable_run_cache"] = True
+            def _do_update():
+                output_area.object = text
 
-            run = flyte.with_runcontext(**runcontext_kwargs).run(
-                module.main,
-                **run_kwargs,
-            )
-            result = run.outputs()
-            output_area.object = (
-                f"✅ Run completed!\nResult: {result}\nSee the 'Explore Runs' pane on the right for more details."
-            )
+            if doc is not None:
+                doc.add_next_tick_callback(_do_update)
+            else:
+                output_area.object = text
 
-            # Refresh the Textual app to show the new run
-            refresh_textual_app()
-        except Exception as e:
-            output_area.object = f"Error: {e}"
+        def _run_in_thread() -> None:
+            try:
+                module = _load_example_module(selected_config["script"])
+                if not hasattr(module, "main"):
+                    update_output("Error: Could not find 'main' task in the code.")
+                    return
+
+                flyte.init(local_persistence=True)
+                env_vars = None
+                if "env_vars" in selected_config:
+                    env_vars = {}
+                    for env_var in selected_config["env_vars"]:
+                        env_vars[env_var] = os.getenv(env_var)
+
+                run_kwargs = selected_config["run_kwargs"]
+                runcontext_kwargs = {"mode": "local", "env_vars": env_vars}
+                if disable_cache:
+                    update_output("🔄 Disabling run cache...\n")
+                    runcontext_kwargs["disable_run_cache"] = True
+
+                refresh_textual_app(time_to_sleep=0.1)
+                run = flyte.with_runcontext(**runcontext_kwargs).run(
+                    module.main,
+                    **run_kwargs,
+                )
+                result = run.outputs()
+                update_output(
+                    f"✅ Run completed!\nResult: {result}\nSee the 'Explore Runs' pane on the right for more details."
+                )
+                refresh_textual_app()
+            except Exception as e:
+                update_output(f"Error: {e}")
+
+        thread = threading.Thread(target=_run_in_thread, daemon=True)
+        thread.start()
 
     play_button = pn.widgets.Button(
         name="▶ Run",
         button_type="primary",
         width=150,
         stylesheets=[
-            ":host .bk-btn { background-color: #7652a2 !important; font-size: 14px !important; "
+            ":host .bk-btn { background-color: #8C4FFF !important; font-size: 14px !important; "
             "border: none !important; line-height: 28px !important;}",
         ],
     )
@@ -391,19 +459,30 @@ def create_panel_app():
 
     left_panel = pn.Column(
         pn.pane.Markdown(
-            "## Introduction to Flyte 2",
+            "## Flyte 2 Live Demo",
             styles={"color": "white", "font-size": "18px"},
             stylesheets=[":host h2 { margin-top: 0 !important; margin-bottom: 5px !important; }"],
         ),
         pn.pane.Markdown(
             "<a href='https://www.union.ai/docs/v2/flyte/' target='_blank'>Flyte 2</a> is a type-safe, "
-            "distributed orchestrator for agents, AI, ML, and data workloads.<br>This demo walks you through how "
-            "Flyte 2 works with code you can run in the browser without having to install anything. Select an example "
-            "below and `▶ Run` it to see it in action. Explore runs with the TUI on the right 👉.",
+            "distributed orchestrator for agents, AI, ML, and data workloads. This in-browser demo lets you run "
+            "real Flyte code - no installs required.<br><br>Select an example below, hit `▶ Run`, and explore your "
+            "results in the TUI on the right 👉",
             styles={"color": "white", "font-size": "16px"},
             stylesheets=[
                 ":host p { margin-top: 0 !important; margin-bottom: 5px !important; }",
-                ":host a, :host a:visited { color: #a082c4 !important; }",
+                ":host a, :host a:visited { color: #8C4FFF !important; }",
+                """
+                :host code {
+                    background-color: #8C4FFF !important;
+                    color: #f7f5fd !important;
+                    padding: 2px 6px !important;
+                    margin: 2px 4px !important;
+                    border-radius: 4px !important;
+                    font-size: 14px !important;
+                    font-weight: bold !important;
+                }
+                """,
             ],
         ),
         example_selector,
@@ -423,7 +502,7 @@ def create_panel_app():
         output_area,
         sizing_mode="stretch_both",
         min_height=800,
-        styles={"background": "#2d2d2d", "padding": "10px", "height": "100vh"},
+        styles={"background": "#050310", "padding": "10px", "height": "100vh"},
     )
 
     # Toggle button for maximizing/minimizing the right panel
@@ -433,7 +512,7 @@ def create_panel_app():
         button_type="default",
         width=40,
         stylesheets=[
-            ":host .bk-btn { background-color: #7652a2 !important; color: #f7f5fd !important; "
+            ":host .bk-btn { background-color: #8C4FFF !important; color: #f7f5fd !important; "
             "font-size: 16px !important; border: none !important; padding: 2px 8px !important; "
             "margin-right: 10px !important; }"
         ],
@@ -444,11 +523,11 @@ def create_panel_app():
             pn.Spacer(sizing_mode="stretch_width"),
             is_maximized,
             sizing_mode="stretch_width",
-            styles={"background": "#2d2d2d"},
+            styles={"background": "#050310"},
         ),
         textual_pane,
         sizing_mode="stretch_width",
-        styles={"background": "#2d2d2d", "padding": "10px", "height": "100vh"},
+        styles={"background": "#050310", "padding": "10px", "height": "100vh"},
     )
 
     def update_layout(maximized):
@@ -470,44 +549,59 @@ def create_panel_app():
 
     header = pn.Row(
         pn.pane.HTML(
-            """
-            <div style="display: flex; justify-content: center; align-items: center; gap: 20px; width: 100%;">
-                <span style="color: #d4d4d4; font-size: 14px;">
-                    Flyte 2 available now for local execution - cloud execution coming to OSS soon.
-                </span>
-                <a href="https://www.union.ai/try-flyte-2" target="_blank"
-                   style="background-color: #171020; color: #f7f5fd; padding: 5px 10px;
-                          border-radius: 5px; text-decoration: none; font-weight: bold;
-                          font-size: 14px; transition: background-color 0.2s; border: 1px solid #f7f5fd;">
-                    Join Flyte 2 production trial ↗
-                </a>
-            </div>
-            """,
+            (Path(__file__).parent / "header.html").read_text(),
             sizing_mode="stretch_width",
         ),
         sizing_mode="stretch_width",
         styles={
-            "background": "#171020",
+            "background": "#12052a",
             "padding": "5px",
-            "border-top": "1px solid #171020",
+            "border-top": "1px solid #12052a",
         },
     )
+    reo_client_id = os.getenv("REO_CLIENT_ID")
+    reo_initializer = ReoInitializer(client_id=reo_client_id)
 
     layout = pn.Column(
+        reo_initializer,
         header,
         main_content,
         sizing_mode="stretch_both",
-        styles={"height": "100vh"},
+        styles={"height": "100vh", "background": "#050310"},
     )
 
-    template = _load_template_html().replace("{{client_id}}", os.getenv("REO_CLIENT_ID"))
+    template = _load_template_html()
     tmpl = pn.Template(template)
     tmpl.add_panel("main", layout)
     tmpl.add_variable(
         "app_favicon",
-        "https://cdn.prod.website-files.com/63bc5f38147eb46b4951579a/63bca1b93a6aa708cb0bba32_Flyte-logo-favicon-32.png",
+        "https://cdn.prod.website-files.com/690e2a44303093ad8549854b/69123f033bc348f79cd2d7a4_flyte-logo-32.png",
     )
     return tmpl
+
+
+def _start_periodic_runs_clear(flyte_tui_app):
+    """Clear runs (RunStore) and re-render the TUI table every 24 hours per session."""
+
+    CACHE_CLEAR_INTERVAL_SECONDS = 24 * 60 * 60  # 24 hours
+
+    def _clear_and_refresh():
+        from flyte._persistence._run_store import RunStore
+
+        RunStore.clear_sync()
+        flyte_tui_app.screen.query_one("#runs-table").populate()
+
+    def _clear_loop():
+        while True:
+            time.sleep(CACHE_CLEAR_INTERVAL_SECONDS)
+            try:
+                if flyte_tui_app._running:
+                    flyte_tui_app.call_from_thread(_clear_and_refresh)
+            except Exception:
+                pass
+
+    thread = threading.Thread(target=_clear_loop, daemon=True)
+    thread.start()
 
 
 @app_env.server
@@ -532,11 +626,12 @@ def serve():
     static_dirs = {"": str(Path(__file__).parent)}
     pn.serve(
         create_panel_app,
-        title="Flyte 2 Intro",
+        title="Flyte 2 | Live Demo",
         port=port,
         show=False,
         websocket_origin=origin,
         static_dirs=static_dirs,
+        session_token_expiration=3600,  # 1 hour (default 300s); avoids "Token is expired" on slow loads
     )
 
 
