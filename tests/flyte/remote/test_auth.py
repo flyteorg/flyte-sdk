@@ -3,8 +3,43 @@ from unittest import mock
 
 import grpc
 import grpc.aio
+import pytest
 
 from flyte.remote._client.auth._channel import create_channel
+
+
+@pytest.mark.asyncio
+@mock.patch("flyte.remote._client.auth._channel.create_auth_interceptors")
+@mock.patch("flyte.remote._client.auth._channel.create_proxy_auth_interceptors", return_value=[])
+@mock.patch("flyte.remote._client.auth._channel.get_async_session")
+@mock.patch("grpc.aio.insecure_channel")
+async def test_insecure_skips_auth_interceptors(
+    mock_insecure_channel, mock_get_session, mock_proxy_auth, mock_create_auth
+):
+    """When insecure=True and no auth_type is given, auth interceptors should be skipped."""
+    mock_channel = mock.AsyncMock(spec=grpc.aio.Channel)
+    mock_insecure_channel.return_value = mock_channel
+
+    await create_channel("localhost:8080", insecure=True)
+
+    mock_create_auth.assert_not_called()
+
+
+@pytest.mark.asyncio
+@mock.patch("flyte.remote._client.auth._channel.create_auth_interceptors")
+@mock.patch("flyte.remote._client.auth._channel.create_proxy_auth_interceptors", return_value=[])
+@mock.patch("flyte.remote._client.auth._channel.get_async_session")
+@mock.patch("grpc.aio.insecure_channel")
+async def test_insecure_with_explicit_auth_type_still_skips_auth(
+    mock_insecure_channel, mock_get_session, mock_proxy_auth, mock_create_auth
+):
+    """When insecure=True, auth interceptors should be skipped even with an explicit auth_type."""
+    mock_channel = mock.AsyncMock(spec=grpc.aio.Channel)
+    mock_insecure_channel.return_value = mock_channel
+
+    await create_channel("localhost:8080", insecure=True, auth_type="ClientSecret", client_id="id", client_secret="s")
+
+    mock_create_auth.assert_not_called()
 
 
 class TestCreateChannel(unittest.TestCase):
