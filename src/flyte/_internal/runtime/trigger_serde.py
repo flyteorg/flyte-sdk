@@ -124,6 +124,8 @@ async def to_task_trigger(
         cluster=t.queue,
         labels=labels,
         annotations=annotations,
+        # TODO: Add notifications to RunSpec once the field is available in flyteidl2
+        # notifications=t.notifications,
     )
 
     kickoff_arg_name = None
