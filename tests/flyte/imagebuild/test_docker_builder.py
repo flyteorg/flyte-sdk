@@ -10,6 +10,7 @@ import pytest_asyncio
 from flyte import Secret
 from flyte._image import AptPackages, Commands, Image, PipPackages, PoetryProject, Requirements, UVProject
 from flyte._internal.imagebuild.docker_builder import (
+    DOCKER_FILE_UV_BASE_TEMPLATE,
     CopyConfig,
     CopyConfigHandler,
     DockerImageBuilder,
@@ -674,3 +675,42 @@ def test_get_build_secrets_from_image_deduplicates_with_group():
     assert len(secrets) == 1, f"Expected 1 secret, got {len(secrets)}. Secrets: {secrets}"
     assert secrets[0].key == "mykey"
     assert secrets[0].group == "mygroup"
+
+
+def test_uv_base_template_default_venv():
+    """When base image has no UV_PYTHON, the template should default to /opt/venv and create a venv."""
+    dockerfile = DOCKER_FILE_UV_BASE_TEMPLATE.substitute(
+        BASE_IMAGE="python:3.12-slim",
+        PYTHON_VERSION="3.12",
+    )
+
+    # Should use shell default syntax for VIRTUALENV and UV_PYTHON
+    assert "VIRTUALENV=${VIRTUALENV:-/opt/venv}" in dockerfile
+    assert "UV_PYTHON=${UV_PYTHON:-/opt/venv/bin/python}" in dockerfile
+
+    # Should capture existing UV_PYTHON via ARG
+    assert "ARG _EXISTING_UV_PYTHON=${UV_PYTHON}" in dockerfile
+
+    # Should conditionally create venv
+    assert 'if [ -z "${_EXISTING_UV_PYTHON}" ]' in dockerfile
+    assert "uv venv $VIRTUALENV --python=3.12" in dockerfile
+
+
+def test_uv_base_template_preserves_existing_uv_python():
+    """When base image has UV_PYTHON set, the template should preserve it and skip venv creation."""
+    dockerfile = DOCKER_FILE_UV_BASE_TEMPLATE.substitute(
+        BASE_IMAGE="my-custom-image:latest",
+        PYTHON_VERSION="3.12",
+    )
+
+    # The ARG captures the base image's UV_PYTHON at build time
+    assert "ARG _EXISTING_UV_PYTHON=${UV_PYTHON}" in dockerfile
+
+    # The conditional block skips venv creation when _EXISTING_UV_PYTHON is non-empty
+    assert 'if [ -z "${_EXISTING_UV_PYTHON}" ]' in dockerfile
+
+    # PATH is conditionally set: only adds /opt/venv/bin when _EXISTING_UV_PYTHON is empty
+    # ${_EXISTING_UV_PYTHON:+$PATH} expands to $PATH when set, nothing when empty
+    # ${_EXISTING_UV_PYTHON:-/opt/venv/bin:$PATH} expands to /opt/venv/bin:$PATH when empty, nothing when set
+    assert "${_EXISTING_UV_PYTHON:+$PATH}" in dockerfile
+    assert "${_EXISTING_UV_PYTHON:-/opt/venv/bin:$PATH}" in dockerfile
