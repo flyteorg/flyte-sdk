@@ -150,6 +150,50 @@ def test_base_image_clone_same():
     assert default_image.uri != cloned_default_image.uri
 
 
+def test_dockerignore_layer_hash_includes_content(tmp_path):
+    dockerignore_file = tmp_path / ".dockerignore"
+    dockerignore_file.write_text("first\n")
+
+    base_image = Image.from_base("python:3.12-slim-bookworm").clone(
+        registry="local", name="dockerignore-layer", extendable=True
+    )
+
+    img_with_ignore = base_image.with_dockerignore(dockerignore_file)
+    first_uri = img_with_ignore.uri
+
+    dockerignore_file.write_text("second\n")
+    img_with_ignore_updated = base_image.with_dockerignore(dockerignore_file)
+    second_uri = img_with_ignore_updated.uri
+
+    assert first_uri != second_uri
+
+
+def test_default_dockerignore_in_hash(tmp_path, monkeypatch):
+    dockerignore_file = tmp_path / ".dockerignore"
+    dockerignore_file.write_text("line-a\n")
+
+    class _Config:
+        def __init__(self, root_dir: Path):
+            self.root_dir = root_dir
+
+    monkeypatch.setattr("flyte._initialize._get_init_config", lambda: _Config(tmp_path))
+
+    base_image = Image.from_base("python:3.12-slim-bookworm").clone(
+        registry="local", name="implicit-dockerignore", extendable=True
+    )
+
+    first_uri = base_image.uri
+
+    dockerignore_file.write_text("line-b\n")
+    updated_image = Image.from_base("python:3.12-slim-bookworm").clone(
+        registry="local", name="implicit-dockerignore", extendable=True
+    )
+
+    second_uri = updated_image.uri
+
+    assert first_uri != second_uri
+
+
 def test_dockerfile():
     img = Image.from_dockerfile(
         file=Path(__file__).parent / "resources" / "Dockerfile.test_sample", name="test-image", registry="localhost"

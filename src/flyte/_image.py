@@ -340,7 +340,17 @@ class DockerIgnore(Layer):
     path: str
 
     def update_hash(self, hasher: hashlib._Hash):
+        from ._utils import filehash_update
+
         hasher.update(self.path.encode("utf-8"))
+
+        dockerignore_path = Path(self.path)
+        if dockerignore_path.exists() and dockerignore_path.is_file():
+            try:
+                filehash_update(dockerignore_path, hasher)
+            except Exception:
+                # If the file cannot be read for any reason, fall back to path-only hashing
+                pass
 
 
 @rich.repr.auto
@@ -828,9 +838,28 @@ class Image:
         if self.dockerfile:
             # Note the location of the dockerfile shouldn't matter, only the contents
             filehash_update(self.dockerfile, hasher)
+        dockerignore_hashed = False
         if self._layers:
             for layer in self._layers:
                 layer.update_hash(hasher)
+                if isinstance(layer, DockerIgnore):
+                    dockerignore_hashed = True
+        if not dockerignore_hashed:
+            dockerignore_path = None
+            try:
+                from flyte._initialize import _get_init_config
+
+                cfg = _get_init_config()
+                if cfg and getattr(cfg, "root_dir", None):
+                    dockerignore_path = Path(cfg.root_dir) / ".dockerignore"
+            except Exception:
+                dockerignore_path = None
+
+            if dockerignore_path and dockerignore_path.is_file():
+                try:
+                    filehash_update(dockerignore_path, hasher)
+                except Exception:
+                    pass
         return hasher.hexdigest()
 
     @property
