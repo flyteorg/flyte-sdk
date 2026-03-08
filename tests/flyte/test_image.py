@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import cast
+from typing import Callable, cast
 from unittest.mock import patch
 
 import pytest
@@ -7,6 +7,26 @@ import pytest
 from flyte._image import AptPackages, CodeBundleLayer, CopyConfig, Image, UVScript, resolve_code_bundle_layer
 from flyte._initialize import _InitConfig
 from flyte._internal.imagebuild.docker_builder import PipAndRequirementsHandler
+
+
+def _assert_dockerignore_change_invalidates_uri(dockerignore: Path, build_uri: Callable[[], str]):
+    """
+    Create, mutate, and clean up the given dockerignore path while asserting the image URI changes accordingly.
+
+    Args:
+        dockerignore: Path that will be written to and removed during the assertion.
+        build_uri: Callback that builds and returns an image URI using the current dockerignore state.
+    """
+    try:
+        dockerignore.write_text("foo\n")
+        uri_with_foo_ignore = build_uri()
+
+        dockerignore.write_text("bar\n")
+        uri_with_bar_ignore = build_uri()
+
+        assert uri_with_foo_ignore != uri_with_bar_ignore
+    finally:
+        dockerignore.unlink(missing_ok=True)
 
 
 def test_base():
@@ -123,35 +143,24 @@ def test_raw_base_image():
 
 def test_root_dockerignore_affects_image_hash(tmp_path):
     dockerignore = tmp_path / ".dockerignore"
-    dockerignore.write_text("foo\n")
     init_config = _InitConfig(root_dir=tmp_path)
 
-    with patch("flyte._initialize._get_init_config", return_value=init_config):
-        first = Image.from_debian_base().clone(name="img", registry="registry.local")
-        first_uri = first.uri
+    def build_uri():
+        with patch("flyte._image._get_init_config", return_value=init_config):
+            return Image.from_debian_base().clone(name="img", registry="registry.local").uri
 
-    dockerignore.write_text("bar\n")
-
-    with patch("flyte._initialize._get_init_config", return_value=init_config):
-        second = Image.from_debian_base().clone(name="img", registry="registry.local")
-        second_uri = second.uri
-
-    assert first_uri != second_uri
+    _assert_dockerignore_change_invalidates_uri(dockerignore, build_uri)
 
 
 def test_dockerignore_layer_hashes_contents(tmp_path):
     dockerignore = tmp_path / "custom.dockerignore"
-    dockerignore.write_text("foo\n")
 
-    first = Image.from_debian_base().clone(name="img", registry="registry.local").with_dockerignore(dockerignore)
-    first_uri = first.uri
+    def build_uri():
+        return (
+            Image.from_debian_base().clone(name="img", registry="registry.local").with_dockerignore(dockerignore).uri
+        )
 
-    dockerignore.write_text("bar\n")
-
-    second = Image.from_debian_base().clone(name="img", registry="registry.local").with_dockerignore(dockerignore)
-    second_uri = second.uri
-
-    assert first_uri != second_uri
+    _assert_dockerignore_change_invalidates_uri(dockerignore, build_uri)
 
 
 def test_base_image_with_layers_unnamed():
@@ -165,7 +174,9 @@ def test_base_image_with_layers():
         .clone(registry="other_registry", name="myclone", extendable=True)
         .with_apt_packages("vim")
     )
-    assert raw_base_image.uri == "other_registry/myclone:56efd2d79905676e7af6fb6958a6874d"
+    # Patch out init config to avoid coupling to the repository .dockerignore for this deterministic hash check.
+    with patch("flyte._image._get_init_config", return_value=None):
+        assert raw_base_image.uri == "other_registry/myclone:a95ad60ad5a34dd40c304b81cf9a15ae"
     assert len(raw_base_image._layers) == 1
 
 

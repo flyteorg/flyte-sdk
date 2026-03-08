@@ -12,6 +12,9 @@ from typing import TYPE_CHECKING, ClassVar, Dict, List, Literal, Optional, Tuple
 
 import rich.repr
 
+from flyte._initialize import _get_init_config
+from flyte._utils import filehash_update
+
 if TYPE_CHECKING:
     from flyte import Secret, SecretRequest
 
@@ -41,6 +44,17 @@ def _ensure_tuple(val: Union[T, List[T], Tuple[T, ...]]) -> Tuple[T] | Tuple[T, 
         return val
     else:
         return (val,)
+
+
+def _update_hash_with_file(path: Path, hasher: hashlib._Hash):
+    """
+    Update the hasher with the path string and file contents.
+    The path is always hashed, even if the file is missing, so a changed or renamed path affects the digest; contents
+    are hashed only when the path points to a file. This function mutates ``hasher`` in place and has no return value.
+    """
+    hasher.update(str(path).encode("utf-8"))
+    if path.exists() and path.is_file():
+        filehash_update(path, hasher)
 
 
 @rich.repr.auto
@@ -340,12 +354,8 @@ class DockerIgnore(Layer):
     path: str
 
     def update_hash(self, hasher: hashlib._Hash):
-        from ._utils import filehash_update
-
         dockerignore_path = Path(self.path)
-        hasher.update(str(dockerignore_path).encode("utf-8"))
-        if dockerignore_path.exists() and dockerignore_path.is_file():
-            filehash_update(dockerignore_path, hasher)
+        _update_hash_with_file(dockerignore_path, hasher)
 
 
 @rich.repr.auto
@@ -837,17 +847,15 @@ class Image:
         if self._layers:
             for layer in self._layers:
                 layer.update_hash(hasher)
-                dockerignore_layer_seen = dockerignore_layer_seen or isinstance(layer, DockerIgnore)
+                if isinstance(layer, DockerIgnore):
+                    dockerignore_layer_seen = True
         # If no DockerIgnore layer was provided, fall back to hashing the default .dockerignore under root_dir (if any)
         if not dockerignore_layer_seen:
-            from flyte._initialize import _get_init_config
-
             init_config = _get_init_config()
-            dockerignore_path = (Path(init_config.root_dir) / ".dockerignore") if init_config else None
-            if dockerignore_path:
-                hasher.update(str(dockerignore_path).encode("utf-8"))
-                if dockerignore_path.exists() and dockerignore_path.is_file():
-                    filehash_update(dockerignore_path, hasher)
+            root_dir = init_config.root_dir if init_config else None
+            if root_dir:
+                dockerignore_path = Path(root_dir) / ".dockerignore"
+                _update_hash_with_file(dockerignore_path, hasher)
         return hasher.hexdigest()
 
     @property
