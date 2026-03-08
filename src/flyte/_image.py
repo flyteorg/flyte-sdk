@@ -28,7 +28,8 @@ def _hash_dockerignore_file(path: Path, hasher: hashlib._Hash, context: str) -> 
         context: Human-readable context for logging (e.g., "explicit" or "implicit").
 
     Returns:
-        None. The hasher is updated in-place when the file can be read; otherwise the call is a no-op.
+        None. The hasher is updated in-place when the file can be read, a warning is logged and contents skipped
+        on read errors, and the call is a no-op when the file is absent.
     """
     if not path.is_file():
         return
@@ -868,7 +869,7 @@ class Image:
         """
         import hashlib
 
-        hasher = hashlib.sha256()
+        hasher = hashlib.md5()
         if self.base_image:
             hasher.update(self.base_image.encode("utf-8"))
         if self.dockerfile:
