@@ -19,6 +19,19 @@ try:
 except ImportError:  # pragma: no cover - fallback when initialization helpers aren't available
     _get_init_config_optional = None
 
+def _hash_dockerignore_file(path: Path, hasher: hashlib._Hash, context: str) -> None:
+    if not path.is_file():
+        return
+    try:
+        filehash_update(path, hasher)
+    except OSError as e:
+        logger.warning(
+            "Failed to read %s .dockerignore at %s; falling back to path-only hashing: %s",
+            context,
+            path,
+            e,
+        )
+
 if TYPE_CHECKING:
     from flyte import Secret, SecretRequest
 
@@ -350,15 +363,7 @@ class DockerIgnore(Layer):
         hasher.update(self.path.encode("utf-8"))
 
         dockerignore_path = Path(self.path)
-        if dockerignore_path.is_file():
-            try:
-                filehash_update(dockerignore_path, hasher)
-            except OSError as e:
-                logger.warning(
-                    "Failed to read .dockerignore file at %s; falling back to path-only hashing: %s",
-                    dockerignore_path,
-                    e,
-                )
+        _hash_dockerignore_file(dockerignore_path, hasher, "explicit")
 
 
 @rich.repr.auto
@@ -858,15 +863,8 @@ class Image:
                 if root_dir:
                     dockerignore_path = Path(root_dir) / ".dockerignore"
 
-            if dockerignore_path and dockerignore_path.is_file():
-                try:
-                    filehash_update(dockerignore_path, hasher)
-                except OSError as e:
-                    logger.warning(
-                        "Failed to read implicit .dockerignore file at %s; falling back to path-only hashing: %s",
-                        dockerignore_path,
-                        e,
-                    )
+            if dockerignore_path:
+                _hash_dockerignore_file(dockerignore_path, hasher, "implicit")
         return hasher.hexdigest()
 
     @property
