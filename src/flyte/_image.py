@@ -20,6 +20,13 @@ except ImportError:  # pragma: no cover - fallback when initialization helpers a
     _get_init_config_optional = None
 
 def _hash_dockerignore_file(path: Path, hasher: hashlib._Hash, context: str) -> None:
+    """Hash the contents of a .dockerignore file if it exists.
+
+    Args:
+        path: Path to the .dockerignore file.
+        hasher: Hashlib-compatible hasher to update.
+        context: Human-readable context for logging (e.g., "explicit" or "implicit").
+    """
     if not path.is_file():
         return
     try:
@@ -34,6 +41,7 @@ def _hash_dockerignore_file(path: Path, hasher: hashlib._Hash, context: str) -> 
 
 
 def _get_default_dockerignore_path() -> Path | None:
+    """Return the .dockerignore path from the initialized root directory, if available."""
     if not _get_init_config_optional:
         return None
     cfg = _get_init_config_optional()
