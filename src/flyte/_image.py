@@ -354,8 +354,11 @@ class DockerIgnore(Layer):
             try:
                 filehash_update(dockerignore_path, hasher)
             except OSError as e:
-                logger.warning(f"Failed to read .dockerignore file at {dockerignore_path}: {e}")
-                # If the file cannot be read for any reason, fall back to path-only hashing
+                logger.warning(
+                    "Failed to read .dockerignore file at %s; falling back to path-only hashing: %s",
+                    dockerignore_path,
+                    e,
+                )
 
 
 @rich.repr.auto
@@ -851,14 +854,19 @@ class Image:
             dockerignore_path = None
             if _maybe_get_init_config:
                 cfg = _maybe_get_init_config()
-                if cfg and getattr(cfg, "root_dir", None):
-                    dockerignore_path = Path(cfg.root_dir) / ".dockerignore"
+                root_dir = getattr(cfg, "root_dir", None) if cfg else None
+                if root_dir:
+                    dockerignore_path = Path(root_dir) / ".dockerignore"
 
             if dockerignore_path and dockerignore_path.is_file():
                 try:
                     filehash_update(dockerignore_path, hasher)
                 except OSError as e:
-                    logger.warning(f"Failed to read implicit .dockerignore file at {dockerignore_path}: {e}")
+                    logger.warning(
+                        "Failed to read implicit .dockerignore file at %s; falling back to path-only hashing: %s",
+                        dockerignore_path,
+                        e,
+                    )
         return hasher.hexdigest()
 
     @property
