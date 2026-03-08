@@ -8,7 +8,7 @@ from abc import abstractmethod
 from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar, Dict, List, Literal, Optional, Tuple, TypeVar, Union
+from typing import TYPE_CHECKING, ClassVar, Dict, List, Literal, Optional, Protocol, Tuple, TypeVar, Union
 
 import rich.repr
 from flyte._logging import logger
@@ -19,7 +19,11 @@ try:
 except ImportError:  # pragma: no cover - fallback when initialization helpers aren't available
     _get_init_config_if_available = None
 
-def _hash_dockerignore_file(path: Path, hasher: hashlib._Hash, context: str) -> None:
+class _HashLike(Protocol):
+    def update(self, data: bytes) -> None: ...
+
+
+def _hash_dockerignore_file(path: Path, hasher: _HashLike, context: str) -> None:
     """Hash the contents of a .dockerignore file if it exists.
 
     Args:
@@ -28,8 +32,7 @@ def _hash_dockerignore_file(path: Path, hasher: hashlib._Hash, context: str) -> 
         context: Human-readable context for logging (e.g., "explicit" or "implicit").
 
     Returns:
-        None. The hasher is updated in-place when the file can be read, a warning is logged and contents skipped
-        on read errors, and the call is a no-op when the file is absent.
+        None. Updates hasher in-place if file exists and is readable; logs a warning on read errors; no-op otherwise.
     """
     if not path.is_file():
         return
