@@ -1,9 +1,11 @@
 from pathlib import Path
 from typing import cast
+from unittest.mock import patch
 
 import pytest
 
 from flyte._image import AptPackages, CodeBundleLayer, CopyConfig, Image, UVScript, resolve_code_bundle_layer
+from flyte._initialize import _InitConfig
 from flyte._internal.imagebuild.docker_builder import PipAndRequirementsHandler
 
 
@@ -119,6 +121,39 @@ def test_raw_base_image():
     assert raw_base_image.uri == "myregistry.com/myimage:v123"
 
 
+def test_root_dockerignore_affects_image_hash(tmp_path):
+    dockerignore = tmp_path / ".dockerignore"
+    dockerignore.write_text("foo\n")
+    init_config = _InitConfig(root_dir=tmp_path)
+
+    with patch("flyte._initialize._get_init_config", return_value=init_config):
+        first = Image.from_debian_base().clone(name="img", registry="registry.local")
+        first_uri = first.uri
+
+    dockerignore.write_text("bar\n")
+
+    with patch("flyte._initialize._get_init_config", return_value=init_config):
+        second = Image.from_debian_base().clone(name="img", registry="registry.local")
+        second_uri = second.uri
+
+    assert first_uri != second_uri
+
+
+def test_dockerignore_layer_hashes_contents(tmp_path):
+    dockerignore = tmp_path / "custom.dockerignore"
+    dockerignore.write_text("foo\n")
+
+    first = Image.from_debian_base().clone(name="img", registry="registry.local").with_dockerignore(dockerignore)
+    first_uri = first.uri
+
+    dockerignore.write_text("bar\n")
+
+    second = Image.from_debian_base().clone(name="img", registry="registry.local").with_dockerignore(dockerignore)
+    second_uri = second.uri
+
+    assert first_uri != second_uri
+
+
 def test_base_image_with_layers_unnamed():
     with pytest.raises(ValueError):
         Image.from_base("myregistry.com/myimage:v123").with_apt_packages("vim")
@@ -130,7 +165,7 @@ def test_base_image_with_layers():
         .clone(registry="other_registry", name="myclone", extendable=True)
         .with_apt_packages("vim")
     )
-    assert raw_base_image.uri == "other_registry/myclone:a95ad60ad5a34dd40c304b81cf9a15ae"
+    assert raw_base_image.uri == "other_registry/myclone:56efd2d79905676e7af6fb6958a6874d"
     assert len(raw_base_image._layers) == 1
 
 
