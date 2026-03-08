@@ -40,7 +40,7 @@ def _hash_dockerignore_file(path: Path, hasher: hashlib._Hash, context: str) -> 
         )
 
 
-def _get_default_dockerignore_path() -> Path | None:
+def _get_default_dockerignore_path() -> Optional[Path]:
     """Return the .dockerignore path from the initialized root directory, if available.
 
     Returns:
@@ -869,11 +869,11 @@ class Image:
         if self.dockerfile:
             # Note the location of the dockerfile shouldn't matter, only the contents
             filehash_update(self.dockerfile, hasher)
-        dockerignore_hashed = any(isinstance(layer, DockerIgnore) for layer in self._layers)
+        has_dockerignore_layer = any(isinstance(layer, DockerIgnore) for layer in self._layers)
         if self._layers:
             for layer in self._layers:
                 layer.update_hash(hasher)
-        if not dockerignore_hashed:
+        if not has_dockerignore_layer:
             dockerignore_path = _get_default_dockerignore_path()
             if dockerignore_path:
                 _hash_dockerignore_file(dockerignore_path, hasher, "implicit")
