@@ -26,11 +26,19 @@ def _hash_dockerignore_file(path: Path, hasher: hashlib._Hash, context: str) -> 
         filehash_update(path, hasher)
     except OSError as e:
         logger.warning(
-            "Failed to read %s .dockerignore at %s; falling back to path-only hashing: %s",
+            "Failed to read %s .dockerignore at %s; ignoring .dockerignore contents: %s",
             context,
             path,
             e,
         )
+
+
+def _get_default_dockerignore_path() -> Path | None:
+    if not _get_init_config_optional:
+        return None
+    cfg = _get_init_config_optional()
+    root_dir = getattr(cfg, "root_dir", None) if cfg else None
+    return Path(root_dir) / ".dockerignore" if root_dir else None
 
 if TYPE_CHECKING:
     from flyte import Secret, SecretRequest
@@ -856,13 +864,7 @@ class Image:
                 if isinstance(layer, DockerIgnore):
                     dockerignore_hashed = True
         if not dockerignore_hashed:
-            dockerignore_path = None
-            if _get_init_config_optional:
-                cfg = _get_init_config_optional()
-                root_dir = getattr(cfg, "root_dir", None) if cfg else None
-                if root_dir:
-                    dockerignore_path = Path(root_dir) / ".dockerignore"
-
+            dockerignore_path = _get_default_dockerignore_path()
             if dockerignore_path:
                 _hash_dockerignore_file(dockerignore_path, hasher, "implicit")
         return hasher.hexdigest()
