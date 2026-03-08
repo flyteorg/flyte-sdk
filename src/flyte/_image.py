@@ -12,6 +12,11 @@ from typing import TYPE_CHECKING, ClassVar, Dict, List, Literal, Optional, Tuple
 
 import rich.repr
 
+try:
+    from flyte._initialize import _get_init_config as _maybe_get_init_config
+except ImportError:  # pragma: no cover - fallback when initialization helpers aren't available
+    _maybe_get_init_config = None
+
 if TYPE_CHECKING:
     from flyte import Secret, SecretRequest
 
@@ -846,13 +851,8 @@ class Image:
                     dockerignore_hashed = True
         if not dockerignore_hashed:
             dockerignore_path = None
-            try:
-                from flyte._initialize import _get_init_config
-            except ImportError:
-                _get_init_config = None
-
-            if _get_init_config:
-                cfg = _get_init_config()
+            if _maybe_get_init_config:
+                cfg = _maybe_get_init_config()
                 if cfg and getattr(cfg, "root_dir", None):
                     dockerignore_path = Path(cfg.root_dir) / ".dockerignore"
 

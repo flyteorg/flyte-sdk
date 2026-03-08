@@ -172,11 +172,11 @@ def test_default_dockerignore_in_hash(tmp_path, monkeypatch):
     dockerignore_file = tmp_path / ".dockerignore"
     dockerignore_file.write_text("line-a\n")
 
-    class _Config:
+    class _MockInitConfig:
         def __init__(self, root_dir: Path):
             self.root_dir = root_dir
 
-    monkeypatch.setattr("flyte._initialize._get_init_config", lambda: _Config(tmp_path))
+    monkeypatch.setattr("flyte._image._maybe_get_init_config", lambda: _MockInitConfig(tmp_path))
 
     base_image = Image.from_base("python:3.12-slim-bookworm").clone(
         registry="local", name="implicit-dockerignore", extendable=True
