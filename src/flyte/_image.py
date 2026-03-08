@@ -15,9 +15,9 @@ from flyte._logging import logger
 from flyte._utils.file_handling import filehash_update
 
 try:
-    from flyte._initialize import _get_init_config as _maybe_get_init_config
+    from flyte._initialize import _get_init_config as _get_init_config_optional
 except ImportError:  # pragma: no cover - fallback when initialization helpers aren't available
-    _maybe_get_init_config = None
+    _get_init_config_optional = None
 
 if TYPE_CHECKING:
     from flyte import Secret, SecretRequest
@@ -350,7 +350,7 @@ class DockerIgnore(Layer):
         hasher.update(self.path.encode("utf-8"))
 
         dockerignore_path = Path(self.path)
-        if dockerignore_path.exists() and dockerignore_path.is_file():
+        if dockerignore_path.is_file():
             try:
                 filehash_update(dockerignore_path, hasher)
             except OSError as e:
@@ -852,8 +852,8 @@ class Image:
                     dockerignore_hashed = True
         if not dockerignore_hashed:
             dockerignore_path = None
-            if _maybe_get_init_config:
-                cfg = _maybe_get_init_config()
+            if _get_init_config_optional:
+                cfg = _get_init_config_optional()
                 root_dir = getattr(cfg, "root_dir", None) if cfg else None
                 if root_dir:
                     dockerignore_path = Path(root_dir) / ".dockerignore"
