@@ -28,6 +28,9 @@ def _hash_dockerignore_file(path: Path, hasher: hashlib._Hash, context: str) -> 
         context: Human-readable context for logging (e.g., "explicit" or "implicit").
 
     The function returns silently if the file is not present.
+
+    Returns:
+        None. The hasher is updated in-place when the file can be read.
     """
     if not path.is_file():
         return
@@ -48,10 +51,12 @@ def _get_default_dockerignore_path() -> Optional[Path]:
     Returns:
         Path to the .dockerignore file when initialization config and root_dir are available, otherwise None.
     """
-    if not _get_init_config_if_available:
+    if _get_init_config_if_available is None:
         return None
     cfg = _get_init_config_if_available()
-    root_dir = getattr(cfg, "root_dir", None) if cfg else None
+    if cfg is None:
+        return None
+    root_dir = getattr(cfg, "root_dir", None)
     return Path(root_dir) / ".dockerignore" if root_dir else None
 
 if TYPE_CHECKING:
