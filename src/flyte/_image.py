@@ -26,6 +26,8 @@ def _hash_dockerignore_file(path: Path, hasher: hashlib._Hash, context: str) -> 
         path: Path to the .dockerignore file.
         hasher: Hashlib-compatible hasher to update.
         context: Human-readable context for logging (e.g., "explicit" or "implicit").
+
+    The function returns silently if the file is not present.
     """
     if not path.is_file():
         return
@@ -869,10 +871,12 @@ class Image:
         if self.dockerfile:
             # Note the location of the dockerfile shouldn't matter, only the contents
             filehash_update(self.dockerfile, hasher)
-        has_dockerignore_layer = any(isinstance(layer, DockerIgnore) for layer in self._layers)
+        has_dockerignore_layer = False
         if self._layers:
             for layer in self._layers:
                 layer.update_hash(hasher)
+                if not has_dockerignore_layer and isinstance(layer, DockerIgnore):
+                    has_dockerignore_layer = True
         if not has_dockerignore_layer:
             dockerignore_path = _get_default_dockerignore_path()
             if dockerignore_path:
