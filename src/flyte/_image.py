@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Dict, List, Literal, Optional, Tuple, TypeVar, Union
 
 import rich.repr
+from flyte._logging import logger
+from flyte._utils.file_handling import filehash_update
 
 try:
     from flyte._initialize import _get_init_config as _maybe_get_init_config
@@ -345,15 +347,14 @@ class DockerIgnore(Layer):
     path: str
 
     def update_hash(self, hasher: hashlib._Hash):
-        from ._utils import filehash_update
-
         hasher.update(self.path.encode("utf-8"))
 
         dockerignore_path = Path(self.path)
         if dockerignore_path.exists() and dockerignore_path.is_file():
             try:
                 filehash_update(dockerignore_path, hasher)
-            except OSError:
+            except OSError as e:
+                logger.warning(f"Failed to read .dockerignore file at {dockerignore_path}: {e}")
                 # If the file cannot be read for any reason, fall back to path-only hashing
                 pass
 
@@ -835,8 +836,6 @@ class Image:
         """
         import hashlib
 
-        from ._utils import filehash_update
-
         hasher = hashlib.md5()
         if self.base_image:
             hasher.update(self.base_image.encode("utf-8"))
@@ -859,7 +858,8 @@ class Image:
             if dockerignore_path and dockerignore_path.is_file():
                 try:
                     filehash_update(dockerignore_path, hasher)
-                except OSError:
+                except OSError as e:
+                    logger.warning(f"Failed to read implicit .dockerignore file at {dockerignore_path}: {e}")
                     pass
         return hasher.hexdigest()
 
