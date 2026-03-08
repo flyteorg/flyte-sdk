@@ -12,11 +12,11 @@ from typing import TYPE_CHECKING, ClassVar, Dict, List, Literal, Optional, Proto
 
 import rich.repr
 from flyte._logging import logger
-from flyte._utils.file_handling import filehash_update
+from flyte._utils.file_handling import filehash_update  # Safe import: no dependency back to flyte._image
 
 try:
     from flyte._initialize import _get_init_config as _get_init_config_if_available
-except ImportError:  # pragma: no cover - fallback when initialization helpers aren't available
+except ImportError:  # pragma: no cover - fallback when flyte._initialize is unavailable (e.g., minimal test contexts)
     _get_init_config_if_available = None
 
 class _HashLike(Protocol):
@@ -32,7 +32,10 @@ def _hash_dockerignore_file(path: Path, hasher: _HashLike, context: str) -> None
         context: Human-readable context for logging (e.g., "explicit" or "implicit").
 
     Returns:
-        None. Updates hasher in-place if file exists and is readable; logs a warning on read errors; no-op otherwise.
+        None.
+
+    Note:
+        Updates hasher in-place if file exists and is readable; logs a warning on read errors; no-op otherwise.
     """
     if not path.is_file():
         return
