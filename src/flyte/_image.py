@@ -356,7 +356,6 @@ class DockerIgnore(Layer):
             except OSError as e:
                 logger.warning(f"Failed to read .dockerignore file at {dockerignore_path}: {e}")
                 # If the file cannot be read for any reason, fall back to path-only hashing
-                pass
 
 
 @rich.repr.auto
@@ -860,7 +859,6 @@ class Image:
                     filehash_update(dockerignore_path, hasher)
                 except OSError as e:
                     logger.warning(f"Failed to read implicit .dockerignore file at {dockerignore_path}: {e}")
-                    pass
         return hasher.hexdigest()
 
     @property
