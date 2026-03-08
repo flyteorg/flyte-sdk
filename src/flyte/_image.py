@@ -15,9 +15,9 @@ from flyte._logging import logger
 from flyte._utils.file_handling import filehash_update
 
 try:
-    from flyte._initialize import _get_init_config as _get_init_config_optional
+    from flyte._initialize import _get_init_config as _get_init_config_if_available
 except ImportError:  # pragma: no cover - fallback when initialization helpers aren't available
-    _get_init_config_optional = None
+    _get_init_config_if_available = None
 
 def _hash_dockerignore_file(path: Path, hasher: hashlib._Hash, context: str) -> None:
     """Hash the contents of a .dockerignore file if it exists.
@@ -41,10 +41,14 @@ def _hash_dockerignore_file(path: Path, hasher: hashlib._Hash, context: str) -> 
 
 
 def _get_default_dockerignore_path() -> Path | None:
-    """Return the .dockerignore path from the initialized root directory, if available."""
-    if not _get_init_config_optional:
+    """Return the .dockerignore path from the initialized root directory, if available.
+
+    Returns:
+        Path to the .dockerignore file when initialization config and root_dir are available, otherwise None.
+    """
+    if not _get_init_config_if_available:
         return None
-    cfg = _get_init_config_optional()
+    cfg = _get_init_config_if_available()
     root_dir = getattr(cfg, "root_dir", None) if cfg else None
     return Path(root_dir) / ".dockerignore" if root_dir else None
 
@@ -865,12 +869,10 @@ class Image:
         if self.dockerfile:
             # Note the location of the dockerfile shouldn't matter, only the contents
             filehash_update(self.dockerfile, hasher)
-        dockerignore_hashed = False
+        dockerignore_hashed = any(isinstance(layer, DockerIgnore) for layer in self._layers)
         if self._layers:
             for layer in self._layers:
                 layer.update_hash(hasher)
-                if isinstance(layer, DockerIgnore):
-                    dockerignore_hashed = True
         if not dockerignore_hashed:
             dockerignore_path = _get_default_dockerignore_path()
             if dockerignore_path:
