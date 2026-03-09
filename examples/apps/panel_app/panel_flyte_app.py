@@ -459,15 +459,15 @@ def create_panel_app():
     )
 
     mobile_tui_toggle = pn.widgets.Button(
-        name="📊 Explore Runs",
+        name="Explore Runs",
         button_type="primary",
         sizing_mode="stretch_width",
         css_classes=["mobile-tui-toggle"],
         stylesheets=[
-            ":host .bk-btn { background-color: #8C4FFF !important; font-size: 14px !important; "
-            "border: none !important; line-height: 28px !important; margin-top: 10px !important; }",
+            ":host .bk-btn { background-color: #12052a !important; color: #f7f5fd !important; font-size: 14px !important; "
+            "border: 1px solid #8C4FFF !important; line-height: 28px !important; margin-top: 10px !important; }",
             ":host { display: none !important; }",
-            "@media (max-width: 768px) { :host { display: block !important; } }",
+            "@media (max-width: 1024px) { :host { display: block !important; } }",
         ],
     )
 
@@ -549,8 +549,8 @@ def create_panel_app():
         styles={"background": "#050310", "padding": "10px", "height": "100vh"},
         css_classes=["right-panel"],
         stylesheets=[
-            "@media (max-width: 768px) { :host { display: none !important; } }",
-            "@media (max-width: 768px) { :host(.right-panel-visible) { display: flex !important; } }",
+            "@media (max-width: 1024px) { :host { display: none !important; } }",
+            "@media (max-width: 1024px) { :host(.right-panel-visible) { display: flex !important; } }",
             "@media (max-width: 1024px) { :host { height: auto !important; min-height: 500px !important; } }",
         ],
     )
