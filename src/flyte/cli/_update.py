@@ -193,8 +193,17 @@ def secret(
     console = common.get_console()
 
     value = common.resolve_secret_value(
-        value, from_file, type, from_docker_config, docker_config_path, registries, registry, username, password,
-        project, domain,
+        value,
+        from_file,
+        type,
+        from_docker_config,
+        docker_config_path,
+        registries,
+        registry,
+        username,
+        password,
+        project,
+        domain,
     )
 
     with console.status(f"Deleting secret {name}..."):

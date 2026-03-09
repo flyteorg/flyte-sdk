@@ -120,8 +120,17 @@ def secret(
     cfg.init(project, domain)
 
     value = common.resolve_secret_value(
-        value, from_file, type, from_docker_config, docker_config_path, registries, registry, username, password,
-        project, domain,
+        value,
+        from_file,
+        type,
+        from_docker_config,
+        docker_config_path,
+        registries,
+        registry,
+        username,
+        password,
+        project,
+        domain,
     )
     Secret.create(name=name, value=value, type=type)
 
