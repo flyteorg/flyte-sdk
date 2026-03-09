@@ -20,14 +20,16 @@ def _to_dict_helper(obj) -> dict[str, str]:
 
         if isinstance(value, (list, dict, bool)):
             try:
-                serialized_value = json.dumps(value)
+                serialized = json.dumps(value)
             except (TypeError, ValueError) as e:
                 raise ValueError(
                     f"mlflow config field '{key}' must be JSON-serializable. "
                     f"Got type: {type(value).__name__}. Error: {e}"
                 ) from e
+        else:
+            serialized = str(value)
 
-        result[f"mlflow_{key}"] = str(serialized_value)
+        result[f"mlflow_{key}"] = serialized
 
     return result
 
