@@ -47,18 +47,18 @@ def build_enhanced_prompt(
     language: str,
     schema: Optional[str],
     constraints: Optional[list[str]],
-    data_samples: Optional[str],
+    data_context: Optional[str],
     inputs: Optional[dict[str, type]],
     outputs: Optional[dict[str, type]],
 ) -> str:
-    """Build enhanced prompt with language, schema, constraints, data samples, inputs, and outputs.
+    """Build enhanced prompt with language, schema, constraints, data context, inputs, and outputs.
 
     Args:
         prompt: User's prompt
         language: Programming language
         schema: Optional schema definition
         constraints: Optional list of constraints
-        data_samples: Optional data samples context
+        data_context: Optional extracted data context (stats, patterns, schemas)
         inputs: Optional input types
         outputs: Optional output types
 
@@ -99,7 +99,7 @@ def build_enhanced_prompt(
             script_constraint += (
                 "File arguments are string paths - use them directly with open() or other file operations."
             )
-    elif data_samples:
+    elif data_context:
         script_constraint += "Accept appropriate command line arguments to process the data samples."
     else:
         script_constraint += "Include appropriate command line arguments if needed."
@@ -130,7 +130,7 @@ Outputs MUST be written before the script exits — do NOT just print() values."
 
     enhanced_prompt += "\n\nConstraints:\n" + "\n".join(f"- {c}" for c in all_constraints)
 
-    if data_samples:
-        enhanced_prompt += f"\n\nData samples:\n```\n{data_samples}\n```"
+    if data_context:
+        enhanced_prompt += f"\n\nData context:\n```\n{data_context}\n```"
 
     return enhanced_prompt

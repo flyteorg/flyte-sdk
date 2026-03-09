@@ -45,6 +45,7 @@ jobs:
           - snowflake
           - wandb
           - hitl
+          - codegen
         python-version: ["3.12"]
       fail-fast: false
     defaults:

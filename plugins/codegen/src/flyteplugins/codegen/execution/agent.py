@@ -544,11 +544,6 @@ The solution code lives at /var/inputs/solution.py inside the sandbox.
 
 {base_prompt}"""
 
-    if generated_schemas:
-        user_query += "\n\nDATA SCHEMAS (Pandera validation schemas for your input data):\n"
-        for schema_name, schema_code in generated_schemas.items():
-            user_query += f"\n--- {schema_name} ---\n```python\n{schema_code}\n```\n"
-
     user_query += "\n\nStart by creating the solution code, then tests, then packages.txt, then run the tests."
 
     logger.info("Running Agent SDK...")
