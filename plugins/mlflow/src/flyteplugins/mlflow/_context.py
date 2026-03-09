@@ -1,5 +1,5 @@
 import json
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from typing import Any, Literal, Optional
 
 import flyte
@@ -20,14 +20,14 @@ def _to_dict_helper(obj) -> dict[str, str]:
 
         if isinstance(value, (list, dict, bool)):
             try:
-                value = json.dumps(value)
+                serialized_value = json.dumps(value)
             except (TypeError, ValueError) as e:
                 raise ValueError(
                     f"mlflow config field '{key}' must be JSON-serializable. "
                     f"Got type: {type(value).__name__}. Error: {e}"
                 ) from e
 
-        result[f"mlflow_{key}"] = str(value)
+        result[f"mlflow_{key}"] = str(serialized_value)
 
     return result
 

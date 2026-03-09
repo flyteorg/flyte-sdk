@@ -12,15 +12,15 @@ This example demonstrates:
 import asyncio
 from pathlib import Path
 
+import flyte
 import mlflow
 import numpy as np
-from flyteplugins.mlflow import Mlflow, get_mlflow_run, mlflow_config, mlflow_run
+from flyte._image import PythonWheels
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_squared_error
 from sklearn.model_selection import train_test_split
 
-import flyte
-from flyte._image import PythonWheels
+from flyteplugins.mlflow import Mlflow, get_mlflow_run, mlflow_config, mlflow_run
 
 DATABRICKS_USERNAME = "<username>"
 DATABRICKS_HOST = "<host>"
@@ -49,13 +49,7 @@ async def _generate_data(n_samples: int = 1000):
     """Generate synthetic regression data."""
     rng = np.random.RandomState(42)
     X = rng.randn(n_samples, 8)
-    y = (
-        X[:, 0] * 3
-        + X[:, 1] * 2
-        - X[:, 2]
-        + 0.5 * X[:, 3] * X[:, 4]
-        + rng.randn(n_samples) * 0.1
-    )
+    y = X[:, 0] * 3 + X[:, 1] * 2 - X[:, 2] + 0.5 * X[:, 3] * X[:, 4] + rng.randn(n_samples) * 0.1
     return train_test_split(X, y, test_size=0.2, random_state=42)
 
 
@@ -64,9 +58,7 @@ async def _generate_data(n_samples: int = 1000):
 # mlflow.parentRunId tag — no need for the parent run to be active
 # in the same process.
 @mlflow_run(run_mode="nested")
-@env.task(
-    links=(Mlflow())
-)  # run ID isn't known yet, so the UI links to the parent run as "MLflow (parent)".
+@env.task(links=(Mlflow()))  # run ID isn't known yet, so the UI links to the parent run as "MLflow (parent)".
 async def run_trial(
     trial_number: int,
     max_depth: int,
@@ -98,10 +90,7 @@ async def run_trial(
 
     mlflow.log_metrics({"mse": mse, "rmse": rmse})
 
-    print(
-        f"Trial {trial_number}: rmse={rmse:.4f} | "
-        f"run_id={run.info.run_id} | params={params}"
-    )
+    print(f"Trial {trial_number}: rmse={rmse:.4f} | run_id={run.info.run_id} | params={params}")
     return rmse
 
 

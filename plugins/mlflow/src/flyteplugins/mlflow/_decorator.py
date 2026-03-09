@@ -6,10 +6,10 @@ from dataclasses import asdict
 from inspect import iscoroutinefunction
 from typing import Any, Callable, Optional, TypeVar, cast
 
-import mlflow
-
 import flyte
 from flyte._task import AsyncFunctionTaskTemplate
+
+import mlflow
 
 from ._context import RunMode, get_mlflow_context
 from ._link import Mlflow
@@ -219,9 +219,7 @@ def _run_for_task(
     # Trace accessing parent's run — yield without creating a new run
     existing_run = ctx.data.get("_mlflow_run")
     if existing_run:
-        logger.debug(
-            "Trace accessing parent's MLflow run: %s", existing_run.info.run_id
-        )
+        logger.debug("Trace accessing parent's MLflow run: %s", existing_run.info.run_id)
         yield existing_run
         return
 
@@ -298,10 +296,7 @@ def _run_for_task(
                 merged["tags"]["mlflow.parentRunId"] = parent_run_id
                 logger.info("Nesting under parent run: %s", parent_run_id)
             else:
-                logger.warning(
-                    "run_mode='nested' but no parent run ID found; "
-                    "creating a top-level run instead"
-                )
+                logger.warning("run_mode='nested' but no parent run ID found; creating a top-level run instead")
 
     # In local execution, tasks share a process. If a parent run is already
     # active and we're creating a new/nested run, MLflow requires nested=True.
@@ -325,11 +320,7 @@ def _run_for_task(
     config = get_mlflow_context()
     host = link_host or (config.link_host if config else None)
     if host:
-        template = (
-            link_template
-            or (config.link_template if config else None)
-            or _DEFAULT_LINK_TEMPLATE
-        )
+        template = link_template or (config.link_template if config else None) or _DEFAULT_LINK_TEMPLATE
         ctx.custom_context["_mlflow_link"] = template.format(
             host=host.rstrip("/"),
             experiment_id=run.info.experiment_id,
@@ -347,9 +338,7 @@ def _run_for_task(
     try:
         yield run
     finally:
-        is_owner = run_mode in ("new", "nested") or (
-            run_mode == "auto" and not saved_run_id
-        )
+        is_owner = run_mode in ("new", "nested") or (run_mode == "auto" and not saved_run_id)
 
         if run and (is_owner or not should_reuse):
             try:
@@ -463,13 +452,9 @@ def mlflow_run(
                 ...
     """
     if experiment_name and experiment_id:
-        raise ValueError(
-            "Cannot provide both 'experiment_name' and 'experiment_id'. Use one or the other."
-        )
+        raise ValueError("Cannot provide both 'experiment_name' and 'experiment_id'. Use one or the other.")
     if run_name and run_id:
-        raise ValueError(
-            "Cannot provide both 'run_name' and 'run_id'. Use one or the other."
-        )
+        raise ValueError("Cannot provide both 'run_name' and 'run_id'. Use one or the other.")
 
     def decorator(func: F) -> F:
         run_kwargs: dict[str, Any] = {}

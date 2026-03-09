@@ -4,8 +4,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from flyteplugins.mlflow._context import (
-    _MLflowConfig,
     _from_dict_helper,
+    _MLflowConfig,
     _to_dict_helper,
     get_mlflow_context,
     mlflow_config,

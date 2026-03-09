@@ -16,15 +16,13 @@ This example demonstrates:
 import logging
 from pathlib import Path
 
-import mlflow
-from flyteplugins.mlflow import Mlflow, get_mlflow_run, mlflow_config, mlflow_run
-
 import flyte
+import mlflow
 from flyte._image import PythonWheels
 
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+from flyteplugins.mlflow import Mlflow, get_mlflow_run, mlflow_config, mlflow_run
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
 DATABRICKS_USERNAME = "<username>"
 DATABRICKS_HOST = "<host>"
@@ -146,9 +144,7 @@ async def parent_task() -> str:
     # 3. Child task with config override but still inheriting run_mode
     with mlflow_config(tags={"role": "child-with-config"}):
         result3 = await child_task_inherits_mode(20)
-    print(
-        f"Child with config override: {result3} (should match parent: {run.info.run_id})"
-    )
+    print(f"Child with config override: {result3} (should match parent: {run.info.run_id})")
 
     # 4. Call traced task - accesses parent's run (no @mlflow_run needed)
     result4 = await traced_child_task(15)

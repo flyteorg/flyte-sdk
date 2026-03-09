@@ -333,9 +333,7 @@ class TestRunForPlainFunction:
 
 
 class TestRunForTask:
-    def _make_ctx(
-        self, run_id=None, data=None, custom_context=None, action_name="task"
-    ):
+    def _make_ctx(self, run_id=None, data=None, custom_context=None, action_name="task"):
         ctx = MagicMock()
         ctx.data = data or {}
         ctx.custom_context = custom_context or {}
@@ -430,7 +428,7 @@ class TestRunForTask:
         mock_mlflow.start_run.return_value = mock_run
         mock_mlflow.active_run.return_value = None
 
-        with _run_for_task(run_mode="nested") as run:
+        with _run_for_task(run_mode="nested"):
             pass
 
         call_kwargs = mock_mlflow.start_run.call_args[1]
@@ -463,10 +461,9 @@ class TestRunForTask:
         mock_mlflow.start_run.return_value = mock_run
         mock_mlflow.active_run.return_value = None
 
-        with _run_for_task(run_mode="new") as run:
+        with _run_for_task(run_mode="new"):
             assert (
-                "_mlflow_link" not in ctx.custom_context
-                or ctx.custom_context.get("_mlflow_link") != "http://old-link"
+                "_mlflow_link" not in ctx.custom_context or ctx.custom_context.get("_mlflow_link") != "http://old-link"
             )
 
     @patch("flyteplugins.mlflow._decorator._setup_autolog")
@@ -496,7 +493,7 @@ class TestRunForTask:
         mock_mlflow.start_run.return_value = mock_run
         mock_mlflow.active_run.return_value = None
 
-        with _run_for_task(run_mode="nested") as run:
+        with _run_for_task(run_mode="nested"):
             assert ctx.custom_context.get("_mlflow_link") == "http://parent-link"
 
     @patch("flyteplugins.mlflow._decorator._setup_autolog")
@@ -551,7 +548,7 @@ class TestRunForTask:
         mock_run.info.experiment_id = "exp-1"
         mock_mlflow.start_run.return_value = mock_run
 
-        with _run_for_task(run_mode="new") as run:
+        with _run_for_task(run_mode="new"):
             pass
 
         call_kwargs = mock_mlflow.start_run.call_args[1]
@@ -617,7 +614,7 @@ class TestRunForTask:
         mock_mlflow.start_run.return_value = mock_run
         mock_mlflow.active_run.return_value = None
 
-        with _run_for_task(run_mode="auto") as run:
+        with _run_for_task(run_mode="auto"):
             expected = "http://mlflow.example.com/#/experiments/exp-456/runs/run-123"
             assert ctx.custom_context["_mlflow_link"] == expected
 
@@ -653,7 +650,7 @@ class TestRunForTask:
             run_mode="auto",
             link_host="https://databricks.com",
             link_template="{host}/ml/experiments/{experiment_id}/runs/{run_id}",
-        ) as run:
+        ):
             expected = "https://databricks.com/ml/experiments/exp-2/runs/run-1"
             assert ctx.custom_context["_mlflow_link"] == expected
 
@@ -685,7 +682,7 @@ class TestRunForTask:
         mock_mlflow.start_run.return_value = mock_run
         mock_mlflow.active_run.return_value = None
 
-        with _run_for_task(run_mode="new") as run:
+        with _run_for_task(run_mode="new"):
             # During execution, data should have the new run
             assert ctx.data["_mlflow_run"] is mock_run
             assert ctx.custom_context["_mlflow_run_id"] == "new-id"

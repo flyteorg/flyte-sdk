@@ -12,15 +12,13 @@ This example demonstrates:
 import logging
 from pathlib import Path
 
-import numpy as np
-from flyteplugins.mlflow import Mlflow, get_mlflow_run, mlflow_config, mlflow_run
-
 import flyte
+import numpy as np
 from flyte._image import PythonWheels
 
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+from flyteplugins.mlflow import Mlflow, get_mlflow_run, mlflow_config, mlflow_run
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
 DATABRICKS_USERNAME = "<username>"
 DATABRICKS_HOST = "<host>"
@@ -49,9 +47,7 @@ env = flyte.TaskEnvironment(
 
 # Framework-specific autolog with sklearn
 @mlflow_run(autolog=True, framework="sklearn")
-@env.task(
-    links=(Mlflow(),)
-)  # needs to be empty if you want the plugin to auto-generate
+@env.task(links=(Mlflow(),))  # needs to be empty if you want the plugin to auto-generate
 async def train_sklearn_model(n_samples: int = 100) -> None:
     from sklearn.linear_model import LogisticRegression
     from sklearn.model_selection import train_test_split

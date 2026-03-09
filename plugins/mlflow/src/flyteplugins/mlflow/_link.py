@@ -44,9 +44,7 @@ class Mlflow(Link):
         # Don't show inherited parent link when task creates its own run.
         # Check decorator-level run_mode (set at decoration time) and
         # context-level run_mode (set via mlflow_config context manager).
-        run_mode = self._decorator_run_mode or (
-            context.get("mlflow_run_mode") if context else None
-        )
+        run_mode = self._decorator_run_mode or (context.get("mlflow_run_mode") if context else None)
         if run_mode == "new":
             return ""
 

@@ -7,15 +7,13 @@ This example can be run locally with a local MLflow server (http://localhost:500
 import logging
 from pathlib import Path
 
-import numpy as np
-from flyteplugins.mlflow import Mlflow, get_mlflow_run, mlflow_config, mlflow_run
-
 import flyte
+import numpy as np
 from flyte._image import PythonWheels
 
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+from flyteplugins.mlflow import Mlflow, get_mlflow_run, mlflow_config, mlflow_run
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
 
 env = flyte.TaskEnvironment(
@@ -100,11 +98,7 @@ async def run_autolog_examples(n_samples: int = 200) -> None:
         autolog_kwargs={"log_input_examples": True},
     ):
         await train_with_context_autolog.override(
-            links=(
-                Mlflow(
-                    link=f"http://localhost:5000/#/experiments/{run.info.experiment_id}"
-                ),
-            )
+            links=(Mlflow(link=f"http://localhost:5000/#/experiments/{run.info.experiment_id}"),)
         )(n_samples=n_samples)
 
 
@@ -115,7 +109,7 @@ if __name__ == "__main__":
     run = flyte.with_runcontext(
         custom_context=mlflow_config(
             tracking_uri="http://localhost:5000",
-            experiment_name=f"autolog-parent",
+            experiment_name="autolog-parent",
             link_host="http://localhost:5000",  # link_template defaults to the local MLflow server
         ),
         mode="local",

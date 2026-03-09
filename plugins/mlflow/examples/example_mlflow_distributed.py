@@ -11,18 +11,18 @@ import time
 import typing
 from pathlib import Path
 
+import flyte
 import mlflow
 import torch
 import torch.distributed
 import torch.nn as nn
 import torch.optim as optim
-from flyteplugins.mlflow import Mlflow, get_mlflow_run, mlflow_config, mlflow_run
+from flyte._image import PythonWheels
 from flyteplugins.pytorch.task import Elastic
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, DistributedSampler
 
-import flyte
-from flyte._image import PythonWheels
+from flyteplugins.mlflow import Mlflow, get_mlflow_run, mlflow_config, mlflow_run
 
 DATABRICKS_USERNAME = "<username>"
 DATABRICKS_HOST = "<host>"
@@ -45,9 +45,7 @@ image = (
 # Single-node environment (1 node, 4 GPUs)
 single_node_env = flyte.TaskEnvironment(
     name="single_node_env",
-    resources=flyte.Resources(
-        cpu=(1, 2), memory=("1Gi", "10Gi"), gpu="T4:4", shm="auto"
-    ),
+    resources=flyte.Resources(cpu=(1, 2), memory=("1Gi", "10Gi"), gpu="T4:4", shm="auto"),
     plugin_config=Elastic(
         nproc_per_node=4,
         nnodes=1,
@@ -66,9 +64,7 @@ single_node_env = flyte.TaskEnvironment(
 # Multi-node environment (2 nodes, 4 GPUs each)
 multi_node_env = flyte.TaskEnvironment(
     name="multi_node_env",
-    resources=flyte.Resources(
-        cpu=(1, 2), memory=("1Gi", "10Gi"), gpu="T4:4", shm="auto"
-    ),
+    resources=flyte.Resources(cpu=(1, 2), memory=("1Gi", "10Gi"), gpu="T4:4", shm="auto"),
     plugin_config=Elastic(
         nproc_per_node=4,
         nnodes=2,
@@ -88,9 +84,7 @@ multi_node_env = flyte.TaskEnvironment(
 class MLP(nn.Module):
     """Large MLP to drive meaningful GPU utilization."""
 
-    def __init__(
-        self, input_dim: int = 784, hidden_dim: int = 4096, num_classes: int = 10
-    ):
+    def __init__(self, input_dim: int = 784, hidden_dim: int = 4096, num_classes: int = 10):
         super().__init__()
         self.layers = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
@@ -118,9 +112,7 @@ class MLP(nn.Module):
 class SyntheticDataset(torch.utils.data.Dataset):
     """Synthetic dataset simulating image classification data."""
 
-    def __init__(
-        self, num_samples: int = 50000, input_dim: int = 784, num_classes: int = 10
-    ):
+    def __init__(self, num_samples: int = 50000, input_dim: int = 784, num_classes: int = 10):
         self.num_samples = num_samples
         self.input_dim = input_dim
         self.num_classes = num_classes
@@ -152,9 +144,7 @@ def _train_loop_impl(num_epochs: int = 10) -> float | None:
 
     # Dataset and dataloader
     dataset = SyntheticDataset(num_samples=50000, input_dim=784, num_classes=10)
-    sampler = DistributedSampler(
-        dataset, num_replicas=world_size, rank=rank, shuffle=True
-    )
+    sampler = DistributedSampler(dataset, num_replicas=world_size, rank=rank, shuffle=True)
     dataloader = DataLoader(
         dataset,
         batch_size=1024,
@@ -166,9 +156,7 @@ def _train_loop_impl(num_epochs: int = 10) -> float | None:
     # Training setup
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.AdamW(model.parameters(), lr=1e-3, weight_decay=0.01)
-    scheduler = optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=num_epochs * len(dataloader)
-    )
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs * len(dataloader))
 
     # MLflow - only rank 0 gets a run (others get None)
     mlflow_run_obj = get_mlflow_run()
@@ -237,10 +225,7 @@ def _train_loop_impl(num_epochs: int = 10) -> float | None:
     final_loss = running_loss / max(num_batches, 1)
 
     if local_rank == 0:
-        print(
-            f"Training complete | "
-            f"Epochs: {num_epochs} | Steps: {global_step} | Time: {total_time:.1f}s"
-        )
+        print(f"Training complete | Epochs: {num_epochs} | Steps: {global_step} | Time: {total_time:.1f}s")
 
     # Log final metrics
     if mlflow_run_obj:
@@ -341,9 +326,7 @@ parent_env = flyte.TaskEnvironment(
 
 @mlflow_run
 @parent_env.task
-async def run_distributed_training(
-    scenario: str, num_epochs: int = 10
-) -> typing.Optional[float]:
+async def run_distributed_training(scenario: str, num_epochs: int = 10) -> typing.Optional[float]:
     scenarios = {
         "single_node_auto": single_node_auto,
         "single_node_new": single_node_new,
