@@ -556,6 +556,7 @@ def resolve_secret_value(
     if isinstance(value, str):
         value = value.encode("utf-8")
 
+    assert value is not None, "Secret value must be provided via --value, --from-file, or docker config options"
     return value
 
 
