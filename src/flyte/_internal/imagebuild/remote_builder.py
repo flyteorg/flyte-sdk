@@ -16,11 +16,12 @@ import flyte
 import flyte.errors
 from flyte import Image, remote
 from flyte._code_bundle._ignore import STANDARD_IGNORE_PATTERNS
-from flyte._code_bundle._utils import tar_strip_file_attributes
+from flyte._code_bundle._utils import copy_code_bundle_to_context, tar_strip_file_attributes
 from flyte._image import (
     _BASE_REGISTRY,
     AptPackages,
     Architecture,
+    CodeBundleLayer,
     Commands,
     CopyConfig,
     DockerIgnore,
@@ -112,7 +113,9 @@ class RemoteImageBuilder(ImageBuilder):
         """Return the image checker."""
         return [RemoteImageChecker]
 
-    async def build_image(self, image: Image, dry_run: bool = False, wait: bool = True) -> "ImageBuild":
+    async def build_image(
+        self, image: Image, dry_run: bool = False, wait: bool = True, force: bool = False
+    ) -> "ImageBuild":
         from flyte._build import ImageBuild
 
         image_name = f"{image.name}:{image._final_tag}"
@@ -144,7 +147,10 @@ class RemoteImageBuilder(ImageBuilder):
         run = cast(
             Run,
             await flyte.with_runcontext(
-                project=cfg.project, domain=cfg.domain, cache_lookup_scope="project-domain"
+                project=cfg.project,
+                domain=cfg.domain,
+                cache_lookup_scope="project-domain",
+                overwrite_cache=force,
             ).run.aio(entity, spec=spec, context=context, target_image=target_image),
         )
 
@@ -320,6 +326,7 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
             # Keep track of the directory containing the pyproject.toml file
             # this is what should be passed to the UVProject image definition proto as 'pyproject'
             pyproject_dir_dst = pyproject_dst.parent
+            pyproject_dir_dsts = [pyproject_dir_dst]
 
             # Copy uv.lock itself (if provided)
             uvlock_dst = copy_files_to_context(layer.uvlock, context_path) if layer.uvlock is not None else None
@@ -331,14 +338,15 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
                         pip_options.extra_args += " --no-install-project"
                     else:
                         pip_options.extra_args = "--no-install-project"
-                    # Copy any editable dependencies to the context
-                    # We use the docker ignore patterns to avoid copying the editable dependencies to the context.
+                    # Copy the editable dependencies defined under the [tool.uv.sources] in pyproject.toml
                     standard_ignore_patterns = STANDARD_IGNORE_PATTERNS.copy()
                     for editable_dep in get_uv_project_editable_dependencies(layer.pyproject.parent):
-                        copy_files_to_context(
-                            editable_dep,
-                            context_path,
-                            ignore_patterns=[*standard_ignore_patterns, *docker_ignore_patterns],
+                        pyproject_dir_dsts.append(
+                            copy_files_to_context(
+                                editable_dep / "pyproject.toml",
+                                context_path,
+                                ignore_patterns=[*standard_ignore_patterns, *docker_ignore_patterns],
+                            )
                         )
                 case "install_project":
                     # Copy the entire project
@@ -356,6 +364,9 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
                     uvlock=str(uvlock_dst.relative_to(context_path)) if uvlock_dst else None,
                     options=pip_options,
                     secret_mounts=secret_mounts,
+                    # Source dir should be the common parent directory of all the pyproject.toml files
+                    # we copied for this UV project layer.
+                    source_dir=str(Path(os.path.commonpath(pyproject_dir_dsts)).relative_to(context_path)),
                 )
             )
             layers.append(uv_layer)
@@ -389,6 +400,21 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
             layers.append(commands_layer)
         elif isinstance(layer, DockerIgnore):
             shutil.copy(layer.path, context_path)
+        elif isinstance(layer, CodeBundleLayer):
+            if layer.root_dir is None:
+                # It should not be possible to have a CodeBundleLayer with a None root_dir since sdk
+                # should already have resolved it.
+                raise flyte.errors.ImageBuildError("CodeBundleLayer requires a root_dir to be specified.")
+            dst_path = copy_code_bundle_to_context(
+                layer.root_dir, layer.copy_style, context_path, ignore_patterns=docker_ignore_patterns
+            )
+            copy_layer = image_definition_pb2.Layer(
+                copy_config=image_definition_pb2.CopyConfig(
+                    src=str(dst_path.relative_to(context_path)),
+                    dst=str(layer.dst),
+                )
+            )
+            layers.append(copy_layer)
         elif isinstance(layer, CopyConfig):
             dst_path = copy_files_to_context(layer.src, context_path, docker_ignore_patterns)
 

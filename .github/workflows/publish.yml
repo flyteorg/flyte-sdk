@@ -82,6 +82,9 @@ jobs:
           - "plugins/wandb"
           - "plugins/polars"
           - "plugins/codegen"
+          - "plugins/hitl"
+          - "plugins/jsonl"
+          - "plugins/anthropic"
         include:
           - workdir: "plugins/sglang"
             image-type: sglang

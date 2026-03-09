@@ -202,7 +202,7 @@ def get_proto_task(
             pod_template_name=(task.pod_template if task.pod_template and isinstance(task.pod_template, str) else None),
             interruptible=task.interruptible,
             generates_deck=wrappers_pb2.BoolValue(value=task.report),
-            debuggable=task.debuggable,
+            debuggable=task.debuggable if task.reusable is None else False,
             log_links=log_links,
             image_build_run=image_build_run,
         ),

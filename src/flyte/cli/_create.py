@@ -16,6 +16,39 @@ def create():
     """
 
 
+@create.command("project", cls=click.RichCommand)
+@click.option("--id", type=str, required=True, help="Unique identifier for the project (immutable).")
+@click.option("--name", type=str, required=True, help="Display name for the project.")
+@click.option("--description", type=str, default="", help="Description for the project.")
+@click.option(
+    "--label",
+    "-l",
+    multiple=True,
+    callback=common.key_value_callback,
+    help="Labels as key=value pairs. Can be specified multiple times.",
+)
+@click.pass_obj
+def project(cfg: common.CLIConfig, id: str, name: str, description: str, label: dict[str, str] | None):
+    """
+    Create a new project.
+
+    \b
+    Example usage:
+
+    ```bash
+    flyte create project --id my_project_id --name "My Project"
+    flyte create project --id my_project_id --name "My Project" --description "My project" -l team=ml -l env=prod
+    ```
+    """
+    from flyte.remote import Project
+
+    cfg.init()
+    console = common.get_console()
+    with console.status(f"Creating project {id}..."):
+        Project.create(id=id, name=name, description=description, labels=label)
+    console.print(f"[bold green]Project {id} created successfully![/bold green]")
+
+
 @create.command(cls=common.CommandBase)
 @click.argument("name", type=str, required=True)
 @click.option(

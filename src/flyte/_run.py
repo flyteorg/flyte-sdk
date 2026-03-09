@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import os
 import pathlib
 import sys
 import uuid
@@ -200,8 +201,17 @@ class _Runner:
                 code_bundle = cached_value.code_bundle
                 image_cache = cached_value.image_cache
             else:
+                # Resolve any CodeBundleLayer layers before building images
+                parent_env = cast(Environment, obj.parent_env())
+                from flyte._image import Image, resolve_code_bundle_layer
+
+                if isinstance(parent_env.image, Image):
+                    parent_env.image = resolve_code_bundle_layer(
+                        parent_env.image, self._copy_files, pathlib.Path(cfg.root_dir)
+                    )
+
                 if not self._dry_run:
-                    image_cache = await build_images.aio(cast(Environment, obj.parent_env()))
+                    image_cache = await build_images.aio(parent_env)
                 else:
                     image_cache = None
 
@@ -277,6 +287,10 @@ class _Runner:
                 if pathlib.Path(p).is_relative_to(root_dir_abs)
             ]
             env[FLYTE_SYS_PATH] = ":".join(added_paths)
+
+        # TODO: Remove once the actions service is the default and this env var is no longer needed.
+        if os.getenv("_U_USE_ACTIONS") == "1":
+            env["_U_USE_ACTIONS"] = "1"
 
         if not self._dry_run:
             if get_client() is None:
@@ -429,6 +443,13 @@ class _Runner:
 
         if obj.parent_env is None:
             raise ValueError("Task is not attached to an environment. Please attach the task to an environment.")
+
+        # Resolve any CodeBundleLayer layers before building images
+        env = cast(Environment, obj.parent_env())
+        from flyte._image import Image, resolve_code_bundle_layer
+
+        if isinstance(env.image, Image):
+            env.image = resolve_code_bundle_layer(env.image, self._copy_files, pathlib.Path(cfg.root_dir))
 
         image_cache = await build_images.aio(cast(Environment, obj.parent_env()))
 

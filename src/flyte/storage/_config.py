@@ -6,6 +6,7 @@ import typing
 from dataclasses import dataclass
 from typing import ClassVar, Literal
 
+from flyte._logging import logger
 from flyte.config import set_if_exists
 
 
@@ -55,7 +56,21 @@ class Storage(object):
 @dataclass(init=True, repr=True, eq=True, frozen=True)
 class S3(Storage):
     """
-    S3 specific configuration
+    S3 specific configuration.
+
+    Authentication resolution used by Flyte + obstore:
+
+    1. If explicit static credentials are provided via Flyte S3 inputs/environment
+    (`access_key_id`/`secret_access_key`), those are used.
+
+    2. If static credentials are not provided, and both `AWS_PROFILE` and
+    `AWS_CONFIG_FILE` are available, Flyte configures a boto3-backed obstore
+    credential provider so profile-based auth can be used. This requires that the `boto3` library
+    is installed.
+
+    3. If neither of the above applies, obstore uses the default AWS credential chain
+    (for remote runs this commonly resolves via workload identity / IAM attached to
+    the service account and then IMDS fallbacks where applicable).
     """
 
     endpoint: typing.Optional[str] = None
@@ -110,6 +125,24 @@ class S3(Storage):
         }
         return S3(**final_kwargs)
 
+    def _build_s3_credential_provider_from_config_file(
+        self,
+        aws_profile: str,
+        aws_config_file: str,
+        region: str | None,
+    ) -> typing.Any:
+        import boto3
+        import boto3.session
+        import botocore.session
+        from obstore.auth.boto3 import Boto3CredentialProvider
+
+        botocore_session = botocore.session.Session()
+        botocore_session.set_config_variable("config_file", aws_config_file)
+        boto3_session = boto3.session.Session(
+            profile_name=aws_profile, botocore_session=botocore_session, region_name=region
+        )
+        return Boto3CredentialProvider(session=boto3_session)
+
     def get_fsspec_kwargs(self, anonymous: bool = False, **kwargs) -> typing.Dict[str, typing.Any]:
         # Construct the config object
         kwargs.pop("anonymous", None)  # Remove anonymous if it exists, as we handle it separately
@@ -133,6 +166,32 @@ class S3(Storage):
 
         if anonymous:
             config[self._KEY_SKIP_SIGNATURE] = True
+
+        has_static_credentials = (
+            self._CONFIG_KEY_FSSPEC_S3_KEY_ID in config and self._CONFIG_KEY_FSSPEC_S3_SECRET in config
+        )
+
+        if not anonymous and not has_static_credentials:
+            aws_profile = os.getenv("AWS_PROFILE", None)
+            aws_config_file = os.getenv("AWS_CONFIG_FILE", None)
+            if aws_profile is not None and aws_config_file is not None:
+                try:
+                    kwargs["credential_provider"] = self._build_s3_credential_provider_from_config_file(
+                        aws_profile=aws_profile,
+                        aws_config_file=aws_config_file,
+                        region=self.region or os.getenv("AWS_REGION", None),
+                    )
+                    logger.debug(
+                        "Using S3 credentials from AWS config file with profile %s at %s",
+                        aws_profile,
+                        aws_config_file,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "Unable to initialize S3 profile/config credential provider (%s). "
+                        "Falling back to default AWS credential resolution.",
+                        e,
+                    )
 
         retry_config = {
             "max_retries": retries,
