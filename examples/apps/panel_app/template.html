@@ -1,5 +1,20 @@
 {% extends base %}
 
+{% block preamble %}
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
+{% endblock %}
+
+{% block postamble %}
+<style>
+  html, body {
+    background-color: #050310 !important;
+    overflow-x: hidden;
+    margin: 0;
+    padding: 0;
+  }
+</style>
+{% endblock %}
+
 {% block contents %}
 {{ embed(roots.main) }}
 {% endblock %}

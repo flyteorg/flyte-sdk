@@ -455,6 +455,20 @@ def create_panel_app():
         sizing_mode="stretch_width",
         align="end",
         styles={"margin-top": "2px", "margin-bottom": "2px"},
+        css_classes=["button-row"],
+    )
+
+    mobile_tui_toggle = pn.widgets.Button(
+        name="📊 Explore Runs",
+        button_type="primary",
+        sizing_mode="stretch_width",
+        css_classes=["mobile-tui-toggle"],
+        stylesheets=[
+            ":host .bk-btn { background-color: #8C4FFF !important; font-size: 14px !important; "
+            "border: none !important; line-height: 28px !important; margin-top: 10px !important; }",
+            ":host { display: none !important; }",
+            "@media (max-width: 768px) { :host { display: block !important; } }",
+        ],
     )
 
     left_panel = pn.Column(
@@ -500,9 +514,14 @@ def create_panel_app():
             stylesheets=[":host h4 { margin-top: 0 !important; margin-bottom: 0px !important; }"],
         ),
         output_area,
+        mobile_tui_toggle,
         sizing_mode="stretch_both",
         min_height=800,
         styles={"background": "#050310", "padding": "10px", "height": "100vh"},
+        css_classes=["left-panel"],
+        stylesheets=[
+            "@media (max-width: 1024px) { :host { height: auto !important; } }",
+        ],
     )
 
     # Toggle button for maximizing/minimizing the right panel
@@ -528,23 +547,38 @@ def create_panel_app():
         textual_pane,
         sizing_mode="stretch_width",
         styles={"background": "#050310", "padding": "10px", "height": "100vh"},
+        css_classes=["right-panel"],
+        stylesheets=[
+            "@media (max-width: 768px) { :host { display: none !important; } }",
+            "@media (max-width: 768px) { :host(.right-panel-visible) { display: flex !important; } }",
+            "@media (max-width: 1024px) { :host { height: auto !important; min-height: 500px !important; } }",
+        ],
     )
 
     def update_layout(maximized):
         if maximized:
             left_panel.visible = False
+            right_panel.css_classes = ["right-panel", "right-panel-visible"]
             is_maximized.name = "⛶"
         else:
             left_panel.visible = True
+            right_panel.css_classes = ["right-panel"]
             is_maximized.name = "⛶"
 
     is_maximized.param.watch(lambda event: update_layout(event.new), "value")
+    mobile_tui_toggle.on_click(lambda event: setattr(is_maximized, "value", True))
 
     main_content = pn.Row(
         left_panel,
         right_panel,
         sizing_mode="stretch_width",
         min_height=800,
+        css_classes=["main-content-row"],
+        stylesheets=[
+            "@media (max-width: 1024px) { :host { flex-direction: column !important; } }",
+            "@media (max-width: 1024px) { :host > * { width: 100% !important; max-width: 100% !important; "
+            "flex: 0 0 auto !important; } }",
+        ],
     )
 
     header = pn.Row(
