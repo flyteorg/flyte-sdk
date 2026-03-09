@@ -205,6 +205,7 @@ class ImageBuildEngine:
         from flyte._build import ImageBuild
 
         # Skip the existence check when force or dry_run is set.
+        image_uri: str | None
         if force or dry_run:
             image_uri = image.uri
             status.step(f"Building image {image_uri}...")
