@@ -41,7 +41,7 @@ class TestBuildEnhancedPrompt:
             language="python",
             schema=None,
             constraints=None,
-            data_samples=None,
+            data_context=None,
             inputs=None,
             outputs=None,
         )
@@ -56,7 +56,7 @@ class TestBuildEnhancedPrompt:
             language="python",
             schema="CREATE TABLE users (id INT)",
             constraints=None,
-            data_samples=None,
+            data_context=None,
             inputs=None,
             outputs=None,
         )
@@ -69,24 +69,24 @@ class TestBuildEnhancedPrompt:
             language="python",
             schema=None,
             constraints=["Must handle nulls", "Must be O(n)"],
-            data_samples=None,
+            data_context=None,
             inputs=None,
             outputs=None,
         )
         assert "Must handle nulls" in result
         assert "Must be O(n)" in result
 
-    def test_with_data_samples(self):
+    def test_with_data_context(self):
         result = build_enhanced_prompt(
             prompt="Process data",
             language="python",
             schema=None,
             constraints=None,
-            data_samples="col1,col2\n1,2\n3,4",
+            data_context="col1,col2\n1,2\n3,4",
             inputs=None,
             outputs=None,
         )
-        assert "Data samples:" in result
+        assert "Data context:" in result
         assert "col1,col2" in result
 
     def test_with_inputs_includes_cli_args(self):
@@ -95,7 +95,7 @@ class TestBuildEnhancedPrompt:
             language="python",
             schema=None,
             constraints=None,
-            data_samples=None,
+            data_context=None,
             inputs={"threshold": float, "mode": str},
             outputs=None,
         )
@@ -109,7 +109,7 @@ class TestBuildEnhancedPrompt:
             language="python",
             schema=None,
             constraints=None,
-            data_samples=None,
+            data_context=None,
             inputs={"csv_data": File},
             outputs=None,
         )
@@ -121,7 +121,7 @@ class TestBuildEnhancedPrompt:
             language="python",
             schema=None,
             constraints=None,
-            data_samples=None,
+            data_context=None,
             inputs=None,
             outputs={"result": str, "count": int},
         )
@@ -129,14 +129,14 @@ class TestBuildEnhancedPrompt:
         assert "/var/outputs/result" in result
         assert "/var/outputs/count" in result
 
-    def test_data_samples_without_inputs(self):
-        """When data_samples provided but no inputs, should suggest appropriate args."""
+    def test_data_context_without_inputs(self):
+        """When data_context provided but no inputs, should suggest appropriate args."""
         result = build_enhanced_prompt(
             prompt="Process data",
             language="python",
             schema=None,
             constraints=None,
-            data_samples="x,y\n1,2",
+            data_context="x,y\n1,2",
             inputs=None,
             outputs=None,
         )
@@ -149,7 +149,7 @@ class TestBuildEnhancedPrompt:
             language="python",
             schema=None,
             constraints=None,
-            data_samples=None,
+            data_context=None,
             inputs=None,
             outputs=None,
         )
