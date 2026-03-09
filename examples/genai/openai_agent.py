@@ -1,8 +1,8 @@
 # /// script
 # requires-python = "==3.13"
 # dependencies = [
-#     "flyte==2.0.0b0",
-#     "openai-agents==0.2.4",
+#     "flyte>=2.0.0",
+#     "openai-agents>=0.11.1",
 # ]
 # ///
 
