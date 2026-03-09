@@ -1,8 +1,12 @@
+from typing import get_args
+
 import rich_click as click
 
 import flyte.remote as remote
+from flyte.remote import SecretTypes
 
 from . import _common as common
+from ._option import DependentOption, MutuallyExclusiveOption
 
 
 @click.group(name="update")
@@ -148,3 +152,148 @@ def app(
         console.print(f"App [{color}]{name}[/{color}] {state}d successfully")
     else:
         console.print(f"App [{color}]{name}[/{color}] {state} initiated")
+
+
+@update.command(cls=common.CommandBase)
+@click.argument("name", type=str, required=True)
+@click.option(
+    "--value",
+    help="Secret value",
+    prompt="Enter secret value",
+    hide_input=True,
+    cls=MutuallyExclusiveOption,
+    mutually_exclusive=["from_file", "from_docker_config", "registry"],
+)
+@click.option(
+    "--from-file",
+    type=click.Path(exists=True),
+    help="Path to the file with the binary secret.",
+    cls=MutuallyExclusiveOption,
+    mutually_exclusive=["value", "from_docker_config", "registry"],
+)
+@click.option(
+    "--type", type=click.Choice(get_args(SecretTypes)), default="regular", help="Type of the secret.", show_default=True
+)
+@click.option(
+    "--from-docker-config",
+    is_flag=True,
+    help="Create image pull secret from Docker config file (only for --type image_pull).",
+    cls=MutuallyExclusiveOption,
+    mutually_exclusive=["value", "from_file", "registry", "username", "password"],
+)
+@click.option(
+    "--docker-config-path",
+    type=click.Path(exists=True),
+    cls=DependentOption,
+    help="Path to Docker config file (defaults to ~/.docker/config.json or $DOCKER_CONFIG).",
+    requires=["from_docker_config"],
+)
+@click.option(
+    "--registries",
+    help="Comma-separated list of registries to include (only with --from-docker-config).",
+)
+@click.option(
+    "--registry",
+    help="Registry hostname (e.g., ghcr.io, docker.io) for explicit credentials (only for --type image_pull).",
+    cls=MutuallyExclusiveOption,
+    mutually_exclusive=["value", "from_file", "from_docker_config"],
+)
+@click.option(
+    "--username",
+    help="Username for the registry (only with --registry).",
+)
+@click.option(
+    "--password",
+    help="Password for the registry (only with --registry). If not provided, will prompt.",
+    hide_input=True,
+)
+@click.pass_obj
+def secret(
+    cfg: common.CLIConfig,
+    name: str,
+    value: str | bytes | None = None,
+    from_file: str | None = None,
+    type: SecretTypes = "regular",
+    from_docker_config: bool = False,
+    docker_config_path: str | None = None,
+    registries: str | None = None,
+    registry: str | None = None,
+    username: str | None = None,
+    password: str | None = None,
+    project: str | None = None,
+    domain: str | None = None,
+):
+    """
+    Update (replace) an existing secret by deleting and recreating it.
+
+    \b
+    Example usage:
+
+    ```bash
+    flyte update secret my_secret --value my_new_value
+    flyte update secret my_secret --from-file /path/to/secret_file
+    flyte update secret my_secret --type image_pull --registry ghcr.io --username myuser
+    ```
+    """
+    from flyte.remote import Secret
+
+    # todo: remove this hack when secrets creation more easily distinguishes between org and project/domain level
+    #   (and domain level) secrets
+    project = "" if project is None else project
+    domain = "" if domain is None else domain
+    cfg.init(project, domain)
+
+    console = common.get_console()
+
+    # Handle image pull secret creation
+    if type == "image_pull":
+        if project != "" or domain != "":
+            raise click.ClickException("Project and domain must not be set when creating an image pull secret.")
+
+        if from_docker_config:
+            from flyte._utils.docker_credentials import create_dockerconfigjson_from_config
+
+            registry_list = [r.strip() for r in registries.split(",")] if registries else None
+            try:
+                value = create_dockerconfigjson_from_config(
+                    registries=registry_list,
+                    docker_config_path=docker_config_path,
+                )
+            except Exception as e:
+                raise click.ClickException(f"Failed to create dockerconfigjson from Docker config: {e}") from e
+
+        elif registry:
+            from flyte._utils.docker_credentials import create_dockerconfigjson_from_credentials
+
+            if not username:
+                username = click.prompt("Username")
+            if not password:
+                password = click.prompt("Password", hide_input=True)
+
+            value = create_dockerconfigjson_from_credentials(registry, username, password)
+
+        else:
+            from flyte._utils.docker_credentials import create_dockerconfigjson_from_credentials
+
+            registry = click.prompt("Registry (e.g., ghcr.io, docker.io)")
+            username = click.prompt("Username")
+            password = click.prompt("Password", hide_input=True)
+
+            value = create_dockerconfigjson_from_credentials(registry, username, password)
+
+    elif from_file:
+        with open(from_file, "rb") as f:
+            value = f.read()
+
+    # Encode string values to bytes
+    if isinstance(value, str):
+        value = value.encode("utf-8")
+
+    with console.status(f"Deleting secret {name}..."):
+        Secret.delete(name=name)
+
+    with console.status(f"Creating secret {name}..."):
+        Secret.create(name=name, value=value, type=type)
+
+    console.print(f"[bold green]Secret {name} updated successfully![/bold green]")
+    console.print("[yellow]Note: Secret replication may take a few moments to propagate across the cluster.[/yellow]")
