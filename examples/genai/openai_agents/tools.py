@@ -21,10 +21,10 @@ uv run tools.py
 
 import random
 
-import flyte
 from agents import Agent, Runner
 from flyteplugins.openai.agents import function_tool
 
+import flyte
 
 env = flyte.TaskEnvironment(
     name="openai_agents_tools",
@@ -40,12 +40,23 @@ async def get_weather(city: str) -> dict:
     """Get random weather data."""
     low = random.randint(-5, 25)
     high = low + random.randint(3, 10)
-    conditions = random.choice([
-        "Sunny", "Partly cloudy", "Overcast", "Light rain",
-        "Heavy rain", "Thunderstorms", "Snowy", "Foggy",
-        "Windy", "Sunny with wind", "Clear skies", "Hail",
-    ])
-    return {"city":city, "temperature_range":f"{low}-{high}C", "conditions": conditions}
+    conditions = random.choice(
+        [
+            "Sunny",
+            "Partly cloudy",
+            "Overcast",
+            "Light rain",
+            "Heavy rain",
+            "Thunderstorms",
+            "Snowy",
+            "Foggy",
+            "Windy",
+            "Sunny with wind",
+            "Clear skies",
+            "Hail",
+        ]
+    )
+    return {"city": city, "temperature_range": f"{low}-{high}C", "conditions": conditions}
 
 
 agent = Agent(

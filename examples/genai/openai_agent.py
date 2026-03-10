@@ -9,9 +9,9 @@
 
 import asyncio
 from typing import Optional
-from flyteplugins.openai.agents import function_tool
 
 from agents import Agent, Runner
+from flyteplugins.openai.agents import function_tool
 
 import flyte
 
