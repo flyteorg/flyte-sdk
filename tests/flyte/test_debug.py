@@ -180,45 +180,35 @@ class TestExtractVscodeUri:
 
 
 # ---------------------------------------------------------------------------
-# Run.debug_url property
+# Run.get_debug_url
 # ---------------------------------------------------------------------------
 
 
-class TestRunDebugUrl:
-    def _get_debug_url(self, attempts):
-        """Create a Run and access debug_url with mocked details."""
+class TestRunGetDebugUrl:
+    def _make_run(self):
         from flyte.remote._run import Run
-
-        run_details = MagicMock()
-        run_details.action_details = _make_action_details(attempts)
-
-        mock_client = MagicMock()
-        mock_client.endpoint = "dns:///demo.hosted.unionai.cloud"
 
         mock_run_pb2 = MagicMock()
         mock_run_pb2.HasField.return_value = True
-
-        run = Run(pb2=mock_run_pb2)
-
-        with (
-            patch.object(run, "details", return_value=run_details),
-            patch("flyte.remote._run.get_client", return_value=mock_client),
-        ):
-            return run.debug_url
-
-    def test_returns_none_when_not_ready(self):
-        attempt = _make_attempt(
-            logs=[_make_log(VSCODE_DEBUGGER_LOG_NAME, "/dataplane/pod/v1/foo")],
-            cluster_events=[_make_cluster_event("Container started")],
-        )
-        assert self._get_debug_url([attempt]) is None
+        return Run(pb2=mock_run_pb2)
 
     def test_returns_url_when_ready(self):
-        attempt = _make_attempt(
-            logs=[_make_log(VSCODE_DEBUGGER_LOG_NAME, "/dataplane/pod/v1/foo")],
-            cluster_events=[_make_cluster_event(VSCODE_READY_MESSAGE)],
-        )
-        assert self._get_debug_url([attempt]) == "https://demo.hosted.unionai.cloud/dataplane/pod/v1/foo"
+        run = self._make_run()
+        with patch(
+            "flyte._debug.client.watch_for_vscode_url",
+            return_value="https://demo.hosted.unionai.cloud/dataplane/pod/v1/foo",
+        ):
+            assert run.get_debug_url() == "https://demo.hosted.unionai.cloud/dataplane/pod/v1/foo"
 
-    def test_returns_none_when_no_attempts(self):
-        assert self._get_debug_url([]) is None
+    def test_returns_none_when_not_found(self):
+        run = self._make_run()
+        with patch("flyte._debug.client.watch_for_vscode_url", return_value=None):
+            assert run.get_debug_url() is None
+
+    def test_caches_result(self):
+        run = self._make_run()
+        expected = "https://demo.hosted.unionai.cloud/dataplane/pod/v1/foo"
+        with patch("flyte._debug.client.watch_for_vscode_url", return_value=expected) as mock_watch:
+            assert run.get_debug_url() == expected
+            assert run.get_debug_url() == expected
+            mock_watch.assert_called_once()
