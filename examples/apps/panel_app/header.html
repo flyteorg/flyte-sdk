@@ -1,16 +1,40 @@
-<div style="display: flex; justify-content: center; align-items: center; width: 100%; position: relative;">
-    <div style="display: flex; align-items: center; gap: 20px;">
-        <span style="color: #d4d4d4; font-size: 14px;">
+<style>
+    @media (max-width: 1024px) {
+        .header-container {
+            flex-direction: column !important;
+            gap: 10px !important;
+            padding: 8px !important;
+        }
+        .header-center {
+            flex-direction: column !important;
+            gap: 8px !important;
+            align-items: center !important;
+            text-align: center !important;
+        }
+        .header-right {
+            position: static !important;
+            transform: none !important;
+            justify-content: center !important;
+        }
+        .header-container .header-text {
+            font-size: 10px !important;
+        }
+    }
+</style>
+<div class="header-container" style="display: flex; justify-content: center; align-items: center; width: 100%; position: relative;">
+    <div class="header-center" style="display: flex; align-items: center; gap: 20px;">
+        <span class="header-text" style="color: #d4d4d4; font-size: 14px;">
             Flyte 2 is available locally today, cloud execution coming to OSS soon.
         </span>
         <a href="https://www.union.ai/try-flyte-2" target="_blank"
            style="background-color: #12052a; color: #f7f5fd; padding: 5px 10px;
                   border-radius: 5px; text-decoration: none; font-weight: bold;
-                  font-size: 14px; transition: background-color 0.2s; border: 1px solid #f7f5fd;">
+                  font-size: 14px; transition: background-color 0.2s; border: 1px solid #f7f5fd;
+                  white-space: nowrap;">
             Join Flyte 2 production preview ↗
         </a>
     </div>
-    <div style="position: absolute; right: 0; top: 50%; transform: translateY(-50%); display: flex; align-items: center; gap: 15px;">
+    <div class="header-right" style="position: absolute; right: 0; top: 50%; transform: translateY(-50%); display: flex; align-items: center; gap: 15px;">
         <a href="https://www.union.ai/docs/v2/flyte/user-guide/running-locally/" target="_blank"
            title="Docs" style="color: #f7f5fd; display: flex; align-items: center; text-decoration: none;">
             <span style="color: #f7f5fd; font-size: 14px; margin-right: 5px;">Try locally</span>
