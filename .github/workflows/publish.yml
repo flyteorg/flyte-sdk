@@ -81,6 +81,7 @@ jobs:
           - "plugins/vllm"
           - "plugins/wandb"
           - "plugins/polars"
+          - "plugins/codegen"
           - "plugins/hitl"
           - "plugins/jsonl"
           - "plugins/anthropic"
