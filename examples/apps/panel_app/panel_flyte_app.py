@@ -464,8 +464,9 @@ def create_panel_app():
         sizing_mode="stretch_width",
         css_classes=["mobile-tui-toggle"],
         stylesheets=[
-            ":host .bk-btn { background-color: #12052a !important; color: #f7f5fd !important; font-size: 14px !important; "
-            "border: 1px solid #8C4FFF !important; line-height: 28px !important; margin-top: 10px !important; }",
+            ":host .bk-btn { background-color: #12052a !important; color: #f7f5fd !important; "
+            "font-size: 14px !important; border: 1px solid #8C4FFF !important; line-height: 28px !important; "
+            "margin-top: 10px !important; }",
             ":host { display: none !important; }",
             "@media (max-width: 1024px) { :host { display: block !important; } }",
         ],
