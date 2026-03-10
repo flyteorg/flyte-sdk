@@ -8,7 +8,6 @@ import pytest
 import flyte
 from flyte._run_python_script import _build_task, run_python_script
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -74,7 +73,7 @@ class TestBuildTask:
 
 
 # ---------------------------------------------------------------------------
-# run_python_script – validation
+# run_python_script -validation
 # ---------------------------------------------------------------------------
 
 
@@ -88,12 +87,12 @@ class TestRunPythonScriptValidation:
     def test_script_not_py(self, tmp_path):
         txt = tmp_path / "script.txt"
         txt.write_text("hello")
-        with pytest.raises(ValueError, match="must be a .py file"):
+        with pytest.raises(ValueError, match=r"must be a \.py file"):
             run_python_script(txt)
 
 
 # ---------------------------------------------------------------------------
-# run_python_script – short_name / name
+# run_python_script -short_name / name
 # ---------------------------------------------------------------------------
 
 
@@ -127,7 +126,7 @@ class TestRunPythonScriptShortName:
 
 
 # ---------------------------------------------------------------------------
-# run_python_script – File.from_local usage
+# run_python_script -File.from_local usage
 # ---------------------------------------------------------------------------
 
 
@@ -149,7 +148,7 @@ class TestRunPythonScriptFileUpload:
 
 
 # ---------------------------------------------------------------------------
-# run_python_script – resources
+# run_python_script -resources
 # ---------------------------------------------------------------------------
 
 
@@ -185,7 +184,7 @@ class TestRunPythonScriptResources:
 
 
 # ---------------------------------------------------------------------------
-# run_python_script – image construction
+# run_python_script -image construction
 # ---------------------------------------------------------------------------
 
 
@@ -210,7 +209,7 @@ class TestRunPythonScriptImage:
 
 
 # ---------------------------------------------------------------------------
-# run_python_script – queue
+# run_python_script -queue
 # ---------------------------------------------------------------------------
 
 
@@ -229,7 +228,7 @@ class TestRunPythonScriptQueue:
 
 
 # ---------------------------------------------------------------------------
-# run_python_script – wait
+# run_python_script -wait
 # ---------------------------------------------------------------------------
 
 
@@ -250,7 +249,7 @@ class TestRunPythonScriptWait:
 
 
 # ---------------------------------------------------------------------------
-# run_python_script – extra_args
+# run_python_script -extra_args
 # ---------------------------------------------------------------------------
 
 
@@ -271,7 +270,7 @@ class TestRunPythonScriptExtraArgs:
 
 
 # ---------------------------------------------------------------------------
-# run_python_script – runcontext
+# run_python_script -runcontext
 # ---------------------------------------------------------------------------
 
 

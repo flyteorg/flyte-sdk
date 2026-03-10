@@ -46,7 +46,7 @@ def _build_task(
 
         local_path = await script_file.download()
         cmd = [sys.executable, local_path, *args]
-        result = subprocess.run(cmd, text=True, timeout=task_timeout - 60)
+        result = subprocess.run(cmd, text=True, check=False, timeout=task_timeout - 60)  # noqa: ASYNC221
 
         return {
             "exit_code": result.returncode,
@@ -154,10 +154,10 @@ async def run_python_script(
     env = flyte.TaskEnvironment(**env_kwargs)
 
     # Build task (in a separate function so File annotation resolves correctly)
-    task_short_name = name if name else script.stem
+    task_short_name = name or script.stem
     execute_script = _build_task(env, timeout, short_name=task_short_name)
 
-    script_file = await File.from_local(script)
+    script_file: File = await File.from_local(script)
 
     runner = flyte.with_runcontext(
         mode="remote",

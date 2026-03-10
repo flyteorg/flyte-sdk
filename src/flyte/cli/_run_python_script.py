@@ -102,12 +102,11 @@ def python_script(
     if image and packages:
         raise click.UsageError("--image and --packages are mutually exclusive.")
 
+    from rich.console import Console
+
     import flyte
     from flyte._run_python_script import run_python_script
     from flyte.cli._run import initialize_config
-    from flyte.remote import Run
-
-    from rich.console import Console
 
     console = Console()
 

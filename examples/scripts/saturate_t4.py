@@ -9,6 +9,7 @@ flyte run --follow python-script saturate_t4.py --gpu 1 --gpu-type T4 --packages
 ."""
 
 import time
+
 import torch
 
 
@@ -40,7 +41,7 @@ def main():
     torch.cuda.synchronize()
     elapsed = time.time() - start
 
-    flops_per_iter = 2 * matrix_size ** 3
+    flops_per_iter = 2 * matrix_size**3
     total_tflops = (iterations * flops_per_iter) / (elapsed * 1e12)
 
     print(f"Completed {iterations} matmuls in {elapsed:.2f}s")
