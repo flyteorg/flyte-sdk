@@ -235,5 +235,3 @@ async def test_empty_dataset(ctx_with_test_raw_data_path):
     assert isinstance(restored, datasets.Dataset)
     assert len(restored) == 0
     assert set(restored.column_names) == {"name", "age"}
-
-
