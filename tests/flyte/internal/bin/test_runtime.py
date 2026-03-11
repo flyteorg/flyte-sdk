@@ -1,3 +1,4 @@
+import asyncio
 import os
 import tempfile
 from pathlib import Path
@@ -121,18 +122,17 @@ def test_runtime_controller_failure_exception():
         mock_controller.watch_for_errors = AsyncMock(side_effect=controller_error)
         mock_controller.stop = AsyncMock()
 
-        # Mock task coroutine that never completes
-        mock_task_coroutine = AsyncMock()
-        mock_task_coroutine.__await__ = lambda: (x for x in ())  # Never completes
-
         # Mock init_in_cluster to return controller kwargs
         def mock_init_in_cluster(*args, **kwargs):
             return {"endpoint": "test-endpoint", "insecure": True}
 
+        async def _never_completes(*args, **kwargs):
+            await asyncio.sleep(3600)
+
         with (
             patch("flyte._initialize.init_in_cluster", side_effect=mock_init_in_cluster),
             patch("flyte._internal.controllers.create_controller", return_value=mock_controller),
-            patch("flyte._internal.runtime.entrypoints.load_and_run_task", return_value=mock_task_coroutine),
+            patch("flyte._internal.runtime.entrypoints.load_and_run_task", return_value=_never_completes()),
             patch("faulthandler.register"),  # Mock faulthandler to avoid fileno issues in tests
             patch.dict(os.environ, env_vars, clear=False),
         ):
