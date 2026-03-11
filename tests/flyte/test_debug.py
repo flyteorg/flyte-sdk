@@ -6,9 +6,9 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from click.testing import CliRunner
+from flyteidl2.core.execution_pb2 import TaskLog
 
 from flyte._debug.client import _build_full_url, _extract_vscode_uri
-from flyte._debug.constants import VSCODE_DEBUGGER_LOG_NAME, VSCODE_READY_MESSAGE
 from flyte._run import _Runner
 
 # ---------------------------------------------------------------------------
@@ -108,19 +108,14 @@ def _make_action_details(attempts):
     return details
 
 
-def _make_attempt(logs=None, cluster_events=None):
+def _make_attempt(logs=None):
     attempt = SimpleNamespace()
     attempt.log_info = logs or []
-    attempt.cluster_events = cluster_events or []
     return attempt
 
 
-def _make_log(name, uri):
-    return SimpleNamespace(name=name, uri=uri)
-
-
-def _make_cluster_event(message):
-    return SimpleNamespace(message=message)
+def _make_log(uri, *, ready=False, link_type=TaskLog.LinkType.EXTERNAL):
+    return SimpleNamespace(uri=uri, ready=ready, link_type=link_type)
 
 
 class TestExtractVscodeUri:
@@ -130,52 +125,43 @@ class TestExtractVscodeUri:
 
     def test_returns_none_when_no_matching_log(self):
         attempt = _make_attempt(
-            logs=[_make_log("Kubernetes Logs", "https://k8s.example.com")],
-            cluster_events=[_make_cluster_event(VSCODE_READY_MESSAGE)],
+            logs=[_make_log("https://example.com/logs", ready=True, link_type=TaskLog.LinkType.EXTERNAL)],
         )
         details = _make_action_details([attempt])
         assert _extract_vscode_uri(details) is None
 
-    def test_returns_none_when_log_present_but_server_not_ready(self):
+    def test_returns_none_when_ide_log_not_ready(self):
         attempt = _make_attempt(
-            logs=[_make_log(VSCODE_DEBUGGER_LOG_NAME, "/dataplane/pod/v1/foo")],
-            cluster_events=[_make_cluster_event("Container started")],
+            logs=[_make_log("/dataplane/pod/v1/foo", ready=False, link_type=TaskLog.LinkType.IDE)],
         )
         details = _make_action_details([attempt])
         assert _extract_vscode_uri(details) is None
 
-    def test_returns_none_when_no_cluster_events(self):
+    def test_returns_none_when_ready_but_wrong_link_type(self):
         attempt = _make_attempt(
-            logs=[_make_log(VSCODE_DEBUGGER_LOG_NAME, "/dataplane/pod/v1/foo")],
-            cluster_events=[],
+            logs=[_make_log("/dataplane/pod/v1/foo", ready=True, link_type=TaskLog.LinkType.DASHBOARD)],
         )
         details = _make_action_details([attempt])
         assert _extract_vscode_uri(details) is None
 
-    def test_returns_uri_when_ready_and_log_present(self):
+    def test_returns_uri_when_ready_and_ide_type(self):
         attempt = _make_attempt(
             logs=[
-                _make_log("Kubernetes Logs", "https://k8s.example.com"),
-                _make_log(VSCODE_DEBUGGER_LOG_NAME, "/dataplane/pod/v1/foo"),
-            ],
-            cluster_events=[
-                _make_cluster_event("Container started"),
-                _make_cluster_event(VSCODE_READY_MESSAGE),
+                _make_log("https://example.com/logs", ready=True, link_type=TaskLog.LinkType.EXTERNAL),
+                _make_log("/dataplane/pod/v1/foo", ready=True, link_type=TaskLog.LinkType.IDE),
             ],
         )
         details = _make_action_details([attempt])
         assert _extract_vscode_uri(details) == "/dataplane/pod/v1/foo"
 
-    def test_skips_not_ready_attempt_picks_ready_one(self):
-        not_ready = _make_attempt(
-            logs=[_make_log(VSCODE_DEBUGGER_LOG_NAME, "/wrong")],
-            cluster_events=[_make_cluster_event("Container started")],
+    def test_skips_not_ready_log_picks_ready_one(self):
+        attempt = _make_attempt(
+            logs=[
+                _make_log("/wrong", ready=False, link_type=TaskLog.LinkType.IDE),
+                _make_log("/correct", ready=True, link_type=TaskLog.LinkType.IDE),
+            ],
         )
-        ready = _make_attempt(
-            logs=[_make_log(VSCODE_DEBUGGER_LOG_NAME, "/correct")],
-            cluster_events=[_make_cluster_event(VSCODE_READY_MESSAGE)],
-        )
-        details = _make_action_details([not_ready, ready])
+        details = _make_action_details([attempt])
         assert _extract_vscode_uri(details) == "/correct"
 
 
