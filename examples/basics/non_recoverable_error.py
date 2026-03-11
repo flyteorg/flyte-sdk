@@ -26,6 +26,7 @@ async def validate_and_process(x: int) -> str:
         )
     return f"processed({x})"
 
+
 if __name__ == "__main__":
     flyte.init_from_config()
     # Run validate_and_process with invalid input — observe in the UI that only
