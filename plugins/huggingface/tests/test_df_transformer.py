@@ -13,7 +13,7 @@ import flyteplugins.huggingface.df_transformer  # noqa: F401
 from flyteplugins.huggingface.df_transformer import (
     HuggingFaceDatasetToParquetEncodingHandler,
     ParquetToHuggingFaceDatasetDecodingHandler,
-    get_hf_storage_options,
+    _get_storage_options,
 )
 
 datasets = pytest.importorskip("datasets")
@@ -247,31 +247,31 @@ async def test_empty_dataset(ctx_with_test_raw_data_path):
 # ============================================================================
 
 
-def test_get_hf_storage_options_none_protocol():
+def test__get_storage_options_none_protocol():
     """Test that empty dict is returned when protocol is None."""
-    result = get_hf_storage_options(None)
+    result = _get_storage_options(None)
     assert result == {}
 
 
-def test_get_hf_storage_options_empty_protocol():
+def test__get_storage_options_empty_protocol():
     """Test that empty dict is returned when protocol is empty string."""
-    result = get_hf_storage_options("")
+    result = _get_storage_options("")
     assert result == {}
 
 
-def test_get_hf_storage_options_unknown_protocol():
+def test__get_storage_options_unknown_protocol():
     """Test that empty dict is returned for unknown protocols."""
-    result = get_hf_storage_options("unknown")
+    result = _get_storage_options("unknown")
     assert result == {}
 
 
-def test_get_hf_storage_options_gs():
+def test__get_storage_options_gs():
     """Test that empty dict is returned for GCS (uses application default credentials)."""
-    result = get_hf_storage_options("gs")
+    result = _get_storage_options("gs")
     assert result == {}
 
 
-def test_get_hf_storage_options_s3_with_mock():
+def test__get_storage_options_s3_with_mock():
     """Test S3 storage options via public storage API (get_configured_fsspec_kwargs)."""
     from flyte.storage import S3
 
@@ -282,7 +282,7 @@ def test_get_hf_storage_options_s3_with_mock():
     )
 
     with patch("flyte.storage._storage.get_storage", return_value=s3_config):
-        result = get_hf_storage_options("s3")
+        result = _get_storage_options("s3")
     assert "config" in result
     assert result["config"]["access_key_id"] == "test_access_key"
     assert result["config"]["secret_access_key"] == "test_secret_key"
@@ -291,7 +291,7 @@ def test_get_hf_storage_options_s3_with_mock():
     assert "skip_signature" not in result.get("config", {})
 
 
-def test_get_hf_storage_options_s3_anonymous():
+def test__get_storage_options_s3_anonymous():
     """Test S3 storage options with anonymous access."""
     from flyte.storage import S3
 
@@ -302,11 +302,11 @@ def test_get_hf_storage_options_s3_anonymous():
     )
 
     with patch("flyte.storage._storage.get_storage", return_value=s3_config):
-        result = get_hf_storage_options("s3", anonymous=True)
+        result = _get_storage_options("s3", anonymous=True)
     assert result.get("config", {}).get("skip_signature") is True
 
 
-def test_get_hf_storage_options_abfs_with_mock():
+def test__get_storage_options_abfs_with_mock():
     """Test Azure Blob storage options via public storage API."""
     from flyte.storage import ABFS
 
@@ -319,7 +319,7 @@ def test_get_hf_storage_options_abfs_with_mock():
     )
 
     with patch("flyte.storage._storage.get_storage", return_value=abfs_config):
-        result = get_hf_storage_options("abfs")
+        result = _get_storage_options("abfs")
     assert "config" in result
     assert result["config"]["account_name"] == "test_account"
     assert result["config"]["account_key"] == "test_key"
@@ -328,12 +328,12 @@ def test_get_hf_storage_options_abfs_with_mock():
     assert result["config"]["client_secret"] == "test_secret"
 
 
-def test_get_hf_storage_options_abfss():
+def test__get_storage_options_abfss():
     """Test that abfss protocol is handled same as abfs."""
     from flyte.storage import ABFS
 
     abfs_config = ABFS(account_name="test_account")
 
     with patch("flyte.storage._storage.get_storage", return_value=abfs_config):
-        result = get_hf_storage_options("abfss")
+        result = _get_storage_options("abfss")
     assert result["config"]["account_name"] == "test_account"
