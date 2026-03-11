@@ -29,6 +29,64 @@ async def test_with_requirements(tmp_path):
     assert img._layers[-2].file == file
 
 
+def test_with_requirements_index_url(tmp_path):
+    file = Path(__file__).parent / "resources" / "sample_requirements.txt"
+    img = Image.from_debian_base(registry="localhost", name="test-image").with_requirements(
+        file, index_url="https://my-private-pypi.example.com/simple"
+    )
+    layer = img._layers[-1]
+    assert layer.file == file
+    assert layer.index_url == "https://my-private-pypi.example.com/simple"
+
+
+def test_with_requirements_extra_index_urls(tmp_path):
+    file = Path(__file__).parent / "resources" / "sample_requirements.txt"
+    img = Image.from_debian_base(registry="localhost", name="test-image").with_requirements(
+        file, extra_index_urls="https://extra.example.com/simple"
+    )
+    layer = img._layers[-1]
+    assert layer.extra_index_urls == ("https://extra.example.com/simple",)
+
+    img2 = Image.from_debian_base(registry="localhost", name="test-image").with_requirements(
+        file, extra_index_urls=["https://extra1.example.com", "https://extra2.example.com"]
+    )
+    layer2 = img2._layers[-1]
+    assert layer2.extra_index_urls == ("https://extra1.example.com", "https://extra2.example.com")
+
+
+def test_with_requirements_pre(tmp_path):
+    file = Path(__file__).parent / "resources" / "sample_requirements.txt"
+    img = Image.from_debian_base(registry="localhost", name="test-image").with_requirements(file, pre=True)
+    layer = img._layers[-1]
+    assert layer.pre is True
+
+
+def test_with_requirements_extra_args(tmp_path):
+    file = Path(__file__).parent / "resources" / "sample_requirements.txt"
+    img = Image.from_debian_base(registry="localhost", name="test-image").with_requirements(
+        file, extra_args="--no-deps"
+    )
+    layer = img._layers[-1]
+    assert layer.extra_args == "--no-deps"
+
+
+def test_with_requirements_all_pip_options(tmp_path):
+    file = Path(__file__).parent / "resources" / "sample_requirements.txt"
+    img = Image.from_debian_base(registry="localhost", name="test-image").with_requirements(
+        file,
+        index_url="https://private.example.com/simple",
+        extra_index_urls=["https://extra.example.com"],
+        pre=True,
+        extra_args="--no-deps",
+    )
+    layer = img._layers[-1]
+    assert layer.file == file
+    assert layer.index_url == "https://private.example.com/simple"
+    assert layer.extra_index_urls == ("https://extra.example.com",)
+    assert layer.pre is True
+    assert layer.extra_args == "--no-deps"
+
+
 def test_with_pip_packages():
     packages = ("numpy", "pandas")
     img = Image.from_debian_base(registry="localhost", name="test-image").with_pip_packages(*packages)

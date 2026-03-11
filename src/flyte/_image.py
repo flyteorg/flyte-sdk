@@ -870,6 +870,10 @@ class Image:
     def with_requirements(
         self,
         file: str | Path,
+        index_url: Optional[str] = None,
+        extra_index_urls: Union[str, List[str], Tuple[str, ...], None] = None,
+        pre: bool = False,
+        extra_args: Optional[str] = None,
         secret_mounts: Optional[SecretRequest] = None,
     ) -> Image:
         """
@@ -877,6 +881,10 @@ class Image:
         Cannot be used in conjunction with conda
 
         :param file: path to the requirements file, must be a .txt file
+        :param index_url: index url to use for pip install, default is None
+        :param extra_index_urls: extra index urls to use for pip install, default is None
+        :param pre: if True, install pre-release packages, default is False
+        :param extra_args: extra arguments to pass to pip install, default is None
         :param secret_mounts: list of secret to mount for the build process.
         :return:
         """
@@ -884,8 +892,16 @@ class Image:
             file = Path(file)
         if file.suffix != ".txt":
             raise ValueError(f"Requirements file {file} must have a .txt extension")
+        new_extra_index_urls: Optional[Tuple] = _ensure_tuple(extra_index_urls) if extra_index_urls else None
         new_image = self.clone(
-            addl_layer=Requirements(file=file, secret_mounts=_ensure_tuple(secret_mounts) if secret_mounts else None)
+            addl_layer=Requirements(
+                file=file,
+                index_url=index_url,
+                extra_index_urls=new_extra_index_urls,
+                pre=pre,
+                extra_args=extra_args,
+                secret_mounts=_ensure_tuple(secret_mounts) if secret_mounts else None,
+            )
         )
         return new_image
 
