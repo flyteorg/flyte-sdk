@@ -9,8 +9,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
-from flyte._debug.constants import VSCODE_DEBUGGER_LOG_NAME, VSCODE_READY_MESSAGE
-
 if TYPE_CHECKING:
     from flyte.remote._action import ActionDetails
     from flyte.remote._run import Run
@@ -23,12 +21,11 @@ def _extract_vscode_uri(details: ActionDetails) -> str | None:
     ``message`` equals ``"Vscode server is ready"``, indicating that the
     code-server is actually accepting connections.
     """
+    from flyteidl2.core.execution_pb2 import TaskLog
+
     for attempt in details.pb2.attempts:
-        server_ready = any(ev.message == VSCODE_READY_MESSAGE for ev in attempt.cluster_events)
-        if not server_ready:
-            continue
         for log in attempt.log_info:
-            if log.name == VSCODE_DEBUGGER_LOG_NAME:
+            if log.ready and log.link_type == TaskLog.LinkType.IDE:
                 return log.uri
     return None
 
