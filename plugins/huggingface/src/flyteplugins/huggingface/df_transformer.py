@@ -20,12 +20,7 @@ else:
     datasets = lazy_module("datasets")
 
 
-def get_hf_storage_options(protocol: typing.Optional[str], anonymous: bool = False) -> typing.Dict[str, typing.Any]:
-    """Get fsspec-compatible storage options for HuggingFace datasets.
-
-    HuggingFace datasets uses fsspec for remote I/O. Options are taken from
-    the public flyte.storage API so plugins do not depend on internal APIs.
-    """
+def _get_storage_options(protocol: typing.Optional[str], anonymous: bool = False) -> typing.Dict[str, typing.Any]:
     if not protocol:
         return {}
     return storage.get_configured_fsspec_kwargs(protocol=protocol, anonymous=anonymous)
@@ -54,15 +49,8 @@ class HuggingFaceDatasetToParquetEncodingHandler(DataFrameEncoder):
         path = os.path.join(uri, f"{0:05}.parquet")
         df = typing.cast(datasets.Dataset, dataframe.val)
 
-        if structured_dataset_type.columns:
-            columns = [c.name for c in structured_dataset_type.columns]
-            existing = set(df.features.keys())
-            to_remove = [c for c in existing if c not in columns]
-            if to_remove:
-                df = df.remove_columns(to_remove)
-
         filesystem = storage.get_underlying_filesystem(path=path)
-        storage_options = get_hf_storage_options(protocol=filesystem.protocol)
+        storage_options = _get_storage_options(protocol=filesystem.protocol)
         df.to_parquet(path, storage_options=storage_options or None)
 
         structured_dataset_type.format = PARQUET
@@ -87,13 +75,13 @@ class ParquetToHuggingFaceDatasetDecodingHandler(DataFrameDecoder):
 
         parquet_path = os.path.join(uri, f"{0:05}.parquet")
         filesystem = storage.get_underlying_filesystem(path=parquet_path)
-        storage_options = get_hf_storage_options(protocol=filesystem.protocol)
+        storage_options = _get_storage_options(protocol=filesystem.protocol)
         try:
             return datasets.Dataset.from_parquet(parquet_path, columns=columns, storage_options=storage_options or None)
         except Exception as exc:
             if exc.__class__.__name__ == "NoCredentialsError":
                 logger.debug("S3 source detected, attempting anonymous access")
-                storage_options = get_hf_storage_options(protocol=filesystem.protocol, anonymous=True)
+                storage_options = _get_storage_options(protocol=filesystem.protocol, anonymous=True)
                 return datasets.Dataset.from_parquet(
                     parquet_path, columns=columns, storage_options=storage_options or None
                 )
@@ -112,5 +100,4 @@ def register_huggingface_df_transformers():
     DataFrameTransformerEngine.register(ParquetToHuggingFaceDatasetDecodingHandler(), default_format_for_type=True)
 
 
-# Also register at module import time for backwards compatibility
 register_huggingface_df_transformers()
