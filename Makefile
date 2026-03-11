@@ -18,6 +18,15 @@ mypy:
 		examples/basics/hello.py \
 		examples/basics/hello_v2.py
 
+.PHONY: uvlock
+uvlock:
+	uv lock
+	for dir in plugins/*/; do \
+		if [ -f "$$dir/uv.lock" ]; then \
+			echo "Checking $$dir..."; \
+			uv lock --directory "$$dir"; \
+		fi \
+	done
 
 .PHONY: lint
 lint-fix:
