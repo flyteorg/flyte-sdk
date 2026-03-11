@@ -307,3 +307,12 @@ class InvalidPackageError(RuntimeUserError):
             f"This package does not exist in apt repositories. "
             f"Error: {original_error}",
         )
+
+
+class NonRecoverableError(RuntimeUserError):
+    """
+    Raised when an error is encountered that is not recoverable. Retries are irrelevant.
+    """
+
+    def __init__(self, message: str, code: str = "NonRecoverableError"):
+        super().__init__(code, message)
