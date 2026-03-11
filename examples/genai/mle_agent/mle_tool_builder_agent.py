@@ -247,7 +247,6 @@ async def deploy_sandbox_task(code: str, resources_str: str, dependencies: list[
         packages=dependencies,
         resources=flyte.Resources(**json.loads(resources_str)),
         auto_io=False,
-        block_network=True,
     )
     image = sandbox.image or await sandbox._build.aio()
     task_name = sandbox._task_name()
@@ -310,7 +309,6 @@ async def mle_tool_builder_agent(
             packages=dependencies,
             resources=resources,
             auto_io=False,
-            block_network=True,
         )
 
         try:
