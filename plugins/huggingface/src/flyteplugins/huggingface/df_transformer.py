@@ -20,12 +20,6 @@ else:
     datasets = lazy_module("datasets")
 
 
-def _get_storage_options(protocol: typing.Optional[str], anonymous: bool = False) -> typing.Dict[str, typing.Any]:
-    if not protocol:
-        return {}
-    return storage.get_configured_fsspec_kwargs(protocol=protocol, anonymous=anonymous)
-
-
 class HuggingFaceDatasetToParquetEncodingHandler(DataFrameEncoder):
     def __init__(self):
         super().__init__(datasets.Dataset, None, PARQUET)
@@ -50,8 +44,7 @@ class HuggingFaceDatasetToParquetEncodingHandler(DataFrameEncoder):
         df = typing.cast(datasets.Dataset, dataframe.val)
 
         filesystem = storage.get_underlying_filesystem(path=path)
-        storage_options = _get_storage_options(protocol=filesystem.protocol)
-        df.to_parquet(path, storage_options=storage_options or None)
+        pq.write_table(df.data.table, path, filesystem=filesystem)
 
         structured_dataset_type.format = PARQUET
         return literals_pb2.StructuredDataset(
