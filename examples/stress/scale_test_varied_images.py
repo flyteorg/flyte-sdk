@@ -316,7 +316,7 @@ async def worker_pytorch(pod_id: int) -> WorkerResult:
     print(f"[PyTorch Pod {pod_id}] Imports complete in {import_time:.2f}s")
 
     # Phase 2: Filesystem stress
-    files, size = stress_filesystem_traversal()
+    files, _size = stress_filesystem_traversal()
     total_files += files
     _, bytes_read = stress_file_content_reading()
     total_bytes += bytes_read
@@ -335,7 +335,7 @@ async def worker_pytorch(pod_id: int) -> WorkerResult:
             data = torch.randn(16, 128, 512)
             activations = [torch.matmul(data, w.T) for w in weights[:4]]
             grads = [torch.randn_like(w) for w in weights[:4]]
-            time.sleep(0.3)
+            await asyncio.sleep(0.3)
             del weights, data, activations, grads
             gc.collect()
             memory_cycles += 1
@@ -409,7 +409,7 @@ async def worker_tensorflow(pod_id: int) -> WorkerResult:
                 images = tf.zeros((16, 112, 112, 3), dtype=tf.float32)
                 filters = [tf.zeros((3, 3, 3, 32), dtype=tf.float32) for _ in range(4)]
                 features = [tf.nn.conv2d(images, f, strides=1, padding="SAME") for f in filters]
-                time.sleep(0.3)
+                await asyncio.sleep(0.3)
                 del images, filters, features
             gc.collect()
             memory_cycles += 1
@@ -483,7 +483,7 @@ async def worker_jax(pod_id: int) -> WorkerResult:
             result = batch
             for p in params[:3]:
                 result = jnp.dot(result, p)
-            time.sleep(0.3)
+            await asyncio.sleep(0.3)
             del params, batch, result
             gc.collect()
             memory_cycles += 1
@@ -562,7 +562,7 @@ async def worker_transformers(pod_id: int) -> WorkerResult:
                 for _ in range(3)
             ]
             hidden = np.random.randn(batch_size, seq_length, hidden_size).astype(np.float32)
-            time.sleep(0.3)
+            await asyncio.sleep(0.3)
             del embeddings, attention, hidden
             gc.collect()
             memory_cycles += 1
@@ -638,7 +638,7 @@ async def worker_scipy(pod_id: int) -> WorkerResult:
             df_norm = (df - df.mean()) / df.std()
             cov = np.cov(data[:50000].T)
             eigenvalues = np.linalg.eigvals(cov)
-            time.sleep(0.5)
+            await asyncio.sleep(0.5)
             del data, df, df_norm, cov, eigenvalues
             gc.collect()
             memory_cycles += 1
@@ -715,7 +715,7 @@ async def worker_vision(pod_id: int) -> WorkerResult:
                 blurred = cv2.GaussianBlur(resized, (5, 5), 0)
                 processed.append(blurred)
             features = [img.flatten()[:500] for img in processed[:8]]
-            time.sleep(0.5)
+            await asyncio.sleep(0.5)
             del images, processed, features
             gc.collect()
             memory_cycles += 1
@@ -796,7 +796,7 @@ async def worker_data(pod_id: int) -> WorkerResult:
                 [pl.col("value1").mean().alias("mean_v1"), pl.col("value2").sum().alias("sum_v2")]
             )
             arrow_table = df_agg.to_arrow()
-            time.sleep(0.5)
+            await asyncio.sleep(0.5)
             del df, df_filtered, df_agg, arrow_table
             gc.collect()
             memory_cycles += 1
@@ -872,7 +872,7 @@ async def worker_requests(pod_id: int) -> WorkerResult:
                 }
                 mock_responses.append(response_data)
             parsed = [{"id": i, "data": list(range(500))} for i in range(500)]
-            time.sleep(0.5)
+            await asyncio.sleep(0.5)
             del mock_responses, parsed
             gc.collect()
             memory_cycles += 1
@@ -944,7 +944,7 @@ async def worker_minimal(pod_id: int) -> WorkerResult:
             data = [{"id": i, "values": [j * 0.1 for j in range(50)], "meta": {"k": f"v{i}"}} for i in range(5000)]
             serialized = [json.dumps(d) for d in data[:500]]
             deserialized = [json.loads(s) for s in serialized]
-            time.sleep(0.5)
+            await asyncio.sleep(0.5)
             del data, serialized, deserialized
             gc.collect()
             memory_cycles += 1
@@ -1019,7 +1019,7 @@ async def worker_compute(pod_id: int) -> WorkerResult:
             result2 = np.sin(arr1) + np.cos(arr2)
             result3 = np.cumsum(result1[:500000])
             fft_result = np.fft.fft(arr1[:50000])
-            time.sleep(0.5)
+            await asyncio.sleep(0.5)
             del arr1, arr2, result1, result2, result3, fft_result
             gc.collect()
             memory_cycles += 1
@@ -1172,7 +1172,8 @@ async def scale_test_orchestrator(n: int = 100) -> ScaleTestReport:
         avg_import = stats.total_import_time / stats.success if stats.success > 0 else 0
         bytes_mb = stats.total_bytes_read / 1e6
         print(
-            f"  {img_type:<15} {stats.success:>8} {avg_import:>10.2f}s {stats.total_files_traversed:>10,} {bytes_mb:>10.1f}MB"
+            f"  {img_type:<15} {stats.success:>8} {avg_import:>10.2f}s"
+            f" {stats.total_files_traversed:>10,} {bytes_mb:>10.1f}MB"
         )
     print("=" * 70)
 
