@@ -4,7 +4,7 @@ import typing
 from pathlib import Path
 
 import flyte.storage as storage
-from flyte import logger
+import pyarrow.parquet as pq
 from flyte._utils import lazy_module
 from flyte.io import PARQUET, DataFrame
 from flyte.io.extend import (
@@ -75,18 +75,8 @@ class ParquetToHuggingFaceDatasetDecodingHandler(DataFrameDecoder):
 
         parquet_path = os.path.join(uri, f"{0:05}.parquet")
         filesystem = storage.get_underlying_filesystem(path=parquet_path)
-        storage_options = _get_storage_options(protocol=filesystem.protocol)
-        try:
-            return datasets.Dataset.from_parquet(parquet_path, columns=columns, storage_options=storage_options or None)
-        except Exception as exc:
-            if exc.__class__.__name__ == "NoCredentialsError":
-                logger.debug("S3 source detected, attempting anonymous access")
-                storage_options = _get_storage_options(protocol=filesystem.protocol, anonymous=True)
-                return datasets.Dataset.from_parquet(
-                    parquet_path, columns=columns, storage_options=storage_options or None
-                )
-            else:
-                raise
+        table = pq.read_table(parquet_path, columns=columns, filesystem=filesystem)
+        return datasets.Dataset(table)
 
 
 @functools.lru_cache(maxsize=None)
