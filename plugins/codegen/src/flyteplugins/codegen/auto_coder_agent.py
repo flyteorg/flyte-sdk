@@ -199,6 +199,7 @@ class AutoCoderAgent:
             (
                 extracted_data_context,
                 data_schemas,
+                unapplied_constraints,
                 schema_input_tokens,
                 schema_output_tokens,
             ) = await extract_data_context(
@@ -208,6 +209,8 @@ class AutoCoderAgent:
                 model=self.model,
                 litellm_params=self.litellm_params,
             )
+            # Only send constraints that couldn't be encoded into the schema
+            constraints = unapplied_constraints or None
             if data_schemas:
                 logger.info(f"Inferred Pandera schemas for: {list(data_schemas.keys())}")
 
@@ -242,11 +245,11 @@ class AutoCoderAgent:
                         f"Sandbox only supports: {', '.join(supported_names)}"
                     )
 
-        # Agent SDK routing
+        # Agent routing
         if self.backend == "claude":
             if self.skip_tests:
                 logger.warning(
-                    "skip_tests is not supported with Agent SDK mode. The agent autonomously decides when to test."
+                    "skip_tests is not supported with Agent mode. The agent autonomously decides when to test."
                 )
             logger.info("Using Claude Agent SDK approach")
             return await code_gen_eval_agent(
