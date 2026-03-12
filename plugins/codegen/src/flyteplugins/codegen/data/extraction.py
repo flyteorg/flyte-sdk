@@ -268,7 +268,9 @@ async def extract_data_context(
 
             # Apply user constraints if provided
             if constraints and model:
-                schema, unapplied, in_tok, out_tok = await apply_user_constraints(schema, constraints, name, model, litellm_params)
+                schema, unapplied, in_tok, out_tok = await apply_user_constraints(
+                    schema, constraints, name, model, litellm_params
+                )
                 unapplied_constraints = unapplied
                 total_input_tokens += in_tok
                 total_output_tokens += out_tok

@@ -25,10 +25,7 @@ def schema_to_script(schema: pa.DataFrameSchema) -> str:
         else:
             checks_str = "None"
         lines.append(
-            f"    {col_name!r}: pa.Column("
-            f"dtype={col.dtype!r}, "
-            f"nullable={col.nullable!r}, "
-            f"checks={checks_str}),"
+            f"    {col_name!r}: pa.Column(dtype={col.dtype!r}, nullable={col.nullable!r}, checks={checks_str}),"
         )
     lines.append(f"}}, strict={schema.strict!r})")
     return "\n".join(lines)
