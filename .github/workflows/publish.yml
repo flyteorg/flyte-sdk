@@ -81,6 +81,7 @@ jobs:
           - "plugins/vllm"
           - "plugins/wandb"
           - "plugins/polars"
+          - "plugins/mlflow"
         include:
           - workdir: "plugins/sglang"
             image-type: sglang
