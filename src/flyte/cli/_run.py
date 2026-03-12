@@ -14,6 +14,7 @@ from typing_extensions import get_args
 from .._code_bundle._utils import CopyFiles
 from .._task import TaskTemplate
 from ..remote import Run
+from ..syncify import syncify
 from . import _common as common
 from ._params import to_click_option
 
@@ -22,6 +23,7 @@ RUN_PYTHON_SCRIPT_CMD = "python-script"
 initialize_config = common.initialize_config
 
 
+@syncify
 async def _render_debug_url(console, result: Run, config: common.CLIConfig) -> None:
     """Poll the run for the VS Code Debugger URL and print it."""
     from flyte._debug.client import watch_for_vscode_url
@@ -331,7 +333,7 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
         console.print(common.get_panel("Remote Run", run_info, config.output_format))
 
         if self.run_args.debug:
-            await _render_debug_url(console, result, config)
+            await _render_debug_url.aio(console, result, config)
 
         if self.run_args.follow:
             from flyte._status import status
@@ -554,7 +556,7 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
         console.print(common.get_panel("Remote Run", run_info, config.output_format))
 
         if self.run_args.debug:
-            await _render_debug_url(console, result, config)
+            await _render_debug_url.aio(console, result, config)
 
         if self.run_args.follow:
             from flyte._status import status

@@ -23,20 +23,25 @@ def script(tmp_path):
 
 @pytest.fixture
 def mock_remote():
-    """Mock File.from_local and flyte.with_runcontext so no real remote call happens."""
-    mock_file = AsyncMock()
+    """Mock build_code_bundle_from_relative_paths and flyte.with_runcontext so no real remote call happens."""
     mock_run = MagicMock()
     mock_runner = MagicMock()
     mock_runner.run.aio = AsyncMock(return_value=mock_run)
     mock_run.wait.aio = AsyncMock()
 
+    mock_code_bundle = MagicMock()
+
     with (
-        patch.object(flyte.io.File, "from_local", new_callable=AsyncMock, return_value=mock_file) as mock_from_local,
+        patch(
+            "flyte._code_bundle.bundle.build_code_bundle_from_relative_paths",
+            new_callable=AsyncMock,
+            return_value=mock_code_bundle,
+        ) as mock_build_bundle,
         patch("flyte.with_runcontext", return_value=mock_runner) as mock_runcontext,
     ):
         yield {
-            "file": mock_file,
-            "from_local": mock_from_local,
+            "build_bundle": mock_build_bundle,
+            "code_bundle": mock_code_bundle,
             "run": mock_run,
             "runner": mock_runner,
             "runcontext": mock_runcontext,
@@ -53,22 +58,22 @@ class TestBuildTask:
 
     def test_task_short_name(self):
         env = flyte.TaskEnvironment(name="test_env")
-        task = _build_task(env, timeout=3600, short_name="my_script")
+        task = _build_task(env, script_name="my_script.py", timeout=3600, short_name="my_script")
         assert task.short_name == "my_script"
 
     def test_task_short_name_custom(self):
         env = flyte.TaskEnvironment(name="test_env2")
-        task = _build_task(env, timeout=3600, short_name="custom_name")
+        task = _build_task(env, script_name="script.py", timeout=3600, short_name="custom_name")
         assert task.short_name == "custom_name"
 
     def test_task_timeout(self):
         env = flyte.TaskEnvironment(name="test_env3")
-        task = _build_task(env, timeout=7200, short_name="t")
+        task = _build_task(env, script_name="script.py", timeout=7200, short_name="t")
         assert task.timeout == timedelta(seconds=7200)
 
     def test_task_registered_in_env(self):
         env = flyte.TaskEnvironment(name="test_env4")
-        task = _build_task(env, timeout=3600, short_name="t")
+        task = _build_task(env, script_name="script.py", timeout=3600, short_name="t")
         assert task in env.tasks.values()
 
 
@@ -126,25 +131,38 @@ class TestRunPythonScriptShortName:
 
 
 # ---------------------------------------------------------------------------
-# run_python_script -File.from_local usage
+# run_python_script -code bundle
 # ---------------------------------------------------------------------------
 
 
-class TestRunPythonScriptFileUpload:
-    """Tests that the script is uploaded via File.from_local."""
+class TestRunPythonScriptCodeBundle:
+    """Tests that the script is bundled into a code bundle."""
 
-    def test_uses_file_from_local(self, script, mock_remote):
-        """Verify File.from_local is called with the resolved script path."""
+    def test_builds_code_bundle_with_script(self, script, mock_remote):
+        """Verify build_code_bundle_from_relative_paths is called with the script filename."""
         run_python_script(script)
 
-        mock_remote["from_local"].assert_awaited_once_with(script.resolve())
+        mock_remote["build_bundle"].assert_awaited_once_with(
+            (script.name,),
+            from_dir=script.resolve().parent,
+        )
 
-    def test_file_passed_to_runner(self, script, mock_remote):
-        """Verify the File object from from_local is passed to the runner."""
+    def test_code_bundle_set_on_task(self, script, mock_remote):
+        """Verify the built code bundle is set on the task."""
         run_python_script(script)
 
-        call_kwargs = mock_remote["runner"].run.aio.call_args[1]
-        assert call_kwargs["script_file"] is mock_remote["file"]
+        task_arg = mock_remote["runner"].run.aio.call_args[0][0]
+        assert task_arg.code_bundle is mock_remote["code_bundle"]
+
+    def test_task_has_script_resolver(self, script, mock_remote):
+        """Verify the task has a ScriptTaskResolver attached."""
+        from flyte._internal.resolvers.script import ScriptTaskResolver
+
+        run_python_script(script)
+
+        task_arg = mock_remote["runner"].run.aio.call_args[0][0]
+        assert isinstance(task_arg.task_resolver, ScriptTaskResolver)
+        assert task_arg.task_resolver._script_name == script.name
 
 
 # ---------------------------------------------------------------------------
@@ -282,7 +300,7 @@ class TestRunPythonScriptRunContext:
         mock_remote["runcontext"].assert_called_once_with(
             mode="remote",
             name=None,
-            interactive_mode=True,
+            debug=False,
         )
 
     def test_runcontext_passes_name(self, script, mock_remote):
@@ -290,5 +308,13 @@ class TestRunPythonScriptRunContext:
         mock_remote["runcontext"].assert_called_once_with(
             mode="remote",
             name="my-run",
-            interactive_mode=True,
+            debug=False,
+        )
+
+    def test_runcontext_passes_debug(self, script, mock_remote):
+        run_python_script(script, debug=True)
+        mock_remote["runcontext"].assert_called_once_with(
+            mode="remote",
+            name=None,
+            debug=True,
         )
