@@ -455,7 +455,7 @@ class File(BaseModel, Generic[T], SerializableType):
             # Fall back to aiofiles
             fs = storage.get_underlying_filesystem(path=self.path)
             if "file" in fs.protocol:
-                async with aiofiles.open(self.path, mode=mode, **kwargs) as f:
+                async with aiofiles.open(self.path, mode=mode, **kwargs) as f:  # type: ignore[call-overload]
                     yield f
                 return
             raise

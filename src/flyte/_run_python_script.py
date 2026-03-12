@@ -66,10 +66,9 @@ def _build_task(
             timeout=task_timeout - 60,
         )
 
+        _dir: Optional[flyte.io.Dir] = None
         if output_dir:
             _dir = await flyte.io.Dir.from_local(output_dir)
-        else:
-            _dir = None
 
         return PythonScriptOutput(
             exit_code=result.returncode,
@@ -204,7 +203,9 @@ async def run_python_script(
     # serialize and reload it without pickling.
     resolver = ScriptTaskResolver(script.name, output_dir=output_dir, timeout=timeout)
     task_short_name = name or script.stem
-    execute_script = _build_task(env, script.name, timeout, short_name=task_short_name, output_dir=output_dir, task_resolver=resolver)
+    execute_script = _build_task(
+        env, script.name, timeout, short_name=task_short_name, output_dir=output_dir, task_resolver=resolver
+    )
 
     runner = _Runner(
         force_mode="remote",

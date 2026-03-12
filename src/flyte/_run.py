@@ -489,9 +489,7 @@ class _Runner:
                 from ._code_bundle.bundle import build_code_bundle_from_relative_paths
 
                 if not self._bundle_relative_paths or not self._bundle_from_dir:
-                    raise ValueError(
-                        "copy_style='python_script' requires _bundle_relative_paths and _bundle_from_dir"
-                    )
+                    raise ValueError("copy_style='python_script' requires _bundle_relative_paths and _bundle_from_dir")
                 code_bundle = await build_code_bundle_from_relative_paths(
                     self._bundle_relative_paths,
                     from_dir=self._bundle_from_dir,

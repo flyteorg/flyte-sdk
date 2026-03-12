@@ -8,6 +8,7 @@ flyte run --follow python-script hello.py --output-dir output
 
 import os
 
+
 def main():
     print("Hello, world!")
     os.makedirs("output", exist_ok=True)

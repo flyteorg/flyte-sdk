@@ -561,12 +561,13 @@ class AsyncFunctionTaskTemplate(TaskTemplate[P, R, F]):
             if resolver is None:
                 from flyte._internal.resolvers.default import DefaultTaskResolver
 
-                if not serialize_context.root_dir:
-                    raise RuntimeSystemError(
-                        "SerializationError",
-                        "Root dir is required for default task resolver when no code bundle is provided.",
-                    )
                 resolver = DefaultTaskResolver()
+
+            if not serialize_context.root_dir:
+                raise RuntimeSystemError(
+                    "SerializationError",
+                    "Root dir is required for default task resolver when no code bundle is provided.",
+                )
             args = [
                 *args,
                 *[
