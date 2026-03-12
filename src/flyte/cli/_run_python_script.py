@@ -59,6 +59,12 @@ class PythonScriptCommand(CommandBase):
     help="Extra arguments passed to the script (comma-separated).",
 )
 @click.option("--queue", type=str, default=None, help="Flyte queue / cluster override.")
+@click.option(
+    "--output-dir",
+    type=str,
+    default=None,
+    help="Directory path (inside the container) to upload as output after the script finishes.",
+)
 @click.pass_obj
 def python_script(
     cfg: common.CLIConfig,
@@ -72,6 +78,7 @@ def python_script(
     timeout: int,
     extra_args: str | None,
     queue: str | None,
+    output_dir: str | None,
 ) -> None:
     """Run a Python script on a remote Flyte cluster.
 
@@ -152,6 +159,7 @@ def python_script(
         wait=False,
         name=name,
         debug=debug,
+        output_dir=output_dir,
     )
 
     url = run.url

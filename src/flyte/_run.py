@@ -116,10 +116,14 @@ class _Runner:
         preserve_original_types: bool | None = None,
         debug: bool = False,
         _tracker: Any = None,
+        _bundle_relative_paths: tuple[str, ...] | None = None,
+        _bundle_from_dir: pathlib.Path | None = None,
     ):
         from flyte._tools import ipython_check
 
         self._tracker = _tracker
+        self._bundle_relative_paths = _bundle_relative_paths
+        self._bundle_from_dir = _bundle_from_dir
         init_config = _get_init_config()
         client = init_config.client if init_config else None
         if not force_mode and client is not None:
@@ -223,16 +227,28 @@ class _Runner:
                         upload_to_controlplane=not self._dry_run,
                         copy_bundle_to=self._copy_bundle_to,
                     )
-                else:
-                    if self._copy_files != "none":
-                        code_bundle = await build_code_bundle(
-                            from_dir=cfg.root_dir,
-                            dryrun=self._dry_run,
-                            copy_bundle_to=self._copy_bundle_to,
-                            copy_style=self._copy_files,
+                elif self._copy_files == "python_script":
+                    from ._code_bundle.bundle import build_code_bundle_from_relative_paths
+
+                    if not self._bundle_relative_paths or not self._bundle_from_dir:
+                        raise ValueError(
+                            "copy_style='python_script' requires _bundle_relative_paths and _bundle_from_dir"
                         )
-                    else:
-                        code_bundle = None
+                    code_bundle = await build_code_bundle_from_relative_paths(
+                        self._bundle_relative_paths,
+                        from_dir=self._bundle_from_dir,
+                        dryrun=self._dry_run,
+                        copy_bundle_to=self._copy_bundle_to,
+                    )
+                elif self._copy_files != "none":
+                    code_bundle = await build_code_bundle(
+                        from_dir=cfg.root_dir,
+                        dryrun=self._dry_run,
+                        copy_bundle_to=self._copy_bundle_to,
+                        copy_style=self._copy_files,
+                    )
+                else:
+                    code_bundle = None
             if not self._disable_run_cache:
                 _RUN_CACHE[_CacheKey(obj_id=id(obj), dry_run=self._dry_run)] = _CacheValue(
                     code_bundle=code_bundle, image_cache=image_cache
@@ -469,16 +485,28 @@ class _Runner:
                     upload_to_controlplane=not self._dry_run,
                     copy_bundle_to=self._copy_bundle_to,
                 )
-            else:
-                if self._copy_files != "none":
-                    code_bundle = await build_code_bundle(
-                        from_dir=cfg.root_dir,
-                        dryrun=self._dry_run,
-                        copy_bundle_to=self._copy_bundle_to,
-                        copy_style=self._copy_files,
+            elif self._copy_files == "python_script":
+                from ._code_bundle.bundle import build_code_bundle_from_relative_paths
+
+                if not self._bundle_relative_paths or not self._bundle_from_dir:
+                    raise ValueError(
+                        "copy_style='python_script' requires _bundle_relative_paths and _bundle_from_dir"
                     )
-                else:
-                    code_bundle = None
+                code_bundle = await build_code_bundle_from_relative_paths(
+                    self._bundle_relative_paths,
+                    from_dir=self._bundle_from_dir,
+                    dryrun=self._dry_run,
+                    copy_bundle_to=self._copy_bundle_to,
+                )
+            elif self._copy_files != "none":
+                code_bundle = await build_code_bundle(
+                    from_dir=cfg.root_dir,
+                    dryrun=self._dry_run,
+                    copy_bundle_to=self._copy_bundle_to,
+                    copy_style=self._copy_files,
+                )
+            else:
+                code_bundle = None
 
         version = self._version or (
             code_bundle.computed_version if code_bundle and code_bundle.computed_version else None

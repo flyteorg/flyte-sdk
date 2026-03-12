@@ -23,32 +23,21 @@ def script(tmp_path):
 
 @pytest.fixture
 def mock_remote():
-    """Mock build_code_bundle_from_relative_paths and flyte.with_runcontext so no real remote call happens."""
+    """Mock _Runner so no real remote call happens."""
     mock_run = MagicMock()
     mock_runner = MagicMock()
     mock_runner.run.aio = AsyncMock(return_value=mock_run)
     mock_run.wait.aio = AsyncMock()
 
-    mock_code_bundle = MagicMock()
-
-    with (
-        patch(
-            "flyte._code_bundle.bundle.build_code_bundle_from_relative_paths",
-            new_callable=AsyncMock,
-            return_value=mock_code_bundle,
-        ) as mock_build_bundle,
-        patch("flyte.with_runcontext", return_value=mock_runner) as mock_runcontext,
-    ):
+    with patch("flyte._run._Runner", return_value=mock_runner) as mock_runner_cls:
         yield {
-            "build_bundle": mock_build_bundle,
-            "code_bundle": mock_code_bundle,
             "run": mock_run,
             "runner": mock_runner,
-            "runcontext": mock_runcontext,
+            "runner_cls": mock_runner_cls,
         }
 
 
-# ---------------------------------------------------------------------------
+# ---------------------------------------------------------- -----------------
 # _build_task
 # ---------------------------------------------------------------------------
 
@@ -136,23 +125,29 @@ class TestRunPythonScriptShortName:
 
 
 class TestRunPythonScriptCodeBundle:
-    """Tests that the script is bundled into a code bundle."""
+    """Tests that the runner is configured with python_script copy_style."""
 
-    def test_builds_code_bundle_with_script(self, script, mock_remote):
-        """Verify build_code_bundle_from_relative_paths is called with the script filename."""
+    def test_runner_uses_python_script_copy_style(self, script, mock_remote):
+        """Verify _Runner is constructed with copy_style='python_script'."""
         run_python_script(script)
 
-        mock_remote["build_bundle"].assert_awaited_once_with(
-            (script.name,),
-            from_dir=script.resolve().parent,
-        )
+        mock_remote["runner_cls"].assert_called_once()
+        call_kwargs = mock_remote["runner_cls"].call_args[1]
+        assert call_kwargs["copy_style"] == "python_script"
 
-    def test_code_bundle_set_on_task(self, script, mock_remote):
-        """Verify the built code bundle is set on the task."""
+    def test_runner_bundle_relative_paths(self, script, mock_remote):
+        """Verify _Runner receives the script filename as bundle_relative_paths."""
         run_python_script(script)
 
-        task_arg = mock_remote["runner"].run.aio.call_args[0][0]
-        assert task_arg.code_bundle is mock_remote["code_bundle"]
+        call_kwargs = mock_remote["runner_cls"].call_args[1]
+        assert call_kwargs["_bundle_relative_paths"] == (script.name,)
+
+    def test_runner_bundle_from_dir(self, script, mock_remote):
+        """Verify _Runner receives the script's parent as bundle_from_dir."""
+        run_python_script(script)
+
+        call_kwargs = mock_remote["runner_cls"].call_args[1]
+        assert call_kwargs["_bundle_from_dir"] == script.resolve().parent
 
     def test_task_has_script_resolver(self, script, mock_remote):
         """Verify the task has a ScriptTaskResolver attached."""
@@ -163,6 +158,65 @@ class TestRunPythonScriptCodeBundle:
         task_arg = mock_remote["runner"].run.aio.call_args[0][0]
         assert isinstance(task_arg.task_resolver, ScriptTaskResolver)
         assert task_arg.task_resolver._script_name == script.name
+
+    def test_resolver_output_dir_none_by_default(self, script, mock_remote):
+        """Verify the resolver has output_dir=None when not specified."""
+        run_python_script(script)
+
+        task_arg = mock_remote["runner"].run.aio.call_args[0][0]
+        assert task_arg.task_resolver._output_dir is None
+
+    def test_resolver_output_dir_passed_through(self, script, mock_remote):
+        """Verify the resolver receives the output_dir value."""
+        run_python_script(script, output_dir="/tmp/results")
+
+        task_arg = mock_remote["runner"].run.aio.call_args[0][0]
+        assert task_arg.task_resolver._output_dir == "/tmp/results"
+
+
+# ---------------------------------------------------------------------------
+# run_python_script -output_dir
+# ---------------------------------------------------------------------------
+
+
+class TestRunPythonScriptOutputDir:
+    """Tests that the output_dir parameter is propagated correctly."""
+
+    def test_output_dir_default_is_none(self, script, mock_remote):
+        """Without output_dir=, the resolver should have output_dir=None."""
+        from flyte._internal.resolvers.script import ScriptTaskResolver
+
+        run_python_script(script)
+
+        task_arg = mock_remote["runner"].run.aio.call_args[0][0]
+        resolver = task_arg.task_resolver
+        assert isinstance(resolver, ScriptTaskResolver)
+        assert resolver._output_dir is None
+
+    def test_output_dir_passed_to_resolver(self, script, mock_remote):
+        """output_dir= should be stored on the resolver for serialization."""
+        run_python_script(script, output_dir="/tmp/output")
+
+        task_arg = mock_remote["runner"].run.aio.call_args[0][0]
+        assert task_arg.task_resolver._output_dir == "/tmp/output"
+
+    def test_resolver_loader_args_includes_output_dir(self):
+        """loader_args should include output_dir when set."""
+        from flyte._internal.resolvers.script import ScriptTaskResolver
+
+        resolver = ScriptTaskResolver("script.py", output_dir="/tmp/out", timeout=600)
+        args = resolver.loader_args(MagicMock())
+        assert "output_dir" in args
+        idx = args.index("output_dir")
+        assert args[idx + 1] == "/tmp/out"
+
+    def test_resolver_loader_args_excludes_output_dir_when_none(self):
+        """loader_args should not include output_dir when None."""
+        from flyte._internal.resolvers.script import ScriptTaskResolver
+
+        resolver = ScriptTaskResolver("script.py", timeout=600)
+        args = resolver.loader_args(MagicMock())
+        assert "output_dir" not in args
 
 
 # ---------------------------------------------------------------------------
@@ -293,28 +347,21 @@ class TestRunPythonScriptExtraArgs:
 
 
 class TestRunPythonScriptRunContext:
-    """Tests that with_runcontext is called with correct parameters."""
+    """Tests that _Runner is constructed with correct parameters."""
 
-    def test_runcontext_mode_remote(self, script, mock_remote):
+    def test_runner_mode_remote(self, script, mock_remote):
         run_python_script(script)
-        mock_remote["runcontext"].assert_called_once_with(
-            mode="remote",
-            name=None,
-            debug=False,
-        )
+        call_kwargs = mock_remote["runner_cls"].call_args[1]
+        assert call_kwargs["force_mode"] == "remote"
+        assert call_kwargs["name"] is None
+        assert call_kwargs["debug"] is False
 
-    def test_runcontext_passes_name(self, script, mock_remote):
+    def test_runner_passes_name(self, script, mock_remote):
         run_python_script(script, name="my-run")
-        mock_remote["runcontext"].assert_called_once_with(
-            mode="remote",
-            name="my-run",
-            debug=False,
-        )
+        call_kwargs = mock_remote["runner_cls"].call_args[1]
+        assert call_kwargs["name"] == "my-run"
 
-    def test_runcontext_passes_debug(self, script, mock_remote):
+    def test_runner_passes_debug(self, script, mock_remote):
         run_python_script(script, debug=True)
-        mock_remote["runcontext"].assert_called_once_with(
-            mode="remote",
-            name=None,
-            debug=True,
-        )
+        call_kwargs = mock_remote["runner_cls"].call_args[1]
+        assert call_kwargs["debug"] is True

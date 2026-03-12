@@ -20,8 +20,9 @@ class ScriptTaskResolver(Resolver):
     that executes the script via ``subprocess``.
     """
 
-    def __init__(self, script_name: str, timeout: int = 3600):
+    def __init__(self, script_name: str = "", output_dir: Optional[str] = None, timeout: int = 3600):
         self._script_name = script_name
+        self._output_dir = output_dir
         self._timeout = timeout
 
     @property
@@ -32,11 +33,16 @@ class ScriptTaskResolver(Resolver):
         args_iter = iter(loader_args)
         parsed = dict(zip(args_iter, args_iter))
         script_name = parsed["script"]
+        output_dir = parsed.get("output_dir", None)
         timeout = int(parsed.get("timeout", "3600"))
 
         from flyte._run_python_script import _build_script_runner_task
 
-        return _build_script_runner_task(script_name, timeout)
+        return _build_script_runner_task(script_name, output_dir, timeout)
 
     def loader_args(self, task: TaskTemplate, root_dir: Optional[Path] = None) -> List[str]:
-        return ["script", self._script_name, "timeout", str(self._timeout)]
+        args = ["script", self._script_name]
+        if self._output_dir is not None:
+            args.extend(["output_dir", self._output_dir])
+        args.extend(["timeout", str(self._timeout)])
+        return args
