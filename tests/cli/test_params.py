@@ -1,7 +1,54 @@
+import enum
+
+import click
+import pytest
 from flyteidl2.core.interface_pb2 import Variable
 from flyteidl2.core.types_pb2 import LiteralType, SimpleType
 
-from flyte.cli._params import to_click_option
+from flyte.cli._params import EnumParamType, to_click_option
+
+
+class Color(str, enum.Enum):
+    RED = "red-value"
+    GREEN = "green-value"
+    BLUE = "blue-value"
+
+
+class Size(str, enum.Enum):
+    SMALL = "sm-value"
+    MEDIUM = "md-value"
+    LARGE = "lg-value"
+
+
+def test_enum_param_type_choices_are_names():
+    """EnumParamType should expose enum names as CLI choices, not values."""
+    param_type = EnumParamType(Color)
+    assert list(param_type.choices) == ["RED", "GREEN", "BLUE"]
+
+
+def test_enum_param_type_convert_name():
+    """Passing an enum name (e.g. GREEN) should return the corresponding enum instance."""
+    param_type = EnumParamType(Color)
+    assert param_type.convert("GREEN", param=None, ctx=None) is Color.GREEN
+
+
+def test_enum_param_type_convert_str_enum():
+    """EnumParamType should work with StrEnum subclasses."""
+    param_type = EnumParamType(Size)
+    assert param_type.convert("SMALL", param=None, ctx=None) is Size.SMALL
+
+
+def test_enum_param_type_rejects_value():
+    """Passing an enum value (e.g. 'red-value') should be rejected — only names are valid."""
+    param_type = EnumParamType(Color)
+    with pytest.raises((click.exceptions.BadParameter, SystemExit)):
+        param_type.convert("red-value", param=None, ctx=None)
+
+
+def test_enum_param_type_passthrough_instance():
+    """Passing an already-converted enum instance should be returned as-is."""
+    param_type = EnumParamType(Color)
+    assert param_type.convert(Color.BLUE, param=None, ctx=None) is Color.BLUE
 
 
 def test_boolean_flag_false_default():

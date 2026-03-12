@@ -47,7 +47,7 @@ def _from_monty(value: Any) -> Any:
 class ExternalFunctionBridge:
     """Drives Monty execution with external function dispatch.
 
-    Uses the low-level ``Monty.start()`` / ``MontySnapshot.resume()`` loop,
+    Uses the low-level ``Monty.start()`` / ``FunctionSnapshot.resume()`` loop,
     awaiting each external call before resuming. This ensures async external
     functions (task.aio, durable ops) are properly resolved.
     """
@@ -96,10 +96,9 @@ class ExternalFunctionBridge:
         """
         import inspect
 
-        from pydantic_monty import MontyComplete, MontySnapshot
+        from pydantic_monty import FunctionSnapshot, MontyComplete
 
-        ext_names = list(self._all_refs.keys())
-        monty = monty_cls(code, inputs=input_names, external_functions=ext_names)
+        monty = monty_cls(code, inputs=input_names)
         ext_fns = self._build_external_functions()
 
         # Marshal any IO types in the initial inputs so Monty can hold them
@@ -110,7 +109,7 @@ class ExternalFunctionBridge:
         while True:
             if isinstance(progress, MontyComplete):
                 return _from_monty(progress.output)
-            elif isinstance(progress, MontySnapshot):
+            elif isinstance(progress, FunctionSnapshot):
                 fn = ext_fns.get(progress.function_name)
                 if fn is None:
                     raise RuntimeError(f"Sandboxed task called unknown external function: {progress.function_name}")

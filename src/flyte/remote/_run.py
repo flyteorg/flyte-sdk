@@ -37,6 +37,7 @@ class Run(ToJSONMixin):
         if not self.pb2.HasField("action"):
             raise RuntimeError("Run does not have an action")
         self.action = Action(self.pb2.action)
+        self._debug_url = None
 
     @syncify
     @classmethod
@@ -228,6 +229,26 @@ class Run(ToJSONMixin):
         await self.action.show_logs.aio(attempt, max_lines, show_ts, raw, filter_system=filter_system)
 
     @syncify
+    async def get_logs(
+        self,
+        attempt: int | None = None,
+        filter_system: bool = False,
+        show_ts: bool = False,
+    ) -> AsyncGenerator[str, None]:
+        """
+        Get logs for the run as an iterator of strings.
+
+        Can be called synchronously (returns ``Iterator[str]``) or asynchronously
+        via ``.aio()`` (returns ``AsyncIterator[str]``).
+
+        :param attempt: The attempt number to retrieve logs for (defaults to latest attempt).
+        :param filter_system: If True, filter out system-generated log lines.
+        :param show_ts: If True, prefix each line with an ISO-8601 timestamp.
+        """
+        async for line in self.action.get_logs.aio(attempt, filter_system=filter_system, show_ts=show_ts):
+            yield line
+
+    @syncify
     async def details(self) -> RunDetails:
         """
         Get the details of the run. This is a placeholder for getting the run details.
@@ -265,6 +286,19 @@ class Run(ToJSONMixin):
             domain=self.pb2.action.id.run.domain,
             run_name=self.name,
         )
+
+    @syncify
+    async def get_debug_url(self) -> str:
+        """
+        Get the debug URL of the run. Returns ``None`` if the VS Code
+        Debugger log entry is not yet available in the action details.
+        """
+        if self._debug_url is not None:
+            return self._debug_url
+        from flyte._debug.client import watch_for_vscode_url
+
+        self._debug_url = await watch_for_vscode_url(self)
+        return self._debug_url
 
     @syncify
     async def abort(self, reason: str = "Manually aborted from the SDK api."):

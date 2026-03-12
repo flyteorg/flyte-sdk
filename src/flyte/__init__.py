@@ -32,6 +32,7 @@ from ._resources import AMD_GPU, GPU, HABANA_GAUDI, TPU, Device, DeviceClass, Ne
 from ._retry import RetryStrategy
 from ._reusable_environment import ReusePolicy
 from ._run import run, with_runcontext
+from ._run_python_script import run_python_script
 from ._secret import Secret, SecretRequest
 from ._serve import AppHandle, serve, with_servecontext
 from ._task_environment import TaskEnvironment
@@ -118,6 +119,7 @@ __all__ = [
     "logger",
     "map",
     "run",
+    "run_python_script",
     "serve",
     "trace",
     "version",

@@ -274,7 +274,6 @@ class ContainerTask(TaskTemplate):
         print(f"Command: {commands!r}")
 
         run_kwargs: Dict[str, Any] = {
-            "remove": True,
             "volumes": volume_bindings,
             "detach": True,
         }

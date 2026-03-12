@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import os
 import pathlib
 import sys
 import uuid
@@ -113,6 +114,7 @@ class _Runner:
         custom_context: Dict[str, str] | None = None,
         cache_lookup_scope: CacheLookupScope = "global",
         preserve_original_types: bool | None = None,
+        debug: bool = False,
         _tracker: Any = None,
     ):
         from flyte._tools import ipython_check
@@ -152,6 +154,7 @@ class _Runner:
         self._preserve_original_types = (
             preserve_original_types if preserve_original_types is not None else self._interactive_mode
         )
+        self._debug = debug
 
     @requires_initialization
     async def _run_remote(self, obj: TaskTemplate[P, R, F] | LazyEntity, *args: P.args, **kwargs: P.kwargs) -> Run:
@@ -276,6 +279,8 @@ class _Runner:
         env["LOG_FORMAT"] = self._log_format
         if self._reset_root_logger:
             env["FLYTE_RESET_ROOT_LOGGER"] = "1"
+        if self._debug:
+            env["_F_E_VS"] = "1"
 
         # These paths will be appended to sys.path at runtime.
         if cfg.sync_local_sys_paths:
@@ -286,6 +291,10 @@ class _Runner:
                 if pathlib.Path(p).is_relative_to(root_dir_abs)
             ]
             env[FLYTE_SYS_PATH] = ":".join(added_paths)
+
+        # TODO: Remove once the actions service is the default and this env var is no longer needed.
+        if os.getenv("_U_USE_ACTIONS") == "1":
+            env["_U_USE_ACTIONS"] = "1"
 
         if not self._dry_run:
             if get_client() is None:
@@ -727,6 +736,7 @@ def with_runcontext(
     custom_context: Dict[str, str] | None = None,
     cache_lookup_scope: CacheLookupScope = "global",
     preserve_original_types: bool = False,
+    debug: bool = False,
     _tracker: Any = None,
 ) -> _Runner:
     """
@@ -783,6 +793,8 @@ def with_runcontext(
         when guessing python types from literal types. If false (default), it will return the generic
         flyte.io.DataFrame. This option is automatically set to True if interactive_mode is True unless overridden
         explicitly by this parameter.
+    :param debug: Optional If true, the task will be run as a VSCode debug task, starting a code-server in the
+        container so users can connect via the UI to interactively debug/run the task.
     :param _tracker: This is an internal only parameter used by the CLI to render the TUI.
 
     :return: runner
@@ -819,6 +831,7 @@ def with_runcontext(
         custom_context=custom_context,
         cache_lookup_scope=cache_lookup_scope,
         preserve_original_types=preserve_original_types,
+        debug=debug,
         _tracker=_tracker,
     )
 

@@ -1,10 +1,21 @@
 {% extends base %}
 
+{% block preamble %}
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
+<link rel="icon" type="image/png" href="https://cdn.prod.website-files.com/690e2a44303093ad8549854b/69123f033bc348f79cd2d7a4_flyte-logo-32.png">
+{% endblock %}
+
+{% block postamble %}
+<style>
+  html, body {
+    background-color: #050310 !important;
+    overflow-x: hidden;
+    margin: 0;
+    padding: 0;
+  }
+</style>
+{% endblock %}
+
 {% block contents %}
-    <!-- Start of Reo Javascript -->
-    <script type="text/javascript">
-      !function(){var e,t,n;e="{{client_id}}",t=function(){Reo.init({clientID:"{{client_id}}"})},(n=document.createElement("script")).src="https://static.reo.dev/"+e+"/reo.js",n.defer=!0,n.onload=t,document.head.appendChild(n)}();
-    </script>
-    <!-- End of Reo Javascript -->
 {{ embed(roots.main) }}
 {% endblock %}
