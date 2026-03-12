@@ -1,4 +1,4 @@
-"""Example: DataFrame analysis with constraints and reusable tasks (Agent SDK approach).
+"""Example: DataFrame analysis with constraints and reusable tasks (Agent approach).
 
 Demonstrates:
 - Passing pd.DataFrame directly (auto-converted to CSV File)
@@ -6,7 +6,7 @@ Demonstrates:
 - Using base_packages for specific libraries
 - Using as_task() for reusable execution
 - Multiple typed outputs including File
-- Agent SDK mode (backend="claude")
+- Agent mode (backend="claude")
 - max_sample_rows to control data sampling size
 """
 
@@ -85,7 +85,7 @@ async def analyze_sensor_data_with_agent(
     prompt: str,
     sensor_df: pd.DataFrame,
 ) -> dict[str, File | int | str | list[str] | dict[str, int]]:
-    """Generate analysis code using Agent SDK, then create a reusable task."""
+    """Generate analysis code using Agent mode, then create a reusable task."""
     result = await agent.generate.aio(
         prompt=prompt,
         samples={"readings": sensor_df},
@@ -131,7 +131,7 @@ mean humidity, and count warnings.
 Output a summary CSV (report) with columns: sensor_id, mean_temp, min_temp, max_temp,
 mean_humidity, warning_count. Also output total_anomalies as the total warning count.""",
 ) -> dict[str, File | int | str | list[str] | dict[str, int]]:
-    """Analyze sensor data with Agent SDK: generate code from DataFrame, run with reusable task."""
+    """Analyze sensor data with Agent mode: generate code from DataFrame, run with reusable task."""
     sensor_df = build_sensor_data()
     return await analyze_sensor_data_with_agent(prompt=prompt, sensor_df=sensor_df)
 

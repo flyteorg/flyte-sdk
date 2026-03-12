@@ -1,3 +1,4 @@
+import sys
 import textwrap
 from os import getcwd
 from typing import Generator, Tuple
@@ -424,6 +425,11 @@ def markdown(cfg: common.CLIConfig, plugin_variants: str | None = None):
         else:
             print()
             print("\n".join(rendered))
+
+    # Flush stdout to ensure all output is written before the process exits.
+    # InvokeBaseMixin.invoke() calls os._exit(0) after this function returns,
+    # which kills the process without flushing stdio buffers.
+    sys.stdout.flush()
 
 
 def _non_plugin_variants(plugin_variants: str) -> str:

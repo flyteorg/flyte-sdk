@@ -193,7 +193,7 @@ async def extract_data_context(
     constraints: Optional[list[str]] = None,
     model: Optional[str] = None,
     litellm_params: Optional[dict] = None,
-) -> tuple[str, dict[str, str], int, int]:
+) -> tuple[str, dict[str, str], list[str], int, int]:
     """Extract comprehensive context from data inputs with Pandera schema inference.
 
     Extracts:
@@ -212,10 +212,12 @@ async def extract_data_context(
         litellm_params: Optional LiteLLM parameters
 
     Returns:
-        Tuple of (context_string, schemas_as_code_dict, total_input_tokens, total_output_tokens)
+        Tuple of (context_string, schemas_as_code_dict, unapplied_constraints,
+        total_input_tokens, total_output_tokens)
     """
     context_parts = []
     schemas: dict[str, str] = {}
+    unapplied_constraints: list[str] = list(constraints) if constraints else []
     total_input_tokens = 0
     total_output_tokens = 0
 
@@ -266,7 +268,10 @@ async def extract_data_context(
 
             # Apply user constraints if provided
             if constraints and model:
-                schema, in_tok, out_tok = await apply_user_constraints(schema, constraints, name, model, litellm_params)
+                schema, unapplied, in_tok, out_tok = await apply_user_constraints(
+                    schema, constraints, name, model, litellm_params
+                )
+                unapplied_constraints = unapplied
                 total_input_tokens += in_tok
                 total_output_tokens += out_tok
 
@@ -278,4 +283,4 @@ async def extract_data_context(
             context_parts.append(context)
 
     context_str = "\n\n" + "=" * 80 + "\n\n".join(context_parts)
-    return context_str, schemas, total_input_tokens, total_output_tokens
+    return context_str, schemas, unapplied_constraints, total_input_tokens, total_output_tokens
