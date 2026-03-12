@@ -200,6 +200,7 @@ class File(BaseModel, Generic[T], SerializableType):
 
     class Config:
         arbitrary_types_allowed = True
+        json_schema_extra = {"description": "A file reference with an optional format type.", "x-flyte-type": "file"}
 
     @model_validator(mode="before")
     @classmethod

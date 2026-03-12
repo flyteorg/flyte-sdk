@@ -79,7 +79,7 @@ class DataFrame(BaseModel, SerializableType):
     format: typing.Optional[str] = Field(default=GENERIC_FORMAT)
     hash: typing.Optional[str] = Field(default=None)
 
-    model_config = ConfigDict(arbitrary_types_allowed=True)
+    model_config = ConfigDict(arbitrary_types_allowed=True, json_schema_extra={"description": "A tabular data reference backed by a remote file.", "x-flyte-type": "dataframe"})
 
     # Private attributes that are not part of the Pydantic model schema
     _raw_df: typing.Optional[typing.Any] = PrivateAttr(default=None)
