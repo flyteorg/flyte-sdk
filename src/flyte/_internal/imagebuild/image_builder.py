@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import typing
 from importlib.metadata import entry_points
+from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Dict, Optional, Tuple
 
 from async_lru import alru_cache
@@ -14,6 +16,8 @@ from flyte._image import Architecture, Image
 from flyte._initialize import _get_init_config
 from flyte._logging import logger
 from flyte._status import status
+
+_IMAGE_CACHE_DIR = Path.home() / ".flyte" / "cache" / "images"
 
 if TYPE_CHECKING:
     from flyte._build import ImageBuild
@@ -93,6 +97,40 @@ class DockerAPIImageChecker(ImageChecker):
                 return None
 
 
+def _cache_key(repository: str, tag: str, arch: Tuple[str, ...]) -> str:
+    """Return a filesystem-safe cache key for an image."""
+    raw = f"{repository}:{tag}:{','.join(sorted(arch))}"
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def _write_image_cache(repository: str, tag: str, arch: Tuple[str, ...], image_uri: str) -> None:
+    """Persist a verified image URI to local disk cache."""
+    try:
+        _IMAGE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        cache_file = _IMAGE_CACHE_DIR / _cache_key(repository, tag, arch)
+        cache_file.write_text(image_uri)
+    except OSError as e:
+        logger.debug(f"Failed to write image cache: {e}")
+
+
+class PersistentCacheImageChecker(ImageChecker):
+    """Check if image was previously verified and cached on disk (~0ms)."""
+
+    @classmethod
+    async def image_exists(
+        cls, repository: str, tag: str, arch: Tuple[Architecture, ...] = ("linux/amd64",)
+    ) -> Optional[str]:
+        cache_file = _IMAGE_CACHE_DIR / _cache_key(repository, tag, arch)
+        try:
+            if cache_file.is_file():
+                uri = cache_file.read_text().strip()
+                logger.debug(f"Image {uri} found in persistent cache")
+                return uri
+        except OSError as e:
+            logger.debug(f"Failed to read image cache: {e}")
+        return None
+
+
 class LocalDockerCommandImageChecker(ImageChecker):
     command_name: ClassVar[str] = "docker"
 
@@ -170,7 +208,10 @@ class ImageBuildEngine:
                 image_uri = await checker.image_exists(repository, tag, tuple(image.platform))
                 if image_uri:
                     logger.debug(f"Image {image_uri} in registry")
-                return image_uri
+                    # Persist to disk so future process invocations skip network checks
+                    if checker is not PersistentCacheImageChecker:
+                        _write_image_cache(repository, tag, tuple(image.platform), image_uri)
+                    return image_uri
             except Exception as e:
                 logger.debug(f"Error checking image existence with {checker.__name__}: {e}")
                 continue

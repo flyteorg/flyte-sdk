@@ -8,24 +8,57 @@ from flyte._internal.imagebuild.image_builder import (
     DockerAPIImageChecker,
     ImageBuildEngine,
     LocalDockerCommandImageChecker,
+    PersistentCacheImageChecker,
 )
 
 
 @mock.patch("flyte._internal.imagebuild.image_builder.DockerAPIImageChecker.image_exists")
 @mock.patch("flyte._internal.imagebuild.image_builder.LocalDockerCommandImageChecker.image_exists")
+@mock.patch("flyte._internal.imagebuild.image_builder.PersistentCacheImageChecker.image_exists")
 @pytest.mark.asyncio
-async def test_cached(mock_checker_cli, mock_checker_api):
-    # Simulate that the image exists locally
-    mock_checker_cli.return_value = True
+async def test_cached(mock_checker_cache, mock_checker_cli, mock_checker_api):
+    # Simulate that the image exists via persistent cache
+    mock_checker_cache.return_value = True
 
     img = Image.from_debian_base()
     await ImageBuildEngine.image_exists(img)
     await ImageBuildEngine.image_exists(img)
 
-    # The local checker should be called once, and its result cached
-    mock_checker_cli.assert_called_once()
-    # The API checker should not be called at all
+    # The persistent cache checker should be called once, and its result cached by alru_cache
+    mock_checker_cache.assert_called_once()
+    # All other checkers should not be called
+    mock_checker_cli.assert_not_called()
     mock_checker_api.assert_not_called()
+
+
+def test_persistent_cache_write_and_read(tmp_path, monkeypatch):
+    """PersistentCacheImageChecker reads back what _write_image_cache wrote."""
+    import flyte._internal.imagebuild.image_builder as ib
+
+    monkeypatch.setattr(ib, "_IMAGE_CACHE_DIR", tmp_path)
+
+    # Initially nothing cached
+    import asyncio
+
+    result = asyncio.get_event_loop().run_until_complete(
+        PersistentCacheImageChecker.image_exists("myrepo", "v1.0", ("linux/amd64",))
+    )
+    assert result is None
+
+    # Write to cache
+    ib._write_image_cache("myrepo", "v1.0", ("linux/amd64",), "myrepo:v1.0")
+
+    # Now it should be found
+    result = asyncio.get_event_loop().run_until_complete(
+        PersistentCacheImageChecker.image_exists("myrepo", "v1.0", ("linux/amd64",))
+    )
+    assert result == "myrepo:v1.0"
+
+    # Different arch should NOT be found
+    result = asyncio.get_event_loop().run_until_complete(
+        PersistentCacheImageChecker.image_exists("myrepo", "v1.0", ("linux/arm64",))
+    )
+    assert result is None
 
 
 @mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine._get_builder")
