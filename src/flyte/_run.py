@@ -173,7 +173,7 @@ class _Runner:
         from flyte.remote import Run
         from flyte.remote._task import LazyEntity, TaskDetails
 
-        from ._code_bundle import build_code_bundle, build_pkl_bundle
+        from ._code_bundle import build_code_bundle, build_code_bundle_from_relative_paths, build_pkl_bundle
         from ._deploy import build_images
         from ._internal.runtime.convert import convert_from_native_to_inputs
         from ._internal.runtime.task_serde import translate_task_to_wire
@@ -228,8 +228,6 @@ class _Runner:
                         copy_bundle_to=self._copy_bundle_to,
                     )
                 elif self._copy_files == "python_script":
-                    from ._code_bundle.bundle import build_code_bundle_from_relative_paths
-
                     if not self._bundle_relative_paths or not self._bundle_from_dir:
                         raise ValueError(
                             "copy_style='python_script' requires _bundle_relative_paths and _bundle_from_dir"
@@ -451,7 +449,7 @@ class _Runner:
         over the longer term we will productize this.
         """
         import flyte.report
-        from flyte._code_bundle import build_code_bundle, build_pkl_bundle
+        from flyte._code_bundle import build_code_bundle, build_code_bundle_from_relative_paths, build_pkl_bundle
         from flyte._deploy import build_images
         from flyte.models import RawDataPath
         from flyte.storage import ABFS, GCS, S3
@@ -486,8 +484,6 @@ class _Runner:
                     copy_bundle_to=self._copy_bundle_to,
                 )
             elif self._copy_files == "python_script":
-                from ._code_bundle.bundle import build_code_bundle_from_relative_paths
-
                 if not self._bundle_relative_paths or not self._bundle_from_dir:
                     raise ValueError("copy_style='python_script' requires _bundle_relative_paths and _bundle_from_dir")
                 code_bundle = await build_code_bundle_from_relative_paths(
