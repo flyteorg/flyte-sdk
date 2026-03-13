@@ -483,8 +483,8 @@ class Image:
     # Layers to be added to the image. In init, because frozen, but users shouldn't access, so underscore.
     _layers: Tuple[Layer, ...] = field(default_factory=tuple)
 
-    # Only settable internally.
-    _tag: Optional[str] = field(default=None, init=False)
+    # Explicitly set tag — overrides the content-hash default in _final_tag when provided.
+    tag: Optional[str] = field(default=None)
 
     _DEFAULT_IMAGE_PREFIXES: ClassVar = {
         PYTHON_3_10: "py3.10-",
@@ -582,7 +582,7 @@ class Image:
                 else:
                     image = image.with_pip_packages(f"flyte=={flyte_version}")
         if not dev_mode:
-            object.__setattr__(image, "_tag", preset_tag)
+            object.__setattr__(image, "tag", preset_tag)
 
         return image
 
@@ -628,7 +628,7 @@ class Image:
 
         tag = tag or None  # normalize empty string to None
         if tag is not None:
-            object.__setattr__(base_image, "_tag", tag)
+            object.__setattr__(base_image, "tag", tag)
         return base_image
 
     @classmethod
@@ -777,6 +777,7 @@ class Image:
             dockerfile=self.dockerfile,
             registry=registry,
             name=name,
+            tag=tag or None,
             platform=self.platform,
             python_version=python_version or self.python_version,
             extendable=extendable if extendable is not None else self.extendable,
@@ -784,10 +785,6 @@ class Image:
             _image_registry_secret=Secret(key=registry_secret) if isinstance(registry_secret, str) else registry_secret,
             _ref_name=self._ref_name,
         )
-
-        tag = tag or None  # normalize empty string to None
-        if tag is not None:
-            object.__setattr__(img, "_tag", tag)
 
         return img
 
@@ -821,17 +818,12 @@ class Image:
             "dockerfile": file,
             "registry": registry,
             "name": name,
+            "tag": tag or None,
             "extendable": False,  # Dockerfile-based images cannot have additional layers
         }
         if platform:
             kwargs["platform"] = platform
-        img = cls._new(**kwargs)
-
-        tag = tag or None  # normalize empty string to None
-        if tag is not None:
-            object.__setattr__(img, "_tag", tag)
-
-        return img
+        return cls._new(**kwargs)
 
     def _get_hash_digest(self) -> str:
         """
@@ -854,7 +846,7 @@ class Image:
 
     @property
     def _final_tag(self) -> str:
-        t = self._tag or self._get_hash_digest()
+        t = self.tag or self._get_hash_digest()
         return t or "latest"
 
     @cached_property

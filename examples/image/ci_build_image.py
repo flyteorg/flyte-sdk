@@ -60,7 +60,7 @@ async def build_and_push(from_image: str, to_target: str, builder: str = "local"
     """Build an image from a base and push it to a target registry/name:tag."""
     registry, name, tag = parse_target(to_target)
     image = Image.from_base(from_image).clone(registry=registry, name=name)
-    object.__setattr__(image, "_tag", tag)
+    object.__setattr__(image, "tag", tag)
     result = await ImageBuildEngine.build(image, builder=builder, force=force)
     return result.uri
 

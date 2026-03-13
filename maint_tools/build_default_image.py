@@ -70,7 +70,7 @@ async def build_flyte_connector_image(
     suffix = __version__.replace("+", "-")
     python_version = _detect_python_version()
     tag = f"py{python_version[0]}.{python_version[1]}-{suffix}"
-    object.__setattr__(default_image, "_tag", tag)  # NOTE: references _tag by name; update if Image._tag is renamed
+    object.__setattr__(default_image, "tag", tag)
     await ImageBuildEngine.build(default_image, builder=builder)
 
 
