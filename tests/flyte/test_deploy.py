@@ -377,3 +377,31 @@ async def test_build_image_bg_force_defaults_to_false():
         mock_build.aio = AsyncMock(return_value=mock_result)
         await _build_image_bg("my-env", image)
         mock_build.aio.assert_called_once_with(image, force=False)
+
+
+@pytest.mark.asyncio
+async def test_build_images_passes_force_to_bg():
+    """force=True is forwarded through _build_images to _build_image_bg."""
+    image = flyte.Image.from_base("python:3.10")
+    env = flyte.TaskEnvironment(name="my-env", image=image)
+    plan = DeploymentPlan(envs={"my-env": env})
+    mock_result = ImageBuild(uri="registry/my-image:abc", remote_run=None)
+
+    with patch("flyte._build.build") as mock_build:
+        mock_build.aio = AsyncMock(return_value=mock_result)
+        await _build_images(plan, force=True)
+        mock_build.aio.assert_called_once_with(image, force=True)
+
+
+@pytest.mark.asyncio
+async def test_build_images_force_defaults_to_false():
+    """force defaults to False when not specified."""
+    image = flyte.Image.from_base("python:3.10")
+    env = flyte.TaskEnvironment(name="my-env", image=image)
+    plan = DeploymentPlan(envs={"my-env": env})
+    mock_result = ImageBuild(uri="registry/my-image:abc", remote_run=None)
+
+    with patch("flyte._build.build") as mock_build:
+        mock_build.aio = AsyncMock(return_value=mock_result)
+        await _build_images(plan)
+        mock_build.aio.assert_called_once_with(image, force=False)
