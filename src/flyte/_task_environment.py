@@ -170,6 +170,7 @@ class TaskEnvironment(Environment):
         queue: Optional[str] = None,
         triggers: Tuple[Trigger, ...] | Trigger = (),
         links: Tuple[Link, ...] | Link = (),
+        task_resolver: Any | None = None,
     ) -> Callable[[Callable[P, R]], AsyncFunctionTaskTemplate[P, R, Callable[P, R]]]: ...
 
     @overload
@@ -195,6 +196,7 @@ class TaskEnvironment(Environment):
         queue: Optional[str] = None,
         triggers: Tuple[Trigger, ...] | Trigger = (),
         links: Tuple[Link, ...] | Link = (),
+        task_resolver: Any | None = None,
     ) -> Callable[[F], AsyncFunctionTaskTemplate[P, R, F]] | AsyncFunctionTaskTemplate[P, R, F]:
         """
         Decorate a function to be a task.
@@ -277,6 +279,7 @@ class TaskEnvironment(Environment):
                 interruptible=interruptible if interruptible is not None else self.interruptible,
                 triggers=triggers if isinstance(triggers, tuple) else (triggers,),
                 links=links if isinstance(links, tuple) else (links,),
+                task_resolver=task_resolver,
             )
             self._tasks[task_name] = tmpl
             return tmpl

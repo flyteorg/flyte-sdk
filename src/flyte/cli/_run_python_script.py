@@ -59,6 +59,12 @@ class PythonScriptCommand(CommandBase):
     help="Extra arguments passed to the script (comma-separated).",
 )
 @click.option("--queue", type=str, default=None, help="Flyte queue / cluster override.")
+@click.option(
+    "--output-dir",
+    type=str,
+    default=None,
+    help="Directory path (inside the container) to upload as output after the script finishes.",
+)
 @click.pass_obj
 def python_script(
     cfg: common.CLIConfig,
@@ -72,6 +78,7 @@ def python_script(
     timeout: int,
     extra_args: str | None,
     queue: str | None,
+    output_dir: str | None,
 ) -> None:
     """Run a Python script on a remote Flyte cluster.
 
@@ -116,6 +123,7 @@ def python_script(
     name = run_args.name if run_args else None
     project = run_args.project if run_args else None
     domain = run_args.domain if run_args else None
+    debug = run_args.debug if run_args else False
 
     # Initialize flyte config (like prefetch does)
     initialize_config(
@@ -150,6 +158,8 @@ def python_script(
         queue=queue,
         wait=False,
         name=name,
+        debug=debug,
+        output_dir=output_dir,
     )
 
     url = run.url
@@ -157,6 +167,11 @@ def python_script(
         f"Started run [bold]{run.name}[/bold] to execute script [bold]{script}[/bold].\n"
         f"   Check the console for status at [link={url}]{url}[/link]"
     )
+
+    if debug:
+        from flyte.cli._run import _render_debug_url
+
+        _render_debug_url(console, run, cfg)
 
     if follow:
         run.wait()
