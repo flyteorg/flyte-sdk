@@ -595,8 +595,8 @@ class Image:
         registry: Optional[str] = None,
         registry_secret: Optional[str | Secret] = None,
         name: Optional[str] = None,
-        platform: Optional[Tuple[Architecture, ...]] = None,
         tag: Optional[str] = None,
+        platform: Optional[Tuple[Architecture, ...]] = None,
     ) -> Image:
         """
         Use this method to start using the default base image, built from this library's base Dockerfile
@@ -655,6 +655,7 @@ class Image:
         script: Path | str,
         *,
         name: str,
+        tag: Optional[str] = None,
         registry: str | None = None,
         registry_secret: Optional[str | Secret] = None,
         python_version: Optional[Tuple[int, int]] = None,
@@ -664,7 +665,6 @@ class Image:
         extra_args: Optional[str] = None,
         platform: Optional[Tuple[Architecture, ...]] = None,
         secret_mounts: Optional[SecretRequest] = None,
-        tag: Optional[str] = None,
     ) -> Image:
         """
         Use this method to create a new image with the specified uv script.
@@ -728,11 +728,11 @@ class Image:
         registry: Optional[str] = None,
         registry_secret: Optional[str | Secret] = None,
         name: Optional[str] = None,
+        tag: Optional[str] = None,
         base_image: Optional[str] = None,
         python_version: Optional[Tuple[int, int]] = None,
         addl_layer: Optional[Layer] = None,
         extendable: Optional[bool] = None,
-        tag: Optional[str] = None,
     ) -> Image:
         """
         Use this method to clone the current image and change the registry and name
@@ -797,8 +797,8 @@ class Image:
         file: Path,
         registry: str,
         name: str,
-        platform: Union[Architecture, Tuple[Architecture, ...], None] = None,
         tag: Optional[str] = None,
+        platform: Union[Architecture, Tuple[Architecture, ...], None] = None,
     ) -> Image:
         """
         Use this method to create a new image with the specified dockerfile. Note you cannot use additional layers
