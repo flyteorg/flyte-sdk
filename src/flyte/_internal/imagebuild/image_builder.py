@@ -212,7 +212,7 @@ class ImageBuildEngine:
                     # Persist to disk so future process invocations skip network checks
                     if checker is not PersistentCacheImageChecker:
                         _write_image_cache(repository, tag, tuple(image.platform), image_uri)
-                return image_uri
+                    return image_uri
             except Exception as e:
                 logger.debug(f"Error checking image existence with {checker.__name__}: {e}")
                 continue
