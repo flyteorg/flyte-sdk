@@ -40,6 +40,7 @@ class Outputs:
 @dataclass
 class Error:
     err: execution_pb2.ExecutionError
+    recoverable: bool = True
 
 
 # ------------------------------- CONVERT Methods ------------------------------- #
@@ -282,7 +283,17 @@ def convert_error_to_native(
 
 
 def convert_from_native_to_error(err: BaseException) -> Error:
-    if isinstance(err, flyte.errors.RuntimeUnknownError):
+    if isinstance(err, flyte.errors.NonRecoverableError):
+        return Error(
+            err=execution_pb2.ExecutionError(
+                kind=execution_pb2.ExecutionError.USER,
+                code=err.code,
+                message=str(err),
+                worker=err.worker,
+            ),
+            recoverable=False,
+        )
+    elif isinstance(err, flyte.errors.RuntimeUnknownError):
         return Error(
             err=execution_pb2.ExecutionError(
                 kind=execution_pb2.ExecutionError.UNKNOWN,

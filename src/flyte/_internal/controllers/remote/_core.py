@@ -23,6 +23,17 @@ from ._informer import InformerCache
 from ._service_protocol import ActionsService, ClientSet, QueueService, StateService
 
 
+def _actions_metadata(action: Action) -> tuple:
+    """Build gRPC metadata headers for Actions service calls."""
+    run = action.action_id.run
+    return (
+        ("x-actions-project", run.project),
+        ("x-actions-domain", run.domain),
+        ("x-actions-run", run.name),
+        ("x-actions-parent-action", action.parent_action_name),
+    )
+
+
 class Controller:
     """
     Generic controller with high-level submit API running in a dedicated thread with its own event loop.
@@ -308,6 +319,7 @@ class Controller:
                         await self._actions_service.Abort(
                             actions_service_pb2.AbortRequest(action_id=action.action_id),
                             wait_for_ready=True,
+                            metadata=_actions_metadata(action),
                         )
                     else:
                         await self._queue_service.AbortQueuedAction(
@@ -380,6 +392,7 @@ class Controller:
                             ),
                             wait_for_ready=True,
                             timeout=self._enqueue_timeout,
+                            metadata=_actions_metadata(action),
                         )
                     else:
                         await self._queue_service.EnqueueAction(

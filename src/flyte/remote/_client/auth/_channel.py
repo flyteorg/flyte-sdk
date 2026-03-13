@@ -211,16 +211,20 @@ async def create_channel(
     proxy_auth_interceptors = create_proxy_auth_interceptors(endpoint, http_session=http_session, **kwargs)
     interceptors.extend(proxy_auth_interceptors)
 
-    # Get auth interceptors
-    auth_interceptors = create_auth_interceptors(
-        endpoint=endpoint,
-        in_channel=unauthenticated_channel,
-        insecure=insecure,
-        insecure_skip_verify=insecure_skip_verify,
-        ca_cert_file_path=ca_cert_file_path,
-        http_session=http_session,
-        **kwargs,
-    )
+    # Get auth interceptors — skip when insecure=True,
+    # since a plaintext channel typically means no auth server is available.
+    if insecure:
+        auth_interceptors = []
+    else:
+        auth_interceptors = create_auth_interceptors(
+            endpoint=endpoint,
+            in_channel=unauthenticated_channel,
+            insecure=insecure,
+            insecure_skip_verify=insecure_skip_verify,
+            ca_cert_file_path=ca_cert_file_path,
+            http_session=http_session,
+            **kwargs,
+        )
 
     interceptors.extend(auth_interceptors)
 

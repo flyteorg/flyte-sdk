@@ -37,6 +37,7 @@ class Run(ToJSONMixin):
         if not self.pb2.HasField("action"):
             raise RuntimeError("Run does not have an action")
         self.action = Action(self.pb2.action)
+        self._debug_url = None
 
     @syncify
     @classmethod
@@ -285,6 +286,19 @@ class Run(ToJSONMixin):
             domain=self.pb2.action.id.run.domain,
             run_name=self.name,
         )
+
+    @syncify
+    async def get_debug_url(self) -> str:
+        """
+        Get the debug URL of the run. Returns ``None`` if the VS Code
+        Debugger log entry is not yet available in the action details.
+        """
+        if self._debug_url is not None:
+            return self._debug_url
+        from flyte._debug.client import watch_for_vscode_url
+
+        self._debug_url = await watch_for_vscode_url(self)
+        return self._debug_url
 
     @syncify
     async def abort(self, reason: str = "Manually aborted from the SDK api."):

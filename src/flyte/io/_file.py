@@ -10,6 +10,7 @@ from typing import (
     Any,
     AsyncGenerator,
     Callable,
+    ClassVar,
     Coroutine,
     Dict,
     Generator,
@@ -200,6 +201,10 @@ class File(BaseModel, Generic[T], SerializableType):
 
     class Config:
         arbitrary_types_allowed = True
+        json_schema_extra: ClassVar[dict] = {
+            "description": "A file reference with an optional format type.",
+            "x-flyte-type": "file",
+        }
 
     @model_validator(mode="before")
     @classmethod

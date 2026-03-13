@@ -149,16 +149,24 @@ USER root
 COPY --from=uv /uv /usr/bin/uv
 
 
-# Configure default envs
+# Capture any existing UV_PYTHON from the base image
+ARG _EXISTING_UV_PYTHON=$${UV_PYTHON}
+
+
+# Configure default envs (preserve base image values if set)
 ENV UV_COMPILE_BYTECODE=1 \
    UV_LINK_MODE=copy \
-   VIRTUALENV=/opt/venv \
-   UV_PYTHON=/opt/venv/bin/python \
-   PATH="/opt/venv/bin:$$PATH"
+   VIRTUALENV=$${VIRTUALENV:-/opt/venv} \
+   UV_PYTHON=$${UV_PYTHON:-/opt/venv/bin/python}
 
 
-# Create a virtualenv with the user specified python version
-RUN uv venv $$VIRTUALENV --python=$PYTHON_VERSION && uv run --python=$$UV_PYTHON python -m compileall $$VIRTUALENV
+# Create a virtualenv only if the base image doesn't already have one
+RUN if [ -z "$${_EXISTING_UV_PYTHON}" ]; then \
+       uv venv $$VIRTUALENV --python=$PYTHON_VERSION && uv run --python=$$UV_PYTHON python -m compileall $$VIRTUALENV; \
+   fi
+
+# Add /opt/venv/bin to PATH only when we created the venv (no existing UV_PYTHON)
+ENV PATH="$${_EXISTING_UV_PYTHON:+$$PATH}$${_EXISTING_UV_PYTHON:-/opt/venv/bin:$$PATH}"
 
 
 # Adds nvidia just in case it exists
@@ -577,7 +585,9 @@ class DockerImageBuilder(ImageBuilder):
         # Can get a public token for docker.io but ghcr requires a pat, so harder to get the manifest anonymously
         return [LocalDockerCommandImageChecker, LocalPodmanCommandImageChecker, DockerAPIImageChecker]
 
-    async def build_image(self, image: Image, dry_run: bool = False, wait: bool = True) -> "ImageBuild":
+    async def build_image(
+        self, image: Image, dry_run: bool = False, wait: bool = True, force: bool = False
+    ) -> "ImageBuild":
         from flyte._build import ImageBuild
 
         if image.dockerfile:
