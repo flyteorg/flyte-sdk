@@ -6,13 +6,14 @@ help:
 
 .DEFAULT_GOAL := help
 
-.PHONY: install-prek
-install-prek:
+.PHONY: prek-install
+prek-install:
 	curl --proto '=https' --tlsv1.2 -LsSf https://github.com/j178/prek/releases/download/v0.3.5/prek-installer.sh | sh
 
 .PHONY: fmt
 fmt:
-	prek ruff
+	uv run python -m ruff format
+	uv run python -m ruff check . --fix
 
 .PHONY: mypy
 mypy:
