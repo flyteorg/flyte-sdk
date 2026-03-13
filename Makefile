@@ -24,13 +24,7 @@ mypy:
 
 .PHONY: uvlock
 uvlock:
-	uv lock
-	for dir in plugins/*/; do \
-		if [ -f "$$dir/uv.lock" ]; then \
-			echo "Checking $$dir..."; \
-			uv lock --directory "$$dir"; \
-		fi \
-	done
+	bash maint_tools/uvlock.sh
 
 .PHONY: lint
 lint-fix:
