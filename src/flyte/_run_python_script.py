@@ -45,7 +45,7 @@ def _build_task(
     """Build the ``execute_script`` task for serialization.
 
     The *script_name* is captured via closure for local execution.  When
-    running remotely the :class:`ScriptTaskResolver` recreates the task from
+    running remotely the :class:`InternalTaskResolver` recreates the task from
     the loader args embedded in the container command, so the closure value
     is not carried over the wire.
     """
@@ -80,8 +80,8 @@ def _build_task(
     return execute_script
 
 
-def _build_script_runner_task(script_name: str, output_dir: "Optional[str]" = None, timeout: int = 3600) -> Any:
-    """Build the ``execute_script`` task at runtime (called by :class:`ScriptTaskResolver`).
+def _build_script_runner_task(script_name: str, output_dir: "Optional[str]" = None, timeout: str = "3600") -> Any:
+    """Build the ``execute_script`` task at runtime (called by :class:`InternalTaskResolver`).
 
     Creates a minimal :class:`~flyte.TaskEnvironment` — only the function
     signature matters here because the container already has the correct
@@ -90,7 +90,7 @@ def _build_script_runner_task(script_name: str, output_dir: "Optional[str]" = No
     import flyte
 
     env = flyte.TaskEnvironment(name="python_script")
-    return _build_task(env, script_name, timeout, short_name=script_name, output_dir=output_dir)
+    return _build_task(env, script_name, int(timeout), short_name=script_name, output_dir=output_dir)
 
 
 @syncify
@@ -114,7 +114,7 @@ async def run_python_script(
 
     Bundles the script into a Flyte code bundle and executes it remotely
     with the requested resources.  Unlike ``interactive_mode`` (which
-    pickles the task), this approach uses a :class:`ScriptTaskResolver`
+    pickles the task), this approach uses an :class:`InternalTaskResolver`
     so the task can be properly debugged with ``debug=True``.
 
     Project and domain are read from the init config (set via ``flyte.init()``
@@ -165,7 +165,7 @@ async def run_python_script(
         run = flyte.run_python_script(Path("analysis.py"), image=img)
     """
     import flyte
-    from flyte._internal.resolvers.script import ScriptTaskResolver
+    from flyte._internal.resolvers.internal import InternalTaskResolver
     from flyte._run import _Runner
 
     script = pathlib.Path(script).resolve()
@@ -199,9 +199,14 @@ async def run_python_script(
         env_kwargs["queue"] = queue
     env = flyte.TaskEnvironment(**env_kwargs)
 
-    # Build task with the ScriptTaskResolver so the runner knows how to
+    # Build task with the InternalTaskResolver so the runner knows how to
     # serialize and reload it without pickling.
-    resolver = ScriptTaskResolver(script.name, output_dir=output_dir, timeout=timeout)
+    resolver = InternalTaskResolver(
+        "flyte._run_python_script._build_script_runner_task",
+        script_name=script.name,
+        output_dir=output_dir,
+        timeout=timeout,
+    )
     task_short_name = name or script.stem
     execute_script = _build_task(
         env, script.name, timeout, short_name=task_short_name, output_dir=output_dir, task_resolver=resolver
@@ -211,7 +216,7 @@ async def run_python_script(
         force_mode="remote",
         name=name,
         debug=debug,
-        copy_style="python_script",
+        copy_style="custom",
         _bundle_relative_paths=(script.name,),
         _bundle_from_dir=script.parent,
     )

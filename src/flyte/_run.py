@@ -227,11 +227,9 @@ class _Runner:
                         upload_to_controlplane=not self._dry_run,
                         copy_bundle_to=self._copy_bundle_to,
                     )
-                elif self._copy_files == "python_script":
+                elif self._copy_files == "custom":
                     if not self._bundle_relative_paths or not self._bundle_from_dir:
-                        raise ValueError(
-                            "copy_style='python_script' requires _bundle_relative_paths and _bundle_from_dir"
-                        )
+                        raise ValueError("copy_style='custom' requires _bundle_relative_paths and _bundle_from_dir")
                     code_bundle = await build_code_bundle_from_relative_paths(
                         self._bundle_relative_paths,
                         from_dir=self._bundle_from_dir,
@@ -483,9 +481,9 @@ class _Runner:
                     upload_to_controlplane=not self._dry_run,
                     copy_bundle_to=self._copy_bundle_to,
                 )
-            elif self._copy_files == "python_script":
+            elif self._copy_files == "custom":
                 if not self._bundle_relative_paths or not self._bundle_from_dir:
-                    raise ValueError("copy_style='python_script' requires _bundle_relative_paths and _bundle_from_dir")
+                    raise ValueError("copy_style='custom' requires _bundle_relative_paths and _bundle_from_dir")
                 code_bundle = await build_code_bundle_from_relative_paths(
                     self._bundle_relative_paths,
                     from_dir=self._bundle_from_dir,
@@ -824,6 +822,8 @@ def with_runcontext(
     """
     if mode == "hybrid" and not name and not run_base_dir:
         raise ValueError("Run name and run base dir are required for hybrid mode")
+    if copy_style == "custom":
+        raise ValueError("copy_style='custom' is not yet supported through with_runcontext.")
     if copy_style == "none" and not version:
         raise ValueError("Version is required when copy_style is 'none'")
 

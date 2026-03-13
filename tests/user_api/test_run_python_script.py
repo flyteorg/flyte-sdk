@@ -125,15 +125,15 @@ class TestRunPythonScriptShortName:
 
 
 class TestRunPythonScriptCodeBundle:
-    """Tests that the runner is configured with python_script copy_style."""
+    """Tests that the runner is configured with custom copy_style."""
 
-    def test_runner_uses_python_script_copy_style(self, script, mock_remote):
-        """Verify _Runner is constructed with copy_style='python_script'."""
+    def test_runner_uses_custom_copy_style(self, script, mock_remote):
+        """Verify _Runner is constructed with copy_style='custom'."""
         run_python_script(script)
 
         mock_remote["runner_cls"].assert_called_once()
         call_kwargs = mock_remote["runner_cls"].call_args[1]
-        assert call_kwargs["copy_style"] == "python_script"
+        assert call_kwargs["copy_style"] == "custom"
 
     def test_runner_bundle_relative_paths(self, script, mock_remote):
         """Verify _Runner receives the script filename as bundle_relative_paths."""
@@ -149,29 +149,29 @@ class TestRunPythonScriptCodeBundle:
         call_kwargs = mock_remote["runner_cls"].call_args[1]
         assert call_kwargs["_bundle_from_dir"] == script.resolve().parent
 
-    def test_task_has_script_resolver(self, script, mock_remote):
-        """Verify the task has a ScriptTaskResolver attached."""
-        from flyte._internal.resolvers.script import ScriptTaskResolver
+    def test_task_has_internal_resolver(self, script, mock_remote):
+        """Verify the task has an InternalTaskResolver attached."""
+        from flyte._internal.resolvers.internal import InternalTaskResolver
 
         run_python_script(script)
 
         task_arg = mock_remote["runner"].run.aio.call_args[0][0]
-        assert isinstance(task_arg.task_resolver, ScriptTaskResolver)
-        assert task_arg.task_resolver._script_name == script.name
+        assert isinstance(task_arg.task_resolver, InternalTaskResolver)
+        assert task_arg.task_resolver._kwargs["script_name"] == script.name
 
     def test_resolver_output_dir_none_by_default(self, script, mock_remote):
         """Verify the resolver has output_dir=None when not specified."""
         run_python_script(script)
 
         task_arg = mock_remote["runner"].run.aio.call_args[0][0]
-        assert task_arg.task_resolver._output_dir is None
+        assert task_arg.task_resolver._kwargs.get("output_dir") is None
 
     def test_resolver_output_dir_passed_through(self, script, mock_remote):
         """Verify the resolver receives the output_dir value."""
         run_python_script(script, output_dir="/tmp/results")
 
         task_arg = mock_remote["runner"].run.aio.call_args[0][0]
-        assert task_arg.task_resolver._output_dir == "/tmp/results"
+        assert task_arg.task_resolver._kwargs["output_dir"] == "/tmp/results"
 
 
 # ---------------------------------------------------------------------------
@@ -184,27 +184,32 @@ class TestRunPythonScriptOutputDir:
 
     def test_output_dir_default_is_none(self, script, mock_remote):
         """Without output_dir=, the resolver should have output_dir=None."""
-        from flyte._internal.resolvers.script import ScriptTaskResolver
+        from flyte._internal.resolvers.internal import InternalTaskResolver
 
         run_python_script(script)
 
         task_arg = mock_remote["runner"].run.aio.call_args[0][0]
         resolver = task_arg.task_resolver
-        assert isinstance(resolver, ScriptTaskResolver)
-        assert resolver._output_dir is None
+        assert isinstance(resolver, InternalTaskResolver)
+        assert resolver._kwargs.get("output_dir") is None
 
     def test_output_dir_passed_to_resolver(self, script, mock_remote):
         """output_dir= should be stored on the resolver for serialization."""
         run_python_script(script, output_dir="/tmp/output")
 
         task_arg = mock_remote["runner"].run.aio.call_args[0][0]
-        assert task_arg.task_resolver._output_dir == "/tmp/output"
+        assert task_arg.task_resolver._kwargs["output_dir"] == "/tmp/output"
 
     def test_resolver_loader_args_includes_output_dir(self):
         """loader_args should include output_dir when set."""
-        from flyte._internal.resolvers.script import ScriptTaskResolver
+        from flyte._internal.resolvers.internal import InternalTaskResolver
 
-        resolver = ScriptTaskResolver("script.py", output_dir="/tmp/out", timeout=600)
+        resolver = InternalTaskResolver(
+            "flyte._run_python_script._build_script_runner_task",
+            script_name="script.py",
+            output_dir="/tmp/out",
+            timeout=600,
+        )
         args = resolver.loader_args(MagicMock())
         assert "output_dir" in args
         idx = args.index("output_dir")
@@ -212,9 +217,13 @@ class TestRunPythonScriptOutputDir:
 
     def test_resolver_loader_args_excludes_output_dir_when_none(self):
         """loader_args should not include output_dir when None."""
-        from flyte._internal.resolvers.script import ScriptTaskResolver
+        from flyte._internal.resolvers.internal import InternalTaskResolver
 
-        resolver = ScriptTaskResolver("script.py", timeout=600)
+        resolver = InternalTaskResolver(
+            "flyte._run_python_script._build_script_runner_task",
+            script_name="script.py",
+            timeout=600,
+        )
         args = resolver.loader_args(MagicMock())
         assert "output_dir" not in args
 
