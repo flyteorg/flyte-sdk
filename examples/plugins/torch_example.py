@@ -5,21 +5,24 @@ import torch.distributed
 import torch.nn as nn
 import torch.optim as optim
 from flyteplugins.pytorch.task import Elastic
+from flyteplugins.wandb import get_wandb_run, wandb_config, wandb_init
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, DistributedSampler, TensorDataset
 
 import flyte
 
-image = flyte.Image.from_debian_base(name="torch").with_pip_packages("flyteplugins-pytorch")
+image = flyte.Image.from_debian_base(name="torch").with_pip_packages(
+    "flyteplugins-pytorch", "flyteplugins-wandb"
+)
 
 torch_env = flyte.TaskEnvironment(
     name="torch_env",
     resources=flyte.Resources(cpu=(1, 2), memory=("1Gi", "2Gi"), gpu="T4:1"),
     plugin_config=Elastic(
         nproc_per_node=1,
-        # if you want to do local testing set nnodes=1
         nnodes=2,
     ),
+    secrets=flyte.Secret(key="NIELS_WANDB_API_KEY", as_env_var="WANDB_API_KEY"),
     image=image,
 )
 
@@ -38,9 +41,9 @@ def prepare_dataloader(rank: int, world_size: int, batch_size: int = 2) -> DataL
     Prepare a DataLoader with a DistributedSampler so each rank
     gets a shard of the dataset.
     """
-    # Dummy dataset
-    x_train = torch.tensor([[1.0], [2.0], [3.0], [4.0]])
-    y_train = torch.tensor([[3.0], [5.0], [7.0], [9.0]])
+    n_samples = 100
+    x_train = torch.randn(n_samples, 1)
+    y_train = 2.0 * x_train + 1.0 + 0.1 * torch.randn(n_samples, 1)
     dataset = TensorDataset(x_train, y_train)
 
     # Distributed-aware sampler
@@ -69,8 +72,9 @@ def train_loop(epochs: int = 3) -> float:
     optimizer = optim.SGD(model.parameters(), lr=0.01)
 
     final_loss = 0.0
+    wandb_run = get_wandb_run()
 
-    for _ in range(epochs):
+    for epoch in range(epochs):
         for x, y in dataloader:
             outputs = model(x)
             loss = criterion(outputs, y)
@@ -80,12 +84,16 @@ def train_loop(epochs: int = 3) -> float:
             optimizer.step()
 
             final_loss = loss.item()
+
+        if wandb_run:
+            wandb_run.log({"loss": final_loss, "epoch": epoch})
         if torch.distributed.get_rank() == 0:
             print(f"Loss: {final_loss}")
 
     return final_loss
 
 
+@wandb_init
 @torch_env.task
 def torch_distributed_train(epochs: int) -> typing.Optional[float]:
     """
@@ -99,6 +107,9 @@ def torch_distributed_train(epochs: int) -> typing.Optional[float]:
 
 if __name__ == "__main__":
     flyte.init_from_config()
-    run = flyte.with_runcontext(mode="remote").run(torch_distributed_train, epochs=1000)
+    run = flyte.with_runcontext(
+        mode="remote",
+        custom_context=wandb_config(project="torch-distributed-training"),
+    ).run(torch_distributed_train, epochs=1_000_000)
     print("run name:", run.name)
     print("run url:", run.url)
