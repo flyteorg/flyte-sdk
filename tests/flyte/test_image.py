@@ -525,3 +525,26 @@ def test_resolve_code_bundle_loaded_modules_copy_style_none(tmp_path):
     assert bundle_layers[0].root_dir == tmp_path
     assert bundle_layers[0].copy_style == "loaded_modules"
     assert bundle_layers[0].dst == "."
+
+
+def test_clone_with_explicit_tag():
+    img = Image.from_debian_base(registry="reg", name="img", python_version=(3, 12))
+    cloned = img.clone(registry="other-reg", name="other-img", tag="v1.2.3")
+    assert cloned._tag == "v1.2.3"
+    assert cloned.uri == "other-reg/other-img:v1.2.3"
+
+
+def test_clone_tag_not_inherited_from_source():
+    # clone() never inherits _tag from source — always fresh content hash unless tag= given
+    img = Image.from_debian_base(registry="reg", name="img", python_version=(3, 12))
+    # default image has _tag set (version-based); clone without tag= should content-hash
+    cloned = img.clone(registry="other-reg", name="other-img")
+    assert cloned._tag is None
+    assert cloned.uri.startswith("other-reg/other-img:")
+    assert cloned.uri != img.uri  # different because hash differs (no version tag)
+
+
+def test_clone_empty_string_tag_falls_back_to_content_hash():
+    img = Image.from_debian_base(registry="reg", name="img", python_version=(3, 12))
+    cloned = img.clone(registry="reg", name="img", tag="")
+    assert cloned._tag is None  # empty string normalized to None

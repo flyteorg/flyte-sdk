@@ -727,6 +727,7 @@ class Image:
         python_version: Optional[Tuple[int, int]] = None,
         addl_layer: Optional[Layer] = None,
         extendable: Optional[bool] = None,
+        tag: Optional[str] = None,
     ) -> Image:
         """
         Use this method to clone the current image and change the registry and name
@@ -778,6 +779,10 @@ class Image:
             _image_registry_secret=Secret(key=registry_secret) if isinstance(registry_secret, str) else registry_secret,
             _ref_name=self._ref_name,
         )
+
+        tag = tag or None  # normalize empty string to None
+        if tag is not None:
+            object.__setattr__(img, "_tag", tag)
 
         return img
 
