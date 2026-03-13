@@ -788,7 +788,12 @@ class Image:
 
     @classmethod
     def from_dockerfile(
-        cls, file: Path, registry: str, name: str, platform: Union[Architecture, Tuple[Architecture, ...], None] = None
+        cls,
+        file: Path,
+        registry: str,
+        name: str,
+        platform: Union[Architecture, Tuple[Architecture, ...], None] = None,
+        tag: Optional[str] = None,
     ) -> Image:
         """
         Use this method to create a new image with the specified dockerfile. Note you cannot use additional layers
@@ -816,6 +821,10 @@ class Image:
         if platform:
             kwargs["platform"] = platform
         img = cls._new(**kwargs)
+
+        tag = tag or None  # normalize empty string to None
+        if tag is not None:
+            object.__setattr__(img, "_tag", tag)
 
         return img
 
