@@ -1,3 +1,6 @@
+# DEPRECATED: This script is no longer the recommended way to build and push images from CI.
+# Use `flyte build` instead. See the documentation for the supported CI image build path.
+# This file is retained as a reference implementation only.
 """Build and push an image to a user-specified target from CI.
 
 Takes a source image and re-tags/pushes it to a target registry/name:tag.
