@@ -23,6 +23,18 @@ class BuildArguments:
             )
         },
     )
+    force: bool = field(
+        default=False,
+        metadata={
+            "click.option": click.Option(
+                ["--force"],
+                is_flag=True,
+                type=bool,
+                default=False,
+                help="Skip existence check and always rebuild the image.",
+            )
+        },
+    )
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "BuildArguments":
@@ -50,7 +62,7 @@ class BuildEnvCommand(click.Command):
         status.step(f"Building environment: {self.obj_name}")
         obj.init()
         with common.cli_status(obj.output_format, "Building...", spinner="dots"):
-            image_cache = flyte.build_images(self.obj)
+            image_cache = flyte.build_images(self.obj, force=self.build_args.force)
 
         status.success(f"Environment {self.obj_name} built")
         common.print_output(common.format("Images", image_cache.repr(), obj.output_format), obj.output_format)
