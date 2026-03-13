@@ -596,6 +596,7 @@ class Image:
         registry_secret: Optional[str | Secret] = None,
         name: Optional[str] = None,
         platform: Optional[Tuple[Architecture, ...]] = None,
+        tag: Optional[str] = None,
     ) -> Image:
         """
         Use this method to start using the default base image, built from this library's base Dockerfile
@@ -623,8 +624,11 @@ class Image:
         )
 
         if registry or name:
-            return base_image.clone(registry=registry, name=name, registry_secret=registry_secret, extendable=True)
+            return base_image.clone(registry=registry, name=name, registry_secret=registry_secret, extendable=True, tag=tag)
 
+        tag = tag or None  # normalize empty string to None
+        if tag is not None:
+            object.__setattr__(base_image, "_tag", tag)
         return base_image
 
     @classmethod
@@ -660,6 +664,7 @@ class Image:
         extra_args: Optional[str] = None,
         platform: Optional[Tuple[Architecture, ...]] = None,
         secret_mounts: Optional[SecretRequest] = None,
+        tag: Optional[str] = None,
     ) -> Image:
         """
         Use this method to create a new image with the specified uv script.
@@ -716,7 +721,7 @@ class Image:
             platform=platform,
         )
 
-        return img.clone(addl_layer=ll)
+        return img.clone(addl_layer=ll, tag=tag)
 
     def clone(
         self,
