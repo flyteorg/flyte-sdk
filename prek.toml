@@ -1,0 +1,26 @@
+[[repos]]
+repo = "local"
+
+[[repos.hooks]]
+id = "fmt"
+name = "make fmt"
+language = "system"
+entry = "make fmt"
+pass_filenames = false
+files = "\\.py$"
+
+[[repos.hooks]]
+id = "mypy"
+name = "make mypy"
+language = "system"
+entry = "make mypy"
+pass_filenames = false
+files = "\\.py$"
+
+[[repos.hooks]]
+id = "uvlock"
+name = "make uvlock"
+language = "system"
+entry = "make uvlock"
+pass_filenames = false
+files = "(^|/)pyproject\\.toml$|(^|/)uv\\.lock$"
