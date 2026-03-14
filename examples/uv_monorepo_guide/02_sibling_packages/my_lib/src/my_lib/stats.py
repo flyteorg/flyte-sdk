@@ -11,4 +11,5 @@ def variance(values: list[float]) -> float:
 
 def std(values: list[float]) -> float:
     import math
+
     return math.sqrt(variance(values))

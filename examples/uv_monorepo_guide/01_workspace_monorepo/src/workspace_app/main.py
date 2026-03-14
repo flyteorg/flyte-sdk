@@ -1,9 +1,8 @@
 import pathlib
-import flyte
 
+import flyte
 from workspace_app.tasks.etl_tasks import etl_pipeline
 from workspace_app.tasks.ml_tasks import ml_pipeline
-from workspace_app.tasks.envs import etl_env, ml_env
 
 SRC_DIR = pathlib.Path(__file__).parent.parent  # -> 01_workspace_monorepo/src/
 

@@ -1,11 +1,11 @@
 import pathlib
-import flyte
 
+import flyte
 from my_app.env import env
 from my_app.tasks import compute_stats, summarize
 
 MY_APP_ROOT = pathlib.Path(__file__).parent.parent.parent  # -> my_app/
-SRC_DIR = MY_APP_ROOT / "src"                              # -> my_app/src/
+SRC_DIR = MY_APP_ROOT / "src"  # -> my_app/src/
 
 
 @env.task
