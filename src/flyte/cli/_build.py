@@ -31,7 +31,7 @@ class BuildArguments:
                 is_flag=True,
                 type=bool,
                 default=False,
-                help="Skip existence check and always rebuild the image.",
+                help="Force rebuild and push even if the image already exists in the registry.",
             )
         },
     )

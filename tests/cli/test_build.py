@@ -3,7 +3,6 @@ from unittest.mock import Mock, patch
 import pytest
 from click.testing import CliRunner
 
-import flyte
 from flyte._internal.imagebuild.image_builder import ImageCache
 from flyte.cli._build import build
 

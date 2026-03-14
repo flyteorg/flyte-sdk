@@ -595,6 +595,7 @@ class Image:
         registry: Optional[str] = None,
         registry_secret: Optional[str | Secret] = None,
         name: Optional[str] = None,
+        *,
         tag: Optional[str] = None,
         platform: Optional[Tuple[Architecture, ...]] = None,
     ) -> Image:
@@ -608,6 +609,7 @@ class Image:
         :param registry: Registry to use for the image
         :param registry_secret: Secret to use to pull/push the private image.
         :param name: Name of the image if you want to override the default name
+        :param tag: Explicit tag for the built image. If omitted, a content-hash tag is used.
         :param platform: Platform to use for the image, default is linux/amd64, use tuple for multiple values
             Example: ("linux/amd64", "linux/arm64")
 
@@ -624,7 +626,9 @@ class Image:
         )
 
         if registry or name:
-            return base_image.clone(registry=registry, name=name, registry_secret=registry_secret, extendable=True, tag=tag)
+            return base_image.clone(
+                registry=registry, name=name, registry_secret=registry_secret, extendable=True, tag=tag
+            )
 
         tag = tag or None  # normalize empty string to None
         if tag is not None:
@@ -685,6 +689,7 @@ class Image:
         [UV: Declaring script dependencies](https://docs.astral.sh/uv/guides/scripts/#declaring-script-dependencies)
 
         :param name: name of the image
+        :param tag: Explicit tag for the built image. If omitted, a content-hash tag is used.
         :param registry: registry to use for the image
         :param registry_secret: Secret to use to pull/push the private image.
         :param python_version: Python version to use for the image, if not specified, will use the current Python
@@ -728,6 +733,7 @@ class Image:
         registry: Optional[str] = None,
         registry_secret: Optional[str | Secret] = None,
         name: Optional[str] = None,
+        *,
         tag: Optional[str] = None,
         base_image: Optional[str] = None,
         python_version: Optional[Tuple[int, int]] = None,
@@ -740,6 +746,7 @@ class Image:
         :param registry: Registry to use for the image
         :param registry_secret: Secret to use to pull/push the private image.
         :param name: Name of the image
+        :param tag: Explicit tag for the cloned image. If omitted, a content-hash tag is used.
         :param base_image: Base image to use for the image
         :param python_version: Python version for the image, if not specified, will use the current Python version
         :param addl_layer: Additional layer to add to the image. This will be added to the end of the layers.
@@ -791,6 +798,7 @@ class Image:
     @classmethod
     def from_dockerfile(
         cls,
+        *,
         file: Path,
         registry: str,
         name: str,
@@ -806,8 +814,9 @@ class Image:
         context for the builder will be the directory where the dockerfile is located.
 
         :param file: path to the dockerfile
-        :param name: name of the image
         :param registry: registry to use for the image
+        :param name: name of the image
+        :param tag: Explicit tag for the built image. If omitted, a content-hash tag is used.
         :param platform: architecture to use for the image, default is linux/amd64, use tuple for multiple values
             Example: ("linux/amd64", "linux/arm64")
 

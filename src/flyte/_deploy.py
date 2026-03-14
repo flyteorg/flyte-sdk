@@ -367,7 +367,9 @@ async def _build_image_bg(env_name: str, image: Image, force: bool = False) -> T
     return env_name, result.uri, run_id_data
 
 
-async def _build_images(deployment: DeploymentPlan, image_refs: Dict[str, str] | None = None, force: bool = False) -> ImageCache:
+async def _build_images(
+    deployment: DeploymentPlan, image_refs: Dict[str, str] | None = None, force: bool = False
+) -> ImageCache:
     """
     Build the images for the given deployment plan and update the environment with the built image.
     """

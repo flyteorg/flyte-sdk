@@ -355,6 +355,7 @@ async def test_build_images_no_build_run_urls_for_local_build():
     assert cache.image_lookup["my-env"] == "registry/my-image:sha256abc"
     assert cache.build_run_ids == {}
 
+
 @pytest.mark.asyncio
 async def test_build_image_bg_passes_force_to_build():
     """force=True is forwarded to build.aio."""

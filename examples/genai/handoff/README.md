@@ -211,7 +211,7 @@ flyte deploy agent_handoff.py
 
 ```bash
 # Build and push image
-flyte build agent_handoff.py --push
+flyte build agent_handoff.py
 
 # Deploy to Flyte cluster
 flyte deploy agent_handoff.py --domain production

@@ -573,9 +573,7 @@ def test_from_debian_base_with_explicit_tag():
 
 def test_from_uv_script_with_explicit_tag(tmp_path):
     script = tmp_path / "script.py"
-    script.write_text(
-        "# /// script\n# requires-python = '>=3.12'\n# dependencies = []\n# ///\nprint('hello')\n"
-    )
+    script.write_text("# /// script\n# requires-python = '>=3.12'\n# dependencies = []\n# ///\nprint('hello')\n")
     img = Image.from_uv_script(
         script=script,
         name="my-script-img",
