@@ -98,7 +98,7 @@ The Flyte CLI follows a **verb noun** structure. Full reference: [CLI Docs](http
 flyte run hello.py main --numbers '[1,2,3]'     # Run a task
 flyte serve serving.py env                        # Serve an app
 flyte deploy my_workflow.py                       # Deploy environments
-flyte build my_workflow.py --push                 # Build and push images
+flyte build my_workflow.py                        # Build and push images
 flyte get logs <run-name>                         # Get logs for a run
 flyte abort run <run-name>                        # Abort a run
 ```

@@ -483,8 +483,8 @@ class Image:
     # Layers to be added to the image. In init, because frozen, but users shouldn't access, so underscore.
     _layers: Tuple[Layer, ...] = field(default_factory=tuple)
 
-    # Only settable internally.
-    _tag: Optional[str] = field(default=None, init=False)
+    # Explicitly set tag — overrides the content-hash default in _final_tag when provided.
+    tag: Optional[str] = field(default=None)
 
     _DEFAULT_IMAGE_PREFIXES: ClassVar = {
         PYTHON_3_10: "py3.10-",
@@ -582,7 +582,7 @@ class Image:
                 else:
                     image = image.with_pip_packages(f"flyte=={flyte_version}")
         if not dev_mode:
-            object.__setattr__(image, "_tag", preset_tag)
+            object.__setattr__(image, "tag", preset_tag)
 
         return image
 
@@ -596,6 +596,7 @@ class Image:
         registry_secret: Optional[str | Secret] = None,
         name: Optional[str] = None,
         platform: Optional[Tuple[Architecture, ...]] = None,
+        tag: Optional[str] = None,
     ) -> Image:
         """
         Use this method to start using the default base image, built from this library's base Dockerfile
@@ -609,6 +610,7 @@ class Image:
         :param name: Name of the image if you want to override the default name
         :param platform: Platform to use for the image, default is linux/amd64, use tuple for multiple values
             Example: ("linux/amd64", "linux/arm64")
+        :param tag: Explicit tag for the built image. If omitted, a content-hash tag is used.
 
         :return: Image
         """
@@ -623,8 +625,13 @@ class Image:
         )
 
         if registry or name:
-            return base_image.clone(registry=registry, name=name, registry_secret=registry_secret, extendable=True)
+            return base_image.clone(
+                registry=registry, name=name, registry_secret=registry_secret, extendable=True, tag=tag
+            )
 
+        tag = tag or None  # normalize empty string to None
+        if tag is not None:
+            object.__setattr__(base_image, "tag", tag)
         return base_image
 
     @classmethod
@@ -660,6 +667,7 @@ class Image:
         extra_args: Optional[str] = None,
         platform: Optional[Tuple[Architecture, ...]] = None,
         secret_mounts: Optional[SecretRequest] = None,
+        tag: Optional[str] = None,
     ) -> Image:
         """
         Use this method to create a new image with the specified uv script.
@@ -686,17 +694,14 @@ class Image:
         version
         :param script: path to the uv script
         :param platform: architecture to use for the image, default is linux/amd64, use tuple for multiple values
-        :param python_version: Python version for the image, if not specified, will use the current Python version
         :param index_url: index url to use for pip install, default is None
         :param extra_index_urls: extra index urls to use for pip install, default is True
         :param pre: whether to allow pre-release versions, default is False
         :param extra_args: extra arguments to pass to pip install, default is None
         :param secret_mounts: Secret mounts to use for the image, default is None.
+        :param tag: Explicit tag for the built image. If omitted, a content-hash tag is used.
 
         :return: Image
-
-        Args:
-            secret_mounts:
         """
         ll = UVScript(
             script=Path(script),
@@ -716,7 +721,7 @@ class Image:
             platform=platform,
         )
 
-        return img.clone(addl_layer=ll)
+        return img.clone(addl_layer=ll, tag=tag)
 
     def clone(
         self,
@@ -727,6 +732,7 @@ class Image:
         python_version: Optional[Tuple[int, int]] = None,
         addl_layer: Optional[Layer] = None,
         extendable: Optional[bool] = None,
+        tag: Optional[str] = None,
     ) -> Image:
         """
         Use this method to clone the current image and change the registry and name
@@ -741,6 +747,7 @@ class Image:
          image for other images, and additional layers can be added on top of it. If False, the image cannot be
           used as a base image for other images, and additional layers cannot be added on top of it. If None (default),
           defaults to False for safety.
+        :param tag: Explicit tag for the cloned image. If omitted, a content-hash tag is used.
         :return:
         """
         from flyte import Secret
@@ -771,6 +778,7 @@ class Image:
             dockerfile=self.dockerfile,
             registry=registry,
             name=name,
+            tag=tag or None,
             platform=self.platform,
             python_version=python_version or self.python_version,
             extendable=extendable if extendable is not None else self.extendable,
@@ -783,7 +791,12 @@ class Image:
 
     @classmethod
     def from_dockerfile(
-        cls, file: Path, registry: str, name: str, platform: Union[Architecture, Tuple[Architecture, ...], None] = None
+        cls,
+        file: Path,
+        registry: str,
+        name: str,
+        platform: Union[Architecture, Tuple[Architecture, ...], None] = None,
+        tag: Optional[str] = None,
     ) -> Image:
         """
         Use this method to create a new image with the specified dockerfile. Note you cannot use additional layers
@@ -794,10 +807,11 @@ class Image:
         context for the builder will be the directory where the dockerfile is located.
 
         :param file: path to the dockerfile
-        :param name: name of the image
         :param registry: registry to use for the image
+        :param name: name of the image
         :param platform: architecture to use for the image, default is linux/amd64, use tuple for multiple values
             Example: ("linux/amd64", "linux/arm64")
+        :param tag: Explicit tag for the built image. If omitted, a content-hash tag is used.
 
         :return:
         """
@@ -806,13 +820,12 @@ class Image:
             "dockerfile": file,
             "registry": registry,
             "name": name,
+            "tag": tag or None,
             "extendable": False,  # Dockerfile-based images cannot have additional layers
         }
         if platform:
             kwargs["platform"] = platform
-        img = cls._new(**kwargs)
-
-        return img
+        return cls._new(**kwargs)
 
     def _get_hash_digest(self) -> str:
         """
@@ -835,7 +848,7 @@ class Image:
 
     @property
     def _final_tag(self) -> str:
-        t = self._tag or self._get_hash_digest()
+        t = self.tag or self._get_hash_digest()
         return t or "latest"
 
     @cached_property

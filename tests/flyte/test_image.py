@@ -440,6 +440,21 @@ def test_from_dockerfile_is_not_extendable():
         dockerfile_path.unlink()
 
 
+def test_from_dockerfile_with_explicit_tag(tmp_path):
+    dockerfile = tmp_path / "Dockerfile"
+    dockerfile.write_text("FROM python:3.12-slim\n")
+    img = Image.from_dockerfile(file=dockerfile, registry="reg", name="my-img", tag="v2.0.0")
+    assert img.tag == "v2.0.0"
+    assert img.uri == "reg/my-img:v2.0.0"
+
+
+def test_from_dockerfile_empty_string_tag_falls_back_to_content_hash(tmp_path):
+    dockerfile = tmp_path / "Dockerfile"
+    dockerfile.write_text("FROM python:3.12-slim\n")
+    img = Image.from_dockerfile(file=dockerfile, registry="reg", name="my-img", tag="")
+    assert img.tag is None
+
+
 def test_with_code_bundle_defaults():
     """with_code_bundle() creates a CodeBundleLayer with default values."""
     img = Image.from_debian_base(registry="localhost", name="test-image").with_code_bundle()
@@ -525,3 +540,46 @@ def test_resolve_code_bundle_loaded_modules_copy_style_none(tmp_path):
     assert bundle_layers[0].root_dir == tmp_path
     assert bundle_layers[0].copy_style == "loaded_modules"
     assert bundle_layers[0].dst == "."
+
+
+def test_clone_with_explicit_tag():
+    img = Image.from_debian_base(registry="reg", name="img", python_version=(3, 12))
+    cloned = img.clone(registry="other-reg", name="other-img", tag="v1.2.3")
+    assert cloned.tag == "v1.2.3"
+    assert cloned.uri == "other-reg/other-img:v1.2.3"
+
+
+def test_clone_tag_not_inherited_from_source():
+    # clone() never inherits tag from source — always fresh content hash unless tag= given
+    img = Image.from_debian_base(registry="reg", name="img", python_version=(3, 12))
+    # default image has tag set (version-based); clone without tag= should content-hash
+    cloned = img.clone(registry="other-reg", name="other-img")
+    assert cloned.tag is None
+    assert cloned.uri.startswith("other-reg/other-img:")
+    assert cloned.uri != img.uri  # different because hash differs (no version tag)
+
+
+def test_clone_empty_string_tag_falls_back_to_content_hash():
+    img = Image.from_debian_base(registry="reg", name="img", python_version=(3, 12))
+    cloned = img.clone(registry="reg", name="img", tag="")
+    assert cloned.tag is None  # empty string normalized to None
+
+
+def test_from_debian_base_with_explicit_tag():
+    img = Image.from_debian_base(registry="reg", name="my-img", tag="v3.0.0", python_version=(3, 12))
+    assert img.tag == "v3.0.0"
+    assert img.uri == "reg/my-img:v3.0.0"
+
+
+def test_from_uv_script_with_explicit_tag(tmp_path):
+    script = tmp_path / "script.py"
+    script.write_text("# /// script\n# requires-python = '>=3.12'\n# dependencies = []\n# ///\nprint('hello')\n")
+    img = Image.from_uv_script(
+        script=script,
+        name="my-script-img",
+        registry="reg",
+        python_version=(3, 12),
+        tag="v1.0.0",
+    )
+    assert img.tag == "v1.0.0"
+    assert img.uri == "reg/my-script-img:v1.0.0"

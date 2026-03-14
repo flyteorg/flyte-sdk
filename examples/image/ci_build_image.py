@@ -1,3 +1,6 @@
+# DEPRECATED: This script is no longer the recommended way to build and push images from CI.
+# Use `flyte build` instead. See the documentation for the supported CI image build path.
+# This file is retained as a reference implementation only.
 """Build and push an image to a user-specified target from CI.
 
 Takes a source image and re-tags/pushes it to a target registry/name:tag.
@@ -57,7 +60,7 @@ async def build_and_push(from_image: str, to_target: str, builder: str = "local"
     """Build an image from a base and push it to a target registry/name:tag."""
     registry, name, tag = parse_target(to_target)
     image = Image.from_base(from_image).clone(registry=registry, name=name)
-    object.__setattr__(image, "_tag", tag)
+    object.__setattr__(image, "tag", tag)
     result = await ImageBuildEngine.build(image, builder=builder, force=force)
     return result.uri
 
