@@ -1,7 +1,7 @@
 import pathlib
 import flyte
 
-WORKSPACE_ROOT = pathlib.Path(__file__).parent.parent.parent.parent  # -> 02_workspace_monorepo/
+WORKSPACE_ROOT = pathlib.Path(__file__).parent.parent.parent.parent  # -> 01_workspace_monorepo/
 
 etl_env = flyte.TaskEnvironment(
     name="etl",
