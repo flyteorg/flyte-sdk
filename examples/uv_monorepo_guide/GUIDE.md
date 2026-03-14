@@ -392,25 +392,3 @@ Version management: use a deterministic string, a git commit SHA, a git tag, a C
 
 **Do not use `install_project` mode for this.** `install_project` copies the entire project directory into the build context and hashes all of it. Every code change triggers a full image rebuild. `with_code_bundle()` + `copy_style="none"` is more surgical: only the files you select (via `loaded_modules` or `all`) are in the image, and the image hash reflects only those files.
 
-## Section 9: Common Mistakes
-
-1. **Copying source into the image during development.** Using `with_source_folder(Path("src/"))` or `install_project` mode means your image hash includes source files. Every edit triggers a rebuild. Use `with_code_bundle()` instead -- it is a no-op during fast deploy and resolves to a COPY during full build.
-
-2. **Forgetting `uv.lock` in a sub-project.** For Pattern B (independent packages), each app needs its own `uv.lock`. The SDK auto-detects `uv.lock` in the same directory as `pyproject_file`. If missing, builds are non-deterministic. Run `uv lock` from within each app directory.
-
-3. **Wrong `root_dir` for src-layout.** Setting `root_dir` to the project root instead of `src/` means Python can import your module as `src.my_module.x`, creating a second import identity separate from `my_module.x`. Always set `root_dir` to the `src/` directory for src-layout projects.
-
-4. **`root_dir` not covering all needed code.** In Pattern A (shared lockfile), `root_dir` must cover all packages under `src/`. In Pattern B (independent packages), `root_dir` covers only `my_app/src/` — `my_lib` is baked into the image via `with_source_folder()` and does not need to be in the code bundle.
-
-5. **Not using `--only-group` for per-task environments.** In a monorepo with dependency groups, if you do not specify `extra_args="--only-group <group>"`, every environment installs all dependencies into a single fat image. Define one dependency group per `TaskEnvironment`.
-
-6. **Mixing `copy_style="none"` without a stable version string.** Auto-generated versions make image tags unpredictable in CI. Always set an explicit version when using `copy_style="none"`.
-
-## Section 10: Quick Reference
-
-| Scenario | Image definition | `root_dir` |
-|---|---|---|
-| Single project, src-layout | `with_uv_project(pyproject_file=PROJECT_ROOT / "pyproject.toml").with_code_bundle()` | `PROJECT_ROOT / "src"` |
-| Shared lockfile, per-task env | `with_uv_project(pyproject_file=PROJECT_ROOT / "pyproject.toml", extra_args="--only-group X").with_code_bundle()` | `PROJECT_ROOT / "src"` |
-| Independent packages | `with_uv_project(pyproject_file=APP_ROOT / "pyproject.toml").with_source_folder(LIB_PKG).with_code_bundle()` | `APP_ROOT / "src"` |
-| Production full build | Same image + `flyte.deploy(my_env, copy_style="none", version="X")` | same |
