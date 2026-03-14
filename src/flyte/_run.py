@@ -34,6 +34,7 @@ from flyte.syncify import syncify
 from ._constants import FLYTE_SYS_PATH
 
 if TYPE_CHECKING:
+    from flyte.notify import Notification
     from flyte.remote import Run
     from flyte.remote._task import LazyEntity
 
@@ -112,6 +113,7 @@ class _Runner:
         disable_run_cache: bool = False,
         queue: Optional[str] = None,
         custom_context: Dict[str, str] | None = None,
+        notifications: Notification | Tuple[Notification, ...] | None = None,
         cache_lookup_scope: CacheLookupScope = "global",
         preserve_original_types: bool | None = None,
         debug: bool = False,
@@ -149,6 +151,7 @@ class _Runner:
         self._reset_root_logger = reset_root_logger
         self._disable_run_cache = disable_run_cache
         self._queue = queue
+        self._notifications = notifications
         self._custom_context = custom_context or {}
         self._cache_lookup_scope = cache_lookup_scope
         self._preserve_original_types = (
@@ -384,6 +387,8 @@ class _Runner:
                                 if self._cache_lookup_scope
                                 else None,
                             ),
+                            # TODO: Add notifications to RunSpec once the field is available in flyteidl2
+                            # notifications=self._notifications,
                         ),
                     ),
                 )
@@ -733,6 +738,7 @@ def with_runcontext(
     reset_root_logger: bool = False,
     disable_run_cache: bool = False,
     queue: Optional[str] = None,
+    notifications: Notification | Tuple[Notification, ...] | None = None,
     custom_context: Dict[str, str] | None = None,
     cache_lookup_scope: CacheLookupScope = "global",
     preserve_original_types: bool = False,
@@ -745,6 +751,9 @@ def with_runcontext(
     Example:
     ```python
     import flyte
+    import flyte.notify as notify
+    from flyte.models import ActionPhase
+
     env = flyte.TaskEnvironment("example")
 
     @env.task
@@ -752,7 +761,14 @@ def with_runcontext(
         return f"{x} {y}"
 
     if __name__ == "__main__":
-        flyte.with_runcontext(name="example_run_id").run(example_task, 1, y="hello")
+        flyte.with_runcontext(
+            name="example_run_id",
+            notifications=notify.Slack(
+                on_phase=ActionPhase.FAILED,
+                webhook_url="https://hooks.slack.com/services/YOUR/WEBHOOK/URL",
+                message="Task failed: {run.error}",
+            ),
+        ).run(example_task, 1, y="hello")
     ```
 
     :param mode: Optional The mode to use for the run, if not provided, it will be computed from flyte.init
@@ -784,6 +800,9 @@ def with_runcontext(
     :param reset_root_logger: If true, the root logger will be preserved and not modified by Flyte.
     :param disable_run_cache: Optional If true, the run cache will be disabled. This is useful for testing purposes.
     :param queue: Optional The queue to use for the run. This is used to specify the cluster to use for the run.
+    :param notifications: Optional Notification(s) to send when the run reaches specific execution phases.
+        Accepts a single notification or a tuple of notifications. Supports Email, Slack, Teams, and Webhook types.
+        See `flyte.notify` for available notification types and template variables.
     :param custom_context: Optional global input context to pass to the task. This will be available via
         get_custom_context() within the task and will automatically propagate to sub-tasks.
         Acts as base/default values that can be overridden by context managers in the code.
@@ -828,6 +847,7 @@ def with_runcontext(
         reset_root_logger=reset_root_logger,
         disable_run_cache=disable_run_cache,
         queue=queue,
+        notifications=notifications,
         custom_context=custom_context,
         cache_lookup_scope=cache_lookup_scope,
         preserve_original_types=preserve_original_types,
