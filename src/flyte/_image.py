@@ -595,9 +595,8 @@ class Image:
         registry: Optional[str] = None,
         registry_secret: Optional[str | Secret] = None,
         name: Optional[str] = None,
-        *,
-        tag: Optional[str] = None,
         platform: Optional[Tuple[Architecture, ...]] = None,
+        tag: Optional[str] = None,
     ) -> Image:
         """
         Use this method to start using the default base image, built from this library's base Dockerfile
@@ -609,9 +608,9 @@ class Image:
         :param registry: Registry to use for the image
         :param registry_secret: Secret to use to pull/push the private image.
         :param name: Name of the image if you want to override the default name
-        :param tag: Explicit tag for the built image. If omitted, a content-hash tag is used.
         :param platform: Platform to use for the image, default is linux/amd64, use tuple for multiple values
             Example: ("linux/amd64", "linux/arm64")
+        :param tag: Explicit tag for the built image. If omitted, a content-hash tag is used.
 
         :return: Image
         """
@@ -659,7 +658,6 @@ class Image:
         script: Path | str,
         *,
         name: str,
-        tag: Optional[str] = None,
         registry: str | None = None,
         registry_secret: Optional[str | Secret] = None,
         python_version: Optional[Tuple[int, int]] = None,
@@ -669,6 +667,7 @@ class Image:
         extra_args: Optional[str] = None,
         platform: Optional[Tuple[Architecture, ...]] = None,
         secret_mounts: Optional[SecretRequest] = None,
+        tag: Optional[str] = None,
     ) -> Image:
         """
         Use this method to create a new image with the specified uv script.
@@ -689,24 +688,20 @@ class Image:
         [UV: Declaring script dependencies](https://docs.astral.sh/uv/guides/scripts/#declaring-script-dependencies)
 
         :param name: name of the image
-        :param tag: Explicit tag for the built image. If omitted, a content-hash tag is used.
         :param registry: registry to use for the image
         :param registry_secret: Secret to use to pull/push the private image.
         :param python_version: Python version to use for the image, if not specified, will use the current Python
         version
         :param script: path to the uv script
         :param platform: architecture to use for the image, default is linux/amd64, use tuple for multiple values
-        :param python_version: Python version for the image, if not specified, will use the current Python version
         :param index_url: index url to use for pip install, default is None
         :param extra_index_urls: extra index urls to use for pip install, default is True
         :param pre: whether to allow pre-release versions, default is False
         :param extra_args: extra arguments to pass to pip install, default is None
         :param secret_mounts: Secret mounts to use for the image, default is None.
+        :param tag: Explicit tag for the built image. If omitted, a content-hash tag is used.
 
         :return: Image
-
-        Args:
-            secret_mounts:
         """
         ll = UVScript(
             script=Path(script),
@@ -733,12 +728,11 @@ class Image:
         registry: Optional[str] = None,
         registry_secret: Optional[str | Secret] = None,
         name: Optional[str] = None,
-        *,
-        tag: Optional[str] = None,
         base_image: Optional[str] = None,
         python_version: Optional[Tuple[int, int]] = None,
         addl_layer: Optional[Layer] = None,
         extendable: Optional[bool] = None,
+        tag: Optional[str] = None,
     ) -> Image:
         """
         Use this method to clone the current image and change the registry and name
@@ -746,7 +740,6 @@ class Image:
         :param registry: Registry to use for the image
         :param registry_secret: Secret to use to pull/push the private image.
         :param name: Name of the image
-        :param tag: Explicit tag for the cloned image. If omitted, a content-hash tag is used.
         :param base_image: Base image to use for the image
         :param python_version: Python version for the image, if not specified, will use the current Python version
         :param addl_layer: Additional layer to add to the image. This will be added to the end of the layers.
@@ -754,6 +747,7 @@ class Image:
          image for other images, and additional layers can be added on top of it. If False, the image cannot be
           used as a base image for other images, and additional layers cannot be added on top of it. If None (default),
           defaults to False for safety.
+        :param tag: Explicit tag for the cloned image. If omitted, a content-hash tag is used.
         :return:
         """
         from flyte import Secret
@@ -798,12 +792,11 @@ class Image:
     @classmethod
     def from_dockerfile(
         cls,
-        *,
         file: Path,
         registry: str,
         name: str,
-        tag: Optional[str] = None,
         platform: Union[Architecture, Tuple[Architecture, ...], None] = None,
+        tag: Optional[str] = None,
     ) -> Image:
         """
         Use this method to create a new image with the specified dockerfile. Note you cannot use additional layers
@@ -816,9 +809,9 @@ class Image:
         :param file: path to the dockerfile
         :param registry: registry to use for the image
         :param name: name of the image
-        :param tag: Explicit tag for the built image. If omitted, a content-hash tag is used.
         :param platform: architecture to use for the image, default is linux/amd64, use tuple for multiple values
             Example: ("linux/amd64", "linux/arm64")
+        :param tag: Explicit tag for the built image. If omitted, a content-hash tag is used.
 
         :return:
         """
