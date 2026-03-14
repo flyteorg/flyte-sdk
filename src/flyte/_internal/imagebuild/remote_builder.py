@@ -338,12 +338,14 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
                         pip_options.extra_args += " --no-install-project"
                     else:
                         pip_options.extra_args = "--no-install-project"
-                    # Copy the editable dependencies defined under the [tool.uv.sources] in pyproject.toml
+                    # Copy the editable dependencies defined under the [tool.uv.sources] in pyproject.toml.
+                    # We copy the entire dependency directory (not just pyproject.toml) so that uv_build
+                    # can find the source files when building the package during uv sync.
                     standard_ignore_patterns = STANDARD_IGNORE_PATTERNS.copy()
                     for editable_dep in get_uv_project_editable_dependencies(layer.pyproject.parent):
                         pyproject_dir_dsts.append(
                             copy_files_to_context(
-                                editable_dep / "pyproject.toml",
+                                editable_dep,
                                 context_path,
                                 ignore_patterns=[*standard_ignore_patterns, *docker_ignore_patterns],
                             )
