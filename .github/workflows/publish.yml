@@ -87,6 +87,7 @@ jobs:
           - "plugins/jsonl"
           - "plugins/anthropic"
           - "plugins/gemini"
+          - "plugins/mlflow"
         include:
           - workdir: "plugins/sglang"
             image-type: sglang
