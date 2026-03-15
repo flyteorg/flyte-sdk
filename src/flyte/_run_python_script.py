@@ -30,7 +30,6 @@ if TYPE_CHECKING:
 class PythonScriptOutput:
     exit_code: int
     stdout: str
-    stderr: str
     output_dir: Optional[flyte.io.Dir]
 
 
@@ -54,17 +53,33 @@ def _build_task(
     @env.task(timeout=task_timeout, short_name=short_name, task_resolver=task_resolver)
     async def execute_script(args: list[str], task_timeout: int) -> PythonScriptOutput:
         """Execute a Python script on a remote machine."""
+        import os
         import subprocess
         import sys
+        import tempfile
 
+        tail_bytes = 1000
         cmd = [sys.executable, script_name, *args]
-        result = subprocess.run(  # noqa: ASYNC221
-            cmd,
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=task_timeout - 60,
-        )
+
+        with tempfile.TemporaryFile(mode="w+") as out_f, tempfile.TemporaryFile(mode="w+") as err_f:
+            result = subprocess.run(  # noqa: ASYNC221
+                cmd,
+                stdout=out_f,
+                stderr=err_f,
+                check=False,
+                timeout=task_timeout - 60,
+            )
+
+            for f in (out_f, err_f):
+                f.seek(0, os.SEEK_END)
+                pos = f.tell()
+                f.seek(max(0, pos - tail_bytes))
+
+            stdout_tail = out_f.read()
+            stderr_tail = err_f.read()
+
+        if result.returncode != 0:
+            raise RuntimeError(f"Script failed with exit code {result.returncode}, stderr: {stderr_tail}")
 
         _dir: Optional[flyte.io.Dir] = None
         if output_dir:
@@ -72,8 +87,7 @@ def _build_task(
 
         return PythonScriptOutput(
             exit_code=result.returncode,
-            stdout=result.stdout[-1000:],
-            stderr=result.stderr[-1000:],
+            stdout=stdout_tail,
             output_dir=_dir,
         )
 
