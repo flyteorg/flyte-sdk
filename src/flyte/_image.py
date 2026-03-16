@@ -543,7 +543,7 @@ class Image:
                 flyte_version = __version__.replace("+", "-")
             suffix = flyte_version if flyte_version.startswith("v") else f"v{flyte_version}"
             preset_tag = f"py{python_version[0]}.{python_version[1]}-{suffix}"
-            if not dev_mode or flyte_version:
+            if install_flyte and (not dev_mode or flyte_version):
                 return Image.from_base(f"{_BASE_REGISTRY}/{_DEFAULT_IMAGE_NAME}:{preset_tag}")
         image = Image._new(
             base_image=f"python:{python_version[0]}.{python_version[1]}-slim-bookworm",
