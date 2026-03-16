@@ -804,6 +804,7 @@ class Image:
         registry: str,
         name: str,
         platform: Union[Architecture, Tuple[Architecture, ...], None] = None,
+        tag: Optional[str] = None,
     ) -> Image:
         """
         Use this method to create a new image with the specified dockerfile. Note you cannot use additional layers
@@ -818,6 +819,7 @@ class Image:
         :param name: name of the image
         :param platform: architecture to use for the image, default is linux/amd64, use tuple for multiple values
             Example: ("linux/amd64", "linux/arm64")
+        :param tag: Explicit tag for the built image. If omitted, a content-hash tag is used.
 
         :return:
         """
@@ -826,6 +828,7 @@ class Image:
             "dockerfile": file,
             "registry": registry,
             "name": name,
+            "tag": tag or None,
             "extendable": False,  # Dockerfile-based images cannot have additional layers
         }
         if platform:
