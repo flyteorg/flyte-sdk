@@ -8,8 +8,6 @@ from google.protobuf import timestamp_pb2, wrappers_pb2
 import flyte.types
 from flyte import Cron, FixedRate, Trigger, TriggerTime
 
-from .notifications_serde import resolve_notification_settings
-
 
 def _to_schedule(m: Union[Cron, FixedRate], kickoff_arg_name: str | None = None) -> common_pb2.Schedule:
     if isinstance(m, Cron):
@@ -122,6 +120,8 @@ async def to_task_trigger(
     notification_rule_name = None
     notification_rules = None
     if t.notifications:
+        from .notifications_serde import resolve_notification_settings
+
         notification_rule_name, notification_rules = resolve_notification_settings(t.notifications)
 
     run_spec = run_pb2.RunSpec(
