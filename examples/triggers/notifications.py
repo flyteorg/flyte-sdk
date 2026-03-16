@@ -66,6 +66,29 @@ trig2 = flyte.Trigger(
 )
 
 
+# Use a pre-defined named rule (configured by your Flyte admin)
+trig3 = flyte.Trigger(
+    name="hourly-with-named-rule",
+    auto_activate=True,
+    automation=flyte.Cron("0 * * * *"),
+    notifications=flyte.notify.NamedRule("oncall-alerts"),
+)
+
+# Mix named delivery configs with inline notifications
+trig4 = flyte.Trigger(
+    name="hourly-with-named-delivery",
+    auto_activate=True,
+    automation=flyte.Cron("0 * * * *"),
+    notifications=(
+        flyte.notify.NamedDelivery(on_phase=ActionPhase.FAILED, name="slack-oncall"),
+        flyte.notify.Email(
+            on_phase=ActionPhase.SUCCEEDED,
+            recipients=("team@example.com",),
+        ),
+    ),
+)
+
+
 @env.task(triggers=(trig1, trig2))  # Every hour
 def example_task(trigger_time: datetime, x: int = 1) -> str:
     return f"Task executed at {trigger_time.isoformat()} with x={x}"

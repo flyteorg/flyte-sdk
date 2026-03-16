@@ -24,6 +24,40 @@ from flyte.models import ActionPhase
 _SUPPORTED_PHASES = {ActionPhase.FAILED, ActionPhase.SUCCEEDED, ActionPhase.ABORTED, ActionPhase.TIMED_OUT}
 
 
+@dataclass(frozen=True)
+class NamedRule:
+    """Reference a pre-defined notification rule by name.
+
+    Use this when your Flyte admin has configured a named notification rule
+    that you want to apply to your runs. Named rules define both the phases
+    to monitor and the delivery channels to use.
+
+    Example:
+        ```python
+        # As a trigger notification
+        flyte.Trigger(
+            name="hourly",
+            automation=flyte.Cron("0 * * * *"),
+            notifications=flyte.notify.NamedRule("oncall-alerts"),
+        )
+
+        # In with_runcontext
+        flyte.with_runcontext(
+            notifications=flyte.notify.NamedRule("oncall-alerts"),
+        ).run(my_task, x=1)
+        ```
+
+    Args:
+        name: The name of the pre-defined rule (scoped to project/domain).
+    """
+
+    name: str
+
+    def __post_init__(self):
+        if not self.name:
+            raise ValueError("Rule name must not be empty")
+
+
 @dataclass(frozen=True, kw_only=True)
 class Notification:
     """Base notification class.
@@ -50,6 +84,44 @@ class Notification:
 
 
 @dataclass(frozen=True, kw_only=True)
+class NamedDelivery(Notification):
+    """Use a pre-configured delivery channel by name.
+
+    Use this when your Flyte admin has configured a named delivery config
+    (e.g., a shared Slack webhook or email list) that you want to reference
+    without specifying the delivery details inline.
+
+    Example:
+        ```python
+        flyte.notify.NamedDelivery(
+            on_phase=ActionPhase.FAILED,
+            name="slack-oncall",
+        )
+
+        # Combine with inline notifications
+        notifications=(
+            flyte.notify.NamedDelivery(on_phase=ActionPhase.FAILED, name="slack-oncall"),
+            flyte.notify.Email(
+                on_phase=ActionPhase.SUCCEEDED,
+                recipients=["team@example.com"],
+            ),
+        )
+        ```
+
+    Args:
+        on_phase: ActionPhase(s) to trigger notification.
+        name: The name of the pre-configured delivery config (scoped to project/domain).
+    """
+
+    name: str
+
+    def __post_init__(self):
+        super().__post_init__()
+        if not self.name:
+            raise ValueError("Delivery config name must not be empty")
+
+
+@dataclass(frozen=True, kw_only=True)
 class Email(Notification):
     """Send email notifications.
 
@@ -64,7 +136,8 @@ class Email(Notification):
         ```
 
     Args:
-        on_phase: ActionPhase(s) to trigger notification (e.g., ActionPhase.FAILED or (ActionPhase.FAILED, ActionPhase.TIMED_OUT))
+        on_phase: ActionPhase(s) to trigger notification
+            (e.g., ActionPhase.FAILED or (ActionPhase.FAILED, ActionPhase.TIMED_OUT))
         recipients: Tuple of email addresses
         subject: Email subject template (supports template variables)
         body: Email body template (supports template variables)

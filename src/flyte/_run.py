@@ -34,7 +34,7 @@ from flyte.syncify import syncify
 from ._constants import FLYTE_SYS_PATH
 
 if TYPE_CHECKING:
-    from flyte.notify import Notification
+    from flyte.notify import NamedRule, Notification
     from flyte.remote import Run
     from flyte.remote._task import LazyEntity
 
@@ -113,7 +113,7 @@ class _Runner:
         disable_run_cache: bool = False,
         queue: Optional[str] = None,
         custom_context: Dict[str, str] | None = None,
-        notifications: Notification | Tuple[Notification, ...] | None = None,
+        notifications: NamedRule | Notification | Tuple[Notification, ...] | None = None,
         cache_lookup_scope: CacheLookupScope = "global",
         preserve_original_types: bool | None = None,
         debug: bool = False,
@@ -375,6 +375,15 @@ class _Runner:
                 else:
                     raise ValueError(f"Unknown cache lookup scope: {scope}")
 
+            rule_id = None
+            inline_rule = None
+            if self._notifications:
+                from flyte._internal.runtime.notifications_serde import resolve_notification_settings
+
+                rule_id, inline_rule = resolve_notification_settings(
+                    self._notifications, org=cfg.org or "", project=cfg.project or "", domain=cfg.domain or ""
+                )
+
             try:
                 resp = await get_client().run_service.CreateRun(
                     run_service_pb2.CreateRunRequest(
@@ -399,8 +408,8 @@ class _Runner:
                                 if self._cache_lookup_scope
                                 else None,
                             ),
-                            # TODO: Add notifications to RunSpec once the field is available in flyteidl2
-                            # notifications=self._notifications,
+                            rule_id=rule_id,
+                            rule=inline_rule,
                         ),
                     ),
                 )

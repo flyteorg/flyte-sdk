@@ -8,6 +8,8 @@ from google.protobuf import timestamp_pb2, wrappers_pb2
 import flyte.types
 from flyte import Cron, FixedRate, Trigger, TriggerTime
 
+from .notifications_serde import resolve_notification_settings
+
 
 def _to_schedule(m: Union[Cron, FixedRate], kickoff_arg_name: str | None = None) -> common_pb2.Schedule:
     if isinstance(m, Cron):
@@ -117,6 +119,11 @@ async def to_task_trigger(
 
     annotations = run_pb2.Annotations(values=t.annotations) if t.annotations else None
 
+    rule_id = None
+    inline_rule = None
+    if t.notifications:
+        rule_id, inline_rule = resolve_notification_settings(t.notifications)
+
     run_spec = run_pb2.RunSpec(
         overwrite_cache=t.overwrite_cache,
         envs=env,
@@ -124,8 +131,8 @@ async def to_task_trigger(
         cluster=t.queue,
         labels=labels,
         annotations=annotations,
-        # TODO: Add notifications to RunSpec once the field is available in flyteidl2
-        # notifications=t.notifications,
+        rule_id=rule_id,
+        rule=inline_rule,
     )
 
     kickoff_arg_name = None

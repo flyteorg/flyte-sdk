@@ -59,6 +59,8 @@ Template Variables:
 
 from flyte.notify._notifiers import (
     Email,
+    NamedDelivery,
+    NamedRule,
     Notification,
     Slack,
     Teams,
@@ -67,6 +69,8 @@ from flyte.notify._notifiers import (
 
 __all__ = [
     "Email",
+    "NamedDelivery",
+    "NamedRule",
     "Notification",
     "Slack",
     "Teams",
