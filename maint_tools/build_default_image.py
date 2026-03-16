@@ -18,7 +18,8 @@ async def build_flyte_image(registry: str | None = None, name: str | None = None
         builder:  e.g. "local" or "remote".
     """
     default_image = Image.from_debian_base(registry=registry, name=name)
-    await ImageBuildEngine.build(default_image, builder=builder, force=True)
+    object.__setattr__(default_image, "_is_flyte_default", False)
+    await ImageBuildEngine.build(default_image, builder=builder)
 
 
 async def build_flyte_connector_image(

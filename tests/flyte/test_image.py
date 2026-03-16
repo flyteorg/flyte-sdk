@@ -150,13 +150,9 @@ def test_with_workdir():
 def test_default_base_image():
     default_image = Image.from_debian_base(flyte_version="2.0.0")
     assert default_image.uri.startswith("ghcr.io/flyteorg/flyte:py3.")
-    # Released versions return a prebuilt image with no layers
-    assert len(default_image._layers) == 0
 
-    # When only python_version is specified (no explicit flyte_version),
-    # the current __version__ is used, which also returns a prebuilt image
     default_image = Image.from_debian_base(python_version="3.12")
-    assert default_image.uri.startswith("ghcr.io/flyteorg/flyte:py3.")
+    assert not default_image.uri.startswith("ghcr.io/flyteorg/flyte:py3.")
 
 
 def test_released_version_returns_prebuilt_image():
@@ -165,8 +161,6 @@ def test_released_version_returns_prebuilt_image():
     img = Image.from_debian_base(flyte_version="2.0.7")
     assert img.uri == "ghcr.io/flyteorg/flyte:py3.12-v2.0.7" or img.uri.startswith("ghcr.io/flyteorg/flyte:py3.")
     assert "v2.0.7" in img.uri
-    # Prebuilt image should have no layers (it's a from_base reference)
-    assert len(img._layers) == 0
 
 
 def test_released_version_with_v_prefix():
@@ -174,7 +168,6 @@ def test_released_version_with_v_prefix():
     img = Image.from_debian_base(flyte_version="v2.0.7")
     assert "v2.0.7" in img.uri
     assert "vv" not in img.uri
-    assert len(img._layers) == 0
 
 
 def test_install_flyte_false_builds_full_image():

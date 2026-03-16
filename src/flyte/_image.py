@@ -477,6 +477,7 @@ class Image:
     platform: Tuple[Architecture, ...] = field(default=("linux/amd64",))
     python_version: Tuple[int, int] = field(default_factory=_detect_python_version)
     extendable: bool = field(default=False)
+    _is_flyte_default: bool = field(default=False)
     # Refer to the image_refs (name:image-uri) set in CLI or config
     _ref_name: Optional[str] = field(default=None)
 
@@ -543,10 +544,6 @@ class Image:
                 flyte_version = __version__.replace("+", "-")
             suffix = flyte_version if flyte_version.startswith("v") else f"v{flyte_version}"
             preset_tag = f"py{python_version[0]}.{python_version[1]}-{suffix}"
-            if not dev_mode or flyte_version:
-                flyte_default_image = Image.from_base(f"{_BASE_REGISTRY}/{_DEFAULT_IMAGE_NAME}:{preset_tag}")
-                object.__setattr__(flyte_default_image, "platform", ("linux/amd64", "linux/arm64"))
-                return flyte_default_image
         image = Image._new(
             base_image=f"python:{python_version[0]}.{python_version[1]}-slim-bookworm",
             registry=_BASE_REGISTRY,
@@ -584,6 +581,7 @@ class Image:
                     image = image.with_pip_packages(f"flyte=={flyte_version}", pre=True)
                 else:
                     image = image.with_pip_packages(f"flyte=={flyte_version}")
+                    object.__setattr__(image, "_is_flyte_default", True)
         if not dev_mode:
             object.__setattr__(image, "_tag", preset_tag)
 
