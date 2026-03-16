@@ -1,10 +1,13 @@
-# DEPRECATED: This script is no longer the recommended way to build and push images from CI.
-# Use `flyte build` instead. See the documentation for the supported CI image build path.
-# This file is retained as a reference implementation only.
-"""Build and push an image to a user-specified target from CI.
+"""Re-tag and push an existing image to a target registry from CI.
 
-Takes a source image and re-tags/pushes it to a target registry/name:tag.
-Works with both the local Docker builder and the remote builder.
+Use this script when you want to take a pre-built image (e.g. the Flyte default
+image) and publish it under your own registry, name, and tag — without rebuilding
+it from scratch.
+
+For building images defined as :class:`flyte.Environment` objects in Python, use
+the ``flyte build`` CLI command instead::
+
+    flyte build my_workflow.py
 
 Usage::
 
@@ -19,17 +22,11 @@ Usage::
         --to 123456789.dkr.ecr.us-west-2.amazonaws.com/myorg/myimage:v1.0.0 \
         --builder remote
 
-    # Force rebuild even if the target already exists
+    # Force push even if the target already exists
     python examples/image/ci_build_image.py \
         --from ghcr.io/flyteorg/flyte:py3.12-v2.0.0b56 \
         --to 123456789.dkr.ecr.us-west-2.amazonaws.com/myorg/myimage:v1.0.0 \
         --force
-
-    # Force rebuild using the remote builder
-    python examples/image/ci_build_image.py \
-        --from ghcr.io/flyteorg/flyte:py3.12-v2.0.0b56 \
-        --to 123456789.dkr.ecr.us-west-2.amazonaws.com/myorg/myimage:v1.0.0 \
-        --builder remote --force
 """
 
 import argparse
@@ -57,10 +54,9 @@ def parse_target(target: str) -> tuple[str, str, str]:
 
 
 async def build_and_push(from_image: str, to_target: str, builder: str = "local", force: bool = False) -> str:
-    """Build an image from a base and push it to a target registry/name:tag."""
+    """Re-tag a pre-built image and push it to a target registry/name:tag."""
     registry, name, tag = parse_target(to_target)
-    image = Image.from_base(from_image).clone(registry=registry, name=name)
-    object.__setattr__(image, "tag", tag)
+    image = Image.from_base(from_image).clone(registry=registry, name=name, tag=tag)
     result = await ImageBuildEngine.build(image, builder=builder, force=force)
     return result.uri
 
