@@ -206,8 +206,15 @@ def _bind_parameters(
 async def _serve(
     app_env: AppEnvironment,
     materialized_parameters: dict[str, str | flyte.io.File | flyte.io.Dir],
+    raw_data_path: str | None = None,
 ):
     import signal
+
+    if raw_data_path:
+        from flyte.app._context import set_raw_data_path
+
+        set_raw_data_path(raw_data_path)
+        logger.info(f"Set raw_data_path in AppContext: {raw_data_path}")
 
     logger.info("Running app via server function")
     assert app_env._server is not None
@@ -331,15 +338,16 @@ def main(
     os.environ[RUNTIME_PARAMETERS_FILE] = parameters_file
 
     logger.info(f"RAW DATA PATH: {raw_data_path}")
+
+    if app_env and app_env._server is not None:
+        asyncio.run(_serve(app_env, materialized_parameters, raw_data_path=raw_data_path))
+        exit(0)
+
     if raw_data_path:
         from flyte.app._context import set_raw_data_path
 
         set_raw_data_path(raw_data_path)
         logger.info(f"Set raw_data_path in AppContext: {raw_data_path}")
-
-    if app_env and app_env._server is not None:
-        asyncio.run(_serve(app_env, materialized_parameters))
-        exit(0)
 
     if command is None or len(command) == 0:
         raise ValueError("No command provided to execute")
