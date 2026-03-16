@@ -118,10 +118,14 @@ class _Runner:
         preserve_original_types: bool | None = None,
         debug: bool = False,
         _tracker: Any = None,
+        _bundle_relative_paths: tuple[str, ...] | None = None,
+        _bundle_from_dir: pathlib.Path | None = None,
     ):
         from flyte._tools import ipython_check
 
         self._tracker = _tracker
+        self._bundle_relative_paths = _bundle_relative_paths
+        self._bundle_from_dir = _bundle_from_dir
         init_config = _get_init_config()
         client = init_config.client if init_config else None
         if not force_mode and client is not None:
@@ -172,7 +176,7 @@ class _Runner:
         from flyte.remote import Run
         from flyte.remote._task import LazyEntity, TaskDetails
 
-        from ._code_bundle import build_code_bundle, build_pkl_bundle
+        from ._code_bundle import build_code_bundle, build_code_bundle_from_relative_paths, build_pkl_bundle
         from ._deploy import build_images
         from ._internal.runtime.convert import convert_from_native_to_inputs
         from ._internal.runtime.task_serde import translate_task_to_wire
@@ -226,16 +230,24 @@ class _Runner:
                         upload_to_controlplane=not self._dry_run,
                         copy_bundle_to=self._copy_bundle_to,
                     )
+                elif self._copy_files == "custom":
+                    if not self._bundle_relative_paths or not self._bundle_from_dir:
+                        raise ValueError("copy_style='custom' requires _bundle_relative_paths and _bundle_from_dir")
+                    code_bundle = await build_code_bundle_from_relative_paths(
+                        self._bundle_relative_paths,
+                        from_dir=self._bundle_from_dir,
+                        dryrun=self._dry_run,
+                        copy_bundle_to=self._copy_bundle_to,
+                    )
+                elif self._copy_files != "none":
+                    code_bundle = await build_code_bundle(
+                        from_dir=cfg.root_dir,
+                        dryrun=self._dry_run,
+                        copy_bundle_to=self._copy_bundle_to,
+                        copy_style=self._copy_files,
+                    )
                 else:
-                    if self._copy_files != "none":
-                        code_bundle = await build_code_bundle(
-                            from_dir=cfg.root_dir,
-                            dryrun=self._dry_run,
-                            copy_bundle_to=self._copy_bundle_to,
-                            copy_style=self._copy_files,
-                        )
-                    else:
-                        code_bundle = None
+                    code_bundle = None
             if not self._disable_run_cache:
                 _RUN_CACHE[_CacheKey(obj_id=id(obj), dry_run=self._dry_run)] = _CacheValue(
                     code_bundle=code_bundle, image_cache=image_cache
@@ -440,7 +452,7 @@ class _Runner:
         over the longer term we will productize this.
         """
         import flyte.report
-        from flyte._code_bundle import build_code_bundle, build_pkl_bundle
+        from flyte._code_bundle import build_code_bundle, build_code_bundle_from_relative_paths, build_pkl_bundle
         from flyte._deploy import build_images
         from flyte.models import RawDataPath
         from flyte.storage import ABFS, GCS, S3
@@ -474,16 +486,24 @@ class _Runner:
                     upload_to_controlplane=not self._dry_run,
                     copy_bundle_to=self._copy_bundle_to,
                 )
+            elif self._copy_files == "custom":
+                if not self._bundle_relative_paths or not self._bundle_from_dir:
+                    raise ValueError("copy_style='custom' requires _bundle_relative_paths and _bundle_from_dir")
+                code_bundle = await build_code_bundle_from_relative_paths(
+                    self._bundle_relative_paths,
+                    from_dir=self._bundle_from_dir,
+                    dryrun=self._dry_run,
+                    copy_bundle_to=self._copy_bundle_to,
+                )
+            elif self._copy_files != "none":
+                code_bundle = await build_code_bundle(
+                    from_dir=cfg.root_dir,
+                    dryrun=self._dry_run,
+                    copy_bundle_to=self._copy_bundle_to,
+                    copy_style=self._copy_files,
+                )
             else:
-                if self._copy_files != "none":
-                    code_bundle = await build_code_bundle(
-                        from_dir=cfg.root_dir,
-                        dryrun=self._dry_run,
-                        copy_bundle_to=self._copy_bundle_to,
-                        copy_style=self._copy_files,
-                    )
-                else:
-                    code_bundle = None
+                code_bundle = None
 
         version = self._version or (
             code_bundle.computed_version if code_bundle and code_bundle.computed_version else None
@@ -821,6 +841,8 @@ def with_runcontext(
     """
     if mode == "hybrid" and not name and not run_base_dir:
         raise ValueError("Run name and run base dir are required for hybrid mode")
+    if copy_style == "custom":
+        raise ValueError("copy_style='custom' is not yet supported through with_runcontext.")
     if copy_style == "none" and not version:
         raise ValueError("Version is required when copy_style is 'none'")
 

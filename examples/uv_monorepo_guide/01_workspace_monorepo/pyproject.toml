@@ -1,0 +1,20 @@
+[project]
+name = "workspace-app"
+version = "0.1.0"
+description = "uv workspace monorepo example for Flyte"
+requires-python = ">=3.11"
+dependencies = ["flyte>=2.0"]
+
+[build-system]
+requires = ["uv_build>=0.9,<0.10"]
+build-backend = "uv_build"
+
+[tool.uv]
+package = true
+
+[dependency-groups]
+# Only external PyPI deps. lib_transforms and lib_models live under src/ alongside
+# workspace_app and are included in the code bundle automatically.
+etl = ["pandas"]
+ml  = ["scikit-learn"]
+dev = ["pytest", "ruff"]

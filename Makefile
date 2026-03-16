@@ -6,6 +6,10 @@ help:
 
 .DEFAULT_GOAL := help
 
+.PHONY: prek-install
+prek-install:
+	curl --proto '=https' --tlsv1.2 -LsSf https://github.com/j178/prek/releases/download/v0.3.5/prek-installer.sh | sh
+
 .PHONY: fmt
 fmt:
 	uv run python -m ruff format
@@ -20,13 +24,7 @@ mypy:
 
 .PHONY: uvlock
 uvlock:
-	uv lock
-	for dir in plugins/*/; do \
-		if [ -f "$$dir/uv.lock" ]; then \
-			echo "Checking $$dir..."; \
-			uv lock --directory "$$dir"; \
-		fi \
-	done
+	bash maint_tools/uvlock.sh
 
 .PHONY: lint
 lint-fix:
