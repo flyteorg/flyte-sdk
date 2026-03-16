@@ -536,13 +536,15 @@ class Image:
         from flyte._version import __version__
 
         dev_mode = (__version__ and "dev" in __version__) and not flyte_version and install_flyte
-        if install_flyte is False:
+        if not install_flyte:
             preset_tag = f"py{python_version[0]}.{python_version[1]}"
         else:
             if flyte_version is None:
                 flyte_version = __version__.replace("+", "-")
             suffix = flyte_version if flyte_version.startswith("v") else f"v{flyte_version}"
             preset_tag = f"py{python_version[0]}.{python_version[1]}-{suffix}"
+            if not dev_mode or flyte_version:
+                return Image.from_base(f"{_BASE_REGISTRY}/{_DEFAULT_IMAGE_NAME}:{preset_tag}")
         image = Image._new(
             base_image=f"python:{python_version[0]}.{python_version[1]}-slim-bookworm",
             registry=_BASE_REGISTRY,
@@ -570,7 +572,6 @@ class Image:
             }
         )
         image = image.with_apt_packages("build-essential", "ca-certificates")
-
         if install_flyte:
             if dev_mode:
                 if os.path.exists(DIST_FOLDER):
