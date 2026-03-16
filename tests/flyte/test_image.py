@@ -199,6 +199,35 @@ def test_base_image_cloned():
     assert cloned_default_image.uri.startswith("ghcr.io/flyteorg/flyte-clone")
 
 
+def test_clone_strips_base_registry():
+    # Any clone of a from_debian_base() image without an explicit registry should
+    # have registry=None — the clone is a user-owned derivative, not the SDK's
+    # ghcr.io/flyteorg image.
+    img = Image.from_debian_base(python_version=(3, 13)).clone(name="my-image")
+    assert img.registry is None
+    assert img.uri.startswith("my-image:")
+
+    # Same via from_debian_base(name=...)
+    img2 = Image.from_debian_base(python_version=(3, 13), name="my-image")
+    assert img2.registry is None
+    assert img2.uri.startswith("my-image:")
+
+    # with_* chains also strip _BASE_REGISTRY — they produce user-owned derivatives.
+    img3 = Image.from_debian_base(python_version=(3, 13)).with_pip_packages("numpy")
+    assert img3.registry is None
+    assert img3.uri.startswith("flyte:")
+
+    # Explicit registry always wins regardless.
+    img4 = Image.from_debian_base(python_version=(3, 13)).clone(
+        registry="myregistry.io", name="my-image"
+    )
+    assert img4.registry == "myregistry.io"
+
+    # The unmodified base image itself still carries _BASE_REGISTRY.
+    base = Image.from_debian_base(python_version=(3, 13))
+    assert base.registry == "ghcr.io/flyteorg"
+
+
 def test_base_image_clone_same():
     default_image = Image.from_debian_base(python_version=(3, 13))
     cloned_default_image = Image.from_debian_base(python_version=(3, 13)).clone(
@@ -440,6 +469,21 @@ def test_from_dockerfile_is_not_extendable():
         dockerfile_path.unlink()
 
 
+def test_from_dockerfile_with_explicit_tag(tmp_path):
+    dockerfile = tmp_path / "Dockerfile"
+    dockerfile.write_text("FROM python:3.12-slim\n")
+    img = Image.from_dockerfile(file=dockerfile, registry="reg", name="my-img", tag="v2.0.0")
+    assert img.tag == "v2.0.0"
+    assert img.uri == "reg/my-img:v2.0.0"
+
+
+def test_from_dockerfile_empty_string_tag_falls_back_to_content_hash(tmp_path):
+    dockerfile = tmp_path / "Dockerfile"
+    dockerfile.write_text("FROM python:3.12-slim\n")
+    img = Image.from_dockerfile(file=dockerfile, registry="reg", name="my-img", tag="")
+    assert img.tag is None
+
+
 def test_with_code_bundle_defaults():
     """with_code_bundle() creates a CodeBundleLayer with default values."""
     img = Image.from_debian_base(registry="localhost", name="test-image").with_code_bundle()
@@ -525,3 +569,28 @@ def test_resolve_code_bundle_loaded_modules_copy_style_none(tmp_path):
     assert bundle_layers[0].root_dir == tmp_path
     assert bundle_layers[0].copy_style == "loaded_modules"
     assert bundle_layers[0].dst == "."
+
+
+def test_clone_with_explicit_tag():
+    img = Image.from_debian_base(registry="reg", name="img", python_version=(3, 12))
+    cloned = img.clone(registry="other-reg", name="other-img", tag="v1.2.3")
+    assert cloned.tag == "v1.2.3"
+    assert cloned.uri == "other-reg/other-img:v1.2.3"
+
+
+def test_clone_tag_not_inherited_from_source():
+    # clone() never inherits tag from source — always fresh content hash unless tag= given
+    img = Image.from_debian_base(registry="reg", name="img", python_version=(3, 12))
+    # default image has tag set (version-based); clone without tag= should content-hash
+    cloned = img.clone(registry="other-reg", name="other-img")
+    assert cloned.tag is None
+    assert cloned.uri.startswith("other-reg/other-img:")
+    assert cloned.uri != img.uri  # different because hash differs (no version tag)
+
+
+def test_clone_empty_string_tag_falls_back_to_content_hash():
+    img = Image.from_debian_base(registry="reg", name="img", python_version=(3, 12))
+    cloned = img.clone(registry="reg", name="img", tag="")
+    assert cloned.tag is None  # empty string normalized to None
+
+
