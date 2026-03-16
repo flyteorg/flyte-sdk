@@ -601,7 +601,6 @@ class Image:
         registry_secret: Optional[str | Secret] = None,
         name: Optional[str] = None,
         platform: Optional[Tuple[Architecture, ...]] = None,
-        tag: Optional[str] = None,
     ) -> Image:
         """
         Use this method to start using the default base image, built from this library's base Dockerfile
@@ -615,7 +614,6 @@ class Image:
         :param name: Name of the image if you want to override the default name
         :param platform: Platform to use for the image, default is linux/amd64, use tuple for multiple values
             Example: ("linux/amd64", "linux/arm64")
-        :param tag: Explicit tag for the built image. If omitted, a content-hash tag is used.
 
         :return: Image
         """
@@ -631,12 +629,9 @@ class Image:
 
         if registry or name:
             return base_image.clone(
-                registry=registry, name=name, registry_secret=registry_secret, extendable=True, tag=tag
+                registry=registry, name=name, registry_secret=registry_secret, extendable=True
             )
 
-        tag = tag or None  # normalize empty string to None
-        if tag is not None:
-            object.__setattr__(base_image, "tag", tag)
         return base_image
 
     @classmethod
@@ -672,7 +667,6 @@ class Image:
         extra_args: Optional[str] = None,
         platform: Optional[Tuple[Architecture, ...]] = None,
         secret_mounts: Optional[SecretRequest] = None,
-        tag: Optional[str] = None,
     ) -> Image:
         """
         Use this method to create a new image with the specified uv script.
@@ -704,7 +698,6 @@ class Image:
         :param pre: whether to allow pre-release versions, default is False
         :param extra_args: extra arguments to pass to pip install, default is None
         :param secret_mounts: Secret mounts to use for the image, default is None.
-        :param tag: Explicit tag for the built image. If omitted, a content-hash tag is used.
 
         :return: Image
         """
@@ -726,7 +719,7 @@ class Image:
             platform=platform,
         )
 
-        return img.clone(addl_layer=ll, tag=tag)
+        return img.clone(addl_layer=ll)
 
     def clone(
         self,
@@ -811,7 +804,6 @@ class Image:
         registry: str,
         name: str,
         platform: Union[Architecture, Tuple[Architecture, ...], None] = None,
-        tag: Optional[str] = None,
     ) -> Image:
         """
         Use this method to create a new image with the specified dockerfile. Note you cannot use additional layers
@@ -826,7 +818,6 @@ class Image:
         :param name: name of the image
         :param platform: architecture to use for the image, default is linux/amd64, use tuple for multiple values
             Example: ("linux/amd64", "linux/arm64")
-        :param tag: Explicit tag for the built image. If omitted, a content-hash tag is used.
 
         :return:
         """
@@ -835,7 +826,6 @@ class Image:
             "dockerfile": file,
             "registry": registry,
             "name": name,
-            "tag": tag or None,
             "extendable": False,  # Dockerfile-based images cannot have additional layers
         }
         if platform:
