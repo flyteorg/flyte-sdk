@@ -23,6 +23,7 @@ from flyte._logging import LogFormat, logger
 from flyte._task import F, P, R, TaskTemplate
 from flyte.models import (
     ActionID,
+    ActionPhase,
     Checkpoints,
     CodeBundle,
     RawDataPath,
@@ -570,6 +571,33 @@ class _Runner:
             raise err
         return outputs
 
+    async def _send_local_notifications(
+        self,
+        *,
+        phase: ActionPhase,
+        task_name: str,
+        run_name: str,
+        error: str = "",
+    ) -> None:
+        """Send notifications locally. Never raises — failures are logged."""
+        from flyte.notify._notifiers import NamedRule as _NamedRule
+        from flyte.notify._sender import send_notifications
+
+        notifications = self._notifications
+        if isinstance(notifications, _NamedRule):
+            logger.info("Skipping named rule %r in local mode", notifications.name)
+            return
+
+        await send_notifications(
+            notifications,  # type: ignore[arg-type]
+            phase=phase,
+            task_name=task_name,
+            run_name=run_name,
+            error=error,
+            project=self._project or "",
+            domain=self._domain or "",
+        )
+
     async def _run_local(self, obj: TaskTemplate[P, R, F], *args: P.args, **kwargs: P.kwargs) -> Run:
         from flyteidl2.common import identifier_pb2
         from flyteidl2.task import common_pb2
@@ -645,9 +673,15 @@ class _Runner:
                     outputs = await controller.submit(obj, *args, **kwargs)
         except Exception as e:
             recorder.record_root_failure(error=str(e))
+            if self._notifications:
+                await self._send_local_notifications(
+                    phase=ActionPhase.FAILED, task_name=obj.name, run_name=run_name, error=str(e)
+                )
             raise
         else:
             recorder.record_root_complete()
+            if self._notifications:
+                await self._send_local_notifications(phase=ActionPhase.SUCCEEDED, task_name=obj.name, run_name=run_name)
 
         class _LocalRun(Run):
             def __init__(self, outputs: Tuple[Any, ...] | Any):

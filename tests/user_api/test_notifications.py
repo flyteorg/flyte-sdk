@@ -396,6 +396,118 @@ class TestNotificationBase:
             email.recipients = ("new@example.com",)
 
 
+class TestNamedRule:
+    """Tests for NamedRule notification class."""
+
+    def test_named_rule_basic(self):
+        rule = notify.NamedRule("oncall-alerts")
+        assert rule.name == "oncall-alerts"
+
+    def test_named_rule_empty_name_error(self):
+        with pytest.raises(ValueError, match="Rule name must not be empty"):
+            notify.NamedRule("")
+
+    def test_named_rule_frozen(self):
+        rule = notify.NamedRule("test")
+        with pytest.raises(Exception):
+            rule.name = "other"
+
+
+class TestNamedDelivery:
+    """Tests for NamedDelivery notification class."""
+
+    def test_named_delivery_basic(self):
+        nd = notify.NamedDelivery(on_phase=ActionPhase.FAILED, name="slack-oncall")
+        assert nd.name == "slack-oncall"
+        assert nd.on_phase == (ActionPhase.FAILED,)
+
+    def test_named_delivery_multiple_phases(self):
+        nd = notify.NamedDelivery(
+            on_phase=(ActionPhase.FAILED, ActionPhase.TIMED_OUT),
+            name="slack-oncall",
+        )
+        assert nd.on_phase == (ActionPhase.FAILED, ActionPhase.TIMED_OUT)
+
+    def test_named_delivery_empty_name_error(self):
+        with pytest.raises(ValueError, match="Delivery config name must not be empty"):
+            notify.NamedDelivery(on_phase=ActionPhase.FAILED, name="")
+
+    def test_named_delivery_unsupported_phase_error(self):
+        with pytest.raises(ValueError, match="not supported"):
+            notify.NamedDelivery(on_phase=ActionPhase.RUNNING, name="test")
+
+    def test_named_delivery_frozen(self):
+        nd = notify.NamedDelivery(on_phase=ActionPhase.FAILED, name="test")
+        with pytest.raises(Exception):
+            nd.name = "other"
+
+
+class TestEmailExtended:
+    """Tests for Email cc, bcc, and html_body fields."""
+
+    def test_email_cc(self):
+        email = notify.Email(
+            on_phase=ActionPhase.FAILED,
+            recipients=("a@b.com",),
+            cc=("cc1@b.com", "cc2@b.com"),
+        )
+        assert email.cc == ("cc1@b.com", "cc2@b.com")
+
+    def test_email_bcc(self):
+        email = notify.Email(
+            on_phase=ActionPhase.FAILED,
+            recipients=("a@b.com",),
+            bcc=("bcc@b.com",),
+        )
+        assert email.bcc == ("bcc@b.com",)
+
+    def test_email_cc_bcc_default_empty(self):
+        email = notify.Email(on_phase=ActionPhase.FAILED, recipients=("a@b.com",))
+        assert email.cc == ()
+        assert email.bcc == ()
+
+    def test_email_cc_list_to_tuple(self):
+        email = notify.Email(
+            on_phase=ActionPhase.FAILED,
+            recipients=("a@b.com",),
+            cc=["cc@b.com"],  # type: ignore
+        )
+        assert isinstance(email.cc, tuple)
+
+    def test_email_bcc_list_to_tuple(self):
+        email = notify.Email(
+            on_phase=ActionPhase.FAILED,
+            recipients=("a@b.com",),
+            bcc=["bcc@b.com"],  # type: ignore
+        )
+        assert isinstance(email.bcc, tuple)
+
+    def test_email_html_body(self):
+        email = notify.Email(
+            on_phase=ActionPhase.FAILED,
+            recipients=("a@b.com",),
+            html_body="<h1>Alert: {task.name}</h1>",
+        )
+        assert email.html_body == "<h1>Alert: {task.name}</h1>"
+
+    def test_email_html_body_default_none(self):
+        email = notify.Email(on_phase=ActionPhase.FAILED, recipients=("a@b.com",))
+        assert email.html_body is None
+
+
+class TestWebhookExtendedMethods:
+    """Tests for extended HTTP methods on Webhook."""
+
+    @pytest.mark.parametrize("method", ["POST", "PUT", "PATCH", "GET", "DELETE", "HEAD", "OPTIONS", "TRACE", "CONNECT"])
+    def test_all_http_methods(self, method):
+        webhook = notify.Webhook(
+            on_phase=ActionPhase.FAILED,
+            url="https://test",
+            method=method,  # type: ignore
+        )
+        assert webhook.method == method
+
+
 class TestNotificationIntegration:
     """Integration tests for notifications with multiple types."""
 
