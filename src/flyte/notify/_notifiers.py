@@ -138,12 +138,18 @@ class Email(Notification):
     Args:
         on_phase: ActionPhase(s) to trigger notification
             (e.g., ActionPhase.FAILED or (ActionPhase.FAILED, ActionPhase.TIMED_OUT))
-        recipients: Tuple of email addresses
-        subject: Email subject template (supports template variables)
-        body: Email body template (supports template variables)
+        recipients: Email addresses for the "to" field.
+        cc: Optional email addresses for the "cc" field.
+        bcc: Optional email addresses for the "bcc" field.
+        subject: Email subject template (supports template variables).
+        body: Plain text body template (supports template variables).
+        html_body: Optional HTML body template (supports template variables).
+            When provided, the email is sent as multipart with both plain text and HTML.
     """
 
     recipients: Tuple[str, ...]
+    cc: Tuple[str, ...] = ()
+    bcc: Tuple[str, ...] = ()
     subject: str = "Task {task.name} {run.phase}"
     body: str = (
         "Task: {task.name}\n"
@@ -153,12 +159,17 @@ class Email(Notification):
         "Duration: {run.duration}\n"
         "Details: {run.url}\n"
     )
+    html_body: Optional[str] = None
 
     def __post_init__(self):
         super().__post_init__()
         # Normalize recipients to tuple
         if isinstance(self.recipients, list):
             object.__setattr__(self, "recipients", tuple(self.recipients))
+        if isinstance(self.cc, list):
+            object.__setattr__(self, "cc", tuple(self.cc))
+        if isinstance(self.bcc, list):
+            object.__setattr__(self, "bcc", tuple(self.bcc))
 
         if not self.recipients:
             raise ValueError("At least one recipient must be specified")
@@ -289,7 +300,7 @@ class Webhook(Notification):
     """
 
     url: str
-    method: Literal["POST", "PUT", "PATCH", "GET", "DELETE"] = "POST"
+    method: Literal["POST", "PUT", "PATCH", "GET", "DELETE", "HEAD", "OPTIONS", "TRACE", "CONNECT"] = "POST"
     headers: Optional[Dict[str, str]] = None
     body: Optional[Dict[str, Any]] = None
 

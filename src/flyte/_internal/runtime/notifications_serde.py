@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, Tuple, Union, cast
+from typing import Any, Dict, Tuple, cast
 
+from flyteidl2.common import phase_pb2
 from flyteidl2.notification import definition_pb2
 from flyteidl2.task import run_pb2
 
+from flyte.models import ActionPhase
 from flyte.notify import Email, NamedDelivery, NamedRule, Notification, Slack, Teams, Webhook
 
 _HTTP_METHOD_MAP = {
@@ -14,86 +16,67 @@ _HTTP_METHOD_MAP = {
     "POST": definition_pb2.HTTP_METHOD_POST,
     "PUT": definition_pb2.HTTP_METHOD_PUT,
     "DELETE": definition_pb2.HTTP_METHOD_DELETE,
+    "CONNECT": definition_pb2.HTTP_METHOD_CONNECT,
+    "OPTIONS": definition_pb2.HTTP_METHOD_OPTIONS,
+    "TRACE": definition_pb2.HTTP_METHOD_TRACE,
     "PATCH": definition_pb2.HTTP_METHOD_PATCH,
 }
 
-
-def _collect_phases(notifications: Tuple[Notification, ...]) -> Tuple[str, ...]:
-    """Collect the unique phases across all notifications, preserving order."""
-    seen: dict[str, None] = {}
-    for n in notifications:
-        phases = cast(Tuple, n.on_phase)  # always a tuple after __post_init__
-        for phase in phases:
-            seen.setdefault(phase.value, None)
-    return tuple(seen)
-
-
-def to_inline_rule(notifications: Union[Notification, Tuple[Notification, ...]]) -> run_pb2.InlineRule:
-    """Convert one or more Notification objects into an InlineRule proto.
-
-    Each notification becomes a DeliveryOption. Phases are collected from all
-    notifications. Today the proto only supports phase_regex (a single string),
-    so we set it to the first phase as a placeholder. Once the proto adds a
-    repeated phases field, this will switch to populating that instead.
-    """
-    if isinstance(notifications, Notification):
-        notifications = (notifications,)
-
-    phases = _collect_phases(notifications)
-    delivery_options = [to_delivery_option(n) for n in notifications]
-
-    # TODO: switch to repeated phases field once available in the proto.
-    # For now, set phase_regex to the first phase as a simple placeholder.
-    return run_pb2.InlineRule(
-        delivery_options=delivery_options,
-        checks=run_pb2.InlineRuleChecks(phase_regex=phases[0]) if phases else None,
-    )
-
-
-def _to_rule_id(*, org: str, project: str, domain: str, name: str) -> definition_pb2.RuleId:
-    return definition_pb2.RuleId(
-        org=org,
-        project=project,
-        domain=domain,
-        name=name,
-    )
+_ACTION_PHASE_MAP: dict[ActionPhase, phase_pb2.ActionPhase.ValueType] = {
+    ActionPhase.QUEUED: phase_pb2.ACTION_PHASE_QUEUED,
+    ActionPhase.WAITING_FOR_RESOURCES: phase_pb2.ACTION_PHASE_WAITING_FOR_RESOURCES,
+    ActionPhase.INITIALIZING: phase_pb2.ACTION_PHASE_INITIALIZING,
+    ActionPhase.RUNNING: phase_pb2.ACTION_PHASE_RUNNING,
+    ActionPhase.SUCCEEDED: phase_pb2.ACTION_PHASE_SUCCEEDED,
+    ActionPhase.FAILED: phase_pb2.ACTION_PHASE_FAILED,
+    ActionPhase.ABORTED: phase_pb2.ACTION_PHASE_ABORTED,
+    ActionPhase.TIMED_OUT: phase_pb2.ACTION_PHASE_TIMED_OUT,
+}
 
 
 def resolve_notification_settings(
     notifications: NamedRule | Notification | Tuple[Notification, ...],
-    *,
-    org: str = "",
-    project: str = "",
-    domain: str = "",
-) -> tuple[definition_pb2.RuleId | None, run_pb2.InlineRule | None]:
+) -> tuple[str | None, run_pb2.InlineRuleList | None]:
     """Resolve user-facing notification specs into proto fields for RunSpec.
 
-    Returns (rule_id, inline_rule) — exactly one will be set, the other None.
+    Returns (notification_rule_name, notification_rules) — exactly one will be set.
     """
     if isinstance(notifications, NamedRule):
-        return _to_rule_id(org=org, project=project, domain=domain, name=notifications.name), None
-    return None, to_inline_rule(notifications)
+        return notifications.name, None
+    return None, _to_inline_rule_list(notifications)
 
 
-def to_delivery_option(n: Notification) -> run_pb2.DeliveryOption:
-    """Convert a single Notification into a DeliveryOption proto."""
+def _to_inline_rule_list(
+    notifications: Notification | Tuple[Notification, ...],
+) -> run_pb2.InlineRuleList:
+    if isinstance(notifications, Notification):
+        notifications = (notifications,)
+    return run_pb2.InlineRuleList(rules=[_to_inline_rule(n) for n in notifications])
+
+
+def _to_inline_rule(n: Notification) -> run_pb2.InlineRule:
+    """Convert a single Notification into an InlineRule proto.
+
+    Each Notification maps 1:1 to an InlineRule with its own phases and delivery.
+    """
+    on_phases = [_ACTION_PHASE_MAP[p] for p in cast(Tuple, n.on_phase)]
+
     if isinstance(n, NamedDelivery):
-        return run_pb2.DeliveryOption(
-            config_id=definition_pb2.DeliveryConfigId(name=n.name),
-        )
-    return run_pb2.DeliveryOption(
-        template=to_delivery_config_template(n),
-    )
+        return run_pb2.InlineRule(on_phases=on_phases, delivery_config_name=n.name)
+
+    return run_pb2.InlineRule(on_phases=on_phases, delivery_template=_to_delivery_config_template(n))
 
 
-def to_delivery_config_template(n: Notification) -> definition_pb2.DeliveryConfigTemplate:
-    """Convert a Notification into a DeliveryConfigTemplate proto."""
+def _to_delivery_config_template(n: Notification) -> definition_pb2.DeliveryConfigTemplate:
     if isinstance(n, Email):
         return definition_pb2.DeliveryConfigTemplate(
             email=definition_pb2.EmailDeliveryTemplate(
                 subject=n.subject,
-                to=list(n.recipients),
+                to=[definition_pb2.EmailRecipient(address=r) for r in n.recipients],
+                cc=[definition_pb2.EmailRecipient(address=r) for r in n.cc],
+                bcc=[definition_pb2.EmailRecipient(address=r) for r in n.bcc],
                 text_template=n.body,
+                html_template=n.html_body or "",
             ),
         )
     elif isinstance(n, Slack):

@@ -375,14 +375,12 @@ class _Runner:
                 else:
                     raise ValueError(f"Unknown cache lookup scope: {scope}")
 
-            rule_id = None
-            inline_rule = None
+            notification_rule_name = None
+            notification_rules = None
             if self._notifications:
                 from flyte._internal.runtime.notifications_serde import resolve_notification_settings
 
-                rule_id, inline_rule = resolve_notification_settings(
-                    self._notifications, org=cfg.org or "", project=cfg.project or "", domain=cfg.domain or ""
-                )
+                notification_rule_name, notification_rules = resolve_notification_settings(self._notifications)
 
             try:
                 resp = await get_client().run_service.CreateRun(
@@ -408,8 +406,8 @@ class _Runner:
                                 if self._cache_lookup_scope
                                 else None,
                             ),
-                            rule_id=rule_id,
-                            rule=inline_rule,
+                            notification_rule_name=notification_rule_name,
+                            notification_rules=notification_rules,
                         ),
                     ),
                 )

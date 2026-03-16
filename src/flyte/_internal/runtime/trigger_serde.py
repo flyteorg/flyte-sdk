@@ -119,10 +119,10 @@ async def to_task_trigger(
 
     annotations = run_pb2.Annotations(values=t.annotations) if t.annotations else None
 
-    rule_id = None
-    inline_rule = None
+    notification_rule_name = None
+    notification_rules = None
     if t.notifications:
-        rule_id, inline_rule = resolve_notification_settings(t.notifications)
+        notification_rule_name, notification_rules = resolve_notification_settings(t.notifications)
 
     run_spec = run_pb2.RunSpec(
         overwrite_cache=t.overwrite_cache,
@@ -131,8 +131,8 @@ async def to_task_trigger(
         cluster=t.queue,
         labels=labels,
         annotations=annotations,
-        rule_id=rule_id,
-        rule=inline_rule,
+        notification_rule_name=notification_rule_name,
+        notification_rules=notification_rules,
     )
 
     kickoff_arg_name = None
