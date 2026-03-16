@@ -199,6 +199,35 @@ def test_base_image_cloned():
     assert cloned_default_image.uri.startswith("ghcr.io/flyteorg/flyte-clone")
 
 
+def test_clone_strips_base_registry():
+    # Any clone of a from_debian_base() image without an explicit registry should
+    # have registry=None — the clone is a user-owned derivative, not the SDK's
+    # ghcr.io/flyteorg image.
+    img = Image.from_debian_base(python_version=(3, 13)).clone(name="my-image")
+    assert img.registry is None
+    assert img.uri.startswith("my-image:")
+
+    # Same via from_debian_base(name=...)
+    img2 = Image.from_debian_base(python_version=(3, 13), name="my-image")
+    assert img2.registry is None
+    assert img2.uri.startswith("my-image:")
+
+    # with_* chains also strip _BASE_REGISTRY — they produce user-owned derivatives.
+    img3 = Image.from_debian_base(python_version=(3, 13)).with_pip_packages("numpy")
+    assert img3.registry is None
+    assert img3.uri.startswith("flyte:")
+
+    # Explicit registry always wins regardless.
+    img4 = Image.from_debian_base(python_version=(3, 13)).clone(
+        registry="myregistry.io", name="my-image"
+    )
+    assert img4.registry == "myregistry.io"
+
+    # The unmodified base image itself still carries _BASE_REGISTRY.
+    base = Image.from_debian_base(python_version=(3, 13))
+    assert base.registry == "ghcr.io/flyteorg"
+
+
 def test_base_image_clone_same():
     default_image = Image.from_debian_base(python_version=(3, 13))
     cloned_default_image = Image.from_debian_base(python_version=(3, 13)).clone(

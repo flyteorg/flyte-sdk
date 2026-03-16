@@ -545,7 +545,7 @@ class Image:
             preset_tag = f"py{python_version[0]}.{python_version[1]}-{suffix}"
         image = Image._new(
             base_image=f"python:{python_version[0]}.{python_version[1]}-slim-bookworm",
-            registry=_BASE_REGISTRY,
+            registry=None,
             name=_DEFAULT_IMAGE_NAME,
             python_version=python_version,
             platform=("linux/amd64", "linux/arm64") if platform is None else platform,
@@ -581,6 +581,11 @@ class Image:
                     image = image.with_pip_packages(f"flyte=={flyte_version}", pre=True)
                 else:
                     image = image.with_pip_packages(f"flyte=={flyte_version}")
+        # Set the registry last so internal clone() calls during construction
+        # (above) don't inherit _BASE_REGISTRY — clone() strips it whenever
+        # self.registry == _BASE_REGISTRY, so we defer stamping it until the
+        # image is fully assembled.
+        object.__setattr__(image, "registry", _BASE_REGISTRY)
         if not dev_mode:
             object.__setattr__(image, "tag", preset_tag)
 
@@ -764,7 +769,17 @@ class Image:
                 "Flyte current cannot add additional layers to a Dockerfile-based Image."
                 " Please amend the dockerfile directly."
             )
-        registry = registry or self.registry
+        # Registry inheritance: only carry forward a registry that the caller
+        # actually owns. _BASE_REGISTRY ("ghcr.io/flyteorg") is an internal
+        # constant used as the home of the SDK's own prebuilt base images —
+        # virtually no user has write access to it. Inheriting it into a
+        # user-defined clone would silently produce a URI like
+        # "ghcr.io/flyteorg/my-image:tag" that can never be pushed.
+        # When no explicit registry is provided and the parent carries
+        # _BASE_REGISTRY, treat the clone as registry-less (None) so the
+        # build system assigns the correct target registry at build time.
+        parent_registry = None if self.registry == _BASE_REGISTRY else self.registry
+        registry = registry or parent_registry
         name = name or self.name
         registry_secret = registry_secret or self._image_registry_secret
         base_image = base_image or self.base_image
