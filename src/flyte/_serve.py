@@ -413,9 +413,7 @@ class _Serve:
         )
         self._health_check_path = health_check_path if health_check_path is not None else _LOCAL_HEALTH_CHECK_PATH
         self._raw_data_path = (
-            raw_data_path
-            if raw_data_path is not None
-            else ("/tmp/flyte/raw_data" if self._mode == "local" else "")
+            raw_data_path if raw_data_path is not None else ("/tmp/flyte/raw_data" if self._mode == "local" else "")
         )
 
     # ------------------------------------------------------------------
