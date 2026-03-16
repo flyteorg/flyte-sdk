@@ -470,6 +470,7 @@ class AsyncFunctionTaskTemplate(TaskTemplate[P, R, F]):
     func: F
     plugin_config: Optional[Any] = None  # This is used to pass plugin specific configuration
     debuggable: bool = True
+    task_resolver: Optional[Any] = None
 
     def __post_init__(self):
         super().__post_init__()
@@ -556,21 +557,23 @@ class AsyncFunctionTaskTemplate(TaskTemplate[P, R, F]):
 
         if not serialize_context.code_bundle or not serialize_context.code_bundle.pkl:
             # If we do not have a code bundle, or if we have one, but it is not a pkl, we need to add the resolver
+            resolver = self.task_resolver
+            if resolver is None:
+                from flyte._internal.resolvers.default import DefaultTaskResolver
 
-            from flyte._internal.resolvers.default import DefaultTaskResolver
+                resolver = DefaultTaskResolver()
 
             if not serialize_context.root_dir:
                 raise RuntimeSystemError(
                     "SerializationError",
                     "Root dir is required for default task resolver when no code bundle is provided.",
                 )
-            _task_resolver = DefaultTaskResolver()
             args = [
                 *args,
                 *[
                     "--resolver",
-                    _task_resolver.import_path,
-                    *_task_resolver.loader_args(task=self, root_dir=serialize_context.root_dir),
+                    resolver.import_path,
+                    *resolver.loader_args(task=self, root_dir=serialize_context.root_dir),
                 ],
             ]
 

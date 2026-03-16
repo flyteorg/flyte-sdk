@@ -22,7 +22,7 @@ from flyte._logging import logger
 
 from ._ignore import Ignore, IgnoreGroup, StandardIgnore
 
-CopyFiles = Literal["loaded_modules", "all", "none"]
+CopyFiles = Literal["loaded_modules", "all", "none", "custom"]
 
 
 def compress_scripts(source_path: str, destination: str, modules: List[ModuleType]):
