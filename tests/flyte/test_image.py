@@ -311,6 +311,53 @@ def test_uv_project_optional_uvlock():
         assert hash1 != hash2
 
 
+def test_dockerignore_hash_changes_with_content(tmp_path):
+    """Changing .dockerignore contents must produce a different hash."""
+    import hashlib
+
+    from flyte._image import DockerIgnore
+
+    di_file = tmp_path / ".dockerignore"
+    di_file.write_text("*.log\n")
+    h1 = hashlib.md5()
+    DockerIgnore(path=str(di_file)).update_hash(h1)
+
+    di_file.write_text("*.log\n*.pyc\n")
+    h2 = hashlib.md5()
+    DockerIgnore(path=str(di_file)).update_hash(h2)
+
+    assert h1.hexdigest() != h2.hexdigest()
+
+
+def test_dockerignore_hash_stable_for_same_content(tmp_path):
+    """Same .dockerignore contents must produce a stable hash."""
+    import hashlib
+
+    from flyte._image import DockerIgnore
+
+    di_file = tmp_path / ".dockerignore"
+    di_file.write_text("*.log\n")
+    layer = DockerIgnore(path=str(di_file))
+
+    h1, h2 = hashlib.md5(), hashlib.md5()
+    layer.update_hash(h1)
+    layer.update_hash(h2)
+    assert h1.hexdigest() == h2.hexdigest()
+
+
+def test_image_uri_changes_when_dockerignore_content_changes(tmp_path):
+    """Image URI (cache key) must differ when .dockerignore contents change."""
+    di_file = tmp_path / ".dockerignore"
+    di_file.write_text("*.log\n")
+    img1 = Image.from_debian_base(registry="localhost", name="test").with_dockerignore(di_file)
+    uri1 = img1.uri  # access before overwriting the file
+
+    di_file.write_text("*.log\n*.pyc\n")
+    img2 = Image.from_debian_base(registry="localhost", name="test").with_dockerignore(di_file)
+
+    assert uri1 != img2.uri
+
+
 def test_ids_for_different_python_version():
     ex_11 = Image.from_debian_base(python_version=(3, 11), install_flyte=False).with_source_file(Path(__file__))
     ex_12 = Image.from_debian_base(python_version=(3, 12), install_flyte=False).with_source_file(Path(__file__))

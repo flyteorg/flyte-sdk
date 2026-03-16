@@ -340,7 +340,13 @@ class DockerIgnore(Layer):
     path: str
 
     def update_hash(self, hasher: hashlib._Hash):
-        hasher.update(self.path.encode("utf-8"))
+        from ._utils import filehash_update
+
+        path = Path(self.path)
+        if path.exists():
+            filehash_update(path, hasher)
+        else:
+            hasher.update(self.path.encode("utf-8"))
 
 
 @rich.repr.auto
