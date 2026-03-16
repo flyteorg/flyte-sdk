@@ -107,13 +107,13 @@ def to_delivery_config_template(n: Notification) -> definition_pb2.DeliveryConfi
             ),
         )
     elif isinstance(n, Teams):
-        teams_body: Dict[str, Any] = n.card if n.card else {"title": n.title, "text": n.message}
+        teams_body: Dict[str, Any] = n.card or {"title": n.title, "text": n.message}
         return definition_pb2.DeliveryConfigTemplate(
             webhook=definition_pb2.WebhookDeliveryTemplate(
                 url=n.webhook_url,
                 method=definition_pb2.HTTP_METHOD_POST,
                 headers={"Content-Type": "application/json"},
-                body_template=json.dumps(body),
+                body_template=json.dumps(teams_body),
             ),
         )
     elif isinstance(n, Webhook):
