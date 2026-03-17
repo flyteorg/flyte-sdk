@@ -10,6 +10,7 @@ dependencies = [
     "aiohttp",
     "nest-asyncio",
     "flyteplugins-spark",
+    "databricks-sdk"
 ]
 
 [dependency-groups]

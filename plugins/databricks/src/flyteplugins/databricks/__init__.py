@@ -48,7 +48,7 @@ def process_data(input_path: str) -> int:
 ```
 """
 
-from flyteplugins.databricks.connector import DatabricksConnector
+from flyteplugins.databricks.connector import DatabricksConnector, DatabricksSubmitTask
 from flyteplugins.databricks.task import Databricks
 
-__all__ = ["Databricks", "DatabricksConnector"]
+__all__ = ["Databricks", "DatabricksConnector", "DatabricksSubmitTask"]
