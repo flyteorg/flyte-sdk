@@ -257,7 +257,7 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
             )
             layers.append(apt_layer)
         elif isinstance(layer, PythonWheels):
-            dst_path = copy_files_to_context(layer.wheel_dir, context_path, [])
+            dst_path = copy_files_to_context(layer.wheel_dir, context_path, ["*.tar.gz", "*.tar.bz2", "*.zip"])
             wheel_layer = image_definition_pb2.Layer(
                 python_wheels=image_definition_pb2.PythonWheels(
                     dir=str(dst_path.relative_to(context_path)),

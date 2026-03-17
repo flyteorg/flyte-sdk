@@ -531,7 +531,6 @@ class Image:
     ) -> Image:
         # Would love a way to move this outside of this class (but still needs to be accessible via Image.auto())
         # this default image definition may need to be updated once there is a released pypi version
-        from packaging.version import Version
 
         from flyte._version import __version__
 
@@ -577,10 +576,7 @@ class Image:
                     image = image.with_local_v2()
             else:
                 flyte_version = typing.cast(str, flyte_version)
-                if Version(flyte_version).is_devrelease or Version(flyte_version).is_prerelease:
-                    image = image.with_pip_packages(f"flyte=={flyte_version}", pre=True)
-                else:
-                    image = image.with_pip_packages(f"flyte=={flyte_version}")
+                image = image.with_pip_packages(f"flyte=={flyte_version}")
         if not dev_mode:
             object.__setattr__(image, "_tag", preset_tag)
 
@@ -1176,7 +1172,7 @@ class Image:
         """
         # Manually declare the PythonWheel so we can set the hashing
         # used to compute the identifier. Can remove if we ever decide to expose the lambda in with_ commands
-        with_dist = self.clone(addl_layer=PythonWheels(wheel_dir=DIST_FOLDER, package_name="flyte", pre=True))
+        with_dist = self.clone(addl_layer=PythonWheels(wheel_dir=DIST_FOLDER, package_name="flyte"))
 
         return with_dist
 
