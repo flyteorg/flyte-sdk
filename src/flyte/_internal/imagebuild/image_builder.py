@@ -44,7 +44,15 @@ class ImageChecker(Protocol):
     @classmethod
     async def image_exists(
         cls, repository: str, tag: str, arch: Tuple[Architecture, ...] = ("linux/amd64",)
-    ) -> Optional[str]: ...
+    ) -> Optional[str]:
+        """
+        Check whether an image exists in a registry or cache.
+
+        Returns the image URI if found, or None if the image definitively does not exist.
+        Raise an exception if existence cannot be determined (e.g. cache miss, network failure)
+        so the next checker in the chain gets a chance.
+        """
+        ...
 
 
 class DockerAPIImageChecker(ImageChecker):
@@ -168,7 +176,10 @@ class PersistentCacheImageChecker(ImageChecker):
         uri = _read_image_cache(repository, tag, arch)
         if uri:
             logger.debug(f"Image {uri} found in persistent cache")
-        return uri
+            return uri
+        # Cache miss — raise so the next checker in the chain gets a chance.
+        # Returning None would mean "image definitely doesn't exist".
+        raise LookupError(f"Image {repository}:{tag} not found in persistent cache")
 
 
 class LocalDockerCommandImageChecker(ImageChecker):
@@ -252,11 +263,13 @@ class ImageBuildEngine:
                     if checker is not PersistentCacheImageChecker:
                         _write_image_cache(repository, tag, tuple(image.platform), image_uri)
                     return image_uri
+                # Checker ran successfully and returned None — image not found
+                return None
             except Exception as e:
                 logger.debug(f"Error checking image existence with {checker.__name__}: {e}")
                 continue
 
-        # If all checkers fail, then assume the image exists. This is current flytekit behavior
+        # All checkers raised exceptions (e.g. network failures) — assume image exists
         status.info(f"All checkers failed to check existence of {image.uri}, assuming it exists")
         return image.uri
 

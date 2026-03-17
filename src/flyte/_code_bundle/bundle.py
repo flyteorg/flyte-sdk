@@ -199,8 +199,6 @@ async def build_code_bundle(
     if copy_style == "none":
         raise ValueError("If copy_style is 'none', just don't make a code bundle")
 
-    status.step("Bundling code...")
-    logger.debug("Building code bundle.")
     from flyte.remote import upload_file
 
     if not ignore:
@@ -230,6 +228,7 @@ async def build_code_bundle(
             logger.debug(f"Code bundle cache hit: {remote_path}")
             return CodeBundle(tgz=remote_path, destination=extract_dir, computed_version=hash_digest, files=files)
 
+    status.step("Bundling code...")
     logger.debug("Building code bundle.")
     with tempfile.TemporaryDirectory() as tmp_dir:
         bundle_path, tar_size, archive_size = create_bundle(
