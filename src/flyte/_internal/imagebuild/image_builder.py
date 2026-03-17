@@ -3,6 +3,9 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import random
+import sqlite3
+import time
 import typing
 from importlib.metadata import entry_points
 from pathlib import Path
@@ -17,7 +20,8 @@ from flyte._initialize import _get_init_config
 from flyte._logging import logger
 from flyte._status import status
 
-_IMAGE_CACHE_DIR = Path.home() / ".flyte" / "cache" / "images"
+_IMAGE_CACHE_DB = Path.home() / ".flyte" / "cache" / "images.db"
+_IMAGE_CACHE_TTL_DAYS = 30
 
 if TYPE_CHECKING:
     from flyte._build import ImageBuild
@@ -98,35 +102,64 @@ class DockerAPIImageChecker(ImageChecker):
 
 
 def _cache_key(repository: str, tag: str, arch: Tuple[str, ...]) -> str:
-    """Return a filesystem-safe cache key for an image."""
+    """Return a stable cache key for an image."""
     raw = f"{repository}:{tag}:{','.join(sorted(arch))}"
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
+def _get_cache_db() -> sqlite3.Connection:
+    """Open (and lazily initialize) the SQLite image cache database."""
+    _IMAGE_CACHE_DB.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(_IMAGE_CACHE_DB))
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS image_cache "
+        "(key TEXT PRIMARY KEY, image_uri TEXT NOT NULL, "
+        "created_at REAL NOT NULL)"
+    )
+    return conn
+
+
 def _write_image_cache(repository: str, tag: str, arch: Tuple[str, ...], image_uri: str) -> None:
-    """Persist a verified image URI to local disk cache."""
+    """Persist a verified image URI to the SQLite cache."""
     try:
-        _IMAGE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        cache_file = _IMAGE_CACHE_DIR / _cache_key(repository, tag, arch)
-        cache_file.write_text(image_uri)
-    except OSError as e:
+        conn = _get_cache_db()
+        try:
+            with conn:
+                conn.execute(
+                    "INSERT OR REPLACE INTO image_cache (key, image_uri, created_at) VALUES (?, ?, ?)",
+                    (_cache_key(repository, tag, arch), image_uri, time.time()),
+                )
+        finally:
+            conn.close()
+    except (OSError, sqlite3.Error) as e:
         logger.debug(f"Failed to write image cache: {e}")
 
 
 class PersistentCacheImageChecker(ImageChecker):
-    """Check if image was previously verified and cached on disk (~0ms)."""
+    """Check if image was previously verified and cached in SQLite (~0ms)."""
 
     @classmethod
     async def image_exists(
         cls, repository: str, tag: str, arch: Tuple[Architecture, ...] = ("linux/amd64",)
     ) -> Optional[str]:
-        cache_file = _IMAGE_CACHE_DIR / _cache_key(repository, tag, arch)
         try:
-            if cache_file.is_file():
-                uri = cache_file.read_text().strip()
-                logger.debug(f"Image {uri} found in persistent cache")
-                return uri
-        except OSError as e:
+            conn = _get_cache_db()
+            try:
+                cutoff = time.time() - _IMAGE_CACHE_TTL_DAYS * 86400
+                row = conn.execute(
+                    "SELECT image_uri FROM image_cache WHERE key = ? AND created_at > ?",
+                    (_cache_key(repository, tag, arch), cutoff),
+                ).fetchone()
+                # Prune expired entries ~5% of the time to avoid doing it on every read
+                if random.random() < 0.05:
+                    conn.execute("DELETE FROM image_cache WHERE created_at <= ?", (cutoff,))
+                    conn.commit()
+                if row:
+                    logger.debug(f"Image {row[0]} found in persistent cache")
+                    return row[0]
+            finally:
+                conn.close()
+        except (OSError, sqlite3.Error) as e:
             logger.debug(f"Failed to read image cache: {e}")
         return None
 

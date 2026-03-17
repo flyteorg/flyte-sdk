@@ -35,7 +35,7 @@ def test_persistent_cache_write_and_read(tmp_path, monkeypatch):
     """PersistentCacheImageChecker reads back what _write_image_cache wrote."""
     import flyte._internal.imagebuild.image_builder as ib
 
-    monkeypatch.setattr(ib, "_IMAGE_CACHE_DIR", tmp_path)
+    monkeypatch.setattr(ib, "_IMAGE_CACHE_DB", tmp_path / "images.db")
 
     # Initially nothing cached
     import asyncio

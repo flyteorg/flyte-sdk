@@ -5,7 +5,10 @@ import gzip
 import logging
 import os
 import pathlib
+import random
+import sqlite3
 import tempfile
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Type
 
@@ -27,6 +30,61 @@ if TYPE_CHECKING:
 
 _pickled_file_extension = ".pkl.gz"
 _tar_file_extension = ".tar.gz"
+
+_BUNDLE_CACHE_DB = Path.home() / ".flyte" / "cache" / "bundles.db"
+_BUNDLE_CACHE_TTL_DAYS = 30
+
+
+def _get_bundle_cache_db() -> sqlite3.Connection:
+    """Open (and lazily initialize) the SQLite bundle cache database."""
+    _BUNDLE_CACHE_DB.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(_BUNDLE_CACHE_DB))
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS bundle_cache "
+        "(digest TEXT PRIMARY KEY, hash_digest TEXT NOT NULL, remote_path TEXT NOT NULL, "
+        "created_at REAL NOT NULL)"
+    )
+    return conn
+
+
+def _read_bundle_cache(digest: str) -> tuple[str, str] | None:
+    """Look up a previously uploaded bundle by its file digest. Returns (hash_digest, remote_path) or None."""
+    try:
+        conn = _get_bundle_cache_db()
+        try:
+            cutoff = time.time() - _BUNDLE_CACHE_TTL_DAYS * 86400
+            row = conn.execute(
+                "SELECT hash_digest, remote_path FROM bundle_cache WHERE digest = ? AND created_at > ?",
+                (digest, cutoff),
+            ).fetchone()
+            # Prune expired entries ~5% of the time to avoid doing it on every read
+            if random.random() < 0.05:
+                conn.execute("DELETE FROM bundle_cache WHERE created_at <= ?", (cutoff,))
+                conn.commit()
+            if row:
+                return row[0], row[1]
+        finally:
+            conn.close()
+    except (OSError, sqlite3.Error) as e:
+        logger.debug(f"Failed to read bundle cache: {e}")
+    return None
+
+
+def _write_bundle_cache(digest: str, hash_digest: str, remote_path: str) -> None:
+    """Persist a successfully uploaded bundle to the SQLite cache."""
+    try:
+        conn = _get_bundle_cache_db()
+        try:
+            with conn:
+                conn.execute(
+                    "INSERT OR REPLACE INTO bundle_cache (digest, hash_digest, remote_path, created_at) "
+                    "VALUES (?, ?, ?, ?)",
+                    (digest, hash_digest, remote_path, time.time()),
+                )
+        finally:
+            conn.close()
+    except (OSError, sqlite3.Error) as e:
+        logger.debug(f"Failed to write bundle cache: {e}")
 
 
 class _PklCache:
@@ -163,6 +221,15 @@ async def build_code_bundle(
     if logger.getEffectiveLevel() <= logging.INFO:
         print_ls_tree(from_dir, files)
 
+    # Check persistent cache before creating the tar bundle to avoid unnecessary work
+    if not dryrun:
+        cached = _read_bundle_cache(digest)
+        if cached:
+            hash_digest, remote_path = cached
+            status.success(f"Code bundle found in cache, skipping upload")
+            logger.debug(f"Code bundle cache hit: {remote_path}")
+            return CodeBundle(tgz=remote_path, destination=extract_dir, computed_version=hash_digest, files=files)
+
     logger.debug("Building code bundle.")
     with tempfile.TemporaryDirectory() as tmp_dir:
         bundle_path, tar_size, archive_size = create_bundle(
@@ -173,6 +240,7 @@ async def build_code_bundle(
             status.step("Uploading code bundle...")
             hash_digest, remote_path = await upload_file.aio(bundle_path)
             logger.debug(f"Code bundle uploaded to {remote_path}")
+            _write_bundle_cache(digest, hash_digest, remote_path)
         else:
             if copy_bundle_to:
                 remote_path = str(copy_bundle_to / bundle_path.name)
@@ -218,6 +286,15 @@ async def build_code_bundle_from_relative_paths(
     if logger.getEffectiveLevel() <= logging.INFO:
         print_ls_tree(from_dir, files)
 
+    # Check persistent cache before creating the tar bundle to avoid unnecessary work
+    if not dryrun:
+        cached = _read_bundle_cache(digest)
+        if cached:
+            hash_digest, remote_path = cached
+            status.success(f"Code bundle found in cache, skipping upload")
+            logger.debug(f"Code bundle cache hit: {remote_path}")
+            return CodeBundle(tgz=remote_path, destination=extract_dir, computed_version=hash_digest, files=files)
+
     logger.debug("Building code bundle.")
     with tempfile.TemporaryDirectory() as tmp_dir:
         bundle_path, tar_size, archive_size = create_bundle(from_dir, pathlib.Path(tmp_dir), files, digest)
@@ -226,6 +303,7 @@ async def build_code_bundle_from_relative_paths(
             status.step("Uploading code bundle...")
             hash_digest, remote_path = await upload_file.aio(bundle_path)
             logger.debug(f"Code bundle uploaded to {remote_path}")
+            _write_bundle_cache(digest, hash_digest, remote_path)
         else:
             remote_path = "na"
             if copy_bundle_to:
