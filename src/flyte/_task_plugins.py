@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import typing
 from typing import Type
+from typing_extensions import TypeVar
 
 import rich.repr
 
@@ -9,6 +10,7 @@ if typing.TYPE_CHECKING:
     from ._task import AsyncFunctionTaskTemplate
 
 T = typing.TypeVar("T", bound="AsyncFunctionTaskTemplate")
+C = TypeVar("C", default=typing.Any)
 
 
 class _Registry:
@@ -19,7 +21,7 @@ class _Registry:
     def __init__(self: _Registry):
         self._plugins: typing.Dict[Type, Type[typing.Any]] = {}
 
-    def register(self, config_type: Type, plugin: Type[T]):
+    def register(self, config_type: Type[C], plugin: Type[T]):
         """
         Register a plugin.
         """
