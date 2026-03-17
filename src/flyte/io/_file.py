@@ -711,10 +711,7 @@ class File(BaseModel, Generic[T], SerializableType):
             return str(local_path_for_copy)
 
         # Otherwise download from remote using sync functionality
-        # Use the sync version of storage operations
-        with fs.open(self.path, "rb") as src:
-            with open(local_path, "wb") as dst:
-                shutil.copyfileobj(src, dst, length=_COPY_BUFSIZE)
+        fs.get(self.path, local_path)
         return str(local_path)
 
     @classmethod
@@ -795,43 +792,24 @@ class File(BaseModel, Generic[T], SerializableType):
         hash_value = hash_method if isinstance(hash_method, str) else None
         hash_method_obj = hash_method if isinstance(hash_method, HashMethod) else None
 
+        if hash_method_obj and not isinstance(hash_method_obj, PrecomputedValue):
+            with open(local_path, "rb") as fh:
+                while chunk := fh.read(_COPY_BUFSIZE):
+                    hash_method_obj.update(memoryview(chunk))
+            hash_value = hash_method_obj.result()
+        elif hash_method_obj:
+            hash_value = hash_method_obj.result()
+
         if "file" in protocol:
             if remote_destination is None:
                 path = str(Path(local_path).absolute())
             else:
-                if hash_method_obj:
-                    with open(local_path, "rb") as src:
-                        with open(remote_path, "wb") as dst:
-                            dst_wrapper = HashingWriter(dst, accumulator=hash_method_obj)
-                            shutil.copyfileobj(src, dst_wrapper, length=_COPY_BUFSIZE)
-                            hash_value = dst_wrapper.result()
-                            dst_wrapper.close()
-                else:
-                    shutil.copy2(local_path, remote_path)
+                shutil.copy2(local_path, remote_path)
                 path = str(Path(remote_path).absolute())
         else:
-            # Otherwise upload to remote using sync storage layer
             fs = storage.get_underlying_filesystem(path=remote_path)
-
-            if hash_method_obj:
-                if not isinstance(hash_method_obj, PrecomputedValue):
-                    with open(local_path, "rb") as src:
-                        with fs.open(remote_path, "wb") as dst:
-                            dst_wrapper = HashingWriter(dst, accumulator=hash_method_obj)
-                            shutil.copyfileobj(src, dst_wrapper, length=_COPY_BUFSIZE)
-                            hash_value = dst_wrapper.result()
-                    path = remote_path
-                else:
-                    with open(local_path, "rb") as src:
-                        with fs.open(remote_path, "wb") as dst:
-                            shutil.copyfileobj(src, dst, length=_COPY_BUFSIZE)
-                    path = remote_path
-                    hash_value = hash_method_obj.result()
-            else:
-                with open(local_path, "rb") as src:
-                    with fs.open(remote_path, "wb") as dst:
-                        shutil.copyfileobj(src, dst, length=_COPY_BUFSIZE)
-                path = remote_path
+            fs.put(local_path, remote_path)
+            path = remote_path
 
         f = cls(path=path, name=filename, hash_method=hash_method_obj, hash=hash_value)
         return f
