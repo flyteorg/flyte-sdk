@@ -226,7 +226,7 @@ async def build_code_bundle(
         cached = _read_bundle_cache(digest)
         if cached:
             hash_digest, remote_path = cached
-            status.success(f"Code bundle found in cache, skipping upload")
+            status.success("Code bundle found in cache, skipping upload")
             logger.debug(f"Code bundle cache hit: {remote_path}")
             return CodeBundle(tgz=remote_path, destination=extract_dir, computed_version=hash_digest, files=files)
 
@@ -291,7 +291,7 @@ async def build_code_bundle_from_relative_paths(
         cached = _read_bundle_cache(digest)
         if cached:
             hash_digest, remote_path = cached
-            status.success(f"Code bundle found in cache, skipping upload")
+            status.success("Code bundle found in cache, skipping upload")
             logger.debug(f"Code bundle cache hit: {remote_path}")
             return CodeBundle(tgz=remote_path, destination=extract_dir, computed_version=hash_digest, files=files)
 
