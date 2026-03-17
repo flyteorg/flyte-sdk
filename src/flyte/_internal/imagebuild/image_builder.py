@@ -119,6 +119,29 @@ def _get_cache_db() -> sqlite3.Connection:
     return conn
 
 
+def _read_image_cache(repository: str, tag: str, arch: Tuple[str, ...]) -> Optional[str]:
+    """Look up a previously verified image URI by repository, tag, and arch. Returns image_uri or None."""
+    try:
+        conn = _get_cache_db()
+        try:
+            cutoff = time.time() - _IMAGE_CACHE_TTL_DAYS * 86400
+            row = conn.execute(
+                "SELECT image_uri FROM image_cache WHERE key = ? AND created_at > ?",
+                (_cache_key(repository, tag, arch), cutoff),
+            ).fetchone()
+            # Prune expired entries ~5% of the time to avoid doing it on every read
+            if random.random() < 0.05:
+                conn.execute("DELETE FROM image_cache WHERE created_at <= ?", (cutoff,))
+                conn.commit()
+            if row:
+                return row[0]
+        finally:
+            conn.close()
+    except (OSError, sqlite3.Error) as e:
+        logger.debug(f"Failed to read image cache: {e}")
+    return None
+
+
 def _write_image_cache(repository: str, tag: str, arch: Tuple[str, ...], image_uri: str) -> None:
     """Persist a verified image URI to the SQLite cache."""
     try:
@@ -142,26 +165,10 @@ class PersistentCacheImageChecker(ImageChecker):
     async def image_exists(
         cls, repository: str, tag: str, arch: Tuple[Architecture, ...] = ("linux/amd64",)
     ) -> Optional[str]:
-        try:
-            conn = _get_cache_db()
-            try:
-                cutoff = time.time() - _IMAGE_CACHE_TTL_DAYS * 86400
-                row = conn.execute(
-                    "SELECT image_uri FROM image_cache WHERE key = ? AND created_at > ?",
-                    (_cache_key(repository, tag, arch), cutoff),
-                ).fetchone()
-                # Prune expired entries ~5% of the time to avoid doing it on every read
-                if random.random() < 0.05:
-                    conn.execute("DELETE FROM image_cache WHERE created_at <= ?", (cutoff,))
-                    conn.commit()
-                if row:
-                    logger.debug(f"Image {row[0]} found in persistent cache")
-                    return row[0]
-            finally:
-                conn.close()
-        except (OSError, sqlite3.Error) as e:
-            logger.debug(f"Failed to read image cache: {e}")
-        return None
+        uri = _read_image_cache(repository, tag, arch)
+        if uri:
+            logger.debug(f"Image {uri} found in persistent cache")
+        return uri
 
 
 class LocalDockerCommandImageChecker(ImageChecker):
