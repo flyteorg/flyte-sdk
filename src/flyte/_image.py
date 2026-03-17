@@ -205,6 +205,7 @@ class UVProject(PipOption, Layer):
         super().validate()
 
     def update_hash(self, hasher: hashlib._Hash):
+        from ._code_bundle._ignore import DockerfileIgnore
         from ._utils import filehash_update, update_hasher_for_source
 
         super().update_hash(hasher)
@@ -213,7 +214,8 @@ class UVProject(PipOption, Layer):
                 filehash_update(self.uvlock, hasher)
             filehash_update(self.pyproject, hasher)
         else:
-            update_hasher_for_source(self.pyproject.parent, hasher)
+            project_dir = self.pyproject.parent
+            update_hasher_for_source(project_dir, hasher, ignore=DockerfileIgnore(project_dir))
 
 
 @rich.repr.auto
@@ -369,9 +371,11 @@ class CopyConfig(Layer):
             raise ValueError(f"Source file {self.src.absolute()} is not a file")
 
     def update_hash(self, hasher: hashlib._Hash):
+        from ._code_bundle._ignore import DockerfileIgnore
         from ._utils import update_hasher_for_source
 
-        update_hasher_for_source(self.src, hasher)
+        ignore = DockerfileIgnore(self.src) if self.src.is_dir() else None
+        update_hasher_for_source(self.src, hasher, ignore=ignore)
         if self.dst:
             hasher.update(self.dst.encode("utf-8"))
 

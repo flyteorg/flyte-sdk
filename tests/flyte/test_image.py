@@ -311,6 +311,77 @@ def test_uv_project_optional_uvlock():
         assert hash1 != hash2
 
 
+def test_copy_config_update_hash_respects_dockerignore(tmp_path):
+    """CopyConfig.update_hash must exclude files matched by .dockerignore."""
+    import hashlib
+
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.txt").write_text("hello")
+    (src / "b.txt").write_text("world")
+    (src / "c.txt").write_text("data")
+
+    # Hash without any .dockerignore — all three files included
+    h_all = hashlib.md5()
+    CopyConfig(path_type=1, src=src, dst="/app").update_hash(h_all)
+    digest_all = h_all.hexdigest()
+
+    # Add a .dockerignore that excludes c.txt
+    (src / ".dockerignore").write_text("c.txt\n")
+
+    h_ignored = hashlib.md5()
+    CopyConfig(path_type=1, src=src, dst="/app").update_hash(h_ignored)
+    digest_ignored = h_ignored.hexdigest()
+
+    # Hash must differ because c.txt is excluded (and .dockerignore itself is now included)
+    assert digest_all != digest_ignored
+
+
+def test_copy_config_dockerignore_itself_is_hashed(tmp_path):
+    """Changing .dockerignore content must change the hash (PatternMatcher always includes it)."""
+    import hashlib
+
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.txt").write_text("hello")
+    (src / ".dockerignore").write_text("*.log\n")
+
+    h1 = hashlib.md5()
+    CopyConfig(path_type=1, src=src, dst="/app").update_hash(h1)
+
+    # Change .dockerignore content — hash must change because the file content changed
+    (src / ".dockerignore").write_text("*.log\n*.tmp\n")
+    h2 = hashlib.md5()
+    CopyConfig(path_type=1, src=src, dst="/app").update_hash(h2)
+
+    assert h1.hexdigest() != h2.hexdigest()
+
+
+def test_uv_project_install_project_respects_dockerignore(tmp_path):
+    """UVProject (install_project mode) must exclude files matched by .dockerignore."""
+    import hashlib
+
+    from flyte._image import UVProject
+
+    project_dir = tmp_path / "myproject"
+    project_dir.mkdir()
+    (project_dir / "pyproject.toml").write_text("[project]\nname='p'\nversion='0.1.0'")
+    (project_dir / "main.py").write_text("print('hello')")
+    (project_dir / "data.bin").write_text("big data")
+
+    h_all = hashlib.md5()
+    UVProject(pyproject=project_dir / "pyproject.toml", project_install_mode="install_project").update_hash(h_all)
+    digest_all = h_all.hexdigest()
+
+    # Add .dockerignore to exclude data.bin
+    (project_dir / ".dockerignore").write_text("data.bin\n")
+
+    h_ignored = hashlib.md5()
+    UVProject(pyproject=project_dir / "pyproject.toml", project_install_mode="install_project").update_hash(h_ignored)
+
+    assert digest_all != h_ignored.hexdigest()
+
+
 def test_dockerignore_hash_changes_with_content(tmp_path):
     """Changing .dockerignore contents must produce a different hash."""
     import hashlib
