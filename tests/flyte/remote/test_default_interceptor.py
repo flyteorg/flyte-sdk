@@ -13,6 +13,7 @@ from flyte.remote._client.auth._grpc_utils.default_metadata_interceptor import (
     DefaultMetadataUnaryStreamInterceptor,
     DefaultMetadataUnaryUnaryInterceptor,
     _generate_request_id,
+    with_metadata,
 )
 from flyte.report import Report
 
@@ -57,6 +58,28 @@ def mock_call_details_with_metadata():
         credentials=None,
         wait_for_ready=False,
     )
+
+
+class TestWithMetadata:
+    """Tests for with_metadata merging logic."""
+
+    def test_with_metadata_merges_entries(self):
+        """Test that with_metadata correctly iterates and merges metadata from both sources."""
+        call_details = ClientCallDetails(
+            method="/test.Service/TestMethod",
+            timeout=30.0,
+            metadata=Metadata(("key-a", "val-a"), ("key-b", "val-b")),
+            credentials=None,
+            wait_for_ready=False,
+        )
+        new_metadata = Metadata(("key-c", "val-c"))
+
+        result = with_metadata(call_details, new_metadata)
+
+        merged = list(result.metadata)
+        assert ("key-a", "val-a") in merged
+        assert ("key-b", "val-b") in merged
+        assert ("key-c", "val-c") in merged
 
 
 class TestRequestIdGeneration:

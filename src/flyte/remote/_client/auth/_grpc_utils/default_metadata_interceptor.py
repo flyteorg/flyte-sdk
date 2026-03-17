@@ -35,10 +35,10 @@ def _generate_request_id() -> str:
 
 def with_metadata(call_details: ClientCallDetails, new_metadata: Metadata) -> ClientCallDetails:
     metadata = Metadata()
-    for k, v in call_details.metadata.keys():
+    for k, v in call_details.metadata:
         # Add existing metadata to the new metadata object
         metadata.add(key=k, value=v)
-    for k, v in new_metadata.keys():
+    for k, v in new_metadata:
         metadata.add(key=k, value=v)
 
     # return call_details._replace(metadata=metadata), None
