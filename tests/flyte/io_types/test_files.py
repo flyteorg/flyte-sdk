@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 import filecmp
+import io
 import os
 import tempfile
 from typing import Optional
+from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
 from mashumaro.jsonschema.models import JSONSchema
 
 import flyte
-from flyte.io._file import File, FileTransformer
+from flyte.io._file import _COPY_BUFSIZE, File, FileTransformer
 from flyte.io._hashing_io import HashlibAccumulator
 from flyte.storage import S3
 from flyte.types import TypeEngine
@@ -568,3 +570,118 @@ async def test_file_without_lazy_uploader_uses_existing_path():
 
     # The literal should contain the original remote path
     assert lv.scalar.blob.uri == "s3://bucket/remote_file.txt"
+
+
+def test_download_sync_reads_remote_file_in_chunks(tmp_path):
+    """download_sync should stream remote files in chunks via shutil.copyfileobj,
+    not load the entire file into memory with a single read()."""
+    flyte.init()
+
+    file_content = b"A" * 100
+    src_buf = io.BytesIO(file_content)
+
+    mock_fs = MagicMock()
+    mock_fs.protocol = ("s3",)
+    mock_fs.open.return_value.__enter__ = MagicMock(return_value=src_buf)
+    mock_fs.open.return_value.__exit__ = MagicMock(return_value=False)
+
+    remote_file = File(path="s3://bucket/large_file.bin")
+    local_target = str(tmp_path / "downloaded.bin")
+
+    with patch("flyte.storage.get_underlying_filesystem", return_value=mock_fs):
+        result = remote_file.download_sync(local_target)
+
+    assert result == local_target
+    with open(local_target, "rb") as f:
+        assert f.read() == file_content
+
+
+def test_download_sync_reads_large_remote_file_in_chunks(tmp_path):
+    """Verify that a file larger than _COPY_BUFSIZE is read incrementally."""
+    flyte.init()
+
+    file_content = os.urandom(_COPY_BUFSIZE + 1024)
+    src_buf = io.BytesIO(file_content)
+    original_read = src_buf.read
+
+    max_read_size = 0
+
+    def tracking_read(size=-1):
+        nonlocal max_read_size
+        if size > 0:
+            max_read_size = max(max_read_size, size)
+        return original_read(size)
+
+    src_buf.read = tracking_read
+
+    mock_fs = MagicMock()
+    mock_fs.protocol = ("gs",)
+    mock_fs.open.return_value.__enter__ = MagicMock(return_value=src_buf)
+    mock_fs.open.return_value.__exit__ = MagicMock(return_value=False)
+
+    remote_file = File(path="gs://bucket/large_file.bin")
+    local_target = str(tmp_path / "downloaded.bin")
+
+    with patch("flyte.storage.get_underlying_filesystem", return_value=mock_fs):
+        result = remote_file.download_sync(local_target)
+
+    assert result == local_target
+    with open(local_target, "rb") as f:
+        assert f.read() == file_content
+    assert max_read_size <= _COPY_BUFSIZE, f"read() was called with size {max_read_size}, expected <= {_COPY_BUFSIZE}"
+
+
+def test_from_local_sync_with_hash_on_local_files():
+    """from_local_sync with a HashMethod should compute the hash via chunked copy."""
+    flyte.init()
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        local_path = os.path.join(temp_dir, "source.txt")
+        remote_path = os.path.join(temp_dir, "destination.txt")
+
+        with open(local_path, "w") as f:
+            f.write(TEST_CONTENT)
+
+        acc = HashlibAccumulator.from_hash_name("sha256")
+        result = File.from_local_sync(local_path, remote_path, hash_method=acc)
+
+        assert result.path == remote_path
+        assert result.hash == TEST_SHA256
+        with result.open_sync() as f:
+            content = f.read()
+        assert content.decode("utf-8") == TEST_CONTENT
+
+
+def test_from_local_sync_uploads_remote_in_chunks(tmp_path):
+    """from_local_sync should stream to remote storage in chunks, not read entire file."""
+    flyte.init()
+
+    file_content = os.urandom(_COPY_BUFSIZE + 512)
+    local_file = tmp_path / "source.bin"
+    local_file.write_bytes(file_content)
+
+    written_chunks: list[bytes] = []
+
+    class FakeRemoteWriter:
+        def write(self, data):
+            written_chunks.append(bytes(data))
+
+        def close(self):
+            pass
+
+    fake_writer = FakeRemoteWriter()
+
+    mock_fs = MagicMock()
+    mock_fs.protocol = ("s3",)
+    mock_fs.open.return_value.__enter__ = MagicMock(return_value=fake_writer)
+    mock_fs.open.return_value.__exit__ = MagicMock(return_value=False)
+
+    with patch("flyte.storage.get_underlying_filesystem", return_value=mock_fs):
+        with patch("flyte.storage.is_remote", return_value=True):
+            with patch("fsspec.utils.get_protocol", return_value="s3"):
+                result = File.from_local_sync(str(local_file), "s3://bucket/dest.bin")
+
+    assert result.path == "s3://bucket/dest.bin"
+    reassembled = b"".join(written_chunks)
+    assert reassembled == file_content
+    assert all(len(c) <= _COPY_BUFSIZE for c in written_chunks)
