@@ -5,7 +5,7 @@ from my_app.env import env
 from my_app.tasks import compute_stats, summarize
 
 MY_APP_ROOT = pathlib.Path(__file__).parent.parent.parent  # -> my_app/
-SRC_DIR = MY_APP_ROOT / "src"  # -> my_app/src/
+PROJECT_ROOT = MY_APP_ROOT.parent  # -> uv_monorepo_guide/
 
 
 @env.task
@@ -16,7 +16,7 @@ async def stats_pipeline(values: list[float]) -> str:
 
 if __name__ == "__main__":
     # my_lib is installed in the image; root_dir only needs to cover my_app source
-    flyte.init_from_config(root_dir=SRC_DIR)
+    flyte.init_from_config(root_dir=PROJECT_ROOT)
 
     # Development -- run a task directly, code bundle handles source delivery
     run = flyte.run(stats_pipeline, values=[1.0, 2.0, 3.0, 4.0, 5.0])
