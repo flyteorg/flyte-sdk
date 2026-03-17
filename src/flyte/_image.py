@@ -575,6 +575,11 @@ class Image:
             if dev_mode:
                 if os.path.exists(DIST_FOLDER):
                     image = image.with_local_v2()
+                else:
+                    raise FileNotFoundError(
+                        f"Dev mode detected (version={flyte_version}) but '{DIST_FOLDER}' not found. "
+                        f"Run 'uv build' to create a distribution wheel before building images."
+                    )
             else:
                 flyte_version = typing.cast(str, flyte_version)
                 if Version(flyte_version).is_devrelease or Version(flyte_version).is_prerelease:
