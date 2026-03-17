@@ -531,7 +531,6 @@ class Image:
     ) -> Image:
         # Would love a way to move this outside of this class (but still needs to be accessible via Image.auto())
         # this default image definition may need to be updated once there is a released pypi version
-        from packaging.version import Version
 
         from flyte._version import __version__
 
