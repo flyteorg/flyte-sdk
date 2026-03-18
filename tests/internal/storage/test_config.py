@@ -207,19 +207,40 @@ class TestGCSConfig:
     def test_get_fsspec_kwargs_default(self):
         gcs = GCS()
         result = gcs.get_fsspec_kwargs()
-        assert result == {}
+
+        assert "client_options" in result
+        assert result["client_options"]["timeout"] == "99999s"
+        assert result["client_options"]["allow_http"] is True
+        assert "retry_config" in result
+        assert result["retry_config"]["max_retries"] == 3
         assert "anonymous" not in result
 
     def test_get_fsspec_kwargs_with_anonymous(self):
         gcs = GCS()
         result = gcs.get_fsspec_kwargs(anonymous=True)
-        assert result == {}
+
+        assert "config" in result
+        assert result["config"].get("skip_signature") is True
+        assert "client_options" in result
+        assert "retry_config" in result
         assert "anonymous" not in result
 
     def test_get_fsspec_kwargs_with_custom_params(self):
         gcs = GCS()
         result = gcs.get_fsspec_kwargs(token="test-token", project="test-project")
-        assert result == {"token": "test-token", "project": "test-project"}
+        assert result["token"] == "test-token"
+        assert result["project"] == "test-project"
+        assert "client_options" in result
+        assert "retry_config" in result
+        assert "anonymous" not in result
+
+    def test_get_fsspec_kwargs_retries_backoff_override(self):
+        custom_backoff = datetime.timedelta(seconds=10)
+        gcs = GCS(retries=3, backoff=datetime.timedelta(seconds=5))
+        result = gcs.get_fsspec_kwargs(retries=5, backoff=custom_backoff)
+
+        assert result["retry_config"]["max_retries"] == 5
+        assert result["retry_config"]["backoff"]["init_backoff"] == custom_backoff
         assert "anonymous" not in result
 
 
@@ -232,6 +253,8 @@ class TestABFSConfig:
         assert "client_options" in result
         assert result["client_options"]["timeout"] == "99999s"
         assert result["client_options"]["allow_http"] is True
+        assert "retry_config" in result
+        assert result["retry_config"]["max_retries"] == 3
         assert "anonymous" not in result
 
     def test_get_fsspec_kwargs_with_credentials(self):

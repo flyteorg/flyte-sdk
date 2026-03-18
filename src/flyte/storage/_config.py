@@ -221,22 +221,40 @@ class GCS(Storage):
     Any GCS specific configuration.
     """
 
-    gsutil_parallelism: bool = False
-
-    _KEY_ENV_VAR_MAPPING: ClassVar[dict[str, str]] = {
-        "gsutil_parallelism": "GCP_GSUTIL_PARALLELISM",
-    }
+    _KEY_ENV_VAR_MAPPING: ClassVar[dict[str, str]] = {} | Storage._KEY_ENV_VAR_MAPPING
+    _KEY_SKIP_SIGNATURE: ClassVar = "skip_signature"
 
     @classmethod
     def auto(cls) -> GCS:
-        gsutil_parallelism = os.getenv(cls._KEY_ENV_VAR_MAPPING["gsutil_parallelism"], None)
-
-        kwargs: typing.Dict[str, typing.Any] = {}
-        kwargs = set_if_exists(kwargs, "gsutil_parallelism", gsutil_parallelism)
+        kwargs = super()._auto_as_kwargs()
         return GCS(**kwargs)
 
     def get_fsspec_kwargs(self, anonymous: bool = False, **kwargs) -> typing.Dict[str, typing.Any]:
-        kwargs.pop("anonymous", None)
+        kwargs.pop("anonymous", None)  # Remove anonymous if it exists
+        config: typing.Dict[str, typing.Any] = {}
+
+        if anonymous:
+            config[self._KEY_SKIP_SIGNATURE] = True
+
+        retries = kwargs.pop("retries", self.retries)
+        backoff = kwargs.pop("backoff", self.backoff)
+
+        retry_config = {
+            "max_retries": retries,
+            "backoff": {
+                "base": 2,
+                "init_backoff": backoff,
+                "max_backoff": datetime.timedelta(seconds=16),
+            },
+            "retry_timeout": datetime.timedelta(minutes=3),
+        }
+
+        client_options = {"timeout": "99999s", "allow_http": True}
+
+        if config:
+            kwargs["config"] = config
+        kwargs["client_options"] = client_options
+        kwargs["retry_config"] = retry_config
         return kwargs
 
 
@@ -294,10 +312,24 @@ class ABFS(Storage):
         if anonymous:
             config[self._KEY_SKIP_SIGNATURE] = True
 
+        retries = kwargs.pop("retries", self.retries)
+        backoff = kwargs.pop("backoff", self.backoff)
+
+        retry_config = {
+            "max_retries": retries,
+            "backoff": {
+                "base": 2,
+                "init_backoff": backoff,
+                "max_backoff": datetime.timedelta(seconds=16),
+            },
+            "retry_timeout": datetime.timedelta(minutes=3),
+        }
+
         client_options = {"timeout": "99999s", "allow_http": True}
 
         if config:
             kwargs["config"] = config
         kwargs["client_options"] = client_options
+        kwargs["retry_config"] = retry_config
 
         return kwargs
