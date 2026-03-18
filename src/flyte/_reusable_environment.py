@@ -17,8 +17,7 @@ class ReusePolicy:
     Total concurrent capacity is `max_replicas * concurrency`. For example,
     `ReusePolicy(replicas=(1, 3), concurrency=2)` supports up to 6 concurrent tasks.
 
-    .. caution::
-        The environment is shared across invocations — manage memory and resources carefully.
+    Caution: The environment is shared across invocations — manage memory and resources carefully.
 
     Example:
 
