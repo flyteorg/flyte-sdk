@@ -8,7 +8,7 @@ from abc import abstractmethod
 from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar, Dict, List, Literal, Optional, Tuple, TypeVar, Union
+from typing import TYPE_CHECKING, Any, ClassVar, Dict, List, Literal, Optional, Tuple, TypeVar, Union
 
 import rich.repr
 
@@ -74,11 +74,12 @@ class Layer:
                         )
 
     @abstractmethod
-    def update_hash(self, hasher: hashlib._Hash):
+    def update_hash(self, hasher: hashlib._Hash, ignore: Optional[Any] = None):
         """
         This method should be implemented by subclasses to provide a hash representation of the layer.
 
         :param hasher: The hash object to update with the layer's data.
+        :param ignore: Optional ignore instance threaded from Image._get_hash_digest().
         """
 
     def validate(self):
@@ -112,7 +113,7 @@ class PipOption:
             pip_install_args.append(self.extra_args)
         return pip_install_args
 
-    def update_hash(self, hasher: hashlib._Hash):
+    def update_hash(self, hasher: hashlib._Hash, ignore: Optional[Any] = None):
         """
         Update the hash with the PipOption
         """
@@ -141,11 +142,11 @@ class PipPackages(PipOption, Layer):
     def __post_init__(self):
         super().__post_init__()
 
-    def update_hash(self, hasher: hashlib._Hash):
+    def update_hash(self, hasher: hashlib._Hash, ignore: Optional[Any] = None):
         """
         Update the hash with the pip packages
         """
-        super().update_hash(hasher)
+        super().update_hash(hasher, ignore=ignore)
         hash_input = ""
         if self.packages:
             for package in self.packages:
@@ -164,8 +165,8 @@ class PythonWheels(PipOption, Layer):
     def __post_init__(self):
         object.__setattr__(self, "wheel_dir_name", self.wheel_dir.name)
 
-    def update_hash(self, hasher: hashlib._Hash):
-        super().update_hash(hasher)
+    def update_hash(self, hasher: hashlib._Hash, ignore: Optional[Any] = None):
+        super().update_hash(hasher, ignore=ignore)
         from ._utils import filehash_update
 
         # Iterate through all the wheel files in the directory and update the hash
@@ -181,10 +182,10 @@ class PythonWheels(PipOption, Layer):
 class Requirements(PipPackages):
     file: Path
 
-    def update_hash(self, hasher: hashlib._Hash):
+    def update_hash(self, hasher: hashlib._Hash, ignore: Optional[Any] = None):
         from ._utils import filehash_update
 
-        super().update_hash(hasher)
+        super().update_hash(hasher, ignore=ignore)
         filehash_update(self.file, hasher)
 
 
@@ -204,18 +205,20 @@ class UVProject(PipOption, Layer):
             raise ValueError(f"UVLock file {self.uvlock.resolve()} does not exist")
         super().validate()
 
-    def update_hash(self, hasher: hashlib._Hash):
+    def update_hash(self, hasher: hashlib._Hash, ignore: Optional[Any] = None):
         from ._code_bundle._ignore import DockerfileIgnore
         from ._utils import filehash_update, update_hasher_for_source
 
-        super().update_hash(hasher)
+        super().update_hash(hasher, ignore=ignore)
         if self.project_install_mode == "dependencies_only":
             if self.uvlock is not None:
                 filehash_update(self.uvlock, hasher)
             filehash_update(self.pyproject, hasher)
         else:
             project_dir = self.pyproject.parent
-            update_hasher_for_source(project_dir, hasher, ignore=DockerfileIgnore(project_dir))
+            if ignore is None:
+                ignore = DockerfileIgnore(project_dir)
+            update_hasher_for_source(project_dir, hasher, ignore=ignore)
 
 
 @rich.repr.auto
@@ -240,7 +243,7 @@ class PoetryProject(Layer):
             raise ValueError(f"poetry.lock file {self.poetry_lock} does not exist")
         super().validate()
 
-    def update_hash(self, hasher: hashlib._Hash):
+    def update_hash(self, hasher: hashlib._Hash, ignore: Optional[Any] = None):
         from ._utils import filehash_update, update_hasher_for_source
 
         hash_input = ""
@@ -255,7 +258,7 @@ class PoetryProject(Layer):
             filehash_update(self.poetry_lock, hasher)
             filehash_update(self.pyproject, hasher)
         else:
-            update_hasher_for_source(self.pyproject.parent, hasher)
+            update_hasher_for_source(self.pyproject.parent, hasher, ignore=ignore)
 
 
 @rich.repr.auto
@@ -276,14 +279,14 @@ class UVScript(PipOption, Layer):
             raise ValueError(f"UV script {self.script} must have a .py extension")
         super().validate()
 
-    def update_hash(self, hasher: hashlib._Hash):
+    def update_hash(self, hasher: hashlib._Hash, ignore: Optional[Any] = None):
         from ._utils import parse_uv_script_file
 
         header = parse_uv_script_file(self.script)
         h_tuple = _ensure_tuple(header)
         if h_tuple:
             hasher.update(h_tuple.__str__().encode("utf-8"))
-        super().update_hash(hasher)
+        super().update_hash(hasher, ignore=ignore)
         if header.pyprojects:
             for pyproject in header.pyprojects:
                 uvlock_path = Path(pyproject) / "uv.lock"
@@ -291,7 +294,7 @@ class UVScript(PipOption, Layer):
                     pyproject=Path(pyproject) / "pyproject.toml",
                     uvlock=uvlock_path if uvlock_path.exists() else None,
                     project_install_mode="install_project",
-                ).update_hash(hasher)
+                ).update_hash(hasher, ignore=ignore)
 
 
 @rich.repr.auto
@@ -303,7 +306,7 @@ class AptPackages(Layer):
     def __post_init__(self):
         super().__post_init__()
 
-    def update_hash(self, hasher: hashlib._Hash):
+    def update_hash(self, hasher: hashlib._Hash, ignore: Optional[Any] = None):
         hash_input = "".join(self.packages)
 
         if self.secret_mounts:
@@ -318,7 +321,7 @@ class Commands(Layer):
     commands: Tuple[str, ...]
     secret_mounts: Optional[Tuple[str | Secret, ...]] = None
 
-    def update_hash(self, hasher: hashlib._Hash):
+    def update_hash(self, hasher: hashlib._Hash, ignore: Optional[Any] = None):
         hash_input = "".join(self.commands)
 
         if self.secret_mounts:
@@ -332,7 +335,7 @@ class Commands(Layer):
 class WorkDir(Layer):
     workdir: str
 
-    def update_hash(self, hasher: hashlib._Hash):
+    def update_hash(self, hasher: hashlib._Hash, ignore: Optional[Any] = None):
         hasher.update(self.workdir.encode("utf-8"))
 
 
@@ -341,7 +344,7 @@ class WorkDir(Layer):
 class DockerIgnore(Layer):
     path: str
 
-    def update_hash(self, hasher: hashlib._Hash):
+    def update_hash(self, hasher: hashlib._Hash, ignore: Optional[Any] = None):
         from ._utils import filehash_update
 
         path = Path(self.path)
@@ -370,11 +373,12 @@ class CopyConfig(Layer):
         if not self.src.is_file() and self.path_type == 0:
             raise ValueError(f"Source file {self.src.absolute()} is not a file")
 
-    def update_hash(self, hasher: hashlib._Hash):
+    def update_hash(self, hasher: hashlib._Hash, ignore: Optional[Any] = None):
         from ._code_bundle._ignore import DockerfileIgnore
         from ._utils import update_hasher_for_source
 
-        ignore = DockerfileIgnore(self.src) if self.src.is_dir() else None
+        if ignore is None and self.src.is_dir():
+            ignore = DockerfileIgnore(self.src)
         update_hasher_for_source(self.src, hasher, ignore=ignore)
         if self.dst:
             hasher.update(self.dst.encode("utf-8"))
@@ -394,7 +398,7 @@ class CodeBundleLayer(Layer):
     dst: str = "."
     root_dir: Optional[Path] = None
 
-    def update_hash(self, hasher: hashlib._Hash):
+    def update_hash(self, hasher: hashlib._Hash, ignore: Optional[Any] = None):
         hasher.update(f"code_bundle:{self.copy_style}:{self.dst}".encode("utf-8"))
         if self.root_dir is not None:
             from ._utils import update_hasher_for_source
@@ -404,10 +408,10 @@ class CodeBundleLayer(Layer):
 
                 files = list_imported_modules_as_files(str(self.root_dir), list(sys.modules.values()))
                 files.sort()
-                update_hasher_for_source([Path(f) for f in files], hasher)
+                update_hasher_for_source([Path(f) for f in files], hasher, ignore=ignore)
             else:
                 # "all" — hash the entire root_dir
-                update_hasher_for_source(self.root_dir, hasher)
+                update_hasher_for_source(self.root_dir, hasher, ignore=ignore)
         else:
             raise ValueError("root_dir not set for CodeBundleLayer")
 
@@ -425,7 +429,7 @@ class _DockerLines(Layer):
 
     lines: Tuple[str, ...]
 
-    def update_hash(self, hasher: hashlib._Hash):
+    def update_hash(self, hasher: hashlib._Hash, ignore: Optional[Any] = None):
         hasher.update("".join(self.lines).encode("utf-8"))
 
 
@@ -439,7 +443,7 @@ class Env(Layer):
 
     env_vars: Tuple[Tuple[str, str], ...] = field(default_factory=tuple)
 
-    def update_hash(self, hasher: hashlib._Hash):
+    def update_hash(self, hasher: hashlib._Hash, ignore: Optional[Any] = None):
         txt = [f"{k}={v}" for k, v in self.env_vars]
         hasher.update(" ".join(txt).encode("utf-8"))
 
@@ -832,6 +836,29 @@ class Image:
 
         from ._utils import filehash_update
 
+        # Resolve dockerignore once — same logic as get_and_list_dockerignore().
+        # Last DockerIgnore layer wins; fall back to root_dir/.dockerignore from init config.
+        dockerignore_path = None
+        for layer in self._layers:
+            if isinstance(layer, DockerIgnore) and layer.path.strip():
+                dockerignore_path = Path(layer.path)
+
+        if dockerignore_path is None:
+            try:
+                from ._initialize import _get_init_config
+
+                init_config = _get_init_config()
+                if init_config and init_config.root_dir:
+                    dockerignore_path = Path(init_config.root_dir) / ".dockerignore"
+            except Exception:
+                pass
+
+        ignore = None
+        if dockerignore_path and dockerignore_path.exists() and dockerignore_path.is_file():
+            from ._code_bundle._ignore import DockerfileIgnore
+
+            ignore = DockerfileIgnore(dockerignore_path.parent)
+
         hasher = hashlib.md5()
         if self.base_image:
             hasher.update(self.base_image.encode("utf-8"))
@@ -840,7 +867,7 @@ class Image:
             filehash_update(self.dockerfile, hasher)
         if self._layers:
             for layer in self._layers:
-                layer.update_hash(hasher)
+                layer.update_hash(hasher, ignore=ignore)
         return hasher.hexdigest()
 
     @property

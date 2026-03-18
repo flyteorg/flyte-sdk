@@ -382,6 +382,46 @@ def test_uv_project_install_project_respects_dockerignore(tmp_path):
     assert digest_all != h_ignored.hexdigest()
 
 
+def test_copy_config_respects_dockerignore_from_image_layer(tmp_path):
+    """
+    .dockerignore specified via with_dockerignore() at the project root must be
+    respected by CopyConfig even when src is a subdirectory.
+
+    The pattern is relative to the .dockerignore location (project root), so
+    a file at project/src/data.bin is excluded by the pattern 'src/data.bin'.
+    Both images share the same DockerIgnore layer so only the CopyConfig hash differs.
+    """
+    from flyte._image import Image
+
+    project = tmp_path / "project"
+    project.mkdir()
+    src = project / "src"
+    src.mkdir()
+    (src / "main.py").write_text("print('hello')")
+    (src / "data.bin").write_text("big data")
+
+    # .dockerignore is at project root, NOT inside src/.
+    # Pattern is relative to the project root.
+    di = project / ".dockerignore"
+    di.write_text("src/data.bin\n")
+
+    img = Image.from_debian_base(registry="localhost", name="test").with_dockerignore(di).with_source_folder(src)
+
+    # Reference: same dockerignore layer + same dst name, but src has no data.bin.
+    # Use the same directory name so with_source_folder produces the same dst.
+    project2 = tmp_path / "project2"
+    project2.mkdir()
+    src_clean = project2 / "src"
+    src_clean.mkdir()
+    (src_clean / "main.py").write_text("print('hello')")
+
+    img_clean = (
+        Image.from_debian_base(registry="localhost", name="test").with_dockerignore(di).with_source_folder(src_clean)
+    )
+
+    assert img.uri == img_clean.uri
+
+
 def test_dockerignore_hash_changes_with_content(tmp_path):
     """Changing .dockerignore contents must produce a different hash."""
     import hashlib
