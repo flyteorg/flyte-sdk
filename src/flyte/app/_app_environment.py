@@ -36,29 +36,29 @@ class AppEnvironment(Environment):
     )
     ```
 
-    :param type: App type identifier (e.g., ``"streamlit"``, ``"fastapi"``). When set,
+    :param type: App type identifier (e.g., `"streamlit"`, `"fastapi"`). When set,
         the platform may apply framework-specific defaults.
-    :param port: Port for the app server. Default ``8080``. Ports 8012, 8022, 8112, 9090,
-        and 9091 are reserved and cannot be used. Can also be a ``Port`` object for
+    :param port: Port for the app server. Default `8080`. Ports 8012, 8022, 8112, 9090,
+        and 9091 are reserved and cannot be used. Can also be a `Port` object for
         advanced configuration.
     :param args: Arguments passed to the app process. Can be a list of strings or a
         single string. Used for script-based apps (e.g., Streamlit's
-        ``["--server.port", "8080"]``).
-    :param command: Full command to run in the container. Alternative to ``args`` —
+        `["--server.port", "8080"]`).
+    :param command: Full command to run in the container. Alternative to `args` —
         use when you need to override the container's entrypoint entirely.
     :param requires_auth: Whether the app endpoint requires authentication.
-        Default ``True``. Set to ``False`` for public endpoints.
-    :param scaling: ``Scaling`` object controlling replicas and autoscaling behavior.
-        Default is ``Scaling()`` (scale-to-zero, max 1 replica).
-    :param domain: ``Domain`` object for custom domain configuration.
-    :param links: List of ``Link`` objects for connecting to other environments.
+        Default `True`. Set to `False` for public endpoints.
+    :param scaling: `Scaling` object controlling replicas and autoscaling behavior.
+        Default is `Scaling()` (scale-to-zero, max 1 replica).
+    :param domain: `Domain` object for custom domain configuration.
+    :param links: List of `Link` objects for connecting to other environments.
     :param include: List of additional file paths to bundle with the app
         (e.g., utility modules, config files, data files).
-    :param parameters: List of ``Parameter`` objects for app inputs. Use ``RunOutput``
-        to connect app parameters to task outputs, or ``AppEndpoint`` to reference
+    :param parameters: List of `Parameter` objects for app inputs. Use `RunOutput`
+        to connect app parameters to task outputs, or `AppEndpoint` to reference
         other app endpoints.
-    :param cluster_pool: Cluster pool for scheduling. Default ``"default"``.
-    :param timeouts: ``Timeouts`` object for startup/health check timeouts.
+    :param cluster_pool: Cluster pool for scheduling. Default `"default"`.
+    :param timeouts: `Timeouts` object for startup/health check timeouts.
     :param name: Name of the app (required). Must be lowercase alphanumeric with hyphens.
         Inherited from Environment.
     :param image: Docker image for the environment. Inherited from Environment.

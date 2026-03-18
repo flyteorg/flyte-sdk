@@ -14,7 +14,7 @@ class FunctionBodyPolicy(CachePolicy):
     any change to the function source code automatically invalidates the cache,
     while unchanged functions continue to use cached results.
 
-    This is the default policy used when ``Cache(behavior="auto")`` is specified.
+    This is the default policy used when `Cache(behavior="auto")` is specified.
     """
 
     def get_version(self, salt: str, params: VersionParameters) -> str:

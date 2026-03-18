@@ -14,8 +14,8 @@ class ReusePolicy:
     keep a pool of warm containers ready, avoiding cold-start overhead. The Python process
     may be reused by subsequent task invocations.
 
-    Total concurrent capacity is ``max_replicas * concurrency``. For example,
-    ``ReusePolicy(replicas=(1, 3), concurrency=2)`` supports up to 6 concurrent tasks.
+    Total concurrent capacity is `max_replicas * concurrency`. For example,
+    `ReusePolicy(replicas=(1, 3), concurrency=2)` supports up to 6 concurrent tasks.
 
     .. caution::
         The environment is shared across invocations — manage memory and resources carefully.
@@ -31,25 +31,25 @@ class ReusePolicy:
 
     :param replicas: Number of container replicas to maintain.
 
-        - ``int``: Fixed replica count, always running (e.g., ``replicas=3``).
-        - ``tuple(min, max)``: Auto-scaling range (e.g., ``replicas=(1, 5)``).
+        - `int`: Fixed replica count, always running (e.g., `replicas=3`).
+        - `tuple(min, max)`: Auto-scaling range (e.g., `replicas=(1, 5)`).
           Scales between min and max based on demand.
 
-        Default is ``2``. A minimum of 2 replicas is recommended to avoid starvation
+        Default is `2`. A minimum of 2 replicas is recommended to avoid starvation
         when the parent task occupies one replica.
 
     :param idle_ttl: Environment-level idle timeout — shuts down **all** replicas when the
-        entire environment has been idle for this duration. Specified as seconds (``int``)
-        or ``timedelta``. Minimum 30 seconds. Default is 30 seconds.
+        entire environment has been idle for this duration. Specified as seconds (`int`)
+        or `timedelta`. Minimum 30 seconds. Default is 30 seconds.
     :param concurrency: Maximum concurrent tasks per replica. Values greater than 1 are
-        only supported for ``async`` tasks. Default is ``1``.
+        only supported for `async` tasks. Default is `1`.
     :param scaledown_ttl: Per-replica scale-down delay — minimum time to wait before
         removing an **individual** idle replica. Prevents rapid scale-down when tasks
-        arrive in bursts. Specified as seconds (``int``) or ``timedelta``. Default is
+        arrive in bursts. Specified as seconds (`int`) or `timedelta`. Default is
         30 seconds.
 
-        Note the distinction: ``idle_ttl`` controls when the whole environment shuts down;
-        ``scaledown_ttl`` controls when individual replicas are removed during auto-scaling.
+        Note the distinction: `idle_ttl` controls when the whole environment shuts down;
+        `scaledown_ttl` controls when individual replicas are removed during auto-scaling.
     """
 
     replicas: Union[int, Tuple[int, int]] = 2

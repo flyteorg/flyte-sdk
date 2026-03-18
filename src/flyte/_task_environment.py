@@ -71,29 +71,29 @@ class TaskEnvironment(Environment):
     :param name: Name of the environment (required). Must be snake_case or kebab-case.
         TaskEnvironment level only.
     :param image: Docker image for the environment. Can be a string (image URI),
-        an ``Image`` object, or ``"auto"`` to use the default image.
+        an `Image` object, or `"auto"` to use the default image.
         TaskEnvironment level only.
     :param depends_on: List of other environments this one depends on. Used at deploy time
         to ensure dependencies are also deployed. TaskEnvironment level only.
     :param description: Human-readable description (max 255 characters).
         TaskEnvironment level only.
     :param plugin_config: Plugin configuration for custom task types (e.g., Ray, Spark).
-        Cannot be combined with ``reusable``. TaskEnvironment level only.
+        Cannot be combined with `reusable`. TaskEnvironment level only.
     :param resources: Compute resources (CPU, memory, GPU, disk). Overridable via
-        ``task.override(resources=...)`` when not using reusable containers.
-    :param env_vars: Environment variables as ``dict[str, str]``. Overridable via
-        ``task.override(env_vars=...)`` when not using reusable containers.
-    :param secrets: Secrets to inject. Overridable via ``task.override(secrets=...)``
+        `task.override(resources=...)` when not using reusable containers.
+    :param env_vars: Environment variables as `dict[str, str]`. Overridable via
+        `task.override(env_vars=...)` when not using reusable containers.
+    :param secrets: Secrets to inject. Overridable via `task.override(secrets=...)`
         when not using reusable containers.
-    :param cache: Cache policy — ``"auto"``, ``"override"``, ``"disable"``, or a ``Cache`` object.
-        Also settable in ``@env.task(cache=...)`` and ``task.override(cache=...)``.
-    :param reusable: ``ReusePolicy`` for container reuse. Also overridable via
-        ``task.override(reusable=...)``.
-    :param queue: Queue name for scheduling. Also settable in ``@env.task`` and ``task.override``.
+    :param cache: Cache policy — `"auto"`, `"override"`, `"disable"`, or a `Cache` object.
+        Also settable in `@env.task(cache=...)` and `task.override(cache=...)`.
+    :param reusable: `ReusePolicy` for container reuse. Also overridable via
+        `task.override(reusable=...)`.
+    :param queue: Queue name for scheduling. Also settable in `@env.task` and `task.override`.
     :param pod_template: Kubernetes pod template for advanced configuration (sidecars,
-        volumes, etc.). Also settable in ``@env.task`` and ``task.override``.
+        volumes, etc.). Also settable in `@env.task` and `task.override`.
     :param interruptible: Whether tasks can run on spot/preemptible instances. Also
-        settable in ``@env.task`` and ``task.override``.
+        settable in `@env.task` and `task.override`.
     """
 
     cache: CacheRequest = "disable"
@@ -362,9 +362,9 @@ class TaskEnvironment(Environment):
 
 
 class _SandboxNamespace:
-    """Namespace for sandbox operations on a ``TaskEnvironment``.
+    """Namespace for sandbox operations on a `TaskEnvironment`.
 
-    Accessed via ``env.sandbox``.  Provides a unified ``orchestrator()``
+    Accessed via `env.sandbox`.  Provides a unified `orchestrator()`
     method that acts as a decorator (when given a callable), a code-string
     task factory (when given a string), or a decorator factory (when given
     only keyword arguments).
@@ -424,16 +424,16 @@ class _SandboxNamespace:
         cache: CacheRequest | None = None,
         retries: int = 0,
     ) -> Any:
-        """Unified sandbox orchestration on a ``TaskEnvironment``.
+        """Unified sandbox orchestration on a `TaskEnvironment`.
 
         Three usage modes:
 
-        1. **Decorator** (callable) — creates a ``SandboxedTaskTemplate``::
+        1. **Decorator** (callable) — creates a `SandboxedTaskTemplate`::
 
             @env.sandbox.orchestrator
             def pipeline(n: int) -> dict: ...
 
-        2. **Code string** — creates a ``CodeTaskTemplate``::
+        2. **Code string** — creates a `CodeTaskTemplate`::
 
             task = env.sandbox.orchestrator(
                 "add(x, y) * 2",

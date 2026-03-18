@@ -621,18 +621,18 @@ TriggerTime = _trigger_time()
 @dataclass(frozen=True)
 class Cron:
     """
-    Cron-based automation schedule for use with ``Trigger``.
+    Cron-based automation schedule for use with `Trigger`.
 
     Cron expressions use the standard five-field format:
-    ``minute hour day-of-month month day-of-week``
+    `minute hour day-of-month month day-of-week`
 
     Common patterns:
 
-    - ``"0 * * * *"`` — every hour (at minute 0)
-    - ``"0 0 * * *"`` — daily at midnight
-    - ``"0 0 * * 1"`` — weekly on Monday at midnight
-    - ``"0 0 1 * *"`` — monthly on the 1st at midnight
-    - ``"*/5 * * * *"`` — every 5 minutes
+    - `"0 * * * *"` — every hour (at minute 0)
+    - `"0 0 * * *"` — daily at midnight
+    - `"0 0 * * 1"` — weekly on Monday at midnight
+    - `"0 0 1 * *"` — monthly on the 1st at midnight
+    - `"*/5 * * * *"` — every 5 minutes
 
     Example:
 
@@ -644,9 +644,9 @@ class Cron:
     )
     ```
 
-    :param expression: Cron expression string (e.g., ``"0 * * * *"``).
-    :param timezone: Timezone for the cron schedule (default ``"UTC"``). One of the
-        standard timezone values (e.g., ``"US/Eastern"``, ``"Europe/London"``).
+    :param expression: Cron expression string (e.g., `"0 * * * *"`).
+    :param timezone: Timezone for the cron schedule (default `"UTC"`). One of the
+        standard timezone values (e.g., `"US/Eastern"`, `"Europe/London"`).
         Note that DST transitions may cause skipped or duplicated runs.
     """
 
@@ -665,9 +665,9 @@ class Cron:
 @dataclass(frozen=True)
 class FixedRate:
     """
-    Fixed-rate (interval-based) automation schedule for use with ``Trigger``.
+    Fixed-rate (interval-based) automation schedule for use with `Trigger`.
 
-    Unlike ``Cron``, which runs at specific clock times, ``FixedRate`` runs at a
+    Unlike `Cron`, which runs at specific clock times, `FixedRate` runs at a
     consistent interval regardless of clock time.
 
     Example:
@@ -680,10 +680,10 @@ class FixedRate:
     )
     ```
 
-    :param interval_minutes: Interval between trigger activations, in minutes (e.g., ``60`` for hourly,
-        ``1440`` for daily).
+    :param interval_minutes: Interval between trigger activations, in minutes (e.g., `60` for hourly,
+        `1440` for daily).
     :param start_time: Optional start time for the first trigger. Subsequent triggers follow the
-        interval from this point. If not set, the first trigger occurs ``interval_minutes`` after
+        interval from this point. If not set, the first trigger occurs `interval_minutes` after
         deployment/activation.
     """
 
@@ -701,12 +701,12 @@ class Trigger:
     Specification for a scheduled trigger that can be associated with any Flyte task.
 
     Triggers run tasks on a schedule (cron or fixed-rate). They are set only in the
-    ``@env.task`` decorator via the ``triggers`` parameter. The same ``Trigger`` object
+    `@env.task` decorator via the `triggers` parameter. The same `Trigger` object
     can be associated with multiple tasks.
 
-    Predefined convenience constructors are available: ``Trigger.hourly()``,
-    ``Trigger.daily()``, ``Trigger.weekly()``, ``Trigger.monthly()``, and
-    ``Trigger.minutely()``.
+    Predefined convenience constructors are available: `Trigger.hourly()`,
+    `Trigger.daily()`, `Trigger.weekly()`, `Trigger.monthly()`, and
+    `Trigger.minutely()`.
 
     Example:
 
@@ -724,18 +724,18 @@ class Trigger:
     ```
 
     :param name: Unique name for the trigger (required).
-    :param automation: Schedule type — ``Cron(...)`` or ``FixedRate(...)`` (required).
-    :param description: Human-readable description (max 255 characters). Default ``""``.
+    :param automation: Schedule type — `Cron(...)` or `FixedRate(...)` (required).
+    :param description: Human-readable description (max 255 characters). Default `""`.
     :param auto_activate: Whether to activate the trigger automatically on deployment.
-        Default ``True``.
-    :param inputs: Default input values for triggered runs. Use ``flyte.TriggerTime`` to
+        Default `True`.
+    :param inputs: Default input values for triggered runs. Use `flyte.TriggerTime` to
         bind the trigger's scheduled time to an input parameter.
     :param env_vars: Environment variables for triggered runs (overrides the task's
         configured values).
     :param interruptible: Whether triggered runs use spot/preemptible instances.
-        ``None`` (default) preserves the task's configured behavior. Overrides the
+        `None` (default) preserves the task's configured behavior. Overrides the
         task's configured value.
-    :param overwrite_cache: Force cache refresh on triggered runs. Default ``False``.
+    :param overwrite_cache: Force cache refresh on triggered runs. Default `False`.
     :param queue: Queue name for triggered runs (overrides the task's configured value).
     :param labels: Kubernetes labels to attach to triggered runs.
     :param annotations: Kubernetes annotations to attach to triggered runs.

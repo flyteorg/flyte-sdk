@@ -356,7 +356,7 @@ class Resources:
     """
     Resources such as CPU, Memory, and GPU that can be allocated to a task.
 
-    Set via ``TaskEnvironment(resources=...)`` or ``task.override(resources=...)``.
+    Set via `TaskEnvironment(resources=...)` or `task.override(resources=...)`.
 
     Examples:
 
@@ -376,33 +376,33 @@ class Resources:
 
     :param cpu: CPU allocation. Accepts several formats:
 
-        - ``int`` or ``float``: CPU cores (e.g., ``1``, ``0.5``)
-        - ``str``: Kubernetes-style (e.g., ``"500m"`` for 0.5 cores, ``"2"`` for 2 cores)
-        - ``tuple``: Request/limit range (e.g., ``(1, 4)`` requests 1 core, limits to 4)
+        - `int` or `float`: CPU cores (e.g., `1`, `0.5`)
+        - `str`: Kubernetes-style (e.g., `"500m"` for 0.5 cores, `"2"` for 2 cores)
+        - `tuple`: Request/limit range (e.g., `(1, 4)` requests 1 core, limits to 4)
 
     :param memory: Memory allocation using Kubernetes unit conventions:
 
-        - Binary units: ``"512Mi"``, ``"1Gi"``, ``"4Gi"``
-        - Decimal units: ``"500M"``, ``"1G"``
-        - ``tuple``: Request/limit range (e.g., ``("1Gi", "4Gi")``)
+        - Binary units: `"512Mi"`, `"1Gi"`, `"4Gi"`
+        - Decimal units: `"500M"`, `"1G"`
+        - `tuple`: Request/limit range (e.g., `("1Gi", "4Gi")`)
 
     :param gpu: GPU, TPU, or other accelerator allocation. Accepts:
 
-        - ``int``: GPU count, any available type (e.g., ``1``, ``4``)
-        - ``str``: Type and quantity (e.g., ``"T4:1"``, ``"A100:2"``, ``"H100:8"``)
-        - ``Device``: Advanced config via ``GPU()``, ``TPU()``, or ``Device()`` for partitioning
-          and custom device types. See ``GPU``, ``TPU``, ``Device`` for details.
+        - `int`: GPU count, any available type (e.g., `1`, `4`)
+        - `str`: Type and quantity (e.g., `"T4:1"`, `"A100:2"`, `"H100:8"`)
+        - `Device`: Advanced config via `GPU()`, `TPU()`, or `Device()` for partitioning
+          and custom device types. See `GPU`, `TPU`, `Device` for details.
 
         Supported GPU types include T4, L4, L40s, A10, A10G, A100, A100 80G, B200, H100, H200, V100.
         GPU partitioning (MIG) is available on A100, A100 80G, H100, and H200.
 
     :param disk: Ephemeral disk storage as a string with Kubernetes units
-        (e.g., ``"10Gi"``, ``"100Gi"``, ``"1Ti"``). Automatically cleaned up when the task completes.
-    :param shm: Shared memory (``/dev/shm``) allocation. Useful for ML data loading
+        (e.g., `"10Gi"`, `"100Gi"`, `"1Ti"`). Automatically cleaned up when the task completes.
+    :param shm: Shared memory (`/dev/shm`) allocation. Useful for ML data loading
         and inter-process communication:
 
-        - ``str``: Size with units (e.g., ``"1Gi"``, ``"16Gi"``)
-        - ``"auto"``: Set to the maximum shared memory available on the node
+        - `str`: Size with units (e.g., `"1Gi"`, `"16Gi"`)
+        - `"auto"`: Set to the maximum shared memory available on the node
     """
 
     cpu: Union[CPUBaseType, Tuple[CPUBaseType, CPUBaseType], None] = None
