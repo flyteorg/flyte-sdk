@@ -723,29 +723,20 @@ class Trigger:
         ...
     ```
 
-    **Core parameters:**
-
     :param name: Unique name for the trigger (required).
     :param automation: Schedule type — ``Cron(...)`` or ``FixedRate(...)`` (required).
-
-    **Configuration parameters:**
-
     :param description: Human-readable description (max 255 characters). Default ``""``.
     :param auto_activate: Whether to activate the trigger automatically on deployment.
         Default ``True``.
     :param inputs: Default input values for triggered runs. Use ``flyte.TriggerTime`` to
         bind the trigger's scheduled time to an input parameter.
-
-    **Runtime override parameters (override the task's configured values):**
-
-    :param env_vars: Environment variables for triggered runs.
+    :param env_vars: Environment variables for triggered runs (overrides the task's
+        configured values).
     :param interruptible: Whether triggered runs use spot/preemptible instances.
-        ``None`` (default) preserves the task's configured behavior.
+        ``None`` (default) preserves the task's configured behavior. Overrides the
+        task's configured value.
     :param overwrite_cache: Force cache refresh on triggered runs. Default ``False``.
-    :param queue: Queue name for triggered runs.
-
-    **Metadata parameters:**
-
+    :param queue: Queue name for triggered runs (overrides the task's configured value).
     :param labels: Kubernetes labels to attach to triggered runs.
     :param annotations: Kubernetes annotations to attach to triggered runs.
     """

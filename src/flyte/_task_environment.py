@@ -68,19 +68,17 @@ class TaskEnvironment(Environment):
         pass
     ```
 
-    **Parameters settable at TaskEnvironment level only:**
-
     :param name: Name of the environment (required). Must be snake_case or kebab-case.
+        TaskEnvironment level only.
     :param image: Docker image for the environment. Can be a string (image URI),
         an ``Image`` object, or ``"auto"`` to use the default image.
+        TaskEnvironment level only.
     :param depends_on: List of other environments this one depends on. Used at deploy time
-        to ensure dependencies are also deployed.
+        to ensure dependencies are also deployed. TaskEnvironment level only.
     :param description: Human-readable description (max 255 characters).
+        TaskEnvironment level only.
     :param plugin_config: Plugin configuration for custom task types (e.g., Ray, Spark).
-        Cannot be combined with ``reusable``.
-
-    **Parameters settable at TaskEnvironment and overridable at other levels:**
-
+        Cannot be combined with ``reusable``. TaskEnvironment level only.
     :param resources: Compute resources (CPU, memory, GPU, disk). Overridable via
         ``task.override(resources=...)`` when not using reusable containers.
     :param env_vars: Environment variables as ``dict[str, str]``. Overridable via

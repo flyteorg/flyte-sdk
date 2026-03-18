@@ -36,8 +36,6 @@ class AppEnvironment(Environment):
     )
     ```
 
-    **App-specific parameters:**
-
     :param type: App type identifier (e.g., ``"streamlit"``, ``"fastapi"``). When set,
         the platform may apply framework-specific defaults.
     :param port: Port for the app server. Default ``8080``. Ports 8012, 8022, 8112, 9090,
@@ -61,15 +59,14 @@ class AppEnvironment(Environment):
         other app endpoints.
     :param cluster_pool: Cluster pool for scheduling. Default ``"default"``.
     :param timeouts: ``Timeouts`` object for startup/health check timeouts.
-
-    **Inherited from Environment:**
-
     :param name: Name of the app (required). Must be lowercase alphanumeric with hyphens.
-    :param image: Docker image for the environment.
-    :param resources: Compute resources (CPU, memory, GPU).
-    :param env_vars: Environment variables.
-    :param secrets: Secrets to inject.
+        Inherited from Environment.
+    :param image: Docker image for the environment. Inherited from Environment.
+    :param resources: Compute resources (CPU, memory, GPU). Inherited from Environment.
+    :param env_vars: Environment variables. Inherited from Environment.
+    :param secrets: Secrets to inject. Inherited from Environment.
     :param depends_on: Dependencies on other environments (deployed together).
+        Inherited from Environment.
     """
 
     type: Optional[str] = None
