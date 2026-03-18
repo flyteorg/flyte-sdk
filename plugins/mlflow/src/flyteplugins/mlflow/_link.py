@@ -15,11 +15,11 @@ class Mlflow(Link):
 
            task.override(links=[Mlflow(link="https://...")])()
 
-    2. **Context link** — auto-generated from ``link_host`` (and optional
-       ``link_template``) set via ``mlflow_config()``. Propagates to child
+    2. **Context link** — auto-generated from `link_host` (and optional
+       `link_template`) set via `mlflow_config()`. Propagates to child
        tasks that share or nest under the parent's run. Cleared when a task
-       creates an independent run (``run_mode="new"``). For nested runs
-       (``run_mode="nested"``), the parent link is kept and the link name
+       creates an independent run (`run_mode="new"`). For nested runs
+       (`run_mode="nested"`), the parent link is kept and the link name
        is automatically set to "MLflow (parent)".
     """
 

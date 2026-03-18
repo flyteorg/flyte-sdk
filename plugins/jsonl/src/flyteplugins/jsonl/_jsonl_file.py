@@ -140,7 +140,7 @@ def _default_error_handler(line_number: int, raw_line: bytes, exc: Exception) ->
 def _parse_line(line: bytes, line_number: int, handler: ErrorHandler | None) -> dict[str, Any] | None:
     """Parse a single JSONL line, delegating errors to *handler*.
 
-    Returns the parsed dict or ``None`` if the line was skipped.
+    Returns the parsed dict or `None` if the line was skipped.
     """
     line = bytes(line).rstrip(b"\r\n")
     if not line or line.isspace():
@@ -156,15 +156,15 @@ def _parse_line(line: bytes, line_number: int, handler: ErrorHandler | None) -> 
 
 class JsonlFile(File):
     """
-    A file type for JSONL (JSON Lines) files, backed by ``orjson`` for fast
+    A file type for JSONL (JSON Lines) files, backed by `orjson` for fast
     serialisation.
 
     Provides streaming read and write methods that process one record at a time
-    without loading the entire file into memory. Inherits all :class:`File`
+    without loading the entire file into memory. Inherits all `File`
     capabilities (remote storage, upload/download, etc.).
 
     Supports zstd-compressed files transparently via extension detection
-    (``.jsonl.zst`` / ``.jsonl.zstd``).
+    (`.jsonl.zst` / `.jsonl.zstd`).
 
     Example (Async read - compressed or uncompressed):
 
@@ -352,14 +352,14 @@ class JsonlFile(File):
         flush_bytes: int = _DEFAULT_FLUSH_BYTES,
         compression_level: int = 3,
     ) -> AsyncGenerator[JsonlWriter, None]:
-        """Async context manager returning a :class:`JsonlWriter` for streaming writes.
+        """Async context manager returning a `JsonlWriter` for streaming writes.
 
-        If the file path ends in ``.jsonl.zst``, output is zstd-compressed.
+        If the file path ends in `.jsonl.zst`, output is zstd-compressed.
 
         Args:
             flush_bytes: Buffer flush threshold in bytes (default 1 MB).
             compression_level: Zstd compression level (default 3). Only used
-                for ``.jsonl.zst`` paths. Higher = smaller files, slower writes.
+                for `.jsonl.zst` paths. Higher = smaller files, slower writes.
         """
         if _is_zstd_path(self.path):
             async with self._writer_zstd(flush_bytes, compression_level) as w:
@@ -395,14 +395,14 @@ class JsonlFile(File):
         flush_bytes: int = _DEFAULT_FLUSH_BYTES,
         compression_level: int = 3,
     ) -> Generator[JsonlWriterSync, None, None]:
-        """Sync context manager returning a :class:`JsonlWriterSync` for streaming writes.
+        """Sync context manager returning a `JsonlWriterSync` for streaming writes.
 
-        If the file path ends in ``.jsonl.zst``, output is zstd-compressed.
+        If the file path ends in `.jsonl.zst`, output is zstd-compressed.
 
         Args:
             flush_bytes: Buffer flush threshold in bytes (default 1 MB).
             compression_level: Zstd compression level (default 3). Only used
-                for ``.jsonl.zst`` paths. Higher = smaller files, slower writes.
+                for `.jsonl.zst` paths. Higher = smaller files, slower writes.
         """
         if _is_zstd_path(self.path):
             with self._writer_zstd_sync(flush_bytes, compression_level) as w:
@@ -432,7 +432,7 @@ class JsonlFile(File):
     def _resolve_error_handler(
         on_error: Literal["raise", "skip"] | ErrorHandler,
     ) -> ErrorHandler | None:
-        """Return ``None`` for raise (fast path) or a callable handler."""
+        """Return `None` for raise (fast path) or a callable handler."""
         if on_error == "raise":
             return None
         if on_error == "skip":

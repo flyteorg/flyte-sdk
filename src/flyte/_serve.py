@@ -58,7 +58,7 @@ _LOCAL_HEALTH_CHECK_PATH: str = "/health"
 class AppHandle(Protocol):
     """Protocol defining the common interface between local and remote app handles.
 
-    Both ``_LocalApp`` (local serving) and ``App`` (remote serving) satisfy this
+    Both `_LocalApp` (local serving) and `App` (remote serving) satisfy this
     protocol, enabling calling code to work uniformly regardless of the serving mode.
     """
 
@@ -97,7 +97,7 @@ def _cleanup_local_apps() -> None:
     """Deactivate every registered _LocalApp.
 
     Called automatically via signal handlers (SIGINT / SIGTERM) and via
-    ``atexit`` so that child processes and daemon threads are torn down
+    `atexit` so that child processes and daemon threads are torn down
     even if the user Ctrl-C's or kills the parent process.
     """
     # Iterate over a copy because deactivate() removes from the set.
@@ -153,8 +153,8 @@ class _LocalApp:
     """
     Represents a locally-served app environment.
 
-    Provides an interface similar to the remote ``App`` object so that callers
-    of ``_Serve.serve`` can use the result uniformly.
+    Provides an interface similar to the remote `App` object so that callers
+    of `_Serve.serve` can use the result uniformly.
     """
 
     def __init__(
@@ -281,7 +281,7 @@ class _LocalApp:
             # Signal the thread to stop
             self._stop_event.set()
             # Try to stop the event loop running in the thread so that
-            # blocking ``loop.run_until_complete()`` calls are interrupted.
+            # blocking `loop.run_until_complete()` calls are interrupted.
             if self._thread_loop is not None and self._thread_loop.is_running():
                 try:
                     self._thread_loop.call_soon_threadsafe(self._thread_loop.stop)
@@ -351,7 +351,7 @@ class _Serve:
 
         Args:
             mode: Serve mode - "local" to run on localhost, "remote" to deploy to
-                  the Flyte backend.  When ``None`` the mode is inferred: if a Flyte
+                  the Flyte backend.  When `None` the mode is inferred: if a Flyte
                   client is configured the mode defaults to "remote", otherwise "local".
             version: Optional version override for the app deployment
             copy_style: Code bundle copy style (default: "loaded_modules")
@@ -417,7 +417,7 @@ class _Serve:
         Serve an AppEnvironment locally in a background thread or subprocess.
 
         The method is **non-blocking**: it starts the app in the background and
-        returns a ``_LocalApp`` handle immediately after verifying readiness.
+        returns a `_LocalApp` handle immediately after verifying readiness.
         """
 
         port = app_env.get_port().port
@@ -468,7 +468,7 @@ class _Serve:
         port: int,
         materialized_parameters: dict[str, str],
     ) -> _LocalApp:
-        """Start the app via the ``@app_env.server`` decorated function in a daemon thread."""
+        """Start the app via the `@app_env.server` decorated function in a daemon thread."""
         from flyte._bin.serve import _bind_parameters
 
         assert app_env._server is not None
@@ -548,7 +548,7 @@ class _Serve:
         host: str,
         port: int,
     ) -> _LocalApp:
-        """Start the app via its ``command`` or ``args`` as a subprocess."""
+        """Start the app via its `command` or `args` as a subprocess."""
         import shlex
 
         if app_env.command is not None:
@@ -724,8 +724,8 @@ class _Serve:
             app_env: The app environment to serve
 
         Returns:
-            An :class:`AppHandle` — either a ``_LocalApp`` (local mode) or a
-            remote ``App`` (remote mode).  Both satisfy the same protocol so
+            An `AppHandle` — either a `_LocalApp` (local mode) or a
+            remote `App` (remote mode).  Both satisfy the same protocol so
             callers can use them interchangeably.
 
         Raises:
@@ -764,7 +764,7 @@ def with_servecontext(
     This function allows you to customize how an app is served, including
     overriding environment variables, cluster pool, logging, and other deployment settings.
 
-    Use ``mode="local"`` to serve the app on localhost (non-blocking) so you can
+    Use `mode="local"` to serve the app on localhost (non-blocking) so you can
     immediately invoke tasks that call the app endpoint:
 
     ```python
@@ -776,7 +776,7 @@ def with_servecontext(
     local_app.deactivate()
     ```
 
-    Use ``mode="remote"`` (or omit *mode* when a Flyte client is configured) to
+    Use `mode="remote"` (or omit *mode* when a Flyte client is configured) to
     deploy the app to the Flyte backend:
 
     ```python
@@ -794,7 +794,7 @@ def with_servecontext(
 
     Args:
         mode: "local" to run on localhost, "remote" to deploy to the Flyte backend.
-            When ``None`` the mode is inferred from the current configuration.
+            When `None` the mode is inferred from the current configuration.
         version: Optional version override for the app deployment
         copy_style: Code bundle copy style. Options: "loaded_modules", "all", "none" (default: "loaded_modules")
         dry_run: If True, don't actually deploy (default: False)
@@ -812,15 +812,15 @@ def with_servecontext(
             created. This is used to determine if the app should be served in interactive mode or not.
         copy_bundle_to: When dry_run is True, the bundle will be copied to this location if specified
         deactivate_timeout: Timeout in seconds for waiting for the app to stop during
-            ``deactivate(wait=True)``. Defaults to 6 s.
+            `deactivate(wait=True)`. Defaults to 6 s.
         activate_timeout: Total timeout in seconds when polling the health-check endpoint
-            during ``activate(wait=True)``. Defaults to 60 s.
+            during `activate(wait=True)`. Defaults to 60 s.
         health_check_timeout: Per-request timeout in seconds for each health-check HTTP
             request. Defaults to 2 s.
         health_check_interval: Interval in seconds between consecutive health-check polls.
             Defaults to 1 s.
-        health_check_path: URL path used for the local health-check probe (e.g. ``"/healthz"``).
-            Defaults to ``"/health"``.
+        health_check_path: URL path used for the local health-check probe (e.g. `"/healthz"`).
+            Defaults to `"/health"`.
 
     Returns:
         _Serve: Serve context manager with configured settings
@@ -880,7 +880,7 @@ async def serve(app_env: "AppEnvironment") -> AppHandle:
         app_env: The app environment to serve
 
     Returns:
-        An :class:`AppHandle` — either a ``_LocalApp`` (local) or ``App`` (remote)
+        An `AppHandle` — either a `_LocalApp` (local) or `App` (remote)
 
     See Also:
         with_servecontext: For customizing deployment settings

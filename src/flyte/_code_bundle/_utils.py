@@ -158,10 +158,12 @@ def ls_relative_files(relative_paths: list[str], source_path: pathlib.Path) -> t
                 raise ValueError(f"File {path} is not a valid file, directory, or glob pattern")
 
     all_files.sort()
+    resolved_source = source_path.resolve()
     for p in all_files:
         _filehash_update(p, hasher)
-        # Use POSIX-style path for hashing to ensure consistent hashes across platforms
-        rel_path = pathlib.Path(p).relative_to(source_path).as_posix()
+        # Resolve before relative_to to normalize any ".." in the path — un-normalized
+        # paths would produce inconsistent hashes across equivalent paths.
+        rel_path = pathlib.Path(p).resolve().relative_to(resolved_source).as_posix()
         _pathhash_update(rel_path, hasher)
 
     digest = hasher.hexdigest()
@@ -333,7 +335,7 @@ def copy_code_bundle_to_context(
     :param copy_style: "loaded_modules" to copy only imported modules, "all" to copy everything.
     :param context_path: The build context directory.
     :param ignore_patterns: Ignore patterns for the "all" case.  When *None* the
-        ``STANDARD_IGNORE_PATTERNS`` are used.
+        `STANDARD_IGNORE_PATTERNS` are used.
     :return: The path within context_path where files were copied.
     """
     resolved_root = root_dir.resolve()

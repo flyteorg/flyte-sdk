@@ -23,25 +23,50 @@ INTERNAL_APP_ENDPOINT_PATTERN_ENV_VAR = "INTERNAL_APP_ENDPOINT_PATTERN"
 @dataclass(init=True, repr=True)
 class AppEnvironment(Environment):
     """
-    :param type: Type of the environment.
-    :param port: Port to use for the app server.
-    :param args: Arguments to pass to app.
-    :param command: Command to run in the app.
-    :param requires_auth: Whether the app requires authentication.
-    :param scaling: Scaling configuration for the app environment.
-    :param domain: Domain to use for the app.
-    :param links: Links to other environments.
-    :param include: Files to include in the environment to run the app.
-    :param parameters: Parameters to pass to the app environment.
-    :param cluster_pool: Cluster pool to use for the app environment.
-    :param timeouts: Timeout configuration for the app environment.
-    :param name: Name of the app environment
-    :param image: Docker image to use for the environment. If set to "auto", will use the default image.
-    :param resources: Resources to allocate for the environment.
-    :param env_vars: Environment variables to set for the environment.
-    :param secrets: Secrets to inject into the environment.
-    :param depends_on: Environment dependencies to hint, so when you deploy the environment, the dependencies are
-        also deployed. This is useful when you have a set of environments that depend on each other.
+    Configure a long-running app environment for APIs, dashboards, or model servers.
+
+    Example:
+
+    ```python
+    app_env = flyte.app.AppEnvironment(
+        name="my-api",
+        image=flyte.Image.from_debian_base(python="3.12").with_pip_packages("fastapi", "uvicorn"),
+        port=8080,
+        scaling=flyte.app.Scaling(replicas=(1, 3)),
+    )
+    ```
+
+    :param type: App type identifier (e.g., `"streamlit"`, `"fastapi"`). When set,
+        the platform may apply framework-specific defaults.
+    :param port: Port for the app server. Default `8080`. Ports 8012, 8022, 8112, 9090,
+        and 9091 are reserved and cannot be used. Can also be a `Port` object for
+        advanced configuration.
+    :param args: Arguments passed to the app process. Can be a list of strings or a
+        single string. Used for script-based apps (e.g., Streamlit's
+        `["--server.port", "8080"]`).
+    :param command: Full command to run in the container. Alternative to `args` —
+        use when you need to override the container's entrypoint entirely.
+    :param requires_auth: Whether the app endpoint requires authentication.
+        Default `True`. Set to `False` for public endpoints.
+    :param scaling: `Scaling` object controlling replicas and autoscaling behavior.
+        Default is `Scaling()` (scale-to-zero, max 1 replica).
+    :param domain: `Domain` object for custom domain configuration.
+    :param links: List of `Link` objects for connecting to other environments.
+    :param include: List of additional file paths to bundle with the app
+        (e.g., utility modules, config files, data files).
+    :param parameters: List of `Parameter` objects for app inputs. Use `RunOutput`
+        to connect app parameters to task outputs, or `AppEndpoint` to reference
+        other app endpoints.
+    :param cluster_pool: Cluster pool for scheduling. Default `"default"`.
+    :param timeouts: `Timeouts` object for startup/health check timeouts.
+    :param name: Name of the app (required). Must be lowercase alphanumeric with hyphens.
+        Inherited from Environment.
+    :param image: Docker image for the environment. Inherited from Environment.
+    :param resources: Compute resources (CPU, memory, GPU). Inherited from Environment.
+    :param env_vars: Environment variables. Inherited from Environment.
+    :param secrets: Secrets to inject. Inherited from Environment.
+    :param depends_on: Dependencies on other environments (deployed together).
+        Inherited from Environment.
     """
 
     type: Optional[str] = None

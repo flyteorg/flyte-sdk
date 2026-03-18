@@ -6,9 +6,9 @@ full Flyte observability, retries, and caching.
 
 Key features:
 
-- Use any Flyte task as a Gemini tool via ``function_tool``
-- Full agent loop with automatic tool dispatch via ``run_agent``
-- Configurable agent via ``Agent`` (model, system prompt, tools, iteration limits)
+- Use any Flyte task as a Gemini tool via `function_tool`
+- Full agent loop with automatic tool dispatch via `run_agent`
+- Configurable agent via `Agent` (model, system prompt, tools, iteration limits)
 
 Basic usage example:
 

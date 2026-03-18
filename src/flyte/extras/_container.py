@@ -39,7 +39,7 @@ def _extract_path_command_key(cmd: str, input_data_dir: Optional[str]) -> Option
 class ContainerTask(TaskTemplate):
     """
     This is an intermediate class that represents Flyte Tasks that run a container at execution time. This is the vast
-    majority of tasks - the typical ``@task`` decorated tasks; for instance, all run a container. An example of
+    majority of tasks - the typical `@task` decorated tasks; for instance, all run a container. An example of
     something that doesn't run a container would be something like the Athena SQL task.
 
     :param name: Name of the task

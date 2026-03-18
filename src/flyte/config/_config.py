@@ -237,7 +237,7 @@ class Config(object):
 
 def set_if_exists(d: dict, k: str, val: typing.Any) -> dict:
     """
-    Given a dict ``d`` sets the key ``k`` with value of config ``v``, if the config value ``v`` is set
+    Given a dict `d` sets the key `k` with value of config `v`, if the config value `v` is set
     and return the updated dictionary.
     """
     exists = isinstance(val, bool) or bool(val is not None and val)

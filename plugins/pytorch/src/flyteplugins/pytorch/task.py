@@ -73,7 +73,7 @@ class Elastic:
             process health. Once a worker process exits, detection takes at most this
             long. Defaults to 3.
         max_restarts (int): Maximum number of worker group restarts before the elastic
-            agent gives up and raises ``ChildFailedError``. Each restart kills all
+            agent gives up and raises `ChildFailedError`. Each restart kills all
             workers and relaunches the entire group. If the failure is deterministic
             (e.g. model too large for GPU memory), restarts just repeat the same
             failure — set to 0 to fail immediately. Use higher values for transient
@@ -91,12 +91,12 @@ class Elastic:
         nccl_async_error_handling (bool): When True, sets TORCH_NCCL_ASYNC_ERROR_HANDLING=1
             so that NCCL aborts stuck collectives asynchronously instead of blocking
             indefinitely. This causes the worker process to crash-exit on a stuck
-            collective, which the elastic agent detects within ``monitor_interval``
+            collective, which the elastic agent detects within `monitor_interval`
             seconds (~3s by default) — much faster than waiting for the heartbeat
             timeout. Defaults to False (PyTorch default behavior).
         nccl_collective_timeout_sec (Optional[int]): Timeout in seconds for individual
             NCCL collective operations (e.g. all-reduce inside loss.backward()). This
-            is the timeout passed to ``torch.distributed.init_process_group``. When a
+            is the timeout passed to `torch.distributed.init_process_group`. When a
             worker desyncs (e.g. skips a collective after OOM), surviving workers block
             in the collective for this long before the NCCL watchdog fires. This is the
             first phase of failure detection. PyTorch default is 600s (10 min). Set to
@@ -104,7 +104,7 @@ class Elastic:
         nccl_enable_monitoring (bool): When True, sets TORCH_NCCL_ENABLE_MONITORING=1
             to activate NCCL's built-in monitoring thread. The monitoring thread
             checks each worker's heartbeat counter and sends SIGABRT when it stalls,
-            which is what drives ``nccl_heartbeat_timeout_sec``. Defaults to True.
+            which is what drives `nccl_heartbeat_timeout_sec`. Defaults to True.
     """
 
     nnodes: Union[int, str]
@@ -187,13 +187,13 @@ def _start_zombie_watchdog(nproc: int, check_interval: float = 10.0) -> threadin
     comment on _worker_finished_event.
 
     This watchdog periodically discovers child processes via /proc and counts
-    how many are zombies.  When at least ``nproc`` children are zombies, the
+    how many are zombies.  When at least `nproc` children are zombies, the
     workers are all dead and the elastic agent is deadlocked.  We force-exit
     with os._exit() since the deadlocked semaphore cannot be interrupted
     cleanly.
 
     Note: not all children are workers — Python's multiprocessing spawns a
-    ``resource_tracker`` process that stays alive.  We count zombie children
+    `resource_tracker` process that stays alive.  We count zombie children
     rather than requiring *all* children to be zombies.
     """
     stop = threading.Event()

@@ -165,10 +165,10 @@ class AuthorizationClient(object):
         :param endpoint_metadata: EndpointMetadata object to control the rendering of the page on login successful or
             failure
         :param verify: A boolean that controls whether to verify the server's TLS certificate.
-            Defaults to ``True``. When set to ``False``, requests will accept any TLS certificate
+            Defaults to `True`. When set to `False`, requests will accept any TLS certificate
             presented by the server, and will ignore hostname mismatches and/or expired certificates,
             which will make your application vulnerable to man-in-the-middle (MitM) attacks.
-            Setting verify to ``False`` may be useful during local development or testing.
+            Setting verify to `False` may be useful during local development or testing.
         :param ca_cert_path: Path to a certificate chain file for SSL verification (optional)
         :param request_auth_code_params: Dictionary of parameters to add to login URI opened in the browser (optional)
         :param request_access_token_params: Dictionary of parameters to add when exchanging the auth code for the
