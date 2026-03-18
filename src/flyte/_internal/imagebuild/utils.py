@@ -5,7 +5,7 @@ import subprocess
 from pathlib import Path, PurePath
 from typing import List, Optional
 
-import tomllib
+import toml
 
 from flyte._code_bundle._ignore import STANDARD_IGNORE_PATTERNS
 from flyte._image import DockerIgnore, Image
@@ -146,8 +146,7 @@ def get_uv_project_editable_package_names(editable_deps: list[Path]) -> list[str
     for dep_path in editable_deps:
         pyproject_path = dep_path / "pyproject.toml"
         if pyproject_path.exists():
-            with open(pyproject_path, "rb") as f:
-                data = tomllib.load(f)
+            data = toml.load(pyproject_path)
             name = data.get("project", {}).get("name")
             if name:
                 names.append(name)
