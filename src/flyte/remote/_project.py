@@ -133,7 +133,7 @@ class Project(ToJSONMixin):
         """
         List all projects.
 
-        By default, lists active (unarchived) projects. Set ``archived=True`` to list
+        By default, lists active (unarchived) projects. Set `archived=True` to list
         archived projects instead.
 
         :param filters: The filters to apply to the project list.

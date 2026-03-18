@@ -1,4 +1,4 @@
-"""CLI command for ``flyte run python-script``.
+"""CLI command for `flyte run python-script`.
 
 Packages a Python script and runs it on a remote Flyte cluster with
 configurable resources.
@@ -21,7 +21,7 @@ from ._common import CommandBase
 
 
 class PythonScriptCommand(CommandBase):
-    """Command that does not add --project/--domain (already on ``flyte run``)."""
+    """Command that does not add --project/--domain (already on `flyte run`)."""
 
     common_options_enabled = False
 
@@ -85,8 +85,8 @@ def python_script(
     Packages SCRIPT into a Flyte task, builds a container image with the
     requested resources, and submits it for remote execution.
 
-    Project, domain, follow, and name are provided at the ``flyte run`` level
-    (before ``python-script``). Project and domain are read from the init
+    Project, domain, follow, and name are provided at the `flyte run` level
+    (before `python-script`). Project and domain are read from the init
     config if not set.
 
     \b
@@ -117,7 +117,7 @@ def python_script(
 
     console = Console()
 
-    # Read run-level options from RunArguments (set by the parent ``flyte run`` group)
+    # Read run-level options from RunArguments (set by the parent `flyte run` group)
     run_args = cfg.run_args if cfg else None
     follow = run_args.follow if run_args else False
     name = run_args.name if run_args else None

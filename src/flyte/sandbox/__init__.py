@@ -1,8 +1,8 @@
 """Sandbox utilities for running isolated code inside Flyte tasks.
 
-.. warning:: Experimental feature: alpha — APIs may change without notice.
+Warning: Experimental feature: alpha — APIs may change without notice.
 
-``flyte.sandbox`` provides two distinct sandboxing approaches:
+`flyte.sandbox` provides two distinct sandboxing approaches:
 
 ---
 
@@ -10,7 +10,7 @@
     Runs pure Python *orchestration logic* (control flow, routing, aggregation)
     with zero overhead. The Monty runtime enforces strong restrictions:
     no imports, no IO, no network access, microsecond startup.  Used via
-    ``@env.sandbox.orchestrator`` or ``flyte.sandbox.orchestrator_from_str()``.
+    `@env.sandbox.orchestrator` or `flyte.sandbox.orchestrator_from_str()`.
 
     Sandboxed orchestrators are:
 
@@ -37,10 +37,10 @@
 
 **2. Code sandbox** — arbitrary code in an isolated container
     Runs arbitrary Python scripts or shell commands inside an ephemeral Docker
-    container. The image is built on demand from declared ``packages`` and
-    ``system_packages``, executed once, then discarded. Network is blocked by
-    default (``block_network=True``), preventing outbound calls from untrusted
-    code.  Used via ``flyte.sandbox.create()``.
+    container. The image is built on demand from declared `packages` and
+    `system_packages`, executed once, then discarded. Network is blocked by
+    default (`block_network=True`), preventing outbound calls from untrusted
+    code.  Used via `flyte.sandbox.create()`.
 
     Three execution modes are supported:
 

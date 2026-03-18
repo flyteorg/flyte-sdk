@@ -293,7 +293,7 @@ class File(BaseModel, Generic[T], SerializableType):
         """
         Create a File reference whose remote path is derived deterministically from *name*.
 
-        Unlike :meth:`new_remote`, which generates a random path on every call, this method
+        Unlike `new_remote`, which generates a random path on every call, this method
         produces the same path for the same *name* within a given task execution. This makes
         it safe across retries: the first attempt uploads to the path and subsequent retries
         resolve to the identical location without re-uploading.
@@ -309,7 +309,7 @@ class File(BaseModel, Generic[T], SerializableType):
             name: Plain filename (e.g., "data.csv"). Must not contain path separators.
 
         Returns:
-            A :class:`File` instance whose path is stable across retries.
+            A `File` instance whose path is stable across retries.
         """
         import fsspec
 

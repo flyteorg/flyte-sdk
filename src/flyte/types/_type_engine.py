@@ -643,8 +643,8 @@ class PydanticTransformer(TypeTransformer[BaseModel]):
 def _create_pydantic_model_from_schema(schema: dict) -> Type:
     """Create a dynamic Pydantic BaseModel from a JSON schema dict.
 
-    Reuses ``_get_element_type`` so that all JSON-schema constructs handled by the
-    dataclass path (arrays, dicts, nested objects, ``$ref``, ``anyOf``, enums, …)
+    Reuses `_get_element_type` so that all JSON-schema constructs handled by the
+    dataclass path (arrays, dicts, nested objects, `$ref`, `anyOf`, enums, …)
     are also covered here.
     """
     from pydantic import ConfigDict, create_model
@@ -1362,7 +1362,7 @@ class TypeEngine(typing.Generic[T]):
     @classmethod
     def to_literal_type(cls, python_type: Type[T]) -> LiteralType:
         """
-        Converts a python type into a flyte specific ``LiteralType``
+        Converts a python type into a flyte specific `LiteralType`
         """
         transformer = cls.get_transformer(python_type)
         res = transformer.get_literal_type(python_type)
@@ -1442,7 +1442,7 @@ class TypeEngine(typing.Generic[T]):
     @classmethod
     def named_tuple_to_variable_map(cls, t: typing.NamedTuple) -> interface_pb2.VariableMap:
         """
-        Converts a python-native ``NamedTuple`` to a flyte-specific VariableMap of named literals.
+        Converts a python-native `NamedTuple` to a flyte-specific VariableMap of named literals.
         """
         variables = []
         for idx, (var_name, var_type) in enumerate(t.__annotations__.items()):
@@ -1462,7 +1462,7 @@ class TypeEngine(typing.Generic[T]):
         literal_types: typing.Optional[typing.Dict[str, interface_pb2.Variable]] = None,
     ) -> typing.Dict[str, typing.Any]:
         """
-        Given a ``LiteralMap`` (usually an input into a task - intermediate), convert to kwargs for the task
+        Given a `LiteralMap` (usually an input into a task - intermediate), convert to kwargs for the task
         """
         if python_types is None and literal_types is None:
             raise ValueError("At least one of python_types or literal_types must be provided")
@@ -1560,7 +1560,7 @@ class TypeEngine(typing.Generic[T]):
         cls, flyte_variable_list: typing.List[interface_pb2.VariableEntry]
     ) -> typing.Dict[str, Type[Any]]:
         """
-        Transforms a list of flyte-specific ``VariableEntry`` objects to a dictionary of regular python values.
+        Transforms a list of flyte-specific `VariableEntry` objects to a dictionary of regular python values.
         """
         python_types = {}
         for entry in flyte_variable_list:
@@ -1570,7 +1570,7 @@ class TypeEngine(typing.Generic[T]):
     @classmethod
     def guess_python_type(cls, flyte_type: LiteralType) -> Type[T]:
         """
-        Transforms a flyte-specific ``LiteralType`` to a regular python value.
+        Transforms a flyte-specific `LiteralType` to a regular python value.
         """
         for _, transformer in cls._REGISTRY.items():
             try:
@@ -2038,7 +2038,7 @@ class DictTransformer(TypeTransformer[dict]):
     @staticmethod
     async def dict_to_binary_literal(v: dict, python_type: Type[dict], allow_pickle: bool) -> Literal:
         """
-        Converts a Python dictionary to a Flyte-specific ``Literal`` using MessagePack encoding.
+        Converts a Python dictionary to a Flyte-specific `Literal` using MessagePack encoding.
         Falls back to Pickle if encoding fails and `allow_pickle` is True.
         """
         from flyte.types._pickle import FlytePickle
@@ -2075,7 +2075,7 @@ class DictTransformer(TypeTransformer[dict]):
 
     def get_literal_type(self, t: Type[dict]) -> LiteralType:
         """
-        Transforms a native python dictionary to a flyte-specific ``LiteralType``
+        Transforms a native python dictionary to a flyte-specific `LiteralType`
         """
         tp = DictTransformer.extract_types(t)
 
@@ -2627,7 +2627,7 @@ class LiteralsResolver(collections.UserDict):
 
     async def get(self, attr: str, as_type: Optional[typing.Type] = None) -> typing.Any:  # type: ignore
         """
-        This will get the ``attr`` value from the Literal map, and invoke the TypeEngine to convert it into a Python
+        This will get the `attr` value from the Literal map, and invoke the TypeEngine to convert it into a Python
         native value. A Python type can optionally be supplied. If successful, the native value will be cached and
         future calls will return the cached value instead.
 
