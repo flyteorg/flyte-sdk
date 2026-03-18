@@ -151,7 +151,9 @@ class CLIConfig:
         if api_key:
             from flyte._logging import logger
 
-            logger.info("Detected an FLYTE_API_KEY in the environment, using it in lieu of endpoints in any config file")
+            logger.info(
+                "Detected an FLYTE_API_KEY in the environment, using it in lieu of endpoints in any config file"
+            )
             from flyte._utils import sanitize_endpoint
             from flyte.remote._client.auth._auth_utils import decode_api_key
 
