@@ -109,8 +109,8 @@ def _setup_autolog(
 ):
     """Enable MLflow autologging if requested.
 
-    Enabled when decorator passes ``autolog=True`` or
-    ``mlflow_config(autolog=True)`` is set in context.
+    Enabled when decorator passes `autolog=True` or
+    `mlflow_config(autolog=True)` is set in context.
     Decorator args take priority over context config.
     """
     config = get_mlflow_context()
@@ -420,15 +420,15 @@ def mlflow_run(
     """Decorator to manage MLflow runs for Flyte tasks and plain functions.
 
     Handles both manual logging and autologging. For autologging, pass
-    ``autolog=True`` and optionally ``framework`` to select a specific
-    framework (e.g. ``"sklearn"``).
+    `autolog=True` and optionally `framework` to select a specific
+    framework (e.g. `"sklearn"`).
 
     Args:
         run_mode: "auto" (default), "new", or "nested".
             - "auto": reuse parent run if available, else create new.
             - "new": always create a new independent run.
             - "nested": create a new run nested under the parent via
-              ``mlflow.parentRunId`` tag. Works across processes/containers.
+              `mlflow.parentRunId` tag. Works across processes/containers.
         tracking_uri: MLflow tracking server URL.
         experiment_name: MLflow experiment name (exclusive with experiment_id).
         experiment_id: MLflow experiment ID (exclusive with experiment_name).
@@ -439,9 +439,9 @@ def mlflow_run(
         framework: MLflow framework name for autolog (e.g. "sklearn", "pytorch").
         log_models: Whether to log models automatically (requires autolog).
         log_datasets: Whether to log datasets automatically (requires autolog).
-        autolog_kwargs: Extra parameters passed to ``mlflow.autolog()``.
+        autolog_kwargs: Extra parameters passed to `mlflow.autolog()`.
         rank: Process rank for distributed training (only rank 0 logs).
-        **kwargs: Additional ``mlflow.start_run()`` parameters.
+        **kwargs: Additional `mlflow.start_run()` parameters.
 
     Decorator Order:
         @mlflow_run must be the outermost decorator::

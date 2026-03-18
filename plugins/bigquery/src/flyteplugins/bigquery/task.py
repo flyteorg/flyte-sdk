@@ -16,7 +16,7 @@ class BigQueryConfig(object):
 
     Attributes:
         ProjectID: The Google Cloud project ID that owns the BigQuery dataset.
-        Location: The geographic location of the dataset, e.g. ``"US"`` or ``"EU"``.
+        Location: The geographic location of the dataset, e.g. `"US"` or `"EU"`.
             Defaults to the project's default location if not specified.
         QueryJobConfig: Optional advanced job configuration passed directly to the
             BigQuery client. Use this to set query parameters, destination tables,

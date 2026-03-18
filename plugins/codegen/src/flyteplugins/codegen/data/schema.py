@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 def schema_to_script(schema: pa.DataFrameSchema) -> str:
     """Convert a Pandera schema to a script string including column checks.
 
-    Pandera's built-in ``to_script()`` and ``repr()`` omit column-level checks,
+    Pandera's built-in `to_script()` and `repr()` omit column-level checks,
     so we build the script manually.
     """
     lines = ["import pandera.pandas as pa", "", "schema = pa.DataFrameSchema(columns={"]
@@ -240,7 +240,7 @@ def apply_parsed_constraint(
 
     if check:
         # Rebuild column with the new check appended — update_column silently
-        # ignores the ``checks`` kwarg in many Pandera versions.
+        # ignores the `checks` kwarg in many Pandera versions.
         col = schema.columns[col_name]
         existing_checks = list(col.checks) if col.checks else []
         new_col = pa.Column(

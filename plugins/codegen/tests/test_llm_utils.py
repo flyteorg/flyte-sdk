@@ -16,11 +16,11 @@ from flyteplugins.codegen.generation.llm import (
 
 class TestStripCodeFences:
     def test_with_language_tag(self):
-        code = "```python\nprint('hello')\n```"
+        code = "``python\nprint('hello')\n``"
         assert strip_code_fences(code) == "print('hello')"
 
     def test_without_language_tag(self):
-        code = "```\nprint('hello')\n```"
+        code = "``\nprint('hello')\n``"
         assert strip_code_fences(code) == "print('hello')"
 
     def test_no_fences(self):
@@ -29,16 +29,16 @@ class TestStripCodeFences:
 
     def test_nested_fences_not_stripped(self):
         """Only outer fences should be stripped."""
-        code = "```python\ncode = '```nested```'\n```"
+        code = "``python\ncode = '``nested``'\n``"
         result = strip_code_fences(code)
-        assert "```nested```" in result
+        assert "``nested``" in result
 
     def test_whitespace_stripped(self):
-        code = "  \n```python\nprint('hello')\n```  \n"
+        code = "  \n``python\nprint('hello')\n``  \n"
         assert strip_code_fences(code) == "print('hello')"
 
     def test_multiline_code(self):
-        code = "```python\nimport os\nprint(os.getcwd())\n```"
+        code = "``python\nimport os\nprint(os.getcwd())\n``"
         result = strip_code_fences(code)
         assert "import os" in result
         assert "print(os.getcwd())" in result

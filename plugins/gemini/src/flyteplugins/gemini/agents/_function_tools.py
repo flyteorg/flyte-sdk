@@ -148,12 +148,12 @@ class Agent:
             identification only; not sent to the API.
         instructions: The system prompt passed to Gemini on every turn.
             Describes the agent's role, tone, and constraints.
-        model: The Gemini model ID to use, e.g. ``"gemini-2.5-flash"``.
-        tools: List of ``FunctionTool`` instances the agent can invoke.
-            Create tools with ``function_tool()``.
+        model: The Gemini model ID to use, e.g. `"gemini-2.5-flash"`.
+        tools: List of `FunctionTool` instances the agent can invoke.
+            Create tools with `function_tool()`.
         max_output_tokens: Maximum number of tokens in each Gemini response.
         max_iterations: Maximum number of function-call / response cycles before
-            ``run_agent`` returns with a timeout message.
+            `run_agent` returns with a timeout message.
     """
 
     name: str = "assistant"
