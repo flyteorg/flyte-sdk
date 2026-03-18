@@ -34,13 +34,35 @@ def extract_obj_module(obj: object, /, source_dir: pathlib.Path | None = None) -
     try:
         # Get the relative path to the current directory
         # Will raise ValueError if the file is not in the source directory
-        relative_path = file_path.relative_to(str(pathlib.Path(source_dir).absolute()))
+        source_dir_abs = pathlib.Path(source_dir).absolute()
+        relative_path = file_path.relative_to(str(source_dir_abs))
 
         if relative_path == pathlib.Path("_internal/resolvers"):
             entity_module_name = entity_module.__name__
         elif "site-packages" in str(file_path) or "dist-packages" in str(file_path):
             raise ValueError("Object from a library")
         else:
+            # For src-layout projects, sys.path may contain subdirectories of source_dir
+            # (e.g., my_app/src/) that are the actual Python package roots. Use the most
+            # specific sys.path entry to compute the shortest valid module path.
+            # Exclude the file's own parent directory — that would reduce the path to just
+            # the filename stem (e.g., "main"), which is not a valid module import.
+            file_parent = file_path.parent.resolve()
+            best_base = source_dir_abs
+            for p in sys.path:
+                if "site-packages" in p or "dist-packages" in p:
+                    continue
+                p_path = pathlib.Path(p).resolve()
+                if (
+                    p_path != source_dir_abs
+                    and p_path != file_parent
+                    and p_path.is_relative_to(source_dir_abs)
+                    and file_path.is_relative_to(p_path)
+                    and len(p_path.parts) > len(best_base.parts)
+                ):
+                    best_base = p_path
+
+            relative_path = file_path.relative_to(str(best_base))
             # Replace file separators with dots and remove the '.py' extension
             dotted_path = os.path.splitext(str(relative_path))[0].replace(os.sep, ".")
             entity_module_name = dotted_path

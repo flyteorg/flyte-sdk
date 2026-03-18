@@ -5,7 +5,7 @@ from my_app.env import env
 from my_app.tasks import compute_stats, summarize
 
 MY_APP_ROOT = pathlib.Path(__file__).parent.parent.parent  # -> my_app/
-PROJECT_ROOT = MY_APP_ROOT.parent  # -> uv_monorepo_guide/
+PROJECT_ROOT = MY_APP_ROOT.parent  # -> 02_sibling_packages/
 
 
 @env.task
