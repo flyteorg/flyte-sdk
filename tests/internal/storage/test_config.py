@@ -88,6 +88,26 @@ class TestS3Config:
         assert result["retry_config"]["backoff"]["init_backoff"] == custom_backoff
         assert "anonymous" not in result
 
+    def test_get_fsspec_kwargs_caller_overrides_not_clobbered(self):
+        s3 = S3(access_key_id="my-key", secret_access_key="my-secret", endpoint="https://s3.us-west-2.amazonaws.com")
+        custom_retry = {"max_retries": 10, "retry_timeout": datetime.timedelta(minutes=10)}
+        custom_client_options = {"timeout": "30s", "allow_http": False}
+        result = s3.get_fsspec_kwargs(
+            retry_config=custom_retry,
+            client_options=custom_client_options,
+        )
+
+        # Caller-provided retry_config and client_options must not be overwritten by defaults
+        assert result["retry_config"] is custom_retry
+        assert result["retry_config"]["max_retries"] == 10
+        assert result["client_options"] is custom_client_options
+        assert result["client_options"]["timeout"] == "30s"
+        assert result["client_options"]["allow_http"] is False
+        # S3-specific config should still be populated
+        assert result["config"]["access_key_id"] == "my-key"
+        assert result["config"]["secret_access_key"] == "my-secret"
+        assert result["config"]["endpoint"] == "https://s3.us-west-2.amazonaws.com"
+
     def test_get_fsspec_kwargs_addressing_style_virtual(self):
         s3 = S3(addressing_style="virtual")
         result = s3.get_fsspec_kwargs()
@@ -252,6 +272,21 @@ class TestGCSConfig:
         assert result["retry_config"]["max_retries"] == 5
         assert result["retry_config"]["backoff"]["init_backoff"] == custom_backoff
         assert "anonymous" not in result
+
+    def test_get_fsspec_kwargs_caller_overrides_not_clobbered(self):
+        gcs = GCS()
+        custom_retry = {"max_retries": 10, "retry_timeout": datetime.timedelta(minutes=10)}
+        custom_client_options = {"timeout": "30s"}
+        result = gcs.get_fsspec_kwargs(
+            retry_config=custom_retry,
+            client_options=custom_client_options,
+        )
+
+        # Caller-provided retry_config and client_options must not be overwritten by defaults
+        assert result["retry_config"] is custom_retry
+        assert result["retry_config"]["max_retries"] == 10
+        assert result["client_options"] is custom_client_options
+        assert result["client_options"]["timeout"] == "30s"
 
 
 class TestABFSConfig:
