@@ -1,5 +1,7 @@
-from my_app.env import env
 from my_lib.stats import mean, std
+
+from my_app.env import env
+
 
 @env.task
 async def compute_stats(values: list[float]) -> dict:

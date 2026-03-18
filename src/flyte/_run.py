@@ -300,8 +300,7 @@ class _Runner:
             added_paths = [
                 f"./{pathlib.Path(p).relative_to(root_dir_abs)}"
                 for p in sys.path
-                if pathlib.Path(p).is_relative_to(root_dir_abs)
-                and "site-packages" not in pathlib.Path(p).parts
+                if pathlib.Path(p).is_relative_to(root_dir_abs) and "site-packages" not in pathlib.Path(p).parts
             ]
             # Remove paths that are subdirectories of other paths in the list.
             # Python adds the script's directory to sys.path (e.g., my_app/src/my_app),
