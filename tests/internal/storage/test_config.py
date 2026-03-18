@@ -7,19 +7,29 @@ class TestStorage:
     def test_get_fsspec_kwargs_base(self):
         storage = Storage()
         result = storage.get_fsspec_kwargs()
-        assert result == {}
+
+        assert "client_options" in result
+        assert result["client_options"]["timeout"] == "99999s"
+        assert result["client_options"]["allow_http"] is True
+        assert "retry_config" in result
+        assert result["retry_config"]["max_retries"] == 3
         assert "anonymous" not in result
 
     def test_get_fsspec_kwargs_base_with_anonymous(self):
         storage = Storage()
         result = storage.get_fsspec_kwargs(anonymous=True)
-        assert result == {}
+
+        assert "client_options" in result
+        assert "retry_config" in result
         assert "anonymous" not in result
 
     def test_get_fsspec_kwargs_base_with_kwargs(self):
         storage = Storage()
         result = storage.get_fsspec_kwargs(test_param="value")
-        assert result == {}
+
+        assert result["test_param"] == "value"
+        assert "client_options" in result
+        assert "retry_config" in result
         assert "anonymous" not in result
 
 
