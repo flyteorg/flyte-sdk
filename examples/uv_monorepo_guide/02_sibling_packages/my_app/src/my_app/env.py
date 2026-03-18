@@ -14,7 +14,6 @@ env = flyte.TaskEnvironment(
     # editable install's .pth file (which points to a build-stage-only path).
     image=flyte.Image.from_debian_base()
     .with_uv_project(pyproject_file=MY_APP_ROOT / "pyproject.toml")
-    # .with_source_folder(MY_LIB_PKG)
     .with_local_v2()
     .with_code_bundle(),
 )

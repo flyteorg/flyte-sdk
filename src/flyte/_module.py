@@ -6,6 +6,39 @@ from types import ModuleType
 from typing import Tuple
 
 
+def _find_package_root(file_path: pathlib.Path, source_dir: pathlib.Path) -> pathlib.Path:
+    """Find the best Python package root for a file by checking sys.path.
+
+    In src-layout projects (e.g., my_app/src/my_app/main.py), the importable
+    package root is my_app/src/, not source_dir. This function looks for
+    the deepest sys.path entry between source_dir and the file that still
+    produces a valid module path (i.e., not just the bare filename).
+
+    Example:
+        source_dir = /repo
+        file_path  = /repo/my_app/src/my_app/main.py
+        sys.path   = [..., /repo/my_app/src, ...]
+        returns      /repo/my_app/src  (so module = my_app.main)
+    """
+    file_parent = file_path.parent.resolve()
+    best = source_dir
+    for p in sys.path:
+        if "site-packages" in p or "dist-packages" in p:
+            continue
+        candidate = pathlib.Path(p).resolve()
+        # candidate must be: between source_dir and file_path, but not the
+        # file's own directory (that would give just the filename, e.g. "main")
+        if (
+            candidate != source_dir
+            and candidate != file_parent
+            and candidate.is_relative_to(source_dir)
+            and file_path.is_relative_to(candidate)
+            and len(candidate.parts) > len(best.parts)
+        ):
+            best = candidate
+    return best
+
+
 def extract_obj_module(obj: object, /, source_dir: pathlib.Path | None = None) -> Tuple[str, ModuleType]:
     """
     Extract the module from the given object. If source_dir is provided, the module will be relative to the source_dir.
@@ -42,27 +75,8 @@ def extract_obj_module(obj: object, /, source_dir: pathlib.Path | None = None) -
         elif "site-packages" in str(file_path) or "dist-packages" in str(file_path):
             raise ValueError("Object from a library")
         else:
-            # For src-layout projects, sys.path may contain subdirectories of source_dir
-            # (e.g., my_app/src/) that are the actual Python package roots. Use the most
-            # specific sys.path entry to compute the shortest valid module path.
-            # Exclude the file's own parent directory — that would reduce the path to just
-            # the filename stem (e.g., "main"), which is not a valid module import.
-            file_parent = file_path.parent.resolve()
-            best_base = source_dir_abs
-            for p in sys.path:
-                if "site-packages" in p or "dist-packages" in p:
-                    continue
-                p_path = pathlib.Path(p).resolve()
-                if (
-                    p_path != source_dir_abs
-                    and p_path != file_parent
-                    and p_path.is_relative_to(source_dir_abs)
-                    and file_path.is_relative_to(p_path)
-                    and len(p_path.parts) > len(best_base.parts)
-                ):
-                    best_base = p_path
-
-            relative_path = file_path.relative_to(str(best_base))
+            package_root = _find_package_root(file_path, source_dir_abs)
+            relative_path = file_path.relative_to(str(package_root))
             # Replace file separators with dots and remove the '.py' extension
             dotted_path = os.path.splitext(str(relative_path))[0].replace(os.sep, ".")
             entity_module_name = dotted_path
