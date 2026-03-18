@@ -580,10 +580,7 @@ def test_ls_relative_files_dotdot_path_does_not_produce_dotdot_tar_entry():
 
         assert len(member_names) == 1, f"Expected 1 member, got: {member_names}"
         for member in member_names:
-            assert ".." not in member, (
-                f"Tar member '{member}' contains '..'. "
-                "GNU tar refuses to extract such archives."
-            )
+            assert ".." not in member, f"Tar member '{member}' contains '..'. GNU tar refuses to extract such archives."
         # Correct normalized path: sibling/module.py (not project/../sibling/module.py)
         assert "sibling/module.py" in member_names
 
