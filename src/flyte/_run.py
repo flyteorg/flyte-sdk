@@ -302,21 +302,19 @@ class _Runner:
                 for p in sys.path
                 if pathlib.Path(p).is_relative_to(root_dir_abs) and "site-packages" not in pathlib.Path(p).parts
             ]
-            # Remove paths that are subdirectories of other paths in the list.
-            # Python adds the script's directory to sys.path (e.g., my_app/src/my_app),
-            # which can shadow packages at a parent path (e.g., my_app/src/my_app/ shadows
-            # the real my_app package at my_app/src/).
-            filtered_paths = []
-            for p in added_paths:
-                p_norm = os.path.normpath(p)
-                is_subdir = any(
-                    p_norm != os.path.normpath(other)
-                    and os.path.normpath(other) != "."
-                    and pathlib.PurePosixPath(p_norm).is_relative_to(os.path.normpath(other))
+            # Remove redundant subdirectory paths. Python auto-adds the script's
+            # directory (e.g., ./my_app/src/my_app) which shadows the real package
+            # at its parent (./my_app/src). Keep only the shallowest paths.
+            normalized = {p: os.path.normpath(p) for p in added_paths}
+            filtered_paths = [
+                p for p in added_paths
+                if not any(
+                    normalized[p] != normalized[other]
+                    and normalized[other] != "."
+                    and pathlib.PurePosixPath(normalized[p]).is_relative_to(normalized[other])
                     for other in added_paths
                 )
-                if not is_subdir:
-                    filtered_paths.append(p)
+            ]
             env[FLYTE_SYS_PATH] = ":".join(filtered_paths)
 
         # TODO: Remove once the actions service is the default and this env var is no longer needed.
