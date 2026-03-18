@@ -23,7 +23,7 @@ Quick start::
         future = await batcher.submit("hello", estimated_cost=5)
         result = await future
 
-For the common LLM / token-budgeted use case, use :class:`TokenBatcher`::
+For the common LLM / token-budgeted use case, use `TokenBatcher`::
 
     from flyte.extras import TokenBatcher
 
@@ -67,8 +67,8 @@ class CostEstimator(Protocol):
     """Protocol for records that can estimate their own processing cost.
 
     Implement this on your record type and the batcher will call it
-    automatically when no explicit ``estimated_cost`` is passed to
-    :meth:`DynamicBatcher.submit`.
+    automatically when no explicit `estimated_cost` is passed to
+    `DynamicBatcher.submit`.
 
     Example::
 
@@ -87,9 +87,9 @@ class CostEstimator(Protocol):
 class TokenEstimator(Protocol):
     """Protocol for records that can estimate their own token count.
 
-    Implement this on your record type and the :class:`TokenBatcher` will
-    call it automatically when no explicit ``estimated_tokens`` is passed
-    to :meth:`TokenBatcher.submit`.
+    Implement this on your record type and the `TokenBatcher` will
+    call it automatically when no explicit `estimated_tokens` is passed
+    to `TokenBatcher.submit`.
 
     Example::
 
@@ -110,13 +110,13 @@ class TokenEstimator(Protocol):
 
 ProcessFn = Callable[[list[RecordT]], Awaitable[list[ResultT]]]
 """Async function that takes a batch of records and returns results in the
-same order.  Must be a native coroutine (``async def``)."""
+same order.  Must be a native coroutine (`async def`)."""
 
 InferenceFn = ProcessFn
 """Alias for :data:`ProcessFn` — kept for LLM inference use cases."""
 
 CostEstimatorFn = Callable[[RecordT], int]
-"""Optional callable ``(record) -> int`` for cost estimation."""
+"""Optional callable `(record) -> int` for cost estimation."""
 
 TokenEstimatorFn = CostEstimatorFn
 """Alias for :data:`CostEstimatorFn` — kept for token estimation use cases."""
@@ -148,16 +148,16 @@ class _Envelope(Generic[RecordT, ResultT]):
 
 @dataclass
 class BatchStats:
-    """Monitoring statistics exposed by :attr:`DynamicBatcher.stats`.
+    """Monitoring statistics exposed by `DynamicBatcher.stats`.
 
     Attributes:
-        total_submitted: Total records submitted via :meth:`submit`.
+        total_submitted: Total records submitted via `submit`.
         total_completed: Total records whose futures have been resolved.
         total_batches: Number of batches dispatched.
         total_batch_cost: Sum of estimated cost across all batches.
         avg_batch_size: Running average records per batch.
         avg_batch_cost: Running average cost per batch.
-        busy_time_s: Cumulative seconds spent inside ``process_fn``.
+        busy_time_s: Cumulative seconds spent inside `process_fn`.
         idle_time_s: Cumulative seconds the processing loop waited for
             a batch to be assembled.
     """
@@ -190,25 +190,25 @@ class DynamicBatcher(Generic[RecordT, ResultT]):
     The batcher runs two internal loops:
 
     1. **Aggregation loop** — drains the submission queue and assembles
-       cost-budgeted batches, respecting ``target_batch_cost``,
-       ``max_batch_size``, and ``batch_timeout_s``.
+       cost-budgeted batches, respecting `target_batch_cost`,
+       `max_batch_size`, and `batch_timeout_s`.
     2. **Processing loop** — pulls assembled batches and calls
-       ``process_fn``, resolving each record's :class:`asyncio.Future`.
+       `process_fn`, resolving each record's `asyncio.Future`.
 
     Type Parameters:
         RecordT: The input record type produced by your tasks.
-        ResultT: The per-record output type returned by ``process_fn``.
+        ResultT: The per-record output type returned by `process_fn`.
 
     Args:
         process_fn:
-            ``async def f(batch: list[RecordT]) -> list[ResultT]``
+            `async def f(batch: list[RecordT]) -> list[ResultT]`
             Must return results in the **same order** as the input batch.
 
         cost_estimator:
-            Optional ``(RecordT) -> int`` function.  When provided, it is
+            Optional `(RecordT) -> int` function.  When provided, it is
             called to estimate the cost of each submitted record.
-            Falls back to ``record.estimate_cost()`` if the record
-            implements :class:`CostEstimator`, then to ``default_cost``.
+            Falls back to `record.estimate_cost()` if the record
+            implements `CostEstimator`, then to `default_cost`.
 
         target_batch_cost:
             Cost budget per batch.  The aggregator fills batches up to
@@ -226,7 +226,7 @@ class DynamicBatcher(Generic[RecordT, ResultT]):
             idle time but may produce smaller batches.
 
         max_queue_size:
-            Bounded queue size.  When full, :meth:`submit` awaits
+            Bounded queue size.  When full, `submit` awaits
             (backpressure).
 
         prefetch_batches:
@@ -288,7 +288,7 @@ class DynamicBatcher(Generic[RecordT, ResultT]):
 
     @property
     def stats(self) -> BatchStats:
-        """Current :class:`BatchStats` snapshot."""
+        """Current `BatchStats` snapshot."""
         return self._stats
 
     @property
@@ -346,18 +346,18 @@ class DynamicBatcher(Generic[RecordT, ResultT]):
     ) -> asyncio.Future[ResultT]:
         """Submit a single record for batched processing.
 
-        Returns an :class:`asyncio.Future` that resolves once the batch
+        Returns an `asyncio.Future` that resolves once the batch
         containing this record has been processed.
 
         Args:
             record: The input record.
             estimated_cost: Optional explicit cost.  When omitted the
-                batcher tries ``cost_estimator``, then
-                ``record.estimate_cost()``, then ``default_cost``.
+                batcher tries `cost_estimator`, then
+                `record.estimate_cost()`, then `default_cost`.
 
         Returns:
             A future whose result is the corresponding entry from the list
-            returned by ``process_fn``.
+            returned by `process_fn`.
 
         Raises:
             RuntimeError: If the batcher is not running.
@@ -533,7 +533,7 @@ class Prompt:
 
     This is a convenience type for common LLM use cases.  For richer
     prompt types (e.g. with system messages, metadata), define your own
-    dataclass implementing :class:`TokenEstimator`.
+    dataclass implementing `TokenEstimator`.
 
     Attributes:
         text: The prompt text.
@@ -554,12 +554,12 @@ class Prompt:
 class TokenBatcher(DynamicBatcher[RecordT, ResultT]):
     """Token-aware batcher for LLM inference workloads.
 
-    A thin convenience wrapper around :class:`DynamicBatcher` that accepts
-    token-specific parameter names (``inference_fn``, ``token_estimator``,
-    ``target_batch_tokens``, etc.) and maps them to the base class.
+    A thin convenience wrapper around `DynamicBatcher` that accepts
+    token-specific parameter names (`inference_fn`, `token_estimator`,
+    `target_batch_tokens`, etc.) and maps them to the base class.
 
-    Also checks the :class:`TokenEstimator` protocol (``estimate_tokens()``)
-    in addition to :class:`CostEstimator` (``estimate_cost()``).
+    Also checks the `TokenEstimator` protocol (`estimate_tokens()`)
+    in addition to `CostEstimator` (`estimate_cost()`).
 
     Example::
 
@@ -624,7 +624,7 @@ class TokenBatcher(DynamicBatcher[RecordT, ResultT]):
     ) -> asyncio.Future[ResultT]:
         """Submit a single record for batched inference.
 
-        Accepts either ``estimated_tokens`` or ``estimated_cost``.
+        Accepts either `estimated_tokens` or `estimated_cost`.
 
         Args:
             record: The input record.

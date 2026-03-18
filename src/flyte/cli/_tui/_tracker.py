@@ -42,8 +42,8 @@ class ActionNode:
 def _safe_json(obj: Any) -> Any:
     """Convert *obj* to a JSON-safe structure.
 
-    Tries ``json.dumps`` first; on failure recurses into dicts/lists and
-    falls back to ``repr()`` for non-serializable leaves (FlyteFile,
+    Tries `json.dumps` first; on failure recurses into dicts/lists and
+    falls back to `repr()` for non-serializable leaves (FlyteFile,
     DataFrame, etc.).
     """
     if obj is None or isinstance(obj, (bool, int, float, str)):
@@ -229,7 +229,7 @@ class ActionTracker:
     def _update_group_status(self, action_id: str) -> None:
         """If action belongs to a group, recompute the group node's status.
 
-        Must be called while ``self._lock`` is held.
+        Must be called while `self._lock` is held.
         """
         node = self._nodes.get(action_id)
         if node is None or node.group is None:

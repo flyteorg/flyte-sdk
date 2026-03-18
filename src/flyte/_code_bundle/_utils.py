@@ -333,7 +333,7 @@ def copy_code_bundle_to_context(
     :param copy_style: "loaded_modules" to copy only imported modules, "all" to copy everything.
     :param context_path: The build context directory.
     :param ignore_patterns: Ignore patterns for the "all" case.  When *None* the
-        ``STANDARD_IGNORE_PATTERNS`` are used.
+        `STANDARD_IGNORE_PATTERNS` are used.
     :return: The path within context_path where files were copied.
     """
     resolved_root = root_dir.resolve()

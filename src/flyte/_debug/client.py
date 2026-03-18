@@ -1,6 +1,6 @@
 """Client-side helpers for VSCode debug mode.
 
-These utilities are used by ``flyte.run`` and the ``flyte run`` CLI to poll a
+These utilities are used by `flyte.run` and the `flyte run` CLI to poll a
 remote run for the VS Code Debugger URL and print it to the user.
 """
 
@@ -15,10 +15,10 @@ if TYPE_CHECKING:
 
 
 def _extract_vscode_uri(details: ActionDetails) -> str | None:
-    """Return the VS Code Debugger URI from action attempts, or ``None``.
+    """Return the VS Code Debugger URI from action attempts, or `None`.
 
     Only returns the URI when the attempt also has a cluster event whose
-    ``message`` equals ``"Vscode server is ready"``, indicating that the
+    `message` equals `"Vscode server is ready"`, indicating that the
     code-server is actually accepting connections.
     """
     from flyteidl2.core.execution_pb2 import TaskLog
@@ -44,10 +44,10 @@ def _build_full_url(endpoint: str, uri: str) -> str:
 async def watch_for_vscode_url(run: Run) -> str | None:
     """Poll a remote run until the VS Code Debugger URL appears.
 
-    Watches the run's action details for a ``TaskLog`` entry named
+    Watches the run's action details for a `TaskLog` entry named
     *"VS Code Debugger"* and combines its URI with the configured endpoint.
 
-    Returns the full clickable URL, or ``None`` if the URL is not found within
+    Returns the full clickable URL, or `None` if the URL is not found within
     *timeout* seconds or the run reaches a terminal state first.
     """
     from flyte._initialize import get_client

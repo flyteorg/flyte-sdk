@@ -47,7 +47,7 @@ def _from_monty(value: Any) -> Any:
 class ExternalFunctionBridge:
     """Drives Monty execution with external function dispatch.
 
-    Uses the low-level ``Monty.start()`` / ``FunctionSnapshot.resume()`` loop,
+    Uses the low-level `Monty.start()` / `FunctionSnapshot.resume()` loop,
     awaiting each external call before resuming. This ensures async external
     functions (task.aio, durable ops) are properly resolved.
     """
@@ -86,7 +86,7 @@ class ExternalFunctionBridge:
         Parameters
         ----------
         monty_cls:
-            The ``pydantic_monty.Monty`` class.
+            The `pydantic_monty.Monty` class.
         code:
             The rewritten function body source.
         input_names:

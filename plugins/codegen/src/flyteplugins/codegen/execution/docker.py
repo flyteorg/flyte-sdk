@@ -154,11 +154,11 @@ async def run_tests(
         timeout: Task timeout in seconds.
         env_vars: Environment variables available inside the container.
         secrets: Flyte secrets to mount.
-        cache: Cache behaviour — ``"auto"``, ``"override"``, or ``"disable"``.
+        cache: Cache behaviour — `"auto"`, `"override"`, or `"disable"`.
         _attempt: Differentiates repeated calls with the same base name.
 
     Returns:
-        :class:`RunResult` with ``output``, ``exit_code``, and ``tests_passed``.
+        `RunResult` with `output`, `exit_code`, and `tests_passed`.
     """
     code_file = tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False)
     code_file.write(f"{code}\n")

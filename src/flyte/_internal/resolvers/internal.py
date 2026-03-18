@@ -1,9 +1,9 @@
 """Generic resolver for internal Flyte tasks.
 
 Stores an import path to a task-builder function and arbitrary keyword
-arguments.  At runtime ``load_task`` dynamically imports the builder and
+arguments.  At runtime `load_task` dynamically imports the builder and
 calls it with the stored kwargs, recreating a lightweight task without
-pickling.  This is the same mechanism used by ``run_python_script`` and
+pickling.  This is the same mechanism used by `run_python_script` and
 can be reused for prefetch, custom bundling, and other internal tasks.
 """
 
@@ -20,12 +20,12 @@ class InternalTaskResolver(Resolver):
 
     During serialization the resolver stores:
 
-    * ``task_builder`` - fully-qualified import path of a callable that
-      returns a :class:`TaskTemplate` (e.g.
-      ``"flyte._run_python_script._build_script_runner_task"``).
+    * `task_builder` - fully-qualified import path of a callable that
+      returns a `TaskTemplate` (e.g.
+      `"flyte._run_python_script._build_script_runner_task"`).
     * Arbitrary keyword arguments forwarded to the builder.
 
-    At runtime :meth:`load_task` re-imports the builder and calls it with
+    At runtime `load_task` re-imports the builder and calls it with
     the stored kwargs.
     """
 

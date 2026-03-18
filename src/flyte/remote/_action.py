@@ -416,8 +416,8 @@ class Action(ToJSONMixin):
         """
         Get logs for the action as an iterator of strings.
 
-        Can be called synchronously (returns ``Iterator[str]``) or asynchronously
-        via ``.aio()`` (returns ``AsyncIterator[str]``).
+        Can be called synchronously (returns `Iterator[str]`) or asynchronously
+        via `.aio()` (returns `AsyncIterator[str]`).
 
         :param attempt: The attempt number to retrieve logs for (defaults to latest attempt).
         :param filter_system: If True, filter out system-generated log lines.

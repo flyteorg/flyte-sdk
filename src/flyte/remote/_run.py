@@ -238,8 +238,8 @@ class Run(ToJSONMixin):
         """
         Get logs for the run as an iterator of strings.
 
-        Can be called synchronously (returns ``Iterator[str]``) or asynchronously
-        via ``.aio()`` (returns ``AsyncIterator[str]``).
+        Can be called synchronously (returns `Iterator[str]`) or asynchronously
+        via `.aio()` (returns `AsyncIterator[str]`).
 
         :param attempt: The attempt number to retrieve logs for (defaults to latest attempt).
         :param filter_system: If True, filter out system-generated log lines.
@@ -290,7 +290,7 @@ class Run(ToJSONMixin):
     @syncify
     async def get_debug_url(self) -> str:
         """
-        Get the debug URL of the run. Returns ``None`` if the VS Code
+        Get the debug URL of the run. Returns `None` if the VS Code
         Debugger log entry is not yet available in the action details.
         """
         if self._debug_url is not None:

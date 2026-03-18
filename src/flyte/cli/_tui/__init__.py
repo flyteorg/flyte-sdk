@@ -9,7 +9,7 @@ if TYPE_CHECKING:
 def launch_tui(tracker: ActionTracker, execute_fn: Callable[[], Awaitable[Any]]) -> None:
     """Launch the interactive TUI.
 
-    Raises a helpful ``ImportError`` when ``textual`` is not installed.
+    Raises a helpful `ImportError` when `textual` is not installed.
     """
     try:
         from ._app import FlyteTUIApp
@@ -23,7 +23,7 @@ def launch_tui(tracker: ActionTracker, execute_fn: Callable[[], Awaitable[Any]])
 def launch_tui_explore() -> None:
     """Launch the TUI explore mode to browse past local runs.
 
-    Raises a helpful ``ImportError`` when ``textual`` is not installed.
+    Raises a helpful `ImportError` when `textual` is not installed.
     """
     try:
         from ._explore import ExploreTUIApp
