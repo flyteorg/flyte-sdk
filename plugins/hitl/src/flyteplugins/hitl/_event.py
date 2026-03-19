@@ -45,7 +45,7 @@ event_image = (
     .with_pip_packages("fastapi", "uvicorn", "python-multipart", "aiofiles")
     .with_apt_packages("git")
     .with_pip_packages(
-        "git+https://github.com/flyteorg/flyte-sdk.git@675de88a#subdirectory=plugins/hitl&egg=flyteplugins-hitl"
+        "git+https://github.com/flyteorg/flyte-sdk.git@cac8406c#subdirectory=plugins/hitl&egg=flyteplugins-hitl"
     )
     # .with_pip_packages("flyteplugins-hitl==2.0.9")
 )
@@ -380,7 +380,7 @@ async def wait_for_input_event(
                     return value
 
             logger.info(f"Event '{name}' waiting for human input... ({elapsed}/{timeout_seconds}s elapsed)")
-        await flyte.durable.sleep(poll_interval_seconds)
+        await flyte.durable.sleep.aio(poll_interval_seconds)
         elapsed += poll_interval_seconds
 
     raise TimeoutError(
