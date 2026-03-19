@@ -45,7 +45,7 @@ event_image = (
     .with_pip_packages("fastapi", "uvicorn", "python-multipart", "aiofiles")
     .with_apt_packages("git")
     .with_pip_packages(
-        "git+https://github.com/flyteorg/flyte-sdk.git@524b7579#subdirectory=plugins/hitl&egg=flyteplugins-hitl"
+        "git+https://github.com/flyteorg/flyte-sdk.git@a7ce7e5e#subdirectory=plugins/hitl&egg=flyteplugins-hitl"
     )
     # .with_pip_packages("flyteplugins-hitl==2.0.9")
 )
