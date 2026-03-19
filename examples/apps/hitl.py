@@ -145,11 +145,11 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     flyte.init_from_config(
-        pathlib.Path(__file__).parent.parent.parent / ".flyte" / "config.yaml", log_level=logging.DEBUG
+        pathlib.Path(__file__).parent.parent.parent / ".flyte" / "config-union-internal.yaml", log_level=logging.DEBUG
     )
 
     print("\nStarting HITL workflow...")
-    run = flyte.with_runcontext(project="niels").run(main)
+    run = flyte.run(main)
     print(f"Run URL: {run.url}")
     print(f"Run name: {run.name}")
 

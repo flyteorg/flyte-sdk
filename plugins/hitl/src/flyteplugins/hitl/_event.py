@@ -9,7 +9,6 @@ This module provides the Event class that encapsulates the HITL functionality:
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import os
@@ -19,6 +18,7 @@ from typing import Any, ClassVar, Generic, Literal, Type, TypeVar
 
 import flyte
 import flyte.app
+import flyte.durable
 import flyte.report
 import flyte.storage as storage
 from flyte.app.extras import FastAPIAppEnvironment
@@ -45,7 +45,7 @@ event_image = (
     .with_pip_packages("fastapi", "uvicorn", "python-multipart", "aiofiles")
     .with_apt_packages("git")
     .with_pip_packages(
-        "git+https://github.com/flyteorg/flyte-sdk.git@f8b0b472#subdirectory=plugins/hitl&egg=flyteplugins-hitl"
+        "git+https://github.com/flyteorg/flyte-sdk.git@675de88a#subdirectory=plugins/hitl&egg=flyteplugins-hitl"
     )
     # .with_pip_packages("flyteplugins-hitl==2.0.9")
 )
@@ -355,7 +355,6 @@ async def show_form(form_url: str, api_url: str, curl_body: str, type_name: str)
     return html_report
 
 
-@flyte.trace
 async def wait_for_input_event(
     name: str,
     request_id: str,
@@ -381,7 +380,7 @@ async def wait_for_input_event(
                     return value
 
             logger.info(f"Event '{name}' waiting for human input... ({elapsed}/{timeout_seconds}s elapsed)")
-        await asyncio.sleep(poll_interval_seconds)
+        await flyte.durable.sleep(poll_interval_seconds)
         elapsed += poll_interval_seconds
 
     raise TimeoutError(
