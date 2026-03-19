@@ -43,7 +43,9 @@ event_image = (
     flyte.Image.from_debian_base(flyte_version="2.0.9", name="hitl-event-app-image")
     .with_pip_packages("fastapi", "uvicorn", "python-multipart", "aiofiles")
     .with_apt_packages("git")
-    .with_pip_packages("git+https://github.com/flyteorg/flyte-sdk.git@b0732aff")
+    .with_pip_packages(
+        "git+https://github.com/flyteorg/flyte-sdk.git@bb91f188?subdirectory=src/flyte&egg=flyteplugins-hitl"
+    )
     # .with_pip_packages("flyteplugins-hitl==2.0.9")
 )
 
