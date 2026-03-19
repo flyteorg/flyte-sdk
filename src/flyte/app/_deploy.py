@@ -114,25 +114,39 @@ async def _deploy_app(
             "server function."
         )
 
-    image_uri = app.image.uri if isinstance(app.image, Image) else app.image
+    image_uri_for_log = app.image.uri if isinstance(app.image, Image) else app.image
     try:
         app_idl = await translate_app_env_to_idl.aio(
             app, serialization_context, parameter_overrides=parameter_overrides
         )
 
+        # When we have an image cache (e.g. from build_images in serve), use the built image
+        # so deploy uses the correct registry (e.g. ECR) instead of the env's default (e.g. ghcr.io).
+        if (
+            serialization_context.image_cache
+            and app.name in serialization_context.image_cache.image_lookup
+            and app_idl.spec.HasField("container")
+        ):
+            app_idl.spec.container.image = serialization_context.image_cache.image_lookup[app.name]
+
         if dryrun:
             return app_idl
         ensure_client()
-        msg = f"Deploying app {app.name}, with image {image_uri} version {serialization_context.version}"
+        resolved_image = app_idl.spec.container.image if app_idl.spec.HasField("container") else image_uri_for_log
+        msg = f"Deploying app {app.name}, with image {resolved_image} version {serialization_context.version}"
         if app_idl.spec.HasField("container") and app_idl.spec.container.args:
             msg += f" with args {app_idl.spec.container.args}"
         status.step(msg)
 
         return await App.create.aio(app_idl)
     except Exception as exc:
-        logger.error(f"Failed to deploy app {app.name} with image {image_uri}: {exc}")
+        try:
+            resolved_image = app_idl.spec.container.image if app_idl.spec.HasField("container") else image_uri_for_log
+        except NameError:
+            resolved_image = image_uri_for_log
+        logger.error(f"Failed to deploy app {app.name} with image {resolved_image}: {exc}")
         raise flyte.errors.DeploymentError(
-            f"Failed to deploy app {app.name} with image {image_uri}, Error: {exc!s}"
+            f"Failed to deploy app {app.name} with image {resolved_image}, Error: {exc!s}"
         ) from exc
 
 

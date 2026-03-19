@@ -1195,11 +1195,37 @@ class Image:
         Use this method to create a new image with the local v2 builder
         This will override any existing builder
 
-        :return: Image
+        Returns:
+            Image
         """
         # Manually declare the PythonWheel so we can set the hashing
         # used to compute the identifier. Can remove if we ever decide to expose the lambda in with_ commands
         with_dist = self.clone(addl_layer=PythonWheels(wheel_dir=DIST_FOLDER, package_name="flyte"))
+        return with_dist
+
+    def with_local_v2_plugins(self, plugins: str | list[str] | None = None) -> Image:
+        """
+        Use this method to create a new image with the local v2 builder
+        This will override any existing builder
+
+        Args:
+            plugins: plugin name or list of plugin names to install, default is None, e.g.
+                flyteplugins-hitl, flyteplugins-vllm, flyteplugins-sglang, etc.
+
+        Returns:
+            Image
+        """
+        if isinstance(plugins, str):
+            plugins = [plugins]
+
+        with_dist = self
+        if plugins:
+            for plugin in plugins:
+                if not plugin.startswith("flyteplugins-"):
+                    raise ValueError(f"Plugin {plugin} must start with 'flyteplugins-'")
+                with_dist = with_dist.clone(
+                    addl_layer=PythonWheels(wheel_dir=DIST_FOLDER, package_name=plugin.replace("-", "_"))
+                )
 
         return with_dist
 
