@@ -28,7 +28,7 @@ async def create_sample_dir(n: int = 3) -> Dir:
     """Create a temporary directory with n text files and upload it."""
     tmpdir = tempfile.mkdtemp()
     for i in range(n):
-        with open(os.path.join(tmpdir, f"file{i}.txt"), "w") as f:
+        with open(os.path.join(tmpdir, f"file{i}.txt"), "w") as f:  # noqa: ASYNC230
             f.write(f"line {i}\n")
     return await Dir.from_local(tmpdir)
 
