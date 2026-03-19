@@ -14,7 +14,7 @@ class MapAsyncIterator(Generic[P, R]):
     """AsyncIterator implementation for the map function results.
 
     When ``concurrency > 0`` a bounded worker-pool is used so that only
-    *concurrency* asyncio tasks exist at any time — O(concurrency) memory
+    *concurrency* asyncio tasks exist at any time - O(concurrency) memory
     regardless of the total number of items.  When ``concurrency == 0`` all
     tasks are created upfront (original behaviour).
     """
@@ -52,7 +52,7 @@ class MapAsyncIterator(Generic[P, R]):
         return self
 
     # ------------------------------------------------------------------
-    # Invoke helper – handles both plain func and functools.partial
+    # Invoke helper - handles both plain func and functools.partial
     # ------------------------------------------------------------------
     async def _invoke(self, arg_tuple: tuple) -> R:
         if isinstance(self.func, functools.partial):
@@ -64,10 +64,10 @@ class MapAsyncIterator(Generic[P, R]):
                 logger.debug(f"Running {base_func.name} with args: {merged_args} and kwargs: {bound_kwargs}")
             return await base_func.aio(*merged_args, **bound_kwargs)
         else:
-            return await self.func.aio(*arg_tuple)
+            return await self.func.aio(*arg_tuple)  # type: ignore[call-overload]
 
     # ------------------------------------------------------------------
-    # __anext__ – dispatches to the right path
+    # __anext__ - dispatches to the right path
     # ------------------------------------------------------------------
     async def __anext__(self) -> Union[R, Exception]:
         if not self._initialized:
@@ -85,7 +85,7 @@ class MapAsyncIterator(Generic[P, R]):
             return await self._next_unbounded(idx)
 
     async def _next_unbounded(self, idx: int) -> Union[R, Exception]:
-        """Original path – one pre-created task per item."""
+        """Original path - one pre-created task per item."""
         task = self._tasks[idx]
         try:
             result = await task
@@ -100,7 +100,7 @@ class MapAsyncIterator(Generic[P, R]):
             raise e
 
     async def _next_bounded(self, idx: int) -> Union[R, Exception]:
-        """Worker-pool path – wait for the result at *idx*."""
+        """Worker-pool path - wait for the result at *idx*."""
         assert self._condition is not None
         async with self._condition:
             while idx not in self._results:
@@ -155,13 +155,14 @@ class MapAsyncIterator(Generic[P, R]):
             task.add_done_callback(self._active_tasks.discard)
 
     async def _run_one(self, index: int, arg_tuple: tuple, sem: asyncio.Semaphore) -> None:
+        assert self._condition is not None
         try:
             result = await self._invoke(arg_tuple)
-            async with self._condition:  # type: ignore[union-attr]
+            async with self._condition:
                 self._results[index] = (True, result)
                 self._condition.notify_all()
         except Exception as e:
-            async with self._condition:  # type: ignore[union-attr]
+            async with self._condition:
                 self._results[index] = (False, e)
                 self._condition.notify_all()
         finally:
@@ -180,12 +181,12 @@ class MapAsyncIterator(Generic[P, R]):
             return
 
         if self.concurrency > 0:
-            # Bounded path – producer creates at most *concurrency* tasks at a time
+            # Bounded path - producer creates at most *concurrency* tasks at a time
             self._condition = asyncio.Condition()
             self._producer = asyncio.create_task(self._produce_bounded(arg_tuples))
             concurrency_desc = str(self.concurrency)
         else:
-            # Unbounded path – create all tasks upfront
+            # Unbounded path - create all tasks upfront
             self._tasks = [asyncio.create_task(self._invoke(at)) for at in arg_tuples]
             concurrency_desc = "unlimited"
 
