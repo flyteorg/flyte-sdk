@@ -45,7 +45,7 @@ event_image = (
     .with_pip_packages("fastapi", "uvicorn", "python-multipart", "aiofiles")
     .with_apt_packages("git")
     .with_pip_packages(
-        "git+https://github.com/flyteorg/flyte-sdk.git@cac8406c#subdirectory=plugins/hitl&egg=flyteplugins-hitl"
+        "git+https://github.com/flyteorg/flyte-sdk.git@524b7579#subdirectory=plugins/hitl&egg=flyteplugins-hitl"
     )
     # .with_pip_packages("flyteplugins-hitl==2.0.9")
 )
@@ -368,20 +368,21 @@ async def wait_for_input_event(
     # Use the stored response path (which includes the full blob storage path)
     elapsed = 0
 
-    while elapsed < timeout_seconds:
-        # Check if response exists
-        if await storage.exists(response_path):
-            async for chunk in storage.get_stream(response_path):
-                response = json.loads(chunk.decode())
-                if response.get("status") == "completed":
-                    value = response["value"]
-                    logger.info(f"Event '{name}' received human input: {value}")
-                    print(f"\nReceived human input for '{name}': {value}")
-                    return value
+    with flyte.group("wait-for-input-event"):
+        while elapsed < timeout_seconds:
+            # Check if response exists
+            if await storage.exists(response_path):
+                async for chunk in storage.get_stream(response_path):
+                    response = json.loads(chunk.decode())
+                    if response.get("status") == "completed":
+                        value = response["value"]
+                        logger.info(f"Event '{name}' received human input: {value}")
+                        print(f"\nReceived human input for '{name}': {value}")
+                        return value
 
-            logger.info(f"Event '{name}' waiting for human input... ({elapsed}/{timeout_seconds}s elapsed)")
-        await flyte.durable.sleep.aio(poll_interval_seconds)
-        elapsed += poll_interval_seconds
+                logger.info(f"Event '{name}' waiting for human input... ({elapsed}/{timeout_seconds}s elapsed)")
+            await flyte.durable.sleep.aio(poll_interval_seconds)
+            elapsed += poll_interval_seconds
 
     raise TimeoutError(
         f"Event '{name}' (request_id={request_id}) timed out after "
