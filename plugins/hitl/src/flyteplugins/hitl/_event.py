@@ -52,7 +52,6 @@ event_image = (
 event_app_env = FastAPIAppEnvironment(
     name="hitl-event-app",
     app=app,
-    domain=flyte.app.Domain(subdomain="hitl-event-app"),
     description="Human-in-the-loop event service for Flyte workflows",
     command=["uvicorn", "flyteplugins.hitl._app:app", "--host", "0.0.0.0", "--port", "8080"],
     image=event_image,
@@ -157,6 +156,9 @@ class Event(Generic[T]):
         image_build = await flyte.build.aio(event_image, force=True, wait=True)
         print("Image built: ", image_build.uri)
         event_app_env.image = image_build.uri
+        project = flyte.current_project()
+        domain = flyte.current_domain()
+        event_app_env.domain = flyte.app.Domain(subdomain=f"hitl-event-app-{project}-{domain}")
         return await flyte.with_servecontext(
             copy_style="none",
             version=flyte.version(),
