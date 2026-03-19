@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import uuid
 from dataclasses import dataclass
 from typing import Any, ClassVar, Generic, Literal, Type, TypeVar
@@ -158,7 +159,8 @@ class Event(Generic[T]):
         event_app_env.image = image_build.uri
         project = flyte.current_project()
         domain = flyte.current_domain()
-        event_app_env.domain = flyte.app.Domain(subdomain=f"hitl-event-app-{project}-{domain}")
+        org = os.getenv("_U_ORG_NAME")
+        event_app_env.domain = flyte.app.Domain(subdomain=f"hitl-event-app-{org}-{project}-{domain}")
         return await flyte.with_servecontext(
             copy_style="none",
             version=flyte.version(),
