@@ -70,9 +70,14 @@ class MapAsyncIterator(Generic[P, R]):
                 logger.warning("Exception raising is `ON`, raising exception and cancelling remaining tasks")
                 raise e
 
+    async def _run_with_semaphore(self, semaphore: asyncio.Semaphore, coro):
+        """Run a coroutine while holding the semaphore to limit concurrency."""
+        async with semaphore:
+            return await coro
+
     async def _initialize(self):
         """Initialize the tasks - called lazily on first iteration"""
-        # Create all tasks at once
+        semaphore = asyncio.Semaphore(self.concurrency) if self.concurrency > 0 else None
         tasks = []
         task_count = 0
 
@@ -87,13 +92,19 @@ class MapAsyncIterator(Generic[P, R]):
                 merged_args = bound_args + arg_tuple
                 if logger.isEnabledFor(logging.DEBUG):
                     logger.debug(f"Running {base_func.name} with args: {merged_args} and kwargs: {bound_kwargs}")
-                task = asyncio.create_task(base_func.aio(*merged_args, **bound_kwargs))
+                coro = base_func.aio(*merged_args, **bound_kwargs)
+                if semaphore is not None:
+                    coro = self._run_with_semaphore(semaphore, coro)
+                task = asyncio.create_task(coro)
                 tasks.append(task)
                 task_count += 1
         else:
             # Handle regular TaskTemplate functions
             for arg_tuple in zip(*self.args):
-                task = asyncio.create_task(self.func.aio(*arg_tuple))
+                coro = self.func.aio(*arg_tuple)
+                if semaphore is not None:
+                    coro = self._run_with_semaphore(semaphore, coro)
+                task = asyncio.create_task(coro)
                 tasks.append(task)
                 task_count += 1
 
@@ -102,7 +113,8 @@ class MapAsyncIterator(Generic[P, R]):
             self._tasks = []
             self._task_count = 0
         else:
-            logger.info(f"Starting {task_count} tasks in group '{self.name}' with unlimited concurrency")
+            concurrency_desc = str(self.concurrency) if self.concurrency > 0 else "unlimited"
+            logger.info(f"Starting {task_count} tasks in group '{self.name}' with {concurrency_desc} concurrency")
             self._tasks = tasks
             self._task_count = task_count
 
