@@ -56,14 +56,12 @@ logger = logging.getLogger(__name__)
 task_env = flyte.TaskEnvironment(
     name="hitl-workflow",
     image=(
-        flyte.Image.from_debian_base(python_version=(3, 12))
-        .with_pip_packages(
-            # "flyteplugins-hitl>=2.0.9",
+        flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages(
+            "flyteplugins-hitl>=2.0.9",
             "fastapi",
             "uvicorn",
             "python-multipart",
         )
-        .with_local_v2_plugins(plugins="flyteplugins-hitl")
     ),
     resources=flyte.Resources(cpu=1, memory="512Mi"),
     depends_on=[hitl.env],

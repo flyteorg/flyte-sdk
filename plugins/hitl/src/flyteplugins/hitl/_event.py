@@ -41,13 +41,9 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 
 event_image = (
-    flyte.Image.from_debian_base(flyte_version="2.0.9", name="hitl-event-app-image")
+    flyte.Image.from_debian_base(flyte_version=flyte.version(), name="hitl-event-app-image")
     .with_pip_packages("fastapi", "uvicorn", "python-multipart", "aiofiles")
-    .with_apt_packages("git")
-    .with_pip_packages(
-        "git+https://github.com/flyteorg/flyte-sdk.git@a7ce7e5e#subdirectory=plugins/hitl&egg=flyteplugins-hitl"
-    )
-    # .with_pip_packages("flyteplugins-hitl==2.0.9")
+    .with_pip_packages(f"flyteplugins-hitl=={flyte.version()}")
 )
 
 event_app_env = FastAPIAppEnvironment(
