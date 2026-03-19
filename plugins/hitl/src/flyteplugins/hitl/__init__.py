@@ -38,13 +38,12 @@ async def main() -> int:
 - Crash-resilient polling with object storage
 """
 
-from ._event import Event, EventScope, event_app_env, event_task_env, new_event
+from ._event import Event, EventScope, event_task_env, new_event
 
 __all__ = [
     "Event",
     "EventScope",
     "env",
-    "event_app_env",
     "new_event",
 ]
 
