@@ -9,6 +9,7 @@ This module provides the Event class that encapsulates the HITL functionality:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -45,7 +46,7 @@ event_image = (
     .with_pip_packages("fastapi", "uvicorn", "python-multipart", "aiofiles")
     .with_apt_packages("git")
     .with_pip_packages(
-        "git+https://github.com/flyteorg/flyte-sdk.git@c996c9e6#subdirectory=plugins/hitl&egg=flyteplugins-hitl"
+        "git+https://github.com/flyteorg/flyte-sdk.git@aac59e46#subdirectory=plugins/hitl&egg=flyteplugins-hitl"
     )
     # .with_pip_packages("flyteplugins-hitl==2.0.9")
 )
@@ -286,13 +287,6 @@ class Event(Generic[T]):
             indent=2,
         )
 
-        report_html = get_event_report_html(
-            form_url=self.form_url,
-            api_url=self.api_url,
-            curl_body=curl_body,
-            type_name=self._type_name,
-        )
-
         await show_form.override(
             short_name=self.name,
             links=[
@@ -302,7 +296,7 @@ class Event(Generic[T]):
                     request_path=self._request_path,
                 )
             ],
-        )(report_html)
+        )(self.form_url, self.api_url, curl_body, self._type_name)
         return await wait_for_input_event(
             name=self.name,
             request_id=self.request_id,
@@ -347,12 +341,19 @@ class EventFormLink(flyte.Link):
 
 
 @event_task_env.task(report=True)
-async def show_form(html_report: str):
+async def show_form(form_url: str, api_url: str, curl_body: str, type_name: str) -> str:
     """
     Task that serves the event app.
     """
+    html_report = get_event_report_html(
+        form_url=form_url,
+        api_url=api_url,
+        curl_body=curl_body,
+        type_name=type_name,
+    )
     await flyte.report.replace.aio(html_report)
     await flyte.report.flush.aio()
+    return html_report
 
 
 @flyte.trace
@@ -381,7 +382,7 @@ async def wait_for_input_event(
                     return value
 
             logger.info(f"Event '{name}' waiting for human input... ({elapsed}/{timeout_seconds}s elapsed)")
-        await flyte.durable.sleep.aio(poll_interval_seconds)
+        await asyncio.sleep(poll_interval_seconds)
         elapsed += poll_interval_seconds
 
     raise TimeoutError(
