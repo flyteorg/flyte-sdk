@@ -149,10 +149,6 @@ class Event(Generic[T]):
     async def _serve_app(cls) -> flyte.AppHandle:
         """Serve the app and return the app handle."""
         await flyte.init_in_cluster.aio()
-        print("Building image manually...")
-        image_build = await flyte.build.aio(event_image, force=True, wait=True)
-        print("Image built: ", image_build.uri)
-        event_app_env.image = image_build.uri
         project = flyte.current_project()
         domain = flyte.current_domain()
         org = os.getenv("_U_ORG_NAME")
