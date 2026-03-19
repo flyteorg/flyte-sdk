@@ -346,7 +346,7 @@ async def show_form(form_url: str, api_url: str, curl_body: str, type_name: str)
     await flyte.report.flush.aio()
     return html_report
 
-
+@flyte.trace
 async def wait_for_input_event(
     name: str,
     request_id: str,
@@ -360,21 +360,20 @@ async def wait_for_input_event(
     # Use the stored response path (which includes the full blob storage path)
     elapsed = 0
 
-    with flyte.group("wait-for-input-event"):
-        while elapsed < timeout_seconds:
-            # Check if response exists
-            if await storage.exists(response_path):
-                async for chunk in storage.get_stream(response_path):
-                    response = json.loads(chunk.decode())
-                    if response.get("status") == "completed":
-                        value = response["value"]
-                        logger.info(f"Event '{name}' received human input: {value}")
-                        print(f"\nReceived human input for '{name}': {value}")
-                        return value
+    while elapsed < timeout_seconds:
+        # Check if response exists
+        if await storage.exists(response_path):
+            async for chunk in storage.get_stream(response_path):
+                response = json.loads(chunk.decode())
+                if response.get("status") == "completed":
+                    value = response["value"]
+                    logger.info(f"Event '{name}' received human input: {value}")
+                    print(f"\nReceived human input for '{name}': {value}")
+                    return value
 
-                logger.info(f"Event '{name}' waiting for human input... ({elapsed}/{timeout_seconds}s elapsed)")
-            await asyncio.sleep(poll_interval_seconds)
-            elapsed += poll_interval_seconds
+            logger.info(f"Event '{name}' waiting for human input... ({elapsed}/{timeout_seconds}s elapsed)")
+        await asyncio.sleep(poll_interval_seconds)
+        elapsed += poll_interval_seconds
 
     raise TimeoutError(
         f"Event '{name}' (request_id={request_id}) timed out after "
