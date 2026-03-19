@@ -38,9 +38,7 @@ Warning: Experimental feature: alpha — APIs may change without notice.
 **2. Code sandbox** — arbitrary code in an isolated container
     Runs arbitrary Python scripts or shell commands inside an ephemeral Docker
     container. The image is built on demand from declared `packages` and
-    `system_packages`, executed once, then discarded. Network is blocked by
-    default (`block_network=True`), preventing outbound calls from untrusted
-    code.  Used via `flyte.sandbox.create()`.
+    `system_packages`, executed once, then discarded. Used via `flyte.sandbox.create()`.
 
     Three execution modes are supported:
 
