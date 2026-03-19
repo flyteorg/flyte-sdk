@@ -993,13 +993,13 @@ class DirTransformer(TypeTransformer[Dir]):
         lv: literals_pb2.Literal,
         expected_python_type: Type[Dir],
     ) -> Dir:
-        """Convert a Flyte literal to a File object."""
+        """Convert a Flyte literal to a Dir object."""
         if not lv.scalar.HasField("blob"):
             raise TypeTransformerFailedError(f"Expected blob literal, received {lv}")
-        if not lv.scalar.blob.metadata.type.dimensionality == types_pb2.BlobType.BlobDimensionality.MULTIPART:
-            raise TypeTransformerFailedError(
-                f"Expected multipart, received {lv.scalar.blob.metadata.type.dimensionality}"
-            )
+        # Accept both SINGLE and MULTIPART dimensionality: raw container tasks may store
+        # Dir outputs with SINGLE dimensionality because the runtime does not consult the
+        # task interface when writing the output literal.  The URI still points to the
+        # correct directory, so we use the expected Python type (Dir) as the source of truth.
 
         uri = lv.scalar.blob.uri
         filename = Path(uri).name
