@@ -19,7 +19,6 @@ from typing import Any, ClassVar, Generic, Literal, Type, TypeVar
 
 import flyte
 import flyte.app
-import flyte.durable
 import flyte.report
 import flyte.storage as storage
 from flyte.app.extras import FastAPIAppEnvironment
@@ -46,7 +45,7 @@ event_image = (
     .with_pip_packages("fastapi", "uvicorn", "python-multipart", "aiofiles")
     .with_apt_packages("git")
     .with_pip_packages(
-        "git+https://github.com/flyteorg/flyte-sdk.git@aac59e46#subdirectory=plugins/hitl&egg=flyteplugins-hitl"
+        "git+https://github.com/flyteorg/flyte-sdk.git@f8b0b472#subdirectory=plugins/hitl&egg=flyteplugins-hitl"
     )
     # .with_pip_packages("flyteplugins-hitl==2.0.9")
 )
