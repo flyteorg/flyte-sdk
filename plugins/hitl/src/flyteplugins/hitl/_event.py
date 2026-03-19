@@ -35,15 +35,14 @@ EventScope = Literal["run"]
 
 logger = logging.getLogger(__name__)
 
-
 # ============================================================================
 # App and Task Environment for HITL events (module-level)
 # ============================================================================
 
 event_image = (
-    flyte.Image.from_debian_base()
+    flyte.Image.from_debian_base(flyte_version="2.0.9", name="hitl-event-app-image")
     .with_pip_packages("fastapi", "uvicorn", "python-multipart", "aiofiles")
-    .with_pip_packages("flyte>=2.0.0", "flyteplugins-hitl>=2.0.0")
+    .with_pip_packages("flyteplugins-hitl==2.0.9")
 )
 
 event_app_env = FastAPIAppEnvironment(
@@ -51,6 +50,7 @@ event_app_env = FastAPIAppEnvironment(
     app=app,
     domain=flyte.app.Domain(subdomain="hitl-event-app"),
     description="Human-in-the-loop event service for Flyte workflows",
+    command=["uvicorn", "flyteplugins.hitl._app:app", "--host", "0.0.0.0", "--port", "8080"],
     image=event_image,
     resources=flyte.Resources(cpu=1, memory="512Mi"),
     requires_auth=True,
@@ -148,13 +148,10 @@ class Event(Generic[T]):
     @classmethod
     async def _serve_app(cls) -> flyte.AppHandle:
         """Serve the app and return the app handle."""
-        from flyteplugins.hitl import __version__
-
         await flyte.init_in_cluster.aio()
         return await flyte.with_servecontext(
             copy_style="none",
-            version=__version__,
-            interactive_mode=True,
+            version=flyte.version(),
         ).serve.aio(event_app_env)
 
     @classmethod

@@ -56,9 +56,14 @@ logger = logging.getLogger(__name__)
 task_env = flyte.TaskEnvironment(
     name="hitl-workflow",
     image=(
-        flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages(
-            "fastapi", "uvicorn", "python-multipart", "flyteplugins-hitl>=2.0.0"
+        flyte.Image.from_debian_base(python_version=(3, 12))
+        .with_pip_packages(
+            # "flyteplugins-hitl>=2.0.9",
+            "fastapi",
+            "uvicorn",
+            "python-multipart",
         )
+        .with_local_v2_plugins(plugins="flyteplugins-hitl")
     ),
     resources=flyte.Resources(cpu=1, memory="512Mi"),
     depends_on=[hitl.env],
@@ -129,6 +134,7 @@ async def main() -> int:
 
 if __name__ == "__main__":
     import argparse
+    import pathlib
 
     parser = argparse.ArgumentParser(description="HITL Example")
     parser.add_argument(
@@ -138,10 +144,12 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    flyte.init_from_config(log_level=logging.DEBUG)
+    flyte.init_from_config(
+        pathlib.Path(__file__).parent.parent.parent / ".flyte" / "config.yaml", log_level=logging.DEBUG
+    )
 
     print("\nStarting HITL workflow...")
-    run = flyte.run(main)
+    run = flyte.with_runcontext(project="niels").run(main)
     print(f"Run URL: {run.url}")
     print(f"Run name: {run.name}")
 

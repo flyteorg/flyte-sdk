@@ -617,6 +617,8 @@ class _Serve:
                 upload_to_controlplane=not self._dry_run,
                 copy_bundle_to=self._copy_bundle_to,
             )
+        elif self._copy_style == "none":
+            code_bundle = None
         else:
             code_bundle = await build_code_bundle(
                 from_dir=cfg.root_dir,
@@ -633,7 +635,8 @@ class _Serve:
         else:
             h = hashlib.md5()
             h.update(cloudpickle.dumps(app_deployment.envs))
-            h.update(code_bundle.computed_version.encode("utf-8"))
+            if code_bundle:
+                h.update(code_bundle.computed_version.encode("utf-8"))
             h.update(cloudpickle.dumps(image_cache))
             version = h.hexdigest()
 
