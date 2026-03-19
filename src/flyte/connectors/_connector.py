@@ -4,7 +4,7 @@ import os
 import typing
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Type
 
 from flyteidl2.connector import connector_pb2
 from flyteidl2.connector.connector_pb2 import Connector as ConnectorProto
@@ -34,6 +34,7 @@ from flyte._task import AsyncFunctionTaskTemplate, TaskTemplate
 from flyte.connectors.utils import _render_task_template, is_terminal_phase
 from flyte.models import CodeBundle, NativeInterface, SerializationContext
 from flyte.types._type_engine import dataclass_from_dict
+from typing_extensions import TypeVar
 
 
 @dataclass(frozen=True)
@@ -88,7 +89,10 @@ class Resource:
     custom_info: Optional[typing.Dict[str, Any]] = None
 
 
-class AsyncConnector(ABC):
+T = TypeVar("T", bound=ResourceMeta, default=ResourceMeta)
+
+
+class AsyncConnector(ABC, typing.Generic[T]):
     """
     This is the base class for all async connectors, and it defines the interface that all connectors must implement.
     The connector service is responsible for invoking connectors.
@@ -101,7 +105,7 @@ class AsyncConnector(ABC):
     name = "Async Connector"
     task_type_name: str
     task_type_version: int = 0
-    metadata_type: ResourceMeta
+    metadata_type: Type[T]
 
     @abstractmethod
     async def create(
@@ -110,7 +114,7 @@ class AsyncConnector(ABC):
         output_prefix: str,
         inputs: Optional[Dict[str, typing.Any]] = None,
         task_execution_metadata: Optional[TaskExecutionMetadata] = None,
-        **kwargs,
+        **kwargs: typing.Any,
     ) -> ResourceMeta:
         """
         Return a resource meta that can be used to get the status of the task.
@@ -118,7 +122,7 @@ class AsyncConnector(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def get(self, resource_meta: ResourceMeta, **kwargs) -> Resource:
+    async def get(self, resource_meta: T, **kwargs: typing.Any) -> Resource:
         """
         Return the status of the task, and return the outputs in some cases. For example, bigquery job
         can't write the structured dataset to the output location, so it returns the output literals to the propeller,
@@ -127,19 +131,19 @@ class AsyncConnector(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def delete(self, resource_meta: ResourceMeta, **kwargs):
+    async def delete(self, resource_meta: T, **kwargs: typing.Any):
         """
         Delete the task. This call should be idempotent. It should raise an error if fails to delete the task.
         """
         raise NotImplementedError
 
-    async def get_metrics(self, resource_meta: ResourceMeta, **kwargs) -> GetTaskMetricsResponse:
+    async def get_metrics(self, resource_meta: T, **kwargs: typing.Any) -> GetTaskMetricsResponse:
         """
         Return the metrics for the task.
         """
         raise NotImplementedError
 
-    async def get_logs(self, resource_meta: ResourceMeta, **kwargs) -> GetTaskLogsResponse:
+    async def get_logs(self, resource_meta: T, **kwargs: typing.Any) -> GetTaskLogsResponse:
         """
         Return the metrics for the task.
         """
@@ -152,11 +156,11 @@ class ConnectorRegistry(object):
     The connector service will look up the connector registry based on the task type and version.
     """
 
-    _REGISTRY: typing.ClassVar[Dict[ConnectorRegistryKey, AsyncConnector]] = {}
+    _REGISTRY: typing.ClassVar[Dict[ConnectorRegistryKey, AsyncConnector[typing.Any]]] = {}
     _METADATA: typing.ClassVar[Dict[str, ConnectorProto]] = {}
 
     @staticmethod
-    def register(connector: AsyncConnector, override: bool = False):
+    def register(connector: AsyncConnector[T], override: bool = False):
         key = ConnectorRegistryKey(
             task_type_name=connector.task_type_name, task_type_version=connector.task_type_version
         )
