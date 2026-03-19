@@ -105,7 +105,7 @@ def _to_delivery_config_template(n: Notification) -> definition_pb2.DeliveryConf
                 url=n.url,
                 method=_HTTP_METHOD_MAP.get(n.method, definition_pb2.HTTP_METHOD_POST),
                 headers=n.headers or {},
-                body_template=json.dumps(n.body) if n.body else "",
+                body_template=json.dumps(n.body) if n.body is not None else "",
             ),
         )
     else:
