@@ -42,7 +42,9 @@ logger = logging.getLogger(__name__)
 event_image = (
     flyte.Image.from_debian_base(flyte_version="2.0.9", name="hitl-event-app-image")
     .with_pip_packages("fastapi", "uvicorn", "python-multipart", "aiofiles")
-    .with_pip_packages("flyteplugins-hitl==2.0.9")
+    .with_apt_packages("git")
+    .with_pip_packages("git+https://github.com/flyteorg/flyte-sdk.git@38843b6")
+    # .with_pip_packages("flyteplugins-hitl==2.0.9")
 )
 
 event_app_env = FastAPIAppEnvironment(
@@ -149,6 +151,9 @@ class Event(Generic[T]):
     async def _serve_app(cls) -> flyte.AppHandle:
         """Serve the app and return the app handle."""
         await flyte.init_in_cluster.aio()
+        image_build = await flyte.build.aio(event_image, force=True, wait=True)
+        print("Image built: ", image_build.uri)
+        event_app_env.image = image_build.uri
         return await flyte.with_servecontext(
             copy_style="none",
             version=flyte.version(),
