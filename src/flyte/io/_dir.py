@@ -6,6 +6,7 @@ from typing import (
     Any,
     AsyncIterator,
     Callable,
+    ClassVar,
     Coroutine,
     Dict,
     Generic,
@@ -219,6 +220,10 @@ class Dir(BaseModel, Generic[T], SerializableType):
 
     class Config:
         arbitrary_types_allowed = True
+        json_schema_extra: ClassVar[dict] = {
+            "description": "A directory reference with an optional format type.",
+            "x-flyte-type": "dir",
+        }
 
     @model_validator(mode="before")
     @classmethod
@@ -757,6 +762,35 @@ class Dir(BaseModel, Generic[T], SerializableType):
         return cls(path=resolved_remote_path, name=dirname, hash=dir_cache_key)
 
     @classmethod
+    def new_remote(cls, dir_name: Optional[str] = None, hash: Optional[str] = None) -> Dir[T]:
+        """Create a new Dir reference for a remote directory that will be written to.
+
+        Use this when you want to create a new directory and write files into it
+        directly without creating a local directory first.
+
+        Example::
+
+            @env.task
+            async def create() -> Dir:
+                d = Dir.new_remote("output")
+                # write files into d ...
+                return d
+
+        Args:
+            dir_name: Optional name for the remote directory. If not set, a
+                generated name will be used.
+            hash: Optional precomputed hash value to use for cache key computation when this Dir is used
+                as an input to discoverable tasks.
+
+        Returns:
+            A new Dir instance with a generated remote path.
+        """
+        ctx = internal_ctx()
+        remote_path = ctx.raw_data.get_random_remote_path(dir_name)
+        name = dir_name or os.path.basename(remote_path)
+        return cls(path=remote_path, name=name, hash=hash)
+
+    @classmethod
     def from_existing_remote(cls, remote_path: str, dir_cache_key: Optional[str] = None) -> Dir[T]:
         """
         Create a Dir reference from an existing remote directory.
@@ -970,7 +1004,9 @@ class DirTransformer(TypeTransformer[Dir]):
         uri = lv.scalar.blob.uri
         filename = Path(uri).name
         hash_value = lv.hash or None
-        f: Dir = Dir(path=uri, name=filename, format=lv.scalar.blob.metadata.type.format, hash=hash_value)
+        f: Dir = expected_python_type(
+            path=uri, name=filename, format=lv.scalar.blob.metadata.type.format, hash=hash_value
+        )
         return f
 
     def guess_python_type(self, literal_type: types_pb2.LiteralType) -> Type[Dir]:

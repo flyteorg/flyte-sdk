@@ -13,7 +13,7 @@ from flyte._logging import logger
 from flyte.config import _internal
 from flyte.config._reader import ConfigFile, get_config_file, read_file_if_exists
 
-_all__ = ["ConfigFile", "PlatformConfig", "TaskConfig", "ImageConfig"]
+__all__ = ["ConfigFile", "ImageConfig", "PlatformConfig", "TaskConfig"]
 
 if TYPE_CHECKING:
     from flyte.remote._client.auth import AuthType
@@ -237,7 +237,7 @@ class Config(object):
 
 def set_if_exists(d: dict, k: str, val: typing.Any) -> dict:
     """
-    Given a dict ``d`` sets the key ``k`` with value of config ``v``, if the config value ``v`` is set
+    Given a dict `d` sets the key `k` with value of config `v`, if the config value `v` is set
     and return the updated dictionary.
     """
     exists = isinstance(val, bool) or bool(val is not None and val)

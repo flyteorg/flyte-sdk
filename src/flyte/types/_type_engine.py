@@ -45,6 +45,7 @@ from flyte._utils.helpers import load_proto_from_file
 from flyte.errors import RestrictedTypeError
 from flyte.models import NativeInterface
 
+from .._interface import LITERAL_ENUM
 from ._utils import literal_types_match
 
 T = typing.TypeVar("T")
@@ -261,6 +262,27 @@ class TypeTransformer(typing.Generic[T]):
             f"Conversion to python value expected type {expected_python_type} from literal not implemented"
         )
 
+    def schema_match(self, schema: dict) -> bool:
+        """Check if a JSON schema fragment matches this transformer's python_type.
+
+        For BaseModel subclasses, automatically compares the schema's title, type, and
+        required fields against the type's own JSON schema. For other types, returns
+        False by default — override if needed.
+        """
+        if not isinstance(schema, dict):
+            return False
+        try:
+            if hasattr(self.python_type, "model_json_schema") and self.python_type is not BaseModel:
+                this_schema = self.python_type.model_json_schema()  # type: ignore[attr-defined]
+                return (
+                    schema.get("title") == this_schema.get("title")
+                    and schema.get("type") == this_schema.get("type")
+                    and set(schema.get("required", [])) == set(this_schema.get("required", []))
+                )
+        except Exception:
+            pass
+        return False
+
     def from_binary_idl(self, binary_idl_object: Binary, expected_python_type: Type[T]) -> Optional[T]:
         """
         This function primarily handles deserialization for untyped dicts, dataclasses, Pydantic BaseModels, and
@@ -329,7 +351,7 @@ class SimpleTransformer(TypeTransformer[T]):
         return self._lt
 
     async def to_literal(self, python_val: T, python_type: Type[T], expected: Optional[LiteralType] = None) -> Literal:
-        if type(python_val) is not self._type:
+        if not isinstance(python_val, self._type):
             raise TypeTransformerFailedError(
                 f"Expected value of type {self._type} but got '{python_val}' of type {type(python_val)}"
             )
@@ -597,6 +619,46 @@ class PydanticTransformer(TypeTransformer[BaseModel]):
         dict_obj = _walk_enum_fields(dict_obj, expected_python_type, to_names=False)
         python_val = expected_python_type.model_validate(dict_obj, strict=False, context={"deserialize": True})
         return python_val
+
+    def guess_python_type(self, literal_type: LiteralType) -> Type[BaseModel]:
+        """
+        Guess the Python type from a Flyte LiteralType that was produced by the PydanticTransformer.
+
+        This is used when the original Pydantic model class is not available.
+        We create a dynamic Pydantic BaseModel from the JSON schema metadata so that:
+        1. TypeEngine.get_transformer returns PydanticTransformer (tag matches "Pydantic Transformer")
+        2. from_binary_idl / to_python_value can deserialize via model_validate
+        """
+        if literal_type.simple == SimpleType.STRUCT and literal_type.HasField("metadata"):
+            # Only claim types that have the Pydantic Transformer structure tag.
+            # This tag is set by UnionTransformer when wrapping Pydantic models in a union,
+            # and distinguishes them from dataclass types which share the same LiteralType shape.
+            if literal_type.HasField("structure") and literal_type.structure.tag == self.name:
+                metadata = _MessageToDict(literal_type.metadata)
+                if TITLE in metadata:
+                    return _create_pydantic_model_from_schema(metadata)
+        raise ValueError(f"PydanticTransformer cannot reverse {literal_type}")
+
+
+def _create_pydantic_model_from_schema(schema: dict) -> Type:
+    """Create a dynamic Pydantic BaseModel from a JSON schema dict.
+
+    Reuses `_get_element_type` so that all JSON-schema constructs handled by the
+    dataclass path (arrays, dicts, nested objects, `$ref`, `anyOf`, enums, …)
+    are also covered here.
+    """
+    from pydantic import ConfigDict, create_model
+
+    title = schema.get(TITLE, "DynamicModel")
+    properties = schema.get("properties", {})
+
+    fields: dict[str, typing.Any] = {}
+    for name, prop in properties.items():
+        python_type = _get_element_type(prop, schema)
+        default: typing.Any = prop.get("default", ...)
+        fields[name] = (python_type, default)
+
+    return create_model(title, __config__=ConfigDict(extra="allow"), **fields)
 
 
 class PydanticSchemaPlugin(BasePlugin):
@@ -972,19 +1034,21 @@ class EnumTransformer(TypeTransformer[enum.Enum]):
         values = [v.value for v in t]  # type: ignore
         if not isinstance(values[0], str):
             raise TypeTransformerFailedError("Only EnumTypes with name of value are supported")
+        if hasattr(t, "__name__") and t.__name__ == LITERAL_ENUM:
+            # Use enum values directly when use Literal. e.g., Literal["low", "medium", "high"]
+            return LiteralType(enum_type=types_pb2.EnumType(values=values))
         names = [v.name for v in t]  # type: ignore
         return LiteralType(enum_type=types_pb2.EnumType(values=names))
 
     async def to_literal(self, python_val: enum.Enum, python_type: Type[T], expected: LiteralType) -> Literal:
         if isinstance(python_val, str):
             # this is the case when python Literals are used as enums
-            if python_val.__getattribute__("name"):
-                if python_val.__getattribute__("name") not in expected.enum_type.values:
+            if hasattr(python_val, "name"):
+                if python_val.name not in expected.enum_type.values:
                     raise TypeTransformerFailedError(
-                        f"Value {python_val.__getattribute__('name')} is not valid value, expected -"
-                        f" {expected.enum_type.values}"
+                        f"Value {python_val.name} is not valid value, expected - {expected.enum_type.values}"
                     )
-                return Literal(scalar=Scalar(primitive=Primitive(string_value=python_val.__getattribute__("name"))))  # type: ignore
+                return Literal(scalar=Scalar(primitive=Primitive(string_value=python_val.name)))  # type: ignore
             elif python_val not in expected.enum_type.values:
                 raise TypeTransformerFailedError(
                     f"Value {python_val} is not valid value, expected - {expected.enum_type.values}"
@@ -1014,8 +1078,13 @@ class EnumTransformer(TypeTransformer[enum.Enum]):
         raise ValueError(f"Enum transformer cannot reverse {literal_type}")
 
     def assert_type(self, t: Type[enum.Enum], v: T):
-        val = v.value if isinstance(v, enum.Enum) else v
-        if val not in [t_item.value for t_item in t]:
+        if isinstance(v, enum.Enum):
+            if not isinstance(v, t):
+                raise TypeTransformerFailedError(f"Value {v} is not in Enum {t}")
+            return
+        # For string inputs (e.g. from the CLI), accept enum names since the transformer
+        # serializes regular enums by name (get_literal_type returns names, not values).
+        if v not in [t_item.name for t_item in t] and v not in [t_item.value for t_item in t]:
             raise TypeTransformerFailedError(f"Value {v} is not in Enum {t}")
 
 
@@ -1030,9 +1099,15 @@ from ._tuple_dict import (  # noqa: E402
 )
 
 
+def _match_registered_type_from_schema(schema: dict) -> typing.Optional[type]:
+    """Check if a JSON schema fragment matches any registered TypeTransformer."""
+    for transformer in TypeEngine._REGISTRY.values():
+        if transformer.schema_match(schema):
+            return transformer.python_type
+    return None
+
+
 def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name: typing.Any):
-    from flyte.io._dir import Dir
-    from flyte.io._file import File
 
     attribute_list: typing.List[typing.Tuple[Any, Any]] = []
     nested_types: typing.Dict[str, type] = {}  # Track nested model types for conversion
@@ -1055,6 +1130,11 @@ def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name:
                 # Check if the $ref points to an enum definition (no properties)
                 if ref_schema.get("enum"):
                     attribute_list.append((property_key, str))
+                    continue
+                # Check if the $ref matches a registered custom type
+                matched_type = _match_registered_type_from_schema(ref_schema)
+                if matched_type is not None:
+                    attribute_list.append((property_key, typing.cast(GenericAlias, matched_type)))
                     continue
                 # Include $defs so nested models can resolve their own $refs
                 if "$defs" not in ref_schema and defs:
@@ -1085,27 +1165,11 @@ def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name:
                 # For optional with dataclass
                 sub_schemea = property_val["anyOf"][0]
                 sub_schemea_name = sub_schemea["title"]
-                if File.schema_match(property_val):
-                    attribute_list.append(
-                        (
-                            property_key,
-                            typing.cast(
-                                GenericAlias,
-                                File,
-                            ),
-                        )
-                    )
-                    continue
-                elif Dir.schema_match(property_val):
-                    attribute_list.append(
-                        (
-                            property_key,
-                            typing.cast(
-                                GenericAlias,
-                                Dir,
-                            ),
-                        )
-                    )
+                matched_type = _match_registered_type_from_schema(property_val) or _match_registered_type_from_schema(
+                    sub_schemea
+                )
+                if matched_type is not None:
+                    attribute_list.append((property_key, typing.cast(GenericAlias, matched_type)))
                     continue
                 nested_class = convert_mashumaro_json_schema_to_python_class(sub_schemea, sub_schemea_name)
                 attribute_list.append(
@@ -1122,28 +1186,9 @@ def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name:
             elif property_val.get("title"):
                 # For nested dataclass
                 sub_schemea_name = property_val["title"]
-                # Check Flyte offloaded types
-                if File.schema_match(property_val):
-                    attribute_list.append(
-                        (
-                            property_key,
-                            typing.cast(
-                                GenericAlias,
-                                File,
-                            ),
-                        )
-                    )
-                    continue
-                elif Dir.schema_match(property_val):
-                    attribute_list.append(
-                        (
-                            property_key,
-                            typing.cast(
-                                GenericAlias,
-                                Dir,
-                            ),
-                        )
-                    )
+                matched_type = _match_registered_type_from_schema(property_val)
+                if matched_type is not None:
+                    attribute_list.append((property_key, typing.cast(GenericAlias, matched_type)))
                     continue
                 nested_class = convert_mashumaro_json_schema_to_python_class(property_val, sub_schemea_name)
                 attribute_list.append(
@@ -1254,6 +1299,10 @@ class TypeEngine(typing.Generic[T]):
             if python_type.__origin__ in cls._REGISTRY:
                 return cls._REGISTRY[python_type.__origin__]
 
+        if python_type is list:
+            # Generic list, defaults to pickle
+            return None
+
         # Handling UnionType specially - PEP 604
         import types
 
@@ -1313,7 +1362,7 @@ class TypeEngine(typing.Generic[T]):
     @classmethod
     def to_literal_type(cls, python_type: Type[T]) -> LiteralType:
         """
-        Converts a python type into a flyte specific ``LiteralType``
+        Converts a python type into a flyte specific `LiteralType`
         """
         transformer = cls.get_transformer(python_type)
         res = transformer.get_literal_type(python_type)
@@ -1393,7 +1442,7 @@ class TypeEngine(typing.Generic[T]):
     @classmethod
     def named_tuple_to_variable_map(cls, t: typing.NamedTuple) -> interface_pb2.VariableMap:
         """
-        Converts a python-native ``NamedTuple`` to a flyte-specific VariableMap of named literals.
+        Converts a python-native `NamedTuple` to a flyte-specific VariableMap of named literals.
         """
         variables = []
         for idx, (var_name, var_type) in enumerate(t.__annotations__.items()):
@@ -1413,7 +1462,7 @@ class TypeEngine(typing.Generic[T]):
         literal_types: typing.Optional[typing.Dict[str, interface_pb2.Variable]] = None,
     ) -> typing.Dict[str, typing.Any]:
         """
-        Given a ``LiteralMap`` (usually an input into a task - intermediate), convert to kwargs for the task
+        Given a `LiteralMap` (usually an input into a task - intermediate), convert to kwargs for the task
         """
         if python_types is None and literal_types is None:
             raise ValueError("At least one of python_types or literal_types must be provided")
@@ -1511,7 +1560,7 @@ class TypeEngine(typing.Generic[T]):
         cls, flyte_variable_list: typing.List[interface_pb2.VariableEntry]
     ) -> typing.Dict[str, Type[Any]]:
         """
-        Transforms a list of flyte-specific ``VariableEntry`` objects to a dictionary of regular python values.
+        Transforms a list of flyte-specific `VariableEntry` objects to a dictionary of regular python values.
         """
         python_types = {}
         for entry in flyte_variable_list:
@@ -1521,7 +1570,7 @@ class TypeEngine(typing.Generic[T]):
     @classmethod
     def guess_python_type(cls, flyte_type: LiteralType) -> Type[T]:
         """
-        Transforms a flyte-specific ``LiteralType`` to a regular python value.
+        Transforms a flyte-specific `LiteralType` to a regular python value.
         """
         for _, transformer in cls._REGISTRY.items():
             try:
@@ -1989,7 +2038,7 @@ class DictTransformer(TypeTransformer[dict]):
     @staticmethod
     async def dict_to_binary_literal(v: dict, python_type: Type[dict], allow_pickle: bool) -> Literal:
         """
-        Converts a Python dictionary to a Flyte-specific ``Literal`` using MessagePack encoding.
+        Converts a Python dictionary to a Flyte-specific `Literal` using MessagePack encoding.
         Falls back to Pickle if encoding fails and `allow_pickle` is True.
         """
         from flyte.types._pickle import FlytePickle
@@ -2026,7 +2075,7 @@ class DictTransformer(TypeTransformer[dict]):
 
     def get_literal_type(self, t: Type[dict]) -> LiteralType:
         """
-        Transforms a native python dictionary to a flyte-specific ``LiteralType``
+        Transforms a native python dictionary to a flyte-specific `LiteralType`
         """
         tp = DictTransformer.extract_types(t)
 
@@ -2197,9 +2246,6 @@ def _get_element_type(
     element_property: typing.Union[typing.Dict[str, typing.Any], bool],
     schema: typing.Optional[typing.Dict[str, typing.Any]] = None,
 ) -> Type:
-    from flyte.io._dir import Dir
-    from flyte.io._file import File
-
     # Handle additionalProperties: true (means Dict[str, Any])
     if element_property is True:
         return typing.Any
@@ -2207,10 +2253,8 @@ def _get_element_type(
     if not isinstance(element_property, dict):
         return typing.Any
 
-    if File.schema_match(element_property):
-        return File
-    elif Dir.schema_match(element_property):
-        return Dir
+    if (matched_type := _match_registered_type_from_schema(element_property)) is not None:
+        return matched_type
 
     # Handle $ref for nested models and enums
 
@@ -2225,6 +2269,9 @@ def _get_element_type(
             # Guard the nested enum elements inside containers
             if ref_schema.get("enum"):
                 return str
+            # Check if the $ref matches a registered custom type
+            if (matched_type := _match_registered_type_from_schema(ref_schema)) is not None:
+                return matched_type
             # if defs not in the schema, they need to be propogated into the resolved schema
             if "$defs" not in ref_schema and defs:
                 ref_schema["$defs"] = defs
@@ -2580,7 +2627,7 @@ class LiteralsResolver(collections.UserDict):
 
     async def get(self, attr: str, as_type: Optional[typing.Type] = None) -> typing.Any:  # type: ignore
         """
-        This will get the ``attr`` value from the Literal map, and invoke the TypeEngine to convert it into a Python
+        This will get the `attr` value from the Literal map, and invoke the TypeEngine to convert it into a Python
         native value. A Python type can optionally be supplied. If successful, the native value will be cached and
         future calls will return the cached value instead.
 

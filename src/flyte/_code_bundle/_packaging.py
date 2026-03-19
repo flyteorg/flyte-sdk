@@ -144,9 +144,14 @@ def create_bundle(
     # Compute where the archive should be written
     archive_fname = output_dir / f"{FAST_PREFIX}{ls_digest}{FAST_FILEENDING}"
     tar_path = output_dir / "tmp.tar"
+    resolved_source = source.resolve()
     with tarfile.open(str(tar_path), "w", dereference=deref_symlinks) as tar:
         for ws_file in ls:
-            rel_path = os.path.relpath(ws_file, start=source)
+            # Resolve both paths to normalize any ".." components before computing
+            # the arcname — un-normalized paths produce tar member names containing
+            # ".." which GNU tar refuses to extract (and some tools create a literal
+            # ".." directory instead).  Also ensures forward slashes on all platforms.
+            rel_path = pathlib.Path(ws_file).resolve().relative_to(resolved_source).as_posix()
             tar.add(
                 os.path.join(source, ws_file),
                 recursive=False,

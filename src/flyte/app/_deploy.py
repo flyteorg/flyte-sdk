@@ -9,6 +9,7 @@ from flyte import Image
 from flyte._code_bundle.bundle import build_code_bundle_from_relative_paths
 from flyte._initialize import ensure_client
 from flyte._logging import logger
+from flyte._status import status
 from flyte.models import SerializationContext
 
 from ._app_environment import AppEnvironment
@@ -87,13 +88,24 @@ async def _deploy_app(
         # Only bundle when not pickling. If this is a pkl bundle, assume that
         # the AppEnvironment has a server function that will be used to serve
         # the app. This function should contain all of the code needed to serve the app.
-        app_file = Path(app._app_filename)
-        app_root_dir = app_file.parent
+        app_dir = Path(app._app_filename).parent
+        bundle_root = serialization_context.root_dir or app_dir
+
+        # Resolve include paths to absolute paths relative to the app script's
+        # directory, so that relative patterns like "../temp.py" are
+        # anchored correctly before being made relative to bundle_root.
+        resolved_includes = [
+            str((app_dir / inc).resolve()) if not Path(inc).is_absolute() else inc for inc in app.include
+        ]
+
         _preexisting_code_bundle_files = []
         if serialization_context.code_bundle is not None:
             _preexisting_code_bundle_files = serialization_context.code_bundle.files or []
-        files = (*_preexisting_code_bundle_files, *[f for f in app.include if f not in _preexisting_code_bundle_files])
-        code_bundle = await build_code_bundle_from_relative_paths(files, from_dir=app_root_dir)
+        files = (
+            *_preexisting_code_bundle_files,
+            *[f for f in resolved_includes if f not in _preexisting_code_bundle_files],
+        )
+        code_bundle = await build_code_bundle_from_relative_paths(files, from_dir=bundle_root)
         serialization_context.code_bundle = code_bundle
 
     if serialization_context.code_bundle and serialization_context.code_bundle.pkl:
@@ -114,7 +126,7 @@ async def _deploy_app(
         msg = f"Deploying app {app.name}, with image {image_uri} version {serialization_context.version}"
         if app_idl.spec.HasField("container") and app_idl.spec.container.args:
             msg += f" with args {app_idl.spec.container.args}"
-        logger.info(msg)
+        status.step(msg)
 
         return await App.create.aio(app_idl)
     except Exception as exc:

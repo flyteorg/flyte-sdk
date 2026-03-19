@@ -328,9 +328,13 @@ async def test_deploy_app_include_only_builds_code_bundle(temp_app_directory):
         mock_build_bundle.assert_called_once()
         call_args = mock_build_bundle.call_args
 
-        # Verify the files passed are the include files
-        assert call_args[0][0] == ("app.py", "utils.py")
-        # Verify the from_dir is the app's parent directory
+        # Include paths are resolved to absolute paths relative to the app dir
+        expected_files = (
+            str((temp_app_directory / "app.py").resolve()),
+            str((temp_app_directory / "utils.py").resolve()),
+        )
+        assert call_args[0][0] == expected_files
+        # from_dir is bundle_root = serialization_context.root_dir
         assert call_args[1]["from_dir"] == temp_app_directory
 
         # Verify the code_bundle was set on the serialization_context
@@ -348,6 +352,14 @@ async def test_deploy_app_include_with_preexisting_tgz_bundle_merges_files(temp_
     - Duplicate files are not included twice
     - build_code_bundle_from_relative_paths is called with merged file list
     """
+    # Create shared.py so it exists on disk
+    (temp_app_directory / "shared.py").write_text("def shared(): pass")
+
+    abs_app = str((temp_app_directory / "app.py").resolve())
+    abs_config = str((temp_app_directory / "config.yaml").resolve())
+    abs_utils = str((temp_app_directory / "utils.py").resolve())
+    abs_shared = str((temp_app_directory / "shared.py").resolve())
+
     app_env = AppEnvironment(
         name="test-app-merge",
         image=Image.from_base("python:3.11"),
@@ -355,11 +367,11 @@ async def test_deploy_app_include_with_preexisting_tgz_bundle_merges_files(temp_
     )
     app_env._app_filename = str(temp_app_directory / "app.py")
 
-    # Pre-existing code bundle with some files already included
+    # Pre-existing bundle uses absolute paths (as produced by build_code_bundle)
     preexisting_bundle = CodeBundle(
         computed_version="preexisting123",
         tgz="s3://bucket/preexisting.tgz",
-        files=["utils.py", "shared.py"],  # utils.py also in include list
+        files=[abs_utils, abs_shared],  # utils.py also in include list
     )
 
     ctx = SerializationContext(
@@ -374,7 +386,7 @@ async def test_deploy_app_include_with_preexisting_tgz_bundle_merges_files(temp_
     mock_new_bundle = CodeBundle(
         computed_version="merged123",
         tgz="s3://bucket/merged.tgz",
-        files=["utils.py", "shared.py", "app.py", "config.yaml"],
+        files=[abs_utils, abs_shared, abs_app, abs_config],
     )
 
     with (
@@ -391,16 +403,14 @@ async def test_deploy_app_include_with_preexisting_tgz_bundle_merges_files(temp_
         mock_build_bundle.assert_called_once()
         call_args = mock_build_bundle.call_args
 
-        # The merged files should be: preexisting files + include files (excluding duplicates)
-        # utils.py from preexisting, shared.py from preexisting, app.py from include, config.yaml from include
-        # utils.py should NOT appear twice
+        # Merged files: preexisting (absolute) + include resolved to absolute, no duplicates
         merged_files = call_args[0][0]
-        assert "utils.py" in merged_files
-        assert "shared.py" in merged_files
-        assert "app.py" in merged_files
-        assert "config.yaml" in merged_files
-        # Verify no duplicates
-        assert merged_files.count("utils.py") == 1
+        assert abs_utils in merged_files
+        assert abs_shared in merged_files
+        assert abs_app in merged_files
+        assert abs_config in merged_files
+        # utils.py appears in both preexisting and include — should only appear once
+        assert merged_files.count(abs_utils) == 1
 
 
 @pytest.mark.asyncio
@@ -554,5 +564,71 @@ async def test_deploy_app_include_with_preexisting_bundle_no_files(temp_app_dire
         mock_build_bundle.assert_called_once()
         call_args = mock_build_bundle.call_args
 
-        # Only include files should be passed (no preexisting files to merge)
-        assert call_args[0][0] == ("app.py", "utils.py")
+        # Only resolved include files should be passed (no preexisting files to merge)
+        expected_files = (
+            str((temp_app_directory / "app.py").resolve()),
+            str((temp_app_directory / "utils.py").resolve()),
+        )
+        assert call_args[0][0] == expected_files
+
+
+@pytest.mark.asyncio
+async def test_deploy_app_include_outside_app_dir_uses_bundle_root(temp_app_directory):
+    """
+    Regression test for the root dir autodetection bug.
+
+    When an AppEnvironment's `include` contains a path that escapes the app
+    script's directory (e.g. "../shared_utils.py"), the bundle must be rooted
+    at serialization_context.root_dir rather than app_file.parent.
+
+    Using app_file.parent as from_dir would produce tar entries with "../"
+    which Python 3.12+ tarfile rejects on extraction.
+    """
+    # Structure:
+    #   temp_app_directory/          <- root_dir
+    #   temp_app_directory/shared_utils.py
+    #   temp_app_directory/app/app.py
+    app_dir = temp_app_directory / "app"
+    app_dir.mkdir()
+    (app_dir / "app.py").write_text("print('app')")
+    (temp_app_directory / "shared_utils.py").write_text("def greet(name): return f'Hello, {name}!'")
+
+    app_env = AppEnvironment(
+        name="test-root-dir-bug",
+        image=Image.from_base("python:3.11"),
+        include=["../shared_utils.py"],  # escapes app/, points to temp_app_directory/
+    )
+    app_env._app_filename = str(app_dir / "app.py")
+
+    ctx = SerializationContext(
+        org="test-org",
+        project="test-project",
+        domain="test-domain",
+        version="v1.0.0",
+        code_bundle=None,
+        root_dir=temp_app_directory,  # project root — common ancestor of both files
+    )
+
+    mock_bundle = CodeBundle(computed_version="abc123", tgz="s3://bucket/code.tgz")
+
+    with (
+        patch("flyte.app._deploy.build_code_bundle_from_relative_paths", new_callable=AsyncMock) as mock_build_bundle,
+        patch("flyte.app._runtime.translate_app_env_to_idl") as mock_translate,
+        patch("flyte.app._deploy.ensure_client"),
+    ):
+        mock_build_bundle.return_value = mock_bundle
+        mock_translate.aio = AsyncMock(return_value=MagicMock())
+
+        await _deploy_app(app_env, ctx, dryrun=True)
+
+        call_args = mock_build_bundle.call_args
+
+        # "../shared_utils.py" must be resolved to an absolute path anchored
+        # at app_dir, not left as a relative string that would produce "../" in the tar.
+        resolved_include = str((app_dir / "../shared_utils.py").resolve())
+        assert call_args[0][0] == (resolved_include,)
+
+        # from_dir must be root_dir (the common ancestor), not app_dir.
+        # Using app_dir here would make shared_utils.py appear as "../shared_utils.py"
+        # in the tar — a path rejected by Python 3.12+ tarfile.extractall().
+        assert call_args[1]["from_dir"] == temp_app_directory

@@ -4,7 +4,8 @@
 #     "ipdb",
 #     "fastapi",
 #     "uvicorn",
-#     "flyte==2.0.0b48",
+#     "httpx",
+#     "flyte>=2.0.0",
 # ]
 # ///
 
@@ -174,11 +175,7 @@ async def webhook_task(x: int, y: str) -> str:
 
 
 if __name__ == "__main__":
-    import json
-    import urllib.error
-    import urllib.request
-
-    import flyte.remote
+    import httpx
 
     flyte.init_from_config(log_level=logging.DEBUG)
 
@@ -195,33 +192,25 @@ if __name__ == "__main__":
     if not token:
         raise ValueError("FLYTE_API_KEY not set. Obtain with: flyte get api-key")
 
-    # Test /me endpoint to verify passthrough auth works
-    me_req = urllib.request.Request(
-        url.rstrip("/") + "/me",
-        headers={"Authorization": f"Bearer {token}"},
-        method="GET",
-    )
-    with urllib.request.urlopen(me_req) as resp:
-        print(f"/me response: {resp.read().decode('utf-8')}")
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "User-Agent": "flyte-webhook-client/1.0",
+    }
 
-    # Test /run-task endpoint
-    data = {"x": 42, "y": "hello"}
-    route = "/run-task/flytesnacks/development/webhook-runner-task.webhook_task"
-    full_url = url.rstrip("/") + route
-    print(full_url)
+    with httpx.Client(headers=headers) as client:
+        # Test /me endpoint to verify passthrough auth works
+        me_resp = client.get(endpoint.rstrip("/") + "/me")
+        me_resp.raise_for_status()
+        print(f"/me response: {me_resp.text}")
 
-    req = urllib.request.Request(
-        full_url,
-        data=json.dumps(data).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-            "User-Agent": "flyte-webhook-client/1.0",
-        },
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req) as resp:
-            print(f"Webhook response: {resp.read().decode('utf-8')}")
-    except urllib.error.HTTPError as http_err:
-        print(f"HTTP Error: {http_err.code} - {http_err.read().decode('utf-8')}")
+        # Test /run-task endpoint
+        data = {"x": 42, "y": "hello"}
+        route = "/run-task/flytesnacks/development/webhook-runner-task.webhook_task"
+        full_url = endpoint.rstrip("/") + route
+        print(full_url)
+
+        resp = client.post(full_url, json=data)
+        if resp.is_success:
+            print(f"Webhook response: {resp.text}")
+        else:
+            print(f"HTTP Error: {resp.status_code} - {resp.text}")

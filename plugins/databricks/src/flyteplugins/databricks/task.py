@@ -12,16 +12,30 @@ from google.protobuf.json_format import MessageToDict
 
 @dataclass
 class Databricks(Spark):
-    """
-    Use this to configure a Databricks task. Task's marked with this will automatically execute
-    natively onto databricks platform as a distributed execution of spark
+    """Configuration for a Databricks task.
 
-    Args:
-        databricks_conf: Databricks job configuration compliant with API version 2.1, supporting 2.0 use cases.
-        For the configuration structure, visit here.https://docs.databricks.com/dev-tools/api/2.0/jobs.html#request-structure
-        For updates in API 2.1, refer to: https://docs.databricks.com/en/workflows/jobs/jobs-api-updates.html
-        databricks_instance: Domain name of your deployment. Use the form <account>.cloud.databricks.com.
-        databricks_token: the name of the secret containing the Databricks token for authentication.
+    Tasks configured with this will execute natively on Databricks as a
+    distributed PySpark job. Extends `Spark` with Databricks-specific
+    cluster and authentication settings.
+
+    Attributes:
+        spark_conf: Spark configuration key-value pairs, e.g.
+            `{"spark.executor.memory": "4g"}`.
+        hadoop_conf: Hadoop configuration key-value pairs.
+        executor_path: Path to the Python binary used for PySpark execution.
+            Defaults to the interpreter path from the serialization context.
+        applications_path: Path to the main application file. Defaults to
+            the task entrypoint path.
+        driver_pod: Pod template applied to the Spark driver pod.
+        executor_pod: Pod template applied to the Spark executor pods.
+        databricks_conf: Databricks job configuration dict compliant with
+            the Databricks Jobs API v2.1 (also supports v2.0 use cases).
+            Typically includes `new_cluster` or `existing_cluster_id`,
+            `run_name`, and other job settings.
+        databricks_instance: Domain name of your Databricks deployment,
+            e.g. `"myorg.cloud.databricks.com"`.
+        databricks_token: Name of the Flyte secret containing the Databricks
+            API token used for authentication.
     """
 
     databricks_conf: Optional[Dict[str, Union[str, dict]]] = None

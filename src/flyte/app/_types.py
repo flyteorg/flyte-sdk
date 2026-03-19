@@ -33,6 +33,27 @@ class Link:
 @rich.repr.auto
 @dataclass
 class Scaling:
+    """
+    Controls replica count and autoscaling behavior for app environments.
+
+    Common scaling patterns:
+
+    - **Scale-to-zero** (default): `Scaling(replicas=(0, 1))` — no replicas when idle,
+      scales to 1 on demand.
+    - **Always-on**: `Scaling(replicas=(1, 1))` — exactly 1 replica at all times.
+    - **Burstable**: `Scaling(replicas=(1, 5))` — 1 replica minimum, scales up to 5.
+    - **High-availability**: `Scaling(replicas=(2, 10))` — at least 2 replicas always running.
+    - **Fixed size**: `Scaling(replicas=3)` — exactly 3 replicas.
+
+    :param replicas: Number of replicas. An `int` for fixed count, or a `(min, max)`
+        tuple for autoscaling. Default `(0, 1)`.
+    :param metric: Autoscaling metric — `Scaling.Concurrency(val)` (scale when concurrent
+        requests per replica exceeds `val`) or `Scaling.RequestRate(val)` (scale when
+        requests per second per replica exceeds `val`). Default `None`.
+    :param scaledown_after: Time to wait after the last request before scaling down.
+        Seconds (`int`) or `timedelta`. Default `None` (platform default).
+    """
+
     @dataclass(frozen=True)
     class Concurrency:
         """
@@ -98,6 +119,34 @@ class Scaling:
         if isinstance(self.replicas, int):
             return self.replicas, self.replicas
         return self.replicas
+
+
+_MAX_REQUEST_TIMEOUT = timedelta(hours=1)
+
+
+@rich.repr.auto
+@dataclass
+class Timeouts:
+    """Timeout configuration for the application.
+
+    Attributes:
+        request: Timeout for requests to the application. Can be an int
+            (seconds) or timedelta. Must not exceed 1 hour.
+    """
+
+    request: int | timedelta | None = None
+
+    def __post_init__(self):
+        if self.request is None:
+            return
+        if isinstance(self.request, int):
+            self.request = timedelta(seconds=self.request)
+        elif not isinstance(self.request, timedelta):
+            raise TypeError(f"Expected request to be of type int or timedelta, got {type(self.request)}")
+        if self.request < timedelta(0):
+            raise ValueError("request timeout must be non-negative")
+        if self.request > _MAX_REQUEST_TIMEOUT:
+            raise ValueError("request timeout must not exceed 1 hour (3600 seconds)")
 
 
 @rich.repr.auto

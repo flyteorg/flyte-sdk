@@ -273,6 +273,32 @@ def test_config_with_params_preserves_local():
     assert updated.local.persistence is True
 
 
+def test_create_config_local_persistence_only(runner: CliRunner, tmp_path):
+    """Test that --local-persistence alone (no endpoint/org) succeeds."""
+    outpath = str(tmp_path / "config.yaml")
+    result = runner.invoke(
+        main,
+        ["create", "config", "--local-persistence", "-o", outpath, "--force"],
+    )
+    assert result.exit_code == 0, result.output
+    with open(outpath) as f:
+        d = yaml.safe_load(f)
+    assert d["local"]["persistence"] is True
+    assert "admin" not in d
+    assert "task" not in d
+
+
+def test_create_config_no_flags_fails(runner: CliRunner, tmp_path):
+    """Test that no flags at all still raises an error."""
+    outpath = str(tmp_path / "config.yaml")
+    result = runner.invoke(
+        main,
+        ["create", "config", "-o", outpath, "--force"],
+    )
+    assert result.exit_code != 0
+    assert "--local-persistence" in result.output
+
+
 def test_create_config_with_local_persistence(runner: CliRunner, tmp_path):
     """Test that --local-persistence writes the local.persistence field to the config YAML."""
     outpath = str(tmp_path / "config.yaml")

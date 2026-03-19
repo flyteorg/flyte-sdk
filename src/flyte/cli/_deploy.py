@@ -128,9 +128,10 @@ class DeployEnvCommand(click.RichCommand):
         super().__init__(*args, **kwargs)
 
     def invoke(self, ctx: click.Context):
-        console = common.get_console()
-        console.print(f"Deploying root - environment: {self.env_name}")
+        from flyte._status import status
+
         obj: CLIConfig = ctx.obj
+        status.step(f"Deploying environment: {self.env_name}")
         obj.init(
             project=self.deploy_args.project,
             domain=self.deploy_args.domain,
@@ -146,8 +147,10 @@ class DeployEnvCommand(click.RichCommand):
                 version=self.deploy_args.version,
             )
 
-        console.print(common.format("Environments", deployment[0].env_repr(), obj.output_format))
-        console.print(common.format("Entities", deployment[0].table_repr(), obj.output_format))
+        common.print_output(
+            common.format("Environments", deployment[0].env_repr(), obj.output_format), obj.output_format
+        )
+        common.print_output(common.format("Entities", deployment[0].table_repr(), obj.output_format), obj.output_format)
 
 
 class DeployEnvRecursiveCommand(click.Command):
@@ -176,7 +179,7 @@ class DeployEnvRecursiveCommand(click.Command):
             images=tuple(self.deploy_args.image) or None,
             root_dir=self.deploy_args.root_dir,
         )
-        console = common.get_console()
+        from flyte._status import status
 
         root_dir = Path.cwd()
         if self.deploy_args.root_dir:
@@ -184,19 +187,23 @@ class DeployEnvRecursiveCommand(click.Command):
         # Load all python modules
         loaded_modules, failed_paths = load_python_modules(self.path, root_dir, self.deploy_args.recursive)
         if failed_paths:
-            console.print(f"Loaded {len(loaded_modules)} modules with, but failed to load {len(failed_paths)} paths:")
-            console.print(
-                common.format("Modules", [[("Path", p), ("Err", e)] for p, e in failed_paths], obj.output_format)
+            status.warn(f"Loaded {len(loaded_modules)} modules, but failed to load {len(failed_paths)} paths")
+            common.print_output(
+                common.format("Modules", [[("Path", p), ("Err", e)] for p, e in failed_paths], obj.output_format),
+                obj.output_format,
             )
         else:
-            console.print(f"Loaded {len(loaded_modules)} modules")
+            status.info(f"Loaded {len(loaded_modules)} modules")
 
         # Get newly loaded environments
         all_envs = list_loaded_environments()
         if not all_envs:
-            console.print("No environments found to deploy")
+            status.info("No environments found to deploy")
             return
-        console.print(common.format("Loaded Environments", [[("name", e.name)] for e in all_envs], obj.output_format))
+        common.print_output(
+            common.format("Loaded Environments", [[("name", e.name)] for e in all_envs], obj.output_format),
+            obj.output_format,
+        )
 
         if not self.deploy_args.ignore_load_errors and len(failed_paths) > 0:
             raise click.ClickException(
@@ -211,10 +218,14 @@ class DeployEnvRecursiveCommand(click.Command):
                 version=self.deploy_args.version,
             )
 
-        console.print(
-            common.format("Environments", [env for d in deployments for env in d.env_repr()], obj.output_format)
+        common.print_output(
+            common.format("Environments", [env for d in deployments for env in d.env_repr()], obj.output_format),
+            obj.output_format,
         )
-        console.print(common.format("Tasks", [task for d in deployments for task in d.table_repr()], obj.output_format))
+        common.print_output(
+            common.format("Tasks", [task for d in deployments for task in d.table_repr()], obj.output_format),
+            obj.output_format,
+        )
 
 
 class EnvPerFileGroup(common.ObjectsPerFileGroup):
