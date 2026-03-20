@@ -20,12 +20,16 @@ import pandera.typing.modin as pt
 
 import flyte
 
-img = flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages(
-    "flyte>=2.0.9",
-    "flyteplugins-pandera",
-    "modin",
-    "pandera[pandas]",
-    pre=True,
+img = (
+    flyte.Image.from_debian_base(python_version=(3, 12))
+    .with_pip_packages(
+        "flyte>=2.0.9",
+        # "flyteplugins-pandera",
+        "modin",
+        "pandera[pandas]",
+        pre=True,
+    )
+    .with_local_v2_plugins("flyteplugins-pandera")
 )
 
 env = flyte.TaskEnvironment(

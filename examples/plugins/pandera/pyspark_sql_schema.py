@@ -22,8 +22,15 @@ import flyte
 image = (
     flyte.Image.from_base("apache/spark-py:v3.4.0")
     .clone(name="pandera-pyspark-sql", python_version=(3, 10), extendable=True)
-    .with_pip_packages("flyte>=2.0.9", "flyteplugins-spark", "flyteplugins-pandera", "pandera[pyspark]", pre=True)
+    .with_pip_packages(
+        "flyte>=2.0.9",
+        "flyteplugins-spark",
+        # "flyteplugins-pandera",
+        "pandera[pyspark]",
+        pre=True,
+    )
     .with_pip_packages("pandas", "pyarrow")
+    .with_local_v2_plugins("flyteplugins-pandera")
 )
 
 spark_conf = Spark(
