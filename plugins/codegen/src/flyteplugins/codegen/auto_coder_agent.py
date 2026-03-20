@@ -143,13 +143,13 @@ class AutoCoderAgent:
             samples: Optional dict of sample data. Each value is sampled and included in
                 the LLM prompt for context, and converted to a File input for the
                 sandbox. Values are used as defaults at runtime — override them
-                when calling ``result.run()`` or ``result.as_task()``.
+                when calling `result.run()` or `result.as_task()`.
                 Supported types: File, pd.DataFrame.
             inputs: Optional dict declaring non-sample CLI argument types
-                (e.g., ``{"threshold": float, "mode": str}``).
+                (e.g., `{"threshold": float, "mode": str}`).
                 Sample entries are automatically added as File inputs — don't redeclare them here.
                 Supported types: str, int, float, bool, File.
-            outputs: Optional dict defining output types (e.g., ``{"result": str, "report": File}``).
+            outputs: Optional dict defining output types (e.g., `{"result": str, "report": File}`).
                 Supported types: str, int, float, bool, datetime, timedelta, File.
 
         Returns:
@@ -199,6 +199,7 @@ class AutoCoderAgent:
             (
                 extracted_data_context,
                 data_schemas,
+                unapplied_constraints,
                 schema_input_tokens,
                 schema_output_tokens,
             ) = await extract_data_context(
@@ -208,6 +209,8 @@ class AutoCoderAgent:
                 model=self.model,
                 litellm_params=self.litellm_params,
             )
+            # Only send constraints that couldn't be encoded into the schema
+            constraints = unapplied_constraints or None
             if data_schemas:
                 logger.info(f"Inferred Pandera schemas for: {list(data_schemas.keys())}")
 
@@ -242,11 +245,11 @@ class AutoCoderAgent:
                         f"Sandbox only supports: {', '.join(supported_names)}"
                     )
 
-        # Agent SDK routing
+        # Agent routing
         if self.backend == "claude":
             if self.skip_tests:
                 logger.warning(
-                    "skip_tests is not supported with Agent SDK mode. The agent autonomously decides when to test."
+                    "skip_tests is not supported with Agent mode. The agent autonomously decides when to test."
                 )
             logger.info("Using Claude Agent SDK approach")
             return await code_gen_eval_agent(
@@ -1056,7 +1059,7 @@ class _CodeGenSession:
             "2. If a part of the code is working correctly, DO NOT change it. Only fix what's broken.\n"
             "3. Apply each fix by finding the exact code quoted and replacing it - nothing more.\n"
             "4. Do NOT regenerate the entire code. Just apply the specific patches mentioned below.\n\n"
-            f"Your previous code:\n```{self.solution.language}\n{full_code}\n```\n\n" + "\n".join(failures_info)
+            f"Your previous code:\n``{self.solution.language}\n{full_code}\n``\n\n" + "\n".join(failures_info)
         )
 
         if logic_count > 0:

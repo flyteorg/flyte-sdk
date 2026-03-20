@@ -167,7 +167,7 @@ class CodeGenEvalResult(BaseModel):
 
         If samples were provided during generate(), they are used as defaults.
         Override any input by passing it as a keyword argument. If no samples
-        exist, all declared inputs must be provided via ``**overrides``.
+        exist, all declared inputs must be provided via `**overrides`.
 
         Args:
             name: Name for the sandbox

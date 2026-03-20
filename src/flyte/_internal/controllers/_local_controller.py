@@ -223,6 +223,12 @@ class LocalController:
                     attempt_num=attempt_num,
                     error=str(err),
                 )
+                if not err.recoverable:
+                    logger.warning(
+                        f"Task '{_task.name}' raised a non-recoverable error on attempt "
+                        f"{attempt_num}/{max_attempts}, skipping remaining retries."
+                    )
+                    break
                 if attempt_num < max_attempts:
                     backoff = _MIN_BACKOFF_ON_ERR_SEC * (_BACKOFF_MULTIPLIER ** (attempt_num - 1))
                     logger.warning(

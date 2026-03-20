@@ -9,8 +9,8 @@ Generate code from natural language prompts and validate it by running tests in 
 ```bash
 pip install flyteplugins-codegen
 
-# For Agent SDK mode (Claude-only)
-pip install flyteplugins-codegen[agent-sdk]
+# For Agent mode (Claude-only)
+pip install flyteplugins-codegen[agent]
 ```
 
 ## Quick start
@@ -99,7 +99,7 @@ prompt + samples
   (repeat up to max_iterations)
 ```
 
-### 2. Agent SDK
+### 2. Agent
 
 Uses the Claude Agent SDK to autonomously generate, test and fix code. The agent has access to `Bash`, `Read`, `Write` and `Edit` tools and iterates on its own. Test execution is intercepted and run in an isolated `Sandbox`.
 
@@ -157,7 +157,6 @@ result = await agent.generate.aio(prompt="...")
 | `max_iterations`      | `int`             | `10`           | Max generate-test-fix iterations (LiteLLM mode)               |
 | `max_sample_rows`     | `int`             | `100`          | Rows to sample from data for context                          |
 | `skip_tests`          | `bool`            | `False`        | Skip test generation and execution (LiteLLM mode only)        |
-| `network_access`      | `bool`            | `False`        | Allow generated code to access the network inside the sandbox |
 | `sandbox_retries`     | `int`             | `0`            | Flyte task-level retries for each sandbox execution           |
 | `timeout`             | `int`             | `None`         | Timeout in seconds for sandboxes                          |
 | `env_vars`            | `dict[str, str]`  | `None`         | Environment variables to pass to sandboxes                |
@@ -311,7 +310,7 @@ result = await agent.generate.aio(
 error_count = await result.run.aio()
 ```
 
-> **Note:** `skip_tests` only applies to LiteLLM mode. In Agent SDK mode, the agent autonomously decides when to test.
+> **Note:** `skip_tests` only applies to LiteLLM mode. In Agent mode, the agent autonomously decides when to test.
 
 ### Environment setup
 
@@ -362,7 +361,7 @@ User calls agent.generate(prompt, samples, outputs, ...)
 │  ├─ Apply user constraints (LLM-parsed)
 │  └─ Extract data context (stats, patterns, samples)
 │
-├─ LiteLLM Path (default)                 ├─ Agent SDK Path (backend="claude")
+├─ LiteLLM Path (default)                 ├─ Agent Path (backend="claude")
 │  ├─ generate_plan()                     │  ├─ Build prompt with all context
 │  ├─ generate_code()                     │  ├─ Launch Claude agent with hooks:
 │  ├─ detect_packages()                   │  │  ├─ PreToolUse: trace + classify commands
@@ -402,7 +401,7 @@ If the same error persists after fixes, the plugin reclassifies it (logic <-> te
 - Tracks total input/output tokens across all LLM calls
 - Results include full conversation history for debugging
 
-### Agent SDK path
+### Agent path
 
 - Traces each tool call (name + input detail) via `PreToolUse` hook
 - Traces tool failures via `PostToolUseFailure` hook
@@ -416,12 +415,12 @@ See the `examples/` directory:
 
 - **`example_csv_processing.py`** — Process CSVs with different schemas using LiteLLM. Shows batch processing with multiple CSV formats.
 - **`example_csv_processing_sync.py`** — Synchronous version of CSV processing. Shows `agent.generate()` and `result.run()` without async.
-- **`example_csv_processing_agent.py`** — CSV processing using Agent SDK with `backend="claude"`.
+- **`example_csv_processing_agent.py`** — CSV processing using Agent mode with `backend="claude"`.
 - **`example_dataframe_analysis.py`** — DataFrame analysis with constraints, `base_packages`, and `as_task()` for reusable execution.
-- **`example_dataframe_analysis_agent.py`** — Same DataFrame analysis using Agent SDK.
+- **`example_dataframe_analysis_agent.py`** — Same DataFrame analysis using Agent mode.
 - **`example_prompt_only.py`** — Log file analysis with `schema`, `constraints`, `samples`, and explicit `inputs`/`outputs`.
-- **`example_prompt_only_agent.py`** — Same log analysis using Agent SDK.
+- **`example_prompt_only_agent.py`** — Same log analysis using Agent mode.
 - **`example_multi_input.py`** — Multi-input data join with primitives (`float`, `bool`).
-- **`example_multi_input_agent.py`** — Same multi-input join using Agent SDK.
+- **`example_multi_input_agent.py`** — Same multi-input join using Agent mode.
 - **`example_durable_execution.py`** — Durable execution with injected failures, retries, and caching (LLM approach).
-- **`example_durable_execution_agent.py`** — Same durable execution using Agent SDK.
+- **`example_durable_execution_agent.py`** — Same durable execution using Agent mode.

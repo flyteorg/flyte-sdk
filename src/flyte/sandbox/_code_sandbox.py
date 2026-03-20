@@ -126,12 +126,12 @@ class _Sandbox:
         """Wrap user code with auto-generated argparse preamble and output epilogue.
 
         The generated script:
-        1. Parses all declared inputs from CLI args (``--name value``).
+        1. Parses all declared inputs from CLI args (`--name value`).
         2. Executes the user's code verbatim with those names in scope.
-        3. Writes each declared scalar output variable to ``/var/outputs/<name>``.
+        3. Writes each declared scalar output variable to `/var/outputs/<name>`.
 
         File inputs are injected as path strings.
-        File outputs must be written by user code to ``/var/outputs/<name>``.
+        File outputs must be written by user code to `/var/outputs/<name>`.
         """
         scalar_inputs = {k: v for k, v in self.inputs.items() if v is not File}
         io_inputs = {k: v for k, v in self.inputs.items() if v is File}
@@ -299,14 +299,14 @@ class _Sandbox:
     async def as_task(self, image: Optional[str] = None) -> ContainerTask:
         """Build the image (if needed) and return a deployable ContainerTask.
 
-        The returned task has ``_script`` as an optional input with a pre-filled
+        The returned task has `_script` as an optional input with a pre-filled
         default, so retriggers from the UI only require user-declared inputs.
 
         Args:
-            image: Pre-built image URI. If ``None``, the image is built automatically.
+            image: Pre-built image URI. If `None`, the image is built automatically.
 
         Returns:
-            A :class:`ContainerTask` ready to execute or deploy.
+            A `ContainerTask` ready to execute or deploy.
         """
         if image is None:
             image = self.image or await self._build.aio()
@@ -336,7 +336,7 @@ class _Sandbox:
         """Build the image (if needed) and execute the sandbox.
 
         Args:
-            image: Pre-built image URI. If ``None``, the image is built automatically.
+            image: Pre-built image URI. If `None`, the image is built automatically.
             **kwargs: Runtime input values matching the declared inputs.
 
         Returns:
@@ -392,18 +392,18 @@ def create(
 
     Three modes, mutually exclusive:
 
-    - **Auto-IO mode** (``code`` provided, ``auto_io=True``, default): write
+    - **Auto-IO mode** (`code` provided, `auto_io=True`, default): write
       just the business logic. Flyte auto-generates an argparse preamble so
       declared inputs are available as local variables, and writes declared
-      scalar outputs to ``/var/outputs/`` automatically. No boilerplate needed.
-    - **Verbatim mode** (``code`` provided, ``auto_io=False``): run an
+      scalar outputs to `/var/outputs/` automatically. No boilerplate needed.
+    - **Verbatim mode** (`code` provided, `auto_io=False`): run an
       arbitrary Python script as-is. CLI args for declared inputs are still
       forwarded, but the script handles all I/O itself (reading from
-      ``/var/inputs/``, writing to ``/var/outputs/<name>`` manually).
-    - **Command mode** (``command`` provided): run any shell command directly,
+      `/var/inputs/`, writing to `/var/outputs/<name>` manually).
+    - **Command mode** (`command` provided): run any shell command directly,
       e.g. a compiled binary or a shell pipeline.
 
-    Call ``.run()`` on the returned sandbox to build the image and execute.
+    Call `.run()` on the returned sandbox to build the image and execute.
 
     Example — auto-IO mode (default, no boilerplate)::
 
@@ -442,44 +442,44 @@ def create(
     Args:
         name: Sandbox name. Derives task and image names.
         code: Python source to run (auto-IO or verbatim mode). Mutually
-            exclusive with ``command``.
+            exclusive with `command`.
         inputs: Input type declarations. Supported types:
 
-            - Primitive: ``int``, ``float``, ``str``, ``bool``
-            - Date/time: ``datetime.datetime``, ``datetime.timedelta``
-            - IO handles: ``flyte.io.File``
-              (bind-mounted at ``/var/inputs/<name>``; available as a path
+            - Primitive: `int`, `float`, `str`, `bool`
+            - Date/time: `datetime.datetime`, `datetime.timedelta`
+            - IO handles: `flyte.io.File`
+              (bind-mounted at `/var/inputs/<name>`; available as a path
               string in auto-IO mode)
 
         outputs: Output type declarations. Supported types:
 
-            - Primitive: ``int``, ``float``, ``str``, ``bool``
-            - Date/time: ``datetime.datetime`` (ISO-8601), ``datetime.timedelta``
-            - IO handles: ``flyte.io.File``
-              (user code must write the file to ``/var/outputs/<name>``)
+            - Primitive: `int`, `float`, `str`, `bool`
+            - Date/time: `datetime.datetime` (ISO-8601), `datetime.timedelta`
+            - IO handles: `flyte.io.File`
+              (user code must write the file to `/var/outputs/<name>`)
 
-        command: Entrypoint command (command mode). Mutually exclusive with ``code``.
-        arguments: Arguments forwarded to ``command`` (command mode only).
+        command: Entrypoint command (command mode). Mutually exclusive with `code`.
+        arguments: Arguments forwarded to `command` (command mode only).
         packages: Python packages to install via pip.
         system_packages: System packages to install via apt.
-        additional_commands: Extra Dockerfile ``RUN`` commands.
+        additional_commands: Extra Dockerfile `RUN` commands.
         resources: CPU / memory resources for the container.
         image_config: Registry and Python version settings.
         image_name: Explicit image name, overrides the auto-generated one.
         image: Pre-built image URI. Skips the build step if provided.
-        auto_io: When ``True`` (default), Flyte wraps ``code`` with an
+        auto_io: When `True` (default), Flyte wraps `code` with an
             auto-generated argparse preamble and output-writing epilogue so
             declared inputs are available as local variables and scalar outputs
             are collected automatically — no boilerplate needed. When
-            ``False``, ``code`` is run verbatim and must handle all I/O itself.
+            `False`, `code` is run verbatim and must handle all I/O itself.
         retries: Number of task retries on failure.
         timeout: Task timeout in seconds.
         env_vars: Environment variables available inside the container.
-        secrets: Flyte :class:`~flyte.Secret` objects to mount.
-        cache: Cache behaviour — ``"auto"``, ``"override"``, or ``"disable"``.
+        secrets: Flyte `flyte.Secret` objects to mount.
+        cache: Cache behaviour — `"auto"`, `"override"`, or `"disable"`.
 
     Returns:
-        Configured sandbox ready to ``.run()``.
+        Configured sandbox ready to `.run()`.
     """
     if code is not None and command is not None:
         raise ValueError("'code' and 'command' are mutually exclusive.")

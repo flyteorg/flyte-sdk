@@ -66,14 +66,14 @@ def prepare_sales_data() -> list[list[str]]:
 async def generate_and_run_with_agent(
     prompt: str, csv_data: str, description: str, index: int
 ) -> dict[str, float | int]:
-    """Generate code and run for a single CSV format using Agent SDK."""
+    """Generate code and run for a single CSV format using Agent mode."""
 
     # Create temp CSV file
     csv_file = Path(tempfile.gettempdir()) / f"sales_data_agent_{index}.csv"
     csv_file.write_text(csv_data)
 
-    # Generate code with Agent SDK - agent autonomously handles the workflow
-    print(f"\n[{description}] Starting Agent SDK code generation...")
+    # Generate code with Agent mode - agent autonomously handles the workflow
+    print(f"\n[{description}] Starting code generation...")
 
     agent = AutoCoderAgent(
         name=f"sales-agent-{index}",
@@ -93,11 +93,11 @@ async def generate_and_run_with_agent(
     )
 
     if not result.success:
-        print(f"{description}: Agent SDK code generation failed")
+        print(f"{description}: Agent code generation failed")
         print(f"Error: {result.error}")
         return None
 
-    print(f"[{description}] Agent SDK generated solution successfully!")
+    print(f"[{description}] Agent generated solution successfully!")
     print(f"{len(result.detected_packages)} packages detected")
 
     # Run generated code on the original data
@@ -121,9 +121,9 @@ async def sales_processing_agent_workflow(
 
 Return JSON with: total_revenue (float), total_units (int), transaction_count (int)""",
 ) -> list[dict[str, float | int]]:
-    """Process multiple CSV formats using Agent SDK.
+    """Process multiple CSV formats using Agent mode.
 
-    This demonstrates the experimental Agent SDK mode where Claude autonomously:
+    This demonstrates the Agent mode where Claude autonomously:
     1. Analyzes the data
     2. Generates code
     3. Writes tests

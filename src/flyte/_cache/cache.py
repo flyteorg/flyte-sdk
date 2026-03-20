@@ -43,6 +43,24 @@ class VersionParameters(Generic[P, FuncOut]):
 
 @runtime_checkable
 class CachePolicy(Protocol):
+    """
+    Protocol for custom cache version strategies.
+
+    Implement `get_version(salt, params) -> str` to define how cache versions
+    are computed. The default implementation is `FunctionBodyPolicy`, which
+    hashes the function source code.
+
+    Example custom policy:
+
+    ```python
+    class GitHashPolicy:
+        def get_version(self, salt: str, params: VersionParameters) -> str:
+            import subprocess
+            git_hash = subprocess.check_output(["git", "rev-parse", "HEAD"]).decode().strip()
+            return hashlib.sha256(f"{salt}{git_hash}".encode()).hexdigest()
+    ```
+    """
+
     def get_version(self, salt: str, params: VersionParameters) -> str: ...
 
 
@@ -51,20 +69,32 @@ class CachePolicy(Protocol):
 class Cache:
     """
     Cache configuration for a task.
-    :param behavior: The behavior of the cache. Can be "auto", "override" or "disable".
-    :param version_override: The version of the cache. If not provided, the version will be
-     generated based on the cache policies
-    :type version_override: Optional[str]
-    :param serialize: Boolean that indicates if identical (ie. same inputs) instances of this task should be executed in
-          serial when caching is enabled. This means that given multiple concurrent executions over identical inputs,
-          only a single instance executes and the rest wait to reuse the cached results.
-    :type serialize: bool
-    :param ignored_inputs: A tuple of input names to ignore when generating the version hash.
-    :type ignored_inputs: Union[Tuple[str, ...], str]
-    :param salt: A salt used in the hash generation.
-    :type salt: str
-    :param policies: A list of cache policies to generate the version hash.
-    :type policies: Optional[Union[List[CachePolicy], CachePolicy]]
+
+    Three cache behaviors are available:
+
+    - `"auto"` — Cache version is computed automatically from cache policies
+      (default: `FunctionBodyPolicy`, which hashes the function source code).
+      Any change to the function body invalidates the cache.
+    - `"override"` — You provide an explicit `version_override` string.
+      Cache is only invalidated when you change the version.
+    - `"disable"` — Caching is disabled; task always re-executes.
+
+    Set via `TaskEnvironment(cache=...)`, `@env.task(cache=...)`, or
+    `task.override(cache=...)`.
+
+    :param behavior: Cache behavior — `"auto"`, `"override"`, or `"disable"`.
+    :param version_override: Explicit cache version string. Only used when
+        `behavior="override"`.
+    :param serialize: If `True`, concurrent executions with identical inputs will
+        be serialized — only one runs and the rest wait for and reuse the cached result.
+        Default `False`.
+    :param ignored_inputs: Input parameter names to exclude from the cache key.
+        Useful when some inputs (e.g., timestamps) shouldn't affect caching.
+    :param salt: Additional salt for cache key generation. Use to create separate
+        cache namespaces (e.g., `salt="v2"` to invalidate all existing caches).
+    :param policies: Cache policies for version generation. Defaults to
+        `[FunctionBodyPolicy()]` when `behavior="auto"`. Provide a custom
+        `CachePolicy` implementation for alternative versioning strategies.
     """
 
     behavior: CacheBehavior

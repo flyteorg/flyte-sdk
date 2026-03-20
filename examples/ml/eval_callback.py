@@ -31,13 +31,13 @@ import flyte
 from flyte.io import File
 
 image = flyte.Image.from_debian_base(name="lightning-eval").with_pip_packages(
-    "lightning==2.6.1", "flyteplugins-pytorch==2.0.2"
+    "lightning==2.6.1", "flyteplugins-pytorch==2.0.3"
 )
 
 # Multi-node training: 2 nodes, 1 process per node
 train_env = flyte.TaskEnvironment(
     name="distributed-train",
-    resources=flyte.Resources(cpu=4, memory="25Gi", gpu="L4:1"),
+    resources=flyte.Resources(cpu=4, memory="25Gi", gpu="T4:1"),
     plugin_config=Elastic(
         nproc_per_node=1,
         nnodes=2,

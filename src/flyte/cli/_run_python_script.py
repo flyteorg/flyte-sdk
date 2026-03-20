@@ -1,4 +1,4 @@
-"""CLI command for ``flyte run python-script``.
+"""CLI command for `flyte run python-script`.
 
 Packages a Python script and runs it on a remote Flyte cluster with
 configurable resources.
@@ -21,7 +21,7 @@ from ._common import CommandBase
 
 
 class PythonScriptCommand(CommandBase):
-    """Command that does not add --project/--domain (already on ``flyte run``)."""
+    """Command that does not add --project/--domain (already on `flyte run`)."""
 
     common_options_enabled = False
 
@@ -59,6 +59,12 @@ class PythonScriptCommand(CommandBase):
     help="Extra arguments passed to the script (comma-separated).",
 )
 @click.option("--queue", type=str, default=None, help="Flyte queue / cluster override.")
+@click.option(
+    "--output-dir",
+    type=str,
+    default=None,
+    help="Directory path (inside the container) to upload as output after the script finishes.",
+)
 @click.pass_obj
 def python_script(
     cfg: common.CLIConfig,
@@ -72,14 +78,15 @@ def python_script(
     timeout: int,
     extra_args: str | None,
     queue: str | None,
+    output_dir: str | None,
 ) -> None:
     """Run a Python script on a remote Flyte cluster.
 
     Packages SCRIPT into a Flyte task, builds a container image with the
     requested resources, and submits it for remote execution.
 
-    Project, domain, follow, and name are provided at the ``flyte run`` level
-    (before ``python-script``). Project and domain are read from the init
+    Project, domain, follow, and name are provided at the `flyte run` level
+    (before `python-script`). Project and domain are read from the init
     config if not set.
 
     \b
@@ -110,12 +117,13 @@ def python_script(
 
     console = Console()
 
-    # Read run-level options from RunArguments (set by the parent ``flyte run`` group)
+    # Read run-level options from RunArguments (set by the parent `flyte run` group)
     run_args = cfg.run_args if cfg else None
     follow = run_args.follow if run_args else False
     name = run_args.name if run_args else None
     project = run_args.project if run_args else None
     domain = run_args.domain if run_args else None
+    debug = run_args.debug if run_args else False
 
     # Initialize flyte config (like prefetch does)
     initialize_config(
@@ -150,6 +158,8 @@ def python_script(
         queue=queue,
         wait=False,
         name=name,
+        debug=debug,
+        output_dir=output_dir,
     )
 
     url = run.url
@@ -157,6 +167,11 @@ def python_script(
         f"Started run [bold]{run.name}[/bold] to execute script [bold]{script}[/bold].\n"
         f"   Check the console for status at [link={url}]{url}[/link]"
     )
+
+    if debug:
+        from flyte.cli._run import _render_debug_url
+
+        _render_debug_url(console, run, cfg)
 
     if follow:
         run.wait()

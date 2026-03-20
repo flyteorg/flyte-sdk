@@ -100,7 +100,7 @@ class _LogViewer(RichLog):
 class ActionTreeWidget(Tree[str]):
     """Left panel: navigable action tree.
 
-    The invisible Textual root is hidden via ``show_root=False``.
+    The invisible Textual root is hidden via `show_root=False`.
     The first real action becomes the visible top-level node.
     """
 
@@ -149,7 +149,7 @@ class ActionTreeWidget(Tree[str]):
 class _DetailBox(Static):
     """A bordered box used inside the detail panel.
 
-    Markup is disabled so that JSON/repr content with ``[brackets]`` is
+    Markup is disabled so that JSON/repr content with `[brackets]` is
     rendered literally instead of being parsed as Rich markup tags.
     """
 
@@ -401,7 +401,7 @@ _FLYTE_BORDER = "#DEDDE4"
 
 
 class FlyteTUIApp(App[None]):
-    """Interactive TUI for ``flyte run --local --tui``."""
+    """Interactive TUI for `flyte run --local --tui`."""
 
     CSS = f"""
     Screen {{

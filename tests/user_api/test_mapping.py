@@ -119,11 +119,10 @@ async def test_map_async_iterator_initialize_with_partial():
         func=partial_func, args=map_args, name="test_group", concurrency=0, return_exceptions=True
     )
 
-    # Initialize the iterator
-    await iterator._initialize()
+    # Collect results to trigger task execution
+    await iterator.collect()
 
-    # Verify that the correct number of tasks were created
-    assert len(iterator._tasks) == 3
+    # Verify that the correct number of tasks were created and executed
     assert iterator._task_count == 3
 
     # Verify that aio was called with merged arguments for each mapped value

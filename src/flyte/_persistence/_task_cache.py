@@ -7,7 +7,7 @@ from flyte._persistence._db import HAS_AIOSQLITE, LocalDB
 class LocalTaskCache(object):
     """Persistent store for caching local task execution results.
 
-    Uses the shared ``LocalDB`` connection manager.
+    Uses the shared `LocalDB` connection manager.
     """
 
     @staticmethod
