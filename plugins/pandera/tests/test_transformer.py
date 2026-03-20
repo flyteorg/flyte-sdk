@@ -1,0 +1,70 @@
+from __future__ import annotations
+
+import typing
+from unittest.mock import MagicMock, patch
+
+import pandas as pd
+import pytest
+from flyte.types import TypeEngine
+
+from flyteplugins.pandera import ValidationConfig
+from flyteplugins.pandera.transformer import (
+    PanderaDataFrameTransformer,
+    register_pandera_type_transformers,
+)
+
+try:
+    import pandera
+    import pandera.typing.pandas as pandera_typing_pandas
+except ImportError:
+    pandera = None
+    pandera_typing_pandas = None
+
+pytestmark = pytest.mark.skipif(pandera is None or pandera_typing_pandas is None, reason="pandera is not installed")
+
+
+if pandera is not None:
+
+    class InputSchema(pandera.DataFrameModel):
+        value: int
+
+
+@pytest.mark.asyncio
+async def test_pandera_pandas_roundtrip(ctx_with_test_raw_data_path):
+    transformer = PanderaDataFrameTransformer()
+    data = pd.DataFrame({"value": [1, 2, 3]})
+    df_type = pandera_typing_pandas.DataFrame[InputSchema]
+    lt = TypeEngine.to_literal_type(df_type)
+
+    with patch("flyte.report.get_tab") as get_tab:
+        fake_tab = MagicMock()
+        get_tab.return_value = fake_tab
+        lit = await transformer.to_literal(data, df_type, lt)
+        restored = await transformer.to_python_value(lit, df_type)
+
+    assert isinstance(restored, pd.DataFrame)
+    assert restored["value"].tolist() == [1, 2, 3]
+    assert get_tab.call_count >= 1
+    assert fake_tab.replace.call_count >= 1
+
+
+@pytest.mark.asyncio
+async def test_pandera_warn_mode(ctx_with_test_raw_data_path):
+    transformer = PanderaDataFrameTransformer()
+    invalid = pd.DataFrame({"value": ["a", "b"]})
+    df_type = pandera_typing_pandas.DataFrame[InputSchema]
+    configured_type = typing.Annotated[df_type, ValidationConfig(on_error="warn")]
+    lt = TypeEngine.to_literal_type(configured_type)
+
+    with patch("flyte.report.get_tab") as get_tab:
+        get_tab.return_value = MagicMock()
+        lit = await transformer.to_literal(invalid, configured_type, lt)
+        restored = await transformer.to_python_value(lit, configured_type)
+
+    assert isinstance(restored, pd.DataFrame)
+
+
+def test_register_transformer():
+    register_pandera_type_transformers()
+    t = TypeEngine.get_transformer(pandera_typing_pandas.DataFrame)
+    assert isinstance(t, PanderaDataFrameTransformer)
