@@ -40,6 +40,7 @@ from flyte._internal.imagebuild.utils import (
     copy_files_to_context,
     get_and_list_dockerignore,
     get_uv_project_editable_dependencies,
+    get_uv_project_editable_package_names,
 )
 from flyte._internal.runtime.task_serde import get_security_context
 from flyte._logging import logger
@@ -342,10 +343,14 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
                     # We copy the entire dependency directory (not just pyproject.toml) so that uv_build
                     # can find the source files when building the package during uv sync.
                     standard_ignore_patterns = STANDARD_IGNORE_PATTERNS.copy()
-                    for editable_dep in get_uv_project_editable_dependencies(layer.pyproject.parent):
+                    editable_deps = get_uv_project_editable_dependencies(layer.pyproject.parent)
+                    # Skip building/installing editable deps as wheels too
+                    for pkg_name in get_uv_project_editable_package_names(editable_deps):
+                        pip_options.extra_args += f" --no-install-package {pkg_name}"
+                    for editable_dep in editable_deps:
                         pyproject_dir_dsts.append(
                             copy_files_to_context(
-                                editable_dep,
+                                editable_dep / "pyproject.toml",
                                 context_path,
                                 ignore_patterns=[*standard_ignore_patterns, *docker_ignore_patterns],
                             )

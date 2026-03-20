@@ -9,6 +9,7 @@ from flyte._internal.imagebuild.utils import (
     get_and_list_dockerignore,
     get_uv_editable_install_mounts,
     get_uv_project_editable_dependencies,
+    get_uv_project_editable_package_names,
 )
 
 
@@ -132,6 +133,42 @@ def test_get_uv_editable_install_mounts():
             f"target={Path(editable_rel).name},rw",
         ]
         assert mounts == " ".join(expected_mounts)
+
+
+def test_get_uv_project_editable_package_names():
+    with tempfile.TemporaryDirectory() as tmp_context:
+        project_root = Path(tmp_context)
+
+        # Create two editable deps with pyproject.toml files
+        dep_a = project_root / "dep_a"
+        dep_a.mkdir()
+        (dep_a / "pyproject.toml").write_text('[project]\nname = "my-lib-a"\nversion = "0.1.0"\n')
+
+        dep_b = project_root / "dep_b"
+        dep_b.mkdir()
+        (dep_b / "pyproject.toml").write_text('[project]\nname = "my-lib-b"\nversion = "0.2.0"\n')
+
+        # Create a dep without a [project].name (should be skipped)
+        dep_c = project_root / "dep_c"
+        dep_c.mkdir()
+        (dep_c / "pyproject.toml").write_text('[tool.something]\nkey = "value"\n')
+
+        names = get_uv_project_editable_package_names([dep_a, dep_b, dep_c])
+
+        assert names == ["my-lib-a", "my-lib-b"]
+
+
+def test_get_uv_project_editable_package_names_no_pyproject():
+    """Test that deps without pyproject.toml are skipped."""
+    with tempfile.TemporaryDirectory() as tmp_context:
+        project_root = Path(tmp_context)
+        dep = project_root / "dep_missing"
+        dep.mkdir()
+        # No pyproject.toml created
+
+        names = get_uv_project_editable_package_names([dep])
+
+        assert names == []
 
 
 def test_copy_files_to_context_ignores_egg_info():

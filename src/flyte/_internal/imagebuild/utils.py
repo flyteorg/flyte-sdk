@@ -5,6 +5,8 @@ import subprocess
 from pathlib import Path, PurePath
 from typing import List, Optional
 
+import toml
+
 from flyte._code_bundle._ignore import STANDARD_IGNORE_PATTERNS
 from flyte._image import DockerIgnore, Image
 from flyte._logging import logger
@@ -131,8 +133,31 @@ def get_uv_project_editable_dependencies(project_root: Path) -> list[Path]:
     return paths
 
 
+def get_uv_project_editable_package_names(editable_deps: list[Path]) -> list[str]:
+    """Returns package names for editable dependencies by reading their pyproject.toml.
+
+    Args:
+        editable_deps: Paths to editable dependency directories.
+
+    Returns:
+        A list of package names for editable dependencies.
+    """
+    names = []
+    for dep_path in editable_deps:
+        pyproject_path = dep_path / "pyproject.toml"
+        if pyproject_path.exists():
+            data = toml.load(pyproject_path)
+            name = data.get("project", {}).get("name")
+            if name:
+                names.append(name)
+    return names
+
+
 def get_uv_editable_install_mounts(
-    project_root: Path, context_path: Path, ignore_patterns: list[str] | None = None
+    project_root: Path,
+    context_path: Path,
+    ignore_patterns: list[str] | None = None,
+    editable_deps: list[Path] | None = None,
 ) -> str:
     """Builds Docker bind mounts for uv editable path dependencies.
 
@@ -141,12 +166,15 @@ def get_uv_editable_install_mounts(
         context_path: Build context directory for Docker.
         ignore_patterns: A list of ignore patterns to apply when copying editable dependency contents.
             If None, the standard ignore patterns of 'StandardIgnore' will be used.
+        editable_deps: Pre-fetched editable dependency paths. If None, they will be resolved via uv export.
     Returns:
         A string of Docker bind-mount arguments for editable dependencies.
     """
     ignore_patterns = ignore_patterns or STANDARD_IGNORE_PATTERNS.copy()
+    if editable_deps is None:
+        editable_deps = get_uv_project_editable_dependencies(project_root)
     mounts = []
-    for editable_dep in get_uv_project_editable_dependencies(project_root):
+    for editable_dep in editable_deps:
         # Copy the contents of the editable install by applying ignores
         editable_dep_within_context = copy_files_to_context(editable_dep, context_path, ignore_patterns=ignore_patterns)
         mounts.append(
