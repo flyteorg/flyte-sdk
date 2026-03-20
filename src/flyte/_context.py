@@ -33,6 +33,10 @@ class ContextData:
     preserve_original_types: bool = False
     tracker: Any = None  # ActionTracker instance (optional, set for TUI runs)
     in_trace: bool = False  # True when executing inside a @trace decorated function
+    #: When True, type transformers should omit non-essential side effects (e.g. HTML tabs) while still
+    #: performing validation/serialization. Set during cross-task literal conversion so driver tasks do not
+    #: duplicate reports already emitted by worker tasks.
+    type_transformer_quiet: bool = False
 
     def replace(self, **kwargs) -> ContextData:
         return replace(self, **kwargs)
@@ -108,6 +112,12 @@ class Context:
         Return a copy of the context with the given preserve original types flag
         """
         return Context(self.data.replace(preserve_original_types=preserve_original_types))
+
+    def new_type_transformer_quiet(self, type_transformer_quiet: bool) -> Context:
+        """
+        Return a copy of the context with :attr:`ContextData.type_transformer_quiet` set.
+        """
+        return Context(self.data.replace(type_transformer_quiet=type_transformer_quiet))
 
     def get_report(self) -> Optional[Report]:
         """

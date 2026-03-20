@@ -7,18 +7,20 @@ import pandas as pd
 import pytest
 from flyte.types import TypeEngine
 
-from flyteplugins.pandera import ValidationConfig
-from flyteplugins.pandera.transformer import (
-    PanderaDataFrameTransformer,
-    register_pandera_type_transformers,
-)
-
+# Import pandera typing *before* flyteplugins.pandera so `pandera.typing.pandas.DataFrame` is the
+# same class object Flyte's TypeEngine keys on after plugin entry points load (see plugin README).
 try:
     import pandera
     import pandera.typing.pandas as pandera_typing_pandas
 except ImportError:
     pandera = None
     pandera_typing_pandas = None
+
+from flyteplugins.pandera import ValidationConfig
+from flyteplugins.pandera.transformer import (
+    PanderaDataFrameTransformer,
+    register_pandera_type_transformers,
+)
 
 pytestmark = pytest.mark.skipif(pandera is None or pandera_typing_pandas is None, reason="pandera is not installed")
 
