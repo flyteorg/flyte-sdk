@@ -8,7 +8,6 @@ import sqlite3
 import time
 import typing
 from importlib.metadata import entry_points
-from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Dict, Optional, Tuple
 
 from async_lru import alru_cache
@@ -18,9 +17,9 @@ from typing_extensions import Protocol
 from flyte._image import Architecture, Image
 from flyte._initialize import _get_init_config
 from flyte._logging import logger
+from flyte._persistence._db import LocalDB
 from flyte._status import status
 
-_IMAGE_CACHE_DB = Path.home() / ".flyte" / "cache" / "images.db"
 _IMAGE_CACHE_TTL_DAYS = 30
 
 if TYPE_CHECKING:
@@ -115,36 +114,22 @@ def _cache_key(repository: str, tag: str, arch: Tuple[str, ...]) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
-def _get_cache_db() -> sqlite3.Connection:
-    """Open (and lazily initialize) the SQLite image cache database."""
-    _IMAGE_CACHE_DB.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(_IMAGE_CACHE_DB))
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS image_cache "
-        "(key TEXT PRIMARY KEY, image_uri TEXT NOT NULL, "
-        "created_at REAL NOT NULL)"
-    )
-    return conn
-
-
 def _read_image_cache(repository: str, tag: str, arch: Tuple[str, ...]) -> Optional[str]:
     """Look up a previously verified image URI by repository, tag, and arch. Returns image_uri or None."""
     try:
-        conn = _get_cache_db()
-        try:
-            cutoff = time.time() - _IMAGE_CACHE_TTL_DAYS * 86400
-            row = conn.execute(
-                "SELECT image_uri FROM image_cache WHERE key = ? AND created_at > ?",
-                (_cache_key(repository, tag, arch), cutoff),
-            ).fetchone()
-            # Prune expired entries ~5% of the time to avoid doing it on every read
-            if random.random() < 0.05:
+        conn = LocalDB.get_sync()
+        cutoff = time.time() - _IMAGE_CACHE_TTL_DAYS * 86400
+        row = conn.execute(
+            "SELECT image_uri FROM image_cache WHERE key = ? AND created_at > ?",
+            (_cache_key(repository, tag, arch), cutoff),
+        ).fetchone()
+        # Prune expired entries ~5% of the time to avoid doing it on every read
+        if random.random() < 0.05:
+            with LocalDB._write_lock:
                 conn.execute("DELETE FROM image_cache WHERE created_at <= ?", (cutoff,))
                 conn.commit()
-            if row:
-                return row[0]
-        finally:
-            conn.close()
+        if row:
+            return row[0]
     except (OSError, sqlite3.Error) as e:
         logger.debug(f"Failed to read image cache: {e}")
     return None
@@ -153,15 +138,13 @@ def _read_image_cache(repository: str, tag: str, arch: Tuple[str, ...]) -> Optio
 def _write_image_cache(repository: str, tag: str, arch: Tuple[str, ...], image_uri: str) -> None:
     """Persist a verified image URI to the SQLite cache."""
     try:
-        conn = _get_cache_db()
-        try:
-            with conn:
-                conn.execute(
-                    "INSERT OR REPLACE INTO image_cache (key, image_uri, created_at) VALUES (?, ?, ?)",
-                    (_cache_key(repository, tag, arch), image_uri, time.time()),
-                )
-        finally:
-            conn.close()
+        conn = LocalDB.get_sync()
+        with LocalDB._write_lock:
+            conn.execute(
+                "INSERT OR REPLACE INTO image_cache (key, image_uri, created_at) VALUES (?, ?, ?)",
+                (_cache_key(repository, tag, arch), image_uri, time.time()),
+            )
+            conn.commit()
     except (OSError, sqlite3.Error) as e:
         logger.debug(f"Failed to write image cache: {e}")
 
