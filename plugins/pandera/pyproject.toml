@@ -20,7 +20,7 @@ dev = [
 ]
 
 [project.entry-points."flyte.plugins.types"]
-pandera = "flyteplugins.pandera.transformer:register_pandera_type_transformers"
+pandera = "flyteplugins.pandera.register:register_type_transformers"
 
 [build-system]
 requires = ["setuptools", "setuptools_scm"]

@@ -121,7 +121,7 @@ async def convert_from_native_to_inputs(
     **kwargs,
 ) -> Inputs:
     _ic = internal_ctx()
-    _quiet = _ic.new_type_transformer_quiet(True) if _ic.is_task_context() else nullcontext()
+    _quiet = _ic.new_in_driver_literal_conversion(True) if _ic.is_task_context() else nullcontext()
     with _quiet:
         return await _convert_from_native_to_inputs_impl(interface, args, custom_context, kwargs)
 
@@ -242,7 +242,7 @@ async def convert_from_native_to_outputs(o: Any, interface: NativeInterface, tas
 
 
 async def convert_outputs_to_native(interface: NativeInterface, outputs: Outputs) -> Union[Any, Tuple[Any, ...]]:
-    with internal_ctx().new_type_transformer_quiet(True):
+    with internal_ctx().new_in_driver_literal_conversion(True):
         lm = literals_pb2.LiteralMap(
             literals={named_literal.name: named_literal.value for named_literal in outputs.proto_outputs.literals}
         )

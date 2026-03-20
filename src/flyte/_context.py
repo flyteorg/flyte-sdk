@@ -33,10 +33,10 @@ class ContextData:
     preserve_original_types: bool = False
     tracker: Any = None  # ActionTracker instance (optional, set for TUI runs)
     in_trace: bool = False  # True when executing inside a @trace decorated function
-    #: When True, type transformers should omit non-essential side effects (e.g. HTML tabs) while still
-    #: performing validation/serialization. Set during cross-task literal conversion so driver tasks do not
-    #: duplicate reports already emitted by worker tasks.
-    type_transformer_quiet: bool = False
+    #: When True, literal conversion is happening in driver/task-orchestration flow (not task body I/O).
+    #: Type transformers should omit non-essential side effects (e.g. HTML tabs) while still
+    #: performing validation/serialization so driver tasks do not duplicate worker-emitted reports.
+    in_driver_literal_conversion: bool = False
 
     def replace(self, **kwargs) -> ContextData:
         return replace(self, **kwargs)
@@ -113,11 +113,11 @@ class Context:
         """
         return Context(self.data.replace(preserve_original_types=preserve_original_types))
 
-    def new_type_transformer_quiet(self, type_transformer_quiet: bool) -> Context:
+    def new_in_driver_literal_conversion(self, in_driver_literal_conversion: bool) -> Context:
         """
-        Return a copy of the context with :attr:`ContextData.type_transformer_quiet` set.
+        Return a copy of the context with :attr:`ContextData.in_driver_literal_conversion` set.
         """
-        return Context(self.data.replace(type_transformer_quiet=type_transformer_quiet))
+        return Context(self.data.replace(in_driver_literal_conversion=in_driver_literal_conversion))
 
     def get_report(self) -> Optional[Report]:
         """

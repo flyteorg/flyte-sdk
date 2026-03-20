@@ -14,7 +14,7 @@ At runtime, the plugin:
 2. validates data with pandera schemas, and
 3. writes a validation report to `flyte.report`.
 
-Validation **always** runs on every encode/decode. Report tabs are **suppressed** automatically when Flyte is only moving literals across a nested-task boundary (parent task encoding child inputs, or materializing a child’s outputs inside the parent). Those steps set `ContextData.type_transformer_quiet` in the Flyte SDK so you see one report per dataframe on the task that actually produced or consumed it as a task body I/O, not extra tabs on the orchestrating “driver” task.
+Validation **always** runs on every encode/decode. Report tabs are **suppressed** automatically when Flyte is only moving literals across a nested-task boundary (parent task encoding child inputs, or materializing a child’s outputs inside the parent). Those steps set `ContextData.in_driver_literal_conversion` in the Flyte SDK so you see one report per dataframe on the task that actually produced or consumed it as a task body I/O, not extra tabs on the orchestrating “driver” task.
 
 ### Troubleshooting
 

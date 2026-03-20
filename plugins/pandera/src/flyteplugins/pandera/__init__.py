@@ -1,10 +1,11 @@
 from .config import ValidationConfig
-from .renderer import PanderaReportRenderer
-from .transformer import PanderaDataFrameTransformer, register_pandera_type_transformers
+from .register import register_type_transformers
+from .renderers.base import PanderaReportRenderer
+from .transformers.base import PanderaDataFrameTransformer
 
 __all__ = [
     "PanderaDataFrameTransformer",
     "PanderaReportRenderer",
     "ValidationConfig",
-    "register_pandera_type_transformers",
+    "register_type_transformers",
 ]

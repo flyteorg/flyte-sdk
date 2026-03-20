@@ -5,6 +5,8 @@ from typing import TYPE_CHECKING, Any
 
 from flyte._utils import lazy_module
 
+from .base import PanderaReportRenderer
+
 if TYPE_CHECKING:
     import great_tables as gt
     import pandas
@@ -20,10 +22,10 @@ except ImportError:
 
 @dataclass
 class PandasReport:
-    summary: "pandas.DataFrame"
-    data_preview: "pandas.DataFrame"
-    schema_error_df: "pandas.DataFrame | None" = None
-    data_error_df: "pandas.DataFrame | None" = None
+    summary: pandas.DataFrame
+    data_preview: pandas.DataFrame
+    schema_error_df: pandas.DataFrame | None = None
+    data_error_df: pandas.DataFrame | None = None
 
 
 SCHEMA_ERROR_KEY = "SCHEMA"
@@ -37,10 +39,7 @@ FAILURE_CASE_LIMIT = 10
 ERROR_COLUMN_MAX_WIDTH = 200
 
 
-class PanderaReportRenderer:
-    def __init__(self, title: str = "Pandera Validation Report"):
-        self.title = title
-
+class PanderaPandasReportRenderer(PanderaReportRenderer):
     @staticmethod
     def _schema_name(schema: Any) -> str:
         return schema.name or getattr(schema, "__class__", type(schema)).__name__
@@ -326,7 +325,7 @@ class PanderaReportRenderer:
                 {error_segments}
                 """
 
-    def to_html(self, data: Any, schema: Any, error: Exception | None = None) -> str:
+    def to_html(self, title: str, data: Any, schema: Any, error: Exception | None = None) -> str:
         df = self._to_pandas(data)
         error_segments = ""
 
@@ -384,7 +383,7 @@ class PanderaReportRenderer:
         <head>
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>{self.title}</title>
+            <title>{title}</title>
             <link rel="stylesheet" href="{bootstrap_css}" integrity="{bootstrap_integrity}" crossorigin="anonymous">
             <style>
                 .pandera-report {{
@@ -415,7 +414,7 @@ class PanderaReportRenderer:
             <div class="pandera-report">
                 <div class="report-title">
                     <img src="{pandera_logo}" alt="Pandera Logo">
-                    <h1>{self.title}</h1>
+                    <h1>{title}</h1>
                 </div>
 
                 <h3>{top_message}</h3>
