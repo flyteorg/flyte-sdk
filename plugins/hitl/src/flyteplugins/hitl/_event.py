@@ -346,6 +346,7 @@ async def show_form(form_url: str, api_url: str, curl_body: str, type_name: str)
     await flyte.report.flush.aio()
     return html_report
 
+
 @flyte.trace
 async def wait_for_input_event(
     name: str,
