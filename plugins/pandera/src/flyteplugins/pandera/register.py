@@ -3,10 +3,17 @@ import sys
 
 from .transformers.pandas import register_pandera_pandas_type_transformers
 from .transformers.polars import register_pandera_polars_type_transformers
+from .transformers.pyspark_sql import register_pandera_pyspark_sql_type_transformers
 
 
 def _check_package(package_name: str) -> bool:
-    return package_name in sys.modules or importlib.import_module(package_name) is not None
+    if package_name in sys.modules:
+        return True
+    try:
+        importlib.import_module(package_name)
+    except ImportError:
+        return False
+    return True
 
 
 def register_type_transformers() -> None:
@@ -15,3 +22,5 @@ def register_type_transformers() -> None:
         register_pandera_pandas_type_transformers()
     if _check_package("polars"):
         register_pandera_polars_type_transformers()
+    if _check_package("pyspark"):
+        register_pandera_pyspark_sql_type_transformers()

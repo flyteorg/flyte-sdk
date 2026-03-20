@@ -17,9 +17,9 @@ except ImportError:
     pandera_typing_pandas = None
 
 from flyteplugins.pandera import ValidationConfig
-from flyteplugins.pandera.transformer import (
-    PanderaDataFrameTransformer,
-    register_pandera_type_transformers,
+from flyteplugins.pandera.transformers.pandas import (
+    PanderaPandasDataFrameTransformer,
+    register_pandera_pandas_type_transformers,
 )
 
 pytestmark = pytest.mark.skipif(pandera is None or pandera_typing_pandas is None, reason="pandera is not installed")
@@ -33,7 +33,7 @@ if pandera is not None:
 
 @pytest.mark.asyncio
 async def test_pandera_pandas_roundtrip(ctx_with_test_raw_data_path):
-    transformer = PanderaDataFrameTransformer()
+    transformer = PanderaPandasDataFrameTransformer()
     data = pd.DataFrame({"value": [1, 2, 3]})
     df_type = pandera_typing_pandas.DataFrame[InputSchema]
     lt = TypeEngine.to_literal_type(df_type)
@@ -52,7 +52,7 @@ async def test_pandera_pandas_roundtrip(ctx_with_test_raw_data_path):
 
 @pytest.mark.asyncio
 async def test_pandera_warn_mode(ctx_with_test_raw_data_path):
-    transformer = PanderaDataFrameTransformer()
+    transformer = PanderaPandasDataFrameTransformer()
     invalid = pd.DataFrame({"value": ["a", "b"]})
     df_type = pandera_typing_pandas.DataFrame[InputSchema]
     configured_type = typing.Annotated[df_type, ValidationConfig(on_error="warn")]
@@ -67,6 +67,6 @@ async def test_pandera_warn_mode(ctx_with_test_raw_data_path):
 
 
 def test_register_transformer():
-    register_pandera_type_transformers()
+    register_pandera_pandas_type_transformers()
     t = TypeEngine.get_transformer(pandera_typing_pandas.DataFrame)
-    assert isinstance(t, PanderaDataFrameTransformer)
+    assert isinstance(t, PanderaPandasDataFrameTransformer)

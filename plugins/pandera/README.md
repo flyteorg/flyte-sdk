@@ -1,13 +1,16 @@
 # Flyte Pandera Plugin
 
-`flyteplugins-pandera` adds support for **`pandera.typing.pandas.DataFrame`** and **`pandera.typing.polars.DataFrame` / `LazyFrame`** in Flyte v2.
+`flyteplugins-pandera` adds support for **`pandera.typing.pandas.DataFrame`**, **`pandera.typing.polars.DataFrame` / `LazyFrame`**, and **`pandera.typing.pyspark_sql.DataFrame`** in Flyte v2.
 
 Install:
 
 ```bash
 pip install flyteplugins-pandera 'pandera[pandas]'            # pandas only
 pip install flyteplugins-pandera 'pandera[polars]' flyteplugins-polars   # Polars + structured dataset I/O
+pip install flyteplugins-pandera 'pandera[pyspark]' flyteplugins-spark     # PySpark SQL + parquet I/O
 ```
+
+For PySpark, structured dataset serialization uses Flyte’s `DataFrameTransformerEngine` parquet handlers from **`flyteplugins-spark`** (register Spark encoders/decoders alongside this plugin).
 
 At runtime, the plugin:
 
