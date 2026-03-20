@@ -1965,6 +1965,13 @@ class UnionTransformer(TypeTransformer[T]):
                         cur_transformer = trans.name
                         break
                 else:
+                    if lv.HasField("scalar") and lv.scalar.HasField("blob"):
+                        expected_literal_type = TypeEngine.to_literal_type(v)
+                        if (
+                            expected_literal_type.HasField("blob")
+                            and lv.scalar.blob.metadata.type.dimensionality != expected_literal_type.blob.dimensionality
+                        ):
+                            continue
                     res = await trans.to_python_value(lv, v)
                     if found_res:
                         is_ambiguous = True

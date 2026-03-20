@@ -11,10 +11,12 @@ from flyte._internal.imagebuild.image_builder import (
 )
 
 
+@mock.patch("flyte._internal.imagebuild.image_builder._get_init_config", return_value=None)
 @mock.patch("flyte._internal.imagebuild.image_builder.DockerAPIImageChecker.image_exists")
 @mock.patch("flyte._internal.imagebuild.image_builder.LocalDockerCommandImageChecker.image_exists")
 @pytest.mark.asyncio
-async def test_cached(mock_checker_cli, mock_checker_api):
+async def test_cached(mock_checker_cli, mock_checker_api, mock_config):
+    ImageBuildEngine.image_exists.cache_clear()
     # Simulate that the image exists locally
     mock_checker_cli.return_value = True
 
