@@ -456,17 +456,44 @@ def _detect_python_version() -> Tuple[int, int]:
 @dataclass(frozen=True, repr=True, eq=True)
 class Image:
     """
-    This is a representation of Container Images, which can be used to create layered images programmatically.
+    Container image specification built using a fluent, two-step pattern:
 
-    Use by first calling one of the base constructor methods. These all begin with `from` or `default_`
-    The image can then be amended with additional layers using the various `with_*` methods.
+    1. Create a base image with a `from_*` constructor
+    2. Customize with `with_*` methods (each returns a new `Image`)
 
-    Invariant for this class: The construction of Image objects must be doable everywhere. That is, if a
-      user has a custom image that is not accessible, calling .with_source_file on a file that doesn't exist, the
-      instantiation of the object itself must still go through. Further, the .identifier property of the image must
-      also still go through. This is because it may have been already built somewhere else.
-      Use validate() functions to check each layer for actual errors. These are invoked at actual
-      build time. See self.id for more information
+    Example:
+
+    ```python
+    image = (
+        flyte.Image.from_debian_base(python="3.12")
+        .with_pip_packages("pandas", "scikit-learn")
+        .with_apt_packages("curl", "git")
+    )
+    ```
+
+    **Base constructors** (`from_*`):
+
+    - `from_debian_base()` — Debian-based image with a specified Python version
+    - `from_base()` — Any base image by name (e.g., `"python:3.12-slim"`)
+    - `from_uv_script()` — Image from a `uv`-compatible script with inline dependencies
+    - `from_dockerfile()` — Image from a custom Dockerfile
+    - `from_ref_name()` — Reference to a pre-built image by name
+
+    **Customization methods** (`with_*`):
+
+    - `with_pip_packages()` — Add pip packages
+    - `with_apt_packages()` — Add system packages via apt-get
+    - `with_commands()` — Run arbitrary shell commands
+    - `with_env_vars()` — Set environment variables
+    - `with_requirements()` — Install from a requirements.txt file
+    - `with_uv_project()` — Install from a uv/pyproject.toml project
+    - `with_poetry_project()` — Install from a Poetry project
+    - `with_source_folder()` — Include a source directory
+    - `with_source_file()` — Include a single source file
+    - `with_code_bundle()` — Include a code bundle
+    - `with_workdir()` — Set the working directory
+    - `with_dockerignore()` — Add a .dockerignore
+    - `with_local_v2()` — Configure for local v2 execution
     """
 
     # These are base properties of an image
@@ -532,7 +559,6 @@ class Image:
     ) -> Image:
         # Would love a way to move this outside of this class (but still needs to be accessible via Image.auto())
         # this default image definition may need to be updated once there is a released pypi version
-        from packaging.version import Version
 
         from flyte._version import __version__
 
@@ -577,11 +603,7 @@ class Image:
                     image = image.with_local_v2()
             else:
                 flyte_version = typing.cast(str, flyte_version)
-                if Version(flyte_version).is_devrelease or Version(flyte_version).is_prerelease:
-                    image = image.with_pip_packages(f"flyte=={flyte_version}", pre=True)
-                else:
-                    image = image.with_pip_packages(f"flyte=={flyte_version}")
-                    object.__setattr__(image, "_is_flyte_default", True)
+                image = image.with_pip_packages(f"flyte=={flyte_version}")
         if not dev_mode:
             object.__setattr__(image, "_tag", preset_tag)
 
@@ -1173,11 +1195,37 @@ class Image:
         Use this method to create a new image with the local v2 builder
         This will override any existing builder
 
-        :return: Image
+        Returns:
+            Image
         """
         # Manually declare the PythonWheel so we can set the hashing
         # used to compute the identifier. Can remove if we ever decide to expose the lambda in with_ commands
-        with_dist = self.clone(addl_layer=PythonWheels(wheel_dir=DIST_FOLDER, package_name="flyte", pre=True))
+        with_dist = self.clone(addl_layer=PythonWheels(wheel_dir=DIST_FOLDER, package_name="flyte"))
+        return with_dist
+
+    def with_local_v2_plugins(self, plugins: str | list[str] | None = None) -> Image:
+        """
+        Use this method to create a new image with the local v2 builder
+        This will override any existing builder
+
+        Args:
+            plugins: plugin name or list of plugin names to install, default is None, e.g.
+                flyteplugins-hitl, flyteplugins-vllm, flyteplugins-sglang, etc.
+
+        Returns:
+            Image
+        """
+        if isinstance(plugins, str):
+            plugins = [plugins]
+
+        with_dist = self
+        if plugins:
+            for plugin in plugins:
+                if not plugin.startswith("flyteplugins-"):
+                    raise ValueError(f"Plugin {plugin} must start with 'flyteplugins-'")
+                with_dist = with_dist.clone(
+                    addl_layer=PythonWheels(wheel_dir=DIST_FOLDER, package_name=plugin.replace("-", "_"))
+                )
 
         return with_dist
 

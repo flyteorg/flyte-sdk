@@ -44,33 +44,56 @@ if TYPE_CHECKING:
 @dataclass(init=True, repr=True)
 class TaskEnvironment(Environment):
     """
-    Environment class to define a new environment for a set of tasks.
+    Define an execution environment for a set of tasks.
 
-    Example usage:
+    Task configuration in Flyte has three levels (most general to most specific):
+
+    1. **TaskEnvironment** — sets defaults for all tasks in the environment
+    2. **@env.task decorator** — overrides per-task settings
+    3. **task.override()** — overrides at invocation time
+
+    For shared parameters, the more specific level overrides the more general one.
+
+    Example:
+
     ```python
-    env = flyte.TaskEnvironment(name="my_env", image="my_image", resources=Resources(cpu="1", memory="1Gi"))
+    env = flyte.TaskEnvironment(
+        name="my_env",
+        image=flyte.Image.from_debian_base(python="3.12").with_pip_packages("pandas"),
+        resources=flyte.Resources(cpu="1", memory="1Gi"),
+    )
 
     @env.task
     async def my_task():
         pass
     ```
 
-    :param name: Name of the environment
-    :param image: Docker image to use for the environment. If set to "auto", will use the default image.
-    :param resources: Resources to allocate for the environment.
-    :param env_vars: Environment variables to set for the environment.
-    :param secrets: Secrets to inject into the environment.
-    :param depends_on: Environment dependencies to hint, so when you deploy the environment,
-        the dependencies are also deployed. This is useful when you have a set of environments
-        that depend on each other.
-    :param cache: Cache policy for the environment.
-    :param reusable: Reuse policy for the environment, if set, a python process may be reused for multiple tasks.
-    :param plugin_config: Optional plugin configuration for custom task types.
-        If set, all tasks in this environment will use the specified plugin configuration.
-    :param queue: Optional queue name to use for tasks in this environment.
-        If not set, the default queue will be used.
-    :param pod_template: Optional pod template to use for tasks in this environment.
-        If not set, the default pod template will be used.
+    :param name: Name of the environment (required). Must be snake_case or kebab-case.
+        TaskEnvironment level only.
+    :param image: Docker image for the environment. Can be a string (image URI),
+        an `Image` object, or `"auto"` to use the default image.
+        TaskEnvironment level only.
+    :param depends_on: List of other environments this one depends on. Used at deploy time
+        to ensure dependencies are also deployed. TaskEnvironment level only.
+    :param description: Human-readable description (max 255 characters).
+        TaskEnvironment level only.
+    :param plugin_config: Plugin configuration for custom task types (e.g., Ray, Spark).
+        Cannot be combined with `reusable`. TaskEnvironment level only.
+    :param resources: Compute resources (CPU, memory, GPU, disk). Overridable via
+        `task.override(resources=...)` when not using reusable containers.
+    :param env_vars: Environment variables as `dict[str, str]`. Overridable via
+        `task.override(env_vars=...)` when not using reusable containers.
+    :param secrets: Secrets to inject. Overridable via `task.override(secrets=...)`
+        when not using reusable containers.
+    :param cache: Cache policy — `"auto"`, `"override"`, `"disable"`, or a `Cache` object.
+        Also settable in `@env.task(cache=...)` and `task.override(cache=...)`.
+    :param reusable: `ReusePolicy` for container reuse. Also overridable via
+        `task.override(reusable=...)`.
+    :param queue: Queue name for scheduling. Also settable in `@env.task` and `task.override`.
+    :param pod_template: Kubernetes pod template for advanced configuration (sidecars,
+        volumes, etc.). Also settable in `@env.task` and `task.override`.
+    :param interruptible: Whether tasks can run on spot/preemptible instances. Also
+        settable in `@env.task` and `task.override`.
     """
 
     cache: CacheRequest = "disable"
@@ -339,9 +362,9 @@ class TaskEnvironment(Environment):
 
 
 class _SandboxNamespace:
-    """Namespace for sandbox operations on a ``TaskEnvironment``.
+    """Namespace for sandbox operations on a `TaskEnvironment`.
 
-    Accessed via ``env.sandbox``.  Provides a unified ``orchestrator()``
+    Accessed via `env.sandbox`.  Provides a unified `orchestrator()`
     method that acts as a decorator (when given a callable), a code-string
     task factory (when given a string), or a decorator factory (when given
     only keyword arguments).
@@ -401,16 +424,16 @@ class _SandboxNamespace:
         cache: CacheRequest | None = None,
         retries: int = 0,
     ) -> Any:
-        """Unified sandbox orchestration on a ``TaskEnvironment``.
+        """Unified sandbox orchestration on a `TaskEnvironment`.
 
         Three usage modes:
 
-        1. **Decorator** (callable) — creates a ``SandboxedTaskTemplate``::
+        1. **Decorator** (callable) — creates a `SandboxedTaskTemplate`::
 
             @env.sandbox.orchestrator
             def pipeline(n: int) -> dict: ...
 
-        2. **Code string** — creates a ``CodeTaskTemplate``::
+        2. **Code string** — creates a `CodeTaskTemplate`::
 
             task = env.sandbox.orchestrator(
                 "add(x, y) * 2",

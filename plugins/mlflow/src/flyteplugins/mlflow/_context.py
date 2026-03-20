@@ -196,7 +196,7 @@ def mlflow_config(
         autolog_kwargs: Extra parameters passed to mlflow.autolog().
         link_host: MLflow UI host for auto-generating task links.
         link_template: Custom URL template. Defaults to standard MLflow UI format.
-            Available placeholders: ``{host}``, ``{experiment_id}``, ``{run_id}``.
+            Available placeholders: `{host}`, `{experiment_id}`, `{run_id}`.
         **kwargs: Extra parameters passed to mlflow.start_run().
     """
 

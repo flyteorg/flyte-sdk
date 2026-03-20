@@ -8,10 +8,10 @@ class RunRecorder:
     the SQLite persistence layer (RunStore).
 
     The controller only talks to this single object — no more interleaved
-    ``if tracker`` / ``if persist`` conditionals.
+    `if tracker` / `if persist` conditionals.
 
-    Lazy-imports are used so that neither ``RunStore`` nor
-    ``literal_string_repr`` are imported at module level.
+    Lazy-imports are used so that neither `RunStore` nor
+    `literal_string_repr` are imported at module level.
     """
 
     def __init__(
@@ -117,8 +117,8 @@ class RunRecorder:
     def _to_display(outputs: Any) -> Any:
         """Convert raw outputs to a display-friendly representation.
 
-        Handles ``Outputs`` proto wrappers, plain strings, and arbitrary
-        literal trees.  Falls back to ``repr()`` when ``literal_string_repr``
+        Handles `Outputs` proto wrappers, plain strings, and arbitrary
+        literal trees.  Falls back to `repr()` when `literal_string_repr`
         is unavailable or raises.
         """
         try:

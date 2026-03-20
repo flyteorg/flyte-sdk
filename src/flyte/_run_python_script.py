@@ -7,10 +7,10 @@ Public API:
     flyte.run_python_script(Path("my_script.py"), gpu=1, gpu_type="T4")
 """
 
-# NOTE: Do NOT add ``from __future__ import annotations`` here.
-# The task defined in ``_build_task`` uses ``File`` as a type annotation.
-# ``typing.get_type_hints`` resolves string annotations against the
-# function's ``__globals__`` (this module), so ``File`` must be a real
+# NOTE: Do NOT add `from __future__ import annotations` here.
+# The task defined in `_build_task` uses `File` as a type annotation.
+# `typing.get_type_hints` resolves string annotations against the
+# function's `__globals__` (this module), so `File` must be a real
 # class object at decoration time, not a deferred string.
 
 import pathlib
@@ -41,10 +41,10 @@ def _build_task(
     output_dir: "Optional[str]" = None,
     task_resolver: Any = None,
 ) -> Any:
-    """Build the ``execute_script`` task for serialization.
+    """Build the `execute_script` task for serialization.
 
     The *script_name* is captured via closure for local execution.  When
-    running remotely the :class:`InternalTaskResolver` recreates the task from
+    running remotely the `InternalTaskResolver` recreates the task from
     the loader args embedded in the container command, so the closure value
     is not carried over the wire.
     """
@@ -95,9 +95,9 @@ def _build_task(
 
 
 def _build_script_runner_task(script_name: str, output_dir: "Optional[str]" = None, timeout: str = "3600") -> Any:
-    """Build the ``execute_script`` task at runtime (called by :class:`InternalTaskResolver`).
+    """Build the `execute_script` task at runtime (called by `InternalTaskResolver`).
 
-    Creates a minimal :class:`~flyte.TaskEnvironment` — only the function
+    Creates a minimal `flyte.TaskEnvironment` — only the function
     signature matters here because the container already has the correct
     image and resources.
     """
@@ -127,25 +127,25 @@ async def run_python_script(
     """Package and run a Python script on a remote Flyte cluster.
 
     Bundles the script into a Flyte code bundle and executes it remotely
-    with the requested resources.  Unlike ``interactive_mode`` (which
-    pickles the task), this approach uses an :class:`InternalTaskResolver`
-    so the task can be properly debugged with ``debug=True``.
+    with the requested resources.  Unlike `interactive_mode` (which
+    pickles the task), this approach uses an `InternalTaskResolver`
+    so the task can be properly debugged with `debug=True`.
 
-    Project and domain are read from the init config (set via ``flyte.init()``
-    or ``flyte.init_from_config()``), consistent with ``flyte.run()``.
+    Project and domain are read from the init config (set via `flyte.init()`
+    or `flyte.init_from_config()`), consistent with `flyte.run()`.
 
     :param script: Path to the Python script to run.
     :param cpu: Number of CPUs to request (default: 4).
-    :param memory: Memory to request, e.g. ``"16Gi"`` (default: ``"16Gi"``).
+    :param memory: Memory to request, e.g. `"16Gi"` (default: `"16Gi"`).
     :param gpu: Number of GPUs to request (default: 0).
-    :param gpu_type: GPU accelerator type: ``T4``, ``A100``, ``H100``, ``L4``, etc.
-        Only used when ``gpu > 0`` (default: ``"T4"``).
+    :param gpu_type: GPU accelerator type: `T4`, `A100`, `H100`, `L4`, etc.
+        Only used when `gpu > 0` (default: `"T4"`).
     :param image: Container image to use. Accepts either:
 
-        - A :class:`~flyte.Image` object for full control over the image.
-        - A ``list[str]`` of pip package names to install on top of the
-          default Debian base image (e.g. ``["torch", "transformers"]``).
-        - ``None`` to use a plain Debian base image (default).
+        - A `flyte.Image` object for full control over the image.
+        - A `list[str]` of pip package names to install on top of the
+          default Debian base image (e.g. `["torch", "transformers"]`).
+        - `None` to use a plain Debian base image (default).
 
     :param timeout: Task timeout in seconds (default: 3600).
     :param extra_args: Extra arguments passed to the script.
@@ -155,7 +155,7 @@ async def run_python_script(
     :param debug: If True, run the task as a VS Code debug task, starting a
         code-server in the container so you can connect via the UI to
         interactively debug/run the task.
-    :return: A :class:`~flyte.remote.Run` handle for the remote execution.
+    :return: A `flyte.remote.Run` handle for the remote execution.
 
     Example::
 

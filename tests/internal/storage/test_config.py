@@ -7,19 +7,29 @@ class TestStorage:
     def test_get_fsspec_kwargs_base(self):
         storage = Storage()
         result = storage.get_fsspec_kwargs()
-        assert result == {}
+
+        assert "client_options" in result
+        assert result["client_options"]["timeout"] == "99999s"
+        assert result["client_options"]["allow_http"] is True
+        assert "retry_config" in result
+        assert result["retry_config"]["max_retries"] == 3
         assert "anonymous" not in result
 
     def test_get_fsspec_kwargs_base_with_anonymous(self):
         storage = Storage()
         result = storage.get_fsspec_kwargs(anonymous=True)
-        assert result == {}
+
+        assert "client_options" in result
+        assert "retry_config" in result
         assert "anonymous" not in result
 
     def test_get_fsspec_kwargs_base_with_kwargs(self):
         storage = Storage()
         result = storage.get_fsspec_kwargs(test_param="value")
-        assert result == {}
+
+        assert result["test_param"] == "value"
+        assert "client_options" in result
+        assert "retry_config" in result
         assert "anonymous" not in result
 
 
@@ -77,6 +87,26 @@ class TestS3Config:
         assert result["retry_config"]["max_retries"] == 5
         assert result["retry_config"]["backoff"]["init_backoff"] == custom_backoff
         assert "anonymous" not in result
+
+    def test_get_fsspec_kwargs_caller_overrides_not_clobbered(self):
+        s3 = S3(access_key_id="my-key", secret_access_key="my-secret", endpoint="https://s3.us-west-2.amazonaws.com")
+        custom_retry = {"max_retries": 10, "retry_timeout": datetime.timedelta(minutes=10)}
+        custom_client_options = {"timeout": "30s", "allow_http": False}
+        result = s3.get_fsspec_kwargs(
+            retry_config=custom_retry,
+            client_options=custom_client_options,
+        )
+
+        # Caller-provided retry_config and client_options must not be overwritten by defaults
+        assert result["retry_config"] is custom_retry
+        assert result["retry_config"]["max_retries"] == 10
+        assert result["client_options"] is custom_client_options
+        assert result["client_options"]["timeout"] == "30s"
+        assert result["client_options"]["allow_http"] is False
+        # S3-specific config should still be populated
+        assert result["config"]["access_key_id"] == "my-key"
+        assert result["config"]["secret_access_key"] == "my-secret"
+        assert result["config"]["endpoint"] == "https://s3.us-west-2.amazonaws.com"
 
     def test_get_fsspec_kwargs_addressing_style_virtual(self):
         s3 = S3(addressing_style="virtual")
@@ -207,20 +237,56 @@ class TestGCSConfig:
     def test_get_fsspec_kwargs_default(self):
         gcs = GCS()
         result = gcs.get_fsspec_kwargs()
-        assert result == {}
+
+        assert "client_options" in result
+        assert result["client_options"]["timeout"] == "99999s"
+        assert result["client_options"]["allow_http"] is True
+        assert "retry_config" in result
+        assert result["retry_config"]["max_retries"] == 3
         assert "anonymous" not in result
 
     def test_get_fsspec_kwargs_with_anonymous(self):
         gcs = GCS()
         result = gcs.get_fsspec_kwargs(anonymous=True)
-        assert result == {}
+
+        assert "config" in result
+        assert result["config"].get("skip_signature") is True
+        assert "client_options" in result
+        assert "retry_config" in result
         assert "anonymous" not in result
 
     def test_get_fsspec_kwargs_with_custom_params(self):
         gcs = GCS()
         result = gcs.get_fsspec_kwargs(token="test-token", project="test-project")
-        assert result == {"token": "test-token", "project": "test-project"}
+        assert result["token"] == "test-token"
+        assert result["project"] == "test-project"
+        assert "client_options" in result
+        assert "retry_config" in result
         assert "anonymous" not in result
+
+    def test_get_fsspec_kwargs_retries_backoff_override(self):
+        custom_backoff = datetime.timedelta(seconds=10)
+        gcs = GCS(retries=3, backoff=datetime.timedelta(seconds=5))
+        result = gcs.get_fsspec_kwargs(retries=5, backoff=custom_backoff)
+
+        assert result["retry_config"]["max_retries"] == 5
+        assert result["retry_config"]["backoff"]["init_backoff"] == custom_backoff
+        assert "anonymous" not in result
+
+    def test_get_fsspec_kwargs_caller_overrides_not_clobbered(self):
+        gcs = GCS()
+        custom_retry = {"max_retries": 10, "retry_timeout": datetime.timedelta(minutes=10)}
+        custom_client_options = {"timeout": "30s"}
+        result = gcs.get_fsspec_kwargs(
+            retry_config=custom_retry,
+            client_options=custom_client_options,
+        )
+
+        # Caller-provided retry_config and client_options must not be overwritten by defaults
+        assert result["retry_config"] is custom_retry
+        assert result["retry_config"]["max_retries"] == 10
+        assert result["client_options"] is custom_client_options
+        assert result["client_options"]["timeout"] == "30s"
 
 
 class TestABFSConfig:
@@ -232,6 +298,8 @@ class TestABFSConfig:
         assert "client_options" in result
         assert result["client_options"]["timeout"] == "99999s"
         assert result["client_options"]["allow_http"] is True
+        assert "retry_config" in result
+        assert result["retry_config"]["max_retries"] == 3
         assert "anonymous" not in result
 
     def test_get_fsspec_kwargs_with_credentials(self):
