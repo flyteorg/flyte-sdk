@@ -442,6 +442,14 @@ class Task(ToJSONMixin):
         return self.pb2.task_id.version
 
     @property
+    def entrypoint(self) -> bool:
+        """
+        Whether this task is marked as an entrypoint.
+        """
+        # TODO: entrypoint flag — will be available in flyteidl soon
+        return False
+
+    @property
     def url(self) -> str:
         """
         Get the console URL for viewing the task.
@@ -488,6 +496,7 @@ class Task(ToJSONMixin):
         domain: str | None = None,
         sort_by: Tuple[str, Literal["asc", "desc"]] | None = None,
         limit: int = 100,
+        entrypoint: bool | None = None,
     ) -> Union[AsyncIterator[Task], Iterator[Task]]:
         """
         Get all runs for the current project and domain.
@@ -498,6 +507,7 @@ class Task(ToJSONMixin):
         :param domain: The domain to filter tasks by. If None, the current domain will be used.
         :param sort_by: The sorting criteria for the project list, in the format (field, order).
         :param limit: The maximum number of tasks to return.
+        :param entrypoint: If True, only entrypoint tasks will be returned.
         :return: An iterator of runs.
         """
         ensure_client()
@@ -525,6 +535,16 @@ class Task(ToJSONMixin):
                     values=[f"{by_task_env}."],
                 )
             )
+        if entrypoint:
+            # TODO: entrypoint filter — will be available in flyteidl soon
+            # filters.append(
+            #     list_pb2.Filter(
+            #         function=list_pb2.Filter.Function.EQUAL,
+            #         field="entrypoint",
+            #         values=["true"],
+            #     )
+            # )
+            pass
         original_limit = limit
         if limit > cfg.batch_size:
             limit = cfg.batch_size
@@ -563,6 +583,7 @@ class Task(ToJSONMixin):
         yield "name", self.pb2.task_id.name
         yield "version", self.pb2.task_id.version
         yield "short_name", self.pb2.metadata.short_name
+        yield "entrypoint", self.entrypoint
         for t in _repr_task_metadata(self.pb2.metadata):
             yield t
 
