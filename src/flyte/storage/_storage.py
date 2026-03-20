@@ -32,9 +32,16 @@ BATCH_SIZE = int(os.getenv("FLYTE_IO_BATCH_SIZE", str(32)))
 def _is_obstore_supported_protocol(protocol: str) -> bool:
     """
     Check if the given protocol is supported by obstore.
+
+    Set FLYTE_DISABLE_OBSTORE=1 to disable obstore for all protocols. When set,
+    fsspec will use its default filesystem implementations instead of obstore.
+    This can be useful for debugging or compatibility issues.
+
     :param protocol: Protocol to check.
     :return: True if the protocol is supported, False otherwise.
     """
+    if os.getenv("FLYTE_DISABLE_OBSTORE"):
+        return False
     return protocol in _OBSTORE_SUPPORTED_PROTOCOLS
 
 
@@ -87,6 +94,9 @@ def get_random_local_directory() -> pathlib.Path:
 def get_configured_fsspec_kwargs(
     protocol: typing.Optional[str] = None, anonymous: bool = False
 ) -> typing.Dict[str, typing.Any]:
+    if os.getenv("FLYTE_DISABLE_OBSTORE"):
+        return {}
+
     if protocol:
         # Try to get storage config safely - may not be initialized for local operations
         try:
@@ -497,5 +507,6 @@ def get_credentials_error(uri: str, protocol: str) -> str:
     raise ValueError(f"Unsupported protocol: {protocol}")
 
 
-register(_OBSTORE_SUPPORTED_PROTOCOLS, asynchronous=True)
+if not os.getenv("FLYTE_DISABLE_OBSTORE"):
+    register(_OBSTORE_SUPPORTED_PROTOCOLS, asynchronous=True)
 fsspec.register_implementation("flyte", FlyteFS, clobber=True)
