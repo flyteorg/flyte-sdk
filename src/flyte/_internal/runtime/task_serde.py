@@ -93,6 +93,27 @@ def get_security_context(
     )
 
 
+def merge_security_context(
+    security_context: Optional[security_pb2.SecurityContext],
+    service_account: str | None = None,
+) -> Optional[security_pb2.SecurityContext]:
+    """
+    Merge deployment-level security settings into an existing security context.
+
+    This preserves task-level secret mounts while allowing callers to inject a
+    Kubernetes service account at serialization time.
+    """
+    if security_context is None and not service_account:
+        return None
+
+    merged = security_pb2.SecurityContext()
+    if security_context is not None:
+        merged.CopyFrom(security_context)
+    if service_account:
+        merged.run_as.k8s_service_account = service_account
+    return merged
+
+
 def get_proto_retry_strategy(
     retries: RetryStrategy | int | None,
 ) -> Optional[literals_pb2.RetryStrategy]:
@@ -210,7 +231,9 @@ def get_proto_task(
         custom=custom if len(custom) > 0 else None,
         container=container,
         task_type_version=task.task_type_version,
-        security_context=get_security_context(task.secrets),
+        security_context=merge_security_context(
+            get_security_context(task.secrets), serialize_context.service_account
+        ),
         config=extra_config,
         k8s_pod=pod,
         sql=sql,

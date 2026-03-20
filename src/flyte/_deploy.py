@@ -36,6 +36,7 @@ if TYPE_CHECKING:
 class DeploymentPlan:
     envs: Dict[str, Environment]
     version: Optional[str] = None
+    service_account: str | None = None
 
 
 @rich.repr.auto
@@ -487,6 +488,7 @@ async def apply(deployment_plan: DeploymentPlan, copy_style: CopyFiles, dryrun: 
         version=version,
         image_cache=image_cache,
         root_dir=cfg.root_dir,
+        service_account=deployment_plan.service_account,
     )
 
     deployment_coros = []
@@ -579,6 +581,7 @@ async def deploy(
     version: str | None = None,
     interactive_mode: bool | None = None,
     copy_style: CopyFiles = "loaded_modules",
+    service_account: str | None = None,
 ) -> List[Deployment]:
     """
     Deploy the given environment or list of environments.
@@ -598,6 +601,7 @@ async def deploy(
     deployment_plans = plan_deploy(*envs, version=version)
     deployments = []
     for deployment_plan in deployment_plans:
+        deployment_plan.service_account = service_account
         deployments.append(apply(deployment_plan, copy_style=copy_style, dryrun=dryrun))
     return await asyncio.gather(*deployments)
 
