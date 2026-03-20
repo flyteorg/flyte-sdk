@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Dict, List, Literal, Optional, Tuple, TypeVar, Union
 
 import rich.repr
+from packaging.version import Version
 
 if TYPE_CHECKING:
     from flyte import Secret, SecretRequest
@@ -604,6 +605,8 @@ class Image:
             else:
                 flyte_version = typing.cast(str, flyte_version)
                 image = image.with_pip_packages(f"flyte=={flyte_version}")
+                if not Version(flyte_version).is_devrelease and not Version(flyte_version).is_prerelease:
+                    object.__setattr__(image, "_is_flyte_default", True)
         if not dev_mode:
             object.__setattr__(image, "_tag", preset_tag)
 
