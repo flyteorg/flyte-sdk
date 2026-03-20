@@ -258,6 +258,20 @@ def test_plan_deploy_dual_import_raises(dual_import_envs):
         plan_deploy(env1, env2)
 
 
+@pytest.mark.asyncio
+async def test_deploy_passes_service_account_into_serialization_context():
+    env = flyte.TaskEnvironment(name="my_env", image="python:3.10")
+
+    with (
+        patch("flyte._deploy.apply", new_callable=AsyncMock) as mock_apply,
+        patch("flyte._deploy.plan_deploy", return_value=[DeploymentPlan(envs={"my_env": env})]),
+    ):
+        await flyte.deploy.aio(env, service_account="svc-account")
+
+    deployment_plan = mock_apply.await_args.args[0]
+    assert deployment_plan.service_account == "svc-account"
+
+
 def test_recursive_discover_dual_import_raises(dual_import_envs):
     """_recursive_discover surfaces the dual-import error via the identity guard."""
     env1, env2, modules = dual_import_envs

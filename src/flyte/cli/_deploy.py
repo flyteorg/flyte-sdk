@@ -53,6 +53,16 @@ class DeployArguments:
             )
         },
     )
+    service_account: str | None = field(
+        default=None,
+        metadata={
+            "click.option": click.Option(
+                ["--service-account"],
+                type=str,
+                help="Kubernetes service account. If not provided, the configured default will be used",
+            )
+        },
+    )
     recursive: bool = field(
         default=False,
         metadata={
@@ -145,6 +155,7 @@ class DeployEnvCommand(click.RichCommand):
                 dryrun=self.deploy_args.dry_run,
                 copy_style=self.deploy_args.copy_style,
                 version=self.deploy_args.version,
+                service_account=self.deploy_args.service_account,
             )
 
         common.print_output(
@@ -216,6 +227,7 @@ class DeployEnvRecursiveCommand(click.Command):
                 dryrun=self.deploy_args.dry_run,
                 copy_style=self.deploy_args.copy_style,
                 version=self.deploy_args.version,
+                service_account=self.deploy_args.service_account,
             )
 
         common.print_output(
