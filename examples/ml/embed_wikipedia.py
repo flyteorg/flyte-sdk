@@ -1,7 +1,7 @@
 # /// script
 # requires-python = "==3.13"
 # dependencies = [
-#    "flyte>=2.0.0b35",
+#    "flyte",
 #    "sentence-transformers>=5.1.2",
 #    "transformers>=4.41.0",
 #    "huggingface-hub>=0.24",
@@ -10,52 +10,39 @@
 # ]
 # ///
 
-
-"""
-Wikipedia Article Embedding with Modern BERT using Hugging Face Datasets
-
-This Flyte 2 script demonstrates how to:
-1. Load Wikipedia articles using the Hugging Face datasets library
-2. Preprocess and clean the text content
-3. Generate BERT embeddings using modern sentence-transformers
-4. Store the results for further processing
-
-Requirements:
-- datasets (Hugging Face)
-- sentence-transformers
-- pandas
-- numpy
-"""
-
 import asyncio
+import concurrent.futures
 import logging
 import os
 import tempfile
 from collections import defaultdict
-from functools import lru_cache
-from typing import Any, AsyncGenerator, Dict
+from typing import AsyncGenerator
 
 import torch
+from async_lru import alru_cache
 from datasets import load_dataset
-from huggingface_hub import hf_hub_url
+from huggingface_hub import hf_hub_download
 from sentence_transformers import SentenceTransformer
 
+import flyte
 import flyte.io
+from flyte.extras import DynamicBatcher
 
-# Configure logging
 logger = logging.getLogger(__name__)
 
-image = flyte.Image.from_uv_script(__file__, name="embed_wikipedia_image", pre=True).with_pip_packages(
-    "unionai-reuse>=0.1.9",
-)
+_gpu_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="gpu")
+_io_executor = concurrent.futures.ThreadPoolExecutor(max_workers=16, thread_name_prefix="io")
 
-N_GPUS = 1
+image = flyte.Image.from_uv_script(
+    __file__, name="embed_wikipedia_image"
+).with_pip_packages("unionai-reuse>=0.1.9")
+
 worker = flyte.TaskEnvironment(
     name="embed_wikipedia_worker",
     image=image,
-    resources=flyte.Resources(cpu=2, memory="8Gi", gpu=1),
+    resources=flyte.Resources(cpu=4, memory="16Gi", gpu="T4:1"),
     env_vars={"HF_HUB_ENABLE_HF_TRANSFER": "1"},
-    reusable=flyte.ReusePolicy(replicas=16, concurrency=1, idle_ttl=120, scaledown_ttl=120),
+    reusable=flyte.ReusePolicy(replicas=5, concurrency=8, idle_ttl=120, scaledown_ttl=120),
     secrets="HF_HUB_TOKEN",
 )
 
@@ -68,130 +55,140 @@ driver = flyte.TaskEnvironment(
 )
 
 
-@lru_cache(maxsize=1)
-def get_model(model_name: str = "all-MiniLM-L6-v2") -> SentenceTransformer:
-    """Lazily load and cache the SentenceTransformer model."""
-    return SentenceTransformer(model_name)
+@alru_cache(maxsize=1)
+async def get_model(model_name: str = "all-MiniLM-L6-v2") -> SentenceTransformer:
+    model = SentenceTransformer(model_name)
+    if torch.cuda.is_available():
+        model = model.half().to("cuda")
+        model[0].auto_model = torch.compile(model[0].auto_model, dynamic=True)
+        model.encode(["warmup text " * 20] * 128, batch_size=128, convert_to_tensor=True)
+    logger.warning(f"Model loaded on device: {model.device} (FP16: {torch.cuda.is_available()})")
+    return model
+
+
+@alru_cache(maxsize=1)
+async def get_batcher(model_name: str = "all-MiniLM-L6-v2") -> DynamicBatcher[list[str], torch.Tensor]:
+    model = await get_model(model_name)
+
+    async def encode_batch(batches: list[list[str]]) -> list[torch.Tensor]:
+        all_texts = [text for texts in batches for text in texts]
+        loop = asyncio.get_running_loop()
+        all_embeddings = await loop.run_in_executor(
+            _gpu_executor,
+            lambda: model.encode(all_texts, convert_to_tensor=True, batch_size=1024).cpu(),
+        )
+        results, offset = [], 0
+        for texts in batches:
+            results.append(all_embeddings[offset : offset + len(texts)])
+            offset += len(texts)
+        return results
+
+    batcher = DynamicBatcher[list[str], torch.Tensor](
+        process_fn=encode_batch,
+        target_batch_cost=8_000,
+        max_batch_size=64,
+        batch_timeout_s=0.5,
+        max_queue_size=1_000,
+    )
+    await batcher.start()
+    return batcher
+
+
+PIPELINE_DEPTH = 4
 
 
 @worker.task(cache="auto", retries=4)
-async def embed_shard_to_file(repo_id: str, filename: str, model_name: str, batch_size: int = 32) -> flyte.io.File:
-    """
-    Stream one parquet shard, embed in batches, write embeddings to a file.
+async def embed_shard(
+    repo_id: str, filename: str, model_name: str, batch_size: int = 1024,
+) -> flyte.io.File:
+    batcher = await get_batcher(model_name)
 
-    Args:
-        repo_id: Hugging Face dataset repo id (e.g. "wikimedia/wikipedia").
-        filename: Path of the shard inside the dataset repo.
-        model_name: SentenceTransformer model name.
-        batch_size: Number of texts per embedding batch.
-
-    Returns:
-        str: Path to the saved `.pt` file containing embeddings (torch.Tensor).
-    """
-    logger.warning(f"Embedding shard {filename} from repo {repo_id} using model {model_name}")
-    model: SentenceTransformer = get_model(model_name)
-    logger.warning(f"Model loaded on device: {model.device}")
-
-    # Get shard URL
-    file_url: str = hf_hub_url(repo_id=repo_id, filename=filename, repo_type="dataset")
-
-    # Stream dataset shard
-    ds = load_dataset("parquet", data_files=file_url, split="train", streaming=True, token=os.getenv("HF_HUB_TOKEN"))
-
-    # Prepare output file
-    shard_name: str = filename.replace("/", "_")
-    out_path: str = os.path.join(tempfile.gettempdir(), f"{shard_name}.pt")
+    loop = asyncio.get_running_loop()
+    local_path = await loop.run_in_executor(
+        _io_executor,
+        lambda: hf_hub_download(
+            repo_id=repo_id, filename=filename, repo_type="dataset",
+            token=os.getenv("HF_HUB_TOKEN"),
+            local_dir=os.path.join(tempfile.gettempdir(), "hf_cache"),
+        ),
+    )
+    ds = load_dataset("parquet", data_files=local_path, split="train")
 
     all_embeddings: list[torch.Tensor] = []
-    batch: list[str] = []
+    queue: asyncio.Queue = asyncio.Queue(maxsize=PIPELINE_DEPTH)
 
-    async for row in _aiter(ds):
-        text: str = row.get("text", "")
-        if not text:
-            continue
-        batch.append(text)
+    async def producer():
+        async for text_batch in _aiter_text_batches(ds, batch_size):
+            future = await batcher.submit(text_batch, estimated_cost=len(text_batch))
+            await queue.put(future)
+        await queue.put(None)
 
-        if len(batch) >= batch_size:
-            embeddings = model.encode(batch, convert_to_tensor=True, show_progress_bar=True)
-            all_embeddings.append(embeddings.cpu())
-            batch = []
-            print(f"Collected {len(all_embeddings)} articles so far...")
+    async def consumer():
+        while True:
+            future = await queue.get()
+            if future is None:
+                break
+            all_embeddings.append(await future)
+            if len(all_embeddings) % 10 == 0:
+                print(f"  {filename}: {len(all_embeddings)} batches embedded")
 
-    if batch:
-        embeddings = model.encode(batch, convert_to_tensor=True, show_progress_bar=True)
-        all_embeddings.append(embeddings.cpu())
+    await asyncio.gather(producer(), consumer())
 
-    print(f"Saving {len(all_embeddings)} batches of embeddings to {out_path}")
-
+    shard_name = filename.replace("/", "_")
+    out_path = os.path.join(tempfile.gettempdir(), f"{shard_name}.pt")
     if all_embeddings:
-        tensor: torch.Tensor = torch.cat(all_embeddings, dim=0)
-        torch.save(tensor, out_path)
+        torch.save(torch.cat(all_embeddings, dim=0), out_path)
 
     return await flyte.io.File.from_local(out_path)
 
 
-async def _aiter(sync_iterable) -> AsyncGenerator[Dict[str, Any], None]:
-    """Wrap a synchronous iterable into an async generator."""
+async def _aiter_text_batches(ds, batch_size: int) -> AsyncGenerator[list[str], None]:
     loop = asyncio.get_running_loop()
-    for row in sync_iterable:
-        yield await loop.run_in_executor(None, lambda r=row: r)
+    sentinel = object()
+    it = iter(ds.iter(batch_size=batch_size))
+    while True:
+        chunk = await loop.run_in_executor(_io_executor, lambda: next(it, sentinel))
+        if chunk is sentinel:
+            break
+        texts = [t for t in chunk.get("text", []) if t]
+        if texts:
+            yield texts
 
 
 @driver.task(cache="auto")
-async def main(batch_size: int = 64, shard: str = "all") -> list[flyte.io.File]:
+async def embed_wikipedia(batch_size: int = 1024, shard: str = "all") -> list[flyte.io.File]:
     from huggingface_hub import HfApi
 
     repo_id = "wikimedia/wikipedia"
     model_name = "all-MiniLM-L6-v2"
 
     api = HfApi(token=os.getenv("HF_HUB_TOKEN"))
-    info = api.dataset_info("wikimedia/wikipedia")
-    # Each file is stored in info.siblings
+    info = api.dataset_info(repo_id)
     parquet_files = [s.rfilename for s in info.siblings if s.rfilename.endswith(".parquet")]
-    print(f"Found {len(parquet_files)} parquet files in the dataset", flush=True)
-    grouped_coros = defaultdict(list)
+    print(f"Found {len(parquet_files)} parquet files in {repo_id}")
+
+    grouped = defaultdict(list)
     for filename in parquet_files:
         shard_id = filename.split("/")[0]
-        grouped_coros[shard_id].append(
-            embed_shard_to_file(repo_id, filename, model_name=model_name, batch_size=batch_size)
+        grouped[shard_id].append(
+            embed_shard(repo_id, filename, model_name=model_name, batch_size=batch_size),
         )
 
-    if shard == "all":
-        tasks = []
-        for shard_id, coros in grouped_coros.items():
-            print(f"Processing shard {shard_id} with {len(coros)} files", flush=True)
-            with flyte.group(f"shard-{shard_id}"):
-                shard_tasks = [asyncio.create_task(coro) for coro in coros]
-                tasks.extend(shard_tasks)
-        return await asyncio.gather(*tasks)
-    else:
-        if shard not in grouped_coros:
-            raise ValueError(f"Shard {shard} not found. Available shards: {list(grouped_coros.keys())}")
-        print(f"Processing only shard {shard} with {len(grouped_coros[shard])} files", flush=True)
-        with flyte.group(f"shard-{shard}"):
-            tasks = [asyncio.create_task(coro) for coro in grouped_coros[shard]]
-            return await asyncio.gather(*tasks)
+    if shard != "all":
+        if shard not in grouped:
+            raise ValueError(f"Shard {shard!r} not found.  Available: {sorted(grouped)}")
+        grouped = {shard: grouped[shard]}
 
+    tasks = []
+    for shard_id, coros in grouped.items():
+        print(f"  shard {shard_id}: {len(coros)} files")
+        with flyte.group(f"shard-{shard_id}"):
+            tasks.extend(asyncio.create_task(c) for c in coros)
 
-async def high_mem_examples():
-    files = ["20231101.sv/train-00000-of-00005.parquet", "20231101.war/train-00000-of-00001.parquet"]
-    large_task = embed_shard_to_file.override(resources=flyte.Resources(cpu=2, memory="8Gi", gpu=1), reusable="off")
-
-    coros = []
-    for file in files:
-        coros.append(flyte.run.aio(large_task, "wikimedia/wikipedia", file, "all-MiniLM-L6-v2", batch_size=256))
-
-    results = await asyncio.gather(*coros)
-    for r in results:
-        print(r.url)
-        print(r.url)
+    return await asyncio.gather(*tasks)
 
 
 if __name__ == "__main__":
-    # Usage:
-    # Run this with limit=-1 to embed all articles in the dataset (~61MM rows)
-    # flyte.init()
     flyte.init_from_config()
-    run = flyte.with_runcontext().run(main, 256, shard="20231101.en")
+    run = flyte.run(embed_wikipedia, batch_size=1024, shard="20231101.en")
     print(run.url)
-    # asyncio.run(high_mem_examples())
