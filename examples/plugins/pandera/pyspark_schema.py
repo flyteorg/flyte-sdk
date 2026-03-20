@@ -12,6 +12,7 @@ Uses ``pyspark.pandas`` (Koalas API) with ``pandera.pyspark.DataFrameModel``.
 
 from __future__ import annotations
 
+import argparse
 import logging
 
 import pandera.typing.pyspark as pt
@@ -25,8 +26,8 @@ import flyte
 
 image = (
     flyte.Image.from_base("apache/spark-py:v3.4.0")
-    .clone(name="pandera-pyspark-pandas", python_version=(3, 10), registry="ghcr.io/flyteorg", extendable=True)
-    .with_pip_packages("flyteplugins-spark", "flyteplugins-pandera", "pandera[pyspark]", pre=True)
+    .clone(name="pandera-pyspark-pandas", python_version=(3, 10), extendable=True)
+    .with_pip_packages("flyte>=2.0.9", "flyteplugins-spark", "flyteplugins-pandera", "pandera[pyspark]", pre=True)
     .with_pip_packages("pandas", "pyarrow")
 )
 
@@ -63,9 +64,18 @@ async def labels_ps() -> pt.DataFrame[LabelSchema]:
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Pandera + pandas-on-Spark Flyte example.")
+    parser.add_argument(
+        "--mode",
+        choices=("local", "remote"),
+        default="remote",
+        help="Run tasks locally or submit to a remote Flyte cluster.",
+    )
+    args = parser.parse_args()
+
     flyte.init_from_config(log_level=logging.DEBUG)
     try:
-        run = flyte.run(labels_ps)
+        run = flyte.with_runcontext(args.mode).run(labels_ps)
         print(run.url)
         run.wait()
         print("pyspark.pandas pandera example finished:", run.outputs())

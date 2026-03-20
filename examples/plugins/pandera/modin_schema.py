@@ -11,6 +11,7 @@ Modin uses the pandas :class:`~pandera.pandas.DataFrameModel` with ``modin.panda
 
 from __future__ import annotations
 
+import argparse
 import logging
 
 import modin.pandas as mpd
@@ -20,7 +21,7 @@ import pandera.typing.modin as pt
 import flyte
 
 img = flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages(
-    "flyte>=2.0.0b52",
+    "flyte>=2.0.9",
     "flyteplugins-pandera",
     "modin",
     "pandera[pandas]",
@@ -45,9 +46,18 @@ async def modin_rows() -> pt.DataFrame[RowSchema]:
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Pandera + Modin Flyte example.")
+    parser.add_argument(
+        "--mode",
+        choices=("local", "remote"),
+        default="remote",
+        help="Run tasks locally or submit to a remote Flyte cluster.",
+    )
+    args = parser.parse_args()
+
     flyte.init_from_config(log_level=logging.DEBUG)
     try:
-        run = flyte.with_runcontext("local").run(modin_rows)
+        run = flyte.with_runcontext(args.mode).run(modin_rows)
         run.wait()
         print("modin pandera example OK:", run.outputs()[0])
     except Exception as exc:

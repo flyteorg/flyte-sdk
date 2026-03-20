@@ -7,6 +7,7 @@ pattern as ``examples/plugins/spark_dataframe_example.py``).
 
 from __future__ import annotations
 
+import argparse
 import logging
 
 import pandera.typing.pyspark_sql as pt
@@ -20,8 +21,8 @@ import flyte
 
 image = (
     flyte.Image.from_base("apache/spark-py:v3.4.0")
-    .clone(name="pandera-pyspark-sql", python_version=(3, 10), registry="ghcr.io/flyteorg", extendable=True)
-    .with_pip_packages("flyteplugins-spark", "flyteplugins-pandera", "pandera[pyspark]", pre=True)
+    .clone(name="pandera-pyspark-sql", python_version=(3, 10), extendable=True)
+    .with_pip_packages("flyte>=2.0.9", "flyteplugins-spark", "flyteplugins-pandera", "pandera[pyspark]", pre=True)
     .with_pip_packages("pandas", "pyarrow")
 )
 
@@ -64,8 +65,17 @@ async def people_from_spark() -> pt.DataFrame[PersonSchema]:
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Pandera + PySpark SQL Flyte example.")
+    parser.add_argument(
+        "--mode",
+        choices=("local", "remote"),
+        default="remote",
+        help="Run tasks locally or submit to a remote Flyte cluster.",
+    )
+    args = parser.parse_args()
+
     flyte.init_from_config(log_level=logging.DEBUG)
-    run = flyte.run(people_from_spark)
+    run = flyte.with_runcontext(args.mode).run(people_from_spark)
     print(run.url)
     run.wait()
     print("pyspark_sql pandera example finished:", run.outputs())

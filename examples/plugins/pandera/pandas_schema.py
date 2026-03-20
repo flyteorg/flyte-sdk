@@ -6,6 +6,7 @@ Demonstrates a `DataFrameModel` validated on task input/output via `flyteplugins
 
 from __future__ import annotations
 
+import argparse
 import logging
 
 import pandas as pd
@@ -15,7 +16,7 @@ import pandera.typing.pandas as pt
 import flyte
 
 img = flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages(
-    "flyte>=2.0.0b52",
+    "flyte>=2.0.9",
     "flyteplugins-pandera",
     "pandera[pandas]",
     pre=True,
@@ -51,13 +52,22 @@ async def pass_through(df: pt.DataFrame[EmployeeSchema]) -> pt.DataFrame[Employe
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Pandera + pandas Flyte example.")
+    parser.add_argument(
+        "--mode",
+        choices=("local", "remote"),
+        default="remote",
+        help="Run tasks locally or submit to a remote Flyte cluster.",
+    )
+    args = parser.parse_args()
+
     flyte.init_from_config(log_level=logging.DEBUG)
 
-    run = flyte.with_runcontext("local").run(build_valid_employees)
+    run = flyte.with_runcontext(args.mode).run(build_valid_employees)
     run.wait()
     df_out = run.outputs()[0]
     assert isinstance(df_out, pd.DataFrame)
 
-    run2 = flyte.with_runcontext("local").run(pass_through, df=df_out)
+    run2 = flyte.with_runcontext(args.mode).run(pass_through, df=df_out)
     run2.wait()
     print("pandas pandera example OK:", run2.outputs()[0].shape)

@@ -11,6 +11,7 @@ Dask uses the pandas :class:`~pandera.pandas.DataFrameModel` with ``dask.datafra
 
 from __future__ import annotations
 
+import argparse
 import logging
 
 import dask.dataframe as dd
@@ -21,7 +22,7 @@ import pandera.typing.dask as pt
 import flyte
 
 img = flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages(
-    "flyte>=2.0.0b52",
+    "flyte>=2.0.9",
     "flyteplugins-pandera",
     "dask[dataframe]",
     "pandera[pandas]",
@@ -47,9 +48,18 @@ async def dask_partition() -> pt.DataFrame[PartitionSchema]:
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Pandera + Dask Flyte example.")
+    parser.add_argument(
+        "--mode",
+        choices=("local", "remote"),
+        default="remote",
+        help="Run tasks locally or submit to a remote Flyte cluster.",
+    )
+    args = parser.parse_args()
+
     flyte.init_from_config(log_level=logging.DEBUG)
     try:
-        run = flyte.with_runcontext("local").run(dask_partition)
+        run = flyte.with_runcontext(args.mode).run(dask_partition)
         run.wait()
         print("dask pandera example OK:", run.outputs()[0])
     except Exception as exc:

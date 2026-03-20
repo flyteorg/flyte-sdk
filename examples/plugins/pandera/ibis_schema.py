@@ -12,6 +12,7 @@ Uses `pandera.ibis.DataFrameModel` with an `ibis.memtable` table.
 
 from __future__ import annotations
 
+import argparse
 import logging
 
 import ibis
@@ -21,7 +22,7 @@ from pandera.ibis import DataFrameModel
 import flyte
 
 img = flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages(
-    "flyte>=2.0.0b52",
+    "flyte>=2.0.9",
     "flyteplugins-pandera",
     "pandera[ibis]",
     pre=True,
@@ -52,9 +53,18 @@ async def build_sales() -> pt.Table[SalesSchema]:
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Pandera + Ibis Flyte example.")
+    parser.add_argument(
+        "--mode",
+        choices=("local", "remote"),
+        default="remote",
+        help="Run tasks locally or submit to a remote Flyte cluster.",
+    )
+    args = parser.parse_args()
+
     flyte.init_from_config(log_level=logging.DEBUG)
     try:
-        run = flyte.with_runcontext("local").run(build_sales)
+        run = flyte.with_runcontext(args.mode).run(build_sales)
         run.wait()
         print("ibis pandera example OK:", run.outputs()[0])
     except Exception as exc:
