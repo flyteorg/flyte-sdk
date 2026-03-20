@@ -1,8 +1,11 @@
 from .base import PanderaDataFrameTransformer
-from .pandas import PanderaPandasDataFrameTransformer, register_pandera_type_transformers
+from .pandas import PanderaPandasDataFrameTransformer, register_pandera_pandas_type_transformers
+from .polars import PanderaPolarsDataFrameTransformer, register_pandera_polars_type_transformers
 
 __all__ = [
     "PanderaDataFrameTransformer",
     "PanderaPandasDataFrameTransformer",
-    "register_pandera_type_transformers",
+    "PanderaPolarsDataFrameTransformer",
+    "register_pandera_pandas_type_transformers",
+    "register_pandera_polars_type_transformers",
 ]

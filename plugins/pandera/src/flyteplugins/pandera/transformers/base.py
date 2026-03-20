@@ -11,6 +11,9 @@ from flyte.io._dataframe.dataframe import DataFrame as FlyteDataFrame
 from flyte.io._dataframe.dataframe import DataFrameTransformerEngine
 from flyte.types import TypeEngine, TypeTransformer, TypeTransformerFailedError
 from flyteidl2.core.types_pb2 import LiteralType
+from typing_extensions import Annotated, get_args, get_origin
+
+from pandera.errors import SchemaErrors
 
 from ..config import ValidationConfig
 from ..renderers.base import PanderaReportRenderer
@@ -20,8 +23,8 @@ DF = TypeVar("DF")
 
 
 def _unwrap_annotated(t: type[T]) -> tuple[type[T], tuple[Any, ...]]:
-    if typing.get_origin(t) is typing.Annotated:
-        base, *metadata = typing.get_args(t)
+    if get_origin(t) is Annotated:
+        base, *metadata = get_args(t)
         return typing.cast(type[T], base), tuple(metadata)
     return t, ()
 
@@ -49,7 +52,7 @@ def _schema_from_pandera_type(pandera_type: Any) -> Any:
 
 
 class PanderaDataFrameTransformer(TypeTransformer[DF]):
-    """Pandera validation + Flyte ``DataFrameTransformerEngine`` for ``pandera.typing.pandas.DataFrame`` only."""
+    """Pandera validation + Flyte ``DataFrameTransformerEngine`` for Pandera dataframe typings (pandas, Polars, …)."""
 
     _df_transformer = DataFrameTransformerEngine()
     _report_renderer: PanderaReportRenderer | None = None
@@ -63,7 +66,7 @@ class PanderaDataFrameTransformer(TypeTransformer[DF]):
         raw_type = self._resolve_native_df_type(base)
         passthrough_annotations = [m for m in metadata if not isinstance(m, ValidationConfig)]
         if passthrough_annotations:
-            annotated_raw_type = typing.Annotated.__class_getitem__((raw_type, *passthrough_annotations))
+            annotated_raw_type = Annotated.__class_getitem__((raw_type, *passthrough_annotations))
             return TypeEngine.to_literal_type(annotated_raw_type)
         return TypeEngine.to_literal_type(raw_type)
 
@@ -86,9 +89,15 @@ class PanderaDataFrameTransformer(TypeTransformer[DF]):
         emit_report = not internal_ctx().data.in_driver_literal_conversion
         try:
             validated = schema.validate(data, lazy=True)
-        except Exception as exc:
+        except SchemaErrors as exc:
             if emit_report:
-                html = self._report_renderer.to_html(title=report_title, data=data, schema=schema, error=exc)
+                html = self._report_renderer.to_html(
+                    title=report_title,
+                    data=data,
+                    schema=schema,
+                    error=exc,
+                    warn=config.on_error == "warn",
+                )
                 flyte.report.get_tab(report_title).replace(html)
                 await flyte.report.flush.aio()
             if config.on_error == "raise":

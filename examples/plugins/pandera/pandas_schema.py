@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import argparse
 import logging
+from typing import Annotated
 
 import pandas as pd
 import pandera.pandas as pa
 import pandera.typing.pandas as pt
+from flyteplugins.pandera import ValidationConfig
 
 import flyte
 import flyte.io
@@ -21,9 +23,6 @@ img = (
     .with_pip_packages(
         # "flyte>=2.0.9",
         # "flyteplugins-pandera",
-        "pandera[pandas]",
-        "pyarrow",
-        "fastparquet",
     )
     .with_local_v2_plugins("flyteplugins-pandera")
 )
@@ -62,11 +61,37 @@ async def pass_through(df: pt.DataFrame[EmployeeSchema]) -> pt.DataFrame[Employe
 
 
 @env.task(report=True)
+async def pass_through_with_error_warn(
+    df: Annotated[pt.DataFrame[EmployeeSchema], ValidationConfig(on_error="warn")],
+) -> Annotated[pt.DataFrame[EmployeeSchemaWithStatus], ValidationConfig(on_error="warn")]:
+    del df["name"]
+    return df
+
+
+@env.task(report=True)
+async def pass_through_with_error_raise(
+    df: Annotated[pt.DataFrame[EmployeeSchema], ValidationConfig(on_error="warn")],
+) -> Annotated[pt.DataFrame[EmployeeSchemaWithStatus], ValidationConfig(on_error="raise")]:  # raise is the default
+    del df["name"]
+    return df
+
+
+@env.task(report=True)
 async def main() -> pt.DataFrame[EmployeeSchemaWithStatus]:
     # Pandera still validates here, but HTML reports for df/df2 are not duplicated on this
     # parent task—only encode/decode inside worker tasks (build_*, pass_*) emit report tabs.
     df = await build_valid_employees()
     df2 = await pass_through(df)
+
+    # error on the input
+    await pass_through_with_error_warn(df.drop(["employee_id"], axis="columns"))
+
+    # error on the output
+    try:
+        await pass_through_with_error_raise(df)
+    except Exception as exc:
+        print(exc)
+
     return df2
 
 

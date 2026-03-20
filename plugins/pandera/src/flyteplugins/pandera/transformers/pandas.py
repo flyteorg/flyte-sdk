@@ -69,7 +69,7 @@ def _all_pandas_typing_dataframe_classes() -> list[type[Any]]:
     return out
 
 
-def register_pandera_type_transformers() -> None:
+def register_pandera_pandas_type_transformers() -> None:
     """Register one transformer instance for every distinct ``pandera.typing.pandas.DataFrame`` class object."""
     classes = _all_pandas_typing_dataframe_classes()
     # A plain ``import pandera.typing.pandas`` after heavy Flyte imports can expose another class object;

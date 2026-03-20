@@ -9,6 +9,9 @@ dependencies = [
     "flyte",
     "great_tables",
     "pandera",
+    "pandas",
+    "pyarrow",
+    "fastparquet",
 ]
 
 [dependency-groups]

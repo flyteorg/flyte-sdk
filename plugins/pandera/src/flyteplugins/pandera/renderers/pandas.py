@@ -14,10 +14,8 @@ else:
     gt = lazy_module("great_tables")
     pandas = lazy_module("pandas")
 
-try:
-    from pandera.errors import SchemaErrors
-except ImportError:
-    SchemaErrors = ()  # type: ignore[misc,assignment]
+
+from pandera.errors import SchemaErrors
 
 
 @dataclass
@@ -128,10 +126,10 @@ class PanderaPandasReportRenderer(PanderaReportRenderer):
         self,
         data: "pandas.DataFrame",
         schema: Any,
-        error: Any,
+        error: SchemaErrors,
     ):
         failure_cases = error.failure_cases
-        error_dict = error.args[0]
+        error_dict: dict[str, Any] = error.message
 
         schema_errors = error_dict.get(SCHEMA_ERROR_KEY)
         data_errors = error_dict.get(DATA_ERROR_KEY)
@@ -325,7 +323,7 @@ class PanderaPandasReportRenderer(PanderaReportRenderer):
                 {error_segments}
                 """
 
-    def to_html(self, title: str, data: Any, schema: Any, error: Exception | None = None) -> str:
+    def to_html(self, title: str, data: Any, schema: Any, error: SchemaErrors | None = None, warn: bool = False) -> str:
         df = self._to_pandas(data)
         error_segments = ""
 
@@ -352,9 +350,10 @@ class PanderaPandasReportRenderer(PanderaReportRenderer):
                 """
             top_message = "✅ Data validation succeeded."
         else:
+            icon = "⚠️" if warn else "❌"
             if SchemaErrors and isinstance(error, SchemaErrors) and df is not None:
                 report_dfs = self._create_error_report(df, schema, error)
-                top_message = "❌ Data validation failed."
+                top_message = f"{icon} Data validation failed."
                 inner = f"""
                 {self._format_summary_df(report_dfs.summary)}
                 <br>
@@ -371,7 +370,7 @@ class PanderaPandasReportRenderer(PanderaReportRenderer):
                     {self._format_data_error_df(report_dfs.data_error_df)}
                     """
             else:
-                top_message = "❌ Data validation failed."
+                top_message = f"{icon} Data validation failed."
                 inner = self._generic_exception_report(data, schema, error)
 
         bootstrap_css = "https://cdn.jsdelivr.net/npm/bootstrap@3.4.1/dist/css/bootstrap.min.css"
