@@ -94,6 +94,9 @@ def get_random_local_directory() -> pathlib.Path:
 def get_configured_fsspec_kwargs(
     protocol: typing.Optional[str] = None, anonymous: bool = False
 ) -> typing.Dict[str, typing.Any]:
+    if os.getenv("FLYTE_DISABLE_OBSTORE"):
+        return {}
+
     if protocol:
         # Try to get storage config safely - may not be initialized for local operations
         try:
