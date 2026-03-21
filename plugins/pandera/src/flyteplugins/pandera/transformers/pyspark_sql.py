@@ -49,10 +49,11 @@ class PanderaPySparkSqlDataFrameTransformer(PanderaDataFrameTransformer[pt.DataF
         report_title: str,
     ) -> psql.DataFrame:
         schema = _schema_from_pandera_type(pandera_type)
-        ctx = flyte.ctx()
-        emit_report = ctx is not None and not ctx.in_driver_literal_conversion
+        tctx = flyte.ctx()
+        emit_report = tctx is None or not tctx.in_driver_literal_conversion
         validated = schema.validate(data, lazy=True)
-        if (errors := validated.pandera.errors) is not None:
+        errors = validated.pandera.errors
+        if errors:
             if emit_report:
                 html = self._report_renderer.to_html(
                     title=report_title,

@@ -85,8 +85,8 @@ class PanderaDataFrameTransformer(TypeTransformer[DF]):
         report_title: str,
     ) -> DF:
         schema = _schema_from_pandera_type(pandera_type)
-        ctx = flyte.ctx()
-        emit_report = ctx is not None and not ctx.in_driver_literal_conversion
+        tctx = flyte.ctx()
+        emit_report = tctx is None or not tctx.in_driver_literal_conversion
         try:
             validated = schema.validate(data, lazy=True)
         except SchemaErrors as exc:
