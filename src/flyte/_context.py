@@ -33,10 +33,6 @@ class ContextData:
     preserve_original_types: bool = False
     tracker: Any = None  # ActionTracker instance (optional, set for TUI runs)
     in_trace: bool = False  # True when executing inside a @trace decorated function
-    #: When True, literal conversion is happening in driver/task-orchestration flow (not task body I/O).
-    #: Type transformers should omit non-essential side effects (e.g. HTML tabs) while still
-    #: performing validation/serialization so driver tasks do not duplicate worker-emitted reports.
-    in_driver_literal_conversion: bool = False
 
     def replace(self, **kwargs) -> ContextData:
         return replace(self, **kwargs)
@@ -115,9 +111,18 @@ class Context:
 
     def new_in_driver_literal_conversion(self, in_driver_literal_conversion: bool) -> Context:
         """
-        Return a copy of the context with :attr:`ContextData.in_driver_literal_conversion` set.
+        Return a context with :attr:`flyte.models.TaskContext.in_driver_literal_conversion` set on the active task.
+
+        Requires :meth:`is_task_context`. Use ``nullcontext()`` at call sites when there is no task context.
         """
-        return Context(self.data.replace(in_driver_literal_conversion=in_driver_literal_conversion))
+        d = self.data
+        if d.task_context is None:
+            raise ValueError("new_in_driver_literal_conversion requires an active TaskContext")
+        return Context(
+            d.replace(
+                task_context=d.task_context.replace(in_driver_literal_conversion=in_driver_literal_conversion),
+            )
+        )
 
     def get_report(self) -> Optional[Report]:
         """

@@ -6,7 +6,7 @@ import typing
 from typing import Any
 
 from flyte._logging import logger
-from flyte._utils import lazy_module
+from flyte.extend import lazy_module
 from flyte.types import TypeEngine, TypeTransformerFailedError
 
 from ..renderers.polars import PanderaPolarsReportRenderer
@@ -42,41 +42,41 @@ class PanderaPolarsDataFrameTransformer(PanderaDataFrameTransformer[Any]):
         )
 
 
-def _all_polars_typing_container_classes() -> list[type[Any]]:
-    """Distinct ``DataFrame`` / ``LazyFrame`` class objects from ``pandera.typing.polars`` (handles duplicate loads)."""
-    out: list[type[Any]] = []
-    seen: set[int] = set()
-
-    def _add(cls: type[Any] | None) -> None:
-        if cls is None:
-            return
-        i = id(cls)
-        if i in seen:
-            return
-        seen.add(i)
-        out.append(cls)
-
-    try:
-        mod = importlib.import_module("pandera.typing.polars")
-        _add(getattr(mod, "DataFrame", None))
-        _add(getattr(mod, "LazyFrame", None))
-    except (ImportError, AttributeError):
-        pass
-    cached = sys.modules.get("pandera.typing.polars")
-    if cached is not None:
-        _add(getattr(cached, "DataFrame", None))
-        _add(getattr(cached, "LazyFrame", None))
-    return out
-
-
 def register_pandera_polars_type_transformers() -> None:
     """Register one transformer for every distinct ``pandera.typing.polars`` ``DataFrame`` / ``LazyFrame`` class."""
-    classes = _all_polars_typing_container_classes()
+
+    def _distinct_typing_container_classes() -> list[type[Any]]:
+        """Resolve distinct DataFrame/LazyFrame classes from pandera.typing.polars (handles duplicate module loads)."""
+        out: list[type[Any]] = []
+        seen: set[int] = set()
+
+        def _add(cls: type[Any] | None) -> None:
+            if cls is None:
+                return
+            i = id(cls)
+            if i in seen:
+                return
+            seen.add(i)
+            out.append(cls)
+
+        try:
+            mod = importlib.import_module("pandera.typing.polars")
+            _add(getattr(mod, "DataFrame", None))
+            _add(getattr(mod, "LazyFrame", None))
+        except (ImportError, AttributeError):
+            pass
+        cached = sys.modules.get("pandera.typing.polars")
+        if cached is not None:
+            _add(getattr(cached, "DataFrame", None))
+            _add(getattr(cached, "LazyFrame", None))
+        return out
+
+    classes = _distinct_typing_container_classes()
     try:
         import pandera.typing.polars as _pt  # noqa: F401
     except ImportError:
         pass
-    classes = list(dict.fromkeys([*classes, *_all_polars_typing_container_classes()]))
+    classes = list(dict.fromkeys([*classes, *_distinct_typing_container_classes()]))
 
     if not classes:
         logger.warning(

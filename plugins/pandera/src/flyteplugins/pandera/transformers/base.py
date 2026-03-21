@@ -3,10 +3,10 @@ from __future__ import annotations
 import typing
 from typing import Any, TypeVar
 
+import flyte
 import flyte.report
-from flyte._context import internal_ctx
 from flyte._logging import logger
-from flyte._utils import lazy_module
+from flyte.extend import lazy_module
 from flyte.io._dataframe.dataframe import DataFrame as FlyteDataFrame
 from flyte.io._dataframe.dataframe import DataFrameTransformerEngine
 from flyte.types import TypeEngine, TypeTransformer, TypeTransformerFailedError
@@ -86,7 +86,8 @@ class PanderaDataFrameTransformer(TypeTransformer[DF]):
         report_title: str,
     ) -> DF:
         schema = _schema_from_pandera_type(pandera_type)
-        emit_report = not internal_ctx().data.in_driver_literal_conversion
+        ctx = flyte.ctx()
+        emit_report = ctx is not None and not ctx.in_driver_literal_conversion
         try:
             validated = schema.validate(data, lazy=True)
         except SchemaErrors as exc:

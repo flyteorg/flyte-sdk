@@ -242,7 +242,9 @@ async def convert_from_native_to_outputs(o: Any, interface: NativeInterface, tas
 
 
 async def convert_outputs_to_native(interface: NativeInterface, outputs: Outputs) -> Union[Any, Tuple[Any, ...]]:
-    with internal_ctx().new_in_driver_literal_conversion(True):
+    _ic = internal_ctx()
+    _quiet = _ic.new_in_driver_literal_conversion(True) if _ic.is_task_context() else nullcontext()
+    with _quiet:
         lm = literals_pb2.LiteralMap(
             literals={named_literal.name: named_literal.value for named_literal in outputs.proto_outputs.literals}
         )

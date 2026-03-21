@@ -6,7 +6,7 @@ import typing
 from typing import Any
 
 from flyte._logging import logger
-from flyte._utils import lazy_module
+from flyte.extend import lazy_module
 from flyte.types import TypeEngine, TypeTransformerFailedError
 
 from ..renderers.pyspark_sql import PanderaPySparkSqlReportRenderer
