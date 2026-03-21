@@ -4,6 +4,7 @@ import asyncio
 import base64
 import hashlib
 import inspect
+from contextlib import nullcontext
 from dataclasses import dataclass
 from types import NoneType
 from typing import Any, Dict, List, Tuple, Union, get_args
@@ -13,7 +14,7 @@ from flyteidl2.task import common_pb2, task_definition_pb2
 
 import flyte.errors
 import flyte.storage as storage
-from flyte._context import ctx
+from flyte._context import ctx, internal_ctx
 from flyte.models import ActionID, NativeInterface, TaskContext
 from flyte.types import TypeEngine, TypeTransformerFailedError
 
@@ -118,6 +119,18 @@ async def convert_from_native_to_inputs(
     *args,
     custom_context: Dict[str, str] | None = None,
     **kwargs,
+) -> Inputs:
+    _ic = internal_ctx()
+    _quiet = _ic.new_in_driver_literal_conversion(True) if _ic.is_task_context() else nullcontext()
+    with _quiet:
+        return await _convert_from_native_to_inputs_impl(interface, args, custom_context, kwargs)
+
+
+async def _convert_from_native_to_inputs_impl(
+    interface: NativeInterface,
+    args: Tuple[Any, ...],
+    custom_context: Dict[str, str] | None,
+    kwargs: Dict[str, Any],
 ) -> Inputs:
     kwargs = interface.convert_to_kwargs(*args, **kwargs)
 
@@ -229,18 +242,21 @@ async def convert_from_native_to_outputs(o: Any, interface: NativeInterface, tas
 
 
 async def convert_outputs_to_native(interface: NativeInterface, outputs: Outputs) -> Union[Any, Tuple[Any, ...]]:
-    lm = literals_pb2.LiteralMap(
-        literals={named_literal.name: named_literal.value for named_literal in outputs.proto_outputs.literals}
-    )
-    kwargs = await TypeEngine.literal_map_to_kwargs(lm, interface.outputs)
-    if len(kwargs) == 0:
-        return None
-    elif len(kwargs) == 1:
-        return next(iter(kwargs.values()))
-    else:
-        # Return as tuple if multiple outputs are defined in the interface,
-        # to match the order of outputs in the interface
-        return tuple(kwargs[k] for k in interface.outputs.keys())
+    _ic = internal_ctx()
+    _quiet = _ic.new_in_driver_literal_conversion(True) if _ic.is_task_context() else nullcontext()
+    with _quiet:
+        lm = literals_pb2.LiteralMap(
+            literals={named_literal.name: named_literal.value for named_literal in outputs.proto_outputs.literals}
+        )
+        kwargs = await TypeEngine.literal_map_to_kwargs(lm, interface.outputs)
+        if len(kwargs) == 0:
+            return None
+        elif len(kwargs) == 1:
+            return next(iter(kwargs.values()))
+        else:
+            # Return as tuple if multiple outputs are defined in the interface,
+            # to match the order of outputs in the interface
+            return tuple(kwargs[k] for k in interface.outputs.keys())
 
 
 def convert_error_to_native(
