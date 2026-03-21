@@ -171,6 +171,7 @@ ignore = ["PGH003", "PLC0415", "ASYNC210", "ASYNC240", "FURB122"]
 [tool.mypy]
 disable_error_code = ["import-untyped"]
 ignore_missing_imports = true
+check_untyped_defs = true
 
 [tool.ty.rules]
 unused-ignore-comment = "warn"
