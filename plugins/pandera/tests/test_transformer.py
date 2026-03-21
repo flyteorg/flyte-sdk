@@ -17,6 +17,7 @@ except ImportError:
     pandera_typing_pandas = None
 
 from flyteplugins.pandera import ValidationConfig
+from flyteplugins.pandera.renderers.pandas import PanderaPandasReportRenderer
 from flyteplugins.pandera.transformers.pandas import (
     PanderaPandasDataFrameTransformer,
     register_pandera_pandas_type_transformers,
@@ -70,3 +71,21 @@ def test_register_transformer():
     register_pandera_pandas_type_transformers()
     t = TypeEngine.get_transformer(pandera_typing_pandas.DataFrame)
     assert isinstance(t, PanderaPandasDataFrameTransformer)
+
+
+def test_reshape_long_failure_cases_duplicate_pivot_column():
+    """Pandera repeats the model name in ``column`` for each missing field under ``column_in_dataframe``."""
+    long = pd.DataFrame(
+        {
+            "schema_context": ["DataFrameSchema", "DataFrameSchema"],
+            "check": ["column_in_dataframe", "column_in_dataframe"],
+            "index": [pd.NA, pd.NA],
+            "column": ["EmployeeSchemaWithStatus", "EmployeeSchemaWithStatus"],
+            "failure_case": ["name", "status"],
+        }
+    )
+    out = PanderaPandasReportRenderer._reshape_long_failure_cases(long)
+    assert list(out.columns) == ["check", "index", "failure_case"]
+    assert out.iloc[0]["check"] == "column_in_dataframe"
+    assert isinstance(out.iloc[0]["failure_case"], dict)
+    assert "EmployeeSchemaWithStatus" in out.iloc[0]["failure_case"]

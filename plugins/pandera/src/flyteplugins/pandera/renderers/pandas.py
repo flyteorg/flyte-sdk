@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -38,9 +39,23 @@ ERROR_COLUMN_MAX_WIDTH = 200
 
 
 class PanderaPandasReportRenderer(PanderaReportRenderer):
+    _FAILURE_CASES_TAIL_RE = re.compile(r"failure cases:\s*(.+)$", re.IGNORECASE | re.DOTALL)
+
     @staticmethod
     def _schema_name(schema: Any) -> str:
+        if schema is None:
+            return "unknown"
         return schema.name or getattr(schema, "__class__", type(schema)).__name__
+
+    @classmethod
+    def _extract_failure_case_text(cls, error_msg: Any) -> str:
+        if error_msg is None:
+            return ""
+        text = str(error_msg).strip()
+        if not text or text.lower() == "nan":
+            return ""
+        m = cls._FAILURE_CASES_TAIL_RE.search(text)
+        return m.group(1).strip() if m else ""
 
     @staticmethod
     def _to_pandas(data: Any) -> "pandas.DataFrame | None":
@@ -74,17 +89,66 @@ class PanderaPandasReportRenderer(PanderaReportRenderer):
 
     @staticmethod
     def _reshape_long_failure_cases(long_failure_cases: "pandas.DataFrame"):
+        # Pandera can emit several ``column_in_dataframe`` rows that share the same
+        # ``column`` cell (often the model class name) with different ``failure_case``
+        # values (each missing field). ``pivot`` requires unique (index, columns).
+        pivot_keys = ["schema_context", "check", "index", "column"]
+        deduped = (
+            long_failure_cases.groupby(pivot_keys, dropna=False, sort=False)["failure_case"]
+            .agg(lambda s: ", ".join(s.dropna().astype(str).unique()))
+            .reset_index()
+        )
         return (
-            long_failure_cases.pivot(
-                index=["schema_context", "check", "index"], columns="column", values="failure_case"
-            )
+            deduped.pivot(index=["schema_context", "check", "index"], columns="column", values="failure_case")
             .apply(lambda s: s.to_dict(), axis="columns")
             .rename("failure_case")
             .reset_index(["index", "check"])
             .reset_index(drop=True)[["check", "index", "failure_case"]]
         )
 
-    def _prepare_data_error_df(self, data: "pandas.DataFrame", data_errors: dict, failure_cases: "pandas.DataFrame"):
+    def _prepare_data_error_df_without_failure_cases(
+        self, data: "pandas.DataFrame", data_errors: dict[str, Any]
+    ) -> "pandas.DataFrame":
+        """Build the data-error summary when ``failure_cases`` is missing (e.g. serialized error dict only)."""
+
+        def num_failure_cases(series):
+            return len(series)
+
+        def _failure_cases(series):
+            series = series.astype(str)
+            out = ", ".join(str(x) for x in series.iloc[:FAILURE_CASE_LIMIT])
+            if len(series) > FAILURE_CASE_LIMIT:
+                out += f" ... (+{len(series) - FAILURE_CASE_LIMIT} more)"
+            return out
+
+        data_errors_df = pandas.concat(pandas.DataFrame(v).assign(error_code=k) for k, v in data_errors.items())
+        extracted = data_errors_df["error"].map(self._extract_failure_case_text)
+        data_errors_df = data_errors_df.assign(
+            index=pandas.NA,
+            failure_case=extracted.where(extracted != "", data_errors_df["error"].astype(str)),
+        )
+        for col in DATA_ERROR_COLUMNS:
+            if col not in data_errors_df.columns:
+                data_errors_df[col] = pandas.NA
+        out_df = (
+            data_errors_df[DATA_ERROR_COLUMNS]
+            .groupby(["column", "error_code", "check", "error"])
+            .failure_case.agg([num_failure_cases, _failure_cases])
+            .reset_index()
+            .rename(columns={"_failure_cases": "failure_cases"})
+            .assign(percent_valid=lambda df: 1 - (df["num_failure_cases"] / data.shape[0]))
+        )
+        return out_df
+
+    def _prepare_data_error_df(
+        self,
+        data: "pandas.DataFrame",
+        data_errors: dict[str, Any],
+        failure_cases: "pandas.DataFrame | None",
+    ):
+        if failure_cases is None:
+            return self._prepare_data_error_df_without_failure_cases(data, data_errors)
+
         def num_failure_cases(series):
             return len(series)
 
@@ -126,10 +190,16 @@ class PanderaPandasReportRenderer(PanderaReportRenderer):
         self,
         data: "pandas.DataFrame",
         schema: Any,
-        error: SchemaErrors,
+        error: SchemaErrors | dict[str, Any],
     ):
-        failure_cases = error.failure_cases
-        error_dict: dict[str, Any] = error.message
+        if isinstance(error, dict):
+            failure_cases = None
+            error_dict = error
+            err_schema = schema
+        else:
+            failure_cases = getattr(error, "failure_cases", None)
+            error_dict = error.message
+            err_schema = getattr(error, "schema", schema)
 
         schema_errors = error_dict.get(SCHEMA_ERROR_KEY)
         data_errors = error_dict.get(DATA_ERROR_KEY)
@@ -138,11 +208,22 @@ class PanderaPandasReportRenderer(PanderaReportRenderer):
             schema_error_df = None
             total_schema_errors = 0
         else:
-            schema_error_df = (
-                pandas.concat(pandas.DataFrame(v).assign(error_code=k) for k, v in schema_errors.items())
-                .merge(failure_cases, how="left", on=["column", "check"])[SCHEMA_ERROR_COLUMNS]
-                .drop(["schema"], axis="columns")
-            )
+            schema_base = pandas.concat(pandas.DataFrame(v).assign(error_code=k) for k, v in schema_errors.items())
+            if failure_cases is not None:
+                schema_error_df = schema_base.merge(failure_cases, how="left", on=["column", "check"])[
+                    SCHEMA_ERROR_COLUMNS
+                ].drop(["schema"], axis="columns")
+            else:
+                if "error" in schema_base.columns:
+                    extracted = schema_base["error"].map(self._extract_failure_case_text)
+                    failure_col = extracted.where(extracted != "", schema_base["error"].astype(str))
+                else:
+                    failure_col = pandas.Series(pandas.NA, index=schema_base.index, dtype=object)
+                schema_base = schema_base.assign(failure_case=failure_col)
+                for col in SCHEMA_ERROR_COLUMNS:
+                    if col not in schema_base.columns:
+                        schema_base[col] = pandas.NA
+                schema_error_df = schema_base[SCHEMA_ERROR_COLUMNS].drop(columns=["schema"], errors="ignore")
             total_schema_errors = schema_error_df.shape[0]
 
         if data_errors is None:
@@ -152,7 +233,6 @@ class PanderaPandasReportRenderer(PanderaReportRenderer):
             data_error_df = self._prepare_data_error_df(data, data_errors, failure_cases)
             total_data_errors = data_error_df.shape[0]
 
-        err_schema = getattr(error, "schema", schema)
         name = getattr(err_schema, "name", None) or self._schema_name(schema)
         summary = pandas.DataFrame(
             [
@@ -323,7 +403,17 @@ class PanderaPandasReportRenderer(PanderaReportRenderer):
                 {error_segments}
                 """
 
-    def to_html(self, title: str, data: Any, schema: Any, error: SchemaErrors | None = None, warn: bool = False) -> str:
+    def to_html(
+        self,
+        title: str,
+        data: Any,
+        schema: Any,
+        error: SchemaErrors | dict[str, Any] | None = None,
+        warn: bool = False,
+    ) -> str:
+        if hasattr(schema, "to_schema"):
+            schema = schema.to_schema()
+
         df = self._to_pandas(data)
         error_segments = ""
 
@@ -351,7 +441,10 @@ class PanderaPandasReportRenderer(PanderaReportRenderer):
             top_message = "✅ Data validation succeeded."
         else:
             icon = "⚠️" if warn else "❌"
-            if SchemaErrors and isinstance(error, SchemaErrors) and df is not None:
+            if df is not None and (
+                (isinstance(error, dict) and (SCHEMA_ERROR_KEY in error or DATA_ERROR_KEY in error))
+                or (SchemaErrors and isinstance(error, SchemaErrors))
+            ):
                 report_dfs = self._create_error_report(df, schema, error)
                 top_message = f"{icon} Data validation failed."
                 inner = f"""

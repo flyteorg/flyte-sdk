@@ -10,9 +10,6 @@ dependencies = [
     "flyte"
 ]
 
-[project.entry-points."flyte.plugins.types"]
-spark = "flyteplugins.spark.df_transformer:register_spark_df_transformers"
-
 [dependency-groups]
 dev = [
     "pytest>=8.3.5",

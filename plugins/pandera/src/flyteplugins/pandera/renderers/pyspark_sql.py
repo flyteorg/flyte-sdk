@@ -1,17 +1,17 @@
 from __future__ import annotations
 
 import copy
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+from flyte.extend import lazy_module
+
+from flyteplugins.pandera.renderers.pandas import DATA_PREVIEW_HEAD, FAILURE_CASE_LIMIT, PanderaPandasReportRenderer
 from pandera.errors import SchemaErrors
 
-from .pandas import DATA_PREVIEW_HEAD, FAILURE_CASE_LIMIT, PanderaPandasReportRenderer
-
-
-def _pyspark_sql_types():
+if TYPE_CHECKING:
     import pyspark.sql as psql
-
-    return psql
+else:
+    psql = lazy_module("pyspark.sql")
 
 
 class PanderaPySparkSqlReportRenderer(PanderaPandasReportRenderer):
@@ -21,7 +21,6 @@ class PanderaPySparkSqlReportRenderer(PanderaPandasReportRenderer):
     def _failure_cases_to_pandas(failure_cases: Any) -> Any:
         if failure_cases is None:
             return None
-        psql = _pyspark_sql_types()
         if isinstance(failure_cases, psql.DataFrame):
             return failure_cases.limit(FAILURE_CASE_LIMIT).toPandas()
         return failure_cases
@@ -33,7 +32,6 @@ class PanderaPySparkSqlReportRenderer(PanderaPandasReportRenderer):
 
     @staticmethod
     def _to_pandas(data: Any):
-        psql = _pyspark_sql_types()
         if isinstance(data, psql.DataFrame):
             try:
                 return data.limit(DATA_PREVIEW_HEAD).toPandas()

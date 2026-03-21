@@ -78,6 +78,8 @@ async def main() -> pt.DataFrame[EmployeeSchemaWithStatus]:
     # error on the input
     await pass_through_with_error_warn(df.drop(["employee_id"], axis="columns"))
 
+    await pass_through_with_error_warn(df.assign(employee_id=-1))
+
     # error on the output
     try:
         await pass_through_with_error_raise(df)

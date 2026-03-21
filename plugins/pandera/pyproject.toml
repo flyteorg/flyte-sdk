@@ -17,7 +17,10 @@ dependencies = [
 [project.optional-dependencies]
 pandas = ["pandera[pandas]"]
 polars = ["pandera[polars]"]
-pyspark = ["pandera[pyspark]"]
+pyspark = [
+    "pandera[pyspark]",
+    "pandas<3",  # pyspark doesn't support pandas 3 yet
+]
 
 [dependency-groups]
 dev = [

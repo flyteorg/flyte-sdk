@@ -4,12 +4,21 @@ Pandera + Flyte: PySpark SQL (`pandera.typing.pyspark_sql.DataFrame`).
 Demonstrates a `DataFrameModel` validated on task input/output via `flyteplugins-pandera`.
 Requires ``flyteplugins-spark`` and a Spark session in the task context (same
 pattern as ``examples/plugins/spark_dataframe_example.py``).
+
+Flyte loads Pandera type transformers from the *installed* ``flyteplugins-pandera``
+distribution (``flyte.plugins.types`` entry point). For local runs against this
+repo, install the plugin with PySpark extras, e.g.
+``pip install -e "./plugins/pandera[pyspark]"``, so ``register_type_transformers``
+registers ``pandera.typing.pyspark_sql.DataFrame`` and task I/O does not fall back
+to pickle.
 """
 
 from __future__ import annotations
 
 import argparse
 import logging
+import os
+import sys
 from typing import Annotated, cast
 
 import pandera.typing.pyspark_sql as pt
@@ -30,7 +39,7 @@ image = (
         "flyteplugins-spark==2.0.9",
         "pandera[pyspark]",
     )
-    .with_local_v2_plugins("flyteplugins-spark")
+    .with_local_v2_plugins(["flyteplugins-spark", "flyteplugins-pandera"])
 )
 
 spark_conf = Spark(
@@ -111,6 +120,7 @@ async def main() -> pt.DataFrame[EmployeeSchemaWithStatus]:
 
     # error on the input
     await pass_through_with_error_warn(df.drop("employee_id"))
+    await pass_through_with_error_warn(df.withColumn("employee_id", F.lit(-1)))
 
     # error on the output
     try:
@@ -131,9 +141,15 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
+    # Workers default to ``python3`` on PATH; if that differs from this venv, Spark errors with
+    # PYTHON_VERSION_MISMATCH. Pin both sides to the interpreter running this script unless set.
+    if args.mode == "local":
+        _py = os.environ.setdefault("PYSPARK_PYTHON", sys.executable)
+        os.environ.setdefault("PYSPARK_DRIVER_PYTHON", _py)
+
     flyte.init_from_config(log_level=logging.DEBUG, project="niels")
 
-    run = flyte.with_runcontext(args.mode, project="niels").run(main)
+    run = flyte.with_runcontext(args.mode).run(main)
     print(run.url)
     run.wait()
     print("pyspark_sql pandera example OK:", run.outputs()[0])

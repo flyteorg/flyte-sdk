@@ -5,12 +5,17 @@ import sys
 import typing
 from typing import Any
 
+import flyte
+import flyte.report
 from flyte._logging import logger
 from flyte.extend import lazy_module
 from flyte.types import TypeEngine, TypeTransformerFailedError
 
+from flyteplugins.pandera.config import ValidationConfig
 from flyteplugins.pandera.renderers.pyspark_sql import PanderaPySparkSqlReportRenderer
-from flyteplugins.pandera.transformers.base import PanderaDataFrameTransformer
+from flyteplugins.pandera.transformers.base import _schema_from_pandera_type
+
+from .base import PanderaDataFrameTransformer
 
 if typing.TYPE_CHECKING:
     import pyspark.sql as psql
@@ -21,7 +26,7 @@ else:
     pt = lazy_module("pandera.typing.pyspark_sql")
 
 
-class PanderaPySparkSqlDataFrameTransformer(PanderaDataFrameTransformer[Any]):
+class PanderaPySparkSqlDataFrameTransformer(PanderaDataFrameTransformer[pt.DataFrame]):
     _report_renderer: PanderaPySparkSqlReportRenderer = PanderaPySparkSqlReportRenderer()
 
     def __init__(self) -> None:
@@ -35,6 +40,40 @@ class PanderaPySparkSqlDataFrameTransformer(PanderaDataFrameTransformer[Any]):
         if mod.endswith("typing.pyspark_sql") and name == "DataFrame":
             return psql.DataFrame
         raise TypeTransformerFailedError(f"Only pandera.typing.pyspark_sql.DataFrame is supported (got {origin!r}).")
+
+    async def _validate(
+        self,
+        data: Any,
+        pandera_type: Any,
+        config: ValidationConfig,
+        report_title: str,
+    ) -> psql.DataFrame:
+        schema = _schema_from_pandera_type(pandera_type)
+        ctx = flyte.ctx()
+        emit_report = ctx is not None and not ctx.in_driver_literal_conversion
+        validated = schema.validate(data, lazy=True)
+        if (errors := validated.pandera.errors) is not None:
+            if emit_report:
+                html = self._report_renderer.to_html(
+                    title=report_title,
+                    data=data,
+                    schema=schema,
+                    error=errors,
+                    warn=config.on_error == "warn",
+                )
+                flyte.report.get_tab(report_title).replace(html)
+                await flyte.report.flush.aio()
+            if config.on_error == "raise":
+                raise RuntimeError(f"Pandera validation failed: {errors}")
+            if config.on_error == "warn":
+                logger.warning(str(errors))
+                return data
+            raise ValueError(f"Unsupported ValidationConfig.on_error value: {config.on_error}")
+        if emit_report:
+            html = self._report_renderer.to_html(title=report_title, data=validated, schema=schema)
+            flyte.report.get_tab(report_title).replace(html)
+            await flyte.report.flush.aio()
+        return validated
 
 
 def _all_pyspark_sql_typing_dataframe_classes() -> list[type[Any]]:
