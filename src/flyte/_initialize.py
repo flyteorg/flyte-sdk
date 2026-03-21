@@ -453,6 +453,7 @@ async def init_in_cluster(
     ENDPOINT_OVERRIDE = "_U_EP_OVERRIDE"
     INSECURE_SKIP_VERIFY_OVERRIDE = "_U_INSECURE_SKIP_VERIFY"
     INSECURE_OVERRIDE = "_U_INSECURE"
+    AUTH_TYPE_OVERRIDE = "_U_AUTH_TYPE"
     _UNION_EAGER_API_KEY_ENV_VAR = "_UNION_EAGER_API_KEY"
     EAGER_API_KEY = "EAGER_API_KEY"
 
@@ -480,6 +481,13 @@ async def init_in_cluster(
     if str2bool(insecure_skip_verify_str):
         remote_kwargs["insecure_skip_verify"] = True
         logger.info("SSL certificate verification disabled (insecure_skip_verify=True)")
+
+    # Check for auth_type override (e.g. "Passthrough" for selfhosted deployments
+    # where the endpoint is the queue service which doesn't implement AuthMetadataService)
+    auth_type_str = os.getenv(AUTH_TYPE_OVERRIDE, "")
+    if auth_type_str:
+        remote_kwargs["auth_type"] = auth_type_str
+        logger.info(f"Auth type overridden to: {auth_type_str}")
 
     await init.aio(
         org=org, project=project, domain=domain, root_dir=Path.cwd(), image_builder="remote", **remote_kwargs
