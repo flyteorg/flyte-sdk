@@ -7,9 +7,9 @@ def _check_package(package_name: str) -> bool:
         return True
     try:
         importlib.import_module(package_name)
-    except ImportError:
+        return True
+    except (ModuleNotFoundError, ImportError):
         return False
-    return True
 
 
 def register_type_transformers() -> None:

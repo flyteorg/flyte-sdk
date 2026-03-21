@@ -16,16 +16,8 @@ import pandera.typing.pandas as pt
 from flyteplugins.pandera import ValidationConfig
 
 import flyte
-import flyte.io
 
-img = (
-    flyte.Image.from_debian_base(python_version=(3, 12))
-    .with_pip_packages(
-        "pandera[pandas]",
-        "pyspark",
-    )
-    .with_local_v2_plugins("flyteplugins-pandera")
-)
+img = flyte.Image.from_debian_base(python_version=(3, 12)).with_local_v2_plugins("flyteplugins-pandera")
 
 env = flyte.TaskEnvironment(
     "pandera_pandas_schema",

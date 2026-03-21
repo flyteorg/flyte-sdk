@@ -9,8 +9,8 @@ from flyte._logging import logger
 from flyte.extend import lazy_module
 from flyte.types import TypeEngine, TypeTransformerFailedError
 
-from ..renderers.polars import PanderaPolarsReportRenderer
-from .base import PanderaDataFrameTransformer
+from flyteplugins.pandera.renderers.polars import PanderaPolarsReportRenderer
+from flyteplugins.pandera.transformers.base import PanderaDataFrameTransformer
 
 if typing.TYPE_CHECKING:
     import polars as pl

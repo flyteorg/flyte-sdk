@@ -13,10 +13,9 @@ from flyte.types import TypeEngine, TypeTransformer, TypeTransformerFailedError
 from flyteidl2.core.types_pb2 import LiteralType
 from typing_extensions import Annotated, get_args, get_origin
 
+from flyteplugins.pandera.config import ValidationConfig
+from flyteplugins.pandera.renderers.base import PanderaReportRenderer
 from pandera.errors import SchemaErrors
-
-from ..config import ValidationConfig
-from ..renderers.base import PanderaReportRenderer
 
 T = TypeVar("T")
 DF = TypeVar("DF")

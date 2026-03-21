@@ -27,13 +27,10 @@ image = (
     flyte.Image.from_base("apache/spark-py:v3.4.0")
     .clone(name="pandera-pyspark-sql", python_version=(3, 10), extendable=True)
     .with_pip_packages(
-        # "flyte>=2.0.9",
-        # "flyteplugins-pandera",
         "flyteplugins-spark==2.0.9",
         "pandera[pyspark]",
-        pre=True,
     )
-    .with_local_v2_plugins(["flyteplugins-spark"])
+    .with_local_v2_plugins("flyteplugins-spark")
 )
 
 spark_conf = Spark(
@@ -41,8 +38,10 @@ spark_conf = Spark(
         "spark.driver.memory": "1000M",
         "spark.executor.memory": "1000M",
         "spark.executor.cores": "1",
-        "spark.executor.instances": "1",
+        "spark.executor.instances": "2",
         "spark.driver.cores": "1",
+        "spark.kubernetes.file.upload.path": "/opt/spark/work-dir",
+        "spark.jars": "https://storage.googleapis.com/hadoop-lib/gcs/gcs-connector-hadoop3-latest.jar,https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-aws/3.2.2/hadoop-aws-3.2.2.jar,https://repo1.maven.org/maven2/com/amazonaws/aws-java-sdk-bundle/1.12.262/aws-java-sdk-bundle-1.12.262.jar",
     },
 )
 
@@ -55,10 +54,11 @@ env = flyte.TaskEnvironment(
 
 
 class EmployeeSchema(DataFrameModel):
-    """Employee rows: id and name."""
+    """Employee rows: id, name, and job title."""
 
     employee_id: int = Field(ge=0)
     name: str = Field()
+    job_title: str = Field()
 
 
 class EmployeeSchemaWithStatus(EmployeeSchema):
@@ -68,11 +68,16 @@ class EmployeeSchemaWithStatus(EmployeeSchema):
 @env.task(report=True)
 async def build_valid_employees() -> pt.DataFrame[EmployeeSchema]:
     spark = cast(SparkSession, flyte.ctx().data["spark_session"])
-    data = [(1, "Ada"), (2, "Grace"), (3, "Barbara")]
+    data = [
+        (1, "Ada", "Engineer"),
+        (2, "Grace", "Mathematician"),
+        (3, "Barbara", "Computer scientist"),
+    ]
     schema = T.StructType(
         [
             T.StructField("employee_id", T.IntegerType(), False),
             T.StructField("name", T.StringType(), False),
+            T.StructField("job_title", T.StringType(), False),
         ]
     )
     return spark.createDataFrame(data, schema=schema)
@@ -126,9 +131,9 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    flyte.init_from_config(log_level=logging.DEBUG)
+    flyte.init_from_config(log_level=logging.DEBUG, project="niels")
 
-    run = flyte.with_runcontext(args.mode).run(main)
+    run = flyte.with_runcontext(args.mode, project="niels").run(main)
     print(run.url)
     run.wait()
     print("pyspark_sql pandera example OK:", run.outputs()[0])

@@ -18,16 +18,12 @@ import polars as pl
 from flyteplugins.pandera import ValidationConfig
 
 import flyte
-import flyte.io
 
 img = (
     flyte.Image.from_debian_base(python_version=(3, 12))
     .with_pip_packages(
-        # "flyte>=2.0.9",
-        # "flyteplugins-pandera",
         "flyteplugins-polars==2.0.9",
         "pandera[polars]",
-        pre=True,
     )
     .with_local_v2_plugins("flyteplugins-pandera")
 )
