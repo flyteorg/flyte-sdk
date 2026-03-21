@@ -416,7 +416,17 @@ class TorchFunctionTask(AsyncFunctionTaskTemplate):
 
         logger.info("Running neuron_parallel_compile: %s", " ".join(cmd))
         try:
-            subprocess.run(cmd, check=True)
+            result = subprocess.run(cmd)
+            # neuron_parallel_compile returns the number of failed graph compilations
+            # as its exit code. Partial failures are normal (init graphs, dynamic shapes),
+            # so we only log a warning rather than failing the task.
+            if result.returncode != 0:
+                logger.warning(
+                    "neuron_parallel_compile exited with code %d (%d graph compilations failed). "
+                    "This is typically normal — failed graphs will be compiled on-demand during training.",
+                    result.returncode,
+                    result.returncode,
+                )
         finally:
             os.unlink(ctx_file)
 
