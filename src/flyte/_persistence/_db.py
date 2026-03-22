@@ -15,6 +15,20 @@ from flyte.config import auto
 DEFAULT_CACHE_DIR = "~/.flyte"
 CACHE_LOCATION = "local-cache/cache.db"
 
+
+def _cache_scope() -> str:
+    """Return a stable string identifying the current endpoint+project+domain.
+
+    Used to scope image/bundle cache entries so that different environments
+    don't collide.
+    """
+    config = auto()
+    endpoint = config.platform.endpoint or ""
+    project = config.task.project or ""
+    domain = config.task.domain or ""
+    return f"{endpoint}:{project}:{domain}"
+
+
 _TASK_CACHE_DDL = """
 CREATE TABLE IF NOT EXISTS task_cache (
     key TEXT PRIMARY KEY,

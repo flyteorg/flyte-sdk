@@ -109,8 +109,10 @@ class DockerAPIImageChecker(ImageChecker):
 
 
 def _cache_key(repository: str, tag: str, arch: Tuple[str, ...]) -> str:
-    """Return a stable cache key for an image."""
-    raw = f"{repository}:{tag}:{','.join(sorted(arch))}"
+    """Return a stable cache key for an image, scoped to the current endpoint/project/domain."""
+    from flyte._persistence._db import _cache_scope
+
+    raw = f"{_cache_scope()}:{repository}:{tag}:{','.join(sorted(arch))}"
     return hashlib.sha256(raw.encode()).hexdigest()
 
 

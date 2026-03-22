@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import gzip
+import hashlib
 import logging
 import os
 import pathlib
@@ -31,7 +32,15 @@ if TYPE_CHECKING:
 _pickled_file_extension = ".pkl.gz"
 _tar_file_extension = ".tar.gz"
 
-_BUNDLE_CACHE_TTL_DAYS = 30
+_BUNDLE_CACHE_TTL_DAYS = 1
+
+
+def _scoped_digest(digest: str) -> str:
+    """Return a digest scoped to the current endpoint/project/domain."""
+    from flyte._persistence._db import _cache_scope
+
+    raw = f"{_cache_scope()}:{digest}"
+    return hashlib.sha256(raw.encode()).hexdigest()
 
 
 def _read_bundle_cache(digest: str) -> tuple[str, str] | None:
@@ -43,7 +52,7 @@ def _read_bundle_cache(digest: str) -> tuple[str, str] | None:
         cutoff = time.time() - _BUNDLE_CACHE_TTL_DAYS * 86400
         row = conn.execute(
             "SELECT hash_digest, remote_path FROM bundle_cache WHERE digest = ? AND created_at > ?",
-            (digest, cutoff),
+            (_scoped_digest(digest), cutoff),
         ).fetchone()
         # Prune expired entries ~5% of the time to avoid doing it on every read
         if random.random() < 0.05:
@@ -67,7 +76,7 @@ def _write_bundle_cache(digest: str, hash_digest: str, remote_path: str) -> None
             conn.execute(
                 "INSERT OR REPLACE INTO bundle_cache (digest, hash_digest, remote_path, created_at) "
                 "VALUES (?, ?, ?, ?)",
-                (digest, hash_digest, remote_path, time.time()),
+                (_scoped_digest(digest), hash_digest, remote_path, time.time()),
             )
             conn.commit()
     except (OSError, sqlite3.Error) as e:
@@ -170,6 +179,7 @@ async def build_code_bundle(
     dryrun: bool = False,
     copy_bundle_to: pathlib.Path | None = None,
     copy_style: CopyFiles = "loaded_modules",
+    skip_cache: bool = False,
 ) -> CodeBundle:
     """
     Build the code bundle for the current environment.
@@ -180,6 +190,7 @@ async def build_code_bundle(
     :param dryrun: If dryrun is enabled, files will not be uploaded to the control plane.
     :param copy_bundle_to: If set, the bundle will be copied to this path. This is used for testing purposes.
     :param copy_style: What to put into the tarball. (either all, or loaded_modules. if none, skip this function)
+    :param skip_cache: If true, skip the persistent SQLite cache lookup and always rebuild/re-upload.
 
     :return: The code bundle, which contains the path where the code was zipped to.
     """
@@ -207,7 +218,7 @@ async def build_code_bundle(
         print_ls_tree(from_dir, files)
 
     # Check persistent cache before creating the tar bundle to avoid unnecessary work
-    if not dryrun:
+    if not dryrun and not skip_cache:
         cached = _read_bundle_cache(digest)
         if cached:
             hash_digest, remote_path = cached
@@ -252,6 +263,7 @@ async def build_code_bundle_from_relative_paths(
     extract_dir: str = ".",
     dryrun: bool = False,
     copy_bundle_to: pathlib.Path | None = None,
+    skip_cache: bool = False,
 ) -> CodeBundle:
     """
     Build a code bundle from a list of relative paths.
@@ -261,6 +273,7 @@ async def build_code_bundle_from_relative_paths(
         working directory.
     :param dryrun: If dryrun is enabled, files will not be uploaded to the control plane.
     :param copy_bundle_to: If set, the bundle will be copied to this path. This is used for testing purposes.
+    :param skip_cache: If true, skip the persistent SQLite cache lookup and always rebuild/re-upload.
     :return: The code bundle, which contains the path where the code was zipped to.
     """
     status.step("Bundling code...")
@@ -273,7 +286,7 @@ async def build_code_bundle_from_relative_paths(
         print_ls_tree(from_dir, files)
 
     # Check persistent cache before creating the tar bundle to avoid unnecessary work
-    if not dryrun:
+    if not dryrun and not skip_cache:
         cached = _read_bundle_cache(digest)
         if cached:
             hash_digest, remote_path = cached

@@ -6,7 +6,6 @@ import os
 import pathlib
 import sys
 import uuid
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union, cast
 
 from flyte._context import Context, contextual_run, internal_ctx
@@ -40,25 +39,10 @@ if TYPE_CHECKING:
     from flyte.remote._task import LazyEntity
 
     from ._code_bundle import CopyFiles
-    from ._internal.imagebuild.image_builder import ImageCache
 
 Mode = Literal["local", "remote", "hybrid"]
 CacheLookupScope = Literal["global", "project-domain"]
 
-
-@dataclass(frozen=True)
-class _CacheKey:
-    obj_id: int
-    dry_run: bool
-
-
-@dataclass(frozen=True)
-class _CacheValue:
-    code_bundle: CodeBundle | None
-    image_cache: Optional[ImageCache]
-
-
-_RUN_CACHE: Dict[_CacheKey, _CacheValue] = {}
 
 # ContextVar for run mode - thread-safe and coroutine-safe alternative to a global variable.
 # This allows offloaded types (files, directories, dataframes) to be aware of the run mode
@@ -203,56 +187,47 @@ class _Runner:
             if obj.parent_env is None:
                 raise ValueError("Task is not attached to an environment. Please attach the task to an environment")
 
-            if (
-                not self._disable_run_cache
-                and _RUN_CACHE.get(_CacheKey(obj_id=id(obj), dry_run=self._dry_run)) is not None
-            ):
-                cached_value = _RUN_CACHE[_CacheKey(obj_id=id(obj), dry_run=self._dry_run)]
-                code_bundle = cached_value.code_bundle
-                image_cache = cached_value.image_cache
-            else:
-                # Resolve any CodeBundleLayer layers before building images
-                parent_env = cast(Environment, obj.parent_env())
-                from flyte._image import Image, resolve_code_bundle_layer
+            # Resolve any CodeBundleLayer layers before building images
+            parent_env = cast(Environment, obj.parent_env())
+            from flyte._image import Image, resolve_code_bundle_layer
 
-                if isinstance(parent_env.image, Image):
-                    parent_env.image = resolve_code_bundle_layer(
-                        parent_env.image, self._copy_files, pathlib.Path(cfg.root_dir)
-                    )
-
-                if not self._dry_run:
-                    image_cache = await build_images.aio(parent_env)
-                else:
-                    image_cache = None
-
-                if self._interactive_mode:
-                    code_bundle = await build_pkl_bundle(
-                        obj,
-                        upload_to_controlplane=not self._dry_run,
-                        copy_bundle_to=self._copy_bundle_to,
-                    )
-                elif self._copy_files == "custom":
-                    if not self._bundle_relative_paths or not self._bundle_from_dir:
-                        raise ValueError("copy_style='custom' requires _bundle_relative_paths and _bundle_from_dir")
-                    code_bundle = await build_code_bundle_from_relative_paths(
-                        self._bundle_relative_paths,
-                        from_dir=self._bundle_from_dir,
-                        dryrun=self._dry_run,
-                        copy_bundle_to=self._copy_bundle_to,
-                    )
-                elif self._copy_files != "none":
-                    code_bundle = await build_code_bundle(
-                        from_dir=cfg.root_dir,
-                        dryrun=self._dry_run,
-                        copy_bundle_to=self._copy_bundle_to,
-                        copy_style=self._copy_files,
-                    )
-                else:
-                    code_bundle = None
-            if not self._disable_run_cache:
-                _RUN_CACHE[_CacheKey(obj_id=id(obj), dry_run=self._dry_run)] = _CacheValue(
-                    code_bundle=code_bundle, image_cache=image_cache
+            if isinstance(parent_env.image, Image):
+                parent_env.image = resolve_code_bundle_layer(
+                    parent_env.image, self._copy_files, pathlib.Path(cfg.root_dir)
                 )
+
+            if not self._dry_run:
+                image_cache = await build_images.aio(parent_env)
+            else:
+                image_cache = None
+
+            skip_cache = self._disable_run_cache
+            if self._interactive_mode:
+                code_bundle = await build_pkl_bundle(
+                    obj,
+                    upload_to_controlplane=not self._dry_run,
+                    copy_bundle_to=self._copy_bundle_to,
+                )
+            elif self._copy_files == "custom":
+                if not self._bundle_relative_paths or not self._bundle_from_dir:
+                    raise ValueError("copy_style='custom' requires _bundle_relative_paths and _bundle_from_dir")
+                code_bundle = await build_code_bundle_from_relative_paths(
+                    self._bundle_relative_paths,
+                    from_dir=self._bundle_from_dir,
+                    dryrun=self._dry_run,
+                    copy_bundle_to=self._copy_bundle_to,
+                    skip_cache=skip_cache,
+                )
+            elif self._copy_files != "none":
+                code_bundle = await build_code_bundle(
+                    from_dir=cfg.root_dir,
+                    dryrun=self._dry_run,
+                    copy_bundle_to=self._copy_bundle_to,
+                    copy_style=self._copy_files,
+                    skip_cache=skip_cache,
+                )
+            else:
+                code_bundle = None
 
             version = self._version or (
                 code_bundle.computed_version if code_bundle and code_bundle.computed_version else None
