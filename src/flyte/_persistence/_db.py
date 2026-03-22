@@ -15,10 +15,41 @@ from flyte.config import auto
 DEFAULT_CACHE_DIR = "~/.flyte"
 CACHE_LOCATION = "local-cache/cache.db"
 
+
+def _cache_scope() -> str:
+    """Return a stable string identifying the current endpoint+project+domain.
+
+    Used to scope image/bundle cache entries so that different environments
+    don't collide.
+    """
+    config = auto()
+    endpoint = config.platform.endpoint or ""
+    project = config.task.project or ""
+    domain = config.task.domain or ""
+    return f"{endpoint}:{project}:{domain}"
+
+
 _TASK_CACHE_DDL = """
 CREATE TABLE IF NOT EXISTS task_cache (
     key TEXT PRIMARY KEY,
     value BLOB
+)
+"""
+
+_IMAGE_CACHE_DDL = """
+CREATE TABLE IF NOT EXISTS image_cache (
+    key TEXT PRIMARY KEY,
+    image_uri TEXT NOT NULL,
+    created_at REAL NOT NULL
+)
+"""
+
+_BUNDLE_CACHE_DDL = """
+CREATE TABLE IF NOT EXISTS bundle_cache (
+    digest TEXT PRIMARY KEY,
+    hash_digest TEXT NOT NULL,
+    remote_path TEXT NOT NULL,
+    created_at REAL NOT NULL
 )
 """
 
@@ -48,6 +79,8 @@ CREATE TABLE IF NOT EXISTS runs (
 )
 """
 
+
+_ALL_TABLE_DDLS = [_TASK_CACHE_DDL, _RUNS_DDL, _IMAGE_CACHE_DDL, _BUNDLE_CACHE_DDL]
 
 _RUNS_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_runs_action_start ON runs (action_name, start_time)",
@@ -114,16 +147,16 @@ class LocalDB:
     async def _initialize_async():
         db_path = LocalDB._get_db_path()
         conn = await aiosqlite.connect(db_path)
-        await conn.execute(_TASK_CACHE_DDL)
-        await conn.execute(_RUNS_DDL)
+        for ddl in _ALL_TABLE_DDLS:
+            await conn.execute(ddl)
         for idx_stmt in _RUNS_INDEXES:
             await conn.execute(idx_stmt)
         await conn.commit()
         LocalDB._conn = conn
         # Also open a sync connection for sync callers
         sync_conn = sqlite3.connect(db_path, check_same_thread=False)
-        sync_conn.execute(_TASK_CACHE_DDL)
-        sync_conn.execute(_RUNS_DDL)
+        for ddl in _ALL_TABLE_DDLS:
+            sync_conn.execute(ddl)
         _migrate_sync(sync_conn)
         LocalDB._conn_sync = sync_conn
         LocalDB._initialized = True
@@ -140,8 +173,8 @@ class LocalDB:
     def _initialize_sync_inner():
         db_path = LocalDB._get_db_path()
         conn = sqlite3.connect(db_path, check_same_thread=False)
-        conn.execute(_TASK_CACHE_DDL)
-        conn.execute(_RUNS_DDL)
+        for ddl in _ALL_TABLE_DDLS:
+            conn.execute(ddl)
         _migrate_sync(conn)
         LocalDB._conn_sync = conn
         LocalDB._initialized = True
