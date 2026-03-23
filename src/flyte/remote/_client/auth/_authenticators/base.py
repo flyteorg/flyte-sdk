@@ -17,8 +17,6 @@ class AuthHeaders:
     headers: dict[str, str]
 
 
-# Backward-compat alias (will be removed when gRPC interceptors are replaced)
-GrpcAuthMetadata = AuthHeaders
 
 
 class Authenticator(object):
@@ -146,21 +144,6 @@ class Authenticator(object):
                 headers={header_key: f"Bearer {creds.access_token}"},
             )
         return None
-
-    async def get_grpc_call_auth_metadata(self):
-        """
-        Temporary backward-compat wrapper for gRPC interceptors.
-        Will be removed once gRPC interceptors are replaced with ConnectRPC.
-        """
-        from grpc.aio import Metadata as GrpcMetadata
-
-        auth_headers = await self.get_auth_headers()
-        if auth_headers is None:
-            return None
-        return GrpcAuthMetadata(
-            creds_id=auth_headers.creds_id,
-            headers=dict(GrpcMetadata(*auth_headers.headers.items())),
-        )
 
     async def refresh_credentials(self, creds_id: str | None = None):
         """

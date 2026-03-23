@@ -11,6 +11,7 @@ dependencies = [
     "cloudpickle>=3.1.1",
     "docstring_parser>=0.16",
     "fsspec>=2025.3.0",
+    "connectrpc>=0.9.0",
     "grpcio>=1.71.0",
     "obstore>=0.7.3",
     "protobuf>=6.30.1",

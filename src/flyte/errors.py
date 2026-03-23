@@ -10,9 +10,9 @@ from typing import Literal
 ErrorKind = Literal["system", "unknown", "user"]
 
 
-def silence_grpc_polling_error(loop, context):
+def silence_polling_error(loop, context):
     """
-    Suppress specific gRPC polling errors in the event loop.
+    Suppress specific polling errors in the event loop.
     """
     exc = context.get("exception")
     if isinstance(exc, BlockingIOError):

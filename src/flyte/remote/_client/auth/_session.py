@@ -53,8 +53,7 @@ async def create_session(
     """
     Creates a SessionConfig with endpoint, interceptors, and HTTP client for ConnectRPC.
 
-    This replaces create_channel() for the ConnectRPC migration. Instead of returning a
-    grpc.aio.Channel, it returns a SessionConfig namedtuple that can be used to construct
+    This returns a SessionConfig namedtuple that can be used to construct
     ConnectRPC service clients.
 
     :param endpoint: The endpoint URL for the service

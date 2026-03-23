@@ -165,7 +165,7 @@ def main(
     # Run both coroutines concurrently and wait for first to finish and cancel the other
     async def _run_and_stop():
         loop = asyncio.get_event_loop()
-        loop.set_exception_handler(flyte.errors.silence_grpc_polling_error)
+        loop.set_exception_handler(flyte.errors.silence_polling_error)
         try:
             await utils.run_coros(controller_failure, task_coroutine)
             await controller.stop()

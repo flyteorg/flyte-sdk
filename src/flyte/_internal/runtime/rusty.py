@@ -81,7 +81,7 @@ async def create_controller(
     from flyte._initialize import init_in_cluster
 
     loop = asyncio.get_event_loop()
-    loop.set_exception_handler(flyte.errors.silence_grpc_polling_error)
+    loop.set_exception_handler(flyte.errors.silence_polling_error)
 
     # TODO Currently remote tasks are not supported in Rusty.
     controller_kwargs = await init_in_cluster.aio(api_key=api_key, endpoint=endpoint, insecure=insecure)
