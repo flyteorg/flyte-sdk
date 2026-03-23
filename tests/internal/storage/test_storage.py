@@ -139,6 +139,46 @@ async def test_storage_exists():
     assert not await storage.exists("/non-existent/test")
 
 
+@pytest.mark.sandbox
+@pytest.mark.asyncio
+async def test_get_underlying_filesystem_upload_download(tmp_path, ctx_with_test_local_s3_stack_raw_data_path):
+    """
+    Sandbox integration test that uses get_underlying_filesystem with the sandbox S3
+    (LocalStack) to upload and download a file.
+    """
+    from flyte.storage import S3
+
+    await flyte.init.aio(storage=S3.for_sandbox())
+
+    # Create a local file with known content
+    original_content = b"hello from sandbox integration test"
+    local_file = tmp_path / "upload_me.txt"
+    local_file.write_bytes(original_content)
+
+    # Upload the file to sandbox S3 via storage.put
+    s3_path = "s3://bucket/tests/default_upload/upload_me.txt"
+    await storage.put(str(local_file), s3_path)
+
+    # Use get_underlying_filesystem to verify the file exists on S3
+    fs = storage.get_underlying_filesystem(path=s3_path)
+    assert fs.exists(s3_path)
+
+    # Download the file back using get_underlying_filesystem
+    downloaded_file = tmp_path / "downloaded.txt"
+    fs.get(s3_path, str(downloaded_file))
+
+    # Verify the downloaded content matches the original
+    assert downloaded_file.read_bytes() == original_content
+
+    # Also upload via the filesystem directly and read back with storage.get
+    s3_path_2 = "s3://bucket/tests/default_upload/fs_uploaded.txt"
+    fs.put(str(local_file), s3_path_2)
+
+    downloaded_file_2 = tmp_path / "downloaded_2.txt"
+    await storage.get(s3_path_2, str(downloaded_file_2))
+    assert downloaded_file_2.exists()
+
+
 @pytest.mark.parametrize(
     "path,expected",
     [

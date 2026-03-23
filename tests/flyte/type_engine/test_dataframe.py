@@ -85,8 +85,10 @@ async def test_aio_running(ctx_with_test_raw_data_path):
 
     # this should be an empty string format
     flyte_interface = task_serde.transform_native_to_typed_interface(t1.native_interface)
-    assert flyte_interface.outputs.variables["o0"].type.structured_dataset_type.format == ""
-    assert flyte_interface.inputs.variables["a"].type.structured_dataset_type.format == ""
+    outputs_dict = {entry.key: entry.value for entry in flyte_interface.outputs.variables}
+    inputs_dict = {entry.key: entry.value for entry in flyte_interface.inputs.variables}
+    assert outputs_dict["o0"].type.structured_dataset_type.format == ""
+    assert inputs_dict["a"].type.structured_dataset_type.format == ""
 
 
 @pytest.mark.asyncio

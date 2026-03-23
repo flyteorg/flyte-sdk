@@ -35,6 +35,7 @@ env = flyte.TaskEnvironment(
         registry="ghcr.io/flyteorg",
         platform=("linux/amd64", "linux/arm64"),
         python_version=(3, 13),
+        pre=True,
     ).with_apt_packages("ca-certificates"),
 )
 

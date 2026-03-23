@@ -8,6 +8,7 @@ import typing
 from datetime import timedelta
 from typing import Optional, cast
 
+from flyteidl2.common import identifier_pb2 as common_identifier_pb2
 from flyteidl2.core import identifier_pb2, literals_pb2, security_pb2, tasks_pb2
 from flyteidl2.core.execution_pb2 import TaskLog
 from flyteidl2.task import common_pb2, environment_pb2, task_definition_pb2
@@ -135,17 +136,16 @@ def get_proto_task(
         extra_config[_PRIMARY_CONTAINER_NAME_FIELD] = task.pod_template.primary_container_name
     elif sql is None:
         container = _get_urun_container(serialize_context, task)
-
     log_links = []
     if task.links and task_context:
         action = task_context.action
         for link in task.links:
             uri = link.get_link(
-                run_name=action.run_name if action.run_name else "",
-                project=action.project if action.project else "",
-                domain=action.domain if action.domain else "",
-                context=task_context.custom_context if task_context.custom_context else {},
-                parent_action_name=action.name if action.name else "",
+                run_name=action.run_name or "",
+                project=action.project or "",
+                domain=action.domain or "",
+                context=task_context.custom_context or {},
+                parent_action_name=action.name or "",
                 action_name="{{.actionName}}",
                 pod_name="{{.podName}}",
             )
@@ -174,6 +174,16 @@ def get_proto_task(
     else:
         logger.debug(f"Cache disabled for task {task.name}")
 
+    image_build_run = None
+    if serialize_context.image_cache and task.parent_env_name in serialize_context.image_cache.build_run_ids:
+        run_id_data = serialize_context.image_cache.build_run_ids[task.parent_env_name]
+        image_build_run = common_identifier_pb2.RunIdentifier(
+            org=run_id_data.org,
+            project=run_id_data.project,
+            domain=run_id_data.domain,
+            name=run_id_data.name,
+        )
+
     task_template = tasks_pb2.TaskTemplate(
         id=task_id,
         type=task.task_type,
@@ -192,8 +202,9 @@ def get_proto_task(
             pod_template_name=(task.pod_template if task.pod_template and isinstance(task.pod_template, str) else None),
             interruptible=task.interruptible,
             generates_deck=wrappers_pb2.BoolValue(value=task.report),
-            debuggable=task.debuggable,
+            debuggable=task.debuggable if task.reusable is None else False,
             log_links=log_links,
+            image_build_run=image_build_run,
         ),
         interface=transform_native_to_typed_interface(task.native_interface),
         custom=custom if len(custom) > 0 else None,
@@ -227,7 +238,7 @@ def lookup_image_in_cache(serialize_context: SerializationContext, env_name: str
     if serialize_context.image_cache and env_name in serialize_context.image_cache.image_lookup:
         return serialize_context.image_cache.image_lookup[env_name]
 
-    if not serialize_context.image_cache or len(image._layers) == 0:
+    if image._ref_name is None and (not serialize_context.image_cache or len(image._layers) == 0):
         # This computes the image uri, computing hashes as necessary so can fail if done remotely.
         return image.uri
 
@@ -274,6 +285,9 @@ def _get_urun_container(
 
     img_uri = lookup_image_in_cache(serialize_context, env_name, img) if img else None
 
+    config_dict = task_template.config(serialize_context)
+    config = [literals_pb2.KeyValuePair(key=k, value=v) for k, v in config_dict.items()] if config_dict else None
+
     return tasks_pb2.Container(
         image=img_uri,
         command=[],
@@ -281,7 +295,7 @@ def _get_urun_container(
         resources=resources,
         env=env,
         data_config=task_template.data_loading_config(serialize_context),
-        config=task_template.config(serialize_context),
+        config=config,
     )
 
 

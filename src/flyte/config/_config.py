@@ -13,7 +13,7 @@ from flyte._logging import logger
 from flyte.config import _internal
 from flyte.config._reader import ConfigFile, get_config_file, read_file_if_exists
 
-_all__ = ["ConfigFile", "PlatformConfig", "TaskConfig", "ImageConfig"]
+__all__ = ["ConfigFile", "ImageConfig", "PlatformConfig", "TaskConfig"]
 
 if TYPE_CHECKING:
     from flyte.remote._client.auth import AuthType
@@ -166,6 +166,21 @@ class ImageConfig(object):
 
 @rich.repr.auto
 @dataclass(init=True, repr=True, eq=True, frozen=True)
+class LocalConfig(object):
+    """Configuration for local execution settings."""
+
+    persistence: bool = False
+
+    @classmethod
+    def auto(cls, config_file: typing.Optional[typing.Union[str, ConfigFile]] = None) -> "LocalConfig":
+        config_file = get_config_file(config_file)
+        kwargs: typing.Dict[str, typing.Any] = {}
+        kwargs = set_if_exists(kwargs, "persistence", _internal.Local.PERSISTENCE.read(config_file))
+        return LocalConfig(**kwargs)
+
+
+@rich.repr.auto
+@dataclass(init=True, repr=True, eq=True, frozen=True)
 class Config(object):
     """
     This the parent configuration object and holds all the underlying configuration object types. An instance of
@@ -179,6 +194,7 @@ class Config(object):
     platform: PlatformConfig = field(default=PlatformConfig())
     task: TaskConfig = field(default=TaskConfig())
     image: ImageConfig = field(default=ImageConfig())
+    local: LocalConfig = field(default=LocalConfig())
     source: pathlib.Path | None = None
 
     def with_params(
@@ -191,6 +207,8 @@ class Config(object):
             platform=platform or self.platform,
             task=task or self.task,
             image=image or self.image,
+            local=self.local,
+            source=self.source,
         )
 
     @classmethod
@@ -212,13 +230,14 @@ class Config(object):
             platform=PlatformConfig.auto(config_file),
             task=TaskConfig.auto(config_file),
             image=ImageConfig.auto(config_file),
+            local=LocalConfig.auto(config_file),
             source=config_file.path,
         )
 
 
 def set_if_exists(d: dict, k: str, val: typing.Any) -> dict:
     """
-    Given a dict ``d`` sets the key ``k`` with value of config ``v``, if the config value ``v`` is set
+    Given a dict `d` sets the key `k` with value of config `v`, if the config value `v` is set
     and return the updated dictionary.
     """
     exists = isinstance(val, bool) or bool(val is not None and val)

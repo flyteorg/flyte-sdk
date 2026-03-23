@@ -1,8 +1,9 @@
 import datetime
+import functools
+import json
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
-from async_lru import alru_cache
 from flyte import logger
 from flyte.connectors import (
     AsyncConnector,
@@ -40,12 +41,13 @@ class BigQueryMetadata(ResourceMeta):
     user_agent: str
 
 
-@alru_cache
-async def _get_bigquery_client(
+@functools.lru_cache
+def _get_bigquery_client(
     project: str, location: str, user_agent: str, google_application_credentials: str
 ) -> bigquery.Client:
     if google_application_credentials is not None:
-        credentials = service_account.Credentials.from_service_account_info(google_application_credentials)
+        info = json.loads(google_application_credentials)
+        credentials = service_account.Credentials.from_service_account_info(info)
     else:
         credentials = None
     cinfo = ClientInfo(user_agent=user_agent)
@@ -67,8 +69,8 @@ class BigQueryConnector(AsyncConnector):
         job_config = None
         if inputs:
             python_interface_inputs = {
-                name: TypeEngine.guess_python_type(lt.type)
-                for name, lt in task_template.interface.inputs.variables.items()
+                variable.key: TypeEngine.guess_python_type(variable.value.type)
+                for variable in task_template.interface.inputs.variables
             }
             job_config = bigquery.QueryJobConfig(
                 query_parameters=[
@@ -86,7 +88,7 @@ class BigQueryConnector(AsyncConnector):
         project = custom["ProjectID"]
         location = custom["Location"]
 
-        client = await _get_bigquery_client(
+        client = _get_bigquery_client(
             project=project,
             location=location,
             user_agent=user_agent,
@@ -99,7 +101,7 @@ class BigQueryConnector(AsyncConnector):
     async def get(
         self, resource_meta: BigQueryMetadata, google_application_credentials: Optional[str] = None, **kwargs
     ) -> Resource:
-        client = await _get_bigquery_client(
+        client = _get_bigquery_client(
             project=resource_meta.project,
             location=resource_meta.location,
             user_agent=resource_meta.user_agent,
@@ -131,7 +133,7 @@ class BigQueryConnector(AsyncConnector):
     async def delete(
         self, resource_meta: BigQueryMetadata, google_application_credentials: Optional[str] = None, **kwargs
     ):
-        client = await _get_bigquery_client(
+        client = _get_bigquery_client(
             project=resource_meta.project,
             location=resource_meta.location,
             user_agent=resource_meta.user_agent,

@@ -17,6 +17,7 @@ from ._plugins import discover_and_register_plugins
 from ._prefetch import prefetch
 from ._run import run
 from ._serve import serve
+from ._start import start
 from ._update import update
 from ._user import whoami
 
@@ -209,7 +210,9 @@ def main(
 
     log_level = _verbosity_to_loglevel(verbose)
     if log_level is not None or log_format != "console" or reset_root_logger:
-        initialize_logger(log_level=log_level, log_format=log_format, reset_root_logger=reset_root_logger)
+        initialize_logger(
+            log_level=log_level, log_format=log_format, enable_rich=True, reset_root_logger=reset_root_logger
+        )
 
     cfg = config.auto(config_file=config_file)
     if cfg.source:
@@ -228,6 +231,10 @@ def main(
         output_format=output_format,
     )
 
+    from flyte._status import set_output_mode
+
+    set_output_mode("rich" if output_format == "table" else "plain")
+
 
 main.add_command(run)
 main.add_command(deploy)
@@ -240,6 +247,7 @@ main.add_command(build)
 main.add_command(whoami)  # type: ignore
 main.add_command(update)  # type: ignore
 main.add_command(serve)  # type: ignore
+main.add_command(start)  # type: ignore
 main.add_command(prefetch)  # type: ignore
 
 # Discover and register CLI plugins from installed packages

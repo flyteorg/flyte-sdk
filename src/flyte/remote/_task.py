@@ -254,7 +254,7 @@ class TaskDetails(ToJSONMixin):
 
         return flyte.Cache(
             behavior=behavior,
-            version_override=metadata.discovery_version if metadata.discovery_version else None,
+            version_override=metadata.discovery_version or None,
             serialize=metadata.cache_serializable,
             ignored_inputs=tuple(metadata.cache_ignore_input_vars),
         )
@@ -353,7 +353,7 @@ class TaskDetails(ToJSONMixin):
         pb2.CopyFrom(self.pb2)
 
         if short_name:
-            pb2.metadata.short_name = short_name
+            pb2.spec.short_name = short_name
 
         template = pb2.spec.task_template
         if secrets:

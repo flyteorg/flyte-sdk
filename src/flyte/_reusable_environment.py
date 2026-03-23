@@ -8,24 +8,47 @@ from flyte._logging import logger
 @dataclass
 class ReusePolicy:
     """
-    ReusePolicy can be used to configure a task to reuse the environment. This is useful when the environment creation
-    is expensive and the runtime of the task is short. The environment will be reused for the next invocation of the
-    task, even the python process maybe be reused by subsequent task invocations. A good mental model is to think of
-    the environment as a container that is reused for multiple tasks, more like a long-running service.
+    Configure a task environment for container reuse across multiple task invocations.
 
-    Caution: It is important to note that the environment is shared, so managing memory and resources is important.
+    When environment creation is expensive relative to task runtime, reusable containers
+    keep a pool of warm containers ready, avoiding cold-start overhead. The Python process
+    may be reused by subsequent task invocations.
 
-    :param replicas: Either a single int representing number of replicas or a tuple of two ints representing
-     the min and max.
-    :param idle_ttl: The maximum idle duration for an environment, specified as either seconds (int) or a
-        timedelta, after which all replicas in the environment are shutdown.
-        When a replica remains idle — meaning no tasks are running — for this duration, it will be automatically
-        terminated, also referred to as environment idle timeout.
-    :param concurrency: The maximum number of tasks that can run concurrently in one instance of the environment.
-          Concurrency of greater than 1 is only supported for `async` tasks.
-    :param scaledown_ttl: The minimum time to wait before scaling down each replica, specified as either seconds (int)
-        or a timedelta. This is useful to prevent rapid scaling down of replicas when tasks are running
-        frequently. If not set, the default is configured in the backend.
+    Total concurrent capacity is `max_replicas * concurrency`. For example,
+    `ReusePolicy(replicas=(1, 3), concurrency=2)` supports up to 6 concurrent tasks.
+
+    Caution: The environment is shared across invocations — manage memory and resources carefully.
+
+    Example:
+
+    ```python
+    env = flyte.TaskEnvironment(
+        name="fast_env",
+        reusable=flyte.ReusePolicy(replicas=(1, 3), concurrency=2),
+    )
+    ```
+
+    :param replicas: Number of container replicas to maintain.
+
+        - `int`: Fixed replica count, always running (e.g., `replicas=3`).
+        - `tuple(min, max)`: Auto-scaling range (e.g., `replicas=(1, 5)`).
+          Scales between min and max based on demand.
+
+        Default is `2`. A minimum of 2 replicas is recommended to avoid starvation
+        when the parent task occupies one replica.
+
+    :param idle_ttl: Environment-level idle timeout — shuts down **all** replicas when the
+        entire environment has been idle for this duration. Specified as seconds (`int`)
+        or `timedelta`. Minimum 30 seconds. Default is 30 seconds.
+    :param concurrency: Maximum concurrent tasks per replica. Values greater than 1 are
+        only supported for `async` tasks. Default is `1`.
+    :param scaledown_ttl: Per-replica scale-down delay — minimum time to wait before
+        removing an **individual** idle replica. Prevents rapid scale-down when tasks
+        arrive in bursts. Specified as seconds (`int`) or `timedelta`. Default is
+        30 seconds.
+
+        Note the distinction: `idle_ttl` controls when the whole environment shuts down;
+        `scaledown_ttl` controls when individual replicas are removed during auto-scaling.
     """
 
     replicas: Union[int, Tuple[int, int]] = 2

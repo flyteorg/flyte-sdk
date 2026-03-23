@@ -1,4 +1,5 @@
 import asyncio
+import datetime as dt
 import os
 from typing import Tuple, Union
 
@@ -7,8 +8,10 @@ from rich.pretty import pretty_repr
 
 import flyte.remote as remote
 from flyte.models import ActionPhase
+from flyte.remote._common import TimeFilter
 
 from . import _common as common
+from . import _params
 
 
 @click.group(name="get")
@@ -36,10 +39,14 @@ def get():
 
 @get.command()
 @click.argument("name", type=str, required=False)
+@click.option("--archived", is_flag=True, default=False, help="Show archived projects instead of active ones.")
 @click.pass_obj
-def project(cfg: common.CLIConfig, name: str | None = None):
+def project(cfg: common.CLIConfig, name: str | None = None, archived: bool = False):
     """
     Get a list of all projects, or details of a specific project by name.
+
+    By default, only active (unarchived) projects are shown. Use `--archived` to
+    show archived projects instead.
     """
     cfg.init()
 
@@ -47,7 +54,7 @@ def project(cfg: common.CLIConfig, name: str | None = None):
     if name:
         console.print(pretty_repr(remote.Project.get(name)))
     else:
-        console.print(common.format("Projects", remote.Project.listall(), cfg.output_format))
+        console.print(common.format("Projects", remote.Project.listall(archived=archived), cfg.output_format))
     os._exit(0)
 
 
@@ -62,6 +69,24 @@ def project(cfg: common.CLIConfig, name: str | None = None):
 @click.option("--only-mine", is_flag=True, default=False, help="Show only runs created by the current user (you).")
 @click.option("--task-name", type=str, default=None, help="Filter runs by task name.")
 @click.option("--task-version", type=str, default=None, help="Filter runs by task version.")
+@click.option(
+    "--created-after",
+    type=_params.DateTimeType(),
+    default=None,
+    help="Show runs created at or after this datetime (UTC). Accepts ISO dates, 'now', 'today', or 'now - 1 day'.",
+)
+@click.option(
+    "--created-before", type=_params.DateTimeType(), default=None, help="Show runs created before this datetime (UTC)."
+)
+@click.option(
+    "--updated-after",
+    type=_params.DateTimeType(),
+    default=None,
+    help="Show runs updated at or after this datetime (UTC). Accepts ISO dates, 'now', 'today', or 'now - 1 day'.",
+)
+@click.option(
+    "--updated-before", type=_params.DateTimeType(), default=None, help="Show runs updated before this datetime (UTC)."
+)
 @click.pass_obj
 def run(
     cfg: common.CLIConfig,
@@ -73,6 +98,10 @@ def run(
     only_mine: bool = False,
     task_name: str | None = None,
     task_version: str | None = None,
+    created_after: dt.datetime | None = None,
+    created_before: dt.datetime | None = None,
+    updated_after: dt.datetime | None = None,
+    updated_before: dt.datetime | None = None,
 ):
     """
     Get a list of all runs, or details of a specific run by name.
@@ -104,6 +133,20 @@ def run(
             usr = remote.User.get()
             subject = usr.subject()
 
+        def _utc(d: dt.datetime | None) -> dt.datetime | None:
+            return d.replace(tzinfo=dt.timezone.utc) if d is not None and d.tzinfo is None else d
+
+        created_at = (
+            TimeFilter(after=_utc(created_after), before=_utc(created_before))
+            if created_after or created_before
+            else None
+        )
+        updated_at = (
+            TimeFilter(after=_utc(updated_after), before=_utc(updated_before))
+            if updated_after or updated_before
+            else None
+        )
+
         console.print(
             common.format(
                 "Runs",
@@ -113,6 +156,8 @@ def run(
                     created_by_subject=subject,
                     task_name=task_name,
                     task_version=task_version,
+                    created_at=created_at,
+                    updated_at=updated_at,
                 ),
                 cfg.output_format,
             )

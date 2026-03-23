@@ -223,7 +223,6 @@ async def get(from_path: str, to_path: Optional[str | pathlib.Path] = None, recu
         _is_obstore_supported_protocol(file_system.protocol)
         and hasattr(file_system, "_split_path")
         and hasattr(file_system, "_construct_store")
-        and recursive
     ):
         return await _get_obstore_bypass(from_path, to_path, recursive, **kwargs)
 
@@ -306,7 +305,12 @@ async def _open_obstore_bypass(path: str, mode: str = "rb", **kwargs) -> AsyncRe
 
     if "w" in mode:
         attributes = kwargs.pop("attributes", {})
-        file_handle = obstore.open_writer_async(store, file_path, attributes=attributes)
+        buffer_size = 10 * 2**20
+        if "buffer_size" in kwargs:
+            buffer_size = kwargs.pop("buffer_size")
+        if "chunk_size" in kwargs:
+            buffer_size = kwargs.pop("chunk_size")
+        file_handle = obstore.open_writer_async(store, file_path, attributes=attributes, buffer_size=buffer_size)
     else:  # read mode
         buffer_size = kwargs.pop("buffer_size", 10 * 2**20)
         file_handle = await obstore.open_reader_async(store, file_path, buffer_size=buffer_size)

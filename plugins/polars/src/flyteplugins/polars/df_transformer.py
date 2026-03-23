@@ -170,12 +170,11 @@ class PolarsLazyFrameToParquetEncodingHandler(DataFrameEncoder):
 
         if not storage.is_remote(uri):
             Path(uri).mkdir(parents=True, exist_ok=True)
-        path = f"{os.path.join(uri, f'{0:05}')}.parquet"
+        path = os.path.join(uri, f"{0:05}.parquet")
         lazy_df = typing.cast(pl.LazyFrame, dataframe.val)
 
         # Use sink_parquet for efficient lazy writing
-        filesystem = storage.get_underlying_filesystem(path=uri)
-        path = path + filesystem.sep
+        filesystem = storage.get_underlying_filesystem(path=path)
         storage_options = get_polars_storage_options(protocol=filesystem.protocol)
 
         # TODO: support partitioning, which will entail user-defined behavior

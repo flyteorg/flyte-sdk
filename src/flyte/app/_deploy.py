@@ -9,6 +9,7 @@ from flyte import Image
 from flyte._code_bundle.bundle import build_code_bundle_from_relative_paths
 from flyte._initialize import ensure_client
 from flyte._logging import logger
+from flyte._status import status
 from flyte.models import SerializationContext
 
 from ._app_environment import AppEnvironment
@@ -87,13 +88,24 @@ async def _deploy_app(
         # Only bundle when not pickling. If this is a pkl bundle, assume that
         # the AppEnvironment has a server function that will be used to serve
         # the app. This function should contain all of the code needed to serve the app.
-        app_file = Path(app._app_filename)
-        app_root_dir = app_file.parent
+        app_dir = Path(app._app_filename).parent
+        bundle_root = serialization_context.root_dir or app_dir
+
+        # Resolve include paths to absolute paths relative to the app script's
+        # directory, so that relative patterns like "../temp.py" are
+        # anchored correctly before being made relative to bundle_root.
+        resolved_includes = [
+            str((app_dir / inc).resolve()) if not Path(inc).is_absolute() else inc for inc in app.include
+        ]
+
         _preexisting_code_bundle_files = []
         if serialization_context.code_bundle is not None:
             _preexisting_code_bundle_files = serialization_context.code_bundle.files or []
-        files = (*_preexisting_code_bundle_files, *[f for f in app.include if f not in _preexisting_code_bundle_files])
-        code_bundle = await build_code_bundle_from_relative_paths(files, from_dir=app_root_dir)
+        files = (
+            *_preexisting_code_bundle_files,
+            *[f for f in resolved_includes if f not in _preexisting_code_bundle_files],
+        )
+        code_bundle = await build_code_bundle_from_relative_paths(files, from_dir=bundle_root)
         serialization_context.code_bundle = code_bundle
 
     if serialization_context.code_bundle and serialization_context.code_bundle.pkl:
@@ -102,25 +114,39 @@ async def _deploy_app(
             "server function."
         )
 
-    image_uri = app.image.uri if isinstance(app.image, Image) else app.image
+    image_uri_for_log = app.image.uri if isinstance(app.image, Image) else app.image
     try:
         app_idl = await translate_app_env_to_idl.aio(
             app, serialization_context, parameter_overrides=parameter_overrides
         )
 
+        # When we have an image cache (e.g. from build_images in serve), use the built image
+        # so deploy uses the correct registry (e.g. ECR) instead of the env's default (e.g. ghcr.io).
+        if (
+            serialization_context.image_cache
+            and app.name in serialization_context.image_cache.image_lookup
+            and app_idl.spec.HasField("container")
+        ):
+            app_idl.spec.container.image = serialization_context.image_cache.image_lookup[app.name]
+
         if dryrun:
             return app_idl
         ensure_client()
-        msg = f"Deploying app {app.name}, with image {image_uri} version {serialization_context.version}"
+        resolved_image = app_idl.spec.container.image if app_idl.spec.HasField("container") else image_uri_for_log
+        msg = f"Deploying app {app.name}, with image {resolved_image} version {serialization_context.version}"
         if app_idl.spec.HasField("container") and app_idl.spec.container.args:
             msg += f" with args {app_idl.spec.container.args}"
-        logger.info(msg)
+        status.step(msg)
 
         return await App.create.aio(app_idl)
     except Exception as exc:
-        logger.error(f"Failed to deploy app {app.name} with image {image_uri}: {exc}")
+        try:
+            resolved_image = app_idl.spec.container.image if app_idl.spec.HasField("container") else image_uri_for_log
+        except NameError:
+            resolved_image = image_uri_for_log
+        logger.error(f"Failed to deploy app {app.name} with image {resolved_image}: {exc}")
         raise flyte.errors.DeploymentError(
-            f"Failed to deploy app {app.name} with image {image_uri}, Error: {exc!s}"
+            f"Failed to deploy app {app.name} with image {resolved_image}, Error: {exc!s}"
         ) from exc
 
 

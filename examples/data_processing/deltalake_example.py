@@ -60,7 +60,7 @@ processing_env = flyte.TaskEnvironment(
         idle_ttl=300,  # Keep workers alive for 5 minutes after idle
     ),
     image=image,
-    cache=flyte.Cache("auto", "1.1"),
+    cache=flyte.Cache("auto", "1.2"),
 )
 
 # Non-reusable environment for orchestration tasks

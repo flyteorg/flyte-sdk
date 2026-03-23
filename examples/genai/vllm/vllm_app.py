@@ -49,7 +49,7 @@ vllm_app = VLLMAppEnvironment(
     name="qwen3-0-6b-vllm",
     model_hf_path="Qwen/Qwen3-0.6B",
     model_id="qwen3-0.6b",
-    resources=flyte.Resources(cpu="4", memory="16Gi", gpu="V100:1", disk="10Gi"),
+    resources=flyte.Resources(cpu="4", memory="16Gi", gpu="L40s:1", disk="10Gi"),
     image=(
         flyte.Image.from_debian_base(
             name="vllm-app-image",
@@ -57,6 +57,7 @@ vllm_app = VLLMAppEnvironment(
         )
         .with_pip_packages("flashinfer-python", "flashinfer-cubin")
         .with_pip_packages("flashinfer-jit-cache", index_url="https://flashinfer.ai/whl/cu129")
+        .with_pip_packages("vllm==0.11.0", "transformers==4.57.6")
         .with_pip_packages("flyteplugins-vllm", pre=True)
     ),
     stream_model=True,  # Stream model directly from blob store to GPU
