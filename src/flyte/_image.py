@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Dict, List, Literal, Optional, Tuple, TypeVar, Union
 
 import rich.repr
+from packaging.version import Version
 
 if TYPE_CHECKING:
     from flyte import Secret, SecretRequest
@@ -504,6 +505,7 @@ class Image:
     platform: Tuple[Architecture, ...] = field(default=("linux/amd64",))
     python_version: Tuple[int, int] = field(default_factory=_detect_python_version)
     extendable: bool = field(default=False)
+    _is_flyte_default: bool = field(default=False)
     # Refer to the image_refs (name:image-uri) set in CLI or config
     _ref_name: Optional[str] = field(default=None)
 
@@ -562,7 +564,7 @@ class Image:
         from flyte._version import __version__
 
         dev_mode = (__version__ and "dev" in __version__) and not flyte_version and install_flyte
-        if install_flyte is False:
+        if not install_flyte:
             preset_tag = f"py{python_version[0]}.{python_version[1]}"
         else:
             if flyte_version is None:
@@ -596,7 +598,6 @@ class Image:
             }
         )
         image = image.with_apt_packages("build-essential", "ca-certificates")
-
         if install_flyte:
             if dev_mode:
                 if os.path.exists(DIST_FOLDER):
@@ -604,6 +605,8 @@ class Image:
             else:
                 flyte_version = typing.cast(str, flyte_version)
                 image = image.with_pip_packages(f"flyte=={flyte_version}")
+                if not Version(flyte_version).is_devrelease and not Version(flyte_version).is_prerelease:
+                    object.__setattr__(image, "_is_flyte_default", True)
         if not dev_mode:
             object.__setattr__(image, "_tag", preset_tag)
 
