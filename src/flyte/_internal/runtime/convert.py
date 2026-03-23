@@ -119,6 +119,15 @@ async def convert_from_native_to_inputs(
     custom_context: Dict[str, str] | None = None,
     **kwargs,
 ) -> Inputs:
+    return await _convert_from_native_to_inputs_impl(interface, args, custom_context, kwargs)
+
+
+async def _convert_from_native_to_inputs_impl(
+    interface: NativeInterface,
+    args: Tuple[Any, ...],
+    custom_context: Dict[str, str] | None,
+    kwargs: Dict[str, Any],
+) -> Inputs:
     kwargs = interface.convert_to_kwargs(*args, **kwargs)
 
     missing = [key for key in interface.required_inputs() if key not in kwargs]
