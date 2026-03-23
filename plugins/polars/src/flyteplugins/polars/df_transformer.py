@@ -109,7 +109,7 @@ class PolarsToParquetEncodingHandler(DataFrameEncoder):
 
         if not storage.is_remote(uri):
             Path(uri).mkdir(parents=True, exist_ok=True)
-        path = os.path.join(uri, f"{0:05}.parquet")
+        path = os.path.join(uri, f"{0:05}")
         df = typing.cast(pl.DataFrame, dataframe.val)
 
         # Polars requires flat string key-value storage options
@@ -137,7 +137,7 @@ class ParquetToPolarsDecodingHandler(DataFrameDecoder):
         if current_task_metadata.structured_dataset_type and current_task_metadata.structured_dataset_type.columns:
             columns = [c.name for c in current_task_metadata.structured_dataset_type.columns]
 
-        parquet_path = os.path.join(uri, f"{0:05}.parquet")
+        parquet_path = os.path.join(uri, f"{0:05}")
         filesystem = storage.get_underlying_filesystem(path=parquet_path)
         storage_options = get_polars_storage_options(protocol=filesystem.protocol)
         try:
