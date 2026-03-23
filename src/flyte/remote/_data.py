@@ -10,7 +10,8 @@ from pathlib import Path
 from typing import Tuple
 
 import aiofiles
-import grpc
+from connectrpc.code import Code
+from connectrpc.errors import ConnectError
 import httpx
 from flyteidl2.dataproxy import dataproxy_service_pb2
 from google.protobuf import duration_pb2
@@ -145,7 +146,7 @@ async def _upload_single_file(
         expires_in_pb = duration_pb2.Duration()
         expires_in_pb.FromTimedelta(_UPLOAD_EXPIRES_IN)
         client = get_client()
-        resp = await client.dataproxy_service.CreateUploadLocation(  # type: ignore
+        resp = await client.dataproxy_service.create_upload_location(  # type: ignore
             dataproxy_service_pb2.CreateUploadLocationRequest(
                 project=cfg.project,
                 domain=cfg.domain,
@@ -156,19 +157,19 @@ async def _upload_single_file(
                 add_content_md5_metadata=True,
             )
         )
-    except grpc.aio.AioRpcError as e:
-        if e.code() == grpc.StatusCode.NOT_FOUND:
+    except ConnectError as e:
+        if e.code == Code.NOT_FOUND:
             raise RuntimeSystemError(
-                "NotFound", f"Failed to get signed url for {fp}, please check your project and domain: {e.details()}"
+                "NotFound", f"Failed to get signed url for {fp}, please check your project and domain: {e.message}"
             )
-        elif e.code() == grpc.StatusCode.PERMISSION_DENIED:
+        elif e.code == Code.PERMISSION_DENIED:
             raise RuntimeSystemError(
-                "PermissionDenied", f"Failed to get signed url for {fp}, please check your permissions: {e.details()}"
+                "PermissionDenied", f"Failed to get signed url for {fp}, please check your permissions: {e.message}"
             )
-        elif e.code() == grpc.StatusCode.UNAVAILABLE:
+        elif e.code == Code.UNAVAILABLE:
             raise InitializationError("EndpointUnavailable", "user", "Service is unavailable.")
         else:
-            raise RuntimeSystemError(e.code().value, f"Failed to get signed url for {fp}: {e.details()}")
+            raise RuntimeSystemError(e.code.value, f"Failed to get signed url for {fp}: {e.message}")
     except Exception as e:
         raise RuntimeSystemError(type(e).__name__, f"Failed to get signed url for {fp}.") from e
     logger.debug(f"Uploading to [link={resp.signed_url}]signed url[/link] for [link=file://{fp}]{fp}[/link]")

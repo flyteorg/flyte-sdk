@@ -21,7 +21,7 @@ class TestDnsEndpointWithPkce(unittest.TestCase):
         # Mock the admin client and its ListProjects method
         mock_admin_client = mock.AsyncMock()
         mock_projects_response = project_service_pb2.Projects()
-        mock_admin_client.ListProjects.return_value = mock_projects_response
+        mock_admin_client.list_projects.return_value = mock_projects_response
 
         # Create a ClientSet with mocked internals
         with mock.patch.object(ClientSet, "_admin_client", mock_admin_client):
@@ -38,7 +38,7 @@ class TestDnsEndpointWithPkce(unittest.TestCase):
 
             # Call ListProjects and verify it works
             request = project_service_pb2.ProjectListRequest()
-            await client_set.project_domain_service.ListProjects(request)
+            await client_set.project_domain_service.list_projects(request)
 
             # Verify ListProjects was called
-            mock_admin_client.ListProjects.assert_called_once_with(request)
+            mock_admin_client.list_projects.assert_called_once_with(request)
