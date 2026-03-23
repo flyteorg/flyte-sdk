@@ -95,7 +95,7 @@ class DummyService(QueueService, StateService, ClientSet):
     def actions_service(self) -> ActionsService | None:
         return None
 
-    async def Watch(
+    async def watch(
         self, req: state_service_pb2.WatchRequest, **kwargs
     ) -> AsyncIterator[state_service_pb2.WatchResponse]:
         """Simulate watching for state updates."""
@@ -128,7 +128,7 @@ class DummyService(QueueService, StateService, ClientSet):
             sentinel = True
             await asyncio.sleep(0.1)
 
-    async def EnqueueAction(
+    async def enqueue_action(
         self,
         req: queue_service_pb2.EnqueueActionRequest,
         **kwargs,
@@ -141,7 +141,7 @@ class DummyService(QueueService, StateService, ClientSet):
         print("Enqueueing task:", req.action_id.name)
         return queue_service_pb2.EnqueueActionResponse()
 
-    async def AbortQueuedAction(
+    async def abort_queued_action(
         self,
         req: queue_service_pb2.AbortQueuedActionRequest,
         **kwargs,
@@ -154,7 +154,7 @@ class DummyService(QueueService, StateService, ClientSet):
 
     # --- ActionsService methods (unified service) ---
 
-    async def Enqueue(
+    async def enqueue(
         self,
         req: actions_service_pb2.EnqueueRequest,
         **kwargs,
@@ -172,7 +172,7 @@ class DummyService(QueueService, StateService, ClientSet):
         print("Enqueueing task:", name)
         return actions_service_pb2.EnqueueResponse()
 
-    async def WatchForUpdates(
+    async def watch_for_updates(
         self,
         req: actions_service_pb2.WatchForUpdatesRequest,
         **kwargs,
@@ -204,7 +204,7 @@ class DummyService(QueueService, StateService, ClientSet):
             sentinel = True
             await asyncio.sleep(0.1)
 
-    async def Abort(
+    async def abort(
         self,
         req: actions_service_pb2.AbortRequest,
         **kwargs,
@@ -690,10 +690,10 @@ async def test_cancel_queued_action():
     abort_called = False
 
     class TrackingService(DummyService):
-        async def AbortQueuedAction(self, req, **kwargs):
+        async def abort_queued_action(self, req, **kwargs):
             nonlocal abort_called
             abort_called = True
-            return await super().AbortQueuedAction(req, **kwargs)
+            return await super().abort_queued_action(req, **kwargs)
 
     async def create_tracking_service():
         return TrackingService(phases=phases)
@@ -907,10 +907,10 @@ async def test_actions_service_cancel():
     abort_called = False
 
     class TrackingActionsService(DummyActionsService):
-        async def Abort(self, req, **kwargs):
+        async def abort(self, req, **kwargs):
             nonlocal abort_called
             abort_called = True
-            return await super().Abort(req, **kwargs)
+            return await super().abort(req, **kwargs)
 
     async def create_tracking_service():
         return TrackingActionsService(phases=phases)
