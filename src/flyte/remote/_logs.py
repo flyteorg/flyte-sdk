@@ -142,14 +142,16 @@ class Logs:
             except StopAsyncIteration:
                 return
             except grpc.aio.AioRpcError as e:
-                retries += 1
-                if retries >= retry:
-                    if e.code() == grpc.StatusCode.NOT_FOUND:
+                if e.code() == grpc.StatusCode.NOT_FOUND:
+                    retries += 1
+                    logger.debug(f"Log stream not found (attempt {retries}/{retry})")
+                    if retries >= retry:
                         raise LogsNotYetAvailableError(
                             f"Log stream not available for action {action_id.name} in run {action_id.run.name}."
                         )
-                else:
                     await asyncio.sleep(2)
+                else:
+                    raise
 
     @classmethod
     async def create_viewer(
