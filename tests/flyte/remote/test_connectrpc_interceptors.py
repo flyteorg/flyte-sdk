@@ -1,3 +1,4 @@
+import asyncio
 import re
 from unittest.mock import AsyncMock, Mock
 from uuid import UUID
@@ -284,3 +285,137 @@ class TestAuthServerStreamInterceptor:
             async for _ in interceptor.intercept_server_stream(mock_call_next, "request", ctx):
                 pass
         assert exc_info.value.code == Code.NOT_FOUND
+
+
+from flyte.remote._client.auth._interceptors.retry import (
+    RetryUnaryInterceptor,
+    RetryServerStreamInterceptor,
+)
+
+
+class TestRetryUnaryInterceptor:
+    @pytest.mark.asyncio
+    async def test_succeeds_first_attempt(self):
+        interceptor = RetryUnaryInterceptor(max_attempts=3)
+        call_next = AsyncMock(return_value="ok")
+        ctx, _ = _make_ctx_mock()
+
+        result = await interceptor.intercept_unary(call_next, "req", ctx)
+        assert result == "ok"
+        assert call_next.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_retries_on_unavailable(self):
+        interceptor = RetryUnaryInterceptor(max_attempts=3, initial_backoff=0.001)
+        call_next = AsyncMock(side_effect=[
+            ConnectError(Code.UNAVAILABLE, "unavailable"),
+            "ok",
+        ])
+        ctx, _ = _make_ctx_mock()
+
+        result = await interceptor.intercept_unary(call_next, "req", ctx)
+        assert result == "ok"
+        assert call_next.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_retries_on_resource_exhausted(self):
+        interceptor = RetryUnaryInterceptor(max_attempts=3, initial_backoff=0.001)
+        call_next = AsyncMock(side_effect=[
+            ConnectError(Code.RESOURCE_EXHAUSTED, "exhausted"),
+            "ok",
+        ])
+        ctx, _ = _make_ctx_mock()
+
+        result = await interceptor.intercept_unary(call_next, "req", ctx)
+        assert result == "ok"
+
+    @pytest.mark.asyncio
+    async def test_retries_on_internal(self):
+        interceptor = RetryUnaryInterceptor(max_attempts=3, initial_backoff=0.001)
+        call_next = AsyncMock(side_effect=[
+            ConnectError(Code.INTERNAL, "internal"),
+            "ok",
+        ])
+        ctx, _ = _make_ctx_mock()
+
+        result = await interceptor.intercept_unary(call_next, "req", ctx)
+        assert result == "ok"
+
+    @pytest.mark.asyncio
+    async def test_does_not_retry_not_found(self):
+        interceptor = RetryUnaryInterceptor(max_attempts=3)
+        call_next = AsyncMock(side_effect=ConnectError(Code.NOT_FOUND, "nope"))
+        ctx, _ = _make_ctx_mock()
+
+        with pytest.raises(ConnectError) as exc_info:
+            await interceptor.intercept_unary(call_next, "req", ctx)
+        assert exc_info.value.code == Code.NOT_FOUND
+        assert call_next.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_respects_max_attempts(self):
+        interceptor = RetryUnaryInterceptor(max_attempts=3, initial_backoff=0.001)
+        call_next = AsyncMock(side_effect=ConnectError(Code.UNAVAILABLE, "down"))
+        ctx, _ = _make_ctx_mock()
+
+        with pytest.raises(ConnectError) as exc_info:
+            await interceptor.intercept_unary(call_next, "req", ctx)
+        assert exc_info.value.code == Code.UNAVAILABLE
+        assert call_next.call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_exponential_backoff(self):
+        """Verify backoff doubles each retry up to max."""
+        interceptor = RetryUnaryInterceptor(
+            max_attempts=4, initial_backoff=1.0, max_backoff=5.0, multiplier=2.0
+        )
+        call_next = AsyncMock(side_effect=[
+            ConnectError(Code.UNAVAILABLE, "1"),
+            ConnectError(Code.UNAVAILABLE, "2"),
+            ConnectError(Code.UNAVAILABLE, "3"),
+            "ok",
+        ])
+        ctx, _ = _make_ctx_mock()
+
+        sleep_durations = []
+        original_sleep = asyncio.sleep
+        async def mock_sleep(duration):
+            sleep_durations.append(duration)
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(asyncio, "sleep", mock_sleep)
+            result = await interceptor.intercept_unary(call_next, "req", ctx)
+
+        assert result == "ok"
+        assert sleep_durations == [1.0, 2.0, 4.0]
+
+
+class TestRetryServerStreamInterceptor:
+    @pytest.mark.asyncio
+    async def test_streams_without_retry(self):
+        interceptor = RetryServerStreamInterceptor(max_attempts=3)
+
+        async def call_next(req, ctx):
+            yield "a"
+            yield "b"
+
+        ctx, _ = _make_ctx_mock()
+        results = [item async for item in interceptor.intercept_server_stream(call_next, "req", ctx)]
+        assert results == ["a", "b"]
+
+    @pytest.mark.asyncio
+    async def test_retries_stream_on_unavailable(self):
+        interceptor = RetryServerStreamInterceptor(max_attempts=3, initial_backoff=0.001)
+        call_count = 0
+
+        async def call_next(req, ctx):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise ConnectError(Code.UNAVAILABLE, "down")
+            yield "ok"
+
+        ctx, _ = _make_ctx_mock()
+        results = [item async for item in interceptor.intercept_server_stream(call_next, "req", ctx)]
+        assert results == ["ok"]
+        assert call_count == 2
