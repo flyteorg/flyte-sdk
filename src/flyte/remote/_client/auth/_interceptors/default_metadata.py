@@ -32,7 +32,7 @@ class DefaultMetadataInterceptor:
     """
 
     async def on_start(self, ctx) -> None:
-        ctx.request_headers["x-request-id"] = _generate_request_id()
+        ctx.request_headers()["x-request-id"] = _generate_request_id()
 
     async def on_end(self, token, ctx, error) -> None:
         pass

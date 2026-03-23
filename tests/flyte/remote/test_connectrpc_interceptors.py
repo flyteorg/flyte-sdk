@@ -62,24 +62,30 @@ class TestRequestIdGeneration:
             assert r1 != r2
 
 
+def _make_ctx_mock():
+    """Create a mock RequestContext where request_headers() returns a mutable dict."""
+    headers = {}
+    ctx = Mock()
+    ctx.request_headers.return_value = headers
+    return ctx, headers
+
+
 class TestDefaultMetadataInterceptor:
     @pytest.mark.asyncio
     async def test_injects_request_id(self):
         interceptor = DefaultMetadataInterceptor()
-        ctx = Mock()
-        ctx.request_headers = {}
+        ctx, headers = _make_ctx_mock()
         await interceptor.on_start(ctx)
-        assert "x-request-id" in ctx.request_headers
-        assert len(ctx.request_headers["x-request-id"]) > 0
+        assert "x-request-id" in headers
+        assert len(headers["x-request-id"]) > 0
 
     @pytest.mark.asyncio
     async def test_does_not_inject_accept_header(self):
         """ConnectRPC handles content negotiation — no accept header needed."""
         interceptor = DefaultMetadataInterceptor()
-        ctx = Mock()
-        ctx.request_headers = {}
+        ctx, headers = _make_ctx_mock()
         await interceptor.on_start(ctx)
-        assert "accept" not in ctx.request_headers
+        assert "accept" not in headers
 
     @pytest.mark.asyncio
     async def test_on_end_is_noop(self):
@@ -89,10 +95,9 @@ class TestDefaultMetadataInterceptor:
     @pytest.mark.asyncio
     async def test_with_task_context(self, task_context):
         interceptor = DefaultMetadataInterceptor()
-        ctx_mock = Mock()
-        ctx_mock.request_headers = {}
+        ctx, headers = _make_ctx_mock()
         ictx = internal_ctx()
         with ictx.replace_task_context(task_context):
-            await interceptor.on_start(ctx_mock)
-            request_id = ctx_mock.request_headers["x-request-id"]
+            await interceptor.on_start(ctx)
+            request_id = headers["x-request-id"]
             assert "test-project" in request_id
