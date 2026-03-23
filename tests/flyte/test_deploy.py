@@ -373,7 +373,9 @@ def test_resolve_covers_depends_on_envs():
     from pathlib import Path
 
     dep_image = flyte.Image.from_base("python:3.10").clone(registry="r", name="dep", extendable=True).with_code_bundle()
-    parent_image = flyte.Image.from_base("python:3.10").clone(registry="r", name="parent", extendable=True).with_code_bundle()
+    parent_image = (
+        flyte.Image.from_base("python:3.10").clone(registry="r", name="parent", extendable=True).with_code_bundle()
+    )
 
     env_dep = flyte.TaskEnvironment(name="dep", image=dep_image)
     env_parent = flyte.TaskEnvironment(name="parent", image=parent_image, depends_on=[env_dep])

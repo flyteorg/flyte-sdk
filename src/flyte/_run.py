@@ -215,14 +215,13 @@ class _Runner:
                 # Must cover the parent env AND all depends_on envs (recursively)
                 # so that _build_images can compute the content hash for every image.
                 parent_env = cast(Environment, obj.parent_env())
-                from ._deploy import plan_deploy
                 from flyte._image import Image, resolve_code_bundle_layer
+
+                from ._deploy import plan_deploy
 
                 for _env in plan_deploy(parent_env)[0].envs.values():
                     if isinstance(_env.image, Image):
-                        _env.image = resolve_code_bundle_layer(
-                            _env.image, self._copy_files, pathlib.Path(cfg.root_dir)
-                        )
+                        _env.image = resolve_code_bundle_layer(_env.image, self._copy_files, pathlib.Path(cfg.root_dir))
 
                 if not self._dry_run:
                     image_cache = await build_images.aio(parent_env)
