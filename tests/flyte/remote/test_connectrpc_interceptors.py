@@ -1,8 +1,17 @@
 import re
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 from uuid import UUID
 
 import pytest
+
+from connectrpc.code import Code
+from connectrpc.errors import ConnectError
+
+from flyte.remote._client.auth._authenticators.base import AuthHeaders
+from flyte.remote._client.auth._interceptors.auth import (
+    AuthServerStreamInterceptor,
+    AuthUnaryInterceptor,
+)
 
 from flyte._context import internal_ctx
 from flyte.models import ActionID, RawDataPath, TaskContext
@@ -101,3 +110,177 @@ class TestDefaultMetadataInterceptor:
             await interceptor.on_start(ctx)
             request_id = headers["x-request-id"]
             assert "test-project" in request_id
+
+
+def _make_mock_authenticator(headers=None):
+    """Create a mock authenticator that returns given headers."""
+    auth = AsyncMock()
+    if headers:
+        auth.get_auth_headers.return_value = AuthHeaders(creds_id="test-creds", headers=headers)
+    else:
+        auth.get_auth_headers.return_value = None
+    return auth
+
+
+class TestAuthUnaryInterceptor:
+    @pytest.mark.asyncio
+    async def test_injects_auth_headers(self):
+        auth = _make_mock_authenticator({"authorization": "Bearer token123"})
+        interceptor = AuthUnaryInterceptor(lambda: auth)
+
+        call_next = AsyncMock(return_value="response")
+        ctx, headers = _make_ctx_mock()
+
+        result = await interceptor.intercept_unary(call_next, "request", ctx)
+
+        assert result == "response"
+        assert headers["authorization"] == "Bearer token123"
+        call_next.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_retries_on_unauthenticated(self):
+        auth = _make_mock_authenticator({"authorization": "Bearer old"})
+        # After refresh, return new headers
+        auth.get_auth_headers.side_effect = [
+            AuthHeaders(creds_id="old", headers={"authorization": "Bearer old"}),  # initial
+            AuthHeaders(creds_id="new", headers={"authorization": "Bearer new"}),  # after refresh
+        ]
+        interceptor = AuthUnaryInterceptor(lambda: auth)
+
+        call_next = AsyncMock(
+            side_effect=[
+                ConnectError(Code.UNAUTHENTICATED, "expired"),
+                "success",
+            ]
+        )
+        ctx, headers = _make_ctx_mock()
+
+        result = await interceptor.intercept_unary(call_next, "request", ctx)
+
+        assert result == "success"
+        auth.refresh_credentials.assert_called_once_with(creds_id="old")
+        assert call_next.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_retries_on_unknown(self):
+        auth = _make_mock_authenticator({"authorization": "Bearer old"})
+        auth.get_auth_headers.side_effect = [
+            AuthHeaders(creds_id="old", headers={"authorization": "Bearer old"}),
+            AuthHeaders(creds_id="new", headers={"authorization": "Bearer new"}),
+        ]
+        interceptor = AuthUnaryInterceptor(lambda: auth)
+
+        call_next = AsyncMock(
+            side_effect=[
+                ConnectError(Code.UNKNOWN, "unknown"),
+                "success",
+            ]
+        )
+        ctx, headers = _make_ctx_mock()
+
+        result = await interceptor.intercept_unary(call_next, "request", ctx)
+        assert result == "success"
+
+    @pytest.mark.asyncio
+    async def test_does_not_retry_other_errors(self):
+        auth = _make_mock_authenticator({"authorization": "Bearer token"})
+        interceptor = AuthUnaryInterceptor(lambda: auth)
+
+        call_next = AsyncMock(side_effect=ConnectError(Code.NOT_FOUND, "not found"))
+        ctx, headers = _make_ctx_mock()
+
+        with pytest.raises(ConnectError) as exc_info:
+            await interceptor.intercept_unary(call_next, "request", ctx)
+        assert exc_info.value.code == Code.NOT_FOUND
+        auth.refresh_credentials.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_lazy_authenticator_init(self):
+        auth = _make_mock_authenticator({"authorization": "Bearer token"})
+        factory = Mock(return_value=auth)
+        interceptor = AuthUnaryInterceptor(factory)
+
+        # Factory not called yet
+        factory.assert_not_called()
+
+        call_next = AsyncMock(return_value="response")
+        ctx, _ = _make_ctx_mock()
+        await interceptor.intercept_unary(call_next, "request", ctx)
+
+        # Now factory is called
+        factory.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_no_headers_when_auth_returns_none(self):
+        auth = _make_mock_authenticator(headers=None)
+        interceptor = AuthUnaryInterceptor(lambda: auth)
+
+        call_next = AsyncMock(return_value="response")
+        ctx, headers = _make_ctx_mock()
+
+        result = await interceptor.intercept_unary(call_next, "request", ctx)
+        assert result == "response"
+        assert "authorization" not in headers
+
+
+class TestAuthServerStreamInterceptor:
+    @pytest.mark.asyncio
+    async def test_injects_auth_headers_and_streams(self):
+        auth = _make_mock_authenticator({"authorization": "Bearer token123"})
+        interceptor = AuthServerStreamInterceptor(lambda: auth)
+
+        async def mock_call_next(request, ctx):
+            yield "chunk1"
+            yield "chunk2"
+
+        ctx, headers = _make_ctx_mock()
+
+        results = []
+        async for item in interceptor.intercept_server_stream(mock_call_next, "request", ctx):
+            results.append(item)
+
+        assert results == ["chunk1", "chunk2"]
+        assert headers["authorization"] == "Bearer token123"
+
+    @pytest.mark.asyncio
+    async def test_retries_on_unauthenticated(self):
+        auth = _make_mock_authenticator({"authorization": "Bearer old"})
+        auth.get_auth_headers.side_effect = [
+            AuthHeaders(creds_id="old", headers={"authorization": "Bearer old"}),
+            AuthHeaders(creds_id="new", headers={"authorization": "Bearer new"}),
+        ]
+        interceptor = AuthServerStreamInterceptor(lambda: auth)
+
+        call_count = 0
+
+        async def mock_call_next(request, ctx):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise ConnectError(Code.UNAUTHENTICATED, "expired")
+            yield "success"
+
+        ctx, headers = _make_ctx_mock()
+
+        results = []
+        async for item in interceptor.intercept_server_stream(mock_call_next, "request", ctx):
+            results.append(item)
+
+        assert results == ["success"]
+        auth.refresh_credentials.assert_called_once_with(creds_id="old")
+
+    @pytest.mark.asyncio
+    async def test_does_not_retry_other_errors(self):
+        auth = _make_mock_authenticator({"authorization": "Bearer token"})
+        interceptor = AuthServerStreamInterceptor(lambda: auth)
+
+        async def mock_call_next(request, ctx):
+            raise ConnectError(Code.NOT_FOUND, "not found")
+            yield  # make it a generator  # noqa: RUF027
+
+        ctx, headers = _make_ctx_mock()
+
+        with pytest.raises(ConnectError) as exc_info:
+            async for _ in interceptor.intercept_server_stream(mock_call_next, "request", ctx):
+                pass
+        assert exc_info.value.code == Code.NOT_FOUND
