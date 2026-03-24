@@ -100,7 +100,6 @@ def _wait_for_kubeconfig(kubeconfig_path: Path, timeout: int = 60) -> None:
 def _switch_k8s_context(context: str = "flytev2-sandbox", namespace: str = "flyte") -> None:
     try:
         subprocess.run(["kubectl", "config", "use-context", context], check=True)
-        click.echo(f"Switched k8s context to '{context}'")
         subprocess.run(["kubectl", "config", "set-context", "--current", f"--namespace={namespace}"], check=True)
         subprocess.run(
             ["kubectl", "config", "set-cluster", context, "--insecure-skip-tls-verify=true"],
