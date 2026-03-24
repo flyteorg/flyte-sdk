@@ -1053,7 +1053,7 @@ requires-dist = [
     { name = "deltalake", marker = "extra == 'examples-test'" },
     { name = "docstring-parser", specifier = ">=0.16" },
     { name = "fastapi", marker = "extra == 'examples-test'" },
-    { name = "flyteidl2", git = "ssh://git@github.com/flyteorg/flyte.git?subdirectory=gen%2Fpython&rev=jeev%2Fconnectrpc-integration" },
+    { name = "flyteidl2", specifier = ">=2.0.8" },
     { name = "fsspec", specifier = ">=2025.3.0" },
     { name = "grpcio", specifier = ">=1.71.0" },
     { name = "grpcio-health-checking", marker = "extra == 'connector'" },
@@ -1110,13 +1110,16 @@ dev = [
 
 [[package]]
 name = "flyteidl2"
-version = "2.0.9.dev15+g63d653095"
-source = { git = "ssh://git@github.com/flyteorg/flyte.git?subdirectory=gen%2Fpython&rev=jeev%2Fconnectrpc-integration#63d65309565c488b086530fe7ea9ecc24f455910" }
+version = "2.0.8"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "googleapis-common-protos" },
     { name = "protobuf" },
     { name = "protoc-gen-openapiv2" },
     { name = "protovalidate" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/55/20/90ad311f44660df647591cb58ded043788facd32fc8222e20c43fb96a396/flyteidl2-2.0.8-py3-none-any.whl", hash = "sha256:9c160cf5e0a4fd0a0cd93dd68404bdde47b87fdce9bd56e70391d366c1415e4b", size = 278421, upload-time = "2026-03-18T23:46:19.915Z" },
 ]
 
 [[package]]

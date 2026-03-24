@@ -25,7 +25,7 @@ dependencies = [
     "async-lru>=2.0.5",
     "mashumaro",
     "aiolimiter>=1.2.1",
-    "flyteidl2 @ git+ssh://git@github.com/flyteorg/flyte.git@jeev/connectrpc-integration#subdirectory=gen/python",
+    "flyteidl2>=2.0.8",
     "packaging",
 ]
 
