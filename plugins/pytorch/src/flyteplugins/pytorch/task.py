@@ -395,22 +395,32 @@ class TorchFunctionTask(AsyncFunctionTaskTemplate):
     def _run_neuron_parallel_compile(self, tctx: TaskContext, fn_bytes: bytes, kwargs: dict):
         """Run neuron_parallel_compile to extract and pre-compile XLA graphs.
 
-        Serializes the task context and function to a temp file, then invokes:
-            neuron_parallel_compile torchrun --nproc_per_node=N \
-                -m flyteplugins.pytorch.launcher --ctx-file /tmp/ctx.pkl
+        Uses ``elastic_launch`` (fn mode) for the trial run — the same worker
+        spawning mechanism as actual training — so the Neuron runtime produces
+        identical XLA graph hashes and the compilation cache is hit.
+
+        Serializes the task context, function, and launch parameters to a temp
+        file, then invokes:
+            neuron_parallel_compile python -m flyteplugins.pytorch.compile_launcher \
+                --ctx-file /tmp/ctx.pkl
         """
+        launch_params = {
+            "min_nodes": self.min_nodes,
+            "max_nodes": self.max_nodes,
+            "nproc_per_node": self.plugin_config.nproc_per_node,
+            "rdzv_backend": self.plugin_config.rdzv_backend,
+            "rdzv_configs": self.plugin_config.rdzv_configs,
+            "max_restarts": self.plugin_config.max_restarts,
+            "monitor_interval": self.plugin_config.monitor_interval,
+        }
+
         with tempfile.NamedTemporaryFile(suffix=".pkl", delete=False) as f:
-            pickle.dump((tctx, fn_bytes, kwargs), f)
+            pickle.dump((tctx, fn_bytes, kwargs, launch_params), f)
             ctx_file = f.name
 
         cmd = [
             "neuron_parallel_compile",
-            "torchrun",
-            f"--nproc_per_node={self.plugin_config.nproc_per_node}",
-            f"--nnodes={self.max_nodes}",
-            f"--rdzv_backend={self.plugin_config.rdzv_backend}",
-            f"--rdzv_endpoint={os.environ.get('PET_RDZV_ENDPOINT', 'localhost:0')}",
-            "-m", "flyteplugins.pytorch.launcher",
+            "python", "-m", "flyteplugins.pytorch.compile_launcher",
             "--ctx-file", ctx_file,
         ]
 
