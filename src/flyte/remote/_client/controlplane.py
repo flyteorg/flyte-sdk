@@ -84,10 +84,6 @@ class Console:
         else:
             domain = parsed.netloc or parsed.path
 
-        # TODO: make console url configurable
-        # For example, if the console is hosted at a different URL than the API endpoint, we would need to allow
-        # configuring the console URL separately. For now we assume it's always at the same domain with HTTP/HTTPS.
-
         return f"{scheme}://{domain}"
 
     def _resource_url(self, project: str, domain: str, resource: str, resource_name: str) -> str:
