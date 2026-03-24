@@ -27,19 +27,19 @@ def tui():
 
 @start.command()
 @click.option(
-    "--sandbox-image",
+    "--image",
     default="ghcr.io/flyteorg/flyte-sandbox-v2:nightly",
     show_default=True,
-    help="Docker image to use for the sandbox container.",
+    help="Docker image to use for the demo cluster.",
 )
 @click.option(
     "--dev",
     is_flag=True,
     default=False,
-    help="Enable dev mode inside the sandbox (sets FLYTE_DEV=True).",
+    help="Enable dev mode inside the demo cluster (sets FLYTE_DEV=True).",
 )
-def sandbox(sandbox_image: str, dev: bool):
-    """Start a local Flyte sandbox."""
-    from flyte.cli._sandbox import launch_sandbox
+def demo(image: str, dev: bool):
+    """Start a local Flyte demo cluster."""
+    from flyte.cli._demo import launch_demo
 
-    launch_sandbox(sandbox_image, dev)
+    launch_demo(image, dev)

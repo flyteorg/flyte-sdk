@@ -6,6 +6,15 @@ from pathlib import Path
 
 import click
 
+_CONTAINER_NAME = "flyte-demo"
+_VOLUME_NAME = "flyte-demo"
+_KUBE_DIR = Path(
+    "/tmp/.kube"
+)  # This path is used to store k3s kubeconfig file, we later merge it with the default kubeconfig
+_KUBECONFIG_PATH = _KUBE_DIR / "kubeconfig"
+_FLYTE_DEMO_CONFIG_DIR = Path.home() / ".flyte" / "demo"
+_PORTS = ["6443:6443", "30000:30000", "30001:30001", "30002:30002", "30003:30003", "30080:30080"]
+
 
 def _ensure_volume(volume_name: str) -> None:
     result = subprocess.run(
@@ -29,16 +38,15 @@ def _container_is_running(container_name: str) -> bool:
 
 
 def _pull_image(image: str) -> None:
-    click.echo(f"Pulling image '{image}'...")
     subprocess.run(["docker", "pull", image], check=True)
 
 
 def _run_container(
-    sandbox_image: str,
+    image: str,
     is_dev_mode: bool,
     container_name: str,
     kube_dir: Path,
-    flyte_sandbox_config_dir: Path,
+    flyte_demo_config_dir: Path,
     volume_name: str,
     ports: list[str],
 ) -> None:
@@ -59,18 +67,17 @@ def _run_container(
         "--volume",
         f"{kube_dir}:/.kube",
         "--volume",
-        f"{flyte_sandbox_config_dir}:/var/lib/flyte/config",
+        f"{flyte_demo_config_dir}:/var/lib/flyte/config",
         "--volume",
         f"{volume_name}:/var/lib/flyte/storage",
     ]
     for port in ports:
         cmd.extend(["--publish", port])
-    cmd.append(sandbox_image)
+    cmd.append(image)
     subprocess.run(cmd, check=True)
 
 
 def _wait_for_kubeconfig(kubeconfig_path: Path, timeout: int = 60) -> None:
-    click.echo("Waiting for kubeconfig...")
     deadline = time.monotonic() + timeout  # Set a timeout for waiting for k3s kubeconfig
     while True:
         if kubeconfig_path.exists() and kubeconfig_path.stat().st_size > 0:
@@ -80,12 +87,12 @@ def _wait_for_kubeconfig(kubeconfig_path: Path, timeout: int = 60) -> None:
         time.sleep(1)
 
 
+# TODO: Rename context to flyte-demo
 def _switch_k8s_context(context: str = "flytev2-sandbox", namespace: str = "flyte") -> None:
     try:
         subprocess.run(["kubectl", "config", "use-context", context], check=True)
         click.echo(f"Switched k8s context to '{context}'")
         subprocess.run(["kubectl", "config", "set-context", "--current", f"--namespace={namespace}"], check=True)
-        click.echo(f"Switched k8s namespace to '{namespace}'")
         subprocess.run(
             ["kubectl", "config", "set-cluster", context, "--insecure-skip-tls-verify=true"],
             check=True,
@@ -132,4 +139,29 @@ def _merge_kubeconfig(kubeconfig_path: Path, container_name: str) -> None:
 
     shutil.move(tmp_path, default_kubeconfig)
     default_kubeconfig.chmod(0o600)
-    click.echo(f"Merged sandbox kubeconfig into {default_kubeconfig}")
+    click.echo(f"Merged kubeconfig into {default_kubeconfig}")
+
+
+def launch_demo(image_name: str, is_dev_mode: bool) -> None:
+    _ensure_volume(_VOLUME_NAME)
+
+    if _container_is_running(_CONTAINER_NAME):
+        click.echo(f"Container '{_CONTAINER_NAME}' is already running.")
+        if not click.confirm("Do you want to delete the existing demo cluster and start a new one?"):
+            return
+        subprocess.run(["docker", "stop", _CONTAINER_NAME], check=True)
+
+    _KUBE_DIR.mkdir(parents=True, exist_ok=True)
+    # This step makes sure that we always used the latest k3s kubeconfig file
+    if _KUBECONFIG_PATH.exists():
+        _KUBECONFIG_PATH.unlink()
+
+    _pull_image(image_name)
+    _run_container(image_name, is_dev_mode, _CONTAINER_NAME, _KUBE_DIR, _FLYTE_DEMO_CONFIG_DIR, _VOLUME_NAME, _PORTS)
+    _wait_for_kubeconfig(_KUBECONFIG_PATH)
+
+    _merge_kubeconfig(_KUBECONFIG_PATH, _CONTAINER_NAME)
+    _switch_k8s_context()
+
+    click.echo("\nFlyte demo cluster is ready!")
+    click.echo("UI is available at http://localhost:30080/v2")

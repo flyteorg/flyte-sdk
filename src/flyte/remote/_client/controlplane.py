@@ -85,10 +85,8 @@ class Console:
             domain = parsed.netloc or parsed.path
 
         # TODO: make console url configurable
-        domain_split = domain.split(":")
-        if domain_split[0] == "localhost":
-            # Always use port 8080 for localhost, until the to do is done.
-            domain = "localhost:8080"
+        # For example, if the console is hosted at a different URL than the API endpoint, we would need to allow
+        # configuring the console URL separately. For now we assume it's always at the same domain with HTTP/HTTPS.
 
         return f"{scheme}://{domain}"
 

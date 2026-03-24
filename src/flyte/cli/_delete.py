@@ -65,13 +65,13 @@ def app(cfg: common.CLIConfig, name: str, project: str | None = None, domain: st
 
 
 @delete.command()
-def sandbox():
+def demo():
     """
-    Stop and remove the local Flyte sandbox container.
+    Stop and remove the local Flyte demo cluster container.
     """
     console = common.get_console()
     try:
-        subprocess.run(["docker", "stop", "flyte-sandbox"], check=True)
-        console.print("[green]Sandbox stopped.[/green]")
+        subprocess.run(["docker", "stop", "flyte-demo"], check=True)
+        console.print("[green]Demo cluster stopped.[/green]")
     except subprocess.CalledProcessError:
-        raise click.ClickException("Failed to stop sandbox. Is the container running?")
+        raise click.ClickException("Failed to stop demo cluster. Is the container running?")
