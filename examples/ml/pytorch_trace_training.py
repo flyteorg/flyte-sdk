@@ -39,18 +39,20 @@ import base64
 import io
 import os
 
-import flyte
-import flyte.errors
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
+
+import flyte
+import flyte.errors
 
 image = flyte.Image.from_uv_script(__file__, name="pytorch-trace-training")
 
 
 def get_attempt_number() -> int:
     return int(os.environ.get("FLYTE_ATTEMPT_NUMBER", "0"))
+
 
 env = flyte.TaskEnvironment(
     name="pytorch_trace_training",
@@ -239,9 +241,7 @@ async def train(
             # Epoch 10's trace has already been checkpointed by this point, so on
             # retry epochs 1-10 are all replayed instantly and training resumes at 11.
             if epoch == 10 and get_attempt_number() == 0:
-                raise flyte.errors.RuntimeSystemError(
-                    "simulated", "Simulated failure after epoch 10 on attempt 0"
-                )
+                raise flyte.errors.RuntimeSystemError("simulated", "Simulated failure after epoch 10 on attempt 0")
 
             # Thread state forward: this epoch's output becomes next epoch's input.
             # On replay the chain stays intact because each replayed trace returns
@@ -258,8 +258,7 @@ async def train(
 
     final = history[-1]
     print(
-        f"Training complete after {num_epochs} epochs. "
-        f"Final val_loss={final['val_loss']:.4f}",
+        f"Training complete after {num_epochs} epochs. Final val_loss={final['val_loss']:.4f}",
         flush=True,
     )
     return {"history": history, "final_val_loss": final["val_loss"]}
