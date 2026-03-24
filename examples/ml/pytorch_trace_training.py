@@ -2,197 +2,149 @@
 # requires-python = "==3.13"
 # dependencies = [
 #    "flyte>=2.0.9",
+#    "pydantic>=2.0",
 #    "torch==2.7.1",
 # ]
 # ///
 
 """
-PyTorch Training Loop with Trace-Based Checkpointing
-=====================================================
+PyTorch Training with S3 Checkpointing
+=======================================
 
-Demonstrates using @flyte.trace to checkpoint each training epoch so that on
-any failure and retry, completed epochs are replayed instantly from their
-recorded outputs — no wasted compute.
+Each epoch saves a checkpoint to a stable remote path. On any failure — whether
+a retry within the same run or a completely new run — training resumes from the
+last saved epoch automatically.
 
-The core pattern is a *state chain*: each epoch trace receives the previous
-epoch's model/optimizer state as input and returns the updated state as output.
-Because trace replay is keyed on (function, inputs), deterministic inputs
-guarantee the checkpoint is found on retry:
-
-    initial_state
-        → [epoch 1 trace] → state_1   (checkpointed)
-        → [epoch 2 trace] → state_2   (checkpointed)
-        → ...crash at epoch K...
-    retry:
-        → epoch 1: replayed instantly  (no GPU work)
-        → epoch 2: replayed instantly
-        → epoch K: resumes with correct state_K-1
-
-Key Flyte concepts:
-- @flyte.trace     — per-epoch checkpoint; replayed on retry
-- flyte.group()    — groups epoch traces under a named span for observability
-- @env.task(retries=N) — allows the task to retry after failure
+The checkpoint path is derived from a hash of the training config so each unique
+set of hyperparams gets its own path automatically — no checkpoint_dir parameter
+needed. The path is rooted at the storage bucket from raw_data_path (always the right
+environment) with a hash of the training config as the key — stable across
+retries and across runs with the same hyperparameters.
 """
 
 import asyncio
-import base64
+import hashlib
 import io
 import os
+from urllib.parse import urlparse
 
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from pydantic import BaseModel
 from torch.utils.data import DataLoader, TensorDataset
 
 import flyte
 import flyte.errors
+from flyte.io import File
 
-image = flyte.Image.from_uv_script(__file__, name="pytorch-trace-training")
+image = flyte.Image.from_uv_script(__file__, name="pytorch-checkpoint-training")
+
+env = flyte.TaskEnvironment(
+    name="pytorch_checkpoint_training",
+    image=image,
+    resources=flyte.Resources(cpu=2, memory="2Gi"),
+)
 
 
 def get_attempt_number() -> int:
     return int(os.environ.get("FLYTE_ATTEMPT_NUMBER", "0"))
 
 
-env = flyte.TaskEnvironment(
-    name="pytorch_trace_training",
-    image=image,
-    resources=flyte.Resources(cpu=2, memory="2Gi"),
-)
+# ---------------------------------------------------------------------------
+# Pydantic models
+# ---------------------------------------------------------------------------
+
+
+class TrainingConfig(BaseModel):
+    num_epochs: int
+    batch_size: int
+    learning_rate: float
+
+
+class EpochMetrics(BaseModel):
+    epoch: int
+    loss: float
+
+
+class CheckpointMeta(BaseModel):
+    config: TrainingConfig
+    epoch: int  # last completed epoch
+    history: list[EpochMetrics]
+
+
+def checkpoint_path(config: TrainingConfig) -> str:
+    """Derive a stable checkpoint path from the storage bucket + config hash.
+
+    The bucket is pulled from raw_data_path so it's always the right environment.
+    The config hash makes each unique set of hyperparams its own checkpoint,
+    and the path is stable across retries and across runs.
+    """
+    raw = flyte.ctx().raw_data_path.path  # type: ignore[union-attr]
+    parsed = urlparse(raw)
+    bucket_root = f"{parsed.scheme}://{parsed.netloc}"
+    config_hash = hashlib.sha256(config.model_dump_json().encode()).hexdigest()[:12]
+    return f"{bucket_root}/checkpoints/{config_hash}/checkpoint.pt"
+
 
 # ---------------------------------------------------------------------------
-# Model
+# Minimal model + data (not meant to be realistic)
 # ---------------------------------------------------------------------------
 
 INPUT_DIM = 16
-HIDDEN_DIM = 64
-OUTPUT_DIM = 1
 
 
 def build_model() -> nn.Module:
-    return nn.Sequential(
-        nn.Linear(INPUT_DIM, HIDDEN_DIM),
-        nn.ReLU(),
-        nn.Linear(HIDDEN_DIM, HIDDEN_DIM),
-        nn.ReLU(),
-        nn.Linear(HIDDEN_DIM, OUTPUT_DIM),
-    )
+    return nn.Sequential(nn.Linear(INPUT_DIM, 64), nn.ReLU(), nn.Linear(64, 1))
+
+
+def make_loader(batch_size: int) -> DataLoader:
+    g = torch.Generator().manual_seed(42)
+    X = torch.randn(1000, INPUT_DIM, generator=g)
+    y = X.sum(dim=1, keepdim=True)
+    return DataLoader(TensorDataset(X, y), batch_size=batch_size, shuffle=True)
 
 
 # ---------------------------------------------------------------------------
-# State serialization
-#
-# Model/optimizer state dicts are serialized to base64-encoded strings so they
-# can be passed as trace inputs/outputs.  Base64 strings are JSON-serializable
-# and safe to store in Flyte's checkpoint system.
+# Checkpoint helpers
 # ---------------------------------------------------------------------------
 
 
-def state_to_b64(state_dict: dict) -> str:
+async def load_checkpoint(
+    path: str, config: TrainingConfig
+) -> tuple[CheckpointMeta, dict, dict] | None:
+    """Load checkpoint if it exists, otherwise return None to start fresh."""
+    f = File.from_existing_remote(path)
+    if not await f.exists():
+        return None
+
+    async with f.open("rb") as fh:
+        # weights_only=False because the checkpoint contains Pydantic-serialized
+        # metadata alongside tensors — we own everything that was saved here.
+        raw = torch.load(io.BytesIO(bytes(await fh.read())), weights_only=False)
+
+    meta = CheckpointMeta.model_validate(raw["meta"])
+    return meta, raw["model"], raw["optimizer"]
+
+
+async def save_checkpoint(
+    path: str, meta: CheckpointMeta, model: nn.Module, optimizer: optim.Optimizer
+) -> None:
     buf = io.BytesIO()
-    torch.save(state_dict, buf)
-    return base64.b64encode(buf.getvalue()).decode()
-
-
-def b64_to_state(b64: str) -> dict:
-    return torch.load(io.BytesIO(base64.b64decode(b64)), weights_only=True)
-
-
-# ---------------------------------------------------------------------------
-# Dataset
-#
-# Synthetic regression: y = sum(x) + noise.  Fixed seed makes the dataset
-# identical across retries, which keeps trace replay inputs deterministic.
-# ---------------------------------------------------------------------------
-
-
-def make_loaders(batch_size: int, seed: int = 42) -> tuple[DataLoader, DataLoader]:
-    g = torch.Generator().manual_seed(seed)
-    X = torch.randn(2000, INPUT_DIM, generator=g)
-    y = X.sum(dim=1, keepdim=True) + 0.05 * torch.randn(2000, 1, generator=g)
-    ds = TensorDataset(X, y)
-    train_ds, val_ds = torch.utils.data.random_split(ds, [1600, 400], generator=g)
-    train_loader = DataLoader(
-        train_ds, batch_size=batch_size, shuffle=True, generator=torch.Generator().manual_seed(seed)
+    torch.save(
+        {
+            "meta": meta.model_dump(),
+            "model": model.state_dict(),
+            "optimizer": optimizer.state_dict(),
+        },
+        buf,
     )
-    val_loader = DataLoader(val_ds, batch_size=batch_size)
-    return train_loader, val_loader
+    async with File.from_existing_remote(path).open("wb") as fh:
+        await fh.write(buf.getvalue())
 
 
 # ---------------------------------------------------------------------------
-# Traced training epoch
-#
-# Each call to train_epoch is a Flyte checkpoint.  On retry, any epoch whose
-# (function, inputs) tuple was previously recorded is replayed from the stored
-# output — the function body does not re-execute.
-#
-# Why base64 strings for state?
-#   Trace inputs/outputs must be serializable.  Encoding model state as a b64
-#   string keeps every value in the trace signature a JSON primitive, which is
-#   guaranteed to round-trip through Flyte's checkpoint store correctly.
-# ---------------------------------------------------------------------------
-
-
-@flyte.trace
-async def train_epoch(
-    epoch: int,
-    model_state_b64: str,
-    optimizer_state_b64: str,
-    batch_size: int,
-    learning_rate: float,
-) -> dict:
-    """Run one training epoch; return updated state + metrics.
-
-    On retry this function is not re-executed — Flyte returns the previously
-    recorded output dict directly, skipping all GPU work.
-    """
-    model = build_model()
-    model.load_state_dict(b64_to_state(model_state_b64))
-
-    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-    optimizer.load_state_dict(b64_to_state(optimizer_state_b64))
-
-    train_loader, val_loader = make_loaders(batch_size)
-    criterion = nn.MSELoss()
-
-    # Training pass
-    model.train()
-    train_loss = 0.0
-    for X, y in train_loader:
-        optimizer.zero_grad()
-        loss = criterion(model(X), y)
-        loss.backward()
-        optimizer.step()
-        train_loss += loss.item() * len(X)
-    train_loss /= 1600
-
-    # Validation pass
-    model.eval()
-    val_loss = 0.0
-    with torch.no_grad():
-        for X, y in val_loader:
-            val_loss += criterion(model(X), y).item() * len(X)
-    val_loss /= 400
-
-    print(f"[epoch {epoch:02d}] train_loss={train_loss:.4f}  val_loss={val_loss:.4f}", flush=True)
-
-    # Simulate processing time so the speedup from trace replay is obvious
-    # when the task is retried: replayed epochs skip this entirely.
-    await asyncio.sleep(2.0)
-
-    return {
-        "epoch": epoch,
-        "train_loss": float(train_loss),
-        "val_loss": float(val_loss),
-        # Updated state is passed forward to the next epoch's trace inputs,
-        # making that epoch's checkpoint reachable on replay.
-        "model_state_b64": state_to_b64(model.state_dict()),
-        "optimizer_state_b64": state_to_b64(optimizer.state_dict()),
-    }
-
-
-# ---------------------------------------------------------------------------
-# Main training task
+# Training task
 # ---------------------------------------------------------------------------
 
 
@@ -201,67 +153,54 @@ async def train(
     num_epochs: int = 20,
     batch_size: int = 64,
     learning_rate: float = 1e-3,
-    seed: int = 42,
-) -> dict:
-    """Training loop using @flyte.trace for per-epoch checkpointing.
+) -> list[EpochMetrics]:
+    """Training loop that resumes from the last checkpoint.
 
-    The task is configured with retries=3.  If it fails mid-training, Flyte
-    will retry the whole task — but because each epoch is a trace, all epochs
-    that already succeeded are replayed from their checkpoints.  Only the
-    failed epoch (and any after it) actually re-execute.
-
-    Determinism note:
-        Both the model initialization and the dataset are seeded with `seed`.
-        This makes the initial trace inputs identical across retries, which is
-        required for Flyte to find and replay the correct checkpoints.
+    The checkpoint path is derived from the training config — no external path
+    needed. Same hyperparams across runs will always find the same checkpoint.
     """
-    # Initialize with fixed seed so the first epoch's trace inputs are
-    # reproducible across any number of retries.
-    torch.manual_seed(seed)
+    config = TrainingConfig(num_epochs=num_epochs, batch_size=batch_size, learning_rate=learning_rate)
+    ckpt_path = checkpoint_path(config)
+    print(f"[attempt {get_attempt_number()}] checkpoint path: {ckpt_path}", flush=True)
+
     model = build_model()
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+    meta = CheckpointMeta(config=config, epoch=0, history=[])
 
-    model_state_b64 = state_to_b64(model.state_dict())
-    optimizer_state_b64 = state_to_b64(optimizer.state_dict())
+    ckpt = await load_checkpoint(ckpt_path, config)
+    if ckpt is not None:
+        meta, model_state, opt_state = ckpt
+        model.load_state_dict(model_state)
+        optimizer.load_state_dict(opt_state)
+        print(f"Resuming from epoch {meta.epoch}", flush=True)
 
-    history: list[dict] = []
+    loader = make_loader(batch_size)
+    criterion = nn.MSELoss()
 
-    # flyte.group gives all epoch traces a shared parent span in the UI,
-    # making it easy to inspect per-epoch timing and metrics at a glance.
-    with flyte.group("training-loop"):
-        for epoch in range(1, num_epochs + 1):
-            result = await train_epoch(
-                epoch=epoch,
-                model_state_b64=model_state_b64,
-                optimizer_state_b64=optimizer_state_b64,
-                batch_size=batch_size,
-                learning_rate=learning_rate,
-            )
-            # Simulated failure: crash after epoch 10 on the first attempt only.
-            # Epoch 10's trace has already been checkpointed by this point, so on
-            # retry epochs 1-10 are all replayed instantly and training resumes at 11.
-            if epoch == 10 and get_attempt_number() == 0:
-                raise flyte.errors.RuntimeSystemError("simulated", "Simulated failure after epoch 10 on attempt 0")
+    for epoch in range(meta.epoch + 1, num_epochs + 1):
+        model.train()
+        total_loss = 0.0
+        for X, y in loader:
+            optimizer.zero_grad()
+            loss = criterion(model(X), y)
+            loss.backward()
+            optimizer.step()
+            total_loss += loss.item() * len(X)
 
-            # Thread state forward: this epoch's output becomes next epoch's input.
-            # On replay the chain stays intact because each replayed trace returns
-            # the same state bytes it recorded originally.
-            model_state_b64 = result["model_state_b64"]
-            optimizer_state_b64 = result["optimizer_state_b64"]
-            history.append(
-                {
-                    "epoch": result["epoch"],
-                    "train_loss": result["train_loss"],
-                    "val_loss": result["val_loss"],
-                }
-            )
+        await asyncio.sleep(2.0)  # simulate work
 
-    final = history[-1]
-    print(
-        f"Training complete after {num_epochs} epochs. Final val_loss={final['val_loss']:.4f}",
-        flush=True,
-    )
-    return {"history": history, "final_val_loss": final["val_loss"]}
+        metrics = EpochMetrics(epoch=epoch, loss=float(total_loss / 1000))
+        meta = CheckpointMeta(config=config, epoch=epoch, history=[*meta.history, metrics])
+
+        print(f"[epoch {epoch:02d}] loss={metrics.loss:.4f}", flush=True)
+        await save_checkpoint(ckpt_path, meta, model, optimizer)
+
+        # Simulated failure at epoch 10 on the first attempt only.
+        # On retry the checkpoint from epoch 10 exists, so training resumes at 11.
+        if epoch == 10 and get_attempt_number() == 0:
+            raise flyte.errors.RuntimeSystemError("simulated", "Simulated failure after epoch 10")
+
+    return meta.history
 
 
 if __name__ == "__main__":
