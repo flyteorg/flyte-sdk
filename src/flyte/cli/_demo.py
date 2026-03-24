@@ -39,7 +39,7 @@ def _container_is_running(container_name: str) -> bool:
 
 def _is_local_image(image: str) -> bool:
     """Check if the image is local (no registry prefix)."""
-    name = image.split(":")[0]
+    name = image.split(":", maxsplit=1)[0]
     return "/" not in name
 
 
