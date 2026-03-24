@@ -7,6 +7,7 @@ from typing import (
     AsyncIterator,
     Awaitable,
     Callable,
+    Iterator,
     TypeGuard,
     TypeVar,
     Union,
@@ -23,7 +24,7 @@ T = TypeVar("T")
 def trace(func: Callable[..., T]) -> Callable[..., T]:
     """
     A decorator that traces function execution with timing information.
-    Works with regular functions, async functions, and async generators/iterators.
+    Works with regular functions, sync generators, async functions, and async generators/iterators.
     """
 
     @functools.wraps(func)
@@ -80,6 +81,80 @@ def trace(func: Callable[..., T]) -> Callable[..., T]:
                 root_context_var.reset(tok)
 
         return _trace_async()
+
+    @functools.wraps(func)
+    def wrapper_sync_iterator(*args: Any, **kwargs: Any) -> Iterator[Any]:
+        from flyte._context import Context, internal_ctx, root_context_var
+
+        from ._internal.controllers import TraceInfo, get_controller
+
+        ctx = internal_ctx()
+        if not ctx.is_task_context():
+            yield from cast(Iterator[Any], func(*args, **kwargs))
+            return
+
+        controller = get_controller()
+        captured_ctx = ctx
+
+        # Do not wrap the whole traced generator in one @syncify async generator: yielding from inside
+        # `with trace_context` would suspend across threads, so ContextVar tokens from __enter__ would
+        # not match __exit__ (ValueError: Token was created in a different Context). Keep `with
+        # trace_context` and `yield` on this thread; use syncify only for short controller I/O.
+
+        @syncify
+        async def _fetch_outputs() -> tuple[TraceInfo, bool]:
+            tok = root_context_var.set(captured_ctx)
+            try:
+                iface = NativeInterface.from_callable(func)
+                info, ok = await controller.get_action_outputs(iface, func, *args, **kwargs)
+                return info, ok
+            finally:
+                root_context_var.reset(tok)
+
+        info, ok = _fetch_outputs()
+        if ok:
+            logger.info(f"Found existing trace info for {func}, {info}")
+            if info.output is not None:
+                yield from info.output
+                return
+            if info.error:
+                raise info.error
+        else:
+            logger.debug(f"No existing trace info found for {func}, proceeding to execute.")
+
+        start_time = time.time()
+        trace_task_context = captured_ctx.data.task_context.replace(action=info.action)  # type: ignore[union-attr]
+        trace_data = captured_ctx.data.replace(task_context=trace_task_context, in_trace=True)
+        trace_context = Context(trace_data)
+
+        error = None
+        items: list[Any] = []
+
+        with trace_context:
+            result = func(*args, **kwargs)
+            if inspect.isgenerator(result) or is_sync_iterable(result):
+                try:
+                    for item in result:
+                        items.append(item)
+                        yield item
+                    info.add_outputs(items, start_time=start_time, end_time=time.time())
+                except Exception as e:
+                    error = e
+                    info.add_error(e, start_time=start_time, end_time=time.time())
+
+        @syncify
+        async def _record_trace() -> None:
+            tok = root_context_var.set(captured_ctx)
+            try:
+                await controller.record_trace(info)
+                logger.debug(f"Finished trace for {func}, {info}")
+            finally:
+                root_context_var.reset(tok)
+
+        _record_trace()
+
+        if error:
+            raise error
 
     @functools.wraps(func)
     async def wrapper_async(*args: Any, **kwargs: Any) -> Any:
@@ -141,6 +216,13 @@ def trace(func: Callable[..., T]) -> Callable[..., T]:
 
     def is_async_iterable(obj: Any) -> TypeGuard[Union[AsyncGenerator, AsyncIterator]]:
         return hasattr(obj, "__aiter__")
+
+    def is_sync_iterable(obj: Any) -> TypeGuard[Iterator[Any]]:
+        if isinstance(obj, (str, bytes, bytearray)):
+            return False
+        if inspect.isasyncgen(obj) or inspect.iscoroutine(obj):
+            return False
+        return hasattr(obj, "__iter__") and not hasattr(obj, "__aiter__")
 
     @functools.wraps(func)
     async def wrapper_async_iterator(*args: Any, **kwargs: Any) -> AsyncIterator[Any]:
@@ -207,6 +289,8 @@ def trace(func: Callable[..., T]) -> Callable[..., T]:
         return cast(Callable[..., T], wrapper_async)
     elif inspect.isasyncgenfunction(func):
         return cast(Callable[..., T], wrapper_async_iterator)
+    elif inspect.isgeneratorfunction(func):
+        return cast(Callable[..., T], wrapper_sync_iterator)
     else:
         # For regular sync functions
         return cast(Callable[..., T], wrapper_sync)
