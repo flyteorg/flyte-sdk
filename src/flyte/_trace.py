@@ -31,7 +31,7 @@ def trace(func: Callable[..., T]) -> Callable[..., T]:
     def wrapper_sync(*args: Any, **kwargs: Any) -> Any:
         from flyte._context import Context, internal_ctx, root_context_var
 
-        from ._internal.controllers import get_controller
+        from ._internal.controllers import TraceInfo, get_controller
 
         ctx = internal_ctx()
         if not ctx.is_task_context():
@@ -40,47 +40,59 @@ def trace(func: Callable[..., T]) -> Callable[..., T]:
         controller = get_controller()
         captured_ctx = ctx
 
+        # Use syncify only for controller I/O. `with trace_context` and user code stay on this thread so we do not
+        # block syncify's executor across the whole traced call (same pattern as wrapper_sync_iterator).
+
         @syncify
-        async def _trace_async() -> Any:
+        async def _fetch_outputs() -> tuple[TraceInfo, bool]:
             tok = root_context_var.set(captured_ctx)
             try:
                 iface = NativeInterface.from_callable(func)
                 info, ok = await controller.get_action_outputs(iface, func, *args, **kwargs)
-                if ok:
-                    logger.info(f"Found existing trace info for {func}, {info}")
-                    if info.output is not None:
-                        return info.output
-                    elif info.error:
-                        raise info.error
-                else:
-                    logger.debug(f"No existing trace info found for {func}, proceeding to execute.")
-                start_time = time.time()
-
-                trace_task_context = captured_ctx.data.task_context.replace(action=info.action)  # type: ignore[union-attr]
-                trace_data = captured_ctx.data.replace(task_context=trace_task_context, in_trace=True)
-                trace_context = Context(trace_data)
-
-                error = None
-                results = None
-
-                with trace_context:
-                    try:
-                        results = func(*args, **kwargs)
-                        info.add_outputs(results, start_time=start_time, end_time=time.time())
-                    except Exception as e:
-                        error = e
-                        info.add_error(e, start_time=start_time, end_time=time.time())
-
-                await controller.record_trace(info)
-                logger.debug(f"Finished trace for {func}, {info}")
-
-                if error:
-                    raise error
-                return results
+                return info, ok
             finally:
                 root_context_var.reset(tok)
 
-        return _trace_async()
+        info, ok = _fetch_outputs()
+        if ok:
+            logger.info(f"Found existing trace info for {func}, {info}")
+            if info.output is not None:
+                return info.output
+            if info.error:
+                raise info.error
+        else:
+            logger.debug(f"No existing trace info found for {func}, proceeding to execute.")
+
+        start_time = time.time()
+        trace_task_context = captured_ctx.data.task_context.replace(action=info.action)  # type: ignore[union-attr]
+        trace_data = captured_ctx.data.replace(task_context=trace_task_context, in_trace=True)
+        trace_context = Context(trace_data)
+
+        error = None
+        results = None
+
+        with trace_context:
+            try:
+                results = func(*args, **kwargs)
+                info.add_outputs(results, start_time=start_time, end_time=time.time())
+            except Exception as e:
+                error = e
+                info.add_error(e, start_time=start_time, end_time=time.time())
+
+        @syncify
+        async def _record_trace() -> None:
+            tok = root_context_var.set(captured_ctx)
+            try:
+                await controller.record_trace(info)
+                logger.debug(f"Finished trace for {func}, {info}")
+            finally:
+                root_context_var.reset(tok)
+
+        _record_trace()
+
+        if error:
+            raise error
+        return results
 
     @functools.wraps(func)
     def wrapper_sync_iterator(*args: Any, **kwargs: Any) -> Iterator[Any]:
