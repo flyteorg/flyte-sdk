@@ -27,8 +27,15 @@ async def square(i: int = 3) -> int:
     return i * i
 
 
+def _print_versions():
+    from importlib.metadata import version
+    for pkg in ("flyte", "connectrpc", "flyteidl2"):
+        print(f"{pkg}=={version(pkg)}")
+
+
 @env.task
 async def say_hello_nested(data: str = "default string", n: int = 3) -> str:
+    _print_versions()
     print(f"Hello, nested! - {flyte.ctx().action}")
     coros = []
     for i in range(n):
