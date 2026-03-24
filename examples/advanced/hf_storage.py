@@ -27,12 +27,9 @@ import tempfile
 import flyte
 from flyte.io import File
 
-
 env = flyte.TaskEnvironment(
     name="hf-raw-data-example",
-    image=flyte.Image.from_debian_base(name="hf-raw-data-example").with_pip_packages(
-        "huggingface_hub"
-    ),
+    image=flyte.Image.from_debian_base(name="hf-raw-data-example").with_pip_packages("huggingface_hub"),
     secrets=[flyte.Secret(key="hf-token", as_env_var="HF_TOKEN")],
 )
 
@@ -70,9 +67,9 @@ def pipeline(name: str) -> str:
 if __name__ == "__main__":
     flyte.init_from_config()
 
-    run = flyte.with_runcontext(
-        raw_data_path=f"hf://buckets/{USERNAME}/{BUCKET}/raw-data/"
-    ).run(pipeline, name="HuggingFace")
+    run = flyte.with_runcontext(raw_data_path=f"hf://buckets/{USERNAME}/{BUCKET}/raw-data/").run(
+        pipeline, name="HuggingFace"
+    )
 
     print(f"Run URL: {run.url}")
     run.wait()
