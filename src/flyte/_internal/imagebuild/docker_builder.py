@@ -149,24 +149,21 @@ USER root
 COPY --from=uv /uv /usr/bin/uv
 
 
-# Capture any existing UV_PYTHON from the base image
-ARG _EXISTING_UV_PYTHON=$${UV_PYTHON}
+# Configure default paths (can be overridden by base image or --build-arg)
+ARG VIRTUALENV=/opt/venv
+ARG UV_PYTHON=/opt/venv/bin/python
 
 
-# Configure default envs (preserve base image values if set)
 ENV UV_COMPILE_BYTECODE=1 \
    UV_LINK_MODE=copy \
-   VIRTUALENV=$${VIRTUALENV:-/opt/venv} \
-   UV_PYTHON=$${UV_PYTHON:-/opt/venv/bin/python}
+   VIRTUALENV=$$VIRTUALENV \
+   UV_PYTHON=$$UV_PYTHON
 
 
-# Create a virtualenv only if the base image doesn't already have one
-RUN if [ -z "$${_EXISTING_UV_PYTHON}" ]; then \
-       uv venv $$VIRTUALENV --python=$PYTHON_VERSION && uv run --python=$$UV_PYTHON python -m compileall $$VIRTUALENV; \
-   fi
+# Create virtualenv
+RUN uv venv $$VIRTUALENV --python=$PYTHON_VERSION && uv run --python=$$UV_PYTHON python -m compileall $$VIRTUALENV
 
-# Add /opt/venv/bin to PATH only when we created the venv (no existing UV_PYTHON)
-ENV PATH="$${_EXISTING_UV_PYTHON:+$$PATH}$${_EXISTING_UV_PYTHON:-/opt/venv/bin:$$PATH}"
+ENV PATH="$$VIRTUALENV/bin:$$PATH"
 
 
 # Adds nvidia just in case it exists
