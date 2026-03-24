@@ -7,6 +7,11 @@ import flyte
 env = flyte.TaskEnvironment(
     name="hello_world",
     resources=flyte.Resources(cpu=1, memory="1Gi"),
+    image=flyte.Image.from_debian_base()
+    .with_apt_packages("git")
+    .with_pip_packages(
+        "flyteidl2 @ git+https://github.com/flyteorg/flyte.git@jeev/connectrpc-integration#subdirectory=gen/python",
+    ),
 )
 
 
