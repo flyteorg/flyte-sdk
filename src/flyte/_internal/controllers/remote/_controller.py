@@ -306,24 +306,6 @@ class RemoteController(Controller):
         finally:
             loop.close()
 
-    def _ensure_submit_sync_loop(self) -> None:
-        if self._submit_thread is not None:
-            return
-
-        def exc_handler(loop, context):
-            logger.error(f"Remote controller submit sync loop caught exception in {loop}: {context}")
-
-        with _selector_policy():
-            self._submit_loop = asyncio.new_event_loop()
-            self._submit_loop.set_exception_handler(exc_handler)
-
-        self._submit_thread = threading.Thread(
-            name=f"remote-controller-{os.getpid()}-submitter",
-            daemon=True,
-            target=self._sync_thread_loop_runner,
-        )
-        self._submit_thread.start()
-
     def submit_sync(self, _task: TaskTemplate, *args, **kwargs) -> concurrent.futures.Future:
         """
         This function creates a cached thread and loop for the purpose of calling the submit method synchronously,
@@ -337,17 +319,26 @@ class RemoteController(Controller):
         :param kwargs:
         :return:
         """
-        self._ensure_submit_sync_loop()
+        if self._submit_thread is None:
+            # Please see LocalController for the general implementation of this pattern.
+            def exc_handler(loop, context):
+                logger.error(f"Remote controller submit sync loop caught exception in {loop}: {context}")
+
+            with _selector_policy():
+                self._submit_loop = asyncio.new_event_loop()
+                self._submit_loop.set_exception_handler(exc_handler)
+
+            self._submit_thread = threading.Thread(
+                name=f"remote-controller-{os.getpid()}-submitter",
+                daemon=True,
+                target=self._sync_thread_loop_runner,
+            )
+            self._submit_thread.start()
+
         coro = self.submit(_task, *args, **kwargs)
         assert self._submit_loop is not None, "Submit loop should always have been initialized by now"
         fut = asyncio.run_coroutine_threadsafe(coro, self._submit_loop)
         return fut
-
-    def run_coroutine_blocking(self, coro: Any) -> Any:
-        self._ensure_submit_sync_loop()
-        assert self._submit_loop is not None
-        fut = asyncio.run_coroutine_threadsafe(coro, self._submit_loop)
-        return fut.result(None)
 
     async def finalize_parent_action(self, action_id: ActionID):
         """

@@ -74,14 +74,6 @@ class Controller(Protocol):
         """
         ...
 
-    def run_coroutine_blocking(self, coro: Any) -> Any:
-        """
-        Run *coro* on this controller's dedicated asyncio loop (same bridge as submit_sync) and block
-        until it completes. Used for synchronous @flyte.trace execution, which must not run async
-        controller APIs on the caller's event loop (e.g. to avoid deadlock inside sync tasks).
-        """
-        ...
-
     async def submit_task_ref(self, _task: "TaskDetails", *args, **kwargs) -> Any:
         """
         Submit a task reference to the controller asynchronously and wait for the result. This is async and will block

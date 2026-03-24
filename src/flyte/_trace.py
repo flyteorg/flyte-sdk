@@ -15,6 +15,7 @@ from typing import (
 
 from flyte._logging import logger
 from flyte.models import NativeInterface
+from flyte.syncify import syncify
 
 T = TypeVar("T")
 
@@ -38,6 +39,7 @@ def trace(func: Callable[..., T]) -> Callable[..., T]:
         controller = get_controller()
         captured_ctx = ctx
 
+        @syncify
         async def _trace_async() -> Any:
             tok = root_context_var.set(captured_ctx)
             try:
@@ -77,7 +79,7 @@ def trace(func: Callable[..., T]) -> Callable[..., T]:
             finally:
                 root_context_var.reset(tok)
 
-        return controller.run_coroutine_blocking(_trace_async())
+        return _trace_async()
 
     @functools.wraps(func)
     async def wrapper_async(*args: Any, **kwargs: Any) -> Any:

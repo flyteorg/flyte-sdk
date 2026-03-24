@@ -273,16 +273,6 @@ class LocalController:
 
         return self._runner_map[name].get_run_future(coro)
 
-    def run_coroutine_blocking(self, coro: Any) -> Any:
-        name = threading.current_thread().name + f"PID:{os.getpid()}"
-        if name not in self._runner_map:
-            if len(self._runner_map) > 100:
-                logger.warning(
-                    "More than 100 event loop runners created!!! This could be a case of runaway recursion..."
-                )
-            self._runner_map[name] = _TaskRunner()
-        return self._runner_map[name].get_run_future(coro).result(None)
-
     async def finalize_parent_action(self, action: ActionID):
         pass
 
