@@ -110,9 +110,7 @@ def make_loader(batch_size: int) -> DataLoader:
 # ---------------------------------------------------------------------------
 
 
-async def load_checkpoint(
-    path: str, config: TrainingConfig
-) -> tuple[CheckpointMeta, dict, dict] | None:
+async def load_checkpoint(path: str, config: TrainingConfig) -> tuple[CheckpointMeta, dict, dict] | None:
     """Load checkpoint if it exists, otherwise return None to start fresh."""
     f = File.from_existing_remote(path)
     if not await f.exists():
@@ -127,9 +125,7 @@ async def load_checkpoint(
     return meta, raw["model"], raw["optimizer"]
 
 
-async def save_checkpoint(
-    path: str, meta: CheckpointMeta, model: nn.Module, optimizer: optim.Optimizer
-) -> None:
+async def save_checkpoint(path: str, meta: CheckpointMeta, model: nn.Module, optimizer: optim.Optimizer) -> None:
     buf = io.BytesIO()
     torch.save(
         {
