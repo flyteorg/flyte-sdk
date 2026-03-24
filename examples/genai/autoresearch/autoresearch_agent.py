@@ -56,7 +56,7 @@ experiment_env = flyte.TaskEnvironment(
 agent_env = flyte.TaskEnvironment(
     "autoresearch-agent",
     resources=flyte.Resources(cpu=1, memory="1Gi"),
-    secrets=[flyte.Secret(key="niels-anthropic-api-key", as_env_var="ANTHROPIC_API_KEY")],
+    secrets=[flyte.Secret(key="internal-anthropic-api-key", as_env_var="ANTHROPIC_API_KEY")],
     image=(
         flyte.Image.from_debian_base(name="autoresearch-agent-image").with_pip_packages(
             "httpx",
