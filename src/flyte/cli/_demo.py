@@ -37,7 +37,16 @@ def _container_is_running(container_name: str) -> bool:
     return container_name in result.stdout
 
 
+def _is_local_image(image: str) -> bool:
+    """Check if the image is local (no registry prefix)."""
+    name = image.split(":")[0]
+    return "/" not in name
+
+
 def _pull_image(image: str) -> None:
+    if _is_local_image(image):
+        click.echo(f"Skipping pull for local image '{image}'")
+        return
     subprocess.run(["docker", "pull", image], check=True)
 
 
