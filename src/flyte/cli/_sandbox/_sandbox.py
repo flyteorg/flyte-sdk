@@ -43,14 +43,25 @@ def _run_container(
     ports: list[str],
 ) -> None:
     cmd = [
-        "docker", "run", "--detach", "--rm", "--privileged",
-        "--name", container_name,
-        "--add-host", "host.docker.internal:host-gateway",
-        "--env", f"FLYTE_DEV={'True' if is_dev_mode else 'False'}",
-        "--env", "K3S_KUBECONFIG_OUTPUT=/.kube/kubeconfig",
-        "--volume", f"{kube_dir}:/.kube",
-        "--volume", f"{flyte_sandbox_config_dir}:/var/lib/flyte/config",
-        "--volume", f"{volume_name}:/var/lib/flyte/storage",
+        "docker",
+        "run",
+        "--detach",
+        "--rm",
+        "--privileged",
+        "--name",
+        container_name,
+        "--add-host",
+        "host.docker.internal:host-gateway",
+        "--env",
+        f"FLYTE_DEV={'True' if is_dev_mode else 'False'}",
+        "--env",
+        "K3S_KUBECONFIG_OUTPUT=/.kube/kubeconfig",
+        "--volume",
+        f"{kube_dir}:/.kube",
+        "--volume",
+        f"{flyte_sandbox_config_dir}:/var/lib/flyte/config",
+        "--volume",
+        f"{volume_name}:/var/lib/flyte/storage",
     ]
     for port in ports:
         cmd.extend(["--publish", port])
@@ -60,7 +71,7 @@ def _run_container(
 
 def _wait_for_kubeconfig(kubeconfig_path: Path, timeout: int = 60) -> None:
     click.echo("Waiting for kubeconfig...")
-    deadline = time.monotonic() + timeout # Set a timeout for waiting for k3s kubeconfig
+    deadline = time.monotonic() + timeout  # Set a timeout for waiting for k3s kubeconfig
     while True:
         if kubeconfig_path.exists() and kubeconfig_path.stat().st_size > 0:
             return
