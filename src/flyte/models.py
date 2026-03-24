@@ -536,6 +536,7 @@ class SerializationContext:
     interpreter_path: str = "/opt/venv/bin/python"
     image_cache: ImageCache | None = None
     root_dir: Optional[pathlib.Path] = None
+    service_account: str | None = None
 
     def get_entrypoint_path(self, interpreter_path: Optional[str] = None) -> str:
         """

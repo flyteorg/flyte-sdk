@@ -22,6 +22,7 @@ from flyte._internal.runtime.task_serde import (
     get_proto_task,
     get_security_context,
     lookup_image_in_cache,
+    merge_security_context,
     translate_task_to_wire,
 )
 from flyte._secret import Secret
@@ -72,6 +73,17 @@ def test_get_security_context():
     # Case 5: Invalid secret input (not a Secret or list of Secrets)
     with pytest.raises(AttributeError):
         get_security_context(["invalid_secret", 1])
+
+
+def test_merge_security_context_adds_service_account_and_preserves_secrets():
+    security_context = get_security_context(Secret(group="group1", key="key1", as_env_var="ENV_VAR1"))
+    merged = merge_security_context(security_context, service_account="svc-account")
+
+    assert merged is not None
+    assert merged.run_as.k8s_service_account == "svc-account"
+    assert len(merged.secrets) == 1
+    assert merged.secrets[0].group == "group1"
+    assert merged.secrets[0].key == "key1"
 
 
 def test_get_proto_container_task():
@@ -151,6 +163,29 @@ def test_get_proto_container_task():
     assert env_vars["ENV1"] == "val1"
     assert "ENV2" in env_vars
     assert env_vars["ENV2"] == "val2"
+
+
+def test_get_proto_task_includes_service_account_in_security_context():
+    env = flyte.TaskEnvironment(name="test_env_sa", image="python:3.10")
+
+    @env.task()
+    async def t1() -> str:
+        return "ok"
+
+    context = SerializationContext(
+        project="test-project",
+        domain="test-domain",
+        version="test-version",
+        org="test-org",
+        image_cache=None,
+        code_bundle=None,
+        root_dir=pathlib.Path.cwd(),
+        service_account="svc-account",
+    )
+
+    proto_task = get_proto_task(t1, context)
+
+    assert proto_task.security_context.run_as.k8s_service_account == "svc-account"
 
 
 def test_get_proto_task_ignored_cache_inputs():
