@@ -23,3 +23,26 @@ def tui():
     from flyte.cli._tui import launch_tui_explore
 
     launch_tui_explore()
+
+
+@start.command()
+@click.option(
+    "--sandbox-image",
+    default="ghcr.io/flyteorg/flyte-sandbox-v2:nightly",
+    show_default=True,
+    help="Docker image to use for the sandbox container.",
+)
+@click.option(
+    "--dev",
+    is_flag=True,
+    default=False,
+    help="Enable dev mode inside the sandbox (sets FLYTE_DEV=True).",
+)
+def sandbox(sandbox_image: str, dev: bool):
+    """Start a local Flyte sandbox."""
+    from flyte.cli._sandbox import launch_sandbox
+
+    launch_sandbox(sandbox_image, dev)
+
+
+

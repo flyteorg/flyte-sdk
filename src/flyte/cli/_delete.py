@@ -1,3 +1,5 @@
+import subprocess
+
 import rich_click as click
 
 import flyte.cli._common as common
@@ -60,3 +62,16 @@ def app(cfg: common.CLIConfig, name: str, project: str | None = None, domain: st
         App.delete(name=name, project=project, domain=domain)
 
     console.log(f"[green]Successfully deleted app {name} [/green]")
+
+
+@delete.command()
+def sandbox():
+    """
+    Stop and remove the local Flyte sandbox container.
+    """
+    console = common.get_console()
+    try:
+        subprocess.run(["docker", "stop", "flyte-sandbox"], check=True)
+        console.print("[green]Sandbox stopped.[/green]")
+    except subprocess.CalledProcessError:
+        raise click.ClickException("Failed to stop sandbox. Is the container running?")
