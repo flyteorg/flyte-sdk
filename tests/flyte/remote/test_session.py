@@ -1,7 +1,38 @@
+import datetime
+
+import pyqwest
 import pytest
 from unittest.mock import AsyncMock, Mock, patch, MagicMock
 
-from flyte.remote._client.auth._session import create_session, SessionConfig
+from flyte.remote._client.auth._session import (
+    create_session,
+    SessionConfig,
+    _resolve_tls_ca_cert,
+    _build_pyqwest_client,
+    _bootstrap_ssl_from_server,
+)
+
+
+def _make_valid_cert_pem() -> bytes:
+    """Generate a valid self-signed PEM certificate for testing."""
+    from cryptography import x509
+    from cryptography.x509.oid import NameOID
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    subject = issuer = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "test")])
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(issuer)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(datetime.datetime.now(datetime.timezone.utc))
+        .not_valid_after(datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=365))
+        .sign(key, hashes.SHA256())
+    )
+    return cert.public_bytes(serialization.Encoding.PEM)
 
 
 @pytest.mark.asyncio
@@ -35,7 +66,6 @@ async def test_secure_creates_auth_interceptors(mock_get_session, mock_proxy, mo
 async def test_rpc_retries_creates_retry_interceptors(mock_get_session, mock_proxy, mock_auth):
     mock_get_session.return_value = MagicMock()
     result = await create_session("example.com:443", insecure=True, rpc_retries=3)
-    # Should have: DefaultMetadataInterceptor + RetryUnaryInterceptor + RetryServerStreamInterceptor
     from flyte.remote._client.auth._interceptors.retry import RetryUnaryInterceptor, RetryServerStreamInterceptor
 
     retry_unary = [i for i in result.interceptors if isinstance(i, RetryUnaryInterceptor)]
@@ -50,10 +80,109 @@ async def test_rpc_retries_creates_retry_interceptors(mock_get_session, mock_pro
 @patch("flyte.remote._client.auth._session.create_proxy_auth_interceptors", return_value=[])
 @patch("flyte.remote._client.auth._session.get_async_session")
 async def test_returns_session_config(mock_get_session, mock_proxy, mock_auth):
-    mock_http = MagicMock()
-    mock_get_session.return_value = mock_http
+    mock_get_session.return_value = MagicMock()
     result = await create_session("dns:///example.com:8089", insecure=False)
     assert isinstance(result, SessionConfig)
     assert result.endpoint == "https://example.com:8089"
-    assert result.http_client is mock_http
+    assert isinstance(result.http_client, pyqwest.Client)
     assert len(result.interceptors) >= 1  # At least DefaultMetadataInterceptor
+
+
+@pytest.mark.asyncio
+@patch("flyte.remote._client.auth._session.create_auth_interceptors", return_value=[])
+@patch("flyte.remote._client.auth._session.create_proxy_auth_interceptors", return_value=[])
+@patch("flyte.remote._client.auth._session.get_async_session")
+@patch("flyte.remote._client.auth._session._resolve_tls_ca_cert")
+@patch("flyte.remote._client.auth._session._build_pyqwest_client")
+async def test_custom_tls_creates_pyqwest_client(mock_build, mock_tls, mock_get_session, mock_proxy, mock_auth):
+    mock_tls.return_value = b"cert-bytes"
+    mock_client = MagicMock(spec=pyqwest.Client)
+    mock_build.return_value = mock_client
+    mock_get_session.return_value = MagicMock()
+    result = await create_session("example.com:443", insecure=False, ca_cert_file_path="/tmp/ca.pem")
+    mock_build.assert_called_once_with(b"cert-bytes")
+    assert result.http_client is mock_client
+
+
+@pytest.mark.asyncio
+@patch("flyte.remote._client.auth._session.create_auth_interceptors", return_value=[])
+@patch("flyte.remote._client.auth._session.create_proxy_auth_interceptors", return_value=[])
+@patch("flyte.remote._client.auth._session.get_async_session")
+async def test_insecure_no_tls_resolution(mock_get_session, mock_proxy, mock_auth):
+    mock_get_session.return_value = MagicMock()
+    result = await create_session("localhost:8080", insecure=True)
+    assert isinstance(result.http_client, pyqwest.Client)
+
+
+class TestResolveTlsCaCert:
+    @pytest.mark.asyncio
+    async def test_insecure_returns_none(self):
+        result = await _resolve_tls_ca_cert(
+            "http://localhost:8080", insecure=True, insecure_skip_verify=False, ca_cert_file_path=None
+        )
+        assert result is None
+
+    @pytest.mark.asyncio
+    @patch("flyte.remote._client.auth._session._bootstrap_ssl_from_server", return_value=b"PEM-CERT")
+    async def test_insecure_skip_verify_fetches_from_server(self, mock_bootstrap):
+        result = await _resolve_tls_ca_cert(
+            "https://example.com:443", insecure=False, insecure_skip_verify=True, ca_cert_file_path=None
+        )
+        assert result == b"PEM-CERT"
+        mock_bootstrap.assert_called_once_with("https://example.com:443")
+
+    @pytest.mark.asyncio
+    async def test_ca_cert_file_reads_bytes(self, tmp_path):
+        cert_content = b"-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----\n"
+        cert_file = tmp_path / "ca.pem"
+        cert_file.write_bytes(cert_content)
+        result = await _resolve_tls_ca_cert(
+            "https://example.com:443", insecure=False, insecure_skip_verify=False, ca_cert_file_path=str(cert_file)
+        )
+        assert result == cert_content
+
+    @pytest.mark.asyncio
+    async def test_no_tls_config_returns_none(self):
+        result = await _resolve_tls_ca_cert(
+            "https://example.com:443", insecure=False, insecure_skip_verify=False, ca_cert_file_path=None
+        )
+        assert result is None
+
+    @pytest.mark.asyncio
+    @patch("flyte.remote._client.auth._session._bootstrap_ssl_from_server", return_value=b"PEM-CERT")
+    async def test_insecure_skip_verify_takes_precedence_over_ca_cert(self, mock_bootstrap):
+        """When both insecure_skip_verify and ca_cert_file_path are set, skip_verify wins."""
+        result = await _resolve_tls_ca_cert(
+            "https://example.com:443",
+            insecure=False,
+            insecure_skip_verify=True,
+            ca_cert_file_path="/tmp/ca.pem",
+        )
+        assert result == b"PEM-CERT"
+        mock_bootstrap.assert_called_once()
+
+
+class TestBuildPyqwestClient:
+    def test_no_cert_returns_client_with_defaults(self):
+        client = _build_pyqwest_client(None)
+        assert isinstance(client, pyqwest.Client)
+
+    def test_with_valid_cert_returns_pyqwest_client(self):
+        cert_pem = _make_valid_cert_pem()
+        client = _build_pyqwest_client(cert_pem)
+        assert isinstance(client, pyqwest.Client)
+
+
+class TestBootstrapSslFromServer:
+    @patch("flyte.remote._client.auth._session.ssl.get_server_certificate")
+    def test_fetches_cert_and_encodes(self, mock_get_cert):
+        mock_get_cert.return_value = "-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----\n"
+        result = _bootstrap_ssl_from_server("https://example.com:8089")
+        mock_get_cert.assert_called_once_with(("example.com", 8089), timeout=10)
+        assert result == b"-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----\n"
+
+    @patch("flyte.remote._client.auth._session.ssl.get_server_certificate")
+    def test_defaults_to_port_443(self, mock_get_cert):
+        mock_get_cert.return_value = "cert"
+        _bootstrap_ssl_from_server("https://example.com")
+        mock_get_cert.assert_called_once_with(("example.com", 443), timeout=10)
