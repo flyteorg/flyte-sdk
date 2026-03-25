@@ -711,7 +711,7 @@ class ActionDetails(ToJSONMixin):
                 if v.done():
                     return
         except ConnectError as e:
-            if e.code == Code.CANCELLED:
+            if e.code == Code.CANCELED:
                 pass
             else:
                 raise e

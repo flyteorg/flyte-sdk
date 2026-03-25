@@ -4,6 +4,7 @@ import asyncio
 from asyncio import Queue
 from typing import AsyncIterator, Callable, Dict, Optional, Tuple, cast
 
+from connectrpc.code import Code
 from connectrpc.errors import ConnectError
 from flyteidl2.actions import actions_service_pb2
 from flyteidl2.common import identifier_pb2, phase_pb2
@@ -269,6 +270,9 @@ class Informer:
                 last_exc = e
                 retries += 1
             except ConnectError as e:
+                if e.code == Code.CANCELED:
+                    logger.info(f"Watch cancelled: {self.name}")
+                    return
                 logger.error(f"RPC error: {self.name}, {e}", exc_info=False)
                 last_exc = e
                 retries += 1
