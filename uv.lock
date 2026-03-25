@@ -1110,7 +1110,7 @@ dev = [
 
 [[package]]
 name = "flyteidl2"
-version = "2.0.8"
+version = "2.0.9"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "googleapis-common-protos" },
@@ -1119,7 +1119,7 @@ dependencies = [
     { name = "protovalidate" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/55/20/90ad311f44660df647591cb58ded043788facd32fc8222e20c43fb96a396/flyteidl2-2.0.8-py3-none-any.whl", hash = "sha256:9c160cf5e0a4fd0a0cd93dd68404bdde47b87fdce9bd56e70391d366c1415e4b", size = 278421, upload-time = "2026-03-18T23:46:19.915Z" },
+    { url = "https://files.pythonhosted.org/packages/2f/b7/26a675d1bf1d2aa8b4b1618c55e16ee1b611f97c32018112853172da9cab/flyteidl2-2.0.9-py3-none-any.whl", hash = "sha256:419da35be6104343823578b197d430c25e07490f7934e300479963a618362b5d", size = 327125, upload-time = "2026-03-25T04:32:00.925Z" },
 ]
 
 [[package]]

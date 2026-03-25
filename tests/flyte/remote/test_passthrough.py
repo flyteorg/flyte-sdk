@@ -81,6 +81,18 @@ async def test_do_refresh_credentials(authenticator):
 
 
 @pytest.mark.asyncio
+async def test_duplicate_keys_last_wins(authenticator):
+    """dict() conversion means last value wins for duplicate metadata keys."""
+    with mock.patch("flyte.remote._auth_metadata.get_auth_metadata") as mock_get_metadata:
+        mock_get_metadata.return_value = (("authorization", "first"), ("authorization", "second"))
+
+        result = await authenticator.get_auth_headers()
+
+        assert result is not None
+        assert result.headers == {"authorization": "second"}
+
+
+@pytest.mark.asyncio
 async def test_auth_metadata_context_integration(endpoint):
     """Test that auth_metadata context manager integrates with PassthroughAuthenticator."""
     from flyte._context import internal_ctx

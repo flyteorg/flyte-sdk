@@ -434,8 +434,8 @@ class TestRetryServerStreamInterceptor:
         assert call_count == 2
 
     @pytest.mark.asyncio
-    async def test_no_retry_after_yield(self):
-        """If the stream already yielded data, errors must propagate — not restart the stream."""
+    async def test_retry_after_partial_yield(self):
+        """If the stream already yielded data, retries restart the full stream (items may duplicate)."""
         interceptor = RetryServerStreamInterceptor(max_attempts=3, initial_backoff=0.001)
         call_count = 0
 
@@ -443,12 +443,12 @@ class TestRetryServerStreamInterceptor:
             nonlocal call_count
             call_count += 1
             yield "first"
-            raise ConnectError(Code.UNAVAILABLE, "mid-stream failure")
+            if call_count == 1:
+                raise ConnectError(Code.UNAVAILABLE, "mid-stream failure")
 
         ctx, _ = _make_ctx_mock()
         results = []
-        with pytest.raises(ConnectError, match="mid-stream failure"):
-            async for item in interceptor.intercept_server_stream(call_next, "req", ctx):
-                results.append(item)
-        assert results == ["first"]
-        assert call_count == 1  # No retry attempted
+        async for item in interceptor.intercept_server_stream(call_next, "req", ctx):
+            results.append(item)
+        assert results == ["first", "first"]
+        assert call_count == 2
