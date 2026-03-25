@@ -18,7 +18,6 @@ Usage (local):
 
 from __future__ import annotations
 
-import argparse
 import math
 import os
 import pickle
@@ -436,30 +435,3 @@ def evaluate_bpb(model: torch.nn.Module, tokenizer: Tokenizer, batch_size: int, 
         total_nats += (loss_flat * mask.to(loss_flat.dtype)).sum().item()
         total_bytes += int(nbytes.sum().item())
     return total_nats / (math.log(2) * total_bytes)
-
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Prepare data and tokenizer for autoresearch (Flyte example)")
-    parser.add_argument(
-        "--num-shards",
-        type=int,
-        default=10,
-        help="Number of training shards to download (-1 = all). Val shard is always pinned.",
-    )
-    parser.add_argument("--download-workers", type=int, default=8, help="Number of parallel download workers")
-    args = parser.parse_args()
-
-    num_shards = MAX_SHARD if args.num_shards == -1 else args.num_shards
-
-    print(f"Cache directory: {cache_dir()}")
-    print()
-
-    download_data(num_shards, download_workers=args.download_workers)
-    print()
-    train_tokenizer()
-    print()
-    print("Done! Ready to train.")

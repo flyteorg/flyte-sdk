@@ -19,17 +19,19 @@ from __future__ import annotations
 import json
 import math
 import os
-import sys
-import tarfile
-import tempfile
 import time
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-BUNDLE_PATH = "/var/inputs/bundle"
-METRICS_PATH = "/var/outputs/metrics_json"
+ROOT_INPUTS_DIR = "/var/inputs"
+DATA_TGZ = f"{ROOT_INPUTS_DIR}/data_tgz"
+TOKENIZER_TGZ = f"{ROOT_INPUTS_DIR}/tokenizer_tgz"
+DATA_DIR = f"{ROOT_INPUTS_DIR}/data"
+TOKENIZER_DIR = f"{ROOT_INPUTS_DIR}/tokenizer"
+PREPARE_PY = f"{ROOT_INPUTS_DIR}/prepare.py"
+METRICS_PATH = "/var/outputs/metrics_json_str"
 
 # ---------------------------------------------------------------------------
 # Architecture / training knobs (agent edits here)
@@ -42,22 +44,25 @@ DROPOUT = 0.0
 DEVICE_BATCH_SIZE = 4  # sequences per step (reduce on OOM)
 TIME_BUDGET_SEC = int(os.environ.get("AUTORESEARCH_TIME_BUDGET", "120"))
 
-# Upstream context length (must match ``prepare.py`` / bundle).
+# Upstream context length (must match ``prepare.py``).
 MAX_SEQ_LEN = 2048
 
 # Smaller default eval than upstream full 40*524288 for practical Flyte demos.
 os.environ.setdefault("AUTORESEARCH_EVAL_TOKENS", str(256 * MAX_SEQ_LEN))
 
+# Set the cache directory to the inputs directory.
+os.environ["AUTORESEARCH_CACHE"] = ROOT_INPUTS_DIR  # DO NOT CHANGE THIS
 
-def _load_runtime():
-    root = tempfile.mkdtemp(prefix="ar-bundle-")
-    with tarfile.open(BUNDLE_PATH, "r:gz") as tf:
-        tf.extractall(root)
-    os.environ["AUTORESEARCH_CACHE"] = root
-    sys.path.insert(0, root)
-    import autoresearch_runtime as ar
 
-    return ar
+def _prepare_dirs():
+    import sys
+    import tarfile
+
+    sys.path.insert(0, ROOT_INPUTS_DIR)
+    with tarfile.open(DATA_TGZ, "r:gz") as tar:
+        tar.extractall(DATA_DIR)
+    with tarfile.open(TOKENIZER_TGZ, "r:gz") as tar:
+        tar.extractall(TOKENIZER_DIR)
 
 
 class CausalSelfAttention(nn.Module):
@@ -170,11 +175,14 @@ def _count_params(model: nn.Module) -> int:
 
 
 def main() -> None:
-    ar = _load_runtime()
-    assert ar.MAX_SEQ_LEN == MAX_SEQ_LEN, "Bundle MAX_SEQ_LEN must match train.py block size"
+    _prepare_dirs()
+
+    import prepare
+
+    assert prepare.MAX_SEQ_LEN == MAX_SEQ_LEN, "Bundle MAX_SEQ_LEN must match train.py block size"
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    tokenizer = ar.Tokenizer.from_directory()
+    tokenizer = prepare.Tokenizer.from_directory()
     vocab_size = tokenizer.get_vocab_size()
 
     model = TinyGPT(
@@ -187,7 +195,7 @@ def main() -> None:
     ).to(device)
 
     opt = torch.optim.AdamW(model.parameters(), lr=3e-4, weight_decay=0.01)
-    train_loader = ar.make_dataloader(tokenizer, DEVICE_BATCH_SIZE, MAX_SEQ_LEN, "train", device=device)
+    train_loader = prepare.make_dataloader(tokenizer, DEVICE_BATCH_SIZE, MAX_SEQ_LEN, "train", device=device)
 
     t0 = time.time()
     model.train()
@@ -203,7 +211,7 @@ def main() -> None:
         opt.step()
         steps += 1
 
-    val_bpb = float(ar.evaluate_bpb(model, tokenizer, DEVICE_BATCH_SIZE, device=device))
+    val_bpb = float(prepare.evaluate_bpb(model, tokenizer, DEVICE_BATCH_SIZE, device=device))
     model_name = f"TinyGPT-L{N_LAYER}H{N_HEAD}D{N_EMBD}"
 
     payload = {
