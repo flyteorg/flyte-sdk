@@ -15,7 +15,7 @@ from flyte.syncify import syncify
 
 from . import Action, ActionDetails, ActionInputs, ActionOutputs
 from ._action import _action_details_rich_repr, _action_rich_repr
-from ._common import ToJSONMixin, filtering, sorting
+from ._common import TimeFilter, ToJSONMixin, filtering, sorting, time_filtering
 
 
 @dataclass
@@ -28,6 +28,7 @@ class Run(ToJSONMixin):
     pb2: run_definition_pb2.Run
     action: Action = field(init=False)
     _details: RunDetails | None = None
+    _preserve_original_types: bool = False
 
     def __post_init__(self):
         """
@@ -36,6 +37,7 @@ class Run(ToJSONMixin):
         if not self.pb2.HasField("action"):
             raise RuntimeError("Run does not have an action")
         self.action = Action(self.pb2.action)
+        self._debug_url = None
 
     @syncify
     @classmethod
@@ -47,6 +49,10 @@ class Run(ToJSONMixin):
         created_by_subject: str | None = None,
         sort_by: Tuple[str, Literal["asc", "desc"]] | None = None,
         limit: int = 100,
+        project: str | None = None,
+        domain: str | None = None,
+        created_at: TimeFilter | None = None,
+        updated_at: TimeFilter | None = None,
     ) -> AsyncIterator[Run]:
         """
         Get all runs for the current project and domain.
@@ -55,8 +61,12 @@ class Run(ToJSONMixin):
         :param task_name: Filter runs by task name.
         :param task_version: Filter runs by task version.
         :param created_by_subject: Filter runs by the subject that created them. (this is not username, but the subject)
-        :param sort_by: The sorting criteria for the project list, in the format (field, order).
+        :param sort_by: The sorting criteria for the Run list, in the format (field, order).
         :param limit: The maximum number of runs to return.
+        :param project: The project to list runs for. Defaults to the globally configured project.
+        :param domain: The domain to list runs for. Defaults to the globally configured domain.
+        :param created_at: Filter runs by creation time range.
+        :param updated_at: Filter runs by last-update time range.
         :return: An iterator of runs.
         """
         ensure_client()
@@ -107,6 +117,11 @@ class Run(ToJSONMixin):
 
         filters = filtering(created_by_subject, *filters)
 
+        if created_at:
+            filters.extend(time_filtering("created_at", created_at))
+        if updated_at:
+            filters.extend(time_filtering("updated_at", updated_at))
+
         cfg = get_init_config()
         i = 0
         while True:
@@ -122,8 +137,8 @@ class Run(ToJSONMixin):
                     org=cfg.org,
                     project_id=identifier_pb2.ProjectIdentifier(
                         organization=cfg.org,
-                        domain=cfg.domain,
-                        name=cfg.project,
+                        domain=domain or cfg.domain,
+                        name=project or cfg.project,
                     ),
                 )
             )
@@ -214,12 +229,34 @@ class Run(ToJSONMixin):
         await self.action.show_logs.aio(attempt, max_lines, show_ts, raw, filter_system=filter_system)
 
     @syncify
+    async def get_logs(
+        self,
+        attempt: int | None = None,
+        filter_system: bool = False,
+        show_ts: bool = False,
+    ) -> AsyncGenerator[str, None]:
+        """
+        Get logs for the run as an iterator of strings.
+
+        Can be called synchronously (returns `Iterator[str]`) or asynchronously
+        via `.aio()` (returns `AsyncIterator[str]`).
+
+        :param attempt: The attempt number to retrieve logs for (defaults to latest attempt).
+        :param filter_system: If True, filter out system-generated log lines.
+        :param show_ts: If True, prefix each line with an ISO-8601 timestamp.
+        """
+        async for line in self.action.get_logs.aio(attempt, filter_system=filter_system, show_ts=show_ts):
+            yield line
+
+    @syncify
     async def details(self) -> RunDetails:
         """
         Get the details of the run. This is a placeholder for getting the run details.
         """
         if self._details is None or not self._details.done():
             self._details = await RunDetails.get_details.aio(self.pb2.action.id.run)
+        self._details._preserve_original_types = self._preserve_original_types
+        self._details.action_details._preserve_original_types = self._preserve_original_types
         return self._details
 
     @syncify
@@ -251,7 +288,20 @@ class Run(ToJSONMixin):
         )
 
     @syncify
-    async def abort(self):
+    async def get_debug_url(self) -> str:
+        """
+        Get the debug URL of the run. Returns `None` if the VS Code
+        Debugger log entry is not yet available in the action details.
+        """
+        if self._debug_url is not None:
+            return self._debug_url
+        from flyte._debug.client import watch_for_vscode_url
+
+        self._debug_url = await watch_for_vscode_url(self)
+        return self._debug_url
+
+    @syncify
+    async def abort(self, reason: str = "Manually aborted from the SDK api."):
         """
         Aborts / Terminates the run.
         """
@@ -259,6 +309,7 @@ class Run(ToJSONMixin):
             await get_client().run_service.AbortRun(
                 run_service_pb2.AbortRunRequest(
                     run_id=self.pb2.action.id.run,
+                    reason=reason,
                 )
             )
         except grpc.aio.AioRpcError as e:
@@ -305,12 +356,13 @@ class RunDetails(ToJSONMixin):
 
     pb2: run_definition_pb2.RunDetails
     action_details: ActionDetails = field(init=False)
+    _preserve_original_types: bool = False
 
     def __post_init__(self):
         """
         Initialize the RunDetails object with the given run definition.
         """
-        self.action_details = ActionDetails(self.pb2.action)
+        self.action_details = ActionDetails(self.pb2.action, _preserve_original_types=self._preserve_original_types)
 
     @syncify
     @classmethod

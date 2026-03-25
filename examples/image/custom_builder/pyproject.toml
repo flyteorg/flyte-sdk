@@ -1,0 +1,13 @@
+[project]
+name = "my_builder"
+version = "0.1.0"
+description = "Custom image builder"
+requires-python = ">=3.10"
+dependencies = []
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["*"]
+
+[project.entry-points."flyte.plugins.image_builders"]
+my_builder = "my_builder.my_builder:MyImageBuilder"

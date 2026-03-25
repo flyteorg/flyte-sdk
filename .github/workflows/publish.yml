@@ -5,8 +5,8 @@ on:
     types: [published]
   pull_request:
     paths:
-      - '.github/workflows/publish.yml'
-      - 'maint_tools/build_default_image.py'
+      - ".github/workflows/publish.yml"
+      - "maint_tools/build_default_image.py"
 
 jobs:
   flyte-pypi:
@@ -32,17 +32,18 @@ jobs:
           uv run python -m build --wheel --installer uv
       - name: Publish
         if: ${{ github.event_name == 'release' }}
-        working-directory: ${{ matrix.workdir }}
         env:
           TWINE_USERNAME: ${{ secrets.PYPI_USERNAME }}
           TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
         run: |
           uv run python -m twine upload --verbose dist/*
       - name: Sleep until pypi is available
+        if: ${{ github.event_name == 'release' }}
         id: pypiwait
         run: |
-          # from 'refs/tags/v1.2.3 get 1.2.3' and make sure it's not an empty string
-          VERSION=$(echo $GITHUB_REF | sed 's|refs/tags/v||')
+          # from 'v1.2.3' get '1.2.3' and make sure it's not an empty string
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
           if [ -z "$VERSION" ]
           then
             echo "No tagged version found, exiting"
@@ -66,6 +67,7 @@ jobs:
     name: PyPI package
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         workdir:
           - "plugins/ray"
@@ -73,9 +75,25 @@ jobs:
           - "plugins/openai"
           - "plugins/dask"
           - "plugins/pytorch"
-          - "plugins/connectors"
+          - "plugins/bigquery"
+          - "plugins/databricks"
+          - "plugins/snowflake"
           - "plugins/sglang"
           - "plugins/vllm"
+          - "plugins/wandb"
+          - "plugins/polars"
+          - "plugins/codegen"
+          - "plugins/hitl"
+          - "plugins/jsonl"
+          - "plugins/anthropic"
+          - "plugins/gemini"
+          - "plugins/mlflow"
+          - "plugins/pandera"
+        include:
+          - workdir: "plugins/sglang"
+            image-type: sglang
+          - workdir: "plugins/vllm"
+            image-type: vllm
     steps:
       - uses: actions/checkout@v4
         with:
@@ -95,7 +113,7 @@ jobs:
       - name: Build and publish
         working-directory: ${{ matrix.workdir }}
         run: |
-          uv run --prerelease allow python -m build --wheel --installer uv
+          uv run python -m build --wheel --installer uv
       - name: Publish
         if: ${{ github.event_name == 'release' }}
         working-directory: ${{ matrix.workdir }}
@@ -103,7 +121,7 @@ jobs:
           TWINE_USERNAME: ${{ secrets.PYPI_USERNAME }}
           TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
         run: |
-          uv run --prerelease allow python -m twine upload --verbose dist/*
+          uv run python -m twine upload --verbose dist/*
 
   build-and-push-flyte-docker-images:
     needs: flyte-pypi
@@ -116,6 +134,7 @@ jobs:
           - "3.11"
           - "3.12"
           - "3.13"
+          - "3.14"
     steps:
       - uses: actions/checkout@v4
         with:

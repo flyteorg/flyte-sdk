@@ -22,7 +22,7 @@ def test_basic_init_with_model_path():
     assert app.name == "test-app"
     assert app.model_path == "s3://bucket/model"
     assert app.model_id == "test-model"
-    assert app.port.port == 8000
+    assert app.port.port == 8080
     assert app.type == "vLLM"
     assert app.stream_model is True
     assert app.image == DEFAULT_VLLM_IMAGE
@@ -38,11 +38,11 @@ def test_basic_init_with_model_hf_path():
     assert app.name == "test-app"
     assert app.model_hf_path == "Qwen/Qwen3-0.6B"
     assert app.model_id == "test-model"
-    assert app.port.port == 8000
+    assert app.port.port == 8080
     assert app.type == "vLLM"
     assert app.image == DEFAULT_VLLM_IMAGE
     # When using model_hf_path, no parameters should be created
-    assert app.inputs == []
+    assert app.parameters == []
     # The model mount path should be set to the HF path
     assert app.env_vars["FLYTE_MODEL_LOADER_LOCAL_MODEL_PATH"] == "Qwen/Qwen3-0.6B"
 
@@ -147,9 +147,9 @@ def test_stream_model_true_with_model_path():
     assert app.env_vars["FLYTE_MODEL_LOADER_LOCAL_MODEL_PATH"] == "/root/flyte"
 
     # Check parameters
-    assert len(app.inputs) == 1
-    model_input = app.inputs[0]
-    assert model_input.name == "model"
+    assert len(app.parameters) == 1
+    model_input = app.parameters[0]
+    assert model_input.name == "model_path"
     assert model_input.value == "s3://bucket/model"
     assert model_input.env_var == "FLYTE_MODEL_LOADER_REMOTE_MODEL_PATH"
     assert model_input.download is False
@@ -171,8 +171,8 @@ def test_stream_model_false_with_model_path():
     assert app.env_vars["FLYTE_MODEL_LOADER_STREAM_SAFETENSORS"] == "false"
 
     # Check parameters - should download instead of stream
-    assert len(app.inputs) == 1
-    model_input = app.inputs[0]
+    assert len(app.parameters) == 1
+    model_input = app.parameters[0]
     assert model_input.download is True
     assert model_input.mount == "/root/flyte"
 
@@ -186,7 +186,7 @@ def test_model_hf_path_no_inputs():
     )
 
     # No parameters should be created for HF path
-    assert app.inputs == []
+    assert app.parameters == []
 
     # Mount path should be set to the HF path
     assert app.env_vars["FLYTE_MODEL_LOADER_LOCAL_MODEL_PATH"] == "meta-llama/Llama-2-7b"
@@ -329,3 +329,43 @@ def test_custom_env_vars_preserved():
     assert app.env_vars["MY_VAR"] == "my_value"
     # Should also have the model loader env vars
     assert "FLYTE_MODEL_LOADER_LOCAL_MODEL_PATH" in app.env_vars
+
+
+# Tests for server, on_startup, and on_shutdown validation
+
+
+def _create_vllm_app_with_lifecycle_field(field_name, field_value):
+    """Helper to create a VLLMAppEnvironment instance with a lifecycle field set before __post_init__."""
+    app = object.__new__(VLLMAppEnvironment)
+    app.name = "test-app"
+    app.model_path = "s3://bucket/model"
+    app.model_id = "test-model"
+    app.port = 8080
+    app.type = "vLLM"
+    app.extra_args = ""
+    app.stream_model = True
+    app.image = DEFAULT_VLLM_IMAGE
+    app._model_mount_path = "/root/flyte"
+    setattr(app, field_name, field_value)
+    return app
+
+
+def test_server_decorator_raises_error():
+    """Test that setting _server raises ValueError in __post_init__."""
+    app = _create_vllm_app_with_lifecycle_field("_server", lambda: None)
+    with pytest.raises(ValueError, match="server function cannot be set for VLLMAppEnvironment"):
+        VLLMAppEnvironment.__post_init__(app)
+
+
+def test_on_startup_decorator_raises_error():
+    """Test that setting _on_startup raises ValueError in __post_init__."""
+    app = _create_vllm_app_with_lifecycle_field("_on_startup", lambda: None)
+    with pytest.raises(ValueError, match="on_startup function cannot be set for VLLMAppEnvironment"):
+        VLLMAppEnvironment.__post_init__(app)
+
+
+def test_on_shutdown_decorator_raises_error():
+    """Test that setting _on_shutdown raises ValueError in __post_init__."""
+    app = _create_vllm_app_with_lifecycle_field("_on_shutdown", lambda: None)
+    with pytest.raises(ValueError, match="on_shutdown function cannot be set for VLLMAppEnvironment"):
+        VLLMAppEnvironment.__post_init__(app)

@@ -137,8 +137,8 @@ class AsyncConnectorService(AsyncConnectorServiceServicer):
         connector = ConnectorRegistry.get_connector(template.type, template.task_type_version)
         logger.info(f"{connector.name} start creating the job")
         python_interface_inputs: Dict[str, Tuple[Type, Type[_has_default] | Type[inspect._empty]]] = {
-            name: (TypeEngine.guess_python_type(lt.type), inspect.Parameter.empty)
-            for name, lt in template.interface.inputs.variables.items()
+            entry.key: (TypeEngine.guess_python_type(entry.value.type), inspect.Parameter.empty)
+            for entry in template.interface.inputs.variables
         }
         native_interface = NativeInterface.from_types(inputs=python_interface_inputs, outputs={})
         native_inputs = await convert_from_inputs_to_native(native_interface, Inputs(proto_inputs=request.inputs))

@@ -20,9 +20,9 @@ from typing import List, Literal, Optional, Tuple, Union
 
 from flyte._logging import logger
 
-from ._ignore import IgnoreGroup
+from ._ignore import Ignore, IgnoreGroup, StandardIgnore
 
-CopyFiles = Literal["loaded_modules", "all", "none"]
+CopyFiles = Literal["loaded_modules", "all", "none", "custom"]
 
 
 def compress_scripts(source_path: str, destination: str, modules: List[ModuleType]):
@@ -126,7 +126,8 @@ def ls_files(
     all_files.sort()
     hasher = hashlib.md5()
     for abspath in all_files:
-        relpath = os.path.relpath(abspath, source_path)
+        # Use POSIX-style path for hashing to ensure consistent hashes across platforms
+        relpath = pathlib.Path(abspath).relative_to(source_path).as_posix()
         _filehash_update(abspath, hasher)
         _pathhash_update(relpath, hasher)
 
@@ -156,9 +157,14 @@ def ls_relative_files(relative_paths: list[str], source_path: pathlib.Path) -> t
             else:
                 raise ValueError(f"File {path} is not a valid file, directory, or glob pattern")
 
+    all_files.sort()
+    resolved_source = source_path.resolve()
     for p in all_files:
         _filehash_update(p, hasher)
-        _pathhash_update(p, hasher)
+        # Resolve before relative_to to normalize any ".." in the path — un-normalized
+        # paths would produce inconsistent hashes across equivalent paths.
+        rel_path = pathlib.Path(p).resolve().relative_to(resolved_source).as_posix()
+        _pathhash_update(rel_path, hasher)
 
     digest = hasher.hexdigest()
     return all_files, digest
@@ -181,13 +187,19 @@ def _pathhash_update(path: Union[os.PathLike, str], hasher: hashlib._Hash) -> No
 EXCLUDE_DIRS = {".git"}
 
 
-def list_all_files(source_path: pathlib.Path, deref_symlinks, ignore_group: Optional[IgnoreGroup] = None) -> List[str]:
+def list_all_files(source_path: pathlib.Path, deref_symlinks, ignore_group: Optional[Ignore] = None) -> List[str]:
     all_files = []
+    source_path_str = str(source_path.absolute())
 
     # This is needed to prevent infinite recursion when walking with followlinks
     visited_inodes = set()
-    for root, dirnames, files in os.walk(source_path, topdown=True, followlinks=deref_symlinks):
+    for root, dirnames, files in os.walk(source_path_str, topdown=True, followlinks=deref_symlinks):
         dirnames[:] = [d for d in dirnames if d not in EXCLUDE_DIRS]
+
+        # Filter out ignored directories to avoid walking into them
+        if ignore_group:
+            dirnames[:] = [d for d in dirnames if not ignore_group.is_ignored(pathlib.Path(os.path.join(root, d)))]
+
         if deref_symlinks:
             inode = os.stat(root).st_ino
             if inode in visited_inodes:
@@ -197,7 +209,7 @@ def list_all_files(source_path: pathlib.Path, deref_symlinks, ignore_group: Opti
         ff = []
         files.sort()
         for fname in files:
-            abspath = (pathlib.Path(root) / fname).absolute()
+            abspath = os.path.join(root, fname)
             # Only consider files that exist (e.g. disregard symlinks that point to non-existent files)
             if not os.path.exists(abspath):
                 logger.info(f"Skipping non-existent file {abspath}")
@@ -207,10 +219,10 @@ def list_all_files(source_path: pathlib.Path, deref_symlinks, ignore_group: Opti
                 logger.info(f"Skip socket file {abspath}")
                 continue
             if ignore_group:
-                if ignore_group.is_ignored(abspath):
+                if ignore_group.is_ignored(pathlib.Path(abspath)):
                     continue
 
-            ff.append(str(abspath))
+            ff.append(abspath)
         all_files.extend(ff)
 
         # Remove directories that we've already visited from dirnames
@@ -262,7 +274,9 @@ def list_imported_modules_as_files(source_path: str, modules: List[ModuleType]) 
             except AttributeError:
                 continue
 
-        if mod_file is None:
+        # skip if mod_file is (a) None or (b) not a string. (b) can happen if a third-party package overrides
+        # sys.modules[mod.__name__] with a custom object.
+        if mod_file is None or not isinstance(mod_file, str):
             continue
 
         if any(_file_is_in_directory(mod_file, directory) for directory in invalid_directories):
@@ -307,6 +321,46 @@ def add_imported_modules_from_source(source_path: str, destination: str, modules
 
         os.makedirs(os.path.dirname(new_destination), exist_ok=True)
         shutil.copy(file, new_destination)
+
+
+def copy_code_bundle_to_context(
+    root_dir: pathlib.Path,
+    copy_style: CopyFiles,
+    context_path: pathlib.Path,
+    ignore_patterns: Optional[List[str]] = None,
+) -> pathlib.Path:
+    """Copy source files for a CodeBundleLayer into a build context directory.
+
+    :param root_dir: The root directory to copy files from.
+    :param copy_style: "loaded_modules" to copy only imported modules, "all" to copy everything.
+    :param context_path: The build context directory.
+    :param ignore_patterns: Ignore patterns for the "all" case.  When *None* the
+        `STANDARD_IGNORE_PATTERNS` are used.
+    :return: The path within context_path where files were copied.
+    """
+    resolved_root = root_dir.resolve()
+
+    # Determine destination path (absolute roots go under _flyte_abs_context)
+    if root_dir.is_absolute():
+        rel_path = pathlib.PurePath(*root_dir.parts[1:])
+        dst_path = context_path / "_flyte_abs_context" / rel_path
+    else:
+        dst_path = context_path / root_dir
+
+    # Reuse ls_files to list files (handles both "loaded_modules" and "all")
+    ignore = IgnoreGroup(resolved_root, StandardIgnore)
+    if ignore_patterns is not None:
+        ignore.ignores = [StandardIgnore(resolved_root, ignore_patterns)]
+    all_files, _ = ls_files(resolved_root, copy_style, deref_symlinks=False, ignore_group=ignore)
+
+    # Copy listed files into the context
+    for abs_path in all_files:
+        rel = pathlib.Path(abs_path).relative_to(resolved_root)
+        dest = dst_path / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(abs_path, dest)
+
+    return dst_path
 
 
 def import_module_from_file(module_name, file):

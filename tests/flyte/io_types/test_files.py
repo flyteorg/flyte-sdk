@@ -4,6 +4,7 @@ import filecmp
 import os
 import tempfile
 from typing import Optional
+from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
@@ -11,7 +12,7 @@ from mashumaro.jsonschema.models import JSONSchema
 
 import flyte
 from flyte.io._file import File, FileTransformer
-from flyte.io._hashing_io import HashlibAccumulator
+from flyte.io._hashing_io import HashlibAccumulator, PrecomputedValue
 from flyte.storage import S3
 from flyte.types import TypeEngine
 
@@ -161,6 +162,26 @@ async def test_from_local_with_local_files():
         assert result.path == remote_path
         async with result.open() as f:
             content = await f.read()
+        content = content.decode("utf-8")
+        assert content == test_content
+
+
+def test_from_local_sync_with_local_files():
+    flyte.init()
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        local_path = os.path.join(temp_dir, "source.txt")
+        remote_path = os.path.join(temp_dir, "destination.txt")
+
+        test_content = "correct test content"
+        with open(local_path, "w") as f:
+            f.write(test_content)
+
+        result = File.from_local_sync(local_path, remote_path)
+
+        assert result.path == remote_path
+        with result.open_sync() as f:
+            content = f.read()
         content = content.decode("utf-8")
         assert content == test_content
 
@@ -441,3 +462,227 @@ async def test_download_file_with_no_local_target_local(tmp_path, ctx_with_test_
     assert os.path.isfile(downloaded_path)
     suffix = uploaded_file.path.split(os.sep)[-1]
     assert downloaded_path.endswith(suffix)
+
+
+# Tests for lazy_uploader functionality
+
+
+@pytest.mark.asyncio
+async def test_file_from_local_creates_lazy_uploader_without_raw_data_context():
+    """Test that File.from_local creates a lazy_uploader when there's no raw_data context."""
+    flyte.init()
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        local_path = os.path.join(temp_dir, "test_file.txt")
+        with open(local_path, "w") as f:  # noqa: ASYNC230
+            f.write("test content for lazy uploader")
+
+        # When creating a File from local without raw_data context, it should have lazy_uploader
+        file = await File.from_local(local_path)
+
+        # The file should have a lazy_uploader set
+        assert file.lazy_uploader is not None
+        # The path should be the local path
+        assert file.path == local_path
+
+
+@pytest.mark.asyncio
+async def test_file_from_local_sync_creates_lazy_uploader_without_raw_data_context():
+    """Test that File.from_local_sync creates a lazy_uploader when there's no raw_data context."""
+    flyte.init()
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        local_path = os.path.join(temp_dir, "test_file_sync.txt")
+        with open(local_path, "w") as f:  # noqa: ASYNC230
+            f.write("test content for lazy uploader sync")
+
+        # When creating a File from local without raw_data context, it should have lazy_uploader
+        file = File.from_local_sync(local_path)
+
+        # The file should have a lazy_uploader set
+        assert file.lazy_uploader is not None
+        # The path should be the local path
+        assert file.path == local_path
+
+
+@pytest.mark.asyncio
+async def test_lazy_uploader_returns_local_path_in_local_mode():
+    """Test that lazy_uploader returns local path when in local mode."""
+    from flyte._run import _run_mode_var
+
+    flyte.init()
+    _run_mode_var.set("local")
+
+    try:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            local_path = os.path.join(temp_dir, "test_local_mode.txt")
+            with open(local_path, "w") as f:  # noqa: ASYNC230
+                f.write("content for local mode test")
+
+            file = await File.from_local(local_path)
+            assert file.lazy_uploader is not None
+
+            # When we call lazy_uploader in local mode, it should return the local path
+            hash_val, uri = await file.lazy_uploader()
+            assert uri == local_path
+            assert hash_val is None
+    finally:
+        _run_mode_var.set(None)
+
+
+@pytest.mark.asyncio
+async def test_file_transformer_uses_lazy_uploader_in_local_mode():
+    """Test that FileTransformer.to_literal uses lazy_uploader when in local mode."""
+    from flyte._run import _run_mode_var
+
+    flyte.init()
+    _run_mode_var.set("local")
+
+    try:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            local_path = os.path.join(temp_dir, "transformer_test.txt")
+            with open(local_path, "w") as f:  # noqa: ASYNC230
+                f.write("content for transformer test")
+
+            file = await File.from_local(local_path)
+
+            lt = TypeEngine.to_literal_type(File)
+            lv = await FileTransformer().to_literal(file, File, lt)
+
+            # The literal should contain the local path
+            assert lv.scalar.blob.uri == local_path
+    finally:
+        _run_mode_var.set(None)
+
+
+@pytest.mark.asyncio
+async def test_file_without_lazy_uploader_uses_existing_path():
+    """Test that File without lazy_uploader uses the existing path in to_literal."""
+    flyte.init()
+
+    # Create a File pointing to a remote path (no lazy_uploader)
+    remote_file = File.from_existing_remote("s3://bucket/remote_file.txt")
+    assert remote_file.lazy_uploader is None
+
+    lt = TypeEngine.to_literal_type(File)
+    lv = await FileTransformer().to_literal(remote_file, File, lt)
+
+    # The literal should contain the original remote path
+    assert lv.scalar.blob.uri == "s3://bucket/remote_file.txt"
+
+
+def test_download_sync_delegates_to_fs_get(tmp_path):
+    """download_sync should delegate to fs.get() for remote files."""
+    flyte.init()
+
+    mock_fs = MagicMock()
+    mock_fs.protocol = ("s3",)
+
+    remote_file = File(path="s3://bucket/large_file.bin")
+    local_target = str(tmp_path / "downloaded.bin")
+
+    with patch("flyte.storage.get_underlying_filesystem", return_value=mock_fs):
+        result = remote_file.download_sync(local_target)
+
+    mock_fs.get.assert_called_once_with("s3://bucket/large_file.bin", local_target)
+    assert result == local_target
+
+
+def test_from_local_sync_with_hash_local_files():
+    """from_local_sync with hash should compute hash via chunked HashingWriter on local files."""
+    flyte.init()
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        local_path = os.path.join(temp_dir, "source.txt")
+        remote_path = os.path.join(temp_dir, "destination.txt")
+
+        with open(local_path, "w") as f:
+            f.write(TEST_CONTENT)
+
+        acc = HashlibAccumulator.from_hash_name("sha256")
+        result = File.from_local_sync(local_path, remote_path, hash_method=acc)
+
+        assert result.path == remote_path
+        assert result.hash == TEST_SHA256
+        with result.open_sync() as fh:
+            content = fh.read()
+        assert content.decode("utf-8") == TEST_CONTENT
+
+
+def test_from_local_sync_remote_no_hash(tmp_path):
+    """from_local_sync should use chunked copyfileobj when uploading to remote without hash."""
+    flyte.init()
+
+    local_file = tmp_path / "source.bin"
+    local_file.write_bytes(b"test data")
+
+    written_data = bytearray()
+    mock_dst = MagicMock()
+    mock_dst.write.side_effect = written_data.extend
+
+    mock_fs = MagicMock()
+    mock_fs.protocol = ("s3",)
+    mock_fs.open.return_value.__enter__ = MagicMock(return_value=mock_dst)
+    mock_fs.open.return_value.__exit__ = MagicMock(return_value=False)
+
+    with patch("flyte.storage.get_underlying_filesystem", return_value=mock_fs):
+        with patch("fsspec.utils.get_protocol", return_value="s3"):
+            result = File.from_local_sync(str(local_file), "s3://bucket/dest.bin")
+
+    assert result.path == "s3://bucket/dest.bin"
+    assert result.hash is None
+    assert bytes(written_data) == b"test data"
+
+
+def test_from_local_sync_remote_with_hash(tmp_path):
+    """from_local_sync should compute hash via chunked HashingWriter when uploading to remote."""
+    flyte.init()
+
+    local_file = tmp_path / "source.txt"
+    local_file.write_text(TEST_CONTENT)
+
+    written_data = bytearray()
+    mock_dst = MagicMock()
+    mock_dst.write.side_effect = written_data.extend
+
+    mock_fs = MagicMock()
+    mock_fs.protocol = ("s3",)
+    mock_fs.open.return_value.__enter__ = MagicMock(return_value=mock_dst)
+    mock_fs.open.return_value.__exit__ = MagicMock(return_value=False)
+
+    acc = HashlibAccumulator.from_hash_name("sha256")
+
+    with patch("flyte.storage.get_underlying_filesystem", return_value=mock_fs):
+        with patch("fsspec.utils.get_protocol", return_value="s3"):
+            result = File.from_local_sync(str(local_file), "s3://bucket/dest.txt", hash_method=acc)
+
+    assert result.path == "s3://bucket/dest.txt"
+    assert result.hash == TEST_SHA256
+    assert bytes(written_data).decode("utf-8") == TEST_CONTENT
+
+
+def test_from_local_sync_remote_with_precomputed_hash(tmp_path):
+    """from_local_sync with PrecomputedValue should skip hash computation and use the given value."""
+    flyte.init()
+
+    local_file = tmp_path / "source.bin"
+    local_file.write_bytes(b"some data")
+
+    written_data = bytearray()
+    mock_dst = MagicMock()
+    mock_dst.write.side_effect = written_data.extend
+
+    mock_fs = MagicMock()
+    mock_fs.protocol = ("s3",)
+    mock_fs.open.return_value.__enter__ = MagicMock(return_value=mock_dst)
+    mock_fs.open.return_value.__exit__ = MagicMock(return_value=False)
+
+    precomputed = PrecomputedValue("my-precomputed-hash")
+
+    with patch("flyte.storage.get_underlying_filesystem", return_value=mock_fs):
+        with patch("fsspec.utils.get_protocol", return_value="s3"):
+            result = File.from_local_sync(str(local_file), "s3://bucket/dest.bin", hash_method=precomputed)
+
+    assert result.path == "s3://bucket/dest.bin"
+    assert result.hash == "my-precomputed-hash"
+    assert bytes(written_data) == b"some data"

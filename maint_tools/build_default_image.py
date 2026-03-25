@@ -18,6 +18,7 @@ async def build_flyte_image(registry: str | None = None, name: str | None = None
         builder:  e.g. "local" or "remote".
     """
     default_image = Image.from_debian_base(registry=registry, name=name)
+    object.__setattr__(default_image, "_is_flyte_default", False)
     await ImageBuildEngine.build(default_image, builder=builder)
 
 
@@ -44,16 +45,28 @@ async def build_flyte_connector_image(
             Image.from_debian_base(registry=registry, name=name)
             .with_env_vars({"SETUPTOOLS_SCM_PRETEND_VERSION": "9.9.9"})
             .with_uv_project(
-                pyproject_file=(Path(__file__).parent.parent / "plugins/connectors/pyproject.toml"),
+                pyproject_file=(Path(__file__).parent.parent / "plugins/bigquery/pyproject.toml"),
                 pre=True,
-                extra_args="--all-extras",
                 project_install_mode="install_project",
+                extra_args="--no-sources",
+            )
+            .with_uv_project(
+                pyproject_file=(Path(__file__).parent.parent / "plugins/databricks/pyproject.toml"),
+                pre=True,
+                project_install_mode="install_project",
+                extra_args="--no-sources",
+            )
+            .with_uv_project(
+                pyproject_file=(Path(__file__).parent.parent / "plugins/snowflake/pyproject.toml"),
+                pre=True,
+                project_install_mode="install_project",
+                extra_args="--no-sources",
             )
             .with_local_v2()
         )
     else:
         default_image = Image.from_debian_base(registry=registry, name=name).with_pip_packages(
-            "flyteplugins-connectors[bigquery]", pre=True
+            "flyteplugins-bigquery", "flyteplugins-snowflake", "flyteplugins-databricks", pre=True
         )
     suffix = __version__.replace("+", "-")
     python_version = _detect_python_version()

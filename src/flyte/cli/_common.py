@@ -11,7 +11,7 @@ from dataclasses import dataclass, replace
 from functools import lru_cache
 from pathlib import Path
 from types import MappingProxyType, ModuleType
-from typing import Any, Dict, Iterable, List, Literal, Optional
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Literal, Optional
 
 import rich.box
 import rich.repr
@@ -26,6 +26,9 @@ import flyte
 import flyte.errors
 from flyte._logging import LogFormat
 from flyte.config import Config
+
+if TYPE_CHECKING:
+    from flyte.cli._run import RunArguments
 
 OutputFormat = Literal["table", "json", "table-simple", "json-raw"]
 
@@ -81,9 +84,7 @@ def sanitize_auth_type(auth_type: str | None) -> str:
     """
     Convert the auth type to the mode that is used by the Flyte backend.
     """
-    if auth_type is None:
-        return "pkce"
-    if auth_type.lower() in _pkce_options:
+    if auth_type is None or auth_type.lower() in _pkce_options:
         return "Pkce"
     if auth_type.lower() in _device_flow_options:
         return "DeviceFlow"
@@ -105,11 +106,15 @@ class CLIConfig:
     ctx: click.Context
     log_level: int | None = logging.ERROR
     log_format: LogFormat = "console"
+    reset_root_logger: bool = False
     endpoint: str | None = None
     insecure: bool = False
     org: str | None = None
     auth_type: str | None = None
     output_format: OutputFormat = "table"
+    run_args: RunArguments | None = (
+        None  # run_args is set when running tasks via CLI to provide context to parameter converters
+    )
 
     def replace(self, **kwargs) -> CLIConfig:
         """
@@ -127,59 +132,55 @@ class CLIConfig:
     ):
         from flyte.config._config import TaskConfig
 
-        # Check if FLYTE_API_KEY is set and no config file was found
         api_key = os.getenv("FLYTE_API_KEY")
-        has_config_file = self.config.source is not None
 
-        # Use API key initialization only if:
-        # 1. FLYTE_API_KEY is set AND
-        # 2. No config file exists
-        if api_key and not has_config_file:
-            # Require the endpoint arg in the init_from_api_key function for future proofing.
-            # But for the flyte CLI, we can decode since there's already a --endpoint arg.
-            endpoint = self.endpoint
-            if not endpoint:
-                # Decode the API key to get the endpoint
-                from flyte.remote._client.auth._auth_utils import decode_api_key
+        task_cfg = TaskConfig(
+            org=self.org or self.config.task.org,
+            project=project if project is not None else self.config.task.project,
+            domain=domain if domain is not None else self.config.task.domain,
+        )
 
-                endpoint, _, _, _ = decode_api_key(api_key)
+        kwargs: Dict[str, Any] = {}
+        if self.endpoint:
+            kwargs["endpoint"] = self.endpoint
+        if self.insecure is not None:
+            kwargs["insecure"] = self.insecure
+        if self.auth_type:
+            kwargs["auth_mode"] = sanitize_auth_type(self.auth_type)
 
-            flyte.init_from_api_key(
-                endpoint=endpoint,
-                api_key=api_key,
-                project=project if project is not None else self.config.task.project,
-                domain=domain if domain is not None else self.config.task.domain,
-                log_level=self.log_level,
-                log_format=self.log_format,
-                root_dir=pathlib.Path(root_dir) if root_dir else None,
-                sync_local_sys_paths=sync_local_sys_paths,
+        if api_key:
+            from flyte._logging import logger
+
+            logger.info(
+                "Detected an FLYTE_API_KEY in the environment, using it in lieu of endpoints in any config file"
             )
-        else:
-            # Use the standard config-based initialization
-            task_cfg = TaskConfig(
-                org=self.org or self.config.task.org,
-                project=project if project is not None else self.config.task.project,
-                domain=domain if domain is not None else self.config.task.domain,
-            )
+            from flyte._utils import sanitize_endpoint
+            from flyte.remote._client.auth._auth_utils import decode_api_key
 
-            kwargs: Dict[str, Any] = {}
-            if self.endpoint:
-                kwargs["endpoint"] = self.endpoint
-            if self.insecure is not None:
-                kwargs["insecure"] = self.insecure
-            if self.auth_type:
-                kwargs["auth_mode"] = sanitize_auth_type(self.auth_type)
-            platform_cfg = self.config.platform.replace(**kwargs)
+            endpoint, client_id, client_secret, org = decode_api_key(api_key)
+            kwargs.setdefault("endpoint", sanitize_endpoint(endpoint))
+            kwargs["client_id"] = client_id
+            kwargs["client_credentials_secret"] = client_secret
+            kwargs["auth_mode"] = "ClientSecret"
+            if org and org != "None":
+                # redeclare with the org found from the API key
+                task_cfg = TaskConfig(
+                    org=self.org or org,
+                    project=task_cfg.project,
+                    domain=task_cfg.domain,
+                )
 
-            updated_config = self.config.with_params(platform_cfg, task_cfg)
-            flyte.init_from_config(
-                updated_config,
-                log_level=self.log_level,
-                log_format=self.log_format,
-                root_dir=pathlib.Path(root_dir) if root_dir else None,
-                images=images,
-                sync_local_sys_paths=sync_local_sys_paths,
-            )
+        platform_cfg = self.config.platform.replace(**kwargs)
+        updated_config = self.config.with_params(platform_cfg, task_cfg)
+
+        flyte.init_from_config(
+            updated_config,
+            log_level=self.log_level,
+            log_format=self.log_format,
+            root_dir=pathlib.Path(root_dir).resolve() if root_dir else None,
+            images=images,
+            sync_local_sys_paths=sync_local_sys_paths,
+        )
 
 
 class InvokeBaseMixin:
@@ -189,10 +190,14 @@ class InvokeBaseMixin:
     """
 
     def invoke(self, ctx):
+        import os
+
         import grpc
 
         try:
-            return super().invoke(ctx)  # type: ignore
+            _ = super().invoke(ctx)  # type: ignore
+            # Exit successfully to properly close grpc channel
+            os._exit(0)
         except grpc.aio.AioRpcError as e:
             if e.code() == grpc.StatusCode.UNAUTHENTICATED:
                 raise click.ClickException(f"Authentication failed. Please check your credentials. {e.details()}")
@@ -429,11 +434,11 @@ def format(title: str, vals: Iterable[Any], of: OutputFormat = "table") -> Table
         case "json":
             if not vals:
                 return pretty_repr([])
-            return pretty_repr([v.to_dict() for v in vals])
+            return pretty_repr([v.to_dict() if hasattr(v, "to_dict") else dict(v) for v in vals])
         case "json-raw":
             if not vals:
-                return []
-            return json.dumps([v.to_dict() for v in vals])
+                return "[]"
+            return json.dumps([v.to_dict() if hasattr(v, "to_dict") else dict(v) for v in vals])
 
     raise click.ClickException("Unknown output format. Supported formats are: table, table-simple, json.")
 
@@ -442,7 +447,7 @@ def get_panel(title: str, renderable: Any, of: OutputFormat = "table") -> Panel:
     """
     Get a panel from a list of values.
     """
-    if of in ["table-simple", "json"]:
+    if of in ["table-simple", "json", "json-raw"]:
         return renderable
     return Panel.fit(
         renderable,
@@ -456,6 +461,26 @@ def get_console() -> Console:
     Get a console that is configured to use colors if the terminal supports it.
     """
     return Console(color_system="auto", force_terminal=True, width=120)
+
+
+def cli_status(output_format: OutputFormat, message: str, spinner: str = "dots"):
+    """
+    Return a context manager for status display.
+    Returns nullcontext for json/table-simple formats, otherwise a console status spinner.
+    """
+    from contextlib import nullcontext
+
+    if output_format in ("json", "table-simple", "json-raw"):
+        return nullcontext()
+    return get_console().status(message, spinner=spinner)
+
+
+def print_output(renderable: Any, output_format: OutputFormat) -> None:
+    """Print formatted output. Uses plain print for json-raw, Rich console otherwise."""
+    if output_format == "json-raw":
+        print(renderable)
+    else:
+        get_console().print(renderable)
 
 
 def parse_images(cfg: Config, values: tuple[str, ...] | None) -> None:

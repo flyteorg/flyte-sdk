@@ -11,13 +11,17 @@ from flyte.app import Parameter, RunOutput
 from flyte.app._types import Port
 from flyte.models import SerializationContext
 
+from flyteplugins.vllm._constants import VLLM_MIN_VERSION_STR
+
 DEFAULT_VLLM_IMAGE = (
-    flyte.Image.from_debian_base(name="vllm-app-image", python_version=(3, 12))
+    flyte.Image.from_debian_base(name="vllm-app-image")
     # install flashinfer and vllm
     .with_pip_packages("flashinfer-python", "flashinfer-cubin")
     .with_pip_packages("flashinfer-jit-cache", index_url="https://flashinfer.ai/whl/cu129")
     # install the vllm flyte plugin
     .with_pip_packages("flyteplugins-vllm", pre=True)
+    # install vllm in a separate layer due to dependency conflict with flyte (protovalidate)
+    .with_pip_packages(f"vllm=={VLLM_MIN_VERSION_STR}")
 )
 
 
@@ -65,6 +69,15 @@ class VLLMAppEnvironment(flyte.app.AppEnvironment):
     def __post_init__(self):
         if self.env_vars is None:
             self.env_vars = {}
+
+        if self._server is not None:
+            raise ValueError("server function cannot be set for VLLMAppEnvironment")
+
+        if self._on_startup is not None:
+            raise ValueError("on_startup function cannot be set for VLLMAppEnvironment")
+
+        if self._on_shutdown is not None:
+            raise ValueError("on_shutdown function cannot be set for VLLMAppEnvironment")
 
         if self.model_id == "":
             raise ValueError("model_id must be defined")
@@ -118,7 +131,7 @@ class VLLMAppEnvironment(flyte.app.AppEnvironment):
             self.parameters = [Parameter(name="model_path", value=self.model_path, **input_kwargs)]
 
         self.env_vars["FLYTE_MODEL_LOADER_LOCAL_MODEL_PATH"] = self._model_mount_path
-        self.links = [flyte.app.Link(path="/docs", title="vLLM OpenAPI Docs", is_relative=True)]
+        self.links = [flyte.app.Link(path="/docs", title="vLLM OpenAPI Docs", is_relative=True), *self.links]
 
         if self.image is None or self.image == "auto":
             self.image = DEFAULT_VLLM_IMAGE

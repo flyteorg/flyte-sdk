@@ -11,10 +11,13 @@ from flyte.app import Parameter, RunOutput
 from flyte.app._types import Port
 from flyte.models import SerializationContext
 
+from flyteplugins.sglang._constants import SGLANG_MIN_VERSION_STR
+
 DEFAULT_SGLANG_IMAGE = (
-    flyte.Image.from_debian_base(name="sglang-app-image", python_version=(3, 12))
-    # install system dependencies, including CUDA toolkit
-    .with_apt_packages("libnuma-dev", "wget")
+    flyte.Image.from_debian_base(name="sglang-app-image")
+    # install system dependencies, including CUDA toolkit, which is needed by sglang for compiling the model
+    # and rust and cargo for installing sglang
+    .with_apt_packages("libnuma-dev", "wget", "curl", "openssl", "pkg-config", "libssl-dev", "build-essential")
     .with_commands(
         [
             "wget https://developer.download.nvidia.com/compute/cuda/repos/debian12/x86_64/cuda-keyring_1.1-1_all.deb",
@@ -23,10 +26,13 @@ DEFAULT_SGLANG_IMAGE = (
             "apt-get install -y cuda-toolkit-12-8",
         ]
     )
+    .with_commands(["curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && . $HOME/.cargo/env"])
+    .with_env_vars({"CUDA_HOME": "/usr/local/cuda-12.8", "PATH": "/root/.cargo/bin:/usr/local/cuda-12.8/bin:$PATH"})
     # install flash-infer
     .with_pip_packages("flashinfer-python", "flashinfer-cubin")
     .with_pip_packages("flashinfer-jit-cache", index_url="https://flashinfer.ai/whl/cu128")
     .with_pip_packages("flyteplugins-sglang", pre=True)
+    .with_pip_packages(f"sglang=={SGLANG_MIN_VERSION_STR}")
     .with_env_vars({"CUDA_HOME": "/usr/local/cuda-12.8"})
 )
 
@@ -75,6 +81,15 @@ class SGLangAppEnvironment(flyte.app.AppEnvironment):
         if self.env_vars is None:
             self.env_vars = {}
 
+        if self._server is not None:
+            raise ValueError("server function cannot be set for SGLangAppEnvironment")
+
+        if self._on_startup is not None:
+            raise ValueError("on_startup function cannot be set for SGLangAppEnvironment")
+
+        if self._on_shutdown is not None:
+            raise ValueError("on_shutdown function cannot be set for SGLangAppEnvironment")
+
         if self.model_id == "":
             raise ValueError("model_id must be defined")
 
@@ -122,7 +137,7 @@ class SGLangAppEnvironment(flyte.app.AppEnvironment):
             self.parameters = [Parameter(name="model_path", value=self.model_path, **input_kwargs)]
 
         self.env_vars["FLYTE_MODEL_LOADER_LOCAL_MODEL_PATH"] = self._model_mount_path
-        self.links = [flyte.app.Link(path="/docs", title="SGLang OpenAPI Docs", is_relative=True)]
+        self.links = [flyte.app.Link(path="/docs", title="SGLang OpenAPI Docs", is_relative=True), *self.links]
 
         if self.image is None or self.image == "auto":
             self.image = DEFAULT_SGLANG_IMAGE

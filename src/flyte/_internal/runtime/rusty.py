@@ -83,7 +83,7 @@ async def create_controller(
     loop = asyncio.get_event_loop()
     loop.set_exception_handler(flyte.errors.silence_grpc_polling_error)
 
-    # TODO Currently reference tasks are not supported in Rusty.
+    # TODO Currently remote tasks are not supported in Rusty.
     controller_kwargs = await init_in_cluster.aio(api_key=api_key, endpoint=endpoint, insecure=insecure)
     return _create_controller(ct="remote", **controller_kwargs)
 

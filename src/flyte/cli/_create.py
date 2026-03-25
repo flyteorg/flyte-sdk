@@ -5,7 +5,7 @@ import rich_click as click
 
 import flyte
 import flyte.cli._common as common
-from flyte.cli._option import MutuallyExclusiveOption
+from flyte.cli._option import DependentOption, MutuallyExclusiveOption
 from flyte.remote import SecretTypes
 
 
@@ -14,6 +14,39 @@ def create():
     """
     Create resources in a Flyte deployment.
     """
+
+
+@create.command("project", cls=click.RichCommand)
+@click.option("--id", type=str, required=True, help="Unique identifier for the project (immutable).")
+@click.option("--name", type=str, required=True, help="Display name for the project.")
+@click.option("--description", type=str, default="", help="Description for the project.")
+@click.option(
+    "--label",
+    "-l",
+    multiple=True,
+    callback=common.key_value_callback,
+    help="Labels as key=value pairs. Can be specified multiple times.",
+)
+@click.pass_obj
+def project(cfg: common.CLIConfig, id: str, name: str, description: str, label: dict[str, str] | None):
+    """
+    Create a new project.
+
+    \b
+    Example usage:
+
+    ```bash
+    flyte create project --id my_project_id --name "My Project"
+    flyte create project --id my_project_id --name "My Project" --description "My project" -l team=ml -l env=prod
+    ```
+    """
+    from flyte.remote import Project
+
+    cfg.init()
+    console = common.get_console()
+    with console.status(f"Creating project {id}..."):
+        Project.create(id=id, name=name, description=description, labels=label)
+    console.print(f"[bold green]Project {id} created successfully![/bold green]")
 
 
 @create.command(cls=common.CommandBase)
@@ -46,7 +79,9 @@ def create():
 @click.option(
     "--docker-config-path",
     type=click.Path(exists=True),
+    cls=DependentOption,
     help="Path to Docker config file (defaults to ~/.docker/config.json or $DOCKER_CONFIG).",
+    requires=["from_docker_config"],
 )
 @click.option(
     "--registries",
@@ -227,6 +262,13 @@ def secret(
     show_default=True,
     required=False,
 )
+@click.option(
+    "--local-persistence",
+    is_flag=True,
+    default=False,
+    help="Enable SQLite persistence for local run metadata, allowing past runs to be browsed via 'flyte start tui'.",
+    show_default=True,
+)
 def config(
     output: str,
     endpoint: str | None = None,
@@ -237,6 +279,7 @@ def config(
     force: bool = False,
     image_builder: str | None = None,
     auth_type: str | None = None,
+    local_persistence: bool = False,
 ):
     """
     Creates a configuration file for Flyte CLI.
@@ -282,8 +325,12 @@ def config(
     if image_builder:
         image["builder"] = image_builder
 
-    if not admin and not task:
-        raise click.BadParameter("At least one of --endpoint or --org must be provided.")
+    local: Dict[str, Any] = {}
+    if local_persistence:
+        local["persistence"] = True
+
+    if not admin and not task and not local:
+        raise click.BadParameter("At least one of --endpoint, --org, or --local-persistence must be provided.")
 
     with open(output_path, "w") as f:
         d: Dict[str, Any] = {}
@@ -293,6 +340,8 @@ def config(
             d["task"] = task
         if image:
             d["image"] = image
+        if local:
+            d["local"] = local
         yaml.dump(d, f)
 
     click.echo(f"Config file written to {output_path}")

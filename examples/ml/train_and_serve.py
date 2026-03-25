@@ -9,7 +9,7 @@
 #     "pyarrow",
 #     "joblib",
 #     "pydantic",
-#     "flyte>=2.0.0b35",
+#     "flyte>=2.0.0b42",
 # ]
 # ///
 """

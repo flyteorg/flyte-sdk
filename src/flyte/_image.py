@@ -21,6 +21,7 @@ PYTHON_3_10 = (3, 10)
 PYTHON_3_11 = (3, 11)
 PYTHON_3_12 = (3, 12)
 PYTHON_3_13 = (3, 13)
+PYTHON_3_14 = (3, 14)
 
 # 0 is a file, 1 is a directory
 CopyConfigType = Literal[0, 1]
@@ -50,6 +51,28 @@ class Layer:
     This is an abstract representation of Container Image Layers, which can be used to create
      layered images programmatically.
     """
+
+    def __post_init__(self):
+        """
+        Validate that no fields in the layer contain lists.
+        Lists are not allowed because Layer objects must be hashable for caching.
+        """
+        import dataclasses
+
+        for f in dataclasses.fields(self):
+            value = getattr(self, f.name)
+            if isinstance(value, list):
+                raise TypeError(
+                    f"{self.__class__.__name__} field '{f.name}' is a list: {value!r}. "
+                    f"Hint: Pass items as separate arguments, e.g., 'vim', 'git' instead of ['vim', 'git']."
+                )
+            elif isinstance(value, tuple):
+                for i, item in enumerate(value):
+                    if isinstance(item, list):
+                        raise TypeError(
+                            f"{self.__class__.__name__} field '{f.name}' contains a list at index {i}: {item!r}. "
+                            f"Hint: Pass items as separate arguments, e.g., 'vim', 'git' instead of ['vim', 'git']."
+                        )
 
     @abstractmethod
     def update_hash(self, hasher: hashlib._Hash):
@@ -116,6 +139,9 @@ class PipOption:
 class PipPackages(PipOption, Layer):
     packages: Optional[Tuple[str, ...]] = None
 
+    def __post_init__(self):
+        super().__post_init__()
+
     def update_hash(self, hasher: hashlib._Hash):
         """
         Update the hash with the pip packages
@@ -167,7 +193,7 @@ class Requirements(PipPackages):
 @dataclass(frozen=True, repr=True)
 class UVProject(PipOption, Layer):
     pyproject: Path
-    uvlock: Path
+    uvlock: Optional[Path] = None
     project_install_mode: typing.Literal["dependencies_only", "install_project"] = "dependencies_only"
 
     def validate(self):
@@ -175,7 +201,7 @@ class UVProject(PipOption, Layer):
             raise FileNotFoundError(f"pyproject.toml file {self.pyproject.resolve()} does not exist")
         if not self.pyproject.is_file():
             raise ValueError(f"Pyproject file {self.pyproject.resolve()} is not a file")
-        if not self.uvlock.exists():
+        if self.uvlock is not None and not self.uvlock.exists():
             raise ValueError(f"UVLock file {self.uvlock.resolve()} does not exist")
         super().validate()
 
@@ -184,7 +210,8 @@ class UVProject(PipOption, Layer):
 
         super().update_hash(hasher)
         if self.project_install_mode == "dependencies_only":
-            filehash_update(self.uvlock, hasher)
+            if self.uvlock is not None:
+                filehash_update(self.uvlock, hasher)
             filehash_update(self.pyproject, hasher)
         else:
             update_hasher_for_source(self.pyproject.parent, hasher)
@@ -258,8 +285,11 @@ class UVScript(PipOption, Layer):
         super().update_hash(hasher)
         if header.pyprojects:
             for pyproject in header.pyprojects:
+                uvlock_path = Path(pyproject) / "uv.lock"
                 UVProject(
-                    Path(pyproject) / "pyproject.toml", Path(pyproject) / "uv.lock", "install_project"
+                    pyproject=Path(pyproject) / "pyproject.toml",
+                    uvlock=uvlock_path if uvlock_path.exists() else None,
+                    project_install_mode="install_project",
                 ).update_hash(hasher)
 
 
@@ -268,6 +298,9 @@ class UVScript(PipOption, Layer):
 class AptPackages(Layer):
     packages: Tuple[str, ...]
     secret_mounts: Optional[Tuple[str | Secret, ...]] = None
+
+    def __post_init__(self):
+        super().__post_init__()
 
     def update_hash(self, hasher: hashlib._Hash):
         hash_input = "".join(self.packages)
@@ -340,6 +373,41 @@ class CopyConfig(Layer):
 
 @rich.repr.auto
 @dataclass(frozen=True, repr=True)
+class CodeBundleLayer(Layer):
+    """Deferred layer resolved at runtime to copy source code into the image.
+    Only activates when the runner's copy_style is "none".
+
+    Before resolution, root_dir is None. After resolve_code_bundle_layer() sets
+    root_dir, the docker builder handles the actual file copying into the build context.
+    """
+
+    copy_style: Literal["loaded_modules", "all"]
+    dst: str = "."
+    root_dir: Optional[Path] = None
+
+    def update_hash(self, hasher: hashlib._Hash):
+        hasher.update(f"code_bundle:{self.copy_style}:{self.dst}".encode("utf-8"))
+        if self.root_dir is not None:
+            from ._utils import update_hasher_for_source
+
+            if self.copy_style == "loaded_modules":
+                from flyte._code_bundle._utils import list_imported_modules_as_files
+
+                files = list_imported_modules_as_files(str(self.root_dir), list(sys.modules.values()))
+                files.sort()
+                update_hasher_for_source([Path(f) for f in files], hasher)
+            else:
+                # "all" — hash the entire root_dir
+                update_hasher_for_source(self.root_dir, hasher)
+        else:
+            raise ValueError("root_dir not set for CodeBundleLayer")
+
+    def validate(self):
+        pass  # root_dir not known at creation time
+
+
+@rich.repr.auto
+@dataclass(frozen=True, repr=True)
 class _DockerLines(Layer):
     """
     This is an internal class and should only be used by the default images. It is not supported by most
@@ -389,17 +457,44 @@ def _detect_python_version() -> Tuple[int, int]:
 @dataclass(frozen=True, repr=True, eq=True)
 class Image:
     """
-    This is a representation of Container Images, which can be used to create layered images programmatically.
+    Container image specification built using a fluent, two-step pattern:
 
-    Use by first calling one of the base constructor methods. These all begin with `from` or `default_`
-    The image can then be amended with additional layers using the various `with_*` methods.
+    1. Create a base image with a `from_*` constructor
+    2. Customize with `with_*` methods (each returns a new `Image`)
 
-    Invariant for this class: The construction of Image objects must be doable everywhere. That is, if a
-      user has a custom image that is not accessible, calling .with_source_file on a file that doesn't exist, the
-      instantiation of the object itself must still go through. Further, the .identifier property of the image must
-      also still go through. This is because it may have been already built somewhere else.
-      Use validate() functions to check each layer for actual errors. These are invoked at actual
-      build time. See self.id for more information
+    Example:
+
+    ```python
+    image = (
+        flyte.Image.from_debian_base(python="3.12")
+        .with_pip_packages("pandas", "scikit-learn")
+        .with_apt_packages("curl", "git")
+    )
+    ```
+
+    **Base constructors** (`from_*`):
+
+    - `from_debian_base()` — Debian-based image with a specified Python version
+    - `from_base()` — Any base image by name (e.g., `"python:3.12-slim"`)
+    - `from_uv_script()` — Image from a `uv`-compatible script with inline dependencies
+    - `from_dockerfile()` — Image from a custom Dockerfile
+    - `from_ref_name()` — Reference to a pre-built image by name
+
+    **Customization methods** (`with_*`):
+
+    - `with_pip_packages()` — Add pip packages
+    - `with_apt_packages()` — Add system packages via apt-get
+    - `with_commands()` — Run arbitrary shell commands
+    - `with_env_vars()` — Set environment variables
+    - `with_requirements()` — Install from a requirements.txt file
+    - `with_uv_project()` — Install from a uv/pyproject.toml project
+    - `with_poetry_project()` — Install from a Poetry project
+    - `with_source_folder()` — Include a source directory
+    - `with_source_file()` — Include a single source file
+    - `with_code_bundle()` — Include a code bundle
+    - `with_workdir()` — Set the working directory
+    - `with_dockerignore()` — Add a .dockerignore
+    - `with_local_v2()` — Configure for local v2 execution
     """
 
     # These are base properties of an image
@@ -409,6 +504,8 @@ class Image:
     name: Optional[str] = field(default=None)
     platform: Tuple[Architecture, ...] = field(default=("linux/amd64",))
     python_version: Tuple[int, int] = field(default_factory=_detect_python_version)
+    extendable: bool = field(default=False)
+    _is_flyte_default: bool = field(default=False)
     # Refer to the image_refs (name:image-uri) set in CLI or config
     _ref_name: Optional[str] = field(default=None)
 
@@ -423,6 +520,7 @@ class Image:
         PYTHON_3_11: "py3.11-",
         PYTHON_3_12: "py3.12-",
         PYTHON_3_13: "py3.13-",
+        PYTHON_3_14: "py3.14-",
     }
 
     # class-level token not included in __init__
@@ -462,10 +560,11 @@ class Image:
     ) -> Image:
         # Would love a way to move this outside of this class (but still needs to be accessible via Image.auto())
         # this default image definition may need to be updated once there is a released pypi version
+
         from flyte._version import __version__
 
         dev_mode = (__version__ and "dev" in __version__) and not flyte_version and install_flyte
-        if install_flyte is False:
+        if not install_flyte:
             preset_tag = f"py{python_version[0]}.{python_version[1]}"
         else:
             if flyte_version is None:
@@ -478,6 +577,7 @@ class Image:
             name=_DEFAULT_IMAGE_NAME,
             python_version=python_version,
             platform=("linux/amd64", "linux/arm64") if platform is None else platform,
+            extendable=True,
         )
         labels_and_user = _DockerLines(
             (
@@ -498,17 +598,15 @@ class Image:
             }
         )
         image = image.with_apt_packages("build-essential", "ca-certificates")
-
         if install_flyte:
             if dev_mode:
                 if os.path.exists(DIST_FOLDER):
                     image = image.with_local_v2()
             else:
                 flyte_version = typing.cast(str, flyte_version)
-                if Version(flyte_version).is_devrelease or Version(flyte_version).is_prerelease:
-                    image = image.with_pip_packages(f"flyte=={flyte_version}", pre=True)
-                else:
-                    image = image.with_pip_packages(f"flyte=={flyte_version}")
+                image = image.with_pip_packages(f"flyte=={flyte_version}")
+                if not Version(flyte_version).is_devrelease and not Version(flyte_version).is_prerelease:
+                    object.__setattr__(image, "_is_flyte_default", True)
         if not dev_mode:
             object.__setattr__(image, "_tag", preset_tag)
 
@@ -551,7 +649,7 @@ class Image:
         )
 
         if registry or name:
-            return base_image.clone(registry=registry, name=name, registry_secret=registry_secret)
+            return base_image.clone(registry=registry, name=name, registry_secret=registry_secret, extendable=True)
 
         return base_image
 
@@ -584,7 +682,7 @@ class Image:
         python_version: Optional[Tuple[int, int]] = None,
         index_url: Optional[str] = None,
         extra_index_urls: Union[str, List[str], Tuple[str, ...], None] = None,
-        pre: bool = True,
+        pre: bool = False,
         extra_args: Optional[str] = None,
         platform: Optional[Tuple[Architecture, ...]] = None,
         secret_mounts: Optional[SecretRequest] = None,
@@ -654,6 +752,7 @@ class Image:
         base_image: Optional[str] = None,
         python_version: Optional[Tuple[int, int]] = None,
         addl_layer: Optional[Layer] = None,
+        extendable: Optional[bool] = None,
     ) -> Image:
         """
         Use this method to clone the current image and change the registry and name
@@ -661,12 +760,22 @@ class Image:
         :param registry: Registry to use for the image
         :param registry_secret: Secret to use to pull/push the private image.
         :param name: Name of the image
+        :param base_image: Base image to use for the image
         :param python_version: Python version for the image, if not specified, will use the current Python version
         :param addl_layer: Additional layer to add to the image. This will be added to the end of the layers.
+        :param extendable: Whether the image is extendable by other images. If True, the image can be used as a base
+         image for other images, and additional layers can be added on top of it. If False, the image cannot be
+          used as a base image for other images, and additional layers cannot be added on top of it. If None (default),
+          defaults to False for safety.
         :return:
         """
         from flyte import Secret
 
+        if addl_layer and not self.extendable:
+            raise ValueError(
+                "Cannot add additional layers to a non-extendable image. "
+                "Please create the image with extendable=True in the clone() call."
+            )
         if addl_layer and self.dockerfile:
             # We don't know how to inspect dockerfiles to know what kind it is (OS, python version, uv vs poetry, etc)
             # so there's no guarantee any of the layering logic will work.
@@ -674,10 +783,10 @@ class Image:
                 "Flyte current cannot add additional layers to a Dockerfile-based Image."
                 " Please amend the dockerfile directly."
             )
-        registry = registry if registry else self.registry
-        name = name if name else self.name
-        registry_secret = registry_secret if registry_secret else self._image_registry_secret
-        base_image = base_image if base_image else self.base_image
+        registry = registry or self.registry
+        name = name or self.name
+        registry_secret = registry_secret or self._image_registry_secret
+        base_image = base_image or self.base_image
         if addl_layer and (not name):
             raise ValueError(
                 f"Cannot add additional layer {addl_layer} to an image without name. Please first clone()."
@@ -690,6 +799,7 @@ class Image:
             name=name,
             platform=self.platform,
             python_version=python_version or self.python_version,
+            extendable=extendable if extendable is not None else self.extendable,
             _layers=new_layers,
             _image_registry_secret=Secret(key=registry_secret) if isinstance(registry_secret, str) else registry_secret,
             _ref_name=self._ref_name,
@@ -722,6 +832,7 @@ class Image:
             "dockerfile": file,
             "registry": registry,
             "name": name,
+            "extendable": False,  # Dockerfile-based images cannot have additional layers
         }
         if platform:
             kwargs["platform"] = platform
@@ -750,7 +861,7 @@ class Image:
 
     @property
     def _final_tag(self) -> str:
-        t = self._tag if self._tag else self._get_hash_digest()
+        t = self._tag or self._get_hash_digest()
         return t or "latest"
 
     @cached_property
@@ -785,6 +896,10 @@ class Image:
     def with_requirements(
         self,
         file: str | Path,
+        index_url: Optional[str] = None,
+        extra_index_urls: Union[str, List[str], Tuple[str, ...], None] = None,
+        pre: bool = False,
+        extra_args: Optional[str] = None,
         secret_mounts: Optional[SecretRequest] = None,
     ) -> Image:
         """
@@ -792,6 +907,10 @@ class Image:
         Cannot be used in conjunction with conda
 
         :param file: path to the requirements file, must be a .txt file
+        :param index_url: index url to use for pip install, default is None
+        :param extra_index_urls: extra index urls to use for pip install, default is None
+        :param pre: if True, install pre-release packages, default is False
+        :param extra_args: extra arguments to pass to pip install, default is None
         :param secret_mounts: list of secret to mount for the build process.
         :return:
         """
@@ -799,8 +918,16 @@ class Image:
             file = Path(file)
         if file.suffix != ".txt":
             raise ValueError(f"Requirements file {file} must have a .txt extension")
+        new_extra_index_urls: Optional[Tuple] = _ensure_tuple(extra_index_urls) if extra_index_urls else None
         new_image = self.clone(
-            addl_layer=Requirements(file=file, secret_mounts=_ensure_tuple(secret_mounts) if secret_mounts else None)
+            addl_layer=Requirements(
+                file=file,
+                index_url=index_url,
+                extra_index_urls=new_extra_index_urls,
+                pre=pre,
+                extra_args=extra_args,
+                secret_mounts=_ensure_tuple(secret_mounts) if secret_mounts else None,
+            )
         )
         return new_image
 
@@ -891,17 +1018,47 @@ class Image:
         new_image = self.clone(addl_layer=CopyConfig(path_type=1, src=src, dst=dst))
         return new_image
 
-    def with_source_file(self, src: Path, dst: str = ".") -> Image:
+    def with_source_file(self, src: typing.Union[Path, typing.List[Path]], dst: str = ".") -> Image:
         """
-        Use this method to create a new image with the specified local file layered on top of the current image.
+        Use this method to create a new image with the specified local file(s) layered on top of the current image.
         If dest is not specified, it will be copied to the working directory of the image
 
-        :param src: root folder of the source code from the build context to be copied
+        :param src: file or list of files from the build context to be copied
         :param dst: destination folder in the image
         :return: Image
         """
-        new_image = self.clone(addl_layer=CopyConfig(path_type=0, src=src, dst=dst))
-        return new_image
+        if isinstance(src, list):
+            names = [p.name for p in src]
+            duplicates = {name for name in names if names.count(name) > 1}
+            if duplicates:
+                raise ValueError(
+                    f"Multiple files with the same name would overwrite each other at destination '{dst}': "
+                    f"{sorted(duplicates)}"
+                )
+            image = self
+            for path in src:
+                image = image.clone(addl_layer=CopyConfig(path_type=0, src=path, dst=dst))
+            return image
+        return self.clone(addl_layer=CopyConfig(path_type=0, src=src, dst=dst))
+
+    def with_code_bundle(
+        self,
+        copy_style: Literal["loaded_modules", "all"] = "loaded_modules",
+        dst: str = ".",
+    ) -> Image:
+        """
+        Configure this image to automatically copy source code from root_dir
+        when the runner's copy_style is "none".
+
+        When the runner's copy_style is not "none", this is a no-op.
+
+        :param copy_style: Which files to copy into the image.
+            "loaded_modules" copies only imported Python modules.
+            "all" copies all files from root_dir.
+        :param dst: Destination directory in the container. Defaults to working dir.
+        :return: Image
+        """
+        return self.clone(addl_layer=CodeBundleLayer(copy_style=copy_style, dst=dst))
 
     def with_dockerignore(self, path: Path) -> Image:
         new_image = self.clone(addl_layer=DockerIgnore(path=str(path)))
@@ -928,9 +1085,9 @@ class Image:
         If `project_install_mode` is "install_project", it will also copy directory
          where the pyproject.toml file is located into the image.
 
-        :param pyproject_file: path to the pyproject.toml file, needs to have a corresponding uv.lock file
+        :param pyproject_file: path to the pyproject.toml file
         :param uvlock: path to the uv.lock file, if not specified, will use the default uv.lock file in the same
-        directory as the pyproject.toml file. (pyproject.parent / uv.lock)
+        directory as the pyproject.toml file if it exists. (pyproject.parent / uv.lock)
         :param index_url: index url to use for pip install, default is None
         :param extra_index_urls: extra index urls to use for pip install, default is None
         :param pre: whether to allow pre-release versions, default is False
@@ -942,10 +1099,14 @@ class Image:
         """
         if isinstance(pyproject_file, str):
             pyproject_file = Path(pyproject_file)
+        # If uvlock is not provided, use the default uv.lock file in the same directory if it exists
+        if uvlock is None:
+            default_uvlock = pyproject_file.parent / "uv.lock"
+            uvlock = default_uvlock if default_uvlock.exists() else None
         new_image = self.clone(
             addl_layer=UVProject(
                 pyproject=pyproject_file,
-                uvlock=uvlock or (pyproject_file.parent / "uv.lock"),
+                uvlock=uvlock,
                 index_url=index_url,
                 extra_index_urls=extra_index_urls,
                 pre=pre,
@@ -1037,11 +1198,37 @@ class Image:
         Use this method to create a new image with the local v2 builder
         This will override any existing builder
 
-        :return: Image
+        Returns:
+            Image
         """
         # Manually declare the PythonWheel so we can set the hashing
         # used to compute the identifier. Can remove if we ever decide to expose the lambda in with_ commands
-        with_dist = self.clone(addl_layer=PythonWheels(wheel_dir=DIST_FOLDER, package_name="flyte", pre=True))
+        with_dist = self.clone(addl_layer=PythonWheels(wheel_dir=DIST_FOLDER, package_name="flyte"))
+        return with_dist
+
+    def with_local_v2_plugins(self, plugins: str | list[str] | None = None) -> Image:
+        """
+        Use this method to create a new image with the local v2 builder
+        This will override any existing builder
+
+        Args:
+            plugins: plugin name or list of plugin names to install, default is None, e.g.
+                flyteplugins-hitl, flyteplugins-vllm, flyteplugins-sglang, etc.
+
+        Returns:
+            Image
+        """
+        if isinstance(plugins, str):
+            plugins = [plugins]
+
+        with_dist = self
+        if plugins:
+            for plugin in plugins:
+                if not plugin.startswith("flyteplugins-"):
+                    raise ValueError(f"Plugin {plugin} must start with 'flyteplugins-'")
+                with_dist = with_dist.clone(
+                    addl_layer=PythonWheels(wheel_dir=DIST_FOLDER, package_name=plugin.replace("-", "_"))
+                )
 
         return with_dist
 
@@ -1066,3 +1253,57 @@ class Image:
                 details.append(f"Layer: {layer}")
 
         return "\n".join(details)
+
+
+def resolve_code_bundle_layer(image: Image, copy_style: str, root_dir: Path) -> Image:
+    """Resolve any CodeBundleLayer layers in the image based on the runner's copy_style.
+
+    - If no CodeBundleLayer layers exist, returns the same image object.
+    - If copy_style != "none", strips CodeBundleLayer layers (no-op behavior).
+    - If copy_style == "none", replaces CodeBundleLayer with CopyConfig to bake source into image.
+    """
+    code_bundle_layers = [layer for layer in image._layers if isinstance(layer, CodeBundleLayer)]
+    if not code_bundle_layers:
+        return image
+
+    non_bundle_layers = tuple(layer for layer in image._layers if not isinstance(layer, CodeBundleLayer))
+
+    if copy_style != "none":
+        # Strip CodeBundleLayer layers — code is bundled separately
+        return Image._new(
+            base_image=image.base_image,
+            dockerfile=image.dockerfile,
+            registry=image.registry,
+            name=image.name,
+            platform=image.platform,
+            python_version=image.python_version,
+            extendable=image.extendable,
+            _ref_name=image._ref_name,
+            _layers=non_bundle_layers,
+            _image_registry_secret=image._image_registry_secret,
+        )
+
+    # copy_style == "none" — resolve each CodeBundleLayer by setting root_dir.
+    # "all" can be directly converted to CopyConfig. "loaded_modules" keeps
+    # the CodeBundleLayer with root_dir set so the builder can filter files
+    # into the docker context.
+    resolved_layers = list(non_bundle_layers)
+    for cb_layer in code_bundle_layers:
+        if cb_layer.copy_style == "all":
+            resolved_layers.append(CopyConfig(path_type=1, src=root_dir, dst=cb_layer.dst))
+        else:
+            # "loaded_modules" — set root_dir so builder copies only imported modules to context
+            resolved_layers.append(CodeBundleLayer(copy_style=cb_layer.copy_style, dst=cb_layer.dst, root_dir=root_dir))
+
+    return Image._new(
+        base_image=image.base_image,
+        dockerfile=image.dockerfile,
+        registry=image.registry,
+        name=image.name,
+        platform=image.platform,
+        python_version=image.python_version,
+        extendable=image.extendable,
+        _ref_name=image._ref_name,
+        _layers=tuple(resolved_layers),
+        _image_registry_secret=image._image_registry_secret,
+    )

@@ -149,13 +149,26 @@ class ActionNotFoundError(RuntimeError):
     """
 
 
-class ReferenceTaskError(RuntimeUserError):
+class RemoteTaskNotFoundError(RuntimeUserError):
     """
     This error is raised when the user tries to access a task that does not exist.
     """
 
+    CODE = "RemoteTaskNotFoundError"
+
     def __init__(self, message: str):
-        super().__init__("ReferenceTaskUsageError", message, "user")
+        super().__init__(self.CODE, message, "user")
+
+
+class RemoteTaskUsageError(RuntimeUserError):
+    """
+    This error is raised when the user tries to access a task that does not exist.
+    """
+
+    CODE = "RemoteTaskUsageError"
+
+    def __init__(self, message: str):
+        super().__init__(self.CODE, message, "user")
 
 
 class LogsNotYetAvailableError(BaseRuntimeError):
@@ -216,13 +229,13 @@ class InlineIOMaxBytesBreached(RuntimeUserError):
         super().__init__("InlineIOMaxBytesBreached", message, "user")
 
 
-class RunAbortedError(RuntimeUserError):
+class ActionAbortedError(RuntimeUserError):
     """
-    This error is raised when the run is aborted by the user.
+    This error is raised when an action was aborted, externally. The parent action will raise this error.
     """
 
     def __init__(self, message: str):
-        super().__init__("RunAbortedError", message, "user")
+        super().__init__("ActionAbortedError", message, "user")
 
 
 class SlowDownError(RuntimeUserError):
@@ -241,3 +254,65 @@ class OnlyAsyncIOSupportedError(RuntimeUserError):
 
     def __init__(self, message: str):
         super().__init__("OnlyAsyncIOSupportedError", message, "user")
+
+
+class ParameterMaterializationError(RuntimeUserError):
+    """
+    This error is raised when the user tries to use a Parameter in an App, that has delayed Materialization,
+    but the materialization fails.
+    """
+
+    def __init__(self, message: str):
+        super().__init__("ParameterMaterializationError", message, "user")
+
+
+class RestrictedTypeError(RuntimeUserError):
+    """
+    This error is raised when the user uses a restricted type, for example current a Tuple is not supported for one
+     value.
+    """
+
+    def __init__(self, message: str):
+        super().__init__("RestrictedTypeUsage", message, "user")
+
+
+class CodeBundleError(RuntimeUserError):
+    """
+    This error is raised when the code bundle cannot be created, for example when no files are found to bundle.
+    """
+
+    def __init__(self, message: str):
+        super().__init__("CodeBundleError", message, "user")
+
+
+class TraceDoesNotAllowNestedTasksError(RuntimeUserError):
+    """
+    This error is raised when the user tries to use a task from within a trace. Tasks can be nested under tasks
+    not traces.
+    """
+
+    def __init__(self, message: str):
+        super().__init__("TraceDoesNotAllowNestedTasksError", message)
+
+
+class InvalidPackageError(RuntimeUserError):
+    """Raised when an invalid system package is detected during image build."""
+
+    def __init__(self, package_name: str, original_error: str):
+        self.package_name = package_name
+        self.original_error = original_error
+        super().__init__(
+            "InvalidPackageError",
+            f"Invalid system package detected: '{package_name}'. "
+            f"This package does not exist in apt repositories. "
+            f"Error: {original_error}",
+        )
+
+
+class NonRecoverableError(RuntimeUserError):
+    """
+    Raised when an error is encountered that is not recoverable. Retries are irrelevant.
+    """
+
+    def __init__(self, message: str, code: str = "NonRecoverableError"):
+        super().__init__(code, message)

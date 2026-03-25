@@ -77,6 +77,20 @@ class ActionID:
         new_name = base36_encode(bytes_digest)
         return self.new_sub_action(new_name)
 
+    def unique_id_str(self, salt: str | None = None) -> str:
+        """
+        Generate a unique ID string for this action in the format:
+        {project}-{domain}-{run_name}-{action_name}
+
+        This is optimized for performance assuming all fields are available.
+
+        :return: A unique ID string
+        """
+        v = f"{self.project}-{self.domain}-{self.run_name}-{self.name}"
+        if salt is not None:
+            return f"{v}-{salt}"
+        return v
+
 
 @rich.repr.auto
 @dataclass
@@ -198,6 +212,8 @@ class TaskContext:
       set on all sub-actions.
     :param custom_context: Context metadata for the action. If an action receives context, it'll automatically pass it
       to any actions it spawns. Context will not be used for cache key computation.
+    :param in_driver_literal_conversion: Set by the runtime during nested-task literal marshalling; type transformers
+      may use it to skip duplicate side effects (e.g. report tabs) outside true task-body I/O.
     """
 
     action: ActionID
@@ -215,6 +231,10 @@ class TaskContext:
     mode: Literal["local", "remote", "hybrid"] = "remote"
     interactive_mode: bool = False
     custom_context: Dict[str, str] = field(default_factory=dict)
+    disable_run_cache: bool = False
+    #: True while converting literals for nested-task / driver orchestration (not task-body I/O).
+    #: Type transformers should omit non-essential side effects (e.g. duplicate HTML tabs) when set.
+    in_driver_literal_conversion: bool = False
 
     def replace(self, **kwargs) -> TaskContext:
         if "data" in kwargs:
@@ -414,10 +434,52 @@ class NativeInterface:
         """
         return {k: v[0] for k, v in self.inputs.items()}
 
+    @property
+    def json_schema(self) -> Dict[str, Any]:
+        """Convert task inputs to a JSON schema dict.
+
+        Uses the Flyte type engine to produce a LiteralType for each input, then
+        converts to JSON schema.
+        """
+        # Deferred imports: TypeEngine is heavyweight and _json_schema depends on
+        # flyteidl2 protobuf, so we avoid pulling them in at module load time.
+        from flyte._json_schema import literal_type_to_json_schema
+        from flyte.types._type_engine import TypeEngine
+
+        properties: Dict[str, Any] = {}
+        required: List[str] = []
+
+        for name, (py_type, default) in self.inputs.items():
+            if py_type is inspect.Parameter.empty:
+                # No annotation — fall back to a plain string schema
+                properties[name] = {"type": "string"}
+            else:
+                lt = TypeEngine.to_literal_type(py_type)
+                properties[name] = literal_type_to_json_schema(lt)
+
+            if default is inspect.Parameter.empty:
+                required.append(name)
+
+        return {"type": "object", "properties": properties, "required": required}
+
     def __repr__(self):
         """
         Returns a string representation of the task interface.
         """
+
+        def format_type(tpe):
+            """Format a type for display in the interface repr."""
+            if isinstance(tpe, str):
+                return tpe
+            # For simple types (int, str, etc.) use __name__
+            # For generic types (list[str], dict[str, int]) use repr()
+            # For union types (int | str) use repr()
+            if isinstance(tpe, type) and not hasattr(tpe, "__origin__"):
+                # Simple type like int, str
+                return tpe.__name__
+            # Generic types, unions, or other complex types - use repr
+            return repr(tpe)
+
         i = "("
         if self.inputs:
             initial = True
@@ -425,7 +487,7 @@ class NativeInterface:
                 if not initial:
                     i += ", "
                 initial = False
-                tp = tpe[0] if isinstance(tpe[0], str) else getattr(tpe[0], "__name__", str(tpe[0]))
+                tp = format_type(tpe[0])
                 i += f"{key}: {tp}"
                 if tpe[1] is not inspect.Parameter.empty:
                     if tpe[1] is self.has_default:
@@ -443,7 +505,7 @@ class NativeInterface:
                 if not initial:
                     i += ", "
                 initial = False
-                tp = tpe.__name__ if isinstance(tpe, type) else tpe
+                tp = format_type(tpe)
                 i += f"{key}: {tp}"
             if multi:
                 i += ")"
