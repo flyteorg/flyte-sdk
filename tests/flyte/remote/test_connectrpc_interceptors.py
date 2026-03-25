@@ -112,6 +112,15 @@ class TestDefaultMetadataInterceptor:
             request_id = headers["x-request-id"]
             assert "test-project" in request_id
 
+    @pytest.mark.asyncio
+    async def test_preserves_existing_request_id(self):
+        """If a caller already set x-request-id, the interceptor must not overwrite it."""
+        interceptor = DefaultMetadataInterceptor()
+        ctx, headers = _make_ctx_mock()
+        headers["x-request-id"] = "caller-correlation-id"
+        await interceptor.on_start(ctx)
+        assert headers["x-request-id"] == "caller-correlation-id"
+
 
 def _make_mock_authenticator(headers=None):
     """Create a mock authenticator that returns given headers."""
@@ -423,3 +432,23 @@ class TestRetryServerStreamInterceptor:
         results = [item async for item in interceptor.intercept_server_stream(call_next, "req", ctx)]
         assert results == ["ok"]
         assert call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_no_retry_after_yield(self):
+        """If the stream already yielded data, errors must propagate — not restart the stream."""
+        interceptor = RetryServerStreamInterceptor(max_attempts=3, initial_backoff=0.001)
+        call_count = 0
+
+        async def call_next(req, ctx):
+            nonlocal call_count
+            call_count += 1
+            yield "first"
+            raise ConnectError(Code.UNAVAILABLE, "mid-stream failure")
+
+        ctx, _ = _make_ctx_mock()
+        results = []
+        with pytest.raises(ConnectError, match="mid-stream failure"):
+            async for item in interceptor.intercept_server_stream(call_next, "req", ctx):
+                results.append(item)
+        assert results == ["first"]
+        assert call_count == 1  # No retry attempted

@@ -54,12 +54,14 @@ class RetryServerStreamInterceptor:
     async def intercept_server_stream(self, call_next, request, ctx):
         backoff = self._initial_backoff
         for attempt in range(self._max_attempts):
+            yielded_any = False
             try:
                 async for response in call_next(request, ctx):
+                    yielded_any = True
                     yield response
                 return  # Stream completed successfully
             except ConnectError as e:
-                if e.code not in RETRYABLE_CODES or attempt == self._max_attempts - 1:
+                if yielded_any or e.code not in RETRYABLE_CODES or attempt == self._max_attempts - 1:
                     raise
                 await asyncio.sleep(backoff * (0.5 + random.random()))
                 backoff = min(backoff * self._multiplier, self._max_backoff)
