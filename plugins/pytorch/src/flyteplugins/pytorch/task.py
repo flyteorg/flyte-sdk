@@ -7,7 +7,13 @@ import threading
 from dataclasses import dataclass, field
 from typing import Any, Dict, Literal, Optional, Union
 
+import flyte
 from cloudpickle import cloudpickle
+from flyte._context import internal_ctx
+from flyte._logging import logger
+from flyte._task import P, R
+from flyte.extend import AsyncFunctionTaskTemplate, TaskPluginRegistry
+from flyte.models import SerializationContext, TaskContext
 from flyteidl2.plugins.kubeflow import common_pb2
 from flyteidl2.plugins.kubeflow.pytorch_pb2 import (
     DistributedPyTorchTrainingReplicaSpec,
@@ -18,13 +24,6 @@ from google.protobuf.json_format import MessageToDict
 from torch.distributed import run
 from torch.distributed.elastic.multiprocessing.errors import ChildFailedError
 from torch.distributed.launcher.api import LaunchConfig, elastic_launch
-
-import flyte
-from flyte._context import internal_ctx
-from flyte._logging import logger
-from flyte._task import P, R
-from flyte.extend import AsyncFunctionTaskTemplate, TaskPluginRegistry
-from flyte.models import SerializationContext, TaskContext
 
 
 @dataclass
@@ -421,13 +420,17 @@ class TorchFunctionTask(AsyncFunctionTaskTemplate):
 
         cmd = [
             "neuron_parallel_compile",
-            "python", "-m", "flyteplugins.pytorch.compile_launcher",
-            "--ctx-file", ctx_file,
+            "python",
+            "-m",
+            "flyteplugins.pytorch.compile_launcher",
+            "--ctx-file",
+            ctx_file,
         ]
 
         logger.info("Running neuron_parallel_compile: %s", " ".join(cmd))
         try:
-            result = subprocess.run(cmd)
+            result = subprocess.run(cmd, check=False)
+
             # neuron_parallel_compile returns the number of failed graph compilations
             # as its exit code. Partial failures are normal (init graphs, dynamic shapes),
             # so we only log a warning rather than failing the task.

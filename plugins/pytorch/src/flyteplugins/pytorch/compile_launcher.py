@@ -44,9 +44,7 @@ def main():
         monitor_interval=launch_params["monitor_interval"],
     )
 
-    elastic_launch(config=config, entrypoint=launcher_entrypoint)(
-        tctx, fn_bytes, kwargs
-    )
+    elastic_launch(config=config, entrypoint=launcher_entrypoint)(tctx, fn_bytes, kwargs)
 
 
 if __name__ == "__main__":
