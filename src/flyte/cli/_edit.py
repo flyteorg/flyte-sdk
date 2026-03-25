@@ -27,6 +27,8 @@ def settings(cfg: common.CLIConfig, project: str | None, domain: str | None):
     """
     import flyte.remote as remote
 
+    cfg.init()
+
     # Determine scope
     scope_desc = "ROOT"
     if project and domain:

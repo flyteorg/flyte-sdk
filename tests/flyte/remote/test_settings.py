@@ -17,7 +17,6 @@ from flyte.remote._settings import (
     _settings_proto_to_flat,
 )
 
-
 # ---------------------------------------------------------------------------
 # Proto conversion helpers
 # ---------------------------------------------------------------------------
@@ -37,15 +36,11 @@ class TestExtractSettingValue:
         assert _extract_setting_value(sv) is True
 
     def test_list_value(self):
-        sv = settings_definition_pb2.SettingValue(
-            list_value=settings_definition_pb2.StringValues(values=["a", "b"])
-        )
+        sv = settings_definition_pb2.SettingValue(list_value=settings_definition_pb2.StringValues(values=["a", "b"]))
         assert _extract_setting_value(sv) == ["a", "b"]
 
     def test_map_value(self):
-        sv = settings_definition_pb2.SettingValue(
-            map_value=settings_definition_pb2.StringMap(entries={"k": "v"})
-        )
+        sv = settings_definition_pb2.SettingValue(map_value=settings_definition_pb2.StringMap(entries={"k": "v"}))
         assert _extract_setting_value(sv) == {"k": "v"}
 
     def test_inherit_returns_none(self):
@@ -144,37 +139,47 @@ class TestSettingsProtoToFlat:
 
 class TestFlatOverridesToSettingsProto:
     def test_two_part_keys(self):
-        proto = _flat_overrides_to_settings_proto({
-            "run.default_queue": "gpu",
-            "security.service_account": "my-sa",
-        })
+        proto = _flat_overrides_to_settings_proto(
+            {
+                "run.default_queue": "gpu",
+                "security.service_account": "my-sa",
+            }
+        )
         assert proto.run.default_queue.string_value == "gpu"
         assert proto.security.service_account.string_value == "my-sa"
 
     def test_three_part_keys(self):
-        proto = _flat_overrides_to_settings_proto({
-            "task_resource.defaults.min_cpu": "2",
-            "task_resource.defaults.max_memory": "8Gi",
-        })
+        proto = _flat_overrides_to_settings_proto(
+            {
+                "task_resource.defaults.min_cpu": "2",
+                "task_resource.defaults.max_memory": "8Gi",
+            }
+        )
         assert proto.task_resource.defaults.min_cpu.string_value == "2"
         assert proto.task_resource.defaults.max_memory.string_value == "8Gi"
 
     def test_top_level_keys(self):
-        proto = _flat_overrides_to_settings_proto({
-            "labels": {"env": "prod"},
-        })
+        proto = _flat_overrides_to_settings_proto(
+            {
+                "labels": {"env": "prod"},
+            }
+        )
         assert dict(proto.labels.map_value.entries) == {"env": "prod"}
 
     def test_int_value(self):
-        proto = _flat_overrides_to_settings_proto({
-            "run.run_concurrency": 10,
-        })
+        proto = _flat_overrides_to_settings_proto(
+            {
+                "run.run_concurrency": 10,
+            }
+        )
         assert proto.run.run_concurrency.int_value == 10
 
     def test_bool_value(self):
-        proto = _flat_overrides_to_settings_proto({
-            "task_resource.mirror_limits_request": True,
-        })
+        proto = _flat_overrides_to_settings_proto(
+            {
+                "task_resource.mirror_limits_request": True,
+            }
+        )
         assert proto.task_resource.mirror_limits_request.bool_value is True
 
     def test_empty_overrides(self):
@@ -340,17 +345,15 @@ _PATCH_CONFIG = "flyte.remote._settings.get_init_config"
 
 class TestSettingsGet:
     def test_get_org_scope(self, mock_client, mock_settings_service, mock_init_config):
-        mock_settings_service.GetSettingsForEdit.return_value = (
-            settings_service_pb2.GetSettingsForEditResponse(
-                requestedKey=settings_definition_pb2.SettingsKey(org="myorg"),
-                levels=[
-                    _make_settings_record(
-                        org="myorg",
-                        version=5,
-                        **{"run.default_queue": "cpu", "security.service_account": "default-sa"},
-                    ),
-                ],
-            )
+        mock_settings_service.GetSettingsForEdit.return_value = settings_service_pb2.GetSettingsForEditResponse(
+            requestedKey=settings_definition_pb2.SettingsKey(org="myorg"),
+            levels=[
+                _make_settings_record(
+                    org="myorg",
+                    version=5,
+                    **{"run.default_queue": "cpu", "security.service_account": "default-sa"},
+                ),
+            ],
         )
 
         with (
@@ -370,9 +373,7 @@ class TestSettingsGet:
         assert "run.default_queue" in effective_keys
         assert "security.service_account" in effective_keys
 
-    def test_get_project_scope_with_inheritance(
-        self, mock_client, mock_settings_service, mock_init_config
-    ):
+    def test_get_project_scope_with_inheritance(self, mock_client, mock_settings_service, mock_init_config):
         org_record = _make_settings_record(
             org="myorg",
             version=1,
@@ -392,13 +393,9 @@ class TestSettingsGet:
             **{"security.service_account": "ml-sa"},
         )
 
-        mock_settings_service.GetSettingsForEdit.return_value = (
-            settings_service_pb2.GetSettingsForEditResponse(
-                requestedKey=settings_definition_pb2.SettingsKey(
-                    org="myorg", domain="prod", project="ml"
-                ),
-                levels=[org_record, domain_record, project_record],
-            )
+        mock_settings_service.GetSettingsForEdit.return_value = settings_service_pb2.GetSettingsForEditResponse(
+            requestedKey=settings_definition_pb2.SettingsKey(org="myorg", domain="prod", project="ml"),
+            levels=[org_record, domain_record, project_record],
         )
 
         with (
@@ -424,8 +421,8 @@ class TestSettingsGet:
         assert local_keys == {"security.service_account"}
 
     def test_get_sends_correct_key(self, mock_client, mock_settings_service, mock_init_config):
-        mock_settings_service.GetSettingsForEdit.return_value = (
-            settings_service_pb2.GetSettingsForEditResponse(levels=[])
+        mock_settings_service.GetSettingsForEdit.return_value = settings_service_pb2.GetSettingsForEditResponse(
+            levels=[]
         )
 
         with (
@@ -441,8 +438,8 @@ class TestSettingsGet:
         assert req.key.project == "web"
 
     def test_get_empty_levels(self, mock_client, mock_settings_service, mock_init_config):
-        mock_settings_service.GetSettingsForEdit.return_value = (
-            settings_service_pb2.GetSettingsForEditResponse(levels=[])
+        mock_settings_service.GetSettingsForEdit.return_value = settings_service_pb2.GetSettingsForEditResponse(
+            levels=[]
         )
 
         with (
@@ -458,9 +455,7 @@ class TestSettingsGet:
 
 
 class TestSettingsUpdate:
-    def test_update_sends_correct_request(
-        self, mock_client, mock_settings_service, mock_init_config
-    ):
+    def test_update_sends_correct_request(self, mock_client, mock_settings_service, mock_init_config):
         settings = Settings(
             effective_settings=[],
             local_settings=[],
@@ -484,9 +479,7 @@ class TestSettingsUpdate:
         assert req.settings.run.default_queue.string_value == "gpu"
         assert req.settings.run.run_concurrency.int_value == 5
 
-    def test_update_refreshes_local_state(
-        self, mock_client, mock_settings_service, mock_init_config
-    ):
+    def test_update_refreshes_local_state(self, mock_client, mock_settings_service, mock_init_config):
         settings = Settings(
             effective_settings=[],
             local_settings=[LocalSetting(key="old.key", value="old")],

@@ -1,19 +1,27 @@
 """Hierarchical settings management for Flyte deployments.
 
-Settings are scoped hierarchically: ORG → DOMAIN → PROJECT. Narrower scopes
-inherit from broader ones and can override individual values.
+Settings are scoped at two levels: DOMAIN and PROJECT. Projects inherit from
+their parent domain, and domains inherit from the org-wide defaults. Narrower
+scopes can override individual values.
+
+Scope selection via ``project`` and ``domain`` parameters:
+
+- ``domain`` only → DOMAIN scope.
+- ``domain`` + ``project`` → PROJECT scope, inherits from DOMAIN.
+
+These parameters are **independent of ``flyte.init()``**. The ``project`` and
+``domain`` passed to ``init()`` configure the default execution context; they
+are *not* automatically applied to settings. You must always pass ``domain``
+(and optionally ``project``) explicitly.
 
 Retrieving settings::
 
     import flyte.remote as remote
 
-    # Get effective settings at ORG (root) scope
-    settings = remote.Settings.get()
-
-    # Get settings for a specific domain — includes inherited ORG values
+    # Get settings for a domain
     settings = remote.Settings.get(domain="production")
 
-    # Get settings for a project — includes inherited ORG + DOMAIN values
+    # Get settings for a project — includes inherited DOMAIN values
     settings = remote.Settings.get(domain="production", project="ml-pipeline")
 
     # Inspect effective settings (resolved with inheritance)
@@ -38,7 +46,10 @@ Updating settings::
 
 Interactive editing (via CLI)::
 
-    # Opens $EDITOR with YAML showing local overrides and inherited values
+    # DOMAIN scope
+    $ flyte edit settings --domain production
+
+    # PROJECT scope
     $ flyte edit settings --domain production --project ml-pipeline
 
 Available setting keys (dot-notation)::
@@ -97,13 +108,9 @@ def _make_setting_value(value: Any) -> settings_definition_pb2.SettingValue:
     elif isinstance(value, str):
         return settings_definition_pb2.SettingValue(string_value=value)
     elif isinstance(value, list):
-        return settings_definition_pb2.SettingValue(
-            list_value=settings_definition_pb2.StringValues(values=value)
-        )
+        return settings_definition_pb2.SettingValue(list_value=settings_definition_pb2.StringValues(values=value))
     elif isinstance(value, dict):
-        return settings_definition_pb2.SettingValue(
-            map_value=settings_definition_pb2.StringMap(entries=value)
-        )
+        return settings_definition_pb2.SettingValue(map_value=settings_definition_pb2.StringMap(entries=value))
     else:
         return settings_definition_pb2.SettingValue(string_value=str(value))
 
@@ -338,31 +345,32 @@ class Settings(ToJSONMixin):
         Returns a Settings object containing both the effective (resolved) settings
         with inheritance, and the local overrides at the requested scope.
 
-        :param project: Project name (requires domain to be set).
-        :param domain: Domain name.
+        The scope is determined by ``domain`` and ``project``:
+
+        - ``domain`` only → DOMAIN scope.
+        - ``domain`` + ``project`` → PROJECT scope, inherits from DOMAIN.
+
+        These are explicit parameters — they are **not** inferred from
+        ``flyte.init()``.
+
+        :param domain: Domain name (required).
+        :param project: Project name. Requires ``domain`` to also be set.
         :returns: Settings object with effective_settings, local_settings, and version.
 
         Example::
 
-            # ORG-level settings
-            settings = Settings.get()
-
-            # Domain-level — inherits from ORG
+            # Domain-level settings
             settings = Settings.get(domain="production")
 
-            # Project-level — inherits from ORG + DOMAIN
+            # Project-level — inherits from DOMAIN
             settings = Settings.get(domain="production", project="ml-pipeline")
         """
-        await ensure_client()
+        ensure_client()
         cfg = get_init_config()
         client = get_client()
 
-        key = settings_definition_pb2.SettingsKey(
-            org=cfg.org or "", domain=domain or "", project=project or ""
-        )
-        resp = await client.settings_service.GetSettingsForEdit(
-            settings_service_pb2.GetSettingsForEditRequest(key=key)
-        )
+        key = settings_definition_pb2.SettingsKey(org=cfg.org or "", domain=domain or "", project=project or "")
+        resp = await client.settings_service.GetSettingsForEdit(settings_service_pb2.GetSettingsForEditRequest(key=key))
 
         # resp.levels is ordered broadest → most specific.
         # Build effective settings by layering: broader values get overridden by narrower.
@@ -393,9 +401,12 @@ class Settings(ToJSONMixin):
     async def update(self, overrides: dict[str, Any]) -> None:
         """Update settings with new local overrides at this scope.
 
-        Replaces the complete set of local overrides. Settings not included
-        will inherit from the parent scope. Uses optimistic locking via the
-        version obtained from get().
+        Replaces the complete set of local overrides for the scope that this
+        Settings object was retrieved for (determined by the ``domain`` and
+        ``project`` passed to ``get()``). Settings not included in ``overrides``
+        will inherit from the parent scope.
+
+        Uses optimistic locking via the version obtained from ``get()``.
 
         :param overrides: Dict of flat dot-notation keys to values.
             Example: ``{"run.default_queue": "gpu", "security.service_account": "my-sa"}``
@@ -417,9 +428,7 @@ class Settings(ToJSONMixin):
         settings_proto = _flat_overrides_to_settings_proto(overrides)
 
         await client.settings_service.UpdateSettings(
-            settings_service_pb2.UpdateSettingsRequest(
-                key=key, settings=settings_proto, version=self._version
-            )
+            settings_service_pb2.UpdateSettingsRequest(key=key, settings=settings_proto, version=self._version)
         )
 
         # Update local state

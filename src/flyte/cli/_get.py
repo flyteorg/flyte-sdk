@@ -410,6 +410,42 @@ def io(
     )
 
 
+@get.command(cls=common.CommandBase)
+@click.pass_obj
+def settings(
+    cfg: common.CLIConfig,
+    project: str | None = None,
+    domain: str | None = None,
+):
+    """
+    Get effective settings for a domain or project.
+
+    Shows the resolved settings at the requested scope, including values
+    inherited from parent scopes.
+
+    \b
+    Examples:
+
+    ```bash
+    # Get settings for a domain
+    flyte get settings --domain production
+
+    # Get settings for a project (inherits from domain)
+    flyte get settings --domain production --project ml-pipeline
+    ```
+    """
+    cfg.init()
+
+    console = common.get_console()
+    s = remote.Settings.get(domain=domain, project=project)
+
+    if not s.effective_settings:
+        console.print("[dim]No settings found at this scope.[/dim]")
+        return
+
+    console.print(common.format("Settings", s.effective_settings, cfg.output_format))
+
+
 @get.command(cls=click.RichCommand)
 @click.pass_obj
 def config(cfg: common.CLIConfig):
