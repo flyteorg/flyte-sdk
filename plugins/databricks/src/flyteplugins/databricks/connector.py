@@ -1,17 +1,18 @@
 import os
-from dataclasses import dataclass, asdict
 import typing as ty
+from dataclasses import asdict, dataclass
+from functools import cache, wraps
 
 from flyte import logger
 from flyte.connectors import AsyncConnector, ConnectorRegistry, Resource, ResourceMeta
 from flyte.connectors.utils import convert_to_flyte_phase
+from flyteidl2.connector.connector_pb2 import TaskExecutionMetadata
 from flyteidl2.core.execution_pb2 import TaskExecution, TaskLog
 from flyteidl2.core.tasks_pb2 import TaskTemplate
-from flyteidl2.connector.connector_pb2 import TaskExecutionMetadata
 from google.protobuf.json_format import MessageToDict
-from databricks.sdk.service import jobs, compute
-from databricks.sdk import core, WorkspaceClient
-from functools import cache, wraps
+
+from databricks.sdk import WorkspaceClient, core
+from databricks.sdk.service import compute, jobs
 
 P = ty.ParamSpec("P")
 R = ty.TypeVar("R")
@@ -24,6 +25,7 @@ def cache_with_sig(f: ty.Callable[P, R]) -> ty.Callable[P, R]:
     @wraps(f)
     def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
         return cache(f)(*args, **kwargs)
+
     return wrapper
 
 
@@ -96,7 +98,7 @@ class DatabricksConnector(AsyncConnector[RunResource]):
                 f"Missing databricks instance. Please set the value through the task config or"
                 f" set the {DEFAULT_DATABRICKS_INSTANCE_ENV_KEY} environment variable in the connector."
             )
-        
+
         wc = _get_wc(host=f"https://{databricks_instance}", token=databricks_token or "")
         run_waiter = wc.jobs.submit(
             run_name="",
@@ -104,15 +106,15 @@ class DatabricksConnector(AsyncConnector[RunResource]):
             git_source=jobs.GitSource(
                 git_url="https://github.com/flyteorg/flytetools",
                 git_provider=jobs.GitProvider.GIT_HUB,
-                git_commit="194364210c47c49ce66c419e8fb68d6f9c06fd7e"
-            )
+                git_commit="194364210c47c49ce66c419e8fb68d6f9c06fd7e",
+            ),
         )
         return RunResource(**asdict(wc.jobs.get_run(run_id=run_waiter.run_id)), databricks_instance=databricks_instance)
 
     async def get(
         self, resource_meta: RunResource, databricks_token: ty.Optional[str] = None, **kwargs: str
     ) -> Resource:
-        
+
         wc = _get_wc(host=f"https://{resource_meta.databricks_instance}", token=databricks_token or "")
         assert resource_meta.run_id is not None
         run = wc.jobs.get_run(resource_meta.run_id)
@@ -123,7 +125,7 @@ class DatabricksConnector(AsyncConnector[RunResource]):
         # The databricks job's state is determined by life_cycle_state and result_state.
         # https://docs.databricks.com/en/workflows/jobs/jobs-2.0-api.html#runresultstate
         if status and status.state:
-            if (termination_type := get_result_state(status)):
+            if termination_type := get_result_state(status):
                 result_state = termination_type.value
                 cur_phase = convert_to_flyte_phase(result_state)
             else:
@@ -144,7 +146,11 @@ class DatabricksConnector(AsyncConnector[RunResource]):
 
 
 def get_result_state(status: jobs.RunStatus) -> jobs.TerminationTypeType | None:
-    if status.state == jobs.RunLifecycleStateV2State.TERMINATED and status.termination_details and status.termination_details.type:
+    if (
+        status.state == jobs.RunLifecycleStateV2State.TERMINATED
+        and status.termination_details
+        and status.termination_details.type
+    ):
         return status.termination_details.type
     return None
 

@@ -8,6 +8,7 @@ from flyteidl2.plugins.spark_pb2 import SparkApplication, SparkJob
 from flyteplugins.spark import Spark
 from flyteplugins.spark.task import PysparkFunctionTask
 from google.protobuf.json_format import MessageToDict
+
 from flyteplugins.databricks.connector import DatabricksSubmitTask
 
 
@@ -38,12 +39,13 @@ class Databricks(Spark):
         databricks_token: Name of the Flyte secret containing the Databricks
             API token used for authentication.
     """
+
     databricks_conf: Optional[DatabricksSubmitTask] = None
     databricks_instance: Optional[str] = None
     databricks_token: Optional[str] = None
 
 
-class DatabricksFunctionTask(AsyncConnectorExecutorMixin, PysparkFunctionTask[Databricks]):
+class DatabricksFunctionTask(AsyncConnectorExecutorMixin, PysparkFunctionTask):
     """
     Actual Plugin that transforms the local python code for execution within a spark context
     """

@@ -18,6 +18,7 @@ from flyteidl2.core import tasks_pb2
 from flyteidl2.core.execution_pb2 import TaskExecution, TaskLog
 from google.protobuf import json_format
 from google.protobuf.struct_pb2 import Struct
+from typing_extensions import TypeVar
 
 import flyte.storage as storage
 from flyte import Secret
@@ -34,7 +35,6 @@ from flyte._task import AsyncFunctionTaskTemplate, TaskTemplate
 from flyte.connectors.utils import _render_task_template, is_terminal_phase
 from flyte.models import CodeBundle, NativeInterface, SerializationContext
 from flyte.types._type_engine import dataclass_from_dict
-from typing_extensions import TypeVar
 
 
 @dataclass(frozen=True)

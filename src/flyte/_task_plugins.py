@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import typing
 from typing import Type
-from typing_extensions import TypeVar
 
 import rich.repr
+from typing_extensions import TypeVar
 
 if typing.TYPE_CHECKING:
     from ._task import AsyncFunctionTaskTemplate
