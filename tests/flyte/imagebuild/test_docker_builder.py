@@ -684,16 +684,20 @@ def test_uv_base_template_default_venv():
         PYTHON_VERSION="3.12",
     )
 
-    # Should use shell default syntax for VIRTUALENV and UV_PYTHON
-    assert "VIRTUALENV=${VIRTUALENV:-/opt/venv}" in dockerfile
-    assert "UV_PYTHON=${UV_PYTHON:-/opt/venv/bin/python}" in dockerfile
+    # Should declare default paths via ARG
+    assert "ARG VIRTUALENV=/opt/venv" in dockerfile
+    assert "ARG UV_PYTHON=$VIRTUALENV/bin/python" in dockerfile
 
-    # Should capture existing UV_PYTHON via ARG
-    assert "ARG _EXISTING_UV_PYTHON=${UV_PYTHON}" in dockerfile
+    # Should set ENV from ARGs
+    assert "VIRTUALENV=$VIRTUALENV" in dockerfile
+    assert "UV_PYTHON=$UV_PYTHON" in dockerfile
 
-    # Should conditionally create venv
-    assert 'if [ -z "${_EXISTING_UV_PYTHON}" ]' in dockerfile
+    # Should conditionally create venv only if UV_PYTHON binary doesn't exist
+    assert 'if [ ! -f "$UV_PYTHON" ]' in dockerfile
     assert "uv venv $VIRTUALENV --python=3.12" in dockerfile
+
+    # Should add VIRTUALENV/bin to PATH
+    assert 'PATH="$VIRTUALENV/bin:$PATH"' in dockerfile
 
 
 def test_uv_base_template_preserves_existing_uv_python():
@@ -703,14 +707,11 @@ def test_uv_base_template_preserves_existing_uv_python():
         PYTHON_VERSION="3.12",
     )
 
-    # The ARG captures the base image's UV_PYTHON at build time
-    assert "ARG _EXISTING_UV_PYTHON=${UV_PYTHON}" in dockerfile
+    # UV_PYTHON ARG defaults to $VIRTUALENV/bin/python but can be overridden by base image
+    assert "ARG UV_PYTHON=$VIRTUALENV/bin/python" in dockerfile
 
-    # The conditional block skips venv creation when _EXISTING_UV_PYTHON is non-empty
-    assert 'if [ -z "${_EXISTING_UV_PYTHON}" ]' in dockerfile
+    # The conditional block skips venv creation when UV_PYTHON binary already exists
+    assert 'if [ ! -f "$UV_PYTHON" ]' in dockerfile
 
-    # PATH is conditionally set: only adds /opt/venv/bin when _EXISTING_UV_PYTHON is empty
-    # ${_EXISTING_UV_PYTHON:+$PATH} expands to $PATH when set, nothing when empty
-    # ${_EXISTING_UV_PYTHON:-/opt/venv/bin:$PATH} expands to /opt/venv/bin:$PATH when empty, nothing when set
-    assert "${_EXISTING_UV_PYTHON:+$PATH}" in dockerfile
-    assert "${_EXISTING_UV_PYTHON:-/opt/venv/bin:$PATH}" in dockerfile
+    # PATH includes VIRTUALENV/bin
+    assert 'PATH="$VIRTUALENV/bin:$PATH"' in dockerfile
