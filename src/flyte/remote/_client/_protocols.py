@@ -3,6 +3,7 @@ from typing import AsyncIterator, Protocol
 from flyteidl2.app import app_payload_pb2
 from flyteidl2.auth import identity_pb2
 from flyteidl2.dataproxy import dataproxy_service_pb2
+from flyteidl2.org import settings_service_pb2
 from flyteidl2.project import project_service_pb2
 from flyteidl2.secret import payload_pb2
 from flyteidl2.task import task_service_pb2
@@ -159,12 +160,26 @@ class TriggerService(Protocol):
 
 
 class SettingsService(Protocol):
-    """Settings service protocol for hierarchical configuration management.
+    async def GetSettings(
+        self, request: settings_service_pb2.GetSettingsRequest
+    ) -> settings_service_pb2.GetSettingsResponse: ...
 
-    Note: This assumes the protobuf messages will be available from flyteidl2.settings
-    once the settings.proto file is compiled.
-    """
+    async def GetSettingsForEdit(
+        self, request: settings_service_pb2.GetSettingsForEditRequest
+    ) -> settings_service_pb2.GetSettingsForEditResponse: ...
 
-    async def GetSettings(self, request) -> ...: ...
+    async def GetSettingsForEditRaw(
+        self, request: settings_service_pb2.GetSettingsForEditRawRequest
+    ) -> settings_service_pb2.GetSettingsForEditRawResponse: ...
 
-    async def UpdateSettings(self, request) -> ...: ...
+    async def CreateSettings(
+        self, request: settings_service_pb2.CreateSettingsRequest
+    ) -> settings_service_pb2.CreateSettingsResponse: ...
+
+    async def UpdateSettings(
+        self, request: settings_service_pb2.UpdateSettingsRequest
+    ) -> settings_service_pb2.UpdateSettingsResponse: ...
+
+    async def UpdateSettingsRaw(
+        self, request: settings_service_pb2.UpdateSettingsRawRequest
+    ) -> settings_service_pb2.UpdateSettingsRawResponse: ...
