@@ -7,16 +7,16 @@ authors = [{ name = "Kevin Su", email = "pingsutw@users.noreply.github.com" }]
 requires-python = ">=3.10"
 dependencies = [
     "flyte[connector]",
-    "aiohttp",
     "nest-asyncio",
     "flyteplugins-spark",
+    "databricks-sdk"
 ]
 
 [dependency-groups]
 dev = [
     "pytest>=8.3.5",
     "pytest-asyncio>=0.26.0",
-    "kubernetes"
+    "kubernetes",
 ]
 
 [project.entry-points."flyte.connectors"]

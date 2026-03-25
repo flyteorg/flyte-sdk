@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Optional
 
 from flyte._task_plugins import TaskPluginRegistry
 from flyte.connectors import AsyncConnectorExecutorMixin
@@ -8,6 +8,8 @@ from flyteidl2.plugins.spark_pb2 import SparkApplication, SparkJob
 from flyteplugins.spark import Spark
 from flyteplugins.spark.task import PysparkFunctionTask
 from google.protobuf.json_format import MessageToDict
+
+from flyteplugins.databricks.connector import DatabricksSubmitTask
 
 
 @dataclass
@@ -38,7 +40,7 @@ class Databricks(Spark):
             API token used for authentication.
     """
 
-    databricks_conf: Optional[Dict[str, Union[str, dict]]] = None
+    databricks_conf: Optional[DatabricksSubmitTask] = None
     databricks_instance: Optional[str] = None
     databricks_token: Optional[str] = None
 
@@ -67,7 +69,7 @@ class DatabricksFunctionTask(AsyncConnectorExecutorMixin, PysparkFunctionTask):
             applicationType=SparkApplication.PYTHON,
             driverPod=driver_pod,
             executorPod=executor_pod,
-            databricksConf=self.plugin_config.databricks_conf,
+            databricksConf=self.plugin_config.databricks_conf.as_dict() if self.plugin_config.databricks_conf else None,
             databricksInstance=self.plugin_config.databricks_instance,
         )
 
