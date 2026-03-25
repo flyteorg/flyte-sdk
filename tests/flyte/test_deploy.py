@@ -259,6 +259,14 @@ def test_plan_deploy_dual_import_raises(dual_import_envs):
         plan_deploy(env1, env2)
 
 
+def test_plan_deploy_explicit_dep_no_false_positive():
+    """flyte.deploy(env_a, env_b) where env_a.depends_on=[env_b] must not raise."""
+    env_b = flyte.TaskEnvironment(name="b", image="python:3.10")
+    env_a = flyte.TaskEnvironment(name="a", image="python:3.10", depends_on=[env_b])
+    plans = plan_deploy(env_a, env_b)  # must not raise
+    assert len(plans) == 1  # env_b already covered, no second plan
+
+
 def test_recursive_discover_dual_import_raises(dual_import_envs):
     """_recursive_discover surfaces the dual-import error via the identity guard."""
     env1, env2, modules = dual_import_envs
