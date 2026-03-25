@@ -53,7 +53,7 @@ image = flyte.Image.from_debian_base(name="autoresearch-agent-image").with_pip_p
     "httpx",
     "pydantic-monty",
     "fastparquet",
-    "flyteplugins-hitl",
+    "flyteplugins-hitl==2.0.11",
     *PREPARE_PIP_PACKAGES,
 )
 
@@ -391,7 +391,7 @@ async def run_training_subjob(
     return metrics_json_str
 
 
-@agent_env.task(retries=0, report=True)
+@agent_env.task(retries=3, report=True)
 async def autoresearch_agent(
     research_topic: str | None = None,
     user_intent: str = (
@@ -458,8 +458,6 @@ async def autoresearch_agent(
         except Exception as exc:
             err = str(exc)
             history.append(HistoryEntry(round=round_idx, code=code, title=title, error=err))
-            if round_idx >= max_experiment_rounds:
-                raise RuntimeError(f"Training failed after {max_experiment_rounds} rounds: {err}") from exc
 
         title, code = await write_training_code(
             user_intent=user_intent,
@@ -531,7 +529,7 @@ if __name__ == "__main__":
             research_topic=None,
             user_intent="Try a small but reasonable GPT baseline; tune depth/width if time allows. Minimize val_bpb.",
             num_prepare_shards=4,
-            max_experiment_rounds=1,
+            max_experiment_rounds=3,
         )
         print(f"View at: {run.url}")
         run.wait()

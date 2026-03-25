@@ -25,6 +25,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+# ---------------------------------------------------------------------------
+# Constants, agents should not edit these
+# ---------------------------------------------------------------------------
+
 ROOT_INPUTS_DIR = "/var/inputs"
 DATA_TGZ = f"{ROOT_INPUTS_DIR}/data_tgz"
 TOKENIZER_TGZ = f"{ROOT_INPUTS_DIR}/tokenizer_tgz"
@@ -32,17 +36,6 @@ DATA_DIR = f"{ROOT_INPUTS_DIR}/data"
 TOKENIZER_DIR = f"{ROOT_INPUTS_DIR}/tokenizer"
 PREPARE_PY = f"{ROOT_INPUTS_DIR}/prepare.py"
 METRICS_PATH = "/var/outputs/metrics_json_str"
-
-# ---------------------------------------------------------------------------
-# Architecture / training knobs (agent edits here)
-# ---------------------------------------------------------------------------
-
-N_LAYER = 4
-N_HEAD = 4
-N_EMBD = 256
-DROPOUT = 0.0
-DEVICE_BATCH_SIZE = 4  # sequences per step (reduce on OOM)
-TIME_BUDGET_SEC = int(os.environ.get("AUTORESEARCH_TIME_BUDGET", "120"))
 
 # Upstream context length (must match ``prepare.py``).
 MAX_SEQ_LEN = 2048
@@ -63,6 +56,17 @@ def _prepare_dirs():
         tar.extractall(DATA_DIR)
     with tarfile.open(TOKENIZER_TGZ, "r:gz") as tar:
         tar.extractall(TOKENIZER_DIR)
+
+
+# ---------------------------------------------------------------------------
+# Architecture / training knobs (agent edits here)
+# ---------------------------------------------------------------------------
+N_LAYER = 4
+N_HEAD = 4
+N_EMBD = 256
+DROPOUT = 0.0
+DEVICE_BATCH_SIZE = 4  # sequences per step (reduce on OOM)
+TIME_BUDGET_SEC = int(os.environ.get("AUTORESEARCH_TIME_BUDGET", "120"))
 
 
 class CausalSelfAttention(nn.Module):
