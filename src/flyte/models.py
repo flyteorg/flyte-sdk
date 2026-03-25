@@ -212,6 +212,8 @@ class TaskContext:
       set on all sub-actions.
     :param custom_context: Context metadata for the action. If an action receives context, it'll automatically pass it
       to any actions it spawns. Context will not be used for cache key computation.
+    :param in_driver_literal_conversion: Set by the runtime during nested-task literal marshalling; type transformers
+      may use it to skip duplicate side effects (e.g. report tabs) outside true task-body I/O.
     """
 
     action: ActionID
@@ -230,6 +232,9 @@ class TaskContext:
     interactive_mode: bool = False
     custom_context: Dict[str, str] = field(default_factory=dict)
     disable_run_cache: bool = False
+    #: True while converting literals for nested-task / driver orchestration (not task-body I/O).
+    #: Type transformers should omit non-essential side effects (e.g. duplicate HTML tabs) when set.
+    in_driver_literal_conversion: bool = False
 
     def replace(self, **kwargs) -> TaskContext:
         if "data" in kwargs:
