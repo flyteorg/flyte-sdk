@@ -8,7 +8,11 @@ def hostname_from_url(url: str) -> str:
     # Handle standard URL formats
     import urllib.parse
 
-    parsed = urllib.parse.urlparse(url)
+    # If no scheme, prepend one so urlparse doesn't misinterpret host:port
+    if "://" not in url:
+        parsed = urllib.parse.urlparse(f"dummy://{url}")
+    else:
+        parsed = urllib.parse.urlparse(url)
     return parsed.netloc or parsed.path.lstrip("/").rsplit("/")[0]
 
 
@@ -24,9 +28,11 @@ def org_from_endpoint(endpoint: str | None) -> str | None:
         return None
 
     hostname = hostname_from_url(endpoint)
+    # Strip port if present
+    hostname = hostname.split(":")[0]
     domain_parts = hostname.split(".")
-    if len(domain_parts) > 2:
-        # Assuming the organization is the first part of the domain
+    if len(domain_parts) >= 1:
+        # Return the first part of the domain (org for multi-part, or hostname itself for localhost)
         return domain_parts[0]
     return None
 
