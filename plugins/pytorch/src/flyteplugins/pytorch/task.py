@@ -7,13 +7,7 @@ import threading
 from dataclasses import dataclass, field
 from typing import Any, Dict, Literal, Optional, Union
 
-import flyte
 from cloudpickle import cloudpickle
-from flyte._context import internal_ctx
-from flyte._logging import logger
-from flyte._task import P, R
-from flyte.extend import AsyncFunctionTaskTemplate, TaskPluginRegistry
-from flyte.models import SerializationContext, TaskContext
 from flyteidl2.plugins.kubeflow import common_pb2
 from flyteidl2.plugins.kubeflow.pytorch_pb2 import (
     DistributedPyTorchTrainingReplicaSpec,
@@ -24,6 +18,13 @@ from google.protobuf.json_format import MessageToDict
 from torch.distributed import run
 from torch.distributed.elastic.multiprocessing.errors import ChildFailedError
 from torch.distributed.launcher.api import LaunchConfig, elastic_launch
+
+import flyte
+from flyte._context import internal_ctx
+from flyte._logging import logger
+from flyte._task import P, R
+from flyte.extend import AsyncFunctionTaskTemplate, TaskPluginRegistry
+from flyte.models import SerializationContext, TaskContext
 
 
 @dataclass
@@ -111,8 +112,8 @@ class Elastic:
         neuron_parallel_compile (bool): When True, runs ``neuron_parallel_compile``
             before the real training to extract and pre-compile XLA graphs in parallel.
             This avoids compilation during training and prevents compilation-related
-            hangs. Requires ``neuron_parallel_compile`` to be installed in the container
-            image (included in AWS Neuron SDK images). Defaults to False.
+            hangs. Requires ``torch-neuronx`` to be installed in the container
+            image. Defaults to False.
     """
 
     nnodes: Union[int, str]

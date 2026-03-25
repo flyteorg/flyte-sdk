@@ -1,11 +1,7 @@
 """Launcher for neuron_parallel_compile that uses elastic_launch.
 
 neuron_parallel_compile wraps a command, setting NEURON_EXTRACT_GRAPHS_ONLY=1
-to extract XLA graphs during a trial run. Previously, the trial run used
-``torchrun`` CLI (cmd mode), while actual training used ``elastic_launch``
-Python API (fn mode). These different worker-spawning mechanisms caused the
-Neuron runtime to produce different XLA graph hashes, so the compilation
-cache was never hit.
+to extract XLA graphs during a trial run.
 
 This module ensures the trial run uses the same ``elastic_launch`` (fn mode)
 as actual training, so XLA graphs match exactly and the cache is hit.
