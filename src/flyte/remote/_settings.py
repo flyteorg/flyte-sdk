@@ -1,28 +1,211 @@
+"""Hierarchical settings management for Flyte deployments.
+
+Settings are scoped hierarchically: ORG → DOMAIN → PROJECT. Narrower scopes
+inherit from broader ones and can override individual values.
+
+Retrieving settings::
+
+    import flyte.remote as remote
+
+    # Get effective settings at ORG (root) scope
+    settings = remote.Settings.get()
+
+    # Get settings for a specific domain — includes inherited ORG values
+    settings = remote.Settings.get(domain="production")
+
+    # Get settings for a project — includes inherited ORG + DOMAIN values
+    settings = remote.Settings.get(domain="production", project="ml-pipeline")
+
+    # Inspect effective settings (resolved with inheritance)
+    for s in settings.effective_settings:
+        print(f"{s.key} = {s.value}  (from {s.origin})")
+
+    # Inspect local overrides at this scope only
+    for s in settings.local_settings:
+        print(f"{s.key} = {s.value}")
+
+Updating settings::
+
+    settings = remote.Settings.get(domain="production", project="ml-pipeline")
+
+    # Update with a dict of flat dot-notation overrides.
+    # Keys not included will inherit from parent scope.
+    settings.update({
+        "run.default_queue": "gpu",
+        "security.service_account": "ml-sa",
+        "task_resource.defaults.min_cpu": 2,
+    })
+
+Interactive editing (via CLI)::
+
+    # Opens $EDITOR with YAML showing local overrides and inherited values
+    $ flyte edit settings --domain production --project ml-pipeline
+
+Available setting keys (dot-notation)::
+
+    run.default_queue, run.run_concurrency, run.action_concurrency,
+    security.service_account,
+    storage.raw_data_path,
+    task_resource.defaults.{min,max}_{cpu,gpu,memory,storage},
+    task_resource.mirror_limits_request,
+    labels, annotations, environment_variables
+"""
+
 from __future__ import annotations
 
-from dataclasses import dataclass
-from pathlib import Path
+from dataclasses import dataclass, field
 from typing import Any
 
+from flyteidl2.org import settings_definition_pb2, settings_service_pb2
+
+from flyte._initialize import ensure_client, get_client, get_init_config
 from flyte.remote._common import ToJSONMixin
-from flyte.remote._settings_store import SettingsStore
 from flyte.syncify import syncify
+
+# Scope level mapping from proto enum to human-readable strings
+_SCOPE_NAMES = {
+    settings_definition_pb2.SCOPE_LEVEL_ORG: "ORG",
+    settings_definition_pb2.SCOPE_LEVEL_DOMAIN: "DOMAIN",
+    settings_definition_pb2.SCOPE_LEVEL_PROJECT: "PROJECT",
+}
+
+
+def _extract_setting_value(sv: settings_definition_pb2.SettingValue) -> Any | None:
+    """Extract the Python value from a SettingValue proto, or None if inherited/unset."""
+    which = sv.WhichOneof("value")
+    if which == "state":
+        return None
+    if which == "string_value":
+        return sv.string_value
+    if which == "int_value":
+        return sv.int_value
+    if which == "bool_value":
+        return sv.bool_value
+    if which == "list_value":
+        return list(sv.list_value.values)
+    if which == "map_value":
+        return dict(sv.map_value.entries)
+    return None
+
+
+def _make_setting_value(value: Any) -> settings_definition_pb2.SettingValue:
+    """Create a SettingValue proto from a Python value."""
+    if isinstance(value, bool):
+        return settings_definition_pb2.SettingValue(bool_value=value)
+    elif isinstance(value, int):
+        return settings_definition_pb2.SettingValue(int_value=value)
+    elif isinstance(value, str):
+        return settings_definition_pb2.SettingValue(string_value=value)
+    elif isinstance(value, list):
+        return settings_definition_pb2.SettingValue(
+            list_value=settings_definition_pb2.StringValues(values=value)
+        )
+    elif isinstance(value, dict):
+        return settings_definition_pb2.SettingValue(
+            map_value=settings_definition_pb2.StringMap(entries=value)
+        )
+    else:
+        return settings_definition_pb2.SettingValue(string_value=str(value))
+
+
+def _settings_proto_to_flat(
+    settings_proto: settings_definition_pb2.Settings,
+) -> list[tuple[str, Any]]:
+    """Flatten a Settings proto into dot-notation (key, value) pairs.
+
+    Walks the nested proto structure and returns only fields that have
+    actual values set (not inherited/unset).
+    """
+    results: list[tuple[str, Any]] = []
+
+    def _walk(msg: Any, prefix: str) -> None:
+        for fd in msg.DESCRIPTOR.fields:
+            child = getattr(msg, fd.name)
+            full_key = f"{prefix}.{fd.name}" if prefix else fd.name
+
+            if fd.message_type and fd.message_type.name == "SettingValue":
+                val = _extract_setting_value(child)
+                if val is not None:
+                    results.append((full_key, val))
+            elif fd.message_type:
+                # Recurse into sub-messages (RunSettings, TaskResourceSettings, etc.)
+                _walk(child, full_key)
+
+    _walk(settings_proto, "")
+    return results
+
+
+# Map of dot-notation prefixes to their proto sub-message class and parent field name.
+# This drives the reverse conversion from flat keys to nested proto.
+_SETTINGS_TREE: dict[str, tuple[str, type]] = {
+    "run": ("run", settings_definition_pb2.RunSettings),
+    "security": ("security", settings_definition_pb2.SecuritySettings),
+    "storage": ("storage", settings_definition_pb2.StorageSettings),
+    "task_resource": ("task_resource", settings_definition_pb2.TaskResourceSettings),
+    "task_resource.defaults": ("defaults", settings_definition_pb2.TaskResourceDefaults),
+}
+
+
+def _flat_overrides_to_settings_proto(
+    overrides: dict[str, Any],
+) -> settings_definition_pb2.Settings:
+    """Build a Settings proto from flat dot-notation overrides.
+
+    Example input: {"run.default_queue": "gpu", "task_resource.defaults.min_cpu": 2}
+    """
+    settings = settings_definition_pb2.Settings()
+
+    for dotkey, value in overrides.items():
+        sv = _make_setting_value(value)
+        parts = dotkey.split(".")
+
+        # Top-level SettingValue fields (labels, annotations, environment_variables)
+        if len(parts) == 1:
+            getattr(settings, parts[0]).CopyFrom(sv)
+            continue
+
+        # Two-part keys: e.g., run.default_queue, security.service_account
+        if len(parts) == 2:
+            parent = getattr(settings, parts[0])
+            getattr(parent, parts[1]).CopyFrom(sv)
+            continue
+
+        # Three-part keys: e.g., task_resource.defaults.min_cpu
+        if len(parts) == 3:
+            mid = getattr(settings, parts[0])
+            parent = getattr(mid, parts[1])
+            getattr(parent, parts[2]).CopyFrom(sv)
+            continue
+
+    return settings
+
+
+def _scope_origin_from_key(
+    key: settings_definition_pb2.SettingsKey,
+) -> SettingOrigin:
+    """Determine the SettingOrigin from a SettingsKey proto."""
+    if key.project:
+        return SettingOrigin(scope_type="PROJECT", domain=key.domain, project=key.project)
+    elif key.domain:
+        return SettingOrigin(scope_type="DOMAIN", domain=key.domain)
+    else:
+        return SettingOrigin(scope_type="ORG")
 
 
 @dataclass
 class SettingOrigin:
     """Represents where a setting value comes from in the hierarchy."""
 
-    scope_type: str  # "ROOT", "DOMAIN", or "PROJECT"
+    scope_type: str  # "ORG", "DOMAIN", or "PROJECT"
     domain: str | None = None
     project: str | None = None
 
     def __str__(self) -> str:
-        if self.scope_type == "ROOT":
-            return "ROOT"
+        if self.scope_type == "ORG":
+            return "ORG"
         elif self.scope_type == "DOMAIN":
             return f"DOMAIN({self.domain})"
-        else:  # PROJECT
+        else:
             return f"PROJECT({self.domain}/{self.project})"
 
 
@@ -47,7 +230,7 @@ class LocalSetting:
 class Settings(ToJSONMixin):
     """Hierarchical configuration settings with inheritance support.
 
-    This class manages settings across ROOT, DOMAIN, and PROJECT scopes,
+    This class manages settings across ORG, DOMAIN, and PROJECT scopes,
     supporting local overrides and inheritance from parent scopes.
     """
 
@@ -55,31 +238,23 @@ class Settings(ToJSONMixin):
     local_settings: list[LocalSetting]
     domain: str | None = None
     project: str | None = None
-    _store: SettingsStore | None = None
-
-    def __post_init__(self):
-        """Initialize the settings store if not provided."""
-        if self._store is None:
-            object.__setattr__(self, "_store", SettingsStore())
+    _version: int = field(default=0, repr=False)
 
     @staticmethod
     def _parse_value(raw_value: str) -> Any:
         """Parse a YAML value string into appropriate Python type."""
         raw_value = raw_value.strip()
 
-        # Remove quotes if present
         if (raw_value.startswith('"') and raw_value.endswith('"')) or (
             raw_value.startswith("'") and raw_value.endswith("'")
         ):
             return raw_value[1:-1]
 
-        # Parse booleans
         if raw_value.lower() == "true":
             return True
         if raw_value.lower() == "false":
             return False
 
-        # Parse numbers
         try:
             if "." in raw_value:
                 return float(raw_value)
@@ -87,7 +262,6 @@ class Settings(ToJSONMixin):
         except ValueError:
             pass
 
-        # Return as string
         return raw_value
 
     @staticmethod
@@ -96,7 +270,6 @@ class Settings(ToJSONMixin):
         if isinstance(value, bool):
             return "true" if value else "false"
         elif isinstance(value, str):
-            # Quote strings that contain special characters or are numeric-looking
             if (
                 any(c in value for c in [":", "#", "\n", '"', "'"])
                 or value.strip() != value
@@ -115,11 +288,8 @@ class Settings(ToJSONMixin):
         Local settings are uncommented, inherited settings are commented with origin info.
         """
         lines = []
-
-        # Create a set of local setting keys for quick lookup
         local_keys = {s.key for s in self.local_settings}
 
-        # Add local overrides section
         if self.local_settings:
             lines.append("# Local overrides")
             for l_setting in self.local_settings:
@@ -127,7 +297,6 @@ class Settings(ToJSONMixin):
                 lines.append(f"{l_setting.key}: {value_str}")
             lines.append("")
 
-        # Add inherited settings section
         inherited = [s for s in self.effective_settings if s.key not in local_keys]
         if inherited:
             lines.append("# Inherited settings (uncomment to override)")
@@ -147,16 +316,13 @@ class Settings(ToJSONMixin):
         overrides = {}
         for line in yaml_content.split("\n"):
             stripped = line.strip()
-            # Skip empty lines and comments
             if not stripped or stripped.startswith("#"):
                 continue
 
-            # Parse key-value pair
             if ":" not in stripped:
                 continue
 
             key, raw_value = stripped.split(":", 1)
-            # Remove inline comments
             if "#" in raw_value:
                 raw_value = raw_value.split("#")[0]
 
@@ -166,92 +332,95 @@ class Settings(ToJSONMixin):
 
     @syncify
     @classmethod
-    async def get(
-        cls, project: str | None = None, domain: str | None = None, store_path: Path | None = None
-    ) -> Settings:
+    async def get(cls, project: str | None = None, domain: str | None = None) -> Settings:
         """Retrieve settings for a given scope.
 
-        Args:
-            project: Project name (requires domain to be set)
-            domain: Domain name
-            store_path: Optional custom path to settings store file
+        Returns a Settings object containing both the effective (resolved) settings
+        with inheritance, and the local overrides at the requested scope.
 
-        Returns:
-            Settings object with effective and local settings
+        :param project: Project name (requires domain to be set).
+        :param domain: Domain name.
+        :returns: Settings object with effective_settings, local_settings, and version.
+
+        Example::
+
+            # ORG-level settings
+            settings = Settings.get()
+
+            # Domain-level — inherits from ORG
+            settings = Settings.get(domain="production")
+
+            # Project-level — inherits from ORG + DOMAIN
+            settings = Settings.get(domain="production", project="ml-pipeline")
         """
-        # TODO: Once the gRPC client is implemented, replace local store with API call
-        # from flyte.remote._client.controlplane import ClientSet
-        # client = await ClientSet.from_env()
-        # request = GetSettingsRequest(domain=domain or "", project=project or "")
-        # response = await client.settings_service.GetSettings(request)
+        await ensure_client()
+        cfg = get_init_config()
+        client = get_client()
 
-        # Use local file-based store
-        store = SettingsStore(store_path)
+        key = settings_definition_pb2.SettingsKey(
+            org=cfg.org or "", domain=domain or "", project=project or ""
+        )
+        resp = await client.settings_service.GetSettingsForEdit(
+            settings_service_pb2.GetSettingsForEditRequest(key=key)
+        )
 
-        # Get effective settings with inheritance
-        effective_dict = store.get_effective_settings(domain=domain, project=project)
-        effective_settings = [
-            EffectiveSetting(
-                key=key,
-                value=value,
-                origin=SettingOrigin(scope_type=scope_type, domain=origin_domain, project=origin_project),
-            )
-            for key, (value, scope_type, origin_domain, origin_project) in effective_dict.items()
-        ]
+        # resp.levels is ordered broadest → most specific.
+        # Build effective settings by layering: broader values get overridden by narrower.
+        effective: dict[str, EffectiveSetting] = {}
+        for record in resp.levels:
+            origin = _scope_origin_from_key(record.key)
+            for dotkey, val in _settings_proto_to_flat(record.settings):
+                effective[dotkey] = EffectiveSetting(key=dotkey, value=val, origin=origin)
 
-        # Get local settings for this scope only
-        local_dict = store.get_local_settings(domain=domain, project=project)
-        local_settings = [LocalSetting(key=k, value=v) for k, v in local_dict.items()]
+        # Local settings come from the most specific level that matches the requested scope.
+        local_settings: list[LocalSetting] = []
+        version = 0
+        if resp.levels:
+            most_specific = resp.levels[-1]
+            version = most_specific.version
+            for dotkey, val in _settings_proto_to_flat(most_specific.settings):
+                local_settings.append(LocalSetting(key=dotkey, value=val))
 
         return cls(
-            effective_settings=effective_settings,
+            effective_settings=list(effective.values()),
             local_settings=local_settings,
             domain=domain,
             project=project,
-            _store=store,
+            _version=version,
         )
 
     @syncify
     async def update(self, overrides: dict[str, Any]) -> None:
-        """Update settings with new local overrides.
+        """Update settings with new local overrides at this scope.
 
-        This replaces the complete set of local overrides for the current scope.
-        Settings not included will be removed and inherit from parent scope.
+        Replaces the complete set of local overrides. Settings not included
+        will inherit from the parent scope. Uses optimistic locking via the
+        version obtained from get().
 
-        Args:
-            overrides: Dictionary of setting key-value pairs to set as local overrides
+        :param overrides: Dict of flat dot-notation keys to values.
+            Example: ``{"run.default_queue": "gpu", "security.service_account": "my-sa"}``
+
+        Example::
+
+            settings = Settings.get(domain="production")
+            settings.update({
+                "run.default_queue": "gpu",
+                "task_resource.defaults.min_cpu": 2,
+            })
         """
-        # TODO: Once the gRPC client is implemented, replace local store with API call
-        # from flyte.remote._client.controlplane import ClientSet
-        # client = await ClientSet.from_env()
-        #
-        # local_settings = [
-        #     LocalSetting(key=k, value=v) for k, v in overrides.items()
-        # ]
-        #
-        # request = UpdateSettingsRequest(
-        #     domain=self.domain or "",
-        #     project=self.project or "",
-        #     local_settings=local_settings
-        # )
-        # await client.settings_service.UpdateSettings(request)
+        cfg = get_init_config()
+        client = get_client()
 
-        # Update local file-based store
-        if self._store is None:
-            self._store = SettingsStore()
+        key = settings_definition_pb2.SettingsKey(
+            org=cfg.org or "", domain=self.domain or "", project=self.project or ""
+        )
+        settings_proto = _flat_overrides_to_settings_proto(overrides)
 
-        self._store.set_local_settings(overrides, domain=self.domain, project=self.project)
-
-        # Update local state to reflect the changes
-        self.local_settings = [LocalSetting(key=k, value=v) for k, v in overrides.items()]
-
-        # Recalculate effective settings with inheritance
-        effective_dict = self._store.get_effective_settings(domain=self.domain, project=self.project)
-        self.effective_settings = [
-            EffectiveSetting(
-                key=key,
-                value=value,
-                origin=SettingOrigin(scope_type=scope_type, domain=origin_domain, project=origin_project),
+        await client.settings_service.UpdateSettings(
+            settings_service_pb2.UpdateSettingsRequest(
+                key=key, settings=settings_proto, version=self._version
             )
-            for key, (value, scope_type, origin_domain, origin_project) in effective_dict.items()
-        ]
+        )
+
+        # Update local state
+        self.local_settings = [LocalSetting(key=k, value=v) for k, v in overrides.items()]
