@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import random
 
 from connectrpc.code import Code
 from connectrpc.errors import ConnectError
@@ -31,7 +32,7 @@ class RetryUnaryInterceptor:
             except ConnectError as e:
                 if e.code not in RETRYABLE_CODES or attempt == self._max_attempts - 1:
                     raise
-                await asyncio.sleep(backoff)
+                await asyncio.sleep(backoff * (0.5 + random.random()))
                 backoff = min(backoff * self._multiplier, self._max_backoff)
 
 
@@ -60,5 +61,5 @@ class RetryServerStreamInterceptor:
             except ConnectError as e:
                 if e.code not in RETRYABLE_CODES or attempt == self._max_attempts - 1:
                     raise
-                await asyncio.sleep(backoff)
+                await asyncio.sleep(backoff * (0.5 + random.random()))
                 backoff = min(backoff * self._multiplier, self._max_backoff)

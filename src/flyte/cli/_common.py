@@ -185,8 +185,8 @@ class CLIConfig:
 
 class InvokeBaseMixin:
     """
-    Mixin to catch grpc.RpcError, flyte.RpcError, other errors and other exceptions
-    and raise them as gclick.ClickException.
+    Mixin to catch ConnectError, flyte.RpcError, other errors and other exceptions
+    and raise them as click.ClickException.
     """
 
     def invoke(self, ctx):
@@ -197,7 +197,7 @@ class InvokeBaseMixin:
 
         try:
             _ = super().invoke(ctx)  # type: ignore
-            # Exit successfully to properly close grpc channel
+            # Exit successfully to ensure clean shutdown
             os._exit(0)
         except ConnectError as e:
             if e.code == Code.UNAUTHENTICATED:

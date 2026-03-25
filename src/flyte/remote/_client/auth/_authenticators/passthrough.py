@@ -7,7 +7,7 @@ from flyte.remote._client.auth._keyring import Credentials
 class PassthroughAuthenticator(Authenticator):
     """
     Passthrough authenticator that extracts headers from the context and passes them
-    to the gRPC calls without performing any authentication flow.
+    to RPC calls without performing any authentication flow.
 
     This authenticator is used when you want to pass custom authentication metadata
     using the flyte.remote.auth_metadata() context manager.

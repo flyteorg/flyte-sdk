@@ -181,8 +181,8 @@ class _BackgroundLoop:
                 yield r
             return
 
-        # Install the gRPC error handler on the caller's event loop as well.
-        # This is needed because gRPC's async polling events may be delivered to
+        # Install the polling error handler on the caller's event loop as well.
+        # This is needed because async polling events may be delivered to
         # the caller's loop (e.g., FastAPI's event loop) when using .aio().
         _ensure_polling_error_handler_installed()
 

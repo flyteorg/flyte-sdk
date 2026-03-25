@@ -364,8 +364,8 @@ class TestRetryUnaryInterceptor:
         assert call_next.call_count == 3
 
     @pytest.mark.asyncio
-    async def test_exponential_backoff(self):
-        """Verify backoff doubles each retry up to max."""
+    async def test_exponential_backoff_with_jitter(self):
+        """Verify backoff doubles each retry with jitter applied."""
         interceptor = RetryUnaryInterceptor(
             max_attempts=4, initial_backoff=1.0, max_backoff=5.0, multiplier=2.0
         )
@@ -378,7 +378,6 @@ class TestRetryUnaryInterceptor:
         ctx, _ = _make_ctx_mock()
 
         sleep_durations = []
-        original_sleep = asyncio.sleep
         async def mock_sleep(duration):
             sleep_durations.append(duration)
 
@@ -387,7 +386,12 @@ class TestRetryUnaryInterceptor:
             result = await interceptor.intercept_unary(call_next, "req", ctx)
 
         assert result == "ok"
-        assert sleep_durations == [1.0, 2.0, 4.0]
+        assert len(sleep_durations) == 3
+        # Jitter applies factor of (0.5 + random()) to each backoff level (1.0, 2.0, 4.0)
+        # so each sleep is in [0.5*base, 1.5*base)
+        assert 0.5 <= sleep_durations[0] < 1.5   # base=1.0
+        assert 1.0 <= sleep_durations[1] < 3.0   # base=2.0
+        assert 2.0 <= sleep_durations[2] < 6.0   # base=4.0
 
 
 class TestRetryServerStreamInterceptor:
