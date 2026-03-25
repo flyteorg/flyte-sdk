@@ -149,12 +149,9 @@ USER root
 COPY --from=uv /uv /usr/bin/uv
 
 
-# Capture UV_PYTHON from base image (empty if not set)
-ARG _BASE_UV_PYTHON=$${UV_PYTHON}
-
 # Configure default paths (can be overridden via --build-arg)
 ARG VIRTUALENV=/opt/venv
-ARG UV_PYTHON=/opt/venv/bin/python
+ARG UV_PYTHON=$$VIRTUALENV/bin/python
 
 
 ENV UV_COMPILE_BYTECODE=1 \
@@ -163,8 +160,8 @@ ENV UV_COMPILE_BYTECODE=1 \
    UV_PYTHON=$$UV_PYTHON
 
 
-# Create virtualenv only if the base image doesn't already provide UV_PYTHON
-RUN if [ -z "$$_BASE_UV_PYTHON" ]; then \
+# Create virtualenv only if UV_PYTHON doesn't already exist
+RUN if [ ! -f "$$UV_PYTHON" ]; then \
        uv venv $$VIRTUALENV --python=$PYTHON_VERSION && uv run --python=$$UV_PYTHON python -m compileall $$VIRTUALENV; \
    fi
 
