@@ -162,13 +162,12 @@ class Console:
 
 
 class ClientSet:
-    def __init__(self, endpoint: str, insecure: bool = False, interceptors=(), http_client=None):
-        self.endpoint = endpoint
-        self.insecure = insecure
+    def __init__(self, session: SessionConfig):
+        self.endpoint = session.endpoint
+        self.insecure = session.insecure
         self._console = Console(self.endpoint, self.insecure)
-        self._session_config = SessionConfig(endpoint=endpoint, interceptors=interceptors, http_client=http_client)
-        self._shared = {"address": endpoint, "interceptors": interceptors, "http_client": http_client}
-        shared = self._shared
+        self._session_config = session
+        shared = {"address": session.endpoint, "interceptors": session.interceptors, "http_client": session.http_client}
         self._admin_client = ProjectServiceClient(**shared)
         self._task_service = TaskServiceClient(**shared)
         self._app_service = AppServiceClient(**shared)
@@ -183,17 +182,13 @@ class ClientSet:
     async def for_endpoint(cls, endpoint: str, *, insecure: bool = False, **kwargs) -> ClientSet:
         rpc_retries = kwargs.pop("rpc_retries", None)
         session = await create_session_config(endpoint, None, insecure=insecure, rpc_retries=rpc_retries, **kwargs)
-        return cls(
-            session.endpoint, insecure=insecure, interceptors=session.interceptors, http_client=session.http_client
-        )
+        return cls(session)
 
     @classmethod
     async def for_api_key(cls, api_key: str, *, insecure: bool = False, **kwargs) -> ClientSet:
         rpc_retries = kwargs.pop("rpc_retries", None)
         session = await create_session_config(None, api_key, insecure=insecure, rpc_retries=rpc_retries, **kwargs)
-        return cls(
-            session.endpoint, insecure=insecure, interceptors=session.interceptors, http_client=session.http_client
-        )
+        return cls(session)
 
     @classmethod
     async def for_serverless(cls) -> ClientSet:

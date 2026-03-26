@@ -16,7 +16,7 @@ from ._authenticators.factory import (
     get_async_proxy_authenticator,
 )
 
-SessionConfig = namedtuple("SessionConfig", ["endpoint", "interceptors", "http_client"])
+SessionConfig = namedtuple("SessionConfig", ["endpoint", "insecure", "interceptors", "http_client"])
 
 
 def normalize_rpc_endpoint(endpoint: str, *, insecure: bool = False) -> str:
@@ -210,4 +210,4 @@ async def create_session_config(
         interceptors.append(RetryUnaryInterceptor(max_attempts=rpc_retries + 1))
         interceptors.append(RetryServerStreamInterceptor(max_attempts=rpc_retries + 1))
 
-    return SessionConfig(endpoint=endpoint, interceptors=interceptors, http_client=http_client)
+    return SessionConfig(endpoint=endpoint, insecure=insecure or False, interceptors=interceptors, http_client=http_client)
