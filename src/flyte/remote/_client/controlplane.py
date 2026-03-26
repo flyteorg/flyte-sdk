@@ -23,7 +23,7 @@ from ._protocols import (
     TaskService,
     TriggerService,
 )
-from .auth._session import create_session_config
+from .auth._session import SessionConfig, create_session_config
 
 
 class Console:
@@ -166,6 +166,7 @@ class ClientSet:
         self.endpoint = endpoint
         self.insecure = insecure
         self._console = Console(self.endpoint, self.insecure)
+        self._session_config = SessionConfig(endpoint=endpoint, interceptors=interceptors, http_client=http_client)
         self._shared = {"address": endpoint, "interceptors": interceptors, "http_client": http_client}
         shared = self._shared
         self._admin_client = ProjectServiceClient(**shared)
@@ -240,6 +241,15 @@ class ClientSet:
     @property
     def trigger_service(self) -> TriggerService:
         return self._trigger_service
+
+    @property
+    def session_config(self) -> SessionConfig:
+        """The session configuration used by this client.
+
+        Useful for external packages that need to create their own ConnectRPC
+        service clients sharing the same transport and auth interceptors.
+        """
+        return self._session_config
 
     @property
     def console(self) -> Console:
