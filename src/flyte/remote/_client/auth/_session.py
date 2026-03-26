@@ -10,7 +10,11 @@ from flyte._logging import logger
 from flyte._utils.org_discovery import hostname_from_url
 
 from ._authenticators.base import get_async_session
-from ._authenticators.factory import create_auth_interceptors, create_proxy_auth_interceptors, get_async_proxy_authenticator
+from ._authenticators.factory import (
+    create_auth_interceptors,
+    create_proxy_auth_interceptors,
+    get_async_proxy_authenticator,
+)
 
 SessionConfig = namedtuple("SessionConfig", ["endpoint", "interceptors", "http_client"])
 
@@ -172,9 +176,7 @@ async def create_session(
     # This is separate from the pyqwest client used for ConnectRPC transport.
     proxy_authenticator = None
     if proxy_command:
-        proxy_authenticator = get_async_proxy_authenticator(
-            endpoint=endpoint, proxy_command=proxy_command, **kwargs
-        )
+        proxy_authenticator = get_async_proxy_authenticator(endpoint=endpoint, proxy_command=proxy_command, **kwargs)
     auth_http_session = get_async_session(
         ca_cert_file_path=ca_cert_file_path, proxy_authenticator=proxy_authenticator, **kwargs
     )
@@ -203,7 +205,7 @@ async def create_session(
 
     # Add retry interceptors
     if rpc_retries is not None and rpc_retries > 0:
-        from ._interceptors.retry import RetryUnaryInterceptor, RetryServerStreamInterceptor
+        from ._interceptors.retry import RetryServerStreamInterceptor, RetryUnaryInterceptor
 
         interceptors.append(RetryUnaryInterceptor(max_attempts=rpc_retries + 1))
         interceptors.append(RetryServerStreamInterceptor(max_attempts=rpc_retries + 1))

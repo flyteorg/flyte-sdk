@@ -4,10 +4,11 @@ from unittest.mock import AsyncMock, Mock
 from uuid import UUID
 
 import pytest
-
 from connectrpc.code import Code
 from connectrpc.errors import ConnectError
 
+from flyte._context import internal_ctx
+from flyte.models import ActionID, RawDataPath, TaskContext
 from flyte.remote._client.auth._authenticators.base import AuthHeaders
 from flyte.remote._client.auth._interceptors.auth import (
     AuthBidiStreamInterceptor,
@@ -15,12 +16,13 @@ from flyte.remote._client.auth._interceptors.auth import (
     AuthServerStreamInterceptor,
     AuthUnaryInterceptor,
 )
-
-from flyte._context import internal_ctx
-from flyte.models import ActionID, RawDataPath, TaskContext
 from flyte.remote._client.auth._interceptors.default_metadata import (
     DefaultMetadataInterceptor,
     _generate_request_id,
+)
+from flyte.remote._client.auth._interceptors.retry import (
+    RetryServerStreamInterceptor,
+    RetryUnaryInterceptor,
 )
 from flyte.report import Report
 
@@ -165,7 +167,7 @@ class TestAuthUnaryInterceptor:
                 "success",
             ]
         )
-        ctx, headers = _make_ctx_mock()
+        ctx, _headers = _make_ctx_mock()
 
         result = await interceptor.intercept_unary(call_next, "request", ctx)
 
@@ -188,7 +190,7 @@ class TestAuthUnaryInterceptor:
                 "success",
             ]
         )
-        ctx, headers = _make_ctx_mock()
+        ctx, _headers = _make_ctx_mock()
 
         result = await interceptor.intercept_unary(call_next, "request", ctx)
         assert result == "success"
@@ -199,7 +201,7 @@ class TestAuthUnaryInterceptor:
         interceptor = AuthUnaryInterceptor(lambda: auth)
 
         call_next = AsyncMock(side_effect=ConnectError(Code.NOT_FOUND, "not found"))
-        ctx, headers = _make_ctx_mock()
+        ctx, _headers = _make_ctx_mock()
 
         with pytest.raises(ConnectError) as exc_info:
             await interceptor.intercept_unary(call_next, "request", ctx)
@@ -272,7 +274,7 @@ class TestAuthServerStreamInterceptor:
                 raise ConnectError(Code.UNAUTHENTICATED, "expired")
             yield "success"
 
-        ctx, headers = _make_ctx_mock()
+        ctx, _headers = _make_ctx_mock()
 
         results = []
         async for item in interceptor.intercept_server_stream(mock_call_next, "request", ctx):
@@ -288,9 +290,9 @@ class TestAuthServerStreamInterceptor:
 
         async def mock_call_next(request, ctx):
             raise ConnectError(Code.NOT_FOUND, "not found")
-            yield  # make it a generator  # noqa: RUF027
+            yield  # make it a generator
 
-        ctx, headers = _make_ctx_mock()
+        ctx, _headers = _make_ctx_mock()
 
         with pytest.raises(ConnectError) as exc_info:
             async for _ in interceptor.intercept_server_stream(mock_call_next, "request", ctx):
@@ -332,7 +334,7 @@ class TestAuthClientStreamInterceptor:
                 "success",
             ]
         )
-        ctx, headers = _make_ctx_mock()
+        ctx, _headers = _make_ctx_mock()
 
         async def request_iter():
             yield "req1"
@@ -349,7 +351,7 @@ class TestAuthClientStreamInterceptor:
         interceptor = AuthClientStreamInterceptor(lambda: auth)
 
         call_next = AsyncMock(side_effect=ConnectError(Code.NOT_FOUND, "not found"))
-        ctx, headers = _make_ctx_mock()
+        ctx, _ = _make_ctx_mock()
 
         async def request_iter():
             yield "req1"
@@ -400,7 +402,7 @@ class TestAuthBidiStreamInterceptor:
                 raise ConnectError(Code.UNAUTHENTICATED, "expired")
             yield "success"
 
-        ctx, headers = _make_ctx_mock()
+        ctx, _ = _make_ctx_mock()
 
         async def request_iter():
             yield "req1"
@@ -419,9 +421,9 @@ class TestAuthBidiStreamInterceptor:
 
         async def mock_call_next(request, ctx):
             raise ConnectError(Code.NOT_FOUND, "not found")
-            yield  # make it a generator  # noqa: RUF027
+            yield  # make it a generator
 
-        ctx, headers = _make_ctx_mock()
+        ctx, _ = _make_ctx_mock()
 
         async def request_iter():
             yield "req1"
@@ -430,12 +432,6 @@ class TestAuthBidiStreamInterceptor:
             async for _ in interceptor.intercept_bidi_stream(mock_call_next, request_iter(), ctx):
                 pass
         assert exc_info.value.code == Code.NOT_FOUND
-
-
-from flyte.remote._client.auth._interceptors.retry import (
-    RetryUnaryInterceptor,
-    RetryServerStreamInterceptor,
-)
 
 
 class TestRetryUnaryInterceptor:
@@ -452,10 +448,12 @@ class TestRetryUnaryInterceptor:
     @pytest.mark.asyncio
     async def test_retries_on_unavailable(self):
         interceptor = RetryUnaryInterceptor(max_attempts=3, initial_backoff=0.001)
-        call_next = AsyncMock(side_effect=[
-            ConnectError(Code.UNAVAILABLE, "unavailable"),
-            "ok",
-        ])
+        call_next = AsyncMock(
+            side_effect=[
+                ConnectError(Code.UNAVAILABLE, "unavailable"),
+                "ok",
+            ]
+        )
         ctx, _ = _make_ctx_mock()
 
         result = await interceptor.intercept_unary(call_next, "req", ctx)
@@ -465,10 +463,12 @@ class TestRetryUnaryInterceptor:
     @pytest.mark.asyncio
     async def test_retries_on_resource_exhausted(self):
         interceptor = RetryUnaryInterceptor(max_attempts=3, initial_backoff=0.001)
-        call_next = AsyncMock(side_effect=[
-            ConnectError(Code.RESOURCE_EXHAUSTED, "exhausted"),
-            "ok",
-        ])
+        call_next = AsyncMock(
+            side_effect=[
+                ConnectError(Code.RESOURCE_EXHAUSTED, "exhausted"),
+                "ok",
+            ]
+        )
         ctx, _ = _make_ctx_mock()
 
         result = await interceptor.intercept_unary(call_next, "req", ctx)
@@ -477,10 +477,12 @@ class TestRetryUnaryInterceptor:
     @pytest.mark.asyncio
     async def test_retries_on_internal(self):
         interceptor = RetryUnaryInterceptor(max_attempts=3, initial_backoff=0.001)
-        call_next = AsyncMock(side_effect=[
-            ConnectError(Code.INTERNAL, "internal"),
-            "ok",
-        ])
+        call_next = AsyncMock(
+            side_effect=[
+                ConnectError(Code.INTERNAL, "internal"),
+                "ok",
+            ]
+        )
         ctx, _ = _make_ctx_mock()
 
         result = await interceptor.intercept_unary(call_next, "req", ctx)
@@ -511,18 +513,19 @@ class TestRetryUnaryInterceptor:
     @pytest.mark.asyncio
     async def test_exponential_backoff_with_jitter(self):
         """Verify backoff doubles each retry with jitter applied."""
-        interceptor = RetryUnaryInterceptor(
-            max_attempts=4, initial_backoff=1.0, max_backoff=5.0, multiplier=2.0
+        interceptor = RetryUnaryInterceptor(max_attempts=4, initial_backoff=1.0, max_backoff=5.0, multiplier=2.0)
+        call_next = AsyncMock(
+            side_effect=[
+                ConnectError(Code.UNAVAILABLE, "1"),
+                ConnectError(Code.UNAVAILABLE, "2"),
+                ConnectError(Code.UNAVAILABLE, "3"),
+                "ok",
+            ]
         )
-        call_next = AsyncMock(side_effect=[
-            ConnectError(Code.UNAVAILABLE, "1"),
-            ConnectError(Code.UNAVAILABLE, "2"),
-            ConnectError(Code.UNAVAILABLE, "3"),
-            "ok",
-        ])
         ctx, _ = _make_ctx_mock()
 
         sleep_durations = []
+
         async def mock_sleep(duration):
             sleep_durations.append(duration)
 
@@ -534,9 +537,9 @@ class TestRetryUnaryInterceptor:
         assert len(sleep_durations) == 3
         # Jitter applies factor of (0.5 + random()) to each backoff level (1.0, 2.0, 4.0)
         # so each sleep is in [0.5*base, 1.5*base)
-        assert 0.5 <= sleep_durations[0] < 1.5   # base=1.0
-        assert 1.0 <= sleep_durations[1] < 3.0   # base=2.0
-        assert 2.0 <= sleep_durations[2] < 6.0   # base=4.0
+        assert 0.5 <= sleep_durations[0] < 1.5  # base=1.0
+        assert 1.0 <= sleep_durations[1] < 3.0  # base=2.0
+        assert 2.0 <= sleep_durations[2] < 6.0  # base=4.0
 
 
 class TestRetryServerStreamInterceptor:

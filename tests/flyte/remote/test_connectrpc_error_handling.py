@@ -11,7 +11,6 @@ from flyteidl2.workflow import run_definition_pb2
 
 import flyte.errors
 
-
 # --- Action.abort (instance method, @syncify) ---
 
 
@@ -39,9 +38,7 @@ class TestActionAbortErrors:
     async def test_not_found_returns_none(self):
         """Action.abort with NOT_FOUND is a no-op (action already gone)."""
         mock_client = MagicMock()
-        mock_client.run_service.abort_action = AsyncMock(
-            side_effect=ConnectError(Code.NOT_FOUND, "not found")
-        )
+        mock_client.run_service.abort_action = AsyncMock(side_effect=ConnectError(Code.NOT_FOUND, "not found"))
         action = self._make_action()
         with patch("flyte.remote._action.get_client", return_value=mock_client):
             result = await action.abort.aio()
@@ -51,9 +48,7 @@ class TestActionAbortErrors:
     async def test_other_error_propagates(self):
         """Action.abort with non-NOT_FOUND code re-raises."""
         mock_client = MagicMock()
-        mock_client.run_service.abort_action = AsyncMock(
-            side_effect=ConnectError(Code.INTERNAL, "server error")
-        )
+        mock_client.run_service.abort_action = AsyncMock(side_effect=ConnectError(Code.INTERNAL, "server error"))
         action = self._make_action()
         with patch("flyte.remote._action.get_client", return_value=mock_client):
             with pytest.raises(ConnectError):
@@ -70,9 +65,7 @@ class TestRunAbortErrors:
         from flyte.remote._run import Run
 
         mock_client = MagicMock()
-        mock_client.run_service.abort_run = AsyncMock(
-            side_effect=ConnectError(Code.NOT_FOUND, "not found")
-        )
+        mock_client.run_service.abort_run = AsyncMock(side_effect=ConnectError(Code.NOT_FOUND, "not found"))
         # Build a Run without triggering __post_init__ (which requires HasField("action"))
         run = Run.__new__(Run)
         run_id = identifier_pb2.RunIdentifier(
@@ -103,9 +96,7 @@ class TestAppDeleteErrors:
         from flyte.remote._app import App
 
         mock_client = MagicMock()
-        mock_client.app_service.delete = AsyncMock(
-            side_effect=ConnectError(Code.NOT_FOUND, "not found")
-        )
+        mock_client.app_service.delete = AsyncMock(side_effect=ConnectError(Code.NOT_FOUND, "not found"))
         mock_cfg = MagicMock()
         mock_cfg.org = "test-org"
         mock_cfg.project = "p"
@@ -136,9 +127,7 @@ class TestAppCreateErrors:
         from flyte.remote._app import App
 
         mock_client = MagicMock()
-        mock_client.app_service.create = AsyncMock(
-            side_effect=ConnectError(Code.ALREADY_EXISTS, "exists")
-        )
+        mock_client.app_service.create = AsyncMock(side_effect=ConnectError(Code.ALREADY_EXISTS, "exists"))
         mock_replace_result = MagicMock(spec=App)
         with (
             patch("flyte.remote._app.ensure_client"),
@@ -148,7 +137,7 @@ class TestAppCreateErrors:
                 new=MagicMock(aio=AsyncMock(return_value=mock_replace_result)),
             ) as mock_replace,
         ):
-            result = await App.create.aio(app=self._make_app_proto())
+            await App.create.aio(app=self._make_app_proto())
             mock_replace.aio.assert_called_once()
 
     @pytest.mark.asyncio
@@ -157,9 +146,7 @@ class TestAppCreateErrors:
         from flyte.remote._app import App
 
         mock_client = MagicMock()
-        mock_client.app_service.create = AsyncMock(
-            side_effect=ConnectError(Code.ABORTED, "aborted on server")
-        )
+        mock_client.app_service.create = AsyncMock(side_effect=ConnectError(Code.ABORTED, "aborted on server"))
         mock_replace_result = MagicMock(spec=App)
         with (
             patch("flyte.remote._app.ensure_client"),
@@ -169,7 +156,7 @@ class TestAppCreateErrors:
                 new=MagicMock(aio=AsyncMock(return_value=mock_replace_result)),
             ) as mock_replace,
         ):
-            result = await App.create.aio(app=self._make_app_proto())
+            await App.create.aio(app=self._make_app_proto())
             mock_replace.aio.assert_called_once()
 
 

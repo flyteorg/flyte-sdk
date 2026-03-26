@@ -5,9 +5,9 @@ import functools
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Callable, Coroutine, Dict, Iterator, Literal, Optional, Tuple, Union, cast
 
+import rich.repr
 from connectrpc.code import Code
 from connectrpc.errors import ConnectError
-import rich.repr
 from flyteidl2.common import identifier_pb2, list_pb2
 from flyteidl2.core import literals_pb2
 from flyteidl2.task import task_definition_pb2, task_service_pb2

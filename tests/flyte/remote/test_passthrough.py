@@ -3,7 +3,6 @@ from unittest import mock
 
 import pytest
 
-from flyte.remote._client.auth._authenticators.base import AuthHeaders
 from flyte.remote._client.auth._authenticators.passthrough import PassthroughAuthenticator
 from flyte.remote._client.auth._keyring import Credentials
 

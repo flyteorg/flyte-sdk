@@ -5,9 +5,9 @@ from contextlib import asynccontextmanager, contextmanager
 from typing import AsyncGenerator, AsyncIterator, Generator, Literal, Mapping, Tuple, cast
 
 import google.protobuf.json_format
+import rich.repr
 from connectrpc.code import Code
 from connectrpc.errors import ConnectError
-import rich.repr
 from flyteidl2.app import app_definition_pb2, app_payload_pb2
 from flyteidl2.common import identifier_pb2, list_pb2
 

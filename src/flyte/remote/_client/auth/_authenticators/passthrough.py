@@ -1,6 +1,6 @@
 import typing
 
-from flyte.remote._client.auth._authenticators.base import AuthHeaders, Authenticator
+from flyte.remote._client.auth._authenticators.base import Authenticator, AuthHeaders
 from flyte.remote._client.auth._keyring import Credentials
 
 

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from urllib.parse import urlparse
 
 from flyteidl2.app.app_service_connect import AppServiceClient
@@ -167,7 +166,7 @@ class ClientSet:
         self.endpoint = endpoint
         self.insecure = insecure
         self._console = Console(self.endpoint, self.insecure)
-        self._shared = dict(address=endpoint, interceptors=interceptors, http_client=http_client)
+        self._shared = {"address": endpoint, "interceptors": interceptors, "http_client": http_client}
         shared = self._shared
         self._admin_client = ProjectServiceClient(**shared)
         self._task_service = TaskServiceClient(**shared)
@@ -185,14 +184,18 @@ class ClientSet:
         # Remove grpc_options from kwargs since it's gRPC-specific
         kwargs.pop("grpc_options", None)
         session = await create_session(endpoint, None, insecure=insecure, rpc_retries=rpc_retries, **kwargs)
-        return cls(session.endpoint, insecure=insecure, interceptors=session.interceptors, http_client=session.http_client)
+        return cls(
+            session.endpoint, insecure=insecure, interceptors=session.interceptors, http_client=session.http_client
+        )
 
     @classmethod
     async def for_api_key(cls, api_key: str, *, insecure: bool = False, **kwargs) -> ClientSet:
         rpc_retries = kwargs.pop("rpc_retries", None)
         kwargs.pop("grpc_options", None)
         session = await create_session(None, api_key, insecure=insecure, rpc_retries=rpc_retries, **kwargs)
-        return cls(session.endpoint, insecure=insecure, interceptors=session.interceptors, http_client=session.http_client)
+        return cls(
+            session.endpoint, insecure=insecure, interceptors=session.interceptors, http_client=session.http_client
+        )
 
     @classmethod
     async def for_serverless(cls) -> ClientSet:

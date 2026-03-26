@@ -1,24 +1,24 @@
 import datetime
+from unittest.mock import MagicMock, patch
 
 import pyqwest
 import pytest
-from unittest.mock import AsyncMock, Mock, patch, MagicMock
 
 from flyte.remote._client.auth._session import (
-    create_session,
     SessionConfig,
-    _resolve_tls_ca_cert,
-    _build_pyqwest_client,
     _bootstrap_ssl_from_server,
+    _build_pyqwest_client,
+    _resolve_tls_ca_cert,
+    create_session,
 )
 
 
 def _make_valid_cert_pem() -> bytes:
     """Generate a valid self-signed PEM certificate for testing."""
     from cryptography import x509
-    from cryptography.x509.oid import NameOID
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
 
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     subject = issuer = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "test")])
@@ -66,7 +66,7 @@ async def test_secure_creates_auth_interceptors(mock_get_session, mock_proxy, mo
 async def test_rpc_retries_creates_retry_interceptors(mock_get_session, mock_proxy, mock_auth):
     mock_get_session.return_value = MagicMock()
     result = await create_session("example.com:443", insecure=True, rpc_retries=3)
-    from flyte.remote._client.auth._interceptors.retry import RetryUnaryInterceptor, RetryServerStreamInterceptor
+    from flyte.remote._client.auth._interceptors.retry import RetryServerStreamInterceptor, RetryUnaryInterceptor
 
     retry_unary = [i for i in result.interceptors if isinstance(i, RetryUnaryInterceptor)]
     retry_stream = [i for i in result.interceptors if isinstance(i, RetryServerStreamInterceptor)]

@@ -1,4 +1,5 @@
 import pytest
+
 from flyte.remote._client.auth._session import normalize_rpc_endpoint
 
 

@@ -15,7 +15,7 @@ class ControllerClient:
     """
 
     def __init__(self, endpoint: str, *, interceptors=(), http_client=None):
-        shared = dict(address=endpoint, interceptors=interceptors, http_client=http_client)
+        shared = {"address": endpoint, "interceptors": interceptors, "http_client": http_client}
         self._state_service = StateServiceClient(**shared)
         self._queue_service = QueueServiceClient(**shared)
         self._actions_service = ActionsServiceClient(**shared) if use_actions_service() else None

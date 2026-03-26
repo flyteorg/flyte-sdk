@@ -17,8 +17,6 @@ class AuthHeaders:
     headers: dict[str, str]
 
 
-
-
 class Authenticator(object):
     """
     Base authenticator for all authentication flows

@@ -1,6 +1,5 @@
 """Tests for ConnectError handling in _upload_single_file."""
 
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest

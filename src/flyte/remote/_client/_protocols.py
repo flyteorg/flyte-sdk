@@ -63,7 +63,9 @@ class RunService(Protocol):
 
     async def abort_run(self, request: run_service_pb2.AbortRunRequest) -> run_service_pb2.AbortRunResponse: ...
 
-    async def abort_action(self, request: run_service_pb2.AbortActionRequest) -> run_service_pb2.AbortActionResponse: ...
+    async def abort_action(
+        self, request: run_service_pb2.AbortActionRequest
+    ) -> run_service_pb2.AbortActionResponse: ...
 
     async def get_run_details(
         self, request: run_service_pb2.GetRunDetailsRequest
@@ -91,7 +93,9 @@ class RunService(Protocol):
         self, request: run_service_pb2.WatchRunsRequest
     ) -> AsyncIterator[run_service_pb2.WatchRunsResponse]: ...
 
-    async def list_actions(self, request: run_service_pb2.ListActionsRequest) -> run_service_pb2.ListActionsResponse: ...
+    async def list_actions(
+        self, request: run_service_pb2.ListActionsRequest
+    ) -> run_service_pb2.ListActionsResponse: ...
 
     async def watch_actions(
         self, request: run_service_pb2.WatchActionsRequest

@@ -1,10 +1,10 @@
 """Tests for ConnectError → click.ClickException translation in CLI invoke."""
 
+from unittest.mock import patch
+
 import click
 import pytest
 from click.testing import CliRunner
-from unittest.mock import patch
-
 from connectrpc.code import Code
 from connectrpc.errors import ConnectError
 

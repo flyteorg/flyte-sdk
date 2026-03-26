@@ -3,9 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import AsyncGenerator, AsyncIterator, Literal, Tuple
 
+import rich.repr
 from connectrpc.code import Code
 from connectrpc.errors import ConnectError
-import rich.repr
 from flyteidl2.common import identifier_pb2, list_pb2, phase_pb2
 from flyteidl2.workflow import run_definition_pb2, run_service_pb2
 

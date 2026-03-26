@@ -10,9 +10,9 @@ from pathlib import Path
 from typing import Tuple
 
 import aiofiles
+import httpx
 from connectrpc.code import Code
 from connectrpc.errors import ConnectError
-import httpx
 from flyteidl2.dataproxy import dataproxy_service_pb2
 from google.protobuf import duration_pb2
 

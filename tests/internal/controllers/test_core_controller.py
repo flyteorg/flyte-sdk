@@ -4,6 +4,8 @@ import asyncio
 from typing import AsyncIterator, Dict, List, Optional, Tuple
 
 import pytest
+from connectrpc.code import Code
+from connectrpc.errors import ConnectError
 from flyteidl2.actions import actions_service_pb2
 from flyteidl2.common import identifier_pb2, phase_pb2
 from flyteidl2.core import execution_pb2
@@ -13,6 +15,7 @@ from flyteidl2.workflow import (
     state_service_pb2,
 )
 
+import flyte.errors
 from flyte._internal.controllers.remote._action import Action
 from flyte._internal.controllers.remote._controller import Controller
 from flyte._internal.controllers.remote._service_protocol import (
@@ -21,12 +24,6 @@ from flyte._internal.controllers.remote._service_protocol import (
     QueueService,
     StateService,
 )
-from unittest.mock import AsyncMock
-
-from connectrpc.code import Code
-from connectrpc.errors import ConnectError
-
-import flyte.errors
 from flyte._logging import logger
 from flyte._utils import run_coros
 

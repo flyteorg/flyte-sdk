@@ -415,13 +415,10 @@ class Controller:
                         Code.INVALID_ARGUMENT,
                         Code.NOT_FOUND,
                     ]:
-                        raise flyte.errors.RuntimeSystemError(
-                            e.code.name, f"Precondition failed: {e.message}"
-                        ) from e
+                        raise flyte.errors.RuntimeSystemError(e.code.name, f"Precondition failed: {e.message}") from e
                     # For all other errors, we will retry with backoff
                     logger.error(
-                        f"Failed to launch action: {action.name}, Code: {e.code}, "
-                        f"Details {e.message} backing off..."
+                        f"Failed to launch action: {action.name}, Code: {e.code}, Details {e.message} backing off..."
                     )
                     logger.debug(f"Action details: {action}")
                     raise flyte.errors.SlowDownError(f"Failed to launch action: {e.message}") from e
