@@ -21,6 +21,7 @@ from ._authenticators.factory import (
 class SessionConfig:
     endpoint: str
     insecure: bool
+    insecure_skip_verify: bool
     interceptors: tuple
     http_client: Any
 
@@ -219,4 +220,10 @@ async def create_session_config(
         interceptors.append(RetryUnaryInterceptor(max_attempts=rpc_retries + 1))
         interceptors.append(RetryServerStreamInterceptor(max_attempts=rpc_retries + 1))
 
-    return SessionConfig(endpoint=endpoint, insecure=insecure or False, interceptors=interceptors, http_client=http_client)
+    return SessionConfig(
+        endpoint=endpoint,
+        insecure=insecure or False,
+        insecure_skip_verify=insecure_skip_verify or False,
+        interceptors=interceptors,
+        http_client=http_client,
+    )
