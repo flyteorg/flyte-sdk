@@ -182,8 +182,6 @@ class ClientSet:
     @classmethod
     async def for_endpoint(cls, endpoint: str, *, insecure: bool = False, **kwargs) -> ClientSet:
         rpc_retries = kwargs.pop("rpc_retries", None)
-        # Remove grpc_options from kwargs since it's gRPC-specific
-        kwargs.pop("grpc_options", None)
         session = await create_session_config(endpoint, None, insecure=insecure, rpc_retries=rpc_retries, **kwargs)
         return cls(
             session.endpoint, insecure=insecure, interceptors=session.interceptors, http_client=session.http_client
@@ -192,7 +190,6 @@ class ClientSet:
     @classmethod
     async def for_api_key(cls, api_key: str, *, insecure: bool = False, **kwargs) -> ClientSet:
         rpc_retries = kwargs.pop("rpc_retries", None)
-        kwargs.pop("grpc_options", None)
         session = await create_session_config(None, api_key, insecure=insecure, rpc_retries=rpc_retries, **kwargs)
         return cls(
             session.endpoint, insecure=insecure, interceptors=session.interceptors, http_client=session.http_client
@@ -267,6 +264,3 @@ class ClientSet:
             >>> url = client.console.task_url(project="myproj", domain="dev", task_name="mytask")
         """
         return self._console
-
-    async def close(self, grace: float | None = None):
-        pass  # HTTP client lifecycle managed externally

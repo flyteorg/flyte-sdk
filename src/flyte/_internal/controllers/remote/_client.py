@@ -41,6 +41,3 @@ class ControllerClient:
     @property
     def actions_service(self) -> ActionsService | None:
         return self._actions_service
-
-    async def close(self, grace: float | None = None):
-        pass  # no-op for ConnectRPC
