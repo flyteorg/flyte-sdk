@@ -167,7 +167,7 @@ class ClientSet:
         self.insecure = session.insecure
         self._console = Console(self.endpoint, self.insecure)
         self._session_config = session
-        shared = {"address": session.endpoint, "interceptors": session.interceptors, "http_client": session.http_client}
+        shared = session.connect_kwargs()
         self._admin_client = ProjectServiceClient(**shared)
         self._task_service = TaskServiceClient(**shared)
         self._app_service = AppServiceClient(**shared)

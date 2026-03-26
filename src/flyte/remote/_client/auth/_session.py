@@ -1,7 +1,8 @@
 import asyncio
 import ssl
 import typing
-from collections import namedtuple
+from dataclasses import dataclass
+from typing import Any
 from urllib.parse import urlparse
 
 import pyqwest
@@ -16,7 +17,15 @@ from ._authenticators.factory import (
     get_async_proxy_authenticator,
 )
 
-SessionConfig = namedtuple("SessionConfig", ["endpoint", "insecure", "interceptors", "http_client"])
+@dataclass(frozen=True)
+class SessionConfig:
+    endpoint: str
+    insecure: bool
+    interceptors: tuple
+    http_client: Any
+
+    def connect_kwargs(self) -> dict[str, Any]:
+        return {"address": self.endpoint, "interceptors": self.interceptors, "http_client": self.http_client}
 
 
 def normalize_rpc_endpoint(endpoint: str, *, insecure: bool = False) -> str:
