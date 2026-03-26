@@ -21,6 +21,7 @@ from flyte._deploy import (
     plan_deploy,
 )
 from flyte._docstring import Docstring
+from flyte._image import CodeBundleLayer, resolve_code_bundle_layer
 from flyte._internal.imagebuild.image_builder import ImageCache
 from flyte._internal.runtime.types_serde import transform_native_to_typed_interface
 from flyte.models import NativeInterface
@@ -258,6 +259,14 @@ def test_plan_deploy_dual_import_raises(dual_import_envs):
         plan_deploy(env1, env2)
 
 
+def test_plan_deploy_explicit_dep_no_false_positive():
+    """flyte.deploy(env_a, env_b) where env_a.depends_on=[env_b] must not raise."""
+    env_b = flyte.TaskEnvironment(name="b", image="python:3.10")
+    env_a = flyte.TaskEnvironment(name="a", image="python:3.10", depends_on=[env_b])
+    plans = plan_deploy(env_a, env_b)  # must not raise
+    assert len(plans) == 1  # env_b already covered, no second plan
+
+
 def test_recursive_discover_dual_import_raises(dual_import_envs):
     """_recursive_discover surfaces the dual-import error via the identity guard."""
     env1, env2, modules = dual_import_envs
@@ -354,3 +363,42 @@ async def test_build_images_no_build_run_urls_for_local_build():
 
     assert cache.image_lookup["my-env"] == "registry/my-image:sha256abc"
     assert cache.build_run_ids == {}
+
+
+# ---------------------------------------------------------------------------
+# resolve_code_bundle_layer across depends_on environments
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_covers_depends_on_envs():
+    """plan_deploy + resolve_code_bundle_layer must strip CodeBundleLayer from
+    depends_on environments, not just the parent env.
+
+    Regression test: _run_remote and _run_hybrid previously only resolved
+    parent_env.image, leaving depends_on images with root_dir=None, which
+    caused 'root_dir not set for CodeBundleLayer' when computing image hashes.
+    """
+    from pathlib import Path
+
+    dep_image = flyte.Image.from_base("python:3.10").clone(registry="r", name="dep", extendable=True).with_code_bundle()
+    parent_image = (
+        flyte.Image.from_base("python:3.10").clone(registry="r", name="parent", extendable=True).with_code_bundle()
+    )
+
+    env_dep = flyte.TaskEnvironment(name="dep", image=dep_image)
+    env_parent = flyte.TaskEnvironment(name="parent", image=parent_image, depends_on=[env_dep])
+
+    # Simulate exactly what the fixed _run_remote / _run_hybrid does.
+    for _env in plan_deploy(env_parent)[0].envs.values():
+        from flyte._image import Image
+
+        if isinstance(_env.image, Image):
+            _env.image = resolve_code_bundle_layer(_env.image, "loaded_modules", Path("/tmp"))
+
+    # Both images must have their CodeBundleLayer stripped.
+    assert not any(isinstance(layer, CodeBundleLayer) for layer in env_parent.image._layers), (
+        "parent env still has CodeBundleLayer after resolution"
+    )
+    assert not any(isinstance(layer, CodeBundleLayer) for layer in env_dep.image._layers), (
+        "depends_on env still has CodeBundleLayer after resolution — regression"
+    )

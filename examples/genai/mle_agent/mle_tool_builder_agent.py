@@ -23,7 +23,7 @@ from flyte.io import File
 agent_env = flyte.TaskEnvironment(
     "mle-tool-builder",
     resources=flyte.Resources(cpu=1, memory="1Gi"),
-    secrets=[flyte.Secret(key="niels-anthropic-api-key", as_env_var="ANTHROPIC_API_KEY")],
+    secrets=[flyte.Secret(key="internal-anthropic-api-key", as_env_var="ANTHROPIC_API_KEY")],
     image=(
         flyte.Image.from_debian_base(name="mle-tool-builder-image").with_pip_packages(
             "httpx", "pandas", "scikit-learn", "numpy"
