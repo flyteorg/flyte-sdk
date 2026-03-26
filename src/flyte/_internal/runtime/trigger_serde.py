@@ -144,7 +144,7 @@ async def to_task_trigger(
             else:
                 default_inputs[k] = v
 
-    # assert that default_inputs and the kickoff_arg_name are infact in the task inputs
+    # assert that default_inputs and the kickoff_arg_name are in fact in the task inputs
     # Convert variables list to dict for checking
     variables_dict = {entry.key: entry.value for entry in task_inputs.variables}
     if kickoff_arg_name is not None and kickoff_arg_name not in variables_dict:

@@ -328,7 +328,7 @@ async def test_poetry_handler_without_project_install():
             )
 
             initial_dockerfile = "FROM python:3.9\n"
-            result = await PoetryProjectHandler.handel(
+            result = await PoetryProjectHandler.handle(
                 layer=poetry_project,
                 context_path=context_path,
                 dockerfile=initial_dockerfile,
@@ -370,7 +370,7 @@ async def test_poetry_handler_with_project_install():
             (user_folder / "main.py").write_text("print('hello')")
 
             initial_dockerfile = "FROM python:3.9\n"
-            result = await PoetryProjectHandler.handel(
+            result = await PoetryProjectHandler.handle(
                 layer=poetry_project,
                 context_path=context_path,
                 dockerfile=initial_dockerfile,
