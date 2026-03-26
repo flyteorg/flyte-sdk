@@ -186,3 +186,15 @@ class TestBootstrapSslFromServer:
         mock_get_cert.return_value = "cert"
         _bootstrap_ssl_from_server("https://example.com")
         mock_get_cert.assert_called_once_with(("example.com", 443), timeout=10)
+
+
+class TestClientSetSessionConfig:
+    def test_exposes_session_config(self):
+        from flyte.remote._client.controlplane import ClientSet
+
+        cs = ClientSet("https://example.com", insecure=False, interceptors=("a",), http_client="fake")
+        cfg = cs.session_config
+        assert isinstance(cfg, SessionConfig)
+        assert cfg.endpoint == "https://example.com"
+        assert cfg.interceptors == ("a",)
+        assert cfg.http_client == "fake"
