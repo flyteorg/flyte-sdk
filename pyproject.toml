@@ -183,5 +183,10 @@ possibly-unbound-import = "error"
 # Ref: https://github.com/codespell-project/codespell#using-a-config-file
 skip = '.git,.gitignore,.gitattributes,*.lock'
 check-hidden = true
+# Ignore embedded base64 images in notebooks
 ignore-regex = '^\s*"image/\S+": ".*'
-# ignore-words-list = ''
+# ot - variable for output type, nd - NamedDelivery variable,
+# crasher - legitimate word, tru - intentional truncated JSON in test,
+# Nome - timezone "America/Nome", lits - short for "literals",
+# rouge - NLP scoring metric (not "rogue")
+ignore-words-list = 'ot,nd,crasher,tru,nome,lits,rouge'
