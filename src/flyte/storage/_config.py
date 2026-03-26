@@ -232,7 +232,21 @@ class GCS(Storage):
         return GCS(**kwargs)
 
     def get_fsspec_kwargs(self, anonymous: bool = False, **kwargs) -> typing.Dict[str, typing.Any]:
-        return super().get_fsspec_kwargs(anonymous=anonymous, **kwargs)
+        kwargs = super().get_fsspec_kwargs(anonymous=anonymous, **kwargs)
+
+        if not anonymous and "credential_provider" not in kwargs:
+            try:
+                from obstore.auth.google import GoogleCredentialProvider
+
+                kwargs["credential_provider"] = GoogleCredentialProvider()
+            except Exception as e:
+                logger.warning(
+                    "Unable to initialize GCS credential provider (%s). "
+                    "Falling back to default GCS credential resolution.",
+                    e,
+                )
+
+        return kwargs
 
 
 @dataclass(init=True, repr=True, eq=True, frozen=True)

@@ -1,4 +1,5 @@
 import datetime
+from unittest.mock import patch
 
 from flyte.storage._config import ABFS, GCS, S3, Storage
 
@@ -287,6 +288,36 @@ class TestGCSConfig:
         assert result["retry_config"]["max_retries"] == 10
         assert result["client_options"] is custom_client_options
         assert result["client_options"]["timeout"] == "30s"
+
+    def test_get_fsspec_kwargs_has_credential_provider(self):
+        gcs = GCS()
+        mock_provider = object()
+        with patch("obstore.auth.google.GoogleCredentialProvider", return_value=mock_provider):
+            result = gcs.get_fsspec_kwargs()
+
+        assert "credential_provider" in result
+        assert result["credential_provider"] is mock_provider
+
+    def test_get_fsspec_kwargs_anonymous_no_credential_provider(self):
+        gcs = GCS()
+        result = gcs.get_fsspec_kwargs(anonymous=True)
+
+        assert "credential_provider" not in result
+
+    def test_get_fsspec_kwargs_caller_credential_provider_not_clobbered(self):
+        gcs = GCS()
+        custom_provider = lambda: {"token": "test"}  # noqa: E731
+        result = gcs.get_fsspec_kwargs(credential_provider=custom_provider)
+
+        assert result["credential_provider"] is custom_provider
+
+    def test_get_fsspec_kwargs_credential_provider_fallback(self):
+        gcs = GCS()
+        with patch("flyte.storage._config.GCS.get_fsspec_kwargs", wraps=gcs.get_fsspec_kwargs):
+            with patch.dict("sys.modules", {"obstore.auth.google": None}):
+                result = gcs.get_fsspec_kwargs()
+
+        assert "credential_provider" not in result
 
 
 class TestABFSConfig:
