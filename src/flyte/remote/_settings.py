@@ -115,76 +115,19 @@ def _make_setting_value(value: Any) -> settings_definition_pb2.SettingValue:
         return settings_definition_pb2.SettingValue(string_value=str(value))
 
 
-def _settings_proto_to_flat(
-    settings_proto: settings_definition_pb2.Settings,
+def _raw_data_to_flat(
+    data: dict[str, settings_definition_pb2.SettingValue],
 ) -> list[tuple[str, Any]]:
-    """Flatten a Settings proto into dot-notation (key, value) pairs.
+    """Convert a RawSettingsRecord data map to (key, value) pairs.
 
-    Walks the nested proto structure and returns only fields that have
-    actual values set (not inherited/unset).
+    Filters out inherited/unset entries (returns only those with actual values).
     """
     results: list[tuple[str, Any]] = []
-
-    def _walk(msg: Any, prefix: str) -> None:
-        for fd in msg.DESCRIPTOR.fields:
-            child = getattr(msg, fd.name)
-            full_key = f"{prefix}.{fd.name}" if prefix else fd.name
-
-            if fd.message_type and fd.message_type.name == "SettingValue":
-                val = _extract_setting_value(child)
-                if val is not None:
-                    results.append((full_key, val))
-            elif fd.message_type:
-                # Recurse into sub-messages (RunSettings, TaskResourceSettings, etc.)
-                _walk(child, full_key)
-
-    _walk(settings_proto, "")
+    for dotkey, sv in data.items():
+        val = _extract_setting_value(sv)
+        if val is not None:
+            results.append((dotkey, val))
     return results
-
-
-# Map of dot-notation prefixes to their proto sub-message class and parent field name.
-# This drives the reverse conversion from flat keys to nested proto.
-_SETTINGS_TREE: dict[str, tuple[str, type]] = {
-    "run": ("run", settings_definition_pb2.RunSettings),
-    "security": ("security", settings_definition_pb2.SecuritySettings),
-    "storage": ("storage", settings_definition_pb2.StorageSettings),
-    "task_resource": ("task_resource", settings_definition_pb2.TaskResourceSettings),
-    "task_resource.defaults": ("defaults", settings_definition_pb2.TaskResourceDefaults),
-}
-
-
-def _flat_overrides_to_settings_proto(
-    overrides: dict[str, Any],
-) -> settings_definition_pb2.Settings:
-    """Build a Settings proto from flat dot-notation overrides.
-
-    Example input: {"run.default_queue": "gpu", "task_resource.defaults.min_cpu": 2}
-    """
-    settings = settings_definition_pb2.Settings()
-
-    for dotkey, value in overrides.items():
-        sv = _make_setting_value(value)
-        parts = dotkey.split(".")
-
-        # Top-level SettingValue fields (labels, annotations, environment_variables)
-        if len(parts) == 1:
-            getattr(settings, parts[0]).CopyFrom(sv)
-            continue
-
-        # Two-part keys: e.g., run.default_queue, security.service_account
-        if len(parts) == 2:
-            parent = getattr(settings, parts[0])
-            getattr(parent, parts[1]).CopyFrom(sv)
-            continue
-
-        # Three-part keys: e.g., task_resource.defaults.min_cpu
-        if len(parts) == 3:
-            mid = getattr(settings, parts[0])
-            parent = getattr(mid, parts[1])
-            getattr(parent, parts[2]).CopyFrom(sv)
-            continue
-
-    return settings
 
 
 def _scope_origin_from_key(
@@ -370,14 +313,16 @@ class Settings(ToJSONMixin):
         client = get_client()
 
         key = settings_definition_pb2.SettingsKey(org=cfg.org or "", domain=domain or "", project=project or "")
-        resp = await client.settings_service.GetSettingsForEdit(settings_service_pb2.GetSettingsForEditRequest(key=key))
+        resp = await client.settings_service.GetSettingsForEditRaw(
+            settings_service_pb2.GetSettingsForEditRawRequest(key=key)
+        )
 
         # resp.levels is ordered broadest → most specific.
         # Build effective settings by layering: broader values get overridden by narrower.
         effective: dict[str, EffectiveSetting] = {}
         for record in resp.levels:
             origin = _scope_origin_from_key(record.key)
-            for dotkey, val in _settings_proto_to_flat(record.settings):
+            for dotkey, val in _raw_data_to_flat(record.data):
                 effective[dotkey] = EffectiveSetting(key=dotkey, value=val, origin=origin)
 
         # Local settings come from the most specific level that matches the requested scope.
@@ -386,7 +331,7 @@ class Settings(ToJSONMixin):
         if resp.levels:
             most_specific = resp.levels[-1]
             version = most_specific.version
-            for dotkey, val in _settings_proto_to_flat(most_specific.settings):
+            for dotkey, val in _raw_data_to_flat(most_specific.data):
                 local_settings.append(LocalSetting(key=dotkey, value=val))
 
         return cls(
@@ -425,11 +370,13 @@ class Settings(ToJSONMixin):
         key = settings_definition_pb2.SettingsKey(
             org=cfg.org or "", domain=self.domain or "", project=self.project or ""
         )
-        settings_proto = _flat_overrides_to_settings_proto(overrides)
+        data = {k: _make_setting_value(v) for k, v in overrides.items()}
 
-        await client.settings_service.UpdateSettings(
-            settings_service_pb2.UpdateSettingsRequest(key=key, settings=settings_proto, version=self._version)
-        )
+        req = settings_service_pb2.UpdateSettingsRawRequest(key=key, version=self._version)
+        for k, sv in data.items():
+            req.data[k].CopyFrom(sv)
+
+        await client.settings_service.UpdateSettingsRaw(req)
 
         # Update local state
         self.local_settings = [LocalSetting(key=k, value=v) for k, v in overrides.items()]
