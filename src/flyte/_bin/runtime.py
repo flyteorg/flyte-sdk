@@ -184,9 +184,6 @@ def main(
     for h in logger.handlers:
         h.flush()
     sys.stdout.flush()
-    # We os._exit here to ensure that grpc does not block the exiting! grpc currently has a graceful shutdown system
-    # that blocks the process from exiting
-    os._exit(0)
 
 
 if __name__ == "__main__":

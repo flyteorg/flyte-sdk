@@ -190,15 +190,11 @@ class InvokeBaseMixin:
     """
 
     def invoke(self, ctx):
-        import os
-
         from connectrpc.code import Code
         from connectrpc.errors import ConnectError
 
         try:
-            _ = super().invoke(ctx)  # type: ignore
-            # Exit successfully to ensure clean shutdown
-            os._exit(0)
+            return super().invoke(ctx)  # type: ignore
         except ConnectError as e:
             if e.code == Code.UNAUTHENTICATED:
                 raise click.ClickException(f"Authentication failed. Please check your credentials. {e.message}")
