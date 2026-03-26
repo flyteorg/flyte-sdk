@@ -23,7 +23,7 @@ env = flyte.TaskEnvironment(
     name="error_reusable",
     resources=flyte.Resources(memory="500Mi", cpu=1),
     reusable=flyte.ReusePolicy(
-        replicas=2,  # Min of 2 replacas are needed to ensure no-starvation of tasks.
+        replicas=2,  # Min of 2 replicas are needed to ensure no-starvation of tasks.
         idle_ttl=60,
     ),
     image=actor_image,
