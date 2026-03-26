@@ -21,6 +21,18 @@ from flyte.syncify import syncify
 T = TypeVar("T")
 
 
+@syncify
+async def _fetch_action_outputs(controller, iface, func, *args, **kwargs):
+    """Module-level proxy: calls controller.get_action_outputs via the global syncify loop."""
+    return await controller.get_action_outputs(iface, func, *args, **kwargs)
+
+
+@syncify
+async def _record_trace_action(controller, info):
+    """Module-level proxy: calls controller.record_trace via the global syncify loop."""
+    await controller.record_trace(info)
+
+
 def trace(func: Callable[..., T]) -> Callable[..., T]:
     """
     A decorator that traces function execution with timing information.
@@ -29,31 +41,21 @@ def trace(func: Callable[..., T]) -> Callable[..., T]:
 
     @functools.wraps(func)
     def wrapper_sync(*args: Any, **kwargs: Any) -> Any:
-        from flyte._context import Context, internal_ctx, root_context_var
+        from flyte._context import Context, internal_ctx
 
-        from ._internal.controllers import TraceInfo, get_controller
+        from ._internal.controllers import get_controller
 
         ctx = internal_ctx()
         if not ctx.is_task_context():
             return func(*args, **kwargs)
 
         controller = get_controller()
-        captured_ctx = ctx
 
-        # Use syncify only for controller I/O. `with trace_context` and user code stay on this thread so we do not
-        # block syncify's executor across the whole traced call (same pattern as wrapper_sync_iterator).
-
-        @syncify
-        async def _fetch_outputs() -> tuple[TraceInfo, bool]:
-            tok = root_context_var.set(captured_ctx)
-            try:
-                iface = NativeInterface.from_callable(func)
-                info, ok = await controller.get_action_outputs(iface, func, *args, **kwargs)
-                return info, ok
-            finally:
-                root_context_var.reset(tok)
-
-        info, ok = _fetch_outputs()
+        # Use syncify only for controller I/O via module-level proxies.
+        # `with trace_context` and user code stay on this thread so we do not
+        # block syncify's executor across the whole traced call.
+        iface = NativeInterface.from_callable(func)
+        info, ok = _fetch_action_outputs(controller, iface, func, *args, **kwargs)
         if ok:
             logger.info(f"Found existing trace info for {func}, {info}")
             if info.output is not None:
@@ -64,8 +66,8 @@ def trace(func: Callable[..., T]) -> Callable[..., T]:
             logger.debug(f"No existing trace info found for {func}, proceeding to execute.")
 
         start_time = time.time()
-        trace_task_context = captured_ctx.data.task_context.replace(action=info.action)  # type: ignore[union-attr]
-        trace_data = captured_ctx.data.replace(task_context=trace_task_context, in_trace=True)
+        trace_task_context = ctx.data.task_context.replace(action=info.action)  # type: ignore[union-attr]
+        trace_data = ctx.data.replace(task_context=trace_task_context, in_trace=True)
         trace_context = Context(trace_data)
 
         error = None
@@ -79,16 +81,8 @@ def trace(func: Callable[..., T]) -> Callable[..., T]:
                 error = e
                 info.add_error(e, start_time=start_time, end_time=time.time())
 
-        @syncify
-        async def _record_trace() -> None:
-            tok = root_context_var.set(captured_ctx)
-            try:
-                await controller.record_trace(info)
-                logger.debug(f"Finished trace for {func}, {info}")
-            finally:
-                root_context_var.reset(tok)
-
-        _record_trace()
+        _record_trace_action(controller, info)
+        logger.debug(f"Finished trace for {func}, {info}")
 
         if error:
             raise error
@@ -96,9 +90,9 @@ def trace(func: Callable[..., T]) -> Callable[..., T]:
 
     @functools.wraps(func)
     def wrapper_sync_iterator(*args: Any, **kwargs: Any) -> Iterator[Any]:
-        from flyte._context import Context, internal_ctx, root_context_var
+        from flyte._context import Context, internal_ctx
 
-        from ._internal.controllers import TraceInfo, get_controller
+        from ._internal.controllers import get_controller
 
         ctx = internal_ctx()
         if not ctx.is_task_context():
@@ -106,24 +100,12 @@ def trace(func: Callable[..., T]) -> Callable[..., T]:
             return
 
         controller = get_controller()
-        captured_ctx = ctx
 
-        # Do not wrap the whole traced generator in one @syncify async generator: yielding from inside
-        # `with trace_context` would suspend across threads, so ContextVar tokens from __enter__ would
-        # not match __exit__ (ValueError: Token was created in a different Context). Keep `with
-        # trace_context` and `yield` on this thread; use syncify only for short controller I/O.
-
-        @syncify
-        async def _fetch_outputs() -> tuple[TraceInfo, bool]:
-            tok = root_context_var.set(captured_ctx)
-            try:
-                iface = NativeInterface.from_callable(func)
-                info, ok = await controller.get_action_outputs(iface, func, *args, **kwargs)
-                return info, ok
-            finally:
-                root_context_var.reset(tok)
-
-        info, ok = _fetch_outputs()
+        # Use syncify only for controller I/O via module-level proxies.
+        # Keep `with trace_context` and `yield` on this thread to avoid ContextVar
+        # token mismatches across threads.
+        iface = NativeInterface.from_callable(func)
+        info, ok = _fetch_action_outputs(controller, iface, func, *args, **kwargs)
         if ok:
             logger.info(f"Found existing trace info for {func}, {info}")
             if info.output is not None:
@@ -135,8 +117,8 @@ def trace(func: Callable[..., T]) -> Callable[..., T]:
             logger.debug(f"No existing trace info found for {func}, proceeding to execute.")
 
         start_time = time.time()
-        trace_task_context = captured_ctx.data.task_context.replace(action=info.action)  # type: ignore[union-attr]
-        trace_data = captured_ctx.data.replace(task_context=trace_task_context, in_trace=True)
+        trace_task_context = ctx.data.task_context.replace(action=info.action)  # type: ignore[union-attr]
+        trace_data = ctx.data.replace(task_context=trace_task_context, in_trace=True)
         trace_context = Context(trace_data)
 
         error = None
@@ -154,16 +136,8 @@ def trace(func: Callable[..., T]) -> Callable[..., T]:
                     error = e
                     info.add_error(e, start_time=start_time, end_time=time.time())
 
-        @syncify
-        async def _record_trace() -> None:
-            tok = root_context_var.set(captured_ctx)
-            try:
-                await controller.record_trace(info)
-                logger.debug(f"Finished trace for {func}, {info}")
-            finally:
-                root_context_var.reset(tok)
-
-        _record_trace()
+        _record_trace_action(controller, info)
+        logger.debug(f"Finished trace for {func}, {info}")
 
         if error:
             raise error
