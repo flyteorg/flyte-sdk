@@ -89,7 +89,6 @@ async def enqueue_run(client: ControllerClient):
 async def main():
     client = await get_local_client()
     await enqueue_run(client)
-    await client.close()
 
 
 if __name__ == "__main__":
