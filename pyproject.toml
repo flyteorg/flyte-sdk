@@ -178,3 +178,10 @@ unused-ignore-comment = "warn"
 redundant-cast = "ignore"
 possibly-unbound-attribute = "error"
 possibly-unbound-import = "error"
+
+[tool.codespell]
+# Ref: https://github.com/codespell-project/codespell#using-a-config-file
+skip = '.git,.gitignore,.gitattributes,*.lock'
+check-hidden = true
+ignore-regex = '^\s*"image/\S+": ".*'
+# ignore-words-list = ''
