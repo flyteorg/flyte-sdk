@@ -1,21 +1,10 @@
 import importlib
-import os
 from concurrent import futures
 from importlib.metadata import entry_points
 from typing import List
 
 import click
-
-# Silence gRPC warnings before importing grpc — environment variables must be
-# set before the C extension initialises its logging subsystem.
-if "GRPC_VERBOSITY" not in os.environ:
-    os.environ["GRPC_VERBOSITY"] = "ERROR"
-    os.environ["GRPC_CPP_MIN_LOG_LEVEL"] = "ERROR"
-    os.environ["GRPC_ENABLE_FORK_SUPPORT"] = "0"
-    os.environ["GLOG_minloglevel"] = "2"
-    os.environ["ABSL_LOG"] = "0"
-
-import grpc  # noqa: E402 — must come after env-var setup above
+from flyte.connectors._grpc import grpc
 from flyteidl2.connector import service_pb2
 from flyteidl2.connector.service_pb2_grpc import (
     add_AsyncConnectorServiceServicer_to_server,

@@ -4,7 +4,7 @@ import sys
 from http import HTTPStatus
 from typing import Callable, Dict, List, Tuple, Type, Union
 
-import grpc
+from flyte.connectors._grpc import grpc
 from flyteidl2.connector.connector_pb2 import (
     CreateTaskRequest,
     CreateTaskResponse,
