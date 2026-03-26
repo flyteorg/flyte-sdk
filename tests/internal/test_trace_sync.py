@@ -6,7 +6,6 @@ Covers: context propagation, syncify non-blocking, correctness, error propagatio
 import asyncio
 import threading
 import time
-from dataclasses import dataclass
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -19,18 +18,18 @@ from flyte.syncify import syncify
 
 def _make_trace_info(**overrides):
     """Helper to build a TraceInfo with sensible defaults."""
-    defaults = dict(
-        name="test_func",
-        action=ActionID(name="test-action", run_name="test-run"),
-        interface=MagicMock(spec=NativeInterface),
-        inputs_path="/tmp/inputs",
-    )
+    defaults = {
+        "name": "test_func",
+        "action": ActionID(name="test-action", run_name="test-run"),
+        "interface": MagicMock(spec=NativeInterface),
+        "inputs_path": "/tmp/inputs",
+    }
     defaults.update(overrides)
     return TraceInfo(**defaults)
 
 
 # ---------------------------------------------------------------------------
-# 1. Correctness – ok=True (cached) and ok=False (execute) paths
+# 1. Correctness - ok=True (cached) and ok=False (execute) paths
 # ---------------------------------------------------------------------------
 
 
@@ -109,7 +108,7 @@ def test_record_trace_action_propagates_error():
 
 
 # ---------------------------------------------------------------------------
-# 3. Syncify non-blocking – global syncify loop stays responsive
+# 3. Syncify non-blocking - global syncify loop stays responsive
 # ---------------------------------------------------------------------------
 
 
@@ -155,7 +154,7 @@ def test_sync_trace_proxy_does_not_block_syncify_loop():
     # Give the slow call a moment to start
     time.sleep(0.1)
 
-    # Now call ping() on the global syncify loop – it should complete quickly
+    # Now call ping() on the global syncify loop - it should complete quickly
     start = time.monotonic()
     result = ping()
     elapsed = time.monotonic() - start
@@ -169,7 +168,7 @@ def test_sync_trace_proxy_does_not_block_syncify_loop():
 
 
 # ---------------------------------------------------------------------------
-# 4. Context propagation – controller sees args faithfully
+# 4. Context propagation - controller sees args faithfully
 # ---------------------------------------------------------------------------
 
 
