@@ -115,7 +115,7 @@ def _build_pyqwest_client(tls_ca_cert: bytes | None = None) -> pyqwest.Client:
     return pyqwest.Client(transport=transport)
 
 
-async def create_session(
+async def create_session_config(
     endpoint: str | None,
     api_key: str | None = None,
     /,

@@ -4,7 +4,7 @@ from flyteidl2.actions.actions_service_connect import ActionsServiceClient
 from flyteidl2.workflow.queue_service_connect import QueueServiceClient
 from flyteidl2.workflow.state_service_connect import StateServiceClient
 
-from flyte.remote._client.auth._session import create_session
+from flyte.remote._client.auth._session import create_session_config
 
 from ._service_protocol import ActionsService, QueueService, StateService, use_actions_service
 
@@ -22,12 +22,12 @@ class ControllerClient:
 
     @classmethod
     async def for_endpoint(cls, endpoint: str, insecure: bool = False, **kwargs) -> ControllerClient:
-        session = await create_session(endpoint, None, insecure=insecure, **kwargs)
+        session = await create_session_config(endpoint, None, insecure=insecure, **kwargs)
         return cls(session.endpoint, interceptors=session.interceptors, http_client=session.http_client)
 
     @classmethod
     async def for_api_key(cls, api_key: str, insecure: bool = False, **kwargs) -> ControllerClient:
-        session = await create_session(None, api_key, insecure=insecure, **kwargs)
+        session = await create_session_config(None, api_key, insecure=insecure, **kwargs)
         return cls(session.endpoint, interceptors=session.interceptors, http_client=session.http_client)
 
     @property

@@ -9,7 +9,7 @@ from flyte.remote._client.auth._session import (
     _bootstrap_ssl_from_server,
     _build_pyqwest_client,
     _resolve_tls_ca_cert,
-    create_session,
+    create_session_config,
 )
 
 
@@ -41,7 +41,7 @@ def _make_valid_cert_pem() -> bytes:
 @patch("flyte.remote._client.auth._session.get_async_session")
 async def test_insecure_skips_auth_interceptors(mock_get_session, mock_proxy, mock_auth):
     mock_get_session.return_value = MagicMock()
-    result = await create_session("localhost:8080", insecure=True)
+    result = await create_session_config("localhost:8080", insecure=True)
     assert isinstance(result, SessionConfig)
     mock_auth.assert_not_called()
     assert result.endpoint == "http://localhost:8080"
@@ -53,7 +53,7 @@ async def test_insecure_skips_auth_interceptors(mock_get_session, mock_proxy, mo
 @patch("flyte.remote._client.auth._session.get_async_session")
 async def test_secure_creates_auth_interceptors(mock_get_session, mock_proxy, mock_auth):
     mock_get_session.return_value = MagicMock()
-    result = await create_session("example.com:443", insecure=False)
+    result = await create_session_config("example.com:443", insecure=False)
     mock_auth.assert_called_once()
     assert "auth1" in result.interceptors
     assert result.endpoint == "https://example.com:443"
@@ -65,7 +65,7 @@ async def test_secure_creates_auth_interceptors(mock_get_session, mock_proxy, mo
 @patch("flyte.remote._client.auth._session.get_async_session")
 async def test_rpc_retries_creates_retry_interceptors(mock_get_session, mock_proxy, mock_auth):
     mock_get_session.return_value = MagicMock()
-    result = await create_session("example.com:443", insecure=True, rpc_retries=3)
+    result = await create_session_config("example.com:443", insecure=True, rpc_retries=3)
     from flyte.remote._client.auth._interceptors.retry import RetryServerStreamInterceptor, RetryUnaryInterceptor
 
     retry_unary = [i for i in result.interceptors if isinstance(i, RetryUnaryInterceptor)]
@@ -81,7 +81,7 @@ async def test_rpc_retries_creates_retry_interceptors(mock_get_session, mock_pro
 @patch("flyte.remote._client.auth._session.get_async_session")
 async def test_returns_session_config(mock_get_session, mock_proxy, mock_auth):
     mock_get_session.return_value = MagicMock()
-    result = await create_session("dns:///example.com:8089", insecure=False)
+    result = await create_session_config("dns:///example.com:8089", insecure=False)
     assert isinstance(result, SessionConfig)
     assert result.endpoint == "https://example.com:8089"
     assert isinstance(result.http_client, pyqwest.Client)
@@ -99,7 +99,7 @@ async def test_custom_tls_creates_pyqwest_client(mock_build, mock_tls, mock_get_
     mock_client = MagicMock(spec=pyqwest.Client)
     mock_build.return_value = mock_client
     mock_get_session.return_value = MagicMock()
-    result = await create_session("example.com:443", insecure=False, ca_cert_file_path="/tmp/ca.pem")
+    result = await create_session_config("example.com:443", insecure=False, ca_cert_file_path="/tmp/ca.pem")
     mock_build.assert_called_once_with(b"cert-bytes")
     assert result.http_client is mock_client
 
@@ -110,7 +110,7 @@ async def test_custom_tls_creates_pyqwest_client(mock_build, mock_tls, mock_get_
 @patch("flyte.remote._client.auth._session.get_async_session")
 async def test_insecure_no_tls_resolution(mock_get_session, mock_proxy, mock_auth):
     mock_get_session.return_value = MagicMock()
-    result = await create_session("localhost:8080", insecure=True)
+    result = await create_session_config("localhost:8080", insecure=True)
     assert isinstance(result.http_client, pyqwest.Client)
 
 
