@@ -185,8 +185,10 @@ async def create_session(
     )
     interceptors.extend(proxy_auth_interceptors)
 
-    # Add auth interceptors — skip when insecure=True,
-    # since a plaintext connection typically means no auth server is available.
+    # Add auth interceptors — skip when insecure=True.
+    # NOTE: insecure means "no TLS" (plain HTTP), not "no auth". However, in
+    # practice a plaintext endpoint implies no auth server is available (e.g.
+    # local dev). This matches the old gRPC create_channel() behavior.
     if not insecure:
         auth_interceptors = create_auth_interceptors(
             endpoint=endpoint,

@@ -53,10 +53,51 @@ class AuthUnaryInterceptor(_BaseAuthInterceptor):
             raise
 
 
+class AuthClientStreamInterceptor(_BaseAuthInterceptor):
+    """ConnectRPC client-stream interceptor that injects auth headers and retries on UNAUTHENTICATED.
+
+    NOTE: On retry, the same ``request`` async iterator is passed to ``call_next``
+    again. This is only safe when the auth failure occurs before the iterator is
+    consumed (the typical case — the server rejects the request headers immediately).
+    If the first attempt partially consumes the iterator, the retry will see an
+    incomplete stream. This matches the old gRPC AuthStreamUnaryInterceptor behavior.
+    """
+
+    async def intercept_client_stream(self, call_next, request, ctx):
+        creds_id = await self._inject_auth_headers(ctx)
+        try:
+            return await call_next(request, ctx)
+        except ConnectError as e:
+            if e.code in _RETRYABLE_AUTH_CODES:
+                await self._refresh_and_reinject(creds_id, ctx)
+                return await call_next(request, ctx)
+            raise
+
+
 class AuthServerStreamInterceptor(_BaseAuthInterceptor):
     """ConnectRPC server-stream interceptor that injects auth headers and retries on UNAUTHENTICATED."""
 
     async def intercept_server_stream(self, call_next, request, ctx):
+        creds_id = await self._inject_auth_headers(ctx)
+        try:
+            async for response in call_next(request, ctx):
+                yield response
+        except ConnectError as e:
+            if e.code in _RETRYABLE_AUTH_CODES:
+                await self._refresh_and_reinject(creds_id, ctx)
+                async for response in call_next(request, ctx):
+                    yield response
+            else:
+                raise
+
+
+class AuthBidiStreamInterceptor(_BaseAuthInterceptor):
+    """ConnectRPC bidi-stream interceptor that injects auth headers and retries on UNAUTHENTICATED.
+
+    See AuthClientStreamInterceptor for the request-iterator replay caveat.
+    """
+
+    async def intercept_bidi_stream(self, call_next, request, ctx):
         creds_id = await self._inject_auth_headers(ctx)
         try:
             async for response in call_next(request, ctx):

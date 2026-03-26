@@ -37,14 +37,24 @@ def create_auth_interceptors(endpoint: str, http_client=None, **kwargs) -> list:
         - refresh_access_token_params: Parameters to add when refreshing access token
     :return: List of ConnectRPC interceptors
     """
-    from flyte.remote._client.auth._interceptors.auth import AuthUnaryInterceptor, AuthServerStreamInterceptor
+    from flyte.remote._client.auth._interceptors.auth import (
+        AuthBidiStreamInterceptor,
+        AuthClientStreamInterceptor,
+        AuthServerStreamInterceptor,
+        AuthUnaryInterceptor,
+    )
 
     def authenticator_factory() -> Authenticator:
         return get_async_authenticator(
             endpoint=endpoint, cfg_store=RemoteClientConfigStore(endpoint, http_client=http_client), **kwargs
         )
 
-    return [AuthUnaryInterceptor(authenticator_factory), AuthServerStreamInterceptor(authenticator_factory)]
+    return [
+        AuthUnaryInterceptor(authenticator_factory),
+        AuthClientStreamInterceptor(authenticator_factory),
+        AuthServerStreamInterceptor(authenticator_factory),
+        AuthBidiStreamInterceptor(authenticator_factory),
+    ]
 
 
 def create_proxy_auth_interceptors(
@@ -66,12 +76,22 @@ def create_proxy_auth_interceptors(
     :return: List of ConnectRPC interceptors
     """
     if proxy_command:
-        from flyte.remote._client.auth._interceptors.auth import AuthUnaryInterceptor, AuthServerStreamInterceptor
+        from flyte.remote._client.auth._interceptors.auth import (
+            AuthBidiStreamInterceptor,
+            AuthClientStreamInterceptor,
+            AuthServerStreamInterceptor,
+            AuthUnaryInterceptor,
+        )
 
         def authenticator_factory() -> Authenticator:
             return get_async_proxy_authenticator(endpoint=endpoint, proxy_command=proxy_command, **kwargs)
 
-        return [AuthUnaryInterceptor(authenticator_factory), AuthServerStreamInterceptor(authenticator_factory)]
+        return [
+            AuthUnaryInterceptor(authenticator_factory),
+            AuthClientStreamInterceptor(authenticator_factory),
+            AuthServerStreamInterceptor(authenticator_factory),
+            AuthBidiStreamInterceptor(authenticator_factory),
+        ]
     return []
 
 
