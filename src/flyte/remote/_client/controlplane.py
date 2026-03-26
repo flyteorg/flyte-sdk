@@ -86,6 +86,11 @@ class Console:
         else:
             domain = parsed.netloc or parsed.path
 
+        # TODO: make console url configurable
+        host, _, port = domain.partition(":")
+        if host == "localhost" and port == "8090":
+            domain = "localhost:8080"
+
         return f"{scheme}://{domain}"
 
     def _resource_url(self, project: str, domain: str, resource: str, resource_name: str) -> str:
