@@ -993,13 +993,9 @@ class DirTransformer(TypeTransformer[Dir]):
         lv: literals_pb2.Literal,
         expected_python_type: Type[Dir],
     ) -> Dir:
-        """Convert a Flyte literal to a File object."""
+        """Convert a Flyte literal to a Dir object."""
         if not lv.scalar.HasField("blob"):
             raise TypeTransformerFailedError(f"Expected blob literal, received {lv}")
-        if not lv.scalar.blob.metadata.type.dimensionality == types_pb2.BlobType.BlobDimensionality.MULTIPART:
-            raise TypeTransformerFailedError(
-                f"Expected multipart, received {lv.scalar.blob.metadata.type.dimensionality}"
-            )
 
         uri = lv.scalar.blob.uri
         filename = Path(uri).name

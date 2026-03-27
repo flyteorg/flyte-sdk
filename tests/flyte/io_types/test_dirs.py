@@ -44,6 +44,36 @@ def tmp_dir_structure():
 
 
 @pytest.mark.asyncio
+async def test_transformer_serde_single_dimensionality():
+    """
+    DirTransformer.to_python_value must accept SINGLE-dimensionality blobs.
+
+    Raw container tasks store Dir outputs with dimensionality=SINGLE because the
+    Union runtime does not consult the task interface when writing output literals.
+    The expected Python type (Dir) is the source of truth, not the stored dimensionality.
+    """
+    from flyteidl2.core import literals_pb2, types_pb2
+
+    uri = "s3://bucket/output_dir"
+    lv = literals_pb2.Literal(
+        scalar=literals_pb2.Scalar(
+            blob=literals_pb2.Blob(
+                metadata=literals_pb2.BlobMetadata(
+                    type=types_pb2.BlobType(
+                        format="",
+                        dimensionality=types_pb2.BlobType.BlobDimensionality.SINGLE,
+                    )
+                ),
+                uri=uri,
+            )
+        )
+    )
+
+    pv = await DirTransformer().to_python_value(lv, Dir)
+    assert pv.path == uri
+
+
+@pytest.mark.asyncio
 async def test_transformer_serde():
     f = Dir(path="s3://bucket/files")
     lt = TypeEngine.to_literal_type(Dir)
