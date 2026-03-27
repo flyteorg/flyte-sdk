@@ -1,5 +1,7 @@
 import rich_click as click
 
+import flyte.cli._common as common
+
 
 @click.group()
 def start():
@@ -43,3 +45,18 @@ def demo(image: str, dev: bool):
     from flyte.cli._demo import launch_demo
 
     launch_demo(image, dev)
+
+
+@start.command(cls=common.CommandBase)
+@click.argument("name", type=str, required=True)
+@click.pass_obj
+def app(cfg: common.CLIConfig, name: str, project: str | None = None, domain: str | None = None):
+    """Start (activate) a deployed Flyte app."""
+    from flyte.remote import App
+
+    cfg.init(project, domain)
+    console = common.get_console()
+    with console.status(f"Starting app {name}..."):
+        app_obj = App.get(name=name, project=project, domain=domain)
+        app_obj.activate(wait=True)
+    console.log(f"[green]Successfully started app {name}[/green]")

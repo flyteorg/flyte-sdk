@@ -18,6 +18,7 @@ from ._prefetch import prefetch
 from ._run import run
 from ._serve import serve
 from ._start import start
+from ._stop import stop
 from ._update import update
 from ._user import whoami
 
@@ -33,6 +34,10 @@ help_config = click.RichHelpConfiguration(
             {
                 "name": "Serve Apps",
                 "commands": ["serve"],
+            },
+            {
+                "name": "Start and stop Flyte apps and local services",
+                "commands": ["start", "stop"],
             },
             {
                 "name": "Management of various objects.",
@@ -248,6 +253,7 @@ main.add_command(whoami)  # type: ignore
 main.add_command(update)  # type: ignore
 main.add_command(serve)  # type: ignore
 main.add_command(start)  # type: ignore
+main.add_command(stop)  # type: ignore
 main.add_command(prefetch)  # type: ignore
 
 # Discover and register CLI plugins from installed packages
