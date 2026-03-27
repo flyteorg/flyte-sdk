@@ -1359,6 +1359,13 @@ class TypeEngine(typing.Generic[T]):
             # todo: bring in extras transformers (pytorch, etc.)
             lazy_import_dataframe_handler()
 
+            # Load type-transformer plugins registered under "flyte.plugins.types" before any transformer lookup.
+            # Task modules are often imported (decorators run) before flyte.initialize() / init_in_cluster(), so
+            # relying on init alone yields incorrect FlytePickle fallback + warnings for plugin types.
+            from flyte.types import _load_custom_type_transformers
+
+            _load_custom_type_transformers()
+
     @classmethod
     def to_literal_type(cls, python_type: Type[T]) -> LiteralType:
         """

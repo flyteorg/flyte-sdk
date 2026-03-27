@@ -85,9 +85,8 @@ class Console:
             domain = parsed.netloc or parsed.path
 
         # TODO: make console url configurable
-        domain_split = domain.split(":")
-        if domain_split[0] == "localhost":
-            # Always use port 8080 for localhost, until the to do is done.
+        host, _, port = domain.partition(":")
+        if host == "localhost" and port == "8090":
             domain = "localhost:8080"
 
         return f"{scheme}://{domain}"
