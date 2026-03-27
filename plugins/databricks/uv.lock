@@ -543,7 +543,6 @@ dependencies = [
     { name = "docstring-parser" },
     { name = "flyteidl2" },
     { name = "fsspec" },
-    { name = "grpcio" },
     { name = "httpx" },
     { name = "keyring" },
     { name = "mashumaro" },
@@ -559,6 +558,7 @@ dependencies = [
 
 [package.optional-dependencies]
 connector = [
+    { name = "grpcio" },
     { name = "grpcio-health-checking" },
     { name = "httpx" },
     { name = "prometheus-client" },
@@ -578,7 +578,7 @@ requires-dist = [
     { name = "fastapi", marker = "extra == 'examples-test'" },
     { name = "flyteidl2", specifier = ">=2.0.9,<3.0.0" },
     { name = "fsspec", specifier = ">=2025.3.0" },
-    { name = "grpcio", specifier = ">=1.71.0" },
+    { name = "grpcio", marker = "extra == 'connector'", specifier = ">=1.71.0" },
     { name = "grpcio-health-checking", marker = "extra == 'connector'" },
     { name = "httpx", specifier = ">=0.28.1,<1.0.0" },
     { name = "httpx", marker = "extra == 'connector'" },
