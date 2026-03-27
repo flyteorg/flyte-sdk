@@ -33,10 +33,9 @@ def record_outputs(**kwargs: Any) -> str:
         Protobuf text representation of a ``LiteralMap``. Jupyter captures
         this as the cell's text/plain output.
     """
-    from google.protobuf import text_format
-
     from flyte.syncify import syncify
     from flyte.types import TypeEngine
+    from google.protobuf import text_format
 
     @syncify
     async def _to_literal_map(values: dict[str, Any]):

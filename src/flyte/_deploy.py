@@ -565,7 +565,9 @@ def plan_deploy(*envs: Environment, version: Optional[str] = None) -> List[Deplo
     visited_envs: Dict[str, Environment] = {}
     for env in envs:
         if env.name in visited_envs:
-            _check_duplicate_env(visited_envs[env.name], env)
+            if visited_envs[env.name] is not env:
+                _check_duplicate_env(visited_envs[env.name], env)
+            continue  # already included via depends_on of a prior env
         planned_envs = _recursive_discover({}, env)
         deployment_plans.append(DeploymentPlan(planned_envs, version=version))
         visited_envs.update(planned_envs)

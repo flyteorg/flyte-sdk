@@ -15,10 +15,10 @@ partial results without re-running the whole notebook.
 
 from pathlib import Path
 
-from flyteplugins.papermill import NotebookTask
-
 import flyte
 from flyte._image import PythonWheels
+
+from flyteplugins.papermill import NotebookTask
 
 env = flyte.TaskEnvironment(
     name="failure_report_example",

@@ -6,7 +6,7 @@ import json
 import os
 import tempfile
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import nbformat
 import pytest
@@ -311,16 +311,12 @@ def test_custom_config_no_plugin():
 def test_custom_config_spark_delegates():
     from flyte.models import SerializationContext
 
-    with patch.dict(
-        "sys.modules", {"pyspark": MagicMock(), "pyspark.sql": MagicMock()}
-    ):
+    with patch.dict("sys.modules", {"pyspark": MagicMock(), "pyspark.sql": MagicMock()}):
         try:
             from flyteplugins.spark import Spark
 
             sctx = SerializationContext(version="1")
-            task = make_task(
-                plugin_config=Spark(spark_conf={"spark.executor.instances": "2"})
-            )
+            task = make_task(plugin_config=Spark(spark_conf={"spark.executor.instances": "2"}))
             result = task.custom_config(sctx)
             assert result.get("sparkConf", {}).get("spark.executor.instances") == "2"
         except ImportError:
@@ -334,6 +330,7 @@ def test_custom_config_spark_delegates():
 
 def test_load_file_returns_file():
     from flyte.io import File
+
     from flyteplugins.papermill.notebook import load_file
 
     f = load_file("s3://bucket/data.txt")
@@ -343,6 +340,7 @@ def test_load_file_returns_file():
 
 def test_load_dir_returns_dir():
     from flyte.io import Dir
+
     from flyteplugins.papermill.notebook import load_dir
 
     d = load_dir("s3://bucket/dir/")
@@ -352,6 +350,7 @@ def test_load_dir_returns_dir():
 
 def test_load_dataframe_returns_dataframe():
     from flyte.io import DataFrame
+
     from flyteplugins.papermill.notebook import load_dataframe
 
     df = load_dataframe("s3://bucket/data.parquet")
@@ -458,9 +457,7 @@ def test_forward_output_notebooks_returns_local_files():
 # forward() — partial output notebook written on failure
 # ---------------------------------------------------------------------------
 
-PARTIAL_FAILURE_NOTEBOOK_PATH = str(
-    Path(__file__).parent.parent / "examples" / "notebooks" / "partial_failure.ipynb"
-)
+PARTIAL_FAILURE_NOTEBOOK_PATH = str(Path(__file__).parent.parent / "examples" / "notebooks" / "partial_failure.ipynb")
 
 
 def test_forward_failure_writes_partial_output_notebook():
@@ -470,7 +467,6 @@ def test_forward_failure_writes_partial_output_notebook():
     after a failure. This is the same notebook that gets rendered into the
     report in remote execution.
     """
-    import papermill.exceptions
 
     task = make_task(
         notebook_path=PARTIAL_FAILURE_NOTEBOOK_PATH,

@@ -1,3 +1,5 @@
+import subprocess
+
 import rich_click as click
 
 import flyte.cli._common as common
@@ -60,3 +62,16 @@ def app(cfg: common.CLIConfig, name: str, project: str | None = None, domain: st
         App.delete(name=name, project=project, domain=domain)
 
     console.log(f"[green]Successfully deleted app {name} [/green]")
+
+
+@delete.command()
+def demo():
+    """
+    Stop and remove the local Flyte demo cluster container.
+    """
+    console = common.get_console()
+    try:
+        subprocess.run(["docker", "stop", "flyte-demo"], check=True)
+        console.print("[green]Demo cluster stopped.[/green]")
+    except subprocess.CalledProcessError:
+        raise click.ClickException("Failed to stop demo cluster. Is the container running?")

@@ -2,11 +2,12 @@
 
 from pathlib import Path
 
-from flyteplugins.papermill import NotebookTask
-from tasks import add, double, env as tasks_env
-
 import flyte
 from flyte._image import PythonWheels
+from tasks import add, double
+from tasks import env as tasks_env
+
+from flyteplugins.papermill import NotebookTask
 
 env = flyte.TaskEnvironment(
     name="mixed_workflow_example",
@@ -44,8 +45,6 @@ def mixed_workflow(n: int = 5) -> float:
 
 if __name__ == "__main__":
     flyte.init_from_config()
-    run = flyte.with_runcontext(mode="remote", copy_style="all").run(
-        mixed_workflow, n=7
-    )
+    run = flyte.with_runcontext(mode="remote", copy_style="all").run(mixed_workflow, n=7)
     print(f"Run URL: {run.url}")
     print(f"Outputs: {run.outputs()}")

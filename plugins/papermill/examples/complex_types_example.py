@@ -7,11 +7,11 @@ load_dir(), and load_dataframe().
 
 from pathlib import Path
 
-from flyteplugins.papermill import NotebookTask
-
 import flyte
 from flyte._image import PythonWheels
 from flyte.io import DataFrame, Dir, File
+
+from flyteplugins.papermill import NotebookTask
 
 env = flyte.TaskEnvironment(
     name="complex_types_example",
@@ -112,8 +112,6 @@ if __name__ == "__main__":
     print(f"Run URL: {run_dir.url}")
     print(f"Outputs: {run_dir.outputs()}")
 
-    run_df = flyte.with_runcontext(mode="remote", copy_style="all").run(
-        dataframe_workflow
-    )
+    run_df = flyte.with_runcontext(mode="remote", copy_style="all").run(dataframe_workflow)
     print(f"Run URL: {run_df.url}")
     print(f"Outputs: {run_df.outputs()}")

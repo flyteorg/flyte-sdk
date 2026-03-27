@@ -30,15 +30,11 @@ class NotebookTaskResolver:
             )
         return task
 
-    def loader_args(
-        self, task: TaskTemplate, root_dir: pathlib.Path | None
-    ) -> list[str]:
+    def loader_args(self, task: TaskTemplate, root_dir: pathlib.Path | None) -> list[str]:
         from flyteplugins.papermill.task import NotebookTask
 
         if not isinstance(task, NotebookTask):
-            raise TypeError(
-                f"NotebookTaskResolver only handles NotebookTask, got {type(task)}"
-            )
+            raise TypeError(f"NotebookTaskResolver only handles NotebookTask, got {type(task)}")
 
         caller_file = task._caller_file
         if not caller_file:
@@ -60,9 +56,7 @@ class NotebookTaskResolver:
             # Fall back to checking sys.modules
             module_name = self._find_module_for_file(caller_file)
             if module_name is None:
-                raise ValueError(
-                    f"Cannot determine module for '{caller_file}' relative to root '{root_dir}'."
-                )
+                raise ValueError(f"Cannot determine module for '{caller_file}' relative to root '{root_dir}'.")
             relative = None
 
         if relative is not None:

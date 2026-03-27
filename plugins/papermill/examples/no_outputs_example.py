@@ -6,11 +6,10 @@ in the Flyte UI.
 
 from pathlib import Path
 
-from flyteplugins.papermill import NotebookTask
-
 import flyte
 from flyte._image import PythonWheels
 
+from flyteplugins.papermill import NotebookTask
 
 env = flyte.TaskEnvironment(
     name="no_outputs_example",

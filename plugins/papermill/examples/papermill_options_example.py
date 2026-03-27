@@ -2,11 +2,11 @@
 
 from pathlib import Path
 
-from flyteplugins.papermill import NotebookTask
-
 import flyte
 from flyte._image import PythonWheels
 from flyte.io import File
+
+from flyteplugins.papermill import NotebookTask
 
 env = flyte.TaskEnvironment(
     name="papermill_options_example",
@@ -109,9 +109,7 @@ with_notebook_output = NotebookTask(
 
 
 @env.task
-def options_workflow(
-    x: int = 42, y: float = 0.5
-) -> tuple[float, float, float, float, float, File, File, File, File]:
+def options_workflow(x: int = 42, y: float = 0.5) -> tuple[float, float, float, float, float, File, File, File, File]:
     r1 = all_options(x=x, y=y)
     r2 = verbose_debug(x=x, y=y)
     r3 = fast_execution(x=x, y=y)

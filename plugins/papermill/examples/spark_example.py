@@ -12,11 +12,11 @@ be passed through the Flyte context as it can with regular @task functions.
 
 from pathlib import Path
 
-from flyteplugins.papermill import NotebookTask
-from flyteplugins.spark import Spark
-
 import flyte
 from flyte._image import PythonWheels
+from flyteplugins.spark import Spark
+
+from flyteplugins.papermill import NotebookTask
 
 env = flyte.TaskEnvironment(
     name="spark_example",

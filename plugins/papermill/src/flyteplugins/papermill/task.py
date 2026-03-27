@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import inspect
 import json
 import logging
@@ -43,15 +44,8 @@ def _register_plugin(config_type: type, task_type: str, task_class: type) -> Non
     _PLUGIN_REGISTRY[config_type] = (task_type, task_class)
 
 
-_plugins_registered = False
-
-
+@functools.lru_cache(maxsize=None)
 def _auto_register_plugins() -> None:
-    global _plugins_registered
-    if _plugins_registered:
-        return
-    _plugins_registered = True
-
     try:
         from flyteplugins.spark import Spark
         from flyteplugins.spark.task import PysparkFunctionTask
@@ -67,9 +61,7 @@ def _resolve_task_type(plugin_config: Any) -> str:
     config_type = type(plugin_config)
     if config_type in _PLUGIN_REGISTRY:
         return _PLUGIN_REGISTRY[config_type][0]
-    raise ValueError(
-        f"Unsupported plugin_config type: {config_type}. No plugin registered for it."
-    )
+    raise ValueError(f"Unsupported plugin_config type: {config_type}. No plugin registered for it.")
 
 
 def _build_interface(
@@ -477,9 +469,7 @@ class NotebookTask(TaskTemplate):
 
         return None
 
-    def _execute_notebook(
-        self, *, _inject_context: bool = False, **kwargs: Any
-    ) -> Optional[Any]:
+    def _execute_notebook(self, *, _inject_context: bool = False, **kwargs: Any) -> Optional[Any]:
         """Run the notebook via papermill and collect outputs.
 
         When *_inject_context* is ``True`` and the ``_FLYTE_NB_CTX`` env var
@@ -538,22 +528,17 @@ class NotebookTask(TaskTemplate):
             ``(source_file, executed_file)`` when ``output_notebooks=True``
             and running in a task context, otherwise ``(None, None)``.
         """
-        import nbconvert
-        import nbformat
-
         import flyte.report
         import flyte.storage as storage
+        import nbconvert
+        import nbformat
         from flyte._context import internal_ctx
         from flyte.io import File
 
         nb = nbformat.read(self.output_notebook_path, as_version=4)
 
         # Strip the injected setup cell
-        nb.cells = [
-            c
-            for c in nb.cells
-            if "flyte-setup" not in c.get("metadata", {}).get("tags", [])
-        ]
+        nb.cells = [c for c in nb.cells if "flyte-setup" not in c.get("metadata", {}).get("tags", [])]
 
         if self.report_mode:
             for cell in nb.cells:
@@ -584,16 +569,12 @@ class NotebookTask(TaskTemplate):
         logger.info(f"Uploaded source notebook to {source_remote}")
 
         executed_remote = storage.join(output_base, f"{self.name}-executed.ipynb")
-        executed_file = await File.from_local(
-            self.output_notebook_path, executed_remote
-        )
+        executed_file = await File.from_local(self.output_notebook_path, executed_remote)
         logger.info(f"Uploaded executed notebook to {executed_remote}")
 
         return source_file, executed_file
 
-    async def _build_return(
-        self, literal_map: Any, extra_outputs: Optional[dict[str, Any]] = None
-    ) -> Any:
+    async def _build_return(self, literal_map: Any, extra_outputs: Optional[dict[str, Any]] = None) -> Any:
         """Convert Flyte Literal outputs back to Python values.
 
         Args:
@@ -625,9 +606,7 @@ class NotebookTask(TaskTemplate):
                         f"Notebook did not produce expected output '{name}'. "
                         f"Make sure to call record_outputs({name}=...) in your notebook."
                     )
-            kwargs = await TypeEngine.literal_map_to_kwargs(
-                literal_map, literal_output_types
-            )
+            kwargs = await TypeEngine.literal_map_to_kwargs(literal_map, literal_output_types)
 
         kwargs.update(extra)
         if len(kwargs) == 1:
@@ -675,11 +654,7 @@ class NotebookTask(TaskTemplate):
         kwargs = self.interface.convert_to_kwargs(*args, **kwargs)
 
         ctx = internal_ctx()
-        ctx_manager = (
-            ctx.replace_task_context(ctx.data.task_context)
-            if ctx.data.task_context
-            else nullcontext()
-        )
+        ctx_manager = ctx.replace_task_context(ctx.data.task_context) if ctx.data.task_context else nullcontext()
         with ctx_manager:
             # For local mode, _serialize_task_context returns None, so fall back to
             # a minimal local context so the setup cell still runs and initializes
@@ -749,10 +724,7 @@ class NotebookTask(TaskTemplate):
             "{{.actionName}}",
         ]
 
-        if (
-            serialize_context.image_cache
-            and serialize_context.image_cache.serialized_form
-        ):
+        if serialize_context.image_cache and serialize_context.image_cache.serialized_form:
             args = [
                 *args,
                 "--image-cache",

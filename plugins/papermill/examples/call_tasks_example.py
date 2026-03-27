@@ -6,11 +6,11 @@ Remotely, they are submitted to Flyte and appear as separate nodes in the UI.
 
 from pathlib import Path
 
-from flyteplugins.papermill import NotebookTask
-
 import flyte
 from flyte._image import PythonWheels
 from tasks import env as tasks_env
+
+from flyteplugins.papermill import NotebookTask
 
 env = flyte.TaskEnvironment(
     name="call_tasks_example",
@@ -39,8 +39,6 @@ def task_calling_workflow(a: int = 10, b: int = 20) -> int:
 
 if __name__ == "__main__":
     flyte.init_from_config()
-    run = flyte.with_runcontext(mode="remote", copy_style="all").run(
-        task_calling_workflow
-    )
+    run = flyte.with_runcontext(mode="remote", copy_style="all").run(task_calling_workflow)
     print(f"Run URL: {run.url}")
     print(f"Outputs: {run.outputs()}")
