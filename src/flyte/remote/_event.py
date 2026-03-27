@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import AsyncIterator
+from typing import AsyncIterator, Union
 
 import grpc.aio
 from flyteidl2.common import identifier_pb2, list_pb2
@@ -12,49 +12,47 @@ from flyte.syncify import syncify
 from .._initialize import ensure_client, get_client, get_init_config
 from ._common import ToJSONMixin
 
+# The valid payload types for event signals, matching _event.EventType.
+EventPayload = Union[bool, int, float, str]
+
 
 @dataclass
 class Event(ToJSONMixin):
+    """
+    A remote Event that is registered within an action of a run.
+
+    Events are always scoped to a specific action within a run, identified by
+    ``run_name`` and ``action_name``.
+    """
+
     pb2: ...
 
     @syncify
     @classmethod
     async def get(
-        cls, name: str, /, run_name: str | None = None, task_name: str | None = None, action_name: str | None = None
+        cls,
+        name: str,
+        /,
+        run_name: str,
+        action_name: str,
     ) -> Event | None:
         """
-        Retrieve an existing Event by name and scope. The scope is inferred based on the provided parameters.
+        Retrieve an existing Event by name within a specific action of a run.
 
         :param name: The name of the Event.
-        :param run_name: The name of the Run, if the Event scope is "run
-        :param task_name: The name of the Task, if the Event scope is "task".
-        :param action_name: The name of the Action, if the Event scope is "action".
+        :param run_name: The name of the Run the event belongs to.
+        :param action_name: The name of the Action the event belongs to.
         :return: An Event instance if found, otherwise None.
         """
         ensure_client()
         cfg = get_init_config()
 
-        if task_name is not None:
-            scope = identifier_pb2.EventIdentifier.Scope(task_name=task_name)
-        elif run_name is not None:
-            scope = identifier_pb2.EventIdentifier.Scope(run_name=run_name)
-        elif action_name is not None:
-            scope = identifier_pb2.EventIdentifier.Scope(action_name=action_name)
-        else:
-            raise flyte.errors.EventScopeRequiredError(
-                "At least one of run_name, task_name, or action_name must be provided to determine the event scope."
-            )
+        event_id = _make_event_identifier(cfg, name, run_name, action_name)
 
         try:
             resp = await get_client().event_service.GetEvent(
                 request=event_service_pb2.GetEventRequest(
-                    name=identifier_pb2.EventIdentifier(
-                        org=cfg.org,
-                        project=cfg.project,
-                        domain=cfg.domain,
-                        name=name,
-                        scope=scope,
-                    ),
+                    event_id=event_id,
                 )
             )
             return cls(pb2=resp.event)
@@ -68,66 +66,101 @@ class Event(ToJSONMixin):
     async def listall(
         cls,
         /,
-        run_name: str | None = None,
-        task_name: str | None = None,
+        run_name: str,
         action_name: str | None = None,
         limit: int = 100,
     ) -> AsyncIterator[Event]:
         """
-        List all Events within a specific scope. The scope is inferred based on the provided parameters.
-        :param run_name: The name of the Run, if the Event scope is "run
-        :param task_name: The name of the Task, if the Event scope is "task".
-        :param action_name: The name of the Action, if the Event scope is "action".
+        List all Events for a run, optionally filtered to a specific action.
+
+        :param run_name: The name of the Run to list events for (required).
+        :param action_name: Optionally narrow to a specific action within the run.
+        :param limit: The maximum number of events to fetch per page.
         :return: An async iterator of Event instances.
         """
         ensure_client()
         cfg = get_init_config()
-        if task_name is not None:
-            scope = identifier_pb2.EventIdentifier.Scope(task_name=task_name)
-        elif run_name is not None:
-            scope = identifier_pb2.EventIdentifier.Scope(run_name=run_name)
-        elif action_name is not None:
-            scope = identifier_pb2.EventIdentifier.Scope(action_name=action_name)
+
+        run_id = identifier_pb2.RunIdentifier(
+            org=cfg.org,
+            project=cfg.project,
+            domain=cfg.domain,
+            name=run_name,
+        )
+
+        if action_name is not None:
+            action_id = identifier_pb2.ActionIdentifier(run=run_id, name=action_name)
         else:
-            raise flyte.errors.EventScopeRequiredError(
-                "At least one of run_name, task_name, or action_name must be provided to determine the event scope."
-            )
+            action_id = None
+
         token = None
         while True:
             resp = await get_client().event_service.ListEvents(
                 request=event_service_pb2.ListEventsRequest(
+                    run_id=run_id,
+                    action_id=action_id,
                     request=list_pb2.ListRequest(
                         limit=limit,
                         token=token,
                     ),
-                    scope=scope,
                 )
             )
-            for event_pb2 in resp.events:
-                yield cls(pb2=event_pb2)
+            for ev in resp.events:
+                yield cls(pb2=ev)
             if not resp.token:
                 break
             token = resp.token
 
     @syncify
-    async def signal(self, payload: ...) -> None:
+    async def signal(self, payload: EventPayload) -> None:
         """
         Signal the event with the provided payload.
 
-        :param payload: The payload to signal the event with.
-        """
-        ensure_client()
-        cfg = get_init_config()
+        The payload must be one of: ``bool``, ``int``, ``float``, or ``str``.
 
-        resp = await get_client().event_service.SignalEvent(
+        :param payload: The value to signal the event with.
+        :raises TypeError: If the payload is not a supported type.
+        """
+        if not isinstance(payload, (bool, int, float, str)):
+            raise TypeError(
+                f"payload must be bool, int, float, or str, got {type(payload).__name__}"
+            )
+
+        ensure_client()
+
+        await get_client().event_service.SignalEvent(
             request=event_service_pb2.SignalEventRequest(
-                name=identifier_pb2.EventIdentifier(
-                    org=cfg.org,
-                    project=cfg.project,
-                    domain=cfg.domain,
-                    name=self.pb2.name,
-                    scope=self.pb2.scope,
-                ),
-                payload=payload,
+                event_id=self.pb2.event_id,
+                payload=_encode_payload(payload),
             )
         )
+
+
+def _make_event_identifier(
+    cfg, name: str, run_name: str, action_name: str
+) -> "event_service_pb2.EventIdentifier":
+    """Build an EventIdentifier from config + names."""
+    run_id = identifier_pb2.RunIdentifier(
+        org=cfg.org,
+        project=cfg.project,
+        domain=cfg.domain,
+        name=run_name,
+    )
+    action_id = identifier_pb2.ActionIdentifier(run=run_id, name=action_name)
+    return event_service_pb2.EventIdentifier(
+        action_id=action_id,
+        name=name,
+    )
+
+
+def _encode_payload(value: EventPayload) -> "event_service_pb2.EventPayload":
+    """Encode a Python value into an EventPayload proto message."""
+    if isinstance(value, bool):
+        return event_service_pb2.EventPayload(bool_value=value)
+    elif isinstance(value, int):
+        return event_service_pb2.EventPayload(int_value=value)
+    elif isinstance(value, float):
+        return event_service_pb2.EventPayload(float_value=value)
+    elif isinstance(value, str):
+        return event_service_pb2.EventPayload(string_value=value)
+    raise TypeError(f"Unsupported payload type: {type(value)}")

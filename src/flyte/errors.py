@@ -100,6 +100,15 @@ class TaskTimeoutError(RuntimeUserError):
         super().__init__("TaskTimeoutError", message, "user")
 
 
+class EventTimedoutError(RuntimeUserError):
+    """
+    This error is raised when an event is not signaled within its specified timeout.
+    """
+
+    def __init__(self, message: str):
+        super().__init__("EventTimedoutError", message, "user")
+
+
 class RetriesExhaustedError(RuntimeUserError):
     """
     This error is raised when the underlying task execution fails after all retries have been exhausted.
@@ -318,13 +327,13 @@ class NonRecoverableError(RuntimeUserError):
         super().__init__(code, message)
 
 
-class EventAlreadyExistsInScopeError(RuntimeUserError):
+class EventAlreadyExistsError(RuntimeUserError):
     """
-    This error is raised when the user tries to create an event that already exists in the given scope.
+    This error is raised when the user tries to create an event that already exists within the action.
     """
 
     def __init__(self, message: str):
-        super().__init__("EventAlreadyExistsInScopeError", message, "user")
+        super().__init__("EventAlreadyExistsError", message, "user")
 
 
 class EventNotFoundError(RuntimeUserError):
@@ -334,12 +343,3 @@ class EventNotFoundError(RuntimeUserError):
 
     def __init__(self, message: str):
         super().__init__("EventNotFoundError", message, "user")
-
-
-class EventScopeRequiredError(RuntimeUserError):
-    """
-    This error is raised when the user tries to access an event without specifying the scope.
-    """
-
-    def __init__(self, message: str):
-        super().__init__("EventScopeRequiredError", message, "user")

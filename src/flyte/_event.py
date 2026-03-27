@@ -1,12 +1,12 @@
 import typing
 from dataclasses import dataclass
-from typing import Generic, Literal, Type
+from datetime import timedelta
+from typing import Generic, Literal, Type, Union
 
 import rich.repr
 
 from flyte.syncify import syncify
 
-EventScope = Literal["task", "run", "action"]
 PromptType = Literal["text", "markdown"]
 
 EventType = typing.TypeVar("EventType", bool, int, float, str)
@@ -27,7 +27,7 @@ class _Event(Generic[EventType]):
 
     @env.task
     async def my_task() -> Optional[int]:
-        event = await flyte.new_event(name="my_event", scope="run", prompt="Is it ok to continue?", data_type=bool)
+        event = await flyte.new_event(name="my_event", prompt="Is it ok to continue?", data_type=bool)
         result = await event.wait()
         if result:
             return 42
@@ -37,17 +37,25 @@ class _Event(Generic[EventType]):
     """
 
     name: str
-    # TODO restrict scope to action only right now
-    scope: EventScope = "run"
     prompt: str = "Approve?"
-    prompt_type: "PromptType" = "text"
+    prompt_type: PromptType = "text"
     data_type: Type[EventType] = bool  # type: ignore[assignment]
     description: str = ""
+    timeout: Union[timedelta, int, float, None] = None
 
     def __post_init__(self):
         valid_types = (bool, int, float, str)
         if self.data_type not in valid_types:
             raise TypeError(f"Invalid data_type {self.data_type}. Must be one of {valid_types}.")
+        if self.timeout is not None:
+            if isinstance(self.timeout, timedelta):
+                self._timeout_seconds = self.timeout.total_seconds()
+            else:
+                self._timeout_seconds = float(self.timeout)
+            if self._timeout_seconds <= 0:
+                raise ValueError("timeout must be positive")
+        else:
+            self._timeout_seconds = None
 
     @syncify
     async def wait(self) -> EventType:
@@ -76,25 +84,26 @@ class _Event(Generic[EventType]):
 async def new_event(
     name: str,
     /,
-    scope: EventScope = "run",
     prompt: str = "Approve?",
     prompt_type: PromptType = "text",
     data_type: Type[EventType] = bool,  # type: ignore[assignment]
     description: str = "",
+    timeout: Union[timedelta, int, float, None] = None,
 ) -> _Event:
     """
     Create an event that can be awaited in a workflow. Events can be used to pause workflow execution until
     an external signal is received.
 
     :param name: Name of the event
-    :param scope: Scope of the event - "task", "run", or "action"
     :param prompt: Prompt message for the event
     :param data_type: Data type of the event payload
     :param prompt_type: Type of prompt rendering - "text" or "markdown"
     :param description: Description of the event
+    :param timeout: Optional timeout as a timedelta or number of seconds. If the event is not signaled
+        within this duration, ``wait()`` will raise ``flyte.errors.EventTimedoutError``.
     :return: An instance of _Event representing the created event
     """
-    event = _Event(name=name, scope=scope, prompt=prompt, prompt_type=prompt_type, data_type=data_type, description=description)
+    event = _Event(name=name, prompt=prompt, prompt_type=prompt_type, data_type=data_type, description=description, timeout=timeout)
     from flyte._context import internal_ctx
 
     ctx = internal_ctx()

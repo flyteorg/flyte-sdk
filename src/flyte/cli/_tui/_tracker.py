@@ -52,13 +52,17 @@ class PendingEvent:
     description: str = ""
     _ready: threading.Event = field(default_factory=threading.Event, repr=False)
     _result: Any = field(default=None, repr=False)
+    timed_out: bool = field(default=False, repr=False)
 
     def set_result(self, value: Any) -> None:
         self._result = value
         self._ready.set()
 
-    def wait_for_result(self) -> Any:
-        self._ready.wait()
+    def wait_for_result(self, timeout: float | None = None) -> Any:
+        signaled = self._ready.wait(timeout=timeout)
+        if not signaled:
+            self.timed_out = True
+            return None
         return self._result
 
 

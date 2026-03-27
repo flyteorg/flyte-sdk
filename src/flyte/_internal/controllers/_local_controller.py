@@ -384,7 +384,7 @@ class LocalController:
         if not isinstance(event, _Event):
             raise TypeError(f"Expected _Event, got {type(event)}")
 
-        logger.debug(f"Registering event: {event.name} with scope: {event.scope}")
+        logger.debug(f"Registering event: {event.name}")
         self._registered_events[event.name] = event
 
     def _get_current_action_id(self) -> str:
@@ -421,15 +421,32 @@ class LocalController:
             description=event.description,
         )
 
+        timeout_seconds = event._timeout_seconds
+
         if pending is not None:
             # TUI mode: block until the TUI resolves the event
             loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(None, pending.wait_for_result)
+            result = await loop.run_in_executor(None, pending.wait_for_result, timeout_seconds)
+            if pending.timed_out:
+                raise flyte.errors.EventTimedoutError(
+                    f"Event '{event.name}' was not signaled within {timeout_seconds} seconds."
+                )
             if result is None:
                 raise RuntimeError(f"Event '{event.name}' was cancelled (TUI quit).")
             return result
 
         # Non-TUI mode: fall back to rich console prompts
+        if timeout_seconds is not None:
+            loop = asyncio.get_event_loop()
+            try:
+                return await asyncio.wait_for(
+                    loop.run_in_executor(None, self._prompt_event_console, event),
+                    timeout=timeout_seconds,
+                )
+            except asyncio.TimeoutError:
+                raise flyte.errors.EventTimedoutError(
+                    f"Event '{event.name}' was not signaled within {timeout_seconds} seconds."
+                )
         return self._prompt_event_console(event)
 
     @staticmethod
