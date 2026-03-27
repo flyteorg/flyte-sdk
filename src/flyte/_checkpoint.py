@@ -16,15 +16,37 @@ from __future__ import annotations
 
 import pathlib
 import shutil
+import sys
 import tempfile
 from abc import ABC, abstractmethod
 from typing import Optional
 
 import flyte.storage as storage
 from flyte._logging import logger
+from flyte.storage._parallel_reader import DownloadQueueEmpty
 from flyte.syncify import syncify
 
 _CHECKPOINT_CACHE_KEY = "__flyte_sync_checkpoint__"
+
+
+def _is_recoverable_checkpoint_load_error(exc: BaseException) -> bool:
+    """
+    True for missing/empty checkpoint data. Obstore parallel download raises
+    :class:`DownloadQueueEmpty` inside :class:`asyncio.TaskGroup` on Python 3.11+,
+    which surfaces as :class:`BaseExceptionGroup` — a plain ``except DownloadQueueEmpty``
+    does not catch that.
+    """
+    try:
+        from builtins import BaseExceptionGroup
+    except ImportError:
+        # Python < 3.11: no task-group wrapped storage errors; isinstance never matches.
+        BaseExceptionGroup = type(None)  # type: ignore
+
+    if isinstance(exc, (AssertionError, FileNotFoundError, OSError, DownloadQueueEmpty)):
+        return True
+    if sys.version_info >= (3, 11) and isinstance(exc, BaseExceptionGroup):
+        return all(_is_recoverable_checkpoint_load_error(e) for e in exc.exceptions)
+    return False
 
 
 def _clear_directory_contents(directory: pathlib.Path) -> None:
@@ -110,7 +132,11 @@ class AsyncCheckpoint(Checkpoint):
             dest.mkdir(parents=True, exist_ok=True)
             await storage.get(self._checkpoint_src, dest, recursive=True)
             self._had_remote_prev = True
-        except (AssertionError, FileNotFoundError, OSError) as e:
+        except BaseException as e:
+            if isinstance(e, (KeyboardInterrupt, SystemExit)):
+                raise
+            if not _is_recoverable_checkpoint_load_error(e):
+                raise
             logger.debug("Checkpoint load skipped or failed for %s: %s", self._checkpoint_src, e)
             self._had_remote_prev = False
 

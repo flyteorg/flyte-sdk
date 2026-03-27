@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import json
 import pathlib
+import sys
 import tempfile
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from flyte._checkpoint import AsyncCheckpoint, task_checkpoint_cache_key
 from flyte.models import ActionID, Checkpoints, RawDataPath, TaskContext
 from flyte.report import Report
+from flyte.storage._parallel_reader import DownloadQueueEmpty
 
 
 def test_async_checkpoint_prev_exists() -> None:
@@ -46,6 +49,30 @@ def test_async_checkpoint_file_roundtrip() -> None:
         assert cp2.load() is not None
         state2 = next(cp2.path.rglob("state.json"))
         assert json.loads(state2.read_text(encoding="utf-8"))["step"] == 4
+
+
+@pytest.mark.asyncio
+async def test_async_checkpoint_load_treats_empty_remote_as_no_checkpoint() -> None:
+    """S3/recursive listing with zero objects raises DownloadQueueEmpty; load must not fail."""
+    with patch("flyte._checkpoint.storage.get", new_callable=AsyncMock) as mock_get:
+        mock_get.side_effect = DownloadQueueEmpty()
+        cp = AsyncCheckpoint("s3://bucket/out", "s3://bucket/prev/prefix/")
+        restored = await cp.load.aio()
+        assert restored is None
+
+
+@pytest.mark.skipif(sys.version_info < (3, 11), reason="asyncio.TaskGroup uses ExceptionGroup on 3.11+")
+@pytest.mark.asyncio
+async def test_async_checkpoint_load_treats_exception_group_download_queue_empty() -> None:
+    """Obstore uses TaskGroup; empty listing becomes ExceptionGroup(DownloadQueueEmpty(...))."""
+    from builtins import BaseExceptionGroup
+
+    eg = BaseExceptionGroup("unhandled errors in a TaskGroup", [DownloadQueueEmpty()])
+    with patch("flyte._checkpoint.storage.get", new_callable=AsyncMock) as mock_get:
+        mock_get.side_effect = eg
+        cp = AsyncCheckpoint("s3://bucket/out", "s3://bucket/prev/prefix/")
+        restored = await cp.load.aio()
+        assert restored is None
 
 
 @pytest.mark.asyncio

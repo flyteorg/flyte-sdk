@@ -27,7 +27,10 @@ import pathlib
 
 import flyte
 
-env = flyte.TaskEnvironment(name="checkpoint_generic_json")
+env = flyte.TaskEnvironment(
+    name="checkpoint_generic_json",
+    image=flyte.Image.from_debian_base(),
+)
 
 STATE_FILE = "state.json"
 RETRIES = 3
@@ -44,7 +47,7 @@ def resolve_state_file(root: pathlib.Path) -> pathlib.Path:
 
 
 @env.task(retries=RETRIES)
-async def durable_counter(steps: int = 100) -> int:
+async def durable_counter(steps: int = 10) -> int:
     tctx = flyte.ctx()
     assert tctx is not None
     ck = tctx.checkpoint
@@ -53,22 +56,26 @@ async def durable_counter(steps: int = 100) -> int:
     await ck.load.aio()
     path = resolve_state_file(ck.path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    n = 0
+    start = 0
+    print("PATH", path)
+    print("REMOTE PATH", ck._checkpoint_dest)
     if path.exists():
-        n = int(json.loads(path.read_text(encoding="utf-8"))["n"])
+        start = int(json.loads(path.read_text(encoding="utf-8"))["index"])
 
-    failure_interval = steps // RETRIES
-    for i in range(steps):
-        if i % failure_interval == 0 and i > 0:
+    print("START", start)
+
+    for index in range(start, steps):
+        if index == (steps // RETRIES):
             raise RuntimeError("Simulated failure")
-        n += 1
 
-        path.write_text(json.dumps({"n": n}), encoding="utf-8")
+        path.write_text(json.dumps({"index": index}), encoding="utf-8")
         await ck.save.aio(local_path=path)
-    return n
+    return index
 
 
 if __name__ == "__main__":
-    flyte.init_from_config()
-    run = flyte.with_runcontext(mode="local").run(durable_counter, steps=3)
-    print(run.outputs())
+    import logging
+
+    flyte.init_from_config(log_level=logging.DEBUG)
+    run = flyte.with_runcontext(mode="remote").run(durable_counter, steps=3)
+    print(run.url)

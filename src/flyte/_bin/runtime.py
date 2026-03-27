@@ -149,7 +149,7 @@ def main(
         resolver_args=resolver_args,
         action=ActionID(name=name, run_name=run_name, project=project, domain=domain, org=org),
         raw_data_path=RawDataPath(path=raw_data_path, path_rewrite=path_rewrite),
-        checkpoints=Checkpoints(checkpoint_path, prev_checkpoint),
+        checkpoints=Checkpoints(prev_checkpoint_path=prev_checkpoint, checkpoint_path=checkpoint_path),
         code_bundle=bundle,
         input_path=inputs,
         output_path=outputs_path,
