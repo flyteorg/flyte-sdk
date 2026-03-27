@@ -14,21 +14,21 @@ class ControllerClient:
     A client for the Controller API.
     """
 
-    def __init__(self, session: SessionConfig):
-        shared = session.connect_kwargs()
+    def __init__(self, session_cfg: SessionConfig):
+        shared = session_cfg.connect_kwargs()
         self._state_service = StateServiceClient(**shared)
         self._queue_service = QueueServiceClient(**shared)
         self._actions_service = ActionsServiceClient(**shared) if use_actions_service() else None
 
     @classmethod
     async def for_endpoint(cls, endpoint: str, insecure: bool = False, **kwargs) -> ControllerClient:
-        session = await create_session_config(endpoint, None, insecure=insecure, **kwargs)
-        return cls(session)
+        session_cfg = await create_session_config(endpoint, None, insecure=insecure, **kwargs)
+        return cls(session_cfg)
 
     @classmethod
     async def for_api_key(cls, api_key: str, insecure: bool = False, **kwargs) -> ControllerClient:
-        session = await create_session_config(None, api_key, insecure=insecure, **kwargs)
-        return cls(session)
+        session_cfg = await create_session_config(None, api_key, insecure=insecure, **kwargs)
+        return cls(session_cfg)
 
     @property
     def state_service(self) -> StateService:

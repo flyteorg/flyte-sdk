@@ -162,12 +162,10 @@ class Console:
 
 
 class ClientSet:
-    def __init__(self, session: SessionConfig):
-        self.endpoint = session.endpoint
-        self.insecure = session.insecure
-        self._console = Console(self.endpoint, self.insecure)
-        self._session_config = session
-        shared = session.connect_kwargs()
+    def __init__(self, session_cfg: SessionConfig):
+        self._console = Console(session_cfg.endpoint, session_cfg.insecure)
+        self._session_config = session_cfg
+        shared = session_cfg.connect_kwargs()
         self._admin_client = ProjectServiceClient(**shared)
         self._task_service = TaskServiceClient(**shared)
         self._app_service = AppServiceClient(**shared)
@@ -181,14 +179,14 @@ class ClientSet:
     @classmethod
     async def for_endpoint(cls, endpoint: str, *, insecure: bool = False, **kwargs) -> ClientSet:
         rpc_retries = kwargs.pop("rpc_retries", None)
-        session = await create_session_config(endpoint, None, insecure=insecure, rpc_retries=rpc_retries, **kwargs)
-        return cls(session)
+        session_cfg = await create_session_config(endpoint, None, insecure=insecure, rpc_retries=rpc_retries, **kwargs)
+        return cls(session_cfg)
 
     @classmethod
     async def for_api_key(cls, api_key: str, *, insecure: bool = False, **kwargs) -> ClientSet:
         rpc_retries = kwargs.pop("rpc_retries", None)
-        session = await create_session_config(None, api_key, insecure=insecure, rpc_retries=rpc_retries, **kwargs)
-        return cls(session)
+        session_cfg = await create_session_config(None, api_key, insecure=insecure, rpc_retries=rpc_retries, **kwargs)
+        return cls(session_cfg)
 
     @classmethod
     async def for_serverless(cls) -> ClientSet:
@@ -233,6 +231,10 @@ class ClientSet:
     @property
     def trigger_service(self) -> TriggerService:
         return self._trigger_service
+
+    @property
+    def endpoint(self) -> str:
+        return self._session_config.endpoint
 
     @property
     def session_config(self) -> SessionConfig:
