@@ -32,12 +32,21 @@ class ControllerClient:
 
     @property
     def state_service(self) -> StateService:
+        """
+        The state service.
+        """
         return self._state_service
 
     @property
     def queue_service(self) -> QueueService:
+        """
+        The queue service.
+        """
         return self._queue_service
 
     @property
     def actions_service(self) -> ActionsService | None:
+        """
+        The unified actions service (replaces QueueService + StateService when available).
+        """
         return self._actions_service
