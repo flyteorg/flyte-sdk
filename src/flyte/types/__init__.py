@@ -41,6 +41,10 @@ __all__ = [
 
 
 def _load_custom_type_transformers():
+    """Import and register types from ``flyte.plugins.types`` entry points (at most once)."""
+    if getattr(_load_custom_type_transformers, "_loaded", False):
+        return
+
     plugins = entry_points(group="flyte.plugins.types")
     for ep in plugins:
         try:
@@ -50,3 +54,5 @@ def _load_custom_type_transformers():
                 loaded()
         except Exception as e:
             logger.warning(f"Failed to load type transformer {ep.name} with error: {e}")
+
+    _load_custom_type_transformers._loaded = True  # type: ignore[attr-defined]

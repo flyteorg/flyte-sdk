@@ -219,6 +219,10 @@ class ImageBuildEngine:
     @staticmethod
     @alru_cache
     async def image_exists(image: Image) -> Optional[str]:
+        if image._is_flyte_default:
+            # For flyte default images, we skip the existence check because
+            # they are built and pushed as part of flytekit releases.
+            return image.uri
         if image.name is None:
             logger.debug(f"Image {image} has no name. Skip existence check.")
             return image.uri
@@ -321,10 +325,10 @@ class ImageBuildEngine:
 
             return DockerImageBuilder()
         else:
-            return cls._load_custom_type_transformers(builder)
+            return cls._load_custom_image_builders(builder)
 
     @classmethod
-    def _load_custom_type_transformers(cls, name: str) -> ImageBuilder:
+    def _load_custom_image_builders(cls, name: str) -> ImageBuilder:
         plugins = entry_points(group="flyte.plugins.image_builders")
         for ep in plugins:
             if ep.name != name:

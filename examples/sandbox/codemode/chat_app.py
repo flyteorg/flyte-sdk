@@ -59,7 +59,7 @@ env = FastAPIAppEnvironment(
         "httpx",
         "pydantic-monty",
     ),
-    secrets=flyte.Secret(key="anthropic-api-key", as_env_var="ANTHROPIC_API_KEY"),
+    secrets=flyte.Secret(key="internal-anthropic-api-key", as_env_var="ANTHROPIC_API_KEY"),
     scaling=flyte.app.Scaling(replicas=1),
 )
 

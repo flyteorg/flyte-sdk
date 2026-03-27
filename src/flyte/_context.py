@@ -109,6 +109,21 @@ class Context:
         """
         return Context(self.data.replace(preserve_original_types=preserve_original_types))
 
+    def new_in_driver_literal_conversion(self, in_driver_literal_conversion: bool) -> Context:
+        """
+        Return a context with :attr:`flyte.models.TaskContext.in_driver_literal_conversion` set on the active task.
+
+        Requires :meth:`is_task_context`. Use ``nullcontext()`` at call sites when there is no task context.
+        """
+        d = self.data
+        if d.task_context is None:
+            raise ValueError("new_in_driver_literal_conversion requires an active TaskContext")
+        return Context(
+            d.replace(
+                task_context=d.task_context.replace(in_driver_literal_conversion=in_driver_literal_conversion),
+            )
+        )
+
     def get_report(self) -> Optional[Report]:
         """
         Returns a report if within a task context, else a None
