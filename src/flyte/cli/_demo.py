@@ -2,6 +2,8 @@ import os
 import shutil
 import subprocess
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 import click
@@ -14,6 +16,7 @@ _KUBE_DIR = Path(
 _KUBECONFIG_PATH = _KUBE_DIR / "kubeconfig"
 _FLYTE_DEMO_CONFIG_DIR = Path.home() / ".flyte" / "demo"
 _PORTS = ["6443:6443", "30000:30000", "30001:30001", "30002:30002", "30003:30003", "30080:30080"]
+_CONSOLE_READYZ_URL = "http://localhost:30080/readyz"
 
 
 def _ensure_volume(volume_name: str) -> None:
@@ -84,6 +87,23 @@ def _run_container(
         cmd.extend(["--publish", port])
     cmd.append(image)
     subprocess.run(cmd, check=True)
+
+
+def _wait_for_console_ready(url: str, timeout: int = 300, poll_interval: float = 3.0) -> None:
+    click.echo("Waiting for flyte demo cluster to be ready...", nl=False)
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            with urllib.request.urlopen(url, timeout=5) as resp:
+                if resp.status == 200:
+                    return
+        except (urllib.error.URLError, OSError):
+            pass
+        if time.monotonic() > deadline:
+            click.echo("")
+            raise click.ClickException(f"Timed out after {timeout}s waiting for Flyte cluster ({url}).")
+        click.echo(".", nl=False)
+        time.sleep(poll_interval)
 
 
 def _wait_for_kubeconfig(kubeconfig_path: Path, timeout: int = 60) -> None:
@@ -170,6 +190,7 @@ def launch_demo(image_name: str, is_dev_mode: bool) -> None:
 
     _merge_kubeconfig(_KUBECONFIG_PATH, _CONTAINER_NAME)
     _switch_k8s_context()
+    _wait_for_console_ready(_CONSOLE_READYZ_URL)
 
     click.echo("\nFlyte demo cluster is ready!")
     click.echo("UI is available at http://localhost:30080/v2")
