@@ -97,6 +97,68 @@ def test_map_partials_unhappy():
 
 
 @pytest.mark.asyncio
+async def test_map_concurrency_is_respected():
+    """Regression test: MapAsyncIterator should not start more than `concurrency` tasks at once.
+
+    BUG: _initialize() ignores self.concurrency and creates all tasks immediately.
+    With concurrency=2 and 5 inputs, at most 2 tasks should run concurrently.
+    Currently all 5 are launched, so max_concurrent will equal 5.
+    """
+    import asyncio
+
+    from flyte._map import MapAsyncIterator
+
+    active = 0
+    max_concurrent = 0
+    gate = asyncio.Event()
+
+    async def slow_task():
+        nonlocal active, max_concurrent
+        active += 1
+        max_concurrent = max(max_concurrent, active)
+        await gate.wait()  # block until released
+        active -= 1
+
+    class FakeTask:
+        """Minimal stand-in for AsyncFunctionTaskTemplate.
+        .aio() returns a raw coroutine so asyncio.create_task wraps it directly —
+        no AsyncMock indirection that might swallow the coroutine body.
+        """
+
+        name = "slow_task"
+
+        def aio(self, *args, **kwargs):
+            del args, kwargs  # FakeTask accepts mapped args but slow_task ignores them
+            return slow_task()
+
+    iterator = MapAsyncIterator(
+        func=FakeTask(),
+        args=([1, 2, 3, 4, 5],),
+        name="test_concurrency",
+        concurrency=2,
+        return_exceptions=True,
+    )
+
+    # _initialize() has no awaits, so this completes synchronously and schedules
+    # all 5 task callbacks into the call_soon queue without running them yet.
+    await iterator._initialize()
+
+    # One sleep(0) yield: the event loop runs all 5 queued tasks until their first
+    # await (gate.wait()), then resumes this coroutine.
+    # With the bug all 5 reach gate.wait() simultaneously → max_concurrent == 5.
+    await asyncio.sleep(0)
+
+    # max_concurrent should be <= 2.
+    assert max_concurrent <= 2, (
+        f"Expected at most 2 concurrent tasks (concurrency=2), but {max_concurrent} ran at once. "
+        "MapAsyncIterator._initialize() is not honouring the concurrency parameter."
+    )
+
+    gate.set()
+    await asyncio.sleep(0)  # let remaining tasks complete
+
+
+@pytest.mark.asyncio
 async def test_map_async_iterator_initialize_with_partial():
     from functools import partial
     from unittest.mock import AsyncMock, Mock
