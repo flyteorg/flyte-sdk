@@ -1,19 +1,22 @@
 [project]
-name = "flyteplugins-wandb"
+name = "flyteplugins-papermill"
 dynamic = ["version"]
-description = "Weights & Biases plugin for Flyte"
+description = "Papermill plugin for Flyte - Run Jupyter notebooks as Flyte tasks"
 readme = "README.md"
 authors = [{ name = "Samhita Alla", email = "samhita@union.ai" }]
 requires-python = ">=3.10"
 dependencies = [
-    "wandb",
-    "flyte"
+    "papermill",
+    "nbconvert",
+    "nbformat",
+    "ipykernel",
+    "flyte",
 ]
 
 [dependency-groups]
 dev = [
-    "pytest>=8.3.5",
-    "pytest-asyncio>=0.26.0",
+    "pytest",
+    "pytest-asyncio",
 ]
 
 [build-system]
@@ -32,7 +35,6 @@ include = ["flyteplugins*"]
 root = "../../"
 
 [tool.pytest.ini_options]
-pythonpath = ["src"]
 norecursedirs = []
 log_cli = true
 log_cli_level = 20
@@ -70,10 +72,7 @@ select = [
     "FURB",
     "RUF",
 ]
-ignore = ["PGH003", "PLC0415"]
+ignore = ["PGH003", "PLC0415", "ASYNC240"]
 
 [tool.ruff.lint.per-file-ignores]
 "examples/*" = ["E402"]
-
-[tool.uv.sources]
-flyte = { path = "../../", editable = true }
