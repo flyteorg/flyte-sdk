@@ -17,6 +17,7 @@ from ._authenticators.factory import (
     get_async_proxy_authenticator,
 )
 
+
 @dataclass(frozen=True)
 class SessionConfig:
     endpoint: str

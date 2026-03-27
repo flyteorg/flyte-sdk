@@ -192,7 +192,15 @@ class TestClientSetSessionConfig:
     def test_exposes_session_config(self):
         from flyte.remote._client.controlplane import ClientSet
 
-        cs = ClientSet(SessionConfig(endpoint="https://example.com", insecure=False, insecure_skip_verify=False, interceptors=("a",), http_client="fake"))
+        cs = ClientSet(
+            SessionConfig(
+                endpoint="https://example.com",
+                insecure=False,
+                insecure_skip_verify=False,
+                interceptors=("a",),
+                http_client="fake",
+            )
+        )
         cfg = cs.session_config
         assert isinstance(cfg, SessionConfig)
         assert cfg.endpoint == "https://example.com"
