@@ -17,6 +17,7 @@ from flyte._logging import logger
 if TYPE_CHECKING:
     from flyteidl2.core import literals_pb2
 
+    from flyte._checkpoint import AsyncCheckpoint
     from flyte._internal.imagebuild.image_builder import ImageCache
     from flyte.report import Report
 
@@ -257,6 +258,43 @@ class TaskContext:
         :return: bool
         """
         return self.mode == "remote"
+
+    @property
+    def checkpoint(self) -> Optional[AsyncCheckpoint]:
+        """
+        Task checkpoint helper for the runtime ``checkpoint_path`` / ``prev_checkpoint`` prefixes.
+
+        Returns a lazily constructed :class:`~flyte.AsyncCheckpoint` cached on :attr:`data`, or
+        ``None`` when no checkpoint output prefix is configured. Use :meth:`~flyte.AsyncCheckpoint.load`
+        and :meth:`~flyte.AsyncCheckpoint.save` (sync), or ``.load.aio()`` / ``.save.aio()`` for async.
+        """
+        from flyte._checkpoint import AsyncCheckpoint as AsyncCheckpointCls
+        from flyte._checkpoint import task_checkpoint_cache_key
+
+        cps = self.checkpoints
+        if cps is None:
+            return None
+        dest = cps.checkpoint_path
+        if dest is None or not str(dest).strip():
+            return None
+        key = task_checkpoint_cache_key()
+        cached = self.data.get(key)
+        if cached is not None:
+            assert isinstance(cached, AsyncCheckpointCls)
+            return cached
+        prev = cps.prev_checkpoint_path
+        prev_n = prev.strip() if prev else None
+        cp = AsyncCheckpointCls(str(dest).strip(), prev_n or None)
+        self.data[key] = cp
+        return cp
+
+    @property
+    def attempt_number(self) -> int:
+        """
+        Get the attempt number for the current task.
+        :return: The attempt number.
+        """
+        return int(os.environ.get("FLYTE_ATTEMPT_NUMBER", "0"))
 
 
 @rich.repr.auto
