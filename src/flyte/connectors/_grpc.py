@@ -16,6 +16,6 @@ if "GRPC_VERBOSITY" not in os.environ:
     os.environ["GLOG_minloglevel"] = "2"
     os.environ["ABSL_LOG"] = "0"
 
-import grpc  # noqa: E402
+import grpc
 
 __all__ = ["grpc"]

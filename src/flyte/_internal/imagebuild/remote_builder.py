@@ -99,7 +99,7 @@ class RemoteImageChecker(ImageChecker):
             if cls._images_client is None:
                 if cfg.client is None:
                     raise ValueError("remote client should not be None")
-                cls._images_client = ImageServiceClient(**cfg.client._shared)
+                cls._images_client = ImageServiceClient(**cfg.client.session_config.connect_kwargs())
             resp = await cls._images_client.get_image(req)
             logger.debug(f"Image {resp.image.fqin} found in remote registry")
             return resp.image.fqin

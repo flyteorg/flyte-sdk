@@ -224,6 +224,6 @@ async def create_session_config(
         endpoint=endpoint,
         insecure=insecure or False,
         insecure_skip_verify=insecure_skip_verify or False,
-        interceptors=interceptors,
+        interceptors=tuple(interceptors),
         http_client=http_client,
     )
