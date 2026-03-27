@@ -4,7 +4,6 @@ import sys
 from http import HTTPStatus
 from typing import Callable, Dict, List, Tuple, Type, Union
 
-import grpc
 from flyteidl2.connector.connector_pb2 import (
     CreateTaskRequest,
     CreateTaskResponse,
@@ -28,6 +27,7 @@ from prometheus_client import Counter, Summary
 from flyte._internal.runtime.convert import Inputs, convert_from_inputs_to_native
 from flyte._logging import logger
 from flyte.connectors._connector import ConnectorRegistry, FlyteConnectorNotFound, get_resource_proto
+from flyte.connectors._grpc import grpc
 from flyte.connectors.utils import _start_grpc_server
 from flyte.models import NativeInterface, _has_default
 from flyte.syncify import syncify

@@ -26,14 +26,14 @@ from flyte._logging import logger
 
 P = ParamSpec("P")
 
-# Track loops that have already had the gRPC error handler installed
+# Track loops that have already had the polling error handler installed
 _configured_loops: set[int] = set()
 _configured_loops_lock = threading.Lock()
 
 
-def _ensure_grpc_error_handler_installed() -> None:
+def _ensure_polling_error_handler_installed() -> None:
     """
-    Install the gRPC error handler on the current event loop if not already done.
+    Install the polling error handler on the current event loop if not already done.
     Uses a thread-safe set to track which loops have been configured.
     """
     try:
@@ -49,7 +49,7 @@ def _ensure_grpc_error_handler_installed() -> None:
 
     import flyte.errors
 
-    loop.set_exception_handler(flyte.errors.silence_grpc_polling_error)
+    loop.set_exception_handler(flyte.errors.silence_polling_error)
 
 
 R_co = TypeVar("R_co", covariant=True)
@@ -95,9 +95,9 @@ class _BackgroundLoop:
         def exception_handler(loop, context):
             import flyte.errors
 
-            flyte.errors.silence_grpc_polling_error(loop, context)
+            flyte.errors.silence_polling_error(loop, context)
 
-        # Set the exception handler to silence specific gRPC polling errors
+        # Set the exception handler to silence specific polling errors
         self.loop.set_exception_handler(exception_handler)
         asyncio.set_event_loop(self.loop)
         self.loop.run_forever()
@@ -181,10 +181,10 @@ class _BackgroundLoop:
                 yield r
             return
 
-        # Install the gRPC error handler on the caller's event loop as well.
-        # This is needed because gRPC's async polling events may be delivered to
+        # Install the polling error handler on the caller's event loop as well.
+        # This is needed because async polling events may be delivered to
         # the caller's loop (e.g., FastAPI's event loop) when using .aio().
-        _ensure_grpc_error_handler_installed()
+        _ensure_polling_error_handler_installed()
 
         while True:
             try:
@@ -222,10 +222,10 @@ class _BackgroundLoop:
             # If we are already in the background loop, just run the coroutine
             return await coro
         try:
-            # Install the gRPC error handler on the caller's event loop as well.
-            # This is needed because gRPC's async polling events may be delivered to
+            # Install the polling error handler on the caller's event loop as well.
+            # This is needed because async polling events may be delivered to
             # the caller's loop (e.g., FastAPI's event loop) when using .aio().
-            _ensure_grpc_error_handler_installed()
+            _ensure_polling_error_handler_installed()
 
             # Otherwise, run it in the background loop and wait for the result
             future: concurrent.futures.Future[R_co] = asyncio.run_coroutine_threadsafe(coro, self.loop)

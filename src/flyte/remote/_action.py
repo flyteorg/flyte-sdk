@@ -18,9 +18,10 @@ from typing import (
     cast,
 )
 
-import grpc
 import rich.pretty
 import rich.repr
+from connectrpc.code import Code
+from connectrpc.errors import ConnectError
 from flyteidl2.common import identifier_pb2, list_pb2, phase_pb2
 from flyteidl2.task import common_pb2
 from flyteidl2.workflow import run_definition_pb2, run_service_pb2
@@ -246,7 +247,7 @@ class Action(ToJSONMixin):
                 sort_by=sort_pb2,
                 filters=filter_list or None,
             )
-            resp = await get_client().run_service.ListActions(
+            resp = await get_client().run_service.list_actions(
                 run_service_pb2.ListActionsRequest(
                     request=req,
                     run_id=identifier_pb2.RunIdentifier(
@@ -361,14 +362,14 @@ class Action(ToJSONMixin):
         Aborts / Terminates the action.
         """
         try:
-            await get_client().run_service.AbortAction(
+            await get_client().run_service.abort_action(
                 run_service_pb2.AbortActionRequest(
                     action_id=self.pb2.id,
                     reason=reason,
                 )
             )
-        except grpc.aio.AioRpcError as e:
-            if e.code() == grpc.StatusCode.NOT_FOUND:
+        except ConnectError as e:
+            if e.code == Code.NOT_FOUND:
                 return
             raise
 
@@ -646,7 +647,7 @@ class ActionDetails(ToJSONMixin):
         Get the details of the action. This is a placeholder for getting the action details.
         """
         ensure_client()
-        resp = await get_client().run_service.GetActionDetails(
+        resp = await get_client().run_service.get_action_details(
             run_service_pb2.GetActionDetailsRequest(
                 action_id=action_id,
             )
@@ -697,7 +698,7 @@ class ActionDetails(ToJSONMixin):
 
         call = cast(
             AsyncIterator[WatchActionDetailsResponse],
-            get_client().run_service.WatchActionDetails(
+            get_client().run_service.watch_action_details(
                 request=run_service_pb2.WatchActionDetailsRequest(
                     action_id=action_id,
                 )
@@ -709,8 +710,8 @@ class ActionDetails(ToJSONMixin):
                 yield v
                 if v.done():
                     return
-        except grpc.aio.AioRpcError as e:
-            if e.code() == grpc.StatusCode.CANCELLED:
+        except ConnectError as e:
+            if e.code == Code.CANCELED:
                 pass
             else:
                 raise e
@@ -962,7 +963,7 @@ class ActionDetails(ToJSONMixin):
             return True
         if self._inputs and not self.done():
             return False
-        resp = await get_client().run_service.GetActionData(
+        resp = await get_client().run_service.get_action_data(
             request=run_service_pb2.GetActionDataRequest(
                 action_id=self.pb2.id,
             )

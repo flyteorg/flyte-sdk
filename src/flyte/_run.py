@@ -166,7 +166,8 @@ class _Runner:
 
     @requires_initialization
     async def _run_remote(self, obj: TaskTemplate[P, R, F] | LazyEntity, *args: P.args, **kwargs: P.kwargs) -> Run:
-        import grpc
+        from connectrpc.code import Code
+        from connectrpc.errors import ConnectError
         from flyteidl2.common import identifier_pb2
         from flyteidl2.core import literals_pb2, security_pb2
         from flyteidl2.task import run_pb2
@@ -387,7 +388,7 @@ class _Runner:
                 notification_rule_name, notification_rules = resolve_notification_settings(self._notifications)
 
             try:
-                resp = await get_client().run_service.CreateRun(
+                resp = await get_client().run_service.create_run(
                     run_service_pb2.CreateRunRequest(
                         run_id=run_id,
                         project_id=project_id,
@@ -416,15 +417,15 @@ class _Runner:
                     ),
                 )
                 return Run(pb2=resp.run, _preserve_original_types=self._preserve_original_types)
-            except grpc.aio.AioRpcError as e:
-                if e.code() == grpc.StatusCode.UNAVAILABLE:
+            except ConnectError as e:
+                if e.code == Code.UNAVAILABLE:
                     raise flyte.errors.RuntimeSystemError(
                         "SystemUnavailableError",
                         "Flyte system is currently unavailable. check your configuration, or the service status.",
                     ) from e
-                elif e.code() == grpc.StatusCode.INVALID_ARGUMENT:
-                    raise flyte.errors.RuntimeUserError("InvalidArgumentError", e.details())
-                elif e.code() == grpc.StatusCode.ALREADY_EXISTS:
+                elif e.code == Code.INVALID_ARGUMENT:
+                    raise flyte.errors.RuntimeUserError("InvalidArgumentError", e.message)
+                elif e.code == Code.ALREADY_EXISTS:
                     # TODO maybe this should be a pass and return existing run?
                     raise flyte.errors.RuntimeUserError(
                         "RunAlreadyExistsError",
@@ -433,7 +434,7 @@ class _Runner:
                 else:
                     raise flyte.errors.RuntimeSystemError(
                         "RunCreationError",
-                        f"Failed to create run: {e.details()}",
+                        f"Failed to create run: {e.message}",
                     ) from e
 
         class DryRun(Run):
