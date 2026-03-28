@@ -14,7 +14,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 import flyte.errors
-from flyte._event import EventType, PromptType, _Event, new_event
+from flyte._event import EventType, EventWebhook, PromptType, _Event, new_event
+from flyte._internal.controllers._local_controller import _substitute_callback_uri
 from flyte.cli._tui._tracker import PendingEvent
 
 # event_service_pb2 doesn't exist yet (proto not compiled), so inject a mock
@@ -570,3 +571,187 @@ class TestRemoteEventSignal:
             await event.signal.aio(3.14)
 
         mock_client.event_service.SignalEvent.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# EventWebhook dataclass
+# ---------------------------------------------------------------------------
+
+
+class TestEventWebhook:
+    def test_basic_creation(self):
+        wh = EventWebhook(url="https://example.com/hook")
+        assert wh.url == "https://example.com/hook"
+        assert wh.payload is None
+
+    def test_with_payload(self):
+        wh = EventWebhook(
+            url="https://example.com/hook",
+            payload={"callback": "{callback_uri}", "event": "approval"},
+        )
+        assert wh.url == "https://example.com/hook"
+        assert wh.payload == {"callback": "{callback_uri}", "event": "approval"}
+
+    def test_event_with_webhook(self):
+        wh = EventWebhook(url="https://example.com/hook")
+        e = _Event(name="ev", webhook=wh)
+        assert e.webhook is wh
+
+    def test_event_webhook_defaults_none(self):
+        e = _Event(name="ev")
+        assert e.webhook is None
+
+
+class TestNewEventWebhook:
+    @pytest.mark.asyncio
+    async def test_new_event_with_webhook(self):
+        wh = EventWebhook(url="https://example.com/hook", payload={"cb": "{callback_uri}"})
+        e = await new_event.aio("wh_event", webhook=wh)
+        assert e.webhook is wh
+
+    @pytest.mark.asyncio
+    async def test_new_event_registers_with_webhook_in_task_context(self):
+        mock_controller = MagicMock()
+        mock_controller.register_event = AsyncMock()
+
+        mock_ctx = MagicMock()
+        mock_ctx.is_task_context.return_value = True
+
+        wh = EventWebhook(url="https://example.com/hook")
+        with patch("flyte._context.internal_ctx", return_value=mock_ctx), \
+             patch("flyte._internal.controllers.get_controller", return_value=mock_controller):
+            e = await new_event.aio("wh_reg_event", webhook=wh)
+
+        assert e.webhook is wh
+        mock_controller.register_event.assert_awaited_once_with(e)
+
+
+# ---------------------------------------------------------------------------
+# _substitute_callback_uri helper
+# ---------------------------------------------------------------------------
+
+
+class TestSubstituteCallbackUri:
+    def test_string_replacement(self):
+        assert _substitute_callback_uri("{callback_uri}", "http://x") == "http://x"
+
+    def test_string_partial_replacement(self):
+        result = _substitute_callback_uri("url={callback_uri}&done", "http://x")
+        assert result == "url=http://x&done"
+
+    def test_string_no_placeholder(self):
+        assert _substitute_callback_uri("no placeholder", "http://x") == "no placeholder"
+
+    def test_dict_replacement(self):
+        result = _substitute_callback_uri(
+            {"callback": "{callback_uri}", "static": "val"},
+            "http://x",
+        )
+        assert result == {"callback": "http://x", "static": "val"}
+
+    def test_nested_dict(self):
+        result = _substitute_callback_uri(
+            {"outer": {"inner": "{callback_uri}"}},
+            "http://x",
+        )
+        assert result == {"outer": {"inner": "http://x"}}
+
+    def test_list_replacement(self):
+        result = _substitute_callback_uri(["{callback_uri}", "other"], "http://x")
+        assert result == ["http://x", "other"]
+
+    def test_non_string_passthrough(self):
+        assert _substitute_callback_uri(42, "http://x") == 42
+        assert _substitute_callback_uri(True, "http://x") is True
+        assert _substitute_callback_uri(None, "http://x") is None
+
+
+# ---------------------------------------------------------------------------
+# Local controller: webhook firing
+# ---------------------------------------------------------------------------
+
+
+class TestLocalControllerWebhook:
+    @pytest.fixture
+    def controller(self):
+        from flyte._internal.controllers._local_controller import LocalController
+
+        mock_recorder = MagicMock()
+        mock_recorder.record_event_waiting.return_value = None
+        controller = LocalController.__new__(LocalController)
+        controller._registered_events = {}
+        controller._recorder = mock_recorder
+        return controller
+
+    @pytest.mark.asyncio
+    async def test_register_event_without_webhook_does_not_fire(self, controller):
+        e = _Event(name="ev_no_wh")
+        with patch.object(controller, "_fire_event_webhook", new_callable=AsyncMock) as mock_fire:
+            await controller.register_event(e)
+        mock_fire.assert_not_awaited()
+        assert "ev_no_wh" in controller._registered_events
+
+    @pytest.mark.asyncio
+    async def test_register_event_with_webhook_fires(self, controller):
+        wh = EventWebhook(url="https://example.com/hook", payload={"cb": "{callback_uri}"})
+        e = _Event(name="ev_wh", webhook=wh)
+        with patch.object(controller, "_fire_event_webhook", new_callable=AsyncMock) as mock_fire:
+            await controller.register_event(e)
+        mock_fire.assert_awaited_once_with(e)
+        assert "ev_wh" in controller._registered_events
+
+    @pytest.mark.asyncio
+    async def test_fire_event_webhook_posts_with_substituted_payload(self, controller):
+        wh = EventWebhook(
+            url="https://example.com/hook",
+            payload={"callback": "{callback_uri}", "event": "test"},
+        )
+        e = _Event(name="my_ev", webhook=wh)
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_resp)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            await controller._fire_event_webhook(e)
+
+        mock_client.post.assert_awaited_once_with(
+            "https://example.com/hook",
+            json={"callback": "local://events/my_ev/signal", "event": "test"},
+            headers={"Content-Type": "application/json"},
+        )
+
+    @pytest.mark.asyncio
+    async def test_fire_event_webhook_no_payload(self, controller):
+        wh = EventWebhook(url="https://example.com/hook")
+        e = _Event(name="ev_nopayload", webhook=wh)
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_resp)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            await controller._fire_event_webhook(e)
+
+        mock_client.post.assert_awaited_once_with(
+            "https://example.com/hook",
+            json=None,
+            headers={"Content-Type": "application/json"},
+        )
+
+    @pytest.mark.asyncio
+    async def test_fire_event_webhook_exception_logged_not_raised(self, controller):
+        wh = EventWebhook(url="https://example.com/hook")
+        e = _Event(name="ev_fail", webhook=wh)
+
+        with patch("httpx.AsyncClient", side_effect=Exception("connection error")):
+            # Should not raise
+            await controller._fire_event_webhook(e)

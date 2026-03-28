@@ -39,7 +39,7 @@ from ._task_environment import TaskEnvironment
 from ._timeout import Timeout, TimeoutType
 from ._trace import trace
 from ._trigger import Cron, FixedRate, Trigger, TriggerTime
-from ._event import new_event
+from ._event import EventWebhook, new_event
 from ._version import __version__
 
 sys.excepthook = custom_excepthook
@@ -127,4 +127,5 @@ __all__ = [
     "with_runcontext",
     "with_servecontext",
     "new_event",
+    "EventWebhook",
 ]

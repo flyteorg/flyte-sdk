@@ -376,6 +376,7 @@ class LocalController:
     async def register_event(self, event: Any):
         """
         Register an event that can be awaited. Stores the event for later retrieval.
+        If the event has a webhook configured, fires it asynchronously.
 
         :param event: Event object to register
         """
@@ -386,6 +387,36 @@ class LocalController:
 
         logger.debug(f"Registering event: {event.name}")
         self._registered_events[event.name] = event
+
+        if event.webhook is not None:
+            await self._fire_event_webhook(event)
+
+    async def _fire_event_webhook(self, event: Any):
+        """Fire the webhook associated with an event.
+
+        Substitutes ``{callback_uri}`` in all string values of the payload, then
+        POSTs the JSON body to the webhook URL.
+        """
+        import httpx
+
+        webhook = event.webhook
+        callback_uri = f"local://events/{event.name}/signal"
+
+        payload = webhook.payload
+        if payload is not None:
+            payload = _substitute_callback_uri(payload, callback_uri)
+
+        logger.debug(f"Firing webhook for event '{event.name}' to {webhook.url}")
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    webhook.url,
+                    json=payload,
+                    headers={"Content-Type": "application/json"},
+                )
+                logger.debug(f"Webhook response for event '{event.name}': {resp.status_code}")
+        except Exception:
+            logger.exception(f"Failed to fire webhook for event '{event.name}'")
 
     def _get_current_action_id(self) -> str:
         ctx = internal_ctx()
@@ -475,3 +506,14 @@ class LocalController:
 
         logger.debug(f"Event {event.name} received value: {result}")
         return result
+
+
+def _substitute_callback_uri(obj: Any, callback_uri: str) -> Any:
+    """Recursively replace ``{callback_uri}`` in all string values."""
+    if isinstance(obj, str):
+        return obj.replace("{callback_uri}", callback_uri)
+    if isinstance(obj, dict):
+        return {k: _substitute_callback_uri(v, callback_uri) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_substitute_callback_uri(item, callback_uri) for item in obj]
+    return obj
