@@ -24,7 +24,7 @@ from flyte.io import HashFunction
 
 # Create task environment with required dependencies
 img = flyte.Image.from_debian_base(name="polars-dataframe-hash").with_pip_packages(
-    "flyteplugins-polars>=2.0.0b56", pre=True
+    "flyteplugins-polars>=2.0.0b56"
 )
 
 env = flyte.TaskEnvironment(

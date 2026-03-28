@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12"
 # dependencies = [
-#   "flyte>=2.0.0b43",
+#   "flyte",
 #   "fastapi",
 #   "uvicorn",
 #   "python-multipart",

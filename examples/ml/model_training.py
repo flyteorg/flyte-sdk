@@ -3,7 +3,7 @@
 # dependencies = [
 #    "pandas",
 #    "pyarrow",
-#    "flyte>=0.2.0b10",
+#    "flyte",
 # ]
 # ///
 
@@ -19,7 +19,7 @@ import flyte
 driver = flyte.TaskEnvironment(
     name="driver",
     resources=flyte.Resources(cpu=1, memory="250Mi"),
-    image=flyte.Image.from_uv_script(__file__, name="flyte", registry="ghcr.io/flyteorg", pre=True).with_apt_packages(
+    image=flyte.Image.from_uv_script(__file__, name="flyte", registry="ghcr.io/flyteorg").with_apt_packages(
         "ca-certificates"
     ),
 )

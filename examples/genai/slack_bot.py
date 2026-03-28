@@ -2,7 +2,7 @@
 # requires-python = ">=3.10"
 # dependencies = [
 #     "slack-sdk>=3.33.5",
-#     "flyte>=2.0.0b25",
+#     "flyte",
 # ]
 # ///
 """

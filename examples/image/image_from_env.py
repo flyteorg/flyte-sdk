@@ -42,9 +42,7 @@ import flyte
 build_env = flyte.TaskEnvironment(
     name="build_env",
     image=(
-        flyte.Image.from_debian_base(name="base-image", python_version=(3, 12)).with_pip_packages(
-            "flyte", pre=True, extra_args="--prerelease=allow"
-        )
+        flyte.Image.from_debian_base(name="base-image", python_version=(3, 12)).with_pip_packages("flyte")
     ),
 )
 

@@ -5,7 +5,7 @@ private_package = "git+https://$GITHUB_PAT@github.com/pingsutw/flytex.git@2e20a2
 image = (
     Image.from_debian_base(install_flyte=True)
     .with_apt_packages("git", "vim", "curl")
-    .with_pip_packages(private_package, pre=True, secret_mounts=Secret("GITHUB_PAT"))
+    .with_pip_packages(private_package, secret_mounts=Secret("GITHUB_PAT"))
 )
 
 env = flyte.TaskEnvironment(name="private_package", image=image)
