@@ -7,8 +7,8 @@
 [![License](https://img.shields.io/badge/license-Apache%202.0-orange)](LICENSE)
 [![Try in Browser](https://img.shields.io/badge/Try%20in%20Browser-Live%20Demo-7652a2)](https://flyte2intro.apps.demo.hosted.unionai.cloud/)
 [![Docs](https://img.shields.io/badge/Docs-flyte-blue)](https://www.union.ai/docs/v2/flyte/user-guide/running-locally/)
-[![SDK Reference](https://img.shields.io/badge/SDK%20Reference-API-brightgreen)](https://www.union.ai/docs/v2/byoc/api-reference/flyte-sdk/)
-[![CLI Reference](https://img.shields.io/badge/CLI%20Reference-API-brightgreen)](https://www.union.ai/docs/v2/byoc/api-reference/flyte-cli/)
+[![SDK Reference](https://img.shields.io/badge/SDK%20Reference-API-brightgreen)](https://www.union.ai/docs/v2/union/api-reference/flyte-sdk/)
+[![CLI Reference](https://img.shields.io/badge/CLI%20Reference-API-brightgreen)](https://www.union.ai/docs/v2/union/api-reference/flyte-cli/)
 
 ## Install
 
@@ -124,8 +124,8 @@ pip install flyte[tui]
 
 - **[Live Demo](https://flyte2intro.apps.demo.hosted.unionai.cloud/)** — Try Flyte 2 in your browser
 - **[Documentation](https://www.union.ai/docs/v2/flyte/user-guide/running-locally/)** — Get started running locally
-- **[SDK Reference](https://www.union.ai/docs/v2/byoc/api-reference/flyte-sdk/)** — API reference docs
-- **[CLI Reference](https://www.union.ai/docs/v2/byoc/api-reference/flyte-cli/)** — CLI docs
+- **[SDK Reference](https://www.union.ai/docs/v2/union/api-reference/flyte-sdk/)** — API reference docs
+- **[CLI Reference](https://www.union.ai/docs/v2/union/api-reference/flyte-cli/)** — CLI docs
 - **[Join the Flyte 2 Production Preview](https://www.union.ai/try-flyte-2)** — Get early access
 - **[Features](FEATURES.md)** — Async parallelism, app serving, tracing, and more
 - **[Examples](examples/)** — Ready-to-run examples for every feature
