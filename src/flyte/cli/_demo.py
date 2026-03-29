@@ -190,7 +190,8 @@ def launch_demo(image_name: str, is_dev_mode: bool) -> None:
 
     _merge_kubeconfig(_KUBECONFIG_PATH, _CONTAINER_NAME)
     _switch_k8s_context()
-    _wait_for_console_ready(_CONSOLE_READYZ_URL)
+    if not is_dev_mode:
+        _wait_for_console_ready(_CONSOLE_READYZ_URL)
 
     click.echo("\nFlyte demo cluster is ready!")
     click.echo("UI is available at http://localhost:30080/v2")
