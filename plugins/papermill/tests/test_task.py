@@ -296,6 +296,170 @@ async def test_render_and_upload_report_strips_source_hidden():
 
 
 # ---------------------------------------------------------------------------
+# resolver — schema-based self-contained loading
+# ---------------------------------------------------------------------------
+
+
+def test_resolver_loader_args_schema_format():
+    """loader_args() produces the new schema-based flat key-value format."""
+    from flyteplugins.papermill.resolver import NotebookTaskResolver
+
+    task = make_task(inputs={"x": int, "y": float}, outputs={"result": int})
+    resolver = NotebookTaskResolver()
+    args = resolver.loader_args(task=task, root_dir=None)
+
+    args_dict = dict(zip(args[0::2], args[1::2]))
+    assert args_dict["notebook"].endswith(".ipynb")
+    assert args_dict["name"] == "test_task"
+
+    import json
+
+    input_schema = json.loads(args_dict["input-schema"])
+    assert "x" in input_schema
+    assert "y" in input_schema
+
+    output_schema = json.loads(args_dict["output-schema"])
+    assert "result" in output_schema
+
+
+def test_resolver_round_trip_basic_types():
+    """loader_args() + load_task() round-trips type schemas correctly."""
+    from flyteplugins.papermill.resolver import NotebookTaskResolver
+    from flyteplugins.papermill.task import NotebookTask
+
+    task = make_task(inputs={"x": int, "y": float}, outputs={"result": int})
+    resolver = NotebookTaskResolver()
+    args = resolver.loader_args(task=task, root_dir=None)
+
+    reconstructed = resolver.load_task(args)
+    assert isinstance(reconstructed, NotebookTask)
+    assert "x" in reconstructed.interface.inputs
+    assert "y" in reconstructed.interface.inputs
+    assert "result" in reconstructed.interface.outputs
+
+
+def test_resolver_round_trip_output_notebooks():
+    """output_notebooks=True: auto-added File outputs are stripped before serialization
+    and re-added by the reconstructed task's __init__."""
+    from flyte.io import File
+
+    from flyteplugins.papermill.resolver import NotebookTaskResolver
+
+    task = make_task(outputs={"result": int}, output_notebooks=True)
+    resolver = NotebookTaskResolver()
+    args = resolver.loader_args(task=task, root_dir=None)
+
+    import json
+
+    args_dict = dict(zip(args[0::2], args[1::2]))
+    output_schema = json.loads(args_dict["output-schema"])
+    # File outputs are stripped from schema so the reconstructed task can re-add them
+    assert "output_notebook" not in output_schema
+    assert "output_notebook_executed" not in output_schema
+    assert "result" in output_schema
+
+    config = json.loads(args_dict["config"])
+    assert config.get("output_notebooks") is True
+
+    reconstructed = resolver.load_task(args)
+    assert "output_notebook" in reconstructed.interface.outputs
+    assert reconstructed.interface.outputs["output_notebook"] is File
+
+
+def test_resolver_round_trip_no_outputs():
+    """Tasks with no outputs are serialized and reconstructed correctly."""
+    from flyteplugins.papermill.resolver import NotebookTaskResolver
+    from flyteplugins.papermill.task import NotebookTask
+
+    task = make_task(outputs=None)
+    resolver = NotebookTaskResolver()
+    args = resolver.loader_args(task=task, root_dir=None)
+
+    reconstructed = resolver.load_task(args)
+    assert isinstance(reconstructed, NotebookTask)
+    assert reconstructed.interface.outputs == {}
+
+
+def test_resolver_no_root_dir_preserves_original_path():
+    """Without root_dir, notebook_path is stored as the user originally wrote it,
+    not as the developer-machine absolute path."""
+    from flyteplugins.papermill.resolver import NotebookTaskResolver
+
+    # Use a relative path (as a user would write it)
+    task = make_task(notebook_path=NOTEBOOK_PATH)  # abs path stands in for the user's path
+    resolver = NotebookTaskResolver()
+    args = resolver.loader_args(task=task, root_dir=None)
+
+    args_dict = dict(zip(args[0::2], args[1::2]))
+    # When root_dir is None, we use task.notebook_path (the original string)
+    assert args_dict["notebook"] == task.notebook_path
+
+
+def test_resolver_notebook_relative_to_root_dir(tmp_path):
+    """When root_dir is provided, notebook path is stored relative to it."""
+    import shutil
+
+    from flyteplugins.papermill.resolver import NotebookTaskResolver
+
+    # Copy the test notebook into a temp "root" dir to simulate a code bundle
+    root = tmp_path / "bundle"
+    nb_dir = root / "notebooks"
+    nb_dir.mkdir(parents=True)
+    dest = nb_dir / "test_notebook.ipynb"
+    shutil.copy(NOTEBOOK_PATH, dest)
+
+    task = make_task(notebook_path=str(dest))
+    resolver = NotebookTaskResolver()
+    args = resolver.loader_args(task=task, root_dir=root)
+
+    args_dict = dict(zip(args[0::2], args[1::2]))
+    # Notebook path should be relative to the bundle root
+    assert not args_dict["notebook"].startswith("/")
+    assert "notebooks" in args_dict["notebook"]
+
+
+def test_resolver_load_task_resolves_relative_notebook(tmp_path):
+    """load_task() finds the notebook when the path is relative and CWD is the bundle root."""
+    import shutil
+    import sys
+
+    from flyteplugins.papermill.resolver import NotebookTaskResolver
+    from flyteplugins.papermill.task import NotebookTask
+
+    # Set up bundle structure
+    root = tmp_path / "bundle"
+    nb_dir = root / "notebooks"
+    nb_dir.mkdir(parents=True)
+    dest = nb_dir / "test_notebook.ipynb"
+    shutil.copy(NOTEBOOK_PATH, dest)
+
+    task = make_task(notebook_path=str(dest))
+    resolver = NotebookTaskResolver()
+    args = resolver.loader_args(task=task, root_dir=root)
+
+    # Simulate container: add bundle root to sys.path
+    old_sys_path = sys.path[:]
+    try:
+        sys.path.insert(0, str(root))
+        reconstructed = resolver.load_task(args)
+        assert isinstance(reconstructed, NotebookTask)
+        assert os.path.isabs(reconstructed.resolved_notebook_path)
+        assert os.path.exists(reconstructed.resolved_notebook_path)
+    finally:
+        sys.path[:] = old_sys_path
+
+
+def test_container_args_no_root_dir_required():
+    """container_args() no longer raises when root_dir is absent."""
+    from flyte.models import SerializationContext
+
+    task = make_task()
+    sctx = SerializationContext(version="1", input_path="/in", output_path="/out", root_dir=None)
+    args = task.container_args(sctx)
+    assert "--resolver" in args
+
+
+# ---------------------------------------------------------------------------
 # custom_config — Spark plugin delegation
 # ---------------------------------------------------------------------------
 

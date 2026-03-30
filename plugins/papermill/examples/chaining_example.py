@@ -17,29 +17,26 @@ env = flyte.TaskEnvironment(
     ),
 )
 
-step1 = NotebookTask(
-    name="step1_add",
-    notebook_path="notebooks/basic_math.ipynb",
-    task_environment=env,
-    inputs={"x": int, "y": float},
-    outputs={"result": float},
-)
-
-step2 = NotebookTask(
-    name="step2_add",
-    notebook_path="notebooks/basic_math.ipynb",
-    task_environment=env,
-    inputs={"x": int, "y": float},
-    outputs={"result": float},
-)
-
 
 @env.task
 def chained_workflow(a: int = 1, b: float = 2.0, c: float = 3.0) -> float:
     # step1: a + b
-    intermediate = step1(x=a, y=b)
+    intermediate = NotebookTask(
+        name="step1_add",
+        notebook_path="notebooks/basic_math.ipynb",
+        task_environment=env,
+        inputs={"x": int, "y": float},
+        outputs={"result": float},
+    )(x=a, y=b)
+
     # step2: intermediate + c
-    final = step2(x=int(intermediate), y=c)
+    final = NotebookTask(
+        name="step2_add",
+        notebook_path="notebooks/basic_math.ipynb",
+        task_environment=env,
+        inputs={"x": int, "y": float},
+        outputs={"result": float},
+    )(x=int(intermediate), y=c)
     return final
 
 

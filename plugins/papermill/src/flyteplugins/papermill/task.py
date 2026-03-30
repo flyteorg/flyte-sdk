@@ -181,7 +181,6 @@ class NotebookTask(TaskTemplate):
 
     # Internal
     _resolved_notebook_path: str = field(init=False, repr=False, default="")
-    _caller_file: str = field(init=False, repr=False, default="")
 
     def __init__(
         self,
@@ -205,17 +204,10 @@ class NotebookTask(TaskTemplate):
         output_notebooks: bool = False,
         **kwargs: Any,
     ):
-        # Capture the caller's file so the resolver can find this instance later
-        frame = sys._getframe(1)
-        caller_file = frame.f_globals.get("__file__", "")
-
-        # Resolve notebook path relative to the caller's file
+        # Resolve relative notebook paths against CWD (the project root when
+        # running normally). Absolute paths are used as-is.
         if not os.path.isabs(notebook_path):
-            if caller_file:
-                base_dir = os.path.dirname(os.path.abspath(caller_file))
-            else:
-                base_dir = os.getcwd()
-            resolved = os.path.normpath(os.path.join(base_dir, notebook_path))
+            resolved = os.path.normpath(os.path.join(os.getcwd(), notebook_path))
         else:
             resolved = os.path.normpath(notebook_path)
 
@@ -258,7 +250,6 @@ class NotebookTask(TaskTemplate):
         self.engine_kwargs = engine_kwargs or {}
         self.output_notebooks = output_notebooks
         self._resolved_notebook_path = resolved
-        self._caller_file = caller_file
 
         if task_environment is not None:
             task_environment._tasks[name] = self
@@ -695,10 +686,6 @@ class NotebookTask(TaskTemplate):
 
         return result
 
-    @property
-    def source_file(self) -> Optional[str]:
-        return self._caller_file or None
-
     def container_args(self, serialize_context: SerializationContext) -> list[str]:
         from .resolver import NotebookTaskResolver
 
@@ -747,14 +734,6 @@ class NotebookTask(TaskTemplate):
                 "--dest",
                 f"{serialize_context.code_bundle.destination or '.'}",
             ]
-
-        if not serialize_context.root_dir:
-            from flyte.errors import RuntimeSystemError
-
-            raise RuntimeSystemError(
-                "SerializationError",
-                "Root dir is required for NotebookTask serialization.",
-            )
 
         args = [
             *args,
