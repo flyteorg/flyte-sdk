@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 _SENTRY_DSN = "https://d0e3f0a470b8e1333411eff583cf4004@o4507249423810560.ingest.us.sentry.io/4511135180128256"
 
-_initialized = False
+_state = {"initialized": False}
 
 
 def _is_dev_mode() -> bool:
@@ -28,10 +28,9 @@ def _is_disabled() -> bool:
 
 def init() -> None:
     """Initialize Sentry SDK. Safe to call multiple times — only runs once."""
-    global _initialized
-    if _initialized:
+    if _state["initialized"]:
         return
-    _initialized = True
+    _state["initialized"] = True
 
     if _is_disabled() or _is_dev_mode():
         return
@@ -91,7 +90,7 @@ def count(key: str, value: int = 1, **tags: str) -> None:
         import sentry_sdk
 
         if sentry_sdk.is_initialized():
-            sentry_sdk.metrics.count(key, value, attributes=tags if tags else None)
+            sentry_sdk.metrics.count(key, value, attributes=tags or None)
             sentry_sdk.flush(timeout=2)
     except ImportError:
         pass
