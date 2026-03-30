@@ -1,9 +1,9 @@
 from pathlib import Path
 
-from flyteplugins.papermill import NotebookTask
-
 import flyte
 from flyte._image import PythonWheels
+
+from flyteplugins.papermill import NotebookTask
 
 env = flyte.TaskEnvironment(
     name="inline_example",
@@ -27,8 +27,6 @@ nb = NotebookTask(
 
 if __name__ == "__main__":
     flyte.init_from_config()
-    run_sync = flyte.with_runcontext(mode="remote", copy_style="all").run(
-        nb, x=3, y=1.5
-    )
+    run_sync = flyte.with_runcontext(mode="remote", copy_style="all").run(nb, x=3, y=1.5)
     print(f"Run URL: {run_sync.url}")
     print(f"Outputs: {run_sync.outputs()}")
