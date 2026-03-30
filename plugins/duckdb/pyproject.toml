@@ -8,6 +8,8 @@ requires-python = ">=3.10"
 dependencies = [
     "duckdb",
     "flyte",
+    "pandas",
+    "pyarrow",
 ]
 
 [dependency-groups]
