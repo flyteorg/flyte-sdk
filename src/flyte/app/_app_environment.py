@@ -274,6 +274,9 @@ class AppEnvironment(Environment):
                 cmd.append("--parameters")
                 cmd.append(self._serialize_parameters(parameter_overrides))
 
+            # Add raw-data-path with template variable for backend to substitute at runtime
+            cmd.extend(["--raw-data-path", "{{.rawOutputDataPrefix}}"])
+
             # Only add resolver args if _caller_frame is set and we can extract the module
             # (i.e., app was created in a module and can be found)
             if self._caller_frame is not None:
