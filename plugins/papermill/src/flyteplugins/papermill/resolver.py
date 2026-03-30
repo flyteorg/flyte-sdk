@@ -29,15 +29,14 @@ class NotebookTaskResolver:
         return "flyteplugins.papermill.resolver.NotebookTaskResolver"
 
     def load_task(self, loader_args: list[str]) -> TaskTemplate:
-        from flyteidl2.core.types_pb2 import LiteralType
-        from flyteplugins.papermill.task import NotebookTask
-        from google.protobuf import json_format
-
-        from flyte.types import TypeEngine
-
         # Ensure all IO type transformers are registered before attempting
         # guess_python_type — they are registered as side-effects of import.
         import flyte.io  # noqa: F401
+        from flyte.types import TypeEngine
+        from flyteidl2.core.types_pb2 import LiteralType
+        from google.protobuf import json_format
+
+        from flyteplugins.papermill.task import NotebookTask
 
         # Parse flat key-value list
         it = iter(loader_args)
@@ -46,9 +45,7 @@ class NotebookTaskResolver:
             try:
                 args_dict[key] = next(it)
             except StopIteration:
-                raise ValueError(
-                    f"Odd number of loader args — missing value for key '{key}'"
-                )
+                raise ValueError(f"Odd number of loader args — missing value for key '{key}'")
 
         notebook_path = args_dict["notebook"]
         name = args_dict["name"]
@@ -91,18 +88,14 @@ class NotebookTaskResolver:
             **config,
         )
 
-    def loader_args(
-        self, task: TaskTemplate, root_dir: pathlib.Path | None
-    ) -> list[str]:
-        from flyteplugins.papermill.task import NotebookTask
+    def loader_args(self, task: TaskTemplate, root_dir: pathlib.Path | None) -> list[str]:
+        from flyte.types import TypeEngine
         from google.protobuf import json_format
 
-        from flyte.types import TypeEngine
+        from flyteplugins.papermill.task import NotebookTask
 
         if not isinstance(task, NotebookTask):
-            raise TypeError(
-                f"NotebookTaskResolver only handles NotebookTask, got {type(task)}"
-            )
+            raise TypeError(f"NotebookTaskResolver only handles NotebookTask, got {type(task)}")
 
         # If the notebook is inside the bundle root, store a relative path so
         # it resolves correctly wherever the bundle is extracted in the container.
@@ -113,9 +106,7 @@ class NotebookTaskResolver:
         nb_path = pathlib.Path(task._resolved_notebook_path)
         if root_dir is not None:
             try:
-                notebook_arg = str(
-                    nb_path.relative_to(pathlib.Path(root_dir).resolve())
-                )
+                notebook_arg = str(nb_path.relative_to(pathlib.Path(root_dir).resolve()))
             except ValueError:
                 notebook_arg = str(nb_path)
         else:
@@ -130,23 +121,13 @@ class NotebookTaskResolver:
             return schema
 
         # Inputs
-        input_types = {
-            name: typ for name, (typ, _) in (task.interface.inputs or {}).items()
-        }
+        input_types = {name: typ for name, (typ, _) in (task.interface.inputs or {}).items()}
         input_schema = _types_to_schema(input_types)
 
         # Outputs: strip the auto-added notebook File outputs so the reconstructed
         # task can re-add them via output_notebooks=True in the config.
-        skip_outputs = (
-            {"output_notebook", "output_notebook_executed"}
-            if task.output_notebooks
-            else set()
-        )
-        output_types = {
-            name: typ
-            for name, typ in (task.interface.outputs or {}).items()
-            if name not in skip_outputs
-        }
+        skip_outputs = {"output_notebook", "output_notebook_executed"} if task.output_notebooks else set()
+        output_types = {name: typ for name, typ in (task.interface.outputs or {}).items() if name not in skip_outputs}
         output_schema = _types_to_schema(output_types)
 
         # Execution config (plugin_config is serialization-only; not needed at execution time)

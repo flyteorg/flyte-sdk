@@ -56,14 +56,10 @@ async def async_inline_workflow(x: int = 3, y: float = 1.5) -> int:
 
 if __name__ == "__main__":
     flyte.init_from_config()
-    run_sync = flyte.with_runcontext(mode="remote", copy_style="all").run(
-        sync_inline_workflow
-    )
+    run_sync = flyte.with_runcontext(mode="remote", copy_style="all").run(sync_inline_workflow)
     print(f"Run URL: {run_sync.url}")
     print(f"Outputs: {run_sync.outputs()}")
 
-    run_async = flyte.with_runcontext(mode="remote", copy_style="all").run(
-        async_inline_workflow
-    )
+    run_async = flyte.with_runcontext(mode="remote", copy_style="all").run(async_inline_workflow)
     print(f"Run URL: {run_async.url}")
     print(f"Outputs: {run_async.outputs()}")
