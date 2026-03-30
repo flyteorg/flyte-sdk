@@ -171,25 +171,40 @@ result = notebook_task(x=1, y=2.5)
 
 This runs the notebook synchronously via papermill and returns the Python outputs. No report is rendered (requires a task context), no uploads happen, and no plugin hooks are called.
 
-## Limitations
+## Calling from async tasks
 
-### Workflows must be synchronous
-
-`NotebookTask` execution is synchronous — papermill blocks while the notebook runs. Workflows that call a `NotebookTask` must use `def`, not `async def`:
+`NotebookTask` is a synchronous task (papermill blocks while the notebook runs). Call it with `nb(...)` from a sync task or `await nb.aio(...)` from an async task:
 
 ```python
-# Correct
+# Sync task — call directly
 @env.task
 def workflow(x: int) -> float:
     return notebook(x=x)
 
-# Will not work
+# Async task — use .aio()
 @env.task
 async def workflow(x: int) -> float:
-    return await notebook(x=x)
+    return await notebook.aio(x=x)
 ```
 
-Async tasks can still be called _inside_ the notebook via `await`; it's only the parent task that invokes the `NotebookTask` that must be synchronous.
+## Inline definition
+
+`NotebookTask` can be defined inside a task function rather than at module level. The resolver bakes the notebook path and type schemas into the task spec at registration time, so no module import is needed at execution time:
+
+```python
+@env.task
+def workflow(x: int = 3, y: float = 1.5) -> int:
+    from flyteplugins.papermill import NotebookTask
+
+    nb = NotebookTask(
+        name="add_numbers",
+        notebook_path="notebooks/basic_math.ipynb",
+        task_environment=env,
+        inputs={"x": int, "y": float},
+        outputs={"result": int},
+    )
+    return nb(x=x, y=y)
+```
 
 ## NotebookTask reference
 
@@ -223,6 +238,7 @@ See the [`examples/`](examples/) directory for complete working examples:
 - [`complex_types_example.py`](examples/complex_types_example.py) — `File`, `Dir`, and `DataFrame` inputs/outputs
 - [`call_tasks_example.py`](examples/call_tasks_example.py) — Calling Flyte tasks from within a notebook
 - [`async_example.py`](examples/async_example.py) — Calling async tasks from within a notebook
+- [`inline_example.py`](examples/inline_example.py) — Defining `NotebookTask` inline inside a task function
 - [`chaining_example.py`](examples/chaining_example.py) — Chaining multiple notebooks
 - [`mixed_workflow_example.py`](examples/mixed_workflow_example.py) — Mixing `NotebookTask` with regular tasks
 - [`spark_example.py`](examples/spark_example.py) — Spark notebooks via `plugin_config`

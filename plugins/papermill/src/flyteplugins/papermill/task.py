@@ -544,7 +544,7 @@ class NotebookTask(TaskTemplate):
         html_body, _ = exporter.from_notebook_node(nb)
 
         # Log rendered HTML to Flyte report
-        flyte.report.log(html_body, do_flush=True)
+        await flyte.report.log.aio(html_body, do_flush=True)
 
         if not self.output_notebooks:
             return None, None

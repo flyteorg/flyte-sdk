@@ -6,7 +6,7 @@ import json
 import os
 import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import nbformat
 import pytest
@@ -282,7 +282,9 @@ async def test_render_and_upload_report_strips_source_hidden():
         "output_notebook_path",
         new_callable=lambda: property(lambda self: executed_path),
     ):
-        with patch("flyte.report.log"):
+        mock_log = MagicMock()
+        mock_log.aio = AsyncMock()
+        with patch("flyte.report.log", mock_log):
             with patch("flyte._context.internal_ctx") as mock_ctx:
                 mock_ctx.return_value.is_task_context.return_value = False
                 await task._render_and_upload_report()
@@ -655,3 +657,30 @@ def test_forward_failure_writes_partial_output_notebook():
     cell_ids_with_output = [c.get("id") for c in nb.cells if c.get("outputs")]
     assert "step1" in cell_ids_with_output
     assert "step2" in cell_ids_with_output
+
+
+# ---------------------------------------------------------------------------
+# Inline NotebookTask — defined inside a function
+# ---------------------------------------------------------------------------
+
+
+def test_forward_inline_definition():
+    """NotebookTask defined inside a function works the same as module-level."""
+    from flyteplugins.papermill.task import NotebookTask
+
+    def make_inline_task():
+        with patch("flyte.TaskEnvironment") as mock_env_cls:
+            mock_env = MagicMock()
+            mock_env_cls.return_value = mock_env
+            mock_env._tasks = {}
+            return NotebookTask(
+                name="inline_task",
+                notebook_path=NOTEBOOK_PATH,
+                task_environment=mock_env,
+                inputs={"x": int, "y": float},
+                outputs={"result": int},
+            )
+
+    task = make_inline_task()
+    result = task.forward(x=3, y=1.5)
+    assert result == 4
