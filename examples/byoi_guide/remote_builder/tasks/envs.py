@@ -16,10 +16,12 @@ env_train_image = (
     flyte.Image.from_base("<your-registry>/training-base:latest")
     .clone(name="<your-org>/<your-image>", registry=REGISTRY, extendable=True)
     .with_commands(["/opt/venv/bin/pip install flyte"])
-    .with_env_vars({
-        "PATH": "/opt/venv/bin:$PATH",
-        "PYTHONPATH": "/workspace",   # /workspace is WORKDIR
-    })
+    .with_env_vars(
+        {
+            "PATH": "/opt/venv/bin:$PATH",
+            "PYTHONPATH": "/workspace",  # /workspace is WORKDIR
+        }
+    )
     .with_code_bundle()
 )
 
@@ -31,7 +33,7 @@ env_data_image = (
     flyte.Image.from_base("<your-registry>/data-prep-base:latest")
     .clone(name="<your-org>/<your-image>", registry=REGISTRY, extendable=True)
     .with_commands(["/opt/conda/bin/pip install flyte"])
-    .with_env_vars({"PYTHONPATH": "/app"})   # /app is WORKDIR; code bundle extracts here
+    .with_env_vars({"PYTHONPATH": "/app"})  # /app is WORKDIR; code bundle extracts here
     .with_code_bundle()
 )
 

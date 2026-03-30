@@ -1,4 +1,3 @@
-import flyte
 
 from workflow_code.envs import env_data, env_train
 

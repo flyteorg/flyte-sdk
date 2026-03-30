@@ -17,11 +17,12 @@ Run (from v2_guide/pure_byoi/):
   uv run main.py
 """
 
-import flyte
 from workflow_code.tasks import prepare
 
+import flyte
+
 DATA_PREP_IMAGE = "<your-registry>/data-prep:latest"
-TRAINING_IMAGE  = "<your-registry>/training:latest"
+TRAINING_IMAGE = "<your-registry>/training:latest"
 
 if __name__ == "__main__":
     # No root_dir — Flyte does not inject code. The images contain everything.

@@ -24,7 +24,6 @@ Run (from v2_guide/remote_builder/):
 import pathlib
 
 import flyte
-from tasks.tasks import prepare
 
 HERE = pathlib.Path(__file__).parent
 
@@ -38,5 +37,6 @@ if __name__ == "__main__":
 
     # Production: bake code into both images, pin to a version.
     from tasks.envs import env_data, env_train
+
     flyte.deploy(env_data, copy_style="none", version="3.0.0")
     flyte.deploy(env_train, copy_style="none", version="3.0.0")
