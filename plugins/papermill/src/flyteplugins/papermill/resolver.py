@@ -35,6 +35,10 @@ class NotebookTaskResolver:
 
         from flyte.types import TypeEngine
 
+        # Ensure all IO type transformers are registered before attempting
+        # guess_python_type — they are registered as side-effects of import.
+        import flyte.io  # noqa: F401
+
         # Parse flat key-value list
         it = iter(loader_args)
         args_dict: dict[str, str] = {}

@@ -340,6 +340,29 @@ def test_resolver_round_trip_basic_types():
     assert "result" in reconstructed.interface.outputs
 
 
+def test_resolver_round_trip_complex_types():
+    """DataFrame, File, and Dir types survive the loader_args/load_task round-trip."""
+    from flyte.io import DataFrame, Dir, File
+
+    from flyteplugins.papermill.resolver import NotebookTaskResolver
+    from flyteplugins.papermill.task import NotebookTask
+
+    task = make_task(
+        inputs={"df": DataFrame, "f": File, "d": Dir},
+        outputs={"out_df": DataFrame},
+    )
+    resolver = NotebookTaskResolver()
+    args = resolver.loader_args(task=task, root_dir=None)
+    reconstructed = resolver.load_task(args)
+
+    assert isinstance(reconstructed, NotebookTask)
+    # inputs are stored as (type, default) tuples
+    assert reconstructed.interface.inputs["df"][0] is DataFrame
+    assert reconstructed.interface.inputs["f"][0] is File
+    assert reconstructed.interface.inputs["d"][0] is Dir
+    assert reconstructed.interface.outputs["out_df"] is DataFrame
+
+
 def test_resolver_round_trip_output_notebooks():
     """output_notebooks=True: auto-added File outputs are stripped before serialization
     and re-added by the reconstructed task's __init__."""
