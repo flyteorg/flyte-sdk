@@ -115,6 +115,8 @@ class DuckDB(TaskTemplate):
                 raise ValueError("A query must be provided at task definition or at runtime via a 'query' input.")
 
             queries = query if isinstance(query, list) else [query]
+            if not queries:
+                raise ValueError("Query list must not be empty.")
             result = self._execute_queries(con, queries, params)
             return DataFrame.wrap_df(result.to_arrow_table())
         finally:
@@ -143,7 +145,7 @@ class DuckDB(TaskTemplate):
                 else:
                     current_params = params
 
-                if "insert" in query.lower():
+                if query.lstrip().lower().startswith("insert"):
                     result = con.executemany(query, current_params)
                 else:
                     result = con.execute(query, current_params)

@@ -131,6 +131,12 @@ class TestExecute:
         with pytest.raises(ValueError, match="query must be provided"):
             await task.execute()
 
+    @pytest.mark.asyncio
+    async def test_empty_query_list_raises(self):
+        task = DuckDB(name="empty_list", query=[])
+        with pytest.raises(ValueError, match="must not be empty"):
+            await task.execute()
+
 
 # ---------------------------------------------------------------------------
 # Execute: DataFrame inputs
@@ -178,6 +184,23 @@ class TestDataFrameInputs:
 # ---------------------------------------------------------------------------
 # Execute: parameterized queries
 # ---------------------------------------------------------------------------
+
+
+class TestInsertDetection:
+    @pytest.mark.asyncio
+    async def test_column_named_insert_not_treated_as_insert(self):
+        """A SELECT on a column named 'insert_date' should use execute(), not executemany()."""
+        task = _make_task(
+            query=[
+                "CREATE TABLE log (insert_date DATE, val INTEGER)",
+                "INSERT INTO log VALUES ('2026-01-01', 1)",
+                "SELECT insert_date FROM log WHERE val = ?",
+            ],
+            inputs={"params": list},
+        )
+        result = await task.execute(params=[1])
+        out = result.val.to_pandas()
+        assert len(out) == 1
 
 
 class TestParameterizedQueries:
