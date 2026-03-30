@@ -25,7 +25,7 @@ env = flyte.TaskEnvironment(
     resources=flyte.Resources(cpu=2, memory="2Gi"),
     secrets=[flyte.Secret(key="openai-api-key", as_env_var="OPENAI_API_KEY")],
     image=flyte.Image.from_debian_base().with_uv_project(
-        pyproject_file=pathlib.Path(__file__).parent / "pyproject.toml", pre=True
+        pyproject_file=pathlib.Path(__file__).parent / "pyproject.toml"
     ),
     reusable=flyte.ReusePolicy(
         replicas=(1, 5),
