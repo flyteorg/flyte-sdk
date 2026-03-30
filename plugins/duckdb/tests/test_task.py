@@ -137,6 +137,12 @@ class TestExecute:
         with pytest.raises(ValueError, match="must not be empty"):
             await task.execute()
 
+    @pytest.mark.asyncio
+    async def test_ddl_only_query_returns_empty(self):
+        task = _make_task(query="CREATE TABLE t (id INTEGER)")
+        result = await task.execute()
+        assert result.val is not None
+
 
 # ---------------------------------------------------------------------------
 # Execute: DataFrame inputs
