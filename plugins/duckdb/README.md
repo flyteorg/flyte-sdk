@@ -1,8 +1,8 @@
 # DuckDB Plugin for Flyte
 
-Run DuckDB SQL queries as Flyte tasks with parameterized inputs, extension support, and DataFrame output.
+Run DuckDB SQL queries as Flyte tasks with DataFrame inputs, parameterized queries, and extension support.
 
-DuckDB is an embedded analytical database (like SQLite for OLAP). Queries execute locally and synchronously, so no remote credentials or connection setup is required.
+DuckDB is an embedded analytical database (like SQLite for OLAP). Queries execute locally and synchronously.
 
 ## Installation
 
@@ -13,134 +13,95 @@ pip install flyteplugins-duckdb
 ## Quick start
 
 ```python
-from flyteplugins.duckdb import DuckDB, DuckDBConfig
+import pandas as pd
+from flyteplugins.duckdb import DuckDB
 
-import flyte
-
-config = DuckDBConfig()
-
-query = DuckDB(
-    name="count_rows",
-    query_template="SELECT COUNT(*) AS total FROM 'data.parquet'",
-    plugin_config=config,
-    output_dataframe_type=pd.DataFrame,
-)
-```
-
-## In-memory queries
-
-By default, DuckDB runs in-memory. This is ideal for ad-hoc analytics and querying files directly:
-
-```python
-config = DuckDBConfig()  # defaults to database_path=":memory:"
-
-task = DuckDB(
+analyze = DuckDB(
     name="analyze",
-    query_template="SELECT * FROM 'sales.parquet' WHERE amount > 100",
-    plugin_config=config,
-    output_dataframe_type=pd.DataFrame,
+    query="SELECT SUM(a) AS total FROM mydf",
+    inputs={"mydf": pd.DataFrame},
 )
 ```
 
-## File-based databases
+## DataFrame inputs
 
-To query a persistent DuckDB database file:
+Pass pandas DataFrames or PyArrow Tables as inputs. They are registered as virtual tables queryable by name:
 
 ```python
-config = DuckDBConfig(database_path="/data/analytics.duckdb")
+import pyarrow as pa
 
 task = DuckDB(
-    name="query_db",
-    query_template="SELECT * FROM customers LIMIT 10",
-    plugin_config=config,
-    output_dataframe_type=pd.DataFrame,
+    name="join_tables",
+    query="SELECT a.name, b.total FROM users a JOIN orders b ON a.id = b.user_id",
+    inputs={"users": pd.DataFrame, "orders": pa.Table},
 )
 ```
+
+You can also pass `flyte.io.DataFrame` for interoperability with any DataFrame type in the Flyte ecosystem.
 
 ## Parameterized queries
 
-Use `%(name)s` placeholders and typed `inputs`:
+Use `?` or `$N` placeholders with list parameters:
 
 ```python
-lookup = DuckDB(
-    name="lookup_user",
-    query_template="SELECT * FROM 'users.parquet' WHERE id = %(user_id)s",
-    plugin_config=config,
-    inputs={"user_id": int},
-    output_dataframe_type=pd.DataFrame,
+task = DuckDB(
+    name="filtered",
+    query="SELECT * FROM mydf WHERE age > ?",
+    inputs={"mydf": pd.DataFrame, "params": list},
+)
+```
+
+## Multiple queries
+
+Pass a list of queries. All are executed in order and the result of the last query is returned:
+
+```python
+task = DuckDB(
+    name="etl",
+    query=[
+        "CREATE TABLE staging AS SELECT * FROM raw WHERE active = true",
+        "SELECT department, COUNT(*) AS cnt FROM staging GROUP BY department",
+    ],
+    inputs={"raw": pd.DataFrame},
+)
+```
+
+## Runtime queries
+
+Omit `query` and provide it at execution time via a `query` string input:
+
+```python
+task = DuckDB(
+    name="dynamic",
+    inputs={"mydf": pd.DataFrame, "query": str},
 )
 ```
 
 ## Extensions
 
-DuckDB supports extensions for additional functionality. Install and load them via `DuckDBConfig.extensions`:
+DuckDB extensions are auto-installed and loaded before query execution:
 
 ```python
-config = DuckDBConfig(extensions=["httpfs"])
+from flyteplugins.duckdb import DuckDBConfig
 
 task = DuckDB(
-    name="query_s3",
-    query_template="SELECT * FROM 's3://bucket/data.parquet' LIMIT 100",
-    plugin_config=config,
-    output_dataframe_type=pd.DataFrame,
+    name="s3_query",
+    query="SELECT * FROM 's3://bucket/data.parquet' LIMIT 100",
+    config=DuckDBConfig(extensions=["httpfs"]),
 )
 ```
 
-Common extensions:
-- `httpfs` - Read files from HTTP/S3
-- `spatial` - Geospatial functions
-- `json` - JSON processing
-- `excel` - Read Excel files
+Common extensions: `httpfs`, `json`, `spatial`, `excel`, `parquet`.
 
-## Reading results as DataFrames
-
-Set `output_dataframe_type` to get query results as a pandas DataFrame:
+## Configuration
 
 ```python
-import pandas as pd
+from flyteplugins.duckdb import DuckDBConfig
 
-select_task = DuckDB(
-    name="get_data",
-    query_template="SELECT * FROM 'data.parquet'",
-    plugin_config=config,
-    output_dataframe_type=pd.DataFrame,
-)
-```
-
-## Full example
-
-```python
-import pandas as pd
-from flyteplugins.duckdb import DuckDB, DuckDBConfig
-
-import flyte
-
-config = DuckDBConfig(extensions=["httpfs"])
-
-analyze_task = DuckDB(
-    name="analyze_sales",
-    query_template="SELECT region, SUM(amount) as total FROM 'sales.parquet' GROUP BY region",
-    plugin_config=config,
-    output_dataframe_type=pd.DataFrame,
+config = DuckDBConfig(
+    database_path=":memory:",      # default; or "/path/to/file.duckdb"
+    extensions=["httpfs", "json"],
 )
 
-duckdb_env = flyte.TaskEnvironment.from_task("duckdb_env", analyze_task)
-
-env = flyte.TaskEnvironment(
-    name="example_env",
-    image=flyte.Image.from_debian_base().with_pip_packages("flyteplugins-duckdb"),
-    depends_on=[duckdb_env],
-)
-
-
-@env.task
-async def main() -> float:
-    df = await analyze_task()
-    return df["total"].sum().item()
-
-
-if __name__ == "__main__":
-    flyte.init_from_config()
-    run = flyte.with_runcontext(mode="remote").run(main)
-    print(run.url)
+task = DuckDB(name="my_task", query="SELECT 1", config=config)
 ```
