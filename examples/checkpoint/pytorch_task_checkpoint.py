@@ -10,10 +10,10 @@
 PyTorch checkpoint via TaskContext
 ==================================
 
-Saves ``model.pt`` (state dict + optimizer + epoch) under the Flyte checkpoint
-prefix using :class:`~flyte.AsyncCheckpoint`. Use :meth:`~flyte.AsyncCheckpoint.load`
-and :meth:`~flyte.AsyncCheckpoint.save` (sync), or ``await ...load.aio()`` /
-``await ...save.aio(...)`` from async code.
+Saves ``training.pt`` (state dict + optimizer + epoch) using :class:`~flyte.AsyncCheckpoint`,
+following the same load / persist pattern as ``huggingface_trainer_checkpoint.py`` (resolve a local
+root from ``await checkpoint.load.aio()``, sync :meth:`~flyte.AsyncCheckpoint.save` at each epoch end,
+then a final ``await checkpoint.save.aio(...)``).
 
 **Note:** Use an editable install of this SDK (or a release that includes
 ``TaskContext.checkpoint``); see ``generic_data_checkpoint.py`` for details.
@@ -43,17 +43,23 @@ def weights_path(root: pathlib.Path) -> pathlib.Path:
 
 @env.task()
 async def train_linear(epochs: int = 3) -> float:
-    tctx = flyte.ctx()
-    assert tctx is not None
-    ck = tctx.checkpoint
+    ctx = flyte.ctx()
+    assert ctx is not None
+    ck = ctx.checkpoint
     assert ck is not None
+
+    checkpoint_path: pathlib.Path | None = await ck.load.aio()
+    if checkpoint_path is None:
+        train_root = pathlib.Path("pytorch_linear")
+    else:
+        train_root = checkpoint_path if checkpoint_path.is_dir() else checkpoint_path.parent / "pytorch_linear"
+    train_root.mkdir(parents=True, exist_ok=True)
+    wpath = weights_path(train_root)
 
     model = nn.Linear(4, 1)
     opt = torch.optim.SGD(model.parameters(), lr=0.01)
     start = 0
 
-    await ck.load.aio()
-    wpath = weights_path(ck.path)
     if wpath.exists():
         blob = torch.load(wpath, map_location="cpu", weights_only=False)
         model.load_state_dict(blob["model"])
@@ -68,11 +74,13 @@ async def train_linear(epochs: int = 3) -> float:
         loss.backward()
         opt.step()
 
-    wpath.parent.mkdir(parents=True, exist_ok=True)
-    torch.save(
-        {"model": model.state_dict(), "opt": opt.state_dict(), "epoch": epochs - 1},
-        wpath,
-    )
+        wpath.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(
+            {"model": model.state_dict(), "opt": opt.state_dict(), "epoch": epoch},
+            wpath,
+        )
+        ck.save(wpath)
+
     await ck.save.aio(wpath)
     with torch.no_grad():
         return float(model(torch.ones(1, 4)).squeeze().item())

@@ -10,9 +10,10 @@
 Scikit-learn partial_fit with checkpoints
 =========================================
 
-``SGDClassifier.partial_fit`` is resumed across task retries by pickling the
-estimator to a file under :attr:`flyte.AsyncCheckpoint.path` and uploading it with
-:meth:`flyte.AsyncCheckpoint.save` or ``await checkpoint.save.aio(path)`` (positional path or ``bytes``).
+``SGDClassifier.partial_fit`` is resumed across task retries by pickling the estimator to
+``sgd_bundle.pkl``, matching ``huggingface_trainer_checkpoint.py``: resolve a bundle directory from
+``await checkpoint.load.aio()``, call blocking :meth:`~flyte.AsyncCheckpoint.save` after each training
+chunk (incremental training step), then ``await checkpoint.save.aio`` for the final state.
 
 **Note:** ``uv run --script`` may install an older ``flyte`` from PyPI without
 ``TaskContext.checkpoint``. Run with a venv where this repository is installed
@@ -44,18 +45,24 @@ def bundle_path(root: pathlib.Path) -> pathlib.Path:
 
 @env.task()
 async def incremental_sgd(chunks: int = 4) -> float:
-    tctx = flyte.ctx()
-    assert tctx is not None
-    ck = tctx.checkpoint
+    ctx = flyte.ctx()
+    assert ctx is not None
+    ck = ctx.checkpoint
     assert ck is not None
+
+    checkpoint_path: pathlib.Path | None = await ck.load.aio()
+    if checkpoint_path is None:
+        bundle_root = pathlib.Path("sklearn_partial")
+    else:
+        bundle_root = checkpoint_path if checkpoint_path.is_dir() else checkpoint_path.parent / "sklearn_partial"
+    bundle_root.mkdir(parents=True, exist_ok=True)
+    bpath = bundle_path(bundle_root)
 
     rng = np.random.default_rng(0)
     clf: SGDClassifier | None = None
     classes = np.array([0, 1])
     done = 0
 
-    await ck.load.aio()
-    bpath = bundle_path(ck.path)
     if bpath.exists():
         bundle = pickle.loads(bpath.read_bytes())
         clf = bundle["clf"]
@@ -72,7 +79,9 @@ async def incremental_sgd(chunks: int = 4) -> float:
 
         bpath.parent.mkdir(parents=True, exist_ok=True)
         bpath.write_bytes(pickle.dumps({"clf": clf, "chunks_done": i + 1}))
-        await ck.save.aio(bpath)
+        ck.save(bpath)
+
+    await ck.save.aio(bpath)
 
     assert clf is not None
     x_test = rng.standard_normal((64, 8))

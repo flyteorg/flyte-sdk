@@ -22,7 +22,10 @@ Flow:
 2. :func:`transformers.trainer_utils.get_last_checkpoint` — pick up the latest ``checkpoint-*``
    folder after a restore (or ``None`` on the first run).
 3. ``Trainer.train(resume_from_checkpoint=...)`` — resume training when a checkpoint exists.
-4. ``await checkpoint.save.aio(output_dir)`` — upload the trainer output directory.
+4. :class:`FlyteTrainerCheckpointCallback` — at each epoch end, upload ``output_dir`` with
+   :meth:`~flyte.AsyncCheckpoint.save` (sync; safe inside ``Trainer.train``).
+5. ``await checkpoint.save.aio(output_dir)`` — final upload so the tail of the last epoch is persisted when
+   training stops on ``max_steps`` before the next epoch boundary.
 
 The model id ``hf-internal-testing/tiny-random-bert`` is small and intended for tests; the first
 run may download weights from the Hub. Transformers may print a "LOAD REPORT" with
@@ -37,6 +40,8 @@ see ``generic_data_checkpoint.py``.
 
 from __future__ import annotations
 
+import pathlib
+
 import torch
 from torch.utils.data import Dataset
 from transformers import (
@@ -44,9 +49,9 @@ from transformers import (
     AutoTokenizer,
     DataCollatorWithPadding,
     Trainer,
+    TrainerCallback,
     TrainingArguments,
 )
-from transformers.trainer_utils import get_last_checkpoint
 
 import flyte
 
@@ -79,19 +84,33 @@ class ToyTextDataset(Dataset):
         return enc
 
 
+class FlyteTrainerCheckpointCallback(TrainerCallback):
+    """
+    After each training epoch, upload ``output_dir`` (HF checkpoints and trainer state) to Flyte.
+
+    :class:`~transformers.Trainer` runs synchronously; use blocking
+    :meth:`~flyte.AsyncCheckpoint.save`, not ``await ...save.aio()`` here.
+    """
+
+    def __init__(self, flyte_checkpoint: flyte.AsyncCheckpoint, output_dir: pathlib.Path) -> None:
+        self._flyte_checkpoint = flyte_checkpoint
+        self._output_dir = output_dir
+
+    def on_epoch_end(self, args, state, control, **kwargs) -> None:
+        self._flyte_checkpoint.save(self._output_dir)
+
+
 @env.task()
 async def train_transformers(max_steps: int = 24) -> float:
-    tctx = flyte.ctx()
-    assert tctx is not None
-    checkpoint = tctx.checkpoint
-    assert checkpoint is not None
+    ctx = flyte.ctx()
+    assert ctx is not None
+    checkpoint = ctx.checkpoint
 
-    await checkpoint.load.aio()
-    root = checkpoint.path
-    output_dir = root / "hf_trainer"
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    resume_path = get_last_checkpoint(str(output_dir))
+    checkpoint_path: pathlib.Path | None = await checkpoint.load.aio()
+    if checkpoint_path is None:
+        output_dir = pathlib.Path("hf_trainer")
+    else:
+        output_dir = checkpoint_path
 
     tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
     model = AutoModelForSequenceClassification.from_pretrained(MODEL_ID, num_labels=2)
@@ -117,10 +136,9 @@ async def train_transformers(max_steps: int = 24) -> float:
         args=args,
         train_dataset=train_ds,
         data_collator=collator,
+        callbacks=[FlyteTrainerCheckpointCallback(checkpoint, output_dir)],
     )
-    trainer.train(resume_from_checkpoint=resume_path)
-
-    await checkpoint.save.aio(output_dir)
+    trainer.train(resume_from_checkpoint=checkpoint_path)
 
     model.eval()
     device = next(model.parameters()).device

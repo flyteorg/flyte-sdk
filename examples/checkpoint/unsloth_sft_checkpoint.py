@@ -25,8 +25,9 @@ Unsloth's docs describe checkpointing with ``save_strategy`` / ``save_steps`` an
 and the `continued pretraining / adapter notes
 <https://unsloth.ai/docs/basics/continued-pretraining>`__ for loading LoRA adapters.
 
-This example mirrors that pattern, but stores checkpoints under ``checkpoint.path`` and syncs them
-to object storage with ``await checkpoint.save.aio(output_dir)`` (file or directory path, or ``bytes``).
+This example mirrors ``huggingface_trainer_checkpoint.py``: resolve ``output_dir`` from
+``await checkpoint.load.aio()``, train with :class:`FlyteTrainerCheckpointCallback` (epoch-end Flyte
+:meth:`~flyte.AsyncCheckpoint.save`), and match HF resume semantics via ``resume_from_checkpoint``.
 
 **Hardware:** Unsloth currently requires an **NVIDIA, AMD, or Intel GPU** (not Apple Silicon / MPS).
 See `Unsloth requirements <https://unsloth.ai/docs/get-started/fine-tuning-for-beginners/unsloth-requirements>`__.
@@ -38,12 +39,31 @@ Imports from ``unsloth`` are deferred until the task body so the script can be p
 
 from __future__ import annotations
 
+import pathlib
+
+from transformers import TrainerCallback
+
 import flyte
 
 env = flyte.TaskEnvironment(name="checkpoint_unsloth_sft")
 
 # Small 4-bit model from the Unsloth Hub (multi-GB download on first run).
 MODEL_NAME = "unsloth/Llama-3.2-1B-bnb-4bit"
+
+
+class FlyteTrainerCheckpointCallback(TrainerCallback):
+    """
+    After each training epoch, upload ``output_dir`` (HF / TRL checkpoint tree) to Flyte.
+
+    Use blocking :meth:`~flyte.AsyncCheckpoint.save` inside ``Trainer.train`` (sync loop).
+    """
+
+    def __init__(self, flyte_checkpoint: flyte.AsyncCheckpoint, output_dir: pathlib.Path) -> None:
+        self._flyte_checkpoint = flyte_checkpoint
+        self._output_dir = output_dir
+
+    def on_epoch_end(self, args, state, control, **kwargs) -> None:
+        self._flyte_checkpoint.save(self._output_dir)
 
 
 def _tiny_instruction_dataset():
@@ -63,21 +83,20 @@ async def train_unsloth_sft(max_steps: int = 12) -> float:
     # Unsloth must be imported before TRL/transformers (see Unsloth docs). Deferred so Mac hosts
     # without a supported GPU can still load this module.
     import unsloth  # noqa: F401
-    from transformers.trainer_utils import get_last_checkpoint
     from trl import SFTConfig, SFTTrainer
     from unsloth import FastLanguageModel
 
-    tctx = flyte.ctx()
-    assert tctx is not None
-    checkpoint = tctx.checkpoint
+    ctx = flyte.ctx()
+    assert ctx is not None
+    checkpoint = ctx.checkpoint
     assert checkpoint is not None
 
-    await checkpoint.load.aio()
-    root = checkpoint.path
-    output_dir = root / "unsloth_sft"
+    checkpoint_path: pathlib.Path | None = await checkpoint.load.aio()
+    if checkpoint_path is None:
+        output_dir = pathlib.Path("unsloth_sft")
+    else:
+        output_dir = checkpoint_path if checkpoint_path.is_dir() else checkpoint_path.parent / "unsloth_sft"
     output_dir.mkdir(parents=True, exist_ok=True)
-
-    resume_path = get_last_checkpoint(str(output_dir))
 
     max_seq_length = 512
     model, tokenizer = FastLanguageModel.from_pretrained(
@@ -128,10 +147,9 @@ async def train_unsloth_sft(max_steps: int = 12) -> float:
         args=args,
         train_dataset=train_dataset,
         processing_class=tokenizer,
+        callbacks=[FlyteTrainerCheckpointCallback(checkpoint, output_dir)],
     )
-    trainer.train(resume_from_checkpoint=resume_path)
-
-    await checkpoint.save.aio(output_dir)
+    trainer.train(resume_from_checkpoint=checkpoint_path)
 
     for h in reversed(trainer.state.log_history):
         if "loss" in h:

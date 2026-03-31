@@ -173,6 +173,14 @@ class Checkpoint(ABC):
     def prev_exists(self) -> bool:
         """Whether the runtime provided a previous-checkpoint prefix (retry / resume)."""
 
+    @abstractmethod
+    def save(self, data: pathlib.Path | str | bytes) -> None:
+        """Save checkpoint data to the remote destination."""
+
+    @abstractmethod
+    def load(self) -> Optional[pathlib.Path]:
+        """Load checkpoint data from the remote source."""
+
 
 class AsyncCheckpoint(Checkpoint):
     """

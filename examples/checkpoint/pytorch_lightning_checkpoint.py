@@ -15,12 +15,15 @@ Trains a tiny regression model with Lightning's :class:`~lightning.pytorch.callb
 persisting the checkpoint directory through the task's Flyte checkpoint prefix so retries and
 new attempts can resume from ``last.ckpt``.
 
-Flow:
+Flow (aligned with ``huggingface_trainer_checkpoint.py``):
 
-1. ``await checkpoint.load.aio()`` — download any prior checkpoint tree into :attr:`~flyte.AsyncCheckpoint.path`.
-2. If ``last.ckpt`` exists under that tree, pass it to :meth:`~lightning.pytorch.trainer.trainer.Trainer.fit`
+1. ``checkpoint_path = await checkpoint.load.aio()`` — restore prior state into the checkpoint workspace when a
+   previous attempt exists.
+2. Resolve ``ckpt_dir`` from ``checkpoint_path`` (see task body); if ``last.ckpt`` exists, pass it to ``Trainer.fit``
    as ``ckpt_path``.
-3. After training, ``await checkpoint.save.aio(ckpt_dir)`` uploads the directory that holds ``last.ckpt``.
+3. :class:`FlyteLightningCheckpointCallback` — subclasses :class:`~lightning.pytorch.callbacks.ModelCheckpoint`
+   and, after each epoch checkpoint write, uploads ``dirpath`` with blocking :meth:`~flyte.AsyncCheckpoint.save`.
+4. Optional final ``await checkpoint.save.aio(ckpt_dir)`` if training can stop before the next epoch boundary.
 
 **Note:** Install this repository editable (``pip install -e .``) so ``TaskContext.checkpoint`` exists;
 see ``generic_data_checkpoint.py``.
@@ -35,12 +38,33 @@ import torch
 import torch.nn as nn
 from lightning.pytorch.callbacks import ModelCheckpoint
 from torch.utils.data import DataLoader, TensorDataset
+from typing_extensions import override
 
 import flyte
 
 env = flyte.TaskEnvironment(name="checkpoint_lightning")
 
 FEATURES = 16
+
+
+class FlyteLightningCheckpointCallback(ModelCheckpoint):
+    """
+    :class:`~lightning.pytorch.callbacks.ModelCheckpoint` that mirrors ``dirpath`` to Flyte after each
+    on-disk checkpoint cycle in :meth:`~ModelCheckpoint.on_train_epoch_end`.
+
+    Calls ``super()`` first so ``last.ckpt`` exists locally, then uses blocking
+    :meth:`~flyte.AsyncCheckpoint.save` (safe inside ``Trainer.fit``).
+    """
+
+    def __init__(self, flyte_checkpoint: flyte.AsyncCheckpoint, *, dirpath: str | pathlib.Path, **kwargs) -> None:
+        super().__init__(dirpath=str(dirpath), **kwargs)
+        self._flyte_checkpoint = flyte_checkpoint
+
+    @override
+    def on_train_epoch_end(self, trainer: L.Trainer, pl_module: L.LightningModule) -> None:
+        super().on_train_epoch_end(trainer, pl_module)
+        if self.dirpath:
+            self._flyte_checkpoint.save(pathlib.Path(self.dirpath))
 
 
 def find_last_checkpoint(root: pathlib.Path) -> str | None:
@@ -81,21 +105,24 @@ def _make_loaders(batch: int = 32, batches: int = 8) -> DataLoader:
 
 @env.task()
 async def train_lightning(max_epochs: int = 3) -> float:
-    tctx = flyte.ctx()
-    assert tctx is not None
-    checkpoint = tctx.checkpoint
+    ctx = flyte.ctx()
+    assert ctx is not None
+    checkpoint = ctx.checkpoint
     assert checkpoint is not None
 
-    await checkpoint.load.aio()
-    root = checkpoint.path
-    ckpt_dir = root / "pl_checkpoints"
+    checkpoint_path: pathlib.Path | None = await checkpoint.load.aio()
+    if checkpoint_path is None:
+        ckpt_dir = pathlib.Path("pl_checkpoints")
+    else:
+        ckpt_dir = checkpoint_path if checkpoint_path.is_dir() else checkpoint_path.parent / "pl_checkpoints"
     ckpt_dir.mkdir(parents=True, exist_ok=True)
 
-    resume = find_last_checkpoint(root)
+    resume = find_last_checkpoint(ckpt_dir)
 
     model = TinyModule()
-    mc = ModelCheckpoint(
-        dirpath=str(ckpt_dir),
+    mc = FlyteLightningCheckpointCallback(
+        checkpoint,
+        dirpath=ckpt_dir,
         filename="last",
         save_last=True,
         save_top_k=0,
