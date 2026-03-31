@@ -105,21 +105,10 @@ async def _resolve_tls_ca_cert(
 
 
 def _build_pyqwest_client(tls_ca_cert: bytes | None = None) -> pyqwest.Client:
-    """Build a pyqwest Client with transport defaults matching the old gRPC channel config.
-
-    These defaults are always set explicitly so behaviour doesn't silently
-    change if pyqwest changes its own defaults in a future release.
-
-    Mapping from old gRPC channel options:
-        grpc.keepalive_time_ms = 30000        → tcp_keepalive_interval = 30.0
-        grpc.keepalive_timeout_ms = 10000     → (OS-level TCP; no pyqwest knob)
-        grpc.keepalive_permit_without_calls=1 → pyqwest keepalive is always-on
-        pool idle timeout (implicit 2 min)    → pool_idle_timeout = 90.0
-        connection timeout (implicit)         → connect_timeout = 30.0
-    """
+    """Build a pyqwest Client with sensible transport defaults."""
     transport = pyqwest.HTTPTransport(
         tls_ca_cert=tls_ca_cert,
-        tcp_keepalive_interval=30.0,
+        tcp_keepalive_interval=30.0,  # was grpc.keepalive_time_ms = 30000
         pool_idle_timeout=90.0,
         connect_timeout=30.0,
     )
