@@ -5,7 +5,7 @@ from pathlib import Path
 
 import flyte.storage as storage
 import pyarrow.parquet as pq
-from flyte._utils import lazy_module
+from flyte.extend import lazy_module
 from flyte.io import PARQUET, DataFrame
 from flyte.io.extend import (
     DataFrameDecoder,
