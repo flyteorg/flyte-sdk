@@ -66,34 +66,36 @@ def load_class(qualified_name) -> Type:
     return getattr(module, class_name)  # Retrieve the class
 
 
-_SKIP_DIRS = frozenset({
-    ".git",
-    ".hg",
-    ".svn",
-    ".venv",
-    "venv",
-    "env",
-    ".local",
-    ".cache",
-    ".uv",
-    "__pycache__",
-    "node_modules",
-    ".mypy_cache",
-    ".pytest_cache",
-    ".ruff_cache",
-    ".idea",
-    ".tox",
-    ".nox",
-    ".eggs",
-    "site-packages",
-    "dist-packages",
-    "dist",
-    "build",
-})
+_SKIP_DIRS = frozenset(
+    {
+        ".git",
+        ".hg",
+        ".svn",
+        ".venv",
+        "venv",
+        "env",
+        ".local",
+        ".cache",
+        ".uv",
+        "__pycache__",
+        "node_modules",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".idea",
+        ".tox",
+        ".nox",
+        ".eggs",
+        "site-packages",
+        "dist-packages",
+        "dist",
+        "build",
+    }
+)
 
 
 def _list_user_files(cwd: str) -> list[str]:
-    """List user-relevant files under cwd, filtering out virtual environments, caches, and other non-user directories."""
+    """List user-relevant files under cwd, filtering out virtual envs, caches, and other non-user directories."""
     files: list[str] = []
     try:
         for root, dirs, filenames in os.walk(cwd):
