@@ -45,6 +45,8 @@ from flyte._internal.imagebuild.utils import (
     copy_files_to_context,
     get_and_list_dockerignore,
     get_uv_editable_install_mounts,
+    get_uv_project_editable_dependencies,
+    get_uv_project_editable_package_names,
 )
 from flyte._logging import logger
 from flyte._utils.asyncify import run_sync_with_loop
@@ -298,6 +300,10 @@ class UVProjectHandler:
             pip_install_args = " ".join(layer.get_pip_install_args())
             if "--no-install-project" not in pip_install_args:
                 pip_install_args += " --no-install-project"
+            editable_deps = get_uv_project_editable_dependencies(layer.pyproject.parent)
+            # Skip building/installing editable deps as wheels too
+            for pkg_name in get_uv_project_editable_package_names(editable_deps):
+                pip_install_args += f" --no-install-package {pkg_name}"
             # Only Copy pyproject.yaml and uv.lock (if provided) from the project root.
             pyproject_dst = copy_files_to_context(layer.pyproject, context_path)
             # Apply any editable install mounts to the template.
@@ -308,6 +314,7 @@ class UVProjectHandler:
                     *STANDARD_IGNORE_PATTERNS,
                     *docker_ignore_patterns,
                 ],
+                editable_deps=editable_deps,
             )
             if layer.uvlock is not None:
                 uvlock_dst = copy_files_to_context(layer.uvlock, context_path)

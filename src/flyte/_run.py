@@ -307,9 +307,22 @@ class _Runner:
             added_paths = [
                 f"./{pathlib.Path(p).relative_to(root_dir_abs)}"
                 for p in sys.path
-                if pathlib.Path(p).is_relative_to(root_dir_abs)
+                if pathlib.Path(p).is_relative_to(root_dir_abs) and "site-packages" not in pathlib.Path(p).parts
             ]
-            env[FLYTE_SYS_PATH] = ":".join(added_paths)
+            # Remove redundant subdirectory paths. Python auto-adds the script's
+            # directory (e.g., ./my_app/src/my_app) which shadows the real package
+            # at its parent (./my_app/src). Keep only the shallowest paths.
+            normalized = {p: os.path.normpath(p) for p in added_paths}
+            filtered_paths = [
+                p for p in added_paths
+                if not any(
+                    normalized[p] != normalized[other]
+                    and normalized[other] != "."
+                    and pathlib.PurePosixPath(normalized[p]).is_relative_to(normalized[other])
+                    for other in added_paths
+                )
+            ]
+            env[FLYTE_SYS_PATH] = ":".join(filtered_paths)
 
         # TODO: Remove once the actions service is the default and this env var is no longer needed.
         if os.getenv("_U_USE_ACTIONS") == "1":

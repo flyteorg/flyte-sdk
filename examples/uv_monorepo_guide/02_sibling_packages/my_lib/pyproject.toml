@@ -3,7 +3,7 @@ name = "my-lib"
 version = "0.1.0"
 description = "Pure utility library — no Flyte dependency"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = ["mypy", "ty"]
 
 [build-system]
 requires = ["uv_build>=0.9,<0.10"]
