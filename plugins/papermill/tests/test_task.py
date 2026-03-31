@@ -14,6 +14,8 @@ import pytest
 TESTS_DIR = Path(__file__).parent
 NOTEBOOK_PATH = str(TESTS_DIR / "test_notebook.ipynb")
 NO_OUTPUTS_NOTEBOOK_PATH = str(TESTS_DIR / "test_notebook_no_outputs.ipynb")
+PRIMITIVES_NOTEBOOK_PATH = str(TESTS_DIR / "test_notebook_primitives.ipynb")
+PRIMITIVE_TYPES_NOTEBOOK_PATH = str(TESTS_DIR.parent / "examples" / "notebooks" / "primitive_types.ipynb")
 
 
 # ---------------------------------------------------------------------------
@@ -98,6 +100,14 @@ def test_output_notebooks_false_no_extra_outputs():
     assert "output_notebook_executed" not in task.interface.outputs
 
 
+def test_notebook_task_accepts_bool_list_dict():
+    task = make_task(inputs={"flag": bool, "items": list, "metadata": dict}, outputs={"result": int})
+    assert "flag" in task.interface.inputs
+    assert "items" in task.interface.inputs
+    assert "metadata" in task.interface.inputs
+
+
+
 # ---------------------------------------------------------------------------
 # _serialize_params
 # ---------------------------------------------------------------------------
@@ -134,6 +144,34 @@ def test_serialize_params_dataframe():
     df = DataFrame(uri="s3://bucket/data.parquet", format="parquet")
     result = task._serialize_params({"df": df})
     assert result["df"] == "s3://bucket/data.parquet"
+
+
+def test_serialize_params_bool_list_dict_none():
+    task = make_task()
+    result = task._serialize_params({
+        "flag": True,
+        "items": [1, "two", 3.0],
+        "config": {"key": "val", "count": 5},
+        "nothing": None,
+    })
+    assert result == {
+        "flag": True,
+        "items": [1, "two", 3.0],
+        "config": {"key": "val", "count": 5},
+        "nothing": None,
+    }
+
+
+def test_serialize_params_unsupported_type_raises():
+    import dataclasses
+
+    @dataclasses.dataclass
+    class Foo:
+        x: int = 0
+
+    task = make_task()
+    with pytest.raises(TypeError, match="unsupported type"):
+        task._serialize_params({"bad": Foo()})
 
 
 # ---------------------------------------------------------------------------
@@ -608,6 +646,51 @@ def test_forward_no_outputs():
     )
     result = task.forward(x=7)
     assert result is None
+
+
+def test_forward_bool_list_dict():
+    task = make_task(
+        notebook_path=PRIMITIVES_NOTEBOOK_PATH,
+        inputs={"flag": bool, "items": list, "metadata": dict},
+        outputs={"item_count": int, "key_count": int},
+    )
+    item_count, key_count = task.forward(flag=True, items=[1, 2, 3], metadata={"a": 1, "b": 2})
+    assert item_count == 3
+    assert key_count == 2
+
+
+def test_forward_primitive_types_example_notebook():
+    """Integration test against the example notebook: bool/list/dict inputs, int/float/str outputs."""
+    task = make_task(
+        notebook_path=PRIMITIVE_TYPES_NOTEBOOK_PATH,
+        inputs={"enabled": bool, "values": list, "options": dict},
+        outputs={"count": int, "total": float, "label": str},
+    )
+    count, total, label = task.forward(
+        enabled=True,
+        values=[1, 5, 10, 15, 20],
+        options={"threshold": 8, "label": "demo"},
+    )
+    assert count == 3        # values above threshold 8: [10, 15, 20]
+    assert total == 51.0     # sum([1, 5, 10, 15, 20])
+    assert label == "demo"
+
+
+def test_forward_primitive_types_disabled():
+    """When enabled=False the notebook skips computation and returns zeros."""
+    task = make_task(
+        notebook_path=PRIMITIVE_TYPES_NOTEBOOK_PATH,
+        inputs={"enabled": bool, "values": list, "options": dict},
+        outputs={"count": int, "total": float, "label": str},
+    )
+    count, total, label = task.forward(
+        enabled=False,
+        values=[1, 5, 10, 15, 20],
+        options={"threshold": 8, "label": "skipped"},
+    )
+    assert count == 0
+    assert total == 0.0
+    assert label == "skipped"
 
 
 def test_forward_output_notebook_path_written():

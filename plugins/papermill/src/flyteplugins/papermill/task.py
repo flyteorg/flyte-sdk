@@ -306,14 +306,21 @@ class NotebookTask(TaskTemplate):
         """
         from flyte.io import DataFrame, Dir, File
 
+        _PRIMITIVES = (int, float, str, bool, list, dict, type(None))
         out: dict[str, Any] = {}
         for k, v in kwargs.items():
             if isinstance(v, File) or isinstance(v, Dir):
                 out[k] = str(v.path)
             elif isinstance(v, DataFrame):
                 out[k] = str(v.uri)
-            else:
+            elif isinstance(v, _PRIMITIVES):
                 out[k] = v
+            else:
+                raise TypeError(
+                    f"NotebookTask input '{k}' has unsupported type {type(v)!r}. "
+                    f"Papermill only supports primitives (int, float, str, bool, list, dict, None) "
+                    f"and flyte.io types (File, Dir, DataFrame)."
+                )
         return out
 
     @staticmethod
