@@ -3,6 +3,7 @@ import json
 import pandas as pd
 import pyarrow as pa
 import pytest
+from flyte.io import DataFrame
 from flyte.models import SerializationContext
 from flyteidl2.core.tasks_pb2 import Sql
 
@@ -172,6 +173,18 @@ class TestDataFrameInputs:
         out = result.val.to_pandas()
         assert len(out) == 1
         assert out["j"].iloc[0] == "b"
+
+    @pytest.mark.asyncio
+    async def test_flyte_dataframe_input(self):
+        task = _make_task(
+            query="SELECT SUM(a) AS total FROM mydf",
+            inputs={"mydf": DataFrame},
+        )
+        raw = pd.DataFrame({"a": [10, 20, 30]})
+        fdf = DataFrame.from_df(raw)
+        result = await task.execute(mydf=fdf)
+        out = result.val.to_pandas()
+        assert out["total"].iloc[0] == 60
 
     @pytest.mark.asyncio
     async def test_multiple_dataframe_inputs(self):

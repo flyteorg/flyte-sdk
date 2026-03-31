@@ -102,7 +102,16 @@ class DuckDB(TaskTemplate):
                 elif isinstance(val, (pd.DataFrame, pa.Table)):
                     con.register(key, val)
                 elif isinstance(val, DataFrame):
-                    arrow_table = await val.open(pa.Table).all()
+                    raw = val.val
+                    if raw is not None:
+                        if isinstance(raw, pa.Table):
+                            arrow_table = raw
+                        elif isinstance(raw, pd.DataFrame):
+                            arrow_table = pa.Table.from_pandas(raw)
+                        else:
+                            arrow_table = pa.table(raw)
+                    else:
+                        arrow_table = await val.open(pa.Table).all()
                     con.register(key, arrow_table)
                 elif isinstance(val, list):
                     params = val
