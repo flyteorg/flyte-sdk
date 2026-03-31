@@ -5,7 +5,6 @@ from typing import List, Optional, Tuple, Type
 
 import flyte.errors
 from flyte._code_bundle import download_bundle
-from flyte._code_bundle._ignore import STANDARD_IGNORE_PATTERNS
 from flyte._context import contextual_run
 from flyte._internal import Controller
 from flyte._internal.imagebuild.image_builder import ImageCache
@@ -67,24 +66,30 @@ def load_class(qualified_name) -> Type:
     return getattr(module, class_name)  # Retrieve the class
 
 
-# Reuse STANDARD_IGNORE_PATTERNS for directory names, plus runtime-specific dirs
-# (e.g. .local, .uv, site-packages appear at runtime but not in the standard list)
-_SKIP_DIRS = frozenset(
-    # Extract plain names from STANDARD_IGNORE_PATTERNS (no glob wildcards or path separators)
-    {p for p in STANDARD_IGNORE_PATTERNS if "*" not in p and "/" not in p}
-    | {
-        ".local",
-        ".uv",
-        ".hg",
-        ".svn",
-        "node_modules",
-        "site-packages",
-        "dist-packages",
-        ".tox",
-        ".nox",
-        ".eggs",
-    }
-)
+_SKIP_DIRS = frozenset({
+    ".git",
+    ".hg",
+    ".svn",
+    ".venv",
+    "venv",
+    "env",
+    ".local",
+    ".cache",
+    ".uv",
+    "__pycache__",
+    "node_modules",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".idea",
+    ".tox",
+    ".nox",
+    ".eggs",
+    "site-packages",
+    "dist-packages",
+    "dist",
+    "build",
+})
 
 
 def _list_user_files(cwd: str) -> list[str]:
