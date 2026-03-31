@@ -22,7 +22,7 @@ Flow:
 2. :func:`transformers.trainer_utils.get_last_checkpoint` — pick up the latest ``checkpoint-*``
    folder after a restore (or ``None`` on the first run).
 3. ``Trainer.train(resume_from_checkpoint=...)`` — resume training when a checkpoint exists.
-4. ``await checkpoint.save.aio(local_path=output_dir)`` — upload the trainer output directory.
+4. ``await checkpoint.save.aio(output_dir)`` — upload the trainer output directory.
 
 The model id ``hf-internal-testing/tiny-random-bert`` is small and intended for tests; the first
 run may download weights from the Hub. Transformers may print a "LOAD REPORT" with
@@ -120,7 +120,7 @@ async def train_transformers(max_steps: int = 24) -> float:
     )
     trainer.train(resume_from_checkpoint=resume_path)
 
-    await checkpoint.save.aio(local_path=output_dir)
+    await checkpoint.save.aio(output_dir)
 
     model.eval()
     device = next(model.parameters()).device

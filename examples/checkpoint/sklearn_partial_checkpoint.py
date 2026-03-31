@@ -12,7 +12,7 @@ Scikit-learn partial_fit with checkpoints
 
 ``SGDClassifier.partial_fit`` is resumed across task retries by pickling the
 estimator to a file under :attr:`flyte.AsyncCheckpoint.path` and uploading it with
-:meth:`flyte.AsyncCheckpoint.save` or ``await checkpoint.save.aio(...)``.
+:meth:`flyte.AsyncCheckpoint.save` or ``await checkpoint.save.aio(path)`` (positional path or ``bytes``).
 
 **Note:** ``uv run --script`` may install an older ``flyte`` from PyPI without
 ``TaskContext.checkpoint``. Run with a venv where this repository is installed
@@ -72,7 +72,7 @@ async def incremental_sgd(chunks: int = 4) -> float:
 
         bpath.parent.mkdir(parents=True, exist_ok=True)
         bpath.write_bytes(pickle.dumps({"clf": clf, "chunks_done": i + 1}))
-        await ck.save.aio(local_path=bpath)
+        await ck.save.aio(bpath)
 
     assert clf is not None
     x_test = rng.standard_normal((64, 8))

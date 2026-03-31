@@ -73,7 +73,7 @@ async def train_linear(epochs: int = 3) -> float:
         {"model": model.state_dict(), "opt": opt.state_dict(), "epoch": epochs - 1},
         wpath,
     )
-    await ck.save.aio(local_path=wpath)
+    await ck.save.aio(wpath)
     with torch.no_grad():
         return float(model(torch.ones(1, 4)).squeeze().item())
 

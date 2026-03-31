@@ -4,11 +4,8 @@ Task checkpointing against Flyte checkpoint object-store prefixes (v2 SDK).
 :class:`AsyncCheckpoint` uses ``flyte.storage`` for I/O.
 
 - **Async (recommended in async tasks):** ``await checkpoint.load.aio()``, ``await checkpoint.save.aio(...)``.
-- **Sync via syncify:** ``checkpoint.load()``, ``checkpoint.save()`` run the async obstore path on the
+- **Sync in ordinary task code:** ``checkpoint.load()``, ``checkpoint.save(...)`` run the async storage path on the
   global :mod:`flyte.syncify` background loop (same pattern as other SDK async I/O).
-- **Pure sync fsspec I/O:** :meth:`~AsyncCheckpoint.load_sync` and :meth:`~AsyncCheckpoint.save_sync` use
-  synchronous ``FileSystem.get`` / ``put`` like :meth:`flyte.io.File.download_sync`, avoiding the
-  async obstore bypass and syncify thread.
 
 - **Previous-checkpoint URI repair:** For remote prev URIs (e.g. ``s3://``), if the path uses the **current**
   attempt directory (``…/{run}/{action}/{n}/…``), :class:`~AsyncCheckpoint` rewrites *n* to *n-1* when *n > 1*,
@@ -18,9 +15,9 @@ Task checkpointing against Flyte checkpoint object-store prefixes (v2 SDK).
 
 Remote checkpoint URIs are a **single object** (e.g. ``.../_flytecheckpoints``). :meth:`~AsyncCheckpoint.save`
 uploads a **file** as-is; a **directory** is stored as a gzip-compressed tar. :meth:`~AsyncCheckpoint.load`
-downloads that object and extracts a tar into :attr:`~AsyncCheckpoint.path`, or copies bytes to an internal
-single-file name under :attr:`~AsyncCheckpoint.path`. Use :meth:`~AsyncCheckpoint.read_payload_bytes` /
-:meth:`~AsyncCheckpoint.save_payload_sync` (or :meth:`~AsyncCheckpoint.save_payload`) for that blob shape.
+downloads that object, extracts a tar into :attr:`~AsyncCheckpoint.path`, or moves a single downloaded file to
+``path / "payload"``. For a **single raw blob**, :meth:`~AsyncCheckpoint.save` accepts ``bytes``; after
+:meth:`~AsyncCheckpoint.load`, that blob is available at ``checkpoint.path / "payload"`` when present.
 """
 
 from __future__ import annotations
@@ -38,12 +35,11 @@ from typing import Optional
 import flyte.storage as storage
 from flyte._logging import logger
 from flyte.storage._parallel_reader import DownloadQueueEmpty
-from flyte.storage._storage import strip_file_header
 from flyte.syncify import syncify
 
 CHECKPOINT_CACHE_KEY = "__flyte_sync_checkpoint__"
 
-# Basename under :attr:`AsyncCheckpoint.path` when the remote checkpoint is a single file (not a tarball).
+# Basename under `AsyncCheckpoint.path` when the remote checkpoint is a single file (not a tarball).
 _PAYLOAD_BASENAME = "payload"
 
 # Object-store schemes for which Union executor may pass a prev-checkpoint URI with the wrong attempt segment.
@@ -147,7 +143,7 @@ def _tar_directory_to_file(source_dir: pathlib.Path, tar_path: pathlib.Path) -> 
 
 
 def _extract_tarball_or_move(archive: pathlib.Path, dest: pathlib.Path) -> None:
-    """If ``archive`` is a tar (e.g. our directory checkpoint), extract into ``dest``; else copy as single file."""
+    """Tar archive: extract into ``dest``. Single file: rename into ``dest / payload`` (no extra copy on same FS)."""
     if tarfile.is_tarfile(archive):
         with tarfile.open(archive, "r:*") as tar:
             tar.extractall(path=dest)
@@ -156,49 +152,10 @@ def _extract_tarball_or_move(archive: pathlib.Path, dest: pathlib.Path) -> None:
     shutil.move(archive, dest / _PAYLOAD_BASENAME)
 
 
-def _storage_get_sync(from_uri: str, to_path: pathlib.Path, *, recursive: bool = False) -> None:
-    """
-    Download a single object using synchronous fsspec I/O (cf. :meth:`flyte.io.File.download_sync`).
-    """
-    fs = storage.get_underlying_filesystem(path=from_uri)
-    if "file" in fs.protocol:
-        src = pathlib.Path(strip_file_header(from_uri))
-        to_path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, to_path)
-        return
-    fs.get(str(from_uri), str(to_path), recursive=recursive)
-
-
-def _storage_put_sync(from_local: str | bytes, to_uri: str, *, recursive: bool = False) -> None:
-    """
-    Upload using synchronous fsspec I/O (cf. sync paths in ``flyte.storage``).
-
-    Supports both:
-    - a local path / URI string (e.g. ``/tmp/x`` or ``file:///tmp/x``)
-    - an in-memory :class:`io.BytesIO` buffer (written to a temporary file for upload)
-    """
-    tmp_path: str | None = None
-    try:
-        if isinstance(from_local, bytes):
-            fd, tmp_path = tempfile.mkstemp(prefix="flyte-cptemp-", suffix=".bin")
-            os.close(fd)
-            with open(tmp_path, "wb") as f:
-                f.write(from_local)
-            from_local_clean = tmp_path
-        else:
-            from_local_clean = strip_file_header(from_local)
-
-        fs = storage.get_underlying_filesystem(path=to_uri)
-        if "file" in fs.protocol:
-            dest = pathlib.Path(strip_file_header(to_uri))
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(from_local_clean, dest)
-            return
-
-        fs.put(from_local_clean, to_uri, recursive=recursive)
-    finally:
-        if tmp_path is not None:
-            pathlib.Path(tmp_path).unlink(missing_ok=True)
+def _new_checkpoint_download_temp_path() -> pathlib.Path:
+    fd, tmp_name = tempfile.mkstemp(prefix="flyte-cpdl-", suffix=".bin")
+    os.close(fd)
+    return pathlib.Path(tmp_name)
 
 
 class Checkpoint(ABC):
@@ -221,10 +178,12 @@ class AsyncCheckpoint(Checkpoint):
     """
     Checkpoint helper using ``flyte.storage``. Remote paths are a **single object**.
 
-    Use :meth:`load` / :meth:`save` (syncify or ``.aio()``), or :meth:`load_sync` / :meth:`save_sync`
-    for blocking fsspec I/O. Saving a **directory** uploads a gzip tar of its top-level entries;
-    saving a **file** uploads it directly. After load, a non-archive remote object is available via
-    :meth:`read_payload_bytes` (and can be updated with :meth:`save_payload_sync` / :meth:`save_payload`).
+    Use :meth:`load` and :meth:`save` (blocking wrappers), or ``.load.aio()`` and ``.save.aio()`` inside async code.
+
+    Saving a **directory** uploads a gzip tar of its top-level entries; saving a **file** or **bytes** uploads
+    that payload directly. After :meth:`load`, a non-tar remote object appears as ``path / "payload"``; tarball
+    checkpoints unpack under :attr:`path` (the return value of :meth:`load` is still ``path / "payload"`` and may
+    not exist as a file when the checkpoint was a directory archive—use :attr:`path` and your layout in that case).
     """
 
     def __init__(self, checkpoint_dest: str, checkpoint_src: str | None = None):
@@ -239,7 +198,9 @@ class AsyncCheckpoint(Checkpoint):
         self._had_remote_prev = False
 
     def __del__(self) -> None:
-        self._td.cleanup()
+        td = getattr(self, "_td", None)
+        if td is not None:
+            td.cleanup()
 
     @property
     def remote_destination(self) -> str:
@@ -260,45 +221,64 @@ class AsyncCheckpoint(Checkpoint):
         p.mkdir(parents=True, exist_ok=True)
         return p
 
+    @property
+    def _payload_path(self) -> pathlib.Path:
+        return self.path / _PAYLOAD_BASENAME
+
     def prev_exists(self) -> bool:
         return self._checkpoint_src is not None
+
+    def _load_return_path(self) -> Optional[pathlib.Path]:
+        """Value returned from :meth:`load` after a successful download (see ``AsyncCheckpoint`` class docstring)."""
+        if not self._had_remote_prev:
+            return None
+        return self._payload_path
 
     @syncify
     async def load(self) -> Optional[pathlib.Path]:
         if not self.prev_exists():
             return None
         if self._restored:
-            return self.path / _PAYLOAD_BASENAME if self._had_remote_prev else None
+            return self._load_return_path()
 
-        assert self._checkpoint_src is not None
-        fd, tmp_name = tempfile.mkstemp(prefix="flyte-cpdl-", suffix=".bin")
-        os.close(fd)
-        dl = pathlib.Path(tmp_name)
+        prev_uri = self._checkpoint_src
+        assert prev_uri is not None
+
+        download_path = _new_checkpoint_download_temp_path()
         try:
             _clear_directory_contents(self.path)
             self.path.mkdir(parents=True, exist_ok=True)
-            await storage.get(self._checkpoint_src, dl, recursive=False)
-            if dl.stat().st_size == 0:
+            await storage.get(prev_uri, download_path, recursive=False)
+            if download_path.stat().st_size == 0:
                 self._had_remote_prev = False
             else:
-                _extract_tarball_or_move(dl, self.path)
+                _extract_tarball_or_move(download_path, self.path)
                 self._had_remote_prev = True
         except BaseException as e:
             if isinstance(e, (KeyboardInterrupt, SystemExit)):
                 raise
             if not _is_recoverable_checkpoint_load_error(e):
                 raise
-            logger.debug(f"Checkpoint load skipped or failed for {self._checkpoint_src}: {e}")
+            logger.debug("Checkpoint load skipped or failed for %s: %s", prev_uri, e)
             self._had_remote_prev = False
         finally:
-            dl.unlink(missing_ok=True)
+            download_path.unlink(missing_ok=True)
 
         self._restored = True
-        return self.path / _PAYLOAD_BASENAME if self._had_remote_prev else None
+        return self._load_return_path()
+
+    async def _save_directory_as_tarball(self, src: pathlib.Path) -> None:
+        fd, tmp_name = tempfile.mkstemp(prefix="flyte-cptar-", suffix=".tar.gz")
+        os.close(fd)
+        tar_path = pathlib.Path(tmp_name)
+        try:
+            _tar_directory_to_file(src, tar_path)
+            await storage.put(str(tar_path), self._checkpoint_dest, recursive=False)
+        finally:
+            tar_path.unlink(missing_ok=True)
 
     @syncify
     async def save(self, data: pathlib.Path | str | bytes) -> None:
-
         if isinstance(data, bytes):
             await storage.put_stream(data, to_path=self._checkpoint_dest)
             return
@@ -307,13 +287,6 @@ class AsyncCheckpoint(Checkpoint):
         if not src.exists():
             raise FileNotFoundError(f"Checkpoint source path does not exist: {src}")
         if src.is_dir():
-            fd, tmp_name = tempfile.mkstemp(prefix="flyte-cptar-", suffix=".tar.gz")
-            os.close(fd)
-            tar_path = pathlib.Path(tmp_name)
-            try:
-                _tar_directory_to_file(src, tar_path)
-                await storage.put(str(tar_path), self._checkpoint_dest, recursive=False)
-            finally:
-                tar_path.unlink(missing_ok=True)
+            await self._save_directory_as_tarball(src)
         else:
             await storage.put(str(src), self._checkpoint_dest, recursive=False)

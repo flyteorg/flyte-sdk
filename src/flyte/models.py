@@ -266,9 +266,10 @@ class TaskContext:
 
         Returns a lazily constructed :class:`~flyte.AsyncCheckpoint` cached on :attr:`data`, or
         ``None`` when no checkpoint output prefix is configured. Use :meth:`~flyte.AsyncCheckpoint.load`
-        and :meth:`~flyte.AsyncCheckpoint.save` (sync), or ``.load.aio()`` / ``.save.aio()`` for async.
-        For a **single raw blob** (flytekit-style checkpoint), use :meth:`~flyte.AsyncCheckpoint.read_payload_bytes`,
-        :meth:`~flyte.AsyncCheckpoint.save_payload_sync`, or :meth:`~flyte.AsyncCheckpoint.save_payload`.
+        and :meth:`~flyte.AsyncCheckpoint.save` (blocking wrappers), or ``.load.aio()`` / ``.save.aio()`` in async code.
+        For a **single raw blob**, pass ``bytes`` to :meth:`~flyte.AsyncCheckpoint.save`; after a successful
+        :meth:`~flyte.AsyncCheckpoint.load`, the blob is at ``checkpoint.path / "payload"`` when the remote object
+        is not a tarball.
         """
         from flyte._checkpoint import CHECKPOINT_CACHE_KEY
         from flyte._checkpoint import AsyncCheckpoint as AsyncCheckpointCls

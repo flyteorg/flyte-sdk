@@ -20,7 +20,7 @@ Flow:
 1. ``await checkpoint.load.aio()`` — download any prior checkpoint tree into :attr:`~flyte.AsyncCheckpoint.path`.
 2. If ``last.ckpt`` exists under that tree, pass it to :meth:`~lightning.pytorch.trainer.trainer.Trainer.fit`
    as ``ckpt_path``.
-3. After training, ``await checkpoint.save.aio(...)`` uploads the directory that holds ``last.ckpt``.
+3. After training, ``await checkpoint.save.aio(ckpt_dir)`` uploads the directory that holds ``last.ckpt``.
 
 **Note:** Install this repository editable (``pip install -e .``) so ``TaskContext.checkpoint`` exists;
 see ``generic_data_checkpoint.py``.
@@ -112,7 +112,7 @@ async def train_lightning(max_epochs: int = 3) -> float:
     loader = _make_loaders()
     trainer.fit(model, loader, ckpt_path=resume)
 
-    await checkpoint.save.aio(local_path=ckpt_dir)
+    await checkpoint.save.aio(ckpt_dir)
 
     with torch.no_grad():
         x = torch.ones(1, FEATURES)

@@ -26,7 +26,7 @@ and the `continued pretraining / adapter notes
 <https://unsloth.ai/docs/basics/continued-pretraining>`__ for loading LoRA adapters.
 
 This example mirrors that pattern, but stores checkpoints under ``checkpoint.path`` and syncs them
-to object storage with ``await checkpoint.save.aio(...)``.
+to object storage with ``await checkpoint.save.aio(output_dir)`` (file or directory path, or ``bytes``).
 
 **Hardware:** Unsloth currently requires an **NVIDIA, AMD, or Intel GPU** (not Apple Silicon / MPS).
 See `Unsloth requirements <https://unsloth.ai/docs/get-started/fine-tuning-for-beginners/unsloth-requirements>`__.
@@ -131,7 +131,7 @@ async def train_unsloth_sft(max_steps: int = 12) -> float:
     )
     trainer.train(resume_from_checkpoint=resume_path)
 
-    await checkpoint.save.aio(local_path=output_dir)
+    await checkpoint.save.aio(output_dir)
 
     for h in reversed(trainer.state.log_history):
         if "loss" in h:
