@@ -4,6 +4,8 @@ import asyncio
 from typing import AsyncIterator, Dict, List, Optional, Tuple
 
 import pytest
+from connectrpc.code import Code
+from connectrpc.errors import ConnectError
 from flyteidl2.actions import actions_service_pb2
 from flyteidl2.common import identifier_pb2, phase_pb2
 from flyteidl2.core import execution_pb2
@@ -13,6 +15,7 @@ from flyteidl2.workflow import (
     state_service_pb2,
 )
 
+import flyte.errors
 from flyte._internal.controllers.remote._action import Action
 from flyte._internal.controllers.remote._controller import Controller
 from flyte._internal.controllers.remote._service_protocol import (
@@ -95,7 +98,7 @@ class DummyService(QueueService, StateService, ClientSet):
     def actions_service(self) -> ActionsService | None:
         return None
 
-    async def Watch(
+    async def watch(
         self, req: state_service_pb2.WatchRequest, **kwargs
     ) -> AsyncIterator[state_service_pb2.WatchResponse]:
         """Simulate watching for state updates."""
@@ -128,7 +131,7 @@ class DummyService(QueueService, StateService, ClientSet):
             sentinel = True
             await asyncio.sleep(0.1)
 
-    async def EnqueueAction(
+    async def enqueue_action(
         self,
         req: queue_service_pb2.EnqueueActionRequest,
         **kwargs,
@@ -141,7 +144,7 @@ class DummyService(QueueService, StateService, ClientSet):
         print("Enqueueing task:", req.action_id.name)
         return queue_service_pb2.EnqueueActionResponse()
 
-    async def AbortQueuedAction(
+    async def abort_queued_action(
         self,
         req: queue_service_pb2.AbortQueuedActionRequest,
         **kwargs,
@@ -154,7 +157,7 @@ class DummyService(QueueService, StateService, ClientSet):
 
     # --- ActionsService methods (unified service) ---
 
-    async def Enqueue(
+    async def enqueue(
         self,
         req: actions_service_pb2.EnqueueRequest,
         **kwargs,
@@ -172,7 +175,7 @@ class DummyService(QueueService, StateService, ClientSet):
         print("Enqueueing task:", name)
         return actions_service_pb2.EnqueueResponse()
 
-    async def WatchForUpdates(
+    async def watch_for_updates(
         self,
         req: actions_service_pb2.WatchForUpdatesRequest,
         **kwargs,
@@ -204,7 +207,7 @@ class DummyService(QueueService, StateService, ClientSet):
             sentinel = True
             await asyncio.sleep(0.1)
 
-    async def Abort(
+    async def abort(
         self,
         req: actions_service_pb2.AbortRequest,
         **kwargs,
@@ -690,10 +693,10 @@ async def test_cancel_queued_action():
     abort_called = False
 
     class TrackingService(DummyService):
-        async def AbortQueuedAction(self, req, **kwargs):
+        async def abort_queued_action(self, req, **kwargs):
             nonlocal abort_called
             abort_called = True
-            return await super().AbortQueuedAction(req, **kwargs)
+            return await super().abort_queued_action(req, **kwargs)
 
     async def create_tracking_service():
         return TrackingService(phases=phases)
@@ -907,10 +910,10 @@ async def test_actions_service_cancel():
     abort_called = False
 
     class TrackingActionsService(DummyActionsService):
-        async def Abort(self, req, **kwargs):
+        async def abort(self, req, **kwargs):
             nonlocal abort_called
             abort_called = True
-            return await super().Abort(req, **kwargs)
+            return await super().abort(req, **kwargs)
 
     async def create_tracking_service():
         return TrackingActionsService(phases=phases)
@@ -1011,4 +1014,183 @@ async def test_actions_service_recover():
         assert final_node.realized_outputs_uri
 
     await c._finalize_parent_action(run_id=run_id, parent_action_name=parent_action_name)
+    await c.stop()
+
+
+# ── ConnectError handling tests ──────────────────────────────────────────────
+
+
+def _ce_make_run_id():
+    return identifier_pb2.RunIdentifier(name="root_run")
+
+
+def _ce_make_action(name="subrun-1", run_id=None):
+    if run_id is None:
+        run_id = _ce_make_run_id()
+    return Action(
+        action_id=identifier_pb2.ActionIdentifier(name=name, run=run_id),
+        parent_action_name="parent_action",
+        task=task_definition_pb2.TaskSpec(),
+        inputs_uri="input_uri",
+        run_output_base="run-base",
+    )
+
+
+@pytest.mark.asyncio
+async def test_enqueue_already_exists_continues_monitoring():
+    """When enqueue raises ALREADY_EXISTS, the controller continues to monitor.
+
+    Simulates the real scenario: the action already exists on the server (pre-populated
+    in the watch queue) so the watch stream delivers updates even though enqueue fails.
+    """
+    run_id = _ce_make_run_id()
+    action_id = identifier_pb2.ActionIdentifier(name="subrun-1", run=run_id)
+    phases = {
+        "subrun-1": [
+            (phase_pb2.ACTION_PHASE_RUNNING, None, None),
+            (phase_pb2.ACTION_PHASE_SUCCEEDED, None, "s3://out/1"),
+        ],
+    }
+
+    # Pre-populate the queue so watch delivers updates for this action
+    pre_queue = {
+        "subrun-1": queue_service_pb2.EnqueueActionRequest(action_id=action_id),
+    }
+
+    class AlreadyExistsService(DummyService):
+        async def enqueue_action(self, req, **kwargs):
+            raise ConnectError(Code.ALREADY_EXISTS, "action already exists")
+
+    service = AlreadyExistsService(phases=phases, queue=pre_queue)
+
+    async def create_service():
+        return service
+
+    action = _ce_make_action("subrun-1", run_id)
+    c = Controller(client_coro=create_service(), workers=2, max_system_retries=2)
+
+    async def _run():
+        final_node = await c.submit_action(action)
+        assert final_node.started
+        assert final_node.phase == phase_pb2.ACTION_PHASE_SUCCEEDED
+        await c._finalize_parent_action(run_id=run_id, parent_action_name="parent_action")
+        await c.stop()
+
+    await run_coros(_run(), c.watch_for_errors())
+
+
+@pytest.mark.asyncio
+async def test_enqueue_failed_precondition_raises_system_error():
+    """When enqueue raises FAILED_PRECONDITION, it translates to RuntimeSystemError."""
+    phases = {
+        "subrun-1": [
+            (phase_pb2.ACTION_PHASE_SUCCEEDED, None, None),
+        ],
+    }
+
+    class FailedPreconditionService(DummyService):
+        async def enqueue_action(self, req, **kwargs):
+            raise ConnectError(Code.FAILED_PRECONDITION, "bad state")
+
+    service = FailedPreconditionService(phases=phases)
+
+    async def create_service():
+        return service
+
+    run_id = _ce_make_run_id()
+    action = _ce_make_action("subrun-1", run_id)
+    c = Controller(client_coro=create_service(), workers=2, max_system_retries=2)
+
+    async def _run():
+        final_node = await c.submit_action(action)
+        assert final_node.client_err is not None
+        assert isinstance(final_node.client_err, flyte.errors.RuntimeSystemError)
+        await c._finalize_parent_action(run_id=run_id, parent_action_name="parent_action")
+        await c.stop()
+
+    await run_coros(_run(), c.watch_for_errors())
+
+
+@pytest.mark.asyncio
+async def test_enqueue_unavailable_retries_then_succeeds():
+    """When enqueue raises UNAVAILABLE, the controller retries with backoff."""
+    phases = {
+        "subrun-1": [
+            (phase_pb2.ACTION_PHASE_RUNNING, None, None),
+            (phase_pb2.ACTION_PHASE_SUCCEEDED, None, "s3://out/1"),
+        ],
+    }
+
+    class UnavailableOnceService(DummyService):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._enqueue_count = 0
+
+        async def enqueue_action(self, req, **kwargs):
+            self._enqueue_count += 1
+            if self._enqueue_count == 1:
+                raise ConnectError(Code.UNAVAILABLE, "temporarily down")
+            return await super().enqueue_action(req, **kwargs)
+
+    service = UnavailableOnceService(phases=phases)
+
+    async def create_service():
+        return service
+
+    run_id = _ce_make_run_id()
+    action = _ce_make_action("subrun-1", run_id)
+    c = Controller(client_coro=create_service(), workers=2, max_system_retries=2)
+
+    async def _run():
+        final_node = await c.submit_action(action)
+        assert final_node.started
+        assert final_node.phase == phase_pb2.ACTION_PHASE_SUCCEEDED
+        assert service._enqueue_count == 2
+        await c._finalize_parent_action(run_id=run_id, parent_action_name="parent_action")
+        await c.stop()
+
+    await run_coros(_run(), c.watch_for_errors())
+
+
+@pytest.mark.asyncio
+async def test_cancel_not_found_is_silent():
+    """When abort raises NOT_FOUND during cancel, controller treats it as already terminated."""
+    phases = {
+        "subrun-1": [
+            (phase_pb2.ACTION_PHASE_RUNNING, None, None),
+            (phase_pb2.ACTION_PHASE_RUNNING, None, None),
+            (phase_pb2.ACTION_PHASE_RUNNING, None, None),
+        ],
+    }
+
+    abort_called = False
+
+    class NotFoundAbortService(DummyService):
+        async def abort_queued_action(self, req, **kwargs):
+            nonlocal abort_called
+            abort_called = True
+            raise ConnectError(Code.NOT_FOUND, "action gone")
+
+    async def create_service():
+        return NotFoundAbortService(phases=phases)
+
+    run_id = _ce_make_run_id()
+    action = _ce_make_action("subrun-1", run_id)
+    c = Controller(client_coro=create_service(), workers=2, max_system_retries=2)
+
+    submit_task = asyncio.create_task(c.submit_action(action))
+    await asyncio.sleep(0.3)
+    action.mark_started()
+
+    # Cancel should not raise despite NOT_FOUND from abort
+    await c.cancel_action(action)
+    assert abort_called
+
+    submit_task.cancel()
+    try:
+        await submit_task
+    except asyncio.CancelledError:
+        pass
+
+    await c._finalize_parent_action(run_id=run_id, parent_action_name="parent_action")
     await c.stop()

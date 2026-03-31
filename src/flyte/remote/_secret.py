@@ -52,7 +52,7 @@ class Secret(ToJSONMixin):
                 type=secret_type,
                 binary_value=value,
             )
-        await get_client().secrets_service.CreateSecret(  # type: ignore
+        await get_client().secrets_service.create_secret(  # type: ignore
             request=payload_pb2.CreateSecretRequest(
                 id=definition_pb2.SecretIdentifier(
                     organization=cfg.org,
@@ -75,7 +75,7 @@ class Secret(ToJSONMixin):
         """
         ensure_client()
         cfg = get_init_config()
-        resp = await get_client().secrets_service.GetSecret(
+        resp = await get_client().secrets_service.get_secret(
             request=payload_pb2.GetSecretRequest(
                 id=definition_pb2.SecretIdentifier(
                     organization=cfg.org,
@@ -100,7 +100,7 @@ class Secret(ToJSONMixin):
         cfg = get_init_config()
         per_cluster_tokens = None
         while True:
-            resp = await get_client().secrets_service.ListSecrets(  # type: ignore
+            resp = await get_client().secrets_service.list_secrets(  # type: ignore
                 request=payload_pb2.ListSecretsRequest(
                     organization=cfg.org,
                     project=cfg.project,
@@ -127,7 +127,7 @@ class Secret(ToJSONMixin):
         """
         ensure_client()
         cfg = get_init_config()
-        await get_client().secrets_service.DeleteSecret(  # type: ignore
+        await get_client().secrets_service.delete_secret(  # type: ignore
             request=payload_pb2.DeleteSecretRequest(
                 id=definition_pb2.SecretIdentifier(
                     organization=cfg.org,
