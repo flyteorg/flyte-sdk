@@ -58,11 +58,10 @@ def create_auth_interceptors(endpoint: str, http_client=None, **kwargs) -> list:
 
 
 def create_proxy_auth_interceptors(
-    endpoint: str, proxy_command: typing.Optional[typing.List[str]] = None, **kwargs
+    endpoint: str, proxy_command: typing.List[str], **kwargs
 ) -> list:
     """
-    If activated in the platform config, returns a list of ConnectRPC interceptors to perform
-    authentication with a proxy in front of Flyte.
+    Returns a list of ConnectRPC interceptors to perform authentication with a proxy in front of Flyte.
 
     :param endpoint: The endpoint URL for authentication
     :param proxy_command: Command to execute to get proxy authentication token
@@ -75,24 +74,22 @@ def create_proxy_auth_interceptors(
         - ca_cert_path: Optional path to CA certificate file
     :return: List of ConnectRPC interceptors
     """
-    if proxy_command:
-        from flyte.remote._client.auth._interceptors.auth import (
-            AuthBidiStreamInterceptor,
-            AuthClientStreamInterceptor,
-            AuthServerStreamInterceptor,
-            AuthUnaryInterceptor,
-        )
+    from flyte.remote._client.auth._interceptors.auth import (
+        AuthBidiStreamInterceptor,
+        AuthClientStreamInterceptor,
+        AuthServerStreamInterceptor,
+        AuthUnaryInterceptor,
+    )
 
-        def authenticator_factory() -> Authenticator:
-            return get_async_proxy_authenticator(endpoint=endpoint, proxy_command=proxy_command, **kwargs)
+    def authenticator_factory() -> Authenticator:
+        return get_async_proxy_authenticator(endpoint=endpoint, proxy_command=proxy_command, **kwargs)
 
-        return [
-            AuthUnaryInterceptor(authenticator_factory),
-            AuthClientStreamInterceptor(authenticator_factory),
-            AuthServerStreamInterceptor(authenticator_factory),
-            AuthBidiStreamInterceptor(authenticator_factory),
-        ]
-    return []
+    return [
+        AuthUnaryInterceptor(authenticator_factory),
+        AuthClientStreamInterceptor(authenticator_factory),
+        AuthServerStreamInterceptor(authenticator_factory),
+        AuthBidiStreamInterceptor(authenticator_factory),
+    ]
 
 
 def get_async_authenticator(

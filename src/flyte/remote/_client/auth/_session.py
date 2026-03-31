@@ -176,18 +176,16 @@ async def create_session_config(
 
     # Create httpx session for auth flows (OAuth token exchange, PKCE, etc.)
     # This is separate from the pyqwest client used for ConnectRPC transport.
-    proxy_authenticator = None
     if proxy_command:
         proxy_authenticator = get_async_proxy_authenticator(endpoint=endpoint, proxy_command=proxy_command, **kwargs)
-    auth_http_session = get_async_session(
-        ca_cert_file_path=ca_cert_file_path, proxy_authenticator=proxy_authenticator, **kwargs
-    )
-
-    # Add proxy auth interceptors
-    proxy_auth_interceptors = create_proxy_auth_interceptors(
-        endpoint, proxy_command=proxy_command, http_session=auth_http_session, **kwargs
-    )
-    interceptors.extend(proxy_auth_interceptors)
+        auth_http_session = get_async_session(
+            ca_cert_file_path=ca_cert_file_path, proxy_authenticator=proxy_authenticator, **kwargs
+        )
+        interceptors.extend(create_proxy_auth_interceptors(
+            endpoint, proxy_command=proxy_command, http_session=auth_http_session, **kwargs
+        ))
+    else:
+        auth_http_session = get_async_session(ca_cert_file_path=ca_cert_file_path, **kwargs)
 
     # Add auth interceptors — skip when insecure=True.
     # NOTE: insecure means "no TLS" (plain HTTP), not "no auth". However, in
