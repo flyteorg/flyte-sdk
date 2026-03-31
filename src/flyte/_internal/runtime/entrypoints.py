@@ -5,6 +5,7 @@ from typing import List, Optional, Tuple, Type
 
 import flyte.errors
 from flyte._code_bundle import download_bundle
+from flyte._code_bundle._ignore import STANDARD_IGNORE_PATTERNS
 from flyte._context import contextual_run
 from flyte._internal import Controller
 from flyte._internal.imagebuild.image_builder import ImageCache
@@ -66,6 +67,41 @@ def load_class(qualified_name) -> Type:
     return getattr(module, class_name)  # Retrieve the class
 
 
+# Reuse STANDARD_IGNORE_PATTERNS for directory names, plus runtime-specific dirs
+# (e.g. .local, .uv, site-packages appear at runtime but not in the standard list)
+_SKIP_DIRS = frozenset(
+    # Extract plain names from STANDARD_IGNORE_PATTERNS (no glob wildcards or path separators)
+    {p for p in STANDARD_IGNORE_PATTERNS if "*" not in p and "/" not in p}
+    | {
+        ".local",
+        ".uv",
+        ".hg",
+        ".svn",
+        "node_modules",
+        "site-packages",
+        "dist-packages",
+        ".tox",
+        ".nox",
+        ".eggs",
+    }
+)
+
+
+def _list_user_files(cwd: str) -> list[str]:
+    """List user-relevant files under cwd, filtering out virtual environments, caches, and other non-user directories."""
+    files: list[str] = []
+    try:
+        for root, dirs, filenames in os.walk(cwd):
+            # Prune irrelevant directories in-place so os.walk won't descend into them
+            dirs[:] = [d for d in dirs if d not in _SKIP_DIRS]
+            for name in filenames:
+                rel_path = os.path.relpath(os.path.join(root, name), cwd)
+                files.append(rel_path)
+    except Exception as list_err:
+        files = [f"(Failed to list directory: {list_err})"]
+    return files
+
+
 def load_task(resolver: str, *resolver_args: str) -> TaskTemplate:
     """
     Load a task from a resolver. This is a placeholder function.
@@ -80,14 +116,7 @@ def load_task(resolver: str, *resolver_args: str) -> TaskTemplate:
         return resolver_instance.load_task(resolver_args)
     except ModuleNotFoundError as e:
         cwd = os.getcwd()
-        files = []
-        try:
-            for root, dirs, filenames in os.walk(cwd):
-                for name in dirs + filenames:
-                    rel_path = os.path.relpath(os.path.join(root, name), cwd)
-                    files.append(rel_path)
-        except Exception as list_err:
-            files = [f"(Failed to list directory: {list_err})"]
+        files = _list_user_files(cwd)
 
         msg = (
             "\n\nFull traceback:\n" + "".join(traceback.format_exc()) + f"\n[ImportError Diagnostics]\n"
