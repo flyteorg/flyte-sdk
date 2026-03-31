@@ -10,5 +10,5 @@ The plugin supports:
 To install the plugin, run the following command:
 
 ```bash
-pip install --pre flyteplugins-huggingface
+pip install flyteplugins-huggingface
 ```
