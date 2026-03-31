@@ -83,7 +83,7 @@ class RemoteImageChecker(ImageChecker):
             from flyteidl2.common.identifier_pb2 import ProjectIdentifier
             from flyteidl2.imagebuilder import definition_pb2 as image_definition__pb2
             from flyteidl2.imagebuilder import payload_pb2 as image_payload__pb2
-            from flyteidl2.imagebuilder import service_pb2_grpc as image_service_pb2_grpc
+            from flyteidl2.imagebuilder.service_connect import ImageServiceClient
 
             from flyte._initialize import _get_init_config
 
@@ -99,8 +99,8 @@ class RemoteImageChecker(ImageChecker):
             if cls._images_client is None:
                 if cfg.client is None:
                     raise ValueError("remote client should not be None")
-                cls._images_client = image_service_pb2_grpc.ImageServiceStub(cfg.client._channel)
-            resp = await cls._images_client.GetImage(req)
+                cls._images_client = ImageServiceClient(**cfg.client.session_config.connect_kwargs())
+            resp = await cls._images_client.get_image(req)
             logger.debug(f"Image {resp.image.fqin} found in remote registry")
             return resp.image.fqin
         except Exception:

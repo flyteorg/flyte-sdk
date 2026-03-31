@@ -45,27 +45,6 @@ from ._version import __version__
 sys.excepthook = custom_excepthook
 
 
-def _silence_grpc_warnings():
-    """
-    Silences gRPC warnings that can clutter the output.
-    """
-    import os
-
-    # Set environment variables for gRPC, this reduces log spew and avoids unnecessary warnings
-    # before importing grpc
-    if "GRPC_VERBOSITY" not in os.environ:
-        os.environ["GRPC_VERBOSITY"] = "ERROR"
-        os.environ["GRPC_CPP_MIN_LOG_LEVEL"] = "ERROR"
-        # Disable fork support (stops "skipping fork() handlers")
-        os.environ["GRPC_ENABLE_FORK_SUPPORT"] = "0"
-        # Reduce absl/glog verbosity
-        os.environ["GLOG_minloglevel"] = "2"
-        os.environ["ABSL_LOG"] = "0"
-
-
-_silence_grpc_warnings()
-
-
 def version() -> str:
     """
     Returns the version of the Flyte SDK.
