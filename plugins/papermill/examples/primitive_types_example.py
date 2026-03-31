@@ -32,8 +32,7 @@ analyze_values = NotebookTask(
     inputs={
         "enabled": bool,  # feature flag — controls whether computation runs
         "values": list[int] | None,  # list of numbers to aggregate
-        "options": dict[str, int | str]
-        | None,  # config: {"threshold": int, "label": str}
+        "options": dict[str, int | str] | None,  # config: {"threshold": int, "label": str}
     },
     outputs={
         "count": int,  # number of values above threshold

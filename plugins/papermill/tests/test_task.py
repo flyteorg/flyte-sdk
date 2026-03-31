@@ -107,7 +107,6 @@ def test_notebook_task_accepts_bool_list_dict():
     assert "metadata" in task.interface.inputs
 
 
-
 # ---------------------------------------------------------------------------
 # _serialize_params
 # ---------------------------------------------------------------------------
@@ -148,12 +147,14 @@ def test_serialize_params_dataframe():
 
 def test_serialize_params_bool_list_dict_none():
     task = make_task()
-    result = task._serialize_params({
-        "flag": True,
-        "items": [1, "two", 3.0],
-        "config": {"key": "val", "count": 5},
-        "nothing": None,
-    })
+    result = task._serialize_params(
+        {
+            "flag": True,
+            "items": [1, "two", 3.0],
+            "config": {"key": "val", "count": 5},
+            "nothing": None,
+        }
+    )
     assert result == {
         "flag": True,
         "items": [1, "two", 3.0],
@@ -671,8 +672,8 @@ def test_forward_primitive_types_example_notebook():
         values=[1, 5, 10, 15, 20],
         options={"threshold": 8, "label": "demo"},
     )
-    assert count == 3        # values above threshold 8: [10, 15, 20]
-    assert total == 51.0     # sum([1, 5, 10, 15, 20])
+    assert count == 3  # values above threshold 8: [10, 15, 20]
+    assert total == 51.0  # sum([1, 5, 10, 15, 20])
     assert label == "demo"
 
 
