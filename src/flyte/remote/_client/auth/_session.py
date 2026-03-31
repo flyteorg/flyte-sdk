@@ -181,9 +181,11 @@ async def create_session_config(
         auth_http_session = get_async_session(
             ca_cert_file_path=ca_cert_file_path, proxy_authenticator=proxy_authenticator, **kwargs
         )
-        interceptors.extend(create_proxy_auth_interceptors(
-            endpoint, proxy_command=proxy_command, http_session=auth_http_session, **kwargs
-        ))
+        interceptors.extend(
+            create_proxy_auth_interceptors(
+                endpoint, proxy_command=proxy_command, http_session=auth_http_session, **kwargs
+            )
+        )
     else:
         auth_http_session = get_async_session(ca_cert_file_path=ca_cert_file_path, **kwargs)
 

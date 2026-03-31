@@ -57,9 +57,7 @@ def create_auth_interceptors(endpoint: str, http_client=None, **kwargs) -> list:
     ]
 
 
-def create_proxy_auth_interceptors(
-    endpoint: str, proxy_command: typing.List[str], **kwargs
-) -> list:
+def create_proxy_auth_interceptors(endpoint: str, proxy_command: typing.List[str], **kwargs) -> list:
     """
     Returns a list of ConnectRPC interceptors to perform authentication with a proxy in front of Flyte.
 
