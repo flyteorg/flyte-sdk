@@ -6,24 +6,10 @@
 # ///
 
 """
-Generic JSON checkpoint
-=======================
-
-Uses :attr:`flyte.ctx().checkpoint` with a single JSON file under the local
-checkpoint workspace. After :meth:`~flyte.AsyncCheckpoint.load` or
-``await checkpoint.load.aio()``, files may
-sit under a subdirectory (depending on the remote prefix); ``rglob`` finds
-``state.json`` reliably.
-
-**Note:** Use an editable install of this SDK (or a release that includes
-``TaskContext.checkpoint``) when running examples; a bare ``uv run`` may resolve
-an older ``flyte`` from PyPI.
+Generic byte checkpointing
 """
 
 from __future__ import annotations
-
-import json
-import pathlib
 
 import flyte
 
@@ -32,44 +18,26 @@ env = flyte.TaskEnvironment(
     image=flyte.Image.from_debian_base(),
 )
 
-STATE_FILE = "state.json"
 RETRIES = 3
 
 
-def resolve_state_file(root: pathlib.Path) -> pathlib.Path:
-    direct = root / STATE_FILE
-    if direct.exists():
-        return direct
-    matches = list(root.rglob(STATE_FILE))
-    if matches:
-        return matches[0]
-    return direct
-
-
+# Define a task to iterate precisely `n_iterations`, checkpoint its state, and recover from simulated failures.
 @env.task(retries=RETRIES)
-async def durable_counter(steps: int = 10) -> int:
-    tctx = flyte.ctx()
-    assert tctx is not None
-    ck = tctx.checkpoint
-    assert ck is not None
+def use_checkpoint(n_iterations: int) -> int:
+    checkpoint = flyte.ctx().checkpoint
 
-    await ck.load.aio()
-    path = resolve_state_file(ck.path)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path = checkpoint.load()
+    prev = None if path is None else path.read_bytes()
+
     start = 0
-    print("PATH", path)
-    print("REMOTE PATH", ck._checkpoint_dest)
-    if path.exists():
-        start = int(json.loads(path.read_text(encoding="utf-8"))["index"])
+    if prev:
+        start = int(prev.decode())
 
-    print("START", start)
-
-    for index in range(start, steps):
-        if index == (steps // RETRIES):
-            raise RuntimeError("Simulated failure")
-
-        path.write_text(json.dumps({"index": index}), encoding="utf-8")
-        await ck.save.aio(local_path=path)
+    failure_interval = n_iterations // RETRIES
+    for index in range(start, n_iterations):
+        if index > start and index % failure_interval == 0:
+            raise RuntimeError(f"Failed at iteration {index}, failure_interval {failure_interval}.")
+        checkpoint.save(f"{index + 1}".encode())
     return index
 
 
@@ -77,5 +45,5 @@ if __name__ == "__main__":
     import logging
 
     flyte.init_from_config(log_level=logging.DEBUG)
-    run = flyte.with_runcontext(mode="remote").run(durable_counter, steps=3)
+    run = flyte.with_runcontext(mode="remote").run(use_checkpoint, n_iterations=10)
     print(run.url)

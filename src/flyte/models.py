@@ -267,9 +267,11 @@ class TaskContext:
         Returns a lazily constructed :class:`~flyte.AsyncCheckpoint` cached on :attr:`data`, or
         ``None`` when no checkpoint output prefix is configured. Use :meth:`~flyte.AsyncCheckpoint.load`
         and :meth:`~flyte.AsyncCheckpoint.save` (sync), or ``.load.aio()`` / ``.save.aio()`` for async.
+        For a **single raw blob** (flytekit-style checkpoint), use :meth:`~flyte.AsyncCheckpoint.read_payload_bytes`,
+        :meth:`~flyte.AsyncCheckpoint.save_payload_sync`, or :meth:`~flyte.AsyncCheckpoint.save_payload`.
         """
+        from flyte._checkpoint import CHECKPOINT_CACHE_KEY
         from flyte._checkpoint import AsyncCheckpoint as AsyncCheckpointCls
-        from flyte._checkpoint import task_checkpoint_cache_key
 
         cps = self.checkpoints
         if cps is None:
@@ -277,15 +279,14 @@ class TaskContext:
         dest = cps.checkpoint_path
         if dest is None or not str(dest).strip():
             return None
-        key = task_checkpoint_cache_key()
-        cached = self.data.get(key)
+        cached = self.data.get(CHECKPOINT_CACHE_KEY)
         if cached is not None:
             assert isinstance(cached, AsyncCheckpointCls)
             return cached
         prev = cps.prev_checkpoint_path
         prev_n = prev.strip() if prev else None
         cp = AsyncCheckpointCls(str(dest).strip(), prev_n or None)
-        self.data[key] = cp
+        self.data[CHECKPOINT_CACHE_KEY] = cp
         return cp
 
     @property
