@@ -20,12 +20,12 @@ class TestBaseRuntimeErrorArithmetic:
     def test_radd_reraises(self):
         err = flyte.errors.RuntimeUserError(code="ValueError", message="subtask failed")
         with pytest.raises(flyte.errors.RuntimeUserError, match="subtask failed"):
-            0 + err  # noqa: B015
+            0 + err
 
     def test_add_reraises(self):
         err = flyte.errors.RuntimeUserError(code="ValueError", message="subtask failed")
         with pytest.raises(flyte.errors.RuntimeUserError, match="subtask failed"):
-            err + 0  # noqa: B015
+            err + 0
 
     def test_sum_reraises(self):
         err = flyte.errors.RetriesExhaustedError(code="ValueError", message="task failed for input 1")
@@ -35,17 +35,17 @@ class TestBaseRuntimeErrorArithmetic:
     def test_mul_reraises(self):
         err = flyte.errors.RuntimeUserError(code="ValueError", message="subtask failed")
         with pytest.raises(flyte.errors.RuntimeUserError, match="subtask failed"):
-            err * 2  # noqa: B015
+            err * 2
 
     def test_truediv_reraises(self):
         err = flyte.errors.RuntimeUserError(code="ValueError", message="subtask failed")
         with pytest.raises(flyte.errors.RuntimeUserError, match="subtask failed"):
-            err / 2  # noqa: B015
+            err / 2
 
     def test_sub_reraises(self):
         err = flyte.errors.RuntimeUserError(code="ValueError", message="subtask failed")
         with pytest.raises(flyte.errors.RuntimeUserError, match="subtask failed"):
-            err - 1  # noqa: B015
+            err - 1
 
 
 class TestMapSubtaskErrorSurfacing:
@@ -70,11 +70,9 @@ class TestMapSubtaskErrorSurfacing:
         err = excinfo.value
         # The error should be the subtask error, not a TypeError from sum()
         assert "task failed for input" in str(err), (
-            f"Expected subtask error to be surfaced, got: code={err.code}, msg={str(err)}"
+            f"Expected subtask error to be surfaced, got: code={err.code}, msg={err!s}"
         )
-        assert err.code != "TypeError", (
-            f"Expected subtask error code, not TypeError. Got: {err.code}"
-        )
+        assert err.code != "TypeError", f"Expected subtask error code, not TypeError. Got: {err.code}"
 
     def test_map_without_subtask_errors_preserves_original_error(self):
         env = flyte.TaskEnvironment(name="no-subtask-error-test")
