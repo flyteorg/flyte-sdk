@@ -108,9 +108,11 @@ def _build_pyqwest_client(tls_ca_cert: bytes | None = None) -> pyqwest.Client:
     """Build a pyqwest Client with sensible transport defaults."""
     transport = pyqwest.HTTPTransport(
         tls_ca_cert=tls_ca_cert,
-        tcp_keepalive_interval=30.0,  # was grpc.keepalive_time_ms = 30000
-        pool_idle_timeout=90.0,
+        timeout=None,
         connect_timeout=30.0,
+        read_timeout=None,
+        pool_idle_timeout=90.0,
+        tcp_keepalive_interval=30.0,  # was grpc.keepalive_time_ms = 30000
     )
     return pyqwest.Client(transport=transport)
 
