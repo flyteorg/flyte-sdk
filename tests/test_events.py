@@ -694,6 +694,141 @@ class TestSubstituteCallbackUri:
 # ---------------------------------------------------------------------------
 
 
+class TestEventWaitConditionProtocol:
+    """Tests for the event wait() condition protocol: timeout, failure, and output handling."""
+
+    @pytest.mark.asyncio
+    async def test_wait_raises_event_timedout_error(self):
+        """wait() should raise EventTimedoutError when the controller reports timeout."""
+        mock_controller = MagicMock()
+        mock_controller.wait_for_event = AsyncMock(
+            side_effect=flyte.errors.EventTimedoutError("Event 'ev' was not signaled within the timeout period.")
+        )
+
+        mock_ctx = MagicMock()
+        mock_ctx.is_task_context.return_value = True
+
+        e = _Event(name="ev", data_type=bool, timeout=10)
+
+        with (
+            patch("flyte._context.internal_ctx", return_value=mock_ctx),
+            patch("flyte._internal.controllers.get_controller", return_value=mock_controller),
+        ):
+            with pytest.raises(flyte.errors.EventTimedoutError, match="not signaled within"):
+                await e.wait.aio()
+
+    @pytest.mark.asyncio
+    async def test_wait_raises_event_failed_error(self):
+        """wait() should raise EventFailedError when the controller reports failure."""
+        mock_controller = MagicMock()
+        mock_controller.wait_for_event = AsyncMock(
+            side_effect=flyte.errors.EventFailedError("Event 'ev' condition action failed.")
+        )
+
+        mock_ctx = MagicMock()
+        mock_ctx.is_task_context.return_value = True
+
+        e = _Event(name="ev", data_type=str)
+
+        with (
+            patch("flyte._context.internal_ctx", return_value=mock_ctx),
+            patch("flyte._internal.controllers.get_controller", return_value=mock_controller),
+        ):
+            with pytest.raises(flyte.errors.EventFailedError, match="failed"):
+                await e.wait.aio()
+
+    @pytest.mark.asyncio
+    async def test_wait_returns_bool_true(self):
+        """wait() should return True for a bool event signaled with True."""
+        mock_controller = MagicMock()
+        mock_controller.wait_for_event = AsyncMock(return_value=True)
+
+        mock_ctx = MagicMock()
+        mock_ctx.is_task_context.return_value = True
+
+        e = _Event(name="approve", data_type=bool)
+
+        with (
+            patch("flyte._context.internal_ctx", return_value=mock_ctx),
+            patch("flyte._internal.controllers.get_controller", return_value=mock_controller),
+        ):
+            result = await e.wait.aio()
+            assert result is True
+
+    @pytest.mark.asyncio
+    async def test_wait_returns_bool_false(self):
+        """wait() should return False for a bool event signaled with False."""
+        mock_controller = MagicMock()
+        mock_controller.wait_for_event = AsyncMock(return_value=False)
+
+        mock_ctx = MagicMock()
+        mock_ctx.is_task_context.return_value = True
+
+        e = _Event(name="approve", data_type=bool)
+
+        with (
+            patch("flyte._context.internal_ctx", return_value=mock_ctx),
+            patch("flyte._internal.controllers.get_controller", return_value=mock_controller),
+        ):
+            result = await e.wait.aio()
+            assert result is False
+
+    @pytest.mark.asyncio
+    async def test_wait_returns_int(self):
+        """wait() should return an int for an int event."""
+        mock_controller = MagicMock()
+        mock_controller.wait_for_event = AsyncMock(return_value=42)
+
+        mock_ctx = MagicMock()
+        mock_ctx.is_task_context.return_value = True
+
+        e = _Event(name="count", data_type=int)
+
+        with (
+            patch("flyte._context.internal_ctx", return_value=mock_ctx),
+            patch("flyte._internal.controllers.get_controller", return_value=mock_controller),
+        ):
+            result = await e.wait.aio()
+            assert result == 42
+            assert isinstance(result, int)
+
+    @pytest.mark.asyncio
+    async def test_wait_returns_float(self):
+        """wait() should return a float for a float event."""
+        mock_controller = MagicMock()
+        mock_controller.wait_for_event = AsyncMock(return_value=3.14)
+
+        mock_ctx = MagicMock()
+        mock_ctx.is_task_context.return_value = True
+
+        e = _Event(name="threshold", data_type=float)
+
+        with (
+            patch("flyte._context.internal_ctx", return_value=mock_ctx),
+            patch("flyte._internal.controllers.get_controller", return_value=mock_controller),
+        ):
+            result = await e.wait.aio()
+            assert abs(result - 3.14) < 1e-6
+
+    @pytest.mark.asyncio
+    async def test_wait_returns_str(self):
+        """wait() should return a str for a str event."""
+        mock_controller = MagicMock()
+        mock_controller.wait_for_event = AsyncMock(return_value="go ahead")
+
+        mock_ctx = MagicMock()
+        mock_ctx.is_task_context.return_value = True
+
+        e = _Event(name="input", data_type=str)
+
+        with (
+            patch("flyte._context.internal_ctx", return_value=mock_ctx),
+            patch("flyte._internal.controllers.get_controller", return_value=mock_controller),
+        ):
+            result = await e.wait.aio()
+            assert result == "go ahead"
+
+
 class TestLocalControllerWebhook:
     @pytest.fixture
     def controller(self):

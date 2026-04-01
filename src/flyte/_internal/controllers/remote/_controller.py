@@ -647,7 +647,11 @@ class RemoteController(Controller):
         Wait for a previously registered event to be signaled by the backend.
 
         :param event: Event object to wait for
-        :return: The payload associated with the event when it is signaled
+        :return: The typed payload associated with the event when it is signaled.
+            For bool events, returns ``True`` or ``False``.
+        :raises flyte.errors.EventTimedoutError: If the condition times out before being signaled.
+        :raises flyte.errors.EventFailedError: If the condition fails during execution.
+        :raises flyte.errors.ActionAbortedError: If the condition action is externally aborted.
         """
         from flyte._event import _Event
 
@@ -670,8 +674,12 @@ class RemoteController(Controller):
             raise flyte.errors.EventTimedoutError(f"Event '{event.name}' was not signaled within the timeout period.")
 
         if n.has_error() or n.phase == phase_pb2.ACTION_PHASE_FAILED:
-            exc = await handle_action_failure(n, event.name)
-            raise exc
+            raise flyte.errors.EventFailedError(f"Event '{event.name}' condition action {n.action_id.name} failed.")
 
-        # TODO: load and convert the event payload from outputs when the backend supports it
+        # For condition actions, the output Literal is delivered inline in the
+        # ActionUpdate (no output_uri).  Convert to the expected Python type.
+        # TODO: Uncomment when the ActionUpdate proto adds the `output` field
+        # and the backend populates it for condition actions:
+        # if n.condition_output is not None:
+        #     return Action.literal_to_python(n.condition_output, event.data_type)
         return None

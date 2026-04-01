@@ -357,6 +357,18 @@ class EventAlreadyExistsError(RuntimeUserError):
         super().__init__("EventAlreadyExistsError", message, "user")
 
 
+class EventFailedError(RuntimeUserError):
+    """
+    This error is raised when a condition event fails during execution.
+
+    This can happen when the backend encounters an error while processing the condition,
+    or when the event is explicitly marked as failed by the system.
+    """
+
+    def __init__(self, message: str):
+        super().__init__("EventFailedError", message, "user")
+
+
 class EventNotFoundError(RuntimeUserError):
     """
     This error is raised when the user tries to access an event that does not exist.

@@ -471,7 +471,7 @@ async def test_wait_for_event_float_succeeded():
 
 @pytest.mark.asyncio
 async def test_wait_for_event_failed_phase():
-    """wait_for_event should raise when the condition action fails."""
+    """wait_for_event should raise EventFailedError when the condition action fails."""
     await flyte.init.aio()
     event = _make_event(name="fail_event", data_type=bool)
 
@@ -504,7 +504,7 @@ async def test_wait_for_event_failed_phase():
                 ),
             ):
                 await controller.register_event(event)
-                with pytest.raises(Exception):
+                with pytest.raises(flyte.errors.EventFailedError):
                     await controller.wait_for_event(event)
 
 
@@ -745,3 +745,198 @@ async def test_record_trace_uses_submit_and_wait():
             await controller.record_trace(trace_info)
 
         mock_submit_and_wait.assert_called_once()
+
+
+# ── Condition output handling ────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_wait_for_event_failed_raises_event_failed_error():
+    """wait_for_event should raise EventFailedError (not generic Exception) on FAILED phase."""
+    await flyte.init.aio()
+    event = _make_event(name="fail_cond", data_type=str)
+
+    failed_action = Action(
+        action_id=identifier_pb2.ActionIdentifier(
+            name="condition-fail_cond",
+            run=identifier_pb2.RunIdentifier(name="test_run"),
+        ),
+        parent_action_name="parent_action",
+        type="condition",
+        phase=phase_pb2.ACTION_PHASE_FAILED,
+    )
+
+    with patch("flyte._initialize.get_init_config") as mock_config:
+        mock_config.return_value.root_dir = pathlib.Path(__file__).parent
+        ctx = internal_ctx()
+        tctx = _make_task_context()
+
+        with ctx.replace_task_context(tctx):
+            controller = _make_controller()
+
+            with (
+                patch.object(controller, "start_action", new_callable=AsyncMock),
+                patch.object(
+                    controller,
+                    "wait_for_action",
+                    new_callable=AsyncMock,
+                    return_value=failed_action,
+                ),
+            ):
+                await controller.register_event(event)
+                with pytest.raises(flyte.errors.EventFailedError, match="fail_cond"):
+                    await controller.wait_for_event(event)
+
+
+@pytest.mark.asyncio
+async def test_wait_for_event_failed_with_client_err_raises_event_failed():
+    """wait_for_event should raise EventFailedError even when client_err is set."""
+    await flyte.init.aio()
+    event = _make_event(name="fail_client", data_type=int)
+
+    failed_action = Action(
+        action_id=identifier_pb2.ActionIdentifier(
+            name="condition-fail_client",
+            run=identifier_pb2.RunIdentifier(name="test_run"),
+        ),
+        parent_action_name="parent_action",
+        type="condition",
+        phase=phase_pb2.ACTION_PHASE_FAILED,
+        client_err=Exception("internal error"),
+    )
+
+    with patch("flyte._initialize.get_init_config") as mock_config:
+        mock_config.return_value.root_dir = pathlib.Path(__file__).parent
+        ctx = internal_ctx()
+        tctx = _make_task_context()
+
+        with ctx.replace_task_context(tctx):
+            controller = _make_controller()
+
+            with (
+                patch.object(controller, "start_action", new_callable=AsyncMock),
+                patch.object(
+                    controller,
+                    "wait_for_action",
+                    new_callable=AsyncMock,
+                    return_value=failed_action,
+                ),
+            ):
+                await controller.register_event(event)
+                with pytest.raises(flyte.errors.EventFailedError):
+                    await controller.wait_for_event(event)
+
+
+@pytest.mark.asyncio
+async def test_wait_for_event_timed_out_raises_event_timedout():
+    """wait_for_event should raise EventTimedoutError on TIMED_OUT phase for all data types."""
+    await flyte.init.aio()
+
+    for dt in (bool, int, float, str):
+        event = _make_event(name=f"timeout_{dt.__name__}", data_type=dt, timeout=5)
+
+        timed_out_action = Action(
+            action_id=identifier_pb2.ActionIdentifier(
+                name=f"condition-timeout_{dt.__name__}",
+                run=identifier_pb2.RunIdentifier(name="test_run"),
+            ),
+            parent_action_name="parent_action",
+            type="condition",
+            phase=phase_pb2.ACTION_PHASE_TIMED_OUT,
+        )
+
+        with patch("flyte._initialize.get_init_config") as mock_config:
+            mock_config.return_value.root_dir = pathlib.Path(__file__).parent
+            ctx = internal_ctx()
+            tctx = _make_task_context()
+
+            with ctx.replace_task_context(tctx):
+                controller = _make_controller()
+
+                with (
+                    patch.object(controller, "start_action", new_callable=AsyncMock),
+                    patch.object(
+                        controller,
+                        "wait_for_action",
+                        new_callable=AsyncMock,
+                        return_value=timed_out_action,
+                    ),
+                ):
+                    await controller.register_event(event)
+                    with pytest.raises(flyte.errors.EventTimedoutError):
+                        await controller.wait_for_event(event)
+
+
+# ── Action.literal_to_python ─────────────────────────────────────────────────
+
+
+class TestLiteralToPython:
+    """Tests for Action.literal_to_python which converts flyteidl Literal to Python values."""
+
+    def test_bool_true(self):
+        from flyteidl2.core.literals_pb2 import Literal, Primitive, Scalar
+
+        lit = Literal(scalar=Scalar(primitive=Primitive(boolean=True)))
+        assert Action.literal_to_python(lit, bool) is True
+
+    def test_bool_false(self):
+        from flyteidl2.core.literals_pb2 import Literal, Primitive, Scalar
+
+        lit = Literal(scalar=Scalar(primitive=Primitive(boolean=False)))
+        assert Action.literal_to_python(lit, bool) is False
+
+    def test_int_value(self):
+        from flyteidl2.core.literals_pb2 import Literal, Primitive, Scalar
+
+        lit = Literal(scalar=Scalar(primitive=Primitive(integer=42)))
+        result = Action.literal_to_python(lit, int)
+        assert result == 42
+        assert isinstance(result, int)
+
+    def test_float_value(self):
+        from flyteidl2.core.literals_pb2 import Literal, Primitive, Scalar
+
+        lit = Literal(scalar=Scalar(primitive=Primitive(float_value=3.14)))
+        result = Action.literal_to_python(lit, float)
+        assert abs(result - 3.14) < 1e-6
+        assert isinstance(result, float)
+
+    def test_str_value(self):
+        from flyteidl2.core.literals_pb2 import Literal, Primitive, Scalar
+
+        lit = Literal(scalar=Scalar(primitive=Primitive(string_value="hello")))
+        result = Action.literal_to_python(lit, str)
+        assert result == "hello"
+        assert isinstance(result, str)
+
+    def test_unsupported_type_raises(self):
+        from flyteidl2.core.literals_pb2 import Literal, Primitive, Scalar
+
+        lit = Literal(scalar=Scalar(primitive=Primitive(integer=1)))
+        with pytest.raises(TypeError, match="Unsupported expected_type"):
+            Action.literal_to_python(lit, list)
+
+
+# ── Action.condition_output field ────────────────────────────────────────────
+
+
+def test_action_condition_output_defaults_none():
+    """Action.condition_output should default to None."""
+    action = Action(
+        action_id=identifier_pb2.ActionIdentifier(name="test", run=identifier_pb2.RunIdentifier(name="run")),
+        parent_action_name="parent",
+    )
+    assert action.condition_output is None
+
+
+def test_action_from_state_sets_condition_output_none():
+    """from_state should set condition_output (currently None until proto support)."""
+    from flyteidl2.workflow.state_service_pb2 import ActionUpdate
+
+    update = ActionUpdate(
+        action_id=identifier_pb2.ActionIdentifier(name="cond-1", run=identifier_pb2.RunIdentifier(name="run")),
+        phase=phase_pb2.ACTION_PHASE_SUCCEEDED,
+        output_uri="",
+    )
+    action = Action.from_state("parent", update)
+    assert action.condition_output is None

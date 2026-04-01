@@ -698,7 +698,7 @@ class FlyteTUIApp(App[None]):
         elif event.state == WorkerState.ERROR:
             self.sub_title = "failed"
 
-    def action_quit(self) -> None:
+    async def action_quit(self) -> None:
         # Cancel all pending events so blocked threads don't hang
         for pe in self._tracker.get_all_pending_events():
             pe.set_result(None)

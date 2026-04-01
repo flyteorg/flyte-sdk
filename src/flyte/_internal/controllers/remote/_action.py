@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import ClassVar, Literal, Optional
 
 from flyteidl2.common import identifier_pb2, phase_pb2
-from flyteidl2.core import execution_pb2, interface_pb2, types_pb2
+from flyteidl2.core import execution_pb2, interface_pb2, literals_pb2, types_pb2
 from flyteidl2.task import common_pb2, task_definition_pb2
 from flyteidl2.workflow import (
     run_definition_pb2,
@@ -43,6 +43,7 @@ class Action:
     queue: Optional[str] = None  # The queue to which this action was submitted.
     client_err: Exception | None = None  # This error is set when something goes wrong in the controller.
     cache_key: str | None = None  # None means no caching, otherwise it is the version of the cache.
+    condition_output: literals_pb2.Literal | None = None  # Output Literal for condition actions (set from ActionUpdate)
 
     @property
     def name(self) -> str:
@@ -90,6 +91,11 @@ class Action:
             self.phase = obj.phase
             self.err = obj.error if obj.HasField("error") else None
         self.realized_outputs_uri = obj.output_uri
+        # For condition actions, the backend may include the output Literal directly
+        # in the ActionUpdate instead of an output_uri.
+        # TODO: Uncomment when the ActionUpdate proto adds the `output` field:
+        # if self.type == "condition" and obj.HasField("output"):
+        #     self.condition_output = obj.output
         self.started = True
 
     def merge_in_action_from_submit(self, action: Action):
@@ -113,6 +119,25 @@ class Action:
 
     def has_error(self) -> bool:
         return self.client_err is not None or self.err is not None
+
+    @staticmethod
+    def literal_to_python(literal: literals_pb2.Literal, expected_type: builtins.type) -> object:
+        """Convert a flyteidl Literal (scalar/primitive) to a Python value.
+
+        The ``expected_type`` must be one of ``bool``, ``int``, ``float``, or ``str``.
+
+        Returns the Python-native value (``True``/``False`` for bool, etc.).
+        """
+        primitive = literal.scalar.primitive
+        if expected_type is bool:
+            return bool(primitive.boolean)
+        if expected_type is int:
+            return int(primitive.integer)
+        if expected_type is float:
+            return float(primitive.float_value)
+        if expected_type is str:
+            return str(primitive.string_value)
+        raise TypeError(f"Unsupported expected_type {expected_type}")
 
     @classmethod
     def from_task(
@@ -152,6 +177,10 @@ class Action:
         from flyte._logging import logger
 
         logger.debug(f"In Action from_state {obj.action_id} {obj.phase} {obj.output_uri}")
+        # For condition actions, the backend may include the output Literal directly.
+        # TODO: Uncomment when the ActionUpdate proto adds the `output` field:
+        # condition_output = obj.output if obj.HasField("output") else None
+        condition_output = None
         return cls(
             action_id=obj.action_id,
             parent_action_name=parent_action_name,
@@ -159,6 +188,7 @@ class Action:
             started=True,
             err=obj.error if obj.HasField("error") else None,
             realized_outputs_uri=obj.output_uri,
+            condition_output=condition_output,
         )
 
     @classmethod

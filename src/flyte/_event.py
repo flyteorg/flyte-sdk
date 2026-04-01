@@ -84,7 +84,22 @@ class _Event(Generic[EventType]):
         """
         Await the event to be signaled.
 
-        :return: The payload associated with the event when it is signaled.
+        Blocks until the condition is resolved by the backend. The return value is
+        converted to the ``data_type`` specified at creation time:
+
+        - ``bool`` → ``True`` / ``False``
+        - ``int`` → Python ``int``
+        - ``float`` → Python ``float``
+        - ``str`` → Python ``str``
+
+        **Protocol:** When running remotely, the event is backed by a *condition action*.
+        The backend delivers the result as a ``Literal`` (protobuf scalar/primitive)
+        directly in the ``ActionUpdate`` — no ``output_uri`` is used for conditions.
+
+        :return: The typed payload associated with the event when it is signaled.
+        :raises flyte.errors.EventTimedoutError: If the event is not signaled within the
+            specified ``timeout``.
+        :raises flyte.errors.EventFailedError: If the condition fails during execution.
         """
         from flyte._context import internal_ctx
 
@@ -117,9 +132,21 @@ async def new_event(
     Create an event that can be awaited in a workflow. Events can be used to pause workflow execution until
     an external signal is received.
 
+    **Condition protocol (remote execution):**
+
+    When running inside a task, ``new_event`` registers a *condition action* with the
+    backend. Calling ``event.wait()`` blocks until the condition is resolved. The backend
+    delivers the result as an inline ``Literal`` (protobuf scalar/primitive) in the
+    ``ActionUpdate`` stream — no ``output_uri`` is involved for conditions.
+
+    - On success, ``wait()`` returns the value converted to ``data_type``
+      (``True``/``False`` for bool, Python ``int``/``float``/``str`` for the others).
+    - If the condition times out, ``wait()`` raises ``flyte.errors.EventTimedoutError``.
+    - If the condition fails, ``wait()`` raises ``flyte.errors.EventFailedError``.
+
     :param name: Name of the event
     :param prompt: Prompt message for the event
-    :param data_type: Data type of the event payload
+    :param data_type: Data type of the event payload — one of ``bool``, ``int``, ``float``, ``str``
     :param prompt_type: Type of prompt rendering - "text" or "markdown"
     :param description: Description of the event
     :param timeout: Optional timeout as a timedelta or number of seconds. If the event is not signaled
