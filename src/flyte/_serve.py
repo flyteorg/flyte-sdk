@@ -345,6 +345,7 @@ class _Serve:
         health_check_timeout: float | None = None,
         health_check_interval: float | None = None,
         health_check_path: str | None = None,
+        raw_data_path: str | None = None,
     ):
         """
         Initialize serve context.
@@ -375,6 +376,10 @@ class _Serve:
                 Defaults to `1` second.
             health_check_path: URL path used for the local health-check probe (e.g. `"/healthz"`).
                 Defaults to `"/health"`.
+            raw_data_path: Raw data path for the app. For local serving, used when testing apps
+                that read ctx().raw_data_path. Defaults to ``/tmp/flyte/raw_data`` when mode is
+                local and not specified. For remote serving, the backend provides this via the
+                container command.
         """
         from flyte._initialize import _get_init_config
 
@@ -407,6 +412,9 @@ class _Serve:
             health_check_interval if health_check_interval is not None else _LOCAL_IS_ACTIVE_INTERVAL
         )
         self._health_check_path = health_check_path if health_check_path is not None else _LOCAL_HEALTH_CHECK_PATH
+        self._raw_data_path = (
+            raw_data_path if raw_data_path is not None else ("/tmp/flyte/raw_data" if self._mode == "local" else "")
+        )
 
     # ------------------------------------------------------------------
     # Local serving
@@ -478,6 +486,12 @@ class _Serve:
         local_app = _LocalApp(app_env=app_env, _serve_obj=self, host=host, port=port)
 
         def _run():
+            # Contextvars don't propagate to new threads. Set raw_data_path in this
+            # thread's context so ctx().raw_data_path works in request handlers.
+            from flyte.app._context import set_raw_data_path
+
+            set_raw_data_path(self._raw_data_path or "")
+
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             local_app._thread_loop = loop
@@ -617,6 +631,8 @@ class _Serve:
                 upload_to_controlplane=not self._dry_run,
                 copy_bundle_to=self._copy_bundle_to,
             )
+        elif self._copy_style == "none":
+            code_bundle = None
         else:
             code_bundle = await build_code_bundle(
                 from_dir=cfg.root_dir,
@@ -633,7 +649,8 @@ class _Serve:
         else:
             h = hashlib.md5()
             h.update(cloudpickle.dumps(app_deployment.envs))
-            h.update(code_bundle.computed_version.encode("utf-8"))
+            if code_bundle:
+                h.update(code_bundle.computed_version.encode("utf-8"))
             h.update(cloudpickle.dumps(image_cache))
             version = h.hexdigest()
 
@@ -757,6 +774,7 @@ def with_servecontext(
     health_check_timeout: float | None = None,
     health_check_interval: float | None = None,
     health_check_path: str | None = None,
+    raw_data_path: str | None = None,
 ) -> _Serve:
     """
     Create a serve context with custom configuration.
@@ -819,8 +837,11 @@ def with_servecontext(
             request. Defaults to 2 s.
         health_check_interval: Interval in seconds between consecutive health-check polls.
             Defaults to 1 s.
-        health_check_path: URL path used for the local health-check probe (e.g. `"/healthz"`).
-            Defaults to `"/health"`.
+        health_check_path: URL path used for the local health-check probe (e.g. ``"/healthz"``).
+            Defaults to ``"/health"``.
+        raw_data_path: Raw data path for the app. For local serving, sets ctx().raw_data_path
+            so apps can read it. Defaults to ``/tmp/flyte/raw_data`` when mode is local.
+            For remote serving, the backend provides this via the container command.
 
     Returns:
         _Serve: Serve context manager with configured settings
@@ -853,6 +874,7 @@ def with_servecontext(
         health_check_timeout=health_check_timeout,
         health_check_interval=health_check_interval,
         health_check_path=health_check_path,
+        raw_data_path=raw_data_path,
     )
 
 

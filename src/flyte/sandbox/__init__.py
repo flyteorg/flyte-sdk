@@ -38,9 +38,7 @@ Warning: Experimental feature: alpha — APIs may change without notice.
 **2. Code sandbox** — arbitrary code in an isolated container
     Runs arbitrary Python scripts or shell commands inside an ephemeral Docker
     container. The image is built on demand from declared `packages` and
-    `system_packages`, executed once, then discarded. Network is blocked by
-    default (`block_network=True`), preventing outbound calls from untrusted
-    code.  Used via `flyte.sandbox.create()`.
+    `system_packages`, executed once, then discarded. Used via `flyte.sandbox.create()`.
 
     Three execution modes are supported:
 
@@ -171,7 +169,14 @@ Type restrictions:
 - Optional[T] and Union of allowed types are permitted.
 - Custom classes, dataclasses, Pydantic models, and any other user-defined types are NOT allowed.
 - set and frozenset are allowed as function parameter/return types but set literals and \
-set comprehensions are not supported in code."""
+set comprehensions are not supported in code.
+
+Built-in functions:
+- `flyte_map(task_name, *iterables, concurrency=0, group_name=None, return_exceptions=True)` \
+— Run a task over one or more iterables in parallel. The first argument is the task name as a \
+string (e.g. `"double"`). Returns a list of results. Mirrors `flyte.map` semantics including \
+concurrency limits and exception handling. Example: `flyte_map("double", items)` or \
+`flyte_map("add", xs, ys, concurrency=4)`."""
 
 __all__ = [
     "ORCHESTRATOR_SYNTAX_PROMPT",

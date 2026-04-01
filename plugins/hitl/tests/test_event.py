@@ -172,12 +172,10 @@ class TestWaitForInputEvent:
     """Tests for the wait_for_input_event function."""
 
     @pytest.mark.asyncio
-    @patch("flyteplugins.hitl._event.flyte.durable.sleep")
     @patch("flyteplugins.hitl._event.storage")
     async def test_wait_for_input_returns_value_when_response_exists(
         self,
         mock_storage,
-        mock_durable_sleep,
     ):
         """Test that wait returns value when response is found."""
         from flyteplugins.hitl._event import wait_for_input_event
@@ -201,12 +199,10 @@ class TestWaitForInputEvent:
         assert result == 42
 
     @pytest.mark.asyncio
-    @patch("flyteplugins.hitl._event.flyte.durable.sleep")
     @patch("flyteplugins.hitl._event.storage")
     async def test_wait_for_input_polls_until_response(
         self,
         mock_storage,
-        mock_durable_sleep,
     ):
         """Test that wait polls until response is found."""
         from flyteplugins.hitl._event import wait_for_input_event
@@ -225,7 +221,6 @@ class TestWaitForInputEvent:
 
         mock_storage.exists = mock_exists
         mock_storage.get_stream = mock_get_stream
-        mock_durable_sleep.aio = AsyncMock()
 
         result = await wait_for_input_event(
             name="test_event",
@@ -236,21 +231,17 @@ class TestWaitForInputEvent:
         )
 
         assert result == "hello"
-        assert mock_durable_sleep.aio.call_count == 2
 
     @pytest.mark.asyncio
-    @patch("flyteplugins.hitl._event.flyte.durable.sleep")
     @patch("flyteplugins.hitl._event.storage")
     async def test_wait_for_input_raises_timeout_error(
         self,
         mock_storage,
-        mock_durable_sleep,
     ):
         """Test that wait raises TimeoutError when timeout is reached."""
         from flyteplugins.hitl._event import wait_for_input_event
 
         mock_storage.exists = AsyncMock(return_value=False)
-        mock_durable_sleep.aio = AsyncMock()
 
         with pytest.raises(TimeoutError) as exc_info:
             await wait_for_input_event(

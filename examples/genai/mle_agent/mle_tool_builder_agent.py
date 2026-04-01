@@ -23,7 +23,7 @@ from flyte.io import File
 agent_env = flyte.TaskEnvironment(
     "mle-tool-builder",
     resources=flyte.Resources(cpu=1, memory="1Gi"),
-    secrets=[flyte.Secret(key="niels-anthropic-api-key", as_env_var="ANTHROPIC_API_KEY")],
+    secrets=[flyte.Secret(key="internal-anthropic-api-key", as_env_var="ANTHROPIC_API_KEY")],
     image=(
         flyte.Image.from_debian_base(name="mle-tool-builder-image").with_pip_packages(
             "httpx", "pandas", "scikit-learn", "numpy"
@@ -216,23 +216,48 @@ async def get_data_stats(data: File) -> str:
 
 
 async def _build_report(code: str) -> str:
-    return f"""
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>MLE Tool Builder Agent</title>
-        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/default.min.css">
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
-        <script>hljs.highlightAll();</script>
-    </head>
+    import html
 
-    <body>
-        <pre><code class="language-python">{code}</code></pre>
-    </body>
-    </html>
-    """
+    escaped = html.escape(code)
+    return f"""\
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MLE Tool Builder Agent</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+    <style>
+        body {{
+            margin: 0;
+            padding: 24px;
+            background: #f6f8fa;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+        }}
+        pre {{
+            margin: 0;
+            border-radius: 8px;
+            border: 1px solid #d1d9e0;
+            background: #ffffff;
+            overflow-x: auto;
+        }}
+        pre code {{
+            display: block;
+            padding: 20px 24px;
+            font-family: "SF Mono", "Fira Code", "Fira Mono", Menlo, Consolas, monospace;
+            font-size: 13px;
+            line-height: 1.6;
+            tab-size: 4;
+        }}
+    </style>
+</head>
+<body>
+    <pre><code class="language-python">{escaped}</code></pre>
+    <script>hljs.highlightAll();</script>
+</body>
+</html>"""
 
 
 @agent_env.task

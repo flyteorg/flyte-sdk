@@ -17,7 +17,7 @@ import flyte.errors
 #     .with_local_v2()
 # )
 
-actor_image = flyte.Image.from_debian_base().with_pip_packages("unionai-reuse==0.1.3")
+actor_image = flyte.Image.from_debian_base().with_pip_packages("unionai-reuse")
 
 env = flyte.TaskEnvironment(
     name="error_reusable",

@@ -19,7 +19,6 @@ __all__ = [
     "Trigger",
     "User",
     "auth_metadata",
-    "create_channel",
     "upload_dir",
     "upload_file",
 ]
@@ -27,7 +26,6 @@ __all__ = [
 from ._action import Action, ActionDetails, ActionInputs, ActionOutputs
 from ._app import App
 from ._auth_metadata import auth_metadata
-from ._client.auth import create_channel
 from ._common import TimeFilter
 from ._data import upload_dir, upload_file
 from ._project import Project

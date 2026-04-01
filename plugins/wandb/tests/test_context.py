@@ -243,6 +243,52 @@ class TestWandBConfig:
         assert config.mode == "offline"
         assert config.kwargs == {"custom_param": "value"}
 
+    def test_wandb_config_with_host(self):
+        """Test wandb_config() with host parameter."""
+        config = wandb_config(
+            project="test-project",
+            entity="test-entity",
+            host="https://my-wandb.example.com",
+        )
+
+        assert config.host == "https://my-wandb.example.com"
+
+    def test_wandb_config_host_to_dict(self):
+        """Test that host is included in to_dict()."""
+        config = _WandBConfig(
+            project="test-project",
+            host="https://my-wandb.example.com",
+        )
+
+        result = config.to_dict()
+
+        assert result["wandb_host"] == "https://my-wandb.example.com"
+
+    def test_wandb_config_host_to_dict_none(self):
+        """Test that host=None is excluded from to_dict()."""
+        config = _WandBConfig(project="test-project", host=None)
+
+        result = config.to_dict()
+
+        assert "wandb_host" not in result
+
+    def test_wandb_config_host_from_dict(self):
+        """Test that host is parsed from dict."""
+        input_dict = {
+            "wandb_project": "test-project",
+            "wandb_host": "https://my-wandb.example.com",
+        }
+
+        config = _WandBConfig.from_dict(input_dict)
+
+        assert config.host == "https://my-wandb.example.com"
+
+    def test_wandb_config_host_roundtrip(self):
+        """Test that host survives a roundtrip through serialization."""
+        config = _WandBConfig(project="test-project", host="https://my-wandb.example.com")
+        restored = _WandBConfig.from_dict(config.to_dict())
+        assert restored.host == "https://my-wandb.example.com"
+
     def test_wandb_config_with_run_mode(self):
         """Test wandb_config() with run_mode parameter."""
         config = wandb_config(

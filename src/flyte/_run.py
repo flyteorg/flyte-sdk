@@ -23,6 +23,7 @@ from flyte._logging import LogFormat, logger
 from flyte._task import F, P, R, TaskTemplate
 from flyte.models import (
     ActionID,
+    ActionPhase,
     Checkpoints,
     CodeBundle,
     RawDataPath,
@@ -34,6 +35,7 @@ from flyte.syncify import syncify
 from ._constants import FLYTE_SYS_PATH
 
 if TYPE_CHECKING:
+    from flyte.notify import NamedRule, Notification
     from flyte.remote import Run
     from flyte.remote._task import LazyEntity
 
@@ -112,6 +114,7 @@ class _Runner:
         disable_run_cache: bool = False,
         queue: Optional[str] = None,
         custom_context: Dict[str, str] | None = None,
+        notifications: NamedRule | Notification | Tuple[Notification, ...] | None = None,
         cache_lookup_scope: CacheLookupScope = "global",
         preserve_original_types: bool | None = None,
         debug: bool = False,
@@ -153,6 +156,7 @@ class _Runner:
         self._reset_root_logger = reset_root_logger
         self._disable_run_cache = disable_run_cache
         self._queue = queue
+        self._notifications = notifications
         self._custom_context = custom_context or {}
         self._cache_lookup_scope = cache_lookup_scope
         self._preserve_original_types = (
@@ -162,7 +166,8 @@ class _Runner:
 
     @requires_initialization
     async def _run_remote(self, obj: TaskTemplate[P, R, F] | LazyEntity, *args: P.args, **kwargs: P.kwargs) -> Run:
-        import grpc
+        from connectrpc.code import Code
+        from connectrpc.errors import ConnectError
         from flyteidl2.common import identifier_pb2
         from flyteidl2.core import literals_pb2, security_pb2
         from flyteidl2.task import run_pb2
@@ -207,14 +212,17 @@ class _Runner:
                 code_bundle = cached_value.code_bundle
                 image_cache = cached_value.image_cache
             else:
-                # Resolve any CodeBundleLayer layers before building images
+                # Resolve any CodeBundleLayer layers before building images.
+                # Must cover the parent env AND all depends_on envs (recursively)
+                # so that _build_images can compute the content hash for every image.
                 parent_env = cast(Environment, obj.parent_env())
                 from flyte._image import Image, resolve_code_bundle_layer
 
-                if isinstance(parent_env.image, Image):
-                    parent_env.image = resolve_code_bundle_layer(
-                        parent_env.image, self._copy_files, pathlib.Path(cfg.root_dir)
-                    )
+                from ._deploy import plan_deploy
+
+                for _env in plan_deploy(parent_env)[0].envs.values():
+                    if isinstance(_env.image, Image):
+                        _env.image = resolve_code_bundle_layer(_env.image, self._copy_files, pathlib.Path(cfg.root_dir))
 
                 if not self._dry_run:
                     image_cache = await build_images.aio(parent_env)
@@ -372,8 +380,15 @@ class _Runner:
                 else:
                     raise ValueError(f"Unknown cache lookup scope: {scope}")
 
+            notification_rule_name = None
+            notification_rules = None
+            if self._notifications:
+                from flyte._internal.runtime.notifications_serde import resolve_notification_settings
+
+                notification_rule_name, notification_rules = resolve_notification_settings(self._notifications)
+
             try:
-                resp = await get_client().run_service.CreateRun(
+                resp = await get_client().run_service.create_run(
                     run_service_pb2.CreateRunRequest(
                         run_id=run_id,
                         project_id=project_id,
@@ -396,19 +411,21 @@ class _Runner:
                                 if self._cache_lookup_scope
                                 else None,
                             ),
+                            notification_rule_name=notification_rule_name,
+                            notification_rules=notification_rules,
                         ),
                     ),
                 )
                 return Run(pb2=resp.run, _preserve_original_types=self._preserve_original_types)
-            except grpc.aio.AioRpcError as e:
-                if e.code() == grpc.StatusCode.UNAVAILABLE:
+            except ConnectError as e:
+                if e.code == Code.UNAVAILABLE:
                     raise flyte.errors.RuntimeSystemError(
                         "SystemUnavailableError",
                         "Flyte system is currently unavailable. check your configuration, or the service status.",
                     ) from e
-                elif e.code() == grpc.StatusCode.INVALID_ARGUMENT:
-                    raise flyte.errors.RuntimeUserError("InvalidArgumentError", e.details())
-                elif e.code() == grpc.StatusCode.ALREADY_EXISTS:
+                elif e.code == Code.INVALID_ARGUMENT:
+                    raise flyte.errors.RuntimeUserError("InvalidArgumentError", e.message)
+                elif e.code == Code.ALREADY_EXISTS:
                     # TODO maybe this should be a pass and return existing run?
                     raise flyte.errors.RuntimeUserError(
                         "RunAlreadyExistsError",
@@ -417,7 +434,7 @@ class _Runner:
                 else:
                     raise flyte.errors.RuntimeSystemError(
                         "RunCreationError",
-                        f"Failed to create run: {e.details()}",
+                        f"Failed to create run: {e.message}",
                     ) from e
 
         class DryRun(Run):
@@ -460,12 +477,16 @@ class _Runner:
         if obj.parent_env is None:
             raise ValueError("Task is not attached to an environment. Please attach the task to an environment.")
 
-        # Resolve any CodeBundleLayer layers before building images
+        # Resolve any CodeBundleLayer layers before building images.
+        # Must cover the parent env AND all depends_on envs (recursively)
+        # so that _build_images can compute the content hash for every image.
         env = cast(Environment, obj.parent_env())
+        from flyte._deploy import plan_deploy
         from flyte._image import Image, resolve_code_bundle_layer
 
-        if isinstance(env.image, Image):
-            env.image = resolve_code_bundle_layer(env.image, self._copy_files, pathlib.Path(cfg.root_dir))
+        for _env in plan_deploy(env)[0].envs.values():
+            if isinstance(_env.image, Image):
+                _env.image = resolve_code_bundle_layer(_env.image, self._copy_files, pathlib.Path(cfg.root_dir))
 
         image_cache = await build_images.aio(cast(Environment, obj.parent_env()))
 
@@ -558,6 +579,33 @@ class _Runner:
             raise err
         return outputs
 
+    async def _send_local_notifications(
+        self,
+        *,
+        phase: ActionPhase,
+        task_name: str,
+        run_name: str,
+        error: str = "",
+    ) -> None:
+        """Send notifications locally. Never raises — failures are logged."""
+        from flyte.notify._notifiers import NamedRule as _NamedRule
+        from flyte.notify._sender import send_notifications
+
+        notifications = self._notifications
+        if isinstance(notifications, _NamedRule):
+            logger.info("Skipping named rule %r in local mode", notifications.name)
+            return
+
+        await send_notifications(
+            notifications,  # type: ignore[arg-type]
+            phase=phase,
+            task_name=task_name,
+            run_name=run_name,
+            error=error,
+            project=self._project or "",
+            domain=self._domain or "",
+        )
+
     async def _run_local(self, obj: TaskTemplate[P, R, F], *args: P.args, **kwargs: P.kwargs) -> Run:
         from flyteidl2.common import identifier_pb2
         from flyteidl2.task import common_pb2
@@ -633,9 +681,15 @@ class _Runner:
                     outputs = await controller.submit(obj, *args, **kwargs)
         except Exception as e:
             recorder.record_root_failure(error=str(e))
+            if self._notifications:
+                await self._send_local_notifications(
+                    phase=ActionPhase.FAILED, task_name=obj.name, run_name=run_name, error=str(e)
+                )
             raise
         else:
             recorder.record_root_complete()
+            if self._notifications:
+                await self._send_local_notifications(phase=ActionPhase.SUCCEEDED, task_name=obj.name, run_name=run_name)
 
         class _LocalRun(Run):
             def __init__(self, outputs: Tuple[Any, ...] | Any):
@@ -753,6 +807,7 @@ def with_runcontext(
     reset_root_logger: bool = False,
     disable_run_cache: bool = False,
     queue: Optional[str] = None,
+    notifications: Notification | Tuple[Notification, ...] | None = None,
     custom_context: Dict[str, str] | None = None,
     cache_lookup_scope: CacheLookupScope = "global",
     preserve_original_types: bool = False,
@@ -765,6 +820,9 @@ def with_runcontext(
     Example:
     ```python
     import flyte
+    import flyte.notify as notify
+    from flyte.models import ActionPhase
+
     env = flyte.TaskEnvironment("example")
 
     @env.task
@@ -772,7 +830,14 @@ def with_runcontext(
         return f"{x} {y}"
 
     if __name__ == "__main__":
-        flyte.with_runcontext(name="example_run_id").run(example_task, 1, y="hello")
+        flyte.with_runcontext(
+            name="example_run_id",
+            notifications=notify.Slack(
+                on_phase=ActionPhase.FAILED,
+                webhook_url="https://hooks.slack.com/services/YOUR/WEBHOOK/URL",
+                message="Task failed: {run.error}",
+            ),
+        ).run(example_task, 1, y="hello")
     ```
 
     :param mode: Optional The mode to use for the run, if not provided, it will be computed from flyte.init
@@ -804,6 +869,9 @@ def with_runcontext(
     :param reset_root_logger: If true, the root logger will be preserved and not modified by Flyte.
     :param disable_run_cache: Optional If true, the run cache will be disabled. This is useful for testing purposes.
     :param queue: Optional The queue to use for the run. This is used to specify the cluster to use for the run.
+    :param notifications: Optional Notification(s) to send when the run reaches specific execution phases.
+        Accepts a single notification or a tuple of notifications. Supports Email, Slack, Teams, and Webhook types.
+        See `flyte.notify` for available notification types and template variables.
     :param custom_context: Optional global input context to pass to the task. This will be available via
         get_custom_context() within the task and will automatically propagate to sub-tasks.
         Acts as base/default values that can be overridden by context managers in the code.
@@ -850,6 +918,7 @@ def with_runcontext(
         reset_root_logger=reset_root_logger,
         disable_run_cache=disable_run_cache,
         queue=queue,
+        notifications=notifications,
         custom_context=custom_context,
         cache_lookup_scope=cache_lookup_scope,
         preserve_original_types=preserve_original_types,

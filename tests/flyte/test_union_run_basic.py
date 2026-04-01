@@ -67,10 +67,10 @@ async def test_task1_remote_union_sync(
 
     # Ensure the run is not None
     assert run
-    # Ensure the mocked run_service.CreateRun is called
+    # Ensure the mocked run_service.create_run is called
     mock_build_image_bg.assert_called_once()
-    mock_run_service.CreateRun.assert_called_once()
-    captured_input = mock_run_service.CreateRun.call_args[0]
+    mock_run_service.create_run.assert_called_once()
+    captured_input = mock_run_service.create_run.call_args[0]
     req: run_service_pb2.CreateRunRequest = captured_input[0]
     assert req.inputs == common_pb2.Inputs(
         literals=[

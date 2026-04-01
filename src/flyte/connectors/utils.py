@@ -4,7 +4,6 @@ from importlib.metadata import entry_points
 from typing import List
 
 import click
-import grpc
 from flyteidl2.connector import service_pb2
 from flyteidl2.connector.service_pb2_grpc import (
     add_AsyncConnectorServiceServicer_to_server,
@@ -17,6 +16,7 @@ from rich.table import Table
 
 import flyte
 from flyte import logger
+from flyte.connectors._grpc import grpc
 
 
 def is_terminal_phase(phase: TaskExecution.Phase) -> bool:
