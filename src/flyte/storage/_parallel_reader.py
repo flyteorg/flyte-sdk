@@ -10,9 +10,13 @@ import tempfile
 import typing
 from typing import Any, Hashable, Protocol
 
+import logging
+
 import aiofiles
 import aiofiles.os
 import obstore
+
+logger = logging.getLogger(__name__)
 
 if typing.TYPE_CHECKING:
     from obstore import Bytes, ObjectMeta
@@ -155,9 +159,10 @@ class ObstoreParallelReader:
                 pass
 
         async def _worker():
+            task: DownloadTask | None = None
             try:
                 while not done.is_set():
-                    task: DownloadTask = await inq.get()
+                    task = await inq.get()
                     if task is sentinel:
                         inq.put_nowait(sentinel)
                         break
@@ -189,6 +194,16 @@ class ObstoreParallelReader:
                     del active[task.source.id]
             except asyncio.CancelledError:
                 pass
+            except Exception:
+                if task is not None:
+                    logger.exception(
+                        "Worker failed downloading chunk of %s at offset %d",
+                        task.source.path,
+                        task.chunk.offset,
+                    )
+                else:
+                    logger.exception("Worker failed before receiving a task")
+                raise
             finally:
                 done.set()
 
