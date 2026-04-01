@@ -12,34 +12,28 @@
 Hugging Face ``transformers.Trainer`` + Flyte ``AsyncCheckpoint``
 ================================================================
 
-Trains a tiny BERT classifier with :class:`transformers.Trainer`, keeping the Hugging Face
-``output_dir`` (including ``checkpoint-*`` folders) under :attr:`~flyte.AsyncCheckpoint.path`
-and syncing it through the task checkpoint prefix.
+Trains a tiny BERT classifier with :class:`transformers.Trainer`, keeping the Hugging Face ``output_dir``
+under the task checkpoint prefix. Matches ``sklearn_partial_checkpoint.py``:
 
-Flow:
+1. ``await checkpoint.load.aio()`` — restore prior tree from object storage.
+2. ``resume_from_checkpoint`` from :func:`transformers.trainer_utils.get_last_checkpoint` (not the raw
+   Flyte load path).
+3. ``chunks_start`` from ``trainer_state.json`` ``global_step`` when resuming (steps completed before this
+   attempt). Failure uses the same rule as sklearn:
+   ``(global_step - 1) > chunks_start and (global_step - 1) % failure_interval == 0`` with
+   ``failure_interval = max_steps // RETRIES``.
+4. :class:`FlyteTrainerCheckpointCallback` — :meth:`~flyte.AsyncCheckpoint.save` on each HF ``on_save``
+   (aligned with HF checkpoint writes).
+5. ``await checkpoint.save.aio(output_dir)`` at the end.
 
-1. ``await checkpoint.load.aio()`` — restore any prior tree from object storage.
-2. :func:`transformers.trainer_utils.get_last_checkpoint` — pick up the latest ``checkpoint-*``
-   folder after a restore (or ``None`` on the first run).
-3. ``Trainer.train(resume_from_checkpoint=...)`` — resume training when a checkpoint exists.
-4. :class:`FlyteTrainerCheckpointCallback` — at each epoch end, upload ``output_dir`` with
-   :meth:`~flyte.AsyncCheckpoint.save` (sync; safe inside ``Trainer.train``).
-5. ``await checkpoint.save.aio(output_dir)`` — final upload so the tail of the last epoch is persisted when
-   training stops on ``max_steps`` before the next epoch boundary.
-
-The model id ``hf-internal-testing/tiny-random-bert`` is small and intended for tests; the first
-run may download weights from the Hub. Transformers may print a "LOAD REPORT" with
-``UNEXPECTED`` keys for this checkpoint — that is normal when repurposing a random test weight.
-
-``accelerate`` is required for :class:`transformers.Trainer` with PyTorch (see Transformers docs).
-``use_cpu=True`` keeps the example portable on machines with CUDA/MPS.
-
-**Note:** Install this repository editable (``pip install -e .``) so ``TaskContext.checkpoint`` exists;
-see ``generic_data_checkpoint.py``.
+The model id ``hf-internal-testing/tiny-random-bert`` is small and intended for tests; the first run may
+download weights from the Hub. ``accelerate`` is required for :class:`transformers.Trainer` with PyTorch.
+``use_cpu=True`` keeps the example portable.
 """
 
 from __future__ import annotations
 
+import json
 import pathlib
 
 import torch
@@ -52,13 +46,14 @@ from transformers import (
     TrainerCallback,
     TrainingArguments,
 )
+from transformers.trainer_utils import get_last_checkpoint
 
 import flyte
 
 env = flyte.TaskEnvironment(name="checkpoint_hf_trainer")
 
-# Small test weights — first run downloads from the Hub (~few MB).
 MODEL_ID = "hf-internal-testing/tiny-random-bert"
+RETRIES = 3
 
 
 class ToyTextDataset(Dataset):
@@ -84,33 +79,61 @@ class ToyTextDataset(Dataset):
         return enc
 
 
-class FlyteTrainerCheckpointCallback(TrainerCallback):
-    """
-    After each training epoch, upload ``output_dir`` (HF checkpoints and trainer state) to Flyte.
+class FailureInjectionCallback(TrainerCallback):
+    """Sklearn-style step failures: ``i > chunks_start and i % failure_interval == 0`` for ``i = global_step - 1``."""
 
-    :class:`~transformers.Trainer` runs synchronously; use blocking
-    :meth:`~flyte.AsyncCheckpoint.save`, not ``await ...save.aio()`` here.
-    """
+    def __init__(self, chunks_start: int, failure_interval: int) -> None:
+        self._chunks_start = chunks_start
+        self._failure_interval = failure_interval
+
+    def on_step_end(self, args, state, control, **kwargs) -> None:
+        g = state.global_step
+        i = g - 1
+        if i > self._chunks_start and i % self._failure_interval == 0:
+            raise RuntimeError(
+                f"Failed after optimizer step global_step={g} (i={i}), failure_interval {self._failure_interval}."
+            )
+
+
+class FlyteTrainerCheckpointCallback(TrainerCallback):
+    """After each HF checkpoint save, upload ``output_dir`` to Flyte (blocking :meth:`~flyte.AsyncCheckpoint.save`)."""
 
     def __init__(self, flyte_checkpoint: flyte.AsyncCheckpoint, output_dir: pathlib.Path) -> None:
         self._flyte_checkpoint = flyte_checkpoint
         self._output_dir = output_dir
 
-    def on_epoch_end(self, args, state, control, **kwargs) -> None:
+    def on_save(self, args, state, control, **kwargs) -> None:
         self._flyte_checkpoint.save(self._output_dir)
 
 
-@env.task()
+def _chunks_start_from_hf_checkpoint(checkpoint_dir: str | None) -> int:
+    if not checkpoint_dir:
+        return 0
+    p = pathlib.Path(checkpoint_dir) / "trainer_state.json"
+    if not p.is_file():
+        return 0
+    return int(json.loads(p.read_text())["global_step"])
+
+
+@env.task(retries=RETRIES)
 async def train_transformers(max_steps: int = 24) -> float:
+    assert max_steps > RETRIES
     ctx = flyte.ctx()
     assert ctx is not None
     checkpoint = ctx.checkpoint
+    assert checkpoint is not None
 
     checkpoint_path: pathlib.Path | None = await checkpoint.load.aio()
     if checkpoint_path is None:
         output_dir = pathlib.Path("hf_trainer")
     else:
-        output_dir = checkpoint_path
+        output_dir = checkpoint_path if checkpoint_path.is_dir() else checkpoint_path.parent / "hf_trainer"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    hf_resume = get_last_checkpoint(str(output_dir))
+    chunks_start = _chunks_start_from_hf_checkpoint(hf_resume)
+    failure_interval = max_steps // RETRIES
+    print(f"chunks_start={chunks_start}, max_steps={max_steps}, failure_interval={failure_interval}")
 
     tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
     model = AutoModelForSequenceClassification.from_pretrained(MODEL_ID, num_labels=2)
@@ -124,7 +147,7 @@ async def train_transformers(max_steps: int = 24) -> float:
         per_device_train_batch_size=4,
         save_strategy="steps",
         save_steps=save_steps,
-        save_total_limit=1,
+        save_total_limit=2,
         logging_steps=max(1, save_steps // 2),
         report_to="none",
         seed=42,
@@ -136,9 +159,12 @@ async def train_transformers(max_steps: int = 24) -> float:
         args=args,
         train_dataset=train_ds,
         data_collator=collator,
-        callbacks=[FlyteTrainerCheckpointCallback(checkpoint, output_dir)],
+        callbacks=[
+            FailureInjectionCallback(chunks_start, failure_interval),
+            FlyteTrainerCheckpointCallback(checkpoint, output_dir),
+        ],
     )
-    trainer.train(resume_from_checkpoint=checkpoint_path)
+    trainer.train(resume_from_checkpoint=hf_resume)
 
     model.eval()
     device = next(model.parameters()).device
@@ -157,5 +183,5 @@ async def train_transformers(max_steps: int = 24) -> float:
 
 if __name__ == "__main__":
     flyte.init_from_config()
-    run = flyte.with_runcontext(mode="local").run(train_transformers, max_steps=16)
-    print(run.outputs())
+    run = flyte.with_runcontext(mode="remote").run(train_transformers, max_steps=24)
+    print(run.url)

@@ -63,7 +63,7 @@ def repair_union_prev_checkpoint_uri(
     Fix **prev-checkpoint** URIs when the executor passes the **current** attempt directory segment
     (``…/{run_name}/{action}/{n}/…``) instead of the prior attempt (``n-1``).
 
-    Union executor v2 encodes ``n`` as ``GetAttempts()+1`` in the raw-data prefix; the checkpoint
+    Flyte executor v2 encodes ``n`` as ``GetAttempts()+1`` in the raw-data prefix; the checkpoint
     path for the previous attempt must use ``n-1`` when ``n > 1``. When ``run_name`` / ``action_name``
     are omitted, they are read from :func:`flyte.ctx` (``action.run_name``, ``action.name``).
 
@@ -74,6 +74,8 @@ def repair_union_prev_checkpoint_uri(
     or ``n == FLYTE_ATTEMPT_NUMBER + 1`` (0-based :attr:`flyte.models.TaskContext.attempt_number` with a
     ``GetAttempts()+1``-style directory). Otherwise the URI is left unchanged so a correct prev path is not rewritten.
     When the variable is unset or ``< 1``, only ``n > 1`` is required (backward compatible).
+
+    NOTE: This function will be removed once the backend is updated to use the correct attempt number.
     """
     if run_name is None or action_name is None:
         from flyte._context import ctx

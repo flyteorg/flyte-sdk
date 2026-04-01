@@ -1,10 +1,3 @@
-# /// script
-# requires-python = ">=3.11"
-# dependencies = [
-#   "flyte",
-# ]
-# ///
-
 """
 Generic byte checkpointing
 """
@@ -24,6 +17,7 @@ RETRIES = 3
 # Define a task to iterate precisely `n_iterations`, checkpoint its state, and recover from simulated failures.
 @env.task(retries=RETRIES)
 def use_checkpoint(n_iterations: int) -> int:
+    assert n_iterations > RETRIES
     checkpoint = flyte.ctx().checkpoint
 
     path = checkpoint.load()
@@ -36,6 +30,7 @@ def use_checkpoint(n_iterations: int) -> int:
     failure_interval = n_iterations // RETRIES
     for index in range(start, n_iterations):
         if index > start and index % failure_interval == 0:
+            # Simulate a failure at a regular interval
             raise RuntimeError(f"Failed at iteration {index}, failure_interval {failure_interval}.")
         checkpoint.save(f"{index + 1}".encode())
     return index

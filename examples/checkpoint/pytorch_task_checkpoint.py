@@ -7,16 +7,13 @@
 # ///
 
 """
-PyTorch checkpoint via TaskContext
-==================================
+PyTorch checkpoints
+===================
 
 Saves ``training.pt`` (state dict + optimizer + epoch) using :class:`~flyte.AsyncCheckpoint`,
 following the same load / persist pattern as ``huggingface_trainer_checkpoint.py`` (resolve a local
 root from ``await checkpoint.load.aio()``, sync :meth:`~flyte.AsyncCheckpoint.save` at each epoch end,
 then a final ``await checkpoint.save.aio(...)``).
-
-**Note:** Use an editable install of this SDK (or a release that includes
-``TaskContext.checkpoint``); see ``generic_data_checkpoint.py`` for details.
 """
 
 from __future__ import annotations
@@ -28,44 +25,41 @@ import torch.nn as nn
 
 import flyte
 
-env = flyte.TaskEnvironment(name="checkpoint_pytorch")
+env = flyte.TaskEnvironment(
+    name="checkpoint_pytorch",
+    image=flyte.Image.from_debian_base().with_pip_packages("torch"),
+)
 
-CHECKPOINT_FILE = "training.pt"
-
-
-def weights_path(root: pathlib.Path) -> pathlib.Path:
-    direct = root / CHECKPOINT_FILE
-    if direct.exists():
-        return direct
-    found = list(root.rglob(CHECKPOINT_FILE))
-    return found[0] if found else direct
+RETRIES = 3
 
 
-@env.task()
+@env.task(retries=RETRIES)
 async def train_linear(epochs: int = 3) -> float:
+    assert epochs > RETRIES
     ctx = flyte.ctx()
     assert ctx is not None
-    ck = ctx.checkpoint
-    assert ck is not None
-
-    checkpoint_path: pathlib.Path | None = await ck.load.aio()
-    if checkpoint_path is None:
-        train_root = pathlib.Path("pytorch_linear")
-    else:
-        train_root = checkpoint_path if checkpoint_path.is_dir() else checkpoint_path.parent / "pytorch_linear"
-    train_root.mkdir(parents=True, exist_ok=True)
-    wpath = weights_path(train_root)
+    cp = ctx.checkpoint
+    assert cp is not None
 
     model = nn.Linear(4, 1)
     opt = torch.optim.SGD(model.parameters(), lr=0.01)
-    start = 0
 
-    if wpath.exists():
-        blob = torch.load(wpath, map_location="cpu", weights_only=False)
+    prev_cp_path: pathlib.Path | None = await cp.load.aio()
+    if prev_cp_path:
+        # load model, optimizer, and epoch from previous checkpoint
+        blob = torch.load(prev_cp_path, map_location="cpu", weights_only=False)
         model.load_state_dict(blob["model"])
         opt.load_state_dict(blob["opt"])
         start = int(blob["epoch"]) + 1
+    else:
+        start = 0
 
+    # create local checkpoint directory
+    wpath = pathlib.Path("pytorch_linear") / "training.pt"
+    wpath.parent.mkdir(parents=True, exist_ok=True)
+
+    failure_interval = epochs // RETRIES
+    print(f"Start at epoch {start} of {epochs}")
     for epoch in range(start, epochs):
         x = torch.randn(8, 4)
         y = torch.randn(8, 1)
@@ -74,19 +68,23 @@ async def train_linear(epochs: int = 3) -> float:
         loss.backward()
         opt.step()
 
+        if epoch > start and epoch % failure_interval == 0:
+            raise RuntimeError(f"Failed at epoch {epoch}, failure_interval {failure_interval}.")
+
         wpath.parent.mkdir(parents=True, exist_ok=True)
         torch.save(
             {"model": model.state_dict(), "opt": opt.state_dict(), "epoch": epoch},
             wpath,
         )
-        ck.save(wpath)
+        # save checkpoint to object storage, which can be loaded by cp.load.aio() at the top of the script on the
+        # next attempt
+        await cp.save.aio(wpath)
 
-    await ck.save.aio(wpath)
     with torch.no_grad():
         return float(model(torch.ones(1, 4)).squeeze().item())
 
 
 if __name__ == "__main__":
     flyte.init_from_config()
-    run = flyte.with_runcontext(mode="local").run(train_linear, epochs=2)
-    print(run.outputs())
+    run = flyte.with_runcontext(mode="remote").run(train_linear, epochs=10)
+    print(run.url)

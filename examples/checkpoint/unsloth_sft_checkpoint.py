@@ -15,59 +15,70 @@
 Unsloth + TRL ``SFTTrainer`` + Flyte ``AsyncCheckpoint``
 =========================================================
 
-LoRA fine-tuning with `Unsloth <https://unsloth.ai/docs>`__ and :class:`trl.trainer.SFTTrainer`,
-while persisting the Hugging Face ``output_dir`` (checkpoint shards, adapter config, etc.) through
-the task :class:`~flyte.AsyncCheckpoint` so Flyte retries can resume.
+LoRA fine-tuning with `Unsloth <https://unsloth.ai/docs>`__ and :class:`trl.trainer.SFTTrainer`, persisting
+``output_dir`` through :class:`~flyte.AsyncCheckpoint` so Flyte retries can resume.
 
-Unsloth's docs describe checkpointing with ``save_strategy`` / ``save_steps`` and
-``trainer.train(resume_from_checkpoint=...)`` — see
-`Finetuning from Last Checkpoint <https://unsloth.ai/docs/basics/finetuning-from-last-checkpoint>`__
-and the `continued pretraining / adapter notes
-<https://unsloth.ai/docs/basics/continued-pretraining>`__ for loading LoRA adapters.
+Follows ``sklearn_partial_checkpoint.py`` and ``huggingface_trainer_checkpoint.py``:
 
-This example mirrors ``huggingface_trainer_checkpoint.py``: resolve ``output_dir`` from
-``await checkpoint.load.aio()``, train with :class:`FlyteTrainerCheckpointCallback` (epoch-end Flyte
-:meth:`~flyte.AsyncCheckpoint.save`), and match HF resume semantics via ``resume_from_checkpoint``.
+- ``await checkpoint.load.aio()``, ``get_last_checkpoint``, ``trainer.train(resume_from_checkpoint=...)``.
+- ``chunks_start`` from ``trainer_state.json`` and step failure rule
+  ``(global_step - 1) > chunks_start and (global_step - 1) % failure_interval == 0`` with
+  ``failure_interval = max_steps // RETRIES``.
+- Flyte sync on HF ``on_save``.
 
-**Hardware:** Unsloth currently requires an **NVIDIA, AMD, or Intel GPU** (not Apple Silicon / MPS).
-See `Unsloth requirements <https://unsloth.ai/docs/get-started/fine-tuning-for-beginners/unsloth-requirements>`__.
-Imports from ``unsloth`` are deferred until the task body so the script can be parsed on any machine.
-
-**Note:** Editable ``pip install -e .`` for this SDK so ``TaskContext.checkpoint`` exists; see
-``generic_data_checkpoint.py``.
+**Hardware:** Unsloth requires an **NVIDIA, AMD, or Intel GPU** (not Apple Silicon / MPS). Imports from
+``unsloth`` are deferred until the task body.
 """
 
 from __future__ import annotations
 
+import json
 import pathlib
 
 from transformers import TrainerCallback
+from transformers.trainer_utils import get_last_checkpoint
 
 import flyte
 
 env = flyte.TaskEnvironment(name="checkpoint_unsloth_sft")
 
-# Small 4-bit model from the Unsloth Hub (multi-GB download on first run).
 MODEL_NAME = "unsloth/Llama-3.2-1B-bnb-4bit"
+RETRIES = 3
+
+
+class FailureInjectionCallback(TrainerCallback):
+    def __init__(self, chunks_start: int, failure_interval: int) -> None:
+        self._chunks_start = chunks_start
+        self._failure_interval = failure_interval
+
+    def on_step_end(self, args, state, control, **kwargs) -> None:
+        g = state.global_step
+        i = g - 1
+        if i > self._chunks_start and i % self._failure_interval == 0:
+            raise RuntimeError(
+                f"Failed after optimizer step global_step={g} (i={i}), failure_interval {self._failure_interval}."
+            )
 
 
 class FlyteTrainerCheckpointCallback(TrainerCallback):
-    """
-    After each training epoch, upload ``output_dir`` (HF / TRL checkpoint tree) to Flyte.
-
-    Use blocking :meth:`~flyte.AsyncCheckpoint.save` inside ``Trainer.train`` (sync loop).
-    """
-
     def __init__(self, flyte_checkpoint: flyte.AsyncCheckpoint, output_dir: pathlib.Path) -> None:
         self._flyte_checkpoint = flyte_checkpoint
         self._output_dir = output_dir
 
-    def on_epoch_end(self, args, state, control, **kwargs) -> None:
+    def on_save(self, args, state, control, **kwargs) -> None:
         self._flyte_checkpoint.save(self._output_dir)
 
 
+def _chunks_start_from_hf_checkpoint(checkpoint_dir: str | None) -> int:
+    if not checkpoint_dir:
+        return 0
+    p = pathlib.Path(checkpoint_dir) / "trainer_state.json"
+    if not p.is_file():
+        return 0
+    return int(json.loads(p.read_text())["global_step"])
+
+
 def _tiny_instruction_dataset():
-    """A few instruction/response rows for a smoke fine-tune."""
     from datasets import Dataset
 
     rows = [
@@ -78,10 +89,9 @@ def _tiny_instruction_dataset():
     return Dataset.from_dict({"text": rows})
 
 
-@env.task()
+@env.task(retries=RETRIES)
 async def train_unsloth_sft(max_steps: int = 12) -> float:
-    # Unsloth must be imported before TRL/transformers (see Unsloth docs). Deferred so Mac hosts
-    # without a supported GPU can still load this module.
+    assert max_steps > RETRIES
     import unsloth  # noqa: F401
     from trl import SFTConfig, SFTTrainer
     from unsloth import FastLanguageModel
@@ -97,6 +107,11 @@ async def train_unsloth_sft(max_steps: int = 12) -> float:
     else:
         output_dir = checkpoint_path if checkpoint_path.is_dir() else checkpoint_path.parent / "unsloth_sft"
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    hf_resume = get_last_checkpoint(str(output_dir))
+    chunks_start = _chunks_start_from_hf_checkpoint(hf_resume)
+    failure_interval = max_steps // RETRIES
+    print(f"chunks_start={chunks_start}, max_steps={max_steps}, failure_interval={failure_interval}")
 
     max_seq_length = 512
     model, tokenizer = FastLanguageModel.from_pretrained(
@@ -134,7 +149,7 @@ async def train_unsloth_sft(max_steps: int = 12) -> float:
         gradient_accumulation_steps=1,
         save_strategy="steps",
         save_steps=save_steps,
-        save_total_limit=1,
+        save_total_limit=2,
         logging_steps=max(1, save_steps // 2),
         report_to="none",
         seed=42,
@@ -147,9 +162,14 @@ async def train_unsloth_sft(max_steps: int = 12) -> float:
         args=args,
         train_dataset=train_dataset,
         processing_class=tokenizer,
-        callbacks=[FlyteTrainerCheckpointCallback(checkpoint, output_dir)],
+        callbacks=[
+            FailureInjectionCallback(chunks_start, failure_interval),
+            FlyteTrainerCheckpointCallback(checkpoint, output_dir),
+        ],
     )
-    trainer.train(resume_from_checkpoint=checkpoint_path)
+    trainer.train(resume_from_checkpoint=hf_resume)
+
+    await checkpoint.save.aio(output_dir)
 
     for h in reversed(trainer.state.log_history):
         if "loss" in h:
@@ -162,8 +182,8 @@ async def train_unsloth_sft(max_steps: int = 12) -> float:
 if __name__ == "__main__":
     flyte.init_from_config()
     try:
-        run = flyte.with_runcontext(mode="local").run(train_unsloth_sft, max_steps=8)
-        print(run.outputs())
+        run = flyte.with_runcontext(mode="remote").run(train_unsloth_sft, max_steps=12)
+        print(run.url)
     except Exception as e:
         msg = str(e)
         if "Unsloth currently only works" in msg or "NVIDIA, AMD and Intel GPUs" in msg:

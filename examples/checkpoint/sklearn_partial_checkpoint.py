@@ -1,11 +1,3 @@
-# /// script
-# requires-python = ">=3.11"
-# dependencies = [
-#   "flyte",
-#   "scikit-learn>=1.3",
-# ]
-# ///
-
 """
 Scikit-learn partial_fit with checkpoints
 =========================================
@@ -30,9 +22,14 @@ from sklearn.linear_model import SGDClassifier
 
 import flyte
 
-env = flyte.TaskEnvironment(name="checkpoint_sklearn_partial")
+env = flyte.TaskEnvironment(
+    name="checkpoint_sklearn_partial",
+    image=flyte.Image.from_debian_base().with_pip_packages("scikit-learn"),
+    resources=flyte.Resources(cpu="2", memory="1Gi"),
+)
 
 BUNDLE_FILE = "sgd_bundle.pkl"
+RETRIES = 3
 
 
 def bundle_path(root: pathlib.Path) -> pathlib.Path:
@@ -43,45 +40,46 @@ def bundle_path(root: pathlib.Path) -> pathlib.Path:
     return found[0] if found else direct
 
 
-@env.task()
+@env.task(retries=RETRIES)
 async def incremental_sgd(chunks: int = 4) -> float:
+    assert chunks > RETRIES
     ctx = flyte.ctx()
     assert ctx is not None
-    ck = ctx.checkpoint
-    assert ck is not None
+    cp = ctx.checkpoint
+    assert cp is not None
 
-    checkpoint_path: pathlib.Path | None = await ck.load.aio()
-    if checkpoint_path is None:
-        bundle_root = pathlib.Path("sklearn_partial")
+    prev_cp_path: pathlib.Path | None = await cp.load.aio()
+    prev = None if prev_cp_path is None else prev_cp_path.read_bytes()
+    if prev:
+        # load clf and chunks_done from previous checkpoint
+        bundle = pickle.loads(prev)
+        chunks_start = bundle["chunks_done"]
+        clf = bundle["clf"]
     else:
-        bundle_root = checkpoint_path if checkpoint_path.is_dir() else checkpoint_path.parent / "sklearn_partial"
-    bundle_root.mkdir(parents=True, exist_ok=True)
-    bpath = bundle_path(bundle_root)
+        chunks_start = 0
+        clf = SGDClassifier(max_iter=1, tol=None, random_state=0)
+
+    # create local checkpoint directory
+    bundle_path = pathlib.Path("sklearn_partial") / "sgd_bundle.pkl"
+    bundle_path.parent.mkdir(parents=True, exist_ok=True)
 
     rng = np.random.default_rng(0)
-    clf: SGDClassifier | None = None
     classes = np.array([0, 1])
-    done = 0
 
-    if bpath.exists():
-        bundle = pickle.loads(bpath.read_bytes())
-        clf = bundle["clf"]
-        done = int(bundle["chunks_done"])
-
-    for i in range(done, chunks):
+    failure_interval = chunks // RETRIES
+    print(f"Start at: {chunks_start} of {chunks} chunks")
+    for i in range(chunks_start, chunks):
         x = rng.standard_normal((32, 8))
         y = (x[:, 0] + x[:, 1] > 0).astype(int)
-        if clf is None:
-            clf = SGDClassifier(max_iter=1, tol=None, random_state=0)
-            clf.partial_fit(x, y, classes=classes)
-        else:
-            clf.partial_fit(x, y)
+        clf.partial_fit(x, y, classes=classes)
 
-        bpath.parent.mkdir(parents=True, exist_ok=True)
-        bpath.write_bytes(pickle.dumps({"clf": clf, "chunks_done": i + 1}))
-        ck.save(bpath)
+        if i > chunks_start and i % failure_interval == 0:
+            # Simulate a failure at a regular interval
+            raise RuntimeError(f"Failed at iteration {i}, failure_interval {failure_interval}.")
 
-    await ck.save.aio(bpath)
+        # save checkpoint to object storage, which can be loaded by cp.load.aio() at the top of the script on the
+        bundle_path.write_bytes(pickle.dumps({"clf": clf, "chunks_done": i + 1}))
+        await cp.save.aio(bundle_path)
 
     assert clf is not None
     x_test = rng.standard_normal((64, 8))
@@ -91,5 +89,5 @@ async def incremental_sgd(chunks: int = 4) -> float:
 
 if __name__ == "__main__":
     flyte.init_from_config()
-    run = flyte.with_runcontext(mode="local").run(incremental_sgd, chunks=3)
-    print(run.outputs())
+    run = flyte.with_runcontext(mode="remote").run(incremental_sgd, chunks=10)
+    print(run.url)

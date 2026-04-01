@@ -12,21 +12,19 @@ PyTorch Lightning + Flyte ``AsyncCheckpoint``
 =============================================
 
 Trains a tiny regression model with Lightning's :class:`~lightning.pytorch.callbacks.ModelCheckpoint`,
-persisting the checkpoint directory through the task's Flyte checkpoint prefix so retries and
-new attempts can resume from ``last.ckpt``.
+persisting the checkpoint directory through the task's Flyte checkpoint prefix so retries can resume
+from ``last.ckpt``.
 
-Flow (aligned with ``huggingface_trainer_checkpoint.py``):
+Aligned with ``sklearn_partial_checkpoint.py``:
 
-1. ``checkpoint_path = await checkpoint.load.aio()`` — restore prior state into the checkpoint workspace when a
-   previous attempt exists.
-2. Resolve ``ckpt_dir`` from ``checkpoint_path`` (see task body); if ``last.ckpt`` exists, pass it to ``Trainer.fit``
-   as ``ckpt_path``.
-3. :class:`FlyteLightningCheckpointCallback` — subclasses :class:`~lightning.pytorch.callbacks.ModelCheckpoint`
-   and, after each epoch checkpoint write, uploads ``dirpath`` with blocking :meth:`~flyte.AsyncCheckpoint.save`.
-4. Optional final ``await checkpoint.save.aio(ckpt_dir)`` if training can stop before the next epoch boundary.
-
-**Note:** Install this repository editable (``pip install -e .``) so ``TaskContext.checkpoint`` exists;
-see ``generic_data_checkpoint.py``.
+1. ``await checkpoint.load.aio()`` — restore prior tree when a previous attempt exists.
+2. ``chunks_start`` — epochs already completed before this ``Trainer.fit`` (from ``last.ckpt``'s
+   ``epoch`` field when resuming, else ``0``). A :class:`FailureInjectionCallback` tracks the same
+   0-based epoch index as sklearn's loop variable ``i`` and only raises when
+   ``i > chunks_start and i % failure_interval == 0`` with ``failure_interval = max_epochs // RETRIES``.
+3. Callback order is ``FailureInjectionCallback`` then :class:`FlyteLightningCheckpointCallback` so a simulated
+   failure happens **before** that epoch is persisted (same order as sklearn: train → fail check → save).
+4. ``await checkpoint.save.aio(ckpt_dir)`` at the end.
 """
 
 from __future__ import annotations
@@ -45,15 +43,33 @@ import flyte
 env = flyte.TaskEnvironment(name="checkpoint_lightning")
 
 FEATURES = 16
+RETRIES = 3
+
+
+class FailureInjectionCallback(L.Callback):
+    """
+    Mirrors sklearn's ``for i in range(chunks_start, n): ... if i > chunks_start and i % fi == 0: raise``.
+    """
+
+    def __init__(self, chunks_start: int, failure_interval: int) -> None:
+        self._chunks_start = chunks_start
+        self._failure_interval = failure_interval
+        self._i: int | None = None
+
+    @override
+    def on_train_epoch_end(self, trainer: L.Trainer, pl_module: L.LightningModule) -> None:
+        if self._i is None:
+            self._i = self._chunks_start
+        i = self._i
+        self._i = i + 1
+        if i > self._chunks_start and i % self._failure_interval == 0:
+            raise RuntimeError(f"Failed at epoch index {i}, failure_interval {self._failure_interval}.")
 
 
 class FlyteLightningCheckpointCallback(ModelCheckpoint):
     """
     :class:`~lightning.pytorch.callbacks.ModelCheckpoint` that mirrors ``dirpath`` to Flyte after each
     on-disk checkpoint cycle in :meth:`~ModelCheckpoint.on_train_epoch_end`.
-
-    Calls ``super()`` first so ``last.ckpt`` exists locally, then uses blocking
-    :meth:`~flyte.AsyncCheckpoint.save` (safe inside ``Trainer.fit``).
     """
 
     def __init__(self, flyte_checkpoint: flyte.AsyncCheckpoint, *, dirpath: str | pathlib.Path, **kwargs) -> None:
@@ -103,8 +119,9 @@ def _make_loaders(batch: int = 32, batches: int = 8) -> DataLoader:
     return DataLoader(ds, batch_size=batch, shuffle=True)
 
 
-@env.task()
+@env.task(retries=RETRIES)
 async def train_lightning(max_epochs: int = 3) -> float:
+    assert max_epochs > RETRIES
     ctx = flyte.ctx()
     assert ctx is not None
     checkpoint = ctx.checkpoint
@@ -118,6 +135,13 @@ async def train_lightning(max_epochs: int = 3) -> float:
     ckpt_dir.mkdir(parents=True, exist_ok=True)
 
     resume = find_last_checkpoint(ckpt_dir)
+    chunks_start = 0
+    if resume:
+        ck = torch.load(resume, map_location="cpu", weights_only=False)
+        chunks_start = int(ck.get("epoch", 0))
+
+    failure_interval = max_epochs // RETRIES
+    print(f"chunks_start={chunks_start}, max_epochs={max_epochs}, failure_interval={failure_interval}")
 
     model = TinyModule()
     mc = FlyteLightningCheckpointCallback(
@@ -127,10 +151,11 @@ async def train_lightning(max_epochs: int = 3) -> float:
         save_last=True,
         save_top_k=0,
     )
+    fail_cb = FailureInjectionCallback(chunks_start=chunks_start, failure_interval=failure_interval)
     trainer = L.Trainer(
         max_epochs=max_epochs,
         enable_checkpointing=True,
-        callbacks=[mc],
+        callbacks=[fail_cb, mc],
         enable_progress_bar=True,
         logger=False,
         accelerator="cpu",
@@ -148,5 +173,5 @@ async def train_lightning(max_epochs: int = 3) -> float:
 
 if __name__ == "__main__":
     flyte.init_from_config()
-    run = flyte.with_runcontext(mode="local").run(train_lightning, max_epochs=2)
-    print(run.outputs())
+    run = flyte.with_runcontext(mode="remote").run(train_lightning, max_epochs=10)
+    print(run.url)
