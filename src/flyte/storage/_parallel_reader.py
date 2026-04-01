@@ -14,6 +14,8 @@ import aiofiles
 import aiofiles.os
 import obstore
 
+from flyte._logging import logger
+
 if typing.TYPE_CHECKING:
     from obstore import Bytes, ObjectMeta
     from obstore.store import ObjectStore
@@ -157,7 +159,11 @@ class ObstoreParallelReader:
         async def _worker():
             try:
                 while not done.is_set():
-                    task: DownloadTask = await inq.get()
+                    try:
+                        task: DownloadTask = await inq.get()
+                    except Exception:
+                        logger.exception("Worker failed before receiving a task")
+                        raise
                     if task is sentinel:
                         inq.put_nowait(sentinel)
                         break
@@ -166,12 +172,20 @@ class ObstoreParallelReader:
                     # The actual file position is the sum of both
                     file_offset = task.chunk.offset + task.source.offset
                     buf = active[task.source.id]
-                    data_to_write = await obstore.get_range_async(
-                        self._store,
-                        str(task.source.path),
-                        start=file_offset,
-                        end=file_offset + task.chunk.length,
-                    )
+                    try:
+                        data_to_write = await obstore.get_range_async(
+                            self._store,
+                            str(task.source.path),
+                            start=file_offset,
+                            end=file_offset + task.chunk.length,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Worker failed downloading chunk of %s at offset %d",
+                            task.source.path,
+                            task.chunk.offset,
+                        )
+                        raise
                     await buf.write(
                         task.chunk.offset,
                         task.chunk.length,
