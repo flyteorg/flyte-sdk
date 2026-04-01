@@ -5,7 +5,6 @@ methods, and PendingEvent.
 
 from __future__ import annotations
 
-import asyncio
 import sys
 import threading
 from datetime import timedelta
@@ -14,20 +13,20 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 import flyte.errors
-from flyte._event import EventType, EventWebhook, PromptType, _Event, new_event
+from flyte._event import EventWebhook, _Event, new_event
 from flyte._internal.controllers._local_controller import _substitute_callback_uri
 from flyte.cli._tui._tracker import PendingEvent
 
 # event_service_pb2 doesn't exist yet (proto not compiled), so inject a mock
 # before importing the remote Event module.
 _mock_event_service_pb2 = MagicMock()
-_mock_event_service_pb2.EventPayload = lambda **kw: MagicMock(**kw)
+_mock_event_service_pb2.EventPayload = MagicMock
 sys.modules.setdefault("flyteidl2.workflow.event_service_pb2", _mock_event_service_pb2)
-
-from flyte.remote._event import Event, EventPayload, _encode_payload  # noqa: E402
 
 # Ensure the module-level name is wired up
 import flyte.remote._event as _remote_event_mod  # noqa: E402
+from flyte.remote._event import Event, _encode_payload  # noqa: E402
+
 _remote_event_mod.event_service_pb2 = _mock_event_service_pb2
 
 
@@ -134,8 +133,10 @@ class TestNewEvent:
         mock_ctx = MagicMock()
         mock_ctx.is_task_context.return_value = True
 
-        with patch("flyte._context.internal_ctx", return_value=mock_ctx), \
-             patch("flyte._internal.controllers.get_controller", return_value=mock_controller):
+        with (
+            patch("flyte._context.internal_ctx", return_value=mock_ctx),
+            patch("flyte._internal.controllers.get_controller", return_value=mock_controller),
+        ):
             e = await new_event.aio("reg_event")
 
         assert e.name == "reg_event"
@@ -327,8 +328,10 @@ class TestLocalControllerEvents:
         e = _Event(name="ev", timeout=0.05)
 
         try:
-            with patch("flyte._internal.controllers._local_controller.internal_ctx", return_value=mock_ctx), \
-                 patch.object(controller, "_prompt_event_console", side_effect=blocking_prompt):
+            with (
+                patch("flyte._internal.controllers._local_controller.internal_ctx", return_value=mock_ctx),
+                patch.object(controller, "_prompt_event_console", side_effect=blocking_prompt),
+            ):
                 with pytest.raises(flyte.errors.EventTimedoutError, match="not signaled within"):
                     await controller.wait_for_event(e)
         finally:
@@ -382,9 +385,11 @@ class TestRemoteEventGet:
         mock_cfg.project = "proj"
         mock_cfg.domain = "dev"
 
-        with patch("flyte.remote._event.ensure_client"), \
-             patch("flyte.remote._event.get_client", return_value=mock_client), \
-             patch("flyte.remote._event.get_init_config", return_value=mock_cfg):
+        with (
+            patch("flyte.remote._event.ensure_client"),
+            patch("flyte.remote._event.get_client", return_value=mock_client),
+            patch("flyte.remote._event.get_init_config", return_value=mock_cfg),
+        ):
             result = await Event.get.aio("my_event", run_name="run1", action_name="act1")
 
         assert result is not None
@@ -410,9 +415,11 @@ class TestRemoteEventGet:
         mock_cfg.project = "proj"
         mock_cfg.domain = "dev"
 
-        with patch("flyte.remote._event.ensure_client"), \
-             patch("flyte.remote._event.get_client", return_value=mock_client), \
-             patch("flyte.remote._event.get_init_config", return_value=mock_cfg):
+        with (
+            patch("flyte.remote._event.ensure_client"),
+            patch("flyte.remote._event.get_client", return_value=mock_client),
+            patch("flyte.remote._event.get_init_config", return_value=mock_cfg),
+        ):
             result = await Event.get.aio("missing", run_name="run1", action_name="act1")
 
         assert result is None
@@ -435,9 +442,11 @@ class TestRemoteEventListall:
         mock_cfg.project = "proj"
         mock_cfg.domain = "dev"
 
-        with patch("flyte.remote._event.ensure_client"), \
-             patch("flyte.remote._event.get_client", return_value=mock_client), \
-             patch("flyte.remote._event.get_init_config", return_value=mock_cfg):
+        with (
+            patch("flyte.remote._event.ensure_client"),
+            patch("flyte.remote._event.get_client", return_value=mock_client),
+            patch("flyte.remote._event.get_init_config", return_value=mock_cfg),
+        ):
             events = []
             async for e in Event.listall.aio(run_name="run1", action_name="act1"):
                 events.append(e)
@@ -460,9 +469,11 @@ class TestRemoteEventListall:
         mock_cfg.project = "proj"
         mock_cfg.domain = "dev"
 
-        with patch("flyte.remote._event.ensure_client"), \
-             patch("flyte.remote._event.get_client", return_value=mock_client), \
-             patch("flyte.remote._event.get_init_config", return_value=mock_cfg):
+        with (
+            patch("flyte.remote._event.ensure_client"),
+            patch("flyte.remote._event.get_client", return_value=mock_client),
+            patch("flyte.remote._event.get_init_config", return_value=mock_cfg),
+        ):
             events = []
             async for e in Event.listall.aio(run_name="run1"):
                 events.append(e)
@@ -490,9 +501,11 @@ class TestRemoteEventListall:
         mock_cfg.project = "proj"
         mock_cfg.domain = "dev"
 
-        with patch("flyte.remote._event.ensure_client"), \
-             patch("flyte.remote._event.get_client", return_value=mock_client), \
-             patch("flyte.remote._event.get_init_config", return_value=mock_cfg):
+        with (
+            patch("flyte.remote._event.ensure_client"),
+            patch("flyte.remote._event.get_client", return_value=mock_client),
+            patch("flyte.remote._event.get_init_config", return_value=mock_cfg),
+        ):
             events = []
             async for e in Event.listall.aio(run_name="run1"):
                 events.append(e)
@@ -512,8 +525,10 @@ class TestRemoteEventSignal:
 
         event = Event(pb2=mock_pb)
 
-        with patch("flyte.remote._event.ensure_client"), \
-             patch("flyte.remote._event.get_client", return_value=mock_client):
+        with (
+            patch("flyte.remote._event.ensure_client"),
+            patch("flyte.remote._event.get_client", return_value=mock_client),
+        ):
             await event.signal.aio(True)
 
         mock_client.event_service.SignalEvent.assert_awaited_once()
@@ -528,8 +543,10 @@ class TestRemoteEventSignal:
 
         event = Event(pb2=mock_pb)
 
-        with patch("flyte.remote._event.ensure_client"), \
-             patch("flyte.remote._event.get_client", return_value=mock_client):
+        with (
+            patch("flyte.remote._event.ensure_client"),
+            patch("flyte.remote._event.get_client", return_value=mock_client),
+        ):
             await event.signal.aio("go ahead")
 
         mock_client.event_service.SignalEvent.assert_awaited_once()
@@ -550,8 +567,10 @@ class TestRemoteEventSignal:
 
         event = Event(pb2=mock_pb)
 
-        with patch("flyte.remote._event.ensure_client"), \
-             patch("flyte.remote._event.get_client", return_value=mock_client):
+        with (
+            patch("flyte.remote._event.ensure_client"),
+            patch("flyte.remote._event.get_client", return_value=mock_client),
+        ):
             await event.signal.aio(42)
 
         mock_client.event_service.SignalEvent.assert_awaited_once()
@@ -566,8 +585,10 @@ class TestRemoteEventSignal:
 
         event = Event(pb2=mock_pb)
 
-        with patch("flyte.remote._event.ensure_client"), \
-             patch("flyte.remote._event.get_client", return_value=mock_client):
+        with (
+            patch("flyte.remote._event.ensure_client"),
+            patch("flyte.remote._event.get_client", return_value=mock_client),
+        ):
             await event.signal.aio(3.14)
 
         mock_client.event_service.SignalEvent.assert_awaited_once()
@@ -618,8 +639,10 @@ class TestNewEventWebhook:
         mock_ctx.is_task_context.return_value = True
 
         wh = EventWebhook(url="https://example.com/hook")
-        with patch("flyte._context.internal_ctx", return_value=mock_ctx), \
-             patch("flyte._internal.controllers.get_controller", return_value=mock_controller):
+        with (
+            patch("flyte._context.internal_ctx", return_value=mock_ctx),
+            patch("flyte._internal.controllers.get_controller", return_value=mock_controller),
+        ):
             e = await new_event.aio("wh_reg_event", webhook=wh)
 
         assert e.webhook is wh

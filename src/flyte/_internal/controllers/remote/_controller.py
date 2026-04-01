@@ -136,6 +136,7 @@ class RemoteController(Controller):
         self._sequencer = TaskCallSequencer()
         self._submit_loop: asyncio.AbstractEventLoop | None = None
         self._submit_thread: threading.Thread | None = None
+        self._pending_events: dict[str, Action] = {}
 
     def generate_task_call_sequence(self, task_obj: object, action_id: ActionID) -> int:
         """
@@ -239,7 +240,7 @@ class RemoteController(Controller):
                 f"Submitting action Run:[{action.run_name}, Parent:[{action.parent_action_name}], "
                 f"task:[{_task.name}], action:[{action.name}]"
             )
-            n = await self.submit_action(action)
+            n = await self.submit_and_wait_for_action(action)
             logger.info(f"Action for task [{_task.name}] action id: {action.name}, completed!")
         except asyncio.CancelledError:
             # If the action is cancelled, we need to cancel the action on the server as well
@@ -484,7 +485,7 @@ class RemoteController(Controller):
                     f" Parent:[{trace_action.parent_action_name}],"
                     f" Trace fn:[{info.name}], action:[{info.action.name}]"
                 )
-                await self.submit_action(trace_action)
+                await self.submit_and_wait_for_action(trace_action)
                 logger.info(f"Trace Action for [{info.name}] action id: {info.action.name}, completed!")
             except asyncio.CancelledError:
                 # If the action is cancelled, we need to cancel the action on the server as well
@@ -557,7 +558,7 @@ class RemoteController(Controller):
                 f"Submitting action Run:[{action.run_name}, Parent:[{action.parent_action_name}], "
                 f"task:[{task_name}], action:[{action.name}]"
             )
-            n = await self.submit_action(action)
+            n = await self.submit_and_wait_for_action(action)
             logger.info(f"Action for task [{task_name}] action id: {action.name}, completed!")
         except asyncio.CancelledError:
             # If the action is cancelled, we need to cancel the action on the server as well
@@ -590,21 +591,87 @@ class RemoteController(Controller):
 
     async def register_event(self, event: Any):
         """
-        Register an event that can be awaited.
-
-        TODO: Implement remote event registration
+        Register an event by submitting a condition action to the backend.
+        Returns immediately after the action is enqueued (fire-and-forget).
 
         :param event: Event object to register
         """
-        raise NotImplementedError("Remote event registration is not yet implemented")
+        from flyte._event import _Event
+
+        if not isinstance(event, _Event):
+            raise TypeError(f"Expected _Event, got {type(event)}")
+
+        ctx = internal_ctx()
+        tctx = ctx.data.task_context
+        if tctx is None:
+            raise flyte.errors.RuntimeSystemError("BadContext", "Task context not initialized")
+
+        current_action_id = tctx.action
+        invoke_seq = self.generate_task_call_sequence(event, current_action_id)
+
+        # Generate a deterministic action name from event name + sequence
+        sub_action_id, _ = convert.generate_sub_action_id_and_output_path(tctx, event.name, event.name, invoke_seq)
+
+        action = Action.from_condition(
+            parent_action_name=current_action_id.name,
+            action_id=identifier_pb2.ActionIdentifier(
+                name=sub_action_id.name,
+                run=identifier_pb2.RunIdentifier(
+                    name=current_action_id.run_name,
+                    project=current_action_id.project,
+                    domain=current_action_id.domain,
+                    org=current_action_id.org,
+                ),
+            ),
+            event_name=event.name,
+            prompt=event.prompt,
+            data_type=event.data_type,
+            description=event.description,
+            group_data=tctx.group_data,
+            run_output_base=tctx.run_base_dir,
+        )
+
+        logger.info(
+            f"Registering event '{event.name}' as condition action [{action.name}] "
+            f"Run:[{action.run_name}], Parent:[{action.parent_action_name}]"
+        )
+
+        # Store for wait_for_event to retrieve later
+        self._pending_events[event.name] = action
+
+        # Submit without waiting — returns immediately
+        await self.start_action(action)
 
     async def wait_for_event(self, event: Any) -> Any:
         """
-        Wait for an event to be signaled.
-
-        TODO: Implement remote event waiting
+        Wait for a previously registered event to be signaled by the backend.
 
         :param event: Event object to wait for
         :return: The payload associated with the event when it is signaled
         """
-        raise NotImplementedError("Remote event waiting is not yet implemented")
+        from flyte._event import _Event
+
+        if not isinstance(event, _Event):
+            raise TypeError(f"Expected _Event, got {type(event)}")
+
+        if event.name not in self._pending_events:
+            raise RuntimeError(f"Event '{event.name}' was not registered. Call register_event first.")
+
+        action = self._pending_events.pop(event.name)
+
+        logger.info(f"Waiting for event '{event.name}' condition action [{action.name}]")
+
+        n = await self.wait_for_action(action)
+
+        if n.phase == phase_pb2.ACTION_PHASE_ABORTED:
+            raise flyte.errors.ActionAbortedError(f"Event '{event.name}' action {n.action_id.name} was aborted")
+
+        if n.phase == phase_pb2.ACTION_PHASE_TIMED_OUT:
+            raise flyte.errors.EventTimedoutError(f"Event '{event.name}' was not signaled within the timeout period.")
+
+        if n.has_error() or n.phase == phase_pb2.ACTION_PHASE_FAILED:
+            exc = await handle_action_failure(n, event.name)
+            raise exc
+
+        # TODO: load and convert the event payload from outputs when the backend supports it
+        return None

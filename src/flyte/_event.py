@@ -129,7 +129,15 @@ async def new_event(
         variable — the backend replaces it with the URI that can be used to signal the event.
     :return: An instance of _Event representing the created event
     """
-    event = _Event(name=name, prompt=prompt, prompt_type=prompt_type, data_type=data_type, description=description, timeout=timeout, webhook=webhook)
+    event = _Event(
+        name=name,
+        prompt=prompt,
+        prompt_type=prompt_type,
+        data_type=data_type,
+        description=description,
+        timeout=timeout,
+        webhook=webhook,
+    )
     from flyte._context import internal_ctx
 
     ctx = internal_ctx()

@@ -1,3 +1,5 @@
+import time
+
 import flyte
 
 env = flyte.TaskEnvironment(name="events")

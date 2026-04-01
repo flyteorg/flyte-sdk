@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import builtins
 from dataclasses import dataclass
-from typing import Literal, Optional
+from typing import ClassVar, Literal, Optional
 
 from flyteidl2.common import identifier_pb2, phase_pb2
-from flyteidl2.core import execution_pb2, interface_pb2
+from flyteidl2.core import execution_pb2, interface_pb2, types_pb2
 from flyteidl2.task import common_pb2, task_definition_pb2
 from flyteidl2.workflow import (
     run_definition_pb2,
@@ -14,7 +15,7 @@ from google.protobuf import timestamp_pb2
 
 from flyte.models import GroupData
 
-ActionType = Literal["task", "trace"]
+ActionType = Literal["task", "trace", "condition"]
 
 
 @dataclass
@@ -31,6 +32,7 @@ class Action:
     group: GroupData | None = None
     task: task_definition_pb2.TaskSpec | None = None
     trace: run_definition_pb2.TraceAction | None = None
+    condition: run_definition_pb2.ConditionAction | None = None
     inputs_uri: str | None = None
     run_output_base: str | None = None
     realized_outputs_uri: str | None = None
@@ -207,5 +209,54 @@ class Action:
                     report_uri=report_uri,
                 ),
                 spec=spec,
+            ),
+        )
+
+    # Mapping from Python types to flyteidl SimpleType enum values (class var, not a dataclass field)
+    _DATA_TYPE_TO_SIMPLE: ClassVar[dict[builtins.type, int]] = {
+        bool: types_pb2.BOOLEAN,
+        int: types_pb2.INTEGER,
+        float: types_pb2.FLOAT,
+        str: types_pb2.STRING,
+    }
+
+    @classmethod
+    def from_condition(
+        cls,
+        parent_action_name: str,
+        action_id: identifier_pb2.ActionIdentifier,
+        event_name: str,
+        prompt: str,
+        data_type: builtins.type,
+        run_output_base: str,
+        group_data: GroupData | None = None,
+        description: str = "",
+        # TODO: proto does not yet have these fields — will be added separately
+        # prompt_type: str = "text",
+        # timeout: float | None = None,
+        # webhook_url: str | None = None,
+        # webhook_payload: dict | None = None,
+    ) -> Action:
+        """Create a condition action for an event."""
+        simple_type = cls._DATA_TYPE_TO_SIMPLE.get(data_type)
+        if simple_type is None:
+            raise TypeError(f"Unsupported event data_type {data_type}")
+
+        literal_type = types_pb2.LiteralType(simple=simple_type)
+
+        return cls(
+            action_id=action_id,
+            parent_action_name=parent_action_name,
+            type="condition",
+            friendly_name=event_name,
+            group=group_data,
+            run_output_base=run_output_base,
+            condition=run_definition_pb2.ConditionAction(
+                name=event_name,
+                run_id=action_id.run.name,
+                action_id=action_id.name,
+                type=literal_type,
+                prompt=prompt,
+                description=description,
             ),
         )

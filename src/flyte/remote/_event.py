@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import AsyncIterator, Union
+from typing import Any, AsyncIterator, Union
 
 import grpc.aio
 from flyteidl2.common import identifier_pb2, list_pb2
 
-import flyte.errors
+try:
+    from flyteidl2.workflow import event_service_pb2
+except ImportError:
+    event_service_pb2 = None  # type: ignore[assignment]
+
 from flyte.syncify import syncify
 
 from .._initialize import ensure_client, get_client, get_init_config
@@ -25,7 +29,7 @@ class Event(ToJSONMixin):
     ``run_name`` and ``action_name``.
     """
 
-    pb2: ...
+    pb2: Any
 
     @syncify
     @classmethod
@@ -50,8 +54,8 @@ class Event(ToJSONMixin):
         event_id = _make_event_identifier(cfg, name, run_name, action_name)
 
         try:
-            resp = await get_client().event_service.GetEvent(
-                request=event_service_pb2.GetEventRequest(
+            resp = await get_client().event_service.GetEvent(  # type: ignore[attr-defined]
+                request=event_service_pb2.GetEventRequest(  # type: ignore[union-attr]
                     event_id=event_id,
                 )
             )
@@ -95,8 +99,8 @@ class Event(ToJSONMixin):
 
         token = None
         while True:
-            resp = await get_client().event_service.ListEvents(
-                request=event_service_pb2.ListEventsRequest(
+            resp = await get_client().event_service.ListEvents(  # type: ignore[attr-defined]
+                request=event_service_pb2.ListEventsRequest(  # type: ignore[union-attr]
                     run_id=run_id,
                     action_id=action_id,
                     request=list_pb2.ListRequest(
@@ -122,23 +126,19 @@ class Event(ToJSONMixin):
         :raises TypeError: If the payload is not a supported type.
         """
         if not isinstance(payload, (bool, int, float, str)):
-            raise TypeError(
-                f"payload must be bool, int, float, or str, got {type(payload).__name__}"
-            )
+            raise TypeError(f"payload must be bool, int, float, or str, got {type(payload).__name__}")
 
         ensure_client()
 
-        await get_client().event_service.SignalEvent(
-            request=event_service_pb2.SignalEventRequest(
+        await get_client().event_service.SignalEvent(  # type: ignore[attr-defined]
+            request=event_service_pb2.SignalEventRequest(  # type: ignore[union-attr]
                 event_id=self.pb2.event_id,
                 payload=_encode_payload(payload),
             )
         )
 
 
-def _make_event_identifier(
-    cfg, name: str, run_name: str, action_name: str
-) -> "event_service_pb2.EventIdentifier":
+def _make_event_identifier(cfg, name: str, run_name: str, action_name: str) -> Any:
     """Build an EventIdentifier from config + names."""
     run_id = identifier_pb2.RunIdentifier(
         org=cfg.org,
@@ -147,20 +147,20 @@ def _make_event_identifier(
         name=run_name,
     )
     action_id = identifier_pb2.ActionIdentifier(run=run_id, name=action_name)
-    return event_service_pb2.EventIdentifier(
+    return event_service_pb2.EventIdentifier(  # type: ignore[union-attr]
         action_id=action_id,
         name=name,
     )
 
 
-def _encode_payload(value: EventPayload) -> "event_service_pb2.EventPayload":
+def _encode_payload(value: EventPayload) -> Any:
     """Encode a Python value into an EventPayload proto message."""
     if isinstance(value, bool):
-        return event_service_pb2.EventPayload(bool_value=value)
+        return event_service_pb2.EventPayload(bool_value=value)  # type: ignore[union-attr]
     elif isinstance(value, int):
-        return event_service_pb2.EventPayload(int_value=value)
+        return event_service_pb2.EventPayload(int_value=value)  # type: ignore[union-attr]
     elif isinstance(value, float):
-        return event_service_pb2.EventPayload(float_value=value)
+        return event_service_pb2.EventPayload(float_value=value)  # type: ignore[union-attr]
     elif isinstance(value, str):
-        return event_service_pb2.EventPayload(string_value=value)
+        return event_service_pb2.EventPayload(string_value=value)  # type: ignore[union-attr]
     raise TypeError(f"Unsupported payload type: {type(value)}")
