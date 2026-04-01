@@ -2,6 +2,7 @@ import asyncio
 import filecmp
 import os
 import time
+import unittest.mock as mock
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -13,6 +14,67 @@ from flyte import storage
 from flyte._context import internal_ctx
 from flyte.storage import S3
 from flyte.storage._parallel_reader import ObstoreParallelReader
+
+
+@pytest.mark.asyncio
+async def test_worker_logs_exception_on_download_failure(tmp_path):
+    """Worker should log the failing file path before re-raising so the real
+    error is visible instead of being swallowed inside a BaseExceptionGroup."""
+
+    store = mock.MagicMock()
+    reader = ObstoreParallelReader(store, max_concurrency=1)
+
+    async def _mock_list(*args, **kwargs):
+        yield [{"path": "prefix/file.txt", "size": 100}]
+
+    with (
+        mock.patch("flyte.storage._parallel_reader.obstore") as mock_obstore,
+        mock.patch("flyte.storage._parallel_reader.logger") as mock_logger,
+    ):
+        mock_obstore.list = _mock_list
+        mock_obstore.get_range_async = mock.AsyncMock(side_effect=RuntimeError("GCS 429: Too Many Requests"))
+
+        with pytest.raises(Exception):
+            await reader.download_files(Path("prefix"), tmp_path)
+
+    mock_logger.exception.assert_called_once()
+    call_args = str(mock_logger.exception.call_args)
+    assert "prefix/file.txt" in call_args
+
+
+@pytest.mark.asyncio
+async def test_worker_logs_exception_before_task_received(tmp_path):
+    """Worker should log a fallback message when inq.get() raises before any
+    task is dequeued (task is still None at that point)."""
+
+    store = mock.MagicMock()
+    reader = ObstoreParallelReader(store, max_concurrency=1)
+
+    async def _mock_list(*args, **kwargs):
+        yield [{"path": "prefix/file.txt", "size": 100}]
+
+    class _RaisingInQueue(asyncio.Queue):
+        # inq is created with maxsize > 0; outq has maxsize == 0.
+        # Only raise for inq so the main outq.get() loop is unaffected.
+        async def get(self):
+            if self.maxsize > 0:
+                raise RuntimeError("inq exploded before task received")
+            return await super().get()
+
+    with (
+        mock.patch("flyte.storage._parallel_reader.obstore") as mock_obstore,
+        mock.patch("flyte.storage._parallel_reader.logger") as mock_logger,
+        mock.patch("flyte.storage._parallel_reader.asyncio.Queue", _RaisingInQueue),
+    ):
+        mock_obstore.list = _mock_list
+        mock_obstore.get_range_async = mock.AsyncMock()
+
+        with pytest.raises(Exception):
+            await reader.download_files(Path("prefix"), tmp_path)
+
+    mock_logger.exception.assert_called_once()
+    call_args = str(mock_logger.exception.call_args)
+    assert "before receiving a task" in call_args
 
 
 @pytest.mark.skip
