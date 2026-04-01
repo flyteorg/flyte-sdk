@@ -140,15 +140,10 @@ def load_app_env(
     try:
         return resolver_instance.load_app_env(resolver_args)
     except ModuleNotFoundError as e:
+        from flyte._internal.runtime.entrypoints import _list_user_files
+
         cwd = os.getcwd()
-        files = []
-        try:
-            for root, dirs, filenames in os.walk(cwd):
-                for name in dirs + filenames:
-                    rel_path = os.path.relpath(os.path.join(root, name), cwd)
-                    files.append(rel_path)
-        except Exception as list_err:
-            files = [f"(Failed to list directory: {list_err})"]
+        files = _list_user_files(cwd)
 
         msg = (
             "\n\nFull traceback:\n" + "".join(traceback.format_exc()) + f"\n[ImportError Diagnostics]\n"
