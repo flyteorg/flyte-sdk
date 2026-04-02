@@ -256,7 +256,7 @@ def test_dockerfile_with_str_path():
         platform=("linux/amd64"),
     )
     assert img.uri.startswith("localhost/test-image"), f"Unexpected URI: {img.uri}"
-    assert img.platform == ("linux/amd64")
+    assert img.platform == ("linux/amd64",)
 
 
 def test_image_uri_consistency_for_uvscript():
