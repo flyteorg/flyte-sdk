@@ -30,6 +30,7 @@ from flyte.models import (
     SerializationContext,
     TaskContext,
 )
+from flyte.storage import join as storage_join
 from flyte.syncify import syncify
 
 from ._constants import FLYTE_SYS_PATH
@@ -634,11 +635,12 @@ class _Runner:
             raw_data_path = RawDataPath(path=self._raw_data_path)
 
         ctx = internal_ctx()
+        rd_base = raw_data_path.path
         tctx = TaskContext(
             action=action,
             checkpoints=Checkpoints(
-                prev_checkpoint_path=internal_ctx().raw_data.path,
-                checkpoint_path=internal_ctx().raw_data.path,
+                prev_checkpoint_path=storage_join(rd_base, "prev_checkpoint"),
+                checkpoint_path=storage_join(rd_base, "checkpoint"),
             ),
             code_bundle=None,
             output_path=str(output_path),

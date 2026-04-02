@@ -40,7 +40,10 @@ from typing_extensions import override
 
 import flyte
 
-env = flyte.TaskEnvironment(name="checkpoint_lightning")
+env = flyte.TaskEnvironment(
+    name="checkpoint_lightning",
+    image=flyte.Image.from_debian_base().with_pip_packages("lightning"),
+)
 
 FEATURES = 16
 RETRIES = 3
@@ -51,18 +54,18 @@ class FailureInjectionCallback(L.Callback):
     Mirrors sklearn's ``for i in range(chunks_start, n): ... if i > chunks_start and i % fi == 0: raise``.
     """
 
-    def __init__(self, chunks_start: int, failure_interval: int) -> None:
-        self._chunks_start = chunks_start
+    def __init__(self, epoch_start: int, failure_interval: int) -> None:
+        self._epoch_start = epoch_start
         self._failure_interval = failure_interval
         self._i: int | None = None
 
     @override
     def on_train_epoch_end(self, trainer: L.Trainer, pl_module: L.LightningModule) -> None:
         if self._i is None:
-            self._i = self._chunks_start
+            self._i = self._epoch_start
         i = self._i
         self._i = i + 1
-        if i > self._chunks_start and i % self._failure_interval == 0:
+        if i > self._epoch_start and i % self._failure_interval == 0:
             raise RuntimeError(f"Failed at epoch index {i}, failure_interval {self._failure_interval}.")
 
 
@@ -120,28 +123,27 @@ def _make_loaders(batch: int = 32, batches: int = 8) -> DataLoader:
 
 
 @env.task(retries=RETRIES)
-async def train_lightning(max_epochs: int = 3) -> float:
+def train_lightning(max_epochs: int = 3) -> float:
     assert max_epochs > RETRIES
     ctx = flyte.ctx()
     assert ctx is not None
     checkpoint = ctx.checkpoint
     assert checkpoint is not None
 
-    checkpoint_path: pathlib.Path | None = await checkpoint.load.aio()
-    if checkpoint_path is None:
-        ckpt_dir = pathlib.Path("pl_checkpoints")
-    else:
-        ckpt_dir = checkpoint_path if checkpoint_path.is_dir() else checkpoint_path.parent / "pl_checkpoints"
+    ckpt_dir = pathlib.Path("pl_checkpoints")
     ckpt_dir.mkdir(parents=True, exist_ok=True)
-
-    resume = find_last_checkpoint(ckpt_dir)
-    chunks_start = 0
-    if resume:
-        ck = torch.load(resume, map_location="cpu", weights_only=False)
-        chunks_start = int(ck.get("epoch", 0))
-
     failure_interval = max_epochs // RETRIES
-    print(f"chunks_start={chunks_start}, max_epochs={max_epochs}, failure_interval={failure_interval}")
+
+    prev_cp_path: pathlib.Path | None = checkpoint.load()
+    resume_ckpt: str | None = None
+    epoch_start = 0
+    if prev_cp_path:
+        last_ckpt = find_last_checkpoint(prev_cp_path)
+        if last_ckpt:
+            ck = torch.load(last_ckpt, map_location="cpu", weights_only=False)
+            epoch_start = int(ck.get("epoch", 0))
+            resume_ckpt = last_ckpt
+            print(f"Resuming from epoch {epoch_start} from checkpoint {ck}")
 
     model = TinyModule()
     mc = FlyteLightningCheckpointCallback(
@@ -149,9 +151,9 @@ async def train_lightning(max_epochs: int = 3) -> float:
         dirpath=ckpt_dir,
         filename="last",
         save_last=True,
-        save_top_k=0,
+        save_top_k=1,
     )
-    fail_cb = FailureInjectionCallback(chunks_start=chunks_start, failure_interval=failure_interval)
+    fail_cb = FailureInjectionCallback(epoch_start=epoch_start, failure_interval=failure_interval)
     trainer = L.Trainer(
         max_epochs=max_epochs,
         enable_checkpointing=True,
@@ -162,9 +164,7 @@ async def train_lightning(max_epochs: int = 3) -> float:
         devices=1,
     )
     loader = _make_loaders()
-    trainer.fit(model, loader, ckpt_path=resume)
-
-    await checkpoint.save.aio(ckpt_dir)
+    trainer.fit(model, loader, ckpt_path=resume_ckpt)
 
     with torch.no_grad():
         x = torch.ones(1, FEATURES)

@@ -40,7 +40,10 @@ from transformers.trainer_utils import get_last_checkpoint
 
 import flyte
 
-env = flyte.TaskEnvironment(name="checkpoint_unsloth_sft")
+env = flyte.TaskEnvironment(
+    name="checkpoint_unsloth_sft",
+    image=flyte.Image.from_debian_base().with_pip_packages("unsloth"),
+)
 
 MODEL_NAME = "unsloth/Llama-3.2-1B-bnb-4bit"
 RETRIES = 3

@@ -16,8 +16,9 @@ Task checkpointing against Flyte checkpoint object-store prefixes (v2 SDK).
 Remote checkpoint URIs are a **single object** (e.g. ``.../_flytecheckpoints``). :meth:`~AsyncCheckpoint.save`
 uploads a **file** as-is; a **directory** is stored as a gzip-compressed tar. :meth:`~AsyncCheckpoint.load`
 downloads that object, extracts a tar into :attr:`~AsyncCheckpoint.path`, or moves a single downloaded file to
-``path / "payload"``. For a **single raw blob**, :meth:`~AsyncCheckpoint.save` accepts ``bytes``; after
-:meth:`~AsyncCheckpoint.load`, that blob is available at ``checkpoint.path / "payload"`` when present.
+``path / "payload"``. :meth:`~AsyncCheckpoint.load` returns ``path / "payload"`` when that file exists, else
+:attr:`~AsyncCheckpoint.path` (restored directory tree). For a **single raw blob**, :meth:`~AsyncCheckpoint.save`
+accepts ``bytes``; after :meth:`~AsyncCheckpoint.load`, that blob is available at ``checkpoint.path / "payload"``.
 """
 
 from __future__ import annotations
@@ -144,14 +145,18 @@ def _tar_directory_to_file(source_dir: pathlib.Path, tar_path: pathlib.Path) -> 
             tar.add(child, arcname=child.name, recursive=True)
 
 
-def _extract_tarball_or_move(archive: pathlib.Path, dest: pathlib.Path) -> None:
-    """Tar archive: extract into ``dest``. Single file: rename into ``dest / payload`` (no extra copy on same FS)."""
+def _extract_tarball_or_move(archive: pathlib.Path, dest: pathlib.Path) -> bool:
+    """
+    Tar archive: extract into ``dest``. Single file: rename into ``dest / payload`` (no extra copy on same FS).
+    Returns True if the archive was a tarball, False if it was a single file.
+    """
     if tarfile.is_tarfile(archive):
         with tarfile.open(archive, "r:*") as tar:
             tar.extractall(path=dest)
-        return
+        return True
     dest.mkdir(parents=True, exist_ok=True)
     shutil.move(archive, dest / _PAYLOAD_BASENAME)
+    return False
 
 
 def _new_checkpoint_download_temp_path() -> pathlib.Path:
@@ -191,9 +196,9 @@ class AsyncCheckpoint(Checkpoint):
     Use :meth:`load` and :meth:`save` (blocking wrappers), or ``.load.aio()`` and ``.save.aio()`` inside async code.
 
     Saving a **directory** uploads a gzip tar of its top-level entries; saving a **file** or **bytes** uploads
-    that payload directly. After :meth:`load`, a non-tar remote object appears as ``path / "payload"``; tarball
-    checkpoints unpack under :attr:`path` (the return value of :meth:`load` is still ``path / "payload"`` and may
-    not exist as a file when the checkpoint was a directory archive—use :attr:`path` and your layout in that case).
+    that payload directly. After :meth:`load`, a non-tar remote object appears as ``path / "payload"`` and
+    :meth:`load` returns that path. Tarball checkpoints unpack under :attr:`path`; :meth:`load` then returns
+    :attr:`path` so callers can scan the restored tree (e.g. ``rglob``).
     """
 
     def __init__(self, checkpoint_dest: str, checkpoint_src: str | None = None):
@@ -205,6 +210,7 @@ class AsyncCheckpoint(Checkpoint):
             self._checkpoint_src = src
         self._td = tempfile.TemporaryDirectory(prefix="flyte-cp-")
         self._restored = False
+        self._is_tarball = False
         self._had_remote_prev = False
 
     def __del__(self) -> None:
@@ -238,10 +244,13 @@ class AsyncCheckpoint(Checkpoint):
     def prev_exists(self) -> bool:
         return self._checkpoint_src is not None
 
-    def _load_return_path(self) -> Optional[pathlib.Path]:
+    def _load_return_path(self, is_tarball: bool = False) -> Optional[pathlib.Path]:
         """Value returned from :meth:`load` after a successful download (see ``AsyncCheckpoint`` class docstring)."""
         if not self._had_remote_prev:
             return None
+        # Directory archives unpack under :attr:`path`; only single-file checkpoints use ``path / "payload"``.
+        if is_tarball:
+            return self.path
         return self._payload_path
 
     @syncify
@@ -249,12 +258,13 @@ class AsyncCheckpoint(Checkpoint):
         if not self.prev_exists():
             return None
         if self._restored:
-            return self._load_return_path()
+            return self._load_return_path(is_tarball=self._is_tarball)
 
         prev_uri = self._checkpoint_src
         assert prev_uri is not None
 
         download_path = _new_checkpoint_download_temp_path()
+        is_tarball = False
         try:
             _clear_directory_contents(self.path)
             self.path.mkdir(parents=True, exist_ok=True)
@@ -262,7 +272,7 @@ class AsyncCheckpoint(Checkpoint):
             if download_path.stat().st_size == 0:
                 self._had_remote_prev = False
             else:
-                _extract_tarball_or_move(download_path, self.path)
+                is_tarball = _extract_tarball_or_move(download_path, self.path)
                 self._had_remote_prev = True
         except BaseException as e:
             if isinstance(e, (KeyboardInterrupt, SystemExit)):
@@ -275,7 +285,8 @@ class AsyncCheckpoint(Checkpoint):
             download_path.unlink(missing_ok=True)
 
         self._restored = True
-        return self._load_return_path()
+        self._is_tarball = is_tarball
+        return self._load_return_path(is_tarball=is_tarball)
 
     async def _save_directory_as_tarball(self, src: pathlib.Path) -> None:
         fd, tmp_name = tempfile.mkstemp(prefix="flyte-cptar-", suffix=".tar.gz")

@@ -50,7 +50,10 @@ from transformers.trainer_utils import get_last_checkpoint
 
 import flyte
 
-env = flyte.TaskEnvironment(name="checkpoint_hf_trainer")
+env = flyte.TaskEnvironment(
+    name="checkpoint_hf_trainer",
+    image=flyte.Image.from_debian_base().with_pip_packages("transformers[torch]"),
+)
 
 MODEL_ID = "hf-internal-testing/tiny-random-bert"
 RETRIES = 3
