@@ -715,3 +715,29 @@ def test_uv_base_template_preserves_existing_uv_python():
 
     # PATH includes VIRTUALENV/bin
     assert 'PATH="$VIRTUALENV/bin:$PATH"' in dockerfile
+
+
+@pytest.mark.asyncio
+async def test_ensure_buildx_builder_creates_with_host_network():
+    """When creating a new buildx builder, it should use --driver-opt network=host."""
+    calls = []
+
+    def mock_run(cmd, **kwargs):
+        calls.append(cmd)
+        result = subprocess.CompletedProcess(cmd, 0)
+        # For 'docker buildx ls', return output without the builder name
+        if cmd == ["docker", "buildx", "ls"]:
+            result.stdout = "default"
+            result.stderr = ""
+        return result
+
+    with patch("flyte._internal.imagebuild.docker_builder.run_sync_with_loop", side_effect=lambda fn, *a, **kw: fn(*a, **kw)):
+        with patch("subprocess.run", side_effect=mock_run):
+            await DockerImageBuilder._ensure_buildx_builder()
+
+    # Find the create command
+    create_cmds = [c for c in calls if "create" in c]
+    assert len(create_cmds) == 1
+    create_cmd = create_cmds[0]
+    assert "--driver-opt" in create_cmd
+    assert "network=host" in create_cmd
