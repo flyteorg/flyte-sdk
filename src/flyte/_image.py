@@ -823,7 +823,11 @@ class Image:
 
     @classmethod
     def from_dockerfile(
-        cls, file: typing.Union[Path, str], registry: str, name: str, platform: Union[Architecture, Tuple[Architecture, ...], None] = None
+        cls,
+        file: typing.Union[Path, str],
+        registry: str,
+        name: str,
+        platform: Union[Architecture, Tuple[Architecture, ...], None] = None,
     ) -> Image:
         """
         Use this method to create a new image with the specified dockerfile. Note you cannot use additional layers
