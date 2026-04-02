@@ -824,7 +824,7 @@ class Image:
     @classmethod
     def from_dockerfile(
         cls,
-        file: typing.Union[Path, str],
+        file: Union[Path, str],
         registry: str,
         name: str,
         platform: Union[Architecture, Tuple[Architecture, ...], None] = None,
