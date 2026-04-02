@@ -32,7 +32,7 @@ class PassthroughAuthenticator(Authenticator):
         )
         self._creds_id: str = "passthrough"
 
-    def refresh_credentials(self, creds_id: str | None = None):
+    async def refresh_credentials(self, creds_id: str | None = None):
         return
 
     def get_credentials(self) -> typing.Optional[Credentials]:
