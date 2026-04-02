@@ -253,7 +253,6 @@ def test_dockerfile_with_str_path():
         file=str(Path(__file__).parent / "resources/Dockerfile.test_sample"),
         registry="localhost",
         name="test-image",
-        platform=("linux/amd64"),
     )
     assert img.uri.startswith("localhost/test-image"), f"Unexpected URI: {img.uri}"
     assert img.platform == ("linux/amd64",)

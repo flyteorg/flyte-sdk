@@ -848,13 +848,13 @@ class Image:
         platform = _ensure_tuple(platform) if platform else None
         if type(file) is str:
             file = Path(file)
-        kwargs = {
+        kwargs: dict[str, Any] = {
             "dockerfile": file,
             "registry": registry,
             "name": name,
             "extendable": False,  # Dockerfile-based images cannot have additional layers
         }
-        if platform:
+        if platform is not None:
             kwargs["platform"] = platform
         img = cls._new(**kwargs)
 
