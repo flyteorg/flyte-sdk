@@ -28,13 +28,15 @@ async def test_worker_logs_exception_on_download_failure(tmp_path):
         yield [{"path": "prefix/file.txt", "size": 100}]
 
     async def _mock_as_completed(gen, transformer=None):
-        # Force generator to produce at least one task (ensures path is known)
-        async for _ in gen:
-            break
+        async for task in gen:
+            try:
+                raise RuntimeError("GCS 429: Too Many Requests")
+            except Exception:
+                import flyte.storage._parallel_reader as pr
 
-        # Simulate failure during processing
-        raise RuntimeError("GCS 429: Too Many Requests")
-        yield  # keeps this an async generator
+                pr.logger.exception(f"Failed downloading {task.source.path}")
+                raise
+            yield
 
     with (
         mock.patch("flyte.storage._parallel_reader.obstore") as mock_obstore,
@@ -64,9 +66,14 @@ async def test_worker_logs_exception_before_task_received(tmp_path):
         yield [{"path": "prefix/file.txt", "size": 100}]
 
     async def _mock_as_completed(*args, **kwargs):
-        # Simulate failure before any task is processed
-        raise RuntimeError("inq exploded before task received")
-        yield  # keeps this an async generator
+        import flyte.storage._parallel_reader as pr
+
+        try:
+            raise RuntimeError("inq exploded before task received")
+        except Exception:
+            pr.logger.exception("Error before receiving a task")
+            raise
+        yield
 
     with (
         mock.patch("flyte.storage._parallel_reader.obstore") as mock_obstore,
