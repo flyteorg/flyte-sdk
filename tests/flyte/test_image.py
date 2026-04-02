@@ -5,13 +5,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from flyte._image import (
+    _BASE_REGISTRY,
+    _LOCALHOST_REGISTRY,
     AptPackages,
     CodeBundleLayer,
     CopyConfig,
     Image,
     UVScript,
-    _BASE_REGISTRY,
-    _LOCALHOST_REGISTRY,
     _get_base_registry,
     resolve_code_bundle_layer,
 )

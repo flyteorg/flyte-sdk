@@ -731,7 +731,9 @@ async def test_ensure_buildx_builder_creates_with_host_network():
             result.stderr = ""
         return result
 
-    with patch("flyte._internal.imagebuild.docker_builder.run_sync_with_loop", side_effect=lambda fn, *a, **kw: fn(*a, **kw)):
+    with patch(
+        "flyte._internal.imagebuild.docker_builder.run_sync_with_loop", side_effect=lambda fn, *a, **kw: fn(*a, **kw)
+    ):
         with patch("subprocess.run", side_effect=mock_run):
             await DockerImageBuilder._ensure_buildx_builder()
 
