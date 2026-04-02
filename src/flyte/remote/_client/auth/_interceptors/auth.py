@@ -6,7 +6,7 @@ from connectrpc.code import Code
 from connectrpc.errors import ConnectError
 
 if typing.TYPE_CHECKING:
-    from flyte.remote._client.auth._authenticators.base import AuthHeaders, Authenticator
+    from flyte.remote._client.auth._authenticators.base import Authenticator, AuthHeaders
 
 
 class _BaseAuthInterceptor:

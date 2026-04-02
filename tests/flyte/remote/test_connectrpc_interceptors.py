@@ -236,7 +236,6 @@ class TestAuthUnaryInterceptor:
         assert result == "response"
         assert "authorization" not in headers
 
-
     @pytest.mark.asyncio
     async def test_removes_stale_header_on_retry_when_key_changes(self):
         """When refresh changes the header key (e.g. authorization → flyte-authorization),
