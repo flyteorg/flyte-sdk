@@ -70,7 +70,7 @@ check-import-profile:
 .PHONY: unit_test
 unit_test: ## Test the code with pytest
 	@echo "🚀 Testing code: Running unit tests..."
-	@uv run python -m pytest -k "not integration and not sandbox" tests
+	@uv run python -m pytest --timeout=60 -k "not integration and not sandbox" tests
 
 
 # Test plugins with pytest

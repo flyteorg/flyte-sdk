@@ -72,6 +72,7 @@ async def run_sync_with_loop(
             execute_loop_created.set()
             execute_loop.run_forever()
         except Exception as e:
+            execute_loop_created.set()
             logger.error(f"Exception in thread '{full_thread_name}' running '{func_name}': {e}", exc_info=True)
             raise
         finally:
@@ -94,7 +95,10 @@ async def run_sync_with_loop(
         return res
 
     # Wait for the loop to be created in a thread to avoid blocking the current thread
-    await asyncio.get_event_loop().run_in_executor(None, execute_loop_created.wait)
+    loop = asyncio.get_running_loop()
+    ready = await loop.run_in_executor(None, lambda: execute_loop_created.wait(timeout=30))
+    if not ready or execute_loop is None:
+        raise RuntimeError(f"Background event loop for '{func_name}' failed to start")
     assert execute_loop is not None
     fut = asyncio.run_coroutine_threadsafe(async_wrapper(), loop=execute_loop)
     async_fut = asyncio.wrap_future(fut)
