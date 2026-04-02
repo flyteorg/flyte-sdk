@@ -236,6 +236,36 @@ class TestAuthUnaryInterceptor:
         assert result == "response"
         assert "authorization" not in headers
 
+    @pytest.mark.asyncio
+    async def test_removes_stale_header_on_retry_when_key_changes(self):
+        """When refresh changes the header key (e.g. authorization → flyte-authorization),
+        the old header must be removed so the retry doesn't send both.
+        Non-auth headers must be preserved."""
+        auth = AsyncMock()
+        auth.get_auth_headers.side_effect = [
+            AuthHeaders(creds_id="old", headers={"authorization": "Bearer expired"}),
+            AuthHeaders(creds_id="new", headers={"flyte-authorization": "Bearer fresh"}),
+        ]
+        interceptor = AuthUnaryInterceptor(lambda: auth)
+
+        call_next = AsyncMock(
+            side_effect=[
+                ConnectError(Code.UNAUTHENTICATED, "expired"),
+                "success",
+            ]
+        )
+        ctx, headers = _make_ctx_mock()
+        headers["x-request-id"] = "req-123"
+        headers["content-type"] = "application/proto"
+
+        result = await interceptor.intercept_unary(call_next, "request", ctx)
+
+        assert result == "success"
+        assert "authorization" not in headers, "stale auth header should be removed on retry"
+        assert headers["flyte-authorization"] == "Bearer fresh"
+        assert headers["x-request-id"] == "req-123", "non-auth headers must be preserved"
+        assert headers["content-type"] == "application/proto", "non-auth headers must be preserved"
+
 
 class TestAuthServerStreamInterceptor:
     @pytest.mark.asyncio
