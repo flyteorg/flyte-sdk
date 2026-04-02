@@ -21,7 +21,7 @@ from flyte.errors import InitializationError, RuntimeSystemError
 from flyte.syncify import syncify
 
 _UPLOAD_EXPIRES_IN = timedelta(seconds=60)
-_UPLOAD_TIMEOUT = httpx.Timeout(timeout=600.0, connect=30.0)
+_UPLOAD_TIMEOUT = httpx.Timeout(timeout=60.0, connect=30.0)
 
 
 def get_extra_headers_for_protocol(native_url: str) -> typing.Dict[str, str]:
@@ -61,7 +61,7 @@ async def _upload_with_retry(
     signed_url: str,
     extra_headers: dict,
     verify: bool,
-    max_retries: int = 3,
+    max_retries: int = 1,
     min_backoff_sec: float = 0.5,
     max_backoff_sec: float = 10.0,
 ):
