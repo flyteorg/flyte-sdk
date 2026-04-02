@@ -27,12 +27,24 @@ async def test_worker_logs_exception_on_download_failure(tmp_path):
     async def _mock_list(*args, **kwargs):
         yield [{"path": "prefix/file.txt", "size": 100}]
 
+    async def _mock_as_completed(gen, transformer=None):
+        async for task in gen:
+            try:
+                raise RuntimeError("GCS 429: Too Many Requests")
+            except Exception:
+                import flyte.storage._parallel_reader as pr
+
+                pr.logger.exception(f"Failed downloading {task.source.path}")
+                raise
+            yield
+
     with (
         mock.patch("flyte.storage._parallel_reader.obstore") as mock_obstore,
         mock.patch("flyte.storage._parallel_reader.logger") as mock_logger,
+        mock.patch.object(reader, "_as_completed", side_effect=_mock_as_completed),
     ):
         mock_obstore.list = _mock_list
-        mock_obstore.get_range_async = mock.AsyncMock(side_effect=RuntimeError("GCS 429: Too Many Requests"))
+        mock_obstore.get_range_async = mock.AsyncMock()
 
         with pytest.raises(Exception):
             await reader.download_files(Path("prefix"), tmp_path)
@@ -44,7 +56,7 @@ async def test_worker_logs_exception_on_download_failure(tmp_path):
 
 @pytest.mark.asyncio
 async def test_worker_logs_exception_before_task_received(tmp_path):
-    """Worker should log a fallback message when inq.get() raises before any
+    """Worker should log a fallback message when failure happens before any
     task is dequeued (task is still None at that point)."""
 
     store = mock.MagicMock()
@@ -53,18 +65,20 @@ async def test_worker_logs_exception_before_task_received(tmp_path):
     async def _mock_list(*args, **kwargs):
         yield [{"path": "prefix/file.txt", "size": 100}]
 
-    class _RaisingInQueue(asyncio.Queue):
-        # inq is created with maxsize > 0; outq has maxsize == 0.
-        # Only raise for inq so the main outq.get() loop is unaffected.
-        async def get(self):
-            if self.maxsize > 0:
-                raise RuntimeError("inq exploded before task received")
-            return await super().get()
+    async def _mock_as_completed(*args, **kwargs):
+        import flyte.storage._parallel_reader as pr
+
+        try:
+            raise RuntimeError("inq exploded before task received")
+        except Exception:
+            pr.logger.exception("Error before receiving a task")
+            raise
+        yield
 
     with (
         mock.patch("flyte.storage._parallel_reader.obstore") as mock_obstore,
         mock.patch("flyte.storage._parallel_reader.logger") as mock_logger,
-        mock.patch("flyte.storage._parallel_reader.asyncio.Queue", _RaisingInQueue),
+        mock.patch.object(reader, "_as_completed", side_effect=_mock_as_completed),
     ):
         mock_obstore.list = _mock_list
         mock_obstore.get_range_async = mock.AsyncMock()
