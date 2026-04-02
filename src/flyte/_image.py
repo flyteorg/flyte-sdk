@@ -456,8 +456,24 @@ class Env(Layer):
 Architecture = Literal["linux/amd64", "linux/arm64"]
 
 _BASE_REGISTRY = "ghcr.io/flyteorg"
+_LOCALHOST_REGISTRY = "localhost:30000"
 _DEFAULT_IMAGE_NAME = "flyte"
 _DEFAULT_IMAGE_REF_NAME = "default"
+
+
+def _get_base_registry() -> str:
+    """
+    Returns the base registry based on the Flyte config endpoint.
+    If the endpoint contains 'localhost', use the localhost registry.
+    """
+    from flyte._initialize import _get_init_config
+
+    init_config = _get_init_config()
+    if init_config and init_config.client:
+        endpoint = init_config.client.endpoint
+        if endpoint and "localhost" in endpoint:
+            return _LOCALHOST_REGISTRY
+    return _BASE_REGISTRY
 
 
 def _detect_python_version() -> Tuple[int, int]:
@@ -587,7 +603,7 @@ class Image:
             preset_tag = f"py{python_version[0]}.{python_version[1]}-{suffix}"
         image = Image._new(
             base_image=f"python:{python_version[0]}.{python_version[1]}-slim-bookworm",
-            registry=_BASE_REGISTRY,
+            registry=_get_base_registry(),
             name=_DEFAULT_IMAGE_NAME,
             python_version=python_version,
             platform=("linux/amd64", "linux/arm64") if platform is None else platform,

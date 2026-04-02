@@ -672,6 +672,8 @@ class DockerImageBuilder(ImageBuilder):
                     DockerImageBuilder._builder_name,
                     "--platform",
                     "linux/amd64,linux/arm64",
+                    "--driver-opt",
+                    "network=host",
                 ],
                 check=True,
             )
