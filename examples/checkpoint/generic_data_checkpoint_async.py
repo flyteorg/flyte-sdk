@@ -16,11 +16,11 @@ RETRIES = 3
 
 # Define a task to iterate precisely `n_iterations`, checkpoint its state, and recover from simulated failures.
 @env.task(retries=RETRIES)
-def use_checkpoint(n_iterations: int) -> int:
+async def use_checkpoint(n_iterations: int) -> int:
     assert n_iterations > RETRIES
     checkpoint = flyte.ctx().checkpoint
 
-    path = checkpoint.load_sync()
+    path = await checkpoint.load()
     prev = None if path is None else path.read_bytes()
 
     start = 0
@@ -32,7 +32,7 @@ def use_checkpoint(n_iterations: int) -> int:
         if index > start and index % failure_interval == 0:
             # Simulate a failure at a regular interval
             raise RuntimeError(f"Failed at iteration {index}, failure_interval {failure_interval}.")
-        checkpoint.save_sync(f"{index + 1}".encode())
+        await checkpoint.save(f"{index + 1}".encode())
     return index
 
 

@@ -15,7 +15,7 @@ import pytest
 from flyte._checkpoint import (
     _PAYLOAD_BASENAME,
     CHECKPOINT_CACHE_KEY,
-    AsyncCheckpoint,
+    Checkpoint,
     repair_union_prev_checkpoint_uri,
 )
 from flyte._context import Context, ContextData
@@ -94,10 +94,10 @@ def test_repair_union_prev_checkpoint_uri_no_op_when_n_mismatch_env(
     assert repair_union_prev_checkpoint_uri(prev, run_name=run_name, action_name="a0") == prev
 
 
-# --- AsyncCheckpoint construction / prev URI ---
+# --- Checkpoint construction / prev URI ---
 
 
-def test_async_checkpoint_repairs_prev_via_task_context() -> None:
+def test_checkpoint_repairs_prev_via_task_context() -> None:
     run_name = "r969nmh2r5m6mqqnnb4h"
     wrong_prev = f"s3://bucket/ns/prefix/{run_name}/a0/3/5d/{run_name}-a0-1/_flytecheckpoints"
     want_prev = f"s3://bucket/ns/prefix/{run_name}/a0/2/5d/{run_name}-a0-1/_flytecheckpoints"
@@ -113,22 +113,22 @@ def test_async_checkpoint_repairs_prev_via_task_context() -> None:
             checkpoints=None,
         )
         with Context(ContextData(task_context=tctx)):
-            cp = AsyncCheckpoint("s3://bucket/out", wrong_prev)
+            cp = Checkpoint("s3://bucket/out", wrong_prev)
     assert cp.remote_source == want_prev
 
 
-def test_async_checkpoint_prev_exists() -> None:
-    cp = AsyncCheckpoint("s3://bucket/out", None)
+def test_checkpoint_prev_exists() -> None:
+    cp = Checkpoint("s3://bucket/out", None)
     assert not cp.prev_exists()
-    cp2 = AsyncCheckpoint("s3://bucket/out", "s3://bucket/prev")
+    cp2 = Checkpoint("s3://bucket/out", "s3://bucket/prev")
     assert cp2.prev_exists()
 
 
-# --- load / save (syncify + .aio()) ---
+# --- load_sync / save_sync (file URIs) ---
 
 
-def test_async_checkpoint_directory_checkpoint_roundtrip_file_uris() -> None:
-    """Directory layout: tar on remote; syncify ``load`` / ``save`` roundtrip via ``file://`` URIs."""
+def test_checkpoint_directory_checkpoint_roundtrip_file_uris() -> None:
+    """Directory layout: tar on remote; ``load_sync`` / ``save_sync`` roundtrip via ``file://`` URIs."""
     with tempfile.TemporaryDirectory() as td:
         base = pathlib.Path(td)
         prev_blob = base / "prev_sync"
@@ -138,17 +138,17 @@ def test_async_checkpoint_directory_checkpoint_roundtrip_file_uris() -> None:
             inner_name="state.json",
             text=json.dumps({"step": 1}),
         )
-        cp = AsyncCheckpoint(out_blob.as_uri(), prev_blob.as_uri())
-        assert cp.load() is not None
+        cp = Checkpoint(out_blob.as_uri(), prev_blob.as_uri())
+        assert cp.load_sync() is not None
         assert _read_state_step(cp.path) == 1
         (cp.path / "state.json").write_text(json.dumps({"step": 2}), encoding="utf-8")
-        cp.save(cp.path)
-        cp2 = AsyncCheckpoint(base / "out_sync_2", out_blob.as_uri())
-        assert cp2.load() is not None
+        cp.save_sync(cp.path)
+        cp2 = Checkpoint(base / "out_sync_2", out_blob.as_uri())
+        assert cp2.load_sync() is not None
         assert _read_state_step(cp2.path) == 2
 
 
-def test_async_checkpoint_tar_roundtrip() -> None:
+def test_checkpoint_tar_roundtrip() -> None:
     """Remote checkpoint is a single tar object; prev/next URIs are concrete file paths."""
     with tempfile.TemporaryDirectory() as td:
         base = pathlib.Path(td)
@@ -162,69 +162,88 @@ def test_async_checkpoint_tar_roundtrip() -> None:
             text=json.dumps({"step": 3}),
         )
 
-        cp = AsyncCheckpoint(out_blob.as_uri(), prev_blob.as_uri())
-        assert cp.load() is not None
+        cp = Checkpoint(out_blob.as_uri(), prev_blob.as_uri())
+        assert cp.load_sync() is not None
         state_file = cp.path / "state.json"
         assert state_file.is_file()
         assert _read_state_step(cp.path) == 3
 
         state_file.write_text(json.dumps({"step": 4}), encoding="utf-8")
-        cp.save(cp.path)
+        cp.save_sync(cp.path)
 
-        cp2 = AsyncCheckpoint(out2_blob.as_uri(), out_blob.as_uri())
-        assert cp2.load() is not None
+        cp2 = Checkpoint(out2_blob.as_uri(), out_blob.as_uri())
+        assert cp2.load_sync() is not None
         assert _read_state_step(cp2.path) == 4
 
 
-def test_async_checkpoint_single_non_tar_object_roundtrip() -> None:
-    """Raw (non-tar) remote object is moved to ``path / payload``; :meth:`load` returns that path."""
+def test_checkpoint_single_non_tar_object_roundtrip() -> None:
+    """Raw (non-tar) remote object is moved to ``path / payload``; :meth:`load_sync` returns that path."""
     with tempfile.TemporaryDirectory() as td:
         base = pathlib.Path(td)
         prev_blob = base / "prev_raw"
         out_blob = base / "out_raw"
         prev_blob.write_bytes(b"hello-checkpoint")
 
-        cp = AsyncCheckpoint(out_blob.as_uri(), prev_blob.as_uri())
-        payload_path = cp.load()
+        cp = Checkpoint(out_blob.as_uri(), prev_blob.as_uri())
+        payload_path = cp.load_sync()
         assert payload_path is not None
         assert payload_path == cp.path / _PAYLOAD_BASENAME
         assert payload_path.is_file()
         assert payload_path.read_bytes() == b"hello-checkpoint"
 
-        cp.save(b"next")
+        cp.save_sync(b"next")
 
-        cp2 = AsyncCheckpoint(base / "unused_out", out_blob.as_uri())
-        p2 = cp2.load()
+        cp2 = Checkpoint(base / "unused_out", out_blob.as_uri())
+        p2 = cp2.load_sync()
         assert p2 is not None
         assert p2.read_bytes() == b"next"
 
 
+# --- load / save (async) ---
+
+
 @pytest.mark.asyncio
-async def test_async_checkpoint_load_treats_empty_remote_as_no_checkpoint() -> None:
+async def test_checkpoint_load_treats_empty_remote_as_no_checkpoint() -> None:
     """Download with zero bytes or missing listing is recoverable on load."""
     with patch("flyte._checkpoint.storage.get", new_callable=AsyncMock) as mock_get:
         mock_get.side_effect = DownloadQueueEmpty()
-        cp = AsyncCheckpoint("s3://bucket/out", "s3://bucket/prev_checkpoint_file")
-        restored = await cp.load.aio()
+        cp = Checkpoint("s3://bucket/out", "s3://bucket/prev_checkpoint_file")
+        restored = await cp.load()
         assert restored is None
 
 
 @pytest.mark.skipif(sys.version_info < (3, 11), reason="asyncio.TaskGroup uses ExceptionGroup on 3.11+")
 @pytest.mark.asyncio
-async def test_async_checkpoint_load_treats_exception_group_download_queue_empty() -> None:
+async def test_checkpoint_load_treats_exception_group_download_queue_empty() -> None:
     """Obstore uses TaskGroup; empty listing becomes ExceptionGroup(DownloadQueueEmpty(...))."""
     from builtins import BaseExceptionGroup
 
     eg = BaseExceptionGroup("unhandled errors in a TaskGroup", [DownloadQueueEmpty()])
     with patch("flyte._checkpoint.storage.get", new_callable=AsyncMock) as mock_get:
         mock_get.side_effect = eg
-        cp = AsyncCheckpoint("s3://bucket/out", "s3://bucket/prev_checkpoint_file")
-        restored = await cp.load.aio()
+        cp = Checkpoint("s3://bucket/out", "s3://bucket/prev_checkpoint_file")
+        restored = await cp.load()
         assert restored is None
 
 
+def test_checkpoint_load_sync_treats_sync_get_errors_as_no_checkpoint() -> None:
+    with patch("flyte._checkpoint._get_checkpoint_object_sync", side_effect=DownloadQueueEmpty()) as _:
+        cp = Checkpoint("s3://bucket/out", "s3://bucket/prev_checkpoint_file")
+        assert cp.load_sync() is None
+
+
+@pytest.mark.skipif(sys.version_info < (3, 11), reason="asyncio.TaskGroup uses ExceptionGroup on 3.11+")
+def test_checkpoint_load_sync_treats_exception_group_download_queue_empty() -> None:
+    from builtins import BaseExceptionGroup
+
+    eg = BaseExceptionGroup("unhandled errors in a TaskGroup", [DownloadQueueEmpty()])
+    with patch("flyte._checkpoint._get_checkpoint_object_sync", side_effect=eg):
+        cp = Checkpoint("s3://bucket/out", "s3://bucket/prev_checkpoint_file")
+        assert cp.load_sync() is None
+
+
 @pytest.mark.asyncio
-async def test_async_checkpoint_load_save_aio_on_task_loop() -> None:
+async def test_checkpoint_load_save_async_on_task_loop() -> None:
     with tempfile.TemporaryDirectory() as td:
         base = pathlib.Path(td)
         remote_out = base / "checkpoint_out"
@@ -234,21 +253,21 @@ async def test_async_checkpoint_load_save_aio_on_task_loop() -> None:
             inner_name="state.json",
             text=json.dumps({"step": 7}),
         )
-        cp = AsyncCheckpoint(remote_out.as_uri(), remote_prev.as_uri())
-        assert await cp.load.aio() is not None
+        cp = Checkpoint(remote_out.as_uri(), remote_prev.as_uri())
+        assert await cp.load() is not None
         assert _read_state_step(cp.path) == 7
-        await cp.save.aio(cp.path / "state.json")
+        await cp.save(cp.path / "state.json")
 
 
-def test_async_checkpoint_save_empty_directory_uploads_tar() -> None:
+def test_checkpoint_save_empty_directory_uploads_tar() -> None:
     with tempfile.TemporaryDirectory() as td:
         base = pathlib.Path(td)
         out_blob = base / "empty_dir_chkpt"
-        cp = AsyncCheckpoint(out_blob.as_uri(), None)
-        cp.save(cp.path)
+        cp = Checkpoint(out_blob.as_uri(), None)
+        cp.save_sync(cp.path)
 
-        cp2 = AsyncCheckpoint(base / "out2", out_blob.as_uri())
-        assert cp2.load() is not None
+        cp2 = Checkpoint(base / "out2", out_blob.as_uri())
+        assert cp2.load_sync() is not None
         assert list(cp2.path.iterdir()) == []
 
 
@@ -272,7 +291,7 @@ def test_task_context_checkpoint_property_cached() -> None:
         assert tctx.checkpoint is not None
         assert tctx.checkpoint is tctx.checkpoint
         assert CHECKPOINT_CACHE_KEY in tctx.data
-        assert isinstance(tctx.data[CHECKPOINT_CACHE_KEY], AsyncCheckpoint)
+        assert isinstance(tctx.data[CHECKPOINT_CACHE_KEY], Checkpoint)
 
 
 def test_task_context_checkpoint_none_without_prefix() -> None:

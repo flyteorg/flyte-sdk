@@ -9,22 +9,22 @@
 # ///
 
 """
-Hugging Face ``transformers.Trainer`` + Flyte ``AsyncCheckpoint``
-================================================================
+Hugging Face ``transformers.Trainer`` + Flyte ``Checkpoint``
+=========================================================
 
 Trains a tiny BERT classifier with :class:`transformers.Trainer`, keeping the Hugging Face ``output_dir``
 under the task checkpoint prefix. Matches ``sklearn_partial_checkpoint.py``:
 
-1. ``await checkpoint.load.aio()`` — restore prior tree from object storage.
+1. ``await checkpoint.load()`` — restore prior tree from object storage.
 2. ``resume_from_checkpoint`` from :func:`transformers.trainer_utils.get_last_checkpoint` (not the raw
    Flyte load path).
 3. ``chunks_start`` from ``trainer_state.json`` ``global_step`` when resuming (steps completed before this
    attempt). Failure uses the same rule as sklearn:
    ``(global_step - 1) > chunks_start and (global_step - 1) % failure_interval == 0`` with
    ``failure_interval = max_steps // RETRIES``.
-4. :class:`FlyteTrainerCheckpointCallback` — :meth:`~flyte.AsyncCheckpoint.save` on each HF ``on_save``
-   (aligned with HF checkpoint writes).
-5. ``await checkpoint.save.aio(output_dir)`` at the end.
+4. :class:`FlyteTrainerCheckpointCallback` — :meth:`~flyte.Checkpoint.save_sync` on each HF ``on_save``
+   (aligned with HF checkpoint writes; sync callback).
+5. ``await checkpoint.save(output_dir)`` at the end.
 
 The model id ``hf-internal-testing/tiny-random-bert`` is small and intended for tests; the first run may
 download weights from the Hub. ``accelerate`` is required for :class:`transformers.Trainer` with PyTorch.
@@ -99,14 +99,14 @@ class FailureInjectionCallback(TrainerCallback):
 
 
 class FlyteTrainerCheckpointCallback(TrainerCallback):
-    """After each HF checkpoint save, upload ``output_dir`` to Flyte (blocking :meth:`~flyte.AsyncCheckpoint.save`)."""
+    """After each HF checkpoint save, upload ``output_dir`` to Flyte (:meth:`~flyte.Checkpoint.save_sync`)."""
 
-    def __init__(self, flyte_checkpoint: flyte.AsyncCheckpoint, output_dir: pathlib.Path) -> None:
+    def __init__(self, flyte_checkpoint: flyte.Checkpoint, output_dir: pathlib.Path) -> None:
         self._flyte_checkpoint = flyte_checkpoint
         self._output_dir = output_dir
 
     def on_save(self, args, state, control, **kwargs) -> None:
-        self._flyte_checkpoint.save(self._output_dir)
+        self._flyte_checkpoint.save_sync(self._output_dir)
 
 
 def _chunks_start_from_hf_checkpoint(checkpoint_dir: str | None) -> int:
@@ -126,7 +126,7 @@ async def train_transformers(max_steps: int = 24) -> float:
     checkpoint = ctx.checkpoint
     assert checkpoint is not None
 
-    checkpoint_path: pathlib.Path | None = await checkpoint.load.aio()
+    checkpoint_path: pathlib.Path | None = await checkpoint.load()
     if checkpoint_path is None:
         output_dir = pathlib.Path("hf_trainer")
     else:

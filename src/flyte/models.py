@@ -17,7 +17,7 @@ from flyte._logging import logger
 if TYPE_CHECKING:
     from flyteidl2.core import literals_pb2
 
-    from flyte._checkpoint import AsyncCheckpoint
+    from flyte._checkpoint import Checkpoint
     from flyte._internal.imagebuild.image_builder import ImageCache
     from flyte.report import Report
 
@@ -260,19 +260,19 @@ class TaskContext:
         return self.mode == "remote"
 
     @property
-    def checkpoint(self) -> Optional[AsyncCheckpoint]:
+    def checkpoint(self) -> Optional[Checkpoint]:
         """
         Task checkpoint helper for the runtime ``checkpoint_path`` / ``prev_checkpoint`` prefixes.
 
-        Returns a lazily constructed :class:`~flyte.AsyncCheckpoint` cached on :attr:`data`, or
-        ``None`` when no checkpoint output prefix is configured. Use :meth:`~flyte.AsyncCheckpoint.load`
-        and :meth:`~flyte.AsyncCheckpoint.save` (blocking wrappers), or ``.load.aio()`` / ``.save.aio()`` in async code.
-        For a **single raw blob**, pass ``bytes`` to :meth:`~flyte.AsyncCheckpoint.save`; after a successful
-        :meth:`~flyte.AsyncCheckpoint.load`, the blob is at ``checkpoint.path / "payload"`` when the remote object
-        is not a tarball.
+        Returns a lazily constructed :class:`~flyte.Checkpoint` cached on :attr:`data`, or
+        ``None`` when no checkpoint output prefix is configured. In async tasks use :meth:`~flyte.Checkpoint.load`
+        and :meth:`~flyte.Checkpoint.save`; in sync tasks use :meth:`~flyte.Checkpoint.load_sync` and
+        :meth:`~flyte.Checkpoint.save_sync`.
+        For a **single raw blob**, pass ``bytes`` to save; after a successful load, the blob is at
+        ``checkpoint.path / "payload"`` when the remote object is not a tarball.
         """
         from flyte._checkpoint import CHECKPOINT_CACHE_KEY
-        from flyte._checkpoint import AsyncCheckpoint as AsyncCheckpointCls
+        from flyte._checkpoint import Checkpoint as CheckpointCls
 
         cps = self.checkpoints
         if cps is None:
@@ -282,11 +282,11 @@ class TaskContext:
             return None
         cached = self.data.get(CHECKPOINT_CACHE_KEY)
         if cached is not None:
-            assert isinstance(cached, AsyncCheckpointCls)
+            assert isinstance(cached, CheckpointCls)
             return cached
         prev = cps.prev_checkpoint_path
         prev_n = prev.strip() if prev else None
-        cp = AsyncCheckpointCls(str(dest).strip(), prev_n or None)
+        cp = CheckpointCls(str(dest).strip(), prev_n or None)
         self.data[CHECKPOINT_CACHE_KEY] = cp
         return cp
 

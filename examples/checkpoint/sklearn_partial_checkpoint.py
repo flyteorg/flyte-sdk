@@ -4,8 +4,8 @@ Scikit-learn partial_fit with checkpoints
 
 ``SGDClassifier.partial_fit`` is resumed across task retries by pickling the estimator to
 ``sgd_bundle.pkl``, matching ``huggingface_trainer_checkpoint.py``: resolve a bundle directory from
-``await checkpoint.load.aio()``, call blocking :meth:`~flyte.AsyncCheckpoint.save` after each training
-chunk (incremental training step), then ``await checkpoint.save.aio`` for the final state.
+``await checkpoint.load()``, ``await checkpoint.save`` after each training
+chunk (incremental training step).
 
 **Note:** ``uv run --script`` may install an older ``flyte`` from PyPI without
 ``TaskContext.checkpoint``. Run with a venv where this repository is installed
@@ -48,7 +48,7 @@ async def incremental_sgd(chunks: int = 4) -> float:
     cp = ctx.checkpoint
     assert cp is not None
 
-    prev_cp_path: pathlib.Path | None = await cp.load.aio()
+    prev_cp_path: pathlib.Path | None = await cp.load()
     prev = None if prev_cp_path is None else prev_cp_path.read_bytes()
     if prev:
         # load clf and chunks_done from previous checkpoint
@@ -77,9 +77,9 @@ async def incremental_sgd(chunks: int = 4) -> float:
             # Simulate a failure at a regular interval
             raise RuntimeError(f"Failed at iteration {i}, failure_interval {failure_interval}.")
 
-        # save checkpoint to object storage, which can be loaded by cp.load.aio() at the top of the script on the
+        # save checkpoint to object storage, which can be loaded by await cp.load() at the top of the script on the
         bundle_path.write_bytes(pickle.dumps({"clf": clf, "chunks_done": i + 1}))
-        await cp.save.aio(bundle_path)
+        await cp.save(bundle_path)
 
     assert clf is not None
     x_test = rng.standard_normal((64, 8))

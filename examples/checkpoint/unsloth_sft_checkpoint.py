@@ -12,15 +12,15 @@
 # ///
 
 """
-Unsloth + TRL ``SFTTrainer`` + Flyte ``AsyncCheckpoint``
+Unsloth + TRL ``SFTTrainer`` + Flyte ``Checkpoint``
 =========================================================
 
 LoRA fine-tuning with `Unsloth <https://unsloth.ai/docs>`__ and :class:`trl.trainer.SFTTrainer`, persisting
-``output_dir`` through :class:`~flyte.AsyncCheckpoint` so Flyte retries can resume.
+``output_dir`` through :class:`~flyte.Checkpoint` so Flyte retries can resume.
 
 Follows ``sklearn_partial_checkpoint.py`` and ``huggingface_trainer_checkpoint.py``:
 
-- ``await checkpoint.load.aio()``, ``get_last_checkpoint``, ``trainer.train(resume_from_checkpoint=...)``.
+- ``await checkpoint.load()``, ``get_last_checkpoint``, ``trainer.train(resume_from_checkpoint=...)``.
 - ``chunks_start`` from ``trainer_state.json`` and step failure rule
   ``(global_step - 1) > chunks_start and (global_step - 1) % failure_interval == 0`` with
   ``failure_interval = max_steps // RETRIES``.
@@ -64,12 +64,12 @@ class FailureInjectionCallback(TrainerCallback):
 
 
 class FlyteTrainerCheckpointCallback(TrainerCallback):
-    def __init__(self, flyte_checkpoint: flyte.AsyncCheckpoint, output_dir: pathlib.Path) -> None:
+    def __init__(self, flyte_checkpoint: flyte.Checkpoint, output_dir: pathlib.Path) -> None:
         self._flyte_checkpoint = flyte_checkpoint
         self._output_dir = output_dir
 
     def on_save(self, args, state, control, **kwargs) -> None:
-        self._flyte_checkpoint.save(self._output_dir)
+        self._flyte_checkpoint.save_sync(self._output_dir)
 
 
 def _chunks_start_from_hf_checkpoint(checkpoint_dir: str | None) -> int:
@@ -104,7 +104,7 @@ async def train_unsloth_sft(max_steps: int = 12) -> float:
     checkpoint = ctx.checkpoint
     assert checkpoint is not None
 
-    checkpoint_path: pathlib.Path | None = await checkpoint.load.aio()
+    checkpoint_path: pathlib.Path | None = await checkpoint.load()
     if checkpoint_path is None:
         output_dir = pathlib.Path("unsloth_sft")
     else:
@@ -172,7 +172,7 @@ async def train_unsloth_sft(max_steps: int = 12) -> float:
     )
     trainer.train(resume_from_checkpoint=hf_resume)
 
-    await checkpoint.save.aio(output_dir)
+    await checkpoint.save(output_dir)
 
     for h in reversed(trainer.state.log_history):
         if "loss" in h:

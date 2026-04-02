@@ -1,24 +1,24 @@
 """
 Task checkpointing against Flyte checkpoint object-store prefixes (v2 SDK).
 
-:class:`AsyncCheckpoint` uses ``flyte.storage`` for I/O.
+:class:`Checkpoint` uses ``flyte.storage`` for I/O.
 
-- **Async (recommended in async tasks):** ``await checkpoint.load.aio()``, ``await checkpoint.save.aio(...)``.
-- **Sync in ordinary task code:** ``checkpoint.load()``, ``checkpoint.save(...)`` run the async storage path on the
-  global :mod:`flyte.syncify` background loop (same pattern as other SDK async I/O).
+- **Async tasks:** ``await checkpoint.load()``, ``await checkpoint.save(...)``.
+- **Sync tasks:** :meth:`~Checkpoint.load_sync`, :meth:`~Checkpoint.save_sync` (same semantics as
+  :meth:`flyte.io.File.download_sync` / sync uploads — no :mod:`flyte.syncify`).
 
 - **Previous-checkpoint URI repair:** For remote prev URIs (e.g. ``s3://``), if the path uses the **current**
-  attempt directory (``…/{run}/{action}/{n}/…``), :class:`~AsyncCheckpoint` rewrites *n* to *n-1* when *n > 1*,
+  attempt directory (``…/{run}/{action}/{n}/…``), :class:`~Checkpoint` rewrites *n* to *n-1* when *n > 1*,
   using :func:`flyte.ctx` ``action.run_name`` and ``action.name`` (Union executor v2). If ``FLYTE_ATTEMPT_NUMBER``
   is ``>= 1``, the attempt directory integer must match the buggy current-attempt value (``FLYTE_ATTEMPT_NUMBER``
   or ``FLYTE_ATTEMPT_NUMBER + 1``). Local ``file:`` paths are not modified.
 
-Remote checkpoint URIs are a **single object** (e.g. ``.../_flytecheckpoints``). :meth:`~AsyncCheckpoint.save`
-uploads a **file** as-is; a **directory** is stored as a gzip-compressed tar. :meth:`~AsyncCheckpoint.load`
-downloads that object, extracts a tar into :attr:`~AsyncCheckpoint.path`, or moves a single downloaded file to
-``path / "payload"``. :meth:`~AsyncCheckpoint.load` returns ``path / "payload"`` when that file exists, else
-:attr:`~AsyncCheckpoint.path` (restored directory tree). For a **single raw blob**, :meth:`~AsyncCheckpoint.save`
-accepts ``bytes``; after :meth:`~AsyncCheckpoint.load`, that blob is available at ``checkpoint.path / "payload"``.
+Remote checkpoint URIs are a **single object** (e.g. ``.../_flytecheckpoints``). :meth:`~Checkpoint.save`
+uploads a **file** as-is; a **directory** is stored as a gzip-compressed tar. :meth:`~Checkpoint.load`
+downloads that object, extracts a tar into :attr:`~Checkpoint.path`, or moves a single downloaded file to
+``path / "payload"``. :meth:`~Checkpoint.load` returns ``path / "payload"`` when that file exists, else
+:attr:`~Checkpoint.path` (restored directory tree). For a **single raw blob**, :meth:`~Checkpoint.save`
+accepts ``bytes``; after :meth:`~Checkpoint.load`, that blob is available at ``checkpoint.path / "payload"``.
 """
 
 from __future__ import annotations
@@ -36,11 +36,11 @@ from typing import Optional
 import flyte.storage as storage
 from flyte._logging import logger
 from flyte.storage._parallel_reader import DownloadQueueEmpty
-from flyte.syncify import syncify
+from flyte.storage._storage import BATCH_SIZE, _get_anonymous_filesystem, get_underlying_filesystem, strip_file_header
 
 CHECKPOINT_CACHE_KEY = "__flyte_sync_checkpoint__"
 
-# Basename under `AsyncCheckpoint.path` when the remote checkpoint is a single file (not a tarball).
+# Basename under `Checkpoint.path` when the remote checkpoint is a single file (not a tarball).
 _PAYLOAD_BASENAME = "payload"
 
 # Object-store schemes for which Union executor may pass a prev-checkpoint URI with the wrong attempt segment.
@@ -165,7 +165,58 @@ def _new_checkpoint_download_temp_path() -> pathlib.Path:
     return pathlib.Path(tmp_name)
 
 
-class Checkpoint(ABC):
+def _get_checkpoint_object_sync(from_path: str, to_path: pathlib.Path) -> None:
+    """Download one object to a local file (non-recursive), mirroring ``storage.get(..., recursive=False)`` sync I/O."""
+    from fsspec.asyn import AsyncFileSystem
+    from obstore.exceptions import GenericError
+
+    to_path = pathlib.Path(to_path)
+    to_path.parent.mkdir(parents=True, exist_ok=True)
+    local_src = strip_file_header(from_path)
+    file_system = get_underlying_filesystem(path=from_path)
+    if "file" in file_system.protocol:
+        shutil.copy2(local_src, to_path)
+        return
+    try:
+        file_system.get(str(from_path), str(to_path), recursive=False)
+    except (OSError, GenericError) as oe:
+        logger.debug("Sync checkpoint get error %s -> %s: %s", from_path, to_path, oe)
+        if isinstance(file_system, AsyncFileSystem):
+            try:
+                exists = file_system.exists(from_path)
+            except GenericError:
+                exists = True
+        else:
+            exists = file_system.exists(from_path)
+        if not exists:
+            raise AssertionError(f"Unable to load data from {from_path}") from oe
+        file_system = _get_anonymous_filesystem(from_path)
+        file_system.get(str(from_path), str(to_path), recursive=False)
+
+
+def _put_checkpoint_file_sync(from_local: str, to_remote: str) -> None:
+    from_local = strip_file_header(from_local)
+    file_system = get_underlying_filesystem(path=to_remote)
+    if "file" in file_system.protocol:
+        dest = pathlib.Path(strip_file_header(to_remote))
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(from_local, dest)
+    else:
+        file_system.put(from_local, to_remote, recursive=False, batch_size=BATCH_SIZE)
+
+
+def _put_checkpoint_bytes_sync(data: bytes, to_remote: str) -> None:
+    file_system = get_underlying_filesystem(path=to_remote)
+    if "file" in file_system.protocol:
+        p = pathlib.Path(strip_file_header(to_remote))
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(data)
+    else:
+        with file_system.open(to_remote, "wb") as fh:
+            fh.write(data)
+
+
+class BaseCheckpoint(ABC):
     """
     Base type for task checkpoint helpers. Subclasses load prior checkpoint data from
     ``prev_checkpoint`` into a local workspace and upload new state to ``checkpoint_path``.
@@ -181,24 +232,33 @@ class Checkpoint(ABC):
         """Whether the runtime provided a previous-checkpoint prefix (retry / resume)."""
 
     @abstractmethod
-    def save(self, data: pathlib.Path | str | bytes) -> None:
-        """Save checkpoint data to the remote destination."""
+    async def load(self) -> Optional[pathlib.Path]:
+        """Load checkpoint data from the remote source (async)."""
 
     @abstractmethod
-    def load(self) -> Optional[pathlib.Path]:
-        """Load checkpoint data from the remote source."""
+    async def save(self, data: pathlib.Path | str | bytes) -> None:
+        """Save checkpoint data to the remote destination (async)."""
+
+    @abstractmethod
+    def load_sync(self) -> Optional[pathlib.Path]:
+        """Load checkpoint data from the remote source (sync task code)."""
+
+    @abstractmethod
+    def save_sync(self, data: pathlib.Path | str | bytes) -> None:
+        """Save checkpoint data to the remote destination (sync task code)."""
 
 
-class AsyncCheckpoint(Checkpoint):
+class Checkpoint(BaseCheckpoint):
     """
     Checkpoint helper using ``flyte.storage``. Remote paths are a **single object**.
 
-    Use :meth:`load` and :meth:`save` (blocking wrappers), or ``.load.aio()`` and ``.save.aio()`` inside async code.
+    In async tasks use :meth:`load` and :meth:`save`. In ordinary ``def`` tasks use :meth:`load_sync` and
+    :meth:`save_sync`.
 
     Saving a **directory** uploads a gzip tar of its top-level entries; saving a **file** or **bytes** uploads
-    that payload directly. After :meth:`load`, a non-tar remote object appears as ``path / "payload"`` and
-    :meth:`load` returns that path. Tarball checkpoints unpack under :attr:`path`; :meth:`load` then returns
-    :attr:`path` so callers can scan the restored tree (e.g. ``rglob``).
+    that payload directly. After :meth:`load` / :meth:`load_sync`, a non-tar remote object appears as
+    ``path / "payload"`` and those methods return that path. Tarball checkpoints unpack under :attr:`path`;
+    they return :attr:`path` so callers can scan the restored tree (e.g. ``rglob``).
     """
 
     def __init__(self, checkpoint_dest: str, checkpoint_src: str | None = None):
@@ -245,7 +305,7 @@ class AsyncCheckpoint(Checkpoint):
         return self._checkpoint_src is not None
 
     def _load_return_path(self, is_tarball: bool = False) -> Optional[pathlib.Path]:
-        """Value returned from :meth:`load` after a successful download (see ``AsyncCheckpoint`` class docstring)."""
+        """Value returned from :meth:`load` after a successful download (see ``Checkpoint`` class docstring)."""
         if not self._had_remote_prev:
             return None
         # Directory archives unpack under :attr:`path`; only single-file checkpoints use ``path / "payload"``.
@@ -253,7 +313,6 @@ class AsyncCheckpoint(Checkpoint):
             return self.path
         return self._payload_path
 
-    @syncify
     async def load(self) -> Optional[pathlib.Path]:
         if not self.prev_exists():
             return None
@@ -288,6 +347,40 @@ class AsyncCheckpoint(Checkpoint):
         self._is_tarball = is_tarball
         return self._load_return_path(is_tarball=is_tarball)
 
+    def load_sync(self) -> Optional[pathlib.Path]:
+        if not self.prev_exists():
+            return None
+        if self._restored:
+            return self._load_return_path(is_tarball=self._is_tarball)
+
+        prev_uri = self._checkpoint_src
+        assert prev_uri is not None
+
+        download_path = _new_checkpoint_download_temp_path()
+        is_tarball = False
+        try:
+            _clear_directory_contents(self.path)
+            self.path.mkdir(parents=True, exist_ok=True)
+            _get_checkpoint_object_sync(prev_uri, download_path)
+            if download_path.stat().st_size == 0:
+                self._had_remote_prev = False
+            else:
+                is_tarball = _extract_tarball_or_move(download_path, self.path)
+                self._had_remote_prev = True
+        except BaseException as e:
+            if isinstance(e, (KeyboardInterrupt, SystemExit)):
+                raise
+            if not _is_recoverable_checkpoint_load_error(e):
+                raise
+            logger.debug("Checkpoint load skipped or failed for %s: %s", prev_uri, e)
+            self._had_remote_prev = False
+        finally:
+            download_path.unlink(missing_ok=True)
+
+        self._restored = True
+        self._is_tarball = is_tarball
+        return self._load_return_path(is_tarball=is_tarball)
+
     async def _save_directory_as_tarball(self, src: pathlib.Path) -> None:
         fd, tmp_name = tempfile.mkstemp(prefix="flyte-cptar-", suffix=".tar.gz")
         os.close(fd)
@@ -298,7 +391,16 @@ class AsyncCheckpoint(Checkpoint):
         finally:
             tar_path.unlink(missing_ok=True)
 
-    @syncify
+    def _save_directory_as_tarball_sync(self, src: pathlib.Path) -> None:
+        fd, tmp_name = tempfile.mkstemp(prefix="flyte-cptar-", suffix=".tar.gz")
+        os.close(fd)
+        tar_path = pathlib.Path(tmp_name)
+        try:
+            _tar_directory_to_file(src, tar_path)
+            _put_checkpoint_file_sync(str(tar_path), self._checkpoint_dest)
+        finally:
+            tar_path.unlink(missing_ok=True)
+
     async def save(self, data: pathlib.Path | str | bytes) -> None:
         if isinstance(data, bytes):
             await storage.put_stream(data, to_path=self._checkpoint_dest)
@@ -311,3 +413,20 @@ class AsyncCheckpoint(Checkpoint):
             await self._save_directory_as_tarball(src)
         else:
             await storage.put(str(src), self._checkpoint_dest, recursive=False)
+
+    def save_sync(self, data: pathlib.Path | str | bytes) -> None:
+        if isinstance(data, bytes):
+            _put_checkpoint_bytes_sync(data, self._checkpoint_dest)
+            return
+
+        src = pathlib.Path(data) if isinstance(data, str) else data
+        if not src.exists():
+            raise FileNotFoundError(f"Checkpoint source path does not exist: {src}")
+        if src.is_dir():
+            self._save_directory_as_tarball_sync(src)
+        else:
+            _put_checkpoint_file_sync(str(src), self._checkpoint_dest)
+
+
+# Backward compatibility
+AsyncCheckpoint = Checkpoint

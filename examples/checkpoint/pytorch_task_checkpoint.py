@@ -10,10 +10,10 @@
 PyTorch checkpoints
 ===================
 
-Saves ``training.pt`` (state dict + optimizer + epoch) using :class:`~flyte.AsyncCheckpoint`,
+Saves ``training.pt`` (state dict + optimizer + epoch) using :class:`~flyte.Checkpoint`,
 following the same load / persist pattern as ``huggingface_trainer_checkpoint.py`` (resolve a local
-root from ``await checkpoint.load.aio()``, sync :meth:`~flyte.AsyncCheckpoint.save` at each epoch end,
-then a final ``await checkpoint.save.aio(...)``).
+root from ``await checkpoint.load()``, ``await checkpoint.save(...)`` each epoch end,
+then a final ``await checkpoint.save(...)``).
 """
 
 from __future__ import annotations
@@ -44,7 +44,7 @@ async def train_linear(epochs: int = 3) -> float:
     model = nn.Linear(4, 1)
     opt = torch.optim.SGD(model.parameters(), lr=0.01)
 
-    prev_cp_path: pathlib.Path | None = await cp.load.aio()
+    prev_cp_path: pathlib.Path | None = await cp.load()
     if prev_cp_path:
         # load model, optimizer, and epoch from previous checkpoint
         blob = torch.load(prev_cp_path, map_location="cpu", weights_only=False)
@@ -76,9 +76,9 @@ async def train_linear(epochs: int = 3) -> float:
             {"model": model.state_dict(), "opt": opt.state_dict(), "epoch": epoch},
             wpath,
         )
-        # save checkpoint to object storage, which can be loaded by cp.load.aio() at the top of the script on the
+        # save checkpoint to object storage, which can be loaded by await cp.load() at the top of the script on the
         # next attempt
-        await cp.save.aio(wpath)
+        await cp.save(wpath)
 
     with torch.no_grad():
         return float(model(torch.ones(1, 4)).squeeze().item())
