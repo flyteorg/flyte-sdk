@@ -78,9 +78,7 @@ async def test_task1_remote_union_sync(
     assert run
     # Ensure upload_inputs was called with the correct inputs
     mock_dataproxy_service.upload_inputs.assert_called_once()
-    upload_req: dataproxy_service_pb2.UploadInputsRequest = (
-        mock_dataproxy_service.upload_inputs.call_args[0][0]
-    )
+    upload_req: dataproxy_service_pb2.UploadInputsRequest = mock_dataproxy_service.upload_inputs.call_args[0][0]
     assert upload_req.inputs == common_pb2.Inputs(
         literals=[
             common_pb2.NamedLiteral(
@@ -177,9 +175,7 @@ async def test_upload_inputs_with_run_id(
     assert run
 
     # upload_inputs should use run_id when name is provided
-    upload_req: dataproxy_service_pb2.UploadInputsRequest = (
-        mock_dataproxy_service.upload_inputs.call_args[0][0]
-    )
+    upload_req: dataproxy_service_pb2.UploadInputsRequest = mock_dataproxy_service.upload_inputs.call_args[0][0]
     assert upload_req.WhichOneof("id") == "run_id"
     assert upload_req.run_id.name == "my-run"
     assert upload_req.run_id.project == "testproject"
