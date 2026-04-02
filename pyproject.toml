@@ -94,7 +94,6 @@ dev = [
     "mypy>=1.16.0",
     "kubernetes",
     "textual>=0.80",
-    "pytest-timeout>=0.5.1",
 ]
 
 [tool.setuptools]
