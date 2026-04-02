@@ -1,7 +1,5 @@
 """Tests for _upload_with_retry timeout and retry behavior."""
 
-import asyncio
-from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import httpx
