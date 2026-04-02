@@ -248,6 +248,15 @@ def test_dockerfile():
     assert img_multi.platform == ("linux/amd64", "linux/arm64")
 
 
+def test_dockerfile_with_str_path():
+    img = Image.from_dockerfile(
+        file=str(Path(__file__).parent / "resources/Dockerfile.test_sample"),
+        registry="localhost",
+        name="test-image",
+    )
+    assert img.uri.startswith("localhost/test-image"), f"Unexpected URI: {img.uri}"
+    assert img.platform == ("linux/amd64",)
+
 def test_image_uri_consistency_for_uvscript():
     img = Image.from_uv_script(
         "./agent_simulation_loadtest.py", name="flyte", registry="ghcr.io/flyteorg", python_version=(3, 12)
