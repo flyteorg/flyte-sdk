@@ -2,6 +2,7 @@ import asyncio
 import filecmp
 import os
 import time
+import unittest.mock as mock
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -13,6 +14,81 @@ from flyte import storage
 from flyte._context import internal_ctx
 from flyte.storage import S3
 from flyte.storage._parallel_reader import ObstoreParallelReader
+
+
+@pytest.mark.asyncio
+async def test_worker_logs_exception_on_download_failure(tmp_path):
+    """Worker should log the failing file path before re-raising so the real
+    error is visible instead of being swallowed inside a BaseExceptionGroup."""
+
+    store = mock.MagicMock()
+    reader = ObstoreParallelReader(store, max_concurrency=1)
+
+    async def _mock_list(*args, **kwargs):
+        yield [{"path": "prefix/file.txt", "size": 100}]
+
+    async def _mock_as_completed(gen, transformer=None):
+        async for task in gen:
+            try:
+                raise RuntimeError("GCS 429: Too Many Requests")
+            except Exception:
+                import flyte.storage._parallel_reader as pr
+
+                pr.logger.exception(f"Failed downloading {task.source.path}")
+                raise
+            yield
+
+    with (
+        mock.patch("flyte.storage._parallel_reader.obstore") as mock_obstore,
+        mock.patch("flyte.storage._parallel_reader.logger") as mock_logger,
+        mock.patch.object(reader, "_as_completed", side_effect=_mock_as_completed),
+    ):
+        mock_obstore.list = _mock_list
+        mock_obstore.get_range_async = mock.AsyncMock()
+
+        with pytest.raises(Exception):
+            await reader.download_files(Path("prefix"), tmp_path)
+
+    mock_logger.exception.assert_called_once()
+    call_args = str(mock_logger.exception.call_args)
+    assert "prefix/file.txt" in call_args
+
+
+@pytest.mark.asyncio
+async def test_worker_logs_exception_before_task_received(tmp_path):
+    """Worker should log a fallback message when failure happens before any
+    task is dequeued (task is still None at that point)."""
+
+    store = mock.MagicMock()
+    reader = ObstoreParallelReader(store, max_concurrency=1)
+
+    async def _mock_list(*args, **kwargs):
+        yield [{"path": "prefix/file.txt", "size": 100}]
+
+    async def _mock_as_completed(*args, **kwargs):
+        import flyte.storage._parallel_reader as pr
+
+        try:
+            raise RuntimeError("inq exploded before task received")
+        except Exception:
+            pr.logger.exception("Error before receiving a task")
+            raise
+        yield
+
+    with (
+        mock.patch("flyte.storage._parallel_reader.obstore") as mock_obstore,
+        mock.patch("flyte.storage._parallel_reader.logger") as mock_logger,
+        mock.patch.object(reader, "_as_completed", side_effect=_mock_as_completed),
+    ):
+        mock_obstore.list = _mock_list
+        mock_obstore.get_range_async = mock.AsyncMock()
+
+        with pytest.raises(Exception):
+            await reader.download_files(Path("prefix"), tmp_path)
+
+    mock_logger.exception.assert_called_once()
+    call_args = str(mock_logger.exception.call_args)
+    assert "before receiving a task" in call_args
 
 
 @pytest.mark.skip

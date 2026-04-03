@@ -823,7 +823,11 @@ class Image:
 
     @classmethod
     def from_dockerfile(
-        cls, file: Path, registry: str, name: str, platform: Union[Architecture, Tuple[Architecture, ...], None] = None
+        cls,
+        file: Union[Path, str],
+        registry: str,
+        name: str,
+        platform: Union[Architecture, Tuple[Architecture, ...], None] = None,
     ) -> Image:
         """
         Use this method to create a new image with the specified dockerfile. Note you cannot use additional layers
@@ -842,13 +846,15 @@ class Image:
         :return:
         """
         platform = _ensure_tuple(platform) if platform else None
-        kwargs = {
+        if type(file) is str:
+            file = Path(file)
+        kwargs: dict[str, Any] = {
             "dockerfile": file,
             "registry": registry,
             "name": name,
             "extendable": False,  # Dockerfile-based images cannot have additional layers
         }
-        if platform:
+        if platform is not None:
             kwargs["platform"] = platform
         img = cls._new(**kwargs)
 

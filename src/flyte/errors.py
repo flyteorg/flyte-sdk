@@ -32,6 +32,27 @@ class BaseRuntimeError(RuntimeError):
         self.kind = kind
         self.worker = worker
 
+    def _reraise(self, *_args):
+        """Re-raise this error when user code mistakenly treats it as a value.
+
+        When ``flyte.map`` is called with ``return_exceptions=True``, exceptions are
+        returned as values. If user code then performs arithmetic on them (e.g.
+        ``sum(results)``), this surfaces the *real* subtask error instead of a
+        confusing ``TypeError``.
+        """
+        raise self
+
+    __add__ = _reraise
+    __radd__ = _reraise
+    __sub__ = _reraise
+    __rsub__ = _reraise
+    __mul__ = _reraise
+    __rmul__ = _reraise
+    __truediv__ = _reraise
+    __rtruediv__ = _reraise
+    __floordiv__ = _reraise
+    __rfloordiv__ = _reraise
+
 
 class InitializationError(BaseRuntimeError):
     """
