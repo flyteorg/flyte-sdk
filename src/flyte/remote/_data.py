@@ -21,7 +21,7 @@ from flyte.errors import InitializationError, RuntimeSystemError
 from flyte.syncify import syncify
 
 _UPLOAD_EXPIRES_IN = timedelta(seconds=60)
-_UPLOAD_TIMEOUT = httpx.Timeout(timeout=60.0, connect=30.0)
+_UPLOAD_TIMEOUT = httpx.Timeout(timeout=600.0, connect=30.0)
 
 
 def get_extra_headers_for_protocol(native_url: str) -> typing.Dict[str, str]:
@@ -88,10 +88,8 @@ async def _upload_with_retry(
     retry_attempt = 0
     last_error: str | Exception | None = None
 
-    print(f"Uploading {fp} to {signed_url} with max_retries={max_retries}")
     while retry_attempt <= max_retries:
         try:
-            print("test upload with retry")
             async with aiofiles.open(str(fp), "rb") as file:
                 async with httpx.AsyncClient(verify=verify, timeout=_UPLOAD_TIMEOUT) as aclient:
                     put_resp = await aclient.put(signed_url, headers=extra_headers, content=file)
@@ -120,7 +118,6 @@ async def _upload_with_retry(
         except RuntimeSystemError:
             raise
         except (httpx.TimeoutException, httpx.ConnectError, OSError) as e:
-            print("failed to upload, retrying", e)
             last_error = e
             if retry_attempt >= max_retries:
                 raise RuntimeSystemError(
@@ -129,7 +126,6 @@ async def _upload_with_retry(
                 ) from e
 
         # Backoff and retry
-        print("aaaaaaaaaaaaaaaaaaaaaaa")
         retry_attempt += 1
         if retry_attempt <= max_retries:
             backoff_delay = min(min_backoff_sec * (2 ** (retry_attempt - 1)), max_backoff_sec)
@@ -137,9 +133,7 @@ async def _upload_with_retry(
                 f"Upload failed for {fp.name}, backing off for {backoff_delay:.2f}s "
                 f"[retry {retry_attempt}/{max_retries}]: {last_error}"
             )
-            print("bbbbbbbbbbbbbbbbbbbbb")
             await asyncio.sleep(backoff_delay)
-        print("ttttttttttttttttttttttttttttt")
     return None
 
 
@@ -164,7 +158,6 @@ async def _upload_single_file(
         expires_in_pb = duration_pb2.Duration()
         expires_in_pb.FromTimedelta(_UPLOAD_EXPIRES_IN)
         client = get_client()
-        print(f"Creating upload location for {fp} with project={cfg.project}, domain={cfg.domain}")
         resp = await client.dataproxy_service.create_upload_location(  # type: ignore
             dataproxy_service_pb2.CreateUploadLocationRequest(
                 project=cfg.project,
@@ -200,7 +193,6 @@ async def _upload_single_file(
     # Update headers with MD5 and content length
     extra_headers.update({"Content-Length": str(content_length), "Content-MD5": encoded_md5.decode("utf-8")})
 
-    print(f"upload with retry")
     await _upload_with_retry(
         fp=fp,
         signed_url=resp.signed_url,
