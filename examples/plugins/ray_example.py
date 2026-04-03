@@ -40,9 +40,8 @@ ray_env = flyte.TaskEnvironment(
 )
 
 
-@task_env.task(retries=3)
+@task_env.task()
 async def hello_ray():
-    raise ValueError("Hello from the Ray task!")
     await asyncio.sleep(20)
     print("Hello from the Ray task!")
 
