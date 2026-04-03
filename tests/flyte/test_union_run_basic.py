@@ -53,7 +53,7 @@ async def test_task1_remote_union_sync(
     mock_client.run_service = mock_run_service  # Set the mocked run_service
 
     mock_dataproxy_service = AsyncMock()
-    mock_offloaded = common_run_pb2.OffloadedInputData(uri="s3://bucket/inputs", cache_key="abc123")
+    mock_offloaded = common_run_pb2.OffloadedInputData(uri="s3://bucket/inputs", inputs_hash="abc123")
     mock_dataproxy_service.upload_inputs.return_value = dataproxy_service_pb2.UploadInputsResponse(
         offloaded_input_data=mock_offloaded,
     )
@@ -92,6 +92,8 @@ async def test_task1_remote_union_sync(
     assert upload_req.WhichOneof("id") == "project_id"
     assert upload_req.project_id.name == "test"
     assert upload_req.project_id.domain == "test"
+    assert upload_req.WhichOneof("task") == "task_spec"
+    assert upload_req.task_spec.task_template.id.name == "test.task1"
 
     # Ensure create_run uses offloaded_input_data instead of inline inputs
     mock_build_image_bg.assert_called_once()
@@ -153,7 +155,7 @@ async def test_upload_inputs_with_run_id(
     mock_client.run_service = mock_run_service
 
     mock_dataproxy_service = AsyncMock()
-    mock_offloaded = common_run_pb2.OffloadedInputData(uri="s3://bucket/inputs", cache_key="key456")
+    mock_offloaded = common_run_pb2.OffloadedInputData(uri="s3://bucket/inputs", inputs_hash="key456")
     mock_dataproxy_service.upload_inputs.return_value = dataproxy_service_pb2.UploadInputsResponse(
         offloaded_input_data=mock_offloaded,
     )
@@ -180,6 +182,8 @@ async def test_upload_inputs_with_run_id(
     assert upload_req.run_id.name == "my-run"
     assert upload_req.run_id.project == "testproject"
     assert upload_req.run_id.domain == "development"
+    assert upload_req.WhichOneof("task") == "task_spec"
+    assert upload_req.task_spec.task_template.id.name == "test.task1"
 
     # create_run should use offloaded_input_data
     req: run_service_pb2.CreateRunRequest = mock_run_service.create_run.call_args[0][0]

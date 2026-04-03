@@ -392,6 +392,7 @@ class _Runner:
 
                 upload_req = dataproxy_service_pb2.UploadInputsRequest(
                     inputs=inputs.proto_inputs,
+                    task_spec=task_spec,
                 )
                 if run_id is not None:
                     upload_req.run_id.CopyFrom(run_id)
