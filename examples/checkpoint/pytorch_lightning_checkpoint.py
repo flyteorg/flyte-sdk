@@ -165,7 +165,6 @@ def train_lightning(max_epochs: int = 3) -> float:
     )
     loader = _make_loaders()
     trainer.fit(model, loader, ckpt_path=resume_ckpt)
-    checkpoint.save_sync(ckpt_dir)
 
     with torch.no_grad():
         x = torch.ones(1, FEATURES)
