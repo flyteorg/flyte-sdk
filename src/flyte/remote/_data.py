@@ -21,7 +21,8 @@ from flyte.errors import InitializationError, RuntimeSystemError
 from flyte.syncify import syncify
 
 _UPLOAD_EXPIRES_IN = timedelta(seconds=60)
-_UPLOAD_TIMEOUT = httpx.Timeout(timeout=600.0, connect=30.0)
+_UPLOAD_TIMEOUT_SECONDS = float(os.environ.get("FLYTE_UPLOAD_TIMEOUT", "600"))
+_UPLOAD_TIMEOUT = httpx.Timeout(timeout=_UPLOAD_TIMEOUT_SECONDS, connect=30.0)
 
 
 def get_extra_headers_for_protocol(native_url: str) -> typing.Dict[str, str]:

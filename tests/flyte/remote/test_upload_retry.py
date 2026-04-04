@@ -33,9 +33,27 @@ async def test_upload_success(upload_file):
 
 
 @pytest.mark.asyncio
-async def test_upload_timeout_is_10_minutes():
+async def test_upload_timeout_default():
     assert _UPLOAD_TIMEOUT.read == 600.0
     assert _UPLOAD_TIMEOUT.connect == 30.0
+
+
+@pytest.mark.asyncio
+async def test_upload_timeout_env_override():
+    with patch.dict("os.environ", {"FLYTE_UPLOAD_TIMEOUT": "120"}):
+        import importlib
+
+        import flyte.remote._data as data_mod
+
+        importlib.reload(data_mod)
+        assert data_mod._UPLOAD_TIMEOUT.read == 120.0
+        assert data_mod._UPLOAD_TIMEOUT.connect == 30.0
+
+        # Restore default
+        del data_mod
+        import flyte.remote._data
+
+        importlib.reload(flyte.remote._data)
 
 
 @pytest.mark.asyncio
