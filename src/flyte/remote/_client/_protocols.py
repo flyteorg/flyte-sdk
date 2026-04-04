@@ -107,6 +107,10 @@ class DataProxyService(Protocol):
         self, request: dataproxy_service_pb2.CreateUploadLocationRequest
     ) -> dataproxy_service_pb2.CreateUploadLocationResponse: ...
 
+    async def upload_inputs(
+        self, request: dataproxy_service_pb2.UploadInputsRequest
+    ) -> dataproxy_service_pb2.UploadInputsResponse: ...
+
 
 class RunLogsService(Protocol):
     def tail_logs(

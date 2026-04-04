@@ -92,7 +92,7 @@ async def parallel_training(hyperparams: list[dict]) -> dict:
 
 ## CLI
 
-The Flyte CLI follows a **verb noun** structure. Full reference: [CLI Docs](https://www.union.ai/docs/v2/byoc/api-reference/flyte-cli/)
+The Flyte CLI follows a **verb noun** structure. Full reference: [CLI Docs](https://www.union.ai/docs/v2/union/api-reference/flyte-cli/)
 
 ```bash
 flyte run hello.py main --numbers '[1,2,3]'     # Run a task

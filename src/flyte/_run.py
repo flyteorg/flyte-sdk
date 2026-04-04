@@ -388,12 +388,25 @@ class _Runner:
                 notification_rule_name, notification_rules = resolve_notification_settings(self._notifications)
 
             try:
+                from flyteidl2.dataproxy import dataproxy_service_pb2
+
+                upload_req = dataproxy_service_pb2.UploadInputsRequest(
+                    inputs=inputs.proto_inputs,
+                    task_spec=task_spec,
+                )
+                if run_id is not None:
+                    upload_req.run_id.CopyFrom(run_id)
+                else:
+                    upload_req.project_id.CopyFrom(project_id)
+
+                upload_resp = await get_client().dataproxy_service.upload_inputs(upload_req)
+
                 resp = await get_client().run_service.create_run(
                     run_service_pb2.CreateRunRequest(
                         run_id=run_id,
                         project_id=project_id,
                         task_spec=task_spec,
-                        inputs=inputs.proto_inputs,
+                        offloaded_input_data=upload_resp.offloaded_input_data,
                         run_spec=run_pb2.RunSpec(
                             overwrite_cache=self._overwrite_cache,
                             interruptible=wrappers_pb2.BoolValue(value=self._interruptible)
