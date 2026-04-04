@@ -61,7 +61,7 @@ async def _upload_with_retry(
     signed_url: str,
     extra_headers: dict,
     verify: bool,
-    max_retries: int = 1,
+    max_retries: int = 3,
     min_backoff_sec: float = 0.5,
     max_backoff_sec: float = 10.0,
 ):
