@@ -83,7 +83,7 @@ class RemoteImageChecker(ImageChecker):
             from flyteidl2.common.identifier_pb2 import ProjectIdentifier
             from flyteidl2.imagebuilder import definition_pb2 as image_definition__pb2
             from flyteidl2.imagebuilder import payload_pb2 as image_payload__pb2
-            from flyteidl2.imagebuilder import service_pb2_grpc as image_service_pb2_grpc
+            from flyteidl2.imagebuilder.service_connect import ImageServiceClient
 
             from flyte._initialize import _get_init_config
 
@@ -99,8 +99,8 @@ class RemoteImageChecker(ImageChecker):
             if cls._images_client is None:
                 if cfg.client is None:
                     raise ValueError("remote client should not be None")
-                cls._images_client = image_service_pb2_grpc.ImageServiceStub(cfg.client._channel)
-            resp = await cls._images_client.GetImage(req)
+                cls._images_client = ImageServiceClient(**cfg.client.session_config.connect_kwargs())
+            resp = await cls._images_client.get_image(req)
             logger.debug(f"Image {resp.image.fqin} found in remote registry")
             return resp.image.fqin
         except Exception:
@@ -257,7 +257,7 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
             )
             layers.append(apt_layer)
         elif isinstance(layer, PythonWheels):
-            dst_path = copy_files_to_context(layer.wheel_dir, context_path, [])
+            dst_path = copy_files_to_context(layer.wheel_dir, context_path, ["*.tar.gz", "*.tar.bz2", "*.zip"])
             wheel_layer = image_definition_pb2.Layer(
                 python_wheels=image_definition_pb2.PythonWheels(
                     dir=str(dst_path.relative_to(context_path)),
@@ -338,12 +338,14 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
                         pip_options.extra_args += " --no-install-project"
                     else:
                         pip_options.extra_args = "--no-install-project"
-                    # Copy the editable dependencies defined under the [tool.uv.sources] in pyproject.toml
+                    # Copy the editable dependencies defined under the [tool.uv.sources] in pyproject.toml.
+                    # We copy the entire dependency directory (not just pyproject.toml) so that uv_build
+                    # can find the source files when building the package during uv sync.
                     standard_ignore_patterns = STANDARD_IGNORE_PATTERNS.copy()
                     for editable_dep in get_uv_project_editable_dependencies(layer.pyproject.parent):
                         pyproject_dir_dsts.append(
                             copy_files_to_context(
-                                editable_dep / "pyproject.toml",
+                                editable_dep,
                                 context_path,
                                 ignore_patterns=[*standard_ignore_patterns, *docker_ignore_patterns],
                             )

@@ -68,7 +68,7 @@ def build_enhanced_prompt(
     enhanced_prompt = f"Language: {language}\n\n{prompt}"
 
     if schema:
-        enhanced_prompt += f"\n\nSchema:\n```\n{schema}\n```"
+        enhanced_prompt += f"\n\nSchema:\n``\n{schema}\n``"
 
     # Always add script requirement first, then user constraints
     script_constraint = (
@@ -131,6 +131,6 @@ Outputs MUST be written before the script exits — do NOT just print() values."
     enhanced_prompt += "\n\nConstraints:\n" + "\n".join(f"- {c}" for c in all_constraints)
 
     if data_context:
-        enhanced_prompt += f"\n\nData context:\n```\n{data_context}\n```"
+        enhanced_prompt += f"\n\nData context:\n``\n{data_context}\n``"
 
     return enhanced_prompt

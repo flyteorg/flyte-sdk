@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Batch Document OCR workflow with multi-model comparison using Flyte 2.0"
 requires-python = ">=3.10"
 dependencies = [
-    "flyte>=2.0.0b40",
+    "flyte",
 ]
 
 [project.optional-dependencies]

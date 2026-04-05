@@ -140,15 +140,10 @@ def load_app_env(
     try:
         return resolver_instance.load_app_env(resolver_args)
     except ModuleNotFoundError as e:
+        from flyte._internal.runtime.entrypoints import _list_user_files
+
         cwd = os.getcwd()
-        files = []
-        try:
-            for root, dirs, filenames in os.walk(cwd):
-                for name in dirs + filenames:
-                    rel_path = os.path.relpath(os.path.join(root, name), cwd)
-                    files.append(rel_path)
-        except Exception as list_err:
-            files = [f"(Failed to list directory: {list_err})"]
+        files = _list_user_files(cwd)
 
         msg = (
             "\n\nFull traceback:\n" + "".join(traceback.format_exc()) + f"\n[ImportError Diagnostics]\n"
@@ -206,8 +201,15 @@ def _bind_parameters(
 async def _serve(
     app_env: AppEnvironment,
     materialized_parameters: dict[str, str | flyte.io.File | flyte.io.Dir],
+    raw_data_path: str | None = None,
 ):
     import signal
+
+    if raw_data_path:
+        from flyte.app._context import set_raw_data_path
+
+        set_raw_data_path(raw_data_path)
+        logger.info(f"Set raw_data_path in AppContext: {raw_data_path}")
 
     logger.info("Running app via server function")
     assert app_env._server is not None
@@ -262,6 +264,7 @@ async def _serve(
 @click.option("--tgz", required=False)
 @click.option("--pkl", required=False)
 @click.option("--dest", required=False)
+@click.option("--raw-data-path", "-r", required=False)
 @click.option("--project", envvar=PROJECT_NAME, required=False)
 @click.option("--domain", envvar=DOMAIN_NAME, required=False)
 @click.option("--org", envvar=ORG_NAME, required=False)
@@ -277,6 +280,7 @@ def main(
     tgz: str,
     pkl: str,
     dest: str,
+    raw_data_path: str | None = None,
     command: tuple[str, ...] | None = None,
     project: str | None = None,
     domain: str | None = None,
@@ -328,9 +332,17 @@ def main(
 
     os.environ[RUNTIME_PARAMETERS_FILE] = parameters_file
 
+    logger.info(f"RAW DATA PATH: {raw_data_path}")
+
     if app_env and app_env._server is not None:
-        asyncio.run(_serve(app_env, materialized_parameters))
+        asyncio.run(_serve(app_env, materialized_parameters, raw_data_path=raw_data_path))
         exit(0)
+
+    if raw_data_path:
+        from flyte.app._context import set_raw_data_path
+
+        set_raw_data_path(raw_data_path)
+        logger.info(f"Set raw_data_path in AppContext: {raw_data_path}")
 
     if command is None or len(command) == 0:
         raise ValueError("No command provided to execute")

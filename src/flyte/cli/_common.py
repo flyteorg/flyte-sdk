@@ -132,85 +132,86 @@ class CLIConfig:
     ):
         from flyte.config._config import TaskConfig
 
-        # Check if FLYTE_API_KEY is set and no config file was found
         api_key = os.getenv("FLYTE_API_KEY")
-        has_config_file = self.config.source is not None
 
-        # Use API key initialization only if:
-        # 1. FLYTE_API_KEY is set AND
-        # 2. No config file exists
-        if api_key and not has_config_file:
-            # The API key is encoded and contains endpoint, client_id, client_secret, and org
-            # init_from_api_key will decode it automatically
-            flyte.init_from_api_key(
-                api_key=api_key,
-                project=project if project is not None else self.config.task.project,
-                domain=domain if domain is not None else self.config.task.domain,
-                log_level=self.log_level,
-                log_format=self.log_format,
-                root_dir=pathlib.Path(root_dir).resolve() if root_dir else None,
-                sync_local_sys_paths=sync_local_sys_paths,
-            )
-        else:
-            # Use the standard config-based initialization
-            task_cfg = TaskConfig(
-                org=self.org or self.config.task.org,
-                project=project if project is not None else self.config.task.project,
-                domain=domain if domain is not None else self.config.task.domain,
-            )
+        task_cfg = TaskConfig(
+            org=self.org or self.config.task.org,
+            project=project if project is not None else self.config.task.project,
+            domain=domain if domain is not None else self.config.task.domain,
+        )
 
-            kwargs: Dict[str, Any] = {}
-            if self.endpoint:
-                kwargs["endpoint"] = self.endpoint
-            if self.insecure is not None:
-                kwargs["insecure"] = self.insecure
-            if self.auth_type:
-                kwargs["auth_mode"] = sanitize_auth_type(self.auth_type)
-            platform_cfg = self.config.platform.replace(**kwargs)
+        kwargs: Dict[str, Any] = {}
+        if self.endpoint:
+            kwargs["endpoint"] = self.endpoint
+        if self.insecure is not None:
+            kwargs["insecure"] = self.insecure
+        if self.auth_type:
+            kwargs["auth_mode"] = sanitize_auth_type(self.auth_type)
 
-            updated_config = self.config.with_params(platform_cfg, task_cfg)
-            flyte.init_from_config(
-                updated_config,
-                log_level=self.log_level,
-                log_format=self.log_format,
-                root_dir=pathlib.Path(root_dir).resolve() if root_dir else None,
-                images=images,
-                sync_local_sys_paths=sync_local_sys_paths,
+        if api_key:
+            from flyte._logging import logger
+
+            logger.info(
+                "Detected an FLYTE_API_KEY in the environment, using it in lieu of endpoints in any config file"
             )
+            from flyte._utils import sanitize_endpoint
+            from flyte.remote._client.auth._auth_utils import decode_api_key
+
+            endpoint, client_id, client_secret, org = decode_api_key(api_key)
+            kwargs.setdefault("endpoint", sanitize_endpoint(endpoint))
+            kwargs["client_id"] = client_id
+            kwargs["client_credentials_secret"] = client_secret
+            kwargs["auth_mode"] = "ClientSecret"
+            if org and org != "None":
+                # redeclare with the org found from the API key
+                task_cfg = TaskConfig(
+                    org=self.org or org,
+                    project=task_cfg.project,
+                    domain=task_cfg.domain,
+                )
+
+        platform_cfg = self.config.platform.replace(**kwargs)
+        updated_config = self.config.with_params(platform_cfg, task_cfg)
+
+        flyte.init_from_config(
+            updated_config,
+            log_level=self.log_level,
+            log_format=self.log_format,
+            root_dir=pathlib.Path(root_dir).resolve() if root_dir else None,
+            images=images,
+            sync_local_sys_paths=sync_local_sys_paths,
+        )
 
 
 class InvokeBaseMixin:
     """
-    Mixin to catch grpc.RpcError, flyte.RpcError, other errors and other exceptions
-    and raise them as gclick.ClickException.
+    Mixin to catch ConnectError, flyte.RpcError, other errors and other exceptions
+    and raise them as click.ClickException.
     """
 
     def invoke(self, ctx):
-        import os
-
-        import grpc
+        from connectrpc.code import Code
+        from connectrpc.errors import ConnectError
 
         try:
-            _ = super().invoke(ctx)  # type: ignore
-            # Exit successfully to properly close grpc channel
-            os._exit(0)
-        except grpc.aio.AioRpcError as e:
-            if e.code() == grpc.StatusCode.UNAUTHENTICATED:
-                raise click.ClickException(f"Authentication failed. Please check your credentials. {e.details()}")
-            if e.code() == grpc.StatusCode.NOT_FOUND:
-                raise click.ClickException(f"Requested object NOT FOUND. Please check your input. Error: {e.details()}")
-            if e.code() == grpc.StatusCode.ALREADY_EXISTS:
+            return super().invoke(ctx)  # type: ignore
+        except ConnectError as e:
+            if e.code == Code.UNAUTHENTICATED:
+                raise click.ClickException(f"Authentication failed. Please check your credentials. {e.message}")
+            if e.code == Code.NOT_FOUND:
+                raise click.ClickException(f"Requested object NOT FOUND. Please check your input. Error: {e.message}")
+            if e.code == Code.ALREADY_EXISTS:
                 raise click.ClickException("Resource already exists.")
-            if e.code() == grpc.StatusCode.INTERNAL:
-                raise click.ClickException(f"Internal server error: {e.details()}")
-            if e.code() == grpc.StatusCode.UNAVAILABLE:
+            if e.code == Code.INTERNAL:
+                raise click.ClickException(f"Internal server error: {e.message}")
+            if e.code == Code.UNAVAILABLE:
                 raise click.ClickException(
-                    f"Service is currently unavailable. Please try again later. Error: {e.details()}"
+                    f"Service is currently unavailable. Please try again later. Error: {e.message}"
                 )
-            if e.code() == grpc.StatusCode.PERMISSION_DENIED:
-                raise click.ClickException(f"Permission denied. Please check your access rights. Error: {e.details()}")
-            if e.code() == grpc.StatusCode.INVALID_ARGUMENT:
-                raise click.ClickException(f"Invalid argument provided. Please check your input. Error: {e.details()}")
+            if e.code == Code.PERMISSION_DENIED:
+                raise click.ClickException(f"Permission denied. Please check your access rights. Error: {e.message}")
+            if e.code == Code.INVALID_ARGUMENT:
+                raise click.ClickException(f"Invalid argument provided. Please check your input. Error: {e.message}")
             raise click.ClickException(f"RPC error invoking command: {e!s}") from e
         except flyte.errors.InitializationError as e:
             raise click.ClickException(f"Initialization failed. Pass remote config for CLI. (Reason: {e})")

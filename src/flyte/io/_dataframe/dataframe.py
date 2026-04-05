@@ -79,7 +79,13 @@ class DataFrame(BaseModel, SerializableType):
     format: typing.Optional[str] = Field(default=GENERIC_FORMAT)
     hash: typing.Optional[str] = Field(default=None)
 
-    model_config = ConfigDict(arbitrary_types_allowed=True)
+    model_config = ConfigDict(
+        arbitrary_types_allowed=True,
+        json_schema_extra={
+            "description": "A tabular data reference backed by a remote file.",
+            "x-flyte-type": "dataframe",
+        },
+    )
 
     # Private attributes that are not part of the Pydantic model schema
     _raw_df: typing.Optional[typing.Any] = PrivateAttr(default=None)
@@ -586,7 +592,7 @@ def extract_cols_and_format(
     Helper function, just used to iterate through Annotations and extract out the following information:
       - base type, if not Annotated, it will just be the type that was passed in.
       - column information, as a collections.OrderedDict,
-      - the storage format, as a ``DataFrameFormat`` (str),
+      - the storage format, as a `DataFrameFormat` (str),
       - pa.lib.Schema
       - HashMethod for cache key computation
 
@@ -908,7 +914,7 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
 
         :param h: The DataFrameEncoder or DataFrameDecoder you wish to register with this transformer.
         :param default_for_type: If set, when a user returns from a task an instance of the dataframe the handler
-          handles, e.g. ``return pd.DataFrame(...)``, not wrapped around the ``StructuredDataset`` object, we will
+          handles, e.g. `return pd.DataFrame(...)`, not wrapped around the `StructuredDataset` object, we will
           use this handler's protocol and format as the default, effectively saying that this handler will be called.
           Note that this shouldn't be set if your handler's protocol is None, because that implies that your handler
           is capable of handling all the different storage protocols that flytekit's data persistence layer is aware of.

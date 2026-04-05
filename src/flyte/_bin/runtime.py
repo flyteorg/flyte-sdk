@@ -165,18 +165,17 @@ def main(
     # Run both coroutines concurrently and wait for first to finish and cancel the other
     async def _run_and_stop():
         loop = asyncio.get_event_loop()
-        loop.set_exception_handler(flyte.errors.silence_grpc_polling_error)
+        loop.set_exception_handler(flyte.errors.silence_polling_error)
         try:
             await utils.run_coros(controller_failure, task_coroutine)
             await controller.stop()
-        except flyte.errors.RuntimeSystemError as e:
-            logger.error(f"Runtime system error: {e}")
+        except (flyte.errors.RuntimeSystemError, flyte.errors.RuntimeUserError) as e:
             from flyte._internal.runtime.convert import convert_from_native_to_error
             from flyte._internal.runtime.io import upload_error
 
             logger.error(f"Flyte runtime failed for action {name} with run name {run_name}, error: {e}")
             err = convert_from_native_to_error(e)
-            path = await upload_error(err.err, outputs_path)
+            path = await upload_error(err.err, outputs_path, recoverable=err.recoverable)
             logger.error(f"Run {run_name} Action {name} failed with error: {err}. Uploaded error to {path}")
             await controller.stop()
 
@@ -185,9 +184,6 @@ def main(
     for h in logger.handlers:
         h.flush()
     sys.stdout.flush()
-    # We os._exit here to ensure that grpc does not block the exiting! grpc currently has a graceful shutdown system
-    # that blocks the process from exiting
-    os._exit(0)
 
 
 if __name__ == "__main__":

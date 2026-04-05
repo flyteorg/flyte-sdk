@@ -42,7 +42,7 @@ from flyte._image import DIST_FOLDER, PythonWheels
 
 image = (
     flyte.Image.from_debian_base(name="torch")
-    .clone(addl_layer=PythonWheels(wheel_dir=DIST_FOLDER, package_name="flyteplugins-pytorch", pre=True))
+    .clone(addl_layer=PythonWheels(wheel_dir=DIST_FOLDER, package_name="flyteplugins-pytorch"))
     .with_pip_packages("numpy")
 )
 

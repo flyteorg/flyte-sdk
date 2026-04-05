@@ -1,12 +1,12 @@
 """Sharded JSONL directory type.
 
-A JsonlDir is a directory of JSONL shard files (``part-00000.jsonl``,
-``part-00001.jsonl``, etc.) that supports:
+A JsonlDir is a directory of JSONL shard files (`part-00000.jsonl`,
+`part-00001.jsonl`, etc.) that supports:
 
 - **Writing**: automatic shard rotation by record count or byte size
 - **Reading**: transparent iteration across all shards in sorted order,
   with optional one-shard-ahead prefetching for overlapping I/O
-- **Compression**: per-shard zstd via ``.jsonl.zst`` extension
+- **Compression**: per-shard zstd via `.jsonl.zst` extension
 - **Append**: detects existing shards and continues from the next index
 """
 
@@ -51,7 +51,7 @@ def _is_jsonl_path(path: str) -> bool:
 
 
 def _shard_name(index: int, extension: str) -> str:
-    """Build a shard filename: ``part-00042.jsonl``."""
+    """Build a shard filename: `part-00042.jsonl`."""
     return f"part-{index:05d}{extension}"
 
 
@@ -69,7 +69,7 @@ async def _prefetch_shard(
     """Background task: stream records from *shard* into a bounded *queue*.
 
     Overlaps next-shard I/O with current-shard processing so the consumer
-    is never stalled waiting for network reads. The queue's ``maxsize`` is a
+    is never stalled waiting for network reads. The queue's `maxsize` is a
     memory safety bound.
     """
     try:
@@ -86,11 +86,11 @@ class _BaseJsonlDirWriter:
     """Shared state and rotation logic for async/sync shard writers.
 
     Tracks three counters per shard:
-    - ``_index``   — current shard number (part-NNNNN)
-    - ``_records`` — records written to the current shard
-    - ``_bytes``   — uncompressed bytes written to the current shard
+    - `_index`   — current shard number (part-NNNNN)
+    - `_records` — records written to the current shard
+    - `_bytes`   — uncompressed bytes written to the current shard
 
-    ``_writer`` / ``_ctx`` hold the underlying ``JsonlFile`` writer and its
+    `_writer` / `_ctx` hold the underlying `JsonlFile` writer and its
     context manager so we can close and reopen on rotation.
     """
 
@@ -143,9 +143,9 @@ class _BaseJsonlDirWriter:
 class JsonlDirWriter(_BaseJsonlDirWriter):
     """Async sharded JSONL writer.
 
-    Serializes each record with orjson, then delegates to ``_write_bytes``
+    Serializes each record with orjson, then delegates to `_write_bytes`
     which handles rotation and passes pre-serialized bytes to the underlying
-    ``JsonlWriter.write_raw()``.
+    `JsonlWriter.write_raw()`.
     """
 
     async def write(self, record: dict[str, Any]) -> None:
@@ -190,7 +190,7 @@ class JsonlDirWriter(_BaseJsonlDirWriter):
 
 
 class JsonlDirWriterSync(_BaseJsonlDirWriter):
-    """Sync sharded JSONL writer. Same logic as :class:`JsonlDirWriter`."""
+    """Sync sharded JSONL writer. Same logic as `JsonlDirWriter`."""
 
     def write(self, record: dict[str, Any]) -> None:
         self._write_bytes(orjson.dumps(record) + b"\n")
@@ -234,10 +234,10 @@ class JsonlDir(Dir):
     """A directory of sharded JSONL files.
 
     Provides transparent iteration across shards on read and automatic shard
-    rotation on write. Inherits all :class:`Dir` capabilities (remote storage,
+    rotation on write. Inherits all `Dir` capabilities (remote storage,
     walk, download, etc.).
 
-    Shard files are named ``part-00000.jsonl`` (or ``.jsonl.zst`` for
+    Shard files are named `part-00000.jsonl` (or `.jsonl.zst` for
     compressed shards), zero-padded to 5 digits and sorted alphabetically
     on read. Mixed compression within a single directory is supported.
 
@@ -268,7 +268,7 @@ class JsonlDir(Dir):
         return shards
 
     def _get_sorted_shards_sync(self) -> list[JsonlFile]:
-        """Sync variant of :meth:`_get_sorted_shards`."""
+        """Sync variant of `_get_sorted_shards`."""
         shards = [JsonlFile(path=f.path) for f in self.walk_sync(recursive=False) if _is_jsonl_path(f.path)]
         shards.sort(key=lambda s: os.path.basename(s.path))
         return shards
@@ -301,8 +301,8 @@ class JsonlDir(Dir):
         than one shard in memory.
 
         Args:
-            on_error: ``"raise"`` (default), ``"skip"``, or a callable
-                ``(line_number, raw_line, exception) -> None``.
+            on_error: `"raise"` (default), `"skip"`, or a callable
+                `(line_number, raw_line, exception) -> None`.
             prefetch: Overlap next-shard network I/O with current-shard
                 processing for higher throughput.
             queue_size: Memory safety bound on the read-ahead buffer
@@ -384,7 +384,7 @@ class JsonlDir(Dir):
 
         Args:
             batch_size: Max records per batch (default 1000).
-            on_error: ``"raise"`` (default), ``"skip"``, or a callable.
+            on_error: `"raise"` (default), `"skip"`, or a callable.
             prefetch: Overlap next-shard I/O with current-shard processing.
             queue_size: Memory safety bound on the read-ahead buffer.
         """
@@ -406,7 +406,7 @@ class JsonlDir(Dir):
 
         Args:
             batch_size: Max records per batch (default 1000).
-            on_error: ``"raise"`` (default), ``"skip"``, or a callable.
+            on_error: `"raise"` (default), `"skip"`, or a callable.
         """
         batch: list[dict[str, Any]] = []
         for r in self.iter_records_sync(on_error=on_error):
@@ -426,7 +426,7 @@ class JsonlDir(Dir):
 
         Args:
             batch_size: Max records per RecordBatch (default 65536).
-            on_error: ``"raise"`` (default), ``"skip"``, or a callable.
+            on_error: `"raise"` (default), `"skip"`, or a callable.
         """
         shards = await self._get_sorted_shards()
         for s in shards:
@@ -442,7 +442,7 @@ class JsonlDir(Dir):
 
         Args:
             batch_size: Max records per RecordBatch (default 65536).
-            on_error: ``"raise"`` (default), ``"skip"``, or a callable.
+            on_error: `"raise"` (default), `"skip"`, or a callable.
         """
         for s in self._get_sorted_shards_sync():
             yield from s.iter_arrow_batches_sync(batch_size=batch_size, on_error=on_error)
@@ -456,17 +456,17 @@ class JsonlDir(Dir):
         flush_bytes: int = _DEFAULT_FLUSH_BYTES,
         compression_level: int = 3,
     ) -> AsyncGenerator[JsonlDirWriter, None]:
-        """Async context manager returning a :class:`JsonlDirWriter`.
+        """Async context manager returning a `JsonlDirWriter`.
 
         Scans the directory for existing shards and starts writing from the
         next available index, so appending to an existing directory is safe.
 
         Args:
-            shard_extension: File extension (e.g. ``.jsonl`` or ``.jsonl.zst``).
+            shard_extension: File extension (e.g. `.jsonl` or `.jsonl.zst`).
             max_records_per_shard: Roll after this many records (None = no limit).
             max_bytes_per_shard: Roll after this many uncompressed bytes (default 256 MB).
             flush_bytes: Buffer flush threshold in bytes (default 1 MB).
-            compression_level: Zstd level (default 3, only for ``.jsonl.zst``).
+            compression_level: Zstd level (default 3, only for `.jsonl.zst`).
         """
         # Scan existing shards so we don't overwrite them.
         start = self._next_index(await self._get_sorted_shards())
@@ -495,9 +495,9 @@ class JsonlDir(Dir):
         flush_bytes: int = _DEFAULT_FLUSH_BYTES,
         compression_level: int = 3,
     ) -> Generator[JsonlDirWriterSync, None, None]:
-        """Sync context manager returning a :class:`JsonlDirWriterSync`.
+        """Sync context manager returning a `JsonlDirWriterSync`.
 
-        See :meth:`writer` for argument descriptions.
+        See `writer` for argument descriptions.
         """
         start = self._next_index(self._get_sorted_shards_sync())
 

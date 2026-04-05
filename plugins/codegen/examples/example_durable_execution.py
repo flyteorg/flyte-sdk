@@ -156,9 +156,8 @@ async def generate_and_run_with_retries(csv_file: File) -> dict[str, float | int
     # this code path succeeds.
     if attempt == "0":
         raise RuntimeError(
-            "Simulated transient failure after sandbox execution. "
-            "All sandboxes completed and are cached. "
-            "On retry, they will hit cache and complete instantly."
+            "Simulated transient failure after sandbox execution."
+            "On retry, traces and tasks replay from the log and complete instantly."
         )
 
     return {

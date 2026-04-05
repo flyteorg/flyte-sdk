@@ -10,6 +10,7 @@ import pytest_asyncio
 from flyte import Secret
 from flyte._image import AptPackages, Commands, Image, PipPackages, PoetryProject, Requirements, UVProject
 from flyte._internal.imagebuild.docker_builder import (
+    DOCKER_FILE_UV_BASE_TEMPLATE,
     CopyConfig,
     CopyConfigHandler,
     DockerImageBuilder,
@@ -674,3 +675,43 @@ def test_get_build_secrets_from_image_deduplicates_with_group():
     assert len(secrets) == 1, f"Expected 1 secret, got {len(secrets)}. Secrets: {secrets}"
     assert secrets[0].key == "mykey"
     assert secrets[0].group == "mygroup"
+
+
+def test_uv_base_template_default_venv():
+    """When base image has no UV_PYTHON, the template should default to /opt/venv and create a venv."""
+    dockerfile = DOCKER_FILE_UV_BASE_TEMPLATE.substitute(
+        BASE_IMAGE="python:3.12-slim",
+        PYTHON_VERSION="3.12",
+    )
+
+    # Should declare default paths via ARG
+    assert "ARG VIRTUALENV=/opt/venv" in dockerfile
+    assert "ARG UV_PYTHON=$VIRTUALENV/bin/python" in dockerfile
+
+    # Should set ENV from ARGs
+    assert "VIRTUALENV=$VIRTUALENV" in dockerfile
+    assert "UV_PYTHON=$UV_PYTHON" in dockerfile
+
+    # Should conditionally create venv only if UV_PYTHON binary doesn't exist
+    assert 'if [ ! -f "$UV_PYTHON" ]' in dockerfile
+    assert "uv venv $VIRTUALENV --python=3.12" in dockerfile
+
+    # Should add VIRTUALENV/bin to PATH
+    assert 'PATH="$VIRTUALENV/bin:$PATH"' in dockerfile
+
+
+def test_uv_base_template_preserves_existing_uv_python():
+    """When base image has UV_PYTHON set, the template should preserve it and skip venv creation."""
+    dockerfile = DOCKER_FILE_UV_BASE_TEMPLATE.substitute(
+        BASE_IMAGE="my-custom-image:latest",
+        PYTHON_VERSION="3.12",
+    )
+
+    # UV_PYTHON ARG defaults to $VIRTUALENV/bin/python but can be overridden by base image
+    assert "ARG UV_PYTHON=$VIRTUALENV/bin/python" in dockerfile
+
+    # The conditional block skips venv creation when UV_PYTHON binary already exists
+    assert 'if [ ! -f "$UV_PYTHON" ]' in dockerfile
+
+    # PATH includes VIRTUALENV/bin
+    assert 'PATH="$VIRTUALENV/bin:$PATH"' in dockerfile

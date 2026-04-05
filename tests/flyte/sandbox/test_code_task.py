@@ -481,8 +481,8 @@ noop(x)
         assert monty.run(inputs={"x": 42}) is None
 
     def test_function_with_external_functions(self):
-        """Function def with external calls uses MontySnapshot for pause/resume."""
-        from pydantic_monty import MontyComplete, MontySnapshot
+        """Function def with external calls uses FunctionSnapshot for pause/resume."""
+        from pydantic_monty import FunctionSnapshot, Monty, MontyComplete
 
         code = """\
 def pipeline(x):
@@ -490,11 +490,9 @@ def pipeline(x):
     return doubled + 1
 pipeline(x)
 """
-        from pydantic_monty import Monty
-
-        monty = Monty(code, inputs=["x"], external_functions=["double"])
+        monty = Monty(code, inputs=["x"])
         snapshot = monty.start(inputs={"x": 5})
-        assert isinstance(snapshot, MontySnapshot)
+        assert isinstance(snapshot, FunctionSnapshot)
         assert snapshot.function_name == "double"
         assert snapshot.args == (5,)
 

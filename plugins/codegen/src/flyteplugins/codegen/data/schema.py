@@ -12,11 +12,23 @@ logger = logging.getLogger(__name__)
 
 
 def schema_to_script(schema: pa.DataFrameSchema) -> str:
-    """Convert a Pandera schema to a script string, falling back to repr if black is not installed."""
-    try:
-        return schema.to_script()
-    except ImportError:
-        return repr(schema)
+    """Convert a Pandera schema to a script string including column checks.
+
+    Pandera's built-in `to_script()` and `repr()` omit column-level checks,
+    so we build the script manually.
+    """
+    lines = ["import pandera.pandas as pa", "", "schema = pa.DataFrameSchema(columns={"]
+    for col_name, col in schema.columns.items():
+        checks_list = list(col.checks) if col.checks else []
+        if checks_list:
+            checks_str = "[" + ", ".join(repr(c) for c in checks_list) + "]"
+        else:
+            checks_str = "None"
+        lines.append(
+            f"    {col_name!r}: pa.Column(dtype={col.dtype!r}, nullable={col.nullable!r}, checks={checks_str}),"
+        )
+    lines.append(f"}}, strict={schema.strict!r})")
+    return "\n".join(lines)
 
 
 def infer_conservative_schema(df: pd.DataFrame) -> pa.DataFrameSchema:
@@ -216,17 +228,28 @@ def apply_parsed_constraint(
             check = pa.Check.isin(values)
 
     elif parsed.check_type == "not_null":
-        # Update nullable flag instead of adding check
-        schema = schema.update_column(col_name, nullable=False)
-        return schema
+        # Rebuild column with nullable=False
+        col = schema.columns[col_name]
+        new_col = pa.Column(
+            dtype=col.dtype,
+            nullable=False,
+            checks=list(col.checks) if col.checks else None,
+        )
+        new_columns = {**schema.columns, col_name: new_col}
+        return pa.DataFrameSchema(columns=new_columns, strict=schema.strict)
 
     if check:
-        # Add check to column
-        existing_checks = schema.columns[col_name].checks or []
-        if not isinstance(existing_checks, list):
-            existing_checks = [existing_checks]
-
-        schema = schema.update_column(col_name, checks=[*existing_checks, check])
+        # Rebuild column with the new check appended — update_column silently
+        # ignores the `checks` kwarg in many Pandera versions.
+        col = schema.columns[col_name]
+        existing_checks = list(col.checks) if col.checks else []
+        new_col = pa.Column(
+            dtype=col.dtype,
+            nullable=col.nullable,
+            checks=[*existing_checks, check],
+        )
+        new_columns = {**schema.columns, col_name: new_col}
+        schema = pa.DataFrameSchema(columns=new_columns, strict=schema.strict)
 
         logger.info(f"Applied constraint to '{col_name}': {parsed.explanation}")
 
@@ -239,7 +262,7 @@ async def apply_user_constraints(
     data_name: str,
     model: str,
     litellm_params: Optional[dict] = None,
-) -> tuple[pa.DataFrameSchema, int, int]:
+) -> tuple[pa.DataFrameSchema, list[str], int, int]:
     """Apply user-specified constraints to schema using LLM parsing.
 
     Args:
@@ -250,9 +273,10 @@ async def apply_user_constraints(
         litellm_params: Optional LiteLLM parameters
 
     Returns:
-        Tuple of (enhanced_schema, total_input_tokens, total_output_tokens)
+        Tuple of (enhanced_schema, unapplied_constraints, total_input_tokens, total_output_tokens)
     """
     enhanced_schema = schema
+    unapplied: list[str] = []
     total_input_tokens = 0
     total_output_tokens = 0
 
@@ -263,8 +287,9 @@ async def apply_user_constraints(
         total_input_tokens += in_tok
         total_output_tokens += out_tok
 
-        if parsed:
-            # Apply to schema
+        if parsed and parsed.check_type != "none":
             enhanced_schema = apply_parsed_constraint(enhanced_schema, parsed)
+        else:
+            unapplied.append(constraint)
 
-    return enhanced_schema, total_input_tokens, total_output_tokens
+    return enhanced_schema, unapplied, total_input_tokens, total_output_tokens

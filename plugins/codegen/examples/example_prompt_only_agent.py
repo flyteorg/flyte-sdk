@@ -1,4 +1,4 @@
-"""Example: Log file analysis with sample data and schema context (Agent SDK approach).
+"""Example: Log file analysis with sample data and schema context (Agent approach).
 
 Demonstrates:
 - Passing a File as sample data (sampled by LLM for context)
@@ -77,7 +77,7 @@ def create_log_file() -> File:
 
 @env.task
 async def parse_and_summarize_logs_with_agent(prompt: str, log_file: File) -> dict[str, str | int | bool]:
-    """Generate log parsing code from prompt + schema using Agent SDK."""
+    """Generate log parsing code from prompt + schema using Agent."""
     result = await agent.generate.aio(
         prompt=prompt,
         schema="""Output JSON schema for report_json:
@@ -131,7 +131,7 @@ Parse each matching line, compute summary statistics, and identify the component
 with the most errors (worst_component). Set has_critical_errors to true if any
 ERROR lines exist. Output report_json as a JSON string with the summary.""",
 ) -> dict[str, str | int | bool]:
-    """Parse logs with Agent SDK: prompt-only, explicit inputs/outputs."""
+    """Parse logs with Agent mode: prompt-only, explicit inputs/outputs."""
     log_file = create_log_file()
     return await parse_and_summarize_logs_with_agent(prompt=prompt, log_file=log_file)
 
