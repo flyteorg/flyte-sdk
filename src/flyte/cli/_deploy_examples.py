@@ -59,12 +59,8 @@ def deploy_examples(ctx: click.Context, example_type: str, **kwargs):
     examples_dir = examples_root / example_type
 
     if not examples_dir.is_dir():
-        available = sorted(
-            d.name for d in examples_root.iterdir() if d.is_dir() and not d.name.startswith("_")
-        )
-        raise click.ClickException(
-            f"Example type '{example_type}' not found. Available types: {', '.join(available)}"
-        )
+        available = sorted(d.name for d in examples_root.iterdir() if d.is_dir() and not d.name.startswith("_"))
+        raise click.ClickException(f"Example type '{example_type}' not found. Available types: {', '.join(available)}")
 
     status.step(f"Loading examples from {examples_dir}")
 
