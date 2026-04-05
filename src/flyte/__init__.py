@@ -28,6 +28,7 @@ from ._link import Link
 from ._logging import logger
 from ._map import map
 from ._pod import PodTemplate
+from ._replay import replay, with_replaycontext
 from ._resources import AMD_GPU, GPU, HABANA_GAUDI, TPU, Device, DeviceClass, Neuron, Resources
 from ._retry import RetryStrategy
 from ._reusable_environment import ReusePolicy
@@ -97,11 +98,13 @@ __all__ = [
     "init_passthrough",
     "logger",
     "map",
+    "replay",
     "run",
     "run_python_script",
     "serve",
     "trace",
     "version",
+    "with_replaycontext",
     "with_runcontext",
     "with_servecontext",
 ]

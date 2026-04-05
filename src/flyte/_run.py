@@ -87,6 +87,136 @@ def _get_main_run_mode() -> Mode | None:
     return _run_mode_var.get()
 
 
+async def run_task_locally(
+    task: TaskTemplate,
+    *args: Any,
+    name: Optional[str] = None,
+    metadata_path: Optional[str] = None,
+    raw_data_path_str: Optional[str] = None,
+    tracker: Any = None,
+    custom_context: Optional[Dict[str, str]] = None,
+    disable_run_cache: bool = False,
+    run_label: str = "local-run",
+    **kwargs: Any,
+) -> Any:
+    """Shared local execution logic used by both ``_Runner._run_local`` and ``_Replayer._replay_local``.
+
+    Returns a ``_LocalRun`` (a ``Run`` subclass) wrapping the task outputs.
+    Notifications are **not** handled here — callers that need them should wrap
+    this call in try/except.
+    """
+    from flyteidl2.common import identifier_pb2
+    from flyteidl2.task import common_pb2
+    from flyteidl2.workflow import run_definition_pb2
+
+    from flyte._internal.controllers import create_controller
+    from flyte._internal.controllers._local_controller import LocalController
+    from flyte.remote import ActionOutputs, Run
+    from flyte.report import Report
+
+    controller = cast(LocalController, create_controller("local"))
+
+    if name is None:
+        action = ActionID.create_random()
+    else:
+        action = ActionID(name=name)
+
+    _metadata_path: pathlib.Path
+    if metadata_path is None:
+        _metadata_path = pathlib.Path("/") / "tmp" / "flyte" / "metadata" / action.name
+    else:
+        _metadata_path = pathlib.Path(metadata_path) / action.name
+    output_path = _metadata_path / "a0"
+
+    if raw_data_path_str is None:
+        path = pathlib.Path("/") / "tmp" / "flyte" / "raw_data" / action.name
+        raw_data_path = RawDataPath(path=str(path))
+    else:
+        raw_data_path = RawDataPath(path=raw_data_path_str)
+
+    ctx = internal_ctx()
+    tctx = TaskContext(
+        action=action,
+        checkpoints=Checkpoints(
+            prev_checkpoint_path=internal_ctx().raw_data.path,
+            checkpoint_path=internal_ctx().raw_data.path,
+        ),
+        code_bundle=None,
+        output_path=str(output_path),
+        run_base_dir=str(_metadata_path),
+        version="na",
+        raw_data_path=raw_data_path,
+        compiled_image_cache=None,
+        report=Report(name=action.name),
+        mode="local",
+        custom_context=custom_context or {},
+        disable_run_cache=disable_run_cache,
+    )
+
+    if tracker is not None:
+        ctx = Context(ctx.data.replace(tracker=tracker))
+
+    from flyte._initialize import is_persistence_enabled
+    from flyte._persistence._recorder import RunRecorder
+
+    persist = is_persistence_enabled()
+    run_name = action.run_name or action.name
+
+    if persist:
+        RunRecorder.initialize_persistence()
+
+    recorder = RunRecorder(tracker=tracker, persist=persist, run_name=run_name)
+    controller.set_recorder(recorder)
+
+    recorder.record_root_start(task_name=task.name)
+
+    try:
+        with ctx.replace_task_context(tctx):
+            if task._call_as_synchronous:
+                fut = controller.submit_sync(task, *args, **kwargs)
+                awaitable = asyncio.wrap_future(fut)
+                outputs = await awaitable
+            else:
+                outputs = await controller.submit(task, *args, **kwargs)
+    except Exception as e:
+        recorder.record_root_failure(error=str(e))
+        raise
+
+    recorder.record_root_complete()
+
+    class _LocalRun(Run):
+        def __init__(self, outputs: Tuple[Any, ...] | Any):
+            self._outputs = ActionOutputs(common_pb2.Outputs(), outputs if isinstance(outputs, tuple) else (outputs,))
+            super().__init__(
+                pb2=run_definition_pb2.Run(
+                    action=run_definition_pb2.Action(
+                        id=identifier_pb2.ActionIdentifier(
+                            name="a0",
+                            run=identifier_pb2.RunIdentifier(name=run_label),
+                        )
+                    )
+                )
+            )
+
+        @property
+        def url(self) -> str:
+            return str(_metadata_path)
+
+        @syncify
+        async def wait(  # type: ignore[override]
+            self,
+            quiet: bool = False,
+            wait_for: Literal["terminal", "running"] = "terminal",
+        ) -> None:
+            pass
+
+        @syncify
+        async def outputs(self) -> ActionOutputs:  # type: ignore[override]
+            return self._outputs
+
+    return _LocalRun(outputs)
+
+
 class _Runner:
     def __init__(
         self,
@@ -620,125 +750,29 @@ class _Runner:
         )
 
     async def _run_local(self, obj: TaskTemplate[P, R, F], *args: P.args, **kwargs: P.kwargs) -> Run:
-        from flyteidl2.common import identifier_pb2
-        from flyteidl2.task import common_pb2
-
-        from flyte._internal.controllers import create_controller
-        from flyte._internal.controllers._local_controller import LocalController
-        from flyte.remote import ActionOutputs, Run
-        from flyte.report import Report
-
-        controller = cast(LocalController, create_controller("local"))
-
-        if self._name is None:
-            action = ActionID.create_random()
-        else:
-            action = ActionID(name=self._name)
-
-        metadata_path = self._metadata_path
-        if metadata_path is None:
-            metadata_path = pathlib.Path("/") / "tmp" / "flyte" / "metadata" / action.name
-        else:
-            metadata_path = pathlib.Path(metadata_path) / action.name
-        output_path = metadata_path / "a0"
-        if self._raw_data_path is None:
-            path = pathlib.Path("/") / "tmp" / "flyte" / "raw_data" / action.name
-            raw_data_path = RawDataPath(path=str(path))
-        else:
-            raw_data_path = RawDataPath(path=self._raw_data_path)
-
-        ctx = internal_ctx()
-        tctx = TaskContext(
-            action=action,
-            checkpoints=Checkpoints(
-                prev_checkpoint_path=internal_ctx().raw_data.path,
-                checkpoint_path=internal_ctx().raw_data.path,
-            ),
-            code_bundle=None,
-            output_path=str(output_path),
-            run_base_dir=str(metadata_path),
-            version="na",
-            raw_data_path=raw_data_path,
-            compiled_image_cache=None,
-            report=Report(name=action.name),
-            mode="local",
-            custom_context=self._custom_context,
-            disable_run_cache=self._disable_run_cache,
-        )
-
-        if self._tracker is not None:
-            ctx = Context(ctx.data.replace(tracker=self._tracker))
-
-        from flyte._initialize import is_persistence_enabled
-        from flyte._persistence._recorder import RunRecorder
-
-        persist = is_persistence_enabled()
-        run_name = action.run_name or action.name
-
-        if persist:
-            RunRecorder.initialize_persistence()
-
-        recorder = RunRecorder(tracker=self._tracker, persist=persist, run_name=run_name)
-        controller.set_recorder(recorder)
-
-        recorder.record_root_start(task_name=obj.name)
-
         try:
-            with ctx.replace_task_context(tctx):
-                # make the local version always runs on a different thread, returns a wrapped future.
-                if obj._call_as_synchronous:
-                    fut = controller.submit_sync(obj, *args, **kwargs)
-                    awaitable = asyncio.wrap_future(fut)
-                    outputs = await awaitable
-                else:
-                    outputs = await controller.submit(obj, *args, **kwargs)
+            result = await run_task_locally(
+                obj,
+                *args,
+                name=self._name,
+                metadata_path=self._metadata_path,
+                raw_data_path_str=self._raw_data_path,
+                tracker=self._tracker,
+                custom_context=self._custom_context,
+                disable_run_cache=self._disable_run_cache,
+                run_label="dry-run",
+                **kwargs,
+            )
         except Exception as e:
-            recorder.record_root_failure(error=str(e))
             if self._notifications:
                 await self._send_local_notifications(
-                    phase=ActionPhase.FAILED, task_name=obj.name, run_name=run_name, error=str(e)
+                    phase=ActionPhase.FAILED, task_name=obj.name, run_name=obj.name, error=str(e)
                 )
             raise
         else:
-            recorder.record_root_complete()
             if self._notifications:
-                await self._send_local_notifications(phase=ActionPhase.SUCCEEDED, task_name=obj.name, run_name=run_name)
-
-        class _LocalRun(Run):
-            def __init__(self, outputs: Tuple[Any, ...] | Any):
-                from flyteidl2.workflow import run_definition_pb2
-
-                self._outputs = ActionOutputs(
-                    common_pb2.Outputs(), outputs if isinstance(outputs, tuple) else (outputs,)
-                )
-                super().__init__(
-                    pb2=run_definition_pb2.Run(
-                        action=run_definition_pb2.Action(
-                            id=identifier_pb2.ActionIdentifier(
-                                name="a0",
-                                run=identifier_pb2.RunIdentifier(name="dry-run"),
-                            )
-                        )
-                    )
-                )
-
-            @property
-            def url(self) -> str:
-                return str(metadata_path)
-
-            @syncify
-            async def wait(  # type: ignore[override]
-                self,
-                quiet: bool = False,
-                wait_for: Literal["terminal", "running"] = "terminal",
-            ) -> None:
-                pass
-
-            @syncify
-            async def outputs(self) -> ActionOutputs:  # type: ignore[override]
-                return self._outputs
-
-        return _LocalRun(outputs)
+                await self._send_local_notifications(phase=ActionPhase.SUCCEEDED, task_name=obj.name, run_name=obj.name)
+            return result
 
     @syncify  # type: ignore[arg-type]
     async def run(
