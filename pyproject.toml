@@ -92,6 +92,8 @@ dev = [
     "jupyterlab>=4.4.3",
     "ipywidgets>=8.1.7",
     "mypy>=1.16.0",
+    "types-PyYAML",
+    "types-aiofiles",
     "kubernetes",
     "textual>=0.80",
 ]

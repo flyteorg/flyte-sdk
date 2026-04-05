@@ -112,6 +112,15 @@ def test_with_source(tmp_path):
     file.touch()
     img.validate()
 
+    # Single-file COPY layers must hash file contents (os.walk on a file yields nothing).
+    f = tmp_path / "version.md"
+    f.write_text("first")
+    base = Image.from_debian_base(registry="localhost", name="test-image", flyte_version="0.2.0b14")
+    h1 = base.with_source_file(f)._get_hash_digest()
+    f.write_text("second")
+    h2 = base.with_source_file(f)._get_hash_digest()
+    assert h1 != h2
+
     # list of paths — each becomes its own layer
     file2 = tmp_path / "helper.py"
     file2.touch()

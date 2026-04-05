@@ -628,6 +628,8 @@ dev = [
     { name = "ruff", specifier = ">=0.11.0" },
     { name = "setuptools-scm", specifier = ">=8.2.0" },
     { name = "textual", specifier = ">=0.80" },
+    { name = "types-aiofiles" },
+    { name = "types-pyyaml" },
     { name = "uvicorn", specifier = ">=0.40.0" },
 ]
 

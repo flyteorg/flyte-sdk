@@ -35,10 +35,10 @@ def update_hasher_for_source(
     ignore: Optional[_IgnoreLike] = None,
 ):
     """
-    Walks the entirety of the source dir to compute a deterministic md5 hex digest of the dir contents.
+    Incorporates a single file, or walks a directory tree, into the hasher (content + relative paths).
     :param os.PathLike source:
     :param ignore: Optional ignore instance whose is_ignored(abs_path) determines whether to skip a file.
-    :return Text:
+    :return None:
     """
 
     def compute_digest_for_file(path: os.PathLike, rel_path: os.PathLike) -> None:
@@ -75,5 +75,7 @@ def update_hasher_for_source(
                 compute_digest_for_dir(src)
             else:
                 compute_digest_for_file(src, os.path.basename(src))
-    else:
+    elif os.path.isdir(source):
         compute_digest_for_dir(source)
+    else:
+        compute_digest_for_file(source, os.path.basename(source))
