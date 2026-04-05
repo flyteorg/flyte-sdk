@@ -247,7 +247,7 @@ heavy_ml_image = flyte.Image.from_debian_base().with_pip_packages(
 worker_env = flyte.TaskEnvironment(
     name="scale_test_same_image_worker",
     image=heavy_ml_image,
-    resources=flyte.Resources(cpu="500m", memory="512Mi"),
+    resources=flyte.Resources(cpu="500m", memory="512Mi", disk="8Gi"),
 )
 
 
@@ -345,7 +345,7 @@ async def heavy_ml_worker(worker_id: int) -> WorkerResult:
 
 orchestrator_env = flyte.TaskEnvironment(
     name="scale_test_same_image_orchestrator",
-    resources=flyte.Resources(cpu="500m", memory="512Mi"),
+    resources=flyte.Resources(cpu="500m", memory="512Mi", disk="8Gi"),
     depends_on=[worker_env],
 )
 
