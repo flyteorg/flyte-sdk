@@ -14,13 +14,16 @@ from typing_extensions import get_args
 from .._code_bundle._utils import CopyFiles
 from .._task import TaskTemplate
 from ..remote import Run
+from ..syncify import syncify
 from . import _common as common
 from ._params import to_click_option
 
 RUN_REMOTE_CMD = "deployed-task"
+RUN_PYTHON_SCRIPT_CMD = "python-script"
 initialize_config = common.initialize_config
 
 
+@syncify
 async def _render_debug_url(console, result: Run, config: common.CLIConfig) -> None:
     """Poll the run for the VS Code Debugger URL and print it."""
     from flyte._debug.client import watch_for_vscode_url
@@ -330,7 +333,7 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
         console.print(common.get_panel("Remote Run", run_info, config.output_format))
 
         if self.run_args.debug:
-            await _render_debug_url(console, result, config)
+            await _render_debug_url.aio(console, result, config)
 
         if self.run_args.follow:
             from flyte._status import status
@@ -553,7 +556,7 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
         console.print(common.get_panel("Remote Run", run_info, config.output_format))
 
         if self.run_args.debug:
-            await _render_debug_url(console, result, config)
+            await _render_debug_url.aio(console, result, config)
 
         if self.run_args.follow:
             from flyte._status import status
@@ -725,6 +728,7 @@ class TaskFiles(common.FileGroup):
     def list_commands(self, ctx):
         v = [
             RUN_REMOTE_CMD,
+            RUN_PYTHON_SCRIPT_CMD,
             *super().list_commands(ctx),
         ]
         return v
@@ -740,6 +744,11 @@ class TaskFiles(common.FileGroup):
             import flyte.config
 
             ctx.obj = common.CLIConfig(config=flyte.config.auto(), ctx=ctx, run_args=run_args)
+        if cmd_name == RUN_PYTHON_SCRIPT_CMD:
+            from ._run_python_script import python_script
+
+            return python_script
+
         if cmd_name == RUN_REMOTE_CMD:
             return RemoteTaskGroup(
                 name=cmd_name,
@@ -834,6 +843,18 @@ You can discover what deployed tasks are available by running:
 
 ```bash
 flyte run {RUN_REMOTE_CMD}
+```
+
+To run an arbitrary Python script on a remote cluster (without defining a task), use `{RUN_PYTHON_SCRIPT_CMD}`:
+
+```bash
+flyte run {RUN_PYTHON_SCRIPT_CMD} script.py --gpu 1 --gpu-type A100 --memory 64Gi
+```
+
+You can also install extra packages and wait for completion:
+
+```bash
+flyte run --follow {RUN_PYTHON_SCRIPT_CMD} train.py --packages torch,transformers
 ```
 
 Other arguments to the run command are listed below.

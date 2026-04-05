@@ -4,6 +4,7 @@ import concurrent.futures
 import os
 import pathlib
 import threading
+from contextlib import nullcontext
 from typing import Any, Callable, Tuple, TypeVar
 
 import flyte.errors
@@ -97,7 +98,9 @@ class LocalController:
         if not tctx:
             raise flyte.errors.RuntimeSystemError("BadContext", "Task context not initialized")
 
-        inputs = await convert.convert_from_native_to_inputs(_task.native_interface, *args, **kwargs)
+        _ctx = ctx.new_in_driver_literal_conversion(True) if ctx.is_task_context() else nullcontext()
+        with _ctx:
+            inputs = await convert.convert_from_native_to_inputs(_task.native_interface, *args, **kwargs)
         inputs_hash = convert.generate_inputs_hash_from_proto(inputs.proto_inputs)
         task_interface = transform_native_to_typed_interface(_task.interface)
 
@@ -223,6 +226,12 @@ class LocalController:
                     attempt_num=attempt_num,
                     error=str(err),
                 )
+                if not err.recoverable:
+                    logger.warning(
+                        f"Task '{_task.name}' raised a non-recoverable error on attempt "
+                        f"{attempt_num}/{max_attempts}, skipping remaining retries."
+                    )
+                    break
                 if attempt_num < max_attempts:
                     backoff = _MIN_BACKOFF_ON_ERR_SEC * (_BACKOFF_MULTIPLIER ** (attempt_num - 1))
                     logger.warning(
@@ -291,7 +300,9 @@ class LocalController:
 
         converted_inputs = convert.Inputs.empty()
         if _interface.inputs:
-            converted_inputs = await convert.convert_from_native_to_inputs(_interface, *args, **kwargs)
+            _ctx = ctx.new_in_driver_literal_conversion(True) if ctx.is_task_context() else nullcontext()
+            with _ctx:
+                converted_inputs = await convert.convert_from_native_to_inputs(_interface, *args, **kwargs)
             assert converted_inputs
 
         inputs_hash = convert.generate_inputs_hash_from_proto(converted_inputs.proto_inputs)
@@ -342,7 +353,9 @@ class LocalController:
 
         if info.interface.outputs and info.output:
             # If the result is not an AsyncGenerator, convert it directly
-            converted_outputs = await convert.convert_from_native_to_outputs(info.output, info.interface, info.name)
+            _ctx = ctx.new_in_driver_literal_conversion(True) if ctx.is_task_context() else nullcontext()
+            with _ctx:
+                converted_outputs = await convert.convert_from_native_to_outputs(info.output, info.interface, info.name)
             assert converted_outputs
             self._recorder.record_complete(action_id=info.action.name, outputs=converted_outputs)
         elif info.error:

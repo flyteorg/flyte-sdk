@@ -35,8 +35,8 @@ _PYTHON_STDLIB = sys.stdlib_module_names
 def strip_code_fences(code: str) -> str:
     """Strip markdown code fences from LLM output."""
     stripped = code.strip()
-    # Match ```python ... ``` or ``` ... ```
-    match = re.match(r"^```(?:\w+)?\s*\n(.*?)```\s*$", stripped, re.DOTALL)
+    # Match ``python ... `` or `` ... ``
+    match = re.match(r"^``(?:\w+)?\s*\n(.*?)``\s*$", stripped, re.DOTALL)
     if match:
         return match.group(1).strip()
     return stripped
@@ -1001,7 +1001,7 @@ async def verify_test_fixes_applied(
 
     patches_section = []
     for patch in patches:
-        patches_section.append(f"### {patch.test_name}\n```python\n{patch.fixed_code}\n```")
+        patches_section.append(f"### {patch.test_name}\n``python\n{patch.fixed_code}\n``")
     patches_text = "\n\n".join(patches_section) if patches_section else "(no patches returned)"
 
     verify_prompt = f"""You are a CODE DIFF REVIEWER. \

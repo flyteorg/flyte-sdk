@@ -11,7 +11,13 @@ from ._task import AsyncFunctionTaskTemplate, F, P, R
 
 
 class MapAsyncIterator(Generic[P, R]):
-    """AsyncIterator implementation for the map function results"""
+    """AsyncIterator implementation for the map function results.
+
+    When ``concurrency > 0`` a bounded worker-pool is used so that only
+    *concurrency* asyncio tasks exist at any time - O(concurrency) memory
+    regardless of the total number of items.  When ``concurrency == 0`` all
+    tasks are created upfront (original behaviour).
+    """
 
     def __init__(
         self,
@@ -26,90 +32,168 @@ class MapAsyncIterator(Generic[P, R]):
         self.name = name
         self.concurrency = concurrency
         self.return_exceptions = return_exceptions
-        self._tasks: List[asyncio.Task] = []
         self._current_index = 0
         self._completed_count = 0
         self._exception_count = 0
         self._task_count = 0
         self._initialized = False
 
+        # concurrency == 0 path (all tasks upfront)
+        self._tasks: List[asyncio.Task] = []
+
+        # concurrency > 0 path (bounded worker pool)
+        self._results: dict[int, tuple[bool, Any]] = {}
+        self._condition: asyncio.Condition | None = None
+        self._active_tasks: set[asyncio.Task] = set()
+        self._producer: asyncio.Task | None = None
+        self._cancelled = False
+
     def __aiter__(self) -> AsyncIterator[Union[R, Exception]]:
-        """Return self as the async iterator"""
         return self
 
-    async def __anext__(self) -> Union[R, Exception]:
-        """Get the next result"""
-        # Initialize on first call
-        if not self._initialized:
-            await self._initialize()
-
-        # Check if we've exhausted all tasks
-        if self._current_index >= self._task_count:
-            raise StopAsyncIteration
-
-        # Get the next task result
-        task = self._tasks[self._current_index]
-        self._current_index += 1
-
-        try:
-            result = await task
-            self._completed_count += 1
-            logger.debug(f"Task {self._current_index - 1} completed successfully")
-            return result
-        except Exception as e:
-            self._exception_count += 1
-            logger.debug(
-                f"Task {self._current_index - 1} failed with exception: {e}, return_exceptions={self.return_exceptions}"
-            )
-            if self.return_exceptions:
-                return e
-            else:
-                # Cancel remaining tasks
-                for remaining_task in self._tasks[self._current_index + 1 :]:
-                    remaining_task.cancel()
-                logger.warning("Exception raising is `ON`, raising exception and cancelling remaining tasks")
-                raise e
-
-    async def _initialize(self):
-        """Initialize the tasks - called lazily on first iteration"""
-        # Create all tasks at once
-        tasks = []
-        task_count = 0
-
+    # ------------------------------------------------------------------
+    # Invoke helper - handles both plain func and functools.partial
+    # ------------------------------------------------------------------
+    async def _invoke(self, arg_tuple: tuple) -> R:
         if isinstance(self.func, functools.partial):
-            # Handle partial functions by merging bound args/kwargs with mapped args
             base_func = cast(AsyncFunctionTaskTemplate, self.func.func)
             bound_args = self.func.args
             bound_kwargs = self.func.keywords or {}
-
-            for arg_tuple in zip(*self.args):
-                # Merge bound positional args with mapped args
-                merged_args = bound_args + arg_tuple
-                if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug(f"Running {base_func.name} with args: {merged_args} and kwargs: {bound_kwargs}")
-                task = asyncio.create_task(base_func.aio(*merged_args, **bound_kwargs))
-                tasks.append(task)
-                task_count += 1
+            merged_args = bound_args + arg_tuple
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"Running {base_func.name} with args: {merged_args} and kwargs: {bound_kwargs}")
+            return await base_func.aio(*merged_args, **bound_kwargs)
         else:
-            # Handle regular TaskTemplate functions
-            for arg_tuple in zip(*self.args):
-                task = asyncio.create_task(self.func.aio(*arg_tuple))
-                tasks.append(task)
-                task_count += 1
+            return await self.func.aio(*arg_tuple)  # type: ignore[call-overload]
 
-        if task_count == 0:
+    # ------------------------------------------------------------------
+    # __anext__ - dispatches to the right path
+    # ------------------------------------------------------------------
+    async def __anext__(self) -> Union[R, Exception]:
+        if not self._initialized:
+            await self._initialize()
+
+        if self._current_index >= self._task_count:
+            raise StopAsyncIteration
+
+        idx = self._current_index
+        self._current_index += 1
+
+        if self.concurrency > 0:
+            return await self._next_bounded(idx)
+        else:
+            return await self._next_unbounded(idx)
+
+    async def _next_unbounded(self, idx: int) -> Union[R, Exception]:
+        """Original path - one pre-created task per item."""
+        task = self._tasks[idx]
+        try:
+            result = await task
+            self._completed_count += 1
+            return result
+        except Exception as e:
+            self._exception_count += 1
+            if self.return_exceptions:
+                return e
+            for remaining_task in self._tasks[idx + 1 :]:
+                remaining_task.cancel()
+            raise e
+
+    async def _next_bounded(self, idx: int) -> Union[R, Exception]:
+        """Worker-pool path - wait for the result at *idx*."""
+        assert self._condition is not None
+        async with self._condition:
+            while idx not in self._results:
+                await self._condition.wait()
+            success, value = self._results.pop(idx)
+
+        if success:
+            self._completed_count += 1
+            return value
+        else:
+            self._exception_count += 1
+            if self.return_exceptions:
+                return value
+            # Cancel outstanding work and clean up
+            await self._cancel_workers()
+            raise value
+
+    async def _cancel_workers(self) -> None:
+        """Signal the producer to stop and cancel all in-flight tasks."""
+        self._cancelled = True
+        if self._producer and not self._producer.done():
+            self._producer.cancel()
+        for t in list(self._active_tasks):
+            t.cancel()
+        # Wait briefly for tasks to acknowledge cancellation so they don't
+        # leak into the event loop after the iterator is abandoned.
+        if self._active_tasks:
+            await asyncio.gather(*list(self._active_tasks), return_exceptions=True)
+        if self._producer and not self._producer.done():
+            await asyncio.gather(self._producer, return_exceptions=True)
+
+    async def aclose(self) -> None:
+        """Clean up background tasks if the caller stops iterating early."""
+        if self.concurrency > 0 and self._initialized and not self._cancelled:
+            await self._cancel_workers()
+
+    # ------------------------------------------------------------------
+    # Bounded producer / worker helpers
+    # ------------------------------------------------------------------
+    async def _produce_bounded(self, arg_tuples: List[tuple]) -> None:
+        """Feed work items, blocking when *concurrency* tasks are in-flight."""
+        sem = asyncio.Semaphore(self.concurrency)
+        for i, at in enumerate(arg_tuples):
+            if self._cancelled:
+                break
+            await sem.acquire()
+            if self._cancelled:
+                sem.release()
+                break
+            task = asyncio.create_task(self._run_one(i, at, sem))
+            self._active_tasks.add(task)
+            task.add_done_callback(self._active_tasks.discard)
+
+    async def _run_one(self, index: int, arg_tuple: tuple, sem: asyncio.Semaphore) -> None:
+        assert self._condition is not None
+        try:
+            result = await self._invoke(arg_tuple)
+            async with self._condition:
+                self._results[index] = (True, result)
+                self._condition.notify_all()
+        except Exception as e:
+            async with self._condition:
+                self._results[index] = (False, e)
+                self._condition.notify_all()
+        finally:
+            sem.release()
+
+    # ------------------------------------------------------------------
+    # Initialization
+    # ------------------------------------------------------------------
+    async def _initialize(self) -> None:
+        arg_tuples = list(zip(*self.args))
+        self._task_count = len(arg_tuples)
+
+        if self._task_count == 0:
             logger.info(f"Group '{self.name}' has no tasks to process")
-            self._tasks = []
-            self._task_count = 0
-        else:
-            logger.info(f"Starting {task_count} tasks in group '{self.name}' with unlimited concurrency")
-            self._tasks = tasks
-            self._task_count = task_count
+            self._initialized = True
+            return
 
+        if self.concurrency > 0:
+            # Bounded path - producer creates at most *concurrency* tasks at a time
+            self._condition = asyncio.Condition()
+            self._producer = asyncio.create_task(self._produce_bounded(arg_tuples))
+            concurrency_desc = str(self.concurrency)
+        else:
+            # Unbounded path - create all tasks upfront
+            self._tasks = [asyncio.create_task(self._invoke(at)) for at in arg_tuples]
+            concurrency_desc = "unlimited"
+
+        logger.info(f"Starting {self._task_count} tasks in group '{self.name}' with {concurrency_desc} concurrency")
         self._initialized = True
 
     async def collect(self) -> List[Union[R, Exception]]:
-        """Convenience method to collect all results into a list"""
         results = []
         async for result in self:
             results.append(result)

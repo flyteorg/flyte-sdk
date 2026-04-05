@@ -67,6 +67,7 @@ jobs:
     name: PyPI package
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         workdir:
           - "plugins/ray"
@@ -85,6 +86,9 @@ jobs:
           - "plugins/hitl"
           - "plugins/jsonl"
           - "plugins/anthropic"
+          - "plugins/gemini"
+          - "plugins/mlflow"
+          - "plugins/pandera"
         include:
           - workdir: "plugins/sglang"
             image-type: sglang
@@ -109,7 +113,7 @@ jobs:
       - name: Build and publish
         working-directory: ${{ matrix.workdir }}
         run: |
-          uv run --prerelease allow python -m build --wheel --installer uv
+          uv run python -m build --wheel --installer uv
       - name: Publish
         if: ${{ github.event_name == 'release' }}
         working-directory: ${{ matrix.workdir }}
@@ -117,7 +121,7 @@ jobs:
           TWINE_USERNAME: ${{ secrets.PYPI_USERNAME }}
           TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
         run: |
-          uv run --prerelease allow python -m twine upload --verbose dist/*
+          uv run python -m twine upload --verbose dist/*
 
   build-and-push-flyte-docker-images:
     needs: flyte-pypi

@@ -47,7 +47,5 @@ __all__ = [
     "new_event",
 ]
 
-__version__ = "0.1.0"
-
 # Expose the task environment as `env` for user convenience
 env = event_task_env

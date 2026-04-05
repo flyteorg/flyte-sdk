@@ -112,7 +112,7 @@ async def code_gen_eval_agent(
     """
     from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient, HookMatcher
 
-    logger.info(f"Starting Agent SDK code generation for task: {name}")
+    logger.info(f"Starting Agent mode code generation for task: {name}")
 
     _task_hash = hashlib.sha256(name.encode()).hexdigest()[:8]
     workspace = Path(f"/tmp/codegen-{_task_hash}")
@@ -546,7 +546,7 @@ The solution code lives at /var/inputs/solution.py inside the sandbox.
 
     user_query += "\n\nStart by creating the solution code, then tests, then packages.txt, then run the tests."
 
-    logger.info("Running Agent SDK...")
+    logger.info("Running Agent ...")
 
     async def restrict_to_workspace(
         tool_name: str,
@@ -632,11 +632,11 @@ The solution code lives at /var/inputs/solution.py inside the sandbox.
 
         success = exit_code == 0
 
-        logger.info(f"Agent SDK completed: success={success}, exit_code={exit_code}")
+        logger.info(f"Agent completed: success={success}, exit_code={exit_code}")
         logger.info(f"Tool calls: {len(tool_calls)} total")
 
         plan = CodePlan(
-            description="Agent SDK autonomous generation",
+            description="Agent autonomous generation",
             approach="Agent explored, generated, tested, and fixed autonomously",
         )
 
@@ -667,5 +667,5 @@ The solution code lives at /var/inputs/solution.py inside the sandbox.
         )
 
     except Exception as e:
-        logger.error(f"Agent SDK generation failed: {e}")
+        logger.error(f"Agent generation failed: {e}")
         raise

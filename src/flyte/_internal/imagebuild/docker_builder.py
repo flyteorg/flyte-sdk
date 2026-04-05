@@ -149,16 +149,23 @@ USER root
 COPY --from=uv /uv /usr/bin/uv
 
 
-# Configure default envs
+# Configure default paths (can be overridden via --build-arg)
+ARG VIRTUALENV=/opt/venv
+ARG UV_PYTHON=$$VIRTUALENV/bin/python
+
+
 ENV UV_COMPILE_BYTECODE=1 \
    UV_LINK_MODE=copy \
-   VIRTUALENV=/opt/venv \
-   UV_PYTHON=/opt/venv/bin/python \
-   PATH="/opt/venv/bin:$$PATH"
+   VIRTUALENV=$$VIRTUALENV \
+   UV_PYTHON=$$UV_PYTHON
 
 
-# Create a virtualenv with the user specified python version
-RUN uv venv $$VIRTUALENV --python=$PYTHON_VERSION && uv run --python=$$UV_PYTHON python -m compileall $$VIRTUALENV
+# Create virtualenv only if UV_PYTHON doesn't already exist
+RUN if [ ! -f "$$UV_PYTHON" ]; then \
+       uv venv $$VIRTUALENV --python=$PYTHON_VERSION && uv run --python=$$UV_PYTHON python -m compileall $$VIRTUALENV; \
+   fi
+
+ENV PATH="$$VIRTUALENV/bin:$$PATH"
 
 
 # Adds nvidia just in case it exists

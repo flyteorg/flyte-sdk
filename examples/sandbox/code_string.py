@@ -154,6 +154,44 @@ validate = flyte.sandbox.orchestrator_from_str(
 # flyte.run(validate, items=[1, 2, 3])  → None (no error)
 
 
+# --- Example 8: Parallel mapping with flyte_map ------------------------------
+# ``flyte_map("task_name", iterable)`` runs a task over every element in
+# parallel — the sandbox equivalent of ``flyte.map``.  The first argument is
+# the task name as a string; remaining positional args are iterables that get
+# zipped. Keyword args ``concurrency``, ``group_name``, and
+# ``return_exceptions`` are forwarded to ``flyte.map``.
+
+batch_add = flyte.sandbox.orchestrator_from_str(
+    """
+    flyte_map("add", xs, ys)
+    """,
+    inputs={"xs": list, "ys": list},
+    output=list,
+    tasks=[add],
+    name="batch-add",
+)
+# flyte.run(batch_add, xs=[1, 2, 3], ys=[10, 20, 30])  → [11, 22, 33]
+
+
+# --- Example 9: flyte_map with post-processing -------------------------------
+# Collect mapped results and feed them into another task.
+
+map_then_reduce = flyte.sandbox.orchestrator_from_str(
+    """
+    doubled = flyte_map("multiply", items, items)
+    total = 0
+    for v in doubled:
+        total = total + v
+    total
+    """,
+    inputs={"items": list[int]},
+    output=int,
+    tasks=[multiply],
+    name="map-then-reduce",
+)
+# flyte.run(map_then_reduce, items=[1, 2, 3])  → 14  (1*1 + 2*2 + 3*3)
+
+
 # --- Attach to an environment for ``flyte run`` -----------------------------
 # ``orchestrator_from_str()`` creates standalone templates. ``flyte run`` requires
 # every task to belong to a TaskEnvironment.
@@ -167,6 +205,8 @@ sandbox_env = flyte.TaskEnvironment.from_task(
     classify,
     summarize,
     validate,
+    batch_add,
+    map_then_reduce,
 )
 
 

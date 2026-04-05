@@ -6,6 +6,10 @@ help:
 
 .DEFAULT_GOAL := help
 
+.PHONY: prek-install
+prek-install:
+	curl --proto '=https' --tlsv1.2 -LsSf https://github.com/j178/prek/releases/download/v0.3.5/prek-installer.sh | sh
+
 .PHONY: fmt
 fmt:
 	uv run python -m ruff format
@@ -18,6 +22,9 @@ mypy:
 		examples/basics/hello.py \
 		examples/basics/hello_v2.py
 
+.PHONY: uvlock
+uvlock:
+	bash maint_tools/uvlock.sh
 
 .PHONY: lint
 lint-fix:

@@ -18,7 +18,7 @@ def sample_dataframe():
 
 class TestGetPrivateKey:
     def test_converts_pem_to_der(self):
-        """Test that _get_private_key calls cryptography correctly."""
+        """Test that get_private_key calls cryptography correctly."""
         mock_private_key = MagicMock()
         mock_der_bytes = b"der-encoded-key"
         mock_private_key.private_bytes.return_value = mock_der_bytes
@@ -30,9 +30,9 @@ class TestGetPrivateKey:
             ) as mock_load,
             patch("cryptography.hazmat.backends.default_backend"),
         ):
-            from flyteplugins.snowflake.dataframe import _get_private_key
+            from flyteplugins.snowflake._crypto import get_private_key
 
-            result = _get_private_key("-----BEGIN PRIVATE KEY-----\nfake\n-----END PRIVATE KEY-----")
+            result = get_private_key("-----BEGIN PRIVATE KEY-----\nfake\n-----END PRIVATE KEY-----")
 
             assert result == mock_der_bytes
             mock_load.assert_called_once()
@@ -51,9 +51,9 @@ class TestGetPrivateKey:
             ) as mock_load,
             patch("cryptography.hazmat.backends.default_backend"),
         ):
-            from flyteplugins.snowflake.dataframe import _get_private_key
+            from flyteplugins.snowflake._crypto import get_private_key
 
-            _get_private_key("fake-key-content", private_key_passphrase="my-passphrase")
+            get_private_key("fake-key-content", private_key_passphrase="my-passphrase")
 
             call_kwargs = mock_load.call_args
             assert call_kwargs[1]["password"] == b"my-passphrase"
@@ -70,9 +70,9 @@ class TestGetPrivateKey:
             ) as mock_load,
             patch("cryptography.hazmat.backends.default_backend"),
         ):
-            from flyteplugins.snowflake.dataframe import _get_private_key
+            from flyteplugins.snowflake._crypto import get_private_key
 
-            _get_private_key("  \n  fake-key-content  \n  ")
+            get_private_key("  \n  fake-key-content  \n  ")
 
             call_args = mock_load.call_args[0]
             assert call_args[0] == b"fake-key-content"
@@ -87,7 +87,7 @@ class TestGetConnection:
         import flyteplugins.snowflake.dataframe as sf_module
 
         with (
-            patch.object(sf_module, "_get_private_key", return_value=b"der-key") as mock_gpk,
+            patch.object(sf_module, "get_private_key", return_value=b"der-key") as mock_gpk,
             patch.object(snowflake_connector, "connect") as mock_connect,
         ):
             mock_connect.return_value = MagicMock()
@@ -107,7 +107,7 @@ class TestGetConnection:
         import flyteplugins.snowflake.dataframe as sf_module
 
         with (
-            patch.object(sf_module, "_get_private_key", return_value=b"der-key") as mock_gpk,
+            patch.object(sf_module, "get_private_key", return_value=b"der-key") as mock_gpk,
             patch.object(snowflake_connector, "connect") as mock_connect,
         ):
             mock_connect.return_value = MagicMock()

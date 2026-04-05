@@ -1,7 +1,7 @@
-"""Example: Durable execution with mid-pipeline failure and cached recovery (Agent SDK).
+"""Example: Durable execution with mid-pipeline failure and cached recovery (Agent).
 
-Same pattern as example_durable_execution.py, but using the Agent SDK path (backend="claude").
-The Agent SDK autonomously generates, tests, and fixes code — all sandboxes created during
+Same pattern as example_durable_execution.py, but using the Agent path (backend="claude").
+The Agent mode autonomously generates, tests, and fixes code — all sandboxes created during
 this process are cached, and traces can be replayed on retries if called in the same sequence.
 The plugin checkpoints all intermediate artifacts (generated code, test code, test results,
 detected packages, etc.), so on retry the agent can resume by loading these checkpoints
@@ -49,7 +49,7 @@ env = flyte.TaskEnvironment(
     depends_on=[sandbox_environment],
 )
 
-# cache="auto" flows to sandboxes created by the Agent SDK hooks.
+# cache="auto" flows to sandboxes created by the Agent hooks.
 # When the agent runs pytest, the PreToolUse hook intercepts it and runs tests
 # in a sandbox — that task gets cache="auto".
 agent = AutoCoderAgent(
@@ -83,28 +83,28 @@ async def generate_and_run_with_retries(csv_file: File) -> dict[str, float | int
     """Multi-phase pipeline that fails midway and recovers via cached traces.
 
     Attempt 0:
-      - Agent SDK autonomously generates code, writes tests, and iterates.
+      - Agent autonomously generates code, writes tests, and iterates.
         Each pytest invocation is intercepted by hooks and run in a sandbox
         task with cache="auto".
       - result.run() executes the code in a cached sandbox.
       - A simulated failure is raised after both phases complete.
 
     Attempt 1 (retry):
-      - Agent SDK re-runs, but sandboxes (image builds, test
+      - Agent re-runs, but sandboxes (image builds, test
         runs) hit cache — the agent completes much faster.
       - result.run()'s sandbox also hits cache — instant.
       - No failure — the task succeeds.
     """
     attempt = os.environ["FLYTE_ATTEMPT_NUMBER"]
-    print(f"[Attempt {attempt}] Starting Agent SDK pipeline...")
+    print(f"[Attempt {attempt}] Starting Agent pipeline...")
 
-    # ── Phase 1: Agent SDK code generation ─────────────────────────────────
+    # ── Phase 1: Agent code generation ─────────────────────────────────
     # The agent autonomously generates, tests, and fixes code. Each test
     # execution creates a sandbox with cache="auto".
     #
     # Attempt 0: sandboxes run fresh
     # Attempt 1: sandboxes hit cache -> agent completes faster
-    print(f"[Attempt {attempt}] Phase 1: Agent SDK generating code...")
+    print(f"[Attempt {attempt}] Phase 1: Agent generating code...")
     result = await agent.generate.aio(
         prompt="Read the CSV and compute total_revenue, total_units, and row_count.",
         samples={"csv_data": csv_file},
@@ -112,7 +112,7 @@ async def generate_and_run_with_retries(csv_file: File) -> dict[str, float | int
     )
 
     if not result.success:
-        raise RuntimeError(f"Agent SDK code generation failed: {result.error}")
+        raise RuntimeError(f"Agent code generation failed: {result.error}")
 
     print(f"[Attempt {attempt}] Phase 1 complete: {len(result.detected_packages)} packages detected")
 
@@ -136,8 +136,7 @@ async def generate_and_run_with_retries(csv_file: File) -> dict[str, float | int
         raise RuntimeUserError(
             code="SIMULATED_FAILURE",
             message="""Simulated transient failure after sandbox execution.
-            All sandboxes completed and are cached.
-            On retry, they will hit cache and complete instantly.""",
+            On retry, traces and tasks replay from the log and complete instantly.""",
         )
 
     return {
@@ -149,7 +148,7 @@ async def generate_and_run_with_retries(csv_file: File) -> dict[str, float | int
 
 @env.task
 async def durable_execution_agent_workflow() -> dict[str, float | int]:
-    """Workflow: durable execution with Agent SDK, mid-pipeline failure, cached recovery."""
+    """Workflow: durable execution with Agent mode, mid-pipeline failure, cached recovery."""
     csv_file = await prepare_data()
     return await generate_and_run_with_retries(csv_file)
 

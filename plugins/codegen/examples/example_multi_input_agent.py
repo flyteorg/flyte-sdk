@@ -1,10 +1,10 @@
-"""Example: Multi-input data join with primitive inputs (Agent SDK approach).
+"""Example: Multi-input data join with primitive inputs (Agent approach).
 
 Demonstrates:
 - Multiple data inputs in a single call (two DataFrames)
 - Explicit inputs mixing data (File) with primitives (float, bool)
 - image_config for custom image settings
-- Agent SDK mode (backend="claude")
+- Agent mode (backend="claude")
 """
 
 import logging
@@ -91,7 +91,7 @@ def build_products() -> pd.DataFrame:
 async def join_and_analyze_with_agent(
     prompt: str, orders: pd.DataFrame, products: pd.DataFrame
 ) -> tuple[File, File, float]:
-    """Join two datasets using Agent SDK, filter by threshold, produce report dir."""
+    """Join two datasets using Agent mode, filter by threshold, produce report dir."""
     result = await agent.generate.aio(
         prompt=prompt,
         samples={"orders": orders, "products": products},
@@ -133,7 +133,7 @@ Output a product_summary.csv (product_id, name, category, total_orders, total_re
 and an overall_summary.csv (metric, value). Also output grand_total as the total revenue
 across all filtered orders.""",
 ) -> tuple[File, File, float]:
-    """Join two datasets with Agent SDK: multiple data inputs, primitive args."""
+    """Join two datasets with Agent mode: multiple data inputs, primitive args."""
     orders = build_orders()
     products = build_products()
     return await join_and_analyze_with_agent(prompt=prompt, orders=orders, products=products)

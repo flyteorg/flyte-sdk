@@ -1,6 +1,8 @@
 import mock
 import pytest
+from flyteidl2.common import run_pb2 as common_run_pb2
 from flyteidl2.core import literals_pb2
+from flyteidl2.dataproxy import dataproxy_service_pb2
 from flyteidl2.task import common_pb2
 from flyteidl2.workflow import run_service_pb2
 from mock.mock import AsyncMock, MagicMock
@@ -50,6 +52,13 @@ async def test_task1_remote_union_sync(
     mock_run_service = AsyncMock()
     mock_client.run_service = mock_run_service  # Set the mocked run_service
 
+    mock_dataproxy_service = AsyncMock()
+    mock_offloaded = common_run_pb2.OffloadedInputData(uri="s3://bucket/inputs", inputs_hash="abc123")
+    mock_dataproxy_service.upload_inputs.return_value = dataproxy_service_pb2.UploadInputsResponse(
+        offloaded_input_data=mock_offloaded,
+    )
+    mock_client.dataproxy_service = mock_dataproxy_service
+
     inputs = "say test"
 
     mock_code_bundler.return_value = CodeBundle(
@@ -67,12 +76,10 @@ async def test_task1_remote_union_sync(
 
     # Ensure the run is not None
     assert run
-    # Ensure the mocked run_service.CreateRun is called
-    mock_build_image_bg.assert_called_once()
-    mock_run_service.CreateRun.assert_called_once()
-    captured_input = mock_run_service.CreateRun.call_args[0]
-    req: run_service_pb2.CreateRunRequest = captured_input[0]
-    assert req.inputs == common_pb2.Inputs(
+    # Ensure upload_inputs was called with the correct inputs
+    mock_dataproxy_service.upload_inputs.assert_called_once()
+    upload_req: dataproxy_service_pb2.UploadInputsRequest = mock_dataproxy_service.upload_inputs.call_args[0][0]
+    assert upload_req.inputs == common_pb2.Inputs(
         literals=[
             common_pb2.NamedLiteral(
                 name="v",
@@ -82,6 +89,19 @@ async def test_task1_remote_union_sync(
             ),
         ]
     )
+    assert upload_req.WhichOneof("id") == "project_id"
+    assert upload_req.project_id.name == "test"
+    assert upload_req.project_id.domain == "test"
+    assert upload_req.WhichOneof("task") == "task_spec"
+    assert upload_req.task_spec.task_template.id.name == "test.task1"
+
+    # Ensure create_run uses offloaded_input_data instead of inline inputs
+    mock_build_image_bg.assert_called_once()
+    mock_run_service.create_run.assert_called_once()
+    captured_input = mock_run_service.create_run.call_args[0]
+    req: run_service_pb2.CreateRunRequest = captured_input[0]
+    assert req.offloaded_input_data == mock_offloaded
+    assert not req.HasField("inputs")
     assert req.project_id.name == "test"
     assert req.project_id.domain == "test"
     assert req.task_spec is not None
@@ -120,3 +140,52 @@ async def test_task1_remote_union_sync(
         "task1",
     ]
     assert "ghcr.io/flyteorg/flyte" in Image.from_debian_base().uri
+
+
+@pytest.mark.asyncio
+@mock.patch("flyte._deploy._build_image_bg", new_callable=AsyncMock)
+@mock.patch("flyte._code_bundle.build_code_bundle", new_callable=AsyncMock)
+@mock.patch("flyte.remote._client.controlplane.ClientSet")
+async def test_upload_inputs_with_run_id(
+    mock_client_class: MagicMock, mock_code_bundler: AsyncMock, mock_build_image_bg: AsyncMock
+):
+    """When a run name is provided, upload_inputs should use run_id."""
+    mock_client = mock_client_class.return_value
+    mock_run_service = AsyncMock()
+    mock_client.run_service = mock_run_service
+
+    mock_dataproxy_service = AsyncMock()
+    mock_offloaded = common_run_pb2.OffloadedInputData(uri="s3://bucket/inputs", inputs_hash="key456")
+    mock_dataproxy_service.upload_inputs.return_value = dataproxy_service_pb2.UploadInputsResponse(
+        offloaded_input_data=mock_offloaded,
+    )
+    mock_client.dataproxy_service = mock_dataproxy_service
+
+    mock_code_bundler.return_value = CodeBundle(
+        computed_version="v1",
+        tgz="test.tgz",
+    )
+    mock_build_image_bg.return_value = (env.name, "image_name", None)
+
+    await _init_for_testing(
+        client=mock_client,
+        project="testproject",
+        domain="development",
+    )
+    run = await flyte.with_runcontext(mode="remote", name="my-run").run.aio(task1, "hello")
+
+    assert run
+
+    # upload_inputs should use run_id when name is provided
+    upload_req: dataproxy_service_pb2.UploadInputsRequest = mock_dataproxy_service.upload_inputs.call_args[0][0]
+    assert upload_req.WhichOneof("id") == "run_id"
+    assert upload_req.run_id.name == "my-run"
+    assert upload_req.run_id.project == "testproject"
+    assert upload_req.run_id.domain == "development"
+    assert upload_req.WhichOneof("task") == "task_spec"
+    assert upload_req.task_spec.task_template.id.name == "test.task1"
+
+    # create_run should use offloaded_input_data
+    req: run_service_pb2.CreateRunRequest = mock_run_service.create_run.call_args[0][0]
+    assert req.offloaded_input_data == mock_offloaded
+    assert not req.HasField("inputs")

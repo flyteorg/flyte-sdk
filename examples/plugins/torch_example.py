@@ -10,18 +10,11 @@ from torch.utils.data import DataLoader, DistributedSampler, TensorDataset
 
 import flyte
 
-# Install flyteplugins-torch from the wheel for development.
-# In production, you would just specify the package name and version.
-# from flyte._image import DIST_FOLDER, PythonWheels
-# image = flyte.Image.from_debian_base(name="torch").clone(
-#     addl_layer=PythonWheels(wheel_dir=DIST_FOLDER, package_name="flyteplugins-pytorch", pre=True)
-# )
-
 image = flyte.Image.from_debian_base(name="torch").with_pip_packages("flyteplugins-pytorch")
 
 torch_env = flyte.TaskEnvironment(
     name="torch_env",
-    resources=flyte.Resources(cpu=(1, 2), memory=("1Gi", "2Gi")),
+    resources=flyte.Resources(cpu=(1, 2), memory=("1Gi", "2Gi"), gpu="T4:1"),
     plugin_config=Elastic(
         nproc_per_node=1,
         # if you want to do local testing set nnodes=1
@@ -106,6 +99,6 @@ def torch_distributed_train(epochs: int) -> typing.Optional[float]:
 
 if __name__ == "__main__":
     flyte.init_from_config()
-    run = flyte.with_runcontext(mode="remote").run(torch_distributed_train, epochs=3)
+    run = flyte.with_runcontext(mode="remote").run(torch_distributed_train, epochs=1000)
     print("run name:", run.name)
     print("run url:", run.url)

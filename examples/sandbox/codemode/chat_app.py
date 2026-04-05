@@ -59,7 +59,7 @@ env = FastAPIAppEnvironment(
         "httpx",
         "pydantic-monty",
     ),
-    secrets=flyte.Secret(key="anthropic-api-key", as_env_var="ANTHROPIC_API_KEY"),
+    secrets=flyte.Secret(key="internal-anthropic-api-key", as_env_var="ANTHROPIC_API_KEY"),
     scaling=flyte.app.Scaling(replicas=1),
 )
 
@@ -123,6 +123,5 @@ async def index() -> HTMLResponse:
 
 if __name__ == "__main__":
     flyte.init_from_config(root_dir=pathlib.Path(__file__).parent)
-    deployments = flyte.deploy(env)
-    d = deployments[0]
-    print(f"Deployed Chat Analytics Agent: {d.table_repr()}")
+    app_handle = flyte.serve(env)
+    print(f"Deployed Chat Analytics Agent: {app_handle.url}")

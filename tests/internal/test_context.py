@@ -173,6 +173,25 @@ def test_task_context_disable_run_cache_explicit():
     assert task_ctx.disable_run_cache is True
 
 
+def test_in_driver_literal_conversion_on_task_context(outer_task_ctx):
+    """Driver literal conversion is mirrored onto TaskContext so flyte.ctx() stays authoritative."""
+    base = internal_ctx()
+    with base.replace_task_context(outer_task_ctx):
+        assert flyte.ctx() is not None
+        assert flyte.ctx().in_driver_literal_conversion is False
+        with internal_ctx().new_in_driver_literal_conversion(True):
+            assert flyte.ctx().in_driver_literal_conversion is True
+        assert flyte.ctx().in_driver_literal_conversion is False
+
+
+def test_new_in_driver_literal_conversion_requires_task_context():
+    """Driver literal conversion is only tracked on TaskContext."""
+    base = internal_ctx()
+    assert flyte.ctx() is None
+    with pytest.raises(ValueError, match="TaskContext"):
+        base.new_in_driver_literal_conversion(True)
+
+
 def test_has_raw_data_with_task_context():
     """Test has_raw_data returns True when raw_data_path is set in task_context"""
     ctx = internal_ctx()

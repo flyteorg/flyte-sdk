@@ -1,29 +1,16 @@
 from __future__ import annotations
 
-import os
 from urllib.parse import urlparse
 
-# Set environment variables for gRPC, this reduces log spew and avoids unnecessary warnings
-# before importing grpc
-if "GRPC_VERBOSITY" not in os.environ:
-    os.environ["GRPC_VERBOSITY"] = "ERROR"
-    os.environ["GRPC_CPP_MIN_LOG_LEVEL"] = "ERROR"
-    # Disable fork support (stops "skipping fork() handlers")
-    os.environ["GRPC_ENABLE_FORK_SUPPORT"] = "0"
-    # Reduce absl/glog verbosity
-    os.environ["GLOG_minloglevel"] = "2"
-    os.environ["ABSL_LOG"] = "0"
-#### Has to be before grpc
-
-import grpc
-from flyteidl2.app import app_service_pb2_grpc
-from flyteidl2.auth import identity_pb2_grpc
-from flyteidl2.dataproxy import dataproxy_service_pb2_grpc
-from flyteidl2.project import project_service_pb2_grpc
-from flyteidl2.secret import secret_pb2_grpc
-from flyteidl2.task import task_service_pb2_grpc
-from flyteidl2.trigger import trigger_service_pb2_grpc
-from flyteidl2.workflow import run_logs_service_pb2_grpc, run_service_pb2_grpc
+from flyteidl2.app.app_service_connect import AppServiceClient
+from flyteidl2.auth.identity_connect import IdentityServiceClient
+from flyteidl2.dataproxy.dataproxy_service_connect import DataProxyServiceClient
+from flyteidl2.project.project_service_connect import ProjectServiceClient
+from flyteidl2.secret.secret_connect import SecretServiceClient
+from flyteidl2.task.task_service_connect import TaskServiceClient
+from flyteidl2.trigger.trigger_service_connect import TriggerServiceClient
+from flyteidl2.workflow.run_logs_service_connect import RunLogsServiceClient
+from flyteidl2.workflow.run_service_connect import RunServiceClient
 
 from ._protocols import (
     AppService,
@@ -36,7 +23,7 @@ from ._protocols import (
     TaskService,
     TriggerService,
 )
-from .auth import create_channel
+from .auth._session import SessionConfig, create_session_config
 
 
 class Console:
@@ -85,9 +72,8 @@ class Console:
             domain = parsed.netloc or parsed.path
 
         # TODO: make console url configurable
-        domain_split = domain.split(":")
-        if domain_split[0] == "localhost":
-            # Always use port 8080 for localhost, until the to do is done.
+        host, _, port = domain.partition(":")
+        if host == "localhost" and port == "8090":
             domain = "localhost:8080"
 
         return f"{scheme}://{domain}"
@@ -176,52 +162,31 @@ class Console:
 
 
 class ClientSet:
-    def __init__(
-        self,
-        channel: grpc.aio.Channel,
-        endpoint: str,
-        insecure: bool = False,
-        **kwargs,
-    ):
-        self.endpoint = endpoint
-        self.insecure = insecure
-        self._channel = channel
-        self._console = Console(self.endpoint, self.insecure)
-        self._admin_client = project_service_pb2_grpc.ProjectServiceStub(channel=channel)
-        self._task_service = task_service_pb2_grpc.TaskServiceStub(channel=channel)
-        self._app_service = app_service_pb2_grpc.AppServiceStub(channel=channel)
-        self._run_service = run_service_pb2_grpc.RunServiceStub(channel=channel)
-        self._dataproxy = dataproxy_service_pb2_grpc.DataProxyServiceStub(channel=channel)
-        self._log_service = run_logs_service_pb2_grpc.RunLogsServiceStub(channel=channel)
-        self._secrets_service = secret_pb2_grpc.SecretServiceStub(channel=channel)
-        self._identity_service = identity_pb2_grpc.IdentityServiceStub(channel=channel)
-        self._trigger_service = trigger_service_pb2_grpc.TriggerServiceStub(channel=channel)
+    def __init__(self, session_cfg: SessionConfig):
+        self._console = Console(session_cfg.endpoint, session_cfg.insecure)
+        self._session_config = session_cfg
+        shared = session_cfg.connect_kwargs()
+        self._admin_client = ProjectServiceClient(**shared)
+        self._task_service = TaskServiceClient(**shared)
+        self._app_service = AppServiceClient(**shared)
+        self._run_service = RunServiceClient(**shared)
+        self._dataproxy = DataProxyServiceClient(**shared)
+        self._log_service = RunLogsServiceClient(**shared)
+        self._secrets_service = SecretServiceClient(**shared)
+        self._identity_service = IdentityServiceClient(**shared)
+        self._trigger_service = TriggerServiceClient(**shared)
 
     @classmethod
     async def for_endpoint(cls, endpoint: str, *, insecure: bool = False, **kwargs) -> ClientSet:
         rpc_retries = kwargs.pop("rpc_retries", None)
-        return cls(
-            await create_channel(endpoint, None, insecure=insecure, rpc_retries=rpc_retries, **kwargs),
-            endpoint,
-            insecure=insecure,
-            **kwargs,
-        )
+        session_cfg = await create_session_config(endpoint, None, insecure=insecure, rpc_retries=rpc_retries, **kwargs)
+        return cls(session_cfg)
 
     @classmethod
     async def for_api_key(cls, api_key: str, *, insecure: bool = False, **kwargs) -> ClientSet:
-        from flyte.remote._client.auth._auth_utils import decode_api_key
-
-        # Parsing the API key is done in create_channel, but cleaner to redo it here rather than getting create_channel
-        # to return the endpoint
-        endpoint, _, _, _ = decode_api_key(api_key)
-
         rpc_retries = kwargs.pop("rpc_retries", None)
-        return cls(
-            await create_channel(None, api_key, insecure=insecure, rpc_retries=rpc_retries, **kwargs),
-            endpoint,
-            insecure=insecure,
-            **kwargs,
-        )
+        session_cfg = await create_session_config(None, api_key, insecure=insecure, rpc_retries=rpc_retries, **kwargs)
+        return cls(session_cfg)
 
     @classmethod
     async def for_serverless(cls) -> ClientSet:
@@ -268,6 +233,19 @@ class ClientSet:
         return self._trigger_service
 
     @property
+    def endpoint(self) -> str:
+        return self._session_config.endpoint
+
+    @property
+    def session_config(self) -> SessionConfig:
+        """The session configuration used by this client.
+
+        Useful for external packages that need to create their own ConnectRPC
+        service clients sharing the same transport and auth interceptors.
+        """
+        return self._session_config
+
+    @property
     def console(self) -> Console:
         """
         Get the Console instance for this client.
@@ -283,6 +261,3 @@ class ClientSet:
             >>> url = client.console.task_url(project="myproj", domain="dev", task_name="mytask")
         """
         return self._console
-
-    async def close(self, grace: float | None = None):
-        return await self._channel.close(grace=grace)

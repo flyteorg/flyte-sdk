@@ -6,6 +6,7 @@ from typing import (
     Any,
     AsyncIterator,
     Callable,
+    ClassVar,
     Coroutine,
     Dict,
     Generic,
@@ -219,6 +220,10 @@ class Dir(BaseModel, Generic[T], SerializableType):
 
     class Config:
         arbitrary_types_allowed = True
+        json_schema_extra: ClassVar[dict] = {
+            "description": "A directory reference with an optional format type.",
+            "x-flyte-type": "dir",
+        }
 
     @model_validator(mode="before")
     @classmethod

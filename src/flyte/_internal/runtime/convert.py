@@ -40,6 +40,7 @@ class Outputs:
 @dataclass
 class Error:
     err: execution_pb2.ExecutionError
+    recoverable: bool = True
 
 
 # ------------------------------- CONVERT Methods ------------------------------- #
@@ -79,7 +80,7 @@ async def convert_upload_default_inputs(
     vars = []
     literal_coros = []
     for input_name, (input_type, default_value) in interface.inputs.items():
-        if default_value and default_value is not inspect.Parameter.empty:
+        if default_value is not None and default_value is not inspect.Parameter.empty:
             lt = TypeEngine.to_literal_type(input_type)
             literal_coros.append(TypeEngine.to_literal(default_value, input_type, lt))
             vars.append((input_name, lt))
@@ -117,6 +118,15 @@ async def convert_from_native_to_inputs(
     *args,
     custom_context: Dict[str, str] | None = None,
     **kwargs,
+) -> Inputs:
+    return await _convert_from_native_to_inputs_impl(interface, args, custom_context, kwargs)
+
+
+async def _convert_from_native_to_inputs_impl(
+    interface: NativeInterface,
+    args: Tuple[Any, ...],
+    custom_context: Dict[str, str] | None,
+    kwargs: Dict[str, Any],
 ) -> Inputs:
     kwargs = interface.convert_to_kwargs(*args, **kwargs)
 
@@ -282,7 +292,17 @@ def convert_error_to_native(
 
 
 def convert_from_native_to_error(err: BaseException) -> Error:
-    if isinstance(err, flyte.errors.RuntimeUnknownError):
+    if isinstance(err, flyte.errors.NonRecoverableError):
+        return Error(
+            err=execution_pb2.ExecutionError(
+                kind=execution_pb2.ExecutionError.USER,
+                code=err.code,
+                message=str(err),
+                worker=err.worker,
+            ),
+            recoverable=False,
+        )
+    elif isinstance(err, flyte.errors.RuntimeUnknownError):
         return Error(
             err=execution_pb2.ExecutionError(
                 kind=execution_pb2.ExecutionError.UNKNOWN,
