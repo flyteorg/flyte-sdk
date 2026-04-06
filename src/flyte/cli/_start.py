@@ -40,6 +40,12 @@ def tui():
 )
 def demo(image: str, dev: bool):
     """Start a local Flyte demo cluster."""
+    from flyte._sentry import capture_exception, count
     from flyte.cli._demo import launch_demo
 
-    launch_demo(image, dev)
+    count("cli.command", command="start_demo")
+    try:
+        launch_demo(image, dev)
+    except Exception as e:
+        capture_exception(e)
+        raise

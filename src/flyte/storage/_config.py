@@ -146,7 +146,7 @@ class S3(Storage):
             "access_key_id": "minio",
             "secret_access_key": "miniostorage",
         }
-        return S3(**final_kwargs)
+        return S3(**final_kwargs)  # type: ignore[arg-type]
 
     def _build_s3_credential_provider_from_config_file(
         self,
