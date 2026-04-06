@@ -2,7 +2,7 @@
 # Flyte Type System
 
 The Flyte type system provides a way to define, transform, and manipulate types in Flyte workflows.
-Since the data flowing through Flyte has to often cross process, container and langauge boundaries, the type system
+Since the data flowing through Flyte has to often cross process, container and language boundaries, the type system
 is designed to be serializable to a universal format that can be understood across different environments. This
 universal format is based on Protocol Buffers. The types are called LiteralTypes and the runtime
 representation of data is called Literals.

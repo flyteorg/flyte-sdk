@@ -66,6 +66,49 @@ def load_class(qualified_name) -> Type:
     return getattr(module, class_name)  # Retrieve the class
 
 
+_SKIP_DIRS = frozenset(
+    {
+        ".git",
+        ".hg",
+        ".svn",
+        ".venv",
+        "venv",
+        "env",
+        ".local",
+        ".cache",
+        ".uv",
+        "__pycache__",
+        "node_modules",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".idea",
+        ".tox",
+        ".nox",
+        ".eggs",
+        "site-packages",
+        "dist-packages",
+        "dist",
+        "build",
+    }
+)
+
+
+def _list_user_files(cwd: str) -> list[str]:
+    """List user-relevant files under cwd, filtering out virtual envs, caches, and other non-user directories."""
+    files: list[str] = []
+    try:
+        for root, dirs, filenames in os.walk(cwd):
+            # Prune irrelevant directories in-place so os.walk won't descend into them
+            dirs[:] = [d for d in dirs if d not in _SKIP_DIRS]
+            for name in filenames:
+                rel_path = os.path.relpath(os.path.join(root, name), cwd)
+                files.append(rel_path)
+    except Exception as list_err:
+        files = [f"(Failed to list directory: {list_err})"]
+    return files
+
+
 def load_task(resolver: str, *resolver_args: str) -> TaskTemplate:
     """
     Load a task from a resolver. This is a placeholder function.
@@ -80,14 +123,7 @@ def load_task(resolver: str, *resolver_args: str) -> TaskTemplate:
         return resolver_instance.load_task(resolver_args)
     except ModuleNotFoundError as e:
         cwd = os.getcwd()
-        files = []
-        try:
-            for root, dirs, filenames in os.walk(cwd):
-                for name in dirs + filenames:
-                    rel_path = os.path.relpath(os.path.join(root, name), cwd)
-                    files.append(rel_path)
-        except Exception as list_err:
-            files = [f"(Failed to list directory: {list_err})"]
+        files = _list_user_files(cwd)
 
         msg = (
             "\n\nFull traceback:\n" + "".join(traceback.format_exc()) + f"\n[ImportError Diagnostics]\n"

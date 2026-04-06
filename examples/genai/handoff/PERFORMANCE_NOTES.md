@@ -57,7 +57,7 @@ env = flyte.TaskEnvironment(
     "agent-handoff",
     resources=flyte.Resources(cpu=2, memory="2Gi"),
     secrets=[flyte.Secret(key="openai-api-key", as_env_var="OPENAI_API_KEY")],
-    image=flyte.Image.from_uv_script(__file__, name="agent-handoff", pre=True),
+    image=flyte.Image.from_uv_script(__file__, name="agent-handoff"),
     concurrency=10,  # Allow 10 parallel executions
 )
 ```

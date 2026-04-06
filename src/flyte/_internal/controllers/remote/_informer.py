@@ -4,7 +4,8 @@ import asyncio
 from asyncio import Queue
 from typing import AsyncIterator, Callable, Dict, Optional, Tuple, cast
 
-import grpc.aio
+from connectrpc.code import Code
+from connectrpc.errors import ConnectError
 from flyteidl2.actions import actions_service_pb2
 from flyteidl2.common import identifier_pb2, phase_pb2
 from flyteidl2.workflow import state_service_pb2
@@ -233,26 +234,24 @@ class Informer:
                     name=self.parent_action_name,
                     run=self._run_id,
                 )
-                metadata = (
-                    ("x-actions-project", self._run_id.project),
-                    ("x-actions-domain", self._run_id.domain),
-                    ("x-actions-run", self._run_id.name),
-                    ("x-actions-parent-action", self.parent_action_name),
-                )
+                headers = {
+                    "x-actions-project": self._run_id.project,
+                    "x-actions-domain": self._run_id.domain,
+                    "x-actions-run": self._run_id.name,
+                    "x-actions-parent-action": self.parent_action_name,
+                }
                 if self._actions_client:
-                    watcher = self._actions_client.WatchForUpdates(
+                    watcher = self._actions_client.watch_for_updates(
                         actions_service_pb2.WatchForUpdatesRequest(
                             parent_action_id=parent_action_id,
                         ),
-                        wait_for_ready=True,
-                        metadata=metadata,
+                        headers=headers,
                     )
                 else:
-                    watcher = self._client.Watch(
+                    watcher = self._client.watch(
                         state_service_pb2.WatchRequest(
                             parent_action_id=parent_action_id,
                         ),
-                        wait_for_ready=True,
                     )
                 async for resp in watcher:
                     retries = 0
@@ -270,7 +269,10 @@ class Informer:
                 logger.error(f"Watch timeout: {self.name}, {e}", exc_info=False)
                 last_exc = e
                 retries += 1
-            except grpc.aio.AioRpcError as e:
+            except ConnectError as e:
+                if e.code == Code.CANCELED:
+                    logger.info(f"Watch cancelled: {self.name}")
+                    return
                 logger.error(f"RPC error: {self.name}, {e}", exc_info=False)
                 last_exc = e
                 retries += 1

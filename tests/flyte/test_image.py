@@ -112,6 +112,15 @@ def test_with_source(tmp_path):
     file.touch()
     img.validate()
 
+    # Single-file COPY layers must hash file contents (os.walk on a file yields nothing).
+    f = tmp_path / "version.md"
+    f.write_text("first")
+    base = Image.from_debian_base(registry="localhost", name="test-image", flyte_version="0.2.0b14")
+    h1 = base.with_source_file(f)._get_hash_digest()
+    f.write_text("second")
+    h2 = base.with_source_file(f)._get_hash_digest()
+    assert h1 != h2
+
     # list of paths — each becomes its own layer
     file2 = tmp_path / "helper.py"
     file2.touch()
@@ -248,6 +257,16 @@ def test_dockerfile():
     assert img_multi.platform == ("linux/amd64", "linux/arm64")
 
 
+def test_dockerfile_with_str_path():
+    img = Image.from_dockerfile(
+        file=str(Path(__file__).parent / "resources/Dockerfile.test_sample"),
+        registry="localhost",
+        name="test-image",
+    )
+    assert img.uri.startswith("localhost/test-image"), f"Unexpected URI: {img.uri}"
+    assert img.platform == ("linux/amd64",)
+
+
 def test_image_uri_consistency_for_uvscript():
     img = Image.from_uv_script(
         "./agent_simulation_loadtest.py", name="flyte", registry="ghcr.io/flyteorg", python_version=(3, 12)
@@ -334,6 +353,164 @@ def test_uv_project_optional_uvlock():
         hash2 = hasher2.hexdigest()
 
         assert hash1 != hash2
+
+
+def test_copy_config_update_hash_respects_dockerignore(tmp_path):
+    """CopyConfig.update_hash must exclude files matched by .dockerignore."""
+    import hashlib
+
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.txt").write_text("hello")
+    (src / "b.txt").write_text("world")
+    (src / "c.txt").write_text("data")
+
+    # Hash without any .dockerignore — all three files included
+    h_all = hashlib.md5()
+    CopyConfig(path_type=1, src=src, dst="/app").update_hash(h_all)
+    digest_all = h_all.hexdigest()
+
+    # Add a .dockerignore that excludes c.txt
+    (src / ".dockerignore").write_text("c.txt\n")
+
+    h_ignored = hashlib.md5()
+    CopyConfig(path_type=1, src=src, dst="/app").update_hash(h_ignored)
+    digest_ignored = h_ignored.hexdigest()
+
+    # Hash must differ because c.txt is excluded (and .dockerignore itself is now included)
+    assert digest_all != digest_ignored
+
+
+def test_copy_config_dockerignore_itself_is_hashed(tmp_path):
+    """Changing .dockerignore content must change the hash (PatternMatcher always includes it)."""
+    import hashlib
+
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.txt").write_text("hello")
+    (src / ".dockerignore").write_text("*.log\n")
+
+    h1 = hashlib.md5()
+    CopyConfig(path_type=1, src=src, dst="/app").update_hash(h1)
+
+    # Change .dockerignore content — hash must change because the file content changed
+    (src / ".dockerignore").write_text("*.log\n*.tmp\n")
+    h2 = hashlib.md5()
+    CopyConfig(path_type=1, src=src, dst="/app").update_hash(h2)
+
+    assert h1.hexdigest() != h2.hexdigest()
+
+
+def test_uv_project_install_project_respects_dockerignore(tmp_path):
+    """UVProject (install_project mode) must exclude files matched by .dockerignore."""
+    import hashlib
+
+    from flyte._image import UVProject
+
+    project_dir = tmp_path / "myproject"
+    project_dir.mkdir()
+    (project_dir / "pyproject.toml").write_text("[project]\nname='p'\nversion='0.1.0'")
+    (project_dir / "main.py").write_text("print('hello')")
+    (project_dir / "data.bin").write_text("big data")
+
+    h_all = hashlib.md5()
+    UVProject(pyproject=project_dir / "pyproject.toml", project_install_mode="install_project").update_hash(h_all)
+    digest_all = h_all.hexdigest()
+
+    # Add .dockerignore to exclude data.bin
+    (project_dir / ".dockerignore").write_text("data.bin\n")
+
+    h_ignored = hashlib.md5()
+    UVProject(pyproject=project_dir / "pyproject.toml", project_install_mode="install_project").update_hash(h_ignored)
+
+    assert digest_all != h_ignored.hexdigest()
+
+
+def test_copy_config_respects_dockerignore_from_image_layer(tmp_path):
+    """
+    .dockerignore specified via with_dockerignore() at the project root must be
+    respected by CopyConfig even when src is a subdirectory.
+
+    The pattern is relative to the .dockerignore location (project root), so
+    a file at project/src/data.bin is excluded by the pattern 'src/data.bin'.
+    Both images share the same DockerIgnore layer so only the CopyConfig hash differs.
+    """
+    from flyte._image import Image
+
+    project = tmp_path / "project"
+    project.mkdir()
+    src = project / "src"
+    src.mkdir()
+    (src / "main.py").write_text("print('hello')")
+    (src / "data.bin").write_text("big data")
+
+    # .dockerignore is at project root, NOT inside src/.
+    # Pattern is relative to the project root.
+    di = project / ".dockerignore"
+    di.write_text("src/data.bin\n")
+
+    img = Image.from_debian_base(registry="localhost", name="test").with_dockerignore(di).with_source_folder(src)
+
+    # Reference: same dockerignore layer + same dst name, but src has no data.bin.
+    # Use the same directory name so with_source_folder produces the same dst.
+    project2 = tmp_path / "project2"
+    project2.mkdir()
+    src_clean = project2 / "src"
+    src_clean.mkdir()
+    (src_clean / "main.py").write_text("print('hello')")
+
+    img_clean = (
+        Image.from_debian_base(registry="localhost", name="test").with_dockerignore(di).with_source_folder(src_clean)
+    )
+
+    assert img.uri == img_clean.uri
+
+
+def test_dockerignore_hash_changes_with_content(tmp_path):
+    """Changing .dockerignore contents must produce a different hash."""
+    import hashlib
+
+    from flyte._image import DockerIgnore
+
+    di_file = tmp_path / ".dockerignore"
+    di_file.write_text("*.log\n")
+    h1 = hashlib.md5()
+    DockerIgnore(path=str(di_file)).update_hash(h1)
+
+    di_file.write_text("*.log\n*.pyc\n")
+    h2 = hashlib.md5()
+    DockerIgnore(path=str(di_file)).update_hash(h2)
+
+    assert h1.hexdigest() != h2.hexdigest()
+
+
+def test_dockerignore_hash_stable_for_same_content(tmp_path):
+    """Same .dockerignore contents must produce a stable hash."""
+    import hashlib
+
+    from flyte._image import DockerIgnore
+
+    di_file = tmp_path / ".dockerignore"
+    di_file.write_text("*.log\n")
+    layer = DockerIgnore(path=str(di_file))
+
+    h1, h2 = hashlib.md5(), hashlib.md5()
+    layer.update_hash(h1)
+    layer.update_hash(h2)
+    assert h1.hexdigest() == h2.hexdigest()
+
+
+def test_image_uri_changes_when_dockerignore_content_changes(tmp_path):
+    """Image URI (cache key) must differ when .dockerignore contents change."""
+    di_file = tmp_path / ".dockerignore"
+    di_file.write_text("*.log\n")
+    img1 = Image.from_debian_base(registry="localhost", name="test").with_dockerignore(di_file)
+    uri1 = img1.uri  # access before overwriting the file
+
+    di_file.write_text("*.log\n*.pyc\n")
+    img2 = Image.from_debian_base(registry="localhost", name="test").with_dockerignore(di_file)
+
+    assert uri1 != img2.uri
 
 
 def test_ids_for_different_python_version():

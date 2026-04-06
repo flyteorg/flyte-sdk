@@ -22,7 +22,7 @@ def gen():
     "plugin_variants",
     type=str,
     default=None,
-    help="Hugo variant names for plugin commands (e.g., 'byoc selfmanaged'). "
+    help="Hugo variant names for plugin commands (e.g., 'union'). "
     "When set, plugin command sections and index entries are wrapped in "
     "{{< variant >}} shortcodes. Core commands appear unconditionally.",
 )
@@ -427,21 +427,19 @@ def markdown(cfg: common.CLIConfig, plugin_variants: str | None = None):
             print("\n".join(rendered))
 
     # Flush stdout to ensure all output is written before the process exits.
-    # InvokeBaseMixin.invoke() calls os._exit(0) after this function returns,
-    # which kills the process without flushing stdio buffers.
     sys.stdout.flush()
 
 
 def _non_plugin_variants(plugin_variants: str) -> str:
     """Derive core variant names from the page's variant list minus plugin variants.
 
-    The page frontmatter declares all variants (e.g., +flyte +byoc +selfmanaged).
-    Plugin variants are the ones that should show plugin commands (e.g., byoc selfmanaged).
+    The page frontmatter declares all variants (e.g., +flyte +union).
+    Plugin variants are the ones that should show plugin commands (e.g., union).
     This function returns the remaining variants (e.g., flyte).
     """
     # For now, we hardcode "flyte" as the core variant since that's the only
     # non-plugin variant. A more robust approach would read the page frontmatter.
-    all_variants = {"flyte", "byoc", "selfmanaged"}
+    all_variants = {"flyte", "union"}
     plugin_set = set(plugin_variants.split())
     core = all_variants - plugin_set
     return " ".join(sorted(core))

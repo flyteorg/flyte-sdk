@@ -1,5 +1,5 @@
 """
-This example shows how to tune and cache optimial resource configurations for a task.
+This example shows how to tune and cache optimal resource configurations for a task.
 
 It builds on the `multi_loops.py` example by adding a `tune_memory` step that
 runs and caches the optimal memory configuration for a task-input combination.
