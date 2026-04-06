@@ -262,14 +262,14 @@ class TaskContext:
     @property
     def checkpoint(self) -> Optional[Checkpoint]:
         """
-        Task checkpoint helper for the runtime ``checkpoint_path`` / ``prev_checkpoint`` prefixes.
+        Task checkpoint helper for the runtime `checkpoint_path` / `prev_checkpoint` prefixes.
 
-        Returns a lazily constructed :class:`~flyte.Checkpoint` cached on :attr:`data`, or
-        ``None`` when no checkpoint output prefix is configured. In async tasks use :meth:`~flyte.Checkpoint.load`
-        and :meth:`~flyte.Checkpoint.save`; in sync tasks use :meth:`~flyte.Checkpoint.load_sync` and
-        :meth:`~flyte.Checkpoint.save_sync`.
-        For a **single raw blob**, pass ``bytes`` to save; after a successful load, the blob is at
-        ``checkpoint.path / "payload"`` when the remote object is not a tarball.
+        Returns a lazily constructed `flyte.Checkpoint` cached on `flyte.models.TaskContext.data`, or
+        `None` when no checkpoint output prefix is configured. In async tasks use `flyte.Checkpoint.load`
+        and `flyte.Checkpoint.save`; in sync tasks use `flyte.Checkpoint.load_sync` and
+        `flyte.Checkpoint.save_sync`.
+        For a **single raw blob**, pass `bytes` to save; after a successful load, the blob is at
+        `checkpoint.path / "payload"` when the remote object is not a tarball.
         """
         from flyte._checkpoint import CHECKPOINT_CACHE_KEY
         from flyte._checkpoint import Checkpoint as CheckpointCls
@@ -339,7 +339,10 @@ class CodeBundle:
 @dataclass(frozen=True)
 class Checkpoints:
     """
-    A class representing the checkpoints for a task. This is used to store the checkpoints for the task execution.
+    Paths the platform provides for this task's checkpoint output and optional previous-attempt input.
+
+    This is distinct from `flyte.Checkpoint`, which performs download/upload of the checkpoint **blob**
+    for those paths (see `flyte.models.TaskContext.checkpoint`).
     """
 
     prev_checkpoint_path: str | None

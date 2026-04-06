@@ -8,7 +8,7 @@ import sys
 
 from ._build import ImageBuild, build
 from ._cache import Cache, CachePolicy, CacheRequest
-from ._checkpoint import AsyncCheckpoint, BaseCheckpoint, Checkpoint, latest_checkpoint_under
+from ._checkpoint import BaseCheckpoint, Checkpoint, latest_checkpoint
 from ._context import ctx
 from ._custom_context import custom_context, get_custom_context
 from ._deploy import build_images, deploy
@@ -79,7 +79,6 @@ __all__ = [
     "HABANA_GAUDI",
     "TPU",
     "AppHandle",
-    "AsyncCheckpoint",
     "BaseCheckpoint",
     "Cache",
     "CachePolicy",
@@ -120,7 +119,7 @@ __all__ = [
     "init_from_config",
     "init_in_cluster",
     "init_passthrough",
-    "latest_checkpoint_under",
+    "latest_checkpoint",
     "logger",
     "map",
     "run",

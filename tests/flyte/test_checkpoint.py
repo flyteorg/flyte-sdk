@@ -16,6 +16,7 @@ from flyte._checkpoint import (
     _PAYLOAD_BASENAME,
     CHECKPOINT_CACHE_KEY,
     Checkpoint,
+    latest_checkpoint,
     repair_union_prev_checkpoint_uri,
 )
 from flyte._context import Context, ContextData
@@ -124,6 +125,37 @@ def test_checkpoint_prev_exists() -> None:
     assert cp2.prev_exists()
 
 
+def test_latest_checkpoint_prefers_newest_mtime() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        root = pathlib.Path(td)
+        old = root / "a" / "last.ckpt"
+        new = root / "b" / "last.ckpt"
+        old.parent.mkdir(parents=True)
+        new.parent.mkdir(parents=True)
+        old.write_text("x", encoding="utf-8")
+        new.write_text("y", encoding="utf-8")
+        got = latest_checkpoint(root)
+        assert got == new
+
+
+def test_latest_checkpoint_custom_glob() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        root = pathlib.Path(td)
+        (root / "a.ckpt").write_text("a", encoding="utf-8")
+        assert latest_checkpoint(root, "*.ckpt") == root / "a.ckpt"
+
+
+def test_latest_checkpoint_custom_sort_key() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        root = pathlib.Path(td)
+        low = root / "ckpt_step0.ckpt"
+        high = root / "ckpt_step9.ckpt"
+        low.write_text("a", encoding="utf-8")
+        high.write_text("b", encoding="utf-8")
+        got = latest_checkpoint(root, "*.ckpt", key=lambda p: int(p.stem.split("step")[-1]))
+        assert got == high
+
+
 # --- load_sync / save_sync (file URIs) ---
 
 
@@ -205,7 +237,7 @@ def test_checkpoint_single_non_tar_object_roundtrip() -> None:
 @pytest.mark.asyncio
 async def test_checkpoint_load_treats_empty_remote_as_no_checkpoint() -> None:
     """Download with zero bytes or missing listing is recoverable on load."""
-    with patch("flyte._checkpoint.storage.get", new_callable=AsyncMock) as mock_get:
+    with patch("flyte.storage.get", new_callable=AsyncMock) as mock_get:
         mock_get.side_effect = DownloadQueueEmpty()
         cp = Checkpoint("s3://bucket/out", "s3://bucket/prev_checkpoint_file")
         restored = await cp.load()
@@ -219,7 +251,7 @@ async def test_checkpoint_load_treats_exception_group_download_queue_empty() -> 
     from builtins import BaseExceptionGroup
 
     eg = BaseExceptionGroup("unhandled errors in a TaskGroup", [DownloadQueueEmpty()])
-    with patch("flyte._checkpoint.storage.get", new_callable=AsyncMock) as mock_get:
+    with patch("flyte.storage.get", new_callable=AsyncMock) as mock_get:
         mock_get.side_effect = eg
         cp = Checkpoint("s3://bucket/out", "s3://bucket/prev_checkpoint_file")
         restored = await cp.load()
@@ -227,7 +259,7 @@ async def test_checkpoint_load_treats_exception_group_download_queue_empty() -> 
 
 
 def test_checkpoint_load_sync_treats_sync_get_errors_as_no_checkpoint() -> None:
-    with patch("flyte._checkpoint._get_checkpoint_object_sync", side_effect=DownloadQueueEmpty()) as _:
+    with patch("flyte.io._file.File.download_sync", side_effect=DownloadQueueEmpty()):
         cp = Checkpoint("s3://bucket/out", "s3://bucket/prev_checkpoint_file")
         assert cp.load_sync() is None
 
@@ -237,7 +269,7 @@ def test_checkpoint_load_sync_treats_exception_group_download_queue_empty() -> N
     from builtins import BaseExceptionGroup
 
     eg = BaseExceptionGroup("unhandled errors in a TaskGroup", [DownloadQueueEmpty()])
-    with patch("flyte._checkpoint._get_checkpoint_object_sync", side_effect=eg):
+    with patch("flyte.io._file.File.download_sync", side_effect=eg):
         cp = Checkpoint("s3://bucket/out", "s3://bucket/prev_checkpoint_file")
         assert cp.load_sync() is None
 

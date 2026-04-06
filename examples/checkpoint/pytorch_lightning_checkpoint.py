@@ -18,7 +18,7 @@ from `last.ckpt`.
 Aligned with `sklearn_partial_checkpoint.py`:
 
 1. `checkpoint.load_sync()` — restore prior tree when a previous attempt exists (sync task).
-2. `flyte.latest_checkpoint_under` — pick the newest `last.ckpt` under the restored tree.
+2. `flyte.latest_checkpoint` — pick the newest `last.ckpt` under the restored tree.
 3. `chunks_start` — epochs already completed before this `lightning.pytorch.Trainer.fit` (from `last.ckpt`'s
    `epoch` field when resuming, else `0`). A `FailureInjectionCallback` tracks the same
    0-based epoch index as sklearn's loop variable `i` and only raises when
@@ -131,7 +131,7 @@ def train_lightning(max_epochs: int = 3) -> float:
     resume_ckpt: str | None = None
     epoch_start = 0
     if prev_cp_path:
-        last = flyte.latest_checkpoint_under(prev_cp_path)
+        last = flyte.latest_checkpoint(prev_cp_path)
         last_ckpt = str(last) if last else None
         if last_ckpt:
             ck = torch.load(last_ckpt, map_location="cpu", weights_only=False)
