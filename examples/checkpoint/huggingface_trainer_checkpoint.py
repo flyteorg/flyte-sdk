@@ -9,34 +9,34 @@
 # ///
 
 """
-Hugging Face ``transformers.Trainer`` + Flyte ``Checkpoint``
+Hugging Face `transformers.Trainer` + Flyte `Checkpoint`
 ===========================================================
 
-Trains a tiny BERT classifier with :class:`transformers.Trainer`, mirroring
-``pytorch_task_checkpoint.py`` and ``pytorch_lightning_checkpoint.py``.
+Trains a tiny BERT classifier with `transformers.Trainer`, mirroring
+`pytorch_task_checkpoint.py` and `pytorch_lightning_checkpoint.py`.
 
-**Async task (like ``pytorch_task_checkpoint``):** use ``cp = ctx.checkpoint``, ``prev_cp_path = await cp.load()``,
-and ``await cp.save(...)`` so object storage stays in sync with local HF checkpoints.
+**Async task (like `pytorch_task_checkpoint`):** use `cp = ctx.checkpoint`, `prev_cp_path = await cp.load()`,
+and `await cp.save(...)` so object storage stays in sync with local HF checkpoints.
 
-**Layout (like ``pytorch_lightning_checkpoint``):** resolve a fixed ``output_dir`` under the restored Flyte tree
-(or ``hf_trainer`` when there is no prior checkpoint), then ``resume_from_checkpoint`` from
-:func:`transformers.trainer_utils.get_last_checkpoint` (not the raw Flyte path).
+**Layout (like `pytorch_lightning_checkpoint`):** resolve a fixed `output_dir` under the restored Flyte tree
+(or `hf_trainer` when there is no prior checkpoint), then `resume_from_checkpoint` from
+`transformers.trainer_utils.get_last_checkpoint` (not the raw Flyte path).
 
-**Retries:** ``chunks_start`` from ``trainer_state.json`` ``global_step`` when resuming. Failure injection matches
-sklearn / Lightning: ``(global_step - 1) > chunks_start and (global_step - 1) % failure_interval == 0`` with
-``failure_interval = max_steps // RETRIES``.
+**Retries:** `chunks_start` from `trainer_state.json` `global_step` when resuming. Failure injection matches
+sklearn / Lightning: `(global_step - 1) > chunks_start and (global_step - 1) % failure_interval == 0` with
+`failure_interval = max_steps // RETRIES`.
 
-**Callbacks (Lightning order):** :class:`FailureInjectionCallback` first, then
-:class:`FlyteTrainerCheckpointCallback`, so a simulated failure happens before that step is mirrored to Flyte.
-:class:`FlyteTrainerCheckpointCallback` uses :meth:`~flyte.Checkpoint.save_sync` on HF ``on_save`` (Trainer
+**Callbacks (Lightning order):** `FailureInjectionCallback` first, then
+`FlyteTrainerCheckpointCallback`, so a simulated failure happens before that step is mirrored to Flyte.
+`FlyteTrainerCheckpointCallback` uses `flyte.Checkpoint.save_sync` on HF `on_save` (Trainer
 callbacks are synchronous).
 
-**Final persist:** ``await cp.save(output_dir)`` after :meth:`~transformers.Trainer.train` (same idea as the last
-``await cp.save(...)`` in ``pytorch_task_checkpoint``).
+**Final persist:** `await cp.save(output_dir)` after `transformers.Trainer.train` (same idea as the last
+`await cp.save(...)` in `pytorch_task_checkpoint`).
 
-The model id ``hf-internal-testing/tiny-random-bert`` is small and intended for tests; the first run may
-download weights from the Hub. ``accelerate`` is required for :class:`transformers.Trainer` with PyTorch.
-``use_cpu=True`` keeps the example portable.
+The model id `hf-internal-testing/tiny-random-bert` is small and intended for tests; the first run may
+download weights from the Hub. `accelerate` is required for `transformers.Trainer` with PyTorch.
+`use_cpu=True` keeps the example portable.
 """
 
 from __future__ import annotations
@@ -91,7 +91,7 @@ class ToyTextDataset(Dataset):
 
 
 class FailureInjectionCallback(TrainerCallback):
-    """Sklearn-style step failures: ``i > chunks_start and i % failure_interval == 0`` for ``i = global_step - 1``."""
+    """Sklearn-style step failures: `i > chunks_start and i % failure_interval == 0` for `i = global_step - 1`."""
 
     def __init__(self, chunks_start: int, failure_interval: int) -> None:
         self._chunks_start = chunks_start
@@ -105,7 +105,7 @@ class FailureInjectionCallback(TrainerCallback):
 
 
 class FlyteTrainerCheckpointCallback(TrainerCallback):
-    """Mirror HF ``output_dir`` to Flyte after each on-disk save (sync :meth:`~flyte.Checkpoint.save_sync`)."""
+    """Mirror HF `output_dir` to Flyte after each on-disk save (sync `flyte.Checkpoint.save_sync`)."""
 
     def __init__(self, cp: flyte.Checkpoint, output_dir: pathlib.Path) -> None:
         self._cp = cp

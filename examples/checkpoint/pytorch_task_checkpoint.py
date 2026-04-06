@@ -10,10 +10,10 @@
 PyTorch checkpoints
 ===================
 
-Saves ``training.pt`` (state dict + optimizer + epoch) using :class:`~flyte.Checkpoint`,
-following the same load / persist pattern as ``huggingface_trainer_checkpoint.py`` (resolve a local
-root from ``await checkpoint.load()``, ``await checkpoint.save(...)`` each epoch end,
-then a final ``await checkpoint.save(...)``).
+Saves `training.pt` (state dict + optimizer + epoch) using `flyte.Checkpoint`,
+following the same load / persist pattern as `huggingface_trainer_checkpoint.py` (resolve a local
+root from `await checkpoint.load()`, `await checkpoint.save(...)` each epoch end,
+then a final `await checkpoint.save(...)`).
 """
 
 from __future__ import annotations

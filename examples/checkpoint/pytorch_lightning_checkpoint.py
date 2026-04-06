@@ -8,23 +8,24 @@
 # ///
 
 """
-PyTorch Lightning + Flyte ``Checkpoint``
+PyTorch Lightning + Flyte `Checkpoint`
 ========================================
 
-Trains a tiny regression model with Lightning's :class:`~lightning.pytorch.callbacks.ModelCheckpoint`,
+Trains a tiny regression model with Lightning's `lightning.pytorch.callbacks.ModelCheckpoint`,
 persisting the checkpoint directory through the task's Flyte checkpoint prefix so retries can resume
-from ``last.ckpt``.
+from `last.ckpt`.
 
-Aligned with ``sklearn_partial_checkpoint.py``:
+Aligned with `sklearn_partial_checkpoint.py`:
 
-1. ``checkpoint.load_sync()`` — restore prior tree when a previous attempt exists (sync task).
-2. ``chunks_start`` — epochs already completed before this ``Trainer.fit`` (from ``last.ckpt``'s
-   ``epoch`` field when resuming, else ``0``). A :class:`FailureInjectionCallback` tracks the same
-   0-based epoch index as sklearn's loop variable ``i`` and only raises when
-   ``i > chunks_start and i % failure_interval == 0`` with ``failure_interval = max_epochs // RETRIES``.
-3. Callback order is ``FailureInjectionCallback`` then :class:`FlyteLightningCheckpointCallback` so a simulated
+1. `checkpoint.load_sync()` — restore prior tree when a previous attempt exists (sync task).
+2. `flyte.latest_checkpoint_under` — pick the newest `last.ckpt` under the restored tree.
+3. `chunks_start` — epochs already completed before this `lightning.pytorch.Trainer.fit` (from `last.ckpt`'s
+   `epoch` field when resuming, else `0`). A `FailureInjectionCallback` tracks the same
+   0-based epoch index as sklearn's loop variable `i` and only raises when
+   `i > chunks_start and i % failure_interval == 0` with `failure_interval = max_epochs // RETRIES`.
+4. Callback order is `FailureInjectionCallback` then `FlyteLightningCheckpointCallback` so a simulated
    failure happens **before** that epoch is persisted (same order as sklearn: train → fail check → save).
-4. ``checkpoint.save_sync(ckpt_dir)`` after training (sync).
+5. `checkpoint.save_sync(ckpt_dir)` after training (sync).
 """
 
 from __future__ import annotations
@@ -51,7 +52,7 @@ RETRIES = 3
 
 class FailureInjectionCallback(L.Callback):
     """
-    Mirrors sklearn's ``for i in range(chunks_start, n): ... if i > chunks_start and i % fi == 0: raise``.
+    Mirrors sklearn's `for i in range(chunks_start, n): ... if i > chunks_start and i % fi == 0: raise`.
     """
 
     def __init__(self, epoch_start: int, failure_interval: int) -> None:
@@ -71,8 +72,8 @@ class FailureInjectionCallback(L.Callback):
 
 class FlyteLightningCheckpointCallback(ModelCheckpoint):
     """
-    :class:`~lightning.pytorch.callbacks.ModelCheckpoint` that mirrors ``dirpath`` to Flyte after each
-    on-disk checkpoint cycle in :meth:`~ModelCheckpoint.on_train_epoch_end`.
+    `lightning.pytorch.callbacks.ModelCheckpoint` that mirrors `dirpath` to Flyte after each
+    on-disk checkpoint cycle in `lightning.pytorch.callbacks.ModelCheckpoint.on_train_epoch_end`.
     """
 
     def __init__(self, flyte_checkpoint: flyte.Checkpoint, *, dirpath: str | pathlib.Path, **kwargs) -> None:
@@ -84,14 +85,6 @@ class FlyteLightningCheckpointCallback(ModelCheckpoint):
         super().on_train_epoch_end(trainer, pl_module)
         if self.dirpath:
             self._flyte_checkpoint.save_sync(pathlib.Path(self.dirpath))
-
-
-def find_last_checkpoint(root: pathlib.Path) -> str | None:
-    matches = list(root.rglob("last.ckpt"))
-    if not matches:
-        return None
-    matches.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-    return str(matches[0])
 
 
 class TinyModule(L.LightningModule):
@@ -138,7 +131,8 @@ def train_lightning(max_epochs: int = 3) -> float:
     resume_ckpt: str | None = None
     epoch_start = 0
     if prev_cp_path:
-        last_ckpt = find_last_checkpoint(prev_cp_path)
+        last = flyte.latest_checkpoint_under(prev_cp_path)
+        last_ckpt = str(last) if last else None
         if last_ckpt:
             ck = torch.load(last_ckpt, map_location="cpu", weights_only=False)
             epoch_start = int(ck.get("epoch", 0))

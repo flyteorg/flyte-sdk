@@ -12,27 +12,27 @@
 # ///
 
 """
-Unsloth + TRL ``SFTTrainer`` + Flyte ``Checkpoint``
+Unsloth + TRL `trl.trainer.SFTTrainer` + Flyte `Checkpoint`
 ===================================================
 
-LoRA fine-tuning with `Unsloth <https://unsloth.ai/docs>`__ and :class:`trl.trainer.SFTTrainer`, using the same
-checkpointing shape as ``pytorch_task_checkpoint.py``, ``pytorch_lightning_checkpoint.py``, and
-``huggingface_trainer_checkpoint.py``.
+LoRA fine-tuning with Unsloth (https://unsloth.ai/docs) and `trl.trainer.SFTTrainer`, using the same
+checkpointing shape as `pytorch_task_checkpoint.py`, `pytorch_lightning_checkpoint.py`, and
+`huggingface_trainer_checkpoint.py`.
 
-**Async task:** ``cp = ctx.checkpoint``, ``prev_cp_path = await cp.load()``, fixed ``unsloth_sft`` under the
-restored tree (or fresh), then ``get_last_checkpoint`` and ``trainer.train(resume_from_checkpoint=...)``.
+**Async task:** `cp = ctx.checkpoint`, `prev_cp_path = await cp.load()`, fixed `unsloth_sft` under the
+restored tree (or fresh), then `get_last_checkpoint` and `trainer.train(resume_from_checkpoint=...)`.
 
-**Retries:** ``chunks_start`` from ``trainer_state.json``; failures when
-``(global_step - 1) > chunks_start and (global_step - 1) % failure_interval == 0`` with
-``failure_interval = max_steps // RETRIES``.
+**Retries:** `chunks_start` from `trainer_state.json`; failures when
+`(global_step - 1) > chunks_start and (global_step - 1) % failure_interval == 0` with
+`failure_interval = max_steps // RETRIES`.
 
-**Callbacks:** :class:`FailureInjectionCallback` then :class:`FlyteTrainerCheckpointCallback` (fail before Flyte
-mirror). The latter calls :meth:`~flyte.Checkpoint.save_sync` on HF ``on_save`` (sync callback).
+**Callbacks:** `FailureInjectionCallback` then `FlyteTrainerCheckpointCallback` (fail before Flyte
+mirror). The latter calls `flyte.Checkpoint.save_sync` on HF `on_save` (sync callback).
 
-**Final persist:** ``await cp.save(output_dir)`` after training, matching Hugging Face / PyTorch task examples.
+**Final persist:** `await cp.save(output_dir)` after training, matching Hugging Face / PyTorch task examples.
 
 **Hardware:** Unsloth requires an **NVIDIA, AMD, or Intel GPU** (not Apple Silicon / MPS). Imports from
-``unsloth`` are deferred until the task body.
+`unsloth` are deferred until the task body.
 """
 
 from __future__ import annotations

@@ -2,14 +2,14 @@
 Scikit-learn partial_fit with checkpoints
 =========================================
 
-``SGDClassifier.partial_fit`` is resumed across task retries by pickling the estimator to
-``sgd_bundle.pkl``, matching ``huggingface_trainer_checkpoint.py``: resolve a bundle directory from
-``await checkpoint.load()``, ``await checkpoint.save`` after each training
+`sklearn.linear_model.SGDClassifier.partial_fit` is resumed across task retries by pickling the estimator to
+`sgd_bundle.pkl`, matching `huggingface_trainer_checkpoint.py`: resolve a bundle directory from
+`await checkpoint.load()`, `await checkpoint.save` after each training
 chunk (incremental training step).
 
-**Note:** ``uv run --script`` may install an older ``flyte`` from PyPI without
-``TaskContext.checkpoint``. Run with a venv where this repository is installed
-editable (``pip install -e .``), or pin a released SDK that includes checkpointing.
+**Note:** `uv run --script` may install an older `flyte` from PyPI without
+`flyte.models.TaskContext.checkpoint`. Run with a venv where this repository is installed
+editable (`pip install -e .`), or pin a released SDK that includes checkpointing.
 """
 
 from __future__ import annotations
