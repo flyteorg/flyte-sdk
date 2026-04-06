@@ -20,7 +20,7 @@ from flyte._checkpoint import (
     repair_union_prev_checkpoint_uri,
 )
 from flyte._context import Context, ContextData
-from flyte.models import ActionID, Checkpoints, RawDataPath, TaskContext
+from flyte.models import ActionID, CheckpointPaths, RawDataPath, TaskContext
 from flyte.report import Report
 from flyte.storage._parallel_reader import DownloadQueueEmpty
 
@@ -111,7 +111,7 @@ def test_checkpoint_repairs_prev_via_task_context() -> None:
             output_path=str(base / "o"),
             run_base_dir=str(base),
             report=Report(name="t"),
-            checkpoints=None,
+            checkpoint_paths=None,
         )
         with Context(ContextData(task_context=tctx)):
             cp = Checkpoint("s3://bucket/out", wrong_prev)
@@ -318,7 +318,7 @@ def test_task_context_checkpoint_property_cached() -> None:
             output_path=str(base / "outputs"),
             run_base_dir=str(base),
             report=Report(name="t"),
-            checkpoints=Checkpoints(checkpoint_path=out, prev_checkpoint_path=prev),
+            checkpoint_paths=CheckpointPaths(checkpoint_path=out, prev_checkpoint_path=prev),
         )
         assert tctx.checkpoint is not None
         assert tctx.checkpoint is tctx.checkpoint
@@ -334,7 +334,7 @@ def test_task_context_checkpoint_none_without_prefix() -> None:
         output_path="/tmp/o",
         run_base_dir="/tmp",
         report=Report(name="t"),
-        checkpoints=None,
+        checkpoint_paths=None,
     )
     assert tctx.checkpoint is None
 
@@ -347,6 +347,6 @@ def test_task_context_checkpoint_none_empty_dest() -> None:
         output_path="/tmp/o",
         run_base_dir="/tmp",
         report=Report(name="t"),
-        checkpoints=Checkpoints(checkpoint_path="  ", prev_checkpoint_path=None),
+        checkpoint_paths=CheckpointPaths(checkpoint_path="  ", prev_checkpoint_path=None),
     )
     assert tctx.checkpoint is None

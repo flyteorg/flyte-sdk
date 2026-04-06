@@ -225,7 +225,7 @@ class TaskContext:
     run_base_dir: str
     report: Report
     group_data: GroupData | None = None
-    checkpoints: Checkpoints | None = None
+    checkpoint_paths: CheckpointPaths | None = None
     code_bundle: CodeBundle | None = None
     compiled_image_cache: ImageCache | None = None
     data: Dict[str, Any] = field(default_factory=dict)
@@ -274,7 +274,7 @@ class TaskContext:
         from flyte._checkpoint import CHECKPOINT_CACHE_KEY
         from flyte._checkpoint import Checkpoint as CheckpointCls
 
-        cps = self.checkpoints
+        cps = self.checkpoint_paths
         if cps is None:
             return None
         dest = cps.checkpoint_path
@@ -337,7 +337,7 @@ class CodeBundle:
 
 @rich.repr.auto
 @dataclass(frozen=True)
-class Checkpoints:
+class CheckpointPaths:
     """
     Paths the platform provides for this task's checkpoint output and optional previous-attempt input.
 

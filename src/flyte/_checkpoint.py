@@ -9,7 +9,7 @@ open / open_sync in ``"wb"`` mode) so explicit `file://` checkpoint URIs work wi
 - **Sync tasks:** `checkpoint.load_sync()`, `checkpoint.save_sync(...)` (same semantics as
   `flyte.io.File.download_sync` / sync uploads — no `flyte.syncify`).
 
-`flyte.models` exposes `flyte.models.Checkpoints`, a small value type with the platform
+`flyte.models` exposes `flyte.models.CheckpointPaths`, a small value type with the platform
 `checkpoint_path` and `prev_checkpoint_path` strings. `flyte.Checkpoint` is the runtime helper
 that downloads the previous attempt's **blob** into a temp workspace and uploads a new blob to the
 task output prefix (including tarball encoding when you save a directory).

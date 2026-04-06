@@ -24,7 +24,7 @@ from flyte._task import F, P, R, TaskTemplate
 from flyte.models import (
     ActionID,
     ActionPhase,
-    Checkpoints,
+    CheckpointPaths,
     CodeBundle,
     RawDataPath,
     SerializationContext,
@@ -555,13 +555,13 @@ class _Runner:
         raw_data_path_obj = RawDataPath(path=raw_data_path)
         checkpoint_path = f"{raw_data_path}/checkpoint"
         prev_checkpoint = f"{raw_data_path}/prev_checkpoint"
-        checkpoints = Checkpoints(prev_checkpoint_path=prev_checkpoint, checkpoint_path=checkpoint_path)
+        checkpoint_paths = CheckpointPaths(prev_checkpoint_path=prev_checkpoint, checkpoint_path=checkpoint_path)
 
         async def _run_task() -> Tuple[Any, Optional[Exception]]:
             ctx = internal_ctx()
             tctx = TaskContext(
                 action=action,
-                checkpoints=checkpoints,
+                checkpoint_paths=checkpoint_paths,
                 code_bundle=code_bundle,
                 output_path=output_path,
                 version=version or "na",
@@ -638,7 +638,7 @@ class _Runner:
         rd_base = raw_data_path.path
         tctx = TaskContext(
             action=action,
-            checkpoints=Checkpoints(
+            checkpoint_paths=CheckpointPaths(
                 prev_checkpoint_path=storage_join(rd_base, "prev_checkpoint"),
                 checkpoint_path=storage_join(rd_base, "checkpoint"),
             ),
