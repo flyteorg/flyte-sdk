@@ -409,7 +409,7 @@ class SimpleTransformer(TypeTransformer[T]):
         if expected_python_type is not self._type:
             if expected_python_type is None and issubclass(self._type, NoneType):
                 # If the expected type is NoneType, we can return None
-                return None
+                return None  # type: ignore[return-value]
             raise TypeTransformerFailedError(
                 f"Cannot convert to type {expected_python_type}, only {self._type} is supported"
             )
@@ -988,7 +988,7 @@ class ProtobufTransformer(TypeTransformer[Message]):
         try:
             if type(python_val) is struct_pb2.ListValue:
                 literals = []
-                for v in python_val:
+                for v in python_val:  # type: ignore[attr-defined]
                     literal_type = TypeEngine.to_literal_type(type(v))
                     # Recursively convert python native values to literals
                     literal = await TypeEngine.to_literal(v, type(v), literal_type)
