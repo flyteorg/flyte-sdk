@@ -11,7 +11,7 @@ from flyte._internal.runtime.taskrunner import extract_download_run_upload
 from flyte._logging import logger
 from flyte._task import TaskTemplate
 from flyte._utils import adjust_sys_path
-from flyte.models import ActionID, Checkpoints, CodeBundle, PathRewrite, RawDataPath
+from flyte.models import ActionID, CheckpointPaths, CodeBundle, PathRewrite, RawDataPath
 
 
 async def download_tgz(destination: str, version: str, tgz: str) -> CodeBundle:
@@ -159,7 +159,7 @@ async def run_task(
             raw_data_path=RawDataPath(path=raw_data_path, path_rewrite=path_rewrite),
             output_path=output_path,
             run_base_dir=run_base_dir,
-            checkpoints=Checkpoints(prev_checkpoint_path=prev_checkpoint, checkpoint_path=checkpoint_path),
+            checkpoint_paths=CheckpointPaths(prev_checkpoint_path=prev_checkpoint, checkpoint_path=checkpoint_path),
             code_bundle=code_bundle,
             input_path=input_path,
             image_cache=ImageCache.from_transport(image_cache) if image_cache else None,

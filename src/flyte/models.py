@@ -17,6 +17,7 @@ from flyte._logging import logger
 if TYPE_CHECKING:
     from flyteidl2.core import literals_pb2
 
+    from flyte._checkpoint import Checkpoint
     from flyte._internal.imagebuild.image_builder import ImageCache
     from flyte.report import Report
 
@@ -224,7 +225,7 @@ class TaskContext:
     run_base_dir: str
     report: Report
     group_data: GroupData | None = None
-    checkpoints: Checkpoints | None = None
+    checkpoint_paths: CheckpointPaths | None = None
     code_bundle: CodeBundle | None = None
     compiled_image_cache: ImageCache | None = None
     data: Dict[str, Any] = field(default_factory=dict)
@@ -257,6 +258,45 @@ class TaskContext:
         :return: bool
         """
         return self.mode == "remote"
+
+    @property
+    def checkpoint(self) -> Optional[Checkpoint]:
+        """
+        Task checkpoint helper for the runtime `checkpoint_path` / `prev_checkpoint` prefixes.
+
+        Returns a lazily constructed `flyte.Checkpoint` cached on `flyte.models.TaskContext.data`, or
+        `None` when no checkpoint output prefix is configured. In async tasks use `flyte.Checkpoint.load`
+        and `flyte.Checkpoint.save`; in sync tasks use `flyte.Checkpoint.load_sync` and
+        `flyte.Checkpoint.save_sync`.
+        For a **single raw blob**, pass `bytes` to save; after a successful load, the blob is at
+        `checkpoint.path / "payload"` when the remote object is not a tarball.
+        """
+        from flyte._checkpoint import CHECKPOINT_CACHE_KEY
+        from flyte._checkpoint import Checkpoint as CheckpointCls
+
+        cps = self.checkpoint_paths
+        if cps is None:
+            return None
+        dest = cps.checkpoint_path
+        if dest is None or not str(dest).strip():
+            return None
+        cached = self.data.get(CHECKPOINT_CACHE_KEY)
+        if cached is not None:
+            assert isinstance(cached, CheckpointCls)
+            return cached
+        prev = cps.prev_checkpoint_path
+        prev_n = prev.strip() if prev else None
+        cp = CheckpointCls(str(dest).strip(), prev_n or None)
+        self.data[CHECKPOINT_CACHE_KEY] = cp
+        return cp
+
+    @property
+    def attempt_number(self) -> int:
+        """
+        Get the attempt number for the current task.
+        :return: The attempt number.
+        """
+        return int(os.environ.get("FLYTE_ATTEMPT_NUMBER", "0"))
 
 
 @rich.repr.auto
@@ -297,9 +337,12 @@ class CodeBundle:
 
 @rich.repr.auto
 @dataclass(frozen=True)
-class Checkpoints:
+class CheckpointPaths:
     """
-    A class representing the checkpoints for a task. This is used to store the checkpoints for the task execution.
+    Paths the platform provides for this task's checkpoint output and optional previous-attempt input.
+
+    This is distinct from `flyte.Checkpoint`, which performs download/upload of the checkpoint **blob**
+    for those paths (see `flyte.models.TaskContext.checkpoint`).
     """
 
     prev_checkpoint_path: str | None

@@ -12,7 +12,7 @@ async def double(x: int) -> int:
     print(flyte.ctx().raw_data_path)
     print(flyte.ctx().data)
     print(flyte.ctx().code_bundle)
-    print(flyte.ctx().checkpoints)
+    print(flyte.ctx().checkpoint_paths)
     return x * 2
 
 
