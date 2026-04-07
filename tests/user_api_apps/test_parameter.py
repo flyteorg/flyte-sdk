@@ -80,3 +80,15 @@ def test_parameter_env_var_underscore_prefix():
 def test_parameter_env_var_with_numbers():
     p = Parameter(name="x", value="v", env_var="VAR_123")
     assert p.env_var == "VAR_123"
+
+
+def test_parameter_none_value():
+    p = Parameter(name="data")
+    assert p.name == "data"
+    assert p.value is None
+
+
+def test_parameter_none_value_with_mount():
+    p = Parameter(name="model", mount="/tmp/model")
+    assert p.value is None
+    assert p.mount == "/tmp/model"
