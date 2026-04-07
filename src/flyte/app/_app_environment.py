@@ -88,10 +88,12 @@ class AppEnvironment(Environment):
 
     timeouts: Timeouts = field(default_factory=Timeouts)
 
-    # private field
+    # private fields
     _server: Callable[[], None] | None = field(init=False, default=None)
     _on_startup: Callable[[], None] | None = field(init=False, default=None)
     _on_shutdown: Callable[[], None] | None = field(init=False, default=None)
+
+    _FINGERPRINT_SKIP_FIELDS: frozenset = frozenset({"_caller_frame"})
 
     def _validate_name(self):
         if not APP_NAME_RE.fullmatch(self.name):
@@ -244,8 +246,6 @@ class AppEnvironment(Environment):
             version = serialize_context.version
             if version is None and serialize_context.code_bundle is not None:
                 version = serialize_context.code_bundle.computed_version
-
-            print("VERSION:", version)
             cmd: list[str] = [
                 "fserve",
                 "--version",

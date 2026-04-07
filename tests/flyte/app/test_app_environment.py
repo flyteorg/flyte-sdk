@@ -1254,6 +1254,104 @@ def test_app_environment_timeouts_invalid_type():
         )
 
 
+def test_app_environment_config_fingerprint_deterministic():
+    """config_fingerprint() produces the same string for identically-configured envs."""
+    app1 = AppEnvironment(
+        name="fp-test",
+        image=Image.from_base("python:3.11"),
+        parameters=[Parameter(value="v1", name="config")],
+        env_vars={"KEY": "VAL"},
+    )
+    app2 = AppEnvironment(
+        name="fp-test",
+        image=Image.from_base("python:3.11"),
+        parameters=[Parameter(value="v1", name="config")],
+        env_vars={"KEY": "VAL"},
+    )
+    assert app1.config_fingerprint() == app2.config_fingerprint()
+
+
+def test_app_environment_config_fingerprint_changes_on_config_change():
+    """config_fingerprint() changes when a deployment-relevant field changes."""
+    app1 = AppEnvironment(
+        name="fp-change",
+        image=Image.from_base("python:3.11"),
+        parameters=[Parameter(value="v1", name="config")],
+    )
+    app2 = AppEnvironment(
+        name="fp-change",
+        image=Image.from_base("python:3.11"),
+        parameters=[Parameter(value="v2", name="config")],
+    )
+    assert app1.config_fingerprint() != app2.config_fingerprint()
+
+
+def test_app_environment_config_fingerprint_excludes_non_init_fields():
+    """Non-init fields like _server, _on_startup, _on_shutdown are excluded."""
+    app = AppEnvironment(
+        name="fp-lifecycle",
+        image=Image.from_base("python:3.11"),
+    )
+
+    @app.on_startup
+    def startup():
+        pass
+
+    @app.server
+    def serve():
+        pass
+
+    @app.on_shutdown
+    def shutdown():
+        pass
+
+    fp = app.config_fingerprint()
+    assert "0x" not in fp
+    assert "_server" not in fp
+    assert "_on_startup" not in fp
+    assert "_on_shutdown" not in fp
+
+
+def test_fastapi_app_environment_config_fingerprint_excludes_app_object():
+    """FastAPIAppEnvironment fingerprint excludes the FastAPI app (has memory address)."""
+    import fastapi
+
+    from flyte.app.extras._fastapi import FastAPIAppEnvironment
+
+    fa_app = fastapi.FastAPI()
+    env = FastAPIAppEnvironment(
+        name="fp-fastapi",
+        image=Image.from_base("python:3.11"),
+        app=fa_app,
+        parameters=[Parameter(value="v1", name="data")],
+    )
+
+    fp = env.config_fingerprint()
+    assert "0x" not in fp
+    assert "FastAPI" not in fp or "type='FastAPI'" in fp
+
+
+def test_fastapi_app_environment_config_fingerprint_stable_across_instances():
+    """Two FastAPIAppEnvironments with same config produce the same fingerprint."""
+    import fastapi
+
+    from flyte.app.extras._fastapi import FastAPIAppEnvironment
+
+    env1 = FastAPIAppEnvironment(
+        name="fp-stable",
+        image=Image.from_base("python:3.11"),
+        app=fastapi.FastAPI(),
+        parameters=[Parameter(value="s3://b/f.txt", name="data")],
+    )
+    env2 = FastAPIAppEnvironment(
+        name="fp-stable",
+        image=Image.from_base("python:3.11"),
+        app=fastapi.FastAPI(),
+        parameters=[Parameter(value="s3://b/f.txt", name="data")],
+    )
+    assert env1.config_fingerprint() == env2.config_fingerprint()
+
+
 def test_app_environment_clone_with_timeouts():
     """
     GOAL: Validate that clone_with can override timeouts.

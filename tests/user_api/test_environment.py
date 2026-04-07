@@ -113,3 +113,38 @@ def test_environment_get_kwargs():
 def test_environment_interruptible():
     env = Environment(name="interruptible_env", interruptible=True)
     assert env.interruptible is True
+
+
+def test_config_fingerprint_deterministic():
+    env1 = Environment(name="fingerprint_env", env_vars={"A": "1"})
+    env2 = Environment(name="fingerprint_env", env_vars={"A": "1"})
+    assert env1.config_fingerprint() == env2.config_fingerprint()
+
+
+def test_config_fingerprint_changes_with_config():
+    env1 = Environment(name="fp_env1", env_vars={"A": "1"})
+    env2 = Environment(name="fp_env1", env_vars={"A": "2"})
+    assert env1.config_fingerprint() != env2.config_fingerprint()
+
+
+def test_config_fingerprint_includes_all_init_fields():
+    env = Environment(
+        name="fp_full",
+        image="python:3.12",
+        resources=flyte.Resources(cpu="2"),
+        env_vars={"KEY": "VAL"},
+        interruptible=True,
+    )
+    fp = env.config_fingerprint()
+    assert "name=" in fp
+    assert "image=" in fp
+    assert "resources=" in fp
+    assert "env_vars=" in fp
+    assert "interruptible=" in fp
+
+
+def test_config_fingerprint_skips_objects_with_memory_addresses():
+    """Objects whose repr contains 0x (memory addresses) are excluded."""
+    env = Environment(name="fp_addr")
+    fp = env.config_fingerprint()
+    assert "0x" not in fp

@@ -23,8 +23,6 @@ from typing import (
     runtime_checkable,
 )
 
-import cloudpickle
-
 from flyte._initialize import get_init_config
 from flyte._logging import LogFormat, logger
 from flyte._tools import ipython_check
@@ -648,10 +646,11 @@ class _Serve:
             version = app_deployment.version
         else:
             h = hashlib.md5()
-            h.update(cloudpickle.dumps(app_deployment.envs))
+            for env_name in sorted(app_deployment.envs):
+                h.update(app_deployment.envs[env_name].config_fingerprint().encode("utf-8"))
             if code_bundle:
                 h.update(code_bundle.computed_version.encode("utf-8"))
-            h.update(cloudpickle.dumps(image_cache))
+            h.update(image_cache.model_dump_json(exclude={"serialized_form"}).encode("utf-8"))
             version = h.hexdigest()
 
         # Create serialization context

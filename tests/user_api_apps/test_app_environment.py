@@ -202,3 +202,49 @@ def test_app_environment_domain_none():
 def test_app_environment_cluster_pool():
     app = AppEnvironment(name="pool-app", image="auto", cluster_pool="gpu-pool")
     assert app.cluster_pool == "gpu-pool"
+
+
+def test_app_environment_config_fingerprint_deterministic():
+    app1 = AppEnvironment(
+        name="fp-app",
+        image=Image.from_base("python:3.12"),
+        parameters=[Parameter(name="config", value="v1")],
+    )
+    app2 = AppEnvironment(
+        name="fp-app",
+        image=Image.from_base("python:3.12"),
+        parameters=[Parameter(name="config", value="v1")],
+    )
+    assert app1.config_fingerprint() == app2.config_fingerprint()
+
+
+def test_app_environment_config_fingerprint_changes_with_parameters():
+    app1 = AppEnvironment(
+        name="fp-app2",
+        image=Image.from_base("python:3.12"),
+        parameters=[Parameter(name="config", value="v1")],
+    )
+    app2 = AppEnvironment(
+        name="fp-app2",
+        image=Image.from_base("python:3.12"),
+        parameters=[Parameter(name="config", value="v2")],
+    )
+    assert app1.config_fingerprint() != app2.config_fingerprint()
+
+
+def test_app_environment_config_fingerprint_excludes_lifecycle_callbacks():
+    """Lifecycle callbacks contain memory addresses and should be excluded."""
+    app = AppEnvironment(name="fp-lifecycle", image=Image.from_base("python:3.12"))
+
+    @app.on_startup
+    def startup():
+        pass
+
+    @app.server
+    def serve():
+        pass
+
+    fp = app.config_fingerprint()
+    assert "0x" not in fp
+    assert "_server" not in fp
+    assert "_on_startup" not in fp

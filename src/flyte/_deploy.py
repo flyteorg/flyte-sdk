@@ -8,7 +8,6 @@ import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
-import cloudpickle
 import rich.repr
 
 from flyte.models import ActionID, NativeInterface, RawDataPath, SerializationContext, TaskContext
@@ -475,9 +474,10 @@ async def apply(deployment_plan: DeploymentPlan, copy_style: CopyFiles, dryrun: 
             version = deployment_plan.version
         else:
             h = hashlib.md5()
-            h.update(cloudpickle.dumps(deployment_plan.envs))
+            for env_name in sorted(deployment_plan.envs):
+                h.update(deployment_plan.envs[env_name].config_fingerprint().encode("utf-8"))
             h.update(code_bundle.computed_version.encode("utf-8"))
-            h.update(cloudpickle.dumps(image_cache))
+            h.update(image_cache.model_dump_json(exclude={"serialized_form"}).encode("utf-8"))
             version = h.hexdigest()
 
     sc = SerializationContext(

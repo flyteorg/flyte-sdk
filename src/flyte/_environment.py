@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Literal, Optional, Union
@@ -104,6 +105,30 @@ class Environment:
         **kwargs: Any,
     ) -> Environment:
         raise NotImplementedError
+
+    _FINGERPRINT_SKIP_FIELDS: frozenset = frozenset()
+
+    def config_fingerprint(self) -> str:
+        """Return a deterministic string representing deployment-affecting config.
+
+        Used for stable version hashing so that redeploying the same
+        configuration does not produce a spurious version change.  Skips
+        non-init fields, fields listed in ``_FINGERPRINT_SKIP_FIELDS``,
+        and any field whose ``repr`` contains a Python object address
+        (``0x``, e.g. FastAPI app instances or function callbacks).
+
+        Subclasses can extend ``_FINGERPRINT_SKIP_FIELDS`` to exclude
+        additional non-deterministic fields.
+        """
+        parts: List[str] = []
+        for f in dataclasses.fields(self):
+            if not f.init or f.name in self._FINGERPRINT_SKIP_FIELDS:
+                continue
+            r = repr(getattr(self, f.name))
+            if "0x" in r:  # skip objects with Python memory addresses
+                continue
+            parts.append(f"{f.name}={r}")
+        return "|".join(parts)
 
     def _get_kwargs(self) -> Dict[str, Any]:
         """
