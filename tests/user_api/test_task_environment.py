@@ -140,3 +140,83 @@ def test_task_evironment_typechecks():
 
     with pytest.raises(TypeError, match="Expected reusable to be of type ReusePolicy, got <class 'int'>"):
         flyte.TaskEnvironment(name="bad_reusable", image="img", reusable=123)
+
+
+def test_config_fingerprint_deterministic():
+    env1 = flyte.TaskEnvironment(name="fp_task", image="img", cache="auto", queue="default")
+    env2 = flyte.TaskEnvironment(name="fp_task", image="img", cache="auto", queue="default")
+    assert env1.config_fingerprint() == env2.config_fingerprint()
+
+
+def test_config_fingerprint_changes_with_cache():
+    env1 = flyte.TaskEnvironment(name="fp_cache", image="img", cache="auto")
+    env2 = flyte.TaskEnvironment(name="fp_cache", image="img", cache="disable")
+    assert env1.config_fingerprint() != env2.config_fingerprint()
+
+
+def test_config_fingerprint_changes_with_queue():
+    env1 = flyte.TaskEnvironment(name="fp_queue", image="img", queue="gpu")
+    env2 = flyte.TaskEnvironment(name="fp_queue", image="img", queue="cpu")
+    assert env1.config_fingerprint() != env2.config_fingerprint()
+
+
+def test_config_fingerprint_changes_with_reusable():
+    env1 = flyte.TaskEnvironment(name="fp_reuse", image="img")
+    env2 = flyte.TaskEnvironment(name="fp_reuse", image="img", reusable=flyte.ReusePolicy(replicas=1))
+    assert env1.config_fingerprint() != env2.config_fingerprint()
+
+
+def test_config_fingerprint_changes_with_resources():
+    env1 = flyte.TaskEnvironment(name="fp_res", image="img", resources=flyte.Resources(cpu="1"))
+    env2 = flyte.TaskEnvironment(name="fp_res", image="img", resources=flyte.Resources(cpu="2"))
+    assert env1.config_fingerprint() != env2.config_fingerprint()
+
+
+def test_config_fingerprint_includes_task_environment_fields():
+    env = flyte.TaskEnvironment(
+        name="fp_fields",
+        image="python:3.12",
+        resources=flyte.Resources(cpu="2"),
+        cache="auto",
+        queue="default",
+    )
+    fp = env.config_fingerprint()
+    assert "name=" in fp
+    assert "image=" in fp
+    assert "resources=" in fp
+    assert "cache=" in fp
+    assert "queue=" in fp
+
+
+def test_config_fingerprint_excludes_non_init_fields():
+    env = flyte.TaskEnvironment(name="fp_noninit", image="img")
+
+    @env.task
+    async def my_task(x: int) -> int:
+        return x
+
+    fp = env.config_fingerprint()
+    assert "_tasks=" not in fp
+
+
+def test_config_fingerprint_stable_after_adding_tasks():
+    env1 = flyte.TaskEnvironment(name="fp_stable", image="img")
+    fp_before = env1.config_fingerprint()
+
+    @env1.task
+    async def added_task(x: int) -> int:
+        return x + 1
+
+    fp_after = env1.config_fingerprint()
+    assert fp_before == fp_after
+
+
+def test_config_fingerprint_no_memory_addresses():
+    env = flyte.TaskEnvironment(name="fp_addr", image="img")
+
+    @env.task
+    async def some_task(x: int) -> int:
+        return x
+
+    fp = env.config_fingerprint()
+    assert "0x" not in fp
