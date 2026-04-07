@@ -239,18 +239,21 @@ class TestBootstrapSslFromServer:
         """conn.close() is called after successful chain retrieval."""
         mock_conn = MagicMock()
         mock_conn.get_peer_cert_chain.return_value = [MagicMock()]
+        mock_sock = MagicMock()
 
         with (
             patch(f"{_SESSION_MOD}.SSL") as mock_ssl,
             patch(f"{_SESSION_MOD}.crypto") as mock_crypto,
-            patch(f"{_SESSION_MOD}.socket"),
+            patch(f"{_SESSION_MOD}.socket") as mock_socket,
         ):
+            mock_socket.create_connection.return_value = mock_sock
             mock_ssl.Connection.return_value = mock_conn
             mock_crypto.dump_certificate.return_value = (
                 b"-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----\n"
             )
             _bootstrap_ssl_from_server("https://example.com:443")
 
+        mock_sock.settimeout.assert_called_once_with(None)
         mock_conn.close.assert_called_once()
 
     def test_closes_socket_if_connection_setup_fails(self):
