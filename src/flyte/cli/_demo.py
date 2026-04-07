@@ -40,6 +40,25 @@ def _container_is_running(container_name: str) -> bool:
     return container_name in result.stdout
 
 
+def _container_is_paused(container_name: str) -> bool:
+    result = subprocess.run(
+        [
+            "docker",
+            "ps",
+            "--filter",
+            f"name=^{container_name}$",
+            "--filter",
+            "status=paused",
+            "--format",
+            "{{.Names}}",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return container_name in result.stdout
+
+
 def _is_local_image(image: str) -> bool:
     """Check if the image is local (no registry prefix)."""
     name = image.split(":", maxsplit=1)[0]
@@ -170,8 +189,31 @@ def _merge_kubeconfig(kubeconfig_path: Path, container_name: str) -> None:
     click.echo(f"Merged kubeconfig into {default_kubeconfig}")
 
 
+def _wait_for_demo_ready(is_dev_mode: bool) -> None:
+    if not is_dev_mode:
+        _wait_for_console_ready(_CONSOLE_READYZ_URL)
+        click.echo("\nFlyte demo cluster is ready!")
+        click.echo("UI is available at http://localhost:30080/v2")
+
+
+def stop_demo() -> None:
+    if _container_is_paused(_CONTAINER_NAME):
+        click.echo("Demo cluster is already paused.")
+        return
+    if not _container_is_running(_CONTAINER_NAME):
+        click.echo("Demo cluster is not running.")
+        return
+    subprocess.run(["docker", "pause", _CONTAINER_NAME], check=True, capture_output=True)
+    click.echo("Demo cluster paused. Run 'flyte start demo' to resume.")
+
+
 def launch_demo(image_name: str, is_dev_mode: bool) -> None:
     _ensure_volume(_VOLUME_NAME)
+
+    if _container_is_paused(_CONTAINER_NAME):
+        click.echo("Resuming paused demo cluster...")
+        subprocess.run(["docker", "unpause", _CONTAINER_NAME], check=True, capture_output=True)
+        return
 
     if _container_is_running(_CONTAINER_NAME):
         click.echo(f"Container '{_CONTAINER_NAME}' is already running.")
@@ -190,7 +232,4 @@ def launch_demo(image_name: str, is_dev_mode: bool) -> None:
 
     _merge_kubeconfig(_KUBECONFIG_PATH, _CONTAINER_NAME)
     _switch_k8s_context()
-    if not is_dev_mode:
-        _wait_for_console_ready(_CONSOLE_READYZ_URL)
-        click.echo("\nFlyte demo cluster is ready!")
-        click.echo("UI is available at http://localhost:30080/v2")
+    _wait_for_demo_ready(is_dev_mode)
