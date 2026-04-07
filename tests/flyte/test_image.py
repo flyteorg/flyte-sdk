@@ -1,9 +1,20 @@
 from pathlib import Path
 from typing import cast
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from flyte._image import AptPackages, CodeBundleLayer, CopyConfig, Image, UVScript, resolve_code_bundle_layer
+from flyte._image import (
+    _BASE_REGISTRY,
+    _LOCALHOST_REGISTRY,
+    AptPackages,
+    CodeBundleLayer,
+    CopyConfig,
+    Image,
+    UVScript,
+    _get_base_registry,
+    resolve_code_bundle_layer,
+)
 from flyte._internal.imagebuild.docker_builder import PipAndRequirementsHandler
 
 
@@ -727,3 +738,49 @@ def test_resolve_code_bundle_loaded_modules_copy_style_none(tmp_path):
     assert bundle_layers[0].root_dir == tmp_path
     assert bundle_layers[0].copy_style == "loaded_modules"
     assert bundle_layers[0].dst == "."
+
+
+def test_get_base_registry_returns_default_when_not_initialized():
+    """When flyte is not initialized, _get_base_registry returns the default registry."""
+    with patch("flyte._initialize._get_init_config", return_value=None):
+        assert _get_base_registry() == _BASE_REGISTRY
+
+
+def test_get_base_registry_returns_default_when_no_client():
+    """When init config has no client, _get_base_registry returns the default registry."""
+    mock_config = MagicMock()
+    mock_config.client = None
+    with patch("flyte._initialize._get_init_config", return_value=mock_config):
+        assert _get_base_registry() == _BASE_REGISTRY
+
+
+def test_get_base_registry_returns_default_for_remote_endpoint():
+    """When endpoint is a remote URL, _get_base_registry returns the default registry."""
+    mock_config = MagicMock()
+    mock_config.client.endpoint = "dns:///my-cluster.example.com"
+    with patch("flyte._initialize._get_init_config", return_value=mock_config):
+        assert _get_base_registry() == _BASE_REGISTRY
+
+
+def test_get_base_registry_returns_localhost_for_localhost_endpoint():
+    """When endpoint contains 'localhost', _get_base_registry returns the localhost registry."""
+    mock_config = MagicMock()
+    mock_config.client.endpoint = "localhost:8090"
+    with patch("flyte._initialize._get_init_config", return_value=mock_config):
+        assert _get_base_registry() == _LOCALHOST_REGISTRY
+
+
+def test_get_base_registry_returns_localhost_for_localhost_in_url():
+    """When endpoint contains 'localhost' as part of a URL, _get_base_registry returns the localhost registry."""
+    mock_config = MagicMock()
+    mock_config.client.endpoint = "dns:///localhost:30080"
+    with patch("flyte._initialize._get_init_config", return_value=mock_config):
+        assert _get_base_registry() == _LOCALHOST_REGISTRY
+
+
+def test_get_base_registry_returns_default_for_empty_endpoint():
+    """When endpoint is empty string, _get_base_registry returns the default registry."""
+    mock_config = MagicMock()
+    mock_config.client.endpoint = ""
+    with patch("flyte._initialize._get_init_config", return_value=mock_config):
+        assert _get_base_registry() == _BASE_REGISTRY
