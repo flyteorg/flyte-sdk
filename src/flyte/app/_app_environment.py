@@ -245,6 +245,7 @@ class AppEnvironment(Environment):
             if version is None and serialize_context.code_bundle is not None:
                 version = serialize_context.code_bundle.computed_version
 
+            print("VERSION:", version)
             cmd: list[str] = [
                 "fserve",
                 "--version",

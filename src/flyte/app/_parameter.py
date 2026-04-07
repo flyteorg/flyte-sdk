@@ -215,7 +215,7 @@ class Parameter:
     :param type: Type of parameter. If ``None``, the type will be inferred from the value.
     :param env_var: Environment name to set the value in the serving environment.
     :param download: When True, the parameter will be automatically downloaded. This
-        only works if the value refers to an item in a object store. i.e. `s3://...`
+        only works if the value refers to a file/directory in a object store. i.e. `s3://...`
     :param mount: If `value` is a directory, then the directory will be available
         at `mount`. If `value` is a file, then the file will be downloaded into the
         `mount` directory.
@@ -227,7 +227,7 @@ class Parameter:
     value: Optional[ParameterTypes | _DelayedValue] = None
     type: Optional[Literal["string", "file", "directory", "app_endpoint"]] = None
     env_var: Optional[str] = None
-    download: bool = False
+    download: bool = True
     mount: Optional[str] = None
     ignore_patterns: list[str] = field(default_factory=list)
 

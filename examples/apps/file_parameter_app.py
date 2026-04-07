@@ -78,8 +78,9 @@ app_env = FastAPIAppEnvironment(
     resources=flyte.Resources(cpu=1, memory="512Mi"),
     requires_auth=False,
     parameters=[
-        Parameter(name="data", mount=DATA_MOUNT_PATH, env_var=DATA_ENV_VAR),
-        Parameter(name="data_dir", mount=DATA_DIR_MOUNT_PATH, env_var=DATA_DIR_ENV_VAR),
+        Parameter(name="data", type="file", mount=DATA_MOUNT_PATH, env_var=DATA_ENV_VAR),
+        Parameter(name="data_with_dir", type="file", mount=DATA_DIR_MOUNT_PATH, env_var=DATA_DIR_ENV_VAR),
+        Parameter(name="data_raw", type="file"),
     ],
     env_vars={"LOG_LEVEL": "10"},
 )
@@ -110,13 +111,24 @@ def from_env_var(from_dir: bool = False) -> dict:
 @app.get("/from-helper-function")
 def from_helper_function(from_dir: bool = False) -> dict:
     """Return the contents of the parameter file."""
-    parameter_name = "data_dir" if from_dir else "data"
+    parameter_name = "data_with_dir" if from_dir else "data"
     data_path = get_parameter(parameter_name)
     if not os.path.exists(data_path):
         return {"error": "data file not available", "path": data_path}
     with open(data_path, "rb") as fh:
         contents = fh.read().decode("utf-8")
     return {"contents": contents, "path": data_path, "parameter": parameter_name, "from_dir": from_dir}
+
+
+@app.get("/raw")
+def raw() -> dict:
+    """Return the contents of the parameter file."""
+    data_path = get_parameter("data_raw")
+    if not os.path.exists(data_path):
+        return {"error": "data file not available", "path": data_path}
+    with open(data_path, "rb") as fh:
+        contents = fh.read().decode("utf-8")
+    return {"contents": contents, "path": data_path, "parameter": "data_raw"}
 
 
 @app.get("/health")
@@ -150,7 +162,8 @@ if __name__ == "__main__":
         parameter_values={
             app_env.name: {
                 "data": flyte.io.File.from_existing_remote(remote_path),
-                "data_dir": flyte.io.File.from_existing_remote(remote_path),
+                "data_with_dir": flyte.io.File.from_existing_remote(remote_path),
+                "data_raw": flyte.io.File.from_existing_remote(remote_path),
             }
         }
     ).serve(app_env)
