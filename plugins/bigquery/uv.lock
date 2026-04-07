@@ -423,6 +423,7 @@ dependencies = [
     { name = "packaging" },
     { name = "protobuf" },
     { name = "pydantic" },
+    { name = "pyopenssl" },
     { name = "pyyaml" },
     { name = "rich-click" },
     { name = "toml" },
@@ -469,6 +470,7 @@ requires-dist = [
     { name = "pyarrow", marker = "extra == 'examples-test'" },
     { name = "pydantic", specifier = ">=2.10.6" },
     { name = "pydantic-monty", marker = "extra == 'sandbox'", specifier = ">=0.0.8" },
+    { name = "pyopenssl", specifier = ">=24.0.0" },
     { name = "pyyaml", specifier = ">=6.0.2" },
     { name = "rich-click", specifier = "==1.8.9" },
     { name = "scikit-learn", marker = "extra == 'examples-test'" },
@@ -1481,6 +1483,19 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/b0/77/a5b8c569bf593b0140bde72ea885a803b82086995367bf2037de0159d924/pygments-2.19.2.tar.gz", hash = "sha256:636cb2477cec7f8952536970bc533bc43743542f70392ae026374600add5b887", size = 4968631, upload-time = "2025-06-21T13:39:12.283Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c7/21/705964c7812476f378728bdf590ca4b771ec72385c533964653c68e86bdc/pygments-2.19.2-py3-none-any.whl", hash = "sha256:86540386c03d588bb81d44bc3928634ff26449851e99741617ecb9037ee5ec0b", size = 1225217, upload-time = "2025-06-21T13:39:07.939Z" },
+]
+
+[[package]]
+name = "pyopenssl"
+version = "26.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cryptography" },
+    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/8e/11/a62e1d33b373da2b2c2cd9eb508147871c80f12b1cacde3c5d314922afdd/pyopenssl-26.0.0.tar.gz", hash = "sha256:f293934e52936f2e3413b89c6ce36df66a0b34ae1ea3a053b8c5020ff2f513fc", size = 185534, upload-time = "2026-03-15T14:28:26.353Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fb/7d/d4f7d908fa8415571771b30669251d57c3cf313b36a856e6d7548ae01619/pyopenssl-26.0.0-py3-none-any.whl", hash = "sha256:df94d28498848b98cc1c0ffb8ef1e71e40210d3b0a8064c9d29571ed2904bf81", size = 57969, upload-time = "2026-03-15T14:28:24.864Z" },
 ]
 
 [[package]]
