@@ -11,9 +11,10 @@ import uuid
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
+from flyteidl2.core.execution_pb2 import TaskExecution
+
 from flyte import logger
 from flyte.connectors import AsyncConnector, ConnectorRegistry, Resource, ResourceMeta
-from flyteidl2.core.execution_pb2 import TaskExecution
 
 
 @dataclass

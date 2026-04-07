@@ -1,9 +1,10 @@
 """A task that runs on the custom batch job connector."""
+
 from pathlib import Path
 
-import flyte
-
 from my_connector.task import BatchJobConfig, BatchJobTask
+
+import flyte
 
 batch_job = BatchJobTask(
     name="my_batch_job",

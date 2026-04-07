@@ -14,7 +14,7 @@ from flyte.models import SerializationContext
 @rich.repr.auto
 @dataclass(init=True, repr=True)
 class ConnectorEnvironment(AppEnvironment):
-    type: str = "connector"
+    type: str = "Connector"
     port: int | Port = field(default=Port(port=8080, name="h2c"))
 
     def __post_init__(self):

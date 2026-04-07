@@ -1,1 +1,1 @@
-from .connector import BatchJobMetadata
+from .connector import BatchJobMetadata as BatchJobMetadata
