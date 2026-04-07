@@ -260,9 +260,7 @@ async def test_local_docker_checker_arch_mismatch(mock_exec):
         ]
     }
     mock_exec.return_value = _make_mock_process(0, json.dumps(manifest).encode(), b"")
-    result = await LocalDockerCommandImageChecker.image_exists(
-        "registry/img", "tag1", arch=("linux/amd64",)
-    )
+    result = await LocalDockerCommandImageChecker.image_exists("registry/img", "tag1", arch=("linux/amd64",))
     assert result is None
 
 
