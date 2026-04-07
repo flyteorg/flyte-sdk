@@ -204,7 +204,7 @@ def stop_demo() -> None:
         click.echo("Demo cluster is not running.")
         return
     subprocess.run(["docker", "pause", _CONTAINER_NAME], check=True, capture_output=True)
-    click.echo("Demo cluster paused. Run 'flyte start demo' to resume.")
+    click.echo("Demo cluster stopped. Run 'flyte start demo' to resume.")
 
 
 def launch_demo(image_name: str, is_dev_mode: bool) -> None:
