@@ -83,10 +83,15 @@ def _bootstrap_ssl_from_server(endpoint: str) -> bytes:
     ctx.set_verify(SSL.VERIFY_NONE, lambda *args: True)
 
     sock = socket.create_connection(server_address, timeout=10)
-    conn = SSL.Connection(ctx, sock)
-    conn.set_tlsext_host_name(server_address[0].encode())
-    conn.set_connect_state()
+    # create_connection with a timeout leaves the fd in non-blocking mode.
+    # Restore blocking mode so pyOpenSSL's do_handshake() won't raise
+    # WantReadError/WantWriteError.
+    sock.settimeout(None)
+    conn = None
     try:
+        conn = SSL.Connection(ctx, sock)
+        conn.set_tlsext_host_name(server_address[0].encode())
+        conn.set_connect_state()
         conn.do_handshake()
 
         chain = conn.get_peer_cert_chain()
@@ -97,7 +102,10 @@ def _bootstrap_ssl_from_server(endpoint: str) -> bytes:
         logger.debug(f"Retrieved certificate chain ({len(pem_certs)} certs) from {server_address}")
         return b"\n".join(pem_certs)
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
+        else:
+            sock.close()
 
 
 async def _resolve_tls_ca_cert(
