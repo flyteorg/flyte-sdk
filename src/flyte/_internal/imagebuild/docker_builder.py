@@ -658,27 +658,44 @@ class DockerImageBuilder(ImageBuilder):
         )
         builders = result.stdout
 
-        # Check if there's any usable builder
-        if DockerImageBuilder._builder_name not in builders:
-            # No default builder found, create one
-            logger.info("No buildx builder found, creating one...")
+        # Check if there's any usable builder with the correct driver options
+        if DockerImageBuilder._builder_name in builders:
+            # Builder exists — verify it has network=host driver option
+            inspect_result = await run_sync_with_loop(
+                subprocess.run,
+                ["docker", "buildx", "inspect", DockerImageBuilder._builder_name],
+                capture_output=True,
+                text=True,
+            )
+            if inspect_result.returncode == 0 and 'network="host"' in inspect_result.stdout:
+                logger.info("Buildx builder already exists with correct config.")
+                return
+
+            # Builder exists but missing network=host, remove and recreate
+            logger.info("Buildx builder exists but missing network=host driver option, recreating...")
             await run_sync_with_loop(
                 subprocess.run,
-                [
-                    "docker",
-                    "buildx",
-                    "create",
-                    "--name",
-                    DockerImageBuilder._builder_name,
-                    "--platform",
-                    "linux/amd64,linux/arm64",
-                    "--driver-opt",
-                    "network=host",
-                ],
-                check=True,
+                ["docker", "buildx", "rm", DockerImageBuilder._builder_name],
+                check=False,
             )
         else:
-            logger.info("Buildx builder already exists.")
+            logger.info("No buildx builder found, creating one...")
+
+        await run_sync_with_loop(
+            subprocess.run,
+            [
+                "docker",
+                "buildx",
+                "create",
+                "--name",
+                DockerImageBuilder._builder_name,
+                "--platform",
+                "linux/amd64,linux/arm64",
+                "--driver-opt",
+                "network=host",
+            ],
+            check=True,
+        )
 
     async def _build_image(self, image: Image, *, push: bool = True, dry_run: bool = False, wait: bool = True) -> str:
         """
