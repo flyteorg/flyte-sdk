@@ -83,7 +83,6 @@ def _bootstrap_ssl_from_server(endpoint: str) -> bytes:
     ctx.set_verify(SSL.VERIFY_NONE, lambda *args: True)
 
     sock = socket.create_connection(server_address, timeout=10)
-    sock.setblocking(True)
     conn = SSL.Connection(ctx, sock)
     conn.set_tlsext_host_name(server_address[0].encode())
     conn.set_connect_state()
