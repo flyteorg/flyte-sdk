@@ -185,12 +185,14 @@ class TestBootstrapSslFromServer:
         mock_conn = MagicMock()
         mock_conn.get_peer_cert_chain.return_value = [fake_cert_1, fake_cert_2]
 
-        with patch(f"{_SESSION_MOD}.SSL") as mock_ssl, patch(f"{_SESSION_MOD}.crypto") as mock_crypto, patch(
-            f"{_SESSION_MOD}.socket"
-        ) as mock_socket:
+        with (
+            patch(f"{_SESSION_MOD}.SSL") as mock_ssl,
+            patch(f"{_SESSION_MOD}.crypto") as mock_crypto,
+            patch(f"{_SESSION_MOD}.socket") as mock_socket,
+        ):
             mock_ssl.Connection.return_value = mock_conn
-            mock_crypto.dump_certificate.side_effect = (
-                lambda fmt, cert: b"-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----\n"
+            mock_crypto.dump_certificate.side_effect = lambda fmt, cert: (
+                b"-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----\n"
             )
             result = _bootstrap_ssl_from_server("https://example.com:8089")
 
@@ -204,9 +206,11 @@ class TestBootstrapSslFromServer:
         mock_conn = MagicMock()
         mock_conn.get_peer_cert_chain.return_value = [MagicMock()]
 
-        with patch(f"{_SESSION_MOD}.SSL") as mock_ssl, patch(f"{_SESSION_MOD}.crypto") as mock_crypto, patch(
-            f"{_SESSION_MOD}.socket"
-        ) as mock_socket:
+        with (
+            patch(f"{_SESSION_MOD}.SSL") as mock_ssl,
+            patch(f"{_SESSION_MOD}.crypto") as mock_crypto,
+            patch(f"{_SESSION_MOD}.socket") as mock_socket,
+        ):
             mock_ssl.Connection.return_value = mock_conn
             mock_crypto.dump_certificate.return_value = (
                 b"-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----\n"

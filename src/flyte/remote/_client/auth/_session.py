@@ -1,6 +1,5 @@
 import asyncio
 import socket
-import ssl
 import typing
 from dataclasses import dataclass
 from typing import Any
