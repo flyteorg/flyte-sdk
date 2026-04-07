@@ -24,7 +24,7 @@ def test_serializable_from_file_parameter():
     sp = SerializableParameter.from_parameter(p)
     assert sp.name == "model"
     assert sp.type == "file"
-    assert sp.download is False
+    assert sp.download is True
 
 
 def test_serializable_from_file_with_mount():

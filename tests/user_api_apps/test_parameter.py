@@ -9,7 +9,7 @@ def test_parameter_string_value():
     assert p.name == "config"
     assert p.value == "config.yaml"
     assert p.env_var is None
-    assert p.download is False
+    assert p.download is True
     assert p.mount is None
 
 
