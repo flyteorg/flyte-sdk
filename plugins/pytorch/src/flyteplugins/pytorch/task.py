@@ -1,5 +1,8 @@
 import os
+import pickle
 import signal
+import subprocess
+import tempfile
 import threading
 from dataclasses import dataclass, field
 from typing import Any, Dict, Literal, Optional, Union
@@ -105,6 +108,11 @@ class Elastic:
             to activate NCCL's built-in monitoring thread. The monitoring thread
             checks each worker's heartbeat counter and sends SIGABRT when it stalls,
             which is what drives `nccl_heartbeat_timeout_sec`. Defaults to True.
+        neuron_parallel_compile (bool): When True, runs ``neuron_parallel_compile``
+            before the real training to extract and pre-compile XLA graphs in parallel.
+            This avoids compilation during training and prevents compilation-related
+            hangs. Requires ``torch-neuronx`` to be installed in the container
+            image. Defaults to False.
     """
 
     nnodes: Union[int, str]
@@ -118,6 +126,7 @@ class Elastic:
     nccl_async_error_handling: bool = False
     nccl_collective_timeout_sec: Optional[int] = None
     nccl_enable_monitoring: bool = True
+    neuron_parallel_compile: bool = False
 
 
 def launcher_entrypoint(tctx: TaskContext, fn: bytes, kwargs: dict):
@@ -332,6 +341,14 @@ class TorchFunctionTask(AsyncFunctionTaskTemplate):
         tctx = tctx.replace(data=ctx_data)
 
         with ctx.replace_task_context(tctx):
+            fn_bytes = cloudpickle.dumps(self.func)
+
+            # If neuron_parallel_compile is enabled, run a pre-compilation step
+            # using the CLI: neuron_parallel_compile torchrun ... -m flyteplugins.pytorch.launcher
+            # This extracts XLA graphs and compiles them in parallel before the real training.
+            if self.plugin_config.neuron_parallel_compile:
+                self._run_neuron_parallel_compile(tctx, fn_bytes, kwargs)
+
             config = LaunchConfig(
                 run_id=flyte.ctx().action.run_name,
                 min_nodes=self.min_nodes,
@@ -360,7 +377,7 @@ class TorchFunctionTask(AsyncFunctionTaskTemplate):
             try:
                 out = elastic_launch(config=config, entrypoint=launcher_entrypoint)(
                     tctx,
-                    cloudpickle.dumps(self.func),
+                    fn_bytes,
                     kwargs,
                 )
             except ChildFailedError as e:
@@ -374,6 +391,58 @@ class TorchFunctionTask(AsyncFunctionTaskTemplate):
             await self.post(result)
 
         return result
+
+    def _run_neuron_parallel_compile(self, tctx: TaskContext, fn_bytes: bytes, kwargs: dict):
+        """Run neuron_parallel_compile to extract and pre-compile XLA graphs.
+
+        Uses ``elastic_launch`` (fn mode) for the trial run — the same worker
+        spawning mechanism as actual training — so the Neuron runtime produces
+        identical XLA graph hashes and the compilation cache is hit.
+
+        Serializes the task context, function, and launch parameters to a temp
+        file, then invokes:
+            neuron_parallel_compile python -m flyteplugins.pytorch.compile_launcher \
+                --ctx-file /tmp/ctx.pkl
+        """
+        launch_params = {
+            "min_nodes": self.min_nodes,
+            "max_nodes": self.max_nodes,
+            "nproc_per_node": self.plugin_config.nproc_per_node,
+            "rdzv_backend": self.plugin_config.rdzv_backend,
+            "rdzv_configs": self.plugin_config.rdzv_configs,
+            "max_restarts": self.plugin_config.max_restarts,
+            "monitor_interval": self.plugin_config.monitor_interval,
+        }
+
+        with tempfile.NamedTemporaryFile(suffix=".pkl", delete=False) as f:
+            pickle.dump((tctx, fn_bytes, kwargs, launch_params), f)
+            ctx_file = f.name
+
+        cmd = [
+            "neuron_parallel_compile",
+            "python",
+            "-m",
+            "flyteplugins.pytorch.compile_launcher",
+            "--ctx-file",
+            ctx_file,
+        ]
+
+        logger.info("Running neuron_parallel_compile: %s", " ".join(cmd))
+        try:
+            result = subprocess.run(cmd, check=False)
+
+            # neuron_parallel_compile returns the number of failed graph compilations
+            # as its exit code. Partial failures are normal (init graphs, dynamic shapes),
+            # so we only log a warning rather than failing the task.
+            if result.returncode != 0:
+                logger.warning(
+                    "neuron_parallel_compile exited with code %d (%d graph compilations failed). "
+                    "This is typically normal — failed graphs will be compiled on-demand during training.",
+                    result.returncode,
+                    result.returncode,
+                )
+        finally:
+            os.unlink(ctx_file)
 
     def custom_config(self, sctx: SerializationContext) -> Optional[Dict[str, Any]]:
         """
