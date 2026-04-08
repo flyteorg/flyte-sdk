@@ -156,6 +156,10 @@ async def to_task_trigger(
 
     literals = await process_default_inputs(default_inputs, task_name, task_inputs, task_default_inputs)
 
+    context_kvs = None
+    if t.custom_context:
+        context_kvs = [literals_pb2.KeyValuePair(key=k, value=v) for k, v in t.custom_context.items()]
+
     automation = _to_schedule(
         t.automation,
         kickoff_arg_name=kickoff_arg_name,
@@ -166,7 +170,7 @@ async def to_task_trigger(
         spec=task_definition_pb2.TaskTriggerSpec(
             active=t.auto_activate,
             run_spec=run_spec,
-            inputs=common_pb2.Inputs(literals=literals),
+            inputs=common_pb2.Inputs(literals=literals, context=context_kvs),
             description=t.description,
         ),
         automation_spec=common_pb2.TriggerAutomationSpec(
