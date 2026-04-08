@@ -231,7 +231,7 @@ def launch_demo(image_name: str, is_dev_mode: bool, log_format: str = "console")
         return
 
     if _container_is_running(_CONTAINER_NAME):
-        console.print(f"[yellow]Flyte demo cluster is already running.[/yellow]")
+        console.print("[yellow]Flyte demo cluster is already running.[/yellow]")
         if not click.confirm("Do you want to delete the existing demo cluster and start a new one?"):
             return
         subprocess.run(["docker", "stop", _CONTAINER_NAME], check=True, capture_output=True)
@@ -277,8 +277,8 @@ def _launch_demo_plain(image_name: str, is_dev_mode: bool, steps: list[tuple[str
         click.echo("Flyte dev cluster is running.")
     else:
         click.echo("Flyte demo cluster is ready!")
-        click.echo(f"  UI:             http://localhost:30080/v2")
-        click.echo(f"  Image Registry: localhost:30000")
+        click.echo("  UI:             http://localhost:30080/v2")
+        click.echo("  Image Registry: localhost:30000")
 
 
 def _launch_demo_rich(image_name: str, is_dev_mode: bool, steps: list[tuple[str, str]]) -> None:
@@ -303,8 +303,8 @@ def _launch_demo_rich(image_name: str, is_dev_mode: bool, steps: list[tuple[str,
         console.print(
             Panel(
                 "[green bold]Flyte demo cluster is ready![/green bold]\n\n"
-                f"  🚀 UI:             [link=http://localhost:30080/v2]http://localhost:30080/v2[/link]\n"
-                f"  🐳 Image Registry: localhost:30000",
+                "  🚀 UI:             [link=http://localhost:30080/v2]http://localhost:30080/v2[/link]\n"
+                "  🐳 Image Registry: localhost:30000",
                 title="[bold]Flyte Demo[/bold]",
                 border_style="green",
             )
