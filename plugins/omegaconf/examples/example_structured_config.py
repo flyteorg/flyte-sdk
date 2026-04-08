@@ -15,16 +15,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List
 
+import flyte
+from flyte._image import PythonWheels
+from flyte.errors import RuntimeUserError
 from omegaconf import (
     MISSING,
     DictConfig,
     OmegaConf,
     ValidationError,
 )
-
-import flyte
-from flyte._image import PythonWheels
-from flyte.errors import RuntimeUserError
 
 env = flyte.TaskEnvironment(
     name="omegaconf-structured-example",
@@ -96,9 +95,7 @@ async def scale_learning_rate(cfg: DictConfig, factor: float) -> DictConfig:
 @env.task
 async def validate_config(cfg: DictConfig) -> str:
     """Verifies the config is properly typed and returns a summary."""
-    assert (
-        OmegaConf.get_type(cfg) == TrainConf
-    ), f"Expected TrainConf, got {OmegaConf.get_type(cfg)}"
+    assert OmegaConf.get_type(cfg) == TrainConf, f"Expected TrainConf, got {OmegaConf.get_type(cfg)}"
     return (
         f"experiment={cfg.experiment_name} "
         f"lr={cfg.optimizer.lr} "
@@ -121,11 +118,7 @@ async def type_validation_check(cfg: DictConfig) -> bool:
 async def summarize_network(cfg: DictConfig) -> str:
     """Receives a NetworkConf-backed DictConfig, reads its list fields."""
     assert OmegaConf.get_type(cfg) == NetworkConf
-    return (
-        f"layers={list(cfg.layer_sizes)} "
-        f"activations={list(cfg.activations)} "
-        f"dropouts={list(cfg.dropout_rates)}"
-    )
+    return f"layers={list(cfg.layer_sizes)} activations={list(cfg.activations)} dropouts={list(cfg.dropout_rates)}"
 
 
 @env.task
@@ -134,9 +127,9 @@ async def append_output_layer(cfg: DictConfig, output_dim: int) -> DictConfig:
     return OmegaConf.merge(
         cfg,
         {
-            "layer_sizes": list(cfg.layer_sizes) + [output_dim],
-            "activations": list(cfg.activations) + ["softmax"],
-            "dropout_rates": list(cfg.dropout_rates) + [0.0],
+            "layer_sizes": [*list(cfg.layer_sizes), output_dim],
+            "activations": [*list(cfg.activations), "softmax"],
+            "dropout_rates": [*list(cfg.dropout_rates), 0.0],
         },
     )
 
@@ -148,9 +141,7 @@ async def use_filled_config(cfg: DictConfig) -> str:
 
 
 @env.task
-async def check_config_resolution(
-    structured_cfg: DictConfig, plain_cfg: DictConfig
-) -> tuple[str, str]:
+async def check_config_resolution(structured_cfg: DictConfig, plain_cfg: DictConfig) -> tuple[str, str]:
     """Demonstrates deserialization resolution.
 
     structured_cfg was created from a dataclass → comes back as dataclass-backed DictConfig.
@@ -248,9 +239,7 @@ async def config_resolution_pipeline() -> tuple[str, str]:
     """
     structured_cfg = OmegaConf.structured(TrainConf())
     plain_cfg = OmegaConf.create({"optimizer": {"lr": 0.001}, "epochs": 10})
-    structured_type, plain_type = await check_config_resolution(
-        structured_cfg, plain_cfg
-    )
+    structured_type, plain_type = await check_config_resolution(structured_cfg, plain_cfg)
     return structured_type, plain_type
 
 

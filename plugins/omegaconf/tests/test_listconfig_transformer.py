@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
+import flyte
 import msgpack
 import pytest
+from flyte.types._type_engine import MESSAGEPACK, TypeEngine
 from flyteidl2.core.literals_pb2 import Binary, Literal, Scalar
 from omegaconf import ListConfig, OmegaConf
 
-import flyte
-from flyte.types._type_engine import MESSAGEPACK, TypeEngine
 from flyteplugins.omegaconf.listconfig_transformer import ListConfigTransformer
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -291,7 +290,7 @@ async def _identity(cfg: ListConfig) -> ListConfig:
 
 @_env.task
 async def _append(cfg: ListConfig, value: float) -> ListConfig:
-    return OmegaConf.create(list(cfg) + [value])
+    return OmegaConf.create([*list(cfg), value])
 
 
 # ── Task-based integration tests ──────────────────────────────────────────────

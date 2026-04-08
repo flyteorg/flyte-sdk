@@ -12,10 +12,9 @@ Covers:
 
 from pathlib import Path
 
-from omegaconf import DictConfig, ListConfig, OmegaConf
-
 import flyte
 from flyte._image import PythonWheels
+from omegaconf import DictConfig, ListConfig, OmegaConf
 
 env = flyte.TaskEnvironment(
     name="omegaconf-listconfig-example",

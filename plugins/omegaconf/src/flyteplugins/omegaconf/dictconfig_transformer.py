@@ -4,17 +4,17 @@ import importlib
 from typing import Type
 
 import msgpack
-from flyteidl2.core.literals_pb2 import Binary, Literal, Scalar
-from flyteidl2.core.types_pb2 import LiteralType, SimpleType, TypeAnnotation
-from google.protobuf import struct_pb2
-from omegaconf import DictConfig, OmegaConf
-
 from flyte.types._type_engine import (
     CACHE_KEY_METADATA,
     MESSAGEPACK,
     SERIALIZATION_FORMAT,
     TypeTransformer,
 )
+from flyteidl2.core.literals_pb2 import Binary, Literal, Scalar
+from flyteidl2.core.types_pb2 import LiteralType, SimpleType, TypeAnnotation
+from google.protobuf import struct_pb2
+
+from omegaconf import DictConfig, OmegaConf
 
 
 class DictConfigTransformer(TypeTransformer[DictConfig]):
@@ -37,30 +37,22 @@ class DictConfigTransformer(TypeTransformer[DictConfig]):
     ) -> Literal:
         base_type = OmegaConf.get_type(python_val)
         base_dataclass = (
-            f"{base_type.__module__}.{base_type.__qualname__}"
-            if base_type is not dict
-            else "builtins.dict"
+            f"{base_type.__module__}.{base_type.__qualname__}" if base_type is not dict else "builtins.dict"
         )
         payload = {
             "base_dataclass": base_dataclass,
             "values": OmegaConf.to_container(python_val, resolve=True),
         }
         msgpack_bytes = msgpack.dumps(payload)
-        return Literal(
-            scalar=Scalar(binary=Binary(value=msgpack_bytes, tag=MESSAGEPACK))
-        )
+        return Literal(scalar=Scalar(binary=Binary(value=msgpack_bytes, tag=MESSAGEPACK)))
 
-    def from_binary_idl(
-        self, binary_idl_object: Binary, expected_python_type: Type[DictConfig]
-    ) -> DictConfig:
+    def from_binary_idl(self, binary_idl_object: Binary, expected_python_type: Type[DictConfig]) -> DictConfig:
         if binary_idl_object.tag != MESSAGEPACK:
             raise TypeError(f"Unsupported binary format: `{binary_idl_object.tag}`")
         payload = msgpack.loads(binary_idl_object.value, strict_map_key=False)
         return _reconstruct_dictconfig(payload)
 
-    async def to_python_value(
-        self, lv: Literal, expected_python_type: Type[DictConfig]
-    ) -> DictConfig:
+    async def to_python_value(self, lv: Literal, expected_python_type: Type[DictConfig]) -> DictConfig:
         if lv and lv.HasField("scalar") and lv.scalar.HasField("binary"):
             return self.from_binary_idl(lv.scalar.binary, expected_python_type)
         raise TypeError(f"Cannot convert literal to DictConfig: {lv}")

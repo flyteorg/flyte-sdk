@@ -5,13 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List
 
+import flyte
 import msgpack
 import pytest
+from flyte.types._type_engine import MESSAGEPACK, TypeEngine
 from flyteidl2.core.literals_pb2 import Binary, Literal, Scalar
 from omegaconf import MISSING, DictConfig, MissingMandatoryValue, OmegaConf
 
-import flyte
-from flyte.types._type_engine import MESSAGEPACK, TypeEngine
 from flyteplugins.omegaconf.dictconfig_transformer import DictConfigTransformer
 
 # ── Shared dataclasses ────────────────────────────────────────────────────────
@@ -97,7 +97,7 @@ async def test_plain_dict_flat():
     cfg = OmegaConf.create({"lr": 0.001, "epochs": 10})
     result = await roundtrip(cfg)
     assert isinstance(result, DictConfig)
-    assert OmegaConf.get_type(result) == dict
+    assert OmegaConf.get_type(result) is dict
     assert result.lr == 0.001
     assert result.epochs == 10
 
@@ -284,7 +284,7 @@ async def test_structured_unknown_class_falls_back_to_plain_dictconfig():
     binary = Binary(value=msgpack.dumps(payload), tag=MESSAGEPACK)
     result = t.from_binary_idl(binary, DictConfig)
     assert isinstance(result, DictConfig)
-    assert OmegaConf.get_type(result) == dict
+    assert OmegaConf.get_type(result) is dict
     assert result.lr == 0.001
 
 

@@ -14,10 +14,9 @@ Covers:
 
 from pathlib import Path
 
-from omegaconf import DictConfig, OmegaConf
-
 import flyte
 from flyte._image import PythonWheels
+from omegaconf import DictConfig, OmegaConf
 
 env = flyte.TaskEnvironment(
     name="omegaconf-dictconfig-example",
@@ -50,9 +49,7 @@ async def use_interpolated_config(cfg: DictConfig) -> float:
 
 
 @env.task
-async def merge_with_overrides(
-    base_cfg: DictConfig, override_cfg: DictConfig
-) -> DictConfig:
+async def merge_with_overrides(base_cfg: DictConfig, override_cfg: DictConfig) -> DictConfig:
     """Merges two DictConfigs inside a task and returns the result."""
     return OmegaConf.merge(base_cfg, override_cfg)
 
