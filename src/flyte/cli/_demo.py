@@ -141,19 +141,22 @@ def _wait_for_kubeconfig(kubeconfig_path: Path, timeout: int = 60) -> None:
 # TODO: Rename context to flyte-demo
 def _switch_k8s_context(context: str = "flytev2-sandbox", namespace: str = "flyte") -> None:
     try:
-        subprocess.run(["kubectl", "config", "use-context", context], check=True, capture_output=True)
+        subprocess.run(["kubectl", "config", "use-context", context], check=True, capture_output=True, text=True)
         subprocess.run(
             ["kubectl", "config", "set-context", "--current", f"--namespace={namespace}"],
             check=True,
             capture_output=True,
+            text=True,
         )
         subprocess.run(
             ["kubectl", "config", "set-cluster", context, "--insecure-skip-tls-verify=true"],
             check=True,
             capture_output=True,
+            text=True,
         )
-    except subprocess.CalledProcessError:
-        click.echo(f"Warning: failed to switch k8s context to '{context}'. Is kubectl installed?", err=True)
+    except subprocess.CalledProcessError as e:
+        msg = e.stderr.strip() if e.stderr else f"Is kubectl installed?"
+        click.echo(f"Warning: failed to switch k8s context to '{context}': {msg}", err=True)
 
 
 def _flatten_kubeconfig(default_kubeconfig: Path, kubeconfig_path: Path) -> subprocess.CompletedProcess:
