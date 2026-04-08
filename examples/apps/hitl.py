@@ -57,7 +57,7 @@ task_env = flyte.TaskEnvironment(
     name="hitl-workflow",
     image=(
         flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages(
-            "flyteplugins-hitl>=2.0.9",
+            "flyteplugins-hitl>=2.1.3",
             "fastapi",
             "uvicorn",
             "python-multipart",
