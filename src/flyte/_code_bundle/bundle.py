@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import gzip
+import hashlib
 import logging
 import os
 import pathlib
+import random
+import sqlite3
 import tempfile
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Type
 
@@ -27,6 +31,56 @@ if TYPE_CHECKING:
 
 _pickled_file_extension = ".pkl.gz"
 _tar_file_extension = ".tar.gz"
+
+_BUNDLE_CACHE_TTL_DAYS = 1
+
+
+def _scoped_digest(digest: str) -> str:
+    """Return a digest scoped to the current endpoint/project/domain."""
+    from flyte._persistence._db import _cache_scope
+
+    raw = f"{_cache_scope()}:{digest}"
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def _read_bundle_cache(digest: str) -> tuple[str, str] | None:
+    """Look up a previously uploaded bundle by its file digest. Returns (hash_digest, remote_path) or None."""
+    from flyte._persistence._db import LocalDB
+
+    try:
+        conn = LocalDB.get_sync()
+        cutoff = time.time() - _BUNDLE_CACHE_TTL_DAYS * 86400
+        row = conn.execute(
+            "SELECT hash_digest, remote_path FROM bundle_cache WHERE digest = ? AND created_at > ?",
+            (_scoped_digest(digest), cutoff),
+        ).fetchone()
+        # Prune expired entries ~5% of the time to avoid doing it on every read
+        if random.random() < 0.05:
+            with LocalDB._write_lock:
+                conn.execute("DELETE FROM bundle_cache WHERE created_at <= ?", (cutoff,))
+                conn.commit()
+        if row:
+            return row[0], row[1]
+    except (OSError, sqlite3.Error) as e:
+        logger.debug(f"Failed to read bundle cache: {e}")
+    return None
+
+
+def _write_bundle_cache(digest: str, hash_digest: str, remote_path: str) -> None:
+    """Persist a successfully uploaded bundle to the SQLite cache."""
+    from flyte._persistence._db import LocalDB
+
+    try:
+        conn = LocalDB.get_sync()
+        with LocalDB._write_lock:
+            conn.execute(
+                "INSERT OR REPLACE INTO bundle_cache (digest, hash_digest, remote_path, created_at) "
+                "VALUES (?, ?, ?, ?)",
+                (_scoped_digest(digest), hash_digest, remote_path, time.time()),
+            )
+            conn.commit()
+    except (OSError, sqlite3.Error) as e:
+        logger.debug(f"Failed to write bundle cache: {e}")
 
 
 class _PklCache:
@@ -125,6 +179,7 @@ async def build_code_bundle(
     dryrun: bool = False,
     copy_bundle_to: pathlib.Path | None = None,
     copy_style: CopyFiles = "loaded_modules",
+    skip_cache: bool = False,
 ) -> CodeBundle:
     """
     Build the code bundle for the current environment.
@@ -135,14 +190,13 @@ async def build_code_bundle(
     :param dryrun: If dryrun is enabled, files will not be uploaded to the control plane.
     :param copy_bundle_to: If set, the bundle will be copied to this path. This is used for testing purposes.
     :param copy_style: What to put into the tarball. (either all, or loaded_modules. if none, skip this function)
+    :param skip_cache: If true, skip the persistent SQLite cache lookup and always rebuild/re-upload.
 
     :return: The code bundle, which contains the path where the code was zipped to.
     """
     if copy_style == "none":
         raise ValueError("If copy_style is 'none', just don't make a code bundle")
 
-    status.step("Bundling code...")
-    logger.debug("Building code bundle.")
     from flyte.remote import upload_file
 
     if not ignore:
@@ -163,6 +217,16 @@ async def build_code_bundle(
     if logger.getEffectiveLevel() <= logging.INFO:
         print_ls_tree(from_dir, files)
 
+    # Check persistent cache before creating the tar bundle to avoid unnecessary work
+    if not dryrun and not skip_cache:
+        cached = _read_bundle_cache(digest)
+        if cached:
+            hash_digest, remote_path = cached
+            status.success("Code bundle found in cache, skipping upload")
+            logger.debug(f"Code bundle cache hit: {remote_path}")
+            return CodeBundle(tgz=remote_path, destination=extract_dir, computed_version=hash_digest, files=files)
+
+    status.step("Bundling code...")
     logger.debug("Building code bundle.")
     with tempfile.TemporaryDirectory() as tmp_dir:
         bundle_path, tar_size, archive_size = create_bundle(
@@ -173,6 +237,7 @@ async def build_code_bundle(
             status.step("Uploading code bundle...")
             hash_digest, remote_path = await upload_file.aio(bundle_path)
             logger.debug(f"Code bundle uploaded to {remote_path}")
+            _write_bundle_cache(digest, hash_digest, remote_path)
         else:
             if copy_bundle_to:
                 remote_path = str(copy_bundle_to / bundle_path.name)
@@ -198,6 +263,7 @@ async def build_code_bundle_from_relative_paths(
     extract_dir: str = ".",
     dryrun: bool = False,
     copy_bundle_to: pathlib.Path | None = None,
+    skip_cache: bool = False,
 ) -> CodeBundle:
     """
     Build a code bundle from a list of relative paths.
@@ -207,6 +273,7 @@ async def build_code_bundle_from_relative_paths(
         working directory.
     :param dryrun: If dryrun is enabled, files will not be uploaded to the control plane.
     :param copy_bundle_to: If set, the bundle will be copied to this path. This is used for testing purposes.
+    :param skip_cache: If true, skip the persistent SQLite cache lookup and always rebuild/re-upload.
     :return: The code bundle, which contains the path where the code was zipped to.
     """
     status.step("Bundling code...")
@@ -218,6 +285,15 @@ async def build_code_bundle_from_relative_paths(
     if logger.getEffectiveLevel() <= logging.INFO:
         print_ls_tree(from_dir, files)
 
+    # Check persistent cache before creating the tar bundle to avoid unnecessary work
+    if not dryrun and not skip_cache:
+        cached = _read_bundle_cache(digest)
+        if cached:
+            hash_digest, remote_path = cached
+            status.success("Code bundle found in cache, skipping upload")
+            logger.debug(f"Code bundle cache hit: {remote_path}")
+            return CodeBundle(tgz=remote_path, destination=extract_dir, computed_version=hash_digest, files=files)
+
     logger.debug("Building code bundle.")
     with tempfile.TemporaryDirectory() as tmp_dir:
         bundle_path, tar_size, archive_size = create_bundle(from_dir, pathlib.Path(tmp_dir), files, digest)
@@ -226,6 +302,7 @@ async def build_code_bundle_from_relative_paths(
             status.step("Uploading code bundle...")
             hash_digest, remote_path = await upload_file.aio(bundle_path)
             logger.debug(f"Code bundle uploaded to {remote_path}")
+            _write_bundle_cache(digest, hash_digest, remote_path)
         else:
             remote_path = "na"
             if copy_bundle_to:
