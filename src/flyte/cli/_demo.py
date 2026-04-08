@@ -155,7 +155,7 @@ def _switch_k8s_context(context: str = "flytev2-sandbox", namespace: str = "flyt
             text=True,
         )
     except subprocess.CalledProcessError as e:
-        msg = e.stderr.strip() if e.stderr else f"Is kubectl installed?"
+        msg = e.stderr.strip() if e.stderr else "Is kubectl installed?"
         click.echo(f"Warning: failed to switch k8s context to '{context}': {msg}", err=True)
 
 
