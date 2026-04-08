@@ -166,6 +166,7 @@ def run(
 @click.argument("name", type=str, required=False)
 @click.argument("version", type=str, required=False)
 @click.option("--limit", type=int, default=100, help="Limit the number of tasks to fetch.")
+@click.option("--entrypoint", is_flag=True, default=False, help="Show only entrypoint tasks.")
 @click.pass_obj
 def task(
     cfg: common.CLIConfig,
@@ -174,6 +175,7 @@ def task(
     version: str | None = None,
     project: str | None = None,
     domain: str | None = None,
+    entrypoint: bool = False,
 ):
     """
     Retrieve a list of all tasks, or details of a specific task by name and version.
@@ -192,10 +194,16 @@ def task(
             console.print(common.format(f"Task {name}", [t], "json"))
         else:
             console.print(
-                common.format("Tasks", remote.Task.listall(by_task_name=name, limit=limit), cfg.output_format)
+                common.format(
+                    "Tasks",
+                    remote.Task.listall(by_task_name=name, limit=limit, entrypoint=entrypoint or None),
+                    cfg.output_format,
+                )
             )
     else:
-        console.print(common.format("Tasks", remote.Task.listall(limit=limit), cfg.output_format))
+        console.print(
+            common.format("Tasks", remote.Task.listall(limit=limit, entrypoint=entrypoint or None), cfg.output_format)
+        )
 
 
 @get.command(cls=common.CommandBase)
