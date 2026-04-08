@@ -71,7 +71,9 @@ def _is_local_image(image: str) -> bool:
 def _pull_image(image: str) -> None:
     if _is_local_image(image):
         return
-    subprocess.run(["docker", "pull", image], check=True, capture_output=True)
+    result = subprocess.run(["docker", "pull", image], capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        raise click.ClickException(f"Failed to pull image '{image}':\n{result.stderr.strip()}")
 
 
 def _run_container(
@@ -107,7 +109,9 @@ def _run_container(
     for port in ports:
         cmd.extend(["--publish", port])
     cmd.append(image)
-    subprocess.run(cmd, check=True, capture_output=True)
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        raise click.ClickException(f"Failed to start container:\n{result.stderr.strip()}")
 
 
 def _wait_for_console_ready(url: str, timeout: int = 300, poll_interval: float = 3.0) -> None:
