@@ -647,3 +647,58 @@ class TestInitInCluster:
         # Env var should override to False even for localhost endpoint
         assert result["insecure"] is True
         assert result["endpoint"] == "host.docker.internal:8090"
+
+    @patch("flyte._initialize.init")
+    @pytest.mark.asyncio
+    async def test_init_in_cluster_reads_api_key_from_file(self, mock_init, monkeypatch, tmp_path):
+        """Test eager API key can be loaded from a mounted secret file."""
+        mock_init.aio = AsyncMock()
+
+        eager_api_key_file = tmp_path / "EAGER_API_KEY"
+        eager_api_key_file.write_text("encoded-key\n")
+
+        monkeypatch.setenv("FLYTE_INTERNAL_EXECUTION_PROJECT", "test-project")
+        monkeypatch.setenv("FLYTE_INTERNAL_EXECUTION_DOMAIN", "test-domain")
+        monkeypatch.delenv("_UNION_EAGER_API_KEY", raising=False)
+        monkeypatch.delenv("EAGER_API_KEY", raising=False)
+        monkeypatch.setenv("EAGER_API_KEY_FILE", str(eager_api_key_file))
+
+        result = await init_in_cluster.aio()
+
+        assert result["api_key"] == "encoded-key"
+        assert "endpoint" not in result
+
+    @patch("flyte._initialize.init")
+    @pytest.mark.asyncio
+    async def test_init_in_cluster_prefers_api_key_env_over_file(self, mock_init, monkeypatch, tmp_path):
+        """Test direct env var values take precedence over mounted secret files."""
+        mock_init.aio = AsyncMock()
+
+        eager_api_key_file = tmp_path / "EAGER_API_KEY"
+        eager_api_key_file.write_text("file-key")
+
+        monkeypatch.setenv("FLYTE_INTERNAL_EXECUTION_PROJECT", "test-project")
+        monkeypatch.setenv("FLYTE_INTERNAL_EXECUTION_DOMAIN", "test-domain")
+        monkeypatch.setenv("EAGER_API_KEY", "env-key")
+        monkeypatch.setenv("EAGER_API_KEY_FILE", str(eager_api_key_file))
+
+        result = await init_in_cluster.aio()
+
+        assert result["api_key"] == "env-key"
+
+    @patch("flyte._initialize.init")
+    @pytest.mark.asyncio
+    async def test_init_in_cluster_missing_api_key_file_raises(self, mock_init, monkeypatch, tmp_path):
+        """Test a configured eager API key file path must exist."""
+        mock_init.aio = AsyncMock()
+
+        missing_path = tmp_path / "missing-key"
+
+        monkeypatch.setenv("FLYTE_INTERNAL_EXECUTION_PROJECT", "test-project")
+        monkeypatch.setenv("FLYTE_INTERNAL_EXECUTION_DOMAIN", "test-domain")
+        monkeypatch.delenv("_UNION_EAGER_API_KEY", raising=False)
+        monkeypatch.delenv("EAGER_API_KEY", raising=False)
+        monkeypatch.setenv("EAGER_API_KEY_FILE", str(missing_path))
+
+        with pytest.raises(InitializationError, match="does not exist"):
+            await init_in_cluster.aio()

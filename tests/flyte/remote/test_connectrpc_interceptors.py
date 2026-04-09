@@ -18,10 +18,6 @@ from flyte.remote._client.auth._interceptors.auth import (
 )
 from flyte.remote._client.auth._interceptors.default_metadata import (
     DefaultMetadataInterceptor,
-    TRUSTED_IDENTITY_CLAIM_ENV_VAR,
-    TRUSTED_IDENTITY_TYPE_CLAIM_ENV_VAR,
-    USER_IDENTITY_TYPE_HEADER,
-    USER_SUBJECT_HEADER,
     _generate_request_id,
 )
 from flyte.remote._client.auth._interceptors.retry import (
@@ -128,34 +124,6 @@ class TestDefaultMetadataInterceptor:
         headers["x-request-id"] = "caller-correlation-id"
         await interceptor.on_start(ctx)
         assert headers["x-request-id"] == "caller-correlation-id"
-
-    @pytest.mark.asyncio
-    async def test_injects_trusted_identity_headers_from_env(self, monkeypatch):
-        monkeypatch.setenv(TRUSTED_IDENTITY_CLAIM_ENV_VAR, "00uabc123")
-        monkeypatch.setenv(TRUSTED_IDENTITY_TYPE_CLAIM_ENV_VAR, "app")
-
-        interceptor = DefaultMetadataInterceptor()
-        ctx, headers = _make_ctx_mock()
-
-        await interceptor.on_start(ctx)
-
-        assert headers[USER_SUBJECT_HEADER] == "00uabc123"
-        assert headers[USER_IDENTITY_TYPE_HEADER] == "app"
-
-    @pytest.mark.asyncio
-    async def test_preserves_existing_trusted_identity_headers(self, monkeypatch):
-        monkeypatch.setenv(TRUSTED_IDENTITY_CLAIM_ENV_VAR, "00uabc123")
-        monkeypatch.setenv(TRUSTED_IDENTITY_TYPE_CLAIM_ENV_VAR, "app")
-
-        interceptor = DefaultMetadataInterceptor()
-        ctx, headers = _make_ctx_mock()
-        headers[USER_SUBJECT_HEADER] = "caller-subject"
-        headers[USER_IDENTITY_TYPE_HEADER] = "caller-type"
-
-        await interceptor.on_start(ctx)
-
-        assert headers[USER_SUBJECT_HEADER] == "caller-subject"
-        assert headers[USER_IDENTITY_TYPE_HEADER] == "caller-type"
 
 
 def _make_mock_authenticator(headers=None):

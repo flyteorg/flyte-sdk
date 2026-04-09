@@ -425,6 +425,51 @@ async def init_from_api_key(
     )
 
 
+def _read_secret_from_file(secret_file: str | None, *, secret_name: str) -> str | None:
+    """Read a secret value from a mounted file path."""
+    if not secret_file:
+        return None
+
+    path = Path(secret_file)
+    if not path.exists():
+        raise InitializationError(
+            "SecretFileNotFoundError",
+            "user",
+            f"{secret_name} file '{path}' does not exist.",
+        )
+
+    secret_value = path.read_text().strip()
+    if not secret_value:
+        raise InitializationError(
+            "SecretFileEmptyError",
+            "user",
+            f"{secret_name} file '{path}' is empty.",
+        )
+
+    return secret_value
+
+
+def _resolve_in_cluster_api_key(api_key: str | None = None) -> str | None:
+    union_eager_api_key_env_var = "_UNION_EAGER_API_KEY"
+    eager_api_key_env_var = "EAGER_API_KEY"
+    union_eager_api_key_file_env_var = "_UNION_EAGER_API_KEY_FILE"
+    eager_api_key_file_env_var = "EAGER_API_KEY_FILE"
+
+    return (
+        api_key
+        or os.getenv(union_eager_api_key_env_var)
+        or os.getenv(eager_api_key_env_var)
+        or _read_secret_from_file(
+            os.getenv(union_eager_api_key_file_env_var),
+            secret_name=union_eager_api_key_env_var,
+        )
+        or _read_secret_from_file(
+            os.getenv(eager_api_key_file_env_var),
+            secret_name=eager_api_key_env_var,
+        )
+    )
+
+
 @syncify
 async def init_in_cluster(
     org: str | None = None,
@@ -442,17 +487,15 @@ async def init_in_cluster(
     ENDPOINT_OVERRIDE = "_U_EP_OVERRIDE"
     INSECURE_SKIP_VERIFY_OVERRIDE = "_U_INSECURE_SKIP_VERIFY"
     INSECURE_OVERRIDE = "_U_INSECURE"
-    _UNION_EAGER_API_KEY_ENV_VAR = "_UNION_EAGER_API_KEY"
-    EAGER_API_KEY = "EAGER_API_KEY"
 
     org = org or os.getenv(ORG_NAME)
     project = project or os.getenv(PROJECT_NAME)
     domain = domain or os.getenv(DOMAIN_NAME)
-    api_key = api_key or os.getenv(_UNION_EAGER_API_KEY_ENV_VAR) or os.getenv(EAGER_API_KEY)
+    api_key = _resolve_in_cluster_api_key(api_key)
 
     remote_kwargs: dict[str, typing.Any] = {"insecure": insecure}
     if api_key:
-        logger.info("Using api key from environment")
+        logger.info("Using api key from environment or mounted file")
         remote_kwargs["api_key"] = api_key
     else:
         ep = endpoint or os.environ.get(ENDPOINT_OVERRIDE, "host.docker.internal:8090")
