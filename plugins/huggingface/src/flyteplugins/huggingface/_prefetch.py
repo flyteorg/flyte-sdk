@@ -29,9 +29,9 @@ class HuggingFaceDatasetInfo(BaseModel):
     revision: str | None = None
 
 
-def _validate_artifact_name(name: str | None) -> None:
-    if name is not None and not re.match(r"^[a-zA-Z0-9_-]+$", name):
-        raise ValueError(f"Artifact name '{name}' must only contain alphanumeric characters, underscores, and hyphens")
+def _validate_input_name(value: str | None) -> None:
+    if value is not None and not re.match(r"^[a-zA-Z0-9_.-]+$", value):
+        raise ValueError(f"'{value}' must only contain alphanumeric characters, underscores, hyphens, and dots")
 
 
 def _stream_dataset_to_remote(
@@ -45,12 +45,8 @@ def _stream_dataset_to_remote(
     import flyte.storage as storage
     import huggingface_hub
 
-    api = huggingface_hub.HfApi(token=token)
     hfs = huggingface_hub.HfFileSystem(token=token)
     fs = storage.get_underlying_filesystem(path=remote_dir_path)
-
-    parquet_info = api.dataset_info(repo_id, revision=revision)
-    commit = parquet_info.sha
 
     # HF Hub auto-converts datasets to parquet under refs/convert/parquet
     # Structure: datasets/{repo}/{config}/{split}/0000.parquet
@@ -60,7 +56,6 @@ def _stream_dataset_to_remote(
     if split:
         search_paths = [f"{base_path}/{split}"]
     else:
-        # List all splits
         try:
             entries = hfs.ls(base_path, revision="refs/convert/parquet", detail=True)
             search_paths = [e["name"] for e in entries if e["type"] == "directory"]
@@ -100,7 +95,7 @@ def _stream_dataset_to_remote(
             f"The dataset may not have been auto-converted to parquet yet."
         )
 
-    logger.info(f"Streamed {files_streamed} parquet files to {remote_dir_path} (commit: {commit})")
+    logger.info(f"Streamed {files_streamed} parquet files to {remote_dir_path}")
     return remote_dir_path
 
 
@@ -111,17 +106,16 @@ def _download_dataset_to_local(
     revision: str | None,
     token: str | None,
     local_dir: str,
+    flat_dir: str,
 ) -> str:
     import huggingface_hub
-
-    api = huggingface_hub.HfApi(token=token)
 
     config = config_name or "default"
     base_pattern = f"{config}/"
     if split:
         base_pattern = f"{config}/{split}/"
 
-    files = api.list_repo_files(repo_id, repo_type="dataset", revision="refs/convert/parquet")
+    files = huggingface_hub.list_repo_files(repo_id, repo_type="dataset", revision="refs/convert/parquet")
     parquet_files = [f for f in files if f.startswith(base_pattern) and f.endswith(".parquet")]
 
     if not parquet_files:
@@ -137,8 +131,7 @@ def _download_dataset_to_local(
             token=token,
         )
 
-    # Flatten: move parquet files to local_dir root
-    flat_dir = tempfile.mkdtemp()
+    # Flatten: move parquet files to flat_dir root
     for root, _dirs, filenames in os.walk(local_dir):
         for fname in filenames:
             if fname.endswith(".parquet"):
@@ -149,7 +142,7 @@ def _download_dataset_to_local(
     return flat_dir
 
 
-def store_hf_dataset_task(info: str, raw_data_path: str | None = None) -> Dir:
+def _store_hf_dataset_task(info: str, raw_data_path: str | None = None) -> Dir:
     import flyte
 
     _info = HuggingFaceDatasetInfo.model_validate_json(info)
@@ -171,12 +164,12 @@ def store_hf_dataset_task(info: str, raw_data_path: str | None = None) -> Dir:
         result_dir = Dir.from_existing_remote(remote_path)
         logger.info(f"Streaming completed to {remote_path}")
 
-    except Exception as e:
+    except (OSError, FileNotFoundError) as e:
         logger.error(f"Direct streaming failed: {e}")
         logger.info("Falling back to snapshot download...")
 
-        with tempfile.TemporaryDirectory() as local_dir:
-            flat_dir = _download_dataset_to_local(_info.repo, _info.name, _info.split, _info.revision, token, local_dir)
+        with tempfile.TemporaryDirectory() as local_dir, tempfile.TemporaryDirectory() as flat_dir:
+            _download_dataset_to_local(_info.repo, _info.name, _info.split, _info.revision, token, local_dir, flat_dir)
             result_dir = Dir.from_local_sync(flat_dir, remote_destination=raw_data_path)
 
     logger.info(f"Dataset stored at {result_dir.path}")
@@ -213,6 +206,9 @@ def hf_dataset(
     from flyte import Secret
     from flyte.remote import Run
 
+    _validate_input_name(name)
+    _validate_input_name(split)
+
     info = HuggingFaceDatasetInfo(
         repo=repo,
         name=name,
@@ -228,7 +224,7 @@ def hf_dataset(
         resources=resources,
         secrets=[Secret(key=hf_token_key, as_env_var="HF_TOKEN")],
     )
-    task = env.task()(store_hf_dataset_task)
+    task = env.task()(_store_hf_dataset_task)
     run = flyte.with_runcontext(interactive_mode=True, disable_run_cache=force > 0).run(
         task, info.model_dump_json(), raw_data_path
     )

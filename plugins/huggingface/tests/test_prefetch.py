@@ -5,21 +5,24 @@ import pytest
 from flyteplugins.huggingface._prefetch import (
     HuggingFaceDatasetInfo,
     _stream_dataset_to_remote,
-    _validate_artifact_name,
+    _validate_input_name,
 )
 
 
-def test_validate_artifact_name_valid():
-    _validate_artifact_name("my-dataset_v1")
-    _validate_artifact_name("IMDB")
-    _validate_artifact_name(None)
+def test_validate_input_name_valid():
+    _validate_input_name("my-dataset_v1")
+    _validate_input_name("IMDB")
+    _validate_input_name("v1.0")
+    _validate_input_name(None)
 
 
-def test_validate_artifact_name_invalid():
+def test_validate_input_name_invalid():
     with pytest.raises(ValueError, match="must only contain"):
-        _validate_artifact_name("my dataset")
+        _validate_input_name("my dataset")
     with pytest.raises(ValueError, match="must only contain"):
-        _validate_artifact_name("data/set")
+        _validate_input_name("data/set")
+    with pytest.raises(ValueError, match="must only contain"):
+        _validate_input_name("../etc")
 
 
 def test_dataset_info_serialization():
@@ -43,11 +46,7 @@ def test_stream_dataset_no_parquet_files():
     mock_hfs = MagicMock()
     mock_hfs.ls.return_value = []
 
-    mock_api = MagicMock()
-    mock_api.dataset_info.return_value = MagicMock(sha="abc123")
-
     mock_hub = MagicMock()
-    mock_hub.HfApi.return_value = mock_api
     mock_hub.HfFileSystem.return_value = mock_hfs
 
     mock_fs = MagicMock()

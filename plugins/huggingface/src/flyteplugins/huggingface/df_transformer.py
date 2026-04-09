@@ -46,9 +46,11 @@ class HuggingFaceDatasetToParquetEncodingHandler(DataFrameEncoder):
         filesystem = storage.get_underlying_filesystem(path=path)
         table = df.data.table
         writer = pq.ParquetWriter(path, table.schema, filesystem=filesystem)
-        for batch in table.to_batches(max_chunksize=10_000):
-            writer.write_batch(batch)
-        writer.close()
+        try:
+            for batch in table.to_batches(max_chunksize=10_000):
+                writer.write_batch(batch)
+        finally:
+            writer.close()
 
         structured_dataset_type.format = PARQUET
         return literals_pb2.StructuredDataset(
