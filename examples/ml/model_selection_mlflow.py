@@ -2,11 +2,11 @@
 # requires-python = ">=3.12"
 # dependencies = [
 #    "flyte",
+#    "flyteplugins-mlflow",
 #    "scikit-learn",
 #    "xgboost",
 #    "optuna",
 #    "mlflow",
-#    "pandas",
 #    "joblib",
 # ]
 # ///
@@ -20,17 +20,19 @@ This example demonstrates a complete model selection pipeline that:
    - XGBoost
    - Random Forest
    - Logistic Regression
-3. Logs every trial to MLflow tracking (params, metrics)
+3. Logs every trial as a nested MLflow run (visible in the MLflow UI)
 4. Compares the best model from each family
 5. Registers the overall winner in the MLflow Model Registry
 
-Each model family runs as its own Flyte task, so they execute in parallel on
-separate machines. Optuna handles the inner HPO loop within each task.
+Uses the flyteplugins-mlflow integration for:
+- @mlflow_run decorator for automatic run management
+- Mlflow() link class for clickable MLflow UI links in the Flyte UI
+- mlflow_config() for workflow-level tracking URI and link_host config
 
-The best model from each family is returned as a serialized Flyte File artifact.
-The orchestrator then re-logs the winner to MLflow and registers it — this
-avoids cross-machine MLflow run ID references, since each task gets its own
-local MLflow store.
+Each model family runs as its own Flyte task in parallel. Optuna handles the
+inner HPO loop, and each trial creates a nested MLflow run under the parent.
+
+Pair with examples/apps/mlflow_server.py to deploy a shared MLflow UI.
 """
 
 import asyncio
@@ -49,6 +51,7 @@ from xgboost import XGBClassifier
 
 import flyte
 import flyte.io
+from flyteplugins.mlflow import Mlflow, mlflow_config, mlflow_run
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -60,8 +63,7 @@ env = flyte.TaskEnvironment(
     name="model-selection",
     resources=flyte.Resources(cpu=2, memory="2Gi"),
     image=flyte.Image.from_uv_script(__file__, name="model-selection"),
-    # Point MLflow at a shared tracking server in prod:
-    # secrets=[flyte.Secret(key="MLFLOW_TRACKING_URI", as_env_var="MLFLOW_TRACKING_URI")],
+    env_vars={"GIT_PYTHON_REFRESH": "quiet"},
 )
 
 
@@ -77,24 +79,23 @@ class ModelResult:
 
 # ---------------------------------------------------------------------------
 # Per-family HPO tasks
+#
+# Each task uses @mlflow_run(run_mode="nested") so its MLflow run appears as
+# a child of the parent orchestrator run in the MLflow UI.
 # ---------------------------------------------------------------------------
 
 
-@env.task
+@mlflow_run(run_mode="nested")
+@env.task(links=(Mlflow(),))
 async def tune_xgboost(
-    experiment_name: str,
     n_trials: int = 20,
-    mlflow_tracking_uri: str = "",
 ) -> ModelResult:
     """Run Optuna HPO for XGBoost and log every trial to MLflow."""
-    if mlflow_tracking_uri:
-        mlflow.set_tracking_uri(mlflow_tracking_uri)
-
     data = load_breast_cancer()
     X, y = data.data, data.target
-
-    mlflow.set_experiment(experiment_name)
     best = {"score": -1.0, "params": {}, "model": None}
+
+    mlflow.log_param("model_family", "xgboost")
 
     def objective(trial: optuna.Trial) -> float:
         params = {
@@ -108,11 +109,10 @@ async def tune_xgboost(
         scores = cross_val_score(model, X, y, cv=5, scoring="accuracy")
         mean_score = float(scores.mean())
 
-        with mlflow.start_run(nested=True):
-            mlflow.log_params(params)
-            mlflow.log_param("model_family", "xgboost")
-            mlflow.log_metric("cv_accuracy_mean", mean_score)
-            mlflow.log_metric("cv_accuracy_std", float(scores.std()))
+        mlflow.log_metrics(
+            {"cv_accuracy_mean": mean_score, "cv_accuracy_std": float(scores.std())},
+            step=trial.number,
+        )
 
         if mean_score > best["score"]:
             best["score"] = mean_score
@@ -124,6 +124,9 @@ async def tune_xgboost(
 
     study = optuna.create_study(direction="maximize")
     study.optimize(objective, n_trials=n_trials)
+
+    mlflow.log_params({f"best_{k}": v for k, v in best["params"].items()})
+    mlflow.log_metric("best_cv_accuracy", best["score"])
 
     # Save the best model as a Flyte file artifact
     model_path = Path("/tmp/best_xgboost.joblib")
@@ -139,21 +142,17 @@ async def tune_xgboost(
     )
 
 
-@env.task
+@mlflow_run(run_mode="nested")
+@env.task(links=(Mlflow(),))
 async def tune_random_forest(
-    experiment_name: str,
     n_trials: int = 20,
-    mlflow_tracking_uri: str = "",
 ) -> ModelResult:
     """Run Optuna HPO for Random Forest and log every trial to MLflow."""
-    if mlflow_tracking_uri:
-        mlflow.set_tracking_uri(mlflow_tracking_uri)
-
     data = load_breast_cancer()
     X, y = data.data, data.target
-
-    mlflow.set_experiment(experiment_name)
     best = {"score": -1.0, "params": {}, "model": None}
+
+    mlflow.log_param("model_family", "random_forest")
 
     def objective(trial: optuna.Trial) -> float:
         params = {
@@ -167,11 +166,10 @@ async def tune_random_forest(
         scores = cross_val_score(model, X, y, cv=5, scoring="accuracy")
         mean_score = float(scores.mean())
 
-        with mlflow.start_run(nested=True):
-            mlflow.log_params(params)
-            mlflow.log_param("model_family", "random_forest")
-            mlflow.log_metric("cv_accuracy_mean", mean_score)
-            mlflow.log_metric("cv_accuracy_std", float(scores.std()))
+        mlflow.log_metrics(
+            {"cv_accuracy_mean": mean_score, "cv_accuracy_std": float(scores.std())},
+            step=trial.number,
+        )
 
         if mean_score > best["score"]:
             best["score"] = mean_score
@@ -183,6 +181,9 @@ async def tune_random_forest(
 
     study = optuna.create_study(direction="maximize")
     study.optimize(objective, n_trials=n_trials)
+
+    mlflow.log_params({f"best_{k}": v for k, v in best["params"].items()})
+    mlflow.log_metric("best_cv_accuracy", best["score"])
 
     model_path = Path("/tmp/best_random_forest.joblib")
     joblib.dump(best["model"], model_path)
@@ -197,38 +198,33 @@ async def tune_random_forest(
     )
 
 
-@env.task
+@mlflow_run(run_mode="nested")
+@env.task(links=(Mlflow(),))
 async def tune_logistic_regression(
-    experiment_name: str,
     n_trials: int = 20,
-    mlflow_tracking_uri: str = "",
 ) -> ModelResult:
     """Run Optuna HPO for Logistic Regression and log every trial to MLflow."""
-    if mlflow_tracking_uri:
-        mlflow.set_tracking_uri(mlflow_tracking_uri)
-
     data = load_breast_cancer()
     X, y = data.data, data.target
-
-    mlflow.set_experiment(experiment_name)
     best = {"score": -1.0, "params": {}, "model": None}
+
+    mlflow.log_param("model_family", "logistic_regression")
 
     def objective(trial: optuna.Trial) -> float:
         params = {
             "C": trial.suggest_float("C", 0.001, 100.0, log=True),
             "penalty": trial.suggest_categorical("penalty", ["l1", "l2"]),
-            "solver": "saga",  # supports both l1 and l2
+            "solver": "saga",
             "max_iter": 5000,
         }
         model = LogisticRegression(**params, random_state=42)
         scores = cross_val_score(model, X, y, cv=5, scoring="accuracy")
         mean_score = float(scores.mean())
 
-        with mlflow.start_run(nested=True):
-            mlflow.log_params(params)
-            mlflow.log_param("model_family", "logistic_regression")
-            mlflow.log_metric("cv_accuracy_mean", mean_score)
-            mlflow.log_metric("cv_accuracy_std", float(scores.std()))
+        mlflow.log_metrics(
+            {"cv_accuracy_mean": mean_score, "cv_accuracy_std": float(scores.std())},
+            step=trial.number,
+        )
 
         if mean_score > best["score"]:
             best["score"] = mean_score
@@ -240,6 +236,9 @@ async def tune_logistic_regression(
 
     study = optuna.create_study(direction="maximize")
     study.optimize(objective, n_trials=n_trials)
+
+    mlflow.log_params({f"best_{k}": v for k, v in best["params"].items()})
+    mlflow.log_metric("best_cv_accuracy", best["score"])
 
     model_path = Path("/tmp/best_logistic_regression.joblib")
     joblib.dump(best["model"], model_path)
@@ -259,26 +258,28 @@ async def tune_logistic_regression(
 # ---------------------------------------------------------------------------
 
 
-@env.task
+@mlflow_run
+@env.task(links=(Mlflow(),))
 async def model_selection_pipeline(
     n_trials: int = 20,
     experiment_name: str = "flyte-model-selection",
     registry_name: str = "breast-cancer-classifier",
-    mlflow_tracking_uri: str = "",
 ) -> ModelResult:
     """
     Run HPO for all model families in parallel, pick the winner, and register
     the best model in the MLflow Model Registry.
 
-    Set mlflow_tracking_uri to the endpoint of a deployed MLflow server
-    (e.g. from examples/apps/mlflow_server.py) to get a shared UI for all
-    experiments. Leave empty to use MLflow's default local file store.
+    Configure the MLflow tracking URI and UI link host via mlflow_config()
+    when launching the run (see __main__ below).
     """
-    # Fan out: each model family tunes in parallel on its own Flyte task
+    mlflow.log_params({"n_trials": n_trials, "experiment_name": experiment_name})
+
+    # Fan out: each model family tunes in parallel on its own Flyte task.
+    # Each creates a nested MLflow run under this parent.
     xgb_result, rf_result, lr_result = await asyncio.gather(
-        tune_xgboost(experiment_name, n_trials, mlflow_tracking_uri),
-        tune_random_forest(experiment_name, n_trials, mlflow_tracking_uri),
-        tune_logistic_regression(experiment_name, n_trials, mlflow_tracking_uri),
+        tune_xgboost(n_trials),
+        tune_random_forest(n_trials),
+        tune_logistic_regression(n_trials),
     )
 
     # Compare results
@@ -290,27 +291,24 @@ async def model_selection_pipeline(
     logger.info(f"Winner: {winner.family} with accuracy {winner.best_score:.4f}")
 
     # Download the winning model artifact and register it in MLflow
-    if mlflow_tracking_uri:
-        mlflow.set_tracking_uri(mlflow_tracking_uri)
-    mlflow.set_experiment(experiment_name)
     local_path = await winner.model_file.download("/tmp/winning_model.joblib")
     model = joblib.load(local_path)
 
-    with mlflow.start_run(run_name=f"winner-{winner.family}"):
-        mlflow.log_params(winner.best_params)
-        mlflow.log_param("model_family", winner.family)
-        mlflow.log_metric("cv_accuracy_mean", winner.best_score)
+    # Log the model artifact using the appropriate MLflow flavor
+    if winner.family == "xgboost":
+        mlflow.xgboost.log_model(model, artifact_path="model")
+    else:
+        mlflow.sklearn.log_model(model, artifact_path="model")
 
-        # Log the model artifact using the appropriate MLflow flavor
-        if winner.family == "xgboost":
-            mlflow.xgboost.log_model(model, artifact_path="model")
-        else:
-            mlflow.sklearn.log_model(model, artifact_path="model")
+    mlflow.log_param("winner_family", winner.family)
+    mlflow.log_metric("winner_cv_accuracy", winner.best_score)
 
-        # Register in the Model Registry
-        run_id = mlflow.active_run().info.run_id
-        registered = mlflow.register_model(f"runs:/{run_id}/model", registry_name)
-        logger.info(f"Registered '{registry_name}' version {registered.version} from run {run_id}")
+    # Register in the Model Registry
+    from flyteplugins.mlflow import get_mlflow_run
+
+    run_id = get_mlflow_run().info.run_id
+    registered = mlflow.register_model(f"runs:/{run_id}/model", registry_name)
+    logger.info(f"Registered '{registry_name}' version {registered.version} from run {run_id}")
 
     return winner
 
@@ -318,15 +316,21 @@ async def model_selection_pipeline(
 if __name__ == "__main__":
     flyte.init_from_config()
 
-    # Deploy the MLflow server app first (see examples/apps/mlflow_server.py),
-    # then pass its endpoint here so all tasks log to the same shared store:
-    #   mlflow_tracking_uri="https://<your-mlflow-app-endpoint>"
-    run = flyte.run(
+    # Set your deployed MLflow server URL here (see examples/apps/mlflow_server.py).
+    # link_host generates clickable MLflow UI links in the Flyte UI.
+    MLFLOW_SERVER_URL = "https://cold-bird-3fc86.apps.demo.hosted.unionai.cloud"
+
+    run = flyte.with_runcontext(
+        custom_context=mlflow_config(
+            tracking_uri=MLFLOW_SERVER_URL,
+            experiment_name="flyte-model-selection",
+            link_host=MLFLOW_SERVER_URL,
+        ),
+    ).run(
         model_selection_pipeline,
         n_trials=20,
         experiment_name="flyte-model-selection",
         registry_name="breast-cancer-classifier",
-        mlflow_tracking_uri="",  # set to your deployed MLflow server URL
     )
     print(f"View at: {run.url}")
     run.wait()
