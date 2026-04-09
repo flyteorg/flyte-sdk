@@ -1,6 +1,7 @@
 import asyncio
 import filecmp
 import os
+import sys
 import time
 import unittest.mock as mock
 from pathlib import Path
@@ -13,7 +14,7 @@ import flyte
 from flyte import storage
 from flyte._context import internal_ctx
 from flyte.storage import S3
-from flyte.storage._parallel_reader import ObstoreParallelReader
+from flyte.storage._parallel_reader import Chunk, DownloadTask, ObstoreParallelReader, Source
 
 
 @pytest.mark.asyncio
@@ -89,6 +90,89 @@ async def test_worker_logs_exception_before_task_received(tmp_path):
     mock_logger.exception.assert_called_once()
     call_args = str(mock_logger.exception.call_args)
     assert "before receiving a task" in call_args
+
+
+@pytest.mark.skipif(sys.version_info < (3, 11), reason="asyncio.TaskGroup uses ExceptionGroup on 3.11+")
+@pytest.mark.asyncio
+async def test_as_completed_unwraps_single_taskgroup_exception():
+    from builtins import BaseExceptionGroup
+
+    store = mock.MagicMock()
+    reader = ObstoreParallelReader(store, max_concurrency=1)
+
+    async def _gen():
+        yield DownloadTask(
+            source=Source(id="file", path=Path("prefix/file.txt"), length=4),
+            chunk=Chunk(offset=0, length=4),
+        )
+
+    with mock.patch(
+        "flyte.storage._parallel_reader.obstore.get_range_async",
+        new=mock.AsyncMock(side_effect=RuntimeError("GCS 429: Too Many Requests")),
+    ):
+        with pytest.raises(RuntimeError, match="GCS 429: Too Many Requests") as exc_info:
+            async for _ in reader._as_completed(_gen()):
+                pass
+
+    assert not isinstance(exc_info.value, BaseExceptionGroup)
+
+
+@pytest.mark.asyncio
+async def test_worker_logs_transformer_exception_with_file_context():
+    store = mock.MagicMock()
+    reader = ObstoreParallelReader(store, max_concurrency=1)
+
+    async def _gen():
+        yield DownloadTask(
+            source=Source(id="file", path=Path("prefix/file.txt"), length=4),
+            chunk=Chunk(offset=0, length=4),
+        )
+
+    async def _transformer(*args, **kwargs):
+        raise RuntimeError("replace failed")
+
+    with (
+        mock.patch(
+            "flyte.storage._parallel_reader.obstore.get_range_async",
+            new=mock.AsyncMock(return_value=b"data"),
+        ),
+        mock.patch("flyte.storage._parallel_reader.logger") as mock_logger,
+    ):
+        with pytest.raises(RuntimeError, match="replace failed"):
+            async for _ in reader._as_completed(_gen(), transformer=_transformer):
+                pass
+
+    mock_logger.exception.assert_called_once()
+    call_args = str(mock_logger.exception.call_args)
+    assert "prefix/file.txt" in call_args
+    assert ", 0)" in call_args
+
+
+@pytest.mark.asyncio
+async def test_as_completed_pre311_surfaces_worker_exception_without_hanging():
+
+    store = mock.MagicMock()
+    reader = ObstoreParallelReader(store, max_concurrency=1)
+
+    async def _gen():
+        yield DownloadTask(
+            source=Source(id="file", path=Path("prefix/file.txt"), length=4),
+            chunk=Chunk(offset=0, length=4),
+        )
+
+    async def _consume():
+        async for _ in reader._as_completed(_gen()):
+            pass
+
+    with (
+        mock.patch("flyte.storage._parallel_reader.sys.version_info", (3, 10)),
+        mock.patch(
+            "flyte.storage._parallel_reader.obstore.get_range_async",
+            new=mock.AsyncMock(side_effect=RuntimeError("GCS 429: Too Many Requests")),
+        ),
+    ):
+        with pytest.raises(RuntimeError, match="GCS 429: Too Many Requests"):
+            await asyncio.wait_for(_consume(), timeout=0.5)
 
 
 @pytest.mark.skip
