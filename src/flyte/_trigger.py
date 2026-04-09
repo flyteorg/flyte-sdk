@@ -742,6 +742,8 @@ class Trigger:
     :param queue: Queue name for triggered runs (overrides the task's configured value).
     :param labels: Kubernetes labels to attach to triggered runs.
     :param annotations: Kubernetes annotations to attach to triggered runs.
+    :param custom_context: Metadata propagated through the entire task hierarchy of
+        triggered runs. Readable inside any task via ``flyte.ctx().custom_context``.
     """
 
     name: str
@@ -756,6 +758,7 @@ class Trigger:
     labels: Mapping[str, str] | None = None
     annotations: Mapping[str, str] | None = None
     notifications: NamedRule | Notification | Tuple[Notification, ...] | None = None
+    custom_context: Mapping[str, str] | None = None
 
     def __post_init__(self):
         if not self.name:
@@ -782,6 +785,7 @@ class Trigger:
         queue: str | None = None,
         labels: Mapping[str, str] | None = None,
         annotations: Mapping[str, str] | None = None,
+        custom_context: Mapping[str, str] | None = None,
     ) -> Trigger:
         """
         Creates a Cron trigger that runs daily at midnight.
@@ -799,6 +803,7 @@ class Trigger:
             queue (str | None): Optional queue to run the trigger in.
             labels (Mapping[str, str] | None): Optional labels to attach to the trigger.
             annotations (Mapping[str, str] | None): Optional annotations to attach to the trigger.
+            custom_context (Mapping[str, str] | None): Optional context metadata propagated to triggered runs.
 
         Returns:
             Trigger: A trigger that runs daily at midnight.
@@ -821,6 +826,7 @@ class Trigger:
             queue=queue,
             labels=labels,
             annotations=annotations,
+            custom_context=custom_context,
         )
 
     @classmethod
@@ -838,6 +844,7 @@ class Trigger:
         queue: str | None = None,
         labels: Mapping[str, str] | None = None,
         annotations: Mapping[str, str] | None = None,
+        custom_context: Mapping[str, str] | None = None,
     ) -> Trigger:
         """
         Creates a Cron trigger that runs every hour.
@@ -855,6 +862,7 @@ class Trigger:
             queue (str | None): Optional queue to run the trigger in.
             labels (Mapping[str, str] | None): Optional labels to attach to the trigger.
             annotations (Mapping[str, str] | None): Optional annotations to attach to the trigger.
+            custom_context (Mapping[str, str] | None): Optional context metadata propagated to triggered runs.
 
         Returns:
             Trigger: A trigger that runs every hour, on the hour.
@@ -877,6 +885,7 @@ class Trigger:
             queue=queue,
             labels=labels,
             annotations=annotations,
+            custom_context=custom_context,
         )
 
     @classmethod
@@ -894,6 +903,7 @@ class Trigger:
         queue: str | None = None,
         labels: Mapping[str, str] | None = None,
         annotations: Mapping[str, str] | None = None,
+        custom_context: Mapping[str, str] | None = None,
     ) -> Trigger:
         """
         Creates a Cron trigger that runs every minute.
@@ -911,6 +921,7 @@ class Trigger:
             queue (str | None): Optional queue to run the trigger in.
             labels (Mapping[str, str] | None): Optional labels to attach to the trigger.
             annotations (Mapping[str, str] | None): Optional annotations to attach to the trigger.
+            custom_context (Mapping[str, str] | None): Optional context metadata propagated to triggered runs.
 
         Returns:
             Trigger: A trigger that runs every minute.
@@ -933,6 +944,7 @@ class Trigger:
             queue=queue,
             labels=labels,
             annotations=annotations,
+            custom_context=custom_context,
         )
 
     @classmethod
@@ -950,6 +962,7 @@ class Trigger:
         queue: str | None = None,
         labels: Mapping[str, str] | None = None,
         annotations: Mapping[str, str] | None = None,
+        custom_context: Mapping[str, str] | None = None,
     ) -> Trigger:
         """
         Creates a Cron trigger that runs weekly on Sundays at midnight.
@@ -967,6 +980,7 @@ class Trigger:
             queue (str | None): Optional queue to run the trigger in.
             labels (Mapping[str, str] | None): Optional labels to attach to the trigger.
             annotations (Mapping[str, str] | None): Optional annotations to attach to the trigger.
+            custom_context (Mapping[str, str] | None): Optional context metadata propagated to triggered runs.
 
         Returns:
             Trigger: A trigger that runs weekly on Sundays at midnight.
@@ -989,6 +1003,7 @@ class Trigger:
             queue=queue,
             labels=labels,
             annotations=annotations,
+            custom_context=custom_context,
         )
 
     @classmethod
@@ -1006,6 +1021,7 @@ class Trigger:
         queue: str | None = None,
         labels: Mapping[str, str] | None = None,
         annotations: Mapping[str, str] | None = None,
+        custom_context: Mapping[str, str] | None = None,
     ) -> Trigger:
         """
         Creates a Cron trigger that runs monthly on the 1st at midnight.
@@ -1023,6 +1039,7 @@ class Trigger:
             queue (str | None): Optional queue to run the trigger in.
             labels (Mapping[str, str] | None): Optional labels to attach to the trigger.
             annotations (Mapping[str, str] | None): Optional annotations to attach to the trigger.
+            custom_context (Mapping[str, str] | None): Optional context metadata propagated to triggered runs.
 
         Returns:
             Trigger: A trigger that runs monthly on the 1st at midnight.
@@ -1045,6 +1062,7 @@ class Trigger:
             queue=queue,
             labels=labels,
             annotations=annotations,
+            custom_context=custom_context,
         )
 
 
