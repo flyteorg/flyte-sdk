@@ -90,14 +90,31 @@ class Controller:
     @log
     def submit_action_sync(self, action: Action) -> Action:
         """Synchronous version of submit that runs in the controller's event loop"""
-        fut = self._run_coroutine_in_controller_thread(self._bg_submit_action(action))
+        fut = self._run_coroutine_in_controller_thread(self._bg_submit_and_wait_for_action(action))
         return fut.result()
 
     # --------------- Public async methods
     @log
-    async def submit_action(self, action: Action) -> Action:
+    async def submit_and_wait_for_action(self, action: Action) -> Action:
         """Public API to submit a resource and wait for completion"""
-        return await self._run_coroutine_in_controller_thread(self._bg_submit_action(action))
+        return await self._run_coroutine_in_controller_thread(self._bg_submit_and_wait_for_action(action))
+
+    @log
+    async def submit_action(self, action: Action) -> Action:
+        """Public API to submit a resource and wait for completion (alias for submit_and_wait_for_action)"""
+        return await self.submit_and_wait_for_action(action)
+
+    @log
+    async def start_action(self, action: Action) -> None:
+        """Submit a resource without waiting for completion. Returns immediately after enqueue."""
+        await self._run_coroutine_in_controller_thread(self._bg_submit_action(action))
+
+    @log
+    async def wait_for_action(self, action: Action) -> Action:
+        """Wait for a previously submitted action to complete. Returns the final action state."""
+        return await self._run_coroutine_in_controller_thread(
+            self._bg_wait_for_action(action.action_id, action.action_id.run, action.parent_action_name)
+        )
 
     async def get_action(self, action_id: identifier_pb2.ActionIdentifier, parent_action_name: str) -> Optional[Action]:
         """Get the action from the informer"""
@@ -274,8 +291,8 @@ class Controller:
         if informer:
             await informer.stop()
 
-    async def _bg_submit_action(self, action: Action) -> Action:
-        """Submit a resource and await its completion, returning the final state"""
+    async def _bg_submit_action(self, action: Action) -> None:
+        """Submit a resource to the informer. Returns immediately after enqueue."""
         logger.debug(f"{threading.current_thread().name} Submitting action {action.name}")
         informer = await self._informers.get_or_create(
             action.action_id.run,
@@ -288,19 +305,39 @@ class Controller:
         )
         await informer.submit(action)
 
-        logger.debug(f"{threading.current_thread().name} Waiting for completion of {action.name}")
-        # Wait for completion
-        await informer.wait_for_action_completion(action.name)
-        logger.info(f"{threading.current_thread().name} Action {action.name} completed")
+    async def _bg_wait_for_action(
+        self,
+        action_id: identifier_pb2.ActionIdentifier,
+        run_id: identifier_pb2.RunIdentifier,
+        parent_action_name: str,
+    ) -> Action:
+        """Wait for an action to complete and return its final state."""
+        action_name = action_id.name
+        logger.debug(f"{threading.current_thread().name} Waiting for completion of {action_name}")
+        informer = await self._informers.get_or_create(
+            run_id,
+            parent_action_name,
+            self._shared_queue,
+            self._state_service,
+            fn=self._bg_handle_informer_error,
+            timeout=self._informer_start_wait_timeout,
+            actions_service=self._actions_service,
+        )
+        await informer.wait_for_action_completion(action_name)
+        logger.info(f"{threading.current_thread().name} Action {action_name} completed")
 
-        # Get final resource state and clean up
-        final_resource = await informer.get(action.name)
+        final_resource = await informer.get(action_name)
         if final_resource is None:
-            raise ValueError(f"Action {action.name} not found")
-        logger.debug(f"{threading.current_thread().name} Removed completion event for action {action.name}")
-        await informer.remove(action.name)  # TODO we should not remove maybe, we should keep a record of completed?
-        logger.debug(f"{threading.current_thread().name} Removed action {action.name}")
+            raise ValueError(f"Action {action_name} not found")
+        logger.debug(f"{threading.current_thread().name} Removed completion event for action {action_name}")
+        await informer.remove(action_name)  # TODO we should not remove maybe, we should keep a record of completed?
+        logger.debug(f"{threading.current_thread().name} Removed action {action_name}")
         return final_resource
+
+    async def _bg_submit_and_wait_for_action(self, action: Action) -> Action:
+        """Submit a resource and await its completion, returning the final state."""
+        await self._bg_submit_action(action)
+        return await self._bg_wait_for_action(action.action_id, action.action_id.run, action.parent_action_name)
 
     async def _bg_cancel_action(self, action: Action):
         """
@@ -349,6 +386,7 @@ class Controller:
             async with self._rate_limiter:
                 task: run_definition_pb2.TaskAction | None = None
                 trace: run_definition_pb2.TraceAction | None = None
+                condition: run_definition_pb2.ConditionAction | None = None
                 if action.type == "task":
                     if action.task is None:
                         raise flyte.errors.RuntimeSystemError(
@@ -373,6 +411,8 @@ class Controller:
                     )
                 elif action.type == "trace":
                     trace = action.trace
+                elif action.type == "condition":
+                    condition = action.condition
 
                 logger.debug(f"Attempting to launch action: {action.name}, actions? {bool(self._actions_service)}")
                 try:
@@ -384,6 +424,7 @@ class Controller:
                                     parent_action_name=action.parent_action_name,
                                     task=task,
                                     trace=trace,
+                                    condition=condition,
                                     input_uri=action.inputs_uri,
                                     run_output_base=action.run_output_base,
                                     group=action.group.name if action.group else None,

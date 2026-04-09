@@ -1,0 +1,140 @@
+syntax = "proto3";
+
+package flyteidl2.workflow;
+
+import "flyteidl2/common/identifier.proto";
+import "flyteidl2/common/list.proto";
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/flyteorg/flyte/flyteidl2/gen/pb-go/flyteidl2/workflow";
+
+// ---------------------------------------------------------------------------
+// Identifiers
+// ---------------------------------------------------------------------------
+
+// Uniquely identifies an event within an action of a run.
+message EventIdentifier {
+  // The action this event belongs to (contains run context).
+  flyteidl2.common.ActionIdentifier action_id = 1;
+  // The event name, unique within the action.
+  string name = 2;
+}
+
+// ---------------------------------------------------------------------------
+// Domain objects
+// ---------------------------------------------------------------------------
+
+// A typed payload for an event signal.
+// Exactly one field must be set, matching the event's declared data_type.
+message EventPayload {
+  oneof value {
+    bool   bool_value   = 1;
+    int64  int_value     = 2;
+    double float_value   = 3;
+    string string_value  = 4;
+  }
+}
+
+// The data type an event expects for its payload.
+enum EventDataType {
+  EVENT_DATA_TYPE_UNSPECIFIED = 0;
+  EVENT_DATA_TYPE_BOOL        = 1;
+  EVENT_DATA_TYPE_INT         = 2;
+  EVENT_DATA_TYPE_FLOAT       = 3;
+  EVENT_DATA_TYPE_STRING      = 4;
+}
+
+// Describes how the prompt should be rendered.
+enum EventPromptType {
+  EVENT_PROMPT_TYPE_UNSPECIFIED = 0;
+  EVENT_PROMPT_TYPE_TEXT        = 1;
+  EVENT_PROMPT_TYPE_MARKDOWN    = 2;
+}
+
+// An event that pauses execution until signaled.
+message Event {
+  // Unique identifier for this event.
+  EventIdentifier event_id = 1;
+
+  // Human-readable prompt shown when waiting for the signal.
+  string prompt = 2;
+
+  // How to render the prompt.
+  EventPromptType prompt_type = 3;
+
+  // The expected payload type.
+  EventDataType data_type = 4;
+
+  // Optional description providing additional context.
+  string description = 5;
+
+  // Optional timeout; if the event is not signaled within this duration
+  // the wait will fail with a timeout error.
+  google.protobuf.Duration timeout = 6;
+
+  // The payload value after the event has been signaled.
+  // Empty until signaled.
+  EventPayload payload = 7;
+
+  // Server-managed timestamps.
+  google.protobuf.Timestamp created_at = 8;
+  google.protobuf.Timestamp signaled_at = 9;
+
+  // The identity that signaled the event (empty until signaled).
+  string signaled_by = 10;
+}
+
+// ---------------------------------------------------------------------------
+// Service RPCs
+// ---------------------------------------------------------------------------
+
+// GetEvent
+message GetEventRequest {
+  EventIdentifier event_id = 1;
+}
+
+message GetEventResponse {
+  Event event = 1;
+}
+
+// ListEvents — list events for a run, optionally filtered to one action.
+message ListEventsRequest {
+  // Required: the run whose events to list.
+  flyteidl2.common.RunIdentifier run_id = 1;
+
+  // Optional: narrow to a single action within the run.
+  // If unset, events across all actions in the run are returned.
+  flyteidl2.common.ActionIdentifier action_id = 2;
+
+  // Standard pagination / filtering.
+  flyteidl2.common.ListRequest request = 3;
+}
+
+message ListEventsResponse {
+  repeated Event events = 1;
+  string token = 2;
+}
+
+// SignalEvent
+message SignalEventRequest {
+  EventIdentifier event_id = 1;
+  EventPayload payload = 2;
+}
+
+message SignalEventResponse {}
+
+// ---------------------------------------------------------------------------
+// Service definition
+// ---------------------------------------------------------------------------
+
+service EventService {
+  // Retrieve a single event by identifier.
+  rpc GetEvent(GetEventRequest) returns (GetEventResponse);
+
+  // List events for a run or a specific action within a run.
+  rpc ListEvents(ListEventsRequest) returns (ListEventsResponse);
+
+  // Signal an event, unblocking any action waiting on it.
+  rpc SignalEvent(SignalEventRequest) returns (SignalEventResponse);
+}
