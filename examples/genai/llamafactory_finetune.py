@@ -132,14 +132,16 @@ async def prepare_dataset(
         conversations = []
         for msg in messages:
             role_map = {"user": "human", "assistant": "gpt", "system": "system"}
-            conversations.append({
-                "from": role_map.get(msg["role"], msg["role"]),
-                "value": msg["content"],
-            })
+            conversations.append(
+                {
+                    "from": role_map.get(msg["role"], msg["role"]),
+                    "value": msg["content"],
+                }
+            )
         records.append({"conversations": conversations})
 
     train_path = data_dir / "train.json"
-    with open(train_path, "w") as f:
+    with open(train_path, "w") as f:  # noqa: ASYNC230
         json.dump(records, f, ensure_ascii=False)
 
     # Write dataset_info.json so llamafactory-cli can find our data
@@ -152,7 +154,7 @@ async def prepare_dataset(
             },
         }
     }
-    with open(data_dir / "dataset_info.json", "w") as f:
+    with open(data_dir / "dataset_info.json", "w") as f:  # noqa: ASYNC230
         json.dump(dataset_info, f, indent=2)
 
     print(f"Wrote {len(records)} records to {train_path}")
@@ -211,13 +213,13 @@ async def train_lora(
     }
 
     config_path = Path(tempfile.mkdtemp()) / "train_config.yaml"
-    with open(config_path, "w") as f:
+    with open(config_path, "w") as f:  # noqa: ASYNC230
         yaml.dump(train_config, f, default_flow_style=False)
 
     print(f"Training config:\n{yaml.dump(train_config, default_flow_style=False)}")
     print("Starting LLaMA-Factory training...")
 
-    subprocess.run(
+    subprocess.run(  # noqa: ASYNC221
         ["llamafactory-cli", "train", str(config_path)],
         check=True,
     )
@@ -250,12 +252,12 @@ async def export_merged_model(
     }
 
     config_path = Path(tempfile.mkdtemp()) / "export_config.yaml"
-    with open(config_path, "w") as f:
+    with open(config_path, "w") as f:  # noqa: ASYNC230
         yaml.dump(export_config, f, default_flow_style=False)
 
     print("Merging LoRA adapter into base model...")
 
-    subprocess.run(
+    subprocess.run(  # noqa: ASYNC221
         ["llamafactory-cli", "export", str(config_path)],
         check=True,
     )
@@ -294,14 +296,14 @@ async def evaluate_model(
 
     results = []
     for prompt in prompts:
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"PROMPT: {prompt}")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
         messages = [{"role": "user", "content": prompt}]
-        inputs = tokenizer.apply_chat_template(
-            messages, return_tensors="pt", add_generation_prompt=True
-        ).to(model.device)
+        inputs = tokenizer.apply_chat_template(messages, return_tensors="pt", add_generation_prompt=True).to(
+            model.device
+        )
 
         with torch.no_grad():
             outputs = model.generate(
@@ -312,12 +314,12 @@ async def evaluate_model(
                 top_p=0.9,
             )
 
-        response = tokenizer.decode(outputs[0][inputs.shape[-1]:], skip_special_tokens=True)
+        response = tokenizer.decode(outputs[0][inputs.shape[-1] :], skip_special_tokens=True)
         print(f"RESPONSE: {response}")
         results.append(f"Q: {prompt}\nA: {response}")
 
     full_results = "\n\n---\n\n".join(results)
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("Evaluation complete!")
     return full_results
 
