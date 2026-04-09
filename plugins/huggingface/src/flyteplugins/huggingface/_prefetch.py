@@ -26,7 +26,6 @@ class HuggingFaceDatasetInfo(BaseModel):
     repo: str
     name: str | None = None
     split: str | None = None
-    revision: str | None = None
 
 
 def _validate_input_name(value: str | None) -> None:
@@ -38,7 +37,6 @@ def _stream_dataset_to_remote(
     repo_id: str,
     config_name: str | None,
     split: str | None,
-    revision: str | None,
     token: str | None,
     remote_dir_path: str,
 ) -> str:
@@ -48,7 +46,8 @@ def _stream_dataset_to_remote(
     hfs = huggingface_hub.HfFileSystem(token=token)
     fs = storage.get_underlying_filesystem(path=remote_dir_path)
 
-    # HF Hub auto-converts datasets to parquet under refs/convert/parquet
+    # HF Hub auto-converts datasets to parquet under refs/convert/parquet.
+    # This ref is managed by HF and always contains the latest conversion.
     # Structure: datasets/{repo}/{config}/{split}/0000.parquet
     config = config_name or "default"
     base_path = f"datasets/{repo_id}/{config}"
@@ -108,10 +107,9 @@ def _download_dataset_to_local(
     repo_id: str,
     config_name: str | None,
     split: str | None,
-    revision: str | None,
     token: str | None,
     local_dir: str,
-    flat_dir: str,
+    output_dir: str,
 ) -> str:
     import huggingface_hub
 
@@ -136,15 +134,17 @@ def _download_dataset_to_local(
             token=token,
         )
 
-    # Flatten: move parquet files to flat_dir root
+    # Move parquet files to output_dir, preserving relative structure
     for root, _dirs, filenames in os.walk(local_dir):
         for fname in filenames:
             if fname.endswith(".parquet"):
                 src = os.path.join(root, fname)
-                dst = os.path.join(flat_dir, fname)
+                rel = os.path.relpath(src, local_dir)
+                dst = os.path.join(output_dir, rel)
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
                 os.rename(src, dst)
 
-    return flat_dir
+    return output_dir
 
 
 # NOTE: the info argument is a json string instead of a HuggingFaceDatasetInfo
@@ -171,7 +171,7 @@ def store_hf_dataset_task(info: str, raw_data_path: str | None = None) -> Dir:
         else:
             remote_path = flyte.ctx().raw_data_path.get_random_remote_path(artifact_name)
 
-        _stream_dataset_to_remote(_info.repo, _info.name, _info.split, _info.revision, token, remote_path)
+        _stream_dataset_to_remote(_info.repo, _info.name, _info.split, token, remote_path)
         result_dir = Dir.from_existing_remote(remote_path)
         logger.info(f"Streaming completed to {remote_path}")
 
@@ -179,9 +179,9 @@ def store_hf_dataset_task(info: str, raw_data_path: str | None = None) -> Dir:
         logger.error(f"Direct streaming failed: {e}")
         logger.info("Falling back to snapshot download...")
 
-        with tempfile.TemporaryDirectory() as local_dir, tempfile.TemporaryDirectory() as flat_dir:
-            _download_dataset_to_local(_info.repo, _info.name, _info.split, _info.revision, token, local_dir, flat_dir)
-            result_dir = Dir.from_local_sync(flat_dir, remote_destination=raw_data_path)
+        with tempfile.TemporaryDirectory() as local_dir, tempfile.TemporaryDirectory() as output_dir:
+            _download_dataset_to_local(_info.repo, _info.name, _info.split, token, local_dir, output_dir)
+            result_dir = Dir.from_local_sync(output_dir, remote_destination=raw_data_path)
 
     logger.info(f"Dataset stored at {result_dir.path}")
     return result_dir
@@ -192,7 +192,6 @@ def hf_dataset(
     *,
     name: str | None = None,
     split: str | None = None,
-    revision: str | None = None,
     raw_data_path: str | None = None,
     hf_token_key: str = "HF_TOKEN",
     resources: Resources = Resources(cpu="2", memory="8Gi", disk="50Gi"),
@@ -201,12 +200,12 @@ def hf_dataset(
     """Prefetch a HuggingFace dataset to remote storage.
 
     Streams parquet files from HuggingFace Hub directly to Flyte's remote storage,
-    returning a Dir that downstream tasks can consume.
+    returning a Dir that downstream tasks can consume. Always uses the latest
+    auto-converted parquet from HuggingFace Hub (refs/convert/parquet).
 
     :param repo: HuggingFace dataset repo ID (e.g., 'stanfordnlp/imdb').
     :param name: Dataset configuration name (default: 'default').
     :param split: Dataset split (e.g., 'train', 'test'). None fetches all splits.
-    :param revision: Dataset revision/commit. None uses latest.
     :param raw_data_path: Override remote storage path.
     :param hf_token_key: Secret key for HF token. Default: 'HF_TOKEN'.
     :param resources: Resources for the prefetch task.
@@ -224,7 +223,6 @@ def hf_dataset(
         repo=repo,
         name=name,
         split=split,
-        revision=revision,
     )
 
     image = (

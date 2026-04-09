@@ -42,12 +42,11 @@ def test_validate_input_name_invalid():
 
 
 def test_dataset_info_serialization():
-    info = HuggingFaceDatasetInfo(repo="stanfordnlp/imdb", split="train", revision="v1.0")
+    info = HuggingFaceDatasetInfo(repo="stanfordnlp/imdb", split="train")
     dumped = info.model_dump_json()
     restored = HuggingFaceDatasetInfo.model_validate_json(dumped)
     assert restored.repo == "stanfordnlp/imdb"
     assert restored.split == "train"
-    assert restored.revision == "v1.0"
     assert restored.name is None
 
 
@@ -55,7 +54,6 @@ def test_dataset_info_defaults():
     info = HuggingFaceDatasetInfo(repo="squad")
     assert info.name is None
     assert info.split is None
-    assert info.revision is None
 
 
 # ============================================================================
@@ -73,14 +71,7 @@ def _make_mock_hub(parquet_entries, split="train"):
         return []
 
     mock_hfs.ls.side_effect = ls_side_effect
-
-    # For each parquet file, create a readable BytesIO
-    def open_side_effect(name, mode="rb", revision=None):
-        buf = BytesIO(b"fake-parquet-content")
-        buf.name = name
-        return buf
-
-    mock_hfs.open.side_effect = open_side_effect
+    mock_hfs.open.side_effect = lambda name, mode="rb", revision=None: BytesIO(b"fake-parquet-content")
 
     mock_hub = MagicMock()
     mock_hub.HfFileSystem.return_value = mock_hfs
@@ -101,7 +92,7 @@ def test_stream_dataset_no_parquet_files():
         patch("flyte.storage.get_underlying_filesystem", return_value=mock_fs),
     ):
         with pytest.raises(FileNotFoundError, match="No parquet files found"):
-            _stream_dataset_to_remote("fake/dataset", None, "train", None, None, "s3://bucket/output")
+            _stream_dataset_to_remote("fake/dataset", None, "train", None, "s3://bucket/output")
 
 
 def test_stream_dataset_single_split():
@@ -118,9 +109,8 @@ def test_stream_dataset_single_split():
         patch.dict("sys.modules", {"huggingface_hub": mock_hub}),
         patch("flyte.storage.get_underlying_filesystem", return_value=mock_fs),
     ):
-        result = _stream_dataset_to_remote("org/ds", None, "train", None, None, "s3://bucket/out")
+        result = _stream_dataset_to_remote("org/ds", None, "train", None, "s3://bucket/out")
         assert result == "s3://bucket/out"
-        # With a single split, files go directly into the root
         write_calls = [str(c) for c in mock_fs.open.call_args_list]
         assert any("0000.parquet" in c for c in write_calls)
         assert any("0001.parquet" in c for c in write_calls)
@@ -156,13 +146,11 @@ def test_stream_dataset_multi_split_preserves_split_dirs():
         patch.dict("sys.modules", {"huggingface_hub": mock_hub}),
         patch("flyte.storage.get_underlying_filesystem", return_value=mock_fs),
     ):
-        result = _stream_dataset_to_remote("org/ds", None, None, None, None, "s3://bucket/out")
+        result = _stream_dataset_to_remote("org/ds", None, None, None, "s3://bucket/out")
         assert result == "s3://bucket/out"
-        # Verify files go into split subdirs (train/0000.parquet, test/0000.parquet)
         open_paths = [str(c) for c in mock_fs.open.call_args_list]
         assert any("train/0000.parquet" in p for p in open_paths)
         assert any("test/0000.parquet" in p for p in open_paths)
-        # mkdirs called for each split subdir
         mkdirs_calls = [str(c) for c in mock_fs.mkdirs.call_args_list]
         assert any("train" in c for c in mkdirs_calls)
         assert any("test" in c for c in mkdirs_calls)
@@ -178,12 +166,12 @@ def test_download_dataset_to_local_no_files():
     mock_hub.list_repo_files.return_value = ["other/file.txt"]
 
     with patch.dict("sys.modules", {"huggingface_hub": mock_hub}):
-        with tempfile.TemporaryDirectory() as local_dir, tempfile.TemporaryDirectory() as flat_dir:
+        with tempfile.TemporaryDirectory() as local_dir, tempfile.TemporaryDirectory() as output_dir:
             with pytest.raises(FileNotFoundError, match="No parquet files found"):
-                _download_dataset_to_local("fake/ds", None, "train", None, None, local_dir, flat_dir)
+                _download_dataset_to_local("fake/ds", None, "train", None, local_dir, output_dir)
 
 
-def test_download_dataset_flattens_parquet_files():
+def test_download_dataset_preserves_structure():
     mock_hub = MagicMock()
     mock_hub.list_repo_files.return_value = [
         "default/train/0000.parquet",
@@ -193,19 +181,42 @@ def test_download_dataset_flattens_parquet_files():
     def fake_download(repo_id, filename, repo_type, revision, local_dir, token):
         dest = os.path.join(local_dir, filename)
         os.makedirs(os.path.dirname(dest), exist_ok=True)
-        # Write a minimal parquet file
         table = pa.table({"col": [1]})
         pq.write_table(table, dest)
 
     mock_hub.hf_hub_download.side_effect = fake_download
 
     with patch.dict("sys.modules", {"huggingface_hub": mock_hub}):
-        with tempfile.TemporaryDirectory() as local_dir, tempfile.TemporaryDirectory() as flat_dir:
-            result = _download_dataset_to_local("org/ds", None, "train", None, None, local_dir, flat_dir)
-            assert result == flat_dir
-            files = os.listdir(flat_dir)
-            assert "0000.parquet" in files
-            assert "0001.parquet" in files
+        with tempfile.TemporaryDirectory() as local_dir, tempfile.TemporaryDirectory() as output_dir:
+            result = _download_dataset_to_local("org/ds", None, "train", None, local_dir, output_dir)
+            assert result == output_dir
+            # Files should preserve relative path from local_dir
+            assert os.path.exists(os.path.join(output_dir, "default", "train", "0000.parquet"))
+            assert os.path.exists(os.path.join(output_dir, "default", "train", "0001.parquet"))
+
+
+def test_download_dataset_multi_split_no_collision():
+    """Multi-split download should not overwrite files with the same basename."""
+    mock_hub = MagicMock()
+    mock_hub.list_repo_files.return_value = [
+        "default/train/0000.parquet",
+        "default/test/0000.parquet",
+    ]
+
+    def fake_download(repo_id, filename, repo_type, revision, local_dir, token):
+        dest = os.path.join(local_dir, filename)
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        table = pa.table({"col": [1]})
+        pq.write_table(table, dest)
+
+    mock_hub.hf_hub_download.side_effect = fake_download
+
+    with patch.dict("sys.modules", {"huggingface_hub": mock_hub}):
+        with tempfile.TemporaryDirectory() as local_dir, tempfile.TemporaryDirectory() as output_dir:
+            _download_dataset_to_local("org/ds", None, None, None, local_dir, output_dir)
+            # Both files should exist in separate directories
+            assert os.path.exists(os.path.join(output_dir, "default", "train", "0000.parquet"))
+            assert os.path.exists(os.path.join(output_dir, "default", "test", "0000.parquet"))
 
 
 # ============================================================================
