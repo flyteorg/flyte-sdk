@@ -44,7 +44,6 @@ from mashumaro.codecs.msgpack import MessagePackDecoder, MessagePackEncoder
 from mashumaro.types import SerializableType
 from shapely.geometry import Point
 
-
 # ---------------------------------------------------------------------------
 # GeoDF: a SerializableType wrapper around gpd.GeoDataFrame
 # ---------------------------------------------------------------------------
@@ -100,9 +99,7 @@ class GeoDF(SerializableType):
     uri: Optional[str] = None
 
     # Private fields excluded from mashumaro serialization (init=False).
-    _gdf: Optional[gpd.GeoDataFrame] = field(
-        default=None, init=False, repr=False, compare=False
-    )
+    _gdf: Optional[gpd.GeoDataFrame] = field(default=None, init=False, repr=False, compare=False)
 
     @classmethod
     def from_gdf(cls, gdf: gpd.GeoDataFrame) -> "GeoDF":
@@ -132,6 +129,7 @@ class GeoDF(SerializableType):
                 self._gdf.to_parquet(local_path)
                 remote_path = remote_dir.rstrip("/") + "/data.parquet"
                 from flyte._utils.asyn import loop_manager
+
                 loop_manager.run_sync(storage.put, local_path, remote_path)
                 self.uri = remote_dir
                 return {"uri": self.uri, "format": GEOPANDAS_PARQUET}
@@ -167,6 +165,7 @@ class GeoDF(SerializableType):
                 if storage.is_remote(remote_path):
                     local_path = str(storage.get_random_local_path("data.parquet"))
                     from flyte._utils.asyn import loop_manager
+
                     loop_manager.run_sync(storage.get, remote_path, local_path)
                     self._gdf = gpd.read_parquet(local_path)
                     return self._gdf

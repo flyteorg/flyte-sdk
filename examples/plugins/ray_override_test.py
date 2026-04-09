@@ -11,20 +11,15 @@ This script tests the plugin_config override pattern with different worker resou
 Each task sleeps so you can inspect pods in k9s.
 """
 
-import asyncio
 import time
-from copy import deepcopy
-from dataclasses import dataclass
 from typing import List
 
 import ray
 from flyteplugins.ray.task import HeadNodeConfig, RayJobConfig, WorkerNodeConfig
-
 from kubernetes.client import V1Container, V1PodSpec, V1ResourceRequirements
 
 import flyte
 import flyte.remote
-
 
 # -- Image --
 image = (
