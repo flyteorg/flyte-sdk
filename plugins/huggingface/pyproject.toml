@@ -7,6 +7,7 @@ authors = [{ name = "Flyte Contributors", email = "admin@flyte.org" }]
 requires-python = ">=3.10"
 dependencies = [
     "datasets>=2.14.5",
+    "huggingface-hub>=0.27.0",
     "pyarrow",
     "flyte"
 ]
