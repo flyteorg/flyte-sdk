@@ -24,7 +24,7 @@ def _generate_request_id() -> str:
 
 
 class DefaultMetadataInterceptor:
-    """Injects default metadata into every outgoing RPC.
+    """Injects x-request-id header into every outgoing RPC.
 
     Implements the connectrpc MetadataInterceptor protocol:
     - on_start(ctx) -> token
@@ -32,8 +32,7 @@ class DefaultMetadataInterceptor:
     """
 
     async def on_start(self, ctx) -> None:
-        headers = ctx.request_headers()
-        headers.setdefault("x-request-id", _generate_request_id())
+        ctx.request_headers().setdefault("x-request-id", _generate_request_id())
 
     async def on_end(self, token, ctx, error) -> None:
         pass
