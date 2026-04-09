@@ -54,18 +54,18 @@ def _stream_dataset_to_remote(
     base_path = f"datasets/{repo_id}/{config}"
 
     if split:
-        search_paths = [f"{base_path}/{split}"]
+        split_paths = [(split, f"{base_path}/{split}")]
     else:
         try:
             entries = hfs.ls(base_path, revision="refs/convert/parquet", detail=True)
-            search_paths = [e["name"] for e in entries if e["type"] == "directory"]
+            split_paths = [(e["name"].split("/")[-1], e["name"]) for e in entries if e["type"] == "directory"]
         except FileNotFoundError:
-            search_paths = [base_path]
+            split_paths = [("data", base_path)]
 
     files_streamed = 0
     chunk_size = 64 * 1024 * 1024
 
-    for search_path in search_paths:
+    for split_name, search_path in split_paths:
         try:
             entries = hfs.ls(search_path, revision="refs/convert/parquet", detail=True)
         except FileNotFoundError:
@@ -76,8 +76,13 @@ def _stream_dataset_to_remote(
 
         for file_info in parquet_files:
             file_name = file_info["name"].split("/")[-1]
-            remote_file_path = f"{remote_dir_path}/{file_name}"
-            logger.info(f"  Streaming {file_name}...")
+            if split:
+                remote_file_path = f"{remote_dir_path}/{file_name}"
+            else:
+                remote_file_path = f"{remote_dir_path}/{split_name}/{file_name}"
+                fs.mkdirs(f"{remote_dir_path}/{split_name}", exist_ok=True)
+
+            logger.info(f"  Streaming {split_name}/{file_name}...")
 
             with hfs.open(file_info["name"], "rb", revision="refs/convert/parquet") as src:
                 with fs.open(remote_file_path, "wb") as dst:
@@ -142,11 +147,17 @@ def _download_dataset_to_local(
     return flat_dir
 
 
-def _store_hf_dataset_task(info: str, raw_data_path: str | None = None) -> Dir:
+# NOTE: the info argument is a json string instead of a HuggingFaceDatasetInfo
+# object because the type engine cannot handle nested pydantic or dataclass
+# objects when run in interactive mode.
+def store_hf_dataset_task(info: str, raw_data_path: str | None = None) -> Dir:
     import flyte
 
     _info = HuggingFaceDatasetInfo.model_validate_json(info)
     token = os.environ.get("HF_TOKEN")
+
+    if token is None:
+        logger.warning("HF_TOKEN not set, using anonymous access. Private datasets will fail.")
 
     artifact_name = _info.repo.split("/")[-1].replace(".", "-")
     if _info.split:
@@ -216,7 +227,11 @@ def hf_dataset(
         revision=revision,
     )
 
-    image = flyte.Image.from_debian_base(name="prefetch-hf-dataset-image").with_pip_packages(*HF_IMAGE_PACKAGES)
+    image = (
+        flyte.Image.from_debian_base(name="prefetch-hf-dataset-image")
+        .with_pip_packages(*HF_IMAGE_PACKAGES)
+        .with_env_vars({"HF_HUB_ENABLE_HF_TRANSFER": "1"})
+    )
 
     env = TaskEnvironment(
         name="prefetch-hf-dataset",
@@ -224,7 +239,7 @@ def hf_dataset(
         resources=resources,
         secrets=[Secret(key=hf_token_key, as_env_var="HF_TOKEN")],
     )
-    task = env.task()(_store_hf_dataset_task)
+    task = env.task()(store_hf_dataset_task)
     run = flyte.with_runcontext(interactive_mode=True, disable_run_cache=force > 0).run(
         task, info.model_dump_json(), raw_data_path
     )

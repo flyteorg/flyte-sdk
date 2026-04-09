@@ -1,6 +1,6 @@
 # Hugging Face Datasets Plugin
 
-Native support for `datasets.Dataset` as a Flyte DataFrame type, with Parquet serialization and column filtering.
+Native support for HuggingFace Datasets in Flyte: prefetch datasets from the Hub to remote storage and pass `datasets.Dataset` between tasks with automatic Parquet serialization.
 
 ## Installation
 
@@ -8,7 +8,24 @@ Native support for `datasets.Dataset` as a Flyte DataFrame type, with Parquet se
 pip install flyteplugins-huggingface
 ```
 
-## Usage
+## Prefetch from HuggingFace Hub
+
+Stream a dataset from the Hub directly to Flyte's remote storage:
+
+```python
+import flyte
+from flyteplugins.huggingface import hf_dataset
+
+flyte.init(endpoint="my-flyte-endpoint")
+
+run = hf_dataset(repo="stanfordnlp/imdb", split="train")
+run.wait()
+data_dir = run.outputs()[0]  # flyte.io.Dir with parquet files
+```
+
+## Type transformer
+
+Pass `datasets.Dataset` between tasks with automatic serialization:
 
 ```python
 import flyte
@@ -33,19 +50,6 @@ async def create_dataset() -> datasets.Dataset:
 @env.task
 async def filter_positive(ds: datasets.Dataset) -> datasets.Dataset:
     return ds.filter(lambda x: x["label"] == 1)
-
-
-@env.task
-async def main() -> int:
-    ds = await create_dataset()
-    filtered = await filter_positive(ds)
-    return len(filtered)
-
-
-if __name__ == "__main__":
-    flyte.init_from_config()
-    run = flyte.run(main)
-    print(run.url)
 ```
 
 ## Column filtering
