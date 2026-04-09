@@ -20,6 +20,11 @@ if typing.TYPE_CHECKING:
     from obstore import Bytes, ObjectMeta
     from obstore.store import ObjectStore
 
+try:
+    from builtins import BaseExceptionGroup
+except ImportError:
+    BaseExceptionGroup = None  # type: ignore[assignment]
+
 CHUNK_SIZE = int(os.getenv("FLYTE_IO_CHUNK_SIZE", str(16 * 1024 * 1024)))
 MAX_CONCURRENCY = int(os.getenv("FLYTE_IO_MAX_CONCURRENCY", str(32)))
 
@@ -127,6 +132,14 @@ class ObstoreParallelReader:
             length = min(cs, size - offset)
             yield offset, length
 
+    def _unwrap_single_exception_group(self, exc: BaseException) -> BaseException:
+        if BaseExceptionGroup is None:
+            return exc
+
+        while isinstance(exc, BaseExceptionGroup) and len(exc.exceptions) == 1:
+            exc = exc.exceptions[0]
+        return exc
+
     async def _as_completed(self, gen: typing.AsyncGenerator[DownloadTask, None], transformer=None):
         inq: asyncio.Queue = asyncio.Queue(self._max_concurrency * 2)
         outq: asyncio.Queue = asyncio.Queue()
@@ -171,36 +184,36 @@ class ObstoreParallelReader:
                     # source.offset is the offset within the file where the source data starts
                     # The actual file position is the sum of both
                     file_offset = task.chunk.offset + task.source.offset
-                    buf = active[task.source.id]
                     try:
+                        buf = active[task.source.id]
                         data_to_write = await obstore.get_range_async(
                             self._store,
                             str(task.source.path),
                             start=file_offset,
                             end=file_offset + task.chunk.length,
                         )
+                        await buf.write(
+                            task.chunk.offset,
+                            task.chunk.length,
+                            data_to_write,
+                        )
+                        if not buf.complete:
+                            continue
+                        if transformer is not None:
+                            result = await transformer(buf, task.source)
+                        elif task.target is not None:
+                            result = task.target
+                        else:
+                            result = task.source
+                        outq.put_nowait((task.source.id, result))
+                        del active[task.source.id]
                     except Exception:
                         logger.exception(
-                            "Worker failed downloading chunk of %s at offset %d",
+                            "Worker failed processing %s at offset %d",
                             task.source.path,
                             task.chunk.offset,
                         )
                         raise
-                    await buf.write(
-                        task.chunk.offset,
-                        task.chunk.length,
-                        data_to_write,
-                    )
-                    if not buf.complete:
-                        continue
-                    if transformer is not None:
-                        result = await transformer(buf, task.source)
-                    elif task.target is not None:
-                        result = task.target
-                    else:
-                        result = task.source
-                    outq.put_nowait((task.source.id, result))
-                    del active[task.source.id]
             except asyncio.CancelledError:
                 pass
             finally:
@@ -208,12 +221,20 @@ class ObstoreParallelReader:
 
         # Yield results as they are completed
         if sys.version_info >= (3, 11):
-            async with asyncio.TaskGroup() as tg:
-                tg.create_task(_fill())
-                for _ in range(self._max_concurrency):
-                    tg.create_task(_worker())
-                while not done.is_set():
-                    yield await outq.get()
+            try:
+                async with asyncio.TaskGroup() as tg:
+                    tg.create_task(_fill())
+                    for _ in range(self._max_concurrency):
+                        tg.create_task(_worker())
+                    while not done.is_set():
+                        yield await outq.get()
+            except BaseException as exc:
+                unwrapped = self._unwrap_single_exception_group(exc)
+                if unwrapped is exc:
+                    raise
+                # Hide the original exception when raising the unwrapped one,
+                # since the original is just a wrapper that adds no information
+                raise unwrapped from None
         else:
             fill_task = asyncio.create_task(_fill())
             worker_tasks = [asyncio.create_task(_worker()) for _ in range(self._max_concurrency)]
