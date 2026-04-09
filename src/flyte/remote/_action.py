@@ -23,6 +23,7 @@ import rich.repr
 from connectrpc.code import Code
 from connectrpc.errors import ConnectError
 from flyteidl2.common import identifier_pb2, list_pb2, phase_pb2
+from flyteidl2.dataproxy import dataproxy_service_pb2
 from flyteidl2.task import common_pb2
 from flyteidl2.workflow import run_definition_pb2, run_service_pb2
 from flyteidl2.workflow.run_service_pb2 import WatchActionDetailsResponse
@@ -963,8 +964,8 @@ class ActionDetails(ToJSONMixin):
             return True
         if self._inputs and not self.done():
             return False
-        resp = await get_client().run_service.get_action_data(
-            request=run_service_pb2.GetActionDataRequest(
+        resp = await get_client().dataproxy_service.get_action_data(
+            request=dataproxy_service_pb2.GetActionDataRequest(
                 action_id=self.pb2.id,
             )
         )
