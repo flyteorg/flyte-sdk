@@ -148,6 +148,34 @@ async def test_worker_logs_transformer_exception_with_file_context():
     assert ", 0)" in call_args
 
 
+@pytest.mark.asyncio
+async def test_as_completed_pre311_surfaces_worker_exception_without_hanging():
+    import flyte.storage._parallel_reader as pr
+
+    store = mock.MagicMock()
+    reader = ObstoreParallelReader(store, max_concurrency=1)
+
+    async def _gen():
+        yield DownloadTask(
+            source=Source(id="file", path=Path("prefix/file.txt"), length=4),
+            chunk=Chunk(offset=0, length=4),
+        )
+
+    async def _consume():
+        async for _ in reader._as_completed(_gen()):
+            pass
+
+    with (
+        mock.patch("flyte.storage._parallel_reader.sys.version_info", (3, 10)),
+        mock.patch(
+            "flyte.storage._parallel_reader.obstore.get_range_async",
+            new=mock.AsyncMock(side_effect=RuntimeError("GCS 429: Too Many Requests")),
+        ),
+    ):
+        with pytest.raises(RuntimeError, match="GCS 429: Too Many Requests"):
+            await asyncio.wait_for(_consume(), timeout=0.5)
+
+
 @pytest.mark.skip
 @pytest.mark.asyncio
 async def test_access_large_file():

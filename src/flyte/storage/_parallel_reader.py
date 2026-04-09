@@ -235,18 +235,47 @@ class ObstoreParallelReader:
         else:
             fill_task = asyncio.create_task(_fill())
             worker_tasks = [asyncio.create_task(_worker()) for _ in range(self._max_concurrency)]
+            outq_get_task: asyncio.Task | None = None
             try:
-                while not done.is_set():
-                    yield await outq.get()
-            except Exception as e:
+                while True:
+                    if outq_get_task is None and not done.is_set():
+                        outq_get_task = asyncio.create_task(outq.get())
+
+                    pending = {task for task in (fill_task, *worker_tasks) if not task.done()}
+                    if outq_get_task is not None:
+                        pending.add(outq_get_task)
+                    if not pending:
+                        break
+
+                    completed, _ = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                    if outq_get_task in completed:
+                        yield outq_get_task.result()
+                        outq_get_task = None
+                        continue
+
+                    for task in completed:
+                        if task.cancelled():
+                            continue
+                        exc = task.exception()
+                        if exc is not None:
+                            raise exc
+
+                    if done.is_set():
+                        break
+            except BaseException as e:
                 if not fill_task.done():
                     fill_task.cancel()
                 for wt in worker_tasks:
                     if not wt.done():
                         wt.cancel()
+                if outq_get_task is not None and not outq_get_task.done():
+                    outq_get_task.cancel()
                 raise e
             finally:
-                await asyncio.gather(fill_task, *worker_tasks, return_exceptions=True)
+                await asyncio.gather(
+                    *(task for task in (fill_task, *worker_tasks, outq_get_task) if task is not None),
+                    return_exceptions=True,
+                )
 
         # Drain the output queue
         try:
