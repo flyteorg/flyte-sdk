@@ -138,8 +138,7 @@ def _wait_for_kubeconfig(kubeconfig_path: Path, timeout: int = 60) -> None:
         time.sleep(1)
 
 
-# TODO: Rename context to flyte-demo
-def _switch_k8s_context(context: str = "flytev2-sandbox", namespace: str = "flyte") -> None:
+def _switch_k8s_context(context: str = "flyte-demo", namespace: str = "flyte") -> None:
     try:
         subprocess.run(["kubectl", "config", "use-context", context], check=True, capture_output=True, text=True)
         subprocess.run(
