@@ -150,7 +150,6 @@ async def test_worker_logs_transformer_exception_with_file_context():
 
 @pytest.mark.asyncio
 async def test_as_completed_pre311_surfaces_worker_exception_without_hanging():
-    import flyte.storage._parallel_reader as pr
 
     store = mock.MagicMock()
     reader = ObstoreParallelReader(store, max_concurrency=1)
