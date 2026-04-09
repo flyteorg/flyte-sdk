@@ -20,11 +20,6 @@ if typing.TYPE_CHECKING:
     from obstore import Bytes, ObjectMeta
     from obstore.store import ObjectStore
 
-try:
-    from builtins import BaseExceptionGroup
-except ImportError:
-    BaseExceptionGroup = None  # type: ignore[assignment]
-
 CHUNK_SIZE = int(os.getenv("FLYTE_IO_CHUNK_SIZE", str(16 * 1024 * 1024)))
 MAX_CONCURRENCY = int(os.getenv("FLYTE_IO_MAX_CONCURRENCY", str(32)))
 
@@ -133,8 +128,10 @@ class ObstoreParallelReader:
             yield offset, length
 
     def _unwrap_single_exception_group(self, exc: BaseException) -> BaseException:
-        if BaseExceptionGroup is None:
+        if sys.version_info < (3, 11):
             return exc
+
+        from builtins import BaseExceptionGroup
 
         while isinstance(exc, BaseExceptionGroup) and len(exc.exceptions) == 1:
             exc = exc.exceptions[0]
