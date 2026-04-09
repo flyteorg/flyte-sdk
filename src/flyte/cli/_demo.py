@@ -69,7 +69,9 @@ def _pull_image(image: str) -> None:
     if _is_local_image(image):
         click.echo(f"Skipping pull for local image '{image}'")
         return
-    subprocess.run(["docker", "pull", image], check=True)
+    result = subprocess.run(["docker", "pull", image], capture_output=True, text=True)
+    if result.returncode != 0:
+        raise click.ClickException(f"Failed to pull image '{image}'. Check that the image name is correct and you have access.")
 
 
 def _run_container(
@@ -105,7 +107,7 @@ def _run_container(
     for port in ports:
         cmd.extend(["--publish", port])
     cmd.append(image)
-    subprocess.run(cmd, check=True)
+    subprocess.run(cmd, check=True, capture_output=True)
 
 
 def _wait_for_console_ready(url: str, timeout: int = 300, poll_interval: float = 3.0) -> None:
@@ -135,8 +137,7 @@ def _wait_for_kubeconfig(kubeconfig_path: Path, timeout: int = 60) -> None:
         time.sleep(1)
 
 
-# TODO: Rename context to flyte-demo
-def _switch_k8s_context(context: str = "flytev2-sandbox", namespace: str = "flyte") -> None:
+def _switch_k8s_context(context: str = "flyte-demo", namespace: str = "flyte") -> None:
     try:
         subprocess.run(["kubectl", "config", "use-context", context], check=True)
         subprocess.run(["kubectl", "config", "set-context", "--current", f"--namespace={namespace}"], check=True)
