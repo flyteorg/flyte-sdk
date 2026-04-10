@@ -2,16 +2,17 @@
 Batch Inference with FastAPI and TokenBatcher (Flyte App Environment)
 ====================================================================
 
-Demonstrates how to expose a batched inference endpoint using `FastAPI` within a `flyte.App` environment, while still 
+Demonstrates how to expose a batched inference endpoint using `FastAPI` within a `flyte.App` environment, while still
 using a `flyte.TaskEnvironment` for the main orchestrator.
-This pattern is ideal for serving models where multiple concurrent requests can be 
+This pattern is ideal for serving models where multiple concurrent requests can be
 aggregated into a single large batch to maximize GPU throughput via `TokenBatcher`.
 
 The pattern:
 1. A **Flyte App** runs in a persistent container (via `flyte.App`) containing the FastAPI server and vLLM model.
 2. The app initializes the vLLM model and `TokenBatcher` once on startup using `alru_cache`.
 3. An asynchronous FastAPI endpoint receives inference requests and submits them to the shared `TokenBatcher`.
-4. A **Driver Task** (running in a `flyte.TaskEnvironment`) acts as the orchestrator, which could theoretically trigger other workflows or manage resources.
+4. A **Driver Task** (running in a `flyte.TaskEnvironment`) acts as the orchestrator, which could theoretically trigger
+   other workflows or manage resources.
 
 Key Flyte concepts:
 - ``flyte.App`` for running long-lived, persistent services (e.g., FastAPI servers).
@@ -29,10 +30,10 @@ import logging
 from dataclasses import dataclass
 from typing import List
 
-from fastapi import FastAPI, HTTPException
-from async_lru import alru_cache
 import httpx
 import uvicorn
+from async_lru import alru_cache
+from fastapi import FastAPI, HTTPException
 
 import flyte
 from flyte.app.extras import FastAPIAppEnvironment
@@ -65,20 +66,28 @@ driver_env = flyte.TaskEnvironment(
     depends_on=[app_env],
 )
 
+# HuggingFace Datasets API endpoint for gsm8k (math word problems).
+# Public, no auth needed.  Each row has a "question" and "answer" field.
+GSM8K_URL = "https://datasets-server.huggingface.co/rows?dataset=openai/gsm8k&config=main&split=test&offset={offset}&length={length}"
+
 # ---------------------------------------------------------------------------
 # Record type
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class Prompt:
     """A single inference request record."""
+
     task_id: str
     index: int
     text: str
 
+
 # ---------------------------------------------------------------------------
 # Process-level singletons — loaded once, reused across all FastAPI requests
 # ---------------------------------------------------------------------------
+
 
 @alru_cache(maxsize=1)
 async def get_inference_fn():
@@ -100,6 +109,7 @@ async def get_inference_fn():
     logger.info("vLLM model loaded")
     return inference
 
+
 @alru_cache(maxsize=1)
 async def get_batcher() -> TokenBatcher[Prompt, str]:
     """Create a single TokenBatcher per process."""
@@ -115,11 +125,13 @@ async def get_batcher() -> TokenBatcher[Prompt, str]:
     logger.info("TokenBatcher started")
     return batcher
 
+
 # ---------------------------------------------------------------------------
 # FastAPI Application Setup (Runs inside the app_env)
 # ---------------------------------------------------------------------------
 
 app = FastAPI(title="Flyte Batched Inference Service")
+
 
 @app.post("/generate")
 async def generate(payload: List[str]):
@@ -131,9 +143,9 @@ async def generate(payload: List[str]):
         raise HTTPException(status_code=400, detail="No prompts provided")
 
     batcher = await get_batcher()
-    
+
     request_id = f"req_{asyncio.current_task().get_name()}"
-    
+
     futures: List[asyncio.Future[str]] = []
     for idx, text in enumerate(payload):
         record = Prompt(task_id=request_id, index=int(idx), text=text)
@@ -141,7 +153,7 @@ async def generate(payload: List[str]):
         futures.append(future)
 
     results = await asyncio.gather(*futures)
-    
+
     logger.info(
         "[%s] Processed %d prompts | utilization: %.1f%% | Total Batches: %d",
         request_id,
@@ -151,13 +163,16 @@ async def generate(payload: List[str]):
     )
     return {"results": results}
 
+
 @app.get("/health")
 async def health():
     return {"status": "ok"}
 
+
 # ---------------------------------------------------------------------------
 # Flyte App Entrypoint (The persistent FastAPI server)
 # ---------------------------------------------------------------------------
+
 
 @app_env.app
 async def run_server():
@@ -168,12 +183,13 @@ async def run_server():
     server = uvicorn.Server(config)
     await server.serve()
 
+
 # ---------------------------------------------------------------------------
 # Orchestrator Task (The driver logic in a task env)
 # ---------------------------------------------------------------------------
 
-@driver_env.task
-async def main(prompts: List[str]) -> dict[str, List[str]]:
+
+async def infer_batch(prompts: List[str]) -> dict[str, List[str]]:
     """
     A driver task that calls the FastAPI inference service.
     In a real scenario, this would be triggered as part of a workflow.
@@ -187,8 +203,68 @@ async def main(prompts: List[str]) -> dict[str, List[str]]:
         response.raise_for_status()
         return response.json()
 
+
+async def fetch_gsm8k_questions(n: int = 500) -> list[str]:
+    """Fetch math word problems from the HuggingFace gsm8k dataset.
+
+    Uses the HuggingFace Datasets Server API (public, no auth required).
+    Paginates automatically when more than 100 questions are requested.
+
+    Args:
+        n: Number of questions to fetch.
+
+    Returns:
+        List of question strings.
+    """
+    questions: list[str] = []
+    async with httpx.AsyncClient() as client:
+        offset = 0
+        while offset < n:
+            length = min(n - offset, 100)
+            resp = await client.get(
+                GSM8K_URL.format(offset=offset, length=length),
+                timeout=30,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            questions.extend(row["row"]["question"] for row in data["rows"])
+            offset += length
+    return questions
+
+
+@driver_env.task
+async def main(
+    num_questions: int = 500,
+    chunk_size: int = 50,
+) -> dict[str, list[str]]:
+    """Fetch gsm8k math problems and solve them with batched LLM inference.
+
+    Downloads questions from the HuggingFace ``openai/gsm8k`` dataset,
+    splits them into chunks, and fans each chunk out as a separate
+    ``infer_batch`` call.  With ``ReusePolicy(replicas=2, concurrency=10)``,
+    up to 20 calls run concurrently across 2 GPU replicas, all sharing
+    their replica's model and batcher.
+
+    Args:
+        num_questions: Total questions to fetch from gsm8k.
+        chunk_size: Number of questions per ``infer_batch`` call.
+
+    Returns:
+        Mapping from task_id to list of generated answers.
+    """
+    questions = await fetch_gsm8k_questions(num_questions)
+    logger.info("Fetched %d questions from gsm8k", len(questions))
+
+    # Split into chunks → one infer_batch call per chunk
+    chunks = [questions[i : i + chunk_size] for i in range(0, len(questions), chunk_size)]
+    task_ids = [f"gsm8k_{i:03d}" for i in range(len(chunks))]
+
+    all_results = await asyncio.gather(*(infer_batch(chunk, tid) for chunk, tid in zip(chunks, task_ids)))
+    return dict(zip(task_ids, all_results))
+
+
 if __name__ == "__main__":
     flyte.init_from_config()
     # We run the 'main' task from the driver environment with some sample prompts.
-    run = flyte.run(main, prompts=["Hello world", "What is 2+2?"])
+    run = flyte.run(main, num_questions=5000, chunk_size=50)
     print(f"Driver task completed. Results: {run}")
