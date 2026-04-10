@@ -9,7 +9,13 @@ from flyte.types._type_engine import MESSAGEPACK, TypeEngine
 from flyteidl2.core.literals_pb2 import Binary, Literal, Scalar
 from omegaconf import ListConfig, OmegaConf
 
-from flyteplugins.omegaconf.listconfig_transformer import ListConfigTransformer
+from flyteplugins.omegaconf.base_transformer import ListConfigTransformer
+from flyteplugins.omegaconf.codec import (
+    KIND_LIST,
+    PAYLOAD_KIND,
+    PAYLOAD_MARKER,
+    PAYLOAD_VALUES,
+)
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -243,14 +249,15 @@ async def test_literal_is_binary_msgpack():
 
 @pytest.mark.asyncio
 async def test_payload_is_plain_list():
-    """The msgpack payload is a raw list (not wrapped in a dict)."""
+    """The msgpack payload is a marked ListConfig payload."""
     t = make_transformer()
     cfg = OmegaConf.create([10, 20, 30])
     lt = t.get_literal_type(ListConfig)
     literal = await t.to_literal(cfg, ListConfig, lt)
     payload = msgpack.loads(literal.scalar.binary.value, strict_map_key=False)
-    assert isinstance(payload, list)
-    assert payload == [10, 20, 30]
+    assert payload[PAYLOAD_MARKER] is True
+    assert payload[PAYLOAD_KIND] == KIND_LIST
+    assert payload[PAYLOAD_VALUES] == [10, 20, 30]
 
 
 def test_from_binary_idl_wrong_tag_raises():
@@ -271,7 +278,11 @@ async def test_to_python_value_non_binary_raises():
 def test_from_binary_idl_direct():
     """from_binary_idl can be called directly with a valid Binary."""
     t = make_transformer()
-    payload = [1, 2, 3]
+    payload = {
+        PAYLOAD_MARKER: True,
+        PAYLOAD_KIND: KIND_LIST,
+        PAYLOAD_VALUES: [1, 2, 3],
+    }
     binary = Binary(value=msgpack.dumps(payload), tag=MESSAGEPACK)
     result = t.from_binary_idl(binary, ListConfig)
     assert isinstance(result, ListConfig)

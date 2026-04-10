@@ -12,7 +12,14 @@ from flyte.types._type_engine import MESSAGEPACK, TypeEngine
 from flyteidl2.core.literals_pb2 import Binary, Literal, Scalar
 from omegaconf import MISSING, DictConfig, MissingMandatoryValue, OmegaConf
 
-from flyteplugins.omegaconf.dictconfig_transformer import DictConfigTransformer
+from flyteplugins.omegaconf.base_transformer import DictConfigTransformer
+from flyteplugins.omegaconf.codec import (
+    PAYLOAD_KIND,
+    PAYLOAD_MARKER,
+    PAYLOAD_SCHEMA,
+    PAYLOAD_VALUES,
+    KIND_DICT,
+)
 
 # ── Shared dataclasses ────────────────────────────────────────────────────────
 
@@ -278,8 +285,10 @@ async def test_structured_unknown_class_falls_back_to_plain_dictconfig():
     t = make_transformer()
     # Craft a payload referencing a non-existent class
     payload = {
-        "base_dataclass": "nonexistent.module.FakeConf",
-        "values": {"lr": 0.001, "epochs": 10},
+        PAYLOAD_MARKER: True,
+        PAYLOAD_KIND: KIND_DICT,
+        PAYLOAD_SCHEMA: "nonexistent.module.FakeConf",
+        PAYLOAD_VALUES: {"lr": 0.001, "epochs": 10},
     }
     binary = Binary(value=msgpack.dumps(payload), tag=MESSAGEPACK)
     result = t.from_binary_idl(binary, DictConfig)
@@ -333,15 +342,20 @@ async def test_literal_is_binary_msgpack():
 
 @pytest.mark.asyncio
 async def test_payload_structure():
-    """Serialized payload has base_dataclass and values keys."""
+    """Serialized payload is a marked DictConfig payload with schema and values."""
     t = make_transformer()
     cfg = OmegaConf.structured(TrainConf())
     lt = t.get_literal_type(DictConfig)
     literal = await t.to_literal(cfg, DictConfig, lt)
     payload = msgpack.loads(literal.scalar.binary.value, strict_map_key=False)
-    assert "base_dataclass" in payload
-    assert "values" in payload
-    assert "TrainConf" in payload["base_dataclass"]
+    assert payload[PAYLOAD_MARKER] is True
+    assert payload[PAYLOAD_KIND] == KIND_DICT
+    assert "TrainConf" in payload[PAYLOAD_SCHEMA]
+    assert PAYLOAD_VALUES in payload
+    assert payload[PAYLOAD_VALUES]["epochs"] == 10
+    assert payload[PAYLOAD_VALUES]["optimizer"][PAYLOAD_MARKER] is True
+    assert payload[PAYLOAD_VALUES]["optimizer"][PAYLOAD_KIND] == KIND_DICT
+    assert "OptimizerConf" in payload[PAYLOAD_VALUES]["optimizer"][PAYLOAD_SCHEMA]
 
 
 def test_from_binary_idl_wrong_tag_raises():

@@ -5,15 +5,18 @@ Covers:
 - Flat structured config
 - Nested structured config (dataclass inside dataclass)
 - Structured config with List[T] fields (layer sizes, augmentation names)
+- Dataclass-backed values inside Dict[str, Dataclass] and List[Dataclass] fields
+- Enum, Path, Optional, bytes, and MISSING fields surviving task hops
 - OmegaConf.merge() to apply overrides on top of a structured config
 - Type validation: assigning a wrong type raises ValidationError in the receiving task
-- MISSING fields: raises MissingMandatoryValue if a required field is unset at serialization time
+- MISSING fields: serialize successfully and still raise MissingMandatoryValue on access
 - Dataclass/DictConfig resolution: structured config comes back typed; plain dict comes back as dict
 """
 
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
-from typing import List
+from typing import Optional
 
 import flyte
 from flyte._image import PythonWheels
@@ -69,18 +72,52 @@ class TrainConf:
 class NetworkConf:
     """Structured config with List[T] fields."""
 
-    layer_sizes: List[int] = field(default_factory=lambda: [512, 256, 128])
-    activations: List[str] = field(default_factory=lambda: ["relu", "relu", "sigmoid"])
-    dropout_rates: List[float] = field(default_factory=lambda: [0.1, 0.2, 0.0])
+    layer_sizes: list[int] = field(default_factory=lambda: [512, 256, 128])
+    activations: list[str] = field(default_factory=lambda: ["relu", "relu", "sigmoid"])
+    dropout_rates: list[float] = field(default_factory=lambda: [0.1, 0.2, 0.0])
 
 
 @dataclass
 class TrainConfWithMissing:
-    """Config with required fields that must be provided before serialization."""
+    """Config with required fields that remain MISSING until accessed."""
 
     data_path: str = MISSING  # required — no default
     epochs: int = 10
     lr: float = 0.001
+
+
+class RunMode(Enum):
+    TRAIN = "train"
+    EVAL = "eval"
+
+
+@dataclass
+class CallbackConf:
+    name: str = "early_stop"
+    patience: int = 3
+    monitor: str = MISSING
+
+
+@dataclass
+class AdvancedTrainConf:
+    mode: RunMode = RunMode.TRAIN
+    checkpoint_dir: Path = Path("/tmp/checkpoints")
+    maybe_seed: Optional[int] = None
+    payload: bytes = b"default-token"
+    callbacks_by_name: dict[str, CallbackConf] = field(
+        default_factory=lambda: {
+            "early_stop": CallbackConf(name="early_stop", patience=3),
+            "checkpoint": CallbackConf(
+                name="checkpoint", patience=1, monitor="val_loss"
+            ),
+        }
+    )
+    callbacks: list[CallbackConf] = field(
+        default_factory=lambda: [
+            CallbackConf(name="lr_monitor", patience=2, monitor="lr"),
+            CallbackConf(name="nan_guard", patience=1, monitor="loss"),
+        ]
+    )
 
 
 @env.task
@@ -138,6 +175,32 @@ async def append_output_layer(cfg: DictConfig, output_dim: int) -> DictConfig:
 async def use_filled_config(cfg: DictConfig) -> str:
     """Receives a config with all MISSING fields filled. Simply reads from it."""
     return f"data_path={cfg.data_path} epochs={cfg.epochs} lr={cfg.lr}"
+
+
+@env.task
+async def inspect_advanced_config(cfg: DictConfig) -> str:
+    """Verifies nested dataclass containers and rich scalar types survive roundtrip."""
+    assert OmegaConf.get_type(cfg) == AdvancedTrainConf
+    assert OmegaConf.get_type(cfg.callbacks_by_name["early_stop"]) == CallbackConf
+    assert OmegaConf.get_type(cfg.callbacks[0]) == CallbackConf
+    assert isinstance(cfg.mode, RunMode)
+    assert isinstance(cfg.checkpoint_dir, Path)
+    assert cfg.maybe_seed is None
+    assert isinstance(cfg.payload, bytes)
+
+    try:
+        _ = cfg.callbacks_by_name["early_stop"].monitor
+        missing_preserved = False
+    except Exception:
+        missing_preserved = True
+
+    return (
+        f"mode={cfg.mode.value} "
+        f"checkpoint={cfg.checkpoint_dir} "
+        f"dict_callback={cfg.callbacks_by_name['checkpoint'].monitor} "
+        f"list_callback={cfg.callbacks[0].name} "
+        f"missing_preserved={missing_preserved}"
+    )
 
 
 @env.task
@@ -212,22 +275,30 @@ async def list_fields_pipeline() -> str:
 async def missing_field_pipeline() -> tuple[str, bool]:
     """Demonstrates MISSING field behaviour.
 
-    - Passing a config with MISSING fields raises MissingMandatoryValue at serialization.
+    - Passing a config with MISSING fields serializes successfully.
+    - Accessing the unfilled field in the receiving task still raises.
     - Passing a fully-filled config works fine.
     """
     # Case 1: filled — works
     filled_cfg = OmegaConf.structured(TrainConfWithMissing(data_path="/data/imagenet"))
     summary = await use_filled_config(filled_cfg)
 
-    # Case 2: unfilled — raises at serialization (to_container(resolve=True) hits MISSING)
+    # Case 2: unfilled — roundtrips successfully, but accessing the field still raises
     unfilled_cfg = OmegaConf.structured(TrainConfWithMissing())
-    raised = False
+    raised_on_access = False
     try:
         await use_filled_config(unfilled_cfg)
     except RuntimeUserError:
-        raised = True
+        raised_on_access = True
 
-    return summary, raised
+    return summary, raised_on_access
+
+
+@env.task
+async def advanced_container_pipeline() -> str:
+    """Structured config with dataclasses nested inside dict and list fields."""
+    cfg = OmegaConf.structured(AdvancedTrainConf())
+    return await inspect_advanced_config(cfg)
 
 
 @env.task
@@ -268,6 +339,11 @@ if __name__ == "__main__":
 
     print("\n=== MISSING field pipeline ===")
     run = flyte.run(missing_field_pipeline)
+    print(f"Run URL: {run.url}")
+    print(f"Outputs: {run.outputs()}")
+
+    print("\n=== Advanced container pipeline ===")
+    run = flyte.run(advanced_container_pipeline)
     print(f"Run URL: {run.url}")
     print(f"Outputs: {run.outputs()}")
 

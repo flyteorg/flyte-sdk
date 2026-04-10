@@ -6,10 +6,12 @@ Covers:
 - List of strings (e.g. layer names, optimizer choices)
 - Nested list (list of lists)
 - List of dicts (round-trips as ListConfig of DictConfigs)
+- List of dataclass instances (round-trips as ListConfig of typed DictConfigs)
 - ListConfig as output of one task, input to another
 - Building a ListConfig inside a task and returning it
 """
 
+from dataclasses import dataclass
 from pathlib import Path
 
 import flyte
@@ -25,6 +27,13 @@ env = flyte.TaskEnvironment(
         ),
     ),
 )
+
+
+@dataclass
+class LayerConf:
+    name: str
+    width: int
+    activation: str
 
 
 @env.task
@@ -62,6 +71,15 @@ async def flatten_grid(grid: ListConfig) -> ListConfig:
 @env.task
 async def summarize_list(values: ListConfig) -> str:
     return f"count={len(values)} min={min(values):.4f} max={max(values):.4f}"
+
+
+@env.task
+async def summarize_layer_configs(layers: ListConfig) -> str:
+    """Receives a list of dataclass-backed DictConfigs and inspects their types."""
+    assert OmegaConf.get_type(layers[0]) == LayerConf
+    names = [layer.name for layer in layers]
+    widths = [layer.width for layer in layers]
+    return f"layers={names} widths={widths} final={layers[-1].activation}"
 
 
 @env.task
@@ -139,6 +157,19 @@ async def nested_complex_pipeline() -> int:
     return total
 
 
+@env.task
+async def dataclass_list_pipeline() -> str:
+    """ListConfig whose elements are dataclass-backed configs."""
+    layers = OmegaConf.create(
+        [
+            LayerConf(name="encoder", width=768, activation="gelu"),
+            LayerConf(name="bottleneck", width=128, activation="relu"),
+            LayerConf(name="decoder", width=768, activation="linear"),
+        ]
+    )
+    return await summarize_layer_configs(layers)
+
+
 if __name__ == "__main__":
     flyte.init_from_config()
 
@@ -164,5 +195,10 @@ if __name__ == "__main__":
 
     print("\n=== Nested complex pipeline ===")
     run = flyte.run(nested_complex_pipeline)
+    print(f"Run URL: {run.url}")
+    print(f"Outputs: {run.outputs()}")
+
+    print("\n=== Dataclass list pipeline ===")
+    run = flyte.run(dataclass_list_pipeline)
     print(f"Run URL: {run.url}")
     print(f"Outputs: {run.outputs()}")

@@ -1,8 +1,4 @@
-"""OmegaConf DictConfig/ListConfig support for Flyte.
-
-Importing this package registers the transformers with Flyte's TypeEngine,
-enabling DictConfig and ListConfig as typed task inputs and outputs.
-"""
+"""OmegaConf DictConfig/ListConfig support for Flyte."""
 
 from __future__ import annotations
 
@@ -10,8 +6,7 @@ import functools
 
 from flyte.types._type_engine import TypeEngine
 
-from .dictconfig_transformer import DictConfigTransformer
-from .listconfig_transformer import ListConfigTransformer
+from .base_transformer import DictConfigTransformer, ListConfigTransformer
 
 
 @functools.lru_cache(maxsize=None)
@@ -25,5 +20,5 @@ def register_omegaconf_transformers() -> None:
     TypeEngine.register(ListConfigTransformer())
 
 
-# Register on import so that `import flyteplugins.omegaconf` is sufficient.
+# Register at module import time for backwards compatibility.
 register_omegaconf_transformers()
