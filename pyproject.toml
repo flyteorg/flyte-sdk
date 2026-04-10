@@ -69,6 +69,11 @@ examples-test = [
 sandbox = [
     "pydantic-monty==0.0.17",
 ]
+mcp = [
+    "mcp>=1.26.0",
+    "starlette",
+    "uvicorn",
+]
 tui = [
     "textual>=0.80",
 ]
