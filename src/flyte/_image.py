@@ -604,6 +604,19 @@ class Image:
                 flyte_version = __version__.replace("+", "-")
             suffix = flyte_version if flyte_version.startswith("v") else f"v{flyte_version}"
             preset_tag = f"py{python_version[0]}.{python_version[1]}-{suffix}"
+            if not dev_mode:
+                # This is the released default image; it already exists in the registry.
+                # Return a bare-URI image (via from_base) so the SDK does not try to build it
+                # unless the user clones/modifies it. Preserve the requested platform so later
+                # clones keep the multi-arch default.
+                return Image._new(
+                    base_image=f"{_BASE_REGISTRY}/{_DEFAULT_IMAGE_NAME}:{preset_tag}",
+                    registry=_get_base_registry(),
+                    name=_DEFAULT_IMAGE_NAME,
+                    python_version=python_version,
+                    platform=("linux/amd64", "linux/arm64") if platform is None else platform,
+                    extendable=True,
+                )
         image = Image._new(
             base_image=f"python:{python_version[0]}.{python_version[1]}-slim-bookworm",
             registry=_get_base_registry(),
@@ -612,16 +625,7 @@ class Image:
             platform=("linux/amd64", "linux/arm64") if platform is None else platform,
             extendable=True,
         )
-        if install_flyte and not dev_mode:
-            # This is the released default image; it already exists in the registry.
-            # Return a bare-URI image (via from_base) so the SDK does not try to build it
-            # unless the user clones/modifies it. Preserve the requested platform so later
-            # clones keep the multi-arch default.
-            return Image._new(
-                base_image=f"{_BASE_REGISTRY}/{_DEFAULT_IMAGE_NAME}:{preset_tag}",
-                python_version=python_version,
-                platform=("linux/amd64", "linux/arm64") if platform is None else platform,
-            )
+        print("_get_base_registry():", _get_base_registry())
         labels_and_user = _DockerLines(
             (
                 "LABEL org.opencontainers.image.authors='Union.AI <info@union.ai>'",
