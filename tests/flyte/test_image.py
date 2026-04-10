@@ -784,3 +784,51 @@ def test_get_base_registry_returns_default_for_empty_endpoint():
     mock_config.client.endpoint = ""
     with patch("flyte._initialize._get_init_config", return_value=mock_config):
         assert _get_base_registry() == _BASE_REGISTRY
+
+
+def test_default_image_uses_base_registry_for_released_version_on_localhost():
+    """A released (non-dev) SDK must use the default registry even when pointed at a localhost endpoint."""
+    mock_config = MagicMock()
+    mock_config.client.endpoint = "localhost:8090"
+    with (
+        patch("flyte._version.__version__", "1.2.3"),
+        patch("flyte._initialize._get_init_config", return_value=mock_config),
+    ):
+        image = Image._get_default_image_for(python_version=(3, 12))
+    assert image.registry == _BASE_REGISTRY
+
+
+def test_default_image_uses_localhost_registry_for_dev_version_on_localhost():
+    """A dev SDK pointed at a localhost endpoint should use the localhost registry."""
+    mock_config = MagicMock()
+    mock_config.client.endpoint = "localhost:8090"
+    with (
+        patch("flyte._version.__version__", "1.2.3.dev0+abc"),
+        patch("flyte._initialize._get_init_config", return_value=mock_config),
+    ):
+        image = Image._get_default_image_for(python_version=(3, 12))
+    assert image.registry == _LOCALHOST_REGISTRY
+
+
+def test_default_image_uses_base_registry_for_dev_version_on_remote():
+    """A dev SDK pointed at a remote endpoint should still use the default registry."""
+    mock_config = MagicMock()
+    mock_config.client.endpoint = "dns:///my-cluster.example.com"
+    with (
+        patch("flyte._version.__version__", "1.2.3.dev0+abc"),
+        patch("flyte._initialize._get_init_config", return_value=mock_config),
+    ):
+        image = Image._get_default_image_for(python_version=(3, 12))
+    assert image.registry == _BASE_REGISTRY
+
+
+def test_default_image_uses_base_registry_when_install_flyte_false():
+    """When install_flyte=False, dev_mode is False and we should use the default registry even on localhost."""
+    mock_config = MagicMock()
+    mock_config.client.endpoint = "localhost:8090"
+    with (
+        patch("flyte._version.__version__", "1.2.3.dev0+abc"),
+        patch("flyte._initialize._get_init_config", return_value=mock_config),
+    ):
+        image = Image._get_default_image_for(python_version=(3, 12), install_flyte=False)
+    assert image.registry == _BASE_REGISTRY

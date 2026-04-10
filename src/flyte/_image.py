@@ -603,7 +603,7 @@ class Image:
             preset_tag = f"py{python_version[0]}.{python_version[1]}-{suffix}"
         image = Image._new(
             base_image=f"python:{python_version[0]}.{python_version[1]}-slim-bookworm",
-            registry=_get_base_registry(),
+            registry=_get_base_registry() if dev_mode else _BASE_REGISTRY,
             name=_DEFAULT_IMAGE_NAME,
             python_version=python_version,
             platform=("linux/amd64", "linux/arm64") if platform is None else platform,
