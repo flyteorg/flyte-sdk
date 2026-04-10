@@ -8,8 +8,6 @@
 
 import sys
 
-import polyglot_hello
-
 import flyte
 
 env = flyte.TaskEnvironment(
@@ -21,12 +19,16 @@ env = flyte.TaskEnvironment(
 
 @env.task
 def hello_for_code(code: str) -> tuple[str, str, str]:
+    import polyglot_hello
+
     greeting = polyglot_hello.get_by_code(code)
     return greeting.code, greeting.name, greeting.hello
 
 
 @env.task
 def main(letter: str) -> dict[str, str]:
+    import polyglot_hello
+
     if not isinstance(letter, str) or len(letter) != 1 or not letter.isalpha():
         raise ValueError("letter must be a single alphabetic character, e.g., 'e' or 'S'")
 
