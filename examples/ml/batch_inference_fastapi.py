@@ -2,7 +2,8 @@
 Batch Inference with FastAPI and TokenBatcher (Flyte App Environment)
 ====================================================================
 
-Demonstrates how to expose a batched inference endpoint using `FastAPI` within a `flyte.App` environment, while still using a `flyte.TaskEnvironment` for the main orchestrator. 
+Demonstrates how to expose a batched inference endpoint using `FastAPI` within a `flyte.App` environment, while still 
+using a `flyte.TaskEnvironment` for the main orchestrator.
 This pattern is ideal for serving models where multiple concurrent requests can be aggregated into a single large batch to maximize GPU throughput via `TokenBatcher`.
 
 The pattern:
