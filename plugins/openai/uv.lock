@@ -470,6 +470,7 @@ requires-dist = [
     { name = "keyring", specifier = ">=25.6.0" },
     { name = "lightning", marker = "extra == 'examples-test'" },
     { name = "mashumaro" },
+    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.26.0" },
     { name = "msgpack", specifier = ">=1.1.0" },
     { name = "nest-asyncio", marker = "extra == 'examples-test'" },
     { name = "obstore", specifier = ">=0.7.3" },
@@ -486,11 +487,13 @@ requires-dist = [
     { name = "rich-click", specifier = "==1.8.9" },
     { name = "scikit-learn", marker = "extra == 'examples-test'" },
     { name = "sentry-sdk", specifier = ">=2.0" },
+    { name = "starlette", marker = "extra == 'mcp'" },
     { name = "textual", marker = "extra == 'tui'", specifier = ">=0.80" },
     { name = "toml", specifier = ">=0.10.2" },
     { name = "uvicorn", marker = "extra == 'examples-test'" },
+    { name = "uvicorn", marker = "extra == 'mcp'" },
 ]
-provides-extras = ["aiosqlite", "connector", "examples-test", "sandbox", "tui", "rust-controller"]
+provides-extras = ["aiosqlite", "connector", "examples-test", "sandbox", "mcp", "tui", "rust-controller"]
 
 [package.metadata.requires-dev]
 dev = [
