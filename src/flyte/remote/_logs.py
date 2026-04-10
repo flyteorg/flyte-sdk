@@ -127,7 +127,7 @@ class Logs:
         retries = 0
         while True:
             try:
-                resp = get_client().logs_service.tail_logs(
+                resp = get_client().dataproxy_service.tail_logs(
                     run_logs_service_pb2.TailLogsRequest(action_id=action_id, attempt=attempt)
                 )
                 async for log_set in resp:
