@@ -4,6 +4,7 @@ from urllib.parse import urlparse
 
 from flyteidl2.app.app_service_connect import AppServiceClient
 from flyteidl2.auth.identity_connect import IdentityServiceClient
+from flyteidl2.cluster.service_connect import ClusterServiceClient
 from flyteidl2.dataproxy.dataproxy_service_connect import DataProxyServiceClient
 from flyteidl2.project.project_service_connect import ProjectServiceClient
 from flyteidl2.secret.secret_connect import SecretServiceClient
@@ -14,6 +15,7 @@ from flyteidl2.workflow.run_service_connect import RunServiceClient
 
 from ._protocols import (
     AppService,
+    ClusterService,
     DataProxyService,
     IdentityService,
     ProjectDomainService,
@@ -175,6 +177,8 @@ class ClientSet:
         self._secrets_service = SecretServiceClient(**shared)
         self._identity_service = IdentityServiceClient(**shared)
         self._trigger_service = TriggerServiceClient(**shared)
+        self._cluster_service = ClusterServiceClient(**shared)
+        self._dataproxy_cache: dict[str, DataProxyServiceClient] = {}
 
     @classmethod
     async def for_endpoint(cls, endpoint: str, *, insecure: bool = False, **kwargs) -> ClientSet:
@@ -231,6 +235,61 @@ class ClientSet:
     @property
     def trigger_service(self) -> TriggerService:
         return self._trigger_service
+
+    @property
+    def cluster_service(self) -> ClusterService:
+        return self._cluster_service
+
+    async def get_dataproxy_for_resource(
+        self, operation: int, resource: object
+    ) -> DataProxyService:
+        """Get a DataProxy client routed to the correct cluster for the given resource.
+
+        Calls SelectCluster to discover the cluster endpoint, then creates (or reuses
+        from cache) a DataProxyServiceClient pointing at that endpoint.
+
+        Args:
+            operation: SelectClusterRequest.Operation enum value.
+            resource: A protobuf identifier (e.g. RunIdentifier, ProjectIdentifier).
+        """
+        from flyteidl2.cluster import payload_pb2 as cluster_payload_pb2
+
+        cache_key = f"{operation}:{type(resource).__name__}:{resource}"
+
+        if cache_key in self._dataproxy_cache:
+            return self._dataproxy_cache[cache_key]
+
+        # Build the SelectClusterRequest with the right oneof field
+        req = cluster_payload_pb2.SelectClusterRequest(operation=operation)
+        if hasattr(resource, "DESCRIPTOR"):
+            field_map = {
+                "OrgIdentifier": "org_id",
+                "ProjectIdentifier": "project_id",
+                "TaskIdentifier": "task_id",
+                "ActionIdentifier": "action_id",
+                "ActionAttemptIdentifier": "action_attempt_id",
+            }
+            field_name = field_map.get(type(resource).__name__)
+            if field_name:
+                getattr(req, field_name).CopyFrom(resource)
+
+        resp = await self._cluster_service.select_cluster(req)
+        cluster_endpoint = resp.cluster_endpoint
+
+        # If the cluster endpoint matches our own endpoint, reuse the default client
+        if not cluster_endpoint or cluster_endpoint == self._session_config.endpoint:
+            self._dataproxy_cache[cache_key] = self._dataproxy
+            return self._dataproxy
+
+        # Create a new session config for the cluster endpoint
+        new_session_cfg = await create_session_config(
+            cluster_endpoint,
+            insecure=self._session_config.insecure,
+            insecure_skip_verify=self._session_config.insecure_skip_verify,
+        )
+        client = DataProxyServiceClient(**new_session_cfg.connect_kwargs())
+        self._dataproxy_cache[cache_key] = client
+        return client
 
     @property
     def endpoint(self) -> str:
