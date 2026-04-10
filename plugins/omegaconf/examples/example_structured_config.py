@@ -107,9 +107,7 @@ class AdvancedTrainConf:
     callbacks_by_name: dict[str, CallbackConf] = field(
         default_factory=lambda: {
             "early_stop": CallbackConf(name="early_stop", patience=3),
-            "checkpoint": CallbackConf(
-                name="checkpoint", patience=1, monitor="val_loss"
-            ),
+            "checkpoint": CallbackConf(name="checkpoint", patience=1, monitor="val_loss"),
         }
     )
     callbacks: list[CallbackConf] = field(

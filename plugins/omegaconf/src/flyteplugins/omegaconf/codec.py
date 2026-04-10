@@ -31,9 +31,7 @@ def deserialize_omegaconf(payload: dict[str, Any]) -> DictConfig | ListConfig:
     config = _deserialize_value(payload)
     if isinstance(config, (DictConfig, ListConfig)):
         return config
-    raise TypeError(
-        f"Expected OmegaConf container payload, got {type(config).__name__}"
-    )
+    raise TypeError(f"Expected OmegaConf container payload, got {type(config).__name__}")
 
 
 def _serialize_value(value: Any) -> Any:
@@ -95,9 +93,7 @@ def _serialize_value(value: Any) -> Any:
     return value
 
 
-def _serialize_child(
-    parent: DictConfig | ListConfig, key: str | int, child_node: Any
-) -> Any:
+def _serialize_child(parent: DictConfig | ListConfig, key: str | int, child_node: Any) -> Any:
     if child_node._is_missing():
         return {
             PAYLOAD_MARKER: True,
@@ -142,10 +138,7 @@ def _deserialize_value(payload: Any) -> Any:
         return OmegaConf.create(values)
 
     if kind == KIND_DICT:
-        values = {
-            key: _deserialize_value(value)
-            for key, value in payload[PAYLOAD_VALUES].items()
-        }
+        values = {key: _deserialize_value(value) for key, value in payload[PAYLOAD_VALUES].items()}
         schema_name = payload.get(PAYLOAD_SCHEMA)
         if schema_name is None:
             return OmegaConf.create(values)

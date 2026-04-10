@@ -3,17 +3,17 @@ from __future__ import annotations
 from typing import Generic, Type, TypeVar
 
 import msgpack
-from flyteidl2.core.literals_pb2 import Binary, Literal, Scalar
-from flyteidl2.core.types_pb2 import LiteralType, SimpleType, TypeAnnotation
-from google.protobuf import struct_pb2
-from omegaconf import DictConfig, ListConfig
-
 from flyte.types._type_engine import (
     CACHE_KEY_METADATA,
     MESSAGEPACK,
     SERIALIZATION_FORMAT,
     TypeTransformer,
 )
+from flyteidl2.core.literals_pb2 import Binary, Literal, Scalar
+from flyteidl2.core.types_pb2 import LiteralType, SimpleType, TypeAnnotation
+from google.protobuf import struct_pb2
+
+from omegaconf import DictConfig, ListConfig
 
 from .codec import deserialize_omegaconf, serialize_omegaconf
 
@@ -41,29 +41,21 @@ class OmegaConfTransformerBase(TypeTransformer[T], Generic[T]):
     ) -> Literal:
         payload = serialize_omegaconf(python_val)
         msgpack_bytes = msgpack.dumps(payload)
-        return Literal(
-            scalar=Scalar(binary=Binary(value=msgpack_bytes, tag=MESSAGEPACK))
-        )
+        return Literal(scalar=Scalar(binary=Binary(value=msgpack_bytes, tag=MESSAGEPACK)))
 
-    def from_binary_idl(
-        self, binary_idl_object: Binary, expected_python_type: Type[T]
-    ) -> T:
+    def from_binary_idl(self, binary_idl_object: Binary, expected_python_type: Type[T]) -> T:
         if binary_idl_object.tag != MESSAGEPACK:
             raise TypeError(f"Unsupported binary format: `{binary_idl_object.tag}`")
         payload = msgpack.loads(binary_idl_object.value, strict_map_key=False)
         config = deserialize_omegaconf(payload)
         if not isinstance(config, self._container_type):
-            raise TypeError(
-                f"Expected {self._container_type.__name__} payload, got {type(config).__name__}"
-            )
+            raise TypeError(f"Expected {self._container_type.__name__} payload, got {type(config).__name__}")
         return config
 
     async def to_python_value(self, lv: Literal, expected_python_type: Type[T]) -> T:
         if lv and lv.HasField("scalar") and lv.scalar.HasField("binary"):
             return self.from_binary_idl(lv.scalar.binary, expected_python_type)
-        raise TypeError(
-            f"Cannot convert literal to {self._container_type.__name__}: {lv}"
-        )
+        raise TypeError(f"Cannot convert literal to {self._container_type.__name__}: {lv}")
 
 
 class DictConfigTransformer(OmegaConfTransformerBase[DictConfig]):

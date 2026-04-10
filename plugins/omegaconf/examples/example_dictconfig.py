@@ -128,10 +128,7 @@ async def summarize_transforms(cfg: DictConfig) -> str:
     """Receives a plain DictConfig whose values are dataclass-backed configs."""
     assert OmegaConf.get_type(cfg.train) == TransformConf
     assert OmegaConf.get_type(cfg.eval) == TransformConf
-    return (
-        f"train={cfg.train.name}:{cfg.train.probability:.2f} "
-        f"eval={cfg.eval.name}:{cfg.eval.probability:.2f}"
-    )
+    return f"train={cfg.train.name}:{cfg.train.probability:.2f} eval={cfg.eval.name}:{cfg.eval.probability:.2f}"
 
 
 @env.task

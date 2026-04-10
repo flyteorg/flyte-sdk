@@ -14,11 +14,11 @@ from omegaconf import MISSING, DictConfig, MissingMandatoryValue, OmegaConf
 
 from flyteplugins.omegaconf.base_transformer import DictConfigTransformer
 from flyteplugins.omegaconf.codec import (
+    KIND_DICT,
     PAYLOAD_KIND,
     PAYLOAD_MARKER,
     PAYLOAD_SCHEMA,
     PAYLOAD_VALUES,
-    KIND_DICT,
 )
 
 # ── Shared dataclasses ────────────────────────────────────────────────────────
