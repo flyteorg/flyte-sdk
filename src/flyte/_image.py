@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Dict, List, Literal, Optional, Tuple, TypeVar, Union
 
 import rich.repr
-from packaging.version import Version
 
 if TYPE_CHECKING:
     from flyte import Secret, SecretRequest
@@ -535,7 +534,11 @@ class Image:
     platform: Tuple[Architecture, ...] = field(default=("linux/amd64",))
     python_version: Tuple[int, int] = field(default_factory=_detect_python_version)
     extendable: bool = field(default=False)
-    _is_flyte_default: bool = field(default=False)
+    # Whether this image has been modified/cloned by the user (via clone() or a with_* method).
+    # Defaults to False: an image with no modifications is assumed to already exist in the
+    # registry and does not need to be built. clone() flips this to True, which is what
+    # triggers the build/existence check.
+    _is_cloned: bool = field(default=False)
     # Refer to the image_refs (name:image-uri) set in CLI or config
     _ref_name: Optional[str] = field(default=None)
 
@@ -609,6 +612,16 @@ class Image:
             platform=("linux/amd64", "linux/arm64") if platform is None else platform,
             extendable=True,
         )
+        if install_flyte and not dev_mode:
+            # This is the released default image; it already exists in the registry.
+            # Return a bare-URI image (via from_base) so the SDK does not try to build it
+            # unless the user clones/modifies it. Preserve the requested platform so later
+            # clones keep the multi-arch default.
+            return Image._new(
+                base_image=f"{_BASE_REGISTRY}/{_DEFAULT_IMAGE_NAME}:{preset_tag}",
+                python_version=python_version,
+                platform=("linux/amd64", "linux/arm64") if platform is None else platform,
+            )
         labels_and_user = _DockerLines(
             (
                 "LABEL org.opencontainers.image.authors='Union.AI <info@union.ai>'",
@@ -628,15 +641,8 @@ class Image:
             }
         )
         image = image.with_apt_packages("build-essential", "ca-certificates")
-        if install_flyte:
-            if dev_mode:
-                if os.path.exists(DIST_FOLDER):
-                    image = image.with_local_v2()
-            else:
-                flyte_version = typing.cast(str, flyte_version)
-                image = image.with_pip_packages(f"flyte=={flyte_version}")
-                if not Version(flyte_version).is_devrelease and not Version(flyte_version).is_prerelease:
-                    object.__setattr__(image, "_is_flyte_default", True)
+        if install_flyte and dev_mode and os.path.exists(DIST_FOLDER):
+            image = image.with_local_v2()
         if not dev_mode:
             object.__setattr__(image, "_tag", preset_tag)
 
@@ -830,6 +836,7 @@ class Image:
             platform=self.platform,
             python_version=python_version or self.python_version,
             extendable=extendable if extendable is not None else self.extendable,
+            _is_cloned=True,
             _layers=new_layers,
             _image_registry_secret=Secret(key=registry_secret) if isinstance(registry_secret, str) else registry_secret,
             _ref_name=self._ref_name,
