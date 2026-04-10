@@ -625,7 +625,6 @@ class Image:
             platform=("linux/amd64", "linux/arm64") if platform is None else platform,
             extendable=True,
         )
-        print("_get_base_registry():", _get_base_registry())
         labels_and_user = _DockerLines(
             (
                 "LABEL org.opencontainers.image.authors='Union.AI <info@union.ai>'",
@@ -880,6 +879,7 @@ class Image:
             "registry": registry,
             "name": name,
             "extendable": False,  # Dockerfile-based images cannot have additional layers
+            "_is_cloned": True,
         }
         if platform is not None:
             kwargs["platform"] = platform
