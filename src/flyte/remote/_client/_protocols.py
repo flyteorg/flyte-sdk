@@ -111,6 +111,10 @@ class DataProxyService(Protocol):
         self, request: dataproxy_service_pb2.UploadInputsRequest
     ) -> dataproxy_service_pb2.UploadInputsResponse: ...
 
+    def tail_logs(
+        self, request: run_logs_service_pb2.TailLogsRequest
+    ) -> AsyncIterator[run_logs_service_pb2.TailLogsResponse]: ...
+
 
 class RunLogsService(Protocol):
     def tail_logs(
