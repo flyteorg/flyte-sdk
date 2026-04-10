@@ -243,6 +243,9 @@ _DeviceClassType: Dict[typing.Any, str] = {
 }
 
 
+_NVIDIA_DEVICE_NAME_PREFIX = "nvidia.com/"
+
+
 @rich.repr.auto
 @dataclass(frozen=True, slots=True)
 class Device:
@@ -251,26 +254,43 @@ class Device:
     :param device: The type of device (e.g., "T4", "A100").
     :param quantity: The number of devices of this type.
     :param partition: The partition of the device (e.g., "1g.5gb", "2g.10gb" for gpus) or ("1x1", ... for tpus).
+    :param device_name: Optional Kubernetes resource name for the device (e.g., "nvidia.com/mig-1g.10gb").
+        When set, overrides the default "nvidia.com/gpu" key used in the pod spec resource request.
+        Must start with "nvidia.com/". Useful when using MIG hybrid partition strategy where the
+        resource name depends on the partition profile.
     """
 
     quantity: int
     device_class: DeviceClass
     device: str | None = None
     partition: str | None = None
+    device_name: str | None = None
 
     def __post_init__(self):
         if self.quantity < 1:
             raise ValueError("GPU quantity must be at least 1")
+        if self.device_name is not None and not self.device_name.startswith(_NVIDIA_DEVICE_NAME_PREFIX):
+            raise ValueError(
+                f"device_name must start with '{_NVIDIA_DEVICE_NAME_PREFIX}', got {self.device_name!r}"
+            )
 
 
 def GPU(
-    device: GPUType, quantity: GPUQuantity, partition: A100Parts | A100_80GBParts | H100Parts | H200Parts | None = None
+    device: GPUType,
+    quantity: GPUQuantity,
+    partition: A100Parts | A100_80GBParts | H200Parts | None = None,
+    device_name: Optional[str] = None,
 ) -> Device:
     """
     Create a GPU device instance.
     :param device: The type of GPU (e.g., "T4", "A100").
     :param quantity: The number of GPUs of this type.
     :param partition: The partition of the GPU (e.g., "1g.5gb", "2g.10gb" for gpus) or ("1x1", ... for tpus).
+    :param device_name: Optional Kubernetes resource name override (e.g., "nvidia.com/mig-1g.10gb").
+        Must start with "nvidia.com/". When using MIG hybrid partition strategy, set this to the
+        partition-specific resource name so the pod spec requests the correct resource from the
+        NVIDIA device plugin (e.g., "nvidia.com/mig-1g.5gb" for a 1g.5gb MIG slice).
+        Defaults to "nvidia.com/gpu" when not set.
     :return: Device instance.
     """
     if quantity < 1:
@@ -289,7 +309,11 @@ def GPU(
     elif partition is not None and device == "H200":
         if partition not in get_args(H200Parts):
             raise ValueError(f"Invalid partition for H200: {partition}. Must be one of {get_args(H200Parts)}")
-    return Device(device=device, quantity=quantity, partition=partition, device_class="GPU")
+    if device_name is not None and not device_name.startswith(_NVIDIA_DEVICE_NAME_PREFIX):
+        raise ValueError(
+            f"device_name must start with '{_NVIDIA_DEVICE_NAME_PREFIX}', got {device_name!r}"
+        )
+    return Device(device=device, quantity=quantity, partition=partition, device_class="GPU", device_name=device_name)
 
 
 def TPU(device: TPUType, partition: V5PParts | V6EParts | None = None):
@@ -482,6 +506,16 @@ def pod_spec_from_resources(
     k8s_gpu_resource_key: str = "nvidia.com/gpu",
 ) -> "V1PodSpec":
     from kubernetes.client import V1Container, V1PodSpec, V1ResourceRequirements
+
+    # If either resources object carries a Device with a custom device_name, use it as the
+    # Kubernetes GPU resource key. This supports MIG hybrid partition strategy where the key
+    # is partition-specific (e.g., "nvidia.com/mig-1g.10gb") rather than "nvidia.com/gpu".
+    for _res in (requests, limits):
+        if _res is not None:
+            _device = _res.get_device()
+            if _device is not None and _device.device_name is not None:
+                k8s_gpu_resource_key = _device.device_name
+                break
 
     def _construct_k8s_pods_resources(resources: Optional[Resources], k8s_gpu_resource_key: str):
         if resources is None:

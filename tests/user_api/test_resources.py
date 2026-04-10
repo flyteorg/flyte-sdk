@@ -16,6 +16,8 @@ from flyte._resources import (
     NeuronType,
     Resources,
     TPUType,
+    _NVIDIA_DEVICE_NAME_PREFIX,
+    pod_spec_from_resources,
 )
 
 
@@ -494,6 +496,119 @@ def test_amd_gpu_type_accelerators_synchronization():
     assert not missing_in_amd_gpu_type, (
         f"AMD GPU types in Accelerators but missing in AMD_GPUType: {missing_in_amd_gpu_type}"
     )
+
+
+# ── Custom device_name tests ────────────────────────────────────────────────
+
+
+def test_gpu_device_name_valid():
+    """GPU() accepts a valid nvidia.com/* device_name."""
+    gpu = GPU(device="A100", quantity=1, partition="1g.5gb", device_name="nvidia.com/mig-1g.5gb")
+    assert gpu.device_name == "nvidia.com/mig-1g.5gb"
+    assert gpu.partition == "1g.5gb"
+    assert gpu.device == "A100"
+
+
+def test_gpu_device_name_default_none():
+    """GPU() without device_name leaves device_name as None (default)."""
+    gpu = GPU(device="A100", quantity=1)
+    assert gpu.device_name is None
+
+
+def test_gpu_device_name_invalid_prefix():
+    """GPU() rejects device_name that does not start with nvidia.com/."""
+    with pytest.raises(ValueError, match="device_name must start with 'nvidia.com/'"):
+        GPU(device="A100", quantity=1, device_name="amd.com/gpu")
+
+
+def test_gpu_device_name_invalid_no_prefix():
+    """GPU() rejects bare device_name with no vendor prefix."""
+    with pytest.raises(ValueError, match="device_name must start with 'nvidia.com/'"):
+        GPU(device="A100", quantity=1, device_name="gpu")
+
+
+def test_gpu_device_name_just_prefix_is_valid():
+    """nvidia.com/gpu itself is a valid device_name."""
+    gpu = GPU(device="T4", quantity=1, device_name="nvidia.com/gpu")
+    assert gpu.device_name == "nvidia.com/gpu"
+
+
+@pytest.mark.parametrize(
+    "mig_profile,expected_key",
+    [
+        ("1g.5gb", "nvidia.com/mig-1g.5gb"),
+        ("2g.10gb", "nvidia.com/mig-2g.10gb"),
+        ("3g.20gb", "nvidia.com/mig-3g.20gb"),
+        ("4g.20gb", "nvidia.com/mig-4g.20gb"),
+        ("7g.40gb", "nvidia.com/mig-7g.40gb"),
+    ],
+)
+def test_gpu_device_name_mig_profiles(mig_profile, expected_key):
+    """All A100 MIG partition profiles are accepted as device_name."""
+    gpu = GPU(device="A100", quantity=1, partition=mig_profile, device_name=expected_key)
+    assert gpu.device_name == expected_key
+
+
+def test_device_dataclass_device_name_validation():
+    """Device dataclass rejects device_name not starting with nvidia.com/."""
+    with pytest.raises(ValueError, match="device_name must start with 'nvidia.com/'"):
+        Device(quantity=1, device_class="GPU", device="A100", device_name="bad-vendor/gpu")
+
+
+def test_device_dataclass_device_name_none():
+    """Device dataclass allows device_name=None (default)."""
+    d = Device(quantity=1, device_class="GPU", device="A100")
+    assert d.device_name is None
+
+
+# ── pod_spec_from_resources device_name tests ────────────────────────────────
+
+
+def test_pod_spec_uses_custom_device_name_from_requests():
+    """pod_spec_from_resources uses device_name from requests when set."""
+    res = Resources(gpu=GPU(device="A100", quantity=1, partition="1g.5gb", device_name="nvidia.com/mig-1g.5gb"))
+    spec = pod_spec_from_resources(requests=res)
+    container = spec.containers[0]
+    assert "nvidia.com/mig-1g.5gb" in container.resources.requests
+    assert "nvidia.com/gpu" not in container.resources.requests
+
+
+def test_pod_spec_uses_custom_device_name_from_limits():
+    """pod_spec_from_resources uses device_name from limits when requests has none."""
+    res = Resources(gpu=GPU(device="A100", quantity=2, partition="2g.10gb", device_name="nvidia.com/mig-2g.10gb"))
+    spec = pod_spec_from_resources(limits=res)
+    container = spec.containers[0]
+    assert "nvidia.com/mig-2g.10gb" in container.resources.limits
+
+
+def test_pod_spec_default_gpu_key_when_no_device_name():
+    """pod_spec_from_resources falls back to nvidia.com/gpu when device_name is not set."""
+    res = Resources(gpu=GPU(device="A100", quantity=1))
+    spec = pod_spec_from_resources(requests=res)
+    container = spec.containers[0]
+    assert "nvidia.com/gpu" in container.resources.requests
+
+
+def test_pod_spec_requests_device_name_takes_precedence_over_limits():
+    """device_name from requests takes precedence over limits."""
+    req = Resources(gpu=GPU(device="A100", quantity=1, device_name="nvidia.com/mig-1g.5gb"))
+    lim = Resources(gpu=GPU(device="A100", quantity=1, device_name="nvidia.com/mig-2g.10gb"))
+    spec = pod_spec_from_resources(requests=req, limits=lim)
+    container = spec.containers[0]
+    assert "nvidia.com/mig-1g.5gb" in container.resources.requests
+
+
+def test_pod_spec_custom_k8s_key_overridden_by_device_name():
+    """An explicit k8s_gpu_resource_key is overridden when the Device carries device_name."""
+    res = Resources(gpu=GPU(device="A100", quantity=1, device_name="nvidia.com/mig-1g.5gb"))
+    spec = pod_spec_from_resources(requests=res, k8s_gpu_resource_key="nvidia.com/gpu")
+    container = spec.containers[0]
+    assert "nvidia.com/mig-1g.5gb" in container.resources.requests
+    assert "nvidia.com/gpu" not in container.resources.requests
+
+
+def test_nvidia_device_name_prefix_constant():
+    assert _NVIDIA_DEVICE_NAME_PREFIX == "nvidia.com/"
 
 
 def test_habana_gaudi_type_accelerators_synchronization():
