@@ -935,18 +935,14 @@ class Image:
         """
         Returns the URI of the image in the format <registry>/<name>:<tag>
         """
-        if self.registry and self.name:
-            tag = self._final_tag
+        if not self._is_cloned:
+            assert self.base_image is not None, "Base image must be set for non-cloned images"
+            return self.base_image
+        tag = self._final_tag
+        assert self.name is not None, "Name must be set for cloned images"
+        if self.registry:
             return f"{self.registry}/{self.name}:{tag}"
-        elif self._ref_name and len(self._layers) == 0:
-            assert self.base_image is not None, f"Base image is not set for image ref name {self._ref_name}"
-            return self.base_image
-        elif self.name:
-            return f"{self.name}:{self._final_tag}"
-        elif self.base_image:
-            return self.base_image
-
-        raise ValueError("Image is not fully defined. Please set registry, name and tag.")
+        return f"{self.name}:{tag}"
 
     def with_workdir(self, workdir: str) -> Image:
         """
