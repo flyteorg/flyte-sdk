@@ -240,9 +240,7 @@ class ClientSet:
     def cluster_service(self) -> ClusterService:
         return self._cluster_service
 
-    async def get_dataproxy_for_resource(
-        self, operation: int, resource: object
-    ) -> DataProxyService:
+    async def get_dataproxy_for_resource(self, operation: int, resource: object) -> DataProxyService:
         """Get a DataProxy client routed to the correct cluster for the given resource.
 
         Calls SelectCluster to discover the cluster endpoint, then creates (or reuses
