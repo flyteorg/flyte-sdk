@@ -38,3 +38,13 @@ async def add_one_task(x: int) -> int:
         response = await client.get(app_env.endpoint, params={"x": x})
         response.raise_for_status()
         return response.json()["result"]
+
+
+if __name__ == "__main__":
+    import logging
+
+    flyte.init_from_config(log_level=logging.DEBUG)
+    app = flyte.serve(app_env)
+    print(app.url)
+    run = flyte.run(add_one_task, x=1)
+    print(run.url)
