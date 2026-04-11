@@ -15,6 +15,7 @@ from flyte.remote._client.auth._interceptors.auth import (
     AuthClientStreamInterceptor,
     AuthServerStreamInterceptor,
     AuthUnaryInterceptor,
+    _is_auth_retriable,
 )
 from flyte.remote._client.auth._interceptors.default_metadata import (
     DefaultMetadataInterceptor,
@@ -265,6 +266,75 @@ class TestAuthUnaryInterceptor:
         assert headers["flyte-authorization"] == "Bearer fresh"
         assert headers["x-request-id"] == "req-123", "non-auth headers must be preserved"
         assert headers["content-type"] == "application/proto", "non-auth headers must be preserved"
+
+
+class TestIsAuthRetriable:
+    """Tests for _is_auth_retriable which detects auth errors by code and message."""
+
+    def test_unauthenticated_code(self):
+        assert _is_auth_retriable(ConnectError(Code.UNAUTHENTICATED, "expired"))
+
+    def test_unknown_code(self):
+        assert _is_auth_retriable(ConnectError(Code.UNKNOWN, "something"))
+
+    def test_unavailable_with_unauthorized_message(self):
+        """JSON 401 responses with unrecognized code strings fall back to UNAVAILABLE
+        but keep the 'Unauthorized' message from the HTTP status."""
+        assert _is_auth_retriable(ConnectError(Code.UNAVAILABLE, "Unauthorized"))
+
+    def test_unavailable_with_unauthenticated_message(self):
+        assert _is_auth_retriable(ConnectError(Code.UNAVAILABLE, "unauthenticated"))
+
+    def test_unavailable_without_auth_message(self):
+        assert not _is_auth_retriable(ConnectError(Code.UNAVAILABLE, "service down"))
+
+    def test_not_found_not_retriable(self):
+        assert not _is_auth_retriable(ConnectError(Code.NOT_FOUND, "not found"))
+
+    def test_permission_denied_not_retriable(self):
+        assert not _is_auth_retriable(ConnectError(Code.PERMISSION_DENIED, "forbidden"))
+
+
+class TestAuthUnaryInterceptorMessageFallback:
+    """Tests that the unary interceptor retries on misclassified 401 errors."""
+
+    @pytest.mark.asyncio
+    async def test_retries_on_unavailable_unauthorized_message(self):
+        """When a JSON 401 has a non-standard code field, ConnectRPC maps it to
+        UNAVAILABLE. The interceptor should still retry via message matching."""
+        auth = _make_mock_authenticator({"authorization": "Bearer old"})
+        auth.get_auth_headers.side_effect = [
+            AuthHeaders(creds_id="old", headers={"authorization": "Bearer old"}),
+            AuthHeaders(creds_id="new", headers={"authorization": "Bearer new"}),
+        ]
+        interceptor = AuthUnaryInterceptor(lambda: auth)
+
+        call_next = AsyncMock(
+            side_effect=[
+                ConnectError(Code.UNAVAILABLE, "Unauthorized"),
+                "success",
+            ]
+        )
+        ctx, _headers = _make_ctx_mock()
+
+        result = await interceptor.intercept_unary(call_next, "request", ctx)
+        assert result == "success"
+        auth.refresh_credentials.assert_called_once()
+        assert call_next.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_does_not_retry_unavailable_non_auth(self):
+        """UNAVAILABLE errors without auth keywords should not trigger auth retry."""
+        auth = _make_mock_authenticator({"authorization": "Bearer token"})
+        interceptor = AuthUnaryInterceptor(lambda: auth)
+
+        call_next = AsyncMock(side_effect=ConnectError(Code.UNAVAILABLE, "service down"))
+        ctx, _headers = _make_ctx_mock()
+
+        with pytest.raises(ConnectError) as exc_info:
+            await interceptor.intercept_unary(call_next, "request", ctx)
+        assert exc_info.value.code == Code.UNAVAILABLE
+        auth.refresh_credentials.assert_not_called()
 
 
 class TestAuthServerStreamInterceptor:
