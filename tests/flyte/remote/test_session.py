@@ -173,19 +173,104 @@ class TestBuildPyqwestClient:
         assert isinstance(client, pyqwest.Client)
 
 
-class TestBootstrapSslFromServer:
-    @patch("flyte.remote._client.auth._session.ssl.get_server_certificate")
-    def test_fetches_cert_and_encodes(self, mock_get_cert):
-        mock_get_cert.return_value = "-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----\n"
-        result = _bootstrap_ssl_from_server("https://example.com:8089")
-        mock_get_cert.assert_called_once_with(("example.com", 8089), timeout=10)
-        assert result == b"-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----\n"
+_SESSION_MOD = "flyte.remote._client.auth._session"
 
-    @patch("flyte.remote._client.auth._session.ssl.get_server_certificate")
-    def test_defaults_to_port_443(self, mock_get_cert):
-        mock_get_cert.return_value = "cert"
-        _bootstrap_ssl_from_server("https://example.com")
-        mock_get_cert.assert_called_once_with(("example.com", 443), timeout=10)
+
+class TestBootstrapSslFromServer:
+    def test_fetches_full_chain_and_encodes(self):
+        """Should retrieve the full certificate chain via pyOpenSSL."""
+        fake_cert_1 = MagicMock()
+        fake_cert_2 = MagicMock()
+
+        mock_conn = MagicMock()
+        mock_conn.get_peer_cert_chain.return_value = [fake_cert_1, fake_cert_2]
+
+        with (
+            patch(f"{_SESSION_MOD}.SSL") as mock_ssl,
+            patch(f"{_SESSION_MOD}.crypto") as mock_crypto,
+            patch(f"{_SESSION_MOD}.socket") as mock_socket,
+        ):
+            mock_ssl.Connection.return_value = mock_conn
+            mock_crypto.dump_certificate.side_effect = lambda fmt, cert: (
+                b"-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----\n"
+            )
+            result = _bootstrap_ssl_from_server("https://example.com:8089")
+
+        mock_socket.create_connection.assert_called_once_with(("example.com", 8089), timeout=10)
+        mock_conn.do_handshake.assert_called_once()
+        assert b"-----BEGIN CERTIFICATE-----" in result
+        # Should contain both certs
+        assert result.count(b"-----BEGIN CERTIFICATE-----") == 2
+
+    def test_defaults_to_port_443(self):
+        mock_conn = MagicMock()
+        mock_conn.get_peer_cert_chain.return_value = [MagicMock()]
+
+        with (
+            patch(f"{_SESSION_MOD}.SSL") as mock_ssl,
+            patch(f"{_SESSION_MOD}.crypto") as mock_crypto,
+            patch(f"{_SESSION_MOD}.socket") as mock_socket,
+        ):
+            mock_ssl.Connection.return_value = mock_conn
+            mock_crypto.dump_certificate.return_value = (
+                b"-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----\n"
+            )
+            _bootstrap_ssl_from_server("https://example.com")
+
+        mock_socket.create_connection.assert_called_once_with(("example.com", 443), timeout=10)
+
+    def test_raises_on_empty_cert_chain(self):
+        """RuntimeError when server returns no certificates."""
+        mock_conn = MagicMock()
+        mock_conn.get_peer_cert_chain.return_value = []
+
+        with (
+            patch(f"{_SESSION_MOD}.SSL") as mock_ssl,
+            patch(f"{_SESSION_MOD}.crypto"),
+            patch(f"{_SESSION_MOD}.socket"),
+        ):
+            mock_ssl.Connection.return_value = mock_conn
+            with pytest.raises(RuntimeError, match="returned no certificates"):
+                _bootstrap_ssl_from_server("https://example.com:443")
+
+        mock_conn.close.assert_called_once()
+
+    def test_closes_conn_on_success(self):
+        """conn.close() is called after successful chain retrieval."""
+        mock_conn = MagicMock()
+        mock_conn.get_peer_cert_chain.return_value = [MagicMock()]
+        mock_sock = MagicMock()
+
+        with (
+            patch(f"{_SESSION_MOD}.SSL") as mock_ssl,
+            patch(f"{_SESSION_MOD}.crypto") as mock_crypto,
+            patch(f"{_SESSION_MOD}.socket") as mock_socket,
+        ):
+            mock_socket.create_connection.return_value = mock_sock
+            mock_ssl.Connection.return_value = mock_conn
+            mock_crypto.dump_certificate.return_value = (
+                b"-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----\n"
+            )
+            _bootstrap_ssl_from_server("https://example.com:443")
+
+        mock_sock.settimeout.assert_called_once_with(None)
+        mock_conn.close.assert_called_once()
+
+    def test_closes_socket_if_connection_setup_fails(self):
+        """Socket is closed if SSL.Connection() raises before conn is set."""
+        mock_sock = MagicMock()
+
+        with (
+            patch(f"{_SESSION_MOD}.SSL") as mock_ssl,
+            patch(f"{_SESSION_MOD}.crypto"),
+            patch(f"{_SESSION_MOD}.socket") as mock_socket,
+        ):
+            mock_socket.create_connection.return_value = mock_sock
+            mock_ssl.Connection.side_effect = RuntimeError("SSL init failed")
+            with pytest.raises(RuntimeError, match="SSL init failed"):
+                _bootstrap_ssl_from_server("https://example.com:443")
+
+        mock_sock.close.assert_called_once()
 
 
 class TestClientSetSessionConfig:

@@ -38,14 +38,22 @@ def tui():
     default=False,
     help="Enable dev mode inside the demo cluster (sets FLYTE_DEV=True).",
 )
-def demo(image: str, dev: bool):
+@click.pass_context
+def demo(ctx: click.Context, image: str, dev: bool):
     """Start a local Flyte demo cluster."""
     from flyte._sentry import capture_exception, count
     from flyte.cli._demo import launch_demo
 
+<<<<<<< HEAD
     count("cli.command", command="start_demo")
     try:
         launch_demo(image, dev)
     except Exception as e:
         capture_exception(e)
         raise
+||||||| c2b57a75
+    launch_demo(image, dev)
+=======
+    log_format = getattr(ctx.obj, "log_format", "console") if ctx.obj else "console"
+    launch_demo(image, dev, log_format=log_format)
+>>>>>>> 7aa6b974504a17f7e54c891d2c78a0e9d830a046

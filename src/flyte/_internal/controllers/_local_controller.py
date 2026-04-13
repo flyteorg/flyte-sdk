@@ -3,6 +3,7 @@ import atexit
 import concurrent.futures
 import os
 import pathlib
+import shutil
 import threading
 from contextlib import nullcontext
 from typing import Any, Callable, Tuple, TypeVar
@@ -19,8 +20,9 @@ from flyte._persistence._recorder import RunRecorder
 from flyte._persistence._task_cache import LocalTaskCache
 from flyte._task import AsyncFunctionTaskTemplate, TaskTemplate
 from flyte._utils.helpers import _selector_policy
-from flyte.models import ActionID, NativeInterface
+from flyte.models import ActionID, CheckpointPaths, NativeInterface
 from flyte.remote._task import TaskDetails
+from flyte.storage._storage import strip_file_header
 
 R = TypeVar("R")
 
@@ -30,6 +32,24 @@ R = TypeVar("R")
 # and does not allow for custom backoff strategies.
 _MIN_BACKOFF_ON_ERR_SEC = 0.5
 _BACKOFF_MULTIPLIER = 2.0
+
+
+def _stage_prev_checkpoint_for_local_retry(checkpoint_paths: CheckpointPaths | None) -> None:
+    """
+    Before a local retry, copy the last attempt's checkpoint object into ``prev_checkpoint`` so
+    :class:`~flyte.Checkpoint` can load it (mirrors remote behavior where the platform stages prior output).
+    """
+    if checkpoint_paths is None:
+        return
+    dest = checkpoint_paths.checkpoint_path
+    prev = checkpoint_paths.prev_checkpoint_path
+    if not dest or not prev:
+        return
+    src = pathlib.Path(strip_file_header(str(dest)))
+    dst = pathlib.Path(strip_file_header(str(prev)))
+    if src.is_file():
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
 
 
 class _TaskRunner:
@@ -198,6 +218,8 @@ class LocalController:
             max_attempts = retries + 1
             err = None
             for attempt_num in range(1, max_attempts + 1):
+                if attempt_num > 1:
+                    _stage_prev_checkpoint_for_local_retry(tctx.checkpoint_paths)
                 self._recorder.record_attempt_start(
                     action_id=sub_action_id.name,
                     attempt_num=attempt_num,
@@ -209,7 +231,7 @@ class LocalController:
                     raw_data_path=sub_action_raw_data_path,
                     inputs=inputs,
                     version=cache_version,
-                    checkpoints=tctx.checkpoints,
+                    checkpoint_paths=tctx.checkpoint_paths,
                     code_bundle=tctx.code_bundle,
                     output_path=sub_action_output_path,
                     run_base_dir=tctx.run_base_dir,

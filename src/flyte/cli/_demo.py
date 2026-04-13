@@ -7,6 +7,9 @@ import urllib.request
 from pathlib import Path
 
 import click
+from rich.console import Console
+from rich.panel import Panel
+from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
 _CONTAINER_NAME = "flyte-demo"
 _VOLUME_NAME = "flyte-demo"
@@ -40,6 +43,25 @@ def _container_is_running(container_name: str) -> bool:
     return container_name in result.stdout
 
 
+def _container_is_paused(container_name: str) -> bool:
+    result = subprocess.run(
+        [
+            "docker",
+            "ps",
+            "--filter",
+            f"name=^{container_name}$",
+            "--filter",
+            "status=paused",
+            "--format",
+            "{{.Names}}",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return container_name in result.stdout
+
+
 def _is_local_image(image: str) -> bool:
     """Check if the image is local (no registry prefix)."""
     name = image.split(":", maxsplit=1)[0]
@@ -48,9 +70,10 @@ def _is_local_image(image: str) -> bool:
 
 def _pull_image(image: str) -> None:
     if _is_local_image(image):
-        click.echo(f"Skipping pull for local image '{image}'")
         return
-    subprocess.run(["docker", "pull", image], check=True)
+    result = subprocess.run(["docker", "pull", image], capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        raise click.ClickException(f"Failed to pull image '{image}':\n{result.stderr.strip()}")
 
 
 def _run_container(
@@ -86,11 +109,12 @@ def _run_container(
     for port in ports:
         cmd.extend(["--publish", port])
     cmd.append(image)
-    subprocess.run(cmd, check=True)
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        raise click.ClickException(f"Failed to start container:\n{result.stderr.strip()}")
 
 
 def _wait_for_console_ready(url: str, timeout: int = 300, poll_interval: float = 3.0) -> None:
-    click.echo("Waiting for flyte demo cluster to be ready...", nl=False)
     deadline = time.monotonic() + timeout
     while True:
         try:
@@ -100,9 +124,7 @@ def _wait_for_console_ready(url: str, timeout: int = 300, poll_interval: float =
         except (urllib.error.URLError, OSError):
             pass
         if time.monotonic() > deadline:
-            click.echo("")
             raise click.ClickException(f"Timed out after {timeout}s waiting for Flyte cluster ({url}).")
-        click.echo(".", nl=False)
         time.sleep(poll_interval)
 
 
@@ -116,17 +138,18 @@ def _wait_for_kubeconfig(kubeconfig_path: Path, timeout: int = 60) -> None:
         time.sleep(1)
 
 
-# TODO: Rename context to flyte-demo
-def _switch_k8s_context(context: str = "flytev2-sandbox", namespace: str = "flyte") -> None:
+def _switch_k8s_context(context: str = "flyte-demo", namespace: str = "flyte") -> None:
     try:
-        subprocess.run(["kubectl", "config", "use-context", context], check=True)
-        subprocess.run(["kubectl", "config", "set-context", "--current", f"--namespace={namespace}"], check=True)
+        subprocess.run(["kubectl", "config", "use-context", context], check=True, capture_output=True, text=True)
         subprocess.run(
-            ["kubectl", "config", "set-cluster", context, "--insecure-skip-tls-verify=true"],
+            ["kubectl", "config", "set-context", "--current", f"--namespace={namespace}"],
             check=True,
+            capture_output=True,
+            text=True,
         )
-    except subprocess.CalledProcessError:
-        click.echo(f"Warning: failed to switch k8s context to '{context}'. Is kubectl installed?", err=True)
+    except subprocess.CalledProcessError as e:
+        msg = e.stderr.strip() if e.stderr else "Is kubectl installed?"
+        click.echo(f"Warning: failed to switch k8s context to '{context}': {msg}", err=True)
 
 
 def _flatten_kubeconfig(default_kubeconfig: Path, kubeconfig_path: Path) -> subprocess.CompletedProcess:
@@ -167,30 +190,122 @@ def _merge_kubeconfig(kubeconfig_path: Path, container_name: str) -> None:
 
     shutil.move(tmp_path, default_kubeconfig)
     default_kubeconfig.chmod(0o600)
-    click.echo(f"Merged kubeconfig into {default_kubeconfig}")
 
 
-def launch_demo(image_name: str, is_dev_mode: bool) -> None:
+_STEPS = [
+    ("Pulling image", "pull"),
+    ("Starting container", "start"),
+    ("Waiting for kubeconfig", "kubeconfig"),
+    ("Merging kubeconfig", "merge"),
+    ("Configuring kubectl context", "context"),
+    ("Waiting for cluster to be ready", "ready"),
+]
+
+_STEPS_DEV = _STEPS[:-1]  # Dev mode skips the readiness check
+
+console = Console()
+
+
+def _wait_for_demo_ready(is_dev_mode: bool) -> None:
+    if not is_dev_mode:
+        _wait_for_console_ready(_CONSOLE_READYZ_URL)
+
+
+def stop_demo() -> None:
+    if _container_is_paused(_CONTAINER_NAME):
+        console.print("[yellow]Demo cluster is already paused.[/yellow]")
+        return
+    if not _container_is_running(_CONTAINER_NAME):
+        console.print("[yellow]Demo cluster is not running.[/yellow]")
+        return
+    subprocess.run(["docker", "pause", _CONTAINER_NAME], check=True, capture_output=True)
+    console.print("[green]Demo cluster stopped.[/green] Run [bold]flyte start demo[/bold] to resume.")
+
+
+def launch_demo(image_name: str, is_dev_mode: bool, log_format: str = "console") -> None:
     _ensure_volume(_VOLUME_NAME)
 
+    if _container_is_paused(_CONTAINER_NAME):
+        console.print("[cyan]Resuming paused demo cluster...[/cyan]")
+        subprocess.run(["docker", "unpause", _CONTAINER_NAME], check=True, capture_output=True)
+        return
+
     if _container_is_running(_CONTAINER_NAME):
-        click.echo(f"Container '{_CONTAINER_NAME}' is already running.")
+        console.print("[yellow]Flyte demo cluster is already running.[/yellow]")
         if not click.confirm("Do you want to delete the existing demo cluster and start a new one?"):
             return
-        subprocess.run(["docker", "stop", _CONTAINER_NAME], check=True)
+        subprocess.run(["docker", "stop", _CONTAINER_NAME], check=True, capture_output=True)
 
     _KUBE_DIR.mkdir(parents=True, exist_ok=True)
     # This step makes sure that we always used the latest k3s kubeconfig file
     if _KUBECONFIG_PATH.exists():
         _KUBECONFIG_PATH.unlink()
 
-    _pull_image(image_name)
-    _run_container(image_name, is_dev_mode, _CONTAINER_NAME, _KUBE_DIR, _FLYTE_DEMO_CONFIG_DIR, _VOLUME_NAME, _PORTS)
-    _wait_for_kubeconfig(_KUBECONFIG_PATH)
+    steps = _STEPS_DEV if is_dev_mode else _STEPS
 
-    _merge_kubeconfig(_KUBECONFIG_PATH, _CONTAINER_NAME)
-    _switch_k8s_context()
-    if not is_dev_mode:
-        _wait_for_console_ready(_CONSOLE_READYZ_URL)
-        click.echo("\nFlyte demo cluster is ready!")
-        click.echo("UI is available at http://localhost:30080/v2")
+    if log_format == "json":
+        _launch_demo_plain(image_name, is_dev_mode, steps)
+    else:
+        _launch_demo_rich(image_name, is_dev_mode, steps)
+
+
+def _run_step(step_id: str, image_name: str, is_dev_mode: bool) -> None:
+    if step_id == "pull":
+        _pull_image(image_name)
+    elif step_id == "start":
+        _run_container(
+            image_name, is_dev_mode, _CONTAINER_NAME, _KUBE_DIR, _FLYTE_DEMO_CONFIG_DIR, _VOLUME_NAME, _PORTS
+        )
+    elif step_id == "kubeconfig":
+        _wait_for_kubeconfig(_KUBECONFIG_PATH)
+    elif step_id == "merge":
+        _merge_kubeconfig(_KUBECONFIG_PATH, _CONTAINER_NAME)
+    elif step_id == "context":
+        _switch_k8s_context()
+    elif step_id == "ready":
+        _wait_for_demo_ready(is_dev_mode)
+
+
+def _launch_demo_plain(image_name: str, is_dev_mode: bool, steps: list[tuple[str, str]]) -> None:
+    for i, (description, step_id) in enumerate(steps, 1):
+        click.echo(f"[{i}/{len(steps)}] {description}...")
+        _run_step(step_id, image_name, is_dev_mode)
+        click.echo(f"[{i}/{len(steps)}] {description}... done")
+
+    click.echo("")
+    if is_dev_mode:
+        click.echo("Flyte dev cluster is running.")
+    else:
+        click.echo("Flyte demo cluster is ready!")
+        click.echo("  UI:             http://localhost:30080/v2")
+        click.echo("  Image Registry: localhost:30000")
+
+
+def _launch_demo_rich(image_name: str, is_dev_mode: bool, steps: list[tuple[str, str]]) -> None:
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+        TimeElapsedColumn(),
+        console=console,
+    ) as progress:
+        overall = progress.add_task("[bold cyan]Starting Flyte demo cluster", total=len(steps))
+
+        for description, step_id in steps:
+            progress.update(overall, description=f"[bold cyan]{description}")
+            _run_step(step_id, image_name, is_dev_mode)
+            progress.advance(overall)
+
+    if is_dev_mode:
+        console.print("[green bold]Flyte dev cluster is running.[/green bold]")
+    else:
+        console.print(
+            Panel(
+                "[green bold]Flyte demo cluster is ready![/green bold]\n\n"
+                "  🚀 UI:             [link=http://localhost:30080/v2]http://localhost:30080/v2[/link]\n"
+                "  🐳 Image Registry: localhost:30000",
+                title="[bold]Flyte Demo[/bold]",
+                border_style="green",
+            )
+        )

@@ -27,6 +27,7 @@ dependencies = [
     "flyteidl2==2.0.11",
     "packaging",
     "sentry-sdk>=2.0",
+    "pyOpenSSL>=24.0.0",
 ]
 
 [project.scripts]

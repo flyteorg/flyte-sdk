@@ -24,12 +24,13 @@ from flyte._task import F, P, R, TaskTemplate
 from flyte.models import (
     ActionID,
     ActionPhase,
-    Checkpoints,
+    CheckpointPaths,
     CodeBundle,
     RawDataPath,
     SerializationContext,
     TaskContext,
 )
+from flyte.storage import join as storage_join
 from flyte.syncify import syncify
 
 from ._constants import FLYTE_SYS_PATH
@@ -568,13 +569,13 @@ class _Runner:
         raw_data_path_obj = RawDataPath(path=raw_data_path)
         checkpoint_path = f"{raw_data_path}/checkpoint"
         prev_checkpoint = f"{raw_data_path}/prev_checkpoint"
-        checkpoints = Checkpoints(checkpoint_path, prev_checkpoint)
+        checkpoint_paths = CheckpointPaths(prev_checkpoint_path=prev_checkpoint, checkpoint_path=checkpoint_path)
 
         async def _run_task() -> Tuple[Any, Optional[Exception]]:
             ctx = internal_ctx()
             tctx = TaskContext(
                 action=action,
-                checkpoints=checkpoints,
+                checkpoint_paths=checkpoint_paths,
                 code_bundle=code_bundle,
                 output_path=output_path,
                 version=version or "na",
@@ -648,11 +649,12 @@ class _Runner:
             raw_data_path = RawDataPath(path=self._raw_data_path)
 
         ctx = internal_ctx()
+        rd_base = raw_data_path.path
         tctx = TaskContext(
             action=action,
-            checkpoints=Checkpoints(
-                prev_checkpoint_path=internal_ctx().raw_data.path,
-                checkpoint_path=internal_ctx().raw_data.path,
+            checkpoint_paths=CheckpointPaths(
+                prev_checkpoint_path=storage_join(rd_base, "prev_checkpoint"),
+                checkpoint_path=storage_join(rd_base, "checkpoint"),
             ),
             code_bundle=None,
             output_path=str(output_path),

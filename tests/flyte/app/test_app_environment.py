@@ -240,16 +240,7 @@ def test_app_environment_container_cmd_custom_command():
     - List-format custom commands are used as-is
     - String-format custom commands are split using shlex
     - Custom commands completely replace the default fserve command
-    - Parameters are NOT added when using custom commands (they're user-managed)
     """
-    # Test with list command
-    app_env_list = AppEnvironment(
-        name="app-custom-cmd-list",
-        image=Image.from_base("python:3.11"),
-        command=["python", "app.py"],
-        parameters=[Parameter(value="config.yaml", name="config")],  # Parameters should be ignored with custom command
-    )
-
     ctx = SerializationContext(
         org="test-org",
         project="test-project",
@@ -258,9 +249,15 @@ def test_app_environment_container_cmd_custom_command():
         root_dir=pathlib.Path.cwd(),
     )
 
+    # Test with list command
+    app_env_list = AppEnvironment(
+        name="app-custom-cmd-list",
+        image=Image.from_base("python:3.11"),
+        command=["python", "app.py"],
+    )
+
     cmd_list = app_env_list.container_cmd(ctx)
     assert cmd_list == ["python", "app.py"]
-    assert "--parameters" not in cmd_list  # Parameters not added for custom commands
 
     # Test with string command (will be split using shlex)
     app_env_str = AppEnvironment(
@@ -271,6 +268,19 @@ def test_app_environment_container_cmd_custom_command():
 
     cmd_str = app_env_str.container_cmd(ctx)
     assert cmd_str == ["uvicorn", "app:main", "--host", "0.0.0.0"]
+
+
+def test_app_environment_custom_command_with_parameters_raises():
+    """
+    GOAL: Verify that combining parameters with a non-fserve custom command raises.
+    """
+    with pytest.raises(ValueError, match="Cannot use 'parameters' with a custom 'command'"):
+        AppEnvironment(
+            name="app-bad-combo",
+            image=Image.from_base("python:3.11"),
+            command=["python", "app.py"],
+            parameters=[Parameter(value="config.yaml", name="config")],
+        )
 
 
 def test_app_environment_container_args_variations():
