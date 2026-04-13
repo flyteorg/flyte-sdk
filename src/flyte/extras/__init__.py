@@ -21,12 +21,14 @@ from ._dynamic_batcher import (
     TokenBatcher,
     TokenEstimator,
 )
+from ._inference_pipeline import InferencePipeline
 
 __all__ = [
     "BatchStats",
     "ContainerTask",
     "CostEstimator",
     "DynamicBatcher",
+    "InferencePipeline",
     "Prompt",
     "TokenBatcher",
     "TokenEstimator",
