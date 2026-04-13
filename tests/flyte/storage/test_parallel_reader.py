@@ -1,8 +1,8 @@
 import asyncio
 import filecmp
 import os
-import sys
 import pathlib
+import sys
 import time
 import unittest.mock as mock
 from pathlib import Path
