@@ -296,9 +296,7 @@ class ClientSet:
                 insecure_skip_verify=self._session_config.insecure_skip_verify,
             )
         except Exception as e:
-            raise RuntimeError(
-                f"Failed to create session for cluster endpoint '{cluster_endpoint}': {e}"
-            ) from e
+            raise RuntimeError(f"Failed to create session for cluster endpoint '{cluster_endpoint}': {e}") from e
 
         logger.debug(f"Created DataProxy client for cluster endpoint: {cluster_endpoint}")
         client = DataProxyServiceClient(**new_session_cfg.connect_kwargs())
