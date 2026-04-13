@@ -345,6 +345,10 @@ class ObstoreParallelReader:
 
             return _transformer
 
-        with tempfile.TemporaryDirectory() as temporary_dir:
+        # Create the temp dir on the same filesystem as target_prefix to avoid
+        # cross-device rename failures (EXDEV/errno 18) when the container has
+        # /tmp on a separate mount (e.g. tmpfs) from the destination directory.
+        target_prefix.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix=".flyte-download-", dir=target_prefix) as temporary_dir:
             async for _ in self._as_completed(_gen(temporary_dir), transformer=_transform_decorator(temporary_dir)):
                 pass
