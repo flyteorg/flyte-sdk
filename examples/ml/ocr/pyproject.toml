@@ -11,7 +11,7 @@ dependencies = [
 # OCR-specific dependencies - all models and features
 ocr = [
     "torch>=2.0.0",
-    "transformers>=4.40.0",
+    "transformers>=5.0.0rc3",
     "accelerate>=0.28.0",
     "Pillow>=10.0.0",
     "datasets>=2.18.0",
@@ -32,7 +32,7 @@ all = [
 
 # Development dependencies
 dev = [
-    "pytest>=7.0.0",
+    "pytest>=9.0.3",
     "pytest-asyncio>=0.21.0",
     "black>=23.0.0",
     "ruff>=0.1.0",
