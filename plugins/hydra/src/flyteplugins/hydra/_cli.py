@@ -104,9 +104,7 @@ def _extract_config_overrides(task, args: list[str]) -> tuple[list[str], list[st
             # Support both "--config-param value" and "--config-param=value".
             if arg == option:
                 if idx + 1 >= len(args):
-                    raise click.UsageError(
-                        f"Option '{option}' requires an override value."
-                    )
+                    raise click.UsageError(f"Option '{option}' requires an override value.")
                 overrides.append(args[idx + 1])
                 idx += 2
                 matched = True
@@ -138,6 +136,7 @@ def _parse_task_kwargs(task, args: list[str], parent_ctx: click.Context) -> dict
     """
     from flyte._internal.runtime.types_serde import transform_native_to_typed_interface
     from flyte.cli._params import to_click_option
+
     from flyteplugins.hydra._run import _config_param_names
 
     interface = transform_native_to_typed_interface(task.native_interface)
@@ -157,9 +156,7 @@ def _parse_task_kwargs(task, args: list[str], parent_ctx: click.Context) -> dict
         if inputs_interface[name][1] is not inspect._empty:
             default_val = inputs_interface[name][1]
 
-        params.append(
-            to_click_option(name, var, inputs_interface[name][0], default_val)
-        )
+        params.append(to_click_option(name, var, inputs_interface[name][0], default_val))
 
     def _collect(**kwargs):
         return kwargs
@@ -233,10 +230,7 @@ def hydra_group() -> None:
     "hydra_overrides",
     multiple=True,
     metavar="KEY=VALUE",
-    help=(
-        "Hydra-namespace override (repeatable), e.g. hydra/sweeper=optuna or "
-        "hydra.sweeper.n_trials=20."
-    ),
+    help=("Hydra-namespace override (repeatable), e.g. hydra/sweeper=optuna or hydra.sweeper.n_trials=20."),
 )
 @click.pass_context
 def hydra_run_cmd(

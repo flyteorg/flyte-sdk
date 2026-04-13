@@ -30,10 +30,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Sequence
 
+from omegaconf import DictConfig, open_dict
+
 from hydra.core.utils import JobReturn, JobStatus, configure_log, run_job, setup_globals
 from hydra.plugins.launcher import Launcher
 from hydra.types import HydraContext, TaskFunction
-from omegaconf import DictConfig, open_dict
 
 log = logging.getLogger(__name__)
 
@@ -106,17 +107,13 @@ class FlyteLauncher(Launcher):
         return self._launch_local(job_overrides, initial_job_idx, is_sweep)
 
     def _sweep_config(self, overrides: Sequence[str], job_idx: int) -> DictConfig:
-        cfg = self.hydra_context.config_loader.load_sweep_config(
-            self.config, list(overrides)
-        )
+        cfg = self.hydra_context.config_loader.load_sweep_config(self.config, list(overrides))
         with open_dict(cfg):
             cfg.hydra.job.id = str(job_idx)
             cfg.hydra.job.num = job_idx
         return cfg
 
-    def _run_one(
-        self, overrides: Sequence[str], job_idx: int, is_sweep: bool
-    ) -> JobReturn:
+    def _run_one(self, overrides: Sequence[str], job_idx: int, is_sweep: bool) -> JobReturn:
         log.info(f"\t#{job_idx} : {' '.join(overrides)}")
         return run_job(
             hydra_context=self.hydra_context,
@@ -164,44 +161,30 @@ class FlyteLauncher(Launcher):
         if self.wait:
             self._wait_for_remote_runs(job_returns)
         else:
-            log.info(
-                "Submitted %d Flyte runs; not waiting for completion.", len(job_returns)
-            )
+            log.info("Submitted %d Flyte runs; not waiting for completion.", len(job_returns))
 
         return job_returns
 
-    def _show_submitted_run(
-        self, ret: JobReturn, job_idx: int, multiple_jobs: bool
-    ) -> None:
+    def _show_submitted_run(self, ret: JobReturn, job_idx: int, multiple_jobs: bool) -> None:
         """Print a Flyte run URL immediately after submission, before waiting."""
         flyte_run = ret._return_value
         try:
             url = getattr(flyte_run, "url", None)
         except Exception:
-            log.debug(
-                "Could not read Flyte run URL for job %s.", job_idx, exc_info=True
-            )
+            log.debug("Could not read Flyte run URL for job %s.", job_idx, exc_info=True)
             return
 
         if url is None:
             return
 
-        prefix = (
-            f"Flyte run submitted [{job_idx}]"
-            if multiple_jobs
-            else "Flyte run submitted"
-        )
+        prefix = f"Flyte run submitted [{job_idx}]" if multiple_jobs else "Flyte run submitted"
         print(f"{prefix}: {url}")
 
     def _wait_for_remote_runs(self, job_returns: list[JobReturn]) -> None:
         """Wait for all submitted Flyte runs at the same time."""
         from flyte.models import ActionPhase
 
-        runs = [
-            (ret, ret._return_value)
-            for ret in job_returns
-            if getattr(ret._return_value, "wait", None) is not None
-        ]
+        runs = [(ret, ret._return_value) for ret in job_returns if getattr(ret._return_value, "wait", None) is not None]
         if not runs:
             return
 
@@ -216,18 +199,11 @@ class FlyteLauncher(Launcher):
             # Each wait tracks one run; quiet=True avoids multiple Rich
             # progress renderers fighting each other in parallel.
             flyte_run.wait(quiet=True)
-            outputs = (
-                flyte_run.outputs()
-                if flyte_run.phase == ActionPhase.SUCCEEDED
-                else None
-            )
+            outputs = flyte_run.outputs() if flyte_run.phase == ActionPhase.SUCCEEDED else None
             return flyte_run.phase, outputs
 
         with ThreadPoolExecutor(max_workers=worker_count) as executor:
-            future_to_result = {
-                executor.submit(_wait_one, flyte_run): (ret, flyte_run)
-                for ret, flyte_run in runs
-            }
+            future_to_result = {executor.submit(_wait_one, flyte_run): (ret, flyte_run) for ret, flyte_run in runs}
             for future in as_completed(future_to_result):
                 ret, flyte_run = future_to_result[future]
                 try:
@@ -245,9 +221,7 @@ class FlyteLauncher(Launcher):
                     continue
 
                 url = getattr(flyte_run, "url", flyte_run)
-                ret.return_value = RuntimeError(
-                    f"Flyte run {url} finished in phase {phase}."
-                )
+                ret.return_value = RuntimeError(f"Flyte run {url} finished in phase {phase}.")
                 ret.status = JobStatus.FAILED
 
     def _wait_worker_count(self, run_count: int) -> int:

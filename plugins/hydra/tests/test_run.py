@@ -73,9 +73,7 @@ def test_expand_basic_sweep_overrides_parses_hydra_overrides(hydra_conf: Path, t
     ]
 
 
-def test_hydra_run_composes_config_and_uses_named_config_param(
-    hydra_conf: Path, tmp_path: Path, monkeypatch
-) -> None:
+def test_hydra_run_composes_config_and_uses_named_config_param(hydra_conf: Path, tmp_path: Path, monkeypatch) -> None:
     runner = RecordingRunner()
     task = FakeTask(config_param="config")
 
@@ -99,9 +97,7 @@ def test_hydra_run_composes_config_and_uses_named_config_param(
     assert kwargs["config"].data.path == "s3://bucket/train"
 
 
-def test_hydra_sweep_expands_grid_and_preserves_task_kwargs(
-    hydra_conf: Path, tmp_path: Path, monkeypatch
-) -> None:
+def test_hydra_sweep_expands_grid_and_preserves_task_kwargs(hydra_conf: Path, tmp_path: Path, monkeypatch) -> None:
     runner = RecordingRunner()
     task = FakeTask()
 

@@ -44,8 +44,9 @@ from pathlib import Path
 from typing import Any, Callable
 
 import flyte
-from hydra import initialize, initialize_config_dir
 from omegaconf import DictConfig, OmegaConf
+
+from hydra import initialize, initialize_config_dir
 
 log = logging.getLogger(__name__)
 
@@ -65,19 +66,12 @@ def _task_inputs(task: Callable) -> dict[str, tuple[Any, Any]]:
         return native_interface.inputs
 
     sig = inspect.signature(task)
-    return {
-        name: (param.annotation, param.default)
-        for name, param in sig.parameters.items()
-    }
+    return {name: (param.annotation, param.default) for name, param in sig.parameters.items()}
 
 
 def _config_param_names(task: Callable) -> list[str]:
     """Return DictConfig input parameter names declared on *task*."""
-    return [
-        name
-        for name, (param_type, _) in _task_inputs(task).items()
-        if _is_dictconfig_type(param_type)
-    ]
+    return [name for name, (param_type, _) in _task_inputs(task).items() if _is_dictconfig_type(param_type)]
 
 
 def _config_param_name(task: Callable) -> str:
@@ -90,12 +84,7 @@ def _config_param_name(task: Callable) -> str:
 
 def _task_name(task: Callable) -> str:
     """Return the user-facing task name used for task-env config lookups."""
-    return (
-        getattr(task, "short_name", None)
-        or getattr(task, "__name__", None)
-        or getattr(task, "name", None)
-        or "task"
-    )
+    return getattr(task, "short_name", None) or getattr(task, "__name__", None) or getattr(task, "name", None) or "task"
 
 
 def _coerce_override_kwargs(overrides: Any) -> dict[str, Any]:
@@ -108,9 +97,7 @@ def _coerce_override_kwargs(overrides: Any) -> dict[str, Any]:
         kwargs = overrides
 
     if not isinstance(kwargs, dict):
-        raise TypeError(
-            f"Expected task override kwargs to be a mapping, got {type(kwargs).__name__}."
-        )
+        raise TypeError(f"Expected task override kwargs to be a mapping, got {type(kwargs).__name__}.")
 
     # YAML/structured configs naturally express resources as a mapping, while
     # task.override expects a flyte.Resources object.
@@ -167,9 +154,7 @@ def _hydra_init(config_path: str | Path | None):
 
     GlobalHydra.instance().clear()
     if config_path is not None:
-        ctx = initialize_config_dir(
-            config_dir=str(Path(config_path).absolute()), version_base=None
-        )
+        ctx = initialize_config_dir(config_dir=str(Path(config_path).absolute()), version_base=None)
     else:
         ctx = initialize(config_path=None, version_base=None)
 
@@ -187,10 +172,9 @@ def _setup_launcher(
     run_mode,
 ):
     """Create a ``FlyteLauncher``, load master config, and call ``setup``."""
+    from flyteplugins.hydra._launcher import FlyteLauncher
     from hydra._internal.callbacks import Callbacks
     from hydra.types import HydraContext
-
-    from flyteplugins.hydra._launcher import FlyteLauncher
 
     # Load the master config *without* user overrides — per-job overrides are
     # applied by ``load_sweep_config`` inside ``FlyteLauncher._sweep_config``.
@@ -240,9 +224,7 @@ def _make_entry(
         override_kwargs = _task_override_kwargs(cfg, task_env_key, task_name)
         t = task.override(**override_kwargs) if override_kwargs else task
         run_kwargs = {config_param: cfg, **task_kw}
-        return flyte.with_runcontext(mode=mode, **(run_options or {})).run(
-            t, **run_kwargs
-        )
+        return flyte.with_runcontext(mode=mode, **(run_options or {})).run(t, **run_kwargs)
 
     return _entry
 
@@ -264,7 +246,7 @@ def _split_overrides(overrides: list[str]) -> tuple[list[str], list[str]]:
     app_ovrs: list[str] = []
 
     for o in overrides:
-        if o.startswith("hydra/") or o.startswith("hydra."):
+        if o.startswith(("hydra/", "hydra.")):
             hydra_ovrs.append(o)
         else:
             app_ovrs.append(o)
@@ -272,9 +254,7 @@ def _split_overrides(overrides: list[str]) -> tuple[list[str], list[str]]:
     return app_ovrs, hydra_ovrs
 
 
-def _expand_basic_sweep_overrides(
-    config_loader, overrides: list[str]
-) -> list[list[str]]:
+def _expand_basic_sweep_overrides(config_loader, overrides: list[str]) -> list[list[str]]:
     """Expand comma-separated BasicSweeper overrides into per-job strings."""
     from hydra._internal.core_plugins.basic_sweeper import BasicSweeper
     from hydra.core.override_parser.overrides_parser import OverridesParser
@@ -321,13 +301,12 @@ def _sweep_via_hydra_runtime(
         "hydra/launcher=flyte",
         f"hydra.launcher.mode={mode}",
         f"hydra.launcher.wait={str(wait).lower()}",
-        "hydra.launcher.wait_max_workers="
-        f"{'null' if wait_max_workers is None else wait_max_workers}",
+        f"hydra.launcher.wait_max_workers={'null' if wait_max_workers is None else wait_max_workers}",
     ]
     overrides_argv = launcher_overrides + hydra_overrides + app_overrides
 
     args_parser = get_args_parser()
-    args = args_parser.parse_args(["--multirun"] + overrides_argv)
+    args = args_parser.parse_args(["--multirun", *overrides_argv])
 
     _run_hydra(
         args=args,

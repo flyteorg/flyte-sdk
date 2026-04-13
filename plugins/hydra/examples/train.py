@@ -53,7 +53,7 @@ import hydra
 from flyte.io import Dir
 from hydra.core.config_store import ConfigStore
 from hydra.core.hydra_config import HydraConfig
-from omegaconf import DictConfig, MISSING, OmegaConf
+from omegaconf import MISSING, DictConfig, OmegaConf
 
 
 @dataclass
@@ -240,9 +240,7 @@ async def preprocess(cfg: DictConfig) -> flyte.io.Dir:
 
 
 @env.task
-async def train_model(
-    cfg: DictConfig, data: flyte.io.Dir
-) -> tuple[flyte.io.Dir, float]:
+async def train_model(cfg: DictConfig, data: flyte.io.Dir) -> tuple[flyte.io.Dir, float]:
     """Train the model; returns (checkpoint_dir, val_loss)."""
     import pathlib
     import random
@@ -264,15 +262,11 @@ async def train_model(
 @env.task
 async def pipeline(cfg: DictConfig, dataset: str) -> float:
     """End-to-end pipeline: preprocess, train, return val_loss."""
-    te = cfg.get("task_env", {})
-    train_resources = te.get("train_model", {}).get("resources")
+    task_env = cfg.get("task_env", {})
+    train_resources = task_env.get("train_model", {}).get("resources")
 
     data = await preprocess(cfg)
-    train_task = (
-        train_model.override(resources=flyte.Resources(**train_resources))
-        if train_resources
-        else train_model
-    )
+    train_task = train_model.override(resources=flyte.Resources(**train_resources)) if train_resources else train_model
     _, val_loss = await train_task(cfg, data)
     print(f"pipeline done — val_loss={val_loss:.4f}  dataset={dataset}")
     return val_loss
@@ -281,15 +275,11 @@ async def pipeline(cfg: DictConfig, dataset: str) -> float:
 @env.task
 async def pipeline_with_config(config: DictConfig, dataset: str) -> float:
     """Same pipeline, using ``config`` instead of ``cfg`` as the parameter."""
-    te = config.get("task_env", {})
-    train_resources = te.get("train_model", {}).get("resources")
+    task_env = config.get("task_env", {})
+    train_resources = task_env.get("train_model", {}).get("resources")
 
     data = await preprocess(config)
-    train_task = (
-        train_model.override(resources=flyte.Resources(**train_resources))
-        if train_resources
-        else train_model
-    )
+    train_task = train_model.override(resources=flyte.Resources(**train_resources)) if train_resources else train_model
     _, val_loss = await train_task(config, data)
     print(f"pipeline done — val_loss={val_loss:.4f}  dataset={dataset}")
     return val_loss
@@ -298,13 +288,9 @@ async def pipeline_with_config(config: DictConfig, dataset: str) -> float:
 @hydra.main(version_base=None, config_path="conf", config_name="training")
 def main(cfg: DictConfig):
     flyte.init_from_config()
-    te = cfg.get("task_env", {})
-    pipeline_resources = te.get("pipeline", {}).get("resources")
-    entry_task = (
-        pipeline.override(resources=flyte.Resources(**pipeline_resources))
-        if pipeline_resources
-        else pipeline
-    )
+    task_env = cfg.get("task_env", {})
+    pipeline_resources = task_env.get("pipeline", {}).get("resources")
+    entry_task = pipeline.override(resources=flyte.Resources(**pipeline_resources)) if pipeline_resources else pipeline
     mode = _flyte_launcher_mode()
     runner = flyte.with_runcontext(mode=mode) if mode else flyte
     run = runner.run(

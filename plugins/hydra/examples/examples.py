@@ -18,14 +18,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from flyteplugins.hydra import hydra_run as _hydra_run
-from flyteplugins.hydra import hydra_sweep as _hydra_sweep
 from hydra.core.config_store import ConfigStore
 from omegaconf import MISSING
 from train import pipeline, pipeline_with_config
 
+from flyteplugins.hydra import hydra_run as _hydra_run
+from flyteplugins.hydra import hydra_sweep as _hydra_sweep
+
 CONFIG_PATH = "conf"
-_FLYTE_INITIALIZED = False
+_FLYTE_STATE = {"initialized": False}
 
 
 def _ensure_flyte_config() -> None:
@@ -34,14 +35,13 @@ def _ensure_flyte_config() -> None:
     ``train.py`` initializes Flyte only inside its ``@hydra.main`` entry point.
     This module imports ``pipeline`` directly, so that entry point never runs.
     """
-    global _FLYTE_INITIALIZED
-    if _FLYTE_INITIALIZED:
+    if _FLYTE_STATE["initialized"]:
         return
 
     import flyte
 
     flyte.init_from_config()
-    _FLYTE_INITIALIZED = True
+    _FLYTE_STATE["initialized"] = True
 
 
 def hydra_run(*args, **kwargs):
@@ -266,9 +266,7 @@ class RootConf:
     optimizer: OptimizerConf = field(default_factory=OptimizerConf)
     model: ModelConf = field(default_factory=ModelConf)
     training: TrainConf = field(default_factory=TrainConf)
-    data: DataConf = field(
-        default_factory=lambda: DataConf(path="s3://my-bucket/imagenet")
-    )
+    data: DataConf = field(default_factory=lambda: DataConf(path="s3://my-bucket/imagenet"))
 
 
 def ex_structured_config():
@@ -371,7 +369,7 @@ def ex_hardware_sweep():
 
 
 def ex_hardware_x_hparam_sweep():
-    """2 hardware presets × 3 lr values = 6 jobs."""
+    """2 hardware presets x 3 lr values = 6 jobs."""
     runs = hydra_sweep(
         pipeline,
         config_path=CONFIG_PATH,
@@ -615,7 +613,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "example",
         nargs="?",
-        choices=list(EXAMPLES) + ["cli", "all"],
+        choices=[*list(EXAMPLES), "cli", "all"],
         default="cli",
         help="Which example to run (default: print CLI examples)",
     )
@@ -625,9 +623,9 @@ if __name__ == "__main__":
         print(CLI_EXAMPLES)
     elif args.example == "all":
         for name, fn in EXAMPLES.items():
-            print(f"\n{'─'*60}")
+            print(f"\n{'─' * 60}")
             print(f"  {name}")
-            print(f"{'─'*60}")
+            print(f"{'─' * 60}")
             fn()
     else:
         EXAMPLES[args.example]()
