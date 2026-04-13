@@ -1,0 +1,5 @@
+name: vit_base
+hidden_dim: 768
+num_layers: 12
+num_heads: 12
+dropout: 0.0
