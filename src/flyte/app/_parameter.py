@@ -210,10 +210,12 @@ class Parameter:
     Parameter for application.
 
     :param name: Name of parameter.
-    :param value: Value for parameter.
+    :param value: Value for parameter. When ``None``, the value must be supplied at
+        serving time via ``parameter_values`` in :func:`flyte.with_servecontext`.
+    :param type: Type of parameter. If ``None``, the type will be inferred from the value.
     :param env_var: Environment name to set the value in the serving environment.
     :param download: When True, the parameter will be automatically downloaded. This
-        only works if the value refers to an item in a object store. i.e. `s3://...`
+        only works if the value refers to a file/directory in a object store. i.e. `s3://...`
     :param mount: If `value` is a directory, then the directory will be available
         at `mount`. If `value` is a file, then the file will be downloaded into the
         `mount` directory.
@@ -222,9 +224,10 @@ class Parameter:
     """
 
     name: str
-    value: ParameterTypes | _DelayedValue
+    value: Optional[ParameterTypes | _DelayedValue] = None
+    type: Optional[Literal["string", "file", "directory", "app_endpoint"]] = None
     env_var: Optional[str] = None
-    download: bool = False
+    download: bool = True
     mount: Optional[str] = None
     ignore_patterns: list[str] = field(default_factory=list)
 
@@ -236,7 +239,9 @@ class Parameter:
         if self.env_var is not None and env_name_re.match(self.env_var) is None:
             raise ValueError(f"env_var ({self.env_var}) is not a valid environment name for shells")
 
-        if self.value and not isinstance(self.value, (str, flyte.io.File, flyte.io.Dir, RunOutput, AppEndpoint)):
+        if self.value is not None and not isinstance(
+            self.value, (str, flyte.io.File, flyte.io.Dir, RunOutput, AppEndpoint)
+        ):
             raise TypeError(
                 f"Expected value to be of type str, file, dir, RunOutput or AppEndpoint, got {type(self.value)}"
             )
@@ -265,6 +270,13 @@ class SerializableParameter(BaseModel):
         # param.name is guaranteed to be set by Parameter.__post_init__
         assert param.name is not None, "Parameter name should be set by __post_init__"
 
+        if param.value is None:
+            raise ValueError(
+                f"Parameter '{param.name}' has no value. All parameters must have a value at deployment time. "
+                "Provide a value directly or supply one at serve time via parameter_values in "
+                "flyte.with_servecontext()."
+            )
+
         tpe: _SerializedParameterType = "string"
         if isinstance(param.value, flyte.io.File):
             value = param.value.path
@@ -285,6 +297,11 @@ class SerializableParameter(BaseModel):
         else:
             value = typing.cast(str, param.value)
             download = False
+
+        if param.type is not None:
+            tpe = param.type
+            if tpe in ("file", "directory") and param.mount is not None:
+                download = True
 
         return cls(
             name=param.name,

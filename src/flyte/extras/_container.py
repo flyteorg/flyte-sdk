@@ -39,7 +39,7 @@ def _extract_path_command_key(cmd: str, input_data_dir: Optional[str]) -> Option
 class ContainerTask(TaskTemplate):
     """
     This is an intermediate class that represents Flyte Tasks that run a container at execution time. This is the vast
-    majority of tasks - the typical ``@task`` decorated tasks; for instance, all run a container. An example of
+    majority of tasks - the typical `@task` decorated tasks; for instance, all run a container. An example of
     something that doesn't run a container would be something like the Athena SQL task.
 
     :param name: Name of the task
@@ -74,7 +74,10 @@ class ContainerTask(TaskTemplate):
             task_type="raw-container",
             name=name,
             image=image,
-            interface=NativeInterface({k: (v, None) for k, v in inputs.items()} if inputs else {}, outputs or {}),
+            interface=NativeInterface(
+                {k: (v, None) for k, v in inputs.items()} if inputs else {},
+                outputs or {},
+            ),
             **kwargs,
         )
         self._image = image
@@ -245,7 +248,21 @@ class ContainerTask(TaskTemplate):
         output_directory = storage.get_random_local_directory()
         cmd_and_args = (self._cmd or []) + (self._args or [])
         commands, volume_bindings = self._prepare_command_and_volumes(cmd_and_args, **kwargs)
-        volume_bindings[str(output_directory)] = {"bind": self._output_data_dir, "mode": "rw"}
+
+        # Mount any File/Dir inputs not already bound via command templates.
+        # This covers verbatim mode in sandbox, where inputs aren't referenced in the command
+        # string but the container expects them at /var/inputs/<name>.
+        for k, v in kwargs.items():
+            if isinstance(v, (File, Dir)):
+                local_path = v.path
+                if local_path not in volume_bindings:
+                    remote_path = os.path.join(str(self._input_data_dir), k)
+                    volume_bindings[local_path] = {"bind": remote_path, "mode": "rw"}
+
+        volume_bindings[str(output_directory)] = {
+            "bind": self._output_data_dir,
+            "mode": "rw",
+        }
 
         client = docker.from_env()
         if isinstance(self._image, str):
@@ -254,18 +271,25 @@ class ContainerTask(TaskTemplate):
         self._pull_image_if_not_exists(client, uri)
         print(f"Command: {commands!r}")
 
-        container = client.containers.run(uri, command=commands, remove=True, volumes=volume_bindings, detach=True)
+        run_kwargs: Dict[str, Any] = {
+            "volumes": volume_bindings,
+            "detach": True,
+        }
+
+        container = client.containers.run(uri, command=commands, **run_kwargs)
 
         # Wait for the container to finish the task
         # TODO: Add a 'timeout' parameter to control the max wait time for the container to finish the task.
-
-        if self.local_logs:
-            for log in container.logs(stream=True):
-                print(f"[Local Container] {log.strip()!r}")
-
         container.wait()
 
+        if self.local_logs:
+            logs = container.logs()
+            for line in logs.splitlines():
+                print(f"[Local Container] {line!r}")
+
         output = await self._get_output(output_directory)
+
+        container.remove()
         return output
 
     def data_loading_config(self, sctx: SerializationContext) -> tasks_pb2.DataLoadingConfig:
@@ -283,4 +307,4 @@ class ContainerTask(TaskTemplate):
         )
 
     def container_args(self, sctx: SerializationContext) -> List[str]:
-        return self._cmd + (self._args if self._args else [])
+        return self._cmd + (self._args or [])

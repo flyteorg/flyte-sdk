@@ -12,8 +12,15 @@ from google.cloud import bigquery
 
 @dataclass
 class BigQueryConfig(object):
-    """
-    BigQueryConfig should be used to configure a BigQuery Task.
+    """Configuration for a BigQuery task.
+
+    Attributes:
+        ProjectID: The Google Cloud project ID that owns the BigQuery dataset.
+        Location: The geographic location of the dataset, e.g. `"US"` or `"EU"`.
+            Defaults to the project's default location if not specified.
+        QueryJobConfig: Optional advanced job configuration passed directly to the
+            BigQuery client. Use this to set query parameters, destination tables,
+            time partitioning, etc.
     """
 
     ProjectID: str
@@ -72,7 +79,7 @@ class BigQueryTask(AsyncConnectorExecutorMixin, TaskTemplate):
         if self.plugin_config.QueryJobConfig is not None:
             config.update(self.plugin_config.QueryJobConfig.to_api_repr()["query"])
         if self.google_application_credentials is not None:
-            config["secrets"] = {"google_application_credentials:": self.google_application_credentials}
+            config["secrets"] = {"google_application_credentials": self.google_application_credentials}
         return config
 
     def sql(self, sctx: SerializationContext) -> Optional[str]:

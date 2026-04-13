@@ -4,7 +4,7 @@
 #     "deltalake",
 #     "pyarrow",
 #     "unionai-reuse>=0.1.7",
-#     "flyte>=2.0.0b35",
+#     "flyte",
 # ]
 # ///
 """
@@ -47,7 +47,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Define image using uv script dependencies (avoids duplicating dependency list)
-image = flyte.Image.from_uv_script(__file__, name="deltalake", pre=True)
+image = flyte.Image.from_uv_script(__file__, name="deltalake")
 
 # Define reusable environment for parallel processing tasks
 # ReusePolicy keeps workers alive to avoid cold start overhead
@@ -60,7 +60,7 @@ processing_env = flyte.TaskEnvironment(
         idle_ttl=300,  # Keep workers alive for 5 minutes after idle
     ),
     image=image,
-    cache=flyte.Cache("auto", "1.1"),
+    cache=flyte.Cache("auto", "1.2"),
 )
 
 # Non-reusable environment for orchestration tasks

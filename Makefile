@@ -6,6 +6,10 @@ help:
 
 .DEFAULT_GOAL := help
 
+.PHONY: prek-install
+prek-install:
+	curl --proto '=https' --tlsv1.2 -LsSf https://github.com/j178/prek/releases/download/v0.3.5/prek-installer.sh | sh
+
 .PHONY: fmt
 fmt:
 	uv run python -m ruff format
@@ -18,6 +22,9 @@ mypy:
 		examples/basics/hello.py \
 		examples/basics/hello_v2.py
 
+.PHONY: uvlock
+uvlock:
+	bash maint_tools/uvlock.sh
 
 .PHONY: lint
 lint-fix:
@@ -30,7 +37,8 @@ dist: clean
 
 .PHONY: dist
 dist-plugins: clean
-	for plugin in plugins/*; do \
+    # set FLYTE_PLUGIN_DIST to the directory of a specific plugin to build
+	for plugin in $${FLYTE_PLUGIN_DIST:-plugins/*}; do \
 		if [ -d "$$plugin" ]; then \
 			uv run python -m build --wheel --installer uv --outdir ./dist "$$plugin"; \
 		fi \
@@ -74,7 +82,7 @@ unit_test_plugins:
 	@for plugin in $${FLYTE_PLUGIN:-plugins/*}; do \
 		if [ -d "$$plugin/tests" ]; then \
 			echo "🚀 Testing plugin: $$plugin..."; \
-			cd "$$plugin" && uv run python -m pytest tests/ && cd ../../..; \
+			cd "$$plugin" && uv run python -m pytest tests/ && cd ../..; \
 		fi \
 	done
 

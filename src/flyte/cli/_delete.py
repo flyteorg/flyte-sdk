@@ -1,3 +1,5 @@
+import subprocess
+
 import rich_click as click
 
 import flyte.cli._common as common
@@ -60,3 +62,31 @@ def app(cfg: common.CLIConfig, name: str, project: str | None = None, domain: st
         App.delete(name=name, project=project, domain=domain)
 
     console.log(f"[green]Successfully deleted app {name} [/green]")
+
+
+@delete.command()
+@click.option(
+    "--volume",
+    is_flag=True,
+    default=False,
+    help="Also delete the Docker volume used for persistent storage.",
+)
+def demo(volume: bool):
+    """
+    Stop and remove the local Flyte demo cluster container.
+    """
+    console = common.get_console()
+    result = subprocess.run(["docker", "stop", "flyte-demo"], capture_output=True, check=False)
+    if result.returncode == 0:
+        # The container is started with --rm, so wait for it to be fully removed
+        subprocess.run(["docker", "wait", "flyte-demo"], capture_output=True, check=False)
+        console.print("[green]Demo cluster stopped.[/green]")
+    else:
+        console.print("[yellow]Demo cluster is not running.[/yellow]")
+
+    if volume:
+        result = subprocess.run(["docker", "volume", "rm", "flyte-demo"], capture_output=True, check=False)
+        if result.returncode == 0:
+            console.print("[green]Docker volume 'flyte-demo' deleted.[/green]")
+        else:
+            console.print("[yellow]Docker volume 'flyte-demo' does not exist.[/yellow]")

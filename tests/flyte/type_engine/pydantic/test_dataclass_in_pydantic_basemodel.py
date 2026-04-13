@@ -26,7 +26,7 @@ async def test_dataclass_in_pydantic_basemodel():
         b: float = 3.14
         c: str = "Hello, Flyte"
         d: bool = False
-        inner_bm: InnerBM = Field(default_factory=lambda: InnerBM())
+        inner_bm: InnerBM = Field(default_factory=InnerBM)
 
     @env.task
     async def t_bm(bm: BM):
@@ -81,7 +81,7 @@ async def test_pydantic_dataclass_in_pydantic_basemodel():
         b: float = 3.14
         c: str = "Hello, Flyte"
         d: bool = False
-        inner_bm: InnerBM = Field(default_factory=lambda: InnerBM())
+        inner_bm: InnerBM = Field(default_factory=InnerBM)
 
     @env.task
     async def t_bm(bm: BM):

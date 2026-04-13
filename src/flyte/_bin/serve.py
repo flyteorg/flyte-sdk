@@ -26,6 +26,36 @@ _F_PATH_REWRITE = "_F_PATH_REWRITE"
 ENDPOINT_OVERRIDE = "_U_EP_OVERRIDE"
 
 
+def _ensure_dest_writable(dest_path: str, param_name: str) -> None:
+    """Ensure the directory for a parameter destination exists and is writable.
+
+    For file paths (e.g. ``/tmp/model.bin``), checks the parent directory.
+    For directory paths ending with a separator (e.g. ``/tmp/``), checks the
+    directory itself.
+
+    Raises RuntimeError with an informative message when the directory cannot
+    be created or is not writable.
+    """
+    import pathlib
+
+    if dest_path.endswith(os.sep):
+        dest_dir = pathlib.Path(dest_path)
+    else:
+        dest_dir = pathlib.Path(dest_path).parent
+    try:
+        os.makedirs(dest_dir, exist_ok=True)
+    except OSError as e:
+        raise RuntimeError(
+            f"Cannot create destination directory '{dest_dir}' for parameter '{param_name}'. "
+            f"Ensure the mount path '{dest_path}' is within a writable filesystem: {e}"
+        ) from e
+    if not os.access(dest_dir, os.W_OK):
+        raise RuntimeError(
+            f"Destination directory '{dest_dir}' for parameter '{param_name}' is not writable. "
+            f"Ensure the mount path '{dest_path}' is within a writable filesystem."
+        )
+
+
 async def sync_parameters(serialized_parameters: str, dest: str) -> tuple[dict, dict, dict]:
     """
     Converts parameters into simple dict of name to value, downloading any files/directories as needed.
@@ -79,6 +109,13 @@ async def sync_parameters(serialized_parameters: str, dest: str) -> tuple[dict, 
         # download files or directories
         if parameter.download:
             user_dest = parameter.dest or dest
+
+            if parameter.dest and parameter_type == "file" and parameter.dest.endswith(os.sep):
+                source_filename = os.path.basename(ser_value)
+                user_dest = os.path.join(parameter.dest, source_filename)
+
+            if parameter.dest:
+                _ensure_dest_writable(user_dest, parameter.name)
 
             # replace file and directory inputs with the local paths if download is True
             if parameter_type == "file":
@@ -140,15 +177,10 @@ def load_app_env(
     try:
         return resolver_instance.load_app_env(resolver_args)
     except ModuleNotFoundError as e:
+        from flyte._internal.runtime.entrypoints import _list_user_files
+
         cwd = os.getcwd()
-        files = []
-        try:
-            for root, dirs, filenames in os.walk(cwd):
-                for name in dirs + filenames:
-                    rel_path = os.path.relpath(os.path.join(root, name), cwd)
-                    files.append(rel_path)
-        except Exception as list_err:
-            files = [f"(Failed to list directory: {list_err})"]
+        files = _list_user_files(cwd)
 
         msg = (
             "\n\nFull traceback:\n" + "".join(traceback.format_exc()) + f"\n[ImportError Diagnostics]\n"
@@ -206,8 +238,15 @@ def _bind_parameters(
 async def _serve(
     app_env: AppEnvironment,
     materialized_parameters: dict[str, str | flyte.io.File | flyte.io.Dir],
+    raw_data_path: str | None = None,
 ):
     import signal
+
+    if raw_data_path:
+        from flyte.app._context import set_raw_data_path
+
+        set_raw_data_path(raw_data_path)
+        logger.info(f"Set raw_data_path in AppContext: {raw_data_path}")
 
     logger.info("Running app via server function")
     assert app_env._server is not None
@@ -262,6 +301,7 @@ async def _serve(
 @click.option("--tgz", required=False)
 @click.option("--pkl", required=False)
 @click.option("--dest", required=False)
+@click.option("--raw-data-path", "-r", required=False)
 @click.option("--project", envvar=PROJECT_NAME, required=False)
 @click.option("--domain", envvar=DOMAIN_NAME, required=False)
 @click.option("--org", envvar=ORG_NAME, required=False)
@@ -277,6 +317,7 @@ def main(
     tgz: str,
     pkl: str,
     dest: str,
+    raw_data_path: str | None = None,
     command: tuple[str, ...] | None = None,
     project: str | None = None,
     domain: str | None = None,
@@ -328,9 +369,17 @@ def main(
 
     os.environ[RUNTIME_PARAMETERS_FILE] = parameters_file
 
+    logger.info(f"RAW DATA PATH: {raw_data_path}")
+
     if app_env and app_env._server is not None:
-        asyncio.run(_serve(app_env, materialized_parameters))
+        asyncio.run(_serve(app_env, materialized_parameters, raw_data_path=raw_data_path))
         exit(0)
+
+    if raw_data_path:
+        from flyte.app._context import set_raw_data_path
+
+        set_raw_data_path(raw_data_path)
+        logger.info(f"Set raw_data_path in AppContext: {raw_data_path}")
 
     if command is None or len(command) == 0:
         raise ValueError("No command provided to execute")

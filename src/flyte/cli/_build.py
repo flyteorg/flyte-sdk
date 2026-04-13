@@ -44,14 +44,16 @@ class BuildEnvCommand(click.Command):
         super().__init__(*args, **kwargs)
 
     def invoke(self, ctx: click.Context):
-        console = common.get_console()
-        console.print(f"Building Environment: {self.obj_name}")
+        from flyte._status import status
+
         obj: CLIConfig = ctx.obj
+        status.step(f"Building environment: {self.obj_name}")
         obj.init()
-        with console.status("Building...", spinner="dots"):
+        with common.cli_status(obj.output_format, "Building...", spinner="dots"):
             image_cache = flyte.build_images(self.obj)
 
-        console.print(common.format("Images", image_cache.repr(), obj.output_format))
+        status.success(f"Environment {self.obj_name} built")
+        common.print_output(common.format("Images", image_cache.repr(), obj.output_format), obj.output_format)
 
 
 class EnvPerFileGroup(common.ObjectsPerFileGroup):

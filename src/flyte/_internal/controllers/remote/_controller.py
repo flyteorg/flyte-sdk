@@ -6,6 +6,7 @@ import os
 import threading
 from collections import defaultdict
 from collections.abc import Callable
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, Awaitable, DefaultDict, Tuple, TypeVar
 
@@ -16,7 +17,7 @@ import flyte.errors
 import flyte.storage as storage
 from flyte._code_bundle import build_pkl_bundle
 from flyte._context import internal_ctx
-from flyte._internal.controllers import TraceInfo
+from flyte._internal.controllers import TaskCallSequencer, TraceInfo
 from flyte._internal.controllers.remote._action import Action
 from flyte._internal.controllers.remote._core import Controller
 from flyte._internal.controllers.remote._service_protocol import ClientSet
@@ -132,9 +133,7 @@ class RemoteController(Controller):
         self._parent_action_semaphore: DefaultDict[str, asyncio.Semaphore] = defaultdict(
             lambda: asyncio.Semaphore(default_parent_concurrency)
         )
-        self._parent_action_task_call_sequence: DefaultDict[str, DefaultDict[int | str, int]] = defaultdict(
-            lambda: defaultdict(int)
-        )
+        self._sequencer = TaskCallSequencer()
         self._submit_loop: asyncio.AbstractEventLoop | None = None
         self._submit_thread: threading.Thread | None = None
 
@@ -143,21 +142,10 @@ class RemoteController(Controller):
         Generate a task call sequence for the given task object and action ID.
         This is used to track the number of times a task is called within an action.
         """
-        name = ""
-        if hasattr(task_obj, "__name__"):
-            name = task_obj.__name__
-        elif hasattr(task_obj, "name"):
-            name = task_obj.name
-
-        uniq = unique_action_name(action_id)
-        current_action_sequencer = self._parent_action_task_call_sequence[uniq]
-        current_task_id = name or id(task_obj)
-        v = current_action_sequencer[current_task_id]
-        new_seq = v + 1
-        current_action_sequencer[current_task_id] = new_seq
-
-        logger.info(f"For action {uniq}, task {name} call sequence is {new_seq}")
-        return new_seq
+        action_key = unique_action_name(action_id)
+        seq = self._sequencer.next_seq(task_obj, action_key)
+        logger.info(f"For action {action_key}, task call sequence is {seq}")
+        return seq
 
     async def _submit(self, _task_call_seq: int, _task: TaskTemplate, *args, **kwargs) -> Any:
         ctx = internal_ctx()
@@ -178,7 +166,9 @@ class RemoteController(Controller):
                 upload_from_dataplane_base_path=tctx.run_base_dir,
             )
 
-        inputs = await convert.convert_from_native_to_inputs(_task.native_interface, *args, **kwargs)
+        _ctx = ctx.new_in_driver_literal_conversion(True) if ctx.is_task_context() else nullcontext()
+        with _ctx:
+            inputs = await convert.convert_from_native_to_inputs(_task.native_interface, *args, **kwargs)
 
         root_dir = Path(code_bundle.destination).absolute() if code_bundle else Path.cwd()
         # Don't set output path in sec context because node executor will set it
@@ -282,9 +272,11 @@ class RemoteController(Controller):
                     "RuntimeError",
                     f"Task {n.action_id.name} did not return an output path, but the task has outputs defined.",
                 )
-            return await load_and_convert_outputs(
-                _task.native_interface, n.realized_outputs_uri, max_bytes=_task.max_inline_io_bytes
-            )
+            _ctx = ctx.new_in_driver_literal_conversion(True) if ctx.is_task_context() else nullcontext()
+            with _ctx:
+                return await load_and_convert_outputs(
+                    _task.native_interface, n.realized_outputs_uri, max_bytes=_task.max_inline_io_bytes
+                )
         return None
 
     async def submit(self, _task: TaskTemplate, *args, **kwargs) -> Any:
@@ -361,7 +353,7 @@ class RemoteController(Controller):
         )
         await super()._finalize_parent_action(run_id=run_id, parent_action_name=action_id.name)
         self._parent_action_semaphore.pop(unique_action_name(action_id), None)
-        self._parent_action_task_call_sequence.pop(unique_action_name(action_id), None)
+        self._sequencer.clear(unique_action_name(action_id))
 
     async def get_action_outputs(
         self, _interface: NativeInterface, _func: Callable, *args, **kwargs
@@ -384,7 +376,9 @@ class RemoteController(Controller):
         func_name = _func.__name__
         invoke_seq_num = self.generate_task_call_sequence(_func, current_action_id)
 
-        inputs = await convert.convert_from_native_to_inputs(_interface, *args, **kwargs)
+        _ctx = ctx.new_in_driver_literal_conversion(True) if ctx.is_task_context() else nullcontext()
+        with _ctx:
+            inputs = await convert.convert_from_native_to_inputs(_interface, *args, **kwargs)
         serialized_inputs = inputs.proto_inputs.SerializeToString(deterministic=True)
         inputs_hash = convert.generate_inputs_hash_from_proto(inputs.proto_inputs)
 
@@ -424,7 +418,9 @@ class RemoteController(Controller):
                 logger.warning(f"Action {prev_action.action_id.name} failed, but no error was found, re-running trace!")
         elif prev_action.realized_outputs_uri is not None:
             o = await io.load_outputs(prev_action.realized_outputs_uri, max_bytes=MAX_TRACE_BYTES)
-            outputs = await convert.convert_outputs_to_native(_interface, o)
+            _ctx = ctx.new_in_driver_literal_conversion(True) if ctx.is_task_context() else nullcontext()
+            with _ctx:
+                outputs = await convert.convert_outputs_to_native(_interface, o)
             return (
                 TraceInfo(func_name, sub_action_id, _interface, inputs_uri, output=outputs),
                 True,
@@ -452,7 +448,9 @@ class RemoteController(Controller):
                 err = convert.convert_from_native_to_error(info.error)
                 await io.upload_error(err.err, sub_run_output_path)
             else:
-                outputs = await convert.convert_from_native_to_outputs(info.output, info.interface)
+                _ctx = ctx.new_in_driver_literal_conversion(True) if ctx.is_task_context() else nullcontext()
+                with _ctx:
+                    outputs = await convert.convert_from_native_to_outputs(info.output, info.interface)
                 outputs_file_path = io.outputs_path(sub_run_output_path)
                 await io.upload_outputs(outputs, sub_run_output_path, max_bytes=MAX_TRACE_BYTES)
 
@@ -476,7 +474,7 @@ class RemoteController(Controller):
             run_output_base=tctx.run_base_dir,
             start_time=info.start_time,
             end_time=info.end_time,
-            typed_interface=typed_interface if typed_interface else None,
+            typed_interface=typed_interface or None,
         )
 
         async with self._parent_action_semaphore[unique_action_name(current_action_id)]:
@@ -503,7 +501,9 @@ class RemoteController(Controller):
         native_interface = _task.interface
         pb_interface = _task.pb2.spec.task_template.interface
 
-        inputs = await convert.convert_from_native_to_inputs(native_interface, *args, **kwargs)
+        _ctx = ctx.new_in_driver_literal_conversion(True) if ctx.is_task_context() else nullcontext()
+        with _ctx:
+            inputs = await convert.convert_from_native_to_inputs(native_interface, *args, **kwargs)
         inputs_hash = convert.generate_inputs_hash_from_proto(inputs.proto_inputs)
         sub_action_id, sub_action_output_path = convert.generate_sub_action_id_and_output_path(
             tctx, task_name, inputs_hash, invoke_seq_num

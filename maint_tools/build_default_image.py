@@ -18,6 +18,7 @@ async def build_flyte_image(registry: str | None = None, name: str | None = None
         builder:  e.g. "local" or "remote".
     """
     default_image = Image.from_debian_base(registry=registry, name=name)
+    object.__setattr__(default_image, "_is_flyte_default", False)
     await ImageBuildEngine.build(default_image, builder=builder)
 
 
@@ -47,16 +48,19 @@ async def build_flyte_connector_image(
                 pyproject_file=(Path(__file__).parent.parent / "plugins/bigquery/pyproject.toml"),
                 pre=True,
                 project_install_mode="install_project",
+                extra_args="--no-sources",
             )
             .with_uv_project(
                 pyproject_file=(Path(__file__).parent.parent / "plugins/databricks/pyproject.toml"),
                 pre=True,
                 project_install_mode="install_project",
+                extra_args="--no-sources",
             )
             .with_uv_project(
                 pyproject_file=(Path(__file__).parent.parent / "plugins/snowflake/pyproject.toml"),
                 pre=True,
                 project_install_mode="install_project",
+                extra_args="--no-sources",
             )
             .with_local_v2()
         )

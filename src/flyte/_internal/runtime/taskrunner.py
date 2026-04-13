@@ -14,7 +14,7 @@ from flyte._logging import log, logger
 from flyte._metrics import Stopwatch
 from flyte._task import TaskTemplate
 from flyte.errors import CustomError, RuntimeSystemError, RuntimeUnknownError, RuntimeUserError
-from flyte.models import ActionID, Checkpoints, CodeBundle, RawDataPath, TaskContext
+from flyte.models import ActionID, CheckpointPaths, CodeBundle, RawDataPath, TaskContext
 
 from .. import Controller
 from .convert import (
@@ -120,7 +120,7 @@ async def convert_and_run(
     run_base_dir: str,
     inputs: Inputs = Inputs.empty(),
     input_path: str | None = None,
-    checkpoints: Checkpoints | None = None,
+    checkpoint_paths: CheckpointPaths | None = None,
     code_bundle: CodeBundle | None = None,
     image_cache: ImageCache | None = None,
     interactive_mode: bool = False,
@@ -141,9 +141,12 @@ async def convert_and_run(
     # Extract context from inputs
     custom_context = inputs.context if inputs else {}
 
+    parent_tctx = ctx.data.task_context
+    disable_run_cache = parent_tctx.disable_run_cache if parent_tctx else False
+
     tctx = TaskContext(
         action=action,
-        checkpoints=checkpoints,
+        checkpoint_paths=checkpoint_paths,
         code_bundle=code_bundle,
         input_path=input_path,
         output_path=output_path,
@@ -152,9 +155,10 @@ async def convert_and_run(
         raw_data_path=raw_data_path,
         compiled_image_cache=image_cache,
         report=flyte.report.Report(name=action.name),
-        mode="remote" if not ctx.data.task_context else ctx.data.task_context.mode,
+        mode="remote" if not parent_tctx else parent_tctx.mode,
         interactive_mode=interactive_mode,
         custom_context=custom_context,
+        disable_run_cache=disable_run_cache,
     )
 
     with ctx.replace_task_context(tctx):
@@ -192,7 +196,7 @@ async def extract_download_run_upload(
     output_path: str,
     run_base_dir: str,
     version: str,
-    checkpoints: Checkpoints | None = None,
+    checkpoint_paths: CheckpointPaths | None = None,
     code_bundle: CodeBundle | None = None,
     input_path: str | None = None,
     image_cache: ImageCache | None = None,
@@ -213,14 +217,14 @@ async def extract_download_run_upload(
         output_path=output_path,
         run_base_dir=run_base_dir,
         version=version,
-        checkpoints=checkpoints,
+        checkpoint_paths=checkpoint_paths,
         code_bundle=code_bundle,
         image_cache=image_cache,
         interactive_mode=interactive_mode,
     )
     logger.debug(f"Task {action.name} completed at {t}, with outputs: {outputs}")
     if err is not None:
-        path = await upload_error(err.err, output_path)
+        path = await upload_error(err.err, output_path, recoverable=err.recoverable)
         logger.error(f"Task {task.name} failed with error: {err}. Uploaded error to {path}")
         return
     if outputs is None:

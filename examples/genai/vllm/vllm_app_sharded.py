@@ -55,7 +55,7 @@ vllm_app = VLLMAppEnvironment(
         .with_pip_packages("flashinfer-python", "flashinfer-cubin")
         .with_pip_packages("flashinfer-jit-cache", index_url="https://flashinfer.ai/whl/cu129")
         .with_pip_packages("vllm==0.11.0")
-        .with_pip_packages("flyteplugins-vllm", pre=True)
+        .with_pip_packages("flyteplugins-vllm")
     ),
     stream_model=True,  # Stream model directly from blob store to GPU
     scaling=flyte.app.Scaling(

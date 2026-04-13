@@ -292,6 +292,12 @@ class AsyncConnectorExecutorMixin:
             if resource.log_links:
                 for link in resource.log_links:
                     logger.info(f"{link.name}: {link.uri}")
+                tracker = internal_ctx().data.tracker
+                if tracker is not None:
+                    tracker.record_log_links(
+                        action_id=tctx.action.name,
+                        log_links=[(link.name, link.uri) for link in resource.log_links],
+                    )
             await asyncio.sleep(3)
 
         if resource.phase != TaskExecution.SUCCEEDED:

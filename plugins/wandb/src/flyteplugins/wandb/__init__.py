@@ -125,9 +125,13 @@
    The plugin auto-detects distributed training from environment variables
    (RANK, WORLD_SIZE, LOCAL_RANK, etc.) set by torchrun/torch.distributed.elastic.
 
-   By default (`run_mode="auto"`):
+   The `rank_scope` parameter controls the scope of run creation:
+   - `"global"` (default): Global scope - 1 run/group across all workers
+   - `"worker"`: Worker scope - 1 run/group per worker
+
+   By default (`run_mode="auto"`, `rank_scope="global"`):
    - Single-node: Only rank 0 logs (1 run)
-   - Multi-node: Local rank 0 of each worker logs (1 run per worker)
+   - Multi-node: Only global rank 0 logs (1 run)
 
    ```python
    from flyteplugins.pytorch.task import Elastic
@@ -144,7 +148,7 @@
    async def train_distributed():
        torch.distributed.init_process_group("nccl")
 
-       # Only local rank 0 gets a W&B run, other ranks get None
+       # Only global rank 0 gets a W&B run, other ranks get None
        run = get_wandb_run()
        if run:
            run.log({"loss": loss})
@@ -152,13 +156,33 @@
        return run.id if run else "non-primary-rank"
    ```
 
-   Use `run_mode="shared"` for all ranks to log to a single shared run:
+   Use `rank_scope="worker"` to get 1 run per worker:
 
    ```python
-   @wandb_init(run_mode="shared")
+   @wandb_init(rank_scope="worker")
+   @torch_env.task
+   async def train_distributed_per_worker():
+       # Multi-node: local rank 0 of each worker gets a W&B run (1 run per worker)
+       run = get_wandb_run()
+       if run:
+           run.log({"loss": loss})
+       return run.id if run else "non-primary-rank"
+   ```
+
+   Use `run_mode="shared"` for all ranks to log to shared run(s):
+
+   ```python
+   @wandb_init(run_mode="shared")  # rank_scope="global": 1 shared run across all ranks
    @torch_env.task
    async def train_distributed_shared():
        # All ranks log to the same W&B run (with x_label to identify each rank)
+       run = get_wandb_run()
+       run.log({"rank_metric": value})
+       return run.id
+
+   @wandb_init(run_mode="shared", rank_scope="worker")  # 1 shared run per worker
+   @torch_env.task
+   async def train_distributed_shared_per_worker():
        run = get_wandb_run()
        run.log({"rank_metric": value})
        return run.id
@@ -167,12 +191,18 @@
    Use `run_mode="new"` for each rank to have its own W&B run:
 
    ```python
-   @wandb_init(run_mode="new")
+   @wandb_init(run_mode="new")  # rank_scope="global": all runs in 1 group
    @torch_env.task
    async def train_distributed_separate_runs():
        # Each rank gets its own W&B run (grouped in W&B UI)
-       # Run IDs: {run_name}-{action_name}-rank-{rank} (single-node)
-       # Run IDs: {run_name}-{action_name}-worker-{worker}-rank-{rank} (multi-node)
+       # Run IDs: {base}-rank-{global_rank}
+       run = get_wandb_run()
+       run.log({"rank_metric": value})
+       return run.id
+
+   @wandb_init(run_mode="new", rank_scope="worker")  # runs grouped per worker
+   @torch_env.task
+   async def train_distributed_separate_runs_per_worker():
        run = get_wandb_run()
        run.log({"rank_metric": value})
        return run.id

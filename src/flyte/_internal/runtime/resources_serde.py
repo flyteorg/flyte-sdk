@@ -7,6 +7,7 @@ from flyte._resources import CPUBaseType, DeviceClass, Resources
 ACCELERATOR_DEVICE_MAP = {
     "A100": "nvidia-tesla-a100",
     "A100 80G": "nvidia-a100-80gb",
+    "H100": "nvidia-tesla-h100",
     "A10": "nvidia-a10",
     "A10G": "nvidia-a10g",
     "A100G": "nvidia-a100g",
@@ -71,7 +72,7 @@ def _get_gpu_extended_resource_entry(resources: Resources) -> Optional[tasks_pb2
     device_type = ACCELERATOR_DEVICE_MAP.get(device_type, device_type)
     return tasks_pb2.GPUAccelerator(
         device=device_type,
-        partition_size=device.partition if device.partition else None,
+        partition_size=device.partition or None,
         device_class=device_class,
     )
 

@@ -6,6 +6,7 @@ into protobuf IDL format without using mocks.
 """
 
 import pathlib
+from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -21,11 +22,155 @@ from flyte.app._runtime.app_serde import (
     _get_scaling_metric,
     _materialize_parameters_with_delayed_values,
     _sanitize_resource_name,
+    _serialized_pod_spec,
     get_proto_container,
     translate_app_env_to_idl,
 )
-from flyte.app._types import Domain, Port, Scaling
+from flyte.app._types import Domain, Port, Scaling, Timeouts
 from flyte.models import CodeBundle, SerializationContext
+
+
+def test_serialized_pod_spec_merges_app_env_image_into_primary_container():
+    """
+    GOAL: Verify that app_env.image is merged into the primary container when pod_template is used.
+
+    Tests that when a pod_template is provided with a primary container that has no image,
+    the image from app_env.image is used as a fallback.
+    """
+    from kubernetes.client import V1Container, V1PodSpec, V1SecurityContext
+
+    import flyte
+
+    pod_template = flyte.PodTemplate(
+        primary_container_name="app",
+        pod_spec=V1PodSpec(
+            containers=[
+                V1Container(
+                    name="app",
+                    security_context=V1SecurityContext(privileged=True),
+                )
+            ]
+        ),
+    )
+
+    app_env = AppEnvironment(
+        name="test-app",
+        image=Image.from_base("python:3.11"),
+        pod_template=pod_template,
+        resources=Resources(cpu=1, memory="512Mi"),
+    )
+
+    ctx = SerializationContext(
+        org="test-org",
+        project="test-project",
+        domain="test-domain",
+        version="v1",
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    pod_spec_dict = _serialized_pod_spec(app_env, pod_template, ctx)
+
+    # Verify the primary container has the image from app_env
+    containers = pod_spec_dict.get("containers", [])
+    assert len(containers) == 1
+    primary_container = containers[0]
+    assert primary_container["name"] == "app"
+    assert primary_container["image"] is not None
+    assert "python:3.11" in primary_container["image"]
+
+    # Verify security context is preserved
+    assert primary_container.get("securityContext", {}).get("privileged") is True
+
+
+def test_serialized_pod_spec_preserves_explicit_container_image():
+    """
+    GOAL: Verify that an explicit image in the pod_template container is NOT overwritten.
+
+    Tests that when a pod_template's primary container already has an image,
+    the app_env.image does not override it.
+    """
+    from kubernetes.client import V1Container, V1PodSpec
+
+    import flyte
+
+    pod_template = flyte.PodTemplate(
+        primary_container_name="app",
+        pod_spec=V1PodSpec(
+            containers=[
+                V1Container(
+                    name="app",
+                    image="custom-image:latest",
+                )
+            ]
+        ),
+    )
+
+    app_env = AppEnvironment(
+        name="test-app",
+        image=Image.from_base("python:3.11"),
+        pod_template=pod_template,
+    )
+
+    ctx = SerializationContext(
+        org="test-org",
+        project="test-project",
+        domain="test-domain",
+        version="v1",
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    pod_spec_dict = _serialized_pod_spec(app_env, pod_template, ctx)
+
+    # Verify the primary container keeps its explicit image
+    containers = pod_spec_dict.get("containers", [])
+    assert len(containers) == 1
+    primary_container = containers[0]
+    assert primary_container["image"] == "custom-image:latest"
+
+
+def test_serialized_pod_spec_with_auto_image():
+    """
+    GOAL: Verify that app_env.image="auto" works with pod_template.
+
+    Tests that when app_env.image is "auto" and pod_template's primary container
+    has no image, a default debian base image is used.
+    """
+    from kubernetes.client import V1Container, V1PodSpec
+
+    import flyte
+
+    pod_template = flyte.PodTemplate(
+        primary_container_name="app",
+        pod_spec=V1PodSpec(
+            containers=[
+                V1Container(
+                    name="app",
+                )
+            ]
+        ),
+    )
+
+    app_env = AppEnvironment(
+        name="test-app",
+        image="auto",
+        pod_template=pod_template,
+    )
+
+    ctx = SerializationContext(
+        org="test-org",
+        project="test-project",
+        domain="test-domain",
+        version="v1",
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    pod_spec_dict = _serialized_pod_spec(app_env, pod_template, ctx)
+
+    # Verify the primary container has an image (from auto)
+    containers = pod_spec_dict.get("containers", [])
+    assert len(containers) == 1
+    primary_container = containers[0]
+    assert primary_container["image"] is not None
 
 
 def test_sanitize_resource_name():
@@ -62,26 +207,30 @@ def test_get_scaling_metric_none():
 
 def test_get_scaling_metric_concurrency():
     """
-    GOAL: Document bug in Concurrency metric serialization.
+    GOAL: Verify Concurrency metric is correctly serialized to protobuf.
 
-    The implementation uses 'val' field but protobuf expects 'target_value'.
+    Tests that Scaling.Concurrency.val is mapped to ScalingMetric.concurrency.target_value.
     """
     metric = Scaling.Concurrency(val=10)
-    # Note: Implementation currently has a bug - uses 'val' instead of 'target_value'
-    with pytest.raises(ValueError, match='has no "val" field'):
-        _get_scaling_metric(metric)
+    result = _get_scaling_metric(metric)
+
+    assert result is not None
+    assert result.HasField("concurrency")
+    assert result.concurrency.target_value == 10
 
 
 def test_get_scaling_metric_request_rate():
     """
-    GOAL: Document bug in RequestRate metric serialization.
+    GOAL: Verify RequestRate metric is correctly serialized to protobuf.
 
-    The implementation uses 'val' field but protobuf expects 'target_value'.
+    Tests that Scaling.RequestRate.val is mapped to ScalingMetric.request_rate.target_value.
     """
     metric = Scaling.RequestRate(val=100)
-    # Note: Implementation currently has a bug - uses 'val' instead of 'target_value'
-    with pytest.raises(ValueError, match='has no "val" field'):
-        _get_scaling_metric(metric)
+    result = _get_scaling_metric(metric)
+
+    assert result is not None
+    assert result.HasField("request_rate")
+    assert result.request_rate.target_value == 100
 
 
 def test_get_proto_container_basic():
@@ -346,19 +495,18 @@ def test_get_proto_container_with_only_inputs_no_args():
 
 def test_get_proto_container_with_custom_command_and_inputs():
     """
-    GOAL: Verify custom command overrides default and inputs are ignored.
+    GOAL: Verify custom command overrides default fserve and args still work.
 
     Tests that:
     - Custom command completely replaces fserve
-    - Inputs are NOT added to custom commands
-    - User is responsible for handling inputs with custom commands
+    - Args are passed through independently
+    - Parameters with a non-fserve custom command raises ValueError
     """
     app_env = AppEnvironment(
         name="test-app",
         image=Image.from_base("python:3.11"),
         command=["python", "app.py"],
         args=["--custom-arg"],
-        parameters=[Parameter(value="config.yaml", name="config")],  # Should be ignored
     )
 
     ctx = SerializationContext(
@@ -379,6 +527,19 @@ def test_get_proto_container_with_custom_command_and_inputs():
 
     # Inputs should NOT be in command (custom commands don't auto-add inputs)
     assert "--parameters" not in container.command
+
+
+def test_get_proto_container_custom_command_with_parameters_raises():
+    """
+    GOAL: Verify that combining parameters with a non-fserve custom command raises.
+    """
+    with pytest.raises(ValueError, match="Cannot use 'parameters' with a custom 'command'"):
+        AppEnvironment(
+            name="test-app",
+            image=Image.from_base("python:3.11"),
+            command=["python", "app.py"],
+            parameters=[Parameter(value="config.yaml", name="config")],
+        )
 
 
 def test_get_proto_container_with_string_image():
@@ -970,3 +1131,107 @@ async def test_materialize_parameters_preserves_other_parameter_properties():
     assert result[0].env_var == "MODEL_PATH"
     assert result[0].mount == "/mnt/model"
     assert result[0].download is True
+
+
+def test_translate_app_env_to_idl_with_request_timeout_int():
+    """
+    GOAL: Verify that Timeouts.request (int) is serialized into TimeoutConfig on the Spec.
+
+    Tests that:
+    - An int request is serialized as a Duration with correct seconds
+    - The timeouts field is populated on the Spec
+    """
+    app_env = AppEnvironment(
+        name="timeout-app",
+        image=Image.from_base("python:3.11"),
+        timeouts=Timeouts(request=30),
+    )
+
+    ctx = SerializationContext(
+        org="test-org",
+        project="test-project",
+        domain="test-domain",
+        version="v1",
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    app_idl = translate_app_env_to_idl(app_env, ctx)
+
+    assert app_idl.spec.HasField("timeouts")
+    assert app_idl.spec.timeouts.request_timeout.seconds == 30
+    assert app_idl.spec.timeouts.request_timeout.nanos == 0
+
+
+def test_translate_app_env_to_idl_with_request_timeout_timedelta():
+    """
+    GOAL: Verify that Timeouts.request (timedelta) is serialized into TimeoutConfig on the Spec.
+
+    Tests that:
+    - A timedelta request is serialized as a Duration with correct seconds
+    """
+    app_env = AppEnvironment(
+        name="timeout-app",
+        image=Image.from_base("python:3.11"),
+        timeouts=Timeouts(request=timedelta(minutes=5)),
+    )
+
+    ctx = SerializationContext(
+        org="test-org",
+        project="test-project",
+        domain="test-domain",
+        version="v1",
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    app_idl = translate_app_env_to_idl(app_env, ctx)
+
+    assert app_idl.spec.HasField("timeouts")
+    assert app_idl.spec.timeouts.request_timeout.seconds == 300
+    assert app_idl.spec.timeouts.request_timeout.nanos == 0
+
+
+def test_translate_app_env_to_idl_without_request_timeout():
+    """
+    GOAL: Verify that when Timeouts.request is None, the timeouts field is not set on the Spec.
+    """
+    app_env = AppEnvironment(
+        name="no-timeout-app",
+        image=Image.from_base("python:3.11"),
+    )
+
+    ctx = SerializationContext(
+        org="test-org",
+        project="test-project",
+        domain="test-domain",
+        version="v1",
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    app_idl = translate_app_env_to_idl(app_env, ctx)
+
+    assert not app_idl.spec.HasField("timeouts")
+
+
+def test_translate_app_env_to_idl_with_request_timeout_zero():
+    """
+    GOAL: Verify that Timeouts.request=0 is serialized (not silently dropped).
+    """
+    app_env = AppEnvironment(
+        name="zero-timeout-app",
+        image=Image.from_base("python:3.11"),
+        timeouts=Timeouts(request=0),
+    )
+
+    ctx = SerializationContext(
+        org="test-org",
+        project="test-project",
+        domain="test-domain",
+        version="v1",
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    app_idl = translate_app_env_to_idl(app_env, ctx)
+
+    assert app_idl.spec.HasField("timeouts")
+    assert app_idl.spec.timeouts.request_timeout.seconds == 0
+    assert app_idl.spec.timeouts.request_timeout.nanos == 0

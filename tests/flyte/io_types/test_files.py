@@ -4,6 +4,7 @@ import filecmp
 import os
 import tempfile
 from typing import Optional
+from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
@@ -11,7 +12,7 @@ from mashumaro.jsonschema.models import JSONSchema
 
 import flyte
 from flyte.io._file import File, FileTransformer
-from flyte.io._hashing_io import HashlibAccumulator
+from flyte.io._hashing_io import HashlibAccumulator, PrecomputedValue
 from flyte.storage import S3
 from flyte.types import TypeEngine
 
@@ -161,6 +162,26 @@ async def test_from_local_with_local_files():
         assert result.path == remote_path
         async with result.open() as f:
             content = await f.read()
+        content = content.decode("utf-8")
+        assert content == test_content
+
+
+def test_from_local_sync_with_local_files():
+    flyte.init()
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        local_path = os.path.join(temp_dir, "source.txt")
+        remote_path = os.path.join(temp_dir, "destination.txt")
+
+        test_content = "correct test content"
+        with open(local_path, "w") as f:
+            f.write(test_content)
+
+        result = File.from_local_sync(local_path, remote_path)
+
+        assert result.path == remote_path
+        with result.open_sync() as f:
+            content = f.read()
         content = content.decode("utf-8")
         assert content == test_content
 
@@ -548,3 +569,120 @@ async def test_file_without_lazy_uploader_uses_existing_path():
 
     # The literal should contain the original remote path
     assert lv.scalar.blob.uri == "s3://bucket/remote_file.txt"
+
+
+def test_download_sync_delegates_to_fs_get(tmp_path):
+    """download_sync should delegate to fs.get() for remote files."""
+    flyte.init()
+
+    mock_fs = MagicMock()
+    mock_fs.protocol = ("s3",)
+
+    remote_file = File(path="s3://bucket/large_file.bin")
+    local_target = str(tmp_path / "downloaded.bin")
+
+    with patch("flyte.storage.get_underlying_filesystem", return_value=mock_fs):
+        result = remote_file.download_sync(local_target)
+
+    mock_fs.get.assert_called_once_with("s3://bucket/large_file.bin", local_target)
+    assert result == local_target
+
+
+def test_from_local_sync_with_hash_local_files():
+    """from_local_sync with hash should compute hash via chunked HashingWriter on local files."""
+    flyte.init()
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        local_path = os.path.join(temp_dir, "source.txt")
+        remote_path = os.path.join(temp_dir, "destination.txt")
+
+        with open(local_path, "w") as f:
+            f.write(TEST_CONTENT)
+
+        acc = HashlibAccumulator.from_hash_name("sha256")
+        result = File.from_local_sync(local_path, remote_path, hash_method=acc)
+
+        assert result.path == remote_path
+        assert result.hash == TEST_SHA256
+        with result.open_sync() as fh:
+            content = fh.read()
+        assert content.decode("utf-8") == TEST_CONTENT
+
+
+def test_from_local_sync_remote_no_hash(tmp_path):
+    """from_local_sync should use chunked copyfileobj when uploading to remote without hash."""
+    flyte.init()
+
+    local_file = tmp_path / "source.bin"
+    local_file.write_bytes(b"test data")
+
+    written_data = bytearray()
+    mock_dst = MagicMock()
+    mock_dst.write.side_effect = written_data.extend
+
+    mock_fs = MagicMock()
+    mock_fs.protocol = ("s3",)
+    mock_fs.open.return_value.__enter__ = MagicMock(return_value=mock_dst)
+    mock_fs.open.return_value.__exit__ = MagicMock(return_value=False)
+
+    with patch("flyte.storage.get_underlying_filesystem", return_value=mock_fs):
+        with patch("fsspec.utils.get_protocol", return_value="s3"):
+            result = File.from_local_sync(str(local_file), "s3://bucket/dest.bin")
+
+    assert result.path == "s3://bucket/dest.bin"
+    assert result.hash is None
+    assert bytes(written_data) == b"test data"
+
+
+def test_from_local_sync_remote_with_hash(tmp_path):
+    """from_local_sync should compute hash via chunked HashingWriter when uploading to remote."""
+    flyte.init()
+
+    local_file = tmp_path / "source.txt"
+    local_file.write_text(TEST_CONTENT)
+
+    written_data = bytearray()
+    mock_dst = MagicMock()
+    mock_dst.write.side_effect = written_data.extend
+
+    mock_fs = MagicMock()
+    mock_fs.protocol = ("s3",)
+    mock_fs.open.return_value.__enter__ = MagicMock(return_value=mock_dst)
+    mock_fs.open.return_value.__exit__ = MagicMock(return_value=False)
+
+    acc = HashlibAccumulator.from_hash_name("sha256")
+
+    with patch("flyte.storage.get_underlying_filesystem", return_value=mock_fs):
+        with patch("fsspec.utils.get_protocol", return_value="s3"):
+            result = File.from_local_sync(str(local_file), "s3://bucket/dest.txt", hash_method=acc)
+
+    assert result.path == "s3://bucket/dest.txt"
+    assert result.hash == TEST_SHA256
+    assert bytes(written_data).decode("utf-8") == TEST_CONTENT
+
+
+def test_from_local_sync_remote_with_precomputed_hash(tmp_path):
+    """from_local_sync with PrecomputedValue should skip hash computation and use the given value."""
+    flyte.init()
+
+    local_file = tmp_path / "source.bin"
+    local_file.write_bytes(b"some data")
+
+    written_data = bytearray()
+    mock_dst = MagicMock()
+    mock_dst.write.side_effect = written_data.extend
+
+    mock_fs = MagicMock()
+    mock_fs.protocol = ("s3",)
+    mock_fs.open.return_value.__enter__ = MagicMock(return_value=mock_dst)
+    mock_fs.open.return_value.__exit__ = MagicMock(return_value=False)
+
+    precomputed = PrecomputedValue("my-precomputed-hash")
+
+    with patch("flyte.storage.get_underlying_filesystem", return_value=mock_fs):
+        with patch("fsspec.utils.get_protocol", return_value="s3"):
+            result = File.from_local_sync(str(local_file), "s3://bucket/dest.bin", hash_method=precomputed)
+
+    assert result.path == "s3://bucket/dest.bin"
+    assert result.hash == "my-precomputed-hash"
+    assert bytes(written_data) == b"some data"

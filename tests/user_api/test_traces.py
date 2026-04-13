@@ -8,6 +8,11 @@ env = flyte.TaskEnvironment(
 
 
 @flyte.trace
+def sync_square(x: int) -> int:
+    return x**2
+
+
+@flyte.trace
 async def square(x: int) -> int:
     return x**2
 
@@ -50,12 +55,28 @@ async def traces_loop(n: int = 3) -> int:
     return total
 
 
+@env.task
+def sync_traces_loop(n: int = 3) -> int:
+    total = 0
+    for i in range(n):
+        total += sync_square(i)
+    return total
+
+
 @pytest.mark.asyncio
 async def test_traces_loop():
     await flyte.init.aio()
     run = flyte.run(traces_loop, n=3)
     print(run.name)
     print(run.url)
+    run.wait()
+    assert run.outputs() == (5,)
+
+
+@pytest.mark.asyncio
+async def test_sync_traces_loop():
+    await flyte.init.aio()
+    run = flyte.run(sync_traces_loop, n=3)
     run.wait()
     assert run.outputs() == (5,)
 
@@ -107,3 +128,27 @@ async def test_trace_uses_own_action_id():
     assert trace_action_name != parent_action_name, (
         f"Trace should have different action ID than parent. Trace: {trace_action_name}, Parent: {parent_action_name}"
     )
+
+
+@env.task
+async def nested_child_task(x: int) -> int:
+    return x * 2
+
+
+@flyte.trace
+async def trace_that_calls_task(x: int) -> int:
+    return await nested_child_task(x)
+
+
+@env.task
+async def parent_calling_trace_with_task(x: int = 5) -> int:
+    return await trace_that_calls_task(x)
+
+
+@pytest.mark.asyncio
+async def test_task_nested_in_trace_raises():
+    """Calling a @task inside a @flyte.trace must raise TraceDoesNotAllowNestedTasksError."""
+    await flyte.init.aio()
+    with pytest.raises(flyte.errors.RuntimeUserError) as excinfo:
+        flyte.run(parent_calling_trace_with_task, x=5)
+    assert excinfo.value.code == "TraceDoesNotAllowNestedTasksError"

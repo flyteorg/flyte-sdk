@@ -65,22 +65,98 @@ Distributed training is detected via these environment variables (set by `torchr
 | `LOCAL_WORLD_SIZE` | Number of processes per node |
 | `GROUP_RANK` | Worker/node index (0, 1, 2, ...) |
 
+### Rank scope
+
+The `rank_scope` parameter controls the granularity of W&B runs in multi-node distributed training:
+
+- **`"global"`** (default): Treat all workers as one unit → **1 run** (or 1 group for `run_mode="new"`)
+- **`"worker"`**: Treat each worker/node independently → **N runs** (or N groups for `run_mode="new"`)
+
+The effect of `rank_scope` depends on `run_mode`:
+
+#### run_mode="auto" + rank_scope
+
+```python
+# Global scope (default): Only global rank 0 logs → 1 run total
+@wandb_init
+@multi_node_env.task
+def train():
+    run = get_wandb_run()  # Non-None only for global rank 0
+    ...
+
+# Worker scope: Local rank 0 of each worker logs → N runs (1 per worker)
+@wandb_init(rank_scope="worker")
+@multi_node_env.task
+def train():
+    run = get_wandb_run()  # Non-None for local_rank 0 on each worker
+    ...
+```
+
+#### run_mode="shared" + rank_scope
+
+```python
+# Global scope: All ranks log to 1 shared run
+@wandb_init(run_mode="shared")
+@multi_node_env.task
+def train():
+    run = get_wandb_run()  # All ranks get a run object, all log to same run
+    ...
+
+# Worker scope: All ranks on each worker share a run → N runs total
+@wandb_init(run_mode="shared", rank_scope="worker")
+@multi_node_env.task
+def train():
+    run = get_wandb_run()  # All ranks get a run, grouped by worker
+    ...
+```
+
+#### run_mode="new" + rank_scope
+
+```python
+# Global scope: Each rank gets own run, all grouped together → N×M runs, 1 group
+@wandb_init(run_mode="new")
+@multi_node_env.task
+def train():
+    run = get_wandb_run()  # Each rank has its own run
+    # Run IDs: {base}-rank-{global_rank}
+    ...
+
+# Worker scope: Each rank gets own run, grouped per worker → N×M runs, N groups
+@wandb_init(run_mode="new", rank_scope="worker")
+@multi_node_env.task
+def train():
+    run = get_wandb_run()  # Each rank has its own run
+    # Run IDs: {base}-worker-{idx}-rank-{local_rank}
+    ...
+```
+
 ### Run modes in distributed context
 
-| Mode | Single-Node | Multi-Node |
-|------|-------------|------------|
-| `"auto"` | Only rank 0 logs → 1 run | Local rank 0 of each worker logs → N runs (1 per worker) |
-| `"shared"` | All ranks log to 1 shared run | All ranks per worker log to shared run → N runs (1 per worker) |
-| `"new"` | Each rank gets its own run (grouped) → N runs | Each rank gets its own run (grouped per worker) → N×GPUs runs |
+| run_mode | rank_scope | Who initializes W&B? | W&B Runs | Grouping |
+|----------|------------|----------------------|----------|----------|
+| `"auto"` | `"global"` | global rank 0 only | 1 | - |
+| `"auto"` | `"worker"` | local_rank 0 per worker | N | - |
+| `"shared"` | `"global"` | all ranks (shared mode) | 1 | - |
+| `"shared"` | `"worker"` | all ranks (shared mode) | N | - |
+| `"new"` | `"global"` | all ranks | N×M | 1 group |
+| `"new"` | `"worker"` | all ranks | N×M | N groups |
+
+Where N = number of workers/nodes, M = processes per worker.
 
 ### Run ID patterns
 
-| Scenario | Run ID Pattern |
-|----------|----------------|
-| Single-node auto/shared | `{run_name}-{action_name}` |
-| Single-node new | `{run_name}-{action_name}-rank-{rank}` |
-| Multi-node auto/shared | `{run_name}-{action_name}-worker-{worker_index}` |
-| Multi-node new | `{run_name}-{action_name}-worker-{worker_index}-rank-{local_rank}` |
+| Scenario | Run ID Pattern | Group |
+|----------|----------------|-------|
+| Single-node auto/shared | `{base}` | - |
+| Single-node new | `{base}-rank-{rank}` | `{base}` |
+| Multi-node auto (global) | `{base}` | - |
+| Multi-node auto (worker) | `{base}-worker-{idx}` | - |
+| Multi-node shared (global) | `{base}` | - |
+| Multi-node shared (worker) | `{base}-worker-{idx}` | - |
+| Multi-node new (global) | `{base}-rank-{global_rank}` | `{base}` |
+| Multi-node new (worker) | `{base}-worker-{idx}-rank-{local_rank}` | `{base}-worker-{idx}` |
+
+Where `{base}` = `{run_name}-{action_name}`
 
 ### Example: Distributed training task
 
@@ -96,13 +172,13 @@ multi_node_env = flyte.TaskEnvironment(
     secrets=flyte.Secret(key="wandb_api_key", as_env_var="WANDB_API_KEY"),
 )
 
-@wandb_init  # run_mode="auto" by default
+@wandb_init  # run_mode="auto", rank_scope="global" by default → 1 run total
 @multi_node_env.task
 def train_multi_node():
     import torch.distributed as dist
     dist.init_process_group("nccl")
 
-    run = get_wandb_run()  # Returns run for local_rank 0, None for others
+    run = get_wandb_run()  # Returns run for global rank 0 only, None for others
     dist_info = get_distributed_info()
 
     # Training loop...
@@ -110,6 +186,21 @@ def train_multi_node():
         run.log({"loss": loss.item()})
 
     dist.destroy_process_group()
+```
+
+### Worker scope for per-worker logging
+
+Use `rank_scope="worker"` when you want each worker/node to have its own W&B run:
+
+```python
+@wandb_init(rank_scope="worker")  # 1 run per worker
+@multi_node_env.task
+def train_per_worker():
+    run = get_wandb_run()  # Returns run for local_rank 0 of each worker
+
+    if run:
+        # Each worker logs to its own run
+        run.log({"loss": loss.item(), "worker": dist_info["worker_index"]})
 ```
 
 ### Shared mode for all-Rank logging
@@ -163,16 +254,47 @@ with wandb_config(project="override-project"):
     await child_task()
 ```
 
+### Configuring run_mode and rank_scope
+
+Both `run_mode` and `rank_scope` can be set via decorator or context:
+
+```python
+# Via decorator (takes precedence)
+@wandb_init(run_mode="shared", rank_scope="worker")
+@multi_node_env.task
+def train():
+    ...
+
+# Via context (useful for dynamic configuration)
+run = flyte.with_runcontext(
+    custom_context=wandb_config(
+        project="my-project",
+        run_mode="shared",
+        rank_scope="worker",
+    )
+).run(train)
+```
+
+When both are specified, **decorator arguments take precedence** over context config.
+
 ### Decorator vs context config
 
-- **Decorator arguments** (`@wandb_init(project=...)`) are available only within the current task and its traces
-- **Context config** (`wandb_config(...)`) propagates to child tasks
+| Source | Scope | Use case |
+|--------|-------|----------|
+| Decorator (`@wandb_init(...)`) | Current task and traces only | Static per-task config |
+| Context (`wandb_config(...)`) | Propagates to child tasks | Dynamic/shared config |
+
+Priority order (highest to lowest):
+1. Decorator arguments
+2. Context config (`wandb_config`)
+3. Defaults (`run_mode="auto"`, `rank_scope="global"`)
 
 ## W&B links
 
 Tasks decorated with `@wandb_init` or `@wandb_sweep` automatically get W&B links in the Flyte UI:
 
-- For distributed training with multiple workers, each worker gets its own link
+- With `rank_scope="global"` (default): A single link to the one W&B run
+- With `rank_scope="worker"`: Each worker gets its own link
 - Links point directly to the corresponding W&B runs or sweeps
 - Project/entity are retrieved from decorator parameters or context configuration
 
@@ -248,9 +370,18 @@ The downloaded logs include all files uploaded to W&B during the run (metrics, a
 ### Decorators
 
 - `@wandb_init` - Initialize W&B for a task or function
+  - `run_mode`: `"auto"` (default), `"new"`, or `"shared"`
+  - `rank_scope`: `"global"` (default) or `"worker"` - controls which ranks log in distributed training
+  - `download_logs`: If `True`, download W&B logs after task completion
+  - `project`, `entity`: W&B project and entity names
 - `@wandb_sweep` - Create a W&B sweep for a task
 
 ### Links
 
 - `Wandb` - Link class for W&B runs
 - `WandbSweep` - Link class for W&B sweeps
+
+### Types
+
+- `RankScope` - Literal type: `"global"` | `"worker"`
+- `RunMode` - Literal type: `"auto"` | `"new"` | `"shared"`

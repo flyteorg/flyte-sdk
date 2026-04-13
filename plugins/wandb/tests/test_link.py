@@ -244,6 +244,107 @@ class TestWandbLink:
 
         assert uri == "https://custom.wandb.io/test-entity/test-project/runs/test-run-{{.actionName}}"
 
+    def test_wandb_link_host_from_context(self):
+        """Test link generation with host override from wandb_config context."""
+        link = Wandb(project="test-project", entity="test-entity")
+
+        uri = link.get_link(
+            run_name="test-run",
+            project="flyte-project",
+            domain="development",
+            context={
+                "wandb_host": "https://my-wandb.example.com",
+            },
+            parent_action_name="parent",
+            action_name="{{.actionName}}",
+            pod_name="{{.podName}}",
+        )
+
+        assert uri == "https://my-wandb.example.com/test-entity/test-project/runs/test-run-{{.actionName}}"
+
+    def test_wandb_link_decorator_host_used_when_no_context_host(self):
+        """Test that decorator host is used when context doesn't provide one."""
+        link = Wandb(
+            host="https://decorator.wandb.io",
+            project="test-project",
+            entity="test-entity",
+        )
+
+        uri = link.get_link(
+            run_name="test-run",
+            project="flyte-project",
+            domain="development",
+            context={},
+            parent_action_name="parent",
+            action_name="{{.actionName}}",
+            pod_name="{{.podName}}",
+        )
+
+        assert uri == "https://decorator.wandb.io/test-entity/test-project/runs/test-run-{{.actionName}}"
+
+    def test_wandb_link_context_host_overrides_decorator_host(self):
+        """Test that context host overrides decorator-level host."""
+        link = Wandb(
+            host="https://decorator.wandb.io",
+            project="test-project",
+            entity="test-entity",
+        )
+
+        uri = link.get_link(
+            run_name="test-run",
+            project="flyte-project",
+            domain="development",
+            context={
+                "wandb_host": "https://context.wandb.io",
+            },
+            parent_action_name="parent",
+            action_name="{{.actionName}}",
+            pod_name="{{.podName}}",
+        )
+
+        assert uri == "https://context.wandb.io/test-entity/test-project/runs/test-run-{{.actionName}}"
+
+    def test_wandb_link_context_host_used_in_fallback_when_missing_project(self):
+        """Test that context host is used in fallback URL when project/entity missing."""
+        link = Wandb()
+
+        uri = link.get_link(
+            run_name="test-run",
+            project="flyte-project",
+            domain="development",
+            context={
+                "wandb_host": "https://my-wandb.example.com",
+            },
+            parent_action_name="parent",
+            action_name="{{.actionName}}",
+            pod_name="{{.podName}}",
+        )
+
+        assert uri == "https://my-wandb.example.com"
+
+    def test_wandb_link_context_host_with_distributed(self):
+        """Test that context host works with distributed training links."""
+        link = Wandb(
+            project="test-project",
+            entity="test-entity",
+            _is_distributed=True,
+            _worker_index=None,
+        )
+
+        uri = link.get_link(
+            run_name="test-run",
+            project="flyte-project",
+            domain="development",
+            context={
+                "wandb_host": "https://my-wandb.example.com",
+            },
+            parent_action_name="parent",
+            action_name="train-task",
+            pod_name="{{.podName}}",
+        )
+
+        assert uri == "https://my-wandb.example.com/test-entity/test-project/runs/test-run-train-task"
+
     def test_wandb_link_empty_context(self):
         """Test link generation with empty context dict."""
         link = Wandb(project="test-project", entity="test-entity")
@@ -420,6 +521,181 @@ class TestWandbLink:
         # Should create new run ID even though parent exists
         assert uri == "https://wandb.ai/test-entity/test-project/runs/test-run-{{.actionName}}"
 
+    def test_wandb_link_default_rank_scope_is_global(self):
+        """Test that default rank_scope is 'global'."""
+        link = Wandb(project="test-project", entity="test-entity")
+        assert link.rank_scope == "global"
+
+    def test_wandb_link_distributed_global_scope_single_link(self):
+        """Test link generation for distributed task with global scope."""
+        # Multi-node with global scope: single run link (no worker suffix)
+        link = Wandb(
+            project="test-project",
+            entity="test-entity",
+            run_mode="auto",
+            rank_scope="global",
+            _is_distributed=True,
+            _worker_index=None,  # Global scope doesn't use worker index
+        )
+
+        uri = link.get_link(
+            run_name="test-run",
+            project="flyte-project",
+            domain="development",
+            context={},
+            parent_action_name="parent",
+            action_name="train-task",
+            pod_name="{{.podName}}",
+        )
+
+        # Should link to single run (no worker suffix)
+        assert uri == "https://wandb.ai/test-entity/test-project/runs/test-run-train-task"
+
+    def test_wandb_link_distributed_worker_scope_per_worker_link(self):
+        """Test link generation for distributed task with worker scope (multi-node)."""
+        # Worker 1 link
+        link = Wandb(
+            project="test-project",
+            entity="test-entity",
+            run_mode="auto",
+            rank_scope="worker",
+            _is_distributed=True,
+            _worker_index=1,
+        )
+
+        uri = link.get_link(
+            run_name="test-run",
+            project="flyte-project",
+            domain="development",
+            context={},
+            parent_action_name="parent",
+            action_name="train-task",
+            pod_name="{{.podName}}",
+        )
+
+        # Should link to worker-specific run
+        assert uri == "https://wandb.ai/test-entity/test-project/runs/test-run-train-task-worker-1"
+
+    def test_wandb_link_distributed_worker_scope_worker_0(self):
+        """Test link generation for worker 0 with worker scope."""
+        link = Wandb(
+            project="test-project",
+            entity="test-entity",
+            run_mode="auto",
+            rank_scope="worker",
+            _is_distributed=True,
+            _worker_index=0,
+        )
+
+        uri = link.get_link(
+            run_name="test-run",
+            project="flyte-project",
+            domain="development",
+            context={},
+            parent_action_name="parent",
+            action_name="train-task",
+            pod_name="{{.podName}}",
+        )
+
+        # Should link to worker-specific run
+        assert uri == "https://wandb.ai/test-entity/test-project/runs/test-run-train-task-worker-0"
+
+    def test_wandb_link_distributed_shared_global_scope(self):
+        """Test link generation for distributed shared mode with global scope."""
+        link = Wandb(
+            project="test-project",
+            entity="test-entity",
+            run_mode="shared",
+            rank_scope="global",
+            _is_distributed=True,
+            _worker_index=None,  # Global scope doesn't use worker index
+        )
+
+        uri = link.get_link(
+            run_name="test-run",
+            project="flyte-project",
+            domain="development",
+            context={},
+            parent_action_name="parent",
+            action_name="train-task",
+            pod_name="{{.podName}}",
+        )
+
+        # Should link to single shared run (no worker suffix)
+        assert uri == "https://wandb.ai/test-entity/test-project/runs/test-run-train-task"
+
+    def test_wandb_link_distributed_shared_worker_scope(self):
+        """Test link generation for distributed shared mode with worker scope."""
+        link = Wandb(
+            project="test-project",
+            entity="test-entity",
+            run_mode="shared",
+            rank_scope="worker",
+            _is_distributed=True,
+            _worker_index=1,
+        )
+
+        uri = link.get_link(
+            run_name="test-run",
+            project="flyte-project",
+            domain="development",
+            context={},
+            parent_action_name="parent",
+            action_name="train-task",
+            pod_name="{{.podName}}",
+        )
+
+        # Should link to worker-specific shared run
+        assert uri == "https://wandb.ai/test-entity/test-project/runs/test-run-train-task-worker-1"
+
+    def test_wandb_link_distributed_new_global_scope(self):
+        """Test link generation for distributed new mode with global scope."""
+        link = Wandb(
+            project="test-project",
+            entity="test-entity",
+            run_mode="new",
+            rank_scope="global",
+            _is_distributed=True,
+            _worker_index=None,  # Global scope doesn't use worker index for groups
+        )
+
+        uri = link.get_link(
+            run_name="test-run",
+            project="flyte-project",
+            domain="development",
+            context={},
+            parent_action_name="parent",
+            action_name="train-task",
+            pod_name="{{.podName}}",
+        )
+
+        # Should link to single group (all ranks grouped together)
+        assert uri == "https://wandb.ai/test-entity/test-project/groups/test-run-train-task"
+
+    def test_wandb_link_distributed_new_worker_scope(self):
+        """Test link generation for distributed new mode with worker scope."""
+        link = Wandb(
+            project="test-project",
+            entity="test-entity",
+            run_mode="new",
+            rank_scope="worker",
+            _is_distributed=True,
+            _worker_index=1,
+        )
+
+        uri = link.get_link(
+            run_name="test-run",
+            project="flyte-project",
+            domain="development",
+            context={},
+            parent_action_name="parent",
+            action_name="train-task",
+            pod_name="{{.podName}}",
+        )
+
+        # Should link to worker-specific group
+        assert uri == "https://wandb.ai/test-entity/test-project/groups/test-run-train-task-worker-1"
+
 
 class TestWandbSweepLink:
     """Tests for WandbSweep link class."""
@@ -568,6 +844,65 @@ class TestWandbSweepLink:
         )
 
         assert uri == "https://custom.wandb.io/test-entity/test-project/sweeps"
+
+    def test_wandb_sweep_link_host_from_context(self):
+        """Test sweep link generation with host override from wandb_config context."""
+        link = WandbSweep(project="test-project", entity="test-entity")
+
+        uri = link.get_link(
+            run_name="test-run",
+            project="flyte-project",
+            domain="development",
+            context={
+                "wandb_host": "https://my-wandb.example.com",
+            },
+            parent_action_name="parent",
+            action_name="{{.actionName}}",
+            pod_name="{{.podName}}",
+        )
+
+        assert uri == "https://my-wandb.example.com/test-entity/test-project/sweeps"
+
+    def test_wandb_sweep_link_context_host_overrides_decorator_host(self):
+        """Test that context host overrides decorator-level host for sweeps."""
+        link = WandbSweep(
+            host="https://decorator.wandb.io",
+            project="test-project",
+            entity="test-entity",
+        )
+
+        uri = link.get_link(
+            run_name="test-run",
+            project="flyte-project",
+            domain="development",
+            context={
+                "wandb_host": "https://context.wandb.io",
+            },
+            parent_action_name="parent",
+            action_name="{{.actionName}}",
+            pod_name="{{.podName}}",
+        )
+
+        assert uri == "https://context.wandb.io/test-entity/test-project/sweeps"
+
+    def test_wandb_sweep_link_context_host_with_sweep_id(self):
+        """Test that context host works with sweep ID links."""
+        link = WandbSweep(project="test-project", entity="test-entity")
+
+        uri = link.get_link(
+            run_name="test-run",
+            project="flyte-project",
+            domain="development",
+            context={
+                "wandb_host": "https://my-wandb.example.com",
+                "_wandb_sweep_id": "sweep-abc123",
+            },
+            parent_action_name="parent",
+            action_name="{{.actionName}}",
+            pod_name="{{.podName}}",
+        )
+
+        assert uri == "https://my-wandb.example.com/test-entity/test-project/sweeps/sweep-abc123"
 
     def test_wandb_sweep_link_empty_context(self):
         """Test sweep link generation with empty context dict."""

@@ -37,6 +37,7 @@ class CommonInit:
     batch_size: int = 1000
     source_config_path: Optional[Path] = None  # Only used for documentation
     sync_local_sys_paths: bool = True
+    local_persistence: bool = False
 
 
 @dataclass(init=True, kw_only=True, repr=True, eq=True, frozen=True)
@@ -77,15 +78,6 @@ async def _initialize_client(
     """
     from flyte.remote._client.controlplane import ClientSet
 
-    # https://grpc.io/docs/guides/keepalive/#keepalive-configuration-specification
-    channel_options = [
-        ("grpc.keepalive_permit_without_calls", 1),
-        ("grpc.keepalive_time_ms", 30000),  # Send keepalive ping every 30 seconds
-        ("grpc.keepalive_timeout_ms", 10000),  # Wait 10 seconds for keepalive response
-        ("grpc.http2.max_pings_without_data", 0),  # Allow unlimited pings without data
-        ("grpc.http2.min_ping_interval_without_data_ms", 30000),  # Min 30s between pings
-    ]
-
     if endpoint and api_key is None:
         return await ClientSet.for_endpoint(
             endpoint,
@@ -101,7 +93,6 @@ async def _initialize_client(
             client_config=client_config,
             rpc_retries=rpc_retries,
             http_proxy_url=http_proxy_url,
-            grpc_options=channel_options,
         )
     elif api_key:
         return await ClientSet.for_api_key(
@@ -118,7 +109,6 @@ async def _initialize_client(
             client_config=client_config,
             rpc_retries=rpc_retries,
             http_proxy_url=http_proxy_url,
-            grpc_options=channel_options,
         )
 
     raise InitializationError(
@@ -162,6 +152,7 @@ async def init(
     source_config_path: Optional[Path] = None,
     sync_local_sys_paths: bool = True,
     load_plugin_type_transformers: bool = True,
+    local_persistence: bool = False,
 ) -> None:
     """
     Initialize the Flyte system with the given configuration. This method should be called before any other Flyte
@@ -204,9 +195,10 @@ async def init(
       into the remote container (default: True).
     :param load_plugin_type_transformers: If enabled (default True), load the type transformer plugins registered under
       the "flyte.plugins.types" entry point group.
+    :param local_persistence: Whether to enable SQLite persistence for local run metadata (default: False).
     :return: None
     """
-    from flyte._utils import get_cwd_editable_install, org_from_endpoint, sanitize_endpoint
+    from flyte._utils import org_from_endpoint, sanitize_endpoint
     from flyte.types import _load_custom_type_transformers
 
     _initialize_logger(log_level=log_level, log_format=log_format, reset_root_logger=reset_root_logger)
@@ -238,13 +230,7 @@ async def init(
             )
 
         if not root_dir:
-            editable_root = get_cwd_editable_install()
-            if editable_root:
-                logger.info(f"Using editable install as root directory: {editable_root}")
-                root_dir = editable_root
-            else:
-                logger.info("No editable install found, using current working directory as root directory.")
-                root_dir = Path.cwd()
+            root_dir = Path.cwd()
         # We will inject the root_dir into the sys,path for module resolution
         sys.path.append(str(root_dir))
 
@@ -260,7 +246,10 @@ async def init(
             images=images or {},
             source_config_path=source_config_path,
             sync_local_sys_paths=sync_local_sys_paths,
+            local_persistence=local_persistence,
         )
+
+        logger.info(f"Flyte initialized with config: {_init_config}")
 
 
 @syncify
@@ -352,6 +341,7 @@ async def init_from_config(
         storage=storage,
         source_config_path=cfg_path,
         sync_local_sys_paths=sync_local_sys_paths,
+        local_persistence=cfg.local.persistence,
     )
 
 
@@ -596,6 +586,14 @@ def is_initialized() -> bool:
     return _get_init_config() is not None
 
 
+def is_persistence_enabled() -> bool:
+    """Check if local run persistence is enabled."""
+    cfg = _get_init_config()
+    if cfg is None:
+        return False
+    return cfg.local_persistence
+
+
 def initialize_in_cluster() -> None:
     """
     Initialize the system for in-cluster execution. This is a placeholder function and does not perform any actions.
@@ -732,15 +730,13 @@ async def _init_for_testing(
     log_level: int | None = None,
     client: ClientSet | None = None,
 ):
-    from flyte._utils.helpers import get_cwd_editable_install
-
     global _init_config  # noqa: PLW0603
 
     if log_level:
         initialize_logger(log_level=log_level)
 
     with _init_lock:
-        root_dir = root_dir or get_cwd_editable_install() or Path.cwd()
+        root_dir = root_dir or Path.cwd()
         _init_config = _InitConfig(
             root_dir=root_dir,
             project=project,
@@ -783,3 +779,32 @@ def current_domain() -> str:
             " or Call flyte.init_from_config() with a valid path to the config file",
         )
     return cfg.domain
+
+
+def current_project() -> str:
+    """
+    Returns the current project from the Runtime environment (on the cluster) or from the initialized configuration.
+    This is safe to be used during `deploy`, `run` and within `task` code.
+
+    NOTE: This will not work if you deploy a task to a project and then run it in another project.
+
+    Raises InitializationError if the configuration is not initialized or project is not set.
+    :return: The current project
+    """
+    from ._context import ctx
+
+    tctx = ctx()
+    if tctx is not None:
+        project = tctx.action.project
+        if project is not None:
+            return project
+
+    cfg = _get_init_config()
+    if cfg is None or cfg.project is None:
+        raise InitializationError(
+            "ProjectNotInitializedError",
+            "user",
+            "Project has not been initialized. Call flyte.init() with a valid project before using this function"
+            " or Call flyte.init_from_config() with a valid path to the config file",
+        )
+    return cfg.project

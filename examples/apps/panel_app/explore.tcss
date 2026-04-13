@@ -1,0 +1,79 @@
+Screen {
+    background: #171020;
+}
+Header {
+    background: #7652a2;
+    color: #f7f5fd;
+}
+Footer {
+    background: #7652a2;
+    color: #f7f5fd;
+}
+RunDetailScreen Horizontal {
+    height: 1fr;
+}
+ActionTreeWidget {
+    width: 1fr;
+    min-width: 30;
+    border: solid #7652a2;
+    border-title-color: #f7f5fd;
+    background: #171020;
+    color: #f7f5fd;
+}
+#right-tabs {
+    width: 2fr;
+}
+DetailPanel {
+    background: #171020;
+}
+TabPane {
+    padding: 0;
+}
+Tabs {
+    background: #171020;
+    color: #f7f5fd;
+}
+Tab {
+    background: #171020;
+    color: #f7f5fd;
+}
+Tab.-active {
+    background: #7652a2;
+    color: #f7f5fd;
+}
+Underline {
+    color: #7652a2;
+}
+_DetailBox {
+    border: solid #7652a2;
+    border-title-color: #f7f5fd;
+    padding: 0 1;
+    margin-bottom: 1;
+    height: auto;
+    color: #f7f5fd;
+}
+#filter-bar {
+    height: 3;
+    padding: 0 1;
+    background: #171020;
+}
+#filter-bar Label {
+    padding: 1 1 0 0;
+    color: #f7f5fd;
+    width: auto;
+}
+#status-filter {
+    width: 16;
+}
+#task-filter {
+    width: 1fr;
+}
+RunsTable {
+    height: 1fr;
+    background: #171020;
+    color: #f7f5fd;
+}
+DataTable > .datatable--cursor {
+    background: #7652a2;
+    color: #f7f5fd;
+}
