@@ -622,6 +622,6 @@ def test_entrypoint_flag_on_task_template():
         root_dir=pathlib.Path.cwd(),
     )
 
-    # Serialization should not crash even though the proto field doesn't exist yet
     proto_task = get_proto_task(entrypoint_task, context)
     assert proto_task is not None
+    assert proto_task.metadata.is_entrypoint is True

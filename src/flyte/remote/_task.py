@@ -445,9 +445,9 @@ class Task(ToJSONMixin):
     @property
     def entrypoint(self) -> bool:
         """
-        Whether this task is marked as an entrypoint.
+        Whether this task is marked as an entrypoint. Not populated in listing responses;
+        fetch ``TaskDetails`` to read the authoritative value from the task template.
         """
-        # TODO: entrypoint flag — will be available in flyteidl soon
         return False
 
     @property
@@ -536,16 +536,9 @@ class Task(ToJSONMixin):
                     values=[f"{by_task_env}."],
                 )
             )
-        if entrypoint:
-            # TODO: entrypoint filter — will be available in flyteidl soon
-            # filters.append(
-            #     list_pb2.Filter(
-            #         function=list_pb2.Filter.Function.EQUAL,
-            #         field="entrypoint",
-            #         values=["true"],
-            #     )
-            # )
-            pass
+        known_filters = []
+        if entrypoint is not None:
+            known_filters.append(task_service_pb2.ListTasksRequest.KnownFilter(is_entrypoint=entrypoint))
         original_limit = limit
         if limit > cfg.batch_size:
             limit = cfg.batch_size
@@ -565,6 +558,7 @@ class Task(ToJSONMixin):
                         limit=limit,
                         token=token,
                     ),
+                    known_filters=known_filters,
                 )
             )
             token = resp.token
