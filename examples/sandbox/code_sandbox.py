@@ -16,7 +16,6 @@ Three modes:
 - **Verbatim mode** (``code=``, ``auto_io=False``): run a complete Python script as-is.
   CLI args are forwarded but the script handles all I/O itself.
 - **Command mode** (``command=``): run any shell command (pytest, binary, non-Python code, etc.).
-
 """
 
 import asyncio
@@ -227,7 +226,7 @@ async def run_pipeline() -> dict:
 
     # Network-blocked sandbox: pure computation, no network
     try:
-        isolated_result = await isolated_sandbox.run.aio(x=7)
+        isolated_result = await isolated_sandbox.run.aio()
     except Exception as e:
         isolated_result = f"Failed to access network: {e}"
 
@@ -265,7 +264,7 @@ def run_pipeline_sync() -> dict:
     line_count = linecount_sandbox.run(data_file=data_file)
 
     try:
-        isolated_result = isolated_sandbox.run(x=7)
+        isolated_result = isolated_sandbox.run()
     except Exception as e:
         isolated_result = f"Failed to access network: {e}"
 

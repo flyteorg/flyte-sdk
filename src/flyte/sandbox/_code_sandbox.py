@@ -357,12 +357,15 @@ class _Sandbox:
         return await task(**kwargs)
 
     def _default_image_name(self) -> str:
+        config = self.image_config or ImageConfig()
         spec = {
             "packages": sorted(self.packages),
             "system_packages": sorted(self.system_packages),
+            "additional_commands": self.additional_commands,
+            "python_version": list(config.python_version) if config.python_version else None,
         }
         config_hash = hashlib.sha256(json.dumps(spec, sort_keys=True).encode()).hexdigest()[:12]
-        return f"{self.name or 'sandbox'}-{config_hash}"
+        return f"sandbox-{config_hash}"
 
 
 def create(
