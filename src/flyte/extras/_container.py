@@ -52,6 +52,9 @@ class ContainerTask(TaskTemplate):
     :param output_data_dir: The directory where the output data is stored. This is a string or a Path object.
     :param metadata_format: The format of the output file. This can be "JSON", "YAML", or "PROTO".
     :param local_logs: If True, logs will be printed to the console in the local execution.
+    :param block_network: If True (default), blocks all outbound network access. Locally this
+        sets Docker ``network_mode=none``. On-cluster it applies the pod template
+        ``sandboxed-pod-template``. Set to False to allow network access.
     """
 
     MetadataFormat = Literal["JSON", "YAML", "PROTO"]
@@ -105,6 +108,7 @@ class ContainerTask(TaskTemplate):
             raise ValueError("All elements in the command list must be strings.")
         if arguments and any(not isinstance(a, str) for a in arguments):
             raise ValueError("All elements in the arguments list must be strings.")
+        self._block_network = block_network
         self._cmd = command
         self._args = arguments
         self._input_data_dir = input_data_dir
@@ -289,6 +293,8 @@ class ContainerTask(TaskTemplate):
             "volumes": volume_bindings,
             "detach": True,
         }
+        if self._block_network:
+            run_kwargs["network_mode"] = "none"
 
         container = client.containers.run(uri, command=commands, **run_kwargs)
 

@@ -164,6 +164,7 @@ result = await agent.generate.aio(prompt="...")
 | `cache`               | `str`             | `"auto"`       | CacheRequest for sandboxes: `"auto"`, `"override"`, or `"disable"` |
 | `backend`             | `str`             | `"litellm"`    | Execution backend: `"litellm"` or `"claude"`               |
 | `agent_max_turns`     | `int`             | `50`           | Max turns when `backend="claude"`                          |
+| `block_network`       | `bool`            | `True`         | Block all outbound network access in sandboxes. Set to `False` to allow network access. |
 
 **`generate()` parameters (per-call):**
 
