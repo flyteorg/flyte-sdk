@@ -481,14 +481,8 @@ def create(
         env_vars: Environment variables available inside the container.
         secrets: Flyte `flyte.Secret` objects to mount.
         cache: Cache behaviour — `"auto"`, `"override"`, or `"disable"`.
-        block_network: When `True` (default), the task pod is labeled
-            `sandboxed: "true"`, which triggers a cluster-level
-            `NetworkPolicy` that blocks all egress. Requires the
-            `deny-all-egress-sandboxed` NetworkPolicy and
-            `sandboxed-pod-template` PodTemplate to be provisioned in
-            the namespace (done automatically via cluster resource
-            templates on BYOC clusters). Set to `False` to allow
-            outbound network access from the container.
+        block_network: When `True` (default), the container will not have
+            access to the network. Set to `False` to allow network access.
 
     Returns:
         Configured sandbox ready to `.run()`.
