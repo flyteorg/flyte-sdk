@@ -73,7 +73,7 @@ class AutoCoderAgent:
         cache: CacheRequest for sandboxes: "auto", "override", or "disable". Defaults to "auto".
         backend: Execution backend: "litellm" (default) or "claude".
         agent_max_turns: Maximum agent turns when backend="claude". Defaults to 50.
-        block_network: Block all outbound network access in sandboxes. Defaults to True.
+        block_network: Block all outbound network access in sandboxes. Defaults to False.
 
     Example::
 
@@ -120,7 +120,7 @@ class AutoCoderAgent:
     cache: str = "auto"
     backend: Literal["litellm", "claude"] = "litellm"
     agent_max_turns: int = 50
-    block_network: bool = True
+    block_network: bool = False
 
     @syncify
     async def generate(

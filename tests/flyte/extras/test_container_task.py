@@ -28,25 +28,25 @@ def test_bad_incorrect_type_in_command():
         )
 
 
-def test_block_network_default_sets_pod_template():
+def test_block_network_default_is_false():
     task = ContainerTask(
         name="test",
         image="alpine:latest",
         command=["echo", "hi"],
-    )
-    assert task.pod_template == "sandboxed-pod-template"
-    assert task._block_network is True
-
-
-def test_block_network_false_no_pod_template():
-    task = ContainerTask(
-        name="test",
-        image="alpine:latest",
-        command=["echo", "hi"],
-        block_network=False,
     )
     assert task.pod_template is None
     assert task._block_network is False
+
+
+def test_block_network_true_sets_pod_template():
+    task = ContainerTask(
+        name="test",
+        image="alpine:latest",
+        command=["echo", "hi"],
+        block_network=True,
+    )
+    assert task.pod_template == "sandboxed-pod-template"
+    assert task._block_network is True
 
 
 def test_block_network_merges_label_into_pod_template():

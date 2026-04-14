@@ -70,7 +70,7 @@ class _Sandbox:
     env_vars: Optional[dict[str, str]] = None
     secrets: Optional[list] = None
     cache: str = "auto"
-    block_network: bool = True
+    block_network: bool = False
 
     def _task_name(self) -> str:
         if self.name:
@@ -386,7 +386,7 @@ def create(
     env_vars: Optional[dict[str, str]] = None,
     secrets: Optional[list] = None,
     cache: str = "auto",
-    block_network: bool = True,
+    block_network: bool = False,
 ) -> _Sandbox:
     """Create a stateless Python code sandbox.
 
@@ -481,8 +481,9 @@ def create(
         env_vars: Environment variables available inside the container.
         secrets: Flyte `flyte.Secret` objects to mount.
         cache: Cache behaviour — `"auto"`, `"override"`, or `"disable"`.
-        block_network: When `True` (default), the container will not have
-            access to the network. Set to `False` to allow network access.
+        block_network: When `True`, blocks all outbound network access — locally
+            via Docker ``network_mode=none``, on-cluster via a NetworkPolicy.
+            Defaults to `False`.
 
     Returns:
         Configured sandbox ready to `.run()`.

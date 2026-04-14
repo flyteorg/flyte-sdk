@@ -52,9 +52,9 @@ class ContainerTask(TaskTemplate):
     :param output_data_dir: The directory where the output data is stored. This is a string or a Path object.
     :param metadata_format: The format of the output file. This can be "JSON", "YAML", or "PROTO".
     :param local_logs: If True, logs will be printed to the console in the local execution.
-    :param block_network: If True (default), blocks all outbound network access. Locally this
+    :param block_network: If True, blocks all outbound network access. Locally this
         sets Docker ``network_mode=none``. On-cluster it applies the pod template
-        ``sandboxed-pod-template``. Set to False to allow network access.
+        ``sandboxed-pod-template``. Defaults to False.
     """
 
     MetadataFormat = Literal["JSON", "YAML", "PROTO"]
@@ -71,7 +71,7 @@ class ContainerTask(TaskTemplate):
         output_data_dir: str | pathlib.Path = "/var/outputs",
         metadata_format: MetadataFormat = "JSON",
         local_logs: bool = True,
-        block_network: bool = True,
+        block_network: bool = False,
         **kwargs,
     ):
         if block_network:
