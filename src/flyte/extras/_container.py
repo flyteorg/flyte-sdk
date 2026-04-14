@@ -68,8 +68,22 @@ class ContainerTask(TaskTemplate):
         output_data_dir: str | pathlib.Path = "/var/outputs",
         metadata_format: MetadataFormat = "JSON",
         local_logs: bool = True,
+        block_network: bool = True,
         **kwargs,
     ):
+        if block_network:
+            existing = kwargs.get("pod_template")
+            if existing is None:
+                kwargs["pod_template"] = "sandboxed-pod-template"
+            elif isinstance(existing, str):
+                raise ValueError(
+                    "block_network=True cannot be combined with a string pod_template reference. "
+                    "Use a PodTemplate object instead so the 'sandboxed: true' label can be merged in, "
+                    "or ensure the referenced cluster template already includes that label."
+                )
+            else:
+                existing.labels = {**(existing.labels or {}), "sandboxed": "true"}
+
         super().__init__(
             task_type="raw-container",
             name=name,

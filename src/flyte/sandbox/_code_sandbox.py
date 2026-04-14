@@ -70,6 +70,7 @@ class _Sandbox:
     env_vars: Optional[dict[str, str]] = None
     secrets: Optional[list] = None
     cache: str = "auto"
+    block_network: bool = True
 
     def _task_name(self) -> str:
         if self.name:
@@ -276,6 +277,7 @@ class _Sandbox:
                 resources=resources,
                 retries=self.retries,
                 cache=self.cache,
+                block_network=self.block_network,
                 **extra_kwargs,
             )
         else:
@@ -292,6 +294,7 @@ class _Sandbox:
                 resources=resources,
                 retries=self.retries,
                 cache=self.cache,
+                block_network=self.block_network,
                 **extra_kwargs,
             )
 
@@ -383,6 +386,7 @@ def create(
     env_vars: Optional[dict[str, str]] = None,
     secrets: Optional[list] = None,
     cache: str = "auto",
+    block_network: bool = True,
 ) -> _Sandbox:
     """Create a stateless Python code sandbox.
 
@@ -477,6 +481,14 @@ def create(
         env_vars: Environment variables available inside the container.
         secrets: Flyte `flyte.Secret` objects to mount.
         cache: Cache behaviour — `"auto"`, `"override"`, or `"disable"`.
+        block_network: When `True` (default), the task pod is labeled
+            `sandboxed: "true"`, which triggers a cluster-level
+            `NetworkPolicy` that blocks all egress. Requires the
+            `deny-all-egress-sandboxed` NetworkPolicy and
+            `sandboxed-pod-template` PodTemplate to be provisioned in
+            the namespace (done automatically via cluster resource
+            templates on BYOC clusters). Set to `False` to allow
+            outbound network access from the container.
 
     Returns:
         Configured sandbox ready to `.run()`.
@@ -514,4 +526,5 @@ def create(
         env_vars=env_vars,
         secrets=secrets,
         cache=cache,
+        block_network=block_network,
     )
