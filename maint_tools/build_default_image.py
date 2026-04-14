@@ -17,8 +17,8 @@ async def build_flyte_image(registry: str | None = None, name: str | None = None
         name:     e.g. "my-flyte-image".
         builder:  e.g. "local" or "remote".
     """
-    from flyte._version import __version__
     from flyte._image import _detect_python_version
+    from flyte._version import __version__
 
     default_image = Image.from_debian_base(registry=registry, name=name, install_flyte=False).with_local_v2()
     suffix = __version__.replace("+", "-")
