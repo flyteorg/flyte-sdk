@@ -41,14 +41,9 @@ def tui():
 @click.pass_context
 def demo(ctx: click.Context, image: str, dev: bool):
     """Start a local Flyte demo cluster."""
-    from flyte._sentry import capture_exception, count
+    from flyte._sentry import count
     from flyte.cli._demo import launch_demo
 
     count("cli.command", command="start_demo")
-    try:
-        log_format = getattr(ctx.obj, "log_format", "console") if ctx.obj else "console"
-        launch_demo(image, dev, log_format=log_format)
-    except Exception as e:
-        capture_exception(e)
-        raise
-
+    log_format = getattr(ctx.obj, "log_format", "console") if ctx.obj else "console"
+    launch_demo(image, dev, log_format=log_format)

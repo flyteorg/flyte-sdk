@@ -16,6 +16,7 @@ from .._task import TaskTemplate
 from ..remote import Run
 from ..syncify import syncify
 from . import _common as common
+from .._sentry import capture_errors, capture_exception
 from ._params import to_click_option
 
 RUN_REMOTE_CMD = "deployed-task"
@@ -303,6 +304,7 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
             )
             result = await execution_context.run.aio(self.obj, **ctx.params)
         except Exception as e:
+            capture_exception(e)
             console.print(common.get_panel("Exception", f"[red]✕ Execution failed:[/red] {e}", config.output_format))
             exit(1)
 
@@ -365,6 +367,7 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
 
         launch_tui(tracker, execute_fn)
 
+    @capture_errors
     def invoke(self, ctx: click.Context):
         config: common.CLIConfig = common.initialize_config(
             ctx,
@@ -521,6 +524,7 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
             )
             result = await execution_context.run.aio(task, **ctx.params)
         except Exception as e:
+            capture_exception(e)
             console.print(f"[red]✕ Execution failed:[/red] {e}")
             return
 
@@ -564,6 +568,7 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
             status.step("Waiting for log stream...")
             await result.show_logs.aio(max_lines=30, show_ts=True, raw=False)
 
+    @capture_errors
     def invoke(self, ctx: click.Context):
         config: common.CLIConfig = common.initialize_config(
             ctx,

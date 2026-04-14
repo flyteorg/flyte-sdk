@@ -8,6 +8,8 @@ from pathlib import Path
 
 import click
 from rich.console import Console
+
+from flyte import _sentry
 from rich.panel import Panel
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
@@ -222,6 +224,7 @@ def stop_demo() -> None:
     console.print("[green]Demo cluster stopped.[/green] Run [bold]flyte start demo[/bold] to resume.")
 
 
+@_sentry.capture_errors
 def launch_demo(image_name: str, is_dev_mode: bool, log_format: str = "console") -> None:
     _ensure_volume(_VOLUME_NAME)
 

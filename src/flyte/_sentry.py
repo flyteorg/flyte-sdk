@@ -68,6 +68,21 @@ def capture_exception(exc: BaseException) -> None:
         pass
 
 
+def capture_errors(func):
+    """Decorator that captures exceptions to Sentry and re-raises them."""
+    import functools
+
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:
+            capture_exception(e)
+            raise
+
+    return wrapper
+
+
 def capture_message(msg: str) -> None:
     """Capture a message and send it to Sentry."""
     try:
