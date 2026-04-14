@@ -328,7 +328,7 @@ async def test_poetry_handler_without_project_install():
             )
 
             initial_dockerfile = "FROM python:3.9\n"
-            result = await PoetryProjectHandler.handel(
+            result = await PoetryProjectHandler.handle(
                 layer=poetry_project,
                 context_path=context_path,
                 dockerfile=initial_dockerfile,
@@ -370,7 +370,7 @@ async def test_poetry_handler_with_project_install():
             (user_folder / "main.py").write_text("print('hello')")
 
             initial_dockerfile = "FROM python:3.9\n"
-            result = await PoetryProjectHandler.handel(
+            result = await PoetryProjectHandler.handle(
                 layer=poetry_project,
                 context_path=context_path,
                 dockerfile=initial_dockerfile,
@@ -684,16 +684,20 @@ def test_uv_base_template_default_venv():
         PYTHON_VERSION="3.12",
     )
 
-    # Should use shell default syntax for VIRTUALENV and UV_PYTHON
-    assert "VIRTUALENV=${VIRTUALENV:-/opt/venv}" in dockerfile
-    assert "UV_PYTHON=${UV_PYTHON:-/opt/venv/bin/python}" in dockerfile
+    # Should declare default paths via ARG
+    assert "ARG VIRTUALENV=/opt/venv" in dockerfile
+    assert "ARG UV_PYTHON=$VIRTUALENV/bin/python" in dockerfile
 
-    # Should capture existing UV_PYTHON via ARG
-    assert "ARG _EXISTING_UV_PYTHON=${UV_PYTHON}" in dockerfile
+    # Should set ENV from ARGs
+    assert "VIRTUALENV=$VIRTUALENV" in dockerfile
+    assert "UV_PYTHON=$UV_PYTHON" in dockerfile
 
-    # Should conditionally create venv
-    assert 'if [ -z "${_EXISTING_UV_PYTHON}" ]' in dockerfile
+    # Should conditionally create venv only if UV_PYTHON binary doesn't exist
+    assert 'if [ ! -f "$UV_PYTHON" ]' in dockerfile
     assert "uv venv $VIRTUALENV --python=3.12" in dockerfile
+
+    # Should add VIRTUALENV/bin to PATH
+    assert 'PATH="$VIRTUALENV/bin:$PATH"' in dockerfile
 
 
 def test_uv_base_template_preserves_existing_uv_python():
@@ -703,14 +707,108 @@ def test_uv_base_template_preserves_existing_uv_python():
         PYTHON_VERSION="3.12",
     )
 
-    # The ARG captures the base image's UV_PYTHON at build time
-    assert "ARG _EXISTING_UV_PYTHON=${UV_PYTHON}" in dockerfile
+    # UV_PYTHON ARG defaults to $VIRTUALENV/bin/python but can be overridden by base image
+    assert "ARG UV_PYTHON=$VIRTUALENV/bin/python" in dockerfile
 
-    # The conditional block skips venv creation when _EXISTING_UV_PYTHON is non-empty
-    assert 'if [ -z "${_EXISTING_UV_PYTHON}" ]' in dockerfile
+    # The conditional block skips venv creation when UV_PYTHON binary already exists
+    assert 'if [ ! -f "$UV_PYTHON" ]' in dockerfile
 
-    # PATH is conditionally set: only adds /opt/venv/bin when _EXISTING_UV_PYTHON is empty
-    # ${_EXISTING_UV_PYTHON:+$PATH} expands to $PATH when set, nothing when empty
-    # ${_EXISTING_UV_PYTHON:-/opt/venv/bin:$PATH} expands to /opt/venv/bin:$PATH when empty, nothing when set
-    assert "${_EXISTING_UV_PYTHON:+$PATH}" in dockerfile
-    assert "${_EXISTING_UV_PYTHON:-/opt/venv/bin:$PATH}" in dockerfile
+    # PATH includes VIRTUALENV/bin
+    assert 'PATH="$VIRTUALENV/bin:$PATH"' in dockerfile
+
+
+@pytest.mark.asyncio
+async def test_ensure_buildx_builder_creates_with_host_network():
+    """When creating a new buildx builder, it should use --driver-opt network=host."""
+    calls = []
+
+    def mock_run(cmd, **kwargs):
+        calls.append(cmd)
+        result = subprocess.CompletedProcess(cmd, 0)
+        # For 'docker buildx ls', return output without the builder name
+        if cmd == ["docker", "buildx", "ls"]:
+            result.stdout = "default"
+            result.stderr = ""
+        return result
+
+    with patch(
+        "flyte._internal.imagebuild.docker_builder.run_sync_with_loop", side_effect=lambda fn, *a, **kw: fn(*a, **kw)
+    ):
+        with patch("subprocess.run", side_effect=mock_run):
+            await DockerImageBuilder._ensure_buildx_builder()
+
+    # Find the create command
+    create_cmds = [c for c in calls if "create" in c]
+    assert len(create_cmds) == 1
+    create_cmd = create_cmds[0]
+    assert "--driver-opt" in create_cmd
+    assert "network=host" in create_cmd
+
+
+@pytest.mark.asyncio
+async def test_ensure_buildx_builder_skips_when_network_host_present():
+    """When the builder already exists with network=host, it should not recreate."""
+    calls = []
+
+    def mock_run(cmd, **kwargs):
+        calls.append(cmd)
+        result = subprocess.CompletedProcess(cmd, 0)
+        if cmd == ["docker", "buildx", "ls"]:
+            result.stdout = f"default\n{DockerImageBuilder._builder_name}  docker-container"
+            result.stderr = ""
+        elif "inspect" in cmd:
+            result.stdout = (
+                f"Name:          {DockerImageBuilder._builder_name}\n"
+                "Driver:        docker-container\n"
+                "Nodes:\n"
+                'Driver Options: network="host"\n'
+            )
+            result.stderr = ""
+        return result
+
+    with patch(
+        "flyte._internal.imagebuild.docker_builder.run_sync_with_loop", side_effect=lambda fn, *a, **kw: fn(*a, **kw)
+    ):
+        with patch("subprocess.run", side_effect=mock_run):
+            await DockerImageBuilder._ensure_buildx_builder()
+
+    # Should NOT have called create or rm
+    assert not any("create" in c for c in calls)
+    assert not any("rm" in c for c in calls)
+
+
+@pytest.mark.asyncio
+async def test_ensure_buildx_builder_recreates_when_network_host_missing():
+    """When the builder exists but is missing network=host, it should be removed and recreated."""
+    calls = []
+
+    def mock_run(cmd, **kwargs):
+        calls.append(cmd)
+        result = subprocess.CompletedProcess(cmd, 0)
+        if cmd == ["docker", "buildx", "ls"]:
+            result.stdout = f"default\n{DockerImageBuilder._builder_name}  docker-container"
+            result.stderr = ""
+        elif "inspect" in cmd:
+            result.stdout = (
+                f"Name:          {DockerImageBuilder._builder_name}\n"
+                "Driver:        docker-container\n"
+                "Nodes:\n"
+                "Driver Options: <none>\n"
+            )
+            result.stderr = ""
+        return result
+
+    with patch(
+        "flyte._internal.imagebuild.docker_builder.run_sync_with_loop", side_effect=lambda fn, *a, **kw: fn(*a, **kw)
+    ):
+        with patch("subprocess.run", side_effect=mock_run):
+            await DockerImageBuilder._ensure_buildx_builder()
+
+    # Should have called rm then create
+    rm_cmds = [c for c in calls if "rm" in c]
+    create_cmds = [c for c in calls if "create" in c]
+    assert len(rm_cmds) == 1
+    assert DockerImageBuilder._builder_name in rm_cmds[0]
+    assert len(create_cmds) == 1
+    assert "--driver-opt" in create_cmds[0]
+    assert "network=host" in create_cmds[0]

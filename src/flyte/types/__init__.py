@@ -2,7 +2,7 @@
 # Flyte Type System
 
 The Flyte type system provides a way to define, transform, and manipulate types in Flyte workflows.
-Since the data flowing through Flyte has to often cross process, container and langauge boundaries, the type system
+Since the data flowing through Flyte has to often cross process, container and language boundaries, the type system
 is designed to be serializable to a universal format that can be understood across different environments. This
 universal format is based on Protocol Buffers. The types are called LiteralTypes and the runtime
 representation of data is called Literals.
@@ -41,6 +41,10 @@ __all__ = [
 
 
 def _load_custom_type_transformers():
+    """Import and register types from ``flyte.plugins.types`` entry points (at most once)."""
+    if getattr(_load_custom_type_transformers, "_loaded", False):
+        return
+
     plugins = entry_points(group="flyte.plugins.types")
     for ep in plugins:
         try:
@@ -50,3 +54,5 @@ def _load_custom_type_transformers():
                 loaded()
         except Exception as e:
             logger.warning(f"Failed to load type transformer {ep.name} with error: {e}")
+
+    _load_custom_type_transformers._loaded = True  # type: ignore[attr-defined]

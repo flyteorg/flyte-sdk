@@ -4,7 +4,7 @@
 #    "scikit-learn==1.6.1",
 #    "pandas",
 #    "pyarrow",
-#    "flyte>=2.0.0b3",
+#    "flyte",
 # ]
 # ///
 
@@ -23,7 +23,6 @@ worker = flyte.TaskEnvironment(
         __file__,
         name="flyte",
         registry="ghcr.io/flyteorg",
-        pre=True,
     ).with_apt_packages("ca-certificates"),
 )
 

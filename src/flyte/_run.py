@@ -24,12 +24,13 @@ from flyte._task import F, P, R, TaskTemplate
 from flyte.models import (
     ActionID,
     ActionPhase,
-    Checkpoints,
+    CheckpointPaths,
     CodeBundle,
     RawDataPath,
     SerializationContext,
     TaskContext,
 )
+from flyte.storage import join as storage_join
 from flyte.syncify import syncify
 
 from ._constants import FLYTE_SYS_PATH
@@ -166,7 +167,8 @@ class _Runner:
 
     @requires_initialization
     async def _run_remote(self, obj: TaskTemplate[P, R, F] | LazyEntity, *args: P.args, **kwargs: P.kwargs) -> Run:
-        import grpc
+        from connectrpc.code import Code
+        from connectrpc.errors import ConnectError
         from flyteidl2.common import identifier_pb2
         from flyteidl2.core import literals_pb2, security_pb2
         from flyteidl2.task import run_pb2
@@ -211,14 +213,17 @@ class _Runner:
                 code_bundle = cached_value.code_bundle
                 image_cache = cached_value.image_cache
             else:
-                # Resolve any CodeBundleLayer layers before building images
+                # Resolve any CodeBundleLayer layers before building images.
+                # Must cover the parent env AND all depends_on envs (recursively)
+                # so that _build_images can compute the content hash for every image.
                 parent_env = cast(Environment, obj.parent_env())
                 from flyte._image import Image, resolve_code_bundle_layer
 
-                if isinstance(parent_env.image, Image):
-                    parent_env.image = resolve_code_bundle_layer(
-                        parent_env.image, self._copy_files, pathlib.Path(cfg.root_dir)
-                    )
+                from ._deploy import plan_deploy
+
+                for _env in plan_deploy(parent_env)[0].envs.values():
+                    if isinstance(_env.image, Image):
+                        _env.image = resolve_code_bundle_layer(_env.image, self._copy_files, pathlib.Path(cfg.root_dir))
 
                 if not self._dry_run:
                     image_cache = await build_images.aio(parent_env)
@@ -384,12 +389,25 @@ class _Runner:
                 notification_rule_name, notification_rules = resolve_notification_settings(self._notifications)
 
             try:
-                resp = await get_client().run_service.CreateRun(
+                from flyteidl2.dataproxy import dataproxy_service_pb2
+
+                upload_req = dataproxy_service_pb2.UploadInputsRequest(
+                    inputs=inputs.proto_inputs,
+                    task_spec=task_spec,
+                )
+                if run_id is not None:
+                    upload_req.run_id.CopyFrom(run_id)
+                else:
+                    upload_req.project_id.CopyFrom(project_id)
+
+                upload_resp = await get_client().dataproxy_service.upload_inputs(upload_req)
+
+                resp = await get_client().run_service.create_run(
                     run_service_pb2.CreateRunRequest(
                         run_id=run_id,
                         project_id=project_id,
                         task_spec=task_spec,
-                        inputs=inputs.proto_inputs,
+                        offloaded_input_data=upload_resp.offloaded_input_data,
                         run_spec=run_pb2.RunSpec(
                             overwrite_cache=self._overwrite_cache,
                             interruptible=wrappers_pb2.BoolValue(value=self._interruptible)
@@ -413,15 +431,15 @@ class _Runner:
                     ),
                 )
                 return Run(pb2=resp.run, _preserve_original_types=self._preserve_original_types)
-            except grpc.aio.AioRpcError as e:
-                if e.code() == grpc.StatusCode.UNAVAILABLE:
+            except ConnectError as e:
+                if e.code == Code.UNAVAILABLE:
                     raise flyte.errors.RuntimeSystemError(
                         "SystemUnavailableError",
                         "Flyte system is currently unavailable. check your configuration, or the service status.",
                     ) from e
-                elif e.code() == grpc.StatusCode.INVALID_ARGUMENT:
-                    raise flyte.errors.RuntimeUserError("InvalidArgumentError", e.details())
-                elif e.code() == grpc.StatusCode.ALREADY_EXISTS:
+                elif e.code == Code.INVALID_ARGUMENT:
+                    raise flyte.errors.RuntimeUserError("InvalidArgumentError", e.message)
+                elif e.code == Code.ALREADY_EXISTS:
                     # TODO maybe this should be a pass and return existing run?
                     raise flyte.errors.RuntimeUserError(
                         "RunAlreadyExistsError",
@@ -430,7 +448,7 @@ class _Runner:
                 else:
                     raise flyte.errors.RuntimeSystemError(
                         "RunCreationError",
-                        f"Failed to create run: {e.details()}",
+                        f"Failed to create run: {e.message}",
                     ) from e
 
         class DryRun(Run):
@@ -473,12 +491,16 @@ class _Runner:
         if obj.parent_env is None:
             raise ValueError("Task is not attached to an environment. Please attach the task to an environment.")
 
-        # Resolve any CodeBundleLayer layers before building images
+        # Resolve any CodeBundleLayer layers before building images.
+        # Must cover the parent env AND all depends_on envs (recursively)
+        # so that _build_images can compute the content hash for every image.
         env = cast(Environment, obj.parent_env())
+        from flyte._deploy import plan_deploy
         from flyte._image import Image, resolve_code_bundle_layer
 
-        if isinstance(env.image, Image):
-            env.image = resolve_code_bundle_layer(env.image, self._copy_files, pathlib.Path(cfg.root_dir))
+        for _env in plan_deploy(env)[0].envs.values():
+            if isinstance(_env.image, Image):
+                _env.image = resolve_code_bundle_layer(_env.image, self._copy_files, pathlib.Path(cfg.root_dir))
 
         image_cache = await build_images.aio(cast(Environment, obj.parent_env()))
 
@@ -547,13 +569,13 @@ class _Runner:
         raw_data_path_obj = RawDataPath(path=raw_data_path)
         checkpoint_path = f"{raw_data_path}/checkpoint"
         prev_checkpoint = f"{raw_data_path}/prev_checkpoint"
-        checkpoints = Checkpoints(checkpoint_path, prev_checkpoint)
+        checkpoint_paths = CheckpointPaths(prev_checkpoint_path=prev_checkpoint, checkpoint_path=checkpoint_path)
 
         async def _run_task() -> Tuple[Any, Optional[Exception]]:
             ctx = internal_ctx()
             tctx = TaskContext(
                 action=action,
-                checkpoints=checkpoints,
+                checkpoint_paths=checkpoint_paths,
                 code_bundle=code_bundle,
                 output_path=output_path,
                 version=version or "na",
@@ -627,11 +649,12 @@ class _Runner:
             raw_data_path = RawDataPath(path=self._raw_data_path)
 
         ctx = internal_ctx()
+        rd_base = raw_data_path.path
         tctx = TaskContext(
             action=action,
-            checkpoints=Checkpoints(
-                prev_checkpoint_path=internal_ctx().raw_data.path,
-                checkpoint_path=internal_ctx().raw_data.path,
+            checkpoint_paths=CheckpointPaths(
+                prev_checkpoint_path=storage_join(rd_base, "prev_checkpoint"),
+                checkpoint_path=storage_join(rd_base, "checkpoint"),
             ),
             code_bundle=None,
             output_path=str(output_path),

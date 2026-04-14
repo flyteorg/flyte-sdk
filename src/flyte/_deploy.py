@@ -169,7 +169,8 @@ async def _deploy_task(
     Deploy the given task.
     """
     ensure_client()
-    import grpc.aio
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
     from flyteidl2.task import task_definition_pb2, task_service_pb2
 
     import flyte.errors
@@ -248,7 +249,7 @@ async def _deploy_task(
             )
 
         try:
-            await get_client().task_service.DeployTask(
+            await get_client().task_service.deploy_task(
                 task_service_pb2.DeployTaskRequest(
                     task_id=task_id,
                     spec=spec,
@@ -256,8 +257,8 @@ async def _deploy_task(
                 )
             )
             status.success(f"Deployed task {task.name} (version {task_id.version})")
-        except grpc.aio.AioRpcError as e:
-            if e.code() == grpc.StatusCode.ALREADY_EXISTS:
+        except ConnectError as e:
+            if e.code == Code.ALREADY_EXISTS:
                 status.info(f"Task {task.name} already exists, skipping")
                 return DeployedTask(spec, deployable_triggers)
             raise
@@ -565,7 +566,9 @@ def plan_deploy(*envs: Environment, version: Optional[str] = None) -> List[Deplo
     visited_envs: Dict[str, Environment] = {}
     for env in envs:
         if env.name in visited_envs:
-            _check_duplicate_env(visited_envs[env.name], env)
+            if visited_envs[env.name] is not env:
+                _check_duplicate_env(visited_envs[env.name], env)
+            continue  # already included via depends_on of a prior env
         planned_envs = _recursive_discover({}, env)
         deployment_plans.append(DeploymentPlan(planned_envs, version=version))
         visited_envs.update(planned_envs)

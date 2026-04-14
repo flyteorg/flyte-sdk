@@ -185,36 +185,33 @@ class CLIConfig:
 
 class InvokeBaseMixin:
     """
-    Mixin to catch grpc.RpcError, flyte.RpcError, other errors and other exceptions
-    and raise them as gclick.ClickException.
+    Mixin to catch ConnectError, flyte.RpcError, other errors and other exceptions
+    and raise them as click.ClickException.
     """
 
     def invoke(self, ctx):
-        import os
-
-        import grpc
+        from connectrpc.code import Code
+        from connectrpc.errors import ConnectError
 
         try:
-            _ = super().invoke(ctx)  # type: ignore
-            # Exit successfully to properly close grpc channel
-            os._exit(0)
-        except grpc.aio.AioRpcError as e:
-            if e.code() == grpc.StatusCode.UNAUTHENTICATED:
-                raise click.ClickException(f"Authentication failed. Please check your credentials. {e.details()}")
-            if e.code() == grpc.StatusCode.NOT_FOUND:
-                raise click.ClickException(f"Requested object NOT FOUND. Please check your input. Error: {e.details()}")
-            if e.code() == grpc.StatusCode.ALREADY_EXISTS:
+            return super().invoke(ctx)  # type: ignore
+        except ConnectError as e:
+            if e.code == Code.UNAUTHENTICATED:
+                raise click.ClickException(f"Authentication failed. Please check your credentials. {e.message}")
+            if e.code == Code.NOT_FOUND:
+                raise click.ClickException(f"Requested object NOT FOUND. Please check your input. Error: {e.message}")
+            if e.code == Code.ALREADY_EXISTS:
                 raise click.ClickException("Resource already exists.")
-            if e.code() == grpc.StatusCode.INTERNAL:
-                raise click.ClickException(f"Internal server error: {e.details()}")
-            if e.code() == grpc.StatusCode.UNAVAILABLE:
+            if e.code == Code.INTERNAL:
+                raise click.ClickException(f"Internal server error: {e.message}")
+            if e.code == Code.UNAVAILABLE:
                 raise click.ClickException(
-                    f"Service is currently unavailable. Please try again later. Error: {e.details()}"
+                    f"Service is currently unavailable. Please try again later. Error: {e.message}"
                 )
-            if e.code() == grpc.StatusCode.PERMISSION_DENIED:
-                raise click.ClickException(f"Permission denied. Please check your access rights. Error: {e.details()}")
-            if e.code() == grpc.StatusCode.INVALID_ARGUMENT:
-                raise click.ClickException(f"Invalid argument provided. Please check your input. Error: {e.details()}")
+            if e.code == Code.PERMISSION_DENIED:
+                raise click.ClickException(f"Permission denied. Please check your access rights. Error: {e.message}")
+            if e.code == Code.INVALID_ARGUMENT:
+                raise click.ClickException(f"Invalid argument provided. Please check your input. Error: {e.message}")
             raise click.ClickException(f"RPC error invoking command: {e!s}") from e
         except flyte.errors.InitializationError as e:
             raise click.ClickException(f"Initialization failed. Pass remote config for CLI. (Reason: {e})")
@@ -407,7 +404,12 @@ def _table_format(table: Table, vals: Iterable[Any]) -> Table:
         if headers is None:
             headers = [k for k, _ in o]
             for h in headers:
-                table.add_column(h.capitalize(), no_wrap=True if "name" in h.casefold() else False)
+                if "name" in h.casefold():
+                    # Keep name/identifier columns on a single line for readability,
+                    # since they are often used to copy-paste or reference specific resources
+                    table.add_column(h.capitalize(), no_wrap=True)
+                else:
+                    table.add_column(h.capitalize(), overflow="fold")
         table.add_row(*[str(v) for _, v in o])
     return table
 
@@ -460,7 +462,7 @@ def get_console() -> Console:
     """
     Get a console that is configured to use colors if the terminal supports it.
     """
-    return Console(color_system="auto", force_terminal=True, width=120)
+    return Console(color_system="auto", force_terminal=True)
 
 
 def cli_status(output_format: OutputFormat, message: str, spinner: str = "dots"):

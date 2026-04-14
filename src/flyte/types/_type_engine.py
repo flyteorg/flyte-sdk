@@ -1359,6 +1359,13 @@ class TypeEngine(typing.Generic[T]):
             # todo: bring in extras transformers (pytorch, etc.)
             lazy_import_dataframe_handler()
 
+            # Load type-transformer plugins registered under "flyte.plugins.types" before any transformer lookup.
+            # Task modules are often imported (decorators run) before flyte.initialize() / init_in_cluster(), so
+            # relying on init alone yields incorrect FlytePickle fallback + warnings for plugin types.
+            from flyte.types import _load_custom_type_transformers
+
+            _load_custom_type_transformers()
+
     @classmethod
     def to_literal_type(cls, python_type: Type[T]) -> LiteralType:
         """
@@ -2264,7 +2271,7 @@ def _get_element_type(
         defs = schema.get("$defs", schema.get("definitions", {}))
         # Look up for ref_name in the defs defined in the schema
         if ref_name in defs:
-            # Don't mutate the orignal schema
+            # Don't mutate the original schema
             ref_schema = defs[ref_name].copy()
             # Guard the nested enum elements inside containers
             if ref_schema.get("enum"):
@@ -2272,7 +2279,7 @@ def _get_element_type(
             # Check if the $ref matches a registered custom type
             if (matched_type := _match_registered_type_from_schema(ref_schema)) is not None:
                 return matched_type
-            # if defs not in the schema, they need to be propogated into the resolved schema
+            # if defs not in the schema, they need to be propagated into the resolved schema
             if "$defs" not in ref_schema and defs:
                 ref_schema["$defs"] = defs
             # build a dataclass from the resolved schema

@@ -5,8 +5,9 @@ import functools
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Callable, Coroutine, Dict, Iterator, Literal, Optional, Tuple, Union, cast
 
-import grpc
 import rich.repr
+from connectrpc.code import Code
+from connectrpc.errors import ConnectError
 from flyteidl2.common import identifier_pb2, list_pb2
 from flyteidl2.core import literals_pb2
 from flyteidl2.task import task_definition_pb2, task_service_pb2
@@ -165,14 +166,14 @@ class TaskDetails(ToJSONMixin):
                 version=_version,
             )
             try:
-                resp = await get_client().task_service.GetTaskDetails(
+                resp = await get_client().task_service.get_task_details(
                     task_service_pb2.GetTaskDetailsRequest(
                         task_id=task_id,
                     )
                 )
                 return cls(resp.details)
-            except grpc.aio.AioRpcError as err:
-                if err.code() == grpc.StatusCode.NOT_FOUND:
+            except ConnectError as err:
+                if err.code == Code.NOT_FOUND:
                     raise flyte.errors.RemoteTaskNotFoundError(
                         f"Task {name}, version {_version} not found in {project} {domain}."
                     )
@@ -550,7 +551,7 @@ class Task(ToJSONMixin):
             limit = cfg.batch_size
         retrieved = 0
         while True:
-            resp = await get_client().task_service.ListTasks(
+            resp = await get_client().task_service.list_tasks(
                 task_service_pb2.ListTasksRequest(
                     org=cfg.org,
                     project_id=identifier_pb2.ProjectIdentifier(

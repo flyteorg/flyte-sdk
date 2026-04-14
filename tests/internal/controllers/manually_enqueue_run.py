@@ -73,7 +73,7 @@ async def enqueue_run(client: ControllerClient):
                 group="",
             ),
         )
-        await client.actions_service.Enqueue(enqueue_request)
+        await client.actions_service.enqueue(enqueue_request)
     else:
         enqueue_request = queue_service_pb2.EnqueueActionRequest(
             action_id=action_id,
@@ -83,13 +83,12 @@ async def enqueue_run(client: ControllerClient):
             output_uri="s3://bucket/outputs/0/jfkljfa/0",
             group="",
         )
-        await client.queue_service.EnqueueAction(enqueue_request)
+        await client.queue_service.enqueue_action(enqueue_request)
 
 
 async def main():
     client = await get_local_client()
     await enqueue_run(client)
-    await client.close()
 
 
 if __name__ == "__main__":

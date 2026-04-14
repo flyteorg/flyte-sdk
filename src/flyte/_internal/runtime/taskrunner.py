@@ -14,7 +14,7 @@ from flyte._logging import log, logger
 from flyte._metrics import Stopwatch
 from flyte._task import TaskTemplate
 from flyte.errors import CustomError, RuntimeSystemError, RuntimeUnknownError, RuntimeUserError
-from flyte.models import ActionID, Checkpoints, CodeBundle, RawDataPath, TaskContext
+from flyte.models import ActionID, CheckpointPaths, CodeBundle, RawDataPath, TaskContext
 
 from .. import Controller
 from .convert import (
@@ -120,7 +120,7 @@ async def convert_and_run(
     run_base_dir: str,
     inputs: Inputs = Inputs.empty(),
     input_path: str | None = None,
-    checkpoints: Checkpoints | None = None,
+    checkpoint_paths: CheckpointPaths | None = None,
     code_bundle: CodeBundle | None = None,
     image_cache: ImageCache | None = None,
     interactive_mode: bool = False,
@@ -146,7 +146,7 @@ async def convert_and_run(
 
     tctx = TaskContext(
         action=action,
-        checkpoints=checkpoints,
+        checkpoint_paths=checkpoint_paths,
         code_bundle=code_bundle,
         input_path=input_path,
         output_path=output_path,
@@ -196,7 +196,7 @@ async def extract_download_run_upload(
     output_path: str,
     run_base_dir: str,
     version: str,
-    checkpoints: Checkpoints | None = None,
+    checkpoint_paths: CheckpointPaths | None = None,
     code_bundle: CodeBundle | None = None,
     input_path: str | None = None,
     image_cache: ImageCache | None = None,
@@ -217,7 +217,7 @@ async def extract_download_run_upload(
         output_path=output_path,
         run_base_dir=run_base_dir,
         version=version,
-        checkpoints=checkpoints,
+        checkpoint_paths=checkpoint_paths,
         code_bundle=code_bundle,
         image_cache=image_cache,
         interactive_mode=interactive_mode,

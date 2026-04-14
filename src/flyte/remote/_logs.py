@@ -3,7 +3,8 @@ from collections import deque
 from dataclasses import dataclass
 from typing import AsyncGenerator, AsyncIterator
 
-import grpc
+from connectrpc.code import Code
+from connectrpc.errors import ConnectError
 from flyteidl2.common import identifier_pb2
 from flyteidl2.logs.dataplane import payload_pb2
 from flyteidl2.workflow import run_logs_service_pb2
@@ -126,7 +127,7 @@ class Logs:
         retries = 0
         while True:
             try:
-                resp = get_client().logs_service.TailLogs(
+                resp = get_client().logs_service.tail_logs(
                     run_logs_service_pb2.TailLogsRequest(action_id=action_id, attempt=attempt)
                 )
                 async for log_set in resp:
@@ -141,15 +142,17 @@ class Logs:
                 return
             except StopAsyncIteration:
                 return
-            except grpc.aio.AioRpcError as e:
-                retries += 1
-                if retries >= retry:
-                    if e.code() == grpc.StatusCode.NOT_FOUND:
+            except ConnectError as e:
+                if e.code == Code.NOT_FOUND:
+                    retries += 1
+                    logger.debug(f"Log stream not found (attempt {retries}/{retry})")
+                    if retries >= retry:
                         raise LogsNotYetAvailableError(
                             f"Log stream not available for action {action_id.name} in run {action_id.run.name}."
                         )
-                else:
                     await asyncio.sleep(2)
+                else:
+                    raise
 
     @classmethod
     async def create_viewer(

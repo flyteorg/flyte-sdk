@@ -51,13 +51,13 @@ image = (
     flyte.Image.from_debian_base()
     .with_pip_packages("vllm", "hf-transfer", "unionai-reuse")
     .with_pip_packages("flashinfer-python==0.6.4", "flashinfer-cubin==0.6.4")
-    .with_pip_packages("flashinfer-jit-cache", index_url="https://flashinfer.ai/whl/cu129")
+    .with_pip_packages("flashinfer-jit-cache==0.6.4", index_url="https://flashinfer.ai/whl/cu129")
     .with_env_vars({"HF_HUB_ENABLE_HF_TRANSFER": "1"})
 )
 
 gpu_env = flyte.TaskEnvironment(
     name="gpu_worker",
-    resources=flyte.Resources(cpu=4, memory="16Gi", gpu="A10G:1"),
+    resources=flyte.Resources(cpu=4, memory="16Gi", gpu="L4:1"),
     image=image,
     reusable=flyte.ReusePolicy(
         replicas=2,
@@ -66,7 +66,7 @@ gpu_env = flyte.TaskEnvironment(
 )
 
 driver_env = flyte.TaskEnvironment(
-    name="driver",
+    name="dynamic_batch_gpu_saturator",
     resources=flyte.Resources(cpu=2, memory="2Gi"),
     image=image,
     depends_on=[gpu_env],
@@ -250,5 +250,5 @@ async def main(
 
 if __name__ == "__main__":
     flyte.init_from_config()
-    run = flyte.run(main)
+    run = flyte.run(main, num_questions=5000, chunk_size=50)
     print(run.url)

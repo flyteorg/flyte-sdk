@@ -69,7 +69,7 @@ Edit `pyproject.toml`:
 ```toml
 [project]
 dependencies = [
-    "flyte>=2.0.0b35",
+    "flyte",
     "openai>=1.0.0",
     "pydantic>=2.0.0",
     "your-new-package>=1.0.0",  # Add here

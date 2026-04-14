@@ -100,27 +100,32 @@ class LocalDockerCommandImageChecker(ImageChecker):
     async def image_exists(
         cls, repository: str, tag: str, arch: Tuple[Architecture, ...] = ("linux/amd64",)
     ) -> Optional[str]:
-        # Check if the image exists locally by running the docker inspect command
+        # Use buildx imagetools inspect which works with both OCI and Docker manifest formats,
+        # including local/insecure registries that docker manifest inspect doesn't handle well.
         process = await asyncio.create_subprocess_exec(
             cls.command_name,
-            "manifest",
+            "buildx",
+            "imagetools",
             "inspect",
             f"{repository}:{tag}",
+            "--raw",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
         stdout, stderr = await process.communicate()
-        if (stderr and "manifest unknown") or "no such manifest" in stderr.decode():
-            logger.debug(f"Image {repository}:{tag} not found using the docker command.")
-            return None
-
         if process.returncode != 0:
-            raise RuntimeError(f"Failed to run docker image inspect {repository}:{tag}")
+            stderr_str = stderr.decode() if stderr else ""
+            if "manifest unknown" in stderr_str or "no such manifest" in stderr_str or "not found" in stderr_str:
+                logger.debug(f"Image {repository}:{tag} not found using the docker command.")
+                return None
+            raise RuntimeError(f"Failed to run docker buildx imagetools inspect {repository}:{tag}: {stderr_str}")
 
         inspect_data = json.loads(stdout.decode())
         if "manifests" not in inspect_data:
-            raise RuntimeError(f"Invalid data returned from docker image inspect for {repository}:{tag}")
-        manifest_list = inspect_data["manifests"]
+            # Single-platform image without a manifest list — image exists
+            logger.debug(f"Image {repository}:{tag} found (single-platform manifest)")
+            return f"{repository}:{tag}"
+        manifest_list = [m for m in inspect_data["manifests"] if "platform" in m and "os" in m.get("platform", {})]
         architectures = [f"{x['platform']['os']}/{x['platform']['architecture']}" for x in manifest_list]
         if set(architectures) >= set(arch):
             logger.debug(f"Image {repository}:{tag} found for architecture(s) {arch}, has {architectures}")
@@ -145,6 +150,10 @@ class ImageBuildEngine:
     @staticmethod
     @alru_cache
     async def image_exists(image: Image) -> Optional[str]:
+        if not image._is_cloned:
+            # Unmodified flyte default images are built and pushed as part of flyte releases,
+            # so they are guaranteed to exist — skip the existence check.
+            return image.uri
         if image.name is None:
             logger.debug(f"Image {image} has no name. Skip existence check.")
             return image.uri
@@ -242,10 +251,10 @@ class ImageBuildEngine:
 
             return DockerImageBuilder()
         else:
-            return cls._load_custom_type_transformers(builder)
+            return cls._load_custom_image_builders(builder)
 
     @classmethod
-    def _load_custom_type_transformers(cls, name: str) -> ImageBuilder:
+    def _load_custom_image_builders(cls, name: str) -> ImageBuilder:
         plugins = entry_points(group="flyte.plugins.image_builders")
         for ep in plugins:
             if ep.name != name:

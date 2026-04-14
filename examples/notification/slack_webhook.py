@@ -48,17 +48,15 @@ slack_success = notify.Slack(
         {
             "type": "section",
             "fields": [
-                {"type": "mrkdwn", "text": "*Task:*\n{task.name}"},
-                {"type": "mrkdwn", "text": "*Run:*\n{run.name}"},
-                {"type": "mrkdwn", "text": "*Duration:*\n{run.duration}"},
-                {"type": "mrkdwn", "text": "*Phase:*\n{run.phase}"},
+                {"type": "mrkdwn", "text": "*Run:*\n{{.Run.Name}}"},
+                {"type": "mrkdwn", "text": "*Phase:*\n{{.Phase}}"},
             ],
         },
         {"type": "divider"},
         {
             "type": "context",
             "elements": [
-                {"type": "mrkdwn", "text": "{project}/{domain}"},
+                {"type": "mrkdwn", "text": "{{.Run.Project}}/{{.Run.Domain}}"},
             ],
         },
     ],
@@ -75,8 +73,7 @@ slack_failure = notify.Slack(
         {
             "type": "section",
             "fields": [
-                {"type": "mrkdwn", "text": "*Task:*\n{task.name}"},
-                {"type": "mrkdwn", "text": "*Error:*\n{run.error}"},
+                {"type": "mrkdwn", "text": "*Error:*\n{{.Error}}"},
             ],
         },
     ],
@@ -85,15 +82,15 @@ slack_failure = notify.Slack(
 email_success = notify.Email(
     on_phase=ActionPhase.SUCCEEDED,
     recipients=[NOTIFICATION_EMAIL],
-    subject="Task {task.name} succeeded",
-    body=("Task: {task.name}\nRun: {run.name}\nDuration: {run.duration}\nPhase: {run.phase}\n"),
+    subject="Run {{.Run.Name}} succeeded",
+    body=("Run: {{.Run.Name}}\nPhase: {{.Phase}}\n"),
 )
 
 email_failure = notify.Email(
     on_phase=ActionPhase.FAILED,
     recipients=[NOTIFICATION_EMAIL],
-    subject="ALERT: Task {task.name} failed",
-    body=("Task: {task.name}\nRun: {run.name}\nError: {run.error}\n"),
+    subject="ALERT: Run {{.Run.Name}} failed",
+    body=("Run: {{.Run.Name}}\nError: {{.Error}}\n"),
 )
 
 if __name__ == "__main__":
