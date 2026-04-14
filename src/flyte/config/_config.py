@@ -40,6 +40,7 @@ class PlatformConfig(object):
     :param auth_mode: The OAuth mode to use. Defaults to pkce flow
     :param ca_cert_file_path: [optional] str Root Cert to be loaded and used to verify admin
     :param http_proxy_url: [optional] HTTP Proxy to be used for OAuth requests
+    :param disable_keyring: If True, disables storing/retrieving/deleting tokens from the system keyring
     """
 
     endpoint: str | None = None
@@ -56,6 +57,7 @@ class PlatformConfig(object):
     audience: typing.Optional[str] = None
     rpc_retries: int = 3
     http_proxy_url: typing.Optional[str] = None
+    disable_keyring: bool = False
 
     @classmethod
     def auto(cls, config_file: typing.Optional[typing.Union[str, ConfigFile]] = None) -> "PlatformConfig":
@@ -105,6 +107,7 @@ class PlatformConfig(object):
         kwargs = set_if_exists(kwargs, "console_endpoint", _internal.Platform.CONSOLE_ENDPOINT.read(config_file))
 
         kwargs = set_if_exists(kwargs, "http_proxy_url", _internal.Platform.HTTP_PROXY_URL.read(config_file))
+        kwargs = set_if_exists(kwargs, "disable_keyring", _internal.Platform.DISABLE_KEYRING.read(config_file))
         return PlatformConfig(**kwargs)
 
     def replace(self, **kwargs: typing.Any) -> "PlatformConfig":

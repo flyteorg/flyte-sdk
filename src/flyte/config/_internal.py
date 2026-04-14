@@ -8,6 +8,7 @@ class Platform(object):
     CONSOLE_ENDPOINT = ConfigEntry(YamlConfigEntry("console.endpoint"))
     CA_CERT_FILE_PATH = ConfigEntry(YamlConfigEntry("admin.caCertFilePath"))
     HTTP_PROXY_URL = ConfigEntry(YamlConfigEntry("admin.httpProxyURL"))
+    DISABLE_KEYRING = ConfigEntry(YamlConfigEntry("admin.disableKeyring", bool))
 
 
 class Credentials(object):
