@@ -125,8 +125,37 @@ linecount_sandbox = flyte.sandbox.create(
     outputs={"line_count": str},
 )
 
+# Example 5 — block_network=True (default): no outbound network access
+#
+# Network access is blocked by default. The sandbox can only read its inputs
+# and write its outputs — any attempt to reach the network will fail.
 
-# Example 5 — as_task() + deploy: build a deployable sandbox task
+isolated_sandbox = flyte.sandbox.create(
+    name="isolated-compute",
+    code="""\
+import urllib.request
+with urllib.request.urlopen("https://example.com") as r:
+    status = str(r.status)
+""",
+    outputs={"status": str},
+    block_network=True,  # default — shown explicitly for clarity
+)
+
+# Example 6 — block_network=False: outbound network access allowed
+
+networked_sandbox = flyte.sandbox.create(
+    name="networked-fetch",
+    code="""\
+import urllib.request
+with urllib.request.urlopen("https://example.com") as r:
+    status = str(r.status)
+""",
+    outputs={"status": str},
+    block_network=False,
+)
+
+
+# Example 7 — as_task() + deploy: build a deployable sandbox task
 #
 # Use ``as_task()`` to get a ContainerTask with ``_script`` pre-filled as a
 # default.
@@ -197,6 +226,15 @@ async def run_pipeline() -> dict:
     data_file = await create_text_file()
     line_count = await linecount_sandbox.run.aio(data_file=data_file)
 
+    # Network-blocked sandbox: pure computation, no network
+    try:
+        isolated_result = await isolated_sandbox.run.aio(x=7)
+    except Exception as e:
+        isolated_result = f"Failed to access network: {e}"
+
+    # Network-allowed sandbox: fetch external URL
+    status = await networked_sandbox.run.aio()
+
     # Deploy a sandbox task
     deployment_summary = await deploy_sandbox_task()
 
@@ -207,6 +245,8 @@ async def run_pipeline() -> dict:
         "window_end": window_end.isoformat(),
         "etl_sum_1_to_10": etl_total,
         "line_count": line_count,
+        "isolated_result": isolated_result,
+        "networked_status": status,
         "deployment_summary": deployment_summary,
     }
 
@@ -224,6 +264,13 @@ def run_pipeline_sync() -> dict:
     etl_total = etl_sandbox.run(payload=payload)
     data_file = asyncio.run(create_text_file())
     line_count = linecount_sandbox.run(data_file=data_file)
+
+    try:
+        isolated_result = isolated_sandbox.run(x=7)
+    except Exception as e:
+        isolated_result = f"Failed to access network: {e}"
+
+    status = networked_sandbox.run()
     deployment_summary = asyncio.run(deploy_sandbox_task())
 
     return {
@@ -233,6 +280,8 @@ def run_pipeline_sync() -> dict:
         "window_end": window_end.isoformat(),
         "etl_sum_1_to_10": etl_total,
         "line_count": line_count,
+        "isolated_result": isolated_result,
+        "networked_status": status,
         "deployment_summary": deployment_summary,
     }
 
