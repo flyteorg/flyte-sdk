@@ -794,7 +794,11 @@ class Image:
         extendable: Optional[bool] = None,
     ) -> Image:
         """
-        Use this method to clone the current image and change the registry and name
+        Clone an existing image, optionally with a new name or registry.
+
+        All `with_*` methods already produce a new immutable `Image`; use
+        `clone()` when you need an independent copy with a different name,
+        registry, or other base properties.
 
         :param registry: Registry to use for the image
         :param registry_secret: Secret to use to pull/push the private image.

@@ -31,16 +31,27 @@ def is_snake_or_kebab_with_numbers(s: str) -> bool:
 @dataclass(init=True, repr=True)
 class Environment:
     """
-    :param name: Name of the environment
-    :param image: Docker image to use for the environment. If set to "auto", will use the default image.
-    :param resources: Resources to allocate for the environment.
-    :param env_vars: Environment variables to set for the environment.
+    Base class for execution environments, shared by `TaskEnvironment` and
+    `AppEnvironment`. Defines common infrastructure settings such as container
+    image, compute resources, secrets, and deployment dependencies.
+
+    You typically don't instantiate `Environment` directly — use
+    `TaskEnvironment` for tasks or `AppEnvironment` for long-running apps.
+
+    :param name: Name of the environment (required). Must be snake_case or
+        kebab-case.
+    :param image: Docker image for the environment. Can be a string (image URI),
+        an `Image` object, or `"auto"` to use the default image.
+    :param resources: Compute resources (CPU, memory, GPU, disk) via a
+        `Resources` object.
+    :param env_vars: Environment variables as `dict[str, str]`.
     :param secrets: Secrets to inject into the environment.
-    :param pod_template: Pod template to use for the environment.
-    :param description: Description of the environment.
-    :param interruptible: Whether the environment is interruptible and can be scheduled on spot/preemptible instances
-    :param depends_on: Environment dependencies to hint, so when you deploy the environment, the dependencies are
-        also deployed. This is useful when you have a set of environments that depend on each other.
+    :param pod_template: Kubernetes pod template as a string reference to a
+        named template or a `PodTemplate` object.
+    :param description: Human-readable description (max 255 characters).
+    :param interruptible: Whether the environment can be scheduled on
+        spot/preemptible instances.
+    :param depends_on: List of other environments to deploy alongside this one.
     """
 
     name: str
@@ -81,7 +92,17 @@ class Environment:
 
     def add_dependency(self, *env: Environment):
         """
-        Add a dependency to the environment.
+        Add one or more environment dependencies so they are deployed together.
+
+        When you deploy this environment, any environments added via
+        `add_dependency` will also be deployed. This is an alternative to
+        passing `depends_on=[...]` at construction time, useful when the
+        dependency is defined after the environment is created.
+
+        Duplicate dependencies are silently ignored. An environment cannot
+        depend on itself.
+
+        :param env: One or more `Environment` instances to add as dependencies.
         """
         for e in env:
             if not isinstance(e, Environment):
