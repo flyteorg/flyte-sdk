@@ -56,6 +56,7 @@ def test_block_network_merges_label_into_pod_template():
         image="alpine:latest",
         command=["echo", "hi"],
         pod_template=pt,
+        block_network=True,
     )
     assert task.pod_template.labels == {"existing": "label", "sandboxed": "true"}
 
@@ -67,6 +68,7 @@ def test_block_network_with_string_pod_template_raises():
             image="alpine:latest",
             command=["echo", "hi"],
             pod_template="my-custom-template",
+            block_network=True,
         )
 
 

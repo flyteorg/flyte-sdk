@@ -125,7 +125,7 @@ linecount_sandbox = flyte.sandbox.create(
     outputs={"line_count": str},
 )
 
-# Example 5 — block_network=True (default): no outbound network access
+# Example 5 — block_network=True: no outbound network access
 #
 # Network access is blocked by default. The sandbox can only read its inputs
 # and write its outputs — any attempt to reach the network will fail.
@@ -138,10 +138,10 @@ with urllib.request.urlopen("https://example.com") as r:
     status = str(r.status)
 """,
     outputs={"status": str},
-    block_network=True,  # default — shown explicitly for clarity
+    block_network=True,
 )
 
-# Example 6 — block_network=False: outbound network access allowed
+# Example 6 — block_network=False (default): outbound network access allowed
 
 networked_sandbox = flyte.sandbox.create(
     name="networked-fetch",
@@ -151,7 +151,6 @@ with urllib.request.urlopen("https://example.com") as r:
     status = str(r.status)
 """,
     outputs={"status": str},
-    block_network=False,
 )
 
 
