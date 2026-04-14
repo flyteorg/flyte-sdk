@@ -21,7 +21,7 @@ async def build_flyte_image(registry: str | None = None, name: str | None = None
     from flyte._version import __version__
 
     default_image = Image.from_debian_base(registry=registry, name=name, install_flyte=False).with_local_v2()
-    suffix = __version__.replace("+", "-")
+    suffix = __version__ if __version__.startswith("v") else f"v{__version__}".replace("+", "-")
     python_version = _detect_python_version()
     tag = f"py{python_version[0]}.{python_version[1]}-{suffix}"
     object.__setattr__(default_image, "_tag", tag)
@@ -74,7 +74,7 @@ async def build_flyte_connector_image(
         default_image = Image.from_debian_base(registry=registry, name=name).with_pip_packages(
             "flyteplugins-bigquery", "flyteplugins-snowflake", "flyteplugins-databricks", pre=True
         )
-    suffix = __version__.replace("+", "-")
+    suffix = __version__ if __version__.startswith("v") else f"v{__version__}".replace("+", "-")
     python_version = _detect_python_version()
     tag = f"py{python_version[0]}.{python_version[1]}-{suffix}"
     object.__setattr__(default_image, "_tag", tag)
