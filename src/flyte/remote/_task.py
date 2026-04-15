@@ -578,7 +578,6 @@ class Task(ToJSONMixin):
         yield "name", self.pb2.task_id.name
         yield "version", self.pb2.task_id.version
         yield "short_name", self.pb2.metadata.short_name
-        yield "entrypoint", self.entrypoint
         for t in _repr_task_metadata(self.pb2.metadata):
             yield t
 
