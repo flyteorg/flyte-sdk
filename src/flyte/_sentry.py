@@ -16,10 +16,17 @@ _state = {"initialized": False}
 
 
 def _is_dev_mode() -> bool:
-    """Skip Sentry in dev mode (running from a git checkout of flyte-sdk)."""
+    """Skip Sentry in dev mode (git checkout or dev version of flyte-sdk)."""
     from pathlib import Path
 
-    return (Path(__file__).parent.parent.parent.parent / ".git").is_dir()
+    if (Path(__file__).parent.parent.parent.parent / ".git").is_dir():
+        return True
+
+    version = _get_version()
+    if version and "dev" in version.lower():
+        return True
+
+    return False
 
 
 def _is_disabled() -> bool:
