@@ -38,7 +38,7 @@ Two patterns solve this. Pick based on who controls what:
 ## Pattern 1: Pure BYOI
 
 Teams build complete, Flyte-aware images. Workflow code is copied into the
-Dockerfile. Flyte runs the container as a black box — it sends no code and
+Dockerfile via `COPY`. Flyte runs the container as a black box — it sends no code and
 modifies nothing.
 
 ### Dockerfiles
