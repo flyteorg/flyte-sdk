@@ -89,6 +89,7 @@ jobs:
           - "plugins/gemini"
           - "plugins/mlflow"
           - "plugins/pandera"
+          - "plugins/omegaconf"
         include:
           - workdir: "plugins/sglang"
             image-type: sglang
