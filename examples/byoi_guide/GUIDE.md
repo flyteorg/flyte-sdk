@@ -37,8 +37,8 @@ Two patterns solve this. Pick based on who controls what:
 
 ## Pattern 1: Pure BYOI
 
-Teams build complete, Flyte-aware images. Workflow code is COPYed into the
-Dockerfile. Flyte runs the container as a black box — it sends no code and
+Teams build complete, Flyte-aware images. Workflow code is copied into the
+Dockerfile via `COPY`. Flyte runs the container as a black box — it sends no code and
 modifies nothing.
 
 ### Dockerfiles
@@ -85,7 +85,7 @@ ENV PYTHONPATH=/workspace
 ```
 
 Both expose `import workflow_code.tasks` at runtime because each image's
-PYTHONPATH points to its own WORKDIR where the code was COPYed.
+PYTHONPATH points to its own WORKDIR where the code was copied.
 
 ### Build and push
 
@@ -119,7 +119,7 @@ env_data = flyte.TaskEnvironment(
 
 `from_ref_name()` is a placeholder resolved at runtime. The actual URIs are
 passed in `main.py` via `init_from_config(images=...)`. This is necessary
-because `envs.py` is COPYed into both images — hardcoding a URI would create
+because `envs.py` is copied into both images — hardcoding a URI would create
 a circular reference where an image contains a reference to its own tag.
 
 **main.py** — this is where image URIs are wired in:

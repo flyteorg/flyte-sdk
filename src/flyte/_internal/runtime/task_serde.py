@@ -203,6 +203,7 @@ def get_proto_task(
             interruptible=task.interruptible,
             generates_deck=wrappers_pb2.BoolValue(value=task.report),
             debuggable=task.debuggable if task.reusable is None else False,
+            is_entrypoint=task.entrypoint,
             log_links=log_links,
             image_build_run=image_build_run,
         ),

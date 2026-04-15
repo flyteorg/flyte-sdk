@@ -246,6 +246,7 @@ class TaskEnvironment(Environment):
         triggers: Tuple[Trigger, ...] | Trigger = (),
         links: Tuple[Link, ...] | Link = (),
         task_resolver: Any | None = None,
+        entrypoint: bool = False,
     ) -> Callable[[Callable[P, R]], AsyncFunctionTaskTemplate[P, R, Callable[P, R]]]: ...
 
     @overload
@@ -272,6 +273,7 @@ class TaskEnvironment(Environment):
         triggers: Tuple[Trigger, ...] | Trigger = (),
         links: Tuple[Link, ...] | Link = (),
         task_resolver: Any | None = None,
+        entrypoint: bool = False,
     ) -> Callable[[F], AsyncFunctionTaskTemplate[P, R, F]] | AsyncFunctionTaskTemplate[P, R, F]:
         """
         Decorate a function to be a task.
@@ -300,6 +302,9 @@ class TaskEnvironment(Environment):
          additional context or information about the task. Links should implement the `flyte.Link` protocol
         :param interruptible: Optional Whether the task is interruptible, defaults to environment setting.
         :param queue: Optional queue name to use for this task. If not set, the environment's queue will be used.
+        :param entrypoint: Optionally mark a task as an entrypoint task, defaults to False. This serves as a hint to
+            the UI.
+        :param task_resolver: Optional TaskResolver protocol to load tasks using custom policy.
 
         :return: A TaskTemplate that can be used to deploy the task.
         """
@@ -357,6 +362,7 @@ class TaskEnvironment(Environment):
                 max_inline_io_bytes=max_inline_io_bytes,
                 queue=queue or self.queue,
                 interruptible=interruptible if interruptible is not None else self.interruptible,
+                entrypoint=entrypoint,
                 triggers=triggers if isinstance(triggers, tuple) else (triggers,),
                 links=links if isinstance(links, tuple) else (links,),
                 task_resolver=task_resolver,
