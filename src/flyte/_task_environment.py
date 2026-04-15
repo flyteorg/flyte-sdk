@@ -302,14 +302,11 @@ class TaskEnvironment(Environment):
          additional context or information about the task. Links should implement the `flyte.Link` protocol
         :param interruptible: Optional Whether the task is interruptible, defaults to environment setting.
         :param queue: Optional queue name to use for this task. If not set, the environment's queue will be used.
-        :param entrypoint: Optional entry point for the task, defaults to False.
+        :param entrypoint: Optionally mark a task as an entrypoint task, defaults to False. This serves as a hint to
+            the UI.
         :param task_resolver: Optional TaskResolver protocol to load tasks using custom policy.
 
         :return: A TaskTemplate that can be used to deploy the task.
-
-        Args:
-            entrypoint:
-            task_resolver:
         """
         from ._task import F, P, R
 
