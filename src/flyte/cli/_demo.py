@@ -8,10 +8,10 @@ from pathlib import Path
 
 import click
 from rich.console import Console
-
-from flyte import _sentry
 from rich.panel import Panel
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
+
+from flyte import _sentry
 
 _CONTAINER_NAME = "flyte-demo"
 _VOLUME_NAME = "flyte-demo"
@@ -227,7 +227,6 @@ def stop_demo() -> None:
 @_sentry.capture_errors
 def launch_demo(image_name: str, is_dev_mode: bool, log_format: str = "console") -> None:
     _ensure_volume(_VOLUME_NAME)
-
     if _container_is_paused(_CONTAINER_NAME):
         console.print("[cyan]Resuming paused demo cluster...[/cyan]")
         subprocess.run(["docker", "unpause", _CONTAINER_NAME], check=True, capture_output=True)

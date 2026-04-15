@@ -12,11 +12,11 @@ import rich_click as click
 from typing_extensions import get_args
 
 from .._code_bundle._utils import CopyFiles
+from .._sentry import capture_errors
 from .._task import TaskTemplate
 from ..remote import Run
 from ..syncify import syncify
 from . import _common as common
-from .._sentry import capture_errors, capture_exception
 from ._params import to_click_option
 
 RUN_REMOTE_CMD = "deployed-task"
@@ -304,7 +304,6 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
             )
             result = await execution_context.run.aio(self.obj, **ctx.params)
         except Exception as e:
-            capture_exception(e)
             console.print(common.get_panel("Exception", f"[red]✕ Execution failed:[/red] {e}", config.output_format))
             exit(1)
 
@@ -524,7 +523,6 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
             )
             result = await execution_context.run.aio(task, **ctx.params)
         except Exception as e:
-            capture_exception(e)
             console.print(f"[red]✕ Execution failed:[/red] {e}")
             return
 

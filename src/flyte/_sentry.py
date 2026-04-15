@@ -83,21 +83,6 @@ def capture_errors(func):
     return wrapper
 
 
-def capture_message(msg: str) -> None:
-    """Capture a message and send it to Sentry."""
-    try:
-        init()
-        import sentry_sdk
-
-        if sentry_sdk.is_initialized():
-            sentry_sdk.capture_message(msg)
-            sentry_sdk.flush(timeout=2)
-    except ImportError:
-        pass
-    except Exception:
-        pass
-
-
 def count(key: str, value: int = 1, **tags: str) -> None:
     """Emit a counter metric to Sentry."""
     try:

@@ -9,9 +9,9 @@ import rich_click as click
 import flyte
 from flyte._code_bundle._utils import CopyFiles
 
+from .._sentry import capture_errors
 from . import _common as common
 from ._common import CLIConfig
-from .._sentry import capture_errors
 
 
 @dataclass
@@ -152,9 +152,7 @@ class DeployEnvCommand(click.RichCommand):
         common.print_output(
             common.format("Environments", deployment[0].env_repr(), obj.output_format), obj.output_format
         )
-        common.print_output(
-            common.format("Entities", deployment[0].table_repr(), obj.output_format), obj.output_format
-        )
+        common.print_output(common.format("Entities", deployment[0].table_repr(), obj.output_format), obj.output_format)
 
 
 class DeployEnvRecursiveCommand(click.Command):
