@@ -12,8 +12,9 @@ import rich_click as click
 from typing_extensions import get_args
 
 from .._code_bundle._utils import CopyFiles
-from .._sentry import capture_errors
+from .._sentry import capture_exception, count
 from .._task import TaskTemplate
+from ..errors import RuntimeSystemError
 from ..remote import Run
 from ..syncify import syncify
 from . import _common as common
@@ -304,6 +305,9 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
             )
             result = await execution_context.run.aio(self.obj, **ctx.params)
         except Exception as e:
+            if isinstance(e, RuntimeSystemError):
+                capture_exception(e)
+                count("flyte.run.error", error_kind="system", error_code=e.code)
             console.print(common.get_panel("Exception", f"[red]✕ Execution failed:[/red] {e}", config.output_format))
             exit(1)
 
@@ -366,7 +370,6 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
 
         launch_tui(tracker, execute_fn)
 
-    @capture_errors
     def invoke(self, ctx: click.Context):
         config: common.CLIConfig = common.initialize_config(
             ctx,
@@ -566,7 +569,6 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
             status.step("Waiting for log stream...")
             await result.show_logs.aio(max_lines=30, show_ts=True, raw=False)
 
-    @capture_errors
     def invoke(self, ctx: click.Context):
         config: common.CLIConfig = common.initialize_config(
             ctx,
