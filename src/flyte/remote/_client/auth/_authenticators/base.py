@@ -35,6 +35,7 @@ class Authenticator(object):
         verify: bool = True,
         ca_cert_path: typing.Optional[str] = None,
         default_header_key: str = "authorization",
+        disable_keyring: bool = False,
         **kwargs,
     ):
         """
@@ -68,7 +69,8 @@ class Authenticator(object):
             - app: ASGI application to handle requests
         """
         self._endpoint = endpoint
-        self._creds = credentials or KeyringStore.retrieve(endpoint)
+        self._disable_keyring = disable_keyring
+        self._creds = credentials or KeyringStore.retrieve(endpoint, disable=disable_keyring)
         self._http_proxy_url = http_proxy_url
         self._verify = verify
         self._ca_cert_path = ca_cert_path
@@ -178,9 +180,9 @@ class Authenticator(object):
             # Perform the actual credential refresh
             try:
                 self._creds = await self._do_refresh_credentials()
-                KeyringStore.store(self._creds)
+                KeyringStore.store(self._creds, disable=self._disable_keyring)
             except Exception:
-                KeyringStore.delete(self._endpoint)
+                KeyringStore.delete(self._endpoint, disable=self._disable_keyring)
                 raise
 
             # Update the timestamp to indicate credentials have been refreshed

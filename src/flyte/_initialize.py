@@ -71,6 +71,7 @@ async def _initialize_client(
     client_credentials_secret: str | None = None,
     rpc_retries: int = 3,
     http_proxy_url: str | None = None,
+    disable_keyring: bool = False,
 ) -> ClientSet:
     """
     Initialize the client based on the execution mode.
@@ -103,6 +104,7 @@ async def _initialize_client(
             rpc_retries=rpc_retries,
             http_proxy_url=http_proxy_url,
             grpc_options=channel_options,
+            disable_keyring=disable_keyring,
         )
     elif api_key:
         return await ClientSet.for_api_key(
@@ -120,6 +122,7 @@ async def _initialize_client(
             rpc_retries=rpc_retries,
             http_proxy_url=http_proxy_url,
             grpc_options=channel_options,
+            disable_keyring=disable_keyring,
         )
 
     raise InitializationError(
@@ -156,6 +159,7 @@ async def init(
     auth_client_config: ClientConfig | None = None,
     rpc_retries: int = 3,
     http_proxy_url: str | None = None,
+    disable_keyring: bool = False,
     storage: Storage | None = None,
     batch_size: int = 1000,
     image_builder: ImageBuildEngine.ImageBuilderType = "local",
@@ -238,6 +242,7 @@ async def init(
                 client_config=auth_client_config,
                 rpc_retries=rpc_retries,
                 http_proxy_url=http_proxy_url,
+                disable_keyring=disable_keyring,
             )
 
         if not root_dir:
@@ -343,6 +348,7 @@ async def init_from_config(
         proxy_command=cfg.platform.proxy_command,
         client_id=cfg.platform.client_id,
         client_credentials_secret=cfg.platform.client_credentials_secret,
+        disable_keyring=cfg.platform.disable_keyring,
         root_dir=root_dir,
         log_level=log_level,
         log_format=log_format,
