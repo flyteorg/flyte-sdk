@@ -43,6 +43,7 @@ from pathlib import Path
 import joblib
 import mlflow
 import optuna
+from flyteplugins.mlflow import Mlflow, mlflow_config, mlflow_run
 from sklearn.datasets import load_breast_cancer
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
@@ -51,7 +52,6 @@ from xgboost import XGBClassifier
 
 import flyte
 import flyte.io
-from flyteplugins.mlflow import Mlflow, mlflow_config, mlflow_run
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
