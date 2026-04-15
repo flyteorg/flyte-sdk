@@ -8,7 +8,7 @@ Initializes Sentry with a hardcoded DSN to report errors from CLI commands
 import logging
 import os
 
-logger = logging.getLogger(__name__)
+from flyte._logging import logger
 
 _SENTRY_DSN = "https://d0e3f0a470b8e1333411eff583cf4004@o4507249423810560.ingest.us.sentry.io/4511135180128256"
 

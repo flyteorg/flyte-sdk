@@ -172,12 +172,6 @@ def main(
         except (flyte.errors.RuntimeSystemError, flyte.errors.RuntimeUserError) as e:
             from flyte._internal.runtime.convert import convert_from_native_to_error
             from flyte._internal.runtime.io import upload_error
-            from flyte._sentry import capture_exception, count
-
-            # Only report system errors to Sentry (not user code errors)
-            if isinstance(e, flyte.errors.RuntimeSystemError):
-                capture_exception(e)
-                count("runtime.error", error_kind="system", error_code=e.code)
 
             logger.error(f"Flyte runtime failed for action {name} with run name {run_name}, error: {e}")
             err = convert_from_native_to_error(e)
