@@ -1,9 +1,20 @@
 from pathlib import Path
 from typing import cast
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from flyte._image import AptPackages, CodeBundleLayer, CopyConfig, Image, UVScript, resolve_code_bundle_layer
+from flyte._image import (
+    _BASE_REGISTRY,
+    _LOCALHOST_REGISTRY,
+    AptPackages,
+    CodeBundleLayer,
+    CopyConfig,
+    Image,
+    UVScript,
+    _get_base_registry,
+    resolve_code_bundle_layer,
+)
 from flyte._internal.imagebuild.docker_builder import PipAndRequirementsHandler
 
 
@@ -111,6 +122,15 @@ def test_with_source(tmp_path):
         img.validate()
     file.touch()
     img.validate()
+
+    # Single-file COPY layers must hash file contents (os.walk on a file yields nothing).
+    f = tmp_path / "version.md"
+    f.write_text("first")
+    base = Image.from_debian_base(registry="localhost", name="test-image", flyte_version="0.2.0b14")
+    h1 = base.with_source_file(f)._get_hash_digest()
+    f.write_text("second")
+    h2 = base.with_source_file(f)._get_hash_digest()
+    assert h1 != h2
 
     # list of paths — each becomes its own layer
     file2 = tmp_path / "helper.py"
@@ -246,6 +266,16 @@ def test_dockerfile():
         platform=("linux/amd64", "linux/arm64"),
     )
     assert img_multi.platform == ("linux/amd64", "linux/arm64")
+
+
+def test_dockerfile_with_str_path():
+    img = Image.from_dockerfile(
+        file=str(Path(__file__).parent / "resources/Dockerfile.test_sample"),
+        registry="localhost",
+        name="test-image",
+    )
+    assert img.uri.startswith("localhost/test-image"), f"Unexpected URI: {img.uri}"
+    assert img.platform == ("linux/amd64",)
 
 
 def test_image_uri_consistency_for_uvscript():
@@ -708,3 +738,111 @@ def test_resolve_code_bundle_loaded_modules_copy_style_none(tmp_path):
     assert bundle_layers[0].root_dir == tmp_path
     assert bundle_layers[0].copy_style == "loaded_modules"
     assert bundle_layers[0].dst == "."
+
+
+def test_get_base_registry_returns_default_when_not_initialized():
+    """When flyte is not initialized, _get_base_registry returns the default registry."""
+    with patch("flyte._initialize._get_init_config", return_value=None):
+        assert _get_base_registry() == _BASE_REGISTRY
+
+
+def test_get_base_registry_returns_default_when_no_client():
+    """When init config has no client, _get_base_registry returns the default registry."""
+    mock_config = MagicMock()
+    mock_config.client = None
+    with patch("flyte._initialize._get_init_config", return_value=mock_config):
+        assert _get_base_registry() == _BASE_REGISTRY
+
+
+def test_get_base_registry_returns_default_for_remote_endpoint():
+    """When endpoint is a remote URL, _get_base_registry returns the default registry."""
+    mock_config = MagicMock()
+    mock_config.client.endpoint = "dns:///my-cluster.example.com"
+    with patch("flyte._initialize._get_init_config", return_value=mock_config):
+        assert _get_base_registry() == _BASE_REGISTRY
+
+
+def test_get_base_registry_returns_localhost_for_localhost_endpoint():
+    """When endpoint contains 'localhost', _get_base_registry returns the localhost registry."""
+    mock_config = MagicMock()
+    mock_config.client.endpoint = "localhost:8090"
+    with patch("flyte._initialize._get_init_config", return_value=mock_config):
+        assert _get_base_registry() == _LOCALHOST_REGISTRY
+
+
+def test_get_base_registry_returns_localhost_for_localhost_in_url():
+    """When endpoint contains 'localhost' as part of a URL, _get_base_registry returns the localhost registry."""
+    mock_config = MagicMock()
+    mock_config.client.endpoint = "dns:///localhost:30080"
+    with patch("flyte._initialize._get_init_config", return_value=mock_config):
+        assert _get_base_registry() == _LOCALHOST_REGISTRY
+
+
+def test_get_base_registry_returns_default_for_empty_endpoint():
+    """When endpoint is empty string, _get_base_registry returns the default registry."""
+    mock_config = MagicMock()
+    mock_config.client.endpoint = ""
+    with patch("flyte._initialize._get_init_config", return_value=mock_config):
+        assert _get_base_registry() == _BASE_REGISTRY
+
+
+def test_released_default_image_is_not_cloned():
+    """A released, unmodified default image should have _is_cloned=False so the SDK skips building it."""
+    with patch("flyte._version.__version__", "1.2.3"):
+        image = Image.from_debian_base(python_version=(3, 12))
+    assert image._is_cloned is False
+
+
+def test_dev_default_image_is_cloned():
+    """A dev-version default image should have _is_cloned=True so the SDK builds it."""
+    with patch("flyte._version.__version__", "1.2.3.dev0+abc"):
+        image = Image.from_debian_base(python_version=(3, 12))
+    assert image._is_cloned is True
+
+
+def test_with_pip_packages_marks_image_as_cloned():
+    """Adding pip packages to a default image should flip _is_cloned to True."""
+    with patch("flyte._version.__version__", "1.2.3"):
+        image = Image.from_debian_base(
+            python_version=(3, 12),
+            registry="my-registry.example.com",
+            name="my-image",
+        )
+        assert image._is_cloned is True  # registry override already triggers clone
+        modified = image.with_pip_packages("requests")
+    assert modified._is_cloned is True
+
+
+def test_clone_marks_image_as_cloned():
+    """Explicitly calling clone() should produce an image with _is_cloned=True."""
+    image = Image.from_base("ghcr.io/example/my-image:latest")
+    assert image._is_cloned is False
+    cloned = image.clone(name="my-image")
+    assert cloned._is_cloned is True
+
+
+def test_from_debian_base_with_registry_is_cloned():
+    """Overriding the registry on from_debian_base produces a cloned image (needs build)."""
+    with patch("flyte._version.__version__", "1.2.3"):
+        image = Image.from_debian_base(python_version=(3, 12), registry="my-registry.example.com", name="my-image")
+    assert image._is_cloned is True
+
+
+def test_from_base_is_not_cloned():
+    """Image.from_base points at an existing image URI and should not be rebuilt unless modified."""
+    image = Image.from_base("my-registry.example.com/my-image:latest")
+    assert image._is_cloned is False
+
+
+def test_from_base_with_layers_is_cloned():
+    """Adding layers to a from_base image must flip _is_cloned so the SDK builds the derived image."""
+    image = Image.from_base("my-registry.example.com/my-image:latest")
+    # from_base images don't have a name, so we need to clone first to add layers.
+    cloned = image.clone(name="derived", extendable=True).with_pip_packages("requests")
+    assert cloned._is_cloned is True
+
+
+def test_from_ref_name_is_not_cloned():
+    """Image.from_ref_name is a pointer to an externally configured image and should not be rebuilt."""
+    image = Image.from_ref_name("my-ref")
+    assert image._is_cloned is False

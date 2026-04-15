@@ -1,15 +1,13 @@
 import typing
 
-from grpc.aio import Metadata
-
-from flyte.remote._client.auth._authenticators.base import Authenticator, GrpcAuthMetadata
+from flyte.remote._client.auth._authenticators.base import Authenticator, AuthHeaders
 from flyte.remote._client.auth._keyring import Credentials
 
 
 class PassthroughAuthenticator(Authenticator):
     """
     Passthrough authenticator that extracts headers from the context and passes them
-    to the gRPC calls without performing any authentication flow.
+    to RPC calls without performing any authentication flow.
 
     This authenticator is used when you want to pass custom authentication metadata
     using the flyte.remote.auth_metadata() context manager.
@@ -34,7 +32,7 @@ class PassthroughAuthenticator(Authenticator):
         )
         self._creds_id: str = "passthrough"
 
-    def refresh_credentials(self, creds_id: str | None = None):
+    async def refresh_credentials(self, creds_id: str | None = None):
         return
 
     def get_credentials(self) -> typing.Optional[Credentials]:
@@ -42,14 +40,14 @@ class PassthroughAuthenticator(Authenticator):
         Passthrough authenticator doesn't use traditional credentials.
         Returns a dummy credential to signal that metadata is available.
         """
-        # Return a dummy credential so the interceptor knows to call get_grpc_call_auth_metadata
+        # Return a dummy credential so the interceptor knows to call get_auth_headers
         return self._creds
 
-    async def get_grpc_call_auth_metadata(self) -> typing.Optional[GrpcAuthMetadata]:
+    async def get_auth_headers(self) -> typing.Optional[AuthHeaders]:
         """
-        Fetch the authentication metadata from the context.
+        Fetch the authentication headers from the context.
 
-        :return: GrpcAuthMetadata with the metadata from the context, or None if no metadata is available
+        :return: AuthHeaders with the metadata from the context, or None if no metadata is available
         """
         # Lazy import to avoid circular dependencies
         from flyte.remote._auth_metadata import get_auth_metadata
@@ -60,9 +58,9 @@ class PassthroughAuthenticator(Authenticator):
         if not metadata_tuples:
             return None
 
-        return GrpcAuthMetadata(
+        return AuthHeaders(
             creds_id=self._creds_id,
-            pairs=Metadata(*metadata_tuples),
+            headers=dict(metadata_tuples),
         )
 
     async def _do_refresh_credentials(self) -> Credentials:

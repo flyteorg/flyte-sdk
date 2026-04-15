@@ -71,12 +71,14 @@ def _to_delivery_config_template(n: Notification) -> definition_pb2.DeliveryConf
     if isinstance(n, Email):
         return definition_pb2.DeliveryConfigTemplate(
             email=definition_pb2.EmailDeliveryTemplate(
-                subject=n.subject,
                 to=[definition_pb2.EmailRecipient(address=r) for r in n.recipients],
                 cc=[definition_pb2.EmailRecipient(address=r) for r in n.cc],
                 bcc=[definition_pb2.EmailRecipient(address=r) for r in n.bcc],
-                text_template=n.body,
-                html_template=n.html_body or "",
+                inline=definition_pb2.InlineEmailTemplate(
+                    subject=n.subject,
+                    text_template=n.body,
+                    html_template=n.html_body or "",
+                ),
             ),
         )
     elif isinstance(n, Slack):

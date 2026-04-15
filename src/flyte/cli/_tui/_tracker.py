@@ -92,6 +92,7 @@ class ActionTracker:
         log_links: list[tuple[str, str]] | None = None,
         attempt_count: int = 0,
         attempts: list[dict[str, Any]] | None = None,
+        start_time: float | None = None,
     ) -> None:
         with self._lock:
             initial_attempts = [_safe_json(a) for a in (attempts or []) if isinstance(a, dict)]
@@ -118,6 +119,8 @@ class ActionTracker:
                 selected_attempt=selected_attempt,
             )
             self._nodes[action_id] = node
+            if start_time:
+                node.start_time = start_time
 
             if group and parent_id is not None:
                 group_key = f"__group__{parent_id}__{group}"
@@ -191,14 +194,14 @@ class ActionTracker:
             node.selected_attempt = attempt_num
             self._version += 1
 
-    def record_complete(self, *, action_id: str, outputs: Any = None) -> None:
+    def record_complete(self, *, action_id: str, outputs: Any = None, end_time: float | None = None) -> None:
         with self._lock:
             node = self._nodes.get(action_id)
             if node is None:
                 return
             node.status = ActionStatus.SUCCEEDED
             node.outputs = outputs
-            node.end_time = time.monotonic()
+            node.end_time = end_time or time.monotonic()
             self._update_group_status(action_id)
             self._version += 1
 
@@ -210,7 +213,7 @@ class ActionTracker:
             node.log_links = log_links
             self._version += 1
 
-    def record_failure(self, *, action_id: str, error: str) -> None:
+    def record_failure(self, *, action_id: str, error: str, end_time: float | None = None) -> None:
         from flyte._internal.runtime.convert import Error
 
         with self._lock:
@@ -222,7 +225,7 @@ class ActionTracker:
                 node.error = error.err
             else:
                 node.error = error
-            node.end_time = time.monotonic()
+            node.end_time = end_time or time.monotonic()
             self._update_group_status(action_id)
             self._version += 1
 

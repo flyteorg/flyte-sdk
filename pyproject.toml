@@ -11,7 +11,7 @@ dependencies = [
     "cloudpickle>=3.1.1",
     "docstring_parser>=0.16",
     "fsspec>=2025.3.0",
-    "grpcio>=1.71.0",
+    "connectrpc>=0.9.0,<1.0.0",
     "obstore>=0.7.3",
     "protobuf>=6.30.1",
     "pydantic>=2.10.6",
@@ -24,8 +24,9 @@ dependencies = [
     "async-lru>=2.0.5",
     "mashumaro",
     "aiolimiter>=1.2.1",
-    "flyteidl2==2.0.8",
+    "flyteidl2==2.0.11",
     "packaging",
+    "pyOpenSSL>=24.0.0",
 ]
 
 [project.scripts]
@@ -46,6 +47,7 @@ aiosqlite = [
     "aiosqlite>=0.21.0",
 ]
 connector = [
+    "grpcio>=1.71.0",
     "grpcio-health-checking",
     "httpx",
     "prometheus-client",
@@ -91,6 +93,8 @@ dev = [
     "jupyterlab>=4.4.3",
     "ipywidgets>=8.1.7",
     "mypy>=1.16.0",
+    "types-PyYAML",
+    "types-aiofiles",
     "kubernetes",
     "textual>=0.80",
 ]
@@ -178,3 +182,15 @@ unused-ignore-comment = "warn"
 redundant-cast = "ignore"
 possibly-unbound-attribute = "error"
 possibly-unbound-import = "error"
+
+[tool.codespell]
+# Ref: https://github.com/codespell-project/codespell#using-a-config-file
+skip = '.git,.gitignore,.gitattributes,*.lock'
+check-hidden = true
+# Ignore embedded base64 images in notebooks
+ignore-regex = '^\s*"image/\S+": ".*'
+# ot - variable for output type, nd - NamedDelivery variable,
+# crasher - legitimate word, tru - intentional truncated JSON in test,
+# Nome - timezone "America/Nome", lits - short for "literals",
+# rouge - NLP scoring metric (not "rogue")
+ignore-words-list = 'ot,nd,crasher,tru,nome,lits,rouge'

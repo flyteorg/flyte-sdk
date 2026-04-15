@@ -124,7 +124,7 @@ def mock_init_config():
 @pytest.fixture
 def mock_run_service():
     svc = MagicMock()
-    svc.ListRuns = AsyncMock(return_value=_make_list_runs_response())
+    svc.list_runs = AsyncMock(return_value=_make_list_runs_response())
     return svc
 
 
@@ -148,7 +148,7 @@ class TestRunListallFilters:
 
             list(Run.listall(**kwargs))
 
-        return mock_client.run_service.ListRuns.call_args
+        return mock_client.run_service.list_runs.call_args
 
     def test_defaults_use_config_project_and_domain(self, mock_client, mock_init_config):
         call_args = self._call_listall(mock_client, mock_init_config)
@@ -227,7 +227,7 @@ def _make_list_actions_response():
 @pytest.fixture
 def mock_action_service():
     svc = MagicMock()
-    svc.ListActions = AsyncMock(return_value=_make_list_actions_response())
+    svc.list_actions = AsyncMock(return_value=_make_list_actions_response())
     return svc
 
 
@@ -251,7 +251,7 @@ class TestActionListallFilters:
 
             list(Action.listall(for_run_name="run-abc", **kwargs))
 
-        return mock_client.run_service.ListActions.call_args
+        return mock_client.run_service.list_actions.call_args
 
     def test_created_at_filter_is_sent(self, mock_client_action, mock_init_config):
         after = datetime(2024, 3, 1, tzinfo=timezone.utc)
