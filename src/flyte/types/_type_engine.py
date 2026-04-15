@@ -1664,7 +1664,7 @@ class ListTransformer(TypeTransformer[T]):
             raise ValueError(f"Type of Generic List type is not supported, {e}")
 
     async def to_literal(self, python_val: T, python_type: Type[T], expected: LiteralType) -> Literal:
-        if type(python_val) is not list:
+        if not isinstance(python_val, list):
             raise TypeTransformerFailedError("Expected a list")
 
         t = self.get_sub_type(python_type)
