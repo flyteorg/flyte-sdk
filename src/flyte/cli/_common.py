@@ -404,7 +404,12 @@ def _table_format(table: Table, vals: Iterable[Any]) -> Table:
         if headers is None:
             headers = [k for k, _ in o]
             for h in headers:
-                table.add_column(h.capitalize(), no_wrap=True if "name" in h.casefold() else False)
+                if "name" in h.casefold():
+                    # Keep name/identifier columns on a single line for readability,
+                    # since they are often used to copy-paste or reference specific resources
+                    table.add_column(h.capitalize(), no_wrap=True)
+                else:
+                    table.add_column(h.capitalize(), overflow="fold")
         table.add_row(*[str(v) for _, v in o])
     return table
 
@@ -457,7 +462,7 @@ def get_console() -> Console:
     """
     Get a console that is configured to use colors if the terminal supports it.
     """
-    return Console(color_system="auto", force_terminal=True, width=120)
+    return Console(color_system="auto", force_terminal=True)
 
 
 def cli_status(output_format: OutputFormat, message: str, spinner: str = "dots"):

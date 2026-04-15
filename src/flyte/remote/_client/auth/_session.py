@@ -83,10 +83,22 @@ def _bootstrap_ssl_from_server(endpoint: str) -> bytes:
     ctx.set_verify(SSL.VERIFY_NONE, lambda *args: True)
 
     sock = socket.create_connection(server_address, timeout=10)
-    conn = SSL.Connection(ctx, sock)
-    conn.set_tlsext_host_name(server_address[0].encode())
-    conn.set_connect_state()
+    # create_connection with a timeout sets O_NONBLOCK on the fd. pyOpenSSL's
+    # do_handshake() operates directly on the fd and raises WantReadError /
+    # WantWriteError when it sees EAGAIN. settimeout(None) restores blocking
+    # mode to avoid this. A positive timeout (e.g. settimeout(30)) won't help
+    # because CPython still sets O_NONBLOCK for any timeout > 0.
+    #
+    # This means the TLS handshake has no deadline, but that is acceptable:
+    # the 10s TCP connect timeout above already proves the peer is reachable,
+    # this is a one-time bootstrap path (not a hot path), and it runs inside
+    # asyncio.to_thread() so a stall won't block the event loop.
+    sock.settimeout(None)
+    conn = None
     try:
+        conn = SSL.Connection(ctx, sock)
+        conn.set_tlsext_host_name(server_address[0].encode())
+        conn.set_connect_state()
         conn.do_handshake()
 
         chain = conn.get_peer_cert_chain()
@@ -97,7 +109,10 @@ def _bootstrap_ssl_from_server(endpoint: str) -> bytes:
         logger.debug(f"Retrieved certificate chain ({len(pem_certs)} certs) from {server_address}")
         return b"\n".join(pem_certs)
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
+        else:
+            sock.close()
 
 
 async def _resolve_tls_ca_cert(
