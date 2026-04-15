@@ -88,6 +88,7 @@ jobs:
           - "plugins/anthropic"
           - "plugins/gemini"
           - "plugins/mlflow"
+          - "plugins/papermill"
           - "plugins/pandera"
           - "plugins/omegaconf"
         include:
