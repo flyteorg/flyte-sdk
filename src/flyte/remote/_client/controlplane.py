@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import asyncio
 from urllib.parse import urlparse
 
+from async_lru import alru_cache
 from flyteidl2.app.app_service_connect import AppServiceClient
 from flyteidl2.auth.identity_connect import IdentityServiceClient
 from flyteidl2.cluster import payload_pb2 as cluster_payload_pb2
@@ -186,17 +186,15 @@ class ClusterAwareDataProxy:
         self._cluster_service = cluster_service
         self._session_config = session_config
         self._default_client = default_client
-        self._cache: dict[bytes, asyncio.Future[DataProxyService]] = {}
 
     async def create_upload_location(
         self, request: dataproxy_service_pb2.CreateUploadLocationRequest
     ) -> dataproxy_service_pb2.CreateUploadLocationResponse:
-        project_id = identifier_pb2.ProjectIdentifier(
-            name=request.project, domain=request.domain, organization=request.org
-        )
         client = await self._resolve(
-            cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_CREATE_UPLOAD_LOCATION,
-            project_id,
+            int(cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_CREATE_UPLOAD_LOCATION),
+            request.org,
+            request.project,
+            request.domain,
         )
         return await client.create_upload_location(request)
 
@@ -206,56 +204,33 @@ class ClusterAwareDataProxy:
         which = request.WhichOneof("id")
         if which == "run_id":
             # SelectClusterRequest.resource doesn't include RunIdentifier; route by project.
-            project_id = identifier_pb2.ProjectIdentifier(
-                name=request.run_id.project,
-                domain=request.run_id.domain,
-                organization=request.run_id.org,
-            )
+            org, project, domain = request.run_id.org, request.run_id.project, request.run_id.domain
         elif which == "project_id":
-            project_id = request.project_id
+            org = request.project_id.organization
+            project = request.project_id.name
+            domain = request.project_id.domain
         else:
             raise ValueError("UploadInputsRequest must set either run_id or project_id")
         client = await self._resolve(
-            cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_UPLOAD_INPUTS,
-            project_id,
+            int(cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_UPLOAD_INPUTS),
+            org,
+            project,
+            domain,
         )
         return await client.upload_inputs(request)
 
-    async def _resolve(
-        self,
-        operation: cluster_payload_pb2.SelectClusterRequest.Operation,
-        project_id: identifier_pb2.ProjectIdentifier,
-    ) -> DataProxyService:
-        cache_key = int(operation).to_bytes(4, "little") + project_id.SerializeToString(deterministic=True)
-        # Single-threaded asyncio: between this lookup and the assignment below
-        # nothing else runs. Concurrent callers either see an existing future
-        # to await on, or end up storing the same brand-new future.
-        existing = self._cache.get(cache_key)
-        if existing is not None:
-            return await existing
+    @alru_cache
+    async def _resolve(self, operation: int, org: str, project: str, domain: str) -> DataProxyService:
+        """Cached SelectCluster lookup + per-cluster DataProxy client construction.
 
-        loop = asyncio.get_running_loop()
-        fut: asyncio.Future[DataProxyService] = loop.create_future()
-        self._cache[cache_key] = fut
-        try:
-            client = await self._build_client(operation, project_id)
-        except BaseException as e:
-            # Drop the failed entry so a later call can retry SelectCluster.
-            self._cache.pop(cache_key, None)
-            fut.set_exception(e)
-            raise
-        fut.set_result(client)
-        return client
-
-    async def _build_client(
-        self,
-        operation: cluster_payload_pb2.SelectClusterRequest.Operation,
-        project_id: identifier_pb2.ProjectIdentifier,
-    ) -> DataProxyService:
+        @alru_cache deduplicates concurrent callers (in-flight requests share one
+        coroutine) and only caches successful results, so a transient failure
+        won't poison the entry.
+        """
         from flyte._logging import logger
 
         req = cluster_payload_pb2.SelectClusterRequest(operation=operation)
-        req.project_id.CopyFrom(project_id)
+        req.project_id.CopyFrom(identifier_pb2.ProjectIdentifier(name=project, domain=domain, organization=org))
         try:
             resp = await self._cluster_service.select_cluster(req)
         except Exception as e:
