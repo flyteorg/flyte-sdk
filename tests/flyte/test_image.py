@@ -784,3 +784,65 @@ def test_get_base_registry_returns_default_for_empty_endpoint():
     mock_config.client.endpoint = ""
     with patch("flyte._initialize._get_init_config", return_value=mock_config):
         assert _get_base_registry() == _BASE_REGISTRY
+
+
+def test_released_default_image_is_not_cloned():
+    """A released, unmodified default image should have _is_cloned=False so the SDK skips building it."""
+    with patch("flyte._version.__version__", "1.2.3"):
+        image = Image.from_debian_base(python_version=(3, 12))
+    assert image._is_cloned is False
+
+
+def test_dev_default_image_is_cloned():
+    """A dev-version default image should have _is_cloned=True so the SDK builds it."""
+    with patch("flyte._version.__version__", "1.2.3.dev0+abc"):
+        image = Image.from_debian_base(python_version=(3, 12))
+    assert image._is_cloned is True
+
+
+def test_with_pip_packages_marks_image_as_cloned():
+    """Adding pip packages to a default image should flip _is_cloned to True."""
+    with patch("flyte._version.__version__", "1.2.3"):
+        image = Image.from_debian_base(
+            python_version=(3, 12),
+            registry="my-registry.example.com",
+            name="my-image",
+        )
+        assert image._is_cloned is True  # registry override already triggers clone
+        modified = image.with_pip_packages("requests")
+    assert modified._is_cloned is True
+
+
+def test_clone_marks_image_as_cloned():
+    """Explicitly calling clone() should produce an image with _is_cloned=True."""
+    image = Image.from_base("ghcr.io/example/my-image:latest")
+    assert image._is_cloned is False
+    cloned = image.clone(name="my-image")
+    assert cloned._is_cloned is True
+
+
+def test_from_debian_base_with_registry_is_cloned():
+    """Overriding the registry on from_debian_base produces a cloned image (needs build)."""
+    with patch("flyte._version.__version__", "1.2.3"):
+        image = Image.from_debian_base(python_version=(3, 12), registry="my-registry.example.com", name="my-image")
+    assert image._is_cloned is True
+
+
+def test_from_base_is_not_cloned():
+    """Image.from_base points at an existing image URI and should not be rebuilt unless modified."""
+    image = Image.from_base("my-registry.example.com/my-image:latest")
+    assert image._is_cloned is False
+
+
+def test_from_base_with_layers_is_cloned():
+    """Adding layers to a from_base image must flip _is_cloned so the SDK builds the derived image."""
+    image = Image.from_base("my-registry.example.com/my-image:latest")
+    # from_base images don't have a name, so we need to clone first to add layers.
+    cloned = image.clone(name="derived", extendable=True).with_pip_packages("requests")
+    assert cloned._is_cloned is True
+
+
+def test_from_ref_name_is_not_cloned():
+    """Image.from_ref_name is a pointer to an externally configured image and should not be rebuilt."""
+    image = Image.from_ref_name("my-ref")
+    assert image._is_cloned is False

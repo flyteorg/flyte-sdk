@@ -150,9 +150,9 @@ class ImageBuildEngine:
     @staticmethod
     @alru_cache
     async def image_exists(image: Image) -> Optional[str]:
-        if image._is_flyte_default:
-            # For flyte default images, we skip the existence check because
-            # they are built and pushed as part of flytekit releases.
+        if not image._is_cloned:
+            # Unmodified flyte default images are built and pushed as part of flyte releases,
+            # so they are guaranteed to exist — skip the existence check.
             return image.uri
         if image.name is None:
             logger.debug(f"Image {image} has no name. Skip existence check.")
