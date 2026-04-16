@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from urllib.parse import urlparse
 
 from flyteidl2.app.app_service_connect import AppServiceClient
@@ -185,7 +186,7 @@ class ClusterAwareDataProxy:
         self._cluster_service = cluster_service
         self._session_config = session_config
         self._default_client = default_client
-        self._cache: dict[bytes, DataProxyService] = {}
+        self._cache: dict[bytes, asyncio.Future[DataProxyService]] = {}
 
     async def create_upload_location(
         self, request: dataproxy_service_pb2.CreateUploadLocationRequest
@@ -225,12 +226,33 @@ class ClusterAwareDataProxy:
         operation: cluster_payload_pb2.SelectClusterRequest.Operation,
         project_id: identifier_pb2.ProjectIdentifier,
     ) -> DataProxyService:
-        from flyte._logging import logger
-
         cache_key = int(operation).to_bytes(4, "little") + project_id.SerializeToString(deterministic=True)
-        cached = self._cache.get(cache_key)
-        if cached is not None:
-            return cached
+        # Single-threaded asyncio: between this lookup and the assignment below
+        # nothing else runs. Concurrent callers either see an existing future
+        # to await on, or end up storing the same brand-new future.
+        existing = self._cache.get(cache_key)
+        if existing is not None:
+            return await existing
+
+        loop = asyncio.get_running_loop()
+        fut: asyncio.Future[DataProxyService] = loop.create_future()
+        self._cache[cache_key] = fut
+        try:
+            client = await self._build_client(operation, project_id)
+        except BaseException as e:
+            # Drop the failed entry so a later call can retry SelectCluster.
+            self._cache.pop(cache_key, None)
+            fut.set_exception(e)
+            raise
+        fut.set_result(client)
+        return client
+
+    async def _build_client(
+        self,
+        operation: cluster_payload_pb2.SelectClusterRequest.Operation,
+        project_id: identifier_pb2.ProjectIdentifier,
+    ) -> DataProxyService:
+        from flyte._logging import logger
 
         req = cluster_payload_pb2.SelectClusterRequest(operation=operation)
         req.project_id.CopyFrom(project_id)
@@ -241,7 +263,6 @@ class ClusterAwareDataProxy:
 
         endpoint = resp.cluster_endpoint
         if not endpoint or endpoint == self._session_config.endpoint:
-            self._cache[cache_key] = self._default_client
             return self._default_client
 
         try:
@@ -254,9 +275,7 @@ class ClusterAwareDataProxy:
             raise RuntimeError(f"Failed to create session for cluster endpoint '{endpoint}': {e}") from e
 
         logger.debug(f"Created DataProxy client for cluster endpoint: {endpoint}")
-        client = DataProxyServiceClient(**new_cfg.connect_kwargs())
-        self._cache[cache_key] = client
-        return client
+        return DataProxyServiceClient(**new_cfg.connect_kwargs())
 
 
 class ClientSet:

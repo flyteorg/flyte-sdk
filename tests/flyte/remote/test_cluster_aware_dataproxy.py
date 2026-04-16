@@ -1,5 +1,6 @@
 """Tests for the ClusterAwareDataProxy wrapper in flyte.remote._client.controlplane."""
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -152,3 +153,51 @@ async def test_remote_cluster_endpoint_creates_new_client():
     assert cluster_service.select_cluster.await_count == 1
     assert new_client_inst.create_upload_location.await_count == 2
     default_client.create_upload_location.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_resolve_for_same_key_is_deduplicated():
+    """Concurrent calls for the same (operation, project) issue one SelectCluster."""
+    wrapper, cluster_service, default_client = _make_wrapper()
+
+    gate = asyncio.Event()
+    call_count = 0
+
+    async def slow_select(req):
+        nonlocal call_count
+        call_count += 1
+        await gate.wait()
+        return cluster_payload_pb2.SelectClusterResponse(cluster_endpoint="")
+
+    cluster_service.select_cluster = AsyncMock(side_effect=slow_select)
+
+    req = dataproxy_service_pb2.CreateUploadLocationRequest(project="p", domain="d", org="o")
+    tasks = [asyncio.create_task(wrapper.create_upload_location(req)) for _ in range(10)]
+    # Let all callers reach the await on select_cluster.
+    await asyncio.sleep(0)
+    gate.set()
+    await asyncio.gather(*tasks)
+
+    assert call_count == 1
+    assert cluster_service.select_cluster.await_count == 1
+    assert default_client.create_upload_location.await_count == 10
+
+
+@pytest.mark.asyncio
+async def test_failed_resolve_is_evicted_so_retries_can_succeed():
+    wrapper, cluster_service, default_client = _make_wrapper()
+    cluster_service.select_cluster = AsyncMock(
+        side_effect=[
+            RuntimeError("transient"),
+            cluster_payload_pb2.SelectClusterResponse(cluster_endpoint=""),
+        ]
+    )
+
+    req = dataproxy_service_pb2.CreateUploadLocationRequest(project="p", domain="d", org="o")
+    with pytest.raises(RuntimeError):
+        await wrapper.create_upload_location(req)
+    # Second call should retry SelectCluster, not return the cached failure.
+    await wrapper.create_upload_location(req)
+
+    assert cluster_service.select_cluster.await_count == 2
+    assert default_client.create_upload_location.await_count == 1
