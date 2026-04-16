@@ -2,6 +2,7 @@ from typing import AsyncIterator, Protocol
 
 from flyteidl2.app import app_payload_pb2
 from flyteidl2.auth import identity_pb2
+from flyteidl2.cluster import payload_pb2 as cluster_payload_pb2
 from flyteidl2.dataproxy import dataproxy_service_pb2
 from flyteidl2.project import project_service_pb2
 from flyteidl2.secret import payload_pb2
@@ -132,6 +133,12 @@ class SecretService(Protocol):
 
 class IdentityService(Protocol):
     async def user_info(self, request: identity_pb2.UserInfoRequest) -> identity_pb2.UserInfoResponse: ...
+
+
+class ClusterService(Protocol):
+    async def select_cluster(
+        self, request: cluster_payload_pb2.SelectClusterRequest
+    ) -> cluster_payload_pb2.SelectClusterResponse: ...
 
 
 class TriggerService(Protocol):
