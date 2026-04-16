@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from typing import AsyncIterator
 from urllib.parse import urlparse
 
 from async_lru import alru_cache
@@ -219,22 +220,66 @@ class ClusterAwareDataProxy:
         )
         return await client.upload_inputs(request)
 
+    def tail_logs(
+        self, request: dataproxy_service_pb2.TailLogsRequest
+    ) -> AsyncIterator[dataproxy_service_pb2.TailLogsResponse]:
+        return self._tail_logs(request)
+
+    async def _tail_logs(
+        self, request: dataproxy_service_pb2.TailLogsRequest
+    ) -> AsyncIterator[dataproxy_service_pb2.TailLogsResponse]:
+        run = request.action_id.run
+        client = await self._resolve_by_action(
+            int(cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_TAIL_LOGS),
+            run.org,
+            run.project,
+            run.domain,
+            run.name,
+            request.action_id.name,
+        )
+        async for resp in client.tail_logs(request):
+            yield resp
+
     @alru_cache
     async def _resolve(self, operation: int, org: str, project: str, domain: str) -> DataProxyService:
-        """Cached SelectCluster lookup + per-cluster DataProxy client construction.
+        """Cached SelectCluster lookup, routed by ProjectIdentifier."""
+        req = cluster_payload_pb2.SelectClusterRequest(operation=operation)
+        req.project_id.CopyFrom(identifier_pb2.ProjectIdentifier(name=project, domain=domain, organization=org))
+        return await self._select_and_build(req)
 
-        @alru_cache deduplicates concurrent callers (in-flight requests share one
-        coroutine) and only caches successful results, so a transient failure
-        won't poison the entry.
+    @alru_cache
+    async def _resolve_by_action(
+        self,
+        operation: int,
+        org: str,
+        project: str,
+        domain: str,
+        run_name: str,
+        action_name: str,
+    ) -> DataProxyService:
+        """Cached SelectCluster lookup, routed by ActionIdentifier."""
+        req = cluster_payload_pb2.SelectClusterRequest(operation=operation)
+        req.action_id.CopyFrom(
+            identifier_pb2.ActionIdentifier(
+                run=identifier_pb2.RunIdentifier(org=org, project=project, domain=domain, name=run_name),
+                name=action_name,
+            )
+        )
+        return await self._select_and_build(req)
+
+    async def _select_and_build(self, req: cluster_payload_pb2.SelectClusterRequest) -> DataProxyService:
+        """SelectCluster + build the per-cluster DataProxy client.
+
+        Wrapped by the @alru_cache resolvers above; @alru_cache deduplicates
+        concurrent callers and only caches successful results, so a transient
+        failure won't poison the entry.
         """
         from flyte._logging import logger
 
-        req = cluster_payload_pb2.SelectClusterRequest(operation=operation)
-        req.project_id.CopyFrom(identifier_pb2.ProjectIdentifier(name=project, domain=domain, organization=org))
         try:
             resp = await self._cluster_service.select_cluster(req)
         except Exception as e:
-            raise RuntimeError(f"SelectCluster failed for operation={operation}: {e}") from e
+            raise RuntimeError(f"SelectCluster failed for operation={req.operation}: {e}") from e
 
         endpoint = resp.cluster_endpoint
         if not endpoint or endpoint == self._session_config.endpoint:
@@ -333,6 +378,10 @@ class ClientSet:
     @property
     def trigger_service(self) -> TriggerService:
         return self._trigger_service
+
+    @property
+    def cluster_service(self) -> ClusterService:
+        return self._cluster_service
 
     @property
     def endpoint(self) -> str:
