@@ -341,10 +341,6 @@ class ClientSet:
         return self._trigger_service
 
     @property
-    def cluster_service(self) -> ClusterService:
-        return self._cluster_service
-
-    @property
     def endpoint(self) -> str:
         return self._session_config.endpoint
 
