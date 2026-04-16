@@ -24,12 +24,13 @@ from flyte._task import F, P, R, TaskTemplate
 from flyte.models import (
     ActionID,
     ActionPhase,
-    Checkpoints,
+    CheckpointPaths,
     CodeBundle,
     RawDataPath,
     SerializationContext,
     TaskContext,
 )
+from flyte.storage import join as storage_join
 from flyte.syncify import syncify
 
 from ._constants import FLYTE_SYS_PATH
@@ -388,12 +389,25 @@ class _Runner:
                 notification_rule_name, notification_rules = resolve_notification_settings(self._notifications)
 
             try:
+                from flyteidl2.dataproxy import dataproxy_service_pb2
+
+                upload_req = dataproxy_service_pb2.UploadInputsRequest(
+                    inputs=inputs.proto_inputs,
+                    task_spec=task_spec,
+                )
+                if run_id is not None:
+                    upload_req.run_id.CopyFrom(run_id)
+                else:
+                    upload_req.project_id.CopyFrom(project_id)
+
+                upload_resp = await get_client().dataproxy_service.upload_inputs(upload_req)
+
                 resp = await get_client().run_service.create_run(
                     run_service_pb2.CreateRunRequest(
                         run_id=run_id,
                         project_id=project_id,
                         task_spec=task_spec,
-                        inputs=inputs.proto_inputs,
+                        offloaded_input_data=upload_resp.offloaded_input_data,
                         run_spec=run_pb2.RunSpec(
                             overwrite_cache=self._overwrite_cache,
                             interruptible=wrappers_pb2.BoolValue(value=self._interruptible)
@@ -555,13 +569,13 @@ class _Runner:
         raw_data_path_obj = RawDataPath(path=raw_data_path)
         checkpoint_path = f"{raw_data_path}/checkpoint"
         prev_checkpoint = f"{raw_data_path}/prev_checkpoint"
-        checkpoints = Checkpoints(checkpoint_path, prev_checkpoint)
+        checkpoint_paths = CheckpointPaths(prev_checkpoint_path=prev_checkpoint, checkpoint_path=checkpoint_path)
 
         async def _run_task() -> Tuple[Any, Optional[Exception]]:
             ctx = internal_ctx()
             tctx = TaskContext(
                 action=action,
-                checkpoints=checkpoints,
+                checkpoint_paths=checkpoint_paths,
                 code_bundle=code_bundle,
                 output_path=output_path,
                 version=version or "na",
@@ -635,11 +649,12 @@ class _Runner:
             raw_data_path = RawDataPath(path=self._raw_data_path)
 
         ctx = internal_ctx()
+        rd_base = raw_data_path.path
         tctx = TaskContext(
             action=action,
-            checkpoints=Checkpoints(
-                prev_checkpoint_path=internal_ctx().raw_data.path,
-                checkpoint_path=internal_ctx().raw_data.path,
+            checkpoint_paths=CheckpointPaths(
+                prev_checkpoint_path=storage_join(rd_base, "prev_checkpoint"),
+                checkpoint_path=storage_join(rd_base, "checkpoint"),
             ),
             code_bundle=None,
             output_path=str(output_path),

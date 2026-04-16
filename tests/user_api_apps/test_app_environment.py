@@ -202,3 +202,58 @@ def test_app_environment_domain_none():
 def test_app_environment_cluster_pool():
     app = AppEnvironment(name="pool-app", image="auto", cluster_pool="gpu-pool")
     assert app.cluster_pool == "gpu-pool"
+
+
+def test_parameters_with_custom_command_string_raises():
+    with pytest.raises(ValueError, match="Cannot use 'parameters' with a custom 'command'"):
+        AppEnvironment(
+            name="bad-combo",
+            image="auto",
+            parameters=[Parameter(name="config", value="config.yaml")],
+            command="python app.py",
+        )
+
+
+def test_parameters_with_custom_command_list_raises():
+    with pytest.raises(ValueError, match="Cannot use 'parameters' with a custom 'command'"):
+        AppEnvironment(
+            name="bad-combo",
+            image="auto",
+            parameters=[Parameter(name="config", value="config.yaml")],
+            command=["python", "app.py"],
+        )
+
+
+def test_parameters_with_fserve_command_string_allowed():
+    app = AppEnvironment(
+        name="fserve-app",
+        image="auto",
+        parameters=[Parameter(name="config", value="config.yaml")],
+        command="fserve --version v1",
+    )
+    assert len(app.parameters) == 1
+
+
+def test_parameters_with_fserve_command_list_allowed():
+    app = AppEnvironment(
+        name="fserve-app",
+        image="auto",
+        parameters=[Parameter(name="config", value="config.yaml")],
+        command=["fserve", "--version", "v1"],
+    )
+    assert len(app.parameters) == 1
+
+
+def test_custom_command_without_parameters_allowed():
+    app = AppEnvironment(name="custom-cmd", image="auto", command="python app.py")
+    assert app.command == "python app.py"
+
+
+def test_parameters_without_command_allowed():
+    app = AppEnvironment(
+        name="params-only",
+        image="auto",
+        parameters=[Parameter(name="config", value="config.yaml")],
+    )
+    assert len(app.parameters) == 1
+    assert app.command is None

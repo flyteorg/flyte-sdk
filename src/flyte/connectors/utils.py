@@ -133,6 +133,7 @@ def _load_connectors(modules: List[str] | None):
             logger.warning(f"Failed to load connector '{ep.name}' with error: {e}")
 
     if modules:
+        logger.info(f"Loading additional modules: {modules}")
         for m in modules:
             importlib.import_module(m)
 

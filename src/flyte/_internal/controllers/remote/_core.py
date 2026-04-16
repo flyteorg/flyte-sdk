@@ -414,7 +414,7 @@ class Controller:
                 elif action.type == "condition":
                     condition = action.condition
 
-                logger.debug(f"Attempting to launch action: {action.name}")
+                logger.debug(f"Attempting to launch action: {action.name}, actions? {bool(self._actions_service)}")
                 try:
                     if self._actions_service:
                         await self._actions_service.enqueue(

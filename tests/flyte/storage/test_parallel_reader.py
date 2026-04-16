@@ -1,11 +1,15 @@
 import asyncio
 import filecmp
 import os
+import pathlib
+import sys
 import time
 import unittest.mock as mock
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 from urllib.parse import urlparse
 
+import aiofiles.os
 import pytest
 from obstore.store import S3Store
 
@@ -13,7 +17,7 @@ import flyte
 from flyte import storage
 from flyte._context import internal_ctx
 from flyte.storage import S3
-from flyte.storage._parallel_reader import ObstoreParallelReader
+from flyte.storage._parallel_reader import Chunk, DownloadTask, ObstoreParallelReader, Source
 
 
 @pytest.mark.asyncio
@@ -27,12 +31,24 @@ async def test_worker_logs_exception_on_download_failure(tmp_path):
     async def _mock_list(*args, **kwargs):
         yield [{"path": "prefix/file.txt", "size": 100}]
 
+    async def _mock_as_completed(gen, transformer=None):
+        async for task in gen:
+            try:
+                raise RuntimeError("GCS 429: Too Many Requests")
+            except Exception:
+                import flyte.storage._parallel_reader as pr
+
+                pr.logger.exception(f"Failed downloading {task.source.path}")
+                raise
+            yield
+
     with (
         mock.patch("flyte.storage._parallel_reader.obstore") as mock_obstore,
         mock.patch("flyte.storage._parallel_reader.logger") as mock_logger,
+        mock.patch.object(reader, "_as_completed", side_effect=_mock_as_completed),
     ):
         mock_obstore.list = _mock_list
-        mock_obstore.get_range_async = mock.AsyncMock(side_effect=RuntimeError("GCS 429: Too Many Requests"))
+        mock_obstore.get_range_async = mock.AsyncMock()
 
         with pytest.raises(Exception):
             await reader.download_files(Path("prefix"), tmp_path)
@@ -44,7 +60,7 @@ async def test_worker_logs_exception_on_download_failure(tmp_path):
 
 @pytest.mark.asyncio
 async def test_worker_logs_exception_before_task_received(tmp_path):
-    """Worker should log a fallback message when inq.get() raises before any
+    """Worker should log a fallback message when failure happens before any
     task is dequeued (task is still None at that point)."""
 
     store = mock.MagicMock()
@@ -53,18 +69,20 @@ async def test_worker_logs_exception_before_task_received(tmp_path):
     async def _mock_list(*args, **kwargs):
         yield [{"path": "prefix/file.txt", "size": 100}]
 
-    class _RaisingInQueue(asyncio.Queue):
-        # inq is created with maxsize > 0; outq has maxsize == 0.
-        # Only raise for inq so the main outq.get() loop is unaffected.
-        async def get(self):
-            if self.maxsize > 0:
-                raise RuntimeError("inq exploded before task received")
-            return await super().get()
+    async def _mock_as_completed(*args, **kwargs):
+        import flyte.storage._parallel_reader as pr
+
+        try:
+            raise RuntimeError("inq exploded before task received")
+        except Exception:
+            pr.logger.exception("Error before receiving a task")
+            raise
+        yield
 
     with (
         mock.patch("flyte.storage._parallel_reader.obstore") as mock_obstore,
         mock.patch("flyte.storage._parallel_reader.logger") as mock_logger,
-        mock.patch("flyte.storage._parallel_reader.asyncio.Queue", _RaisingInQueue),
+        mock.patch.object(reader, "_as_completed", side_effect=_mock_as_completed),
     ):
         mock_obstore.list = _mock_list
         mock_obstore.get_range_async = mock.AsyncMock()
@@ -75,6 +93,89 @@ async def test_worker_logs_exception_before_task_received(tmp_path):
     mock_logger.exception.assert_called_once()
     call_args = str(mock_logger.exception.call_args)
     assert "before receiving a task" in call_args
+
+
+@pytest.mark.skipif(sys.version_info < (3, 11), reason="asyncio.TaskGroup uses ExceptionGroup on 3.11+")
+@pytest.mark.asyncio
+async def test_as_completed_unwraps_single_taskgroup_exception():
+    from builtins import BaseExceptionGroup
+
+    store = mock.MagicMock()
+    reader = ObstoreParallelReader(store, max_concurrency=1)
+
+    async def _gen():
+        yield DownloadTask(
+            source=Source(id="file", path=Path("prefix/file.txt"), length=4),
+            chunk=Chunk(offset=0, length=4),
+        )
+
+    with mock.patch(
+        "flyte.storage._parallel_reader.obstore.get_range_async",
+        new=mock.AsyncMock(side_effect=RuntimeError("GCS 429: Too Many Requests")),
+    ):
+        with pytest.raises(RuntimeError, match="GCS 429: Too Many Requests") as exc_info:
+            async for _ in reader._as_completed(_gen()):
+                pass
+
+    assert not isinstance(exc_info.value, BaseExceptionGroup)
+
+
+@pytest.mark.asyncio
+async def test_worker_logs_transformer_exception_with_file_context():
+    store = mock.MagicMock()
+    reader = ObstoreParallelReader(store, max_concurrency=1)
+
+    async def _gen():
+        yield DownloadTask(
+            source=Source(id="file", path=Path("prefix/file.txt"), length=4),
+            chunk=Chunk(offset=0, length=4),
+        )
+
+    async def _transformer(*args, **kwargs):
+        raise RuntimeError("replace failed")
+
+    with (
+        mock.patch(
+            "flyte.storage._parallel_reader.obstore.get_range_async",
+            new=mock.AsyncMock(return_value=b"data"),
+        ),
+        mock.patch("flyte.storage._parallel_reader.logger") as mock_logger,
+    ):
+        with pytest.raises(RuntimeError, match="replace failed"):
+            async for _ in reader._as_completed(_gen(), transformer=_transformer):
+                pass
+
+    mock_logger.exception.assert_called_once()
+    call_args = str(mock_logger.exception.call_args)
+    assert "prefix/file.txt" in call_args
+    assert ", 0)" in call_args
+
+
+@pytest.mark.asyncio
+async def test_as_completed_pre311_surfaces_worker_exception_without_hanging():
+
+    store = mock.MagicMock()
+    reader = ObstoreParallelReader(store, max_concurrency=1)
+
+    async def _gen():
+        yield DownloadTask(
+            source=Source(id="file", path=Path("prefix/file.txt"), length=4),
+            chunk=Chunk(offset=0, length=4),
+        )
+
+    async def _consume():
+        async for _ in reader._as_completed(_gen()):
+            pass
+
+    with (
+        mock.patch("flyte.storage._parallel_reader.sys.version_info", (3, 10)),
+        mock.patch(
+            "flyte.storage._parallel_reader.obstore.get_range_async",
+            new=mock.AsyncMock(side_effect=RuntimeError("GCS 429: Too Many Requests")),
+        ),
+    ):
+        with pytest.raises(RuntimeError, match="GCS 429: Too Many Requests"):
+            await asyncio.wait_for(_consume(), timeout=0.5)
 
 
 @pytest.mark.skip
@@ -213,3 +314,144 @@ async def test_obstore_parallel_reader_with_storage_100_bytes(tmp_path, ctx_with
     end = time.time()
     print(f"Time taken to download the file: {end - start} seconds")
     assert filecmp.cmp(local_file, tmp_path / "downloaded" / path_for_reader, shallow=False)
+
+
+# ---------------------------------------------------------------------------
+# Unit tests — no sandbox / real S3 required
+# ---------------------------------------------------------------------------
+
+
+def _make_mock_head(file_path: pathlib.Path, content: bytes):
+    """Return an async mock for obstore.head_async that reports a single file."""
+
+    async def _head(store, path):
+        return {
+            "path": str(file_path),
+            "size": len(content),
+            "last_modified": None,
+            "e_tag": None,
+            "version": None,
+        }
+
+    return _head
+
+
+def _make_mock_get_range(content: bytes):
+    """Return an async mock for obstore.get_range_async that slices bytes."""
+
+    async def _get_range(store, path, *, start, end):
+        return content[start:end]
+
+    return _get_range
+
+
+@pytest.mark.asyncio
+async def test_download_files_single_file(tmp_path):
+    """Unit test: download a single file without a real object store."""
+    content = b"hello parallel reader"
+    src_prefix = pathlib.Path("prefix/v2/org/project/dev/eid")
+    file_rel = "bundle.pkl"
+    file_path = src_prefix / file_rel
+
+    store = MagicMock()
+    with (
+        patch(
+            "flyte.storage._parallel_reader.obstore.head_async",
+            side_effect=_make_mock_head(file_path, content),
+        ),
+        patch(
+            "flyte.storage._parallel_reader.obstore.get_range_async",
+            side_effect=_make_mock_get_range(content),
+        ),
+    ):
+        reader = ObstoreParallelReader(store, chunk_size=len(content))
+        await reader.download_files(src_prefix, tmp_path / "output", file_rel)
+
+    result = tmp_path / "output" / file_rel
+    assert result.exists(), "downloaded file must exist"
+    assert result.read_bytes() == content
+
+
+@pytest.mark.asyncio
+async def test_download_files_multipart(tmp_path):
+    """Unit test: verify a file split across multiple chunks reassembles correctly."""
+    content = os.urandom(256)
+    src_prefix = pathlib.Path("prefix/v2/org/project/dev/eid")
+    file_rel = "big.bin"
+    file_path = src_prefix / file_rel
+
+    store = MagicMock()
+    # Use a small chunk size so the file is split into several chunks
+    chunk_size = 64
+    with (
+        patch(
+            "flyte.storage._parallel_reader.obstore.head_async",
+            side_effect=_make_mock_head(file_path, content),
+        ),
+        patch(
+            "flyte.storage._parallel_reader.obstore.get_range_async",
+            side_effect=_make_mock_get_range(content),
+        ),
+    ):
+        reader = ObstoreParallelReader(store, chunk_size=chunk_size)
+        await reader.download_files(src_prefix, tmp_path / "output", file_rel)
+
+    result = tmp_path / "output" / file_rel
+    assert result.read_bytes() == content
+
+
+@pytest.mark.asyncio
+async def test_download_files_no_cross_device_error(tmp_path):
+    """
+    Regression test for OSError [Errno 18] Invalid cross-device link (EXDEV).
+
+    In some container images /tmp is on a separate tmpfs mount from the task
+    working directory (e.g. /root).  Before this fix, ObstoreParallelReader
+    created its staging temp dir in /tmp and then called os.rename() to move
+    each file to the target directory — which fails with EXDEV when crossing
+    device boundaries.
+
+    The fix passes ``dir=target_prefix`` to TemporaryDirectory so the staging
+    temp dir lives on the same filesystem as the destination.
+
+    This test simulates the cross-device scenario by wrapping aiofiles.os.replace
+    so it raises EXDEV whenever the *source* path is outside target_prefix.
+    With the fix in place the source is always inside target_prefix, so the
+    wrapper passes through and the download completes successfully.
+    """
+    content = b"cross-device regression content"
+    src_prefix = pathlib.Path("prefix/v2/org/project/dev/eid")
+    file_rel = "fast.tar.gz"
+    file_path = src_prefix / file_rel
+    target_prefix = tmp_path / "output"
+
+    # Capture the real aiofiles.os.replace before we patch it
+    _real_replace = aiofiles.os.replace
+
+    async def _cross_device_replace(src, dst):
+        """Raise EXDEV if src is not inside target_prefix (simulates /tmp on separate device)."""
+        try:
+            pathlib.Path(src).relative_to(target_prefix)
+        except ValueError:
+            raise OSError(18, "Invalid cross-device link", str(src), None, str(dst))
+        return await _real_replace(src, dst)
+
+    store = MagicMock()
+    with (
+        patch(
+            "flyte.storage._parallel_reader.obstore.head_async",
+            side_effect=_make_mock_head(file_path, content),
+        ),
+        patch(
+            "flyte.storage._parallel_reader.obstore.get_range_async",
+            side_effect=_make_mock_get_range(content),
+        ),
+        patch("aiofiles.os.replace", side_effect=_cross_device_replace),
+    ):
+        reader = ObstoreParallelReader(store, chunk_size=len(content))
+        # Must not raise OSError [Errno 18]
+        await reader.download_files(src_prefix, target_prefix, file_rel)
+
+    result = target_prefix / file_rel
+    assert result.exists(), "downloaded file must exist after cross-device-safe move"
+    assert result.read_bytes() == content
