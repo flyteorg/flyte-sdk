@@ -181,26 +181,18 @@ class TriggerService(Protocol):
 
 
 class SettingsService(Protocol):
-    async def GetSettings(
+    async def get_settings(
         self, request: settings_service_pb2.GetSettingsRequest
     ) -> settings_service_pb2.GetSettingsResponse: ...
 
-    async def GetSettingsForEdit(
+    async def get_settings_for_edit(
         self, request: settings_service_pb2.GetSettingsForEditRequest
     ) -> settings_service_pb2.GetSettingsForEditResponse: ...
 
-    async def GetSettingsForEditRaw(
-        self, request: settings_service_pb2.GetSettingsForEditRawRequest
-    ) -> settings_service_pb2.GetSettingsForEditRawResponse: ...
-
-    async def CreateSettings(
+    async def create_settings(
         self, request: settings_service_pb2.CreateSettingsRequest
     ) -> settings_service_pb2.CreateSettingsResponse: ...
 
-    async def UpdateSettings(
+    async def update_settings(
         self, request: settings_service_pb2.UpdateSettingsRequest
     ) -> settings_service_pb2.UpdateSettingsResponse: ...
-
-    async def UpdateSettingsRaw(
-        self, request: settings_service_pb2.UpdateSettingsRawRequest
-    ) -> settings_service_pb2.UpdateSettingsRawResponse: ...
