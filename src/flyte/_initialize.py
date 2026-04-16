@@ -71,21 +71,13 @@ async def _initialize_client(
     client_credentials_secret: str | None = None,
     rpc_retries: int = 3,
     http_proxy_url: str | None = None,
+    disable_keyring: bool = False,
 ) -> ClientSet:
     """
     Initialize the client based on the execution mode.
     :return: The initialized client
     """
     from flyte.remote._client.controlplane import ClientSet
-
-    # https://grpc.io/docs/guides/keepalive/#keepalive-configuration-specification
-    channel_options = [
-        ("grpc.keepalive_permit_without_calls", 1),
-        ("grpc.keepalive_time_ms", 30000),  # Send keepalive ping every 30 seconds
-        ("grpc.keepalive_timeout_ms", 10000),  # Wait 10 seconds for keepalive response
-        ("grpc.http2.max_pings_without_data", 0),  # Allow unlimited pings without data
-        ("grpc.http2.min_ping_interval_without_data_ms", 30000),  # Min 30s between pings
-    ]
 
     if endpoint and api_key is None:
         return await ClientSet.for_endpoint(
@@ -102,7 +94,7 @@ async def _initialize_client(
             client_config=client_config,
             rpc_retries=rpc_retries,
             http_proxy_url=http_proxy_url,
-            grpc_options=channel_options,
+            disable_keyring=disable_keyring,
         )
     elif api_key:
         return await ClientSet.for_api_key(
@@ -119,7 +111,7 @@ async def _initialize_client(
             client_config=client_config,
             rpc_retries=rpc_retries,
             http_proxy_url=http_proxy_url,
-            grpc_options=channel_options,
+            disable_keyring=disable_keyring,
         )
 
     raise InitializationError(
@@ -156,6 +148,7 @@ async def init(
     auth_client_config: ClientConfig | None = None,
     rpc_retries: int = 3,
     http_proxy_url: str | None = None,
+    disable_keyring: bool = False,
     storage: Storage | None = None,
     batch_size: int = 1000,
     image_builder: ImageBuildEngine.ImageBuilderType = "local",
@@ -238,6 +231,7 @@ async def init(
                 client_config=auth_client_config,
                 rpc_retries=rpc_retries,
                 http_proxy_url=http_proxy_url,
+                disable_keyring=disable_keyring,
             )
 
         if not root_dir:
@@ -343,6 +337,7 @@ async def init_from_config(
         proxy_command=cfg.platform.proxy_command,
         client_id=cfg.platform.client_id,
         client_credentials_secret=cfg.platform.client_credentials_secret,
+        disable_keyring=cfg.platform.disable_keyring,
         root_dir=root_dir,
         log_level=log_level,
         log_format=log_format,

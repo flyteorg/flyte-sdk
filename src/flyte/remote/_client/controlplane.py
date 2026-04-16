@@ -1,44 +1,38 @@
 from __future__ import annotations
 
-import os
+from typing import AsyncIterator
 from urllib.parse import urlparse
 
-# Set environment variables for gRPC, this reduces log spew and avoids unnecessary warnings
-# before importing grpc
-if "GRPC_VERBOSITY" not in os.environ:
-    os.environ["GRPC_VERBOSITY"] = "ERROR"
-    os.environ["GRPC_CPP_MIN_LOG_LEVEL"] = "ERROR"
-    # Disable fork support (stops "skipping fork() handlers")
-    os.environ["GRPC_ENABLE_FORK_SUPPORT"] = "0"
-    # Reduce absl/glog verbosity
-    os.environ["GLOG_minloglevel"] = "2"
-    os.environ["ABSL_LOG"] = "0"
-#### Has to be before grpc
-
-import grpc
-from flyteidl2.app import app_service_pb2_grpc
-from flyteidl2.auth import identity_pb2_grpc
-from flyteidl2.dataproxy import dataproxy_service_pb2_grpc
-from flyteidl2.org import settings_service_pb2_grpc
-from flyteidl2.project import project_service_pb2_grpc
-from flyteidl2.secret import secret_pb2_grpc
-from flyteidl2.task import task_service_pb2_grpc
-from flyteidl2.trigger import trigger_service_pb2_grpc
-from flyteidl2.workflow import run_logs_service_pb2_grpc, run_service_pb2_grpc
+from async_lru import alru_cache
+from flyteidl2.app.app_service_connect import AppServiceClient
+from flyteidl2.auth.identity_connect import IdentityServiceClient
+from flyteidl2.cluster import payload_pb2 as cluster_payload_pb2
+from flyteidl2.cluster.service_connect import ClusterServiceClient
+from flyteidl2.common import identifier_pb2
+from flyteidl2.dataproxy import dataproxy_service_pb2
+from flyteidl2.dataproxy.dataproxy_service_connect import DataProxyServiceClient
+from flyteidl2.project.project_service_connect import ProjectServiceClient
+from flyteidl2.secret.secret_connect import SecretServiceClient
+from flyteidl2.task.task_service_connect import TaskServiceClient
+from flyteidl2.trigger.trigger_service_connect import TriggerServiceClient
+from flyteidl2.workflow.run_logs_service_connect import RunLogsServiceClient
+from flyteidl2.workflow.run_service_connect import RunServiceClient
+from flyteidl2.settings.settings_service_connect import SettingsServiceClient
 
 from ._protocols import (
     AppService,
+    ClusterService,
     DataProxyService,
     IdentityService,
     ProjectDomainService,
     RunLogsService,
     RunService,
     SecretService,
-    SettingsService,
     TaskService,
     TriggerService,
+    SettingsService,
 )
-from .auth import create_channel
+from .auth._session import SessionConfig, create_session_config
 
 
 class Console:
@@ -176,54 +170,182 @@ class Console:
         return self._insecure
 
 
-class ClientSet:
+class ClusterAwareDataProxy:
+    """DataProxy client that routes each call to the correct cluster.
+
+    Implements the DataProxyService protocol. For every RPC, extracts the target
+    resource from the request, calls ClusterService.SelectCluster to discover
+    the cluster endpoint, and dispatches to a DataProxyServiceClient pointing at
+    that endpoint. Per-cluster clients are cached by (operation, resource) so
+    repeated calls against the same resource reuse the same connection.
+    """
+
     def __init__(
         self,
-        channel: grpc.aio.Channel,
-        endpoint: str,
-        insecure: bool = False,
-        **kwargs,
+        cluster_service: ClusterService,
+        session_config: SessionConfig,
+        default_client: DataProxyServiceClient,
     ):
-        self.endpoint = endpoint
-        self.insecure = insecure
-        self._channel = channel
-        self._console = Console(self.endpoint, self.insecure)
-        self._admin_client = project_service_pb2_grpc.ProjectServiceStub(channel=channel)
-        self._task_service = task_service_pb2_grpc.TaskServiceStub(channel=channel)
-        self._app_service = app_service_pb2_grpc.AppServiceStub(channel=channel)
-        self._run_service = run_service_pb2_grpc.RunServiceStub(channel=channel)
-        self._dataproxy = dataproxy_service_pb2_grpc.DataProxyServiceStub(channel=channel)
-        self._log_service = run_logs_service_pb2_grpc.RunLogsServiceStub(channel=channel)
-        self._secrets_service = secret_pb2_grpc.SecretServiceStub(channel=channel)
-        self._identity_service = identity_pb2_grpc.IdentityServiceStub(channel=channel)
-        self._trigger_service = trigger_service_pb2_grpc.TriggerServiceStub(channel=channel)
-        self._settings_service = settings_service_pb2_grpc.SettingsServiceStub(channel=channel)
+        self._cluster_service = cluster_service
+        self._session_config = session_config
+        self._default_client = default_client
+
+    async def create_upload_location(
+        self, request: dataproxy_service_pb2.CreateUploadLocationRequest
+    ) -> dataproxy_service_pb2.CreateUploadLocationResponse:
+        client = await self._resolve(
+            int(cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_CREATE_UPLOAD_LOCATION),
+            request.org,
+            request.project,
+            request.domain,
+        )
+        return await client.create_upload_location(request)
+
+    async def upload_inputs(
+        self, request: dataproxy_service_pb2.UploadInputsRequest
+    ) -> dataproxy_service_pb2.UploadInputsResponse:
+        which = request.WhichOneof("id")
+        if which == "run_id":
+            # SelectClusterRequest.resource doesn't include RunIdentifier; route by project.
+            org, project, domain = request.run_id.org, request.run_id.project, request.run_id.domain
+        elif which == "project_id":
+            org = request.project_id.organization
+            project = request.project_id.name
+            domain = request.project_id.domain
+        else:
+            raise ValueError("UploadInputsRequest must set either run_id or project_id")
+        client = await self._resolve(
+            int(cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_UPLOAD_INPUTS),
+            org,
+            project,
+            domain,
+        )
+        return await client.upload_inputs(request)
+
+    async def get_action_data(
+        self, request: dataproxy_service_pb2.GetActionDataRequest
+    ) -> dataproxy_service_pb2.GetActionDataResponse:
+        run = request.action_id.run
+        client = await self._resolve_by_action(
+            int(cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_GET_ACTION_DATA),
+            run.org,
+            run.project,
+            run.domain,
+            run.name,
+            request.action_id.name,
+        )
+        return await client.get_action_data(request)
+
+    def tail_logs(
+        self, request: dataproxy_service_pb2.TailLogsRequest
+    ) -> AsyncIterator[dataproxy_service_pb2.TailLogsResponse]:
+        return self._tail_logs(request)
+
+    async def _tail_logs(
+        self, request: dataproxy_service_pb2.TailLogsRequest
+    ) -> AsyncIterator[dataproxy_service_pb2.TailLogsResponse]:
+        run = request.action_id.run
+        client = await self._resolve_by_action(
+            int(cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_TAIL_LOGS),
+            run.org,
+            run.project,
+            run.domain,
+            run.name,
+            request.action_id.name,
+        )
+        async for resp in client.tail_logs(request):
+            yield resp
+
+    @alru_cache
+    async def _resolve(self, operation: int, org: str, project: str, domain: str) -> DataProxyService:
+        """Cached SelectCluster lookup, routed by ProjectIdentifier."""
+        req = cluster_payload_pb2.SelectClusterRequest(operation=operation)
+        req.project_id.CopyFrom(identifier_pb2.ProjectIdentifier(name=project, domain=domain, organization=org))
+        return await self._select_and_build(req)
+
+    @alru_cache
+    async def _resolve_by_action(
+        self,
+        operation: int,
+        org: str,
+        project: str,
+        domain: str,
+        run_name: str,
+        action_name: str,
+    ) -> DataProxyService:
+        """Cached SelectCluster lookup, routed by ActionIdentifier."""
+        req = cluster_payload_pb2.SelectClusterRequest(operation=operation)
+        req.action_id.CopyFrom(
+            identifier_pb2.ActionIdentifier(
+                run=identifier_pb2.RunIdentifier(org=org, project=project, domain=domain, name=run_name),
+                name=action_name,
+            )
+        )
+        return await self._select_and_build(req)
+
+    async def _select_and_build(self, req: cluster_payload_pb2.SelectClusterRequest) -> DataProxyService:
+        """SelectCluster + build the per-cluster DataProxy client.
+
+        Wrapped by the @alru_cache resolvers above; @alru_cache deduplicates
+        concurrent callers and only caches successful results, so a transient
+        failure won't poison the entry.
+        """
+        from flyte._logging import logger
+
+        try:
+            resp = await self._cluster_service.select_cluster(req)
+        except Exception as e:
+            raise RuntimeError(f"SelectCluster failed for operation={req.operation}: {e}") from e
+
+        endpoint = resp.cluster_endpoint
+        if not endpoint or endpoint == self._session_config.endpoint:
+            return self._default_client
+
+        try:
+            new_cfg = await create_session_config(
+                endpoint,
+                insecure=self._session_config.insecure,
+                insecure_skip_verify=self._session_config.insecure_skip_verify,
+            )
+        except Exception as e:
+            raise RuntimeError(f"Failed to create session for cluster endpoint '{endpoint}': {e}") from e
+
+        logger.debug(f"Created DataProxy client for cluster endpoint: {endpoint}")
+        return DataProxyServiceClient(**new_cfg.connect_kwargs())
+
+
+class ClientSet:
+    def __init__(self, session_cfg: SessionConfig):
+        self._console = Console(session_cfg.endpoint, session_cfg.insecure)
+        self._session_config = session_cfg
+        shared = session_cfg.connect_kwargs()
+        self._admin_client = ProjectServiceClient(**shared)
+        self._task_service = TaskServiceClient(**shared)
+        self._app_service = AppServiceClient(**shared)
+        self._run_service = RunServiceClient(**shared)
+        self._log_service = RunLogsServiceClient(**shared)
+        self._secrets_service = SecretServiceClient(**shared)
+        self._identity_service = IdentityServiceClient(**shared)
+        self._trigger_service = TriggerServiceClient(**shared)
+        self._cluster_service = ClusterServiceClient(**shared)
+        self._settings_service = SettingsServiceClient(**shared)
+        self._dataproxy = ClusterAwareDataProxy(
+            cluster_service=self._cluster_service,
+            session_config=session_cfg,
+            default_client=DataProxyServiceClient(**shared),
+        )
 
     @classmethod
     async def for_endpoint(cls, endpoint: str, *, insecure: bool = False, **kwargs) -> ClientSet:
         rpc_retries = kwargs.pop("rpc_retries", None)
-        return cls(
-            await create_channel(endpoint, None, insecure=insecure, rpc_retries=rpc_retries, **kwargs),
-            endpoint,
-            insecure=insecure,
-            **kwargs,
-        )
+        session_cfg = await create_session_config(endpoint, None, insecure=insecure, rpc_retries=rpc_retries, **kwargs)
+        return cls(session_cfg)
 
     @classmethod
     async def for_api_key(cls, api_key: str, *, insecure: bool = False, **kwargs) -> ClientSet:
-        from flyte.remote._client.auth._auth_utils import decode_api_key
-
-        # Parsing the API key is done in create_channel, but cleaner to redo it here rather than getting create_channel
-        # to return the endpoint
-        endpoint, _, _, _ = decode_api_key(api_key)
-
         rpc_retries = kwargs.pop("rpc_retries", None)
-        return cls(
-            await create_channel(None, api_key, insecure=insecure, rpc_retries=rpc_retries, **kwargs),
-            endpoint,
-            insecure=insecure,
-            **kwargs,
-        )
+        session_cfg = await create_session_config(None, api_key, insecure=insecure, rpc_retries=rpc_retries, **kwargs)
+        return cls(session_cfg)
 
     @classmethod
     async def for_serverless(cls) -> ClientSet:
@@ -251,6 +373,11 @@ class ClientSet:
 
     @property
     def dataproxy_service(self) -> DataProxyService:
+        """Cluster-aware DataProxy client.
+
+        Each call routes to the cluster selected by ClusterService.SelectCluster
+        for the target resource, with per-cluster clients cached.
+        """
         return self._dataproxy
 
     @property
@@ -270,8 +397,25 @@ class ClientSet:
         return self._trigger_service
 
     @property
+    def cluster_service(self) -> ClusterService:
+        return self._cluster_service
+
+    @property
     def settings_service(self) -> SettingsService:
         return self._settings_service
+
+    @property
+    def endpoint(self) -> str:
+        return self._session_config.endpoint
+
+    @property
+    def session_config(self) -> SessionConfig:
+        """The session configuration used by this client.
+
+        Useful for external packages that need to create their own ConnectRPC
+        service clients sharing the same transport and auth interceptors.
+        """
+        return self._session_config
 
     @property
     def console(self) -> Console:
@@ -290,5 +434,3 @@ class ClientSet:
         """
         return self._console
 
-    async def close(self, grace: float | None = None):
-        return await self._channel.close(grace=grace)

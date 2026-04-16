@@ -5,8 +5,9 @@ import functools
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Callable, Coroutine, Dict, Iterator, Literal, Optional, Tuple, Union, cast
 
-import grpc
 import rich.repr
+from connectrpc.code import Code
+from connectrpc.errors import ConnectError
 from flyteidl2.common import identifier_pb2, list_pb2
 from flyteidl2.core import literals_pb2
 from flyteidl2.task import task_definition_pb2, task_service_pb2
@@ -165,14 +166,14 @@ class TaskDetails(ToJSONMixin):
                 version=_version,
             )
             try:
-                resp = await get_client().task_service.GetTaskDetails(
+                resp = await get_client().task_service.get_task_details(
                     task_service_pb2.GetTaskDetailsRequest(
                         task_id=task_id,
                     )
                 )
                 return cls(resp.details)
-            except grpc.aio.AioRpcError as err:
-                if err.code() == grpc.StatusCode.NOT_FOUND:
+            except ConnectError as err:
+                if err.code == Code.NOT_FOUND:
                     raise flyte.errors.RemoteTaskNotFoundError(
                         f"Task {name}, version {_version} not found in {project} {domain}."
                     )
@@ -442,6 +443,14 @@ class Task(ToJSONMixin):
         return self.pb2.task_id.version
 
     @property
+    def entrypoint(self) -> bool:
+        """
+        Whether this task is marked as an entrypoint. Not populated in listing responses;
+        fetch ``TaskDetails`` to read the authoritative value from the task template.
+        """
+        return False
+
+    @property
     def url(self) -> str:
         """
         Get the console URL for viewing the task.
@@ -488,6 +497,7 @@ class Task(ToJSONMixin):
         domain: str | None = None,
         sort_by: Tuple[str, Literal["asc", "desc"]] | None = None,
         limit: int = 100,
+        entrypoint: bool | None = None,
     ) -> Union[AsyncIterator[Task], Iterator[Task]]:
         """
         Get all runs for the current project and domain.
@@ -498,6 +508,7 @@ class Task(ToJSONMixin):
         :param domain: The domain to filter tasks by. If None, the current domain will be used.
         :param sort_by: The sorting criteria for the project list, in the format (field, order).
         :param limit: The maximum number of tasks to return.
+        :param entrypoint: If True, only entrypoint tasks will be returned.
         :return: An iterator of runs.
         """
         ensure_client()
@@ -525,12 +536,15 @@ class Task(ToJSONMixin):
                     values=[f"{by_task_env}."],
                 )
             )
+        known_filters = []
+        if entrypoint is not None:
+            known_filters.append(task_service_pb2.ListTasksRequest.KnownFilter(is_entrypoint=entrypoint))
         original_limit = limit
         if limit > cfg.batch_size:
             limit = cfg.batch_size
         retrieved = 0
         while True:
-            resp = await get_client().task_service.ListTasks(
+            resp = await get_client().task_service.list_tasks(
                 task_service_pb2.ListTasksRequest(
                     org=cfg.org,
                     project_id=identifier_pb2.ProjectIdentifier(
@@ -544,6 +558,7 @@ class Task(ToJSONMixin):
                         limit=limit,
                         token=token,
                     ),
+                    known_filters=known_filters,
                 )
             )
             token = resp.token

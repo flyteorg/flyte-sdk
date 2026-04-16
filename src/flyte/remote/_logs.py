@@ -3,10 +3,11 @@ from collections import deque
 from dataclasses import dataclass
 from typing import AsyncGenerator, AsyncIterator
 
-import grpc
+from connectrpc.code import Code
+from connectrpc.errors import ConnectError
 from flyteidl2.common import identifier_pb2
+from flyteidl2.dataproxy import dataproxy_service_pb2
 from flyteidl2.logs.dataplane import payload_pb2
-from flyteidl2.workflow import run_logs_service_pb2
 from rich.console import Console
 from rich.live import Live
 from rich.panel import Panel
@@ -123,11 +124,12 @@ class Logs:
         :param attempt: The attempt number (default is 0).
         """
         ensure_client()
+        client = get_client()
         retries = 0
         while True:
             try:
-                resp = get_client().logs_service.TailLogs(
-                    run_logs_service_pb2.TailLogsRequest(action_id=action_id, attempt=attempt)
+                resp = client.dataproxy_service.tail_logs(
+                    dataproxy_service_pb2.TailLogsRequest(action_id=action_id, attempt=attempt)
                 )
                 async for log_set in resp:
                     if log_set.logs:
@@ -141,8 +143,8 @@ class Logs:
                 return
             except StopAsyncIteration:
                 return
-            except grpc.aio.AioRpcError as e:
-                if e.code() == grpc.StatusCode.NOT_FOUND:
+            except ConnectError as e:
+                if e.code == Code.NOT_FOUND:
                     retries += 1
                     logger.debug(f"Log stream not found (attempt {retries}/{retry})")
                     if retries >= retry:

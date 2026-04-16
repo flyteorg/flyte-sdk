@@ -165,6 +165,15 @@ class AppEnvironment(Environment):
         if not isinstance(self.timeouts, Timeouts):
             raise TypeError(f"Expected timeouts to be of type Timeouts, got {type(self.timeouts)}")
 
+        if self.parameters and self.command is not None:
+            cmd_head = self.command.split()[0] if isinstance(self.command, str) else self.command[0]
+            if cmd_head != "fserve":
+                raise ValueError(
+                    "Cannot use 'parameters' with a custom 'command' that doesn't start with 'fserve'. "
+                    "Parameters require the fserve runtime to be materialized. "
+                    "Use 'args' instead of 'command', or use @app_env.server to define your app process."
+                )
+
         self._validate_name()
 
         # get instantiated file to keep track of app root directory
@@ -245,6 +254,7 @@ class AppEnvironment(Environment):
             if version is None and serialize_context.code_bundle is not None:
                 version = serialize_context.code_bundle.computed_version
 
+            print("VERSION:", version)
             cmd: list[str] = [
                 "fserve",
                 "--version",
@@ -273,6 +283,9 @@ class AppEnvironment(Environment):
             if self.parameters:
                 cmd.append("--parameters")
                 cmd.append(self._serialize_parameters(parameter_overrides))
+
+            # Add raw-data-path with template variable for backend to substitute at runtime
+            cmd.extend(["--raw-data-path", "{{.rawOutputDataPrefix}}"])
 
             # Only add resolver args if _caller_frame is set and we can extract the module
             # (i.e., app was created in a module and can be found)

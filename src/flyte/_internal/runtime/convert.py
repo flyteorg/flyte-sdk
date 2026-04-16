@@ -80,7 +80,7 @@ async def convert_upload_default_inputs(
     vars = []
     literal_coros = []
     for input_name, (input_type, default_value) in interface.inputs.items():
-        if default_value and default_value is not inspect.Parameter.empty:
+        if default_value is not None and default_value is not inspect.Parameter.empty:
             lt = TypeEngine.to_literal_type(input_type)
             literal_coros.append(TypeEngine.to_literal(default_value, input_type, lt))
             vars.append((input_name, lt))
