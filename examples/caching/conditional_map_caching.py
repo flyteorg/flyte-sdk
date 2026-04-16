@@ -70,9 +70,7 @@ async def child_task(x: int) -> int:
 
 
 @env.task(cache=Cache(behavior="auto"))
-async def parent_task(
-    items: list[int], tolerate_failures: bool = False
-) -> list[int | None]:
+async def parent_task(items: list[int], tolerate_failures: bool = False) -> list[int | None]:
     """Fan out child_task across all items.
 
     When ``tolerate_failures`` is False (the default), the task raises after
@@ -85,9 +83,7 @@ async def parent_task(
     with caching disabled so that downstream tasks still receive results.
     """
     with flyte.group("child-fanout"):
-        raw = await asyncio.gather(
-            *(child_task(x) for x in items), return_exceptions=True
-        )
+        raw = await asyncio.gather(*(child_task(x) for x in items), return_exceptions=True)
 
     results: list[int | None] = []
     failures = 0
@@ -126,9 +122,7 @@ async def pipeline(items: list[int]) -> str:
         results = await parent_task(items=items)
     except Exception as e:
         print(f"Cached parent failed ({e}), retrying with failure tolerance...")
-        results = await parent_task.override(cache="disable")(
-            items=items, tolerate_failures=True
-        )
+        results = await parent_task.override(cache="disable")(items=items, tolerate_failures=True)
 
     return await downstream_task(results=results)
 
