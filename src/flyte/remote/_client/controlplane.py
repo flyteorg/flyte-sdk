@@ -220,6 +220,20 @@ class ClusterAwareDataProxy:
         )
         return await client.upload_inputs(request)
 
+    async def get_action_data(
+        self, request: dataproxy_service_pb2.GetActionDataRequest
+    ) -> dataproxy_service_pb2.GetActionDataResponse:
+        run = request.action_id.run
+        client = await self._resolve_by_action(
+            int(cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_GET_ACTION_DATA),
+            run.org,
+            run.project,
+            run.domain,
+            run.name,
+            request.action_id.name,
+        )
+        return await client.get_action_data(request)
+
     def tail_logs(
         self, request: dataproxy_service_pb2.TailLogsRequest
     ) -> AsyncIterator[dataproxy_service_pb2.TailLogsResponse]:

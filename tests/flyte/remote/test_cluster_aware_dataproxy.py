@@ -33,6 +33,7 @@ def _make_wrapper(
         yield dataproxy_service_pb2.TailLogsResponse()
 
     default_client.tail_logs = MagicMock(side_effect=_stream_one)
+    default_client.get_action_data = AsyncMock(return_value=dataproxy_service_pb2.GetActionDataResponse())
     return (
         ClusterAwareDataProxy(
             cluster_service=cluster_service,
@@ -225,3 +226,21 @@ async def test_tail_logs_routes_by_action_id():
     assert sent.WhichOneof("resource") == "action_id"
     assert sent.action_id == action_id
     default_client.tail_logs.assert_called_once_with(req)
+
+
+@pytest.mark.asyncio
+async def test_get_action_data_routes_by_action_id():
+    wrapper, cluster_service, default_client = _make_wrapper()
+    action_id = identifier_pb2.ActionIdentifier(
+        run=identifier_pb2.RunIdentifier(org="o", project="p", domain="d", name="r"),
+        name="a",
+    )
+    req = dataproxy_service_pb2.GetActionDataRequest(action_id=action_id)
+
+    await wrapper.get_action_data(req)
+
+    sent = cluster_service.select_cluster.await_args[0][0]
+    assert sent.operation == cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_GET_ACTION_DATA
+    assert sent.WhichOneof("resource") == "action_id"
+    assert sent.action_id == action_id
+    default_client.get_action_data.assert_awaited_once_with(req)
