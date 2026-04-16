@@ -13,11 +13,11 @@ from flyteidl2.dataproxy import dataproxy_service_pb2
 from flyteidl2.dataproxy.dataproxy_service_connect import DataProxyServiceClient
 from flyteidl2.project.project_service_connect import ProjectServiceClient
 from flyteidl2.secret.secret_connect import SecretServiceClient
+from flyteidl2.settings.settings_service_connect import SettingsServiceClient
 from flyteidl2.task.task_service_connect import TaskServiceClient
 from flyteidl2.trigger.trigger_service_connect import TriggerServiceClient
 from flyteidl2.workflow.run_logs_service_connect import RunLogsServiceClient
 from flyteidl2.workflow.run_service_connect import RunServiceClient
-from flyteidl2.settings.settings_service_connect import SettingsServiceClient
 
 from ._protocols import (
     AppService,
@@ -28,9 +28,9 @@ from ._protocols import (
     RunLogsService,
     RunService,
     SecretService,
+    SettingsService,
     TaskService,
     TriggerService,
-    SettingsService,
 )
 from .auth._session import SessionConfig, create_session_config
 
@@ -433,4 +433,3 @@ class ClientSet:
             >>> url = client.console.task_url(project="myproj", domain="dev", task_name="mytask")
         """
         return self._console
-

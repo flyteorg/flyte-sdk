@@ -1,19 +1,24 @@
-"""Tests for Settings.get, Settings.update, and proto conversion helpers."""
+"""Tests for Settings.get_settings_for_edit, Settings.update_settings, and proto conversion helpers."""
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from flyteidl2.org import settings_definition_pb2, settings_service_pb2
+from flyteidl2.settings import settings_definition_pb2, settings_service_pb2
 
 from flyte.remote._settings import (
+    _LEAF_DESCRIPTIONS,
+    _LEAF_EXAMPLES,
+    _LEAF_SCHEMA,
     EffectiveSetting,
     LocalSetting,
     SettingOrigin,
     Settings,
-    _extract_setting_value,
-    _make_setting_value,
-    _raw_data_to_flat,
+    _build_leaf,
+    _extract_leaf_value,
+    _flat_to_proto,
+    _proto_to_flat,
     _scope_origin_from_key,
+    _walk_leaf,
 )
 
 # ---------------------------------------------------------------------------
@@ -21,267 +26,162 @@ from flyte.remote._settings import (
 # ---------------------------------------------------------------------------
 
 
-class TestExtractSettingValue:
-    def test_string_value(self):
-        sv = settings_definition_pb2.SettingValue(string_value="gpu")
-        assert _extract_setting_value(sv) == "gpu"
+def _sv_string(s: str) -> settings_definition_pb2.StringSetting:
+    return settings_definition_pb2.StringSetting(state=settings_definition_pb2.SETTING_STATE_VALUE, string_value=s)
 
-    def test_int_value(self):
-        sv = settings_definition_pb2.SettingValue(int_value=42)
-        assert _extract_setting_value(sv) == 42
 
-    def test_bool_value(self):
-        sv = settings_definition_pb2.SettingValue(bool_value=True)
-        assert _extract_setting_value(sv) is True
+def _sv_int(v: int) -> settings_definition_pb2.Int64Setting:
+    return settings_definition_pb2.Int64Setting(state=settings_definition_pb2.SETTING_STATE_VALUE, int_value=v)
 
-    def test_list_value(self):
-        sv = settings_definition_pb2.SettingValue(list_value=settings_definition_pb2.StringValues(values=["a", "b"]))
-        assert _extract_setting_value(sv) == ["a", "b"]
 
-    def test_map_value(self):
-        sv = settings_definition_pb2.SettingValue(map_value=settings_definition_pb2.StringMap(entries={"k": "v"}))
-        assert _extract_setting_value(sv) == {"k": "v"}
+def _sv_bool(v: bool) -> settings_definition_pb2.BoolSetting:
+    return settings_definition_pb2.BoolSetting(state=settings_definition_pb2.SETTING_STATE_VALUE, bool_value=v)
+
+
+def _sv_quantity(v: str) -> settings_definition_pb2.QuantitySetting:
+    return settings_definition_pb2.QuantitySetting(state=settings_definition_pb2.SETTING_STATE_VALUE, quantity_value=v)
+
+
+def _sv_inherit_string() -> settings_definition_pb2.StringSetting:
+    return settings_definition_pb2.StringSetting(state=settings_definition_pb2.SETTING_STATE_INHERIT)
+
+
+class TestExtractLeafValue:
+    def test_string(self):
+        assert _extract_leaf_value(_sv_string("gpu"), "string") == "gpu"
+
+    def test_int(self):
+        assert _extract_leaf_value(_sv_int(42), "int") == 42
+
+    def test_bool_true(self):
+        assert _extract_leaf_value(_sv_bool(True), "bool") is True
+
+    def test_bool_false(self):
+        assert _extract_leaf_value(_sv_bool(False), "bool") is False
+
+    def test_quantity(self):
+        assert _extract_leaf_value(_sv_quantity("2"), "quantity") == "2"
+
+    def test_stringlist(self):
+        leaf = settings_definition_pb2.StringListSetting(
+            state=settings_definition_pb2.SETTING_STATE_VALUE,
+            list_value=settings_definition_pb2.StringValues(values=["a", "b"]),
+        )
+        assert _extract_leaf_value(leaf, "stringlist") == ["a", "b"]
+
+    def test_stringmap(self):
+        leaf = settings_definition_pb2.StringMapSetting(
+            state=settings_definition_pb2.SETTING_STATE_VALUE,
+            map_value=settings_definition_pb2.StringMap(entries={"k": "v"}),
+        )
+        assert _extract_leaf_value(leaf, "stringmap") == {"k": "v"}
 
     def test_inherit_returns_none(self):
-        sv = settings_definition_pb2.SettingValue(state=settings_definition_pb2.SETTING_STATE_INHERIT)
-        assert _extract_setting_value(sv) is None
+        assert _extract_leaf_value(_sv_inherit_string(), "string") is None
 
     def test_unset_returns_none(self):
-        sv = settings_definition_pb2.SettingValue()
-        assert _extract_setting_value(sv) is None
+        leaf = settings_definition_pb2.StringSetting()  # state defaults to INHERIT (0)
+        assert _extract_leaf_value(leaf, "string") is None
 
 
-class TestSettingValueExclusivity:
-    """Verify that SettingValue is a proper oneof: setting one variant leaves all others unset."""
+class TestBuildLeaf:
+    def test_string(self):
+        leaf = _build_leaf("string", "gpu")
+        assert isinstance(leaf, settings_definition_pb2.StringSetting)
+        assert leaf.state == settings_definition_pb2.SETTING_STATE_VALUE
+        assert leaf.string_value == "gpu"
 
-    @pytest.mark.parametrize(
-        "sv, expected_oneof",
-        [
-            (settings_definition_pb2.SettingValue(string_value="gpu"), "string_value"),
-            (settings_definition_pb2.SettingValue(int_value=42), "int_value"),
-            (settings_definition_pb2.SettingValue(bool_value=True), "bool_value"),
-            (
-                settings_definition_pb2.SettingValue(
-                    list_value=settings_definition_pb2.StringValues(values=["a", "b"])
-                ),
-                "list_value",
-            ),
-            (
-                settings_definition_pb2.SettingValue(
-                    map_value=settings_definition_pb2.StringMap(entries={"k": "v"})
-                ),
-                "map_value",
-            ),
-        ],
-        ids=["string", "int", "bool", "list", "map"],
-    )
-    def test_only_one_variant_set(self, sv, expected_oneof):
-        all_variants = {"string_value", "int_value", "bool_value", "list_value", "map_value", "state"}
-        assert sv.WhichOneof("value") == expected_oneof
-        for variant in all_variants - {expected_oneof}:
-            assert sv.WhichOneof("value") != variant
+    def test_int(self):
+        leaf = _build_leaf("int", 42)
+        assert isinstance(leaf, settings_definition_pb2.Int64Setting)
+        assert leaf.int_value == 42
+
+    def test_bool(self):
+        leaf = _build_leaf("bool", True)
+        assert isinstance(leaf, settings_definition_pb2.BoolSetting)
+        assert leaf.bool_value is True
+
+    def test_quantity_coerces_to_str(self):
+        leaf = _build_leaf("quantity", 2)
+        assert isinstance(leaf, settings_definition_pb2.QuantitySetting)
+        assert leaf.quantity_value == "2"
+
+    def test_stringlist(self):
+        leaf = _build_leaf("stringlist", ["a", "b"])
+        assert isinstance(leaf, settings_definition_pb2.StringListSetting)
+        assert list(leaf.list_value.values) == ["a", "b"]
+
+    def test_stringmap(self):
+        leaf = _build_leaf("stringmap", {"k": "v"})
+        assert isinstance(leaf, settings_definition_pb2.StringMapSetting)
+        assert dict(leaf.map_value.entries) == {"k": "v"}
+
+    def test_stringlist_requires_sequence(self):
+        with pytest.raises(TypeError):
+            _build_leaf("stringlist", "not-a-list")
+
+    def test_stringmap_requires_dict(self):
+        with pytest.raises(TypeError):
+            _build_leaf("stringmap", ["not", "a", "dict"])
 
 
-class TestSettingsWireFormat:
-    """Verify Settings proto survives marshal (SerializeToString) → unmarshal (FromString) roundtrip."""
-
-    def test_full_settings_roundtrip(self):
-        original = settings_definition_pb2.Settings(
-            run=settings_definition_pb2.RunSettings(
-                default_queue=settings_definition_pb2.SettingValue(string_value="gpu"),
-                run_concurrency=settings_definition_pb2.SettingValue(int_value=10),
-                action_concurrency=settings_definition_pb2.SettingValue(int_value=5),
-            ),
-            security=settings_definition_pb2.SecuritySettings(
-                service_account=settings_definition_pb2.SettingValue(string_value="ml-sa"),
-            ),
-            storage=settings_definition_pb2.StorageSettings(
-                raw_data_path=settings_definition_pb2.SettingValue(string_value="s3://bucket/data"),
-            ),
-            task_resource=settings_definition_pb2.TaskResourceSettings(
-                defaults=settings_definition_pb2.TaskResourceDefaults(
-                    min_cpu=settings_definition_pb2.SettingValue(string_value="2"),
-                    max_memory=settings_definition_pb2.SettingValue(string_value="8Gi"),
-                ),
-                mirror_limits_request=settings_definition_pb2.SettingValue(bool_value=True),
-            ),
-            labels=settings_definition_pb2.SettingValue(
-                map_value=settings_definition_pb2.StringMap(entries={"env": "prod", "team": "ml"})
-            ),
-            annotations=settings_definition_pb2.SettingValue(
-                map_value=settings_definition_pb2.StringMap(entries={"oncall": "ml-team"})
-            ),
-            environment_variables=settings_definition_pb2.SettingValue(
-                map_value=settings_definition_pb2.StringMap(entries={"DEBUG": "0"})
-            ),
-        )
-
-        wire = original.SerializeToString()
-        restored = settings_definition_pb2.Settings.FromString(wire)
-
-        assert restored == original
-        # Spot-check individual fields survived the roundtrip
-        assert restored.run.default_queue.string_value == "gpu"
-        assert restored.run.run_concurrency.int_value == 10
-        assert restored.security.service_account.string_value == "ml-sa"
-        assert restored.task_resource.defaults.min_cpu.string_value == "2"
-        assert restored.task_resource.mirror_limits_request.bool_value is True
-        assert dict(restored.labels.map_value.entries) == {"env": "prod", "team": "ml"}
-
-        # Verify oneof exclusivity after roundtrip: run_concurrency is int_value,
-        # so all other variants must be unset.
-        rc = restored.run.run_concurrency
-        assert rc.WhichOneof("value") == "int_value"
-        assert rc.string_value == ""
-        assert rc.bool_value is False
-        assert not rc.HasField("list_value")
-        assert not rc.HasField("map_value")
-        assert not rc.HasField("state")
-
-    def test_setting_value_each_variant_roundtrip(self):
-        variants = [
-            settings_definition_pb2.SettingValue(string_value="hello"),
-            settings_definition_pb2.SettingValue(int_value=99),
-            settings_definition_pb2.SettingValue(bool_value=False),
-            settings_definition_pb2.SettingValue(
-                list_value=settings_definition_pb2.StringValues(values=["x", "y", "z"])
-            ),
-            settings_definition_pb2.SettingValue(
-                map_value=settings_definition_pb2.StringMap(entries={"a": "1", "b": "2"})
-            ),
-            settings_definition_pb2.SettingValue(state=settings_definition_pb2.SETTING_STATE_INHERIT),
-        ]
-        for original in variants:
-            wire = original.SerializeToString()
-            restored = settings_definition_pb2.SettingValue.FromString(wire)
-            assert restored == original
-            assert restored.WhichOneof("value") == original.WhichOneof("value")
-
-    def test_raw_data_survives_wire_roundtrip(self):
-        """flat dict → RawSettingsRecord → wire → restore → _raw_data_to_flat should be identity."""
+class TestProtoFlatRoundtrip:
+    def test_all_leaf_types_roundtrip(self):
         overrides = {
             "run.default_queue": "gpu",
             "run.run_concurrency": 10,
-            "security.service_account": "my-sa",
-            "task_resource.defaults.min_cpu": "2",
+            "run.action_concurrency": 5,
+            "security.service_account": "ml-sa",
+            "storage.raw_data_path": "s3://bucket/data",
+            "task_resource.min.cpu": "2",
+            "task_resource.max.memory": "8Gi",
             "task_resource.mirror_limits_request": True,
-            "labels": {"env": "prod"},
+            "labels": ["env:prod", "team:ml"],
+            "annotations": {"oncall": "ml-team"},
+            "environment_variables": {"DEBUG": "0"},
         }
-        record = _make_raw_settings_record(org="myorg", version=1, **overrides)
-        wire = record.SerializeToString()
-        restored = settings_service_pb2.RawSettingsRecord.FromString(wire)
-        flat = dict(_raw_data_to_flat(restored.data))
+        proto = _flat_to_proto(overrides)
+        wire = proto.SerializeToString()
+        restored = settings_definition_pb2.Settings.FromString(wire)
+
+        flat = dict(_proto_to_flat(restored))
         assert flat == overrides
 
-    def test_raw_settings_record_roundtrip(self):
-        """RawSettingsRecord (used in GetSettingsForEditRawResponse) survives wire roundtrip."""
-        record = _make_raw_settings_record(
-            org="myorg",
-            domain="prod",
-            project="ml",
-            version=42,
-            **{"run.default_queue": "gpu", "security.service_account": "sa"},
+    def test_flat_to_proto_sets_nested_fields(self):
+        proto = _flat_to_proto({"task_resource.min.cpu": "2"})
+        assert proto.HasField("task_resource")
+        assert proto.task_resource.HasField("min")
+        assert proto.task_resource.min.HasField("cpu")
+        assert proto.task_resource.min.cpu.quantity_value == "2"
+        assert proto.task_resource.min.cpu.state == settings_definition_pb2.SETTING_STATE_VALUE
+
+    def test_flat_to_proto_unknown_key_raises(self):
+        with pytest.raises(ValueError, match="unknown settings key"):
+            _flat_to_proto({"not.a.real.key": "x"})
+
+    def test_proto_to_flat_skips_inherited(self):
+        proto = settings_definition_pb2.Settings(
+            run=settings_definition_pb2.RunSettings(
+                default_queue=_sv_string("gpu"),
+                run_concurrency=settings_definition_pb2.Int64Setting(
+                    state=settings_definition_pb2.SETTING_STATE_INHERIT,
+                ),
+            )
         )
-
-        wire = record.SerializeToString()
-        restored = settings_service_pb2.RawSettingsRecord.FromString(wire)
-
-        assert restored.key.org == "myorg"
-        assert restored.key.domain == "prod"
-        assert restored.key.project == "ml"
-        assert restored.version == 42
-        assert restored.data["run.default_queue"].string_value == "gpu"
-        assert restored.data["security.service_account"].string_value == "sa"
-
-    def test_empty_raw_record_roundtrip(self):
-        record = settings_service_pb2.RawSettingsRecord()
-        wire = record.SerializeToString()
-        restored = settings_service_pb2.RawSettingsRecord.FromString(wire)
-        assert restored == record
-        assert _raw_data_to_flat(restored.data) == []
+        flat = dict(_proto_to_flat(proto))
+        assert flat == {"run.default_queue": "gpu"}
 
 
-class TestMakeSettingValue:
-    def test_string(self):
-        sv = _make_setting_value("gpu")
-        assert sv.WhichOneof("value") == "string_value"
-        assert sv.string_value == "gpu"
+class TestWalkLeaf:
+    def test_returns_none_when_parent_unset(self):
+        proto = settings_definition_pb2.Settings()
+        assert _walk_leaf(proto, "run.default_queue") is None
 
-    def test_int(self):
-        sv = _make_setting_value(42)
-        assert sv.WhichOneof("value") == "int_value"
-        assert sv.int_value == 42
-
-    def test_bool(self):
-        sv = _make_setting_value(True)
-        assert sv.WhichOneof("value") == "bool_value"
-        assert sv.bool_value is True
-
-    def test_list(self):
-        sv = _make_setting_value(["a", "b"])
-        assert sv.WhichOneof("value") == "list_value"
-        assert list(sv.list_value.values) == ["a", "b"]
-
-    def test_dict(self):
-        sv = _make_setting_value({"k": "v"})
-        assert sv.WhichOneof("value") == "map_value"
-        assert dict(sv.map_value.entries) == {"k": "v"}
-
-    def test_other_type_coerced_to_string(self):
-        sv = _make_setting_value(3.14)
-        assert sv.WhichOneof("value") == "string_value"
-        assert sv.string_value == "3.14"
-
-
-class TestRawDataToFlat:
-    def test_extracts_values(self):
-        data = {
-            "run.default_queue": settings_definition_pb2.SettingValue(string_value="gpu"),
-            "run.run_concurrency": settings_definition_pb2.SettingValue(int_value=10),
-        }
-        result = dict(_raw_data_to_flat(data))
-        assert result["run.default_queue"] == "gpu"
-        assert result["run.run_concurrency"] == 10
-
-    def test_all_value_types(self):
-        data = {
-            "str_key": settings_definition_pb2.SettingValue(string_value="hello"),
-            "int_key": settings_definition_pb2.SettingValue(int_value=42),
-            "bool_key": settings_definition_pb2.SettingValue(bool_value=True),
-            "list_key": settings_definition_pb2.SettingValue(
-                list_value=settings_definition_pb2.StringValues(values=["a", "b"])
-            ),
-            "map_key": settings_definition_pb2.SettingValue(
-                map_value=settings_definition_pb2.StringMap(entries={"k": "v"})
-            ),
-        }
-        result = dict(_raw_data_to_flat(data))
-        assert result["str_key"] == "hello"
-        assert result["int_key"] == 42
-        assert result["bool_key"] is True
-        assert result["list_key"] == ["a", "b"]
-        assert result["map_key"] == {"k": "v"}
-
-    def test_skips_inherited_values(self):
-        data = {
-            "run.default_queue": settings_definition_pb2.SettingValue(string_value="gpu"),
-            "run.run_concurrency": settings_definition_pb2.SettingValue(
-                state=settings_definition_pb2.SETTING_STATE_INHERIT
-            ),
-        }
-        result = dict(_raw_data_to_flat(data))
-        assert "run.default_queue" in result
-        assert "run.run_concurrency" not in result
-
-    def test_empty_data(self):
-        assert _raw_data_to_flat({}) == []
-
-    def test_arbitrary_keys(self):
-        data = {
-            "custom.whatever.key": settings_definition_pb2.SettingValue(string_value="val"),
-        }
-        result = dict(_raw_data_to_flat(data))
-        assert result["custom.whatever.key"] == "val"
+    def test_navigates_nested_path(self):
+        proto = _flat_to_proto({"task_resource.min.cpu": "4"})
+        leaf = _walk_leaf(proto, "task_resource.min.cpu")
+        assert leaf is not None
+        assert leaf.quantity_value == "4"
 
 
 class TestScopeOriginFromKey:
@@ -310,7 +210,7 @@ class TestScopeOriginFromKey:
 
 
 class TestToYaml:
-    def test_local_and_inherited(self):
+    def test_local_inherited_and_template(self):
         settings = Settings(
             effective_settings=[
                 EffectiveSetting(key="run.default_queue", value="gpu", origin=SettingOrigin("PROJECT", "prod", "ml")),
@@ -320,14 +220,24 @@ class TestToYaml:
             local_settings=[
                 LocalSetting(key="run.default_queue", value="gpu"),
             ],
+            domain="prod",
+            project="ml",
         )
         yaml = settings.to_yaml()
+        # Three prefix tiers: ### = headers, ## = docs/meta, # = commented setting.
+        assert "### Settings for scope: PROJECT(prod/ml)" in yaml
+        assert "### Local overrides" in yaml
+        assert "### Inherited settings" in yaml
+        assert "### Available settings" in yaml
         assert "run.default_queue: gpu" in yaml
-        # Inherited should be commented
         assert "# run.run_concurrency: 10" in yaml
         assert "# security.service_account: sa" in yaml
-        assert "inherited from DOMAIN(prod)" in yaml
-        assert "inherited from ORG" in yaml
+        assert "## inherited from DOMAIN(prod)" in yaml
+        assert "## inherited from ORG" in yaml
+        for key in Settings.available_keys():
+            if key in {"run.default_queue", "run.run_concurrency", "security.service_account"}:
+                continue
+            assert f"# {key}: {_LEAF_EXAMPLES[key]}" in yaml
 
     def test_no_local_settings(self):
         settings = Settings(
@@ -335,15 +245,64 @@ class TestToYaml:
                 EffectiveSetting(key="run.default_queue", value="cpu", origin=SettingOrigin("ORG")),
             ],
             local_settings=[],
+            domain="prod",
         )
         yaml = settings.to_yaml()
-        assert "# Local overrides" not in yaml
+        assert "### Local overrides" not in yaml
         assert "# run.default_queue: cpu" in yaml
+        assert "### Available settings" in yaml
 
-    def test_empty(self):
+    def test_empty_shows_full_template(self):
+        """Even when nothing is set, every available key is listed as a commented example."""
         settings = Settings(effective_settings=[], local_settings=[])
         yaml = settings.to_yaml()
-        assert yaml == ""
+        assert "### Local overrides" not in yaml
+        assert "### Inherited settings" not in yaml
+        assert "### Available settings" in yaml
+        for key in Settings.available_keys():
+            assert f"# {key}: {_LEAF_EXAMPLES[key]}" in yaml
+
+    def test_yaml_template_round_trips_through_parser(self):
+        """An unedited template must parse back to an empty override set."""
+        settings = Settings(effective_settings=[], local_settings=[])
+        yaml = settings.to_yaml()
+        assert Settings.parse_yaml(yaml) == {}
+
+    def test_each_field_description_appears_above_its_key(self):
+        """Descriptions pulled from the proto ``desc`` extension appear as
+        ``##``-prefixed comment lines immediately above the corresponding key."""
+        settings = Settings(
+            effective_settings=[
+                EffectiveSetting(key="run.default_queue", value="gpu", origin=SettingOrigin("DOMAIN", "prod")),
+            ],
+            local_settings=[LocalSetting(key="security.service_account", value="ml-sa")],
+            domain="prod",
+        )
+        yaml = settings.to_yaml()
+        for dotkey, description in _LEAF_DESCRIPTIONS.items():
+            if not description:
+                continue
+            lines = yaml.split("\n")
+            key_indices = [i for i, ln in enumerate(lines) if ln.lstrip("# ").startswith(f"{dotkey}:")]
+            assert key_indices, f"key {dotkey!r} not rendered"
+            for idx in key_indices:
+                assert lines[idx - 1] == f"## {description}", (
+                    f"expected description above {dotkey!r}; got {lines[idx - 1]!r}"
+                )
+
+    def test_bulk_uncomment_activates_only_valid_settings(self):
+        """Stripping a single leading ``# `` from every line should activate every
+        commented setting without producing garbage from documentation lines."""
+        settings = Settings(effective_settings=[], local_settings=[], domain="prod")
+        yaml = settings.to_yaml()
+        # Remove one leading '# ' from every line (the common bulk-uncomment gesture).
+        uncommented = "\n".join((ln.removeprefix("# ")) for ln in yaml.split("\n"))
+        overrides = Settings.parse_yaml(uncommented)
+        # Every available key should now be a live override; descriptions stay
+        # as '#' comments (one hash survived from the original '##').
+        assert set(overrides.keys()) == set(Settings.available_keys())
+        # And the result is valid input for the proto builder.
+        _flat_to_proto(overrides)
 
 
 class TestParseYaml:
@@ -379,32 +338,52 @@ security.service_account: my-sa
         overrides = Settings.parse_yaml('run.default_queue: "123"\n')
         assert overrides["run.default_queue"] == "123"
 
+    def test_parse_flow_list(self):
+        overrides = Settings.parse_yaml("labels: ['env:prod', 'team:ml']\n")
+        assert overrides["labels"] == ["env:prod", "team:ml"]
+
+    def test_parse_flow_map(self):
+        overrides = Settings.parse_yaml("annotations: {oncall: ml-team}\n")
+        assert overrides["annotations"] == {"oncall": "ml-team"}
+
+    def test_parse_template_uncomment(self):
+        """Generic placeholders, once uncommented, feed straight through _flat_to_proto."""
+        uncommented = "".join(f"{k}: {_LEAF_EXAMPLES[k]}\n" for k in Settings.available_keys())
+        overrides = Settings.parse_yaml(uncommented)
+        # Every leaf placeholder must be acceptable input to the proto builder.
+        _flat_to_proto(overrides)
+
+    def test_parse_non_mapping_raises(self):
+        with pytest.raises(ValueError):
+            Settings.parse_yaml("- just\n- a\n- list\n")
+
 
 # ---------------------------------------------------------------------------
-# Settings.get and Settings.update (gRPC integration)
+# Settings.get_settings_for_edit and Settings.update_settings (RPC integration)
 # ---------------------------------------------------------------------------
 
 
-def _make_raw_settings_record(
+def _make_record(
     org: str = "",
     domain: str = "",
     project: str = "",
     version: int = 1,
     **setting_values,
-) -> settings_service_pb2.RawSettingsRecord:
-    """Build a RawSettingsRecord with the given flat key-value settings."""
+) -> settings_service_pb2.SettingsRecord:
+    """Build a SettingsRecord with the given flat dot-notation overrides."""
     key = settings_definition_pb2.SettingsKey(org=org, domain=domain, project=project)
-    record = settings_service_pb2.RawSettingsRecord(key=key, version=version)
-    for k, v in setting_values.items():
-        record.data[k].CopyFrom(_make_setting_value(v))
-    return record
+    return settings_service_pb2.SettingsRecord(
+        key=key,
+        settings=_flat_to_proto(dict(setting_values)),
+        version=version,
+    )
 
 
 @pytest.fixture
 def mock_settings_service():
     svc = MagicMock()
-    svc.GetSettingsForEditRaw = AsyncMock()
-    svc.UpdateSettingsRaw = AsyncMock(return_value=settings_service_pb2.UpdateSettingsRawResponse())
+    svc.get_settings_for_edit = AsyncMock()
+    svc.update_settings = AsyncMock(return_value=settings_service_pb2.UpdateSettingsResponse())
     return svc
 
 
@@ -431,10 +410,10 @@ _PATCH_CONFIG = "flyte.remote._settings.get_init_config"
 
 class TestSettingsGet:
     def test_get_org_scope(self, mock_client, mock_settings_service, mock_init_config):
-        mock_settings_service.GetSettingsForEditRaw.return_value = settings_service_pb2.GetSettingsForEditRawResponse(
+        mock_settings_service.get_settings_for_edit.return_value = settings_service_pb2.GetSettingsForEditResponse(
             requestedKey=settings_definition_pb2.SettingsKey(org="myorg"),
             levels=[
-                _make_raw_settings_record(
+                _make_record(
                     org="myorg",
                     version=5,
                     **{"run.default_queue": "cpu", "security.service_account": "default-sa"},
@@ -447,7 +426,7 @@ class TestSettingsGet:
             patch(_PATCH_CLIENT, return_value=mock_client),
             patch(_PATCH_CONFIG, return_value=mock_init_config),
         ):
-            settings = Settings.get()
+            settings = Settings.get_settings_for_edit()
 
         assert len(settings.effective_settings) == 2
         assert len(settings.local_settings) == 2
@@ -460,18 +439,18 @@ class TestSettingsGet:
         assert "security.service_account" in effective_keys
 
     def test_get_project_scope_with_inheritance(self, mock_client, mock_settings_service, mock_init_config):
-        org_record = _make_raw_settings_record(
+        org_record = _make_record(
             org="myorg",
             version=1,
             **{"run.default_queue": "cpu", "security.service_account": "org-sa"},
         )
-        domain_record = _make_raw_settings_record(
+        domain_record = _make_record(
             org="myorg",
             domain="prod",
             version=3,
             **{"run.default_queue": "gpu"},
         )
-        project_record = _make_raw_settings_record(
+        project_record = _make_record(
             org="myorg",
             domain="prod",
             project="ml",
@@ -479,11 +458,9 @@ class TestSettingsGet:
             **{"security.service_account": "ml-sa"},
         )
 
-        mock_settings_service.GetSettingsForEditRaw.return_value = (
-            settings_service_pb2.GetSettingsForEditRawResponse(
-                requestedKey=settings_definition_pb2.SettingsKey(org="myorg", domain="prod", project="ml"),
-                levels=[org_record, domain_record, project_record],
-            )
+        mock_settings_service.get_settings_for_edit.return_value = settings_service_pb2.GetSettingsForEditResponse(
+            requestedKey=settings_definition_pb2.SettingsKey(org="myorg", domain="prod", project="ml"),
+            levels=[org_record, domain_record, project_record],
         )
 
         with (
@@ -491,26 +468,24 @@ class TestSettingsGet:
             patch(_PATCH_CLIENT, return_value=mock_client),
             patch(_PATCH_CONFIG, return_value=mock_init_config),
         ):
-            settings = Settings.get(domain="prod", project="ml")
+            settings = Settings.get_settings_for_edit(domain="prod", project="ml")
 
         assert settings._version == 7
         assert settings.domain == "prod"
         assert settings.project == "ml"
 
-        # Effective settings should have overridden values
         effective = {s.key: s for s in settings.effective_settings}
         assert effective["run.default_queue"].value == "gpu"
         assert effective["run.default_queue"].origin.scope_type == "DOMAIN"
         assert effective["security.service_account"].value == "ml-sa"
         assert effective["security.service_account"].origin.scope_type == "PROJECT"
 
-        # Local settings should only be from the most specific (project) level
         local_keys = {s.key for s in settings.local_settings}
         assert local_keys == {"security.service_account"}
 
     def test_get_sends_correct_key(self, mock_client, mock_settings_service, mock_init_config):
-        mock_settings_service.GetSettingsForEditRaw.return_value = (
-            settings_service_pb2.GetSettingsForEditRawResponse(levels=[])
+        mock_settings_service.get_settings_for_edit.return_value = settings_service_pb2.GetSettingsForEditResponse(
+            levels=[]
         )
 
         with (
@@ -518,16 +493,24 @@ class TestSettingsGet:
             patch(_PATCH_CLIENT, return_value=mock_client),
             patch(_PATCH_CONFIG, return_value=mock_init_config),
         ):
-            Settings.get(domain="staging", project="web")
+            Settings.get_settings_for_edit(domain="staging", project="web")
 
-        req = mock_settings_service.GetSettingsForEditRaw.call_args[0][0]
+        req = mock_settings_service.get_settings_for_edit.call_args[0][0]
         assert req.key.org == "myorg"
         assert req.key.domain == "staging"
         assert req.key.project == "web"
 
-    def test_get_empty_levels(self, mock_client, mock_settings_service, mock_init_config):
-        mock_settings_service.GetSettingsForEditRaw.return_value = (
-            settings_service_pb2.GetSettingsForEditRawResponse(levels=[])
+    def test_get_local_matches_requested_scope_not_last_level(
+        self, mock_client, mock_settings_service, mock_init_config
+    ):
+        """When the server returns no record at the requested scope, nothing is local."""
+        # User asks for PROJECT, but server returns only ORG and DOMAIN — no project record exists yet.
+        org_record = _make_record(org="myorg", version=1, **{"run.default_queue": "cpu"})
+        domain_record = _make_record(org="myorg", domain="prod", version=3, **{"run.default_queue": "gpu"})
+
+        mock_settings_service.get_settings_for_edit.return_value = settings_service_pb2.GetSettingsForEditResponse(
+            requestedKey=settings_definition_pb2.SettingsKey(org="myorg", domain="prod", project="ml"),
+            levels=[org_record, domain_record],
         )
 
         with (
@@ -535,7 +518,25 @@ class TestSettingsGet:
             patch(_PATCH_CLIENT, return_value=mock_client),
             patch(_PATCH_CONFIG, return_value=mock_init_config),
         ):
-            settings = Settings.get()
+            settings = Settings.get_settings_for_edit(domain="prod", project="ml")
+
+        # DOMAIN values are inherited, not local — the requested PROJECT scope has no record.
+        assert settings.local_settings == []
+        assert settings._version == 0
+        # Effective still surfaces the DOMAIN-level value.
+        assert any(s.key == "run.default_queue" and s.value == "gpu" for s in settings.effective_settings)
+
+    def test_get_empty_levels(self, mock_client, mock_settings_service, mock_init_config):
+        mock_settings_service.get_settings_for_edit.return_value = settings_service_pb2.GetSettingsForEditResponse(
+            levels=[]
+        )
+
+        with (
+            patch(_PATCH_ENSURE, new_callable=AsyncMock),
+            patch(_PATCH_CLIENT, return_value=mock_client),
+            patch(_PATCH_CONFIG, return_value=mock_init_config),
+        ):
+            settings = Settings.get_settings_for_edit()
 
         assert settings.effective_settings == []
         assert settings.local_settings == []
@@ -553,19 +554,21 @@ class TestSettingsUpdate:
         )
 
         with (
+            patch(_PATCH_ENSURE, new_callable=AsyncMock),
             patch(_PATCH_CLIENT, return_value=mock_client),
             patch(_PATCH_CONFIG, return_value=mock_init_config),
         ):
-            settings.update({"run.default_queue": "gpu", "run.run_concurrency": 5})
+            settings.update_settings({"run.default_queue": "gpu", "run.run_concurrency": 5})
 
-        mock_settings_service.UpdateSettingsRaw.assert_called_once()
-        req = mock_settings_service.UpdateSettingsRaw.call_args[0][0]
+        mock_settings_service.update_settings.assert_called_once()
+        req = mock_settings_service.update_settings.call_args[0][0]
         assert req.key.org == "myorg"
         assert req.key.domain == "prod"
         assert req.key.project == "ml"
         assert req.version == 7
-        assert req.data["run.default_queue"].string_value == "gpu"
-        assert req.data["run.run_concurrency"].int_value == 5
+        assert req.settings.run.default_queue.string_value == "gpu"
+        assert req.settings.run.default_queue.state == settings_definition_pb2.SETTING_STATE_VALUE
+        assert req.settings.run.run_concurrency.int_value == 5
 
     def test_update_refreshes_local_state(self, mock_client, mock_settings_service, mock_init_config):
         settings = Settings(
@@ -576,16 +579,17 @@ class TestSettingsUpdate:
         )
 
         with (
+            patch(_PATCH_ENSURE, new_callable=AsyncMock),
             patch(_PATCH_CLIENT, return_value=mock_client),
             patch(_PATCH_CONFIG, return_value=mock_init_config),
         ):
-            settings.update({"run.default_queue": "gpu"})
+            settings.update_settings({"run.default_queue": "gpu"})
 
         assert len(settings.local_settings) == 1
         assert settings.local_settings[0].key == "run.default_queue"
         assert settings.local_settings[0].value == "gpu"
 
-    def test_update_empty_overrides(self, mock_client, mock_settings_service, mock_init_config):
+    def test_update_empty_overrides_clears_scope(self, mock_client, mock_settings_service, mock_init_config):
         settings = Settings(
             effective_settings=[],
             local_settings=[LocalSetting(key="run.default_queue", value="gpu")],
@@ -593,14 +597,35 @@ class TestSettingsUpdate:
         )
 
         with (
+            patch(_PATCH_ENSURE, new_callable=AsyncMock),
             patch(_PATCH_CLIENT, return_value=mock_client),
             patch(_PATCH_CONFIG, return_value=mock_init_config),
         ):
-            settings.update({})
+            settings.update_settings({})
 
-        req = mock_settings_service.UpdateSettingsRaw.call_args[0][0]
-        assert len(req.data) == 0
+        req = mock_settings_service.update_settings.call_args[0][0]
+        # Empty overrides → empty Settings proto → no fields set
+        assert req.settings.ByteSize() == 0
         assert settings.local_settings == []
+
+    def test_update_picks_up_version_from_response(self, mock_client, mock_settings_service, mock_init_config):
+        mock_settings_service.update_settings.return_value = settings_service_pb2.UpdateSettingsResponse(
+            settingsRecord=settings_service_pb2.SettingsRecord(
+                key=settings_definition_pb2.SettingsKey(org="myorg", domain="prod"),
+                settings=_flat_to_proto({"run.default_queue": "gpu"}),
+                version=99,
+            )
+        )
+        settings = Settings(effective_settings=[], local_settings=[], domain="prod", _version=3)
+
+        with (
+            patch(_PATCH_ENSURE, new_callable=AsyncMock),
+            patch(_PATCH_CLIENT, return_value=mock_client),
+            patch(_PATCH_CONFIG, return_value=mock_init_config),
+        ):
+            settings.update_settings({"run.default_queue": "gpu"})
+
+        assert settings._version == 99
 
 
 # ---------------------------------------------------------------------------
@@ -617,3 +642,43 @@ class TestSettingOriginStr:
 
     def test_project(self):
         assert str(SettingOrigin("PROJECT", domain="prod", project="ml")) == "PROJECT(prod/ml)"
+
+
+# ---------------------------------------------------------------------------
+# Programmatic helpers
+# ---------------------------------------------------------------------------
+
+
+class TestProgrammaticAccess:
+    def test_available_keys_contains_known_leaves(self):
+        keys = Settings.available_keys()
+        assert "run.default_queue" in keys
+        assert "task_resource.min.cpu" in keys
+        assert "environment_variables" in keys
+
+    def test_schema_is_derived_from_proto_descriptor(self):
+        """The schema must come from walking Settings.DESCRIPTOR, not a hand-written list."""
+        assert len(_LEAF_SCHEMA) > 0
+        for dotkey, kind, field_descriptor in _LEAF_SCHEMA:
+            assert kind in {"string", "int", "bool", "quantity", "stringlist", "stringmap"}
+            # The field descriptor points at a *Setting message in the proto schema.
+            assert field_descriptor.message_type is not None
+            assert field_descriptor.message_type.name.endswith("Setting")
+            # Last segment of the dotkey equals the proto field name.
+            assert dotkey.rsplit(".", 1)[-1] == field_descriptor.name
+
+    def test_every_leaf_has_a_description(self):
+        """Every leaf in the proto schema carries a `desc` annotation."""
+        missing = [k for k, d in _LEAF_DESCRIPTIONS.items() if not d]
+        assert missing == [], f"leaves missing proto desc extension: {missing}"
+
+    def test_local_overrides_and_effective_values(self):
+        settings = Settings(
+            effective_settings=[
+                EffectiveSetting(key="run.default_queue", value="gpu", origin=SettingOrigin("PROJECT", "prod", "ml")),
+                EffectiveSetting(key="run.run_concurrency", value=10, origin=SettingOrigin("DOMAIN", "prod")),
+            ],
+            local_settings=[LocalSetting(key="run.default_queue", value="gpu")],
+        )
+        assert settings.local_overrides() == {"run.default_queue": "gpu"}
+        assert settings.effective_values() == {"run.default_queue": "gpu", "run.run_concurrency": 10}

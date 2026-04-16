@@ -1,6 +1,6 @@
 import asyncio
 import datetime as dt
-from typing import Tuple, Union
+from typing import Any, Tuple, Union
 
 import rich_click as click
 from rich.pretty import pretty_repr
@@ -424,32 +424,111 @@ def settings(
     domain: str | None = None,
 ):
     """
-    Get effective settings for a domain or project.
+    Get settings for a scope as editable YAML.
 
-    Shows the resolved settings at the requested scope, including values
-    inherited from parent scopes.
+    Renders three sections:
+
+    \b
+    * Local overrides — uncommented, applied at this scope.
+    * Inherited settings — commented, with the scope they come from.
+    * Available settings — commented placeholders for every key that
+      isn't set anywhere yet, so you can see what can be configured.
 
     \b
     Examples:
 
     ```bash
+    # Get ORG-level settings
+    flyte get settings
+
     # Get settings for a domain
     flyte get settings --domain production
 
-    # Get settings for a project (inherits from domain)
+    # Get settings for a project (inherits from domain, which inherits from org)
     flyte get settings --domain production --project ml-pipeline
     ```
+
+    Use `flyte edit settings` to interactively modify these values.
     """
+    from rich.panel import Panel
+
     cfg.init()
 
     console = common.get_console()
-    s = remote.Settings.get(domain=domain, project=project)
+    s = remote.Settings.get_settings_for_edit(domain=domain, project=project)
+    console.print(
+        Panel(
+            _stylize_settings_yaml(s.to_yaml()),
+            title=f"[bold]Settings[/bold] · [cyan]{s.scope_description()}[/cyan] · [dim]v{s._version}[/dim]",
+            title_align="left",
+            border_style="bright_black",
+            padding=(1, 2),
+        )
+    )
 
-    if not s.effective_settings:
-        console.print("[dim]No settings found at this scope.[/dim]")
-        return
 
-    console.print(common.format("Settings", s.effective_settings, cfg.output_format))
+def _stylize_settings_yaml(yaml_content: str) -> "Any":
+    """Render settings YAML for display, replacing comment markers with visual
+    cues. The raw ``#`` / ``##`` / ``###`` prefixes emitted by
+    ``Settings.to_yaml`` are stripped for readability — callers that need the
+    round-trippable form (``flyte edit settings``) should use ``to_yaml``
+    directly, *not* this function.
+
+    Visual hierarchy:
+
+    * ``### Section`` → ``▌ Section`` in bold bright cyan.
+    * ``## description`` → the description text only, grey50.
+    * ``# key: value`` → ``key: value`` rendered dim (clearly inactive but
+      still legible so users can see what to uncomment). Any trailing
+      ``  ## meta`` is lifted into a parenthesised italic suffix.
+    * ``key: value`` → bold bright_blue key + bright_green value.
+    """
+    from rich.text import Text
+
+    out = Text(no_wrap=False)
+    lines = yaml_content.split("\n")
+
+    def _append_kv(indent: str, key: str, value: str, key_style: str, val_style: str) -> None:
+        out.append(indent)
+        out.append(key, style=key_style)
+        out.append(":", style="white")
+        out.append(value, style=val_style)
+
+    for i, line in enumerate(lines):
+        stripped = line.lstrip()
+        indent = line[: len(line) - len(stripped)]
+
+        if stripped.startswith("### "):
+            out.append(indent)
+            out.append("▌ ", style="bold bright_cyan")
+            out.append(stripped[4:], style="bold bright_cyan")
+        elif stripped.startswith("## "):
+            out.append(indent)
+            out.append(stripped[3:], style="grey50")
+        elif stripped.startswith("# "):
+            content = stripped[2:]
+            meta = ""
+            meta_idx = content.find("  ## ")
+            if meta_idx >= 0:
+                meta = content[meta_idx + len("  ## ") :]
+                content = content[:meta_idx]
+            if ":" in content:
+                key, value = content.split(":", 1)
+                _append_kv(indent, key, value, key_style="magenta", val_style="grey66")
+            else:
+                out.append(indent)
+                out.append(content, style="grey66")
+            if meta:
+                out.append(f"  ({meta})", style="italic grey50")
+        elif ":" in stripped:
+            key, value = stripped.split(":", 1)
+            _append_kv(indent, key, value, key_style="bold bright_magenta", val_style="bright_green")
+        else:
+            out.append(line)
+
+        if i < len(lines) - 1:
+            out.append("\n")
+    return out
 
 
 @get.command(cls=click.RichCommand)

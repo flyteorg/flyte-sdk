@@ -1,12 +1,13 @@
 """Hierarchical settings management for Flyte deployments.
 
-Settings are scoped at two levels: DOMAIN and PROJECT. Projects inherit from
-their parent domain, and domains inherit from the org-wide defaults. Narrower
+Settings are scoped at three levels: ORG, DOMAIN, and PROJECT. Projects inherit
+from their parent domain, and domains inherit from the org-wide defaults. Narrower
 scopes can override individual values.
 
 Scope selection via ``project`` and ``domain`` parameters:
 
-- ``domain`` only → DOMAIN scope.
+- no args → ORG scope.
+- ``domain`` only → DOMAIN scope, inherits from ORG.
 - ``domain`` + ``project`` → PROJECT scope, inherits from DOMAIN.
 
 These parameters are **independent of ``flyte.init()``**. The ``project`` and
@@ -19,10 +20,10 @@ Retrieving settings::
     import flyte.remote as remote
 
     # Get settings for a domain
-    settings = remote.Settings.get(domain="production")
+    settings = remote.Settings.get_settings_for_edit(domain="production")
 
     # Get settings for a project — includes inherited DOMAIN values
-    settings = remote.Settings.get(domain="production", project="ml-pipeline")
+    settings = remote.Settings.get_settings_for_edit(domain="production", project="ml-pipeline")
 
     # Inspect effective settings (resolved with inheritance)
     for s in settings.effective_settings:
@@ -34,14 +35,14 @@ Retrieving settings::
 
 Updating settings::
 
-    settings = remote.Settings.get(domain="production", project="ml-pipeline")
+    settings = remote.Settings.get_settings_for_edit(domain="production", project="ml-pipeline")
 
     # Update with a dict of flat dot-notation overrides.
     # Keys not included will inherit from parent scope.
-    settings.update({
+    settings.update_settings({
         "run.default_queue": "gpu",
         "security.service_account": "ml-sa",
-        "task_resource.defaults.min_cpu": 2,
+        "task_resource.min.cpu": "2",
     })
 
 Interactive editing (via CLI)::
@@ -57,7 +58,8 @@ Available setting keys (dot-notation)::
     run.default_queue, run.run_concurrency, run.action_concurrency,
     security.service_account,
     storage.raw_data_path,
-    task_resource.defaults.{min,max}_{cpu,gpu,memory,storage},
+    task_resource.min.{cpu,gpu,memory,storage},
+    task_resource.max.{cpu,gpu,memory,storage},
     task_resource.mirror_limits_request,
     labels, annotations, environment_variables
 """
@@ -67,7 +69,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from flyteidl2.org import settings_definition_pb2, settings_service_pb2
+from flyteidl2.settings import settings_definition_pb2, settings_service_pb2
 
 from flyte._initialize import ensure_client, get_client, get_init_config
 from flyte.remote._common import ToJSONMixin
@@ -80,54 +82,164 @@ _SCOPE_NAMES = {
     settings_definition_pb2.SCOPE_LEVEL_PROJECT: "PROJECT",
 }
 
+# Schema of all settable leaves in the Settings proto, derived at import time
+# by walking ``settings_definition_pb2.Settings.DESCRIPTOR``. Each entry is
+# ``(dotkey, leaf_kind, field_descriptor)``.
+#
+# Leaf kinds map to the proto *Setting types:
+#     "string"     → StringSetting
+#     "int"        → Int64Setting
+#     "bool"       → BoolSetting
+#     "quantity"   → QuantitySetting (string-encoded k8s quantity)
+#     "stringlist" → StringListSetting
+#     "stringmap"  → StringMapSetting
 
-def _extract_setting_value(sv: settings_definition_pb2.SettingValue) -> Any | None:
-    """Extract the Python value from a SettingValue proto, or None if inherited/unset."""
-    which = sv.WhichOneof("value")
-    if which == "state":
+# The nested ``*Setting`` messages whose presence marks a descriptor as a leaf.
+_SETTING_TYPE_TO_KIND: dict[str, str] = {
+    "StringSetting": "string",
+    "Int64Setting": "int",
+    "BoolSetting": "bool",
+    "QuantitySetting": "quantity",
+    "StringListSetting": "stringlist",
+    "StringMapSetting": "stringmap",
+}
+
+# YAML-formatted placeholder per leaf kind, used as the default value in the
+# "Available settings" template section. The proto's ``desc`` extension carries
+# the concrete format hints (e.g. ``'256Mi'`` for memory quantities).
+_PLACEHOLDER_BY_KIND: dict[str, str] = {
+    "string": "''",
+    "int": "0",
+    "bool": "false",
+    "quantity": "''",
+    "stringlist": "[]",
+    "stringmap": "{}",
+}
+
+
+def _resolve_description(field_descriptor: Any) -> str:
+    """Return the ``desc`` field option extension attached to a proto field."""
+    options = field_descriptor.GetOptions()
+    ext = settings_definition_pb2.desc
+    if options.HasExtension(ext):
+        return options.Extensions[ext]
+    return ""
+
+
+def _discover_leaves(descriptor: Any, prefix: str = "") -> list[tuple[str, str, Any]]:
+    """Recursively walk a ``Settings`` message descriptor, emitting one tuple
+    per leaf ``*Setting`` field encountered."""
+    results: list[tuple[str, str, Any]] = []
+    for fd in descriptor.fields:
+        if fd.type != fd.TYPE_MESSAGE or fd.message_type is None:
+            continue
+        dotkey = f"{prefix}.{fd.name}" if prefix else fd.name
+        kind = _SETTING_TYPE_TO_KIND.get(fd.message_type.name)
+        if kind is not None:
+            results.append((dotkey, kind, fd))
+        else:
+            results.extend(_discover_leaves(fd.message_type, dotkey))
+    return results
+
+
+_LEAF_SCHEMA: list[tuple[str, str, Any]] = _discover_leaves(settings_definition_pb2.Settings.DESCRIPTOR)
+_LEAF_TYPES: dict[str, str] = {dotkey: kind for dotkey, kind, _ in _LEAF_SCHEMA}
+_LEAF_DESCRIPTIONS: dict[str, str] = {dotkey: _resolve_description(fd) for dotkey, _, fd in _LEAF_SCHEMA}
+_LEAF_EXAMPLES: dict[str, str] = {dotkey: _PLACEHOLDER_BY_KIND[kind] for dotkey, kind, _ in _LEAF_SCHEMA}
+
+
+def _extract_leaf_value(leaf: Any, leaf_type: str) -> Any | None:
+    """Extract the Python value from a typed ``*Setting`` proto.
+
+    Returns ``None`` when the leaf is in INHERIT / UNSET state.
+    """
+    if leaf.state != settings_definition_pb2.SETTING_STATE_VALUE:
         return None
-    if which == "string_value":
-        return sv.string_value
-    if which == "int_value":
-        return sv.int_value
-    if which == "bool_value":
-        return sv.bool_value
-    if which == "list_value":
-        return list(sv.list_value.values)
-    if which == "map_value":
-        return dict(sv.map_value.entries)
+    if leaf_type == "string":
+        return leaf.string_value
+    if leaf_type == "int":
+        return leaf.int_value
+    if leaf_type == "bool":
+        return leaf.bool_value
+    if leaf_type == "quantity":
+        return leaf.quantity_value
+    if leaf_type == "stringlist":
+        return list(leaf.list_value.values)
+    if leaf_type == "stringmap":
+        return dict(leaf.map_value.entries)
     return None
 
 
-def _make_setting_value(value: Any) -> settings_definition_pb2.SettingValue:
-    """Create a SettingValue proto from a Python value."""
-    if isinstance(value, bool):
-        return settings_definition_pb2.SettingValue(bool_value=value)
-    elif isinstance(value, int):
-        return settings_definition_pb2.SettingValue(int_value=value)
-    elif isinstance(value, str):
-        return settings_definition_pb2.SettingValue(string_value=value)
-    elif isinstance(value, list):
-        return settings_definition_pb2.SettingValue(list_value=settings_definition_pb2.StringValues(values=value))
-    elif isinstance(value, dict):
-        return settings_definition_pb2.SettingValue(map_value=settings_definition_pb2.StringMap(entries=value))
-    else:
-        return settings_definition_pb2.SettingValue(string_value=str(value))
+def _build_leaf(leaf_type: str, value: Any) -> Any:
+    """Build a typed ``*Setting`` proto with ``state=VALUE`` from a Python value."""
+    state = settings_definition_pb2.SETTING_STATE_VALUE
+    if leaf_type == "string":
+        return settings_definition_pb2.StringSetting(state=state, string_value=str(value))
+    if leaf_type == "int":
+        return settings_definition_pb2.Int64Setting(state=state, int_value=int(value))
+    if leaf_type == "bool":
+        return settings_definition_pb2.BoolSetting(state=state, bool_value=bool(value))
+    if leaf_type == "quantity":
+        return settings_definition_pb2.QuantitySetting(state=state, quantity_value=str(value))
+    if leaf_type == "stringlist":
+        if not isinstance(value, (list, tuple)):
+            raise TypeError(f"expected list for stringlist leaf, got {type(value).__name__}")
+        return settings_definition_pb2.StringListSetting(
+            state=state,
+            list_value=settings_definition_pb2.StringValues(values=[str(v) for v in value]),
+        )
+    if leaf_type == "stringmap":
+        if not isinstance(value, dict):
+            raise TypeError(f"expected dict for stringmap leaf, got {type(value).__name__}")
+        return settings_definition_pb2.StringMapSetting(
+            state=state,
+            map_value=settings_definition_pb2.StringMap(entries={str(k): str(v) for k, v in value.items()}),
+        )
+    raise ValueError(f"unknown leaf type: {leaf_type}")
 
 
-def _raw_data_to_flat(
-    data: dict[str, settings_definition_pb2.SettingValue],
-) -> list[tuple[str, Any]]:
-    """Convert a RawSettingsRecord data map to (key, value) pairs.
-
-    Filters out inherited/unset entries (returns only those with actual values).
+def _walk_leaf(settings_msg: settings_definition_pb2.Settings, dotkey: str) -> Any | None:
+    """Navigate dot-notation ``dotkey`` into a Settings proto. Returns the leaf
+    ``*Setting`` message if every intermediate submessage is present, else ``None``.
     """
+    obj = settings_msg
+    for part in dotkey.split("."):
+        if not obj.HasField(part):
+            return None
+        obj = getattr(obj, part)
+    return obj
+
+
+def _proto_to_flat(settings_msg: settings_definition_pb2.Settings) -> list[tuple[str, Any]]:
+    """Extract all leaves with an explicit VALUE state as flat (dotkey, value) pairs."""
     results: list[tuple[str, Any]] = []
-    for dotkey, sv in data.items():
-        val = _extract_setting_value(sv)
+    for dotkey, leaf_type, _ in _LEAF_SCHEMA:
+        leaf = _walk_leaf(settings_msg, dotkey)
+        if leaf is None:
+            continue
+        val = _extract_leaf_value(leaf, leaf_type)
         if val is not None:
             results.append((dotkey, val))
     return results
+
+
+def _flat_to_proto(overrides: dict[str, Any]) -> settings_definition_pb2.Settings:
+    """Build a Settings proto from flat dot-notation overrides.
+
+    Keys not present in ``overrides`` are left unset in the returned proto,
+    which the server interprets as "inherit from parent scope".
+    """
+    msg = settings_definition_pb2.Settings()
+    for dotkey, value in overrides.items():
+        if dotkey not in _LEAF_TYPES:
+            raise ValueError(f"unknown settings key: {dotkey!r}. valid keys: {', '.join(sorted(_LEAF_TYPES))}")
+        parts = dotkey.split(".")
+        parent = msg
+        for part in parts[:-1]:
+            parent = getattr(parent, part)
+        leaf_proto = _build_leaf(_LEAF_TYPES[dotkey], value)
+        getattr(parent, parts[-1]).CopyFrom(leaf_proto)
+    return msg
 
 
 def _scope_origin_from_key(
@@ -191,35 +303,32 @@ class Settings(ToJSONMixin):
     _version: int = field(default=0, repr=False)
 
     @staticmethod
-    def _parse_value(raw_value: str) -> Any:
-        """Parse a YAML value string into appropriate Python type."""
-        raw_value = raw_value.strip()
+    def available_keys() -> list[str]:
+        """Return every dot-notation key that can be set on a Settings scope."""
+        return [k for k, _, _ in _LEAF_SCHEMA]
 
-        if (raw_value.startswith('"') and raw_value.endswith('"')) or (
-            raw_value.startswith("'") and raw_value.endswith("'")
-        ):
-            return raw_value[1:-1]
+    def local_overrides(self) -> dict[str, Any]:
+        """Return local overrides as a flat dict for programmatic use."""
+        return {s.key: s.value for s in self.local_settings}
 
-        if raw_value.lower() == "true":
-            return True
-        if raw_value.lower() == "false":
-            return False
+    def effective_values(self) -> dict[str, Any]:
+        """Return resolved effective settings as a flat dict for programmatic use."""
+        return {s.key: s.value for s in self.effective_settings}
 
-        try:
-            if "." in raw_value:
-                return float(raw_value)
-            return int(raw_value)
-        except ValueError:
-            pass
-
-        return raw_value
+    def scope_description(self) -> str:
+        """Human-readable label for the scope this Settings object was fetched for."""
+        if self.project and self.domain:
+            return f"PROJECT({self.domain}/{self.project})"
+        if self.domain:
+            return f"DOMAIN({self.domain})"
+        return "ORG"
 
     @staticmethod
     def _format_value(value: Any) -> str:
-        """Format a Python value for YAML output."""
+        """Format a Python value as a YAML scalar / flow collection."""
         if isinstance(value, bool):
             return "true" if value else "false"
-        elif isinstance(value, str):
+        if isinstance(value, str):
             if (
                 any(c in value for c in [":", "#", "\n", '"', "'"])
                 or value.strip() != value
@@ -227,94 +336,159 @@ class Settings(ToJSONMixin):
             ):
                 return f'"{value}"'
             return value
-        elif isinstance(value, (int, float)):
+        if isinstance(value, (int, float)):
             return str(value)
-        else:
-            return str(value)
+        if isinstance(value, (list, tuple, dict)):
+            import yaml
 
-    def to_yaml(self) -> str:
-        """Generate YAML representation showing local and inherited settings.
+            return yaml.safe_dump(value, default_flow_style=True, width=10000).strip()
+        return str(value)
 
-        Local settings are uncommented, inherited settings are commented with origin info.
+    def to_yaml_sections(self) -> list[tuple[str, str]]:
+        """Return the YAML content split into labelled sections.
+
+        Each tuple is ``(section_title, yaml_body)``; sections are omitted
+        when they have no entries. See :meth:`to_yaml` for the comment-prefix
+        convention.
+
+        Section titles: ``"Local overrides"``, ``"Inherited settings"``, ``"Available settings"``.
         """
-        lines = []
         local_keys = {s.key for s in self.local_settings}
+        effective_keys = {s.key for s in self.effective_settings}
+
+        def _describe(dotkey: str) -> str | None:
+            desc = _LEAF_DESCRIPTIONS.get(dotkey)
+            return f"## {desc}" if desc else None
+
+        sections: list[tuple[str, str]] = []
 
         if self.local_settings:
-            lines.append("# Local overrides")
+            lines: list[str] = []
             for l_setting in self.local_settings:
-                value_str = self._format_value(l_setting.value)
-                lines.append(f"{l_setting.key}: {value_str}")
-            lines.append("")
+                d = _describe(l_setting.key)
+                if d:
+                    lines.append(d)
+                lines.append(f"{l_setting.key}: {self._format_value(l_setting.value)}")
+            sections.append(("Local overrides", "\n".join(lines)))
 
         inherited = [s for s in self.effective_settings if s.key not in local_keys]
         if inherited:
-            lines.append("# Inherited settings (uncomment to override)")
+            lines = []
             for setting in inherited:
-                value_str = self._format_value(setting.value)
-                lines.append(f"# {setting.key}: {value_str}  # inherited from {setting.origin}")
+                d = _describe(setting.key)
+                if d:
+                    lines.append(d)
+                lines.append(
+                    f"# {setting.key}: {self._format_value(setting.value)}  ## inherited from {setting.origin}"
+                )
+            sections.append(("Inherited settings", "\n".join(lines)))
 
+        unset = [k for k, _, _ in _LEAF_SCHEMA if k not in local_keys and k not in effective_keys]
+        if unset:
+            lines = []
+            for key in unset:
+                d = _describe(key)
+                if d:
+                    lines.append(d)
+                lines.append(f"# {key}: {_LEAF_EXAMPLES[key]}")
+            sections.append(("Available settings", "\n".join(lines)))
+
+        return sections
+
+    def to_yaml(self) -> str:
+        """Generate YAML representation of this scope.
+
+        Three comment prefixes form a visibility hierarchy for both human
+        readers and line-based stylers:
+
+        * ``###`` — section headers (scope header, section titles). Prominent.
+        * ``##`` — descriptions and metadata (per-field docs, inline origin
+          annotations). Dim.
+        * ``#`` — a commented-out setting. Uncomment (strip a single leading
+          ``#``) to activate.
+
+        A bulk ``# `` → `` pass safely activates every setting while leaving
+        descriptions (``##`` → ``#``) and section headers (``###`` → ``##``)
+        intact as comments.
+
+        Output has up to three sections:
+
+        * **Local overrides** — already applied at this scope.
+        * **Inherited settings** — resolved from a parent scope; uncomment to
+          override here.
+        * **Available settings** — every key not yet set anywhere, with
+          illustrative placeholders; uncomment and edit to set it here.
+        """
+        _SECTION_HEADERS = {
+            "Local overrides": "### Local overrides",
+            "Inherited settings": "### Inherited settings (uncomment to override at this scope)",
+            "Available settings": "### Available settings (uncomment and edit to set at this scope)",
+        }
+
+        lines = [f"### Settings for scope: {self.scope_description()}", ""]
+        for title, body in self.to_yaml_sections():
+            lines.append(_SECTION_HEADERS[title])
+            lines.append(body)
+            lines.append("")
+        while lines and lines[-1] == "":
+            lines.pop()
         return "\n".join(lines)
 
     @staticmethod
     def parse_yaml(yaml_content: str) -> dict[str, Any]:
-        """Parse edited YAML content into a dictionary of overrides.
+        """Parse YAML content into a dict of overrides.
 
-        Only uncommented lines are considered as local overrides.
-        Commented lines are treated as removed/inherited.
+        Uses ``yaml.safe_load``, so all YAML syntax is supported — including
+        flow collections (``[a, b]``, ``{k: v}``) and block collections — for
+        the list and map leaves (``labels``, ``annotations``,
+        ``environment_variables``). Commented lines are ignored (template
+        entries stay as comments until the user uncomments them).
         """
-        overrides = {}
-        for line in yaml_content.split("\n"):
-            stripped = line.strip()
-            if not stripped or stripped.startswith("#"):
-                continue
+        import yaml
 
-            if ":" not in stripped:
-                continue
-
-            key, raw_value = stripped.split(":", 1)
-            if "#" in raw_value:
-                raw_value = raw_value.split("#")[0]
-
-            overrides[key.strip()] = Settings._parse_value(raw_value)
-
-        return overrides
+        data = yaml.safe_load(yaml_content)
+        if data is None:
+            return {}
+        if not isinstance(data, dict):
+            raise ValueError(f"expected YAML mapping at top level, got {type(data).__name__}")
+        return data
 
     @syncify
     @classmethod
-    async def get(cls, project: str | None = None, domain: str | None = None) -> Settings:
-        """Retrieve settings for a given scope.
+    async def get_settings_for_edit(cls, project: str | None = None, domain: str | None = None) -> Settings:
+        """Retrieve settings at the requested scope along with parent scopes.
 
         Returns a Settings object containing both the effective (resolved) settings
         with inheritance, and the local overrides at the requested scope.
 
         The scope is determined by ``domain`` and ``project``:
 
+        - no args → ORG scope.
         - ``domain`` only → DOMAIN scope.
         - ``domain`` + ``project`` → PROJECT scope, inherits from DOMAIN.
 
         These are explicit parameters — they are **not** inferred from
         ``flyte.init()``.
 
-        :param domain: Domain name (required).
+        :param domain: Domain name.
         :param project: Project name. Requires ``domain`` to also be set.
         :returns: Settings object with effective_settings, local_settings, and version.
 
         Example::
 
             # Domain-level settings
-            settings = Settings.get(domain="production")
+            settings = Settings.get_settings_for_edit(domain="production")
 
             # Project-level — inherits from DOMAIN
-            settings = Settings.get(domain="production", project="ml-pipeline")
+            settings = Settings.get_settings_for_edit(domain="production", project="ml-pipeline")
         """
         ensure_client()
         cfg = get_init_config()
         client = get_client()
 
         key = settings_definition_pb2.SettingsKey(org=cfg.org or "", domain=domain or "", project=project or "")
-        resp = await client.settings_service.GetSettingsForEditRaw(
-            settings_service_pb2.GetSettingsForEditRawRequest(key=key)
+        resp = await client.settings_service.get_settings_for_edit(
+            settings_service_pb2.GetSettingsForEditRequest(key=key)
         )
 
         # resp.levels is ordered broadest → most specific.
@@ -322,17 +496,24 @@ class Settings(ToJSONMixin):
         effective: dict[str, EffectiveSetting] = {}
         for record in resp.levels:
             origin = _scope_origin_from_key(record.key)
-            for dotkey, val in _raw_data_to_flat(record.data):
+            for dotkey, val in _proto_to_flat(record.settings):
                 effective[dotkey] = EffectiveSetting(key=dotkey, value=val, origin=origin)
 
-        # Local settings come from the most specific level that matches the requested scope.
+        # Local settings come from the level whose key equals the requested scope
+        # exactly — that is the only level ``update_settings`` will ever write to.
+        # We don't take ``levels[-1]`` because the server may omit a level when no
+        # record exists at that scope yet, in which case the last returned level
+        # is a parent scope and its values are inherited, not local.
+        want_domain = domain or ""
+        want_project = project or ""
         local_settings: list[LocalSetting] = []
         version = 0
-        if resp.levels:
-            most_specific = resp.levels[-1]
-            version = most_specific.version
-            for dotkey, val in _raw_data_to_flat(most_specific.data):
-                local_settings.append(LocalSetting(key=dotkey, value=val))
+        for record in resp.levels:
+            if (record.key.domain or "") == want_domain and (record.key.project or "") == want_project:
+                version = record.version
+                for dotkey, val in _proto_to_flat(record.settings):
+                    local_settings.append(LocalSetting(key=dotkey, value=val))
+                break
 
         return cls(
             effective_settings=list(effective.values()),
@@ -343,40 +524,42 @@ class Settings(ToJSONMixin):
         )
 
     @syncify
-    async def update(self, overrides: dict[str, Any]) -> None:
-        """Update settings with new local overrides at this scope.
+    async def update_settings(self, overrides: dict[str, Any]) -> None:
+        """Replace the complete set of local overrides for this scope.
 
-        Replaces the complete set of local overrides for the scope that this
-        Settings object was retrieved for (determined by the ``domain`` and
-        ``project`` passed to ``get()``). Settings not included in ``overrides``
-        will inherit from the parent scope.
+        Uses the scope (``domain`` / ``project``) this object was retrieved for.
+        Settings not included in ``overrides`` will inherit from the parent scope.
 
-        Uses optimistic locking via the version obtained from ``get()``.
+        Uses optimistic locking via the version obtained from
+        ``get_settings_for_edit``.
 
         :param overrides: Dict of flat dot-notation keys to values.
             Example: ``{"run.default_queue": "gpu", "security.service_account": "my-sa"}``
 
         Example::
 
-            settings = Settings.get(domain="production")
-            settings.update({
+            settings = Settings.get_settings_for_edit(domain="production")
+            settings.update_settings({
                 "run.default_queue": "gpu",
-                "task_resource.defaults.min_cpu": 2,
+                "task_resource.min.cpu": "2",
             })
         """
+        ensure_client()
         cfg = get_init_config()
         client = get_client()
 
         key = settings_definition_pb2.SettingsKey(
             org=cfg.org or "", domain=self.domain or "", project=self.project or ""
         )
-        data = {k: _make_setting_value(v) for k, v in overrides.items()}
+        settings_proto = _flat_to_proto(overrides)
+        req = settings_service_pb2.UpdateSettingsRequest(
+            key=key,
+            settings=settings_proto,
+            version=self._version,
+        )
+        resp = await client.settings_service.update_settings(req)
 
-        req = settings_service_pb2.UpdateSettingsRawRequest(key=key, version=self._version)
-        for k, sv in data.items():
-            req.data[k].CopyFrom(sv)
-
-        await client.settings_service.UpdateSettingsRaw(req)
-
-        # Update local state
+        # Refresh local state from the server response.
         self.local_settings = [LocalSetting(key=k, value=v) for k, v in overrides.items()]
+        if resp.HasField("settingsRecord"):
+            self._version = resp.settingsRecord.version
