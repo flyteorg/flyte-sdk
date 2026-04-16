@@ -1,5 +1,6 @@
 import asyncio
 import datetime as dt
+from pathlib import Path
 from typing import Any, Tuple, Union
 
 import rich_click as click
@@ -417,11 +418,21 @@ def io(
 
 
 @get.command(cls=common.CommandBase)
+@click.option(
+    "--to-file",
+    "-o",
+    "to_file",
+    type=click.Path(dir_okay=False, writable=True, path_type=Path),
+    default=None,
+    help="Write the scope's YAML to this file instead of printing it. The file "
+    "round-trips through `flyte edit settings --from-file`.",
+)
 @click.pass_obj
 def settings(
     cfg: common.CLIConfig,
     project: str | None = None,
     domain: str | None = None,
+    to_file: Path | None = None,
 ):
     """
     Get settings for a scope as editable YAML.
@@ -446,6 +457,11 @@ def settings(
 
     # Get settings for a project (inherits from domain, which inherits from org)
     flyte get settings --domain production --project ml-pipeline
+
+    # Dump to a file, edit it, then apply non-interactively
+    flyte get settings --domain production -o prod.yaml
+    # ...edit prod.yaml...
+    flyte edit settings --domain production --from-file prod.yaml
     ```
 
     Use `flyte edit settings` to interactively modify these values.
@@ -456,6 +472,16 @@ def settings(
 
     console = common.get_console()
     s = remote.Settings.get_settings_for_edit(domain=domain, project=project)
+
+    if to_file is not None:
+        # Dump the raw YAML (with ### / ## / # markers preserved) so the file
+        # round-trips through `flyte edit settings --from-file`.
+        to_file.write_text(s.to_yaml() + "\n")
+        console.print(
+            f"[green]✓ Wrote settings for {s.scope_description()} (v{s._version}) to [bold]{to_file}[/bold][/green]"
+        )
+        return
+
     console.print(
         Panel(
             _stylize_settings_yaml(s.to_yaml()),

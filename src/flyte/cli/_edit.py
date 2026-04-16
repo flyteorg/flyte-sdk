@@ -51,12 +51,49 @@ def edit():
     pass
 
 
-@edit.command(cls=common.CommandBase)
-@click.pass_obj
-def settings(cfg: common.CLIConfig, project: str | None, domain: str | None):
-    """Edit hierarchical settings interactively.
+def _print_diff(console: "common.Console", overrides: dict, original_local: dict) -> bool:
+    """Print a coloured summary of the override changes. Returns True when the
+    diff is non-empty (i.e. there is something to apply)."""
+    added = {k: v for k, v in overrides.items() if k not in original_local}
+    removed = {k: v for k, v in original_local.items() if k not in overrides}
+    modified = {
+        k: (original_local[k], v) for k, v in overrides.items() if k in original_local and original_local[k] != v
+    }
+    if not (added or removed or modified):
+        return False
+    console.print("\n[bold]Changes to apply:[/bold]")
+    if added:
+        console.print("[green]Added overrides:[/green]")
+        for k, v in added.items():
+            console.print(f"  + {k}: {v}")
+    if modified:
+        console.print("[yellow]Modified overrides:[/yellow]")
+        for k, (old, new) in modified.items():
+            console.print(f"  ~ {k}: {old} → {new}")
+    if removed:
+        console.print("[red]Removed overrides (will inherit):[/red]")
+        for k, v in removed.items():
+            console.print(f"  - {k}: {v}")
+    return True
 
-    Opens settings in your $EDITOR. Three comment tiers appear:
+
+@edit.command(cls=common.CommandBase)
+@click.option(
+    "--from-file",
+    "-f",
+    "from_file",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="Apply overrides from a YAML file and skip the editor. The file can be "
+    "produced by `flyte get settings` (comment markers are honoured) or be a "
+    "plain YAML mapping of flat dot-notation keys to values.",
+)
+@click.pass_obj
+def settings(cfg: common.CLIConfig, project: str | None, domain: str | None, from_file: Path | None):
+    """Edit hierarchical settings interactively — or apply a YAML file directly.
+
+    **Interactive mode** (default). Opens settings in your ``$EDITOR``. Three
+    comment tiers appear:
 
     - ``###`` section headers and the scope line
     - ``##`` per-field descriptions and inline metadata
@@ -66,6 +103,11 @@ def settings(cfg: common.CLIConfig, project: str | None, domain: str | None):
     header so you can fix the syntax without losing your edits. If you
     decline to reopen — or if the server rejects the update — your buffer
     is saved under ``~/.flyte/settings-edit-<timestamp>.yaml``.
+
+    **Non-interactive mode**: pass ``--from-file <path>`` to skip the editor
+    entirely. The file's contents are parsed, the diff is printed, and the
+    overrides are applied without a confirmation prompt. Ideal for
+    CI/automation.
     """
     import flyte.remote as remote
 
@@ -82,6 +124,32 @@ def settings(cfg: common.CLIConfig, project: str | None, domain: str | None):
         console.print(f"[red]Error fetching settings:[/red] {e}")
         raise click.Abort
 
+    # -------------------- non-interactive path -----------------------------
+    if from_file is not None:
+        console.print(
+            f"[bold]Applying settings for scope:[/bold] {settings.scope_description()} [dim]from {from_file}[/dim]"
+        )
+        file_body = from_file.read_text()
+        try:
+            file_overrides = remote.Settings.parse_yaml(file_body)
+        except Exception as e:
+            console.print(f"[red]Invalid YAML in {from_file}:[/red] {e}")
+            raise click.Abort
+
+        if not _print_diff(console, file_overrides, settings.local_overrides()):
+            console.print("[dim]No changes detected.[/dim]")
+            return
+
+        try:
+            settings.update_settings(file_overrides)
+        except Exception as e:
+            console.print(f"[red]Error updating settings:[/red] {e}")
+            raise click.Abort
+
+        console.print("[green]✓ Settings updated successfully[/green]")
+        return
+
+    # -------------------- interactive path ---------------------------------
     console.print(f"[bold]Editing settings for scope:[/bold] {settings.scope_description()}")
 
     yaml_content = settings.to_yaml()
@@ -94,7 +162,7 @@ def settings(cfg: common.CLIConfig, project: str | None, domain: str | None):
     keep_tmp = False
     try:
         # Editor + parse loop: reopen until YAML parses cleanly, or the user bails.
-        overrides = None
+        overrides: dict | None = None
         edited_content = yaml_content
         while overrides is None:
             result = subprocess.run([editor, str(tmp_path)], check=False)
@@ -118,31 +186,9 @@ def settings(cfg: common.CLIConfig, project: str | None, domain: str | None):
                 _prepend_error_header(tmp_path, str(e))
                 overrides = None  # loop
 
-        # Successful parse — compute the diff against the prior local state.
-        original_local = settings.local_overrides()
-        added = {k: v for k, v in overrides.items() if k not in original_local}
-        removed = {k: v for k, v in original_local.items() if k not in overrides}
-        modified = {
-            k: (original_local[k], v) for k, v in overrides.items() if k in original_local and original_local[k] != v
-        }
-
-        if not (added or removed or modified):
+        if not _print_diff(console, overrides, settings.local_overrides()):
             console.print("[dim]No changes detected.[/dim]")
             return
-
-        console.print("\n[bold]Changes to apply:[/bold]")
-        if added:
-            console.print("[green]Added overrides:[/green]")
-            for k, v in added.items():
-                console.print(f"  + {k}: {v}")
-        if modified:
-            console.print("[yellow]Modified overrides:[/yellow]")
-            for k, (old, new) in modified.items():
-                console.print(f"  ~ {k}: {old} → {new}")
-        if removed:
-            console.print("[red]Removed overrides (will inherit):[/red]")
-            for k, v in removed.items():
-                console.print(f"  - {k}: {v}")
 
         if not click.confirm("\nApply these changes?", default=True):
             console.print("[dim]Changes discarded.[/dim]")
