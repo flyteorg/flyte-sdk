@@ -28,6 +28,11 @@ def _make_wrapper(
         return_value=dataproxy_service_pb2.CreateUploadLocationResponse(signed_url="https://signed/")
     )
     default_client.upload_inputs = AsyncMock(return_value=dataproxy_service_pb2.UploadInputsResponse())
+
+    async def _stream_one(_request):
+        yield dataproxy_service_pb2.TailLogsResponse()
+
+    default_client.tail_logs = MagicMock(side_effect=_stream_one)
     return (
         ClusterAwareDataProxy(
             cluster_service=cluster_service,
@@ -201,3 +206,22 @@ async def test_failed_resolve_is_evicted_so_retries_can_succeed():
 
     assert cluster_service.select_cluster.await_count == 2
     assert default_client.create_upload_location.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_tail_logs_routes_by_action_id():
+    wrapper, cluster_service, default_client = _make_wrapper()
+    action_id = identifier_pb2.ActionIdentifier(
+        run=identifier_pb2.RunIdentifier(org="o", project="p", domain="d", name="r"),
+        name="a",
+    )
+    req = dataproxy_service_pb2.TailLogsRequest(action_id=action_id, attempt=1)
+
+    received = [resp async for resp in wrapper.tail_logs(req)]
+
+    assert len(received) == 1
+    sent = cluster_service.select_cluster.await_args[0][0]
+    assert sent.operation == cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_TAIL_LOGS
+    assert sent.WhichOneof("resource") == "action_id"
+    assert sent.action_id == action_id
+    default_client.tail_logs.assert_called_once_with(req)
