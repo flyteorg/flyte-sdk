@@ -1,6 +1,5 @@
 import mock
 import pytest
-from flyteidl2.cluster import payload_pb2 as cluster_payload_pb2
 from flyteidl2.common import run_pb2 as common_run_pb2
 from flyteidl2.core import literals_pb2
 from flyteidl2.dataproxy import dataproxy_service_pb2
@@ -59,7 +58,6 @@ async def test_task1_remote_union_sync(
         offloaded_input_data=mock_offloaded,
     )
     mock_client.dataproxy_service = mock_dataproxy_service
-    mock_client.get_dataproxy_for_resource = AsyncMock(return_value=mock_dataproxy_service)
 
     inputs = "say test"
 
@@ -96,11 +94,6 @@ async def test_task1_remote_union_sync(
     assert upload_req.project_id.domain == "test"
     assert upload_req.WhichOneof("task") == "task_spec"
     assert upload_req.task_spec.task_template.id.name == "test.task1"
-
-    # Ensure get_dataproxy_for_resource was called with OPERATION_UPLOAD_INPUTS
-    mock_client.get_dataproxy_for_resource.assert_called_once()
-    dp_call_args = mock_client.get_dataproxy_for_resource.call_args[0]
-    assert dp_call_args[0] == cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_UPLOAD_INPUTS
 
     # Ensure create_run uses offloaded_input_data instead of inline inputs
     mock_build_image_bg.assert_called_once()
@@ -167,7 +160,6 @@ async def test_upload_inputs_with_run_id(
         offloaded_input_data=mock_offloaded,
     )
     mock_client.dataproxy_service = mock_dataproxy_service
-    mock_client.get_dataproxy_for_resource = AsyncMock(return_value=mock_dataproxy_service)
 
     mock_code_bundler.return_value = CodeBundle(
         computed_version="v1",
@@ -192,15 +184,6 @@ async def test_upload_inputs_with_run_id(
     assert upload_req.run_id.domain == "development"
     assert upload_req.WhichOneof("task") == "task_spec"
     assert upload_req.task_spec.task_template.id.name == "test.task1"
-
-    # Ensure get_dataproxy_for_resource was called with OPERATION_UPLOAD_INPUTS and run_id
-    mock_client.get_dataproxy_for_resource.assert_called_once()
-    dp_call_args = mock_client.get_dataproxy_for_resource.call_args[0]
-    assert dp_call_args[0] == cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_UPLOAD_INPUTS
-    # The resource should be a RunIdentifier
-    assert dp_call_args[1].name == "my-run"
-    assert dp_call_args[1].project == "testproject"
-    assert dp_call_args[1].domain == "development"
 
     # create_run should use offloaded_input_data
     req: run_service_pb2.CreateRunRequest = mock_run_service.create_run.call_args[0][0]

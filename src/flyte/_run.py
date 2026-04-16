@@ -389,7 +389,6 @@ class _Runner:
                 notification_rule_name, notification_rules = resolve_notification_settings(self._notifications)
 
             try:
-                from flyteidl2.cluster.payload_pb2 import SelectClusterRequest
                 from flyteidl2.dataproxy import dataproxy_service_pb2
 
                 upload_req = dataproxy_service_pb2.UploadInputsRequest(
@@ -401,11 +400,7 @@ class _Runner:
                 else:
                     upload_req.project_id.CopyFrom(project_id)
 
-                resource = run_id if run_id is not None else project_id
-                dataproxy = await get_client().get_dataproxy_for_resource(
-                    SelectClusterRequest.Operation.OPERATION_UPLOAD_INPUTS, resource
-                )
-                upload_resp = await dataproxy.upload_inputs(upload_req)
+                upload_resp = await get_client().dataproxy_service.upload_inputs(upload_req)
 
                 resp = await get_client().run_service.create_run(
                     run_service_pb2.CreateRunRequest(

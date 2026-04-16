@@ -153,28 +153,17 @@ async def _upload_single_file(
     :return: Tuple of (MD5 digest hex string, remote native URL).
     """
     md5_bytes, str_digest, _ = hash_file(fp)
-    from flyteidl2.cluster.payload_pb2 import SelectClusterRequest
-    from flyteidl2.common import identifier_pb2
-
     from flyte._logging import logger
 
-    expires_in_pb = duration_pb2.Duration()
-    expires_in_pb.FromTimedelta(_UPLOAD_EXPIRES_IN)
-    client = get_client()
-    project_id = identifier_pb2.ProjectIdentifier(
-        name=cfg.project,
-        domain=cfg.domain,
-        organization=cfg.org or "",
-    )
-    dataproxy = await client.get_dataproxy_for_resource(
-        SelectClusterRequest.Operation.OPERATION_CREATE_UPLOAD_LOCATION, project_id
-    )
-
     try:
-        resp = await dataproxy.create_upload_location(  # type: ignore
+        expires_in_pb = duration_pb2.Duration()
+        expires_in_pb.FromTimedelta(_UPLOAD_EXPIRES_IN)
+        client = get_client()
+        resp = await client.dataproxy_service.create_upload_location(  # type: ignore
             dataproxy_service_pb2.CreateUploadLocationRequest(
                 project=cfg.project,
                 domain=cfg.domain,
+                org=cfg.org or "",
                 content_md5=md5_bytes,
                 filename=fname or fp.name,
                 expires_in=expires_in_pb,
