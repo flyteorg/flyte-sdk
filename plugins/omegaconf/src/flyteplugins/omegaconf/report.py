@@ -138,10 +138,7 @@ def _payload_to_plain_value(payload: Any) -> Any:
         return [_payload_to_plain_value(item) for item in payload[PAYLOAD_VALUES]]
 
     if kind == KIND_DICT:
-        return {
-            key: _payload_to_plain_value(value)
-            for key, value in payload[PAYLOAD_VALUES].items()
-        }
+        return {key: _payload_to_plain_value(value) for key, value in payload[PAYLOAD_VALUES].items()}
 
     return {key: _payload_to_plain_value(value) for key, value in payload.items()}
 
