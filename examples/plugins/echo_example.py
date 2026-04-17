@@ -20,7 +20,7 @@ async def echo_identity(message: str) -> str:
 
 
 if __name__ == "__main__":
-    flyte.init_from_config("/Users/praful/temp/v2/config_dogfood.yaml")
+    flyte.init_from_config(root_dir=pathlib.Path(__file__).parent)
     run = flyte.run(echo_identity, message="hello")
     print("run name:", run.name)
     print("run url:", run.url)
