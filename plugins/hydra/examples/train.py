@@ -11,6 +11,9 @@ Can also be run directly as a @hydra.main script:
     # add task-environment overrides from a YAML config group
     python train.py +task_env=a100
 
+    # run with a prebuilt image override for pipeline and train_model
+    python train.py +task_env=prebuilt_image
+
     # Python dataclass config
     python train.py --config-name structured_training
 
@@ -46,14 +49,19 @@ Can also be run directly as a @hydra.main script:
 """
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import flyte
 import hydra
+from flyte._image import PythonWheels
 from flyte.io import Dir
 from hydra.core.config_store import ConfigStore
 from hydra.core.hydra_config import HydraConfig
+from kubernetes.client import V1Container, V1PodSpec
 from omegaconf import MISSING, DictConfig, OmegaConf
+
+from flyteplugins.hydra import apply_task_env
 
 
 @dataclass
@@ -217,10 +225,15 @@ def _flyte_launcher_mode() -> str | None:
 
 env = flyte.TaskEnvironment(
     name="training",
-    image=flyte.Image.from_debian_base(name="training").with_pip_packages(
-        "flyteplugins-omegaconf",
-        "hydra-core",
-    ),
+    image=flyte.Image.from_debian_base(name="training")
+    .clone(
+        addl_layer=PythonWheels(
+            wheel_dir=Path(__file__).parent.parent / "dist",
+            package_name="flyteplugins-hydra",
+            pre=True,
+        ),
+    )
+    .with_pip_packages("flyteplugins-omegaconf"),
     resources=flyte.Resources(cpu="1", memory="2Gi"),
 )
 
@@ -262,11 +275,8 @@ async def train_model(cfg: DictConfig, data: flyte.io.Dir) -> tuple[flyte.io.Dir
 @env.task
 async def pipeline(cfg: DictConfig, dataset: str) -> float:
     """End-to-end pipeline: preprocess, train, return val_loss."""
-    task_env = cfg.get("task_env", {})
-    train_resources = task_env.get("train_model", {}).get("resources")
-
     data = await preprocess(cfg)
-    train_task = train_model.override(resources=flyte.Resources(**train_resources)) if train_resources else train_model
+    train_task = apply_task_env(train_model, cfg)
     _, val_loss = await train_task(cfg, data)
     print(f"pipeline done — val_loss={val_loss:.4f}  dataset={dataset}")
     return val_loss
@@ -275,12 +285,24 @@ async def pipeline(cfg: DictConfig, dataset: str) -> float:
 @env.task
 async def pipeline_with_config(config: DictConfig, dataset: str) -> float:
     """Same pipeline, using ``config`` instead of ``cfg`` as the parameter."""
-    task_env = config.get("task_env", {})
-    train_resources = task_env.get("train_model", {}).get("resources")
-
     data = await preprocess(config)
-    train_task = train_model.override(resources=flyte.Resources(**train_resources)) if train_resources else train_model
+    train_task = apply_task_env(train_model, config)
     _, val_loss = await train_task(config, data)
+    print(f"pipeline done — val_loss={val_loss:.4f}  dataset={dataset}")
+    return val_loss
+
+
+@env.task(
+    pod_template=flyte.PodTemplate(
+        primary_container_name="primary",
+        pod_spec=V1PodSpec(containers=[V1Container(name="primary", image="python:3.12.13")]),
+    )
+)
+async def pipeline_with_podtemplate(cfg: DictConfig, dataset: str) -> float:
+    """End-to-end pipeline: preprocess, train, return val_loss."""
+    data = await preprocess(cfg)
+    train_task = apply_task_env(train_model, cfg)
+    _, val_loss = await train_task(cfg, data)
     print(f"pipeline done — val_loss={val_loss:.4f}  dataset={dataset}")
     return val_loss
 
@@ -288,9 +310,7 @@ async def pipeline_with_config(config: DictConfig, dataset: str) -> float:
 @hydra.main(version_base=None, config_path="conf", config_name="training")
 def main(cfg: DictConfig):
     flyte.init_from_config()
-    task_env = cfg.get("task_env", {})
-    pipeline_resources = task_env.get("pipeline", {}).get("resources")
-    entry_task = pipeline.override(resources=flyte.Resources(**pipeline_resources)) if pipeline_resources else pipeline
+    entry_task = apply_task_env(pipeline, cfg)
     mode = _flyte_launcher_mode()
     runner = flyte.with_runcontext(mode=mode) if mode else flyte
     run = runner.run(

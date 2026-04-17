@@ -44,6 +44,9 @@ Install this plugin locally into the same environment as `flyte`:
 pip install flyteplugins-hydra
 ```
 
+You may need `flyteplugins-hydra` in the image if you're using `apply_task_env`
+to compose task configs for child tasks.
+
 ## Which entry point should I use?
 
 Use `hydra/launcher=flyte` when your script already has a `@hydra.main` entry
@@ -237,10 +240,123 @@ flyte hydra run --multirun --config-path conf --config-name training \
   --cfg "optimizer.lr=interval(1e-4,1e-1)"
 ```
 
+### Override support
+
+The plugin keeps app config overrides separate from Hydra runtime overrides.
+This mirrors Hydra's own command-line grammar while avoiding conflicts with
+Flyte task arguments.
+
+App-level overrides target your composed config and are passed through the
+task's `DictConfig` parameter flag:
+
+```bash
+# pipeline(cfg: DictConfig, ...)
+flyte hydra run --config-path conf --config-name training \
+  train.py pipeline \
+  --cfg optimizer.lr=0.01 \
+  --cfg training.epochs=20
+
+# pipeline_with_config(config: DictConfig, ...)
+flyte hydra run --config-path conf --config-name training \
+  train.py pipeline_with_config \
+  --config optimizer.lr=0.01
+```
+
+Hydra runtime overrides use `--hydra-override`:
+
+```bash
+flyte hydra run --config-path conf --config-name training \
+  train.py pipeline \
+  --hydra-override hydra.run.dir=./outputs/exp1 \
+  --hydra-override hydra/launcher=flyte
+```
+
+Sweeps use the same split. Basic sweeps accept comma-separated values, while
+custom sweepers can use Hydra sweep functions such as `choice(...)` and
+`interval(...)`:
+
+```bash
+flyte hydra run --multirun --config-path conf --config-name training \
+  train.py pipeline --dataset s3://my-bucket/imagenet \
+  --hydra-override hydra/sweeper=optuna \
+  --hydra-override hydra.sweeper.n_trials=20 \
+  --hydra-override hydra.sweeper.n_jobs=4 \
+  --cfg "optimizer.lr=interval(1e-4,1e-1)" \
+  --cfg "training.epochs=choice(10,20,50)"
+```
+
+Supported app override forms are the standard Hydra forms:
+
+```bash
+--cfg optimizer.lr=0.01          # set a value
+--cfg optimizer=sgd              # select a config group
+--cfg +task_env=a100             # append a config group or key
+--cfg ++optimizer.lr=0.05        # force set or create
+--cfg ~training.warmup_steps     # delete a key
+```
+
 `flyte hydra run` also inherits relevant `flyte run` flags such as `--project`,
 `--domain`, `--image`, `--name`, `--service-account`, `--raw-data-path`,
 `--copy-style`, `--debug`, `--local`, and `--follow`. `--follow` is handled after
 launch and cannot be combined with `--no-wait`.
+
+## Shell Completion
+
+Install shell completion for the `flyte` executable using Click's completion
+hook. For zsh:
+
+```zsh
+eval "$(_FLYTE_COMPLETE=zsh_source flyte)"
+```
+
+For bash:
+
+```bash
+eval "$(_FLYTE_COMPLETE=bash_source flyte)"
+```
+
+If you run Flyte through a wrapper, use the exact command name you type. For
+example:
+
+```zsh
+eval "$(_FLYTE_COMPLETE=zsh_source uv run flyte)"
+```
+
+`flyte hydra run` adds Hydra-aware completions after `SCRIPT TASK_NAME`. It
+loads the script, inspects the task signature, and suggests the app override
+flag that matches the task's `DictConfig` parameter:
+
+```bash
+# pipeline(cfg: DictConfig, ...)
+flyte hydra run --config-path conf --config-name training \
+  train.py pipeline --c<TAB>
+# suggests --cfg
+
+# pipeline_with_config(config: DictConfig, ...)
+flyte hydra run --config-path conf --config-name training \
+  train.py pipeline_with_config --co<TAB>
+# suggests --config
+```
+
+Override values are completed with Hydra's own completion engine:
+
+```bash
+flyte hydra run --config-path conf --config-name training \
+  train.py pipeline --cfg optimizer.<TAB>
+# suggests optimizer.lr=, optimizer.weight_decay=, ...
+
+flyte hydra run --config-path conf --config-name training \
+  train.py pipeline --cfg +task_env=<TAB>
+# suggests task_env config group options
+
+flyte hydra run --config-path conf --config-name training \
+  train.py pipeline --hydra-override hydra/launcher=<TAB>
+# suggests hydra launcher choices
+```
+
+Completion imports the target script to inspect the task. Keep task definitions
+and `ConfigStore` registration import-safe, and avoid expensive top-level work
+in scripts used with `flyte hydra run`.
 
 ## Structured configs
 
@@ -307,18 +423,45 @@ task_env:
       gpu: "A100:1"
 ```
 
+To run the launched task with a prebuilt container image, set `image`. The
+plugin lowers this to a `flyte.PodTemplate`, so the image is expected to
+already exist. `primary_container_name` is optional and defaults to `primary`:
+
+```yaml
+task_env:
+  pipeline:
+    image: ghcr.io/acme/flyte-training:latest
+    primary_container_name: main
+    resources:
+      cpu: "4"
+      memory: 16Gi
+```
+
+If the task already has an inline `flyte.PodTemplate`, the plugin deep-copies
+it and only sets the image on the primary container. If the task references a
+cluster pod template by name, keep the image in that referenced pod template
+instead; there is no inline template object for the plugin to patch safely.
+
+The YAML task environment intentionally does not model the full Kubernetes
+`V1PodSpec`. Keep advanced pod configuration in Python task/environment code,
+and use Hydra task-env presets for the common image and resources knobs.
+
+Example presets live in `examples/conf/task_env/a100.yaml` and
+`examples/conf/task_env/prebuilt_image.yaml`.
+
 The launcher applies overrides only to the task it launches. Child tasks should
-be overridden in user code where those child tasks are called:
+be overridden in user code where those child tasks are called. Use
+`apply_task_env` to apply the same `resources` and `image` handling to child
+tasks:
 
 ```python
+from flyteplugins.hydra import apply_task_env
+
+
 @env.task
 async def pipeline(cfg: DictConfig, dataset: str) -> float:
-    train_resources = cfg.get("task_env", {}).get("train_model", {}).get("resources")
-    train_task = (
-        train_model.override(resources=flyte.Resources(**train_resources))
-        if train_resources
-        else train_model
-    )
+    data = await preprocess(cfg)
+    train_task = apply_task_env(train_model, cfg)
     _, val_loss = await train_task(cfg, data)
     return val_loss
 ```

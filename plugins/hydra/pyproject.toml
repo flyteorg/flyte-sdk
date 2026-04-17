@@ -9,6 +9,7 @@ dependencies = [
     "flyte",
     "flyteplugins-omegaconf",
     "hydra-core",
+    "kubernetes",
 ]
 
 [project.entry-points."flyte.plugins.cli.commands"]

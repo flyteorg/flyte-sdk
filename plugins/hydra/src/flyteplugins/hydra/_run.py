@@ -37,8 +37,8 @@ Examples::
 from __future__ import annotations
 
 import contextlib
+import copy
 import inspect
-import logging
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Callable
@@ -48,7 +48,7 @@ from omegaconf import DictConfig, OmegaConf
 
 from hydra import initialize, initialize_config_dir
 
-log = logging.getLogger(__name__)
+_PRIMARY_CONTAINER_NAME_KEY = "primary_container_name"
 
 
 def _is_dictconfig_type(tp: Any) -> bool:
@@ -87,8 +87,49 @@ def _task_name(task: Callable) -> str:
     return getattr(task, "short_name", None) or getattr(task, "__name__", None) or getattr(task, "name", None) or "task"
 
 
+def _pod_template_with_image(
+    image: str,
+    *,
+    primary_container_name: str,
+    pod_template: flyte.PodTemplate | None = None,
+) -> flyte.PodTemplate:
+    """Return a PodTemplate whose primary container uses a prebuilt image URI."""
+    from kubernetes.client import V1Container, V1PodSpec
+
+    if not isinstance(image, str):
+        raise TypeError(f"Expected task_env image to be a prebuilt image URI string. Got {type(image).__name__}.")
+
+    if pod_template is None:
+        return flyte.PodTemplate(
+            pod_spec=V1PodSpec(containers=[V1Container(name=primary_container_name, image=image)]),
+            primary_container_name=primary_container_name,
+        )
+
+    merged = copy.deepcopy(pod_template)
+    merged.primary_container_name = primary_container_name
+    if merged.pod_spec is None:
+        merged.pod_spec = V1PodSpec(containers=[])
+    if merged.pod_spec.containers is None:
+        merged.pod_spec.containers = []
+
+    for container in merged.pod_spec.containers:
+        if container.name == primary_container_name:
+            container.image = image
+            break
+    else:
+        merged.pod_spec.containers.append(V1Container(name=primary_container_name, image=image))
+
+    return merged
+
+
 def _coerce_override_kwargs(overrides: Any) -> dict[str, Any]:
-    """Convert Hydra override mappings into kwargs accepted by task.override."""
+    """Normalize Hydra task-env mappings before applying them to a task.
+
+    Most keys are passed through to ``task.override``. ``resources`` mappings
+    are converted to ``flyte.Resources``. ``image`` and
+    ``primary_container_name`` are plugin-level conveniences that are resolved
+    later, once the launched task's existing pod template is available.
+    """
     if isinstance(overrides, DictConfig):
         kwargs = OmegaConf.to_container(overrides, resolve=True)
     elif isinstance(overrides, Mapping):
@@ -104,6 +145,56 @@ def _coerce_override_kwargs(overrides: Any) -> dict[str, Any]:
     resources = kwargs.get("resources")
     if isinstance(resources, Mapping):
         kwargs["resources"] = flyte.Resources(**dict(resources))
+
+    return kwargs
+
+
+def _merge_task_env_image(task: Callable, override_kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Resolve task-env ``image`` into a pod template override for task.
+
+    ``task.override`` intentionally rejects ``image`` because the task image is
+    part of the task definition. For Hydra task-env presets, we support
+    prebuilt runtime images by setting the image on the pod template primary
+    container. If the task already has an inline pod template, keep it and only
+    patch a deep copy of its primary container.
+    """
+    if "image" not in override_kwargs:
+        if _PRIMARY_CONTAINER_NAME_KEY in override_kwargs:
+            raise ValueError(f"'{_PRIMARY_CONTAINER_NAME_KEY}' requires 'image'.")
+        return override_kwargs
+
+    kwargs = dict(override_kwargs)
+    image = kwargs.pop("image")
+    requested_primary_name = kwargs.pop(_PRIMARY_CONTAINER_NAME_KEY, None)
+
+    # Users can still pass a Python-created pod template through the SDK path.
+    # YAML examples avoid modeling full V1PodSpec values.
+    configured_pod_template = kwargs.get("pod_template")
+    base_pod_template = (
+        configured_pod_template if configured_pod_template is not None else getattr(task, "pod_template", None)
+    )
+
+    if isinstance(base_pod_template, str):
+        raise ValueError(
+            "Cannot apply task_env image to a task with a named pod_template string. "
+            "Use an inline flyte.PodTemplate or set the image in the referenced pod template."
+        )
+
+    if base_pod_template is not None and not isinstance(base_pod_template, flyte.PodTemplate):
+        raise TypeError(
+            "Expected task pod_template to be a flyte.PodTemplate when using task_env image, "
+            f"got {type(base_pod_template).__name__}."
+        )
+
+    primary_container_name = requested_primary_name
+    if primary_container_name is None and base_pod_template is not None:
+        primary_container_name = base_pod_template.primary_container_name
+
+    kwargs["pod_template"] = _pod_template_with_image(
+        image,
+        primary_container_name=primary_container_name or "primary",
+        pod_template=base_pod_template,
+    )
     return kwargs
 
 
@@ -112,7 +203,9 @@ def _task_override_kwargs(cfg: DictConfig, task_env_key: str, task_name: str) ->
 
     The launcher only controls the task it passes to ``flyte.run``. Child task
     overrides must be applied inside user code, where those child tasks are
-    called.
+    called. The returned mapping may still include plugin-level conveniences
+    such as ``image``; ``_make_entry`` resolves those after it can inspect the
+    launched task's existing pod template.
     """
     task_env = cfg.get(task_env_key, {})
     if not task_env:
@@ -134,6 +227,26 @@ def _task_override_kwargs(cfg: DictConfig, task_env_key: str, task_name: str) ->
             f"kwargs, got {type(task_overrides).__name__}."
         )
     return _coerce_override_kwargs(task_overrides)
+
+
+def apply_task_env(
+    task: Callable,
+    cfg: DictConfig | Mapping[str, Any],
+    *,
+    task_env_key: str = "task_env",
+    task_name: str | None = None,
+) -> Callable:
+    """Return task with Hydra task-env overrides applied.
+
+    The launcher calls this for the entry task automatically. User code can call
+    it for child tasks to get the same resources and prebuilt-image handling
+    before invoking the task.
+    """
+    override_kwargs = _merge_task_env_image(
+        task,
+        _task_override_kwargs(cfg, task_env_key, task_name or _task_name(task)),
+    )
+    return task.override(**override_kwargs) if override_kwargs else task
 
 
 def _task_kwargs(task: Callable, kwargs: dict[str, Any]) -> dict[str, Any]:
@@ -221,8 +334,7 @@ def _make_entry(
     task_name = _task_name(task)
 
     def _entry(cfg: DictConfig) -> Any:
-        override_kwargs = _task_override_kwargs(cfg, task_env_key, task_name)
-        t = task.override(**override_kwargs) if override_kwargs else task
+        t = apply_task_env(task, cfg, task_env_key=task_env_key, task_name=task_name)
         run_kwargs = {config_param: cfg, **task_kw}
         return flyte.with_runcontext(mode=mode, **(run_options or {})).run(t, **run_kwargs)
 

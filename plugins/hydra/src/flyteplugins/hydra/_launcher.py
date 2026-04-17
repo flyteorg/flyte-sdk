@@ -25,18 +25,16 @@ submitted, then optionally waits for all submitted runs concurrently.
 
 from __future__ import annotations
 
-import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Sequence
 
+from flyte._logging import logger as log
 from omegaconf import DictConfig, open_dict
 
 from hydra.core.utils import JobReturn, JobStatus, configure_log, run_job, setup_globals
 from hydra.plugins.launcher import Launcher
 from hydra.types import HydraContext, TaskFunction
-
-log = logging.getLogger(__name__)
 
 
 class FlyteHydraRunResult:

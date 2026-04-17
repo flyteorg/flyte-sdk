@@ -30,6 +30,6 @@ Provides three entry points for running Flyte tasks via Hydra:
                           overrides=["optimizer.lr=0.001,0.01,0.1"], mode="remote")
 """
 
-from flyteplugins.hydra._run import hydra_run, hydra_sweep
+from flyteplugins.hydra._run import apply_task_env, hydra_run, hydra_sweep
 
-__all__ = ["hydra_run", "hydra_sweep"]
+__all__ = ["apply_task_env", "hydra_run", "hydra_sweep"]

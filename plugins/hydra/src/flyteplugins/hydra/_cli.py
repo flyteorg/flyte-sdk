@@ -50,6 +50,9 @@ import sys
 from pathlib import Path
 
 import rich_click as click
+from click.shell_completion import CompletionItem
+
+_HYDRA_OVERRIDE_OPTION = "--hydra-override"
 
 
 def _follow_run_logs(run) -> None:
@@ -72,6 +75,38 @@ def _completed_result_value(run):
     if getattr(run, "url", None) is None:
         return run
     return None
+
+
+def _load_script_task(script: str, task_name: str):
+    """Load script as a module and return the requested Flyte task."""
+    script_path = Path(script).resolve()
+    module_name = script_path.stem
+    sys.path.append(str(script_path.parent))
+    spec = importlib.util.spec_from_file_location(module_name, script_path)
+
+    if spec is None or spec.loader is None:
+        raise click.ClickException(f"Could not load module from {script}")
+
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = mod
+    spec.loader.exec_module(mod)
+
+    task = getattr(mod, task_name, None)
+    if task is None:
+        raise click.ClickException(f"Task '{task_name}' not found in {script}")
+    return task
+
+
+def _script_task_and_tail(ctx: click.Context) -> tuple[str | None, str | None, list[str]]:
+    """Return SCRIPT, TASK_NAME, and remaining task-tail args from a Click context."""
+    script = ctx.params.get("script")
+    task_name = ctx.params.get("task_name")
+    args = list(ctx.args)
+    if script and task_name:
+        return script, task_name, args
+    if len(args) >= 2:
+        return args[0], args[1], args[2:]
+    return None, None, args
 
 
 def _extract_config_overrides(task, args: list[str]) -> tuple[list[str], list[str]]:
@@ -122,6 +157,154 @@ def _extract_config_overrides(task, args: list[str]) -> tuple[list[str], list[st
         idx += 1
 
     return overrides, remaining
+
+
+def _override_completion_context(
+    args: list[str],
+    incomplete: str,
+    override_options: set[str],
+) -> tuple[list[str], str, str] | None:
+    """Return previous overrides, current override prefix, and replacement prefix.
+
+    ``flyte hydra run`` carries Hydra overrides as values to dynamic options
+    such as ``--cfg`` or ``--config``. During shell completion Click gives us
+    only the already-complete tail args plus the current incomplete word, so we
+    scan that tail ourselves to decide whether the cursor is completing a
+    Hydra override value.
+    """
+    for option in override_options:
+        prefix = f"{option}="
+        if incomplete.startswith(prefix):
+            return _collect_complete_overrides(args, override_options), incomplete[len(prefix) :], prefix
+
+    if not args or args[-1] not in override_options:
+        return None
+
+    return _collect_complete_overrides(args[:-1], override_options), incomplete, ""
+
+
+def _collect_complete_overrides(args: list[str], override_options: set[str]) -> list[str]:
+    """Collect complete Hydra override values from a task-argument tail."""
+    overrides: list[str] = []
+    pending_override = False
+
+    for arg in args:
+        if pending_override:
+            overrides.append(arg)
+            pending_override = False
+            continue
+
+        if arg in override_options:
+            pending_override = True
+            continue
+
+        for option in override_options:
+            prefix = f"{option}="
+            if arg.startswith(prefix):
+                overrides.append(arg[len(prefix) :])
+                break
+
+    return overrides
+
+
+def _complete_hydra_override_values(
+    *,
+    config_path: str | None,
+    config_name: str,
+    multirun: bool,
+    previous_overrides: list[str],
+    incomplete: str,
+) -> list[str]:
+    """Ask Hydra's own completion engine for override-value suggestions."""
+    from flyteplugins.hydra._run import _hydra_init
+    from hydra.plugins.completion_plugin import DefaultCompletionPlugin
+
+    parts = ["--multirun"] if multirun else []
+    parts.extend(previous_overrides)
+    line = " ".join([*parts, incomplete]).strip()
+    if not incomplete:
+        line = f"{line} " if line else ""
+
+    with _hydra_init(config_path) as config_loader:
+        completer = DefaultCompletionPlugin(config_loader)
+        return completer._query(config_name=config_name, line=line)
+
+
+def _hydra_override_option_complete(ctx: click.Context, _param, incomplete: str) -> list[CompletionItem]:
+    """Complete values for the declared ``--hydra-override`` Click option."""
+    script, task_name, task_tail = _script_task_and_tail(ctx)
+    config_options: set[str] = set()
+    if script and task_name:
+        try:
+            task = _load_script_task(script, task_name)
+            from flyteplugins.hydra._run import _config_param_names
+
+            config_options = {f"--{name}" for name in _config_param_names(task)}
+        except Exception:
+            config_options = set()
+
+    previous_overrides = list(ctx.params.get("hydra_overrides") or ())
+    previous_overrides.extend(_collect_complete_overrides(task_tail, config_options))
+
+    try:
+        suggestions = _complete_hydra_override_values(
+            config_path=ctx.params.get("config_path"),
+            config_name=ctx.params.get("config_name") or "config",
+            multirun=bool(ctx.params.get("multirun")),
+            previous_overrides=previous_overrides,
+            incomplete=incomplete,
+        )
+    except Exception:
+        return []
+
+    return [CompletionItem(suggestion) for suggestion in suggestions]
+
+
+class HydraRunCommand(click.RichCommand):
+    """Click command that adds Hydra override completions after SCRIPT TASK."""
+
+    def shell_complete(self, ctx: click.Context, incomplete: str) -> list[CompletionItem]:
+        results = super().shell_complete(ctx, incomplete)
+        script, task_name, task_tail = _script_task_and_tail(ctx)
+        if not script or not task_name:
+            return results
+
+        try:
+            task = _load_script_task(script, task_name)
+        except Exception:
+            return results
+
+        from flyteplugins.hydra._run import _config_param_names
+
+        config_options = {f"--{name}" for name in _config_param_names(task)}
+        override_options = {*config_options, _HYDRA_OVERRIDE_OPTION}
+
+        if incomplete.startswith("-"):
+            existing = {item.value for item in results}
+            results.extend(
+                CompletionItem(option, help="Hydra app-level override")
+                for option in sorted(config_options)
+                if option.startswith(incomplete) and option not in existing
+            )
+
+        completion_context = _override_completion_context(task_tail, incomplete, override_options)
+        if completion_context is None:
+            return results
+
+        previous_overrides, current_override, replacement_prefix = completion_context
+        try:
+            suggestions = _complete_hydra_override_values(
+                config_path=ctx.params.get("config_path"),
+                config_name=ctx.params.get("config_name") or "config",
+                multirun=bool(ctx.params.get("multirun")),
+                previous_overrides=previous_overrides,
+                incomplete=current_override,
+            )
+        except Exception:
+            return results
+
+        results.extend(CompletionItem(f"{replacement_prefix}{suggestion}") for suggestion in suggestions)
+        return results
 
 
 def _parse_task_kwargs(task, args: list[str], parent_ctx: click.Context) -> dict:
@@ -183,6 +366,7 @@ def hydra_group() -> None:
 
 @hydra_group.command(
     name="run",
+    cls=HydraRunCommand,
     context_settings={"ignore_unknown_options": True, "allow_extra_args": True},
 )
 @click.argument("script", type=click.Path(exists=True, dir_okay=False))
@@ -230,6 +414,7 @@ def hydra_group() -> None:
     "hydra_overrides",
     multiple=True,
     metavar="KEY=VALUE",
+    shell_complete=_hydra_override_option_complete,
     help=("Hydra-namespace override (repeatable), e.g. hydra/sweeper=optuna or hydra.sweeper.n_trials=20."),
 )
 @click.pass_context
@@ -299,21 +484,7 @@ def hydra_run_cmd(
 
     # Load the script as a module so Flyte task decorators have run before we
     # inspect the requested task's typed interface.
-    script_path = Path(script).resolve()
-    module_name = script_path.stem
-    sys.path.append(str(script_path.parent))
-    spec = importlib.util.spec_from_file_location(module_name, script_path)
-
-    if spec is None or spec.loader is None:
-        raise click.ClickException(f"Could not load module from {script}")
-
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = mod
-    spec.loader.exec_module(mod)
-
-    task = getattr(mod, task_name, None)
-    if task is None:
-        raise click.ClickException(f"Task '{task_name}' not found in {script}")
+    task = _load_script_task(script, task_name)
 
     # ctx.args contains everything after SCRIPT TASK_NAME that was not consumed
     # by the fixed Hydra/Flyte options. First pull out DictConfig override

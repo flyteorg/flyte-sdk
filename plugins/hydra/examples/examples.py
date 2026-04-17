@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 
 from hydra.core.config_store import ConfigStore
 from omegaconf import MISSING
-from train import pipeline, pipeline_with_config
+from train import pipeline, pipeline_with_config, pipeline_with_podtemplate
 
 from flyteplugins.hydra import hydra_run as _hydra_run
 from flyteplugins.hydra import hydra_sweep as _hydra_sweep
@@ -215,6 +215,34 @@ def ex_task_env_preset():
         overrides=["+task_env=a100"],
         dataset="s3://my-bucket/imagenet",
         mode="remote",
+    )
+    _print_remote_result(run)
+
+
+def ex_prebuilt_image():
+    """Use task_env prebuilt image overrides for pipeline and train_model."""
+    run = hydra_run(
+        pipeline,
+        config_path=CONFIG_PATH,
+        config_name="training",
+        overrides=["+task_env=prebuilt_image"],
+        dataset="s3://my-bucket/imagenet",
+        mode="remote",
+        wait=False,
+    )
+    _print_remote_result(run)
+
+
+def ex_prebuilt_image_with_podtemplate():
+    """Merge task_env image into an entry task that already has a pod template."""
+    run = hydra_run(
+        pipeline_with_podtemplate,
+        config_path=CONFIG_PATH,
+        config_name="training",
+        overrides=["+task_env=prebuilt_image"],
+        dataset="s3://my-bucket/imagenet",
+        mode="remote",
+        wait=False,
     )
     _print_remote_result(run)
 
@@ -508,6 +536,16 @@ flyte hydra run --config-path conf --config-name training \\
     train.py pipeline --dataset s3://my-bucket/imagenet \\
     --cfg "+task_env=a100"
 
+# task_env with a prebuilt primary-container image
+flyte hydra run --config-path conf --config-name training \\
+    train.py pipeline --dataset s3://my-bucket/imagenet \\
+    --cfg "+task_env=prebuilt_image"
+
+# task_env with a prebuilt primary-container image and pod template
+flyte hydra run --config-path conf --config-name training \\
+    train.py pipeline_with_podtemplate --dataset s3://my-bucket/imagenet \\
+    --cfg "+task_env=prebuilt_image"
+
 # with standard flyte run options
 flyte hydra run --config-path conf --config-name training \\
     --project my-project --domain development \\
@@ -588,6 +626,8 @@ EXAMPLES = {
     "delete_key": ex_delete_key,
     "hydra_namespace": ex_hydra_namespace_override,
     "task_env_preset": ex_task_env_preset,
+    "prebuilt_image": ex_prebuilt_image,
+    "prebuilt_image_podtemplate": ex_prebuilt_image_with_podtemplate,
     "run_options": ex_run_options,
     "structured_config": ex_structured_config,
     "structured_missing": ex_structured_config_missing_field,
