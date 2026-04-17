@@ -14,7 +14,7 @@ sleep_env = flyte.TaskEnvironment(
 
 fanout_env = flyte.TaskEnvironment(
     name="sleep_fanout",
-    resources=flyte.Resources(cpu=1, memory="200Mi"),
+    resources=flyte.Resources(cpu="50m", memory="200Mi"),
     depends_on=[sleep_env],
 )
 
