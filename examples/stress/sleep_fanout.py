@@ -36,7 +36,7 @@ async def sleep_leaf(duration: timedelta) -> None:
 @fanout_env.task
 async def main(
     n_children: int = 10,
-    sleep_duration: timedelta = timedelta(seconds=10),
+    sleep_duration: timedelta = timedelta(seconds=0),
 ) -> int:
     """
     Fan out n_children core-sleep leaves in parallel.
