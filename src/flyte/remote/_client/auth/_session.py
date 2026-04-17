@@ -163,6 +163,7 @@ async def create_session_config(
     ca_cert_file_path: typing.Optional[str] = None,
     proxy_command: typing.List[str] | None = None,
     rpc_retries: typing.Optional[int] = None,
+    auth_endpoint: typing.Optional[str] = None,
     **kwargs,
 ) -> SessionConfig:
     """
@@ -178,6 +179,9 @@ async def create_session_config(
     :param ca_cert_file_path: Path to CA certificate file for SSL verification
     :param proxy_command: List of strings for proxy command configuration
     :param rpc_retries: Number of times to retry RPCs. None means do not install the retry interceptor.
+    :param auth_endpoint: Endpoint for auth/OAuth discovery. Defaults to ``endpoint`` when not set.
+        When creating sessions for per-cluster DataProxy clients, pass the
+        control-plane endpoint so auth tokens are obtained from the right server.
     :param kwargs: Additional arguments passed to authenticator factories
     :return: SessionConfig with endpoint, interceptors, and http_client
     """
@@ -232,7 +236,7 @@ async def create_session_config(
     # local dev). This matches the old gRPC create_channel() behavior.
     if not insecure:
         auth_interceptors = create_auth_interceptors(
-            endpoint=endpoint,
+            endpoint=auth_endpoint or endpoint,
             http_client=http_client,
             insecure=insecure,
             insecure_skip_verify=insecure_skip_verify,
