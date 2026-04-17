@@ -447,6 +447,7 @@ async def apply(deployment_plan: DeploymentPlan, copy_style: CopyFiles, dryrun: 
     import flyte.errors
 
     from ._code_bundle import build_code_bundle
+    from ._code_bundle._includes import collect_env_include_files
     from ._deployer import DeploymentContext, get_deployer
 
     cfg = get_init_config()
@@ -460,17 +461,25 @@ async def apply(deployment_plan: DeploymentPlan, copy_style: CopyFiles, dryrun: 
 
     image_cache = await _build_images(deployment_plan, cfg.images)
 
-    if copy_style == "none" and not deployment_plan.version:
+    # Collect all `Environment.include` files across envs in the plan. They are
+    # resolved to absolute paths anchored at each env's declaring file and
+    # unioned into a single bundle below.
+    include_files = collect_env_include_files(deployment_plan.envs.values())
+
+    if copy_style == "none" and not deployment_plan.version and not include_files:
         raise flyte.errors.DeploymentError("Version must be set when copy_style is none")
-    elif copy_style == "none":
+    elif copy_style == "none" and not include_files:
         code_bundle = None
         # safe because we would've caught None's above
         assert deployment_plan.version is not None
         version = deployment_plan.version
     else:
-        # if this is an AppEnvironment.include, skip code bundling here and build a code bundle at the
-        # app._deploy._deploy_app function
-        code_bundle = await build_code_bundle(from_dir=cfg.root_dir, dryrun=dryrun, copy_style=copy_style)
+        code_bundle = await build_code_bundle(
+            from_dir=cfg.root_dir,
+            dryrun=dryrun,
+            copy_style=copy_style,
+            additional_files=include_files,
+        )
         if deployment_plan.version:
             version = deployment_plan.version
         else:
