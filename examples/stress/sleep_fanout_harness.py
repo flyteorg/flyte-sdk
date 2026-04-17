@@ -14,7 +14,7 @@ from datetime import timedelta
 
 import flyte
 
-from sleep_fanout import main as sleep_fanout_main
+from sleep_fanout import sleep_fanout as sleep_fanout_main
 
 
 async def submit_one(
