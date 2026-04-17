@@ -1,14 +1,10 @@
 import asyncio
 from datetime import timedelta
 
-from flyteplugins.sleep import Sleep
-
 import flyte
+from flyte.extras import Sleep
 
-# Build the flyteplugins-sleep wheel locally before submitting:
-#   make dist && FLYTE_PLUGIN_DIST=plugins/sleep make dist-plugins
-# `with_local_v2_plugins` then installs it into the image from `flyte-sdk/dist/`.
-image = flyte.Image.from_debian_base().with_local_v2_plugins("flyteplugins-sleep")
+image = flyte.Image.from_debian_base()
 
 # Leaves run in leaseworker via the core-sleep plugin: no task pods are created,
 # so we can fan out wide without paying pod-startup cost.
@@ -18,8 +14,6 @@ sleep_env = flyte.TaskEnvironment(
     plugin_config=Sleep(),
 )
 
-# Parent runs as a normal container task; it needs flyteplugins-sleep installed
-# because the module-level `from flyteplugins.sleep import Sleep` runs on load.
 fanout_env = flyte.TaskEnvironment(
     name="sleep_fanout",
     image=image,

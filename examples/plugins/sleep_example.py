@@ -1,12 +1,10 @@
 import pathlib
 from datetime import timedelta
 
-from flyteplugins.sleep import Sleep
-
 import flyte
+from flyte.extras import Sleep
 
-# The core-sleep plugin executes in leaseworker, so the remote task image does
-# not need flyteplugins-sleep installed.
+# The core-sleep plugin executes in leaseworker, so no task pod is created.
 image = flyte.Image.from_debian_base(python_version=(3, 12))
 
 sleep_env = flyte.TaskEnvironment(

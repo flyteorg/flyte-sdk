@@ -3,10 +3,9 @@ from pathlib import Path
 
 import flyte
 from flyte._internal.runtime.task_serde import translate_task_to_wire
+from flyte.extras import Sleep, SleepTask
 from flyte.models import SerializationContext
 from flyteidl2.core.types_pb2 import SimpleType
-
-from flyteplugins.sleep import Sleep, SleepTask
 
 ROOT_DIR = Path(__file__).resolve().parents[3]
 
