@@ -138,6 +138,22 @@ async def task_b(cfg: DictConfig) -> ...:
 
 To ensure structured configs survive task hops, make sure the dataclass is defined in a module importable by all tasks in the pipeline.
 
+## YAML reports
+
+The Flyte I/O panel displays the literal wire representation. For a human-readable YAML view, enable a Flyte report
+on the task and log the config with `log_yaml`:
+
+```python
+from omegaconf import DictConfig
+from flyteplugins.omegaconf.report import log_yaml
+
+
+@env.task(report=True)
+async def train(cfg: DictConfig) -> DictConfig:
+    await log_yaml.aio(cfg, title="Input config")
+    ...
+```
+
 ## Wire format
 
 Both `DictConfig` and `ListConfig` are serialized as MessagePack binaries with tag `"msgpack"`:
