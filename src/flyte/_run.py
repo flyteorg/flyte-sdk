@@ -30,9 +30,10 @@ from flyte.models import (
     SerializationContext,
     TaskContext,
 )
-from flyte.storage import join as storage_join
 from flyte.syncify import syncify
 
+# ``flyte.storage.join`` is imported lazily inside the one method that needs it so
+# ``import flyte`` does not eagerly pull fsspec/obstore/etc. into the startup path.
 from ._constants import FLYTE_SYS_PATH
 
 if TYPE_CHECKING:
@@ -647,6 +648,8 @@ class _Runner:
             raw_data_path = RawDataPath(path=str(path))
         else:
             raw_data_path = RawDataPath(path=self._raw_data_path)
+
+        from flyte.storage import join as storage_join
 
         ctx = internal_ctx()
         rd_base = raw_data_path.path
