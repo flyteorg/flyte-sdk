@@ -205,6 +205,7 @@ async def init(
     :param load_plugin_type_transformers: If enabled (default True), load the type transformer plugins registered under
       the "flyte.plugins.types" entry point group.
     :param local_persistence: Whether to enable SQLite persistence for local run metadata (default: False).
+    :param disable_keyring: Disable storage of tokens in local keyring.
     :return: None
     """
     from flyte._utils import org_from_endpoint, sanitize_endpoint
@@ -484,11 +485,17 @@ async def init_in_cluster(
     # Cluster runtime never benefits from keyring storage: tokens are short-lived, the pod is
     # ephemeral, and there is no human keychain to read from. Disabling keyring also avoids the
     # ~180ms cold-start hit from `keyring`'s backend enumeration (incl. the `keyring.backends.macOS.api`
-    # C-extension probe that runs even on Linux).
-    remote_kwargs["disable_keyring"] = True
-
+    # C-extension probe that runs even on Linux). Passed directly to ``init`` rather than via
+    # ``remote_kwargs`` because the returned dict is also used to construct the controller, which
+    # does not accept ``disable_keyring``.
     await init.aio(
-        org=org, project=project, domain=domain, root_dir=Path.cwd(), image_builder="remote", **remote_kwargs
+        org=org,
+        project=project,
+        domain=domain,
+        root_dir=Path.cwd(),
+        image_builder="remote",
+        disable_keyring=True,
+        **remote_kwargs,
     )
     return remote_kwargs
 
