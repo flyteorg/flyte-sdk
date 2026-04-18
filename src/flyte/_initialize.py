@@ -481,6 +481,12 @@ async def init_in_cluster(
         remote_kwargs["insecure_skip_verify"] = True
         logger.info("SSL certificate verification disabled (insecure_skip_verify=True)")
 
+    # Cluster runtime never benefits from keyring storage: tokens are short-lived, the pod is
+    # ephemeral, and there is no human keychain to read from. Disabling keyring also avoids the
+    # ~180ms cold-start hit from `keyring`'s backend enumeration (incl. the `keyring.backends.macOS.api`
+    # C-extension probe that runs even on Linux).
+    remote_kwargs["disable_keyring"] = True
+
     await init.aio(
         org=org, project=project, domain=domain, root_dir=Path.cwd(), image_builder="remote", **remote_kwargs
     )
