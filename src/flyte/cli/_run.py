@@ -219,11 +219,37 @@ class RunArguments:
             )
         },
     )
+    env: List[str] = field(
+        default_factory=list,
+        metadata={
+            "click.option": click.Option(
+                ["--env", "-e"],
+                type=str,
+                multiple=True,
+                help="Environment variable to set on the run context. Format: KEY=VALUE. "
+                "Can be specified multiple times, e.g. `-e LOG_LEVEL=debug -e FOO=bar`.",
+            )
+        },
+    )
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> RunArguments:
         modified = {k: v for k, v in d.items() if k in {f.name for f in fields(cls)}}
         return cls(**modified)
+
+    def parsed_env_vars(self) -> Dict[str, str] | None:
+        """Parse ``--env KEY=VALUE`` entries into a dict (returns None if none provided)."""
+        if not self.env:
+            return None
+        parsed: Dict[str, str] = {}
+        for item in self.env:
+            if "=" not in item:
+                raise click.BadParameter(f"Invalid --env value {item!r}: expected KEY=VALUE.")
+            key, value = item.split("=", 1)
+            if not key:
+                raise click.BadParameter(f"Invalid --env value {item!r}: key must not be empty.")
+            parsed[key] = value
+        return parsed
 
     @classmethod
     def options(cls) -> List[click.Option]:
@@ -300,6 +326,7 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
                 log_format=config.log_format,
                 reset_root_logger=config.reset_root_logger,
                 debug=self.run_args.debug,
+                env_vars=self.run_args.parsed_env_vars(),
             )
             result = await execution_context.run.aio(self.obj, **ctx.params)
         except Exception as e:
@@ -359,6 +386,7 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
                 log_format=config.log_format,
                 reset_root_logger=config.reset_root_logger,
                 debug=self.run_args.debug,
+                env_vars=self.run_args.parsed_env_vars(),
                 _tracker=tracker,
             )
             return await execution_context.run.aio(self.obj, **ctx.params)
@@ -518,6 +546,7 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
                 project=self.run_args.run_project,
                 domain=self.run_args.run_domain,
                 debug=self.run_args.debug,
+                env_vars=self.run_args.parsed_env_vars(),
             )
             result = await execution_context.run.aio(task, **ctx.params)
         except Exception as e:

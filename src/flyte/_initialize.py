@@ -122,7 +122,12 @@ async def _initialize_client(
 def _initialize_logger(
     log_level: int | None = None, log_format: LogFormat | None = None, reset_root_logger: bool = False
 ) -> None:
-    initialize_logger(log_level=log_level, log_format=log_format, enable_rich=True, reset_root_logger=reset_root_logger)
+    # In-cluster runtimes never render Rich output (stdout is captured), so skip the Rich handler
+    # — this avoids rich.logging and the transitive ipython_check -> IPython import at startup.
+    enable_rich = os.environ.get("FLYTE_INTERNAL_EXECUTION_PROJECT") is None
+    initialize_logger(
+        log_level=log_level, log_format=log_format, enable_rich=enable_rich, reset_root_logger=reset_root_logger
+    )
 
 
 @syncify
