@@ -28,7 +28,7 @@ def tui():
 @start.command()
 @click.option(
     "--image",
-    default="ghcr.io/flyteorg/flyte-demo-v2:nightly",
+    default="ghcr.io/flyteorg/flyte-demo:nightly",
     show_default=True,
     help="Docker image to use for the demo cluster.",
 )
