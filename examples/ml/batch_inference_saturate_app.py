@@ -90,21 +90,21 @@ app = FastAPI(title="Flyte Batched Inference Service", lifespan=lifespan)
 
 # Define the environment for our FastAPI app (The GPU Worker)
 app_env = FastAPIAppEnvironment(
-    name="inference-server",
+    name="batch_inference_saturate_app",
     app=app,
     image=image,
-    resources=flyte.Resources(cpu=4, memory="16Gi", gpu="L4:1"),
+    resources=flyte.Resources(cpu=6, memory="24Gi", gpu="L4:1", disk="64Gi"),
     scaling=flyte.app.Scaling(
-        replicas=2,
+        replicas=(0, 2),
         metric=flyte.app.Scaling.Concurrency(val=10),
-        scaledown_after=60,
+        scaledown_after=300,
     ),
     requires_auth=False,
 )
 
-# Define the environment for our Driver/Orinthestator
+# Define the environment for the driver
 driver_env = flyte.TaskEnvironment(
-    name="orchestrator",
+    name="batch_inference_saturate_app_driver",
     resources=flyte.Resources(cpu=2, memory="2Gi"),
     image=image,
     depends_on=[app_env],
@@ -180,7 +180,7 @@ async def health():
 # ---------------------------------------------------------------------------
 
 
-@driver_env.task
+@driver_env.task(retries=5)
 async def infer_batch(
     endpoint: str,
     prompts: List[str],
@@ -192,7 +192,7 @@ async def infer_batch(
     """
     url = f"{endpoint}/generate"
     print(f"Calling app at {url}")
-    async with httpx.AsyncClient(timeout=httpx.Timeout(600.0)) as client:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(1200.0)) as client:
         response = await client.post(
             url,
             json={"prompts": prompts, "task_id": task_id},
@@ -268,8 +268,6 @@ if __name__ == "__main__":
     app = flyte.serve(app_env)
     print(app.url)
     print("activating app")
-    with app.activate(wait=True):
-        run = flyte.run(main, num_questions=5000, chunk_size=50)
-        print(run.url)
-    print("deactivating app")
-    app.deactivate(wait=True)
+    app.activate(wait=True)
+    run = flyte.run(main, num_questions=5000, chunk_size=50)
+    print(run.url)
