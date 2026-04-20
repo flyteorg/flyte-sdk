@@ -28,6 +28,8 @@ from omegaconf import (
     ValidationError,
 )
 
+from flyteplugins.omegaconf import log_yaml
+
 env = flyte.TaskEnvironment(
     name="omegaconf-structured-example",
     image=flyte.Image.from_debian_base(name="omegaconf-structured-example").clone(
@@ -175,9 +177,11 @@ async def use_filled_config(cfg: DictConfig) -> str:
     return f"data_path={cfg.data_path} epochs={cfg.epochs} lr={cfg.lr}"
 
 
-@env.task
+@env.task(report=True)
 async def inspect_advanced_config(cfg: DictConfig) -> str:
     """Verifies nested dataclass containers and rich scalar types survive roundtrip."""
+    await log_yaml.aio(cfg, title="Inspecting advanced structured config")
+
     assert OmegaConf.get_type(cfg) == AdvancedTrainConf
     assert OmegaConf.get_type(cfg.callbacks_by_name["early_stop"]) == CallbackConf
     assert OmegaConf.get_type(cfg.callbacks[0]) == CallbackConf
