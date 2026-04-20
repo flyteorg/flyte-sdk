@@ -325,11 +325,14 @@ class RunDetailScreen(Screen):
                 log_links=log_links,
                 attempt_count=r.attempt_count,
                 attempts=attempts,
+                start_time=r.start_time,
             )
             if r.status == "succeeded":
-                self._tracker.record_complete(action_id=r.action_name, outputs=r.outputs)
+                self._tracker.record_complete(action_id=r.action_name, outputs=r.outputs, end_time=r.end_time)
             elif r.status == "failed":
-                self._tracker.record_failure(action_id=r.action_name, error=r.error or "Unknown error")
+                self._tracker.record_failure(
+                    action_id=r.action_name, error=r.error or "Unknown error", end_time=r.end_time
+                )
 
     def compose(self) -> ComposeResult:
         yield Header()
