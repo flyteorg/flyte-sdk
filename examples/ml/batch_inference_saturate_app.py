@@ -180,7 +180,7 @@ async def health():
 # ---------------------------------------------------------------------------
 
 
-@driver_env.task(retries=5)
+@driver_env.task(retries=20)
 async def infer_batch(
     endpoint: str,
     prompts: List[str],
@@ -192,7 +192,7 @@ async def infer_batch(
     """
     url = f"{endpoint}/generate"
     print(f"Calling app at {url}")
-    async with httpx.AsyncClient(timeout=httpx.Timeout(1200.0)) as client:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(180)) as client:
         response = await client.post(
             url,
             json={"prompts": prompts, "task_id": task_id},
@@ -201,6 +201,7 @@ async def infer_batch(
         return response.json()
 
 
+@driver_env.task(cache="auto")
 async def fetch_gsm8k_questions(n: int = 500) -> list[str]:
     """Fetch math word problems from the HuggingFace gsm8k dataset.
 
