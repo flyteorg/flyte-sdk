@@ -5,17 +5,9 @@ from flyte import Image
 This example demonstrates how to build a new image using a private base image,
 then push the resulting image back to the same private registry.
 
-This workflow will change in the next couple weeks, but for now:
-
-First run the old CLI command to create a file. This will extract out from your local docker daemon logged in tokens.
+Create a registry secret from your local docker daemon's logged-in tokens:
 ```
-union create imagepullsecret
-```
-
-
-Take the file that was created and then call the following to create a registry secret:
-```
-flyte create secret --type image_pull pingsutw --from-file <PATH/to/above file>
+flyte create secret --type image_pull pingsutw --from-docker-config
 ```
 
 Keep in mind we only support one secret for now for a given image. If you have a private registry that you need to pull
