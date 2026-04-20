@@ -54,7 +54,7 @@ if TYPE_CHECKING:
 
 IMAGE_TASK_NAME = "build-image"
 IMAGE_TASK_PROJECT = "system"
-IMAGE_TASK_DOMAIN = "production"
+IMAGE_TASK_DOMAIN = os.environ.get("FLYTE_IMAGEBUILDER_TASK_DOMAIN", "production")
 
 
 class RemoteImageChecker(ImageChecker):
