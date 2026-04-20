@@ -18,6 +18,8 @@ import flyte
 from flyte._image import PythonWheels
 from omegaconf import DictConfig, ListConfig, OmegaConf
 
+from flyteplugins.omegaconf import log_yaml
+
 env = flyte.TaskEnvironment(
     name="omegaconf-listconfig-example",
     image=flyte.Image.from_debian_base(name="omegaconf-listconfig-example").clone(
@@ -42,9 +44,10 @@ async def scale_values(values: ListConfig, factor: float) -> ListConfig:
     return OmegaConf.create([v * factor for v in values])
 
 
-@env.task
+@env.task(report=True)
 async def filter_above_threshold(values: ListConfig, threshold: float) -> ListConfig:
     """Returns only values above the threshold."""
+    await log_yaml.aio(values, title="Config values before filtering")
     return OmegaConf.create([v for v in values if v > threshold])
 
 
