@@ -1,0 +1,46 @@
+# syntax=docker/dockerfile:1.10
+FROM ghcr.io/astral-sh/uv:0.8.13 AS uv
+FROM ghcr.io/flyteorg/flyte-demo:nightly
+
+# k3s rootfs lacks /usr/bin and has no package manager, so layer tooling by hand.
+RUN mkdir -p /usr/bin /opt
+COPY --from=uv /uv /usr/bin/uv
+
+# Download a self-contained glibc Python. Must match the target platform — this
+# image runs on linux/amd64, so use x86_64-unknown-linux-gnu.
+ADD https://github.com/astral-sh/python-build-standalone/releases/download/20250723/cpython-3.11.13+20250723-x86_64-unknown-linux-gnu-install_only.tar.gz /tmp/python.tgz
+RUN tar -xzf /tmp/python.tgz -C /opt && rm /tmp/python.tgz
+
+# Point the dynamic linker at the image's bundled glibc and stub the libs
+# python-build-standalone expects but pg-glibc doesn't ship (libutil, libnsl
+# were merged into libc in glibc 2.34; libresolv similarly).
+RUN ln -sf /usr/lib/pg-glibc/libc.so.6 /usr/lib/pg-glibc/libutil.so.1 \
+ && ln -sf /usr/lib/pg-glibc/libc.so.6 /usr/lib/pg-glibc/libnsl.so.1 \
+ && ln -sf /usr/lib/pg-glibc/libc.so.6 /usr/lib/pg-glibc/libresolv.so.2
+
+ENV LD_LIBRARY_PATH=/usr/lib/pg-glibc
+ENV UV_PYTHON=/opt/python/bin/python3
+ENV PATH="/opt/venv/bin:/opt/python/bin:/usr/bin:${PATH}"
+
+# pyqwest (Rust HTTP client used by flyte) can't autodiscover the CA bundle in
+# this non-standard rootfs. Point it explicitly.
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+ENV SSL_CERT_DIR=/etc/ssl/certs
+
+# Install flyte from a specific git ref so we can test branch changes. Override
+# at build time with --build-arg FLYTE_SDK_REF=<branch|tag|sha>. We use a GitHub
+# snapshot tarball rather than git+https because the base image has no git.
+# SETUPTOOLS_SCM_PRETEND_VERSION_FOR_FLYTE is required because GitHub archive
+# tarballs contain no .git directory and no PKG-INFO, so setuptools-scm cannot
+# infer a version.
+ARG FLYTE_SDK_REF=oss-binary-app
+
+# Pass --python explicitly so uv never tries to probe the system libc (which
+# fails here because busybox shells are statically linked).
+RUN SETUPTOOLS_SCM_PRETEND_VERSION_FOR_FLYTE=0.0.0+${FLYTE_SDK_REF} \
+    /usr/bin/uv venv /opt/venv --python=/opt/python/bin/python3 \
+ && SETUPTOOLS_SCM_PRETEND_VERSION_FOR_FLYTE=0.0.0+${FLYTE_SDK_REF} \
+    /usr/bin/uv pip install --python=/opt/venv/bin/python \
+    "flyte @ https://github.com/flyteorg/flyte-sdk/archive/${FLYTE_SDK_REF}.tar.gz"
+
+WORKDIR /root
