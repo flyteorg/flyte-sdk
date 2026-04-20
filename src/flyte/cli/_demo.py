@@ -195,10 +195,10 @@ def _merge_kubeconfig(kubeconfig_path: Path, container_name: str) -> None:
 _STEPS = [
     ("Pulling image", "pull"),
     ("Starting container", "start"),
-    ("Waiting for kubeconfig", "kubeconfig"),
+    ("Waiting for k3d cluster", "kubeconfig"),
     ("Merging kubeconfig", "merge"),
     ("Configuring kubectl context", "context"),
-    ("Waiting for cluster to be ready", "ready"),
+    ("Waiting for flyte cluster to be ready", "ready"),
 ]
 
 _STEPS_DEV = _STEPS[:-1]  # Dev mode skips the readiness check
