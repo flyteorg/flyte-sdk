@@ -306,6 +306,7 @@ class ClusterAwareDataProxy:
                 endpoint,
                 insecure=self._session_config.insecure,
                 insecure_skip_verify=self._session_config.insecure_skip_verify,
+                auth_endpoint=self._session_config.endpoint,
             )
         except Exception as e:
             raise RuntimeError(f"Failed to create session for cluster endpoint '{endpoint}': {e}") from e

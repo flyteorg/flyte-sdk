@@ -7,22 +7,26 @@ Public API:
     flyte.run_python_script(Path("my_script.py"), gpu=1, gpu_type="T4")
 """
 
-# NOTE: Do NOT add `from __future__ import annotations` here.
-# The task defined in `_build_task` uses `File` as a type annotation.
-# `typing.get_type_hints` resolves string annotations against the
-# function's `__globals__` (this module), so `File` must be a real
-# class object at decoration time, not a deferred string.
+# All annotations are deferred (PEP 563) so we can keep ``flyte.io`` out of the
+# ``import flyte`` critical path. ``flyte.io`` would otherwise drag the heavy
+# DataFrame transformer (mashumaro.jsonschema, markdown_it, pendulum) for ~1s on
+# a 1-CPU cluster cold start. ``flyte`` is imported here only as a partial
+# module reference so ``get_type_hints(PythonScriptOutput)`` can resolve
+# ``flyte.io.Dir`` once the inner ``_build_task`` has actually loaded
+# ``flyte.io`` on demand.
+from __future__ import annotations
 
 import pathlib
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
-import flyte.io
+import flyte  # circular: returns the partial module; sufficient for annotation resolution.
 from flyte.syncify import syncify
 
 if TYPE_CHECKING:
     from flyte._image import Image
+    from flyte.io import Dir
     from flyte.remote import Run
 
 
@@ -30,7 +34,12 @@ if TYPE_CHECKING:
 class PythonScriptOutput:
     exit_code: int
     stdout: str
-    output_dir: Optional[flyte.io.Dir]
+    # Always populated. When the script did not request / produce an output directory this is a
+    # ``flyte.io.EmptyDir()`` sentinel — check ``output_dir.is_empty`` to detect that case.
+    # We avoid ``Optional[Dir]`` because Flyte/mashumaro's DataclassTransformer strips the
+    # ``Optional`` wrapper around ``SerializableType`` fields and calls ``Dir._deserialize(None)``,
+    # which fails with ``Field "output_dir" of type Dir in PythonScriptOutput has invalid value None``.
+    output_dir: flyte.io.Dir
 
 
 def _build_task(
@@ -81,9 +90,12 @@ def _build_task(
         if result.returncode != 0:
             raise RuntimeError(f"Script failed with exit code {result.returncode}, stderr: {stderr_tail}")
 
-        _dir: Optional[flyte.io.Dir] = None
+        from flyte.io import Dir, EmptyDir
+
         if output_dir:
-            _dir = await flyte.io.Dir.from_local(output_dir)
+            _dir: Dir = await Dir.from_local(output_dir)
+        else:
+            _dir = EmptyDir()
 
         return PythonScriptOutput(
             exit_code=result.returncode,

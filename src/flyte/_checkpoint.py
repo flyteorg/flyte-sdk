@@ -44,9 +44,11 @@ from typing import Any, Optional
 import aiofiles
 
 from flyte._logging import logger
-from flyte.io import File
-from flyte.storage._parallel_reader import DownloadQueueEmpty
-from flyte.storage._storage import get_underlying_filesystem, strip_file_header
+
+# ``flyte.io``/``flyte.storage`` are imported lazily inside the helpers below.
+# Eager top-level imports would drag the DataFrame type transformer (pydantic +
+# mashumaro.jsonschema + markdown_it, ~1s cold start) and fsspec/obstore into
+# every ``import flyte`` — even for tasks that never touch checkpoints.
 
 CHECKPOINT_CACHE_KEY = "__flyte_sync_checkpoint__"
 
@@ -156,6 +158,8 @@ def _is_recoverable_checkpoint_load_error(exc: BaseException) -> bool:
     which surfaces as `builtins.BaseExceptionGroup` — a plain `except DownloadQueueEmpty`
     does not catch that.
     """
+    from flyte.storage._parallel_reader import DownloadQueueEmpty
+
     try:
         from builtins import BaseExceptionGroup
     except ImportError:
@@ -208,17 +212,23 @@ def _new_checkpoint_download_temp_path() -> pathlib.Path:
 
 def _uri_for_file_io(uri: str) -> str:
     """Strip `file://` so `flyte.io.File` local I/O uses paths the filesystem stack accepts."""
+    from flyte.storage._storage import strip_file_header
+
     return strip_file_header(uri) if uri.startswith("file:") else uri
 
 
 def _ensure_local_checkpoint_parent(path: str) -> None:
     """Create parent dir when the checkpoint URI is on the local filesystem."""
+    from flyte.storage._storage import get_underlying_filesystem
+
     fs = get_underlying_filesystem(path=path)
     if "file" in fs.protocol:
         pathlib.Path(path).parent.mkdir(parents=True, exist_ok=True)
 
 
 async def _upload_checkpoint_bytes(data: bytes, dest_uri: str) -> None:
+    from flyte.io import File
+
     path = _uri_for_file_io(dest_uri)
     _ensure_local_checkpoint_parent(path)
     async with File(path=path).open("wb") as fh:
@@ -226,6 +236,8 @@ async def _upload_checkpoint_bytes(data: bytes, dest_uri: str) -> None:
 
 
 def _upload_checkpoint_bytes_sync(data: bytes, dest_uri: str) -> None:
+    from flyte.io import File
+
     path = _uri_for_file_io(dest_uri)
     _ensure_local_checkpoint_parent(path)
     with File(path=path).open_sync("wb") as fh:
@@ -233,6 +245,9 @@ def _upload_checkpoint_bytes_sync(data: bytes, dest_uri: str) -> None:
 
 
 async def _upload_checkpoint_file(from_local: str, dest_uri: str) -> None:
+    from flyte.io import File
+    from flyte.storage._storage import strip_file_header
+
     local = strip_file_header(from_local)
     path = _uri_for_file_io(dest_uri)
     _ensure_local_checkpoint_parent(path)
@@ -246,6 +261,9 @@ async def _upload_checkpoint_file(from_local: str, dest_uri: str) -> None:
 
 
 def _upload_checkpoint_file_sync(from_local: str, dest_uri: str) -> None:
+    from flyte.io import File
+    from flyte.storage._storage import strip_file_header
+
     local = strip_file_header(from_local)
     path = _uri_for_file_io(dest_uri)
     _ensure_local_checkpoint_parent(path)
@@ -416,6 +434,8 @@ class Checkpoint(BaseCheckpoint):
         if prev_uri is None:
             return None
 
+        from flyte.io import File
+
         async def _fetch(dp: pathlib.Path) -> None:
             await File(path=_uri_for_file_io(prev_uri)).download(dp)
 
@@ -433,6 +453,8 @@ class Checkpoint(BaseCheckpoint):
         prev_uri = self._checkpoint_src
         if prev_uri is None:
             return None
+
+        from flyte.io import File
 
         def _fetch(dp: pathlib.Path) -> None:
             File(path=_uri_for_file_io(prev_uri)).download_sync(dp)
