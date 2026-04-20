@@ -40,6 +40,7 @@ from flyte._internal.imagebuild.image_builder import (
     ImageChecker,
     LocalDockerCommandImageChecker,
     LocalPodmanCommandImageChecker,
+    PersistentCacheImageChecker,
 )
 from flyte._internal.imagebuild.utils import (
     copy_files_to_context,
@@ -582,7 +583,12 @@ class DockerImageBuilder(ImageBuilder):
 
     def get_checkers(self) -> Optional[typing.List[typing.Type[ImageChecker]]]:
         # Can get a public token for docker.io but ghcr requires a pat, so harder to get the manifest anonymously
-        return [LocalDockerCommandImageChecker, LocalPodmanCommandImageChecker, DockerAPIImageChecker]
+        return [
+            PersistentCacheImageChecker,
+            LocalDockerCommandImageChecker,
+            LocalPodmanCommandImageChecker,
+            DockerAPIImageChecker,
+        ]
 
     async def build_image(
         self, image: Image, dry_run: bool = False, wait: bool = True, force: bool = False

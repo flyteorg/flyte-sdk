@@ -24,8 +24,9 @@ class LocalTaskCache(object):
             await conn.commit()
         else:
             conn = LocalDB.get_sync()
-            conn.execute("DELETE FROM task_cache")
-            conn.commit()
+            with LocalDB._write_lock:
+                conn.execute("DELETE FROM task_cache")
+                conn.commit()
 
     @staticmethod
     async def get(cache_key: str) -> convert.Outputs | None:
@@ -76,8 +77,9 @@ class LocalTaskCache(object):
     def _set_sync(cache_key: str, value: convert.Outputs) -> None:
         conn = LocalDB.get_sync()
         output_bytes = value.proto_outputs.SerializeToString()
-        conn.execute("INSERT OR REPLACE INTO task_cache (key, value) VALUES (?, ?)", (cache_key, output_bytes))
-        conn.commit()
+        with LocalDB._write_lock:
+            conn.execute("INSERT OR REPLACE INTO task_cache (key, value) VALUES (?, ?)", (cache_key, output_bytes))
+            conn.commit()
 
     @staticmethod
     async def close():
