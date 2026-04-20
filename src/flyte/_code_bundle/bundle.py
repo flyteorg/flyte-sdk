@@ -269,7 +269,7 @@ async def download_bundle(bundle: CodeBundle) -> pathlib.Path:
         # downloaded data should be copied into this directory. We do this to account for a difference in behavior in
         # fsspec, which requires a trailing slash in case of pre-existing directory.
         args = [
-            "-xvf",
+            "-xzvf",
             str(downloaded_bundle),
             "-C",
             str(dest),

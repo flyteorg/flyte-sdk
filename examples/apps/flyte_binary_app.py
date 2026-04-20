@@ -1,9 +1,19 @@
 """A basic app that uses the built-in Streamlit `hello` app."""
 
+from pathlib import Path
+
 import flyte
 import flyte.app
 
-image = flyte.Image.from_base("ghcr.io/flyteorg/flyte-demo:nightly").clone(name="flyte-oss-binary", extendable=True).with_pip_packages("flyte")
+# Built via a custom Dockerfile because flyte-demo:nightly is a k3s rootfs:
+# no /usr/bin, static busybox shells, and only a partial glibc bundled for
+# Postgres. The Dockerfile pulls python-build-standalone, points it at the
+# bundled glibc, and installs flyte.
+image = flyte.Image.from_dockerfile(
+    file=Path(__file__).parent / "Dockerfile.flyte_binary",
+    registry="ghcr.io/flyteorg",
+    name="flyte-demo",
+).clone(extendable=True).with_local_v2()
 
 # The `App` declaration.
 # Uses the `ImageSpec` declared above.
@@ -12,6 +22,7 @@ image = flyte.Image.from_base("ghcr.io/flyteorg/flyte-demo:nightly").clone(name=
 app_env = flyte.app.AppEnvironment(
     name="flyte-oss-binary",
     image=image,
+    port=30080,
     # args="streamlit hello --server.port 8080",
     resources=flyte.Resources(cpu="8", memory="8Gi"),
 )
