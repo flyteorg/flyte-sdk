@@ -90,7 +90,7 @@ app = FastAPI(title="Flyte Batched Inference Service", lifespan=lifespan)
 
 # Define the environment for our FastAPI app (The GPU Worker)
 app_env = FastAPIAppEnvironment(
-    name="batch_inference_saturate_app",
+    name="batch-inference-saturate-app",
     app=app,
     image=image,
     resources=flyte.Resources(cpu=6, memory="24Gi", gpu="L4:1", disk="64Gi"),
