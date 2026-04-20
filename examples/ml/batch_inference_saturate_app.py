@@ -192,7 +192,7 @@ async def infer_batch(
     """
     url = f"{endpoint}/generate"
     print(f"Calling app at {url}")
-    async with httpx.AsyncClient(timeout=httpx.Timeout(180)) as client:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(connect=60.0, read=600.0, write=30.0, pool=10.0)) as client:
         response = await client.post(
             url,
             json={"prompts": prompts, "task_id": task_id},
@@ -234,17 +234,19 @@ async def fetch_gsm8k_questions(n: int = 500) -> list[str]:
 async def main(
     num_questions: int = 500,
     chunk_size: int = 50,
+    max_concurrency: int = 10,
 ) -> dict[str, list[str]]:
     """Fetch gsm8k math problems and solve them with batched LLM inference.
 
     Downloads questions from the HuggingFace ``openai/gsm8k`` dataset,
     splits them into chunks, and fans each chunk out as a separate
-    ``infer_batch`` call.  With the AppEnvironment, up to 20 calls run
-    concurrently across 2 GPU replicas, all sharing their replica's model and batcher.
+    ``infer_batch`` call.  A semaphore limits the number of in-flight
+    calls to ``max_concurrency`` so the service isn't overwhelmed.
 
     Args:
         num_questions: Total questions to fetch from gsm8k.
         chunk_size: Number of questions per ``infer_batch`` call.
+        max_concurrency: Maximum number of concurrent ``infer_batch`` calls.
 
     Returns:
         Mapping from task_id to list of generated answers.
@@ -255,11 +257,19 @@ async def main(
     endpoint = app_env.endpoint
     logger.info("Resolved app endpoint: %s", endpoint)
 
-    # Split into chunks → one infer_batch call per chunk
     chunks = [questions[i : i + chunk_size] for i in range(0, len(questions), chunk_size)]
     task_ids = [f"gsm8k_{i:03d}" for i in range(len(chunks))]
 
-    all_results = await asyncio.gather(*(infer_batch(endpoint, chunk, tid) for chunk, tid in zip(chunks, task_ids)))
+    all_results = [
+        result
+        async for result in flyte.map.aio(
+            infer_batch,
+            [endpoint] * len(chunks),
+            chunks,
+            task_ids,
+            concurrency=max_concurrency,
+        )
+    ]
     return dict(zip(task_ids, all_results))
 
 
@@ -270,5 +280,5 @@ if __name__ == "__main__":
     print(app.url)
     print("activating app")
     app.activate(wait=True)
-    run = flyte.run(main, num_questions=5000, chunk_size=50)
+    run = flyte.run(main, num_questions=500, chunk_size=25)
     print(run.url)
