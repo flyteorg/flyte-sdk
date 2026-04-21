@@ -134,7 +134,7 @@ def test_app_environment_command_string():
 
 def test_app_environment_include():
     app = AppEnvironment(name="include-app", image="auto", include=["app.py", "config/"])
-    assert app.include == ["app.py", "config/"]
+    assert app.include == ("app.py", "config/")
 
 
 def test_app_environment_invalid_args_type():

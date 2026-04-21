@@ -181,6 +181,7 @@ class _Runner:
         from flyte.remote._task import LazyEntity, TaskDetails
 
         from ._code_bundle import build_code_bundle, build_code_bundle_from_relative_paths, build_pkl_bundle
+        from ._code_bundle._includes import collect_env_include_files
         from ._deploy import build_images
         from ._internal.runtime.convert import convert_from_native_to_inputs
         from ._internal.runtime.task_serde import translate_task_to_wire
@@ -222,7 +223,8 @@ class _Runner:
 
                 from ._deploy import plan_deploy
 
-                for _env in plan_deploy(parent_env)[0].envs.values():
+                plan_envs = list(plan_deploy(parent_env)[0].envs.values())
+                for _env in plan_envs:
                     if isinstance(_env.image, Image):
                         _env.image = resolve_code_bundle_layer(_env.image, self._copy_files, pathlib.Path(cfg.root_dir))
 
@@ -231,7 +233,14 @@ class _Runner:
                 else:
                     image_cache = None
 
+                include_files = collect_env_include_files(plan_envs)
+
                 if self._interactive_mode:
+                    if include_files:
+                        raise ValueError(
+                            "Environment.include is not supported in interactive/pkl runs. "
+                            "Run from a file or remove `include` from the environment."
+                        )
                     code_bundle = await build_pkl_bundle(
                         obj,
                         upload_to_controlplane=not self._dry_run,
@@ -240,8 +249,9 @@ class _Runner:
                 elif self._copy_files == "custom":
                     if not self._bundle_relative_paths or not self._bundle_from_dir:
                         raise ValueError("copy_style='custom' requires _bundle_relative_paths and _bundle_from_dir")
+                    merged_paths = tuple(self._bundle_relative_paths) + include_files
                     code_bundle = await build_code_bundle_from_relative_paths(
-                        self._bundle_relative_paths,
+                        merged_paths,
                         from_dir=self._bundle_from_dir,
                         dryrun=self._dry_run,
                         copy_bundle_to=self._copy_bundle_to,
@@ -252,6 +262,14 @@ class _Runner:
                         dryrun=self._dry_run,
                         copy_bundle_to=self._copy_bundle_to,
                         copy_style=self._copy_files,
+                        additional_files=include_files,
+                    )
+                elif include_files:
+                    code_bundle = await build_code_bundle_from_relative_paths(
+                        include_files,
+                        from_dir=pathlib.Path(cfg.root_dir),
+                        dryrun=self._dry_run,
+                        copy_bundle_to=self._copy_bundle_to,
                     )
                 else:
                     code_bundle = None
