@@ -25,11 +25,15 @@ def tui():
     launch_tui_explore()
 
 
+_DEFAULT_DEMO_IMAGE = "ghcr.io/flyteorg/flyte-sandbox-v2:nightly"
+_DEFAULT_DEMO_GPU_IMAGE = "ghcr.io/flyteorg/flyte-demo:gpu-latest"
+
+
 @start.command()
 @click.option(
     "--image",
-    default="ghcr.io/flyteorg/flyte-sandbox-v2:nightly",
-    show_default=True,
+    default=None,
+    show_default=f"{_DEFAULT_DEMO_IMAGE} ({_DEFAULT_DEMO_GPU_IMAGE} when --gpu)",
     help="Docker image to use for the demo cluster.",
 )
 @click.option(
@@ -43,12 +47,16 @@ def tui():
     is_flag=True,
     default=False,
     help="Pass host GPUs into the demo container (adds --gpus all to docker run). "
-    "Requires an NVIDIA-enabled host and a GPU-capable image (e.g. flyte-demo:gpu-latest).",
+    "Requires an NVIDIA-enabled host. Defaults --image to a GPU-capable image "
+    "if --image is not explicitly set.",
 )
 @click.pass_context
-def demo(ctx: click.Context, image: str, dev: bool, gpu: bool):
+def demo(ctx: click.Context, image: str | None, dev: bool, gpu: bool):
     """Start a local Flyte demo cluster."""
     from flyte.cli._demo import launch_demo
+
+    if image is None:
+        image = _DEFAULT_DEMO_GPU_IMAGE if gpu else _DEFAULT_DEMO_IMAGE
 
     log_format = getattr(ctx.obj, "log_format", "console") if ctx.obj else "console"
     launch_demo(image, dev, gpu=gpu, log_format=log_format)

@@ -153,3 +153,32 @@ class TestDemoCliGpuFlag:
             assert result.exit_code == 0, result.output
             mock_launch.assert_called_once()
             assert mock_launch.call_args.kwargs["gpu"] is False
+
+
+class TestDemoCliDefaultImage:
+    """--gpu without --image should pick the GPU-capable default image."""
+
+    def test_gpu_without_image_uses_gpu_default(self):
+        from flyte.cli._start import _DEFAULT_DEMO_GPU_IMAGE
+
+        runner = CliRunner()
+        with patch("flyte.cli._demo.launch_demo") as mock_launch:
+            result = runner.invoke(demo, ["--gpu"])
+            assert result.exit_code == 0, result.output
+            assert mock_launch.call_args.args[0] == _DEFAULT_DEMO_GPU_IMAGE
+
+    def test_no_flags_uses_cpu_default(self):
+        from flyte.cli._start import _DEFAULT_DEMO_IMAGE
+
+        runner = CliRunner()
+        with patch("flyte.cli._demo.launch_demo") as mock_launch:
+            result = runner.invoke(demo, [])
+            assert result.exit_code == 0, result.output
+            assert mock_launch.call_args.args[0] == _DEFAULT_DEMO_IMAGE
+
+    def test_explicit_image_with_gpu_is_respected(self):
+        runner = CliRunner()
+        with patch("flyte.cli._demo.launch_demo") as mock_launch:
+            result = runner.invoke(demo, ["--gpu", "--image", "myorg/custom:latest"])
+            assert result.exit_code == 0, result.output
+            assert mock_launch.call_args.args[0] == "myorg/custom:latest"
