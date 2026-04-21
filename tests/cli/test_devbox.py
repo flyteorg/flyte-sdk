@@ -25,7 +25,7 @@ class TestRunContainerGpuFlag:
         with patch("flyte.cli._devbox.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0, stderr="")
             _run_container(
-                image="ghcr.io/flyteorg/flyte-demo:gpu-latest",
+                image="ghcr.io/flyteorg/flyte-devbox:gpu-latest",
                 is_dev_mode=False,
                 container_name="flyte-devbox",
                 kube_dir=Path("/tmp/.kube"),
@@ -48,7 +48,7 @@ class TestRunContainerGpuFlag:
 
     def test_gpu_flag_precedes_image(self):
         cmd = self._invoke(gpu=True)
-        assert cmd.index("--gpus") < cmd.index("ghcr.io/flyteorg/flyte-demo:gpu-latest")
+        assert cmd.index("--gpus") < cmd.index("ghcr.io/flyteorg/flyte-devbox:gpu-latest")
 
 
 class TestMergeKubeconfigRetry:
@@ -140,7 +140,7 @@ class TestDevboxCliGpuFlag:
     def test_gpu_flag_passed_through(self):
         runner = CliRunner()
         with patch("flyte.cli._devbox.launch_devbox") as mock_launch:
-            result = runner.invoke(devbox, ["--gpu", "--image", "flyte-demo:gpu-latest"])
+            result = runner.invoke(devbox, ["--gpu", "--image", "flyte-devbox:gpu-latest"])
             assert result.exit_code == 0, result.output
             mock_launch.assert_called_once()
             assert mock_launch.call_args.kwargs["gpu"] is True
@@ -148,7 +148,7 @@ class TestDevboxCliGpuFlag:
     def test_gpu_defaults_to_false(self):
         runner = CliRunner()
         with patch("flyte.cli._devbox.launch_devbox") as mock_launch:
-            result = runner.invoke(devbox, ["--image", "flyte-demo:latest"])
+            result = runner.invoke(devbox, ["--image", "flyte-devbox:latest"])
             assert result.exit_code == 0, result.output
             mock_launch.assert_called_once()
             assert mock_launch.call_args.kwargs["gpu"] is False
