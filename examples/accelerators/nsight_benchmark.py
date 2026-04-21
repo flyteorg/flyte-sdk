@@ -1,0 +1,258 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#    "flyte>=2.0.9",
+#    "kubernetes",
+#    "pandas",
+# ]
+# ///
+#
+# IMPORTANT: NVIDIA distributes the package as `nsight-python` (import name
+# `nsight`). The bare `nsight` name on PyPI is an unrelated squatted package —
+# installing it surfaces as `AttributeError: module 'nsight' has no attribute
+# 'analyze'`. Until the NVIDIA package ships on PyPI, we install it from the
+# git repo in the image definition below (which requires `git` and torch to
+# be layered in first).
+
+"""
+GPU Kernel Benchmarking with NVIDIA nsight-python
+==================================================
+
+A small, self-contained example that layers a `@nsight_report` decorator on top
+of a Flyte task. The decorator wraps the user's function with
+`nsight.analyze.kernel` (from NVIDIA's `nsight-python`), collects per-kernel
+metrics for any region annotated with `nsight.annotate(...)`, and renders the
+resulting DataFrame as an HTML table on the task's Report tab.
+
+    @env.task
+    @nsight_report
+    def benchmark_matmul(n: int) -> pd.DataFrame:
+        a = torch.randn(n, n, device="cuda")
+        b = torch.randn(n, n, device="cuda")
+        with nsight.annotate("matmul"):
+            _ = a @ b
+
+The wrapped function becomes async so Flyte's async report API can be used to
+publish the HTML.
+
+Runtime requirements
+--------------------
+- NVIDIA GPU (Ampere+ recommended for full counter coverage)
+- Nsight Compute installed in the container (`ncu` on PATH)
+- Counter access enabled on the node, one of:
+    * `NVreg_RestrictProfilingToAdminUsers=0` kernel module parameter, or
+    * `CAP_SYS_ADMIN` on the pod (set via `pod_template`)
+
+Run with:
+
+    uv run examples/advanced/nsight_benchmark.py
+"""
+
+import functools
+from typing import Awaitable, Callable
+
+import pandas as pd
+from kubernetes.client import (
+    V1Capabilities,
+    V1Container,
+    V1PodSpec,
+    V1SecurityContext,
+)
+
+import flyte
+import flyte.report
+
+try:
+    import nsight
+
+    HAS_NSIGHT = True
+except ImportError:
+    HAS_NSIGHT = False
+
+
+# ---------------------------------------------------------------------------
+# @nsight_report decorator
+# ---------------------------------------------------------------------------
+
+
+def nsight_report(func: Callable[..., None]) -> Callable[..., Awaitable[pd.DataFrame]]:
+    """Profile a sync GPU function with nsight-python and publish results as a report.
+
+    The wrapped function:
+      1. Runs under `nsight.analyze.kernel` — each annotated region is replayed
+         and counter-profiled by Nsight Compute.
+      2. Converts the benchmark result to a pandas DataFrame.
+      3. Publishes the DataFrame as an HTML table on the task's Report tab.
+      4. Returns the DataFrame to the caller so downstream tasks can consume it.
+
+    The original function's return value is discarded (nsight-python's
+    `analyze.kernel` substitutes its own result object); use annotations to
+    mark the regions of interest.
+    """
+
+    if not HAS_NSIGHT:
+        # Allows the module to import (and local smoke tests to pass) in
+        # environments that don't have the NVIDIA nsight-python package.
+        @functools.wraps(func)
+        async def unavailable(*args, **kwargs):
+            raise RuntimeError(
+                "nsight-python is not installed. Install it with `pip install nsight` "
+                "and make sure Nsight Compute (`ncu`) is on PATH."
+            )
+
+        return unavailable
+
+    profiled = nsight.analyze.kernel(func)
+
+    @functools.wraps(func)
+    async def wrapper(*args, **kwargs) -> pd.DataFrame:
+        result = profiled(*args, **kwargs)
+        df = result.to_dataframe()
+
+        await flyte.report.replace.aio(_render_html(df))
+        await flyte.report.flush.aio()
+
+        return df
+
+    return wrapper
+
+
+def _render_html(df: pd.DataFrame) -> str:
+    preferred = ["Annotation", "Metric", "AvgValue", "NumRuns", "GPU"]
+    cols = [c for c in preferred if c in df.columns] or list(df.columns)
+    table = df[cols].to_html(index=False, classes="metrics", border=0)
+    return f"""
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Nsight Compute Kernel Report</title>
+  <style>
+    body {{
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #f7f5fd; padding: 24px; margin: 0;
+    }}
+    h1 {{ color: #7652a2; margin: 0 0 16px; }}
+    .subtitle {{ color: #555; margin-bottom: 24px; }}
+    table.metrics {{
+      border-collapse: collapse; width: 100%; background: white;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08); border-radius: 8px; overflow: hidden;
+    }}
+    table.metrics thead {{ background: #7652a2; color: white; }}
+    table.metrics th, table.metrics td {{ padding: 10px 14px; text-align: left; }}
+    table.metrics tbody tr:nth-child(even) {{ background: #f7f5fd; }}
+  </style>
+</head>
+<body>
+  <h1>Nsight Compute Kernel Report</h1>
+  <div class="subtitle">Generated by <code>@nsight_report</code> via nsight-python</div>
+  {table}
+</body>
+</html>
+"""
+
+
+# ---------------------------------------------------------------------------
+# Flyte task
+# ---------------------------------------------------------------------------
+
+# The `nsight-python` package wraps the `ncu` CLI — installing the Python package
+# via pip does NOT install the binary. We therefore base on NVIDIA's CUDA devel
+# image, which bundles Nsight Compute (`ncu`) alongside `nvcc`.
+#
+# Ubuntu 24.04 ships Python 3.12; the script header is relaxed to >=3.12 to match.
+# `git` is still needed because nsight-python isn't on PyPI yet and must be
+# cloned during pip install.
+image = (
+    flyte.Image.from_base("nvidia/cuda:12.6.3-devel-ubuntu24.04")
+    .clone(name="nsight-benchmark", extendable=True)
+    .with_apt_packages("git", "software-properties-common", "curl", "ca-certificates")
+    # Flyte's image builder always provisions `uv venv --python 3.13`, so we need
+    # Python 3.13 available system-wide. Ubuntu 24.04's default is 3.12, so we
+    # pull 3.13 from the deadsnakes PPA.
+    .with_commands(
+        [
+            "add-apt-repository -y ppa:deadsnakes/ppa",
+            "apt-get update",
+            "apt-get install -y python3.13 python3.13-venv python3.13-dev",
+        ]
+    )
+    .with_pip_packages(
+        "flyte>=2.0.9",
+        "kubernetes",
+        "pandas",
+        "torch",
+        "nsight-python @ git+https://github.com/NVIDIA/nsight-python.git",
+    )
+)
+
+# Nsight Compute reads GPU perf counters, which on Ampere+ GPUs (A100, L4, H100)
+# require elevated privileges when `NVreg_RestrictProfilingToAdminUsers=1` is set
+# on the node (the current NVIDIA driver default). Granting CAP_SYS_ADMIN on the
+# primary container is the pod-level path; the node-level path is to flip that
+# kernel module param to 0 on the GPU node pool.
+#
+# If counters come back as zeros or `ncu` emits "ERR_NVGPUCTRPERM", you're
+# hitting this — verify the cap is applied and the node permits profiling.
+NSIGHT_PRIMARY_CONTAINER = "primary"
+
+pod_template = flyte.PodTemplate(
+    primary_container_name=NSIGHT_PRIMARY_CONTAINER,
+    pod_spec=V1PodSpec(
+        containers=[
+            V1Container(
+                name=NSIGHT_PRIMARY_CONTAINER,
+                security_context=V1SecurityContext(
+                    capabilities=V1Capabilities(add=["SYS_ADMIN"]),
+                ),
+            ),
+        ],
+    ),
+)
+
+env = flyte.TaskEnvironment(
+    name="nsight_benchmark",
+    image=image,
+    resources=flyte.Resources(gpu="L4:1", cpu=4, memory="16Gi"),
+    pod_template=pod_template,
+)
+
+
+@env.task
+@nsight_report
+def benchmark_matmul(n: int = 2048) -> pd.DataFrame:
+    """Benchmark a single N×N float32 matmul on the GPU.
+
+    nsight-python replays each annotated region to collect stable counters,
+    so the `_ = a @ b` line will run multiple times per invocation.
+    """
+    import torch
+
+    a = torch.randn(n, n, device="cuda")
+    b = torch.randn(n, n, device="cuda")
+
+    with nsight.annotate("matmul"):
+        _ = a @ b
+
+
+@env.task
+@nsight_report
+def benchmark_elementwise(n: int = 1 << 20) -> pd.DataFrame:
+    """Benchmark a memory-bound elementwise op to contrast with a compute-bound matmul."""
+    import torch
+
+    x = torch.randn(n, device="cuda")
+    y = torch.randn(n, device="cuda")
+
+    with nsight.annotate("add"):
+        _ = x + y
+
+    with nsight.annotate("fused_muladd"):
+        _ = x * y + y
+
+
+if __name__ == "__main__":
+    flyte.init_from_config()
+    run = flyte.run(benchmark_matmul, n=4096)
+    print(run.url)
+    run.wait()
