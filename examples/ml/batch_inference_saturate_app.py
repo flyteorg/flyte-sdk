@@ -30,7 +30,6 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import List
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
@@ -66,7 +65,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     params = SamplingParams(temperature=0.7, max_tokens=512)
     logger.info("vLLM model loaded")
 
-    async def inference(batch: List[Prompt]) -> List[str]:
+    async def inference(batch: list[Prompt]) -> list[str]:
         texts = [p.text for p in batch]
         outputs = llm.generate(texts, params)
         return [o.outputs[0].text for o in outputs]
@@ -134,7 +133,7 @@ class Prompt:
 
 
 class GenerateRequest(BaseModel):
-    prompts: List[str]
+    prompts: list[str]
     task_id: str
 
 
@@ -152,7 +151,7 @@ async def generate(request_body: GenerateRequest, request: Request):
 
     batcher: TokenBatcher[Prompt, str] = request.app.state.batcher
 
-    futures: List[asyncio.Future[str]] = []
+    futures: list[asyncio.Future[str]] = []
     for idx, text in enumerate(prompts):
         record = Prompt(task_id=task_id, index=int(idx), text=text)
         future = await batcher.submit(record)
@@ -183,9 +182,9 @@ async def health():
 @driver_env.task(retries=20)
 async def infer_batch(
     endpoint: str,
-    prompts: List[str],
+    prompts: list[str],
     task_id: str,
-) -> dict[str, List[str]]:
+) -> list[str]:
     """
     A driver task that calls the FastAPI inference service.
     In a real scenario, this would be triggered as part of a workflow.
@@ -198,7 +197,7 @@ async def infer_batch(
             json={"prompts": prompts, "task_id": task_id},
         )
         response.raise_for_status()
-        return response.json()
+        return response.json()["results"]
 
 
 @driver_env.task(cache="auto")
