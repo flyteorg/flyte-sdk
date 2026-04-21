@@ -9,7 +9,7 @@ inputs:
   uv-version:
     description: "uv version to use"
     required: true
-    default: "0.11.7"
+    default: "0.8.4"
 
 
 runs:
@@ -20,7 +20,7 @@ runs:
         python-version: ${{ inputs.python-version }}
 
     - name: Install uv
-      uses: astral-sh/setup-uv@v8.1.0
+      uses: astral-sh/setup-uv@v6
       id: setup-uv
       with:
         version: ${{ inputs.uv-version }}
@@ -29,6 +29,23 @@ runs:
         cache-dependency-glob: |
           pyproject.toml
           uv.lock
+    - name: Debug Python and uv
+      shell: bash
+      run: |
+        echo "python from PATH:"
+        which python
+        python --version
+
+        echo "uv version:"
+        uv --version
+
+        echo "project files:"
+        ls -la
+        test -f pyproject.toml && echo "pyproject.toml present"
+        test -f uv.lock && echo "uv.lock present"
+
+        echo "lockfile check:"
+        uv lock --check
     - name: Install Python dependencies
       run: |
         uv sync --all-groups --frozen
