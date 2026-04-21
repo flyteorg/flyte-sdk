@@ -776,7 +776,7 @@ requires-dist = [
     { name = "datasets", specifier = ">=2.14.5" },
     { name = "flyte", editable = "../../" },
     { name = "huggingface-hub", specifier = ">=0.27.0" },
-    { name = "pyarrow" },
+    { name = "pyarrow", specifier = ">=23.0.1,!=24.0.0" },
 ]
 
 [package.metadata.requires-dev]
