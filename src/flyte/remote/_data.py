@@ -163,6 +163,7 @@ async def _upload_single_file(
             dataproxy_service_pb2.CreateUploadLocationRequest(
                 project=cfg.project,
                 domain=cfg.domain,
+                org=cfg.org or "",
                 content_md5=md5_bytes,
                 filename=fname or fp.name,
                 expires_in=expires_in_pb,

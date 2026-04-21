@@ -7,8 +7,8 @@ def stop():
 
 
 @stop.command()
-def demo():
-    """Pause the local Flyte demo cluster without removing it."""
-    from flyte.cli._demo import stop_demo
+def devbox():
+    """Pause the local Flyte devbox cluster without removing it."""
+    from flyte.cli._devbox import stop_devbox
 
-    stop_demo()
+    stop_devbox()

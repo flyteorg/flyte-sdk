@@ -13,13 +13,13 @@ from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeEl
 
 from flyte import _sentry
 
-_CONTAINER_NAME = "flyte-demo"
-_VOLUME_NAME = "flyte-demo"
+_CONTAINER_NAME = "flyte-devbox"
+_VOLUME_NAME = "flyte-devbox"
 _KUBE_DIR = Path(
     "/tmp/.kube"
 )  # This path is used to store k3s kubeconfig file, we later merge it with the default kubeconfig
 _KUBECONFIG_PATH = _KUBE_DIR / "kubeconfig"
-_FLYTE_DEMO_CONFIG_DIR = Path.home() / ".flyte" / "demo"
+_FLYTE_DEVBOX_CONFIG_DIR = Path.home() / ".flyte" / "devbox"
 _PORTS = ["6443:6443", "30000:30000", "30001:30001", "30002:30002", "30003:30003", "30080:30080"]
 _CONSOLE_READYZ_URL = "http://localhost:30080/readyz"
 
@@ -83,9 +83,10 @@ def _run_container(
     is_dev_mode: bool,
     container_name: str,
     kube_dir: Path,
-    flyte_demo_config_dir: Path,
+    flyte_devbox_config_dir: Path,
     volume_name: str,
     ports: list[str],
+    gpu: bool = False,
 ) -> None:
     cmd = [
         "docker",
@@ -104,10 +105,12 @@ def _run_container(
         "--volume",
         f"{kube_dir}:/.kube",
         "--volume",
-        f"{flyte_demo_config_dir}:/var/lib/flyte/config",
+        f"{flyte_devbox_config_dir}:/var/lib/flyte/config",
         "--volume",
         f"{volume_name}:/var/lib/flyte/storage",
     ]
+    if gpu:
+        cmd.extend(["--gpus", "all"])
     for port in ports:
         cmd.extend(["--publish", port])
     cmd.append(image)
@@ -140,7 +143,7 @@ def _wait_for_kubeconfig(kubeconfig_path: Path, timeout: int = 60) -> None:
         time.sleep(1)
 
 
-def _switch_k8s_context(context: str = "flyte-demo", namespace: str = "flyte") -> None:
+def _switch_k8s_context(context: str = "flyte-devbox", namespace: str = "flyte") -> None:
     try:
         subprocess.run(["kubectl", "config", "use-context", context], check=True, capture_output=True, text=True)
         subprocess.run(
@@ -177,8 +180,10 @@ def _merge_kubeconfig(kubeconfig_path: Path, container_name: str) -> None:
 
     try:
         result = _flatten_kubeconfig(default_kubeconfig, kubeconfig_path)
-    except PermissionError:
-        # Handle the case that the user does not have permission to kubeconfig file
+    except (PermissionError, subprocess.CalledProcessError):
+        # On Linux bind mounts, the in-container kubeconfig lands root-owned on
+        # the host; kubectl then exits non-zero (CalledProcessError) rather than
+        # Python raising PermissionError on open.
         uid, gid = os.getuid(), os.getgid()
         subprocess.run(
             ["docker", "exec", container_name, "chown", f"{uid}:{gid}", "/.kube/kubeconfig"],
@@ -197,10 +202,10 @@ def _merge_kubeconfig(kubeconfig_path: Path, container_name: str) -> None:
 _STEPS = [
     ("Pulling image", "pull"),
     ("Starting container", "start"),
-    ("Waiting for kubeconfig", "kubeconfig"),
+    ("Waiting for k3d cluster", "kubeconfig"),
     ("Merging kubeconfig", "merge"),
     ("Configuring kubectl context", "context"),
-    ("Waiting for cluster to be ready", "ready"),
+    ("Waiting for flyte cluster to be ready", "ready"),
 ]
 
 _STEPS_DEV = _STEPS[:-1]  # Dev mode skips the readiness check
@@ -208,33 +213,33 @@ _STEPS_DEV = _STEPS[:-1]  # Dev mode skips the readiness check
 console = Console()
 
 
-def _wait_for_demo_ready(is_dev_mode: bool) -> None:
+def _wait_for_devbox_ready(is_dev_mode: bool) -> None:
     if not is_dev_mode:
         _wait_for_console_ready(_CONSOLE_READYZ_URL)
 
 
-def stop_demo() -> None:
+def stop_devbox() -> None:
     if _container_is_paused(_CONTAINER_NAME):
-        console.print("[yellow]Demo cluster is already paused.[/yellow]")
+        console.print("[yellow]Devbox cluster is already paused.[/yellow]")
         return
     if not _container_is_running(_CONTAINER_NAME):
-        console.print("[yellow]Demo cluster is not running.[/yellow]")
+        console.print("[yellow]Devbox cluster is not running.[/yellow]")
         return
     subprocess.run(["docker", "pause", _CONTAINER_NAME], check=True, capture_output=True)
-    console.print("[green]Demo cluster stopped.[/green] Run [bold]flyte start demo[/bold] to resume.")
+    console.print("[green]Devbox cluster stopped.[/green] Run [bold]flyte start devbox[/bold] to resume.")
 
 
 @_sentry.capture_errors
-def launch_demo(image_name: str, is_dev_mode: bool, log_format: str = "console") -> None:
+def launch_devbox(image_name: str, is_dev_mode: bool, gpu: bool = False, log_format: str = "console") -> None:
     _ensure_volume(_VOLUME_NAME)
     if _container_is_paused(_CONTAINER_NAME):
-        console.print("[cyan]Resuming paused demo cluster...[/cyan]")
+        console.print("[cyan]Resuming paused devbox cluster...[/cyan]")
         subprocess.run(["docker", "unpause", _CONTAINER_NAME], check=True, capture_output=True)
         return
 
     if _container_is_running(_CONTAINER_NAME):
-        console.print("[yellow]Flyte demo cluster is already running.[/yellow]")
-        if not click.confirm("Do you want to delete the existing demo cluster and start a new one?"):
+        console.print("[yellow]Flyte devbox cluster is already running.[/yellow]")
+        if not click.confirm("Do you want to delete the existing devbox cluster and start a new one?"):
             return
         subprocess.run(["docker", "stop", _CONTAINER_NAME], check=True, capture_output=True)
 
@@ -246,17 +251,17 @@ def launch_demo(image_name: str, is_dev_mode: bool, log_format: str = "console")
     steps = _STEPS_DEV if is_dev_mode else _STEPS
 
     if log_format == "json":
-        _launch_demo_plain(image_name, is_dev_mode, steps)
+        _launch_devbox_plain(image_name, is_dev_mode, steps, gpu=gpu)
     else:
-        _launch_demo_rich(image_name, is_dev_mode, steps)
+        _launch_devbox_rich(image_name, is_dev_mode, steps, gpu=gpu)
 
 
-def _run_step(step_id: str, image_name: str, is_dev_mode: bool) -> None:
+def _run_step(step_id: str, image_name: str, is_dev_mode: bool, gpu: bool = False) -> None:
     if step_id == "pull":
         _pull_image(image_name)
     elif step_id == "start":
         _run_container(
-            image_name, is_dev_mode, _CONTAINER_NAME, _KUBE_DIR, _FLYTE_DEMO_CONFIG_DIR, _VOLUME_NAME, _PORTS
+            image_name, is_dev_mode, _CONTAINER_NAME, _KUBE_DIR, _FLYTE_DEVBOX_CONFIG_DIR, _VOLUME_NAME, _PORTS, gpu=gpu
         )
     elif step_id == "kubeconfig":
         _wait_for_kubeconfig(_KUBECONFIG_PATH)
@@ -265,25 +270,25 @@ def _run_step(step_id: str, image_name: str, is_dev_mode: bool) -> None:
     elif step_id == "context":
         _switch_k8s_context()
     elif step_id == "ready":
-        _wait_for_demo_ready(is_dev_mode)
+        _wait_for_devbox_ready(is_dev_mode)
 
 
-def _launch_demo_plain(image_name: str, is_dev_mode: bool, steps: list[tuple[str, str]]) -> None:
+def _launch_devbox_plain(image_name: str, is_dev_mode: bool, steps: list[tuple[str, str]], gpu: bool = False) -> None:
     for i, (description, step_id) in enumerate(steps, 1):
         click.echo(f"[{i}/{len(steps)}] {description}...")
-        _run_step(step_id, image_name, is_dev_mode)
+        _run_step(step_id, image_name, is_dev_mode, gpu=gpu)
         click.echo(f"[{i}/{len(steps)}] {description}... done")
 
     click.echo("")
     if is_dev_mode:
         click.echo("Flyte dev cluster is running.")
     else:
-        click.echo("Flyte demo cluster is ready!")
+        click.echo("Flyte devbox cluster is ready!")
         click.echo("  UI:             http://localhost:30080/v2")
         click.echo("  Image Registry: localhost:30000")
 
 
-def _launch_demo_rich(image_name: str, is_dev_mode: bool, steps: list[tuple[str, str]]) -> None:
+def _launch_devbox_rich(image_name: str, is_dev_mode: bool, steps: list[tuple[str, str]], gpu: bool = False) -> None:
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
@@ -292,11 +297,11 @@ def _launch_demo_rich(image_name: str, is_dev_mode: bool, steps: list[tuple[str,
         TimeElapsedColumn(),
         console=console,
     ) as progress:
-        overall = progress.add_task("[bold cyan]Starting Flyte demo cluster", total=len(steps))
+        overall = progress.add_task("[bold cyan]Starting Flyte devbox cluster", total=len(steps))
 
         for description, step_id in steps:
             progress.update(overall, description=f"[bold cyan]{description}")
-            _run_step(step_id, image_name, is_dev_mode)
+            _run_step(step_id, image_name, is_dev_mode, gpu=gpu)
             progress.advance(overall)
 
     if is_dev_mode:
@@ -304,10 +309,10 @@ def _launch_demo_rich(image_name: str, is_dev_mode: bool, steps: list[tuple[str,
     else:
         console.print(
             Panel(
-                "[green bold]Flyte demo cluster is ready![/green bold]\n\n"
+                "[green bold]Flyte devbox cluster is ready![/green bold]\n\n"
                 "  🚀 UI:             [link=http://localhost:30080/v2]http://localhost:30080/v2[/link]\n"
                 "  🐳 Image Registry: localhost:30000",
-                title="[bold]Flyte Demo[/bold]",
+                title="[bold]Flyte Devbox[/bold]",
                 border_style="green",
             )
         )

@@ -1,0 +1,4 @@
+name: resnet50
+hidden_dim: 512
+num_layers: 50
+dropout: 0.1
