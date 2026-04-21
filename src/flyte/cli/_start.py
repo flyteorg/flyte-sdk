@@ -38,10 +38,17 @@ def tui():
     default=False,
     help="Enable dev mode inside the demo cluster (sets FLYTE_DEV=True).",
 )
+@click.option(
+    "--gpu",
+    is_flag=True,
+    default=False,
+    help="Pass host GPUs into the demo container (adds --gpus all to docker run). "
+    "Requires an NVIDIA-enabled host and a GPU-capable image (e.g. flyte-demo:gpu-latest).",
+)
 @click.pass_context
-def demo(ctx: click.Context, image: str, dev: bool):
+def demo(ctx: click.Context, image: str, dev: bool, gpu: bool):
     """Start a local Flyte demo cluster."""
     from flyte.cli._demo import launch_demo
 
     log_format = getattr(ctx.obj, "log_format", "console") if ctx.obj else "console"
-    launch_demo(image, dev, log_format=log_format)
+    launch_demo(image, dev, gpu=gpu, log_format=log_format)

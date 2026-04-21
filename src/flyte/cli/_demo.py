@@ -84,6 +84,7 @@ def _run_container(
     flyte_demo_config_dir: Path,
     volume_name: str,
     ports: list[str],
+    gpu: bool = False,
 ) -> None:
     cmd = [
         "docker",
@@ -106,6 +107,8 @@ def _run_container(
         "--volume",
         f"{volume_name}:/var/lib/flyte/storage",
     ]
+    if gpu:
+        cmd.extend(["--gpus", "all"])
     for port in ports:
         cmd.extend(["--publish", port])
     cmd.append(image)
@@ -222,7 +225,7 @@ def stop_demo() -> None:
     console.print("[green]Demo cluster stopped.[/green] Run [bold]flyte start demo[/bold] to resume.")
 
 
-def launch_demo(image_name: str, is_dev_mode: bool, log_format: str = "console") -> None:
+def launch_demo(image_name: str, is_dev_mode: bool, gpu: bool = False, log_format: str = "console") -> None:
     _ensure_volume(_VOLUME_NAME)
 
     if _container_is_paused(_CONTAINER_NAME):
@@ -244,17 +247,17 @@ def launch_demo(image_name: str, is_dev_mode: bool, log_format: str = "console")
     steps = _STEPS_DEV if is_dev_mode else _STEPS
 
     if log_format == "json":
-        _launch_demo_plain(image_name, is_dev_mode, steps)
+        _launch_demo_plain(image_name, is_dev_mode, steps, gpu=gpu)
     else:
-        _launch_demo_rich(image_name, is_dev_mode, steps)
+        _launch_demo_rich(image_name, is_dev_mode, steps, gpu=gpu)
 
 
-def _run_step(step_id: str, image_name: str, is_dev_mode: bool) -> None:
+def _run_step(step_id: str, image_name: str, is_dev_mode: bool, gpu: bool = False) -> None:
     if step_id == "pull":
         _pull_image(image_name)
     elif step_id == "start":
         _run_container(
-            image_name, is_dev_mode, _CONTAINER_NAME, _KUBE_DIR, _FLYTE_DEMO_CONFIG_DIR, _VOLUME_NAME, _PORTS
+            image_name, is_dev_mode, _CONTAINER_NAME, _KUBE_DIR, _FLYTE_DEMO_CONFIG_DIR, _VOLUME_NAME, _PORTS, gpu=gpu
         )
     elif step_id == "kubeconfig":
         _wait_for_kubeconfig(_KUBECONFIG_PATH)
@@ -266,10 +269,10 @@ def _run_step(step_id: str, image_name: str, is_dev_mode: bool) -> None:
         _wait_for_demo_ready(is_dev_mode)
 
 
-def _launch_demo_plain(image_name: str, is_dev_mode: bool, steps: list[tuple[str, str]]) -> None:
+def _launch_demo_plain(image_name: str, is_dev_mode: bool, steps: list[tuple[str, str]], gpu: bool = False) -> None:
     for i, (description, step_id) in enumerate(steps, 1):
         click.echo(f"[{i}/{len(steps)}] {description}...")
-        _run_step(step_id, image_name, is_dev_mode)
+        _run_step(step_id, image_name, is_dev_mode, gpu=gpu)
         click.echo(f"[{i}/{len(steps)}] {description}... done")
 
     click.echo("")
@@ -281,7 +284,7 @@ def _launch_demo_plain(image_name: str, is_dev_mode: bool, steps: list[tuple[str
         click.echo("  Image Registry: localhost:30000")
 
 
-def _launch_demo_rich(image_name: str, is_dev_mode: bool, steps: list[tuple[str, str]]) -> None:
+def _launch_demo_rich(image_name: str, is_dev_mode: bool, steps: list[tuple[str, str]], gpu: bool = False) -> None:
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
@@ -294,7 +297,7 @@ def _launch_demo_rich(image_name: str, is_dev_mode: bool, steps: list[tuple[str,
 
         for description, step_id in steps:
             progress.update(overall, description=f"[bold cyan]{description}")
-            _run_step(step_id, image_name, is_dev_mode)
+            _run_step(step_id, image_name, is_dev_mode, gpu=gpu)
             progress.advance(overall)
 
     if is_dev_mode:
