@@ -178,8 +178,10 @@ def _merge_kubeconfig(kubeconfig_path: Path, container_name: str) -> None:
 
     try:
         result = _flatten_kubeconfig(default_kubeconfig, kubeconfig_path)
-    except PermissionError:
-        # Handle the case that the user does not have permission to kubeconfig file
+    except (PermissionError, subprocess.CalledProcessError):
+        # On Linux bind mounts, the in-container kubeconfig lands root-owned on
+        # the host; kubectl then exits non-zero (CalledProcessError) rather than
+        # Python raising PermissionError on open.
         uid, gid = os.getuid(), os.getgid()
         subprocess.run(
             ["docker", "exec", container_name, "chown", f"{uid}:{gid}", "/.kube/kubeconfig"],
