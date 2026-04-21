@@ -315,6 +315,8 @@ class DurationParamType(click.ParamType):
     ) -> typing.Any:
         if value is None:
             raise click.BadParameter("None value cannot be converted to a Duration type.")
+        if isinstance(value, datetime.timedelta):
+            return value
         return parse_duration(value)
 
 
