@@ -24,7 +24,7 @@ async def run(x: int) -> int:
 
 
 @env.task(retries=10)
-async def main():
+async def main() -> list[int]:
     print("Running fast_crasher task - current attempt number:", get_attempt_number(), flush=True)
     with flyte.group("sequential-group"):
         vals = []

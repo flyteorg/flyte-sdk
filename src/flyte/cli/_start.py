@@ -25,7 +25,7 @@ def tui():
     launch_tui_explore()
 
 
-_DEFAULT_DEMO_IMAGE = "ghcr.io/flyteorg/flyte-sandbox-v2:nightly"
+_DEFAULT_DEMO_IMAGE = "ghcr.io/flyteorg/flyte-demo:nightly"
 _DEFAULT_DEMO_GPU_IMAGE = "ghcr.io/flyteorg/flyte-demo:gpu-latest"
 
 

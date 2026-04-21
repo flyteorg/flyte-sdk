@@ -108,8 +108,8 @@ def test_app_environment_comprehensive_happy_path():
     assert app_env.parameters[1].download is True
     assert app_env.parameters[1].mount == "/mnt/data"
 
-    # Verify includes
-    assert app_env.include == ["*.py", "requirements.txt"]
+    # Verify includes (normalized to tuple so Environment stays hashable)
+    assert app_env.include == ("*.py", "requirements.txt")
 
     # Test container_args returns the args as-is (list format)
     ctx = SerializationContext(
@@ -607,7 +607,7 @@ def test_app_environment_default_values():
     assert app.links == []
     assert app.parameters == []
     assert app.cluster_pool == "default"
-    assert app.include == []
+    assert app.include == ()
     assert app.env_vars is None
     assert app.secrets is None
 
