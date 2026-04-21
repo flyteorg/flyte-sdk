@@ -3,7 +3,7 @@ name = "flyteplugins-huggingface"
 dynamic = ["version"]
 description = "Hugging Face Datasets plugin for flyte"
 readme = "README.md"
-authors = [{ name = "Flyte Contributors", email = "admin@flyte.org" }]
+authors = [{ name = "André Ahlert", email = "andre@aex.partners" }, { name = "Samhita Alla", email = "samhita@union.ai" }]
 requires-python = ">=3.10"
 dependencies = [
     "datasets>=2.14.5",
@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [project.entry-points."flyte.plugins.types"]
-huggingface = "flyteplugins.huggingface.df_transformer:register_huggingface_df_transformers"
+huggingface = "flyteplugins.huggingface:register_huggingface_dataset_transformers"
 
 [build-system]
 requires = ["setuptools", "setuptools_scm"]

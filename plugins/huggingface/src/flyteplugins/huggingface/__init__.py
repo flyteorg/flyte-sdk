@@ -1,6 +1,10 @@
-from ._prefetch import HuggingFaceDatasetInfo, hf_dataset
+from .dataset import (
+    HFSource,
+    from_hf,
+    register_huggingface_dataset_transformers,
+)
 
-__all__ = [
-    "HuggingFaceDatasetInfo",
-    "hf_dataset",
-]
+__all__ = ["HFSource", "from_hf"]
+
+
+register_huggingface_dataset_transformers()
