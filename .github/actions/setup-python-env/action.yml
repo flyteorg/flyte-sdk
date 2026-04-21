@@ -29,6 +29,14 @@ runs:
         cache-dependency-glob: |
           pyproject.toml
           uv.lock
+    - name: Debug uv lock issue
+      shell: bash
+      working-directory: plugins/huggingface
+      run: |
+        uv --version
+        python --version
+        uv lock || true
+        git diff uv.lock || true
     - name: Install Python dependencies
       run: |
         uv sync --all-groups --frozen
