@@ -12,8 +12,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
-
 from flyte.cli._demo import _merge_kubeconfig, _run_container
+
 from flyte.cli._start import demo
 
 
