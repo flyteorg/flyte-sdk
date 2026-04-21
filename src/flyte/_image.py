@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Dict, List, Literal, Optional, Tuple, TypeVar, Union
 
 import rich.repr
-from packaging.version import Version
 
 if TYPE_CHECKING:
     from flyte import Secret, SecretRequest
@@ -456,8 +455,24 @@ class Env(Layer):
 Architecture = Literal["linux/amd64", "linux/arm64"]
 
 _BASE_REGISTRY = "ghcr.io/flyteorg"
+_LOCALHOST_REGISTRY = "localhost:30000"
 _DEFAULT_IMAGE_NAME = "flyte"
 _DEFAULT_IMAGE_REF_NAME = "default"
+
+
+def _get_base_registry() -> str:
+    """
+    Returns the base registry based on the Flyte config endpoint.
+    If the endpoint contains 'localhost', use the localhost registry.
+    """
+    from flyte._initialize import _get_init_config
+
+    init_config = _get_init_config()
+    if init_config and init_config.client:
+        endpoint = init_config.client.endpoint
+        if endpoint and "localhost" in endpoint:
+            return _LOCALHOST_REGISTRY
+    return _BASE_REGISTRY
 
 
 def _detect_python_version() -> Tuple[int, int]:
@@ -519,7 +534,11 @@ class Image:
     platform: Tuple[Architecture, ...] = field(default=("linux/amd64",))
     python_version: Tuple[int, int] = field(default_factory=_detect_python_version)
     extendable: bool = field(default=False)
-    _is_flyte_default: bool = field(default=False)
+    # Whether this image has been modified/cloned by the user (via clone() or a with_* method).
+    # Defaults to False: an image with no modifications is assumed to already exist in the
+    # registry and does not need to be built. clone() flips this to True, which is what
+    # triggers the build/existence check.
+    _is_cloned: bool = field(default=False)
     # Refer to the image_refs (name:image-uri) set in CLI or config
     _ref_name: Optional[str] = field(default=None)
 
@@ -585,9 +604,22 @@ class Image:
                 flyte_version = __version__.replace("+", "-")
             suffix = flyte_version if flyte_version.startswith("v") else f"v{flyte_version}"
             preset_tag = f"py{python_version[0]}.{python_version[1]}-{suffix}"
+            if not dev_mode:
+                # This is the released default image; it already exists in the registry.
+                # Return a bare-URI image (via from_base) so the SDK does not try to build it
+                # unless the user clones/modifies it. Preserve the requested platform so later
+                # clones keep the multi-arch default.
+                return Image._new(
+                    base_image=f"{_BASE_REGISTRY}/{_DEFAULT_IMAGE_NAME}:{preset_tag}",
+                    registry=_get_base_registry(),
+                    name=_DEFAULT_IMAGE_NAME,
+                    python_version=python_version,
+                    platform=("linux/amd64", "linux/arm64") if platform is None else platform,
+                    extendable=True,
+                )
         image = Image._new(
             base_image=f"python:{python_version[0]}.{python_version[1]}-slim-bookworm",
-            registry=_BASE_REGISTRY,
+            registry=_get_base_registry(),
             name=_DEFAULT_IMAGE_NAME,
             python_version=python_version,
             platform=("linux/amd64", "linux/arm64") if platform is None else platform,
@@ -612,15 +644,8 @@ class Image:
             }
         )
         image = image.with_apt_packages("build-essential", "ca-certificates")
-        if install_flyte:
-            if dev_mode:
-                if os.path.exists(DIST_FOLDER):
-                    image = image.with_local_v2()
-            else:
-                flyte_version = typing.cast(str, flyte_version)
-                image = image.with_pip_packages(f"flyte=={flyte_version}")
-                if not Version(flyte_version).is_devrelease and not Version(flyte_version).is_prerelease:
-                    object.__setattr__(image, "_is_flyte_default", True)
+        if install_flyte and dev_mode and os.path.exists(DIST_FOLDER):
+            image = image.with_local_v2()
         if not dev_mode:
             object.__setattr__(image, "_tag", preset_tag)
 
@@ -769,7 +794,11 @@ class Image:
         extendable: Optional[bool] = None,
     ) -> Image:
         """
-        Use this method to clone the current image and change the registry and name
+        Clone an existing image, optionally with a new name or registry.
+
+        All `with_*` methods already produce a new immutable `Image`; use
+        `clone()` when you need an independent copy with a different name,
+        registry, or other base properties.
 
         :param registry: Registry to use for the image
         :param registry_secret: Secret to use to pull/push the private image.
@@ -814,6 +843,7 @@ class Image:
             platform=self.platform,
             python_version=python_version or self.python_version,
             extendable=extendable if extendable is not None else self.extendable,
+            _is_cloned=True,
             _layers=new_layers,
             _image_registry_secret=Secret(key=registry_secret) if isinstance(registry_secret, str) else registry_secret,
             _ref_name=self._ref_name,
@@ -823,7 +853,11 @@ class Image:
 
     @classmethod
     def from_dockerfile(
-        cls, file: Path, registry: str, name: str, platform: Union[Architecture, Tuple[Architecture, ...], None] = None
+        cls,
+        file: Union[Path, str],
+        registry: str,
+        name: str,
+        platform: Union[Architecture, Tuple[Architecture, ...], None] = None,
     ) -> Image:
         """
         Use this method to create a new image with the specified dockerfile. Note you cannot use additional layers
@@ -842,13 +876,16 @@ class Image:
         :return:
         """
         platform = _ensure_tuple(platform) if platform else None
-        kwargs = {
+        if type(file) is str:
+            file = Path(file)
+        kwargs: dict[str, Any] = {
             "dockerfile": file,
             "registry": registry,
             "name": name,
             "extendable": False,  # Dockerfile-based images cannot have additional layers
+            "_is_cloned": True,
         }
-        if platform:
+        if platform is not None:
             kwargs["platform"] = platform
         img = cls._new(**kwargs)
 
@@ -906,18 +943,14 @@ class Image:
         """
         Returns the URI of the image in the format <registry>/<name>:<tag>
         """
-        if self.registry and self.name:
-            tag = self._final_tag
+        if not self._is_cloned:
+            assert self.base_image is not None, "Base image must be set for non-cloned images"
+            return self.base_image
+        tag = self._final_tag
+        assert self.name is not None, "Name must be set for cloned images"
+        if self.registry:
             return f"{self.registry}/{self.name}:{tag}"
-        elif self._ref_name and len(self._layers) == 0:
-            assert self.base_image is not None, f"Base image is not set for image ref name {self._ref_name}"
-            return self.base_image
-        elif self.name:
-            return f"{self.name}:{self._final_tag}"
-        elif self.base_image:
-            return self.base_image
-
-        raise ValueError("Image is not fully defined. Please set registry, name and tag.")
+        return f"{self.name}:{tag}"
 
     def with_workdir(self, workdir: str) -> Image:
         """
@@ -1315,6 +1348,7 @@ def resolve_code_bundle_layer(image: Image, copy_style: str, root_dir: Path) -> 
             platform=image.platform,
             python_version=image.python_version,
             extendable=image.extendable,
+            _is_cloned=image._is_cloned,
             _ref_name=image._ref_name,
             _layers=non_bundle_layers,
             _image_registry_secret=image._image_registry_secret,
@@ -1340,6 +1374,7 @@ def resolve_code_bundle_layer(image: Image, copy_style: str, root_dir: Path) -> 
         platform=image.platform,
         python_version=image.python_version,
         extendable=image.extendable,
+        _is_cloned=image._is_cloned,
         _ref_name=image._ref_name,
         _layers=tuple(resolved_layers),
         _image_registry_secret=image._image_registry_secret,

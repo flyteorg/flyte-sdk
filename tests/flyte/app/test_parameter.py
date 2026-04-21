@@ -589,7 +589,7 @@ def test_serializable_input_from_run_output():
     assert serialized.type == "file"
     # Value should be JSON serialized
     assert "my-run-123" in serialized.value
-    assert serialized.download is False
+    assert serialized.download is True
 
 
 def test_serializable_input_from_run_output_with_mount():

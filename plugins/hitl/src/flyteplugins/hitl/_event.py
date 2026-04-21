@@ -159,7 +159,6 @@ class Event(Generic[T]):
         ).serve.aio(event_app_env)
 
     @classmethod
-    @syncify
     async def create(
         cls,
         name: str,
@@ -421,7 +420,7 @@ async def new_event(
         event = new_event("value_event", data_type=int, scope="run", prompt="Enter a number")
         value = event.wait()
     """
-    return await Event.create.aio(
+    return await Event.create(
         name=name,
         data_type=data_type,
         scope=scope,

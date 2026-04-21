@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+from typing import AsyncIterator
 from urllib.parse import urlparse
 
+from async_lru import alru_cache
 from flyteidl2.app.app_service_connect import AppServiceClient
 from flyteidl2.auth.identity_connect import IdentityServiceClient
+from flyteidl2.cluster import payload_pb2 as cluster_payload_pb2
+from flyteidl2.cluster.service_connect import ClusterServiceClient
+from flyteidl2.common import identifier_pb2
+from flyteidl2.dataproxy import dataproxy_service_pb2
 from flyteidl2.dataproxy.dataproxy_service_connect import DataProxyServiceClient
 from flyteidl2.project.project_service_connect import ProjectServiceClient
 from flyteidl2.secret.secret_connect import SecretServiceClient
@@ -14,6 +20,7 @@ from flyteidl2.workflow.run_service_connect import RunServiceClient
 
 from ._protocols import (
     AppService,
+    ClusterService,
     DataProxyService,
     IdentityService,
     ProjectDomainService,
@@ -161,6 +168,151 @@ class Console:
         return self._insecure
 
 
+class ClusterAwareDataProxy:
+    """DataProxy client that routes each call to the correct cluster.
+
+    Implements the DataProxyService protocol. For every RPC, extracts the target
+    resource from the request, calls ClusterService.SelectCluster to discover
+    the cluster endpoint, and dispatches to a DataProxyServiceClient pointing at
+    that endpoint. Per-cluster clients are cached by (operation, resource) so
+    repeated calls against the same resource reuse the same connection.
+    """
+
+    def __init__(
+        self,
+        cluster_service: ClusterService,
+        session_config: SessionConfig,
+        default_client: DataProxyServiceClient,
+    ):
+        self._cluster_service = cluster_service
+        self._session_config = session_config
+        self._default_client = default_client
+
+    async def create_upload_location(
+        self, request: dataproxy_service_pb2.CreateUploadLocationRequest
+    ) -> dataproxy_service_pb2.CreateUploadLocationResponse:
+        client = await self._resolve(
+            int(cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_CREATE_UPLOAD_LOCATION),
+            request.org,
+            request.project,
+            request.domain,
+        )
+        return await client.create_upload_location(request)
+
+    async def upload_inputs(
+        self, request: dataproxy_service_pb2.UploadInputsRequest
+    ) -> dataproxy_service_pb2.UploadInputsResponse:
+        which = request.WhichOneof("id")
+        if which == "run_id":
+            # SelectClusterRequest.resource doesn't include RunIdentifier; route by project.
+            org, project, domain = request.run_id.org, request.run_id.project, request.run_id.domain
+        elif which == "project_id":
+            org = request.project_id.organization
+            project = request.project_id.name
+            domain = request.project_id.domain
+        else:
+            raise ValueError("UploadInputsRequest must set either run_id or project_id")
+        client = await self._resolve(
+            int(cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_UPLOAD_INPUTS),
+            org,
+            project,
+            domain,
+        )
+        return await client.upload_inputs(request)
+
+    async def get_action_data(
+        self, request: dataproxy_service_pb2.GetActionDataRequest
+    ) -> dataproxy_service_pb2.GetActionDataResponse:
+        run = request.action_id.run
+        client = await self._resolve_by_action(
+            int(cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_GET_ACTION_DATA),
+            run.org,
+            run.project,
+            run.domain,
+            run.name,
+            request.action_id.name,
+        )
+        return await client.get_action_data(request)
+
+    def tail_logs(
+        self, request: dataproxy_service_pb2.TailLogsRequest
+    ) -> AsyncIterator[dataproxy_service_pb2.TailLogsResponse]:
+        return self._tail_logs(request)
+
+    async def _tail_logs(
+        self, request: dataproxy_service_pb2.TailLogsRequest
+    ) -> AsyncIterator[dataproxy_service_pb2.TailLogsResponse]:
+        run = request.action_id.run
+        client = await self._resolve_by_action(
+            int(cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_TAIL_LOGS),
+            run.org,
+            run.project,
+            run.domain,
+            run.name,
+            request.action_id.name,
+        )
+        async for resp in client.tail_logs(request):
+            yield resp
+
+    @alru_cache
+    async def _resolve(self, operation: int, org: str, project: str, domain: str) -> DataProxyService:
+        """Cached SelectCluster lookup, routed by ProjectIdentifier."""
+        req = cluster_payload_pb2.SelectClusterRequest(operation=operation)
+        req.project_id.CopyFrom(identifier_pb2.ProjectIdentifier(name=project, domain=domain, organization=org))
+        return await self._select_and_build(req)
+
+    @alru_cache
+    async def _resolve_by_action(
+        self,
+        operation: int,
+        org: str,
+        project: str,
+        domain: str,
+        run_name: str,
+        action_name: str,
+    ) -> DataProxyService:
+        """Cached SelectCluster lookup, routed by ActionIdentifier."""
+        req = cluster_payload_pb2.SelectClusterRequest(operation=operation)
+        req.action_id.CopyFrom(
+            identifier_pb2.ActionIdentifier(
+                run=identifier_pb2.RunIdentifier(org=org, project=project, domain=domain, name=run_name),
+                name=action_name,
+            )
+        )
+        return await self._select_and_build(req)
+
+    async def _select_and_build(self, req: cluster_payload_pb2.SelectClusterRequest) -> DataProxyService:
+        """SelectCluster + build the per-cluster DataProxy client.
+
+        Wrapped by the @alru_cache resolvers above; @alru_cache deduplicates
+        concurrent callers and only caches successful results, so a transient
+        failure won't poison the entry.
+        """
+        from flyte._logging import logger
+
+        try:
+            resp = await self._cluster_service.select_cluster(req)
+        except Exception as e:
+            raise RuntimeError(f"SelectCluster failed for operation={req.operation}: {e}") from e
+
+        endpoint = resp.cluster_endpoint
+        if not endpoint or endpoint == self._session_config.endpoint:
+            return self._default_client
+
+        try:
+            new_cfg = await create_session_config(
+                endpoint,
+                insecure=self._session_config.insecure,
+                insecure_skip_verify=self._session_config.insecure_skip_verify,
+                auth_endpoint=self._session_config.endpoint,
+            )
+        except Exception as e:
+            raise RuntimeError(f"Failed to create session for cluster endpoint '{endpoint}': {e}") from e
+
+        logger.debug(f"Created DataProxy client for cluster endpoint: {endpoint}")
+        return DataProxyServiceClient(**new_cfg.connect_kwargs())
+
+
 class ClientSet:
     def __init__(self, session_cfg: SessionConfig):
         self._console = Console(session_cfg.endpoint, session_cfg.insecure)
@@ -170,11 +322,16 @@ class ClientSet:
         self._task_service = TaskServiceClient(**shared)
         self._app_service = AppServiceClient(**shared)
         self._run_service = RunServiceClient(**shared)
-        self._dataproxy = DataProxyServiceClient(**shared)
         self._log_service = RunLogsServiceClient(**shared)
         self._secrets_service = SecretServiceClient(**shared)
         self._identity_service = IdentityServiceClient(**shared)
         self._trigger_service = TriggerServiceClient(**shared)
+        self._cluster_service = ClusterServiceClient(**shared)
+        self._dataproxy = ClusterAwareDataProxy(
+            cluster_service=self._cluster_service,
+            session_config=session_cfg,
+            default_client=DataProxyServiceClient(**shared),
+        )
 
     @classmethod
     async def for_endpoint(cls, endpoint: str, *, insecure: bool = False, **kwargs) -> ClientSet:
@@ -214,6 +371,11 @@ class ClientSet:
 
     @property
     def dataproxy_service(self) -> DataProxyService:
+        """Cluster-aware DataProxy client.
+
+        Each call routes to the cluster selected by ClusterService.SelectCluster
+        for the target resource, with per-cluster clients cached.
+        """
         return self._dataproxy
 
     @property
@@ -231,6 +393,10 @@ class ClientSet:
     @property
     def trigger_service(self) -> TriggerService:
         return self._trigger_service
+
+    @property
+    def cluster_service(self) -> ClusterService:
+        return self._cluster_service
 
     @property
     def endpoint(self) -> str:

@@ -1,11 +1,12 @@
 import asyncio
-import ssl
+import socket
 import typing
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
 
 import pyqwest
+from OpenSSL import SSL, crypto
 
 from flyte._logging import logger
 from flyte._utils.org_discovery import hostname_from_url
@@ -57,13 +58,16 @@ def normalize_rpc_endpoint(endpoint: str, *, insecure: bool = False) -> str:
 
 
 def _bootstrap_ssl_from_server(endpoint: str) -> bytes:
-    """Fetch the server's TLS certificate and return it as PEM bytes.
+    """Fetch the server's TLS certificate chain and return it as PEM bytes.
 
     Used when insecure_skip_verify is enabled — trusts whatever cert
-    the server presents (e.g. self-signed certs in dev/staging).
+    the server presents (e.g. self-signed or corporate CA certs).
 
-    This is a blocking call (ssl.get_server_certificate uses sockets).
-    Callers should run it via asyncio.to_thread().
+    Uses pyOpenSSL to connect with verification disabled and retrieve the
+    full peer certificate chain (leaf + intermediates + root).  This works
+    on all supported Python versions (>= 3.10).
+
+    This is a blocking call.  Callers should run it via asyncio.to_thread().
     """
     hostname = hostname_from_url(endpoint)
     parts = hostname.rsplit(":", 1)
@@ -73,9 +77,42 @@ def _bootstrap_ssl_from_server(endpoint: str) -> bytes:
         logger.warning(f"Unrecognized port in endpoint [{hostname}], defaulting to 443.")
         server_address = (hostname, 443)
 
-    logger.debug(f"Retrieving SSL certificate from {server_address}")
-    cert = ssl.get_server_certificate(server_address, timeout=10)
-    return cert.encode()
+    logger.debug(f"Retrieving SSL certificate chain from {server_address}")
+
+    ctx = SSL.Context(SSL.TLS_CLIENT_METHOD)
+    ctx.set_verify(SSL.VERIFY_NONE, lambda *args: True)
+
+    sock = socket.create_connection(server_address, timeout=10)
+    # create_connection with a timeout sets O_NONBLOCK on the fd. pyOpenSSL's
+    # do_handshake() operates directly on the fd and raises WantReadError /
+    # WantWriteError when it sees EAGAIN. settimeout(None) restores blocking
+    # mode to avoid this. A positive timeout (e.g. settimeout(30)) won't help
+    # because CPython still sets O_NONBLOCK for any timeout > 0.
+    #
+    # This means the TLS handshake has no deadline, but that is acceptable:
+    # the 10s TCP connect timeout above already proves the peer is reachable,
+    # this is a one-time bootstrap path (not a hot path), and it runs inside
+    # asyncio.to_thread() so a stall won't block the event loop.
+    sock.settimeout(None)
+    conn = None
+    try:
+        conn = SSL.Connection(ctx, sock)
+        conn.set_tlsext_host_name(server_address[0].encode())
+        conn.set_connect_state()
+        conn.do_handshake()
+
+        chain = conn.get_peer_cert_chain()
+        if not chain:
+            raise RuntimeError(f"Server at {server_address} returned no certificates")
+
+        pem_certs = [crypto.dump_certificate(crypto.FILETYPE_PEM, cert) for cert in chain]
+        logger.debug(f"Retrieved certificate chain ({len(pem_certs)} certs) from {server_address}")
+        return b"\n".join(pem_certs)
+    finally:
+        if conn is not None:
+            conn.close()
+        else:
+            sock.close()
 
 
 async def _resolve_tls_ca_cert(
@@ -126,6 +163,7 @@ async def create_session_config(
     ca_cert_file_path: typing.Optional[str] = None,
     proxy_command: typing.List[str] | None = None,
     rpc_retries: typing.Optional[int] = None,
+    auth_endpoint: typing.Optional[str] = None,
     **kwargs,
 ) -> SessionConfig:
     """
@@ -141,6 +179,9 @@ async def create_session_config(
     :param ca_cert_file_path: Path to CA certificate file for SSL verification
     :param proxy_command: List of strings for proxy command configuration
     :param rpc_retries: Number of times to retry RPCs. None means do not install the retry interceptor.
+    :param auth_endpoint: Endpoint for auth/OAuth discovery. Defaults to ``endpoint`` when not set.
+        When creating sessions for per-cluster DataProxy clients, pass the
+        control-plane endpoint so auth tokens are obtained from the right server.
     :param kwargs: Additional arguments passed to authenticator factories
     :return: SessionConfig with endpoint, interceptors, and http_client
     """
@@ -195,7 +236,7 @@ async def create_session_config(
     # local dev). This matches the old gRPC create_channel() behavior.
     if not insecure:
         auth_interceptors = create_auth_interceptors(
-            endpoint=endpoint,
+            endpoint=auth_endpoint or endpoint,
             http_client=http_client,
             insecure=insecure,
             insecure_skip_verify=insecure_skip_verify,

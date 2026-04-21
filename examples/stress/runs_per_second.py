@@ -15,13 +15,14 @@ env = flyte.TaskEnvironment(
 downstream_env = flyte.TaskEnvironment(
     name="downstream",
     resources=flyte.Resources(cpu=1, memory="1Gi"),
-    # reusable=flyte.ReusePolicy(
-    #     replicas=(5, 20),
-    #     idle_ttl=60,
-    #     concurrency=50,
-    #     scaledown_ttl=60,
-    # ),
-    # image=flyte.Image.from_debian_base().with_pip_packages("unionai-reuse"),
+
+    reusable=flyte.ReusePolicy(
+        replicas=(5, 20),
+        idle_ttl=60,
+        concurrency=50,
+        scaledown_ttl=60,
+    ),
+    image=flyte.Image.from_debian_base().with_pip_packages("unionai-reuse"),
 )
 
 

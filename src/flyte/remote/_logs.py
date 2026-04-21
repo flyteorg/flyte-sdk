@@ -6,8 +6,8 @@ from typing import AsyncGenerator, AsyncIterator
 from connectrpc.code import Code
 from connectrpc.errors import ConnectError
 from flyteidl2.common import identifier_pb2
+from flyteidl2.dataproxy import dataproxy_service_pb2
 from flyteidl2.logs.dataplane import payload_pb2
-from flyteidl2.workflow import run_logs_service_pb2
 from rich.console import Console
 from rich.live import Live
 from rich.panel import Panel
@@ -124,11 +124,12 @@ class Logs:
         :param attempt: The attempt number (default is 0).
         """
         ensure_client()
+        client = get_client()
         retries = 0
         while True:
             try:
-                resp = get_client().logs_service.tail_logs(
-                    run_logs_service_pb2.TailLogsRequest(action_id=action_id, attempt=attempt)
+                resp = client.dataproxy_service.tail_logs(
+                    dataproxy_service_pb2.TailLogsRequest(action_id=action_id, attempt=attempt)
                 )
                 async for log_set in resp:
                     if log_set.logs:

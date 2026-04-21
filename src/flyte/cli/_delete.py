@@ -65,13 +65,28 @@ def app(cfg: common.CLIConfig, name: str, project: str | None = None, domain: st
 
 
 @delete.command()
-def demo():
+@click.option(
+    "--volume",
+    is_flag=True,
+    default=False,
+    help="Also delete the Docker volume used for persistent storage.",
+)
+def demo(volume: bool):
     """
     Stop and remove the local Flyte demo cluster container.
     """
     console = common.get_console()
-    try:
-        subprocess.run(["docker", "stop", "flyte-demo"], check=True)
+    result = subprocess.run(["docker", "stop", "flyte-demo"], capture_output=True, check=False)
+    if result.returncode == 0:
+        # The container is started with --rm, so wait for it to be fully removed
+        subprocess.run(["docker", "wait", "flyte-demo"], capture_output=True, check=False)
         console.print("[green]Demo cluster stopped.[/green]")
-    except subprocess.CalledProcessError:
-        raise click.ClickException("Failed to stop demo cluster. Is the container running?")
+    else:
+        console.print("[yellow]Demo cluster is not running.[/yellow]")
+
+    if volume:
+        result = subprocess.run(["docker", "volume", "rm", "flyte-demo"], capture_output=True, check=False)
+        if result.returncode == 0:
+            console.print("[green]Docker volume 'flyte-demo' deleted.[/green]")
+        else:
+            console.print("[yellow]Docker volume 'flyte-demo' does not exist.[/yellow]")

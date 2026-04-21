@@ -1,3 +1,5 @@
+import json
+
 import mock
 import pytest
 from flyteidl2.common import phase_pb2
@@ -178,3 +180,94 @@ async def test_remote_builder_force_sets_overwrite_cache(
     mock_flyte_module.with_runcontext.assert_called_once()
     call_kwargs = mock_flyte_module.with_runcontext.call_args.kwargs
     assert call_kwargs.get("overwrite_cache") is True
+
+
+def _make_mock_process(returncode, stdout_bytes, stderr_bytes):
+    proc = mock.AsyncMock()
+    proc.communicate.return_value = (stdout_bytes, stderr_bytes)
+    proc.returncode = returncode
+    return proc
+
+
+@mock.patch("asyncio.create_subprocess_exec")
+@pytest.mark.asyncio
+async def test_local_docker_checker_multiplatform_found(mock_exec):
+    """Image with matching multi-platform manifest list is found."""
+    manifest = {
+        "manifests": [
+            {"platform": {"os": "linux", "architecture": "amd64"}, "digest": "sha256:aaa"},
+            {"platform": {"os": "linux", "architecture": "arm64"}, "digest": "sha256:bbb"},
+        ]
+    }
+    mock_exec.return_value = _make_mock_process(0, json.dumps(manifest).encode(), b"")
+    result = await LocalDockerCommandImageChecker.image_exists("localhost:30000/flyte", "abc123")
+    assert result == "localhost:30000/flyte:abc123"
+
+
+@mock.patch("asyncio.create_subprocess_exec")
+@pytest.mark.asyncio
+async def test_local_docker_checker_filters_attestation_manifests(mock_exec):
+    """Attestation manifests (no platform.os) are filtered out."""
+    manifest = {
+        "manifests": [
+            {"platform": {"os": "linux", "architecture": "amd64"}, "digest": "sha256:aaa"},
+            {
+                "digest": "sha256:ccc",
+                "annotations": {"vnd.docker.reference.type": "attestation-manifest"},
+            },
+        ]
+    }
+    mock_exec.return_value = _make_mock_process(0, json.dumps(manifest).encode(), b"")
+    result = await LocalDockerCommandImageChecker.image_exists("registry/img", "tag1")
+    assert result == "registry/img:tag1"
+
+
+@mock.patch("asyncio.create_subprocess_exec")
+@pytest.mark.asyncio
+async def test_local_docker_checker_single_platform_manifest(mock_exec):
+    """Single-platform image without a manifests key is treated as found."""
+    manifest = {"schemaVersion": 2, "config": {"digest": "sha256:abc"}}
+    mock_exec.return_value = _make_mock_process(0, json.dumps(manifest).encode(), b"")
+    result = await LocalDockerCommandImageChecker.image_exists("registry/img", "tag1")
+    assert result == "registry/img:tag1"
+
+
+@mock.patch("asyncio.create_subprocess_exec")
+@pytest.mark.asyncio
+async def test_local_docker_checker_not_found(mock_exec):
+    """When stderr contains 'no such manifest', returns None."""
+    mock_exec.return_value = _make_mock_process(1, b"", b"no such manifest: registry/img:tag1")
+    result = await LocalDockerCommandImageChecker.image_exists("registry/img", "tag1")
+    assert result is None
+
+
+@mock.patch("asyncio.create_subprocess_exec")
+@pytest.mark.asyncio
+async def test_local_docker_checker_manifest_unknown(mock_exec):
+    """When stderr contains 'manifest unknown', returns None."""
+    mock_exec.return_value = _make_mock_process(1, b"", b"manifest unknown")
+    result = await LocalDockerCommandImageChecker.image_exists("registry/img", "tag1")
+    assert result is None
+
+
+@mock.patch("asyncio.create_subprocess_exec")
+@pytest.mark.asyncio
+async def test_local_docker_checker_arch_mismatch(mock_exec):
+    """Image exists but doesn't have the requested architecture."""
+    manifest = {
+        "manifests": [
+            {"platform": {"os": "linux", "architecture": "arm64"}, "digest": "sha256:bbb"},
+        ]
+    }
+    mock_exec.return_value = _make_mock_process(0, json.dumps(manifest).encode(), b"")
+    result = await LocalDockerCommandImageChecker.image_exists("registry/img", "tag1", arch=("linux/amd64",))
+    assert result is None
+
+
+@mock.patch("asyncio.create_subprocess_exec")
+@pytest.mark.asyncio
+async def test_local_docker_checker_unexpected_error_raises(mock_exec):
+    """Non-zero exit with unexpected stderr raises RuntimeError."""
+    mock_exec.return_value = _make_mock_process(1, b"", b"connection refused")
+    with pytest.raises(RuntimeError, match="Failed to run docker buildx imagetools inspect"):
+        await LocalDockerCommandImageChecker.image_exists("registry/img", "tag1")

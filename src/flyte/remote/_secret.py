@@ -166,10 +166,8 @@ class Secret(ToJSONMixin):
         yield "type", self.type
         yield "created_time", self.pb2.secret_metadata.created_time.ToDatetime().isoformat()
         yield "status", definition_pb2.OverallStatus.Name(self.pb2.secret_metadata.secret_status.overall_status)
-        yield (
-            "cluster_status",
-            {
-                s.cluster.name: definition_pb2.SecretPresenceStatus.Name(s.presence_status)
-                for s in self.pb2.secret_metadata.secret_status.cluster_status
-            },
+        cluster_status = ", ".join(
+            f"{s.cluster.name}: {definition_pb2.SecretPresenceStatus.Name(s.presence_status)}"
+            for s in self.pb2.secret_metadata.secret_status.cluster_status
         )
+        yield "cluster_status", cluster_status

@@ -21,6 +21,8 @@ from flyte.errors import InitializationError, RuntimeSystemError
 from flyte.syncify import syncify
 
 _UPLOAD_EXPIRES_IN = timedelta(seconds=60)
+_UPLOAD_TIMEOUT_SECONDS = float(os.environ.get("FLYTE_UPLOAD_TIMEOUT", "600"))
+_UPLOAD_TIMEOUT = httpx.Timeout(timeout=_UPLOAD_TIMEOUT_SECONDS, connect=30.0)
 
 
 def get_extra_headers_for_protocol(native_url: str) -> typing.Dict[str, str]:
@@ -85,43 +87,54 @@ async def _upload_with_retry(
     from flyte._logging import logger
 
     retry_attempt = 0
-    last_error = None
+    last_error: str | Exception | None = None
 
     while retry_attempt <= max_retries:
-        async with aiofiles.open(str(fp), "rb") as file:
-            async with httpx.AsyncClient(verify=verify) as aclient:
-                put_resp = await aclient.put(signed_url, headers=extra_headers, content=file)
+        try:
+            async with aiofiles.open(str(fp), "rb") as file:
+                async with httpx.AsyncClient(verify=verify, timeout=_UPLOAD_TIMEOUT) as aclient:
+                    put_resp = await aclient.put(signed_url, headers=extra_headers, content=file)
 
-                # Success
-                if put_resp.status_code in [200, 201, 204]:
-                    if retry_attempt > 0:
-                        logger.info(f"Upload succeeded after {retry_attempt} retries for {fp.name}")
-                    return put_resp
+                    # Success
+                    if put_resp.status_code in [200, 201, 204]:
+                        if retry_attempt > 0:
+                            logger.info(f"Upload succeeded after {retry_attempt} retries for {fp.name}")
+                        return put_resp
 
-                # Check if retryable status code
-                if put_resp.status_code in [408, 429, 500, 502, 503, 504]:
-                    if retry_attempt >= max_retries:
+                    last_error = f"status {put_resp.status_code}: {put_resp.text}"
+
+                    # Check if retryable status code
+                    if put_resp.status_code in [408, 429, 500, 502, 503, 504]:
+                        if retry_attempt >= max_retries:
+                            raise RuntimeSystemError(
+                                "UploadFailed",
+                                f"Failed to upload {fp} after {max_retries} retries: {last_error}",
+                            )
+                    else:
+                        # Non-retryable HTTP error
                         raise RuntimeSystemError(
                             "UploadFailed",
-                            f"Failed to upload {fp} after {max_retries} retries: {put_resp.text}",
+                            f"Failed to upload {fp} to {signed_url}, {last_error}",
                         )
+        except RuntimeSystemError:
+            raise
+        except (httpx.TimeoutException, httpx.ConnectError, OSError) as e:
+            last_error = e
+            if retry_attempt >= max_retries:
+                raise RuntimeSystemError(
+                    "UploadFailed",
+                    f"Failed to upload {fp} after {max_retries} retries: {e}",
+                ) from e
 
-                    # Backoff and retry
-                    retry_attempt += 1
-                    if retry_attempt <= max_retries:
-                        backoff_delay = min(min_backoff_sec * (2 ** (retry_attempt - 1)), max_backoff_sec)
-                        logger.warning(
-                            f"Upload failed for {fp.name}, backing off for {backoff_delay:.2f}s "
-                            f"[retry {retry_attempt}/{max_retries}]: {last_error}"
-                        )
-                        await asyncio.sleep(backoff_delay)
-                else:
-                    # Non-retryable HTTP error
-                    raise RuntimeSystemError(
-                        "UploadFailed",
-                        f"Failed to upload {fp} to {signed_url}, status code: {put_resp.status_code}, "
-                        f"response: {put_resp.text}",
-                    )
+        # Backoff and retry
+        retry_attempt += 1
+        if retry_attempt <= max_retries:
+            backoff_delay = min(min_backoff_sec * (2 ** (retry_attempt - 1)), max_backoff_sec)
+            logger.warning(
+                f"Upload failed for {fp.name}, backing off for {backoff_delay:.2f}s "
+                f"[retry {retry_attempt}/{max_retries}]: {last_error}"
+            )
+            await asyncio.sleep(backoff_delay)
     return None
 
 
@@ -150,6 +163,7 @@ async def _upload_single_file(
             dataproxy_service_pb2.CreateUploadLocationRequest(
                 project=cfg.project,
                 domain=cfg.domain,
+                org=cfg.org or "",
                 content_md5=md5_bytes,
                 filename=fname or fp.name,
                 expires_in=expires_in_pb,

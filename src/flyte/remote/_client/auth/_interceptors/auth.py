@@ -6,7 +6,7 @@ from connectrpc.code import Code
 from connectrpc.errors import ConnectError
 
 if typing.TYPE_CHECKING:
-    from flyte.remote._client.auth._authenticators.base import Authenticator
+    from flyte.remote._client.auth._authenticators.base import Authenticator, AuthHeaders
 
 
 class _BaseAuthInterceptor:
@@ -22,18 +22,27 @@ class _BaseAuthInterceptor:
             self._authenticator = self._get_authenticator()
         return self._authenticator
 
-    async def _inject_auth_headers(self, ctx) -> str:
-        """Inject auth headers into request context. Returns creds_id for refresh tracking."""
+    async def _inject_auth_headers(self, ctx, *, previous: AuthHeaders | None = None) -> AuthHeaders | None:
+        """Inject auth headers into request context, removing any previously injected headers first."""
+        # The old gRPC interceptor rebuilt ClientCallDetails from scratch on each attempt, so stale
+        # auth headers could never accumulate across retries. ConnectRPC's RequestContext is mutable
+        # and shared across retries, so we must explicitly remove headers from the previous attempt
+        # before injecting fresh ones — otherwise a header key change (e.g. "authorization" →
+        # "flyte-authorization") leaves the stale key behind.
+        if previous is not None:
+            headers = ctx.request_headers()
+            for key in previous.headers:
+                headers.pop(key, None)
+
         auth_headers = await self.authenticator.get_auth_headers()
         if auth_headers:
             ctx.request_headers().update(auth_headers.headers)
-            return auth_headers.creds_id
-        return ""
+        return auth_headers
 
-    async def _refresh_and_reinject(self, creds_id: str, ctx) -> None:
-        """Refresh credentials and re-inject auth headers."""
-        await self.authenticator.refresh_credentials(creds_id=creds_id)
-        await self._inject_auth_headers(ctx)
+    async def _refresh_and_reinject(self, previous: AuthHeaders | None, ctx) -> None:
+        """Refresh credentials and re-inject auth headers, removing stale ones."""
+        await self.authenticator.refresh_credentials(creds_id=previous.creds_id if previous else None)
+        await self._inject_auth_headers(ctx, previous=previous)
 
 
 _RETRYABLE_AUTH_CODES = frozenset({Code.UNAUTHENTICATED, Code.UNKNOWN})
@@ -43,12 +52,12 @@ class AuthUnaryInterceptor(_BaseAuthInterceptor):
     """ConnectRPC unary interceptor that injects auth headers and retries on UNAUTHENTICATED."""
 
     async def intercept_unary(self, call_next, request, ctx):
-        creds_id = await self._inject_auth_headers(ctx)
+        auth_headers = await self._inject_auth_headers(ctx)
         try:
             return await call_next(request, ctx)
         except ConnectError as e:
             if e.code in _RETRYABLE_AUTH_CODES:
-                await self._refresh_and_reinject(creds_id, ctx)
+                await self._refresh_and_reinject(auth_headers, ctx)
                 return await call_next(request, ctx)
             raise
 
@@ -64,12 +73,12 @@ class AuthClientStreamInterceptor(_BaseAuthInterceptor):
     """
 
     async def intercept_client_stream(self, call_next, request, ctx):
-        creds_id = await self._inject_auth_headers(ctx)
+        auth_headers = await self._inject_auth_headers(ctx)
         try:
             return await call_next(request, ctx)
         except ConnectError as e:
             if e.code in _RETRYABLE_AUTH_CODES:
-                await self._refresh_and_reinject(creds_id, ctx)
+                await self._refresh_and_reinject(auth_headers, ctx)
                 return await call_next(request, ctx)
             raise
 
@@ -78,13 +87,13 @@ class AuthServerStreamInterceptor(_BaseAuthInterceptor):
     """ConnectRPC server-stream interceptor that injects auth headers and retries on UNAUTHENTICATED."""
 
     async def intercept_server_stream(self, call_next, request, ctx):
-        creds_id = await self._inject_auth_headers(ctx)
+        auth_headers = await self._inject_auth_headers(ctx)
         try:
             async for response in call_next(request, ctx):
                 yield response
         except ConnectError as e:
             if e.code in _RETRYABLE_AUTH_CODES:
-                await self._refresh_and_reinject(creds_id, ctx)
+                await self._refresh_and_reinject(auth_headers, ctx)
                 async for response in call_next(request, ctx):
                     yield response
             else:
@@ -98,13 +107,13 @@ class AuthBidiStreamInterceptor(_BaseAuthInterceptor):
     """
 
     async def intercept_bidi_stream(self, call_next, request, ctx):
-        creds_id = await self._inject_auth_headers(ctx)
+        auth_headers = await self._inject_auth_headers(ctx)
         try:
             async for response in call_next(request, ctx):
                 yield response
         except ConnectError as e:
             if e.code in _RETRYABLE_AUTH_CODES:
-                await self._refresh_and_reinject(creds_id, ctx)
+                await self._refresh_and_reinject(auth_headers, ctx)
                 async for response in call_next(request, ctx):
                     yield response
             else:

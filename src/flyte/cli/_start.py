@@ -28,7 +28,7 @@ def tui():
 @start.command()
 @click.option(
     "--image",
-    default="ghcr.io/flyteorg/flyte-sandbox-v2:nightly",
+    default="ghcr.io/flyteorg/flyte-demo:nightly",
     show_default=True,
     help="Docker image to use for the demo cluster.",
 )
@@ -38,8 +38,10 @@ def tui():
     default=False,
     help="Enable dev mode inside the demo cluster (sets FLYTE_DEV=True).",
 )
-def demo(image: str, dev: bool):
+@click.pass_context
+def demo(ctx: click.Context, image: str, dev: bool):
     """Start a local Flyte demo cluster."""
     from flyte.cli._demo import launch_demo
 
-    launch_demo(image, dev)
+    log_format = getattr(ctx.obj, "log_format", "console") if ctx.obj else "console"
+    launch_demo(image, dev, log_format=log_format)
