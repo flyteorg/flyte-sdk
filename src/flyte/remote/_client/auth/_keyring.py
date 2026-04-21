@@ -2,11 +2,13 @@ import hashlib  # Added import for hashing
 import typing
 from urllib.parse import urlparse  # Added import
 
-import keyring
 import pydantic
-from keyring.errors import NoKeyringError, PasswordDeleteError
 
 from flyte._logging import logger
+
+# `keyring` itself is imported lazily inside the KeyringStore methods below.
+# Importing it here would probe every installed backend (incl. keyring.backends.macOS.api
+# on Linux, ~130ms of CPU for a module that is useless inside an ephemeral cluster pod).
 
 
 def strip_scheme(url: str) -> str:
@@ -71,6 +73,9 @@ class KeyringStore:
         if disable:
             logger.debug("Keyring is disabled, skipping token store.")
             return credentials
+        import keyring
+        from keyring.errors import NoKeyringError
+
         try:
             if credentials.refresh_token:
                 keyring.set_password(
@@ -105,6 +110,9 @@ class KeyringStore:
         if disable:
             logger.debug("Keyring is disabled, skipping token retrieve.")
             return None
+        import keyring
+        from keyring.errors import NoKeyringError
+
         for_endpoint = strip_scheme(for_endpoint)
         access_token: str | None = None
         try:
@@ -145,6 +153,9 @@ class KeyringStore:
         if disable:
             logger.debug("Keyring is disabled, skipping token delete.")
             return
+        import keyring
+        from keyring.errors import NoKeyringError, PasswordDeleteError
+
         for_endpoint = strip_scheme(for_endpoint)
 
         def _delete_key(key):

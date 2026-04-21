@@ -22,6 +22,8 @@ import flyte
 from flyte._image import PythonWheels
 from omegaconf import DictConfig, OmegaConf
 
+from flyteplugins.omegaconf import log_yaml
+
 env = flyte.TaskEnvironment(
     name="omegaconf-dictconfig-example",
     image=flyte.Image.from_debian_base(name="omegaconf-dictconfig-example").clone(
@@ -39,28 +41,34 @@ class TransformConf:
     probability: float = 1.0
 
 
-@env.task
+@env.task(report=True)
 async def normalize_config(cfg: DictConfig) -> DictConfig:
     """Receives a plain DictConfig, adds a field, returns it."""
+    await log_yaml.aio(cfg, title="Original config in normalize_config")
     return OmegaConf.merge(cfg, {"normalized": True})
 
 
-@env.task
+@env.task(report=True)
 async def print_config(cfg: DictConfig) -> str:
     """Receives a DictConfig, returns a string summary."""
+    await log_yaml.aio(cfg, title="Config in print_config")
     return OmegaConf.to_yaml(cfg)
 
 
-@env.task
+@env.task(report=True)
 async def use_interpolated_config(cfg: DictConfig) -> float:
     """Receives a config where interpolations are already resolved at serialization time."""
     # By the time this runs, cfg.optimizer.lr is already the resolved float (not "${base_lr}")
+    await log_yaml.aio(cfg, title="Config in use_interpolated_config")
     return float(cfg.optimizer.lr)
 
 
-@env.task
+@env.task(report=True)
 async def merge_with_overrides(base_cfg: DictConfig, override_cfg: DictConfig) -> DictConfig:
     """Merges two DictConfigs inside a task and returns the result."""
+    await log_yaml.aio(base_cfg, title="Base config in merge_with_overrides")
+    await log_yaml.aio(override_cfg, title="Override config in merge_with_overrides")
+
     return OmegaConf.merge(base_cfg, override_cfg)
 
 
@@ -109,39 +117,46 @@ async def merge_pipeline() -> DictConfig:
     return merged
 
 
-@env.task
+@env.task(report=True)
 async def double_layer_sizes(cfg: DictConfig) -> DictConfig:
     """Receives a config whose values include lists; doubles each layer size."""
+    await log_yaml.aio(cfg, title="Config in double_layer_sizes")
+
     doubled = [size * 2 for size in cfg.model.layer_sizes]
     return OmegaConf.merge(cfg, {"model": {"layer_sizes": doubled}})
 
 
-@env.task
+@env.task(report=True)
 async def summarize_architecture(cfg: DictConfig) -> str:
+    await log_yaml.aio(cfg, title="Config in summarize_architecture")
     layers = list(cfg.model.layer_sizes)
     augmentations = list(cfg.data.augmentations)
     return f"layers={layers} depth={len(layers)} augmentations={augmentations}"
 
 
-@env.task
+@env.task(report=True)
 async def summarize_transforms(cfg: DictConfig) -> str:
     """Receives a plain DictConfig whose values are dataclass-backed configs."""
+    await log_yaml.aio(cfg, title="Config in summarize_transforms")
     assert OmegaConf.get_type(cfg.train) == TransformConf
     assert OmegaConf.get_type(cfg.eval) == TransformConf
     return f"train={cfg.train.name}:{cfg.train.probability:.2f} eval={cfg.eval.name}:{cfg.eval.probability:.2f}"
 
 
-@env.task
+@env.task(report=True)
 async def summarize_path_refs(cfg: DictConfig) -> str:
     """Receives a plain DictConfig containing Path values."""
+    await log_yaml.aio(cfg, title="Config in summarize_path_refs")
     assert isinstance(cfg.model_path, Path)
 
     return f"model_path={cfg.model_path}"
 
 
-@env.task
+@env.task(report=True)
 async def summarize_payload_shaped_user_config(cfg: DictConfig) -> str:
     """Receives user data with keys that overlap with the plugin's internal payload fields."""
+    await log_yaml.aio(cfg, title='User config with "kind" and "values" keys')
+
     assert cfg.kind == "training-job"
 
     # cfg.values resolves to the DictConfig.values() method,
@@ -214,9 +229,11 @@ async def extract_leaf(cfg: DictConfig) -> float:
     return float(cfg.experiment.model.encoder.attention.num_heads)
 
 
-@env.task
+@env.task(report=True)
 async def scale_lr(cfg: DictConfig, factor: float) -> DictConfig:
     """Scales the learning rate in a YAML-loaded config."""
+    await log_yaml.aio(cfg, title="Original config in scale_lr")
+
     new_lr = float(cfg.optimizer.lr) * factor
     return OmegaConf.merge(cfg, {"optimizer": {"lr": new_lr}})
 
@@ -264,47 +281,47 @@ async def deep_nesting_pipeline() -> float:
 if __name__ == "__main__":
     flyte.init_from_config()
 
-    # print("=== Plain DictConfig pipeline ===")
-    # run = flyte.run(plain_dictconfig_pipeline)
-    # print(f"Run URL: {run.url}")
-    # print(f"Outputs: {run.outputs()}")
+    print("=== Plain DictConfig pipeline ===")
+    run = flyte.run(plain_dictconfig_pipeline)
+    print(f"Run URL: {run.url}")
+    print(f"Outputs: {run.outputs()}")
 
-    # print("\n=== Interpolation pipeline ===")
-    # run = flyte.run(interpolation_pipeline)
-    # print(f"Run URL: {run.url}")
-    # print(f"Outputs: {run.outputs()}")
+    print("\n=== Interpolation pipeline ===")
+    run = flyte.run(interpolation_pipeline)
+    print(f"Run URL: {run.url}")
+    print(f"Outputs: {run.outputs()}")
 
-    # print("\n=== Merge pipeline ===")
-    # run = flyte.run(merge_pipeline)
-    # print(f"Run URL: {run.url}")
-    # print(f"Outputs: {run.outputs()}")
+    print("\n=== Merge pipeline ===")
+    run = flyte.run(merge_pipeline)
+    print(f"Run URL: {run.url}")
+    print(f"Outputs: {run.outputs()}")
 
-    # print("\n=== List values pipeline ===")
-    # run = flyte.run(list_values_pipeline)
-    # print(f"Run URL: {run.url}")
-    # print(f"Outputs: {run.outputs()}")
+    print("\n=== List values pipeline ===")
+    run = flyte.run(list_values_pipeline)
+    print(f"Run URL: {run.url}")
+    print(f"Outputs: {run.outputs()}")
 
-    # print("\n=== Dataclass values pipeline ===")
-    # run = flyte.run(dataclass_values_pipeline)
-    # print(f"Run URL: {run.url}")
-    # print(f"Outputs: {run.outputs()}")
+    print("\n=== Dataclass values pipeline ===")
+    run = flyte.run(dataclass_values_pipeline)
+    print(f"Run URL: {run.url}")
+    print(f"Outputs: {run.outputs()}")
 
-    # print("\n=== Path refs pipeline ===")
-    # run = flyte.run(path_refs_pipeline)
-    # print(f"Run URL: {run.url}")
-    # print(f"Outputs: {run.outputs()}")
+    print("\n=== Path refs pipeline ===")
+    run = flyte.run(path_refs_pipeline)
+    print(f"Run URL: {run.url}")
+    print(f"Outputs: {run.outputs()}")
 
     print("\n=== Payload marker collision pipeline ===")
     run = flyte.run(payload_marker_collision_pipeline)
     print(f"Run URL: {run.url}")
     print(f"Outputs: {run.outputs()}")
 
-    # print("\n=== YAML pipeline ===")
-    # run = flyte.with_runcontext(copy_style="all").run(yaml_pipeline)
-    # print(f"Run URL: {run.url}")
-    # print(f"Outputs: {run.outputs()}")
+    print("\n=== YAML pipeline ===")
+    run = flyte.with_runcontext(copy_style="all").run(yaml_pipeline)
+    print(f"Run URL: {run.url}")
+    print(f"Outputs: {run.outputs()}")
 
-    # print("\n=== Deep nesting pipeline ===")
-    # run = flyte.run(deep_nesting_pipeline)
-    # print(f"Run URL: {run.url}")
-    # print(f"Outputs: {run.outputs()}")
+    print("\n=== Deep nesting pipeline ===")
+    run = flyte.run(deep_nesting_pipeline)
+    print(f"Run URL: {run.url}")
+    print(f"Outputs: {run.outputs()}")
