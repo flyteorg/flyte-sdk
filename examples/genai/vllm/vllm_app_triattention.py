@@ -57,10 +57,6 @@ vllm_app = VLLMAppEnvironment(
         .with_pip_packages("vllm==0.19.0", "transformers==4.57.6")
         .with_apt_packages("git")
         .with_pip_packages("triattention @ git+https://github.com/WeianMao/triattention.git")
-        .with_pip_packages(
-            "flash-attn",
-            extra_args="--no-build-isolation --find-links https://github.com/Dao-AILab/flash-attention/releases/expanded_assets/v2.8.3",
-        )
         .with_pip_packages("flyteplugins-vllm")
     ),
     stream_model=True,
