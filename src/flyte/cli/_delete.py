@@ -21,7 +21,11 @@ def secret(cfg: common.CLIConfig, name: str, project: str | None = None, domain:
     """
     from flyte.remote import Secret
 
-    cfg.init(project, domain)
+    if project is None:
+        project = ""
+    if domain is None:
+        domain = ""
+    cfg.init(project=project, domain=domain)
     console = common.get_console()
     with console.status(f"Deleting secret {name}..."):
         Secret.delete(name=name)
