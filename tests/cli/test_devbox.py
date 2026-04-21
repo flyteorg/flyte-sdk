@@ -1,7 +1,7 @@
 """
-Unit tests for flyte.cli._demo.
+Unit tests for flyte.cli._devbox.
 
-Covers the `--gpu` plumbing on `flyte start demo` and the
+Covers the `--gpu` plumbing on `flyte start devbox` and the
 kubeconfig chown-retry fallback when kubectl fails to read a root-owned
 kubeconfig on Linux bind mounts.
 """
@@ -13,8 +13,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 from click.testing import CliRunner
 
-from flyte.cli._demo import _merge_kubeconfig, _run_container
-from flyte.cli._start import demo
+from flyte.cli._devbox import _merge_kubeconfig, _run_container
+from flyte.cli._start import devbox
 
 
 class TestRunContainerGpuFlag:
@@ -22,15 +22,15 @@ class TestRunContainerGpuFlag:
 
     @staticmethod
     def _invoke(gpu: bool) -> list[str]:
-        with patch("flyte.cli._demo.subprocess.run") as mock_run:
+        with patch("flyte.cli._devbox.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0, stderr="")
             _run_container(
-                image="ghcr.io/flyteorg/flyte-demo:gpu-latest",
+                image="ghcr.io/flyteorg/flyte-devbox:gpu-latest",
                 is_dev_mode=False,
-                container_name="flyte-demo",
+                container_name="flyte-devbox",
                 kube_dir=Path("/tmp/.kube"),
-                flyte_demo_config_dir=Path("/tmp/.flyte/demo"),
-                volume_name="flyte-demo",
+                flyte_devbox_config_dir=Path("/tmp/.flyte/devbox"),
+                volume_name="flyte-devbox",
                 ports=["30080:30080"],
                 gpu=gpu,
             )
@@ -47,9 +47,8 @@ class TestRunContainerGpuFlag:
         assert "--gpus" not in cmd
 
     def test_gpu_flag_precedes_image(self):
-        # `docker run [options] <image>` — --gpus must come before the image arg.
         cmd = self._invoke(gpu=True)
-        assert cmd.index("--gpus") < cmd.index("ghcr.io/flyteorg/flyte-demo:gpu-latest")
+        assert cmd.index("--gpus") < cmd.index("ghcr.io/flyteorg/flyte-devbox:gpu-latest")
 
 
 class TestMergeKubeconfigRetry:
@@ -60,14 +59,14 @@ class TestMergeKubeconfigRetry:
         kubeconfig.write_text("")
 
         with (
-            patch("flyte.cli._demo._flatten_kubeconfig") as mock_flatten,
-            patch("flyte.cli._demo.subprocess.run") as mock_run,
-            patch("flyte.cli._demo.shutil.move", side_effect=lambda src, dst: Path(dst).touch()),
-            patch("flyte.cli._demo.Path.home", return_value=tmp_path),
+            patch("flyte.cli._devbox._flatten_kubeconfig") as mock_flatten,
+            patch("flyte.cli._devbox.subprocess.run") as mock_run,
+            patch("flyte.cli._devbox.shutil.move", side_effect=lambda src, dst: Path(dst).touch()),
+            patch("flyte.cli._devbox.Path.home", return_value=tmp_path),
         ):
             mock_flatten.return_value = MagicMock(stdout="apiVersion: v1\n")
 
-            _merge_kubeconfig(kubeconfig, "flyte-demo")
+            _merge_kubeconfig(kubeconfig, "flyte-devbox")
 
             assert mock_flatten.call_count == 1
             mock_run.assert_not_called()
@@ -79,22 +78,22 @@ class TestMergeKubeconfigRetry:
         kubeconfig.write_text("")
 
         with (
-            patch("flyte.cli._demo._flatten_kubeconfig") as mock_flatten,
-            patch("flyte.cli._demo.subprocess.run") as mock_run,
-            patch("flyte.cli._demo.shutil.move", side_effect=lambda src, dst: Path(dst).touch()),
-            patch("flyte.cli._demo.Path.home", return_value=tmp_path),
+            patch("flyte.cli._devbox._flatten_kubeconfig") as mock_flatten,
+            patch("flyte.cli._devbox.subprocess.run") as mock_run,
+            patch("flyte.cli._devbox.shutil.move", side_effect=lambda src, dst: Path(dst).touch()),
+            patch("flyte.cli._devbox.Path.home", return_value=tmp_path),
         ):
             mock_flatten.side_effect = [
                 subprocess.CalledProcessError(1, ["kubectl", "config", "view", "--flatten"]),
                 MagicMock(stdout="apiVersion: v1\n"),
             ]
 
-            _merge_kubeconfig(kubeconfig, "flyte-demo")
+            _merge_kubeconfig(kubeconfig, "flyte-devbox")
 
             assert mock_flatten.call_count == 2
             assert mock_run.call_count == 1
             docker_cmd = mock_run.call_args.args[0]
-            assert docker_cmd[:4] == ["docker", "exec", "flyte-demo", "chown"]
+            assert docker_cmd[:4] == ["docker", "exec", "flyte-devbox", "chown"]
             assert docker_cmd[-1] == "/.kube/kubeconfig"
 
     def test_permission_error_still_triggers_chown_and_retry(self, tmp_path):
@@ -103,17 +102,17 @@ class TestMergeKubeconfigRetry:
         kubeconfig.write_text("")
 
         with (
-            patch("flyte.cli._demo._flatten_kubeconfig") as mock_flatten,
-            patch("flyte.cli._demo.subprocess.run") as mock_run,
-            patch("flyte.cli._demo.shutil.move", side_effect=lambda src, dst: Path(dst).touch()),
-            patch("flyte.cli._demo.Path.home", return_value=tmp_path),
+            patch("flyte.cli._devbox._flatten_kubeconfig") as mock_flatten,
+            patch("flyte.cli._devbox.subprocess.run") as mock_run,
+            patch("flyte.cli._devbox.shutil.move", side_effect=lambda src, dst: Path(dst).touch()),
+            patch("flyte.cli._devbox.Path.home", return_value=tmp_path),
         ):
             mock_flatten.side_effect = [
                 PermissionError("denied"),
                 MagicMock(stdout="apiVersion: v1\n"),
             ]
 
-            _merge_kubeconfig(kubeconfig, "flyte-demo")
+            _merge_kubeconfig(kubeconfig, "flyte-devbox")
 
             assert mock_flatten.call_count == 2
             assert mock_run.call_count == 1
@@ -124,61 +123,61 @@ class TestMergeKubeconfigRetry:
         kubeconfig.write_text("")
 
         with (
-            patch("flyte.cli._demo._flatten_kubeconfig") as mock_flatten,
-            patch("flyte.cli._demo.subprocess.run"),
-            patch("flyte.cli._demo.Path.home", return_value=tmp_path),
+            patch("flyte.cli._devbox._flatten_kubeconfig") as mock_flatten,
+            patch("flyte.cli._devbox.subprocess.run"),
+            patch("flyte.cli._devbox.Path.home", return_value=tmp_path),
         ):
             err = subprocess.CalledProcessError(1, ["kubectl"])
             mock_flatten.side_effect = [err, err]
 
             with pytest.raises(subprocess.CalledProcessError):
-                _merge_kubeconfig(kubeconfig, "flyte-demo")
+                _merge_kubeconfig(kubeconfig, "flyte-devbox")
 
 
-class TestDemoCliGpuFlag:
-    """Verify the --gpu Click option is plumbed to launch_demo."""
+class TestDevboxCliGpuFlag:
+    """Verify the --gpu Click option is plumbed to launch_devbox."""
 
     def test_gpu_flag_passed_through(self):
         runner = CliRunner()
-        with patch("flyte.cli._demo.launch_demo") as mock_launch:
-            result = runner.invoke(demo, ["--gpu", "--image", "flyte-demo:gpu-latest"])
+        with patch("flyte.cli._devbox.launch_devbox") as mock_launch:
+            result = runner.invoke(devbox, ["--gpu", "--image", "flyte-devbox:gpu-latest"])
             assert result.exit_code == 0, result.output
             mock_launch.assert_called_once()
             assert mock_launch.call_args.kwargs["gpu"] is True
 
     def test_gpu_defaults_to_false(self):
         runner = CliRunner()
-        with patch("flyte.cli._demo.launch_demo") as mock_launch:
-            result = runner.invoke(demo, ["--image", "flyte-demo:latest"])
+        with patch("flyte.cli._devbox.launch_devbox") as mock_launch:
+            result = runner.invoke(devbox, ["--image", "flyte-devbox:latest"])
             assert result.exit_code == 0, result.output
             mock_launch.assert_called_once()
             assert mock_launch.call_args.kwargs["gpu"] is False
 
 
-class TestDemoCliDefaultImage:
+class TestDevboxCliDefaultImage:
     """--gpu without --image should pick the GPU-capable default image."""
 
     def test_gpu_without_image_uses_gpu_default(self):
-        from flyte.cli._start import _DEFAULT_DEMO_GPU_IMAGE
+        from flyte.cli._start import _DEFAULT_DEVBOX_GPU_IMAGE
 
         runner = CliRunner()
-        with patch("flyte.cli._demo.launch_demo") as mock_launch:
-            result = runner.invoke(demo, ["--gpu"])
+        with patch("flyte.cli._devbox.launch_devbox") as mock_launch:
+            result = runner.invoke(devbox, ["--gpu"])
             assert result.exit_code == 0, result.output
-            assert mock_launch.call_args.args[0] == _DEFAULT_DEMO_GPU_IMAGE
+            assert mock_launch.call_args.args[0] == _DEFAULT_DEVBOX_GPU_IMAGE
 
     def test_no_flags_uses_cpu_default(self):
-        from flyte.cli._start import _DEFAULT_DEMO_IMAGE
+        from flyte.cli._start import _DEFAULT_DEVBOX_IMAGE
 
         runner = CliRunner()
-        with patch("flyte.cli._demo.launch_demo") as mock_launch:
-            result = runner.invoke(demo, [])
+        with patch("flyte.cli._devbox.launch_devbox") as mock_launch:
+            result = runner.invoke(devbox, [])
             assert result.exit_code == 0, result.output
-            assert mock_launch.call_args.args[0] == _DEFAULT_DEMO_IMAGE
+            assert mock_launch.call_args.args[0] == _DEFAULT_DEVBOX_IMAGE
 
     def test_explicit_image_with_gpu_is_respected(self):
         runner = CliRunner()
-        with patch("flyte.cli._demo.launch_demo") as mock_launch:
-            result = runner.invoke(demo, ["--gpu", "--image", "myorg/custom:latest"])
+        with patch("flyte.cli._devbox.launch_devbox") as mock_launch:
+            result = runner.invoke(devbox, ["--gpu", "--image", "myorg/custom:latest"])
             assert result.exit_code == 0, result.output
             assert mock_launch.call_args.args[0] == "myorg/custom:latest"
