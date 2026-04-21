@@ -31,6 +31,7 @@ runs:
           uv.lock
     - name: Debug Python and uv
       shell: bash
+      working-directory: plugins/huggingface
       run: |
         echo "python from PATH:"
         which python
