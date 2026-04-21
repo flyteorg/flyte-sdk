@@ -186,14 +186,24 @@ image = (
     )
 )
 
-# Nsight Compute reads GPU perf counters, which on Ampere+ GPUs (A100, L4, H100)
-# require elevated privileges when `NVreg_RestrictProfilingToAdminUsers=1` is set
-# on the node (the current NVIDIA driver default). Granting CAP_SYS_ADMIN on the
-# primary container is the pod-level path; the node-level path is to flip that
-# kernel module param to 0 on the GPU node pool.
+# ERR_NVGPUCTRPERM: Nsight Compute reads on-device GPU perf counters. On Ampere+
+# (A100, L4, H100) the NVIDIA driver ships with `NVreg_RestrictProfilingToAdminUsers=1`
+# by default, which REFUSES counter access for any non-admin process — regardless
+# of what Linux capabilities the container holds. This is a node/driver-level gate,
+# not a pod-level one.
 #
-# If counters come back as zeros or `ncu` emits "ERR_NVGPUCTRPERM", you're
-# hitting this — verify the cap is applied and the node permits profiling.
+# In practice this means:
+#   1. The proper fix is cluster-side: add `options nvidia NVreg_RestrictProfilingToAdminUsers=0`
+#      to `/etc/modprobe.d/nvidia.conf` on every GPU node and reload the driver
+#      (or set the kernel module param at node provisioning time).
+#   2. On pods, even `privileged: true` + SYS_ADMIN + CAP_PERFMON only helps IF the
+#      driver was loaded permissively. If the node has the restrictive default,
+#      no amount of pod-level privilege will unlock counters — you'll keep hitting
+#      ERR_NVGPUCTRPERM.
+#
+# The pod template below opts into `privileged: true` so you maximize your chance
+# on a node that allows it. If you still see ERR_NVGPUCTRPERM, it's a node config
+# issue, not a pod config issue — involve your platform team.
 NSIGHT_PRIMARY_CONTAINER = "primary"
 
 pod_template = flyte.PodTemplate(
@@ -203,7 +213,8 @@ pod_template = flyte.PodTemplate(
             V1Container(
                 name=NSIGHT_PRIMARY_CONTAINER,
                 security_context=V1SecurityContext(
-                    capabilities=V1Capabilities(add=["SYS_ADMIN"]),
+                    privileged=True,
+                    capabilities=V1Capabilities(add=["SYS_ADMIN", "PERFMON"]),
                 ),
             ),
         ],
