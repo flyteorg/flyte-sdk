@@ -131,8 +131,8 @@ class Secret(ToJSONMixin):
             request=payload_pb2.DeleteSecretRequest(
                 id=definition_pb2.SecretIdentifier(
                     organization=cfg.org,
-                    project=cfg.project or "",
-                    domain=cfg.domain or "",
+                    project=cfg.project,
+                    domain=cfg.domain,
                     name=name,
                 )
             )
