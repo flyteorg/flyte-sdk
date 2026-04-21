@@ -10,9 +10,9 @@ get back a list of embedding vectors.
 """
 
 import httpx
+from app import tei_cpu_env  # switch to tei_gpu_env for GPU deployment
 
 import flyte
-from app import tei_cpu_env  # switch to tei_gpu_env for GPU deployment
 
 if __name__ == "__main__":
     flyte.init_from_config()
