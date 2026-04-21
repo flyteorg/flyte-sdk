@@ -6,7 +6,6 @@ from flyte.models import SerializationContext
 
 from flyteplugins.echo import Echo, EchoTask
 
-
 ROOT_DIR = Path(__file__).resolve().parents[3]
 
 

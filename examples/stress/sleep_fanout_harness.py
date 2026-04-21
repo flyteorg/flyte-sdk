@@ -12,14 +12,12 @@ import asyncio
 import time
 from datetime import timedelta
 
-import flyte
-
 from sleep_fanout import sleep_fanout as sleep_fanout_main
 
+import flyte
 
-async def submit_one(
-    sem: asyncio.Semaphore, idx: int, n_children: int, sleep_duration: timedelta
-) -> str | None:
+
+async def submit_one(sem: asyncio.Semaphore, idx: int, n_children: int, sleep_duration: timedelta) -> str | None:
     async with sem:
         try:
             run = await flyte.with_runcontext("remote").run.aio(

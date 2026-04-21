@@ -1,11 +1,12 @@
 from datetime import timedelta
 from pathlib import Path
 
+from flyteidl2.core.types_pb2 import SimpleType
+
 import flyte
 from flyte._internal.runtime.task_serde import translate_task_to_wire
 from flyte.extras import Sleep, SleepTask
 from flyte.models import SerializationContext
-from flyteidl2.core.types_pb2 import SimpleType
 
 ROOT_DIR = Path(__file__).resolve().parents[3]
 

@@ -1,7 +1,8 @@
 import pathlib
 
-import flyte
 from flyteplugins.echo import Echo
+
+import flyte
 
 # The echo plugin runs in leaseworker, not inside this task image.
 # Use any normal image your environment can resolve.

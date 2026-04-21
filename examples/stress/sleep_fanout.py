@@ -2,8 +2,8 @@ import asyncio
 from datetime import timedelta
 
 import flyte
-from flyte.extras import Sleep
 import flyte.report
+from flyte.extras import Sleep
 
 # Leaves run in leaseworker via the core-sleep plugin: no task pods are created,
 # so we can fan out wide without paying pod-startup cost.
@@ -23,6 +23,7 @@ swarm_env = flyte.TaskEnvironment(
     resources=flyte.Resources(cpu=1, memory="500Mi"),
     depends_on=[fanout_env],
 )
+
 
 @sleep_env.task
 async def sleep_leaf(duration: timedelta) -> None:
