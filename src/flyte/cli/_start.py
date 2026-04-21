@@ -26,7 +26,7 @@ def tui():
 
 
 _DEFAULT_DEVBOX_IMAGE = "ghcr.io/flyteorg/flyte-devbox:nightly"
-_DEFAULT_DEVBOX_GPU_IMAGE = "ghcr.io/flyteorg/flyte-devbox:gpu-latest"
+_DEFAULT_DEVBOX_GPU_IMAGE = "ghcr.io/flyteorg/flyte-devbox:gpu-nightly"
 
 
 @start.command()
