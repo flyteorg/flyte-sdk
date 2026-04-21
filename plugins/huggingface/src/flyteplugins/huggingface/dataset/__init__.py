@@ -18,12 +18,8 @@ def register_huggingface_dataset_transformers():
     """Register Hugging Face Dataset encoders and decoders."""
     from flyte.io.extend import DataFrameTransformerEngine
 
-    DataFrameTransformerEngine.register(
-        HuggingFaceDatasetToParquetEncodingHandler(), default_format_for_type=True
-    )
-    DataFrameTransformerEngine.register(
-        ParquetToHuggingFaceDatasetDecodingHandler(), default_format_for_type=True
-    )
+    DataFrameTransformerEngine.register(HuggingFaceDatasetToParquetEncodingHandler(), default_format_for_type=True)
+    DataFrameTransformerEngine.register(ParquetToHuggingFaceDatasetDecodingHandler(), default_format_for_type=True)
     DataFrameTransformerEngine.register(HFToHuggingFaceDatasetDecodingHandler())
     DataFrameTransformerEngine.register(
         HuggingFaceIterableDatasetToParquetEncodingHandler(),

@@ -5,15 +5,14 @@ import typing
 from pathlib import Path
 
 import datasets
-from fsspec.core import strip_protocol
+import flyte.storage as storage
 import pyarrow as pa
 import pyarrow.parquet as pq
-from flyteidl2.core import literals_pb2, types_pb2
-
-import flyte.storage as storage
 from flyte._logging import logger
 from flyte.io import PARQUET, DataFrame
 from flyte.io.extend import DataFrameDecoder, DataFrameEncoder
+from flyteidl2.core import literals_pb2, types_pb2
+from fsspec.core import strip_protocol
 
 from ._io import ensure_hf_cached, join_uri_path, list_parquet_files, run_sync_io
 from ._source import HFSource
@@ -41,13 +40,8 @@ def _read_parquet_files(
 
 
 def _batch_to_rows(batch: pa.RecordBatch) -> list[dict]:
-    col_lists = {
-        name: col.to_pylist() for name, col in zip(batch.schema.names, batch.columns)
-    }
-    return [
-        {name: col_lists[name][i] for name in batch.schema.names}
-        for i in range(batch.num_rows)
-    ]
+    col_lists = {name: col.to_pylist() for name, col in zip(batch.schema.names, batch.columns)}
+    return [{name: col_lists[name][i] for name in batch.schema.names} for i in range(batch.num_rows)]
 
 
 def _write_iterable_dataset(ds: datasets.IterableDataset, uri: str, filesystem) -> None:
@@ -85,10 +79,7 @@ def _write_iterable_dataset(ds: datasets.IterableDataset, uri: str, filesystem) 
 def _requested_columns(
     current_task_metadata: literals_pb2.StructuredDatasetMetadata,
 ) -> list[str] | None:
-    if (
-        current_task_metadata.structured_dataset_type
-        and current_task_metadata.structured_dataset_type.columns
-    ):
+    if current_task_metadata.structured_dataset_type and current_task_metadata.structured_dataset_type.columns:
         return [c.name for c in current_task_metadata.structured_dataset_type.columns]
     return None
 
@@ -124,9 +115,7 @@ class HuggingFaceDatasetToParquetEncodingHandler(DataFrameEncoder):
             structured_dataset_type.format = PARQUET
             return literals_pb2.StructuredDataset(
                 uri=typing.cast(str, dataframe.uri),
-                metadata=literals_pb2.StructuredDatasetMetadata(
-                    structured_dataset_type=structured_dataset_type
-                ),
+                metadata=literals_pb2.StructuredDatasetMetadata(structured_dataset_type=structured_dataset_type),
             )
 
         if not dataframe.uri:
@@ -147,16 +136,12 @@ class HuggingFaceDatasetToParquetEncodingHandler(DataFrameEncoder):
             f"Writing Hugging Face Dataset output to "
             f"{'remote' if storage.is_remote(uri) else 'local'} parquet directory {uri}"
         )
-        await run_sync_io(
-            "write HuggingFace dataset", _write_dataset, df, path, filesystem
-        )
+        await run_sync_io("write HuggingFace dataset", _write_dataset, df, path, filesystem)
 
         structured_dataset_type.format = PARQUET
         return literals_pb2.StructuredDataset(
             uri=uri,
-            metadata=literals_pb2.StructuredDatasetMetadata(
-                structured_dataset_type=structured_dataset_type
-            ),
+            metadata=literals_pb2.StructuredDatasetMetadata(structured_dataset_type=structured_dataset_type),
         )
 
 
@@ -177,8 +162,7 @@ class ParquetToHuggingFaceDatasetDecodingHandler(DataFrameDecoder):
                 uri = await ensure_hf_cached(HFSource.from_hf_uri(uri))
             except Exception as e:
                 raise RuntimeError(
-                    f"Failed to materialize Hugging Face dataset from {uri}: "
-                    f"{type(e).__name__}: {e!r}"
+                    f"Failed to materialize Hugging Face dataset from {uri}: {type(e).__name__}: {e!r}"
                 ) from e
             logger.info(
                 f"Resolved Hugging Face source {source_uri} to "
@@ -224,9 +208,7 @@ class HuggingFaceIterableDatasetToParquetEncodingHandler(DataFrameEncoder):
             structured_dataset_type.format = PARQUET
             return literals_pb2.StructuredDataset(
                 uri=typing.cast(str, dataframe.uri),
-                metadata=literals_pb2.StructuredDatasetMetadata(
-                    structured_dataset_type=structured_dataset_type
-                ),
+                metadata=literals_pb2.StructuredDatasetMetadata(structured_dataset_type=structured_dataset_type),
             )
 
         if not dataframe.uri:
@@ -256,9 +238,7 @@ class HuggingFaceIterableDatasetToParquetEncodingHandler(DataFrameEncoder):
         structured_dataset_type.format = PARQUET
         return literals_pb2.StructuredDataset(
             uri=uri,
-            metadata=literals_pb2.StructuredDatasetMetadata(
-                structured_dataset_type=structured_dataset_type
-            ),
+            metadata=literals_pb2.StructuredDatasetMetadata(structured_dataset_type=structured_dataset_type),
         )
 
 
@@ -279,8 +259,7 @@ class ParquetToHuggingFaceIterableDatasetDecodingHandler(DataFrameDecoder):
                 uri = await ensure_hf_cached(HFSource.from_hf_uri(uri))
             except Exception as e:
                 raise RuntimeError(
-                    f"Failed to materialize Hugging Face dataset from {uri}: "
-                    f"{type(e).__name__}: {e!r}"
+                    f"Failed to materialize Hugging Face dataset from {uri}: {type(e).__name__}: {e!r}"
                 ) from e
             logger.info(
                 f"Resolved Hugging Face source {source_uri} to "
@@ -305,8 +284,6 @@ class ParquetToHuggingFaceIterableDatasetDecodingHandler(DataFrameDecoder):
         return datasets.IterableDataset.from_generator(_gen)
 
 
-class HFToHuggingFaceIterableDatasetDecodingHandler(
-    ParquetToHuggingFaceIterableDatasetDecodingHandler
-):
+class HFToHuggingFaceIterableDatasetDecodingHandler(ParquetToHuggingFaceIterableDatasetDecodingHandler):
     def __init__(self):
         super().__init__("hf")

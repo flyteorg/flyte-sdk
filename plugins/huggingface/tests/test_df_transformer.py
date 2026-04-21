@@ -17,13 +17,13 @@ from flyteplugins.huggingface.dataset._io import (
     list_parquet_files,
 )
 from flyteplugins.huggingface.dataset._transformers import (
+    _ROWS_PER_SHARD,
     HFToHuggingFaceDatasetDecodingHandler,
     HFToHuggingFaceIterableDatasetDecodingHandler,
     HuggingFaceDatasetToParquetEncodingHandler,
     HuggingFaceIterableDatasetToParquetEncodingHandler,
     ParquetToHuggingFaceDatasetDecodingHandler,
     ParquetToHuggingFaceIterableDatasetDecodingHandler,
-    _ROWS_PER_SHARD,
 )
 
 datasets = pytest.importorskip("datasets")
@@ -101,9 +101,7 @@ def test_resolve_hf_config_prefers_explicit_name():
         ]
     }[path]
 
-    name, path, entries = _resolve_hf_config(
-        hfs, HFSource(repo="glue", name="mrpc"), "refs/convert/parquet"
-    )
+    name, path, entries = _resolve_hf_config(hfs, HFSource(repo="glue", name="mrpc"), "refs/convert/parquet")
 
     assert name == "mrpc"
     assert path == "datasets/glue/mrpc"
@@ -120,9 +118,7 @@ def test_resolve_hf_config_uses_default_when_available():
 
     hfs.ls.side_effect = ls
 
-    name, path, entries = _resolve_hf_config(
-        hfs, HFSource(repo="org/ds"), "refs/convert/parquet"
-    )
+    name, path, entries = _resolve_hf_config(hfs, HFSource(repo="org/ds"), "refs/convert/parquet")
 
     assert name == "default"
     assert path == "datasets/org/ds/default"
@@ -136,9 +132,7 @@ def test_resolve_hf_config_falls_back_to_only_available_config():
         if path == "datasets/stanfordnlp/imdb/default":
             raise FileNotFoundError(path)
         if path == "datasets/stanfordnlp/imdb":
-            return [
-                {"type": "directory", "name": "datasets/stanfordnlp/imdb/plain_text"}
-            ]
+            return [{"type": "directory", "name": "datasets/stanfordnlp/imdb/plain_text"}]
         if path == "datasets/stanfordnlp/imdb/plain_text":
             return [
                 {
@@ -150,15 +144,11 @@ def test_resolve_hf_config_falls_back_to_only_available_config():
 
     hfs.ls.side_effect = ls
 
-    name, path, entries = _resolve_hf_config(
-        hfs, HFSource(repo="stanfordnlp/imdb"), "refs/convert/parquet"
-    )
+    name, path, entries = _resolve_hf_config(hfs, HFSource(repo="stanfordnlp/imdb"), "refs/convert/parquet")
 
     assert name == "plain_text"
     assert path == "datasets/stanfordnlp/imdb/plain_text"
-    assert entries == [
-        {"type": "directory", "name": "datasets/stanfordnlp/imdb/plain_text/train"}
-    ]
+    assert entries == [{"type": "directory", "name": "datasets/stanfordnlp/imdb/plain_text/train"}]
 
 
 def test_resolve_hf_config_requires_name_when_multiple_configs_exist():
@@ -202,15 +192,11 @@ def test_registered_dataset_handlers():
 
 def test_registered_iterable_handlers():
     assert isinstance(
-        DataFrameTransformerEngine.get_encoder(
-            datasets.IterableDataset, "file", PARQUET
-        ),
+        DataFrameTransformerEngine.get_encoder(datasets.IterableDataset, "file", PARQUET),
         HuggingFaceIterableDatasetToParquetEncodingHandler,
     )
     assert isinstance(
-        DataFrameTransformerEngine.get_decoder(
-            datasets.IterableDataset, "file", PARQUET
-        ),
+        DataFrameTransformerEngine.get_decoder(datasets.IterableDataset, "file", PARQUET),
         ParquetToHuggingFaceIterableDatasetDecodingHandler,
     )
     assert isinstance(
@@ -230,9 +216,7 @@ async def test_dataset_roundtrip(ctx_with_test_raw_data_path, sample_dataset):
     lt = TypeEngine.to_literal_type(datasets.Dataset)
 
     lit = await fdt.to_literal(sample_dataset, python_type=datasets.Dataset, expected=lt)
-    assert (
-        lit.scalar.structured_dataset.metadata.structured_dataset_type.format == PARQUET
-    )
+    assert lit.scalar.structured_dataset.metadata.structured_dataset_type.format == PARQUET
 
     restored = await fdt.to_python_value(lit, expected_python_type=datasets.Dataset)
     assert isinstance(restored, datasets.Dataset)
@@ -245,9 +229,7 @@ async def test_dataset_roundtrip(ctx_with_test_raw_data_path, sample_dataset):
 async def test_dataset_column_projection(ctx_with_test_raw_data_path, sample_dataset):
     fdt = DataFrameTransformerEngine()
     lt = TypeEngine.to_literal_type(datasets.Dataset)
-    lit = await fdt.to_literal(
-        sample_dataset, python_type=datasets.Dataset, expected=lt
-    )
+    lit = await fdt.to_literal(sample_dataset, python_type=datasets.Dataset, expected=lt)
 
     columns = OrderedDict(text=str)
     restored = await fdt.to_python_value(
@@ -299,9 +281,7 @@ async def test_encode_from_hf_reference_as_dataset_emits_hf_uri(
         lit.scalar.structured_dataset.uri
         == "hf://stanfordnlp/imdb?name=plain_text&split=train&cache_root=s3://bucket/cache"
     )
-    assert (
-        lit.scalar.structured_dataset.metadata.structured_dataset_type.format == PARQUET
-    )
+    assert lit.scalar.structured_dataset.metadata.structured_dataset_type.format == PARQUET
 
 
 @pytest.mark.asyncio
@@ -318,14 +298,10 @@ async def test_encode_from_hf_reference_as_iterable_dataset_emits_hf_uri(
 
 
 @pytest.mark.asyncio
-async def test_decode_hf_uri_as_dataset_uses_cache_materialization(
-    ctx_with_test_raw_data_path, sample_dataset
-):
+async def test_decode_hf_uri_as_dataset_uses_cache_materialization(ctx_with_test_raw_data_path, sample_dataset):
     fdt = DataFrameTransformerEngine()
     lt = TypeEngine.to_literal_type(datasets.Dataset)
-    cached_lit = await fdt.to_literal(
-        sample_dataset, python_type=datasets.Dataset, expected=lt
-    )
+    cached_lit = await fdt.to_literal(sample_dataset, python_type=datasets.Dataset, expected=lt)
     cached_uri = cached_lit.scalar.structured_dataset.uri
 
     hf_lit = literals_pb2.Literal(
@@ -341,13 +317,9 @@ async def test_decode_hf_uri_as_dataset_uses_cache_materialization(
         "flyteplugins.huggingface.dataset._transformers.ensure_hf_cached",
         new=AsyncMock(return_value=cached_uri),
     ) as ensure_cached:
-        restored = await fdt.to_python_value(
-            hf_lit, expected_python_type=datasets.Dataset
-        )
+        restored = await fdt.to_python_value(hf_lit, expected_python_type=datasets.Dataset)
 
-    ensure_cached.assert_awaited_once_with(
-        HFSource(repo="stanfordnlp/imdb", split="train")
-    )
+    ensure_cached.assert_awaited_once_with(HFSource(repo="stanfordnlp/imdb", split="train"))
     assert isinstance(restored, datasets.Dataset)
     assert len(restored) == len(sample_dataset)
 
@@ -377,13 +349,9 @@ async def test_decode_hf_uri_as_iterable_dataset_uses_cache_materialization(
         "flyteplugins.huggingface.dataset._transformers.ensure_hf_cached",
         new=AsyncMock(return_value=cached_uri),
     ) as ensure_cached:
-        restored = await fdt.to_python_value(
-            hf_lit, expected_python_type=datasets.IterableDataset
-        )
+        restored = await fdt.to_python_value(hf_lit, expected_python_type=datasets.IterableDataset)
 
-    ensure_cached.assert_awaited_once_with(
-        HFSource(repo="stanfordnlp/imdb", name="plain_text", split="test")
-    )
+    ensure_cached.assert_awaited_once_with(HFSource(repo="stanfordnlp/imdb", name="plain_text", split="test"))
     assert isinstance(restored, datasets.IterableDataset)
     assert len(list(restored)) == len(sample_dataset)
 
@@ -399,12 +367,8 @@ async def test_iterable_dataset_roundtrip(ctx_with_test_raw_data_path, sample_da
     fdt = DataFrameTransformerEngine()
     lt = TypeEngine.to_literal_type(datasets.IterableDataset)
 
-    lit = await fdt.to_literal(
-        iterable_ds, python_type=datasets.IterableDataset, expected=lt
-    )
-    restored = await fdt.to_python_value(
-        lit, expected_python_type=datasets.IterableDataset
-    )
+    lit = await fdt.to_literal(iterable_ds, python_type=datasets.IterableDataset, expected=lt)
+    restored = await fdt.to_python_value(lit, expected_python_type=datasets.IterableDataset)
 
     assert isinstance(restored, datasets.IterableDataset)
     rows = list(restored)
@@ -420,9 +384,7 @@ async def test_iterable_dataset_large_sharding(ctx_with_test_raw_data_path):
     fdt = DataFrameTransformerEngine()
     lt = TypeEngine.to_literal_type(datasets.IterableDataset)
 
-    lit = await fdt.to_literal(
-        iterable_ds, python_type=datasets.IterableDataset, expected=lt
-    )
+    lit = await fdt.to_literal(iterable_ds, python_type=datasets.IterableDataset, expected=lt)
     uri = lit.scalar.structured_dataset.uri
 
     import flyte.storage as storage
@@ -432,9 +394,7 @@ async def test_iterable_dataset_large_sharding(ctx_with_test_raw_data_path):
 
     assert len(files) == 2
 
-    restored = await fdt.to_python_value(
-        lit, expected_python_type=datasets.IterableDataset
-    )
+    restored = await fdt.to_python_value(lit, expected_python_type=datasets.IterableDataset)
     assert len(list(restored)) == _ROWS_PER_SHARD + 1
 
 
@@ -462,10 +422,5 @@ async def test_iterable_dataset_passthrough_task(sample_dataset):
 
 def test_join_uri_path_preserves_uri_scheme():
     assert join_uri_path("s3://bucket/root/", "/a/", "b") == "s3://bucket/root/a/b"
-    assert (
-        join_uri_path("hf://stanfordnlp/imdb", "train") == "hf://stanfordnlp/imdb/train"
-    )
-    assert (
-        join_uri_path("datasets", "stanfordnlp/imdb", "plain_text")
-        == "datasets/stanfordnlp/imdb/plain_text"
-    )
+    assert join_uri_path("hf://stanfordnlp/imdb", "train") == "hf://stanfordnlp/imdb/train"
+    assert join_uri_path("datasets", "stanfordnlp/imdb", "plain_text") == "datasets/stanfordnlp/imdb/plain_text"

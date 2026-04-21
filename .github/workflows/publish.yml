@@ -91,6 +91,7 @@ jobs:
           - "plugins/papermill"
           - "plugins/pandera"
           - "plugins/omegaconf"
+          - "plugins/huggingface"
         include:
           - workdir: "plugins/sglang"
             image-type: sglang

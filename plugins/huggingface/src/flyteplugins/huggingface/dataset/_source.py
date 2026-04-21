@@ -105,9 +105,7 @@ def hf_revision(source: HFSource) -> str:
     return source.revision or _HF_PARQUET_REVISION
 
 
-def hf_source_payload(
-    source: HFSource, shards: list[HFShard] | None = None
-) -> dict[str, typing.Any]:
+def hf_source_payload(source: HFSource, shards: list[HFShard] | None = None) -> dict[str, typing.Any]:
     payload: dict[str, typing.Any] = {
         "repo": source.repo,
         "name": source.name,
@@ -121,11 +119,7 @@ def hf_source_payload(
                 "hf_name": shard.hf_name,
                 "size": shard.size,
                 "etag": shard.etag,
-                "last_modified": (
-                    str(shard.last_modified)
-                    if shard.last_modified is not None
-                    else None
-                ),
+                "last_modified": (str(shard.last_modified) if shard.last_modified is not None else None),
             }
             for shard in sorted(shards, key=lambda s: s.rel_path)
         ]

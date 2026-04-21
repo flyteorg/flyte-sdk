@@ -10,19 +10,19 @@ This example demonstrates:
 - Serializing task-produced datasets.Dataset objects to parquet, locally
 """
 
-from collections import OrderedDict
 import logging
 import os
-from pathlib import Path
 import tempfile
+from collections import OrderedDict
+from pathlib import Path
 from typing import Annotated, Any, Callable
 
 import datasets
-from flyteplugins.huggingface import from_hf
-
 import flyte
 from flyte._image import PythonWheels
 from flyte.io import DataFrame
+
+from flyteplugins.huggingface import from_hf
 
 env = flyte.TaskEnvironment(
     name="hf-dataset-example",
@@ -39,11 +39,7 @@ RUN_MODE = os.environ.get("HF_EXAMPLE_RUN_MODE", "local")
 IS_LOCAL_RUN = RUN_MODE == "local"
 
 LOG_LEVEL_NAME = os.environ.get("HF_EXAMPLE_LOG_LEVEL", "INFO")
-LOG_LEVEL = (
-    int(LOG_LEVEL_NAME)
-    if LOG_LEVEL_NAME.isdigit()
-    else getattr(logging, LOG_LEVEL_NAME.upper(), logging.INFO)
-)
+LOG_LEVEL = int(LOG_LEVEL_NAME) if LOG_LEVEL_NAME.isdigit() else getattr(logging, LOG_LEVEL_NAME.upper(), logging.INFO)
 
 LOCAL_HF_CACHE_ROOT = tempfile.mkdtemp(prefix="flyte-hf-cache-")
 REMOTE_HF_CACHE_ROOT = "s3://my-bucket/flyte-hf-cache"  # TODO: replace with your own remote cache path for remote runs
@@ -236,9 +232,7 @@ if __name__ == "__main__":
     glue_run = run_task(count_glue_mrpc_cached_source)
     print_run("cached glue/mrpc count", glue_run)
 
-    all_splits_run = run_task(
-        list_imdb_cached_all_splits.override(resources=flyte.Resources(memory="2Gi"))
-    )
+    all_splits_run = run_task(list_imdb_cached_all_splits.override(resources=flyte.Resources(memory="2Gi")))
     print_run("cached imdb all-splits columns", all_splits_run)
 
     revision_run = run_task(count_imdb_cached_explicit_revision)

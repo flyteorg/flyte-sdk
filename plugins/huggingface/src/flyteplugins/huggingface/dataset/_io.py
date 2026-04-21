@@ -5,10 +5,9 @@ import json
 import os
 import typing
 
-from fsspec.asyn import AsyncFileSystem
-
 import flyte.storage as storage
 from flyte._logging import logger
+from fsspec.asyn import AsyncFileSystem
 
 from ._source import (
     HFShard,
@@ -103,9 +102,7 @@ async def storage_path_exists(path: str) -> bool:
 
 async def storage_read_bytes(path: str) -> bytes:
     if storage.is_remote(path):
-        local_path = storage.get_random_local_path(
-            file_path_or_file_name=os.path.basename(path)
-        )
+        local_path = storage.get_random_local_path(file_path_or_file_name=os.path.basename(path))
         await storage.get(path, str(local_path))
         path = str(local_path)
 
@@ -136,9 +133,7 @@ async def list_parquet_files(uri: str, filesystem) -> list[str]:
     """Return sorted parquet file paths under uri, recursively."""
     try:
         if isinstance(filesystem, AsyncFileSystem):
-            raw = sorted(
-                f for f in await filesystem._find(uri) if f.endswith(".parquet")
-            )
+            raw = sorted(f for f in await filesystem._find(uri) if f.endswith(".parquet"))
         else:
             found = await run_sync_io("filesystem find parquet", filesystem.find, uri)
             raw = sorted(f for f in found if f.endswith(".parquet"))
@@ -147,7 +142,7 @@ async def list_parquet_files(uri: str, filesystem) -> list[str]:
             return [join_uri_path(uri, f"{0:05}.parquet")]
 
         if "://" in uri and "://" not in raw[0]:
-            proto = uri.split("://")[0] + "://"
+            proto = uri.split("://", maxsplit=1)[0] + "://"
             raw = [f"{proto}{f}" for f in raw]
         return raw
     except Exception as e:
@@ -186,9 +181,7 @@ def _is_directory(entry: dict[str, typing.Any]) -> bool:
 
 
 def _is_parquet_file(entry: dict[str, typing.Any]) -> bool:
-    return entry.get("type") == "file" and typing.cast(
-        str, entry.get("name", "")
-    ).endswith(".parquet")
+    return entry.get("type") == "file" and typing.cast(str, entry.get("name", "")).endswith(".parquet")
 
 
 def _config_dirs(entries: list[dict[str, typing.Any]]) -> list[dict[str, typing.Any]]:
@@ -227,10 +220,7 @@ def _resolve_hf_config(
 
     repo_entries = _try_list_hf_dir(hfs, repo_path, revision)
     if repo_entries is None:
-        raise HFParquetError(
-            f"No Hugging Face parquet conversion found for {source.repo} at "
-            f"revision {revision!r}."
-        )
+        raise HFParquetError(f"No Hugging Face parquet conversion found for {source.repo} at revision {revision!r}.")
 
     configs = _config_dirs(repo_entries)
     config_names = [_entry_name(entry) for entry in configs]
@@ -239,10 +229,7 @@ def _resolve_hf_config(
         return config_names[0], config_path, _list_hf_dir(hfs, config_path, revision)
 
     if not configs:
-        raise HFParquetError(
-            f"No Hugging Face parquet configs found for {source.repo} at "
-            f"revision {revision!r}."
-        )
+        raise HFParquetError(f"No Hugging Face parquet configs found for {source.repo} at revision {revision!r}.")
 
     raise HFParquetError(
         f"Hugging Face dataset {source.repo} has multiple parquet configs: "
@@ -256,9 +243,7 @@ def collect_hf_shards(source: HFSource) -> list[HFShard]:
 
     token = os.environ.get("HF_TOKEN")
     if token is None:
-        logger.warning(
-            "HF_TOKEN not set, using anonymous access. Private datasets will fail."
-        )
+        logger.warning("HF_TOKEN not set, using anonymous access. Private datasets will fail.")
 
     hfs = huggingface_hub.HfFileSystem(token=token)
     revision = hf_revision(source)
@@ -268,9 +253,7 @@ def collect_hf_shards(source: HFSource) -> list[HFShard]:
         split_paths = [(source.split, join_uri_path(base_path, source.split))]
     else:
         split_paths = [
-            (_entry_name(entry), typing.cast(str, entry["name"]))
-            for entry in base_entries
-            if _is_directory(entry)
+            (_entry_name(entry), typing.cast(str, entry["name"])) for entry in base_entries if _is_directory(entry)
         ]
         if not split_paths and any(_is_parquet_file(entry) for entry in base_entries):
             split_paths = [("data", base_path)]
@@ -287,9 +270,7 @@ def collect_hf_shards(source: HFSource) -> list[HFShard]:
         for file_info in entries:
             if _is_parquet_file(file_info):
                 file_name = file_info["name"].split("/")[-1]
-                rel = (
-                    file_name if source.split else join_uri_path(split_name, file_name)
-                )
+                rel = file_name if source.split else join_uri_path(split_name, file_name)
                 shards.append(
                     HFShard(
                         rel_path=rel,
@@ -342,9 +323,7 @@ async def read_cache_manifest(
         return None
 
 
-async def write_cache_manifest(
-    remote_path: str, manifest: dict[str, typing.Any]
-) -> None:
+async def write_cache_manifest(remote_path: str, manifest: dict[str, typing.Any]) -> None:
     data = json.dumps(manifest, sort_keys=True, indent=2).encode("utf-8")
     await storage_write_bytes(manifest_path(remote_path), data)
 
@@ -503,9 +482,7 @@ async def ensure_hf_cached(source: HFSource) -> str:
     )
     registry_record = await read_registry_record(source, cache_key)
     remote_path = (
-        registry_record.get("artifact_uri", default_remote_path)
-        if registry_record is not None
-        else default_remote_path
+        registry_record.get("artifact_uri", default_remote_path) if registry_record is not None else default_remote_path
     )
 
     if await read_cache_manifest(remote_path) == expected_manifest:
