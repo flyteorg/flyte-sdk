@@ -377,7 +377,7 @@ async def test_build_code_bundle_include_changes_digest():
             copy_bundle_to=_bundle_out(tmp_dir, "out_2"),
         )
 
-        # "all" already picks up every file, so re-declaring the html via
+        # "all" already picks up every file, so listing the html again via
         # additional_files is a no-op — digest stable.
         assert bundle_no_include.computed_version == bundle_with_extra.computed_version
 
