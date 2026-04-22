@@ -351,7 +351,7 @@ class SimpleTransformer(TypeTransformer[T]):
         return self._lt
 
     async def to_literal(self, python_val: T, python_type: Type[T], expected: Optional[LiteralType] = None) -> Literal:
-        if type(python_val) is not self._type:
+        if not isinstance(python_val, self._type):
             raise TypeTransformerFailedError(
                 f"Expected value of type {self._type} but got '{python_val}' of type {type(python_val)}"
             )
