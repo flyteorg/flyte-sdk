@@ -141,6 +141,7 @@ async def run_python_script(
     name: "Optional[str]" = None,
     debug: bool = False,
     output_dir: "Optional[str]" = None,
+    include_files: "Optional[List[str]]" = None,
 ) -> "Run":
     """Package and run a Python script on a remote Flyte cluster.
 
@@ -173,6 +174,10 @@ async def run_python_script(
     :param debug: If True, run the task as a VS Code debug task, starting a
         code-server in the container so you can connect via the UI to
         interactively debug/run the task.
+    :param include_files: Extra paths or glob patterns to bundle alongside
+        the script. Relative entries anchor at the script's directory;
+        absolute paths pass through unchanged. Example:
+        `["*.py", "configs/settings.yaml"]`.
     :return: A `flyte.remote.Run` handle for the remote execution.
 
     Example::
@@ -229,7 +234,13 @@ async def run_python_script(
     }
     if queue:
         env_kwargs["queue"] = queue
+    if include_files:
+        env_kwargs["include"] = tuple(include_files)
     env = flyte.TaskEnvironment(**env_kwargs)
+    # Anchor relative `include` entries at the script's directory. The default
+    # stack-walk in `_get_declaring_file` lands on CLI internals, which would
+    # resolve globs against the wrong anchor.
+    env._declaring_file = str(script)
 
     # Build task with the InternalTaskResolver so the runner knows how to
     # serialize and reload it without pickling.
@@ -249,7 +260,7 @@ async def run_python_script(
         name=name,
         debug=debug,
         copy_style="custom",
-        _bundle_relative_paths=tuple(p.name for p in script.parent.glob("*.py")),
+        _bundle_relative_paths=(script.name,),
         _bundle_from_dir=script.parent,
     )
     run = await runner.run.aio(
