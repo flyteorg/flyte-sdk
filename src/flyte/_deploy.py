@@ -615,13 +615,22 @@ async def deploy(
 
 
 @syncify
-async def build_images(envs: Environment) -> ImageCache:
+async def build_images(envs: Environment, copy_style: "CopyFiles" = "loaded_modules") -> ImageCache:
     """
-    Build the images for the given environments.
+    Build the images for the given environment.
     :param envs: Environment to build images for.
+    :param copy_style: Copy style that the eventual deploy will use. Must match the deploy's
+        ``--copy-style`` so the image content hashes — and therefore the registry tags — line
+        up, letting deploy reuse the pre-built image.
     :return: ImageCache containing the built images.
     """
+    from flyte._image import resolve_code_bundle_layer
+
     cfg = get_init_config()
     images = cfg.images if cfg else {}
     deployment = plan_deploy(envs)
-    return await _build_images(deployment[0], images)
+    plan = deployment[0]
+    for env_name, env in plan.envs.items():
+        if isinstance(env.image, Image):
+            env.image = resolve_code_bundle_layer(env.image, copy_style, pathlib.Path(cfg.root_dir))
+    return await _build_images(plan, images)
