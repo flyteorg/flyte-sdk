@@ -62,33 +62,39 @@ def _build_task(
     @env.task(timeout=task_timeout, short_name=short_name, task_resolver=task_resolver)
     async def execute_script(args: list[str], task_timeout: int) -> PythonScriptOutput:
         """Execute a Python script on a remote machine."""
-        import os
+        import collections
         import subprocess
         import sys
-        import tempfile
 
-        tail_bytes = 1000
-        cmd = [sys.executable, script_name, *args]
+        # `-u` forces line-buffered Python so prints flush into the pipe
+        # immediately, giving us live streaming to the pod's stdout (and
+        # therefore the k8s log stream / Flyte UI logs tab).
+        cmd = [sys.executable, "-u", script_name, *args]
+        tail: "collections.deque[str]" = collections.deque(maxlen=80)
 
-        with tempfile.TemporaryFile(mode="w+") as out_f, tempfile.TemporaryFile(mode="w+") as err_f:
-            result = subprocess.run(  # noqa: ASYNC221
-                cmd,
-                stdout=out_f,
-                stderr=err_f,
-                check=False,
-                timeout=task_timeout - 60,
-            )
+        proc = subprocess.Popen(  # noqa: ASYNC220
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,  # unified ordering with stdout
+            text=True,
+            bufsize=1,
+        )
+        assert proc.stdout is not None
+        try:
+            for line in proc.stdout:
+                sys.stdout.write(line)
+                sys.stdout.flush()
+                tail.append(line)
+            proc.wait(timeout=task_timeout - 60)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+            raise
 
-            for f in (out_f, err_f):
-                f.seek(0, os.SEEK_END)
-                pos = f.tell()
-                f.seek(max(0, pos - tail_bytes))
+        stdout_tail = "".join(tail)
 
-            stdout_tail = out_f.read()
-            stderr_tail = err_f.read()
-
-        if result.returncode != 0:
-            raise RuntimeError(f"Script failed with exit code {result.returncode}, stderr: {stderr_tail}")
+        if proc.returncode != 0:
+            raise RuntimeError(f"Script failed with exit code {proc.returncode}, last output: {stdout_tail}")
 
         from flyte.io import Dir, EmptyDir
 
@@ -98,7 +104,7 @@ def _build_task(
             _dir = EmptyDir()
 
         return PythonScriptOutput(
-            exit_code=result.returncode,
+            exit_code=proc.returncode,
             stdout=stdout_tail,
             output_dir=_dir,
         )
@@ -135,6 +141,7 @@ async def run_python_script(
     name: "Optional[str]" = None,
     debug: bool = False,
     output_dir: "Optional[str]" = None,
+    include_files: "Optional[List[str]]" = None,
 ) -> "Run":
     """Package and run a Python script on a remote Flyte cluster.
 
@@ -167,6 +174,10 @@ async def run_python_script(
     :param debug: If True, run the task as a VS Code debug task, starting a
         code-server in the container so you can connect via the UI to
         interactively debug/run the task.
+    :param include_files: Extra paths or glob patterns to bundle alongside
+        the script. Relative entries anchor at the script's directory;
+        absolute paths pass through unchanged. Example:
+        `["*.py", "configs/settings.yaml"]`.
     :return: A `flyte.remote.Run` handle for the remote execution.
 
     Example::
@@ -217,13 +228,19 @@ async def run_python_script(
 
     # Create environment
     env_kwargs: Dict[str, Any] = {
-        "name": "python_script",
+        "name": f"python_script_{script.stem}",
         "image": img,
         "resources": resources,
     }
     if queue:
         env_kwargs["queue"] = queue
+    if include_files:
+        env_kwargs["include"] = tuple(include_files)
     env = flyte.TaskEnvironment(**env_kwargs)
+    # Anchor relative `include` entries at the script's directory. The default
+    # stack-walk in `_get_declaring_file` lands on CLI internals, which would
+    # resolve globs against the wrong anchor.
+    env._declaring_file = str(script)
 
     # Build task with the InternalTaskResolver so the runner knows how to
     # serialize and reload it without pickling.
