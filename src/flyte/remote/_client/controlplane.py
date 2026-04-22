@@ -302,6 +302,7 @@ class ClusterAwareDataProxy:
         try:
             new_cfg = await create_session_config(
                 endpoint,
+                self._session_config.api_key,
                 insecure=self._session_config.insecure,
                 insecure_skip_verify=self._session_config.insecure_skip_verify,
                 auth_endpoint=self._session_config.endpoint,
