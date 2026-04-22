@@ -178,6 +178,9 @@ body {
     align-items: center;
     gap: 12px;
 }
+.header:has(+ .app-description) {
+    border-bottom: none;
+}
 .sidebar.collapsed ~ .main .header {
     padding-left: 58px;
 }
@@ -191,6 +194,17 @@ body {
     font-size: 18px;
     font-weight: 600;
     color: #e5e7eb;
+}
+.app-description {
+    padding: 6px 24px 10px;
+    font-size: 13px;
+    color: #9ca3af;
+    line-height: 1.4;
+    background: #0c0c12;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.sidebar.collapsed ~ .main .app-description {
+    padding-left: 58px;
 }
 
 .messages {
@@ -298,6 +312,11 @@ body {
 .summary-text pre code {
     background: none;
     padding: 0;
+    font-size: 13px;
+}
+.summary-text pre code.hljs {
+    background: transparent;
+    padding: 0;
 }
 .summary-text strong { color: #e5e7eb; }
 .summary-text hr {
@@ -312,11 +331,17 @@ body {
     color: #9ca3af;
 }
 
+.bubble-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 10px;
+    gap: 8px;
+}
 .meta-badge {
     display: inline-flex;
     align-items: center;
     gap: 8px;
-    margin-top: 10px;
     font-size: 11px;
     color: #6b7280;
 }
@@ -324,6 +349,25 @@ body {
     background: rgba(255,255,255,0.04);
     padding: 2px 8px;
     border-radius: 4px;
+}
+.download-btn-group {
+    display: inline-flex;
+    gap: 4px;
+    margin-left: auto;
+}
+.download-card-btn {
+    background: none;
+    border: none;
+    color: #6b7280;
+    font-size: 11px;
+    cursor: pointer;
+    padding: 2px 8px;
+    border-radius: 4px;
+    transition: color 0.15s, background 0.15s;
+}
+.download-card-btn:hover {
+    color: #d1d5db;
+    background: rgba(255, 255, 255, 0.06);
 }
 
 .error-box {
@@ -375,6 +419,27 @@ body {
     border-color: rgba(255, 255, 255, 0.18);
 }
 .input-bar button#sendBtn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* --- Clear chat button --- */
+.clear-chat-bar {
+    display: flex;
+    justify-content: center;
+    padding: 4px 20px 12px;
+}
+.clear-chat-bar button {
+    background: none;
+    border: none;
+    color: #6b7280;
+    font-size: 12px;
+    cursor: pointer;
+    padding: 4px 12px;
+    border-radius: 6px;
+    transition: color 0.15s, background 0.15s;
+}
+.clear-chat-bar button:hover {
+    color: #d1d5db;
+    background: rgba(255, 255, 255, 0.06);
+}
 
 /* --- Additional action button (primary + dropup) --- */
 .action-btn-group {
