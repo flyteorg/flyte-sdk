@@ -72,7 +72,7 @@ def _build_task(
         cmd = [sys.executable, "-u", script_name, *args]
         tail: "collections.deque[str]" = collections.deque(maxlen=80)
 
-        proc = subprocess.Popen(  # noqa: ASYNC221
+        proc = subprocess.Popen(  # noqa: ASYNC220
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,  # unified ordering with stdout
@@ -94,9 +94,7 @@ def _build_task(
         stdout_tail = "".join(tail)
 
         if proc.returncode != 0:
-            raise RuntimeError(
-                f"Script failed with exit code {proc.returncode}, last output: {stdout_tail}"
-            )
+            raise RuntimeError(f"Script failed with exit code {proc.returncode}, last output: {stdout_tail}")
 
         from flyte.io import Dir, EmptyDir
 
