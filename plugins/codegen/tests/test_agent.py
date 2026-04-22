@@ -31,6 +31,15 @@ class TestAutoCoderAgentConstruction:
         assert agent.secrets is None
         assert agent.cache == "auto"
         assert agent.backend == "litellm"
+        assert agent.block_network is False
+
+    def test_block_network_default_is_false(self):
+        agent = AutoCoderAgent(model="gpt-4.1")
+        assert agent.block_network is False
+
+    def test_block_network_can_be_enabled(self):
+        agent = AutoCoderAgent(model="gpt-4.1", block_network=True)
+        assert agent.block_network is True
 
     def test_max_iterations_default(self):
         agent = AutoCoderAgent(model="test")

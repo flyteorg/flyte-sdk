@@ -5,6 +5,8 @@ import typing
 from connectrpc.code import Code
 from connectrpc.errors import ConnectError
 
+from flyte._logging import logger
+
 if typing.TYPE_CHECKING:
     from flyte.remote._client.auth._authenticators.base import Authenticator, AuthHeaders
 
@@ -47,6 +49,22 @@ class _BaseAuthInterceptor:
 
 _RETRYABLE_AUTH_CODES = frozenset({Code.UNAUTHENTICATED, Code.UNKNOWN})
 
+# When a server returns a JSON 401 response whose "code" field is not a valid
+# ConnectRPC code string (e.g. "UNAUTHENTICATED" uppercase instead of
+# "unauthenticated" lowercase), ConnectWireError.from_dict falls back to
+# Code.UNAVAILABLE.  The code-based check above misses that case, so we also
+# inspect the error message for common 401-related keywords.
+_AUTH_MESSAGE_KEYWORDS = ("unauthorized", "unauthenticated")
+
+
+def _is_auth_retriable(e: ConnectError) -> bool:
+    """Return True if the error looks like an authentication failure that
+    should trigger a credential refresh + retry."""
+    if e.code in _RETRYABLE_AUTH_CODES:
+        return True
+    msg = e.message.lower()
+    return any(kw in msg for kw in _AUTH_MESSAGE_KEYWORDS)
+
 
 class AuthUnaryInterceptor(_BaseAuthInterceptor):
     """ConnectRPC unary interceptor that injects auth headers and retries on UNAUTHENTICATED."""
@@ -56,7 +74,8 @@ class AuthUnaryInterceptor(_BaseAuthInterceptor):
         try:
             return await call_next(request, ctx)
         except ConnectError as e:
-            if e.code in _RETRYABLE_AUTH_CODES:
+            if _is_auth_retriable(e):
+                logger.debug("Auth interceptor retrying after %s (code=%s)", e.message, e.code)
                 await self._refresh_and_reinject(auth_headers, ctx)
                 return await call_next(request, ctx)
             raise
@@ -77,7 +96,8 @@ class AuthClientStreamInterceptor(_BaseAuthInterceptor):
         try:
             return await call_next(request, ctx)
         except ConnectError as e:
-            if e.code in _RETRYABLE_AUTH_CODES:
+            if _is_auth_retriable(e):
+                logger.debug("Auth interceptor retrying after %s (code=%s)", e.message, e.code)
                 await self._refresh_and_reinject(auth_headers, ctx)
                 return await call_next(request, ctx)
             raise
@@ -92,7 +112,8 @@ class AuthServerStreamInterceptor(_BaseAuthInterceptor):
             async for response in call_next(request, ctx):
                 yield response
         except ConnectError as e:
-            if e.code in _RETRYABLE_AUTH_CODES:
+            if _is_auth_retriable(e):
+                logger.debug("Auth interceptor retrying after %s (code=%s)", e.message, e.code)
                 await self._refresh_and_reinject(auth_headers, ctx)
                 async for response in call_next(request, ctx):
                     yield response
@@ -112,7 +133,8 @@ class AuthBidiStreamInterceptor(_BaseAuthInterceptor):
             async for response in call_next(request, ctx):
                 yield response
         except ConnectError as e:
-            if e.code in _RETRYABLE_AUTH_CODES:
+            if _is_auth_retriable(e):
+                logger.debug("Auth interceptor retrying after %s (code=%s)", e.message, e.code)
                 await self._refresh_and_reinject(auth_headers, ctx)
                 async for response in call_next(request, ctx):
                     yield response

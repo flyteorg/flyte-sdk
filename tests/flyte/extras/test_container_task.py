@@ -1,5 +1,6 @@
 import pytest
 
+from flyte._pod import PodTemplate
 from flyte.extras import ContainerTask
 
 
@@ -24,6 +25,50 @@ def test_bad_incorrect_type_in_command():
                 "--hyperparams-base64",
                 hyperparams_str,
             ],
+        )
+
+
+def test_block_network_default_is_false():
+    task = ContainerTask(
+        name="test",
+        image="alpine:latest",
+        command=["echo", "hi"],
+    )
+    assert task.pod_template is None
+    assert task._block_network is False
+
+
+def test_block_network_true_sets_pod_template():
+    task = ContainerTask(
+        name="test",
+        image="alpine:latest",
+        command=["echo", "hi"],
+        block_network=True,
+    )
+    assert task.pod_template == "sandboxed-pod-template"
+    assert task._block_network is True
+
+
+def test_block_network_merges_label_into_pod_template():
+    pt = PodTemplate(labels={"existing": "label"})
+    task = ContainerTask(
+        name="test",
+        image="alpine:latest",
+        command=["echo", "hi"],
+        pod_template=pt,
+        block_network=True,
+    )
+    assert task.pod_template.labels == {"existing": "label", "sandboxed": "true"}
+
+
+def test_block_network_with_string_pod_template_raises():
+    with pytest.raises(ValueError, match="block_network=True cannot be combined"):
+        ContainerTask(
+            name="test",
+            image="alpine:latest",
+            command=["echo", "hi"],
+            pod_template="my-custom-template",
+            block_network=True,
         )
 
 
