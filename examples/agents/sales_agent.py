@@ -35,7 +35,7 @@ import pathlib
 from typing import Callable, Literal, TypedDict
 
 import flyte
-from flyte.ai import AgentChatAppEnvironment, CodeModeAgent
+from flyte.ai import AgentChatAppEnvironment, CodeModeAgent, CustomTheme
 
 # ---------------------------------------------------------------------------
 # TypedDict return types — visible in inspect.signature so the LLM knows
@@ -684,6 +684,197 @@ async def get_resource_links(
     return dict(_links)
 
 
+def _format_code_example(title: str, description: str, code: str) -> FormattedResponse:
+    return {
+        "summary": (
+            "## "
+            + title
+            + "\n\n"
+            + description
+            + "\n\n"
+            + "```python\n"
+            + code
+            + "```\n\n"
+            + "**Learn more:**\n"
+            + "- https://www.union.ai/docs/v2/union/user-guide/\n"
+            + "- https://github.com/flyteorg/flyte-sdk"
+        )
+    }
+
+
+async def get_biotech_example() -> FormattedResponse:
+    """Get a Flyte v2 example workflow for a biotech use case.
+
+    Returns {"summary": str} with a formatted Markdown response containing
+    a protein sequence analysis pipeline example. This is a final response —
+    do NOT pass it to format_response, just return it directly.
+    """
+    return _format_code_example(
+        "Biotech: Protein Sequence Analysis",
+        "A simple Flyte v2 pipeline that validates a protein sequence, extracts features, and classifies its family.",
+        (
+            "import flyte\n"
+            "\n"
+            "env = flyte.TaskEnvironment(name='biotech')\n"
+            "\n"
+            "\n"
+            "@env.task\n"
+            "async def validate_sequence(seq: str) -> str:\n"
+            "    valid = set('ACDEFGHIKLMNPQRSTVWY')\n"
+            "    cleaned = seq.upper().strip()\n"
+            "    if not all(c in valid for c in cleaned):\n"
+            "        raise ValueError('Invalid amino acid characters')\n"
+            "    return cleaned\n"
+            "\n"
+            "\n"
+            "@env.task\n"
+            "async def extract_features(seq: str) -> dict[str, float]:\n"
+            "    length = len(seq)\n"
+            "    hydrophobic = sum(1 for c in seq if c in 'AILMFVPW') / length\n"
+            "    charged = sum(1 for c in seq if c in 'DEKRH') / length\n"
+            "    return {'length': length, 'hydrophobic_frac': hydrophobic, 'charged_frac': charged}\n"
+            "\n"
+            "\n"
+            "@env.task\n"
+            "async def classify_family(features: dict[str, float]) -> str:\n"
+            "    if features['length'] < 50:\n"
+            "        return 'peptide'\n"
+            "    if features['hydrophobic_frac'] > 0.4:\n"
+            "        return 'membrane-protein'\n"
+            "    return 'globular-protein'\n"
+            "\n"
+            "\n"
+            "@env.task\n"
+            "async def protein_analysis(seq: str) -> str:\n"
+            "    cleaned = await validate_sequence(seq)\n"
+            "    features = await extract_features(cleaned)\n"
+            "    return await classify_family(features)\n"
+            "\n"
+            "\n"
+            "if __name__ == '__main__':\n"
+            "    flyte.init_from_config()\n"
+            "    run = flyte.run(protein_analysis, seq='MVLSPADKTNVKAAWGKVGAHAGEYGAEALERMFLSFPTTKTYFPHFDLSH')\n"
+            "    print(run.url)\n"
+            "    run.wait()\n"
+        ),
+    )
+
+
+async def get_autonomous_vehicles_example() -> FormattedResponse:
+    """Get a Flyte v2 example workflow for an autonomous vehicles use case.
+
+    Returns {"summary": str} with a formatted Markdown response containing
+    a sensor fusion pipeline example. This is a final response —
+    do NOT pass it to format_response, just return it directly.
+    """
+    return _format_code_example(
+        "Autonomous Vehicles: Sensor Fusion Pipeline",
+        "A simple Flyte v2 pipeline that preprocesses lidar and camera data, fuses them, and runs a prediction model.",
+        (
+            "import asyncio\n"
+            "\n"
+            "import flyte\n"
+            "\n"
+            "env = flyte.TaskEnvironment(name='av-fusion')\n"
+            "\n"
+            "\n"
+            "@env.task\n"
+            "async def preprocess_lidar(raw_path: str) -> list[dict[str, float]]:\n"
+            "    return [{'x': 1.0, 'y': 2.0, 'z': 0.3, 'intensity': 0.9}]\n"
+            "\n"
+            "\n"
+            "@env.task\n"
+            "async def preprocess_camera(image_path: str) -> list[dict]:\n"
+            "    return [{'label': 'car', 'bbox': [100, 200, 300, 400], 'confidence': 0.92}]\n"
+            "\n"
+            "\n"
+            "@env.task\n"
+            "async def fuse_and_predict(\n"
+            "    lidar_points: list[dict[str, float]],\n"
+            "    detections: list[dict],\n"
+            ") -> list[dict]:\n"
+            "    fused = []\n"
+            "    for det in detections:\n"
+            "        det['depth'] = lidar_points[0]['z'] if lidar_points else None\n"
+            "        fused.append(det)\n"
+            "    return [{'label': obj['label'], 'trajectory': 'straight', 'risk': 'low'} for obj in fused]\n"
+            "\n"
+            "\n"
+            "@env.task\n"
+            "async def sensor_fusion_pipeline(lidar_path: str, camera_path: str) -> list[dict]:\n"
+            "    points, detections = await asyncio.gather(\n"
+            "        preprocess_lidar(lidar_path),\n"
+            "        preprocess_camera(camera_path),\n"
+            "    )\n"
+            "    return await fuse_and_predict(points, detections)\n"
+            "\n"
+            "\n"
+            "if __name__ == '__main__':\n"
+            "    flyte.init_from_config()\n"
+            "    run = flyte.run(sensor_fusion_pipeline, lidar_path='s3://data/lidar.bin', camera_path='s3://data/frame.jpg')\n"
+            "    print(run.url)\n"
+            "    run.wait()\n"
+        ),
+    )
+
+
+async def get_ai_agents_example() -> FormattedResponse:
+    """Get a Flyte v2 example workflow for an AI agents use case.
+
+    Returns {"summary": str} with a formatted Markdown response containing
+    a tool-calling agent loop example. This is a final response —
+    do NOT pass it to format_response, just return it directly.
+    """
+    return _format_code_example(
+        "AI Agents: Tool-Calling Agent Loop",
+        "A simple Flyte v2 pipeline that plans actions, executes tool calls, and synthesizes a final response.",
+        (
+            "import flyte\n"
+            "\n"
+            "env = flyte.TaskEnvironment(name='ai-agent')\n"
+            "\n"
+            "\n"
+            "@env.task\n"
+            "async def plan_actions(query: str) -> list[str]:\n"
+            "    tools = []\n"
+            "    if 'weather' in query.lower():\n"
+            "        tools.append('get_weather')\n"
+            "    if 'news' in query.lower():\n"
+            "        tools.append('get_news')\n"
+            "    if not tools:\n"
+            "        tools.append('general_knowledge')\n"
+            "    return tools\n"
+            "\n"
+            "\n"
+            "@env.task\n"
+            "async def execute_tools(tools: list[str]) -> dict[str, str]:\n"
+            "    return {t: 'Result from ' + t for t in tools}\n"
+            "\n"
+            "\n"
+            "@env.task\n"
+            "async def synthesize(query: str, tool_results: dict[str, str]) -> str:\n"
+            "    lines = ['Query: ' + query]\n"
+            "    for name, val in tool_results.items():\n"
+            "        lines.append('- ' + name + ': ' + val)\n"
+            "    return chr(10).join(lines)\n"
+            "\n"
+            "\n"
+            "@env.task\n"
+            "async def agent_loop(query: str) -> str:\n"
+            "    tools = await plan_actions(query)\n"
+            "    results = await execute_tools(tools)\n"
+            "    return await synthesize(query, results)\n"
+            "\n"
+            "\n"
+            "if __name__ == '__main__':\n"
+            "    flyte.init_from_config()\n"
+            "    run = flyte.run(agent_loop, query='What is the weather and latest news?')\n"
+            "    print(run.url)\n"
+            "    run.wait()\n"
+        ),
+    )
+
+
 async def format_response(
     title: str,
     body: str,
@@ -721,6 +912,9 @@ ALL_TOOLS: dict[str, Callable] = {
     "list_why_flyte_dimensions": list_why_flyte_dimensions,
     "get_sales_funnel_guidance": get_sales_funnel_guidance,
     "get_resource_links": get_resource_links,
+    "get_biotech_example": get_biotech_example,
+    "get_autonomous_vehicles_example": get_autonomous_vehicles_example,
+    "get_ai_agents_example": get_ai_agents_example,
     "format_response": format_response,
 }
 
@@ -761,28 +955,13 @@ Every lookup function returns a dict keyed by the topic/dimension name.
 Do NOT invent dict keys that don't exist. Use only the keys documented above.
 When iterating features or adoption, iterate the list directly: for f in features: ...
 Features are strings, not dicts — do NOT access .name or ["name"] on them.
-"""
 
-CUSTOM_CSS = """\
-.tool-card .sig { color: #E6A71F; }
-.tool-card-header:hover { background: rgba(230, 167, 31, 0.06); }
-.tool-card.expanded .tool-card-chevron { color: #E6A71F; }
-.msg.user .bubble {
-    background: rgba(230, 167, 31, 0.10);
-    border-color: rgba(230, 167, 31, 0.22);
-}
-.msg.assistant details summary { color: #E6A71F; }
-.sidebar-toggle:hover,
-.sidebar-toggle-float:hover { background: rgba(230, 167, 31, 0.12); }
-.summary-text a { color: #E6A71F; }
-.summary-text blockquote { border-left-color: rgba(230, 167, 31, 0.3); }
-.input-bar input:focus { border-color: rgba(230, 167, 31, 0.5); }
-.input-bar button { background: #E6A71F; color: #0a0a0f; }
-.input-bar button:hover { background: #F0BA4A; }
-.nudge-card:hover {
-    background: rgba(230, 167, 31, 0.08);
-    border-color: rgba(230, 167, 31, 0.25);
-}
+Code example tools (return pre-formatted responses — do NOT pass to format_response):
+- result = await get_biotech_example()       => result is {"summary": str}
+- result = await get_autonomous_vehicles_example() => result is {"summary": str}
+- result = await get_ai_agents_example()     => result is {"summary": str}
+These tools already return a complete formatted response. Just return the result \
+dict directly — do NOT call format_response after calling these tools.
 """
 
 agent = CodeModeAgent(
@@ -796,7 +975,14 @@ env = AgentChatAppEnvironment(
     name="union-flyte-sales-agent",
     agent=agent,
     title="Union Sales Agent",
-    custom_css=CUSTOM_CSS,
+    subtitle=(
+        "A chat agent that answers questions about Union and Flyte for AI leaders and technical decision makers."
+    ),
+    theme=CustomTheme(
+        accent_color="#E6A71F",
+        accent_hover_color="#F0BA4A",
+        button_text_color="#0a0a0f",
+    ),
     logo_url="https://www.union.ai/docs/v2/union/images/icon-logo.svg",
     prompt_nudges=[
         {
@@ -825,6 +1011,18 @@ env = AgentChatAppEnvironment(
         {
             "label": "Getting started",
             "prompt": ("Where can I find the docs, GitHub repos, and quickstart guides for Flyte and Union?"),
+        },
+        {
+            "label": "Biotech example",
+            "prompt": "Show me a Flyte v2 example for a biotech use case like protein sequence analysis.",
+        },
+        {
+            "label": "Autonomous vehicles example",
+            "prompt": "Show me a Flyte v2 example for an autonomous vehicles sensor fusion pipeline.",
+        },
+        {
+            "label": "AI agents example",
+            "prompt": "Show me a Flyte v2 example for building an AI agent with tool calling.",
         },
     ],
     additional_buttons=[

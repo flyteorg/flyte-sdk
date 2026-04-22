@@ -172,6 +172,7 @@ ignore = ["PGH003", "PLC0415", "ASYNC210", "ASYNC240", "FURB122"]
 [tool.ruff.lint.per-file-ignores]
 "examples/*" = ["E402"]
 "plugins/pandera/tests/test_pyspark_sql_transformer.py" = ["E402"]
+"src/flyte/ai/agents/_html.py" = ["E501"]
 
 
 [tool.mypy]

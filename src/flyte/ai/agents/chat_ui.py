@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -14,6 +15,94 @@ from flyte.models import SerializationContext
 
 from ._html import build_chat_html
 from .protocol import Agent
+
+# ------------------------------------------------------------------
+# CustomTheme — human-readable color theming for the chat UI
+# ------------------------------------------------------------------
+
+_HEX_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}){1,2}$")
+
+
+def _hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
+    h = hex_color.lstrip("#")
+    if len(h) == 3:
+        h = "".join(c * 2 for c in h)
+    return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+
+
+def _rgba(hex_color: str, alpha: float) -> str:
+    r, g, b = _hex_to_rgb(hex_color)
+    return f"rgba({r}, {g}, {b}, {alpha})"
+
+
+@dataclass(kw_only=True)
+class CustomTheme:
+    """Declarative color theme for the Agent Chat UI.
+
+    All colors should be CSS hex strings (e.g. ``"#E6A71F"``).
+
+    Parameters
+    ----------
+    accent_color:
+        Primary brand color used for links, highlights, active
+        indicators, and solid-background buttons.  Defaults to the
+        built-in purple (``"#6F2AEF"``).
+    accent_hover_color:
+        Lighter variant shown on hover states for accent-colored
+        elements.  Defaults to ``"#8B52F2"``.
+    button_text_color:
+        Text color rendered *on top of* accent-colored buttons.
+        Should contrast well with *accent_color*.  Defaults to
+        ``"#f3f4f6"`` (near-white).
+    """
+
+    accent_color: str = "#6F2AEF"
+    accent_hover_color: str = "#8B52F2"
+    button_text_color: str = "#f3f4f6"
+
+    def __post_init__(self) -> None:
+        for attr in ("accent_color", "accent_hover_color", "button_text_color"):
+            val = getattr(self, attr)
+            if not _HEX_RE.match(val):
+                raise ValueError(f"CustomTheme.{attr} must be a CSS hex color (e.g. '#E6A71F'), got {val!r}")
+
+    def to_css(self) -> str:
+        """Generate a CSS override string from the theme colors."""
+        ac = self.accent_color
+        ah = self.accent_hover_color
+        bt = self.button_text_color
+        return (
+            f".tool-card .sig {{ color: {ac}; }}\n"
+            f".tool-card-header:hover {{ background: {_rgba(ac, 0.06)}; }}\n"
+            f".tool-card.expanded .tool-card-chevron {{ color: {ac}; }}\n"
+            f".msg.user .bubble {{\n"
+            f"    background: {_rgba(ac, 0.10)};\n"
+            f"    border-color: {_rgba(ac, 0.22)};\n"
+            f"}}\n"
+            f".msg.assistant details summary {{ color: {ac}; }}\n"
+            f".sidebar-toggle:hover,\n"
+            f".sidebar-toggle-float:hover {{ background: {_rgba(ac, 0.12)}; }}\n"
+            f".summary-text a {{ color: {ac}; }}\n"
+            f".summary-text blockquote {{ border-left-color: {_rgba(ac, 0.3)}; }}\n"
+            f".input-bar input:focus {{ border-color: {_rgba(ac, 0.5)}; }}\n"
+            f".input-bar button {{ background: {ac}; color: {bt}; }}\n"
+            f".input-bar button:hover {{ background: {ah}; }}\n"
+            f".nudge-card:hover {{\n"
+            f"    background: {_rgba(ac, 0.08)};\n"
+            f"    border-color: {_rgba(ac, 0.25)};\n"
+            f"}}\n"
+            f".action-btn-group .action-primary {{\n"
+            f"    background: {ac};\n"
+            f"    color: {bt};\n"
+            f"}}\n"
+            f".action-btn-group .action-primary:hover {{ background: {ah}; }}\n"
+            f".action-btn-group .action-chevron {{\n"
+            f"    background: {ac};\n"
+            f"    color: {bt};\n"
+            f"}}\n"
+            f".action-btn-group .action-chevron:hover {{ background: {ah}; }}\n"
+        )
+
 
 # ------------------------------------------------------------------
 # Request / response models (module-level for FastAPI schema compat)
@@ -52,15 +141,23 @@ class AgentChatAppEnvironment(flyte.app.AppEnvironment):
     title:
         Title displayed in the UI header and browser tab. Defaults to
         the environment *name*.
+    subtitle:
+        Optional short subtitle displayed below the title in the
+        header area.  Use it to explain what the agent does.
     prompt_nudges:
         Optional list of prompt-nudge cards shown before the first
         message.  Each entry is a dict with ``"label"`` (short card
         title) and ``"prompt"`` (the query text sent when clicked).
+    theme:
+        Optional :class:`CustomTheme` instance that controls the UI
+        accent colors via human-readable attributes.  When provided,
+        the theme CSS is generated automatically and prepended to any
+        *custom_css*.
     custom_css:
-        Optional CSS string appended **after** the default styles.
-        Use this to override colors, fonts, layout, etc. without
-        replacing the entire stylesheet.  The default stylesheet is
-        available as :data:`DEFAULT_CSS` for reference.
+        Optional CSS string appended **after** the default styles
+        (and after theme CSS, if a *theme* is provided).  Use this
+        for fine-grained overrides beyond what :class:`CustomTheme`
+        exposes.
     logo_url:
         Optional URL to an image displayed to the left of the title
         in the header bar.  When ``None`` (default), no logo is shown.
@@ -74,7 +171,9 @@ class AgentChatAppEnvironment(flyte.app.AppEnvironment):
 
     agent: Any = field(default=None)
     title: str | None = None
+    subtitle: str | None = None
     prompt_nudges: list[dict[str, str]] = field(default_factory=list)
+    theme: CustomTheme | None = None
     custom_css: str = ""
     logo_url: str | None = None
     additional_buttons: list[dict[str, str]] = field(default_factory=list)
@@ -138,11 +237,17 @@ class AgentChatAppEnvironment(flyte.app.AppEnvironment):
             )
 
         display_title = self.title or self.name
+        css_parts: list[str] = []
+        if self.theme is not None:
+            css_parts.append(self.theme.to_css())
+        if self.custom_css:
+            css_parts.append(self.custom_css)
         chat_html = build_chat_html(
             title=display_title,
-            custom_css=self.custom_css,
+            custom_css="\n".join(css_parts),
             logo_url=self.logo_url,
             additional_buttons=self.additional_buttons,
+            subtitle=self.subtitle,
         )
 
         @fastapi_app.get("/", response_class=HTMLResponse)
