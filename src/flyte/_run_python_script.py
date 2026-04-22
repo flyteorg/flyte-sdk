@@ -62,33 +62,41 @@ def _build_task(
     @env.task(timeout=task_timeout, short_name=short_name, task_resolver=task_resolver)
     async def execute_script(args: list[str], task_timeout: int) -> PythonScriptOutput:
         """Execute a Python script on a remote machine."""
-        import os
+        import collections
         import subprocess
         import sys
-        import tempfile
 
-        tail_bytes = 1000
-        cmd = [sys.executable, script_name, *args]
+        # `-u` forces line-buffered Python so prints flush into the pipe
+        # immediately, giving us live streaming to the pod's stdout (and
+        # therefore the k8s log stream / Flyte UI logs tab).
+        cmd = [sys.executable, "-u", script_name, *args]
+        tail: "collections.deque[str]" = collections.deque(maxlen=80)
 
-        with tempfile.TemporaryFile(mode="w+") as out_f, tempfile.TemporaryFile(mode="w+") as err_f:
-            result = subprocess.run(  # noqa: ASYNC221
-                cmd,
-                stdout=out_f,
-                stderr=err_f,
-                check=False,
-                timeout=task_timeout - 60,
+        proc = subprocess.Popen(  # noqa: ASYNC221
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,  # unified ordering with stdout
+            text=True,
+            bufsize=1,
+        )
+        assert proc.stdout is not None
+        try:
+            for line in proc.stdout:
+                sys.stdout.write(line)
+                sys.stdout.flush()
+                tail.append(line)
+            proc.wait(timeout=task_timeout - 60)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+            raise
+
+        stdout_tail = "".join(tail)
+
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"Script failed with exit code {proc.returncode}, last output: {stdout_tail}"
             )
-
-            for f in (out_f, err_f):
-                f.seek(0, os.SEEK_END)
-                pos = f.tell()
-                f.seek(max(0, pos - tail_bytes))
-
-            stdout_tail = out_f.read()
-            stderr_tail = err_f.read()
-
-        if result.returncode != 0:
-            raise RuntimeError(f"Script failed with exit code {result.returncode}, stderr: {stderr_tail}")
 
         from flyte.io import Dir, EmptyDir
 
@@ -98,7 +106,7 @@ def _build_task(
             _dir = EmptyDir()
 
         return PythonScriptOutput(
-            exit_code=result.returncode,
+            exit_code=proc.returncode,
             stdout=stdout_tail,
             output_dir=_dir,
         )
@@ -217,7 +225,7 @@ async def run_python_script(
 
     # Create environment
     env_kwargs: Dict[str, Any] = {
-        "name": "python_script",
+        "name": f"python_script_{script.stem}",
         "image": img,
         "resources": resources,
     }
@@ -243,7 +251,7 @@ async def run_python_script(
         name=name,
         debug=debug,
         copy_style="custom",
-        _bundle_relative_paths=(script.name,),
+        _bundle_relative_paths=tuple(p.name for p in script.parent.glob("*.py")),
         _bundle_from_dir=script.parent,
     )
     run = await runner.run.aio(

@@ -28,8 +28,8 @@ class PythonScriptCommand(CommandBase):
 
 @click.command("python-script", cls=PythonScriptCommand)
 @click.argument("script", type=click.Path(exists=True, dir_okay=False))
-@click.option("--cpu", type=int, default=4, show_default=True, help="Number of CPUs to request.")
-@click.option("--memory", type=str, default="16Gi", show_default=True, help="Memory to request (e.g. 16Gi, 64Gi).")
+@click.option("--cpu", type=int, default=1, show_default=True, help="Number of CPUs to request.")
+@click.option("--memory", type=str, default="2Gi", show_default=True, help="Memory to request (e.g. 16Gi, 64Gi).")
 @click.option("--gpu", type=int, default=0, show_default=True, help="Number of GPUs to request.")
 @click.option(
     "--gpu-type",
@@ -138,7 +138,10 @@ def python_script(
     # Build the image argument for the public API
     image_arg: flyte.Image | list[str] | None
     if image:
-        image_arg = flyte.Image.from_ref_name(image)
+        if "/" in image or ":" in image:
+            image_arg = flyte.Image.from_base(image)
+        else:
+            image_arg = flyte.Image.from_ref_name(image)
     elif packages:
         image_arg = [p.strip() for p in packages.split(",") if p.strip()]
     else:
