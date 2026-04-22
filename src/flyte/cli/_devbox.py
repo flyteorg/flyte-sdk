@@ -11,6 +11,8 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
+from flyte import _sentry
+
 _CONTAINER_NAME = "flyte-devbox"
 _VOLUME_NAME = "flyte-devbox"
 _KUBE_DIR = Path(
@@ -227,9 +229,9 @@ def stop_devbox() -> None:
     console.print("[green]Devbox cluster stopped.[/green] Run [bold]flyte start devbox[/bold] to resume.")
 
 
+@_sentry.capture_errors
 def launch_devbox(image_name: str, is_dev_mode: bool, gpu: bool = False, log_format: str = "console") -> None:
     _ensure_volume(_VOLUME_NAME)
-
     if _container_is_paused(_CONTAINER_NAME):
         console.print("[cyan]Resuming paused devbox cluster...[/cyan]")
         subprocess.run(["docker", "unpause", _CONTAINER_NAME], check=True, capture_output=True)
