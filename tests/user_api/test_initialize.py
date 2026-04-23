@@ -328,7 +328,6 @@ task:
         assert call_kwargs["project"] == mock_config.task.project
         assert call_kwargs["domain"] == mock_config.task.domain
 
-
     @patch("flyte._initialize.init")
     @patch("flyte.config.auto")
     @pytest.mark.asyncio
