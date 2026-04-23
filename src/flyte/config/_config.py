@@ -127,13 +127,13 @@ class PlatformConfig(object):
             from flyte.remote._client.auth._auth_utils import decode_api_key
 
             api_key_val = os.getenv(api_key_env_var)
-            assert api_key_val is not None
-            dec_endpoint, client_id, client_secret, _org = decode_api_key(api_key_val)
-            kwargs["auth_mode"] = "ClientSecret"
-            kwargs["client_id"] = client_id
-            kwargs["client_credentials_secret"] = client_secret
-            kwargs = set_if_exists(kwargs, "api_key", api_key_val)
-            kwargs = set_if_exists(kwargs, "endpoint", dec_endpoint)
+            if api_key_val:
+                dec_endpoint, client_id, client_secret, _org = decode_api_key(api_key_val)
+                kwargs["auth_mode"] = "ClientSecret"
+                kwargs["client_id"] = client_id
+                kwargs["client_credentials_secret"] = client_secret
+                kwargs = set_if_exists(kwargs, "api_key", api_key_val)
+                kwargs = set_if_exists(kwargs, "endpoint", dec_endpoint)
         kwargs = set_if_exists(kwargs, "endpoint", _internal.Platform.URL.read(config_file))
         kwargs = set_if_exists(kwargs, "console_endpoint", _internal.Platform.CONSOLE_ENDPOINT.read(config_file))
 

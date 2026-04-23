@@ -72,3 +72,25 @@ def test_platform_config_api_key_env_var_missing_key(tmp_path, monkeypatch) -> N
     cfg = Config.auto(cfg_path)
 
     assert cfg.platform.api_key is None
+
+
+def test_platform_config_api_key_env_var_empty_string_skips_decode(tmp_path, monkeypatch) -> None:
+    """Empty env value is treated like unset: no api_key and no ClientSecret override."""
+    cfg_path = tmp_path / "config.yaml"
+    cfg_path.write_text(
+        yaml.dump(
+            {
+                "admin": {
+                    "apiKeyEnvVar": "EMPTY_FLYTE_KEY_VAR",
+                    "authType": "Pkce",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("EMPTY_FLYTE_KEY_VAR", "")
+
+    cfg = Config.auto(cfg_path)
+
+    assert cfg.platform.api_key is None
+    assert cfg.platform.auth_mode == "Pkce"
