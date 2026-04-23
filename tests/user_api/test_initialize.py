@@ -329,6 +329,49 @@ task:
         assert call_kwargs["domain"] == mock_config.task.domain
 
 
+    @patch("flyte._initialize.init")
+    @patch("flyte.config.auto")
+    @pytest.mark.asyncio
+    async def test_image_builder_explicit_overrides_config(self, mock_config_auto, mock_init, mock_config):
+        """Explicit image_builder argument wins over cfg.image.builder."""
+        mock_config.image.builder = "remote"
+        mock_config_auto.return_value = mock_config
+        mock_init.aio = AsyncMock()
+
+        await init_from_config.aio(path_or_config=None, image_builder="local")
+
+        call_kwargs = mock_init.aio.call_args[1]
+        assert call_kwargs["image_builder"] == "local"
+
+    @patch("flyte._initialize.init")
+    @patch("flyte.config.auto")
+    @pytest.mark.asyncio
+    async def test_image_builder_from_config_when_unspecified(self, mock_config_auto, mock_init, mock_config):
+        """When no image_builder is passed, cfg.image.builder is used."""
+        mock_config.image.builder = "remote"
+        mock_config_auto.return_value = mock_config
+        mock_init.aio = AsyncMock()
+
+        await init_from_config.aio(path_or_config=None)
+
+        call_kwargs = mock_init.aio.call_args[1]
+        assert call_kwargs["image_builder"] == "remote"
+
+    @patch("flyte._initialize.init")
+    @patch("flyte.config.auto")
+    @pytest.mark.asyncio
+    async def test_image_builder_falls_back_to_local(self, mock_config_auto, mock_init, mock_config):
+        """With no image_builder and no cfg.image.builder, falls back to 'local'."""
+        mock_config.image.builder = None
+        mock_config_auto.return_value = mock_config
+        mock_init.aio = AsyncMock()
+
+        await init_from_config.aio(path_or_config=None)
+
+        call_kwargs = mock_init.aio.call_args[1]
+        assert call_kwargs["image_builder"] == "local"
+
+
 class TestInitialization:
     """Test cases for core initialization functions"""
 
