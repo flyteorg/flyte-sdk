@@ -18,6 +18,7 @@ from flyte._deploy import (
     _get_documentation_entity,
     _recursive_discover,
     _update_interface_inputs_and_outputs_docstring,
+    build_images,
     plan_deploy,
 )
 from flyte._docstring import Docstring
@@ -325,6 +326,7 @@ async def test_build_images_stores_build_run_urls_in_cache():
     """build_run_ids in ImageCache is populated when remote builder provides a run identifier."""
     from flyte._internal.imagebuild.image_builder import RunIdentifierData
 
+    flyte.init()
     image = flyte.Image.from_base("python:3.10")
     env = flyte.TaskEnvironment(name="my-env", image=image)
     plan = DeploymentPlan(envs={"my-env": env})
@@ -351,6 +353,7 @@ async def test_build_images_stores_build_run_urls_in_cache():
 @pytest.mark.asyncio
 async def test_build_images_no_build_run_urls_for_local_build():
     """build_run_ids in ImageCache is empty when local builder is used."""
+    flyte.init()
     image = flyte.Image.from_base("python:3.10")
     env = flyte.TaskEnvironment(name="my-env", image=image)
     plan = DeploymentPlan(envs={"my-env": env})
@@ -402,3 +405,49 @@ def test_resolve_covers_depends_on_envs():
     assert not any(isinstance(layer, CodeBundleLayer) for layer in env_dep.image._layers), (
         "depends_on env still has CodeBundleLayer after resolution — regression"
     )
+
+
+# ---------------------------------------------------------------------------
+# build_images resolves CodeBundleLayer (regression for flyte build CLI)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_build_images_resolves_code_bundle_layer_default_copy_style():
+    """`flyte build` would previously raise 'root_dir not set for CodeBundleLayer'
+    on any image that used `.with_code_bundle()`, because build_images did not
+    run resolve_code_bundle_layer the way apply() does. With the default
+    copy_style='loaded_modules', the bundle layer must be stripped before build.
+    """
+    flyte.init()
+
+    image = flyte.Image.from_base("python:3.10").clone(registry="r", name="img", extendable=True).with_code_bundle()
+    env = flyte.TaskEnvironment(name="e", image=image)
+
+    with patch("flyte._build.build") as mock_build:
+        mock_build.aio = AsyncMock(return_value=ImageBuild(uri="registry/img:abc", remote_run=None))
+        await build_images.aio(env)
+
+    assert not any(isinstance(layer, CodeBundleLayer) for layer in env.image._layers), (
+        "CodeBundleLayer not stripped at copy_style='loaded_modules'"
+    )
+
+
+@pytest.mark.asyncio
+async def test_build_images_resolves_code_bundle_layer_copy_style_none():
+    """At copy_style='none', CodeBundleLayer is resolved in place (not stripped)
+    so the source gets baked into the image via a COPY instruction.
+    """
+    flyte.init()
+
+    image = flyte.Image.from_base("python:3.10").clone(registry="r", name="img", extendable=True).with_code_bundle()
+    env = flyte.TaskEnvironment(name="e", image=image)
+
+    with patch("flyte._build.build") as mock_build:
+        mock_build.aio = AsyncMock(return_value=ImageBuild(uri="registry/img:abc", remote_run=None))
+        await build_images.aio(env, copy_style="none")
+
+    # Layer should still be present (resolved, with root_dir populated), not stripped.
+    bundle_layers = [layer for layer in env.image._layers if isinstance(layer, CodeBundleLayer)]
+    assert len(bundle_layers) == 1, "CodeBundleLayer should remain (resolved) at copy_style='none'"
+    assert bundle_layers[0].root_dir is not None, "resolved CodeBundleLayer must have root_dir set"
