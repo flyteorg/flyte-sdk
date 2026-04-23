@@ -37,10 +37,7 @@ EXECUTION ENVIRONMENT:
   NEVER use shutil.rmtree, os.rmdir, os.remove on /var/inputs or /var/outputs.
   NEVER call os.makedirs('/var/outputs') or os.makedirs('/var/inputs') — they already exist.
 - /var/inputs is READ-ONLY. Never write to /var/inputs.
-- Materialize each declared output under /var/outputs/.
-  For scalar outputs: open('/var/outputs/<name>', 'w').write(str(value))
-  For File outputs: write the file directly to /var/outputs/<name>
-  For Dir outputs: create the directory directly at /var/outputs/<name>
+- Write each declared output as a SEPARATE FILE under /var/outputs/: open('/var/outputs/<name>', 'w').write(str(value))
 - Always use the literal path '/var/outputs' — never make it configurable or store it in a variable.
 - Output files MUST be written before the script exits. Do NOT just print() values — you MUST write them to files.
 
@@ -126,7 +123,7 @@ def build_enhanced_prompt(
             else:
                 output_parts.append(f"- {name} ({type_name}): write the value to /var/outputs/{name}")
         output_list = "\n".join(output_parts)
-        output_constraint = f"""OUTPUT REQUIREMENTS — you MUST materialize each output under /var/outputs/:
+        output_constraint = f"""OUTPUT REQUIREMENTS — you MUST write each output as a file under /var/outputs/:
 {output_list}
 Use this exact pattern for scalar outputs:
   with open('/var/outputs/<name>', 'w') as f:
