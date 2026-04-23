@@ -330,8 +330,16 @@ async def init_from_config(
     # parse image, this will overwrite the image_refs set in the config file
     parse_images(cfg, images)
 
+    org = cfg.task.org
+    if org is None and cfg.platform.api_key:
+        from flyte.remote._client.auth._auth_utils import decode_api_key
+
+        _, _, _, decoded_org = decode_api_key(cfg.platform.api_key)
+        if decoded_org and decoded_org != "None":
+            org = decoded_org
+
     await init.aio(
-        org=cfg.task.org,
+        org=org,
         project=project or cfg.task.project,
         domain=domain or cfg.task.domain,
         endpoint=cfg.platform.endpoint,
@@ -343,6 +351,7 @@ async def init_from_config(
         proxy_command=cfg.platform.proxy_command,
         client_id=cfg.platform.client_id,
         client_credentials_secret=cfg.platform.client_credentials_secret,
+        api_key=cfg.platform.api_key,
         disable_keyring=cfg.platform.disable_keyring,
         root_dir=root_dir,
         log_level=log_level,

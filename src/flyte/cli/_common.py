@@ -133,7 +133,7 @@ class CLIConfig:
     ):
         from flyte.config._config import TaskConfig
 
-        api_key = os.getenv("FLYTE_API_KEY")
+        api_key = os.getenv("FLYTE_API_KEY") or self.config.platform.api_key
 
         task_cfg = TaskConfig(
             org=self.org or self.config.task.org,
@@ -153,7 +153,8 @@ class CLIConfig:
             from flyte._logging import logger
 
             logger.info(
-                "Detected an FLYTE_API_KEY in the environment, using it in lieu of endpoints in any config file"
+                "Using a Flyte API key from the environment (FLYTE_API_KEY or admin.apiKeyEnvVar); "
+                "it takes precedence over static admin credentials in the config file."
             )
             from flyte._utils import sanitize_endpoint
             from flyte.remote._client.auth._auth_utils import decode_api_key

@@ -42,6 +42,12 @@ class Credentials(object):
     password from a mounted environment variable.
     """
 
+    API_KEY_ENV_VAR = ConfigEntry(YamlConfigEntry("admin.apiKeyEnvVar"))
+    """
+    Name of an environment variable holding the encoded Flyte API key (same format as ``FLYTE_API_KEY``).
+    The value is read at config load time and used for client initialization.
+    """
+
     SCOPES = ConfigEntry(YamlConfigEntry("admin.scopes", list))
     """
     This setting can be used to manually pass in scopes into authenticator flows - eg.) for Auth0 compatibility

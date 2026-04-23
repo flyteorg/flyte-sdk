@@ -59,6 +59,7 @@ task:
         config.platform.proxy_command = None
         config.platform.client_id = None
         config.platform.client_credentials_secret = None
+        config.platform.api_key = None
         config.image.builder = "local"
         return config
 
@@ -78,6 +79,7 @@ task:
         config.platform.proxy_command = None
         config.platform.client_id = None
         config.platform.client_credentials_secret = None
+        config.platform.api_key = None
         config.image.builder = "remote"
         return config
 
@@ -150,6 +152,7 @@ task:
         mock_config.platform.proxy_command = None
         mock_config.platform.client_id = None
         mock_config.platform.client_credentials_secret = None
+        mock_config.platform.api_key = None
         mock_config.image.builder = "local"
 
         await init_from_config.aio(path_or_config=mock_config, root_dir=test_root_dir)
@@ -181,6 +184,7 @@ task:
         mock_config.platform.proxy_command = None
         mock_config.platform.client_id = None
         mock_config.platform.client_credentials_secret = None
+        mock_config.platform.api_key = None
         mock_config.image.builder = "local"
 
         mock_config_auto.return_value = mock_config
@@ -327,6 +331,52 @@ task:
         call_kwargs = mock_init.aio.call_args[1]
         assert call_kwargs["project"] == mock_config.task.project
         assert call_kwargs["domain"] == mock_config.task.domain
+
+    @patch("flyte._initialize.init")
+    @pytest.mark.asyncio
+    async def test_init_from_config_with_platform_api_key_fills_org(self, mock_init):
+        """When task.org is unset and platform.api_key is set, org is taken from the decoded API key."""
+        import base64
+
+        from flyte.config._config import Config, ImageConfig, PlatformConfig, TaskConfig
+
+        raw = "ep.example.com:cid:csecret:org-from-key"
+        key = base64.b64encode(raw.encode("utf-8")).decode("utf-8")
+        cfg = Config(
+            platform=PlatformConfig(api_key=key),
+            task=TaskConfig(org=None, project="p", domain="d"),
+            image=ImageConfig(),
+        )
+        mock_init.aio = AsyncMock()
+
+        await init_from_config.aio(path_or_config=cfg)
+
+        mock_init.aio.assert_called_once()
+        call_kwargs = mock_init.aio.call_args[1]
+        assert call_kwargs["api_key"] == key
+        assert call_kwargs["org"] == "org-from-key"
+
+    @patch("flyte._initialize.init")
+    @pytest.mark.asyncio
+    async def test_init_from_config_task_org_overrides_api_key_org(self, mock_init):
+        import base64
+
+        from flyte.config._config import Config, ImageConfig, PlatformConfig, TaskConfig
+
+        raw = "ep.example.com:cid:csecret:org-from-key"
+        key = base64.b64encode(raw.encode("utf-8")).decode("utf-8")
+        cfg = Config(
+            platform=PlatformConfig(api_key=key),
+            task=TaskConfig(org="task-org", project="p", domain="d"),
+            image=ImageConfig(),
+        )
+        mock_init.aio = AsyncMock()
+
+        await init_from_config.aio(path_or_config=cfg)
+
+        mock_init.aio.assert_called_once()
+        call_kwargs = mock_init.aio.call_args[1]
+        assert call_kwargs["org"] == "task-org"
 
 
 class TestInitialization:

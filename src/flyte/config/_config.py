@@ -36,6 +36,7 @@ class PlatformConfig(object):
     :param client_credentials_secret: Used for service auth, which is automatically called during pyflyte. This will
       allow the Flyte engine to read the password directly from the environment variable. Note that this is
       less secure! Please only use this if mounting the secret as a file is impossible
+    :param api_key: Encoded Flyte API key, typically populated from ``admin.apiKeyEnvVar`` in the config file.
     :param scopes: List of scopes to request. This is only applicable to the client credentials flow
     :param auth_mode: The OAuth mode to use. Defaults to pkce flow
     :param ca_cert_file_path: [optional] str Root Cert to be loaded and used to verify admin
@@ -52,6 +53,7 @@ class PlatformConfig(object):
     proxy_command: typing.Optional[typing.List[str]] = None
     client_id: typing.Optional[str] = None
     client_credentials_secret: typing.Optional[str] = None
+    api_key: typing.Optional[str] = None
     scopes: typing.List[str] = field(default_factory=list)
     auth_mode: "AuthType" = "Pkce"
     audience: typing.Optional[str] = None
@@ -103,6 +105,10 @@ class PlatformConfig(object):
         kwargs = set_if_exists(kwargs, "auth_mode", _internal.Credentials.AUTH_MODE.read(config_file))
         if is_client_secret:
             kwargs = set_if_exists(kwargs, "auth_mode", "ClientSecret")
+        api_key_env_var = _internal.Credentials.API_KEY_ENV_VAR.read(config_file)
+        if api_key_env_var:
+            api_key_val = os.getenv(api_key_env_var)
+            kwargs = set_if_exists(kwargs, "api_key", api_key_val)
         kwargs = set_if_exists(kwargs, "endpoint", _internal.Platform.URL.read(config_file))
         kwargs = set_if_exists(kwargs, "console_endpoint", _internal.Platform.CONSOLE_ENDPOINT.read(config_file))
 

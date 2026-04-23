@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 import click
 
 from flyte.cli._common import CLIConfig
-from flyte.config._config import Config, ImageConfig
+from flyte.config._config import Config, ImageConfig, PlatformConfig
 
 
 def _encode_api_key(endpoint: str, client_id: str, client_secret: str, org: str) -> str:
@@ -133,3 +133,17 @@ class TestApiKeyWithConfig:
         call_cfg = mock_flyte.init_from_config.call_args[0][0]
 
         assert call_cfg.task.org is None
+
+    @patch("flyte.cli._common.flyte")
+    def test_cli_uses_config_platform_api_key_when_flyte_api_key_unset(self, mock_flyte, monkeypatch):
+        """admin.apiKeyEnvVar resolution on PlatformConfig is used when FLYTE_API_KEY is not set."""
+        monkeypatch.delenv("FLYTE_API_KEY", raising=False)
+        cfg = Config(platform=PlatformConfig(api_key=API_KEY))
+        cli = _make_cli_config(config=cfg)
+        cli.init()
+
+        mock_flyte.init_from_config.assert_called_once()
+        call_cfg = mock_flyte.init_from_config.call_args[0][0]
+        assert call_cfg.platform.client_id == "my-client-id"
+        assert call_cfg.platform.client_credentials_secret == "my-secret"
+        assert call_cfg.task.org == "my-org"
