@@ -189,6 +189,7 @@ async def infer_batch(
 # ---------------------------------------------------------------------------
 
 
+@driver_env.task(cache="auto")
 async def fetch_gsm8k_questions(n: int = 500) -> list[str]:
     """Fetch math word problems from the HuggingFace gsm8k dataset.
 

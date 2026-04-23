@@ -500,7 +500,7 @@ class Task(ToJSONMixin):
         entrypoint: bool | None = None,
     ) -> Union[AsyncIterator[Task], Iterator[Task]]:
         """
-        Get all runs for the current project and domain.
+        Get all tasks for the current project and domain.
 
         :param by_task_name: If provided, only tasks with this name will be returned.
         :param by_task_env: If provided, only tasks with this environment prefix will be returned.
@@ -509,7 +509,7 @@ class Task(ToJSONMixin):
         :param sort_by: The sorting criteria for the project list, in the format (field, order).
         :param limit: The maximum number of tasks to return.
         :param entrypoint: If True, only entrypoint tasks will be returned.
-        :return: An iterator of runs.
+        :return: An iterator of tasks.
         """
         ensure_client()
         token = None

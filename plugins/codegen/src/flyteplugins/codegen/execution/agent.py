@@ -77,6 +77,7 @@ async def code_gen_eval_agent(
     env_vars: Optional[dict[str, str]] = None,
     secrets: Optional[list] = None,
     cache: str = "auto",
+    block_network: bool = False,
     max_turns: int = 50,
     language: str = "python",
 ) -> CodeGenEvalResult:
@@ -104,6 +105,7 @@ async def code_gen_eval_agent(
         env_vars: Optional environment variables to set in the sandbox
         secrets: Optional secrets to make available in the sandbox
         cache: Caching behavior for sandbox execution ("auto", "override", "disable")
+        block_network: Block all outbound network access in sandboxes. Defaults to False.
         max_turns: Maximum number of agent turns before stopping (default: 50)
         language: Programming language for code generation (default: "python")
 
@@ -189,6 +191,7 @@ async def code_gen_eval_agent(
             env_vars=env_vars,
             secrets=secrets,
             cache=cache,
+            block_network=block_network,
             _attempt=_exec_state["test_count"],
         )
 
