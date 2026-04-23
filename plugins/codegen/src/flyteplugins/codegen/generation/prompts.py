@@ -102,7 +102,8 @@ def build_enhanced_prompt(
         has_path_inputs = any(_is_path_input_type(t) for t in inputs.values())
         if has_path_inputs:
             script_constraint += (
-                "File and Dir arguments are string paths - use them directly with open(), pathlib, or other file operations."
+                "File and Dir arguments are string paths - use them directly with "
+                "open(), pathlib, or other file operations."
             )
     elif data_context:
         script_constraint += "Accept appropriate command line arguments to process the data samples."

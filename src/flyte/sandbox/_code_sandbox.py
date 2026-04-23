@@ -21,9 +21,7 @@ logger = logging.getLogger(__name__)
 
 # Types that can be declared as sandbox inputs or outputs.
 # Anything outside this set is rejected at create() time.
-_SUPPORTED_TYPES: frozenset[type] = frozenset(
-    {int, float, str, bool, datetime.datetime, datetime.timedelta, File, Dir}
-)
+_SUPPORTED_TYPES: frozenset[type] = frozenset({int, float, str, bool, datetime.datetime, datetime.timedelta, File, Dir})
 
 sandbox_environment = flyte.TaskEnvironment(
     name="sandbox-runtime",

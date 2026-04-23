@@ -274,9 +274,7 @@ async def run_pipeline() -> dict:
     processed_dir, copied_files = await dir_sandbox.run.aio(source_dir=input_dir)
     processed_dir_path = Path(await processed_dir.download())
     dir_output_files = sorted(
-        str(path.relative_to(processed_dir_path))
-        for path in processed_dir_path.rglob("*")
-        if path.is_file()
+        str(path.relative_to(processed_dir_path)) for path in processed_dir_path.rglob("*") if path.is_file()
     )
     summary_text = (processed_dir_path / "summary.txt").read_text().strip()
 
@@ -325,9 +323,7 @@ def run_pipeline_sync() -> dict:
     processed_dir, copied_files = dir_sandbox.run(source_dir=input_dir)
     processed_dir_path = Path(processed_dir.download_sync())
     dir_output_files = sorted(
-        str(path.relative_to(processed_dir_path))
-        for path in processed_dir_path.rglob("*")
-        if path.is_file()
+        str(path.relative_to(processed_dir_path)) for path in processed_dir_path.rglob("*") if path.is_file()
     )
     summary_text = (processed_dir_path / "summary.txt").read_text().strip()
 
