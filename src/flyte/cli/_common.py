@@ -109,6 +109,7 @@ class CLIConfig:
     reset_root_logger: bool = False
     endpoint: str | None = None
     insecure: bool = False
+    image_builder: str | None = None
     org: str | None = None
     auth_type: str | None = None
     output_format: OutputFormat = "table"
@@ -179,6 +180,7 @@ class CLIConfig:
             log_format=self.log_format,
             root_dir=pathlib.Path(root_dir).resolve() if root_dir else None,
             images=images,
+            image_builder=self.image_builder,
             sync_local_sys_paths=sync_local_sys_paths,
         )
 
