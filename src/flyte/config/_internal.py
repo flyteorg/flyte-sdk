@@ -42,6 +42,13 @@ class Credentials(object):
     password from a mounted environment variable.
     """
 
+    API_KEY_ENV_VAR = ConfigEntry(YamlConfigEntry("admin.apiKeyEnvVar"))
+    """
+    Name of an environment variable whose value is the encoded Flyte API key (same format as ``FLYTE_API_KEY``).
+    Read at config load time; ``PlatformConfig.auto`` decodes it for ``endpoint``, ``client_id``,
+    ``client_credentials_secret``, and ``auth_mode`` (see ``flyte.config._config``).
+    """
+
     SCOPES = ConfigEntry(YamlConfigEntry("admin.scopes", list))
     """
     This setting can be used to manually pass in scopes into authenticator flows - eg.) for Auth0 compatibility
@@ -56,6 +63,9 @@ class Credentials(object):
     - 'basic', 'client_credentials' or 'clientSecret': This uses symmetric key auth in which the end user enters a
             client id and a client secret and public key encryption is used to facilitate authentication.
     - None: No auth will be attempted.
+
+    When ``API_KEY_ENV_VAR`` resolves to a non-empty encoded API key, the effective auth mode is always
+    ``ClientSecret`` regardless of ``admin.authType``, matching ``FLYTE_API_KEY`` / ``init_from_api_key`` behavior.
     """
 
 

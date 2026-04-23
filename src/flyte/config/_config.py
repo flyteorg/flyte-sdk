@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
+import inspect
 import os
 import pathlib
 import typing
@@ -26,6 +27,7 @@ class PlatformConfig(object):
     This object contains the settings to talk to a Flyte backend (the DNS location of your Admin server basically).
 
     :param endpoint: DNS for Flyte backend
+    :param api_key: API key for authentication; if provided, it will be used to detect the endpoint and credentials.
     :param insecure: Whether or not to use SSL
     :param insecure_skip_verify: Whether to skip SSL certificate verification
     :param console_endpoint: endpoint for console if different from Flyte backend
@@ -44,6 +46,7 @@ class PlatformConfig(object):
     """
 
     endpoint: str | None = None
+    api_key: str | None = None
     insecure: bool = False
     insecure_skip_verify: bool = False
     ca_cert_file_path: typing.Optional[str] = None
@@ -58,6 +61,22 @@ class PlatformConfig(object):
     rpc_retries: int = 3
     http_proxy_url: typing.Optional[str] = None
     disable_keyring: bool = False
+
+    def __rich_repr__(self) -> rich.repr.Result:
+        """Same shape as ``rich.repr.auto`` for dataclasses, but redacts credentials for logs and CLI."""
+        for name, param in inspect.signature(self.__class__.__init__).parameters.items():
+            if name == "self":
+                continue
+            if param.kind == inspect.Parameter.POSITIONAL_ONLY:
+                yield getattr(self, name)
+            elif param.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY):
+                value = getattr(self, name)
+                if name in ("api_key", "client_credentials_secret") and value:
+                    value = "***"
+                if param.default is inspect.Parameter.empty:
+                    yield value
+                else:
+                    yield name, value, param.default
 
     @classmethod
     def auto(cls, config_file: typing.Optional[typing.Union[str, ConfigFile]] = None) -> "PlatformConfig":
@@ -103,6 +122,18 @@ class PlatformConfig(object):
         kwargs = set_if_exists(kwargs, "auth_mode", _internal.Credentials.AUTH_MODE.read(config_file))
         if is_client_secret:
             kwargs = set_if_exists(kwargs, "auth_mode", "ClientSecret")
+        api_key_env_var = _internal.Credentials.API_KEY_ENV_VAR.read(config_file)
+        if api_key_env_var:
+            from flyte.remote._client.auth._auth_utils import decode_api_key
+
+            api_key_val = os.getenv(api_key_env_var)
+            assert api_key_val is not None
+            dec_endpoint, client_id, client_secret, _org = decode_api_key(api_key_val)
+            kwargs["auth_mode"] = "ClientSecret"
+            kwargs["client_id"] = client_id
+            kwargs["client_credentials_secret"] = client_secret
+            kwargs = set_if_exists(kwargs, "api_key", api_key_val)
+            kwargs = set_if_exists(kwargs, "endpoint", dec_endpoint)
         kwargs = set_if_exists(kwargs, "endpoint", _internal.Platform.URL.read(config_file))
         kwargs = set_if_exists(kwargs, "console_endpoint", _internal.Platform.CONSOLE_ENDPOINT.read(config_file))
 

@@ -409,6 +409,14 @@ async def init_from_api_key(
                 "API key must be provided either as a parameter or via the FLYTE_API_KEY environment variable.",
             )
 
+    api_key = api_key.strip()
+    if not api_key:
+        raise InitializationError(
+            "MissingApiKeyError",
+            "user",
+            "API key must be non-empty after stripping whitespace.",
+        )
+
     # Decode the API key to extract endpoint, client_id, client_secret, and org
     endpoint, client_id, client_secret, org = decode_api_key(api_key)
 
