@@ -11,6 +11,7 @@ from ._common import CLIConfig
 from ._create import create
 from ._delete import delete
 from ._deploy import deploy
+from ._deploy_examples import deploy_examples
 from ._gen import gen
 from ._get import get
 from ._plugins import discover_and_register_plugins
@@ -41,7 +42,7 @@ help_config = click.RichHelpConfiguration(
             },
             {
                 "name": "Build and deploy environments, tasks and images.",
-                "commands": ["build", "deploy"],
+                "commands": ["build", "deploy", "deploy-examples"],
             },
             {
                 "name": "Prefetch artifacts from remote registries.",
@@ -264,6 +265,7 @@ main.add_command(serve)  # type: ignore
 main.add_command(start)  # type: ignore
 main.add_command(stop)  # type: ignore
 main.add_command(prefetch)  # type: ignore
+main.add_command(deploy_examples)
 
 # Discover and register CLI plugins from installed packages
 discover_and_register_plugins(main)

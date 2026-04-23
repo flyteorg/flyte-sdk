@@ -73,7 +73,7 @@ async def parallel_training(hyperparams: list[dict]) -> dict:
 
 | Feature | What it does | Why you need it | Example |
 |---|---|---|---|
-| **Task Environments** | Group tasks with shared container config, resources, and images | Define infrastructure once, reuse across tasks | [basics/container_images.py](examples/basics/container_images.py) |
+| **Task Environments** | Group tasks with shared container config, resources, and images | Define infrastructure once, reuse across tasks | [image/container_images.py](examples/image/container_images.py) |
 | **Reusable Containers** | Keep containers warm between task invocations | Eliminate cold-start latency for iterative workloads | [reuse/reusable.py](examples/reuse/reusable.py) |
 | **Caching** | Content-based or version-based task result caching | Skip redundant computation, save time and cost | [caching/content_based_caching.py](examples/caching/content_based_caching.py) |
 | **Tracing** | Function-level checkpointing with `@flyte.trace` | Resume from the last successful step on failure | [basics/hello.py](examples/basics/hello.py) |
