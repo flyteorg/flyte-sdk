@@ -375,8 +375,7 @@ async def test_decode_hf_uri_as_iterable_dataset_uses_cache_materialization(
 
 
 @pytest.mark.asyncio
-async def test_dataset_decode_remote_prefers_direct_filesystem_read(sample_dataset, caplog):
-    caplog.set_level("INFO")
+async def test_dataset_decode_remote_prefers_direct_filesystem_read(sample_dataset):
     handler = ParquetToHuggingFaceDatasetDecodingHandler()
     fs = object()
     parquet_files = ["s3://bucket/path/00000.parquet"]
@@ -400,18 +399,22 @@ async def test_dataset_decode_remote_prefers_direct_filesystem_read(sample_datas
             "flyteplugins.huggingface.datasets._transformers._localize_parquet_files",
             new=AsyncMock(),
         ) as localize,
+        patch(
+            "flyteplugins.huggingface.datasets._transformers.logger.info"
+        ) as log_info,
     ):
         restored = await handler.decode(lit, metadata)
 
     localize.assert_not_awaited()
     run_sync.assert_awaited_once_with("read parquet files", _read_parquet_files, parquet_files, None, fs)
     assert isinstance(restored, datasets.Dataset)
-    assert "Using direct remote parquet reads for s3://bucket/path via Flyte storage filesystem" in caplog.text
+    log_info.assert_any_call(
+        "Using direct remote parquet reads for s3://bucket/path via Flyte storage filesystem"
+    )
 
 
 @pytest.mark.asyncio
-async def test_dataset_decode_remote_falls_back_to_localized_reads(sample_dataset, caplog):
-    caplog.set_level("INFO")
+async def test_dataset_decode_remote_falls_back_to_localized_reads(sample_dataset):
     handler = ParquetToHuggingFaceDatasetDecodingHandler()
     fs = object()
     remote_files = ["s3://bucket/path/00000.parquet"]
@@ -430,12 +433,20 @@ async def test_dataset_decode_remote_falls_back_to_localized_reads(sample_datase
         ),
         patch(
             "flyteplugins.huggingface.datasets._transformers.run_sync_io",
-            new=AsyncMock(side_effect=[RuntimeError("boom"), sample_dataset.data.table]),
+            new=AsyncMock(
+                side_effect=[RuntimeError("boom"), sample_dataset.data.table]
+            ),
         ) as run_sync,
         patch(
             "flyteplugins.huggingface.datasets._transformers._localize_parquet_files",
             new=AsyncMock(return_value=local_files),
         ) as localize,
+        patch(
+            "flyteplugins.huggingface.datasets._transformers.logger.info"
+        ) as log_info,
+        patch(
+            "flyteplugins.huggingface.datasets._transformers.logger.warning"
+        ) as log_warning,
     ):
         restored = await handler.decode(lit, metadata)
 
@@ -443,7 +454,8 @@ async def test_dataset_decode_remote_falls_back_to_localized_reads(sample_datase
     assert run_sync.await_args_list[0].args == ("read parquet files", _read_parquet_files, remote_files, None, fs)
     assert run_sync.await_args_list[1].args == ("read localized parquet files", _read_parquet_files, local_files, None)
     assert isinstance(restored, datasets.Dataset)
-    assert "Using localized parquet shard reads for s3://bucket/path" in caplog.text
+    log_warning.assert_called_once()
+    log_info.assert_any_call("Using localized parquet shard reads for s3://bucket/path")
 
 
 @pytest.mark.asyncio
@@ -553,7 +565,7 @@ def test_join_uri_path_preserves_uri_scheme():
 
 
 @pytest.mark.asyncio
-async def test_ensure_hf_cached_uses_canonical_cache_path_even_with_registry_artifact_uri():
+async def test_ensure_hf_cached_ignores_registry_artifact_uri_and_uses_canonical_path():
     source = HFSource(
         repo="stanfordnlp/imdb",
         name="plain_text",
