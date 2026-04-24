@@ -146,7 +146,7 @@ async def list_parquet_files(uri: str, filesystem) -> list[str]:
             raw = [f"{proto}{f}" for f in raw]
         return raw
     except Exception as e:
-        logger.debug(f"Unable to list parquet files under {uri}: {e}")
+        logger.warning(f"Unable to list parquet files under {uri}: {e}")
         return [join_uri_path(uri, f"{0:05}.parquet")]
 
 
@@ -307,9 +307,7 @@ def hf_cache_manifest(
     }
 
 
-async def read_cache_manifest(
-    remote_path: str,
-) -> dict[str, typing.Any] | None:
+async def read_cache_manifest(remote_path: str) -> dict[str, typing.Any] | None:
     path = manifest_path(remote_path)
     try:
         if not await storage_path_exists(path):
@@ -348,13 +346,9 @@ async def read_registry_record(
 async def write_registry_record(
     source: HFSource,
     cache_key: str,
-    artifact_uri: str,
     manifest: dict[str, typing.Any],
 ) -> None:
-    record = {
-        **manifest,
-        "artifact_uri": artifact_uri,
-    }
+    record = dict(manifest)
     data = json.dumps(record, sort_keys=True, indent=2).encode("utf-8")
     await storage_write_bytes(get_hf_registry_record_path(source, cache_key), data)
 
@@ -481,32 +475,25 @@ async def ensure_hf_cached(source: HFSource) -> str:
         f"under {source.cache_root}"
     )
     registry_record = await read_registry_record(source, cache_key)
-    remote_path = (
-        registry_record.get("artifact_uri", default_remote_path) if registry_record is not None else default_remote_path
-    )
-
-    if await read_cache_manifest(remote_path) == expected_manifest:
+    if await read_cache_manifest(default_remote_path) == expected_manifest:
         if registry_record is None:
             await write_registry_record(
                 source,
                 cache_key,
-                remote_path,
                 expected_manifest,
             )
-        logger.info(f"Using cached Hugging Face dataset at {remote_path}")
-        return remote_path
+        logger.info(f"Using cached Hugging Face dataset at {default_remote_path}")
+        return default_remote_path
 
     logger.info(
         f"Materializing Hugging Face dataset {source.repo} "
         f"({_source_log_description(source)}) "
-        f"to remote cache artifact {remote_path}"
+        f"to remote cache artifact {default_remote_path}"
     )
-    remote_path = default_remote_path
-    await stream_hf_to_remote(source, remote_path, shards, expected_manifest)
+    await stream_hf_to_remote(source, default_remote_path, shards, expected_manifest)
     await write_registry_record(
         source,
         cache_key,
-        remote_path,
         expected_manifest,
     )
-    return remote_path
+    return default_remote_path

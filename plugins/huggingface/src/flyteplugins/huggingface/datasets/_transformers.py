@@ -34,8 +34,16 @@ def _write_dataset(df: datasets.Dataset, path: str, filesystem) -> None:
 def _read_parquet_files(
     parquet_files: list[str],
     columns: list[str] | None,
+    filesystem=None,
 ) -> pa.Table:
-    tables = [pq.read_table(strip_protocol(f), columns=columns) for f in parquet_files]
+    tables = [
+        pq.read_table(
+            strip_protocol(file_path),
+            columns=columns,
+            filesystem=filesystem if storage.is_remote(file_path) else None,
+        )
+        for file_path in parquet_files
+    ]
     return pa.concat_tables(tables) if len(tables) > 1 else tables[0]
 
 
@@ -44,36 +52,48 @@ def _batch_to_rows(batch: pa.RecordBatch) -> list[dict]:
     return [{name: col_lists[name][i] for name in batch.schema.names} for i in range(batch.num_rows)]
 
 
+def _iter_parquet_rows(parquet_files: list[str], columns: list[str] | None) -> typing.Iterator[dict]:
+    for file_path in parquet_files:
+        filesystem = storage.get_underlying_filesystem(path=file_path) if storage.is_remote(file_path) else None
+        pf = pq.ParquetFile(
+            strip_protocol(file_path),
+            filesystem=filesystem,
+        )
+        for batch in pf.iter_batches(batch_size=10_000, columns=columns):
+            yield from _batch_to_rows(batch)
+
+
 def _write_iterable_dataset(ds: datasets.IterableDataset, uri: str, filesystem) -> None:
     file_idx = 0
     rows_in_shard = 0
     writer: pq.ParquetWriter | None = None
 
-    for batch in ds.iter(batch_size=10_000):
-        table = pa.table(batch)
+    try:
+        for batch in ds.iter(batch_size=10_000):
+            table = pa.table(batch)
 
-        if writer is None:
-            shard_path = join_uri_path(uri, f"{file_idx:05}.parquet")
-            writer = pq.ParquetWriter(
-                strip_protocol(shard_path),
-                table.schema,
-                filesystem=filesystem,
-            )
+            if writer is None:
+                shard_path = join_uri_path(uri, f"{file_idx:05}.parquet")
+                writer = pq.ParquetWriter(
+                    strip_protocol(shard_path),
+                    table.schema,
+                    filesystem=filesystem,
+                )
 
-        for arrow_batch in table.to_batches():
-            writer.write_batch(arrow_batch)
+            for arrow_batch in table.to_batches():
+                writer.write_batch(arrow_batch)
 
-        rows_in_shard += len(table)
+            rows_in_shard += len(table)
 
-        if rows_in_shard >= _ROWS_PER_SHARD:
+            if rows_in_shard >= _ROWS_PER_SHARD:
+                writer.close()
+                writer = None
+
+                file_idx += 1
+                rows_in_shard = 0
+    finally:
+        if writer is not None:
             writer.close()
-            writer = None
-
-            file_idx += 1
-            rows_in_shard = 0
-
-    if writer is not None:
-        writer.close()
 
 
 def _requested_columns(
@@ -98,6 +118,13 @@ async def _localize_parquet_files(parquet_files: list[str]) -> list[str]:
         else:
             local_files.append(strip_protocol(file_path))
     return local_files
+
+
+def _probe_remote_parquet_files(parquet_files: list[str], filesystem) -> None:
+    for file_path in parquet_files:
+        if not storage.is_remote(file_path):
+            continue
+        pq.ParquetFile(strip_protocol(file_path), filesystem=filesystem).metadata
 
 
 class HuggingFaceDatasetToParquetEncodingHandler(DataFrameEncoder):
@@ -176,14 +203,34 @@ class ParquetToHuggingFaceDatasetDecodingHandler(DataFrameDecoder):
         )
 
         parquet_files = await list_parquet_files(uri, filesystem)
-        parquet_files = await _localize_parquet_files(parquet_files)
+        columns = _requested_columns(current_task_metadata)
 
-        table = await run_sync_io(
-            "read parquet files",
-            _read_parquet_files,
-            parquet_files,
-            _requested_columns(current_task_metadata),
-        )
+        try:
+            if any(storage.is_remote(file_path) for file_path in parquet_files):
+                logger.info(f"Using direct remote parquet reads for {uri} via Flyte storage filesystem")
+            table = await run_sync_io(
+                "read parquet files",
+                _read_parquet_files,
+                parquet_files,
+                columns,
+                filesystem,
+            )
+        except Exception as exc:
+            if any(storage.is_remote(file_path) for file_path in parquet_files):
+                logger.warning(
+                    f"Direct parquet read failed for {uri}: {type(exc).__name__}: {exc}. "
+                    "Falling back to localizing remote parquet shards."
+                )
+                parquet_files = await _localize_parquet_files(parquet_files)
+                logger.info(f"Using localized parquet shard reads for {uri}")
+                table = await run_sync_io(
+                    "read localized parquet files",
+                    _read_parquet_files,
+                    parquet_files,
+                    columns,
+                )
+            else:
+                raise
 
         return datasets.Dataset(table)
 
@@ -272,16 +319,32 @@ class ParquetToHuggingFaceIterableDatasetDecodingHandler(DataFrameDecoder):
             f"{'remote' if storage.is_remote(uri) else 'local'} directory {uri}"
         )
         parquet_files = await list_parquet_files(uri, filesystem)
-        parquet_files = await _localize_parquet_files(parquet_files)
         columns = _requested_columns(current_task_metadata)
 
-        def _gen() -> typing.Iterator[dict]:
-            for file_path in parquet_files:
-                pf = pq.ParquetFile(strip_protocol(file_path))
-                for batch in pf.iter_batches(batch_size=10_000, columns=columns):
-                    yield from _batch_to_rows(batch)
+        try:
+            if any(storage.is_remote(file_path) for file_path in parquet_files):
+                logger.info(f"Using direct remote iterable parquet reads for {uri} via Flyte storage filesystem")
+            await run_sync_io(
+                "probe parquet files",
+                _probe_remote_parquet_files,
+                parquet_files,
+                filesystem,
+            )
+        except Exception as exc:
+            if any(storage.is_remote(file_path) for file_path in parquet_files):
+                logger.warning(
+                    f"Direct iterable parquet access failed for {uri}: {type(exc).__name__}: {exc}. "
+                    "Falling back to localizing remote parquet shards."
+                )
+                parquet_files = await _localize_parquet_files(parquet_files)
+                logger.info(f"Using localized iterable parquet shard reads for {uri}")
+            else:
+                raise
 
-        return datasets.IterableDataset.from_generator(_gen)
+        return datasets.IterableDataset.from_generator(
+            _iter_parquet_rows,
+            gen_kwargs={"parquet_files": parquet_files, "columns": columns},
+        )
 
 
 class HFToHuggingFaceIterableDatasetDecodingHandler(ParquetToHuggingFaceIterableDatasetDecodingHandler):

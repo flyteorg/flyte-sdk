@@ -1,9 +1,9 @@
-# Hugging Face Datasets Plugin
+# Hugging Face Plugin
 
-Native Flyte support for Hugging Face `datasets.Dataset` and
-`datasets.IterableDataset`.
+Native Flyte support for Hugging Face integrations in Flyte.
 
-This plugin gives you two related capabilities:
+This plugin provides dataset support for Hugging Face `datasets.Dataset`
+and `datasets.IterableDataset` objects. It gives you two related capabilities:
 
 1. Use `from_hf(...)` to reference a dataset on the Hugging Face Hub as a task
    input default.
@@ -26,7 +26,7 @@ pip install flyteplugins-huggingface
 ```python
 import datasets
 import flyte
-from flyteplugins.huggingface import from_hf
+from flyteplugins.huggingface.datasets import from_hf
 
 env = flyte.TaskEnvironment(name="hf-example")
 
@@ -56,7 +56,7 @@ reference used between Flyte and the plugin.
 `from_hf(...)` is the entry point for Hub-backed task defaults:
 
 ```python
-from flyteplugins.huggingface import from_hf
+from flyteplugins.huggingface.datasets import from_hf
 
 from_hf(
     repo: str,
@@ -142,7 +142,7 @@ dataset.
 Without `cache_root`, a Hub source is materialized into a generated path for the
 current execution only.
 
-With `cache_root`, the plugin uses a shared artifact registry so later runs can
+With `cache_root`, the plugin uses a shared cache registry so later runs can
 skip the Hub download entirely:
 
 ```python
@@ -158,7 +158,7 @@ async def train_cached(
     return len(ds)
 ```
 
-The shared registry layout is:
+The shared cache layout is:
 
 ```text
 {cache_root}/huggingface/datasets/
@@ -176,6 +176,10 @@ The cache key is derived from:
 
 This means the cache is stable across runs as long as the underlying converted
 Parquet source does not change.
+
+The canonical artifact location is always
+`{cache_root}/huggingface/datasets/blobs/{source-cache-key}/...`. The registry
+record under `by-key/` is metadata for that cache key.
 
 ## What the plugin logs
 

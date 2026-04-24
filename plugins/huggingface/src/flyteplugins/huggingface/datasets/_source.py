@@ -21,6 +21,29 @@ class HFSource:
     revision: str | None = None
     cache_root: str | None = None
 
+    def __post_init__(self) -> None:
+        self.repo = self._normalize_required_field("repo", self.repo)
+        self.name = self._normalize_optional_field("name", self.name)
+        self.split = self._normalize_optional_field("split", self.split)
+        self.revision = self._normalize_optional_field("revision", self.revision)
+        self.cache_root = self._normalize_optional_field("cache_root", self.cache_root)
+
+    @staticmethod
+    def _normalize_required_field(field_name: str, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError(f"HFSource {field_name} must not be empty")
+        return normalized
+
+    @staticmethod
+    def _normalize_optional_field(field_name: str, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError(f"HFSource {field_name} must not be blank")
+        return normalized
+
     def to_hf_uri(self) -> str:
         uri = f"hf://{self.repo}"
         params = {}

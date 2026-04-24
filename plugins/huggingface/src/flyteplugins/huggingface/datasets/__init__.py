@@ -1,14 +1,6 @@
 import functools
 
 from ._source import HFSource, from_hf
-from ._transformers import (
-    HFToHuggingFaceDatasetDecodingHandler,
-    HFToHuggingFaceIterableDatasetDecodingHandler,
-    HuggingFaceDatasetToParquetEncodingHandler,
-    HuggingFaceIterableDatasetToParquetEncodingHandler,
-    ParquetToHuggingFaceDatasetDecodingHandler,
-    ParquetToHuggingFaceIterableDatasetDecodingHandler,
-)
 
 __all__ = ["HFSource", "from_hf"]
 
@@ -17,6 +9,15 @@ __all__ = ["HFSource", "from_hf"]
 def register_huggingface_dataset_transformers():
     """Register Hugging Face Dataset encoders and decoders."""
     from flyte.io.extend import DataFrameTransformerEngine
+
+    from ._transformers import (
+        HFToHuggingFaceDatasetDecodingHandler,
+        HFToHuggingFaceIterableDatasetDecodingHandler,
+        HuggingFaceDatasetToParquetEncodingHandler,
+        HuggingFaceIterableDatasetToParquetEncodingHandler,
+        ParquetToHuggingFaceDatasetDecodingHandler,
+        ParquetToHuggingFaceIterableDatasetDecodingHandler,
+    )
 
     DataFrameTransformerEngine.register(HuggingFaceDatasetToParquetEncodingHandler(), default_format_for_type=True)
     DataFrameTransformerEngine.register(ParquetToHuggingFaceDatasetDecodingHandler(), default_format_for_type=True)
@@ -30,6 +31,3 @@ def register_huggingface_dataset_transformers():
         default_format_for_type=True,
     )
     DataFrameTransformerEngine.register(HFToHuggingFaceIterableDatasetDecodingHandler())
-
-
-register_huggingface_dataset_transformers()

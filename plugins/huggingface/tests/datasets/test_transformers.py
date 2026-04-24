@@ -9,14 +9,18 @@ from flyte.io._dataframe.dataframe import PARQUET, DataFrameTransformerEngine
 from flyte.types import TypeEngine
 from flyteidl2.core import literals_pb2
 
-from flyteplugins.huggingface import HFSource, from_hf
-from flyteplugins.huggingface.dataset._io import (
+from flyteplugins.huggingface.datasets import HFSource, from_hf, register_huggingface_dataset_transformers
+from flyteplugins.huggingface.datasets._io import (
     HFParquetError,
     _resolve_hf_config,
+    ensure_hf_cached,
+    get_hf_cache_path,
+    hf_cache_manifest,
     join_uri_path,
     list_parquet_files,
 )
-from flyteplugins.huggingface.dataset._transformers import (
+from flyteplugins.huggingface.datasets._source import HFShard, hf_source_cache_key
+from flyteplugins.huggingface.datasets._transformers import (
     _ROWS_PER_SHARD,
     HFToHuggingFaceDatasetDecodingHandler,
     HFToHuggingFaceIterableDatasetDecodingHandler,
@@ -24,9 +28,12 @@ from flyteplugins.huggingface.dataset._transformers import (
     HuggingFaceIterableDatasetToParquetEncodingHandler,
     ParquetToHuggingFaceDatasetDecodingHandler,
     ParquetToHuggingFaceIterableDatasetDecodingHandler,
+    _iter_parquet_rows,
+    _read_parquet_files,
 )
 
 datasets = pytest.importorskip("datasets")
+register_huggingface_dataset_transformers()
 
 TEST_DATA = {
     "text": ["hello world", "flyte rocks", "hugging face datasets"],
@@ -86,6 +93,17 @@ def test_hfsource_uri_roundtrip():
         HFSource(repo="glue", name="mrpc", split="train"),
     ]:
         assert HFSource.from_hf_uri(source.to_hf_uri()) == source
+
+
+def test_hfsource_rejects_blank_fields():
+    with pytest.raises(ValueError, match="repo must not be empty"):
+        HFSource(repo="  ")
+
+    with pytest.raises(ValueError, match="name must not be blank"):
+        HFSource(repo="stanfordnlp/imdb", name=" ")
+
+    with pytest.raises(ValueError, match="split must not be blank"):
+        HFSource(repo="stanfordnlp/imdb", split=" ")
 
 
 # ============================================================================
@@ -314,7 +332,7 @@ async def test_decode_hf_uri_as_dataset_uses_cache_materialization(ctx_with_test
     )
 
     with patch(
-        "flyteplugins.huggingface.dataset._transformers.ensure_hf_cached",
+        "flyteplugins.huggingface.datasets._transformers.ensure_hf_cached",
         new=AsyncMock(return_value=cached_uri),
     ) as ensure_cached:
         restored = await fdt.to_python_value(hf_lit, expected_python_type=datasets.Dataset)
@@ -346,7 +364,7 @@ async def test_decode_hf_uri_as_iterable_dataset_uses_cache_materialization(
     )
 
     with patch(
-        "flyteplugins.huggingface.dataset._transformers.ensure_hf_cached",
+        "flyteplugins.huggingface.datasets._transformers.ensure_hf_cached",
         new=AsyncMock(return_value=cached_uri),
     ) as ensure_cached:
         restored = await fdt.to_python_value(hf_lit, expected_python_type=datasets.IterableDataset)
@@ -354,6 +372,114 @@ async def test_decode_hf_uri_as_iterable_dataset_uses_cache_materialization(
     ensure_cached.assert_awaited_once_with(HFSource(repo="stanfordnlp/imdb", name="plain_text", split="test"))
     assert isinstance(restored, datasets.IterableDataset)
     assert len(list(restored)) == len(sample_dataset)
+
+
+@pytest.mark.asyncio
+async def test_dataset_decode_remote_prefers_direct_filesystem_read(sample_dataset, caplog):
+    caplog.set_level("INFO")
+    handler = ParquetToHuggingFaceDatasetDecodingHandler()
+    fs = object()
+    parquet_files = ["s3://bucket/path/00000.parquet"]
+    lit = literals_pb2.StructuredDataset(uri="s3://bucket/path")
+    metadata = literals_pb2.StructuredDatasetMetadata()
+
+    with (
+        patch(
+            "flyteplugins.huggingface.datasets._transformers.storage.get_underlying_filesystem",
+            return_value=fs,
+        ),
+        patch(
+            "flyteplugins.huggingface.datasets._transformers.list_parquet_files",
+            new=AsyncMock(return_value=parquet_files),
+        ),
+        patch(
+            "flyteplugins.huggingface.datasets._transformers.run_sync_io",
+            new=AsyncMock(return_value=sample_dataset.data.table),
+        ) as run_sync,
+        patch(
+            "flyteplugins.huggingface.datasets._transformers._localize_parquet_files",
+            new=AsyncMock(),
+        ) as localize,
+    ):
+        restored = await handler.decode(lit, metadata)
+
+    localize.assert_not_awaited()
+    run_sync.assert_awaited_once_with("read parquet files", _read_parquet_files, parquet_files, None, fs)
+    assert isinstance(restored, datasets.Dataset)
+    assert "Using direct remote parquet reads for s3://bucket/path via Flyte storage filesystem" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_dataset_decode_remote_falls_back_to_localized_reads(sample_dataset, caplog):
+    caplog.set_level("INFO")
+    handler = ParquetToHuggingFaceDatasetDecodingHandler()
+    fs = object()
+    remote_files = ["s3://bucket/path/00000.parquet"]
+    local_files = ["/tmp/00000.parquet"]
+    lit = literals_pb2.StructuredDataset(uri="s3://bucket/path")
+    metadata = literals_pb2.StructuredDatasetMetadata()
+
+    with (
+        patch(
+            "flyteplugins.huggingface.datasets._transformers.storage.get_underlying_filesystem",
+            return_value=fs,
+        ),
+        patch(
+            "flyteplugins.huggingface.datasets._transformers.list_parquet_files",
+            new=AsyncMock(return_value=remote_files),
+        ),
+        patch(
+            "flyteplugins.huggingface.datasets._transformers.run_sync_io",
+            new=AsyncMock(side_effect=[RuntimeError("boom"), sample_dataset.data.table]),
+        ) as run_sync,
+        patch(
+            "flyteplugins.huggingface.datasets._transformers._localize_parquet_files",
+            new=AsyncMock(return_value=local_files),
+        ) as localize,
+    ):
+        restored = await handler.decode(lit, metadata)
+
+    localize.assert_awaited_once_with(remote_files)
+    assert run_sync.await_args_list[0].args == ("read parquet files", _read_parquet_files, remote_files, None, fs)
+    assert run_sync.await_args_list[1].args == ("read localized parquet files", _read_parquet_files, local_files, None)
+    assert isinstance(restored, datasets.Dataset)
+    assert "Using localized parquet shard reads for s3://bucket/path" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_iterable_decode_remote_uses_picklable_generator_args():
+    handler = ParquetToHuggingFaceIterableDatasetDecodingHandler()
+    fs = object()
+    parquet_files = ["s3://bucket/path/00000.parquet"]
+    lit = literals_pb2.StructuredDataset(uri="s3://bucket/path")
+    metadata = literals_pb2.StructuredDatasetMetadata()
+
+    sentinel = object()
+    with (
+        patch(
+            "flyteplugins.huggingface.datasets._transformers.storage.get_underlying_filesystem",
+            return_value=fs,
+        ),
+        patch(
+            "flyteplugins.huggingface.datasets._transformers.list_parquet_files",
+            new=AsyncMock(return_value=parquet_files),
+        ),
+        patch(
+            "flyteplugins.huggingface.datasets._transformers.run_sync_io",
+            new=AsyncMock(return_value=None),
+        ),
+        patch(
+            "flyteplugins.huggingface.datasets._transformers.datasets.IterableDataset.from_generator",
+            return_value=sentinel,
+        ) as from_generator,
+    ):
+        restored = await handler.decode(lit, metadata)
+
+    from_generator.assert_called_once_with(
+        _iter_parquet_rows,
+        gen_kwargs={"parquet_files": parquet_files, "columns": None},
+    )
+    assert restored is sentinel
 
 
 # ============================================================================
@@ -424,3 +550,43 @@ def test_join_uri_path_preserves_uri_scheme():
     assert join_uri_path("s3://bucket/root/", "/a/", "b") == "s3://bucket/root/a/b"
     assert join_uri_path("hf://stanfordnlp/imdb", "train") == "hf://stanfordnlp/imdb/train"
     assert join_uri_path("datasets", "stanfordnlp/imdb", "plain_text") == "datasets/stanfordnlp/imdb/plain_text"
+
+
+@pytest.mark.asyncio
+async def test_ensure_hf_cached_uses_canonical_cache_path_even_with_registry_artifact_uri():
+    source = HFSource(
+        repo="stanfordnlp/imdb",
+        name="plain_text",
+        split="train",
+        cache_root="s3://bucket/flyte-hf-cache",
+    )
+    shards = [
+        HFShard(
+            rel_path="00000.parquet",
+            hf_name="datasets/stanfordnlp/imdb/plain_text/train/00000.parquet",
+            size=123,
+            etag="etag-1",
+        )
+    ]
+    cache_key = hf_source_cache_key(source, shards)
+    expected_manifest = hf_cache_manifest(source, shards, cache_key)
+    default_remote_path = get_hf_cache_path(source, cache_key)
+
+    with (
+        patch(
+            "flyteplugins.huggingface.datasets._io.run_sync_io",
+            new=AsyncMock(return_value=shards),
+        ),
+        patch(
+            "flyteplugins.huggingface.datasets._io.read_registry_record",
+            new=AsyncMock(return_value={"artifact_uri": "s3://bucket/old-layout/location"}),
+        ),
+        patch(
+            "flyteplugins.huggingface.datasets._io.read_cache_manifest",
+            new=AsyncMock(return_value=expected_manifest),
+        ) as read_manifest,
+    ):
+        remote_path = await ensure_hf_cached(source)
+
+    read_manifest.assert_awaited_once_with(default_remote_path)
+    assert remote_path == default_remote_path

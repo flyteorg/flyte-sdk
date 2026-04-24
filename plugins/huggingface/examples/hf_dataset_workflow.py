@@ -22,7 +22,7 @@ import flyte
 from flyte._image import PythonWheels
 from flyte.io import DataFrame
 
-from flyteplugins.huggingface import from_hf
+from flyteplugins.huggingface.datasets import from_hf
 
 env = flyte.TaskEnvironment(
     name="hf-dataset-example",
