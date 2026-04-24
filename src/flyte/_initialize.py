@@ -347,7 +347,7 @@ async def init_from_config(
         root_dir=root_dir,
         log_level=log_level,
         log_format=log_format,
-        image_builder=image_builder or cfg.image.builder,
+        image_builder=image_builder or cfg.image.builder or "local",
         batch_size=batch_size,
         images=cfg.image.image_refs,
         storage=storage,
