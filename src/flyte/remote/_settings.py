@@ -75,6 +75,33 @@ from flyte._initialize import ensure_client, get_client, get_init_config
 from flyte.remote._common import ToJSONMixin
 from flyte.syncify import syncify
 
+
+class _UnsetType:
+    """Sentinel for SETTING_STATE_UNSET — explicitly clears a setting, blocking parent inheritance."""
+
+    _instance = None
+
+    def __new__(cls) -> _UnsetType:
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __repr__(self) -> str:
+        return "UNSET"
+
+
+UNSET = _UnsetType()
+"""Pass this value to explicitly unset a setting at the current scope.
+
+An UNSET setting blocks inheritance from the parent scope; the setting has no
+value at this scope even if a parent scope defines one. Distinct from simply
+omitting the key (which means "inherit").
+
+In YAML, write ``key: ~unset`` to express this state.
+"""
+
+_YAML_UNSET_TOKEN = "~unset"
+
 # Scope level mapping from proto enum to human-readable strings
 _SCOPE_NAMES = {
     settings_definition_pb2.SCOPE_LEVEL_ORG: "ORG",
@@ -151,8 +178,11 @@ _LEAF_EXAMPLES: dict[str, str] = {dotkey: _PLACEHOLDER_BY_KIND[kind] for dotkey,
 def _extract_leaf_value(leaf: Any, leaf_type: str) -> Any | None:
     """Extract the Python value from a typed ``*Setting`` proto.
 
-    Returns ``None`` when the leaf is in INHERIT / UNSET state.
+    Returns ``None`` for INHERIT state, :data:`UNSET` for UNSET state, or the
+    concrete value for VALUE state.
     """
+    if leaf.state == settings_definition_pb2.SETTING_STATE_UNSET:
+        return UNSET
     if leaf.state != settings_definition_pb2.SETTING_STATE_VALUE:
         return None
     if leaf_type == "string":
@@ -171,7 +201,26 @@ def _extract_leaf_value(leaf: Any, leaf_type: str) -> Any | None:
 
 
 def _build_leaf(leaf_type: str, value: Any) -> Any:
-    """Build a typed ``*Setting`` proto with ``state=VALUE`` from a Python value."""
+    """Build a typed ``*Setting`` proto from a Python value.
+
+    When ``value`` is :data:`UNSET`, the leaf carries ``state=SETTING_STATE_UNSET``
+    and no payload fields. Otherwise ``state=SETTING_STATE_VALUE``.
+    """
+    if value is UNSET:
+        unset = settings_definition_pb2.SETTING_STATE_UNSET
+        if leaf_type == "string":
+            return settings_definition_pb2.StringSetting(state=unset)
+        if leaf_type == "int":
+            return settings_definition_pb2.Int64Setting(state=unset)
+        if leaf_type == "bool":
+            return settings_definition_pb2.BoolSetting(state=unset)
+        if leaf_type == "quantity":
+            return settings_definition_pb2.QuantitySetting(state=unset)
+        if leaf_type == "stringlist":
+            return settings_definition_pb2.StringListSetting(state=unset)
+        if leaf_type == "stringmap":
+            return settings_definition_pb2.StringMapSetting(state=unset)
+        raise ValueError(f"unknown leaf type: {leaf_type}")
     state = settings_definition_pb2.SETTING_STATE_VALUE
     if leaf_type == "string":
         return settings_definition_pb2.StringSetting(state=state, string_value=str(value))
@@ -326,6 +375,8 @@ class Settings(ToJSONMixin):
     @staticmethod
     def _format_value(value: Any) -> str:
         """Format a Python value as a YAML scalar / flow collection."""
+        if value is UNSET:
+            return _YAML_UNSET_TOKEN
         if isinstance(value, bool):
             return "true" if value else "false"
         if isinstance(value, str):
@@ -425,7 +476,12 @@ class Settings(ToJSONMixin):
             "Available settings": "### Available settings (uncomment and edit to set at this scope)",
         }
 
-        lines = [f"### Settings for scope: {self.scope_description()}", ""]
+        lines = [
+            f"### Settings for scope: {self.scope_description()}",
+            "## Remove or comment out a line to inherit that setting from the parent scope.",
+            "## Set a value to ~unset to explicitly clear it, blocking parent inheritance.",
+            "",
+        ]
         for title, body in self.to_yaml_sections():
             lines.append(_SECTION_HEADERS[title])
             lines.append(body)
@@ -451,7 +507,7 @@ class Settings(ToJSONMixin):
             return {}
         if not isinstance(data, dict):
             raise ValueError(f"expected YAML mapping at top level, got {type(data).__name__}")
-        return data
+        return {k: (UNSET if v == _YAML_UNSET_TOKEN else v) for k, v in data.items()}
 
     @syncify
     @classmethod
@@ -552,12 +608,17 @@ class Settings(ToJSONMixin):
             org=cfg.org or "", domain=self.domain or "", project=self.project or ""
         )
         settings_proto = _flat_to_proto(overrides)
-        req = settings_service_pb2.UpdateSettingsRequest(
-            key=key,
-            settings=settings_proto,
-            version=self._version,
-        )
-        resp = await client.settings_service.update_settings(req)
+
+        if self._version == 0:
+            req = settings_service_pb2.CreateSettingsRequest(key=key, settings=settings_proto)
+            resp = await client.settings_service.create_settings(req)
+        else:
+            req = settings_service_pb2.UpdateSettingsRequest(
+                key=key,
+                settings=settings_proto,
+                version=self._version,
+            )
+            resp = await client.settings_service.update_settings(req)
 
         # Refresh local state from the server response.
         self.local_settings = [LocalSetting(key=k, value=v) for k, v in overrides.items()]

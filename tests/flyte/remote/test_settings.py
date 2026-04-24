@@ -9,6 +9,7 @@ from flyte.remote._settings import (
     _LEAF_DESCRIPTIONS,
     _LEAF_EXAMPLES,
     _LEAF_SCHEMA,
+    UNSET,
     EffectiveSetting,
     LocalSetting,
     SettingOrigin,
@@ -79,9 +80,24 @@ class TestExtractLeafValue:
     def test_inherit_returns_none(self):
         assert _extract_leaf_value(_sv_inherit_string(), "string") is None
 
-    def test_unset_returns_none(self):
+    def test_default_state_returns_none(self):
         leaf = settings_definition_pb2.StringSetting()  # state defaults to INHERIT (0)
         assert _extract_leaf_value(leaf, "string") is None
+
+    def test_unset_state_returns_unset_sentinel(self):
+        leaf = settings_definition_pb2.StringSetting(state=settings_definition_pb2.SETTING_STATE_UNSET)
+        assert _extract_leaf_value(leaf, "string") is UNSET
+
+    def test_unset_sentinel_works_for_all_leaf_types(self):
+        for cls, kind in [
+            (settings_definition_pb2.Int64Setting, "int"),
+            (settings_definition_pb2.BoolSetting, "bool"),
+            (settings_definition_pb2.QuantitySetting, "quantity"),
+            (settings_definition_pb2.StringListSetting, "stringlist"),
+            (settings_definition_pb2.StringMapSetting, "stringmap"),
+        ]:
+            leaf = cls(state=settings_definition_pb2.SETTING_STATE_UNSET)
+            assert _extract_leaf_value(leaf, kind) is UNSET, f"expected UNSET for {kind}"
 
 
 class TestBuildLeaf:
@@ -123,6 +139,36 @@ class TestBuildLeaf:
     def test_stringmap_requires_dict(self):
         with pytest.raises(TypeError):
             _build_leaf("stringmap", ["not", "a", "dict"])
+
+    def test_build_unset_string(self):
+        leaf = _build_leaf("string", UNSET)
+        assert isinstance(leaf, settings_definition_pb2.StringSetting)
+        assert leaf.state == settings_definition_pb2.SETTING_STATE_UNSET
+
+    def test_build_unset_int(self):
+        leaf = _build_leaf("int", UNSET)
+        assert isinstance(leaf, settings_definition_pb2.Int64Setting)
+        assert leaf.state == settings_definition_pb2.SETTING_STATE_UNSET
+
+    def test_build_unset_bool(self):
+        leaf = _build_leaf("bool", UNSET)
+        assert isinstance(leaf, settings_definition_pb2.BoolSetting)
+        assert leaf.state == settings_definition_pb2.SETTING_STATE_UNSET
+
+    def test_build_unset_quantity(self):
+        leaf = _build_leaf("quantity", UNSET)
+        assert isinstance(leaf, settings_definition_pb2.QuantitySetting)
+        assert leaf.state == settings_definition_pb2.SETTING_STATE_UNSET
+
+    def test_build_unset_stringlist(self):
+        leaf = _build_leaf("stringlist", UNSET)
+        assert isinstance(leaf, settings_definition_pb2.StringListSetting)
+        assert leaf.state == settings_definition_pb2.SETTING_STATE_UNSET
+
+    def test_build_unset_stringmap(self):
+        leaf = _build_leaf("stringmap", UNSET)
+        assert isinstance(leaf, settings_definition_pb2.StringMapSetting)
+        assert leaf.state == settings_definition_pb2.SETTING_STATE_UNSET
 
 
 class TestProtoFlatRoundtrip:
@@ -170,6 +216,30 @@ class TestProtoFlatRoundtrip:
         )
         flat = dict(_proto_to_flat(proto))
         assert flat == {"run.default_queue": "gpu"}
+
+    def test_proto_to_flat_includes_unset(self):
+        proto = settings_definition_pb2.Settings(
+            run=settings_definition_pb2.RunSettings(
+                default_queue=settings_definition_pb2.StringSetting(state=settings_definition_pb2.SETTING_STATE_UNSET),
+                run_concurrency=_sv_int(5),
+            )
+        )
+        flat = dict(_proto_to_flat(proto))
+        assert flat["run.default_queue"] is UNSET
+        assert flat["run.run_concurrency"] == 5
+
+    def test_flat_to_proto_with_unset_value(self):
+        proto = _flat_to_proto({"run.default_queue": UNSET})
+        assert proto.run.default_queue.state == settings_definition_pb2.SETTING_STATE_UNSET
+
+    def test_unset_roundtrip(self):
+        overrides = {"run.default_queue": UNSET, "run.run_concurrency": 10}
+        proto = _flat_to_proto(overrides)
+        wire = proto.SerializeToString()
+        restored = settings_definition_pb2.Settings.FromString(wire)
+        flat = dict(_proto_to_flat(restored))
+        assert flat["run.default_queue"] is UNSET
+        assert flat["run.run_concurrency"] == 10
 
 
 class TestWalkLeaf:
@@ -290,6 +360,29 @@ class TestToYaml:
                     f"expected description above {dotkey!r}; got {lines[idx - 1]!r}"
                 )
 
+    def test_local_unset_renders_as_tilde_unset(self):
+        settings = Settings(
+            effective_settings=[],
+            local_settings=[LocalSetting(key="run.default_queue", value=UNSET)],
+            domain="prod",
+        )
+        yaml = settings.to_yaml()
+        assert "run.default_queue: ~unset" in yaml
+
+    def test_unset_local_setting_appears_in_local_section_not_available(self):
+        settings = Settings(
+            effective_settings=[],
+            local_settings=[LocalSetting(key="run.default_queue", value=UNSET)],
+            domain="prod",
+        )
+        yaml = settings.to_yaml()
+        assert "### Local overrides" in yaml
+        lines = yaml.split("\n")
+        local_idx = next(i for i, line in enumerate(lines) if "### Local overrides" in line)
+        available_idx = next(i for i, line in enumerate(lines) if "### Available settings" in line)
+        queue_idx = next(i for i, line in enumerate(lines) if "run.default_queue: ~unset" in line)
+        assert local_idx < queue_idx < available_idx
+
     def test_bulk_uncomment_activates_only_valid_settings(self):
         """Stripping a single leading ``# `` from every line should activate every
         commented setting without producing garbage from documentation lines."""
@@ -357,6 +450,21 @@ security.service_account: my-sa
         with pytest.raises(ValueError):
             Settings.parse_yaml("- just\n- a\n- list\n")
 
+    def test_parse_tilde_unset_returns_unset_sentinel(self):
+        overrides = Settings.parse_yaml("run.default_queue: ~unset\n")
+        assert overrides["run.default_queue"] is UNSET
+
+    def test_parse_tilde_unset_roundtrips_to_proto(self):
+        overrides = Settings.parse_yaml("run.default_queue: ~unset\nrun.run_concurrency: 5\n")
+        assert overrides["run.default_queue"] is UNSET
+        proto = _flat_to_proto(overrides)
+        assert proto.run.default_queue.state == settings_definition_pb2.SETTING_STATE_UNSET
+        assert proto.run.run_concurrency.int_value == 5
+
+    def test_parse_tilde_unset_only_in_values_not_keys(self):
+        overrides = Settings.parse_yaml("run.run_concurrency: 3\n")
+        assert "~unset" not in overrides
+
 
 # ---------------------------------------------------------------------------
 # Settings.get_settings_for_edit and Settings.update_settings (RPC integration)
@@ -384,6 +492,7 @@ def mock_settings_service():
     svc = MagicMock()
     svc.get_settings_for_edit = AsyncMock()
     svc.update_settings = AsyncMock(return_value=settings_service_pb2.UpdateSettingsResponse())
+    svc.create_settings = AsyncMock(return_value=settings_service_pb2.CreateSettingsResponse())
     return svc
 
 
@@ -526,6 +635,33 @@ class TestSettingsGet:
         # Effective still surfaces the DOMAIN-level value.
         assert any(s.key == "run.default_queue" and s.value == "gpu" for s in settings.effective_settings)
 
+    def test_get_surfaces_unset_from_local_scope(self, mock_client, mock_settings_service, mock_init_config):
+        """A SETTING_STATE_UNSET leaf in the server response appears as UNSET in local_settings."""
+        unset_proto = settings_definition_pb2.Settings(
+            run=settings_definition_pb2.RunSettings(
+                default_queue=settings_definition_pb2.StringSetting(state=settings_definition_pb2.SETTING_STATE_UNSET)
+            )
+        )
+        project_record = settings_service_pb2.SettingsRecord(
+            key=settings_definition_pb2.SettingsKey(org="myorg", domain="prod", project="ml"),
+            settings=unset_proto,
+            version=2,
+        )
+        mock_settings_service.get_settings_for_edit.return_value = settings_service_pb2.GetSettingsForEditResponse(
+            requestedKey=project_record.key,
+            levels=[project_record],
+        )
+
+        with (
+            patch(_PATCH_ENSURE, new_callable=AsyncMock),
+            patch(_PATCH_CLIENT, return_value=mock_client),
+            patch(_PATCH_CONFIG, return_value=mock_init_config),
+        ):
+            settings = Settings.get_settings_for_edit(domain="prod", project="ml")
+
+        local = {s.key: s.value for s in settings.local_settings}
+        assert local["run.default_queue"] is UNSET
+
     def test_get_empty_levels(self, mock_client, mock_settings_service, mock_init_config):
         mock_settings_service.get_settings_for_edit.return_value = settings_service_pb2.GetSettingsForEditResponse(
             levels=[]
@@ -607,6 +743,42 @@ class TestSettingsUpdate:
         # Empty overrides → empty Settings proto → no fields set
         assert req.settings.ByteSize() == 0
         assert settings.local_settings == []
+
+    def test_update_with_unset_sends_unset_state_in_proto(self, mock_client, mock_settings_service, mock_init_config):
+        settings = Settings(
+            effective_settings=[],
+            local_settings=[LocalSetting(key="run.default_queue", value="gpu")],
+            domain="prod",
+            _version=4,
+        )
+
+        with (
+            patch(_PATCH_ENSURE, new_callable=AsyncMock),
+            patch(_PATCH_CLIENT, return_value=mock_client),
+            patch(_PATCH_CONFIG, return_value=mock_init_config),
+        ):
+            settings.update_settings({"run.default_queue": UNSET})
+
+        req = mock_settings_service.update_settings.call_args[0][0]
+        assert req.settings.run.default_queue.state == settings_definition_pb2.SETTING_STATE_UNSET
+
+    def test_update_refreshes_local_state_with_unset(self, mock_client, mock_settings_service, mock_init_config):
+        settings = Settings(
+            effective_settings=[],
+            local_settings=[LocalSetting(key="run.default_queue", value="gpu")],
+            domain="prod",
+            _version=4,
+        )
+
+        with (
+            patch(_PATCH_ENSURE, new_callable=AsyncMock),
+            patch(_PATCH_CLIENT, return_value=mock_client),
+            patch(_PATCH_CONFIG, return_value=mock_init_config),
+        ):
+            settings.update_settings({"run.default_queue": UNSET})
+
+        assert settings.local_settings[0].key == "run.default_queue"
+        assert settings.local_settings[0].value is UNSET
 
     def test_update_picks_up_version_from_response(self, mock_client, mock_settings_service, mock_init_config):
         mock_settings_service.update_settings.return_value = settings_service_pb2.UpdateSettingsResponse(
