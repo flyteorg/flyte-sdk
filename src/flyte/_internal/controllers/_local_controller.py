@@ -373,18 +373,21 @@ class LocalController:
         if not tctx:
             raise flyte.errors.NotInTaskContextError("BadContext", "Task context not initialized")
 
-        if info.interface.outputs and info.output:
-            # If the result is not an AsyncGenerator, convert it directly
-            _ctx = ctx.new_in_driver_literal_conversion(True) if ctx.is_task_context() else nullcontext()
-            with _ctx:
-                converted_outputs = await convert.convert_from_native_to_outputs(info.output, info.interface, info.name)
-            assert converted_outputs
-            self._recorder.record_complete(action_id=info.action.name, outputs=converted_outputs)
-        elif info.error:
+        if info.error:
             # If there is an error, convert it to a native error
             converted_error = convert.convert_from_native_to_error(info.error)
             assert converted_error
             self._recorder.record_failure(action_id=info.action.name, error=str(info.error))
+        else:
+            converted_outputs = None
+            if info.interface.outputs and info.output:
+                _ctx = ctx.new_in_driver_literal_conversion(True) if ctx.is_task_context() else nullcontext()
+                with _ctx:
+                    converted_outputs = await convert.convert_from_native_to_outputs(
+                        info.output, info.interface, info.name
+                    )
+                assert converted_outputs
+            self._recorder.record_complete(action_id=info.action.name, outputs=converted_outputs)
         assert info.action
         assert info.start_time
         assert info.end_time
