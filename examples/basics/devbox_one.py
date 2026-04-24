@@ -28,7 +28,7 @@ async def say_hello_nested(data: str = "default string", n: int = 3) -> str:
     print(f"Hello, nested! - {flyte.ctx().action}")
     coros = []
     for i in range(n):
-        if i % 2 == 2:
+        if i % 2 == 0:
             coros.append(square.override(queue="dogfood-2")(i=i))
         else:
             coros.append(square(i=i))
