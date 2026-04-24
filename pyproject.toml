@@ -26,6 +26,7 @@ dependencies = [
     "aiolimiter>=1.2.1",
     "flyteidl2==2.0.13",
     "packaging",
+    "sentry-sdk>=2.0",
     "pyOpenSSL>=24.0.0",
 ]
 

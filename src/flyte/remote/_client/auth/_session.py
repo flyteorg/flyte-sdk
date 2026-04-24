@@ -26,6 +26,7 @@ class SessionConfig:
     insecure_skip_verify: bool
     interceptors: tuple
     http_client: Any
+    api_key: typing.Optional[str] = None
 
     def connect_kwargs(self) -> dict[str, Any]:
         return {"address": self.endpoint, "interceptors": self.interceptors, "http_client": self.http_client}
@@ -259,4 +260,5 @@ async def create_session_config(
         insecure_skip_verify=insecure_skip_verify or False,
         interceptors=tuple(interceptors),
         http_client=http_client,
+        api_key=api_key,
     )

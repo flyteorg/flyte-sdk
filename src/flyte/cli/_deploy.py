@@ -9,6 +9,7 @@ import rich_click as click
 import flyte
 from flyte._code_bundle._utils import CopyFiles
 
+from .._sentry import capture_errors
 from . import _common as common
 from ._common import CLIConfig
 
@@ -127,6 +128,7 @@ class DeployEnvCommand(click.RichCommand):
         self.deploy_args = deploy_args
         super().__init__(*args, **kwargs)
 
+    @capture_errors
     def invoke(self, ctx: click.Context):
         from flyte._status import status
 
@@ -165,6 +167,7 @@ class DeployEnvRecursiveCommand(click.Command):
         self.deploy_args = deploy_args
         super().__init__(*args, **kwargs)
 
+    @capture_errors
     def invoke(self, ctx: click.Context):
         from flyte._environment import list_loaded_environments
         from flyte._utils import load_python_modules

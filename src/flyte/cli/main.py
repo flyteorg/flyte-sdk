@@ -105,6 +105,15 @@ def _verbosity_to_loglevel(verbosity: int) -> int | None:
     show_default=True,
 )
 @click.option(
+    "--image-builder",
+    "--builder",
+    type=click.Choice(["local", "remote"]),
+    default="local",
+    help="Image builder to use for building images. Overrides the config file setting.",
+    show_default=True,
+    required=False,
+)
+@click.option(
     "--auth-type",
     type=click.Choice(common.ALL_AUTH_OPTIONS, case_sensitive=False),
     default=None,
@@ -169,6 +178,7 @@ def main(
     ctx: click.Context,
     endpoint: str | None,
     insecure: bool,
+    image_builder: str | None,
     verbose: int,
     log_format: LogFormat,
     reset_root_logger: bool,
@@ -230,6 +240,7 @@ def main(
         reset_root_logger=reset_root_logger,
         endpoint=endpoint,
         insecure=insecure,
+        image_builder=image_builder,
         org=org,
         config=cfg,
         ctx=ctx,

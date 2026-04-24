@@ -90,6 +90,7 @@ jobs:
           - "plugins/mlflow"
           - "plugins/papermill"
           - "plugins/pandera"
+          - "plugins/hydra"
           - "plugins/omegaconf"
         include:
           - workdir: "plugins/sglang"
