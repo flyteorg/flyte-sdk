@@ -399,18 +399,14 @@ async def test_dataset_decode_remote_prefers_direct_filesystem_read(sample_datas
             "flyteplugins.huggingface.datasets._transformers._localize_parquet_files",
             new=AsyncMock(),
         ) as localize,
-        patch(
-            "flyteplugins.huggingface.datasets._transformers.logger.info"
-        ) as log_info,
+        patch("flyteplugins.huggingface.datasets._transformers.logger.info") as log_info,
     ):
         restored = await handler.decode(lit, metadata)
 
     localize.assert_not_awaited()
     run_sync.assert_awaited_once_with("read parquet files", _read_parquet_files, parquet_files, None, fs)
     assert isinstance(restored, datasets.Dataset)
-    log_info.assert_any_call(
-        "Using direct remote parquet reads for s3://bucket/path via Flyte storage filesystem"
-    )
+    log_info.assert_any_call("Using direct remote parquet reads for s3://bucket/path via Flyte storage filesystem")
 
 
 @pytest.mark.asyncio
@@ -433,20 +429,14 @@ async def test_dataset_decode_remote_falls_back_to_localized_reads(sample_datase
         ),
         patch(
             "flyteplugins.huggingface.datasets._transformers.run_sync_io",
-            new=AsyncMock(
-                side_effect=[RuntimeError("boom"), sample_dataset.data.table]
-            ),
+            new=AsyncMock(side_effect=[RuntimeError("boom"), sample_dataset.data.table]),
         ) as run_sync,
         patch(
             "flyteplugins.huggingface.datasets._transformers._localize_parquet_files",
             new=AsyncMock(return_value=local_files),
         ) as localize,
-        patch(
-            "flyteplugins.huggingface.datasets._transformers.logger.info"
-        ) as log_info,
-        patch(
-            "flyteplugins.huggingface.datasets._transformers.logger.warning"
-        ) as log_warning,
+        patch("flyteplugins.huggingface.datasets._transformers.logger.info") as log_info,
+        patch("flyteplugins.huggingface.datasets._transformers.logger.warning") as log_warning,
     ):
         restored = await handler.decode(lit, metadata)
 
