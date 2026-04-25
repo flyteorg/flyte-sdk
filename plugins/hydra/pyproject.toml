@@ -1,0 +1,81 @@
+[project]
+name = "flyteplugins-hydra"
+dynamic = ["version"]
+description = "Hydra launcher plugin for Flyte — run and sweep Flyte tasks with Hydra"
+readme = "README.md"
+authors = [{ name = "Samhita Alla", email = "samhita@union.ai" }]
+requires-python = ">=3.10"
+dependencies = [
+    "flyte",
+    "flyteplugins-omegaconf",
+    "hydra-core",
+    "kubernetes",
+]
+
+[project.entry-points."flyte.plugins.cli.commands"]
+hydra = "flyteplugins.hydra._cli:hydra_group"
+
+[build-system]
+requires = ["setuptools", "setuptools_scm"]
+build-backend = "setuptools.build_meta"
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+]
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+namespaces = true
+include = ["hydra_plugins*", "flyteplugins*"]
+
+[tool.setuptools_scm]
+root = "../../"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+norecursedirs = []
+log_cli = true
+log_cli_level = 20
+markers = []
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.coverage.run]
+branch = true
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    "E",
+    "W",
+    "F",
+    "I",
+    "PLW",
+    "YTT",
+    "ASYNC",
+    "C4",
+    "T10",
+    "EXE",
+    "ISC",
+    "LOG",
+    "PIE",
+    "Q",
+    "RSE",
+    "FLY",
+    "PGH",
+    "PLC",
+    "PLE",
+    "PLW",
+    "FURB",
+    "RUF",
+]
+ignore = ["PGH003", "PLC0415"]
+
+[tool.ruff.lint.per-file-ignores]
+"examples/*" = ["E402"]

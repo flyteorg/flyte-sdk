@@ -161,6 +161,7 @@ class TaskEnvironment(Environment):
         depends_on: Optional[List[Environment]] = None,
         description: Optional[str] = None,
         interruptible: Optional[bool] = None,
+        include: Optional[Tuple[str, ...]] = None,
         **kwargs: Any,
     ) -> TaskEnvironment:
         """
@@ -227,6 +228,8 @@ class TaskEnvironment(Environment):
             kwargs["description"] = description
         if interruptible is not None:
             kwargs["interruptible"] = interruptible
+        if include is not None:
+            kwargs["include"] = tuple(include) if not isinstance(include, tuple) else include
         return replace(self, **kwargs)
 
     @overload

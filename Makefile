@@ -35,8 +35,14 @@ dist: clean
     # export SETUPTOOLS_SCM_PRETEND_VERSION_FOR_FLYTE=0.0.1b0 to build with specific version
 	uv run python -m build --wheel --installer uv
 
-.PHONY: dist
-dist-plugins: clean
+.PHONY: clean-plugins
+clean-plugins:
+	rm -f dist/flyteplugins_*.whl
+	rm -rf plugins/**/dist/
+	rm -rf plugins/**/build/
+
+.PHONY: dist-plugins
+dist-plugins: clean-plugins
     # set FLYTE_PLUGIN_DIST to the directory of a specific plugin to build
 	for plugin in $${FLYTE_PLUGIN_DIST:-plugins/*}; do \
 		if [ -d "$$plugin" ]; then \
