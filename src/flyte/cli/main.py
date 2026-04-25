@@ -103,8 +103,10 @@ def _verbosity_to_loglevel(verbosity: int) -> int | None:
     "--image-builder",
     "--builder",
     type=click.Choice(["local", "remote"]),
-    default="local",
-    help="Image builder to use for building images. Overrides the config file setting.",
+    default=None,
+    help="Image builder to use for building images. Overrides the config file setting."
+    " If not specified, the builder from the config file (image.builder) is used,"
+    " falling back to 'local'.",
     show_default=True,
     required=False,
 )
