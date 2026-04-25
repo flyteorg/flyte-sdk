@@ -11,7 +11,13 @@ import pytest
 import flyte
 from flyte._code_bundle._ignore import GitIgnore, IgnoreGroup, StandardIgnore
 from flyte._code_bundle._packaging import create_bundle
-from flyte._code_bundle._utils import list_all_files, list_imported_modules_as_files, ls_files, ls_relative_files
+from flyte._code_bundle._utils import (
+    list_all_files,
+    list_imported_modules_as_files,
+    ls_files,
+    ls_relative_files,
+    tar_strip_file_attributes,
+)
 from flyte._code_bundle.bundle import build_pkl_bundle
 from flyte._internal.runtime.entrypoints import load_pkl_task
 from flyte.extras import ContainerTask
@@ -603,3 +609,75 @@ def test_list_all_files_returns_strings():
             assert isinstance(f, str), f"Expected str, got {type(f)}: {f}"
             # Paths should be absolute
             assert os.path.isabs(f), f"Expected absolute path, got: {f}"
+
+
+def test_tar_strip_file_attributes_normalizes_file_mode():
+    """A restrictive source mode (0o600) must be normalized to 0o644 in the archive
+    so a non-root pod user can read bundled assets."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        src = pathlib.Path(tmpdir) / "secret.txt"
+        src.write_text("hello")
+        os.chmod(src, 0o600)
+
+        with tarfile.open(pathlib.Path(tmpdir) / "out.tar", "w") as tar:
+            tar.add(str(src), arcname="secret.txt", filter=tar_strip_file_attributes)
+
+        with tarfile.open(pathlib.Path(tmpdir) / "out.tar", "r") as tar:
+            info = tar.getmember("secret.txt")
+            assert info.mode == 0o644, f"expected 0o644, got 0o{info.mode:o}"
+
+
+def test_tar_strip_file_attributes_normalizes_dir_mode():
+    """A restrictive source dir mode (0o700) must be normalized to 0o755 so the
+    runtime user can traverse into bundled directories."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        src_dir = pathlib.Path(tmpdir) / "templates"
+        src_dir.mkdir(mode=0o700)
+        # Re-chmod in case the umask masked it.
+        os.chmod(src_dir, 0o700)
+
+        with tarfile.open(pathlib.Path(tmpdir) / "out.tar", "w") as tar:
+            tar.add(str(src_dir), arcname="templates", recursive=False, filter=tar_strip_file_attributes)
+
+        with tarfile.open(pathlib.Path(tmpdir) / "out.tar", "r") as tar:
+            info = tar.getmember("templates")
+            assert info.isdir()
+            assert info.mode == 0o755, f"expected 0o755, got 0o{info.mode:o}"
+
+
+def test_tar_strip_file_attributes_drops_executable_bit():
+    """Source files with the executable bit set are normalized to 0o644 — bundled
+    assets are data, not scripts run from the bundle."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        src = pathlib.Path(tmpdir) / "script.sh"
+        src.write_text("#!/bin/sh\necho hi\n")
+        os.chmod(src, 0o755)
+
+        with tarfile.open(pathlib.Path(tmpdir) / "out.tar", "w") as tar:
+            tar.add(str(src), arcname="script.sh", filter=tar_strip_file_attributes)
+
+        with tarfile.open(pathlib.Path(tmpdir) / "out.tar", "r") as tar:
+            info = tar.getmember("script.sh")
+            assert info.mode == 0o644
+
+
+def test_create_bundle_normalizes_permissions_end_to_end():
+    """Files with 0o600 perms in the source tree must come out 0o644 in the
+    final bundle produced by create_bundle (the path used for Environment.include)."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        test_dir = pathlib.Path(tmpdir)
+        output_dir = test_dir / "output"
+        output_dir.mkdir()
+
+        restricted = test_dir / "restricted.txt"
+        restricted.write_text("private")
+        os.chmod(restricted, 0o600)
+
+        archive_path, _, _ = create_bundle(test_dir, output_dir, [str(restricted)], "perm_digest")
+
+        with tarfile.open(archive_path, "r:gz") as tar:
+            info = tar.getmember("restricted.txt")
+            assert info.mode == 0o644, f"expected 0o644 in bundle, got 0o{info.mode:o}"
+            # Other host-machine metadata should also be stripped (regression guard).
+            assert info.uid == 0
+            assert info.gid == 0

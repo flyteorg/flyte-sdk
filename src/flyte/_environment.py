@@ -60,6 +60,13 @@ class Environment:
         absolute, directories (recursively included), or glob patterns. Files
         listed here are bundled **in addition to** the default ``copy_style``
         discovery (``loaded_modules`` or ``all``), not in place of it.
+
+        Permissions on bundled files are normalized to ``0o644`` (files) and
+        ``0o755`` (directories). Source-tree mode bits are not preserved — this
+        ensures a non-root pod user can read the bundle even when the source
+        files are stored with restrictive perms (e.g. ``0o600``). Executable
+        bits are not carried over; bundled assets are expected to be data, not
+        scripts run directly from the bundle.
     """
 
     name: str

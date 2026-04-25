@@ -85,6 +85,15 @@ def tar_strip_file_attributes(tar_info: tarfile.TarInfo) -> tarfile.TarInfo:
     tar_info.gid = 0
     tar_info.gname = ""
 
+    # Normalize permissions so the bundle is readable by any pod user, regardless of
+    # the source tree's mode bits (e.g. repos that store files as 0600). Without this
+    # a non-root securityContext can hit "permission denied" reading bundled assets,
+    # and pod-side `chmod` is not always available.
+    if tar_info.isdir():
+        tar_info.mode = 0o755
+    else:
+        tar_info.mode = 0o644
+
     # stripping paxheaders may not be required
     # see https://stackoverflow.com/questions/34688392/paxheaders-in-tarball
     tar_info.pax_headers = {}
