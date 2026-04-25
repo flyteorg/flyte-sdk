@@ -420,6 +420,7 @@ class _Runner:
                     upload_req.project_id.CopyFrom(project_id)
 
                 upload_resp = await get_client().dataproxy_service.upload_inputs(upload_req)
+                print(f"DEBUG!!! {upload_resp.offloaded_input_data}")
 
                 resp = await get_client().run_service.create_run(
                     run_service_pb2.CreateRunRequest(
