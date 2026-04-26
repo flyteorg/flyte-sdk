@@ -33,9 +33,14 @@ class DefaultMetadataInterceptor:
     """
 
     async def on_start(self, ctx) -> None:
+        existing_rid = ctx.request_headers()["x-request-id"]
+        if existing_rid is not None:
+            return None
+
         rid = _generate_request_id()
         logger.debug(f"request-id: {rid}")
         ctx.request_headers()["x-request-id"] = rid
+        return None
 
     async def on_end(self, token, ctx, error) -> None:
         pass
