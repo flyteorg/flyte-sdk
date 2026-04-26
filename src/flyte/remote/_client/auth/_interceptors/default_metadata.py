@@ -37,6 +37,5 @@ class DefaultMetadataInterceptor:
         logger.debug(f"request-id: {rid}")
         ctx.request_headers()["x-request-id"] = rid
 
-
     async def on_end(self, token, ctx, error) -> None:
         pass
