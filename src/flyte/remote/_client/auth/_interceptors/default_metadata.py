@@ -33,7 +33,7 @@ class DefaultMetadataInterceptor:
     """
 
     async def on_start(self, ctx) -> None:
-        existing_rid = ctx.request_headers()["x-request-id"]
+        existing_rid = ctx.request_headers().get("x-request-id")
         if existing_rid is not None:
             return None
 
