@@ -3,6 +3,7 @@ import string
 from uuid import uuid4
 
 import flyte
+from flyte._logging import logger
 
 ALPHABET = string.ascii_lowercase + string.digits
 
@@ -32,7 +33,10 @@ class DefaultMetadataInterceptor:
     """
 
     async def on_start(self, ctx) -> None:
-        ctx.request_headers().setdefault("x-request-id", _generate_request_id())
+        rid = _generate_request_id()
+        logger.debug(f"request-id: {rid}")
+        ctx.request_headers()["x-request-id"] = rid
+
 
     async def on_end(self, token, ctx, error) -> None:
         pass
