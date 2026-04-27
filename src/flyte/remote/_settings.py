@@ -66,6 +66,7 @@ Available setting keys (dot-notation)::
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -123,15 +124,68 @@ _SCOPE_NAMES = {
 #     "stringlist" → StringListSetting
 #     "stringmap"  → StringMapSetting
 
-# The nested ``*Setting`` messages whose presence marks a descriptor as a leaf.
-_SETTING_TYPE_TO_KIND: dict[str, str] = {
-    "StringSetting": "string",
-    "Int64Setting": "int",
-    "BoolSetting": "bool",
-    "QuantitySetting": "quantity",
-    "StringListSetting": "stringlist",
-    "StringMapSetting": "stringmap",
+
+@dataclass(frozen=True)
+class _LeafIO:
+    """Per-kind I/O for ``*Setting`` leaf messages — single source of truth for
+    leaf marshalling. ``extract`` reads a Python value out of a populated leaf;
+    ``build_kwargs`` returns the proto-class kwargs (excluding ``state``) for a
+    Python value.
+    """
+
+    proto_class: type
+    extract: Callable[[Any], Any]
+    build_kwargs: Callable[[Any], dict[str, Any]]
+
+
+def _build_list_kwargs(v: Any) -> dict[str, Any]:
+    if not isinstance(v, (list, tuple)):
+        raise TypeError(f"expected list for stringlist leaf, got {type(v).__name__}")
+    return {"list_value": settings_definition_pb2.StringValues(values=[str(x) for x in v])}
+
+
+def _build_map_kwargs(v: Any) -> dict[str, Any]:
+    if not isinstance(v, dict):
+        raise TypeError(f"expected dict for stringmap leaf, got {type(v).__name__}")
+    return {"map_value": settings_definition_pb2.StringMap(entries={str(k): str(val) for k, val in v.items()})}
+
+
+_LEAF_IO: dict[str, _LeafIO] = {
+    "string": _LeafIO(
+        settings_definition_pb2.StringSetting,
+        lambda leaf: leaf.string_value,
+        lambda v: {"string_value": str(v)},
+    ),
+    "int": _LeafIO(
+        settings_definition_pb2.Int64Setting,
+        lambda leaf: leaf.int_value,
+        lambda v: {"int_value": int(v)},
+    ),
+    "bool": _LeafIO(
+        settings_definition_pb2.BoolSetting,
+        lambda leaf: leaf.bool_value,
+        lambda v: {"bool_value": bool(v)},
+    ),
+    "quantity": _LeafIO(
+        settings_definition_pb2.QuantitySetting,
+        lambda leaf: leaf.quantity_value,
+        lambda v: {"quantity_value": str(v)},
+    ),
+    "stringlist": _LeafIO(
+        settings_definition_pb2.StringListSetting,
+        lambda leaf: list(leaf.list_value.values),
+        _build_list_kwargs,
+    ),
+    "stringmap": _LeafIO(
+        settings_definition_pb2.StringMapSetting,
+        lambda leaf: dict(leaf.map_value.entries),
+        _build_map_kwargs,
+    ),
 }
+
+# Lookup from proto class name → kind, used by ``_discover_leaves`` to identify
+# which descriptor fields are leaves.
+_SETTING_TYPE_TO_KIND: dict[str, str] = {io.proto_class.__name__: kind for kind, io in _LEAF_IO.items()}
 
 # YAML-formatted placeholder per leaf kind, used as the default value in the
 # "Available settings" template section. The proto's ``desc`` extension carries
@@ -187,19 +241,8 @@ def _extract_leaf_value(leaf: Any, leaf_type: str) -> Any | None:
         return UNSET
     if leaf.state != settings_definition_pb2.SETTING_STATE_VALUE:
         return None
-    if leaf_type == "string":
-        return leaf.string_value
-    if leaf_type == "int":
-        return leaf.int_value
-    if leaf_type == "bool":
-        return leaf.bool_value
-    if leaf_type == "quantity":
-        return leaf.quantity_value
-    if leaf_type == "stringlist":
-        return list(leaf.list_value.values)
-    if leaf_type == "stringmap":
-        return dict(leaf.map_value.entries)
-    return None
+    io = _LEAF_IO.get(leaf_type)
+    return io.extract(leaf) if io else None
 
 
 def _build_leaf(leaf_type: str, value: Any) -> Any:
@@ -208,45 +251,12 @@ def _build_leaf(leaf_type: str, value: Any) -> Any:
     When ``value`` is :data:`UNSET`, the leaf carries ``state=SETTING_STATE_UNSET``
     and no payload fields. Otherwise ``state=SETTING_STATE_VALUE``.
     """
-    if value is UNSET:
-        unset = settings_definition_pb2.SETTING_STATE_UNSET
-        if leaf_type == "string":
-            return settings_definition_pb2.StringSetting(state=unset)
-        if leaf_type == "int":
-            return settings_definition_pb2.Int64Setting(state=unset)
-        if leaf_type == "bool":
-            return settings_definition_pb2.BoolSetting(state=unset)
-        if leaf_type == "quantity":
-            return settings_definition_pb2.QuantitySetting(state=unset)
-        if leaf_type == "stringlist":
-            return settings_definition_pb2.StringListSetting(state=unset)
-        if leaf_type == "stringmap":
-            return settings_definition_pb2.StringMapSetting(state=unset)
+    io = _LEAF_IO.get(leaf_type)
+    if io is None:
         raise ValueError(f"unknown leaf type: {leaf_type}")
-    state = settings_definition_pb2.SETTING_STATE_VALUE
-    if leaf_type == "string":
-        return settings_definition_pb2.StringSetting(state=state, string_value=str(value))
-    if leaf_type == "int":
-        return settings_definition_pb2.Int64Setting(state=state, int_value=int(value))
-    if leaf_type == "bool":
-        return settings_definition_pb2.BoolSetting(state=state, bool_value=bool(value))
-    if leaf_type == "quantity":
-        return settings_definition_pb2.QuantitySetting(state=state, quantity_value=str(value))
-    if leaf_type == "stringlist":
-        if not isinstance(value, (list, tuple)):
-            raise TypeError(f"expected list for stringlist leaf, got {type(value).__name__}")
-        return settings_definition_pb2.StringListSetting(
-            state=state,
-            list_value=settings_definition_pb2.StringValues(values=[str(v) for v in value]),
-        )
-    if leaf_type == "stringmap":
-        if not isinstance(value, dict):
-            raise TypeError(f"expected dict for stringmap leaf, got {type(value).__name__}")
-        return settings_definition_pb2.StringMapSetting(
-            state=state,
-            map_value=settings_definition_pb2.StringMap(entries={str(k): str(v) for k, v in value.items()}),
-        )
-    raise ValueError(f"unknown leaf type: {leaf_type}")
+    if value is UNSET:
+        return io.proto_class(state=settings_definition_pb2.SETTING_STATE_UNSET)
+    return io.proto_class(state=settings_definition_pb2.SETTING_STATE_VALUE, **io.build_kwargs(value))
 
 
 def _walk_leaf(settings_msg: settings_definition_pb2.Settings, dotkey: str) -> Any | None:
@@ -400,6 +410,57 @@ class Settings(ToJSONMixin):
             return yaml.safe_dump(value, default_flow_style=True, width=10000).strip()
         return str(value)
 
+    def _render_merge_collection(self, l_setting: LocalSetting) -> list[str]:
+        """Render a stringmap or stringlist local override as YAML lines, with
+        parent-scope items shown as ``#``-commented lines tagged with their
+        origin scope.
+
+        When the local container has entries::
+
+            ## merge/additive comment
+            {key}:
+              {local entries...}
+              # {parent entry}  ## defined at {origin}
+
+        When the local container is empty, the key line itself is commented so
+        saving an unedited file does not replace inherited values with ``null``::
+
+            ## merge/additive comment
+            # {key}:
+            #   {parent entry}  ## defined at {origin}
+        """
+        key = l_setting.key
+        if _LEAF_TYPES.get(key) == "stringmap":
+            merge_comment = _MAP_MERGE_COMMENT
+            local_dict = l_setting.value if isinstance(l_setting.value, dict) else {}
+            local_items = [(k, f"{k}: {self._format_value(v)}") for k, v in local_dict.items()]
+            parent_items = [
+                (k, f"{k}: {self._format_value(eff.value)}", eff.origin)
+                for k, eff in self._map_entry_origins.get(key, {}).items()
+            ]
+        else:  # stringlist
+            merge_comment = _LIST_ADDITIVE_COMMENT
+            local_list = l_setting.value if isinstance(l_setting.value, list) else []
+            local_items = [(v, f"- {self._format_value(v)}") for v in local_list]
+            parent_items = [
+                (eff.value, f"- {self._format_value(eff.value)}", eff.origin)
+                for eff in self._list_item_origins.get(key, [])
+            ]
+
+        local_dedup_keys = {dk for dk, _ in local_items}
+        lines = [merge_comment]
+        if local_items:
+            lines.append(f"{key}:")
+            lines.extend(f"  {repr_str}" for _, repr_str in local_items)
+            for dk, repr_str, origin in parent_items:
+                if dk not in local_dedup_keys:
+                    lines.append(f"  # {repr_str}  ## defined at {origin}")
+        else:
+            lines.append(f"# {key}:")
+            for _, repr_str, origin in parent_items:
+                lines.append(f"#   {repr_str}  ## defined at {origin}")
+        return lines
+
     def to_yaml_sections(self) -> list[tuple[str, str]]:
         """Return the YAML content split into labelled sections.
 
@@ -437,45 +498,8 @@ class Settings(ToJSONMixin):
                 d = _describe(l_setting.key)
                 if d:
                     lines.append(d)
-                if _LEAF_TYPES.get(l_setting.key) == "stringmap":
-                    lines.append(_MAP_MERGE_COMMENT)
-                    local_map: dict = l_setting.value if isinstance(l_setting.value, dict) else {}
-                    parent_entries = self._map_entry_origins.get(l_setting.key, {})
-                    if local_map:
-                        lines.append(f"{l_setting.key}:")
-                        for entry_key, entry_val in local_map.items():
-                            lines.append(f"  {entry_key}: {self._format_value(entry_val)}")
-                        for entry_key, entry_eff in parent_entries.items():
-                            if entry_key not in local_map:
-                                lines.append(
-                                    f"  # {entry_key}: {self._format_value(entry_eff.value)}  ## defined at {entry_eff.origin}"
-                                )
-                    else:
-                        lines.append(f"# {l_setting.key}:")
-                        for entry_key, entry_eff in parent_entries.items():
-                            lines.append(
-                                f"#   {entry_key}: {self._format_value(entry_eff.value)}  ## defined at {entry_eff.origin}"
-                            )
-                elif _LEAF_TYPES.get(l_setting.key) == "stringlist":
-                    lines.append(_LIST_ADDITIVE_COMMENT)
-                    local_list: list = l_setting.value if isinstance(l_setting.value, list) else []
-                    local_set = set(local_list)
-                    parent_items = self._list_item_origins.get(l_setting.key, [])
-                    if local_list:
-                        lines.append(f"{l_setting.key}:")
-                        for item in local_list:
-                            lines.append(f"  - {self._format_value(item)}")
-                        for item_eff in parent_items:
-                            if item_eff.value not in local_set:
-                                lines.append(
-                                    f"  # - {self._format_value(item_eff.value)}  ## defined at {item_eff.origin}"
-                                )
-                    else:
-                        lines.append(f"# {l_setting.key}:")
-                        for item_eff in parent_items:
-                            lines.append(
-                                f"#   - {self._format_value(item_eff.value)}  ## defined at {item_eff.origin}"
-                            )
+                if _LEAF_TYPES.get(l_setting.key) in ("stringmap", "stringlist"):
+                    lines.extend(self._render_merge_collection(l_setting))
                 else:
                     lines.append(f"{l_setting.key}: {self._format_value(l_setting.value)}")
                     parent = self._parent_effective.get(l_setting.key)
