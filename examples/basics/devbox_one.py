@@ -4,11 +4,7 @@ from typing import List
 
 import flyte
 
-env = flyte.TaskEnvironment(
-    name="hello_world",
-    resources=flyte.Resources(cpu=1, memory="1Gi"),
-    queue="dogfood-1"
-)
+env = flyte.TaskEnvironment(name="hello_world", resources=flyte.Resources(cpu=1, memory="1Gi"), queue="dogfood-1")
 
 
 @env.task(queue="dogfood-2")
