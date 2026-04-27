@@ -101,6 +101,8 @@ In YAML, write ``key: ~unset`` to express this state.
 """
 
 _YAML_UNSET_TOKEN = "~unset"
+_MAP_MERGE_COMMENT = "## Map entries merge across scopes — parent entries are shown below and applied unless overridden here."
+_LIST_ADDITIVE_COMMENT = "## List values add across scopes — parent items are shown below and included unless overridden here."
 
 # Scope level mapping from proto enum to human-readable strings
 _SCOPE_NAMES = {
@@ -350,6 +352,9 @@ class Settings(ToJSONMixin):
     domain: str | None = None
     project: str | None = None
     _version: int = field(default=0, repr=False)
+    _parent_effective: dict[str, EffectiveSetting] = field(default_factory=dict, repr=False)
+    _map_entry_origins: dict[str, dict[str, EffectiveSetting]] = field(default_factory=dict, repr=False)
+    _list_item_origins: dict[str, list[EffectiveSetting]] = field(default_factory=dict, repr=False)
 
     @staticmethod
     def available_keys() -> list[str]:
@@ -407,34 +412,101 @@ class Settings(ToJSONMixin):
         local_keys = {s.key for s in self.local_settings}
         effective_keys = {s.key for s in self.effective_settings}
 
+        # A stringmap or stringlist local setting with no local entries has nothing to override
+        # — treat it as inherited for display so it appears in the Inherited section, not Local overrides.
+        empty_local_map_keys = {
+            s.key
+            for s in self.local_settings
+            if (
+                (_LEAF_TYPES.get(s.key) == "stringmap" and not (isinstance(s.value, dict) and s.value))
+                or (_LEAF_TYPES.get(s.key) == "stringlist" and not (isinstance(s.value, list) and s.value))
+            )
+        }
+        display_local_settings = [s for s in self.local_settings if s.key not in empty_local_map_keys]
+        display_local_keys = local_keys - empty_local_map_keys
+
         def _describe(dotkey: str) -> str | None:
             desc = _LEAF_DESCRIPTIONS.get(dotkey)
             return f"## {desc}" if desc else None
 
         sections: list[tuple[str, str]] = []
 
-        if self.local_settings:
+        if display_local_settings:
             lines: list[str] = []
-            for l_setting in self.local_settings:
+            for l_setting in display_local_settings:
                 d = _describe(l_setting.key)
                 if d:
                     lines.append(d)
-                lines.append(f"{l_setting.key}: {self._format_value(l_setting.value)}")
+                if _LEAF_TYPES.get(l_setting.key) == "stringmap":
+                    lines.append(_MAP_MERGE_COMMENT)
+                    local_map: dict = l_setting.value if isinstance(l_setting.value, dict) else {}
+                    parent_entries = self._map_entry_origins.get(l_setting.key, {})
+                    if local_map:
+                        lines.append(f"{l_setting.key}:")
+                        for entry_key, entry_val in local_map.items():
+                            lines.append(f"  {entry_key}: {self._format_value(entry_val)}")
+                        for entry_key, entry_eff in parent_entries.items():
+                            if entry_key not in local_map:
+                                lines.append(
+                                    f"  # {entry_key}: {self._format_value(entry_eff.value)}  ## defined at {entry_eff.origin}"
+                                )
+                    else:
+                        lines.append(f"# {l_setting.key}:")
+                        for entry_key, entry_eff in parent_entries.items():
+                            lines.append(
+                                f"#   {entry_key}: {self._format_value(entry_eff.value)}  ## defined at {entry_eff.origin}"
+                            )
+                elif _LEAF_TYPES.get(l_setting.key) == "stringlist":
+                    lines.append(_LIST_ADDITIVE_COMMENT)
+                    local_list: list = l_setting.value if isinstance(l_setting.value, list) else []
+                    local_set = set(local_list)
+                    parent_items = self._list_item_origins.get(l_setting.key, [])
+                    if local_list:
+                        lines.append(f"{l_setting.key}:")
+                        for item in local_list:
+                            lines.append(f"  - {self._format_value(item)}")
+                        for item_eff in parent_items:
+                            if item_eff.value not in local_set:
+                                lines.append(
+                                    f"  # - {self._format_value(item_eff.value)}  ## defined at {item_eff.origin}"
+                                )
+                    else:
+                        lines.append(f"# {l_setting.key}:")
+                        for item_eff in parent_items:
+                            lines.append(
+                                f"#   - {self._format_value(item_eff.value)}  ## defined at {item_eff.origin}"
+                            )
+                else:
+                    lines.append(f"{l_setting.key}: {self._format_value(l_setting.value)}")
+                    parent = self._parent_effective.get(l_setting.key)
+                    if parent is not None:
+                        lines.append(
+                            f"# overridden value: {self._format_value(parent.value)}  ## defined at {parent.origin}"
+                        )
             sections.append(("Local overrides", "\n".join(lines)))
 
-        inherited = [s for s in self.effective_settings if s.key not in local_keys]
+        inherited = [s for s in self.effective_settings if s.key not in display_local_keys]
         if inherited:
             lines = []
             for setting in inherited:
                 d = _describe(setting.key)
                 if d:
                     lines.append(d)
-                lines.append(
-                    f"# {setting.key}: {self._format_value(setting.value)}  ## inherited from {setting.origin}"
-                )
+                if _LEAF_TYPES.get(setting.key) == "stringmap" and isinstance(setting.value, dict):
+                    lines.append(f"# {setting.key}:  ## inherited from {setting.origin}")
+                    for entry_key, entry_val in setting.value.items():
+                        lines.append(f"#   {entry_key}: {self._format_value(entry_val)}")
+                elif _LEAF_TYPES.get(setting.key) == "stringlist" and isinstance(setting.value, list):
+                    lines.append(f"# {setting.key}:  ## inherited from {setting.origin}")
+                    for item in setting.value:
+                        lines.append(f"#   - {self._format_value(item)}")
+                else:
+                    lines.append(
+                        f"# {setting.key}: {self._format_value(setting.value)}  ## inherited from {setting.origin}"
+                    )
             sections.append(("Inherited settings", "\n".join(lines)))
 
-        unset = [k for k, _, _ in _LEAF_SCHEMA if k not in local_keys and k not in effective_keys]
+        unset = [k for k, _, _ in _LEAF_SCHEMA if k not in display_local_keys and k not in effective_keys]
         if unset:
             lines = []
             for key in unset:
@@ -549,10 +621,36 @@ class Settings(ToJSONMixin):
 
         # resp.levels is ordered broadest → most specific.
         # Build effective settings by layering: broader values get overridden by narrower.
+        # Also track parent_effective — the effective values from all levels except the local
+        # scope — so each local override can show what it is replacing.
+        want_domain = domain or ""
+        want_project = project or ""
+
         effective: dict[str, EffectiveSetting] = {}
+        parent_effective: dict[str, EffectiveSetting] = {}
+        map_entry_origins: dict[str, dict[str, EffectiveSetting]] = {}
+        list_item_origins: dict[str, list[EffectiveSetting]] = {}
         for record in resp.levels:
+            is_local = (record.key.domain or "") == want_domain and (record.key.project or "") == want_project
             origin = _scope_origin_from_key(record.key)
             for dotkey, val in _proto_to_flat(record.settings):
+                if not is_local:
+                    parent_effective[dotkey] = EffectiveSetting(key=dotkey, value=val, origin=origin)
+                    if _LEAF_TYPES.get(dotkey) == "stringmap":
+                        if val is UNSET:
+                            map_entry_origins.pop(dotkey, None)
+                        elif isinstance(val, dict):
+                            entry_map = map_entry_origins.setdefault(dotkey, {})
+                            for entry_key, entry_val in val.items():
+                                entry_map[entry_key] = EffectiveSetting(key=dotkey, value=entry_val, origin=origin)
+                    elif _LEAF_TYPES.get(dotkey) == "stringlist":
+                        if val is UNSET:
+                            list_item_origins.pop(dotkey, None)
+                        elif isinstance(val, list):
+                            item_map = {es.value: es for es in list_item_origins.get(dotkey, [])}
+                            for item in val:
+                                item_map[item] = EffectiveSetting(key=dotkey, value=item, origin=origin)
+                            list_item_origins[dotkey] = list(item_map.values())
                 effective[dotkey] = EffectiveSetting(key=dotkey, value=val, origin=origin)
 
         # Local settings come from the level whose key equals the requested scope
@@ -560,8 +658,6 @@ class Settings(ToJSONMixin):
         # We don't take ``levels[-1]`` because the server may omit a level when no
         # record exists at that scope yet, in which case the last returned level
         # is a parent scope and its values are inherited, not local.
-        want_domain = domain or ""
-        want_project = project or ""
         local_settings: list[LocalSetting] = []
         version = 0
         for record in resp.levels:
@@ -577,6 +673,9 @@ class Settings(ToJSONMixin):
             domain=domain,
             project=project,
             _version=version,
+            _parent_effective=parent_effective,
+            _map_entry_origins=map_entry_origins,
+            _list_item_origins=list_item_origins,
         )
 
     @syncify
