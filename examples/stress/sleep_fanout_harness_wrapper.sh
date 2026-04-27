@@ -50,7 +50,6 @@ PEAK_PARENT_LIVE=0
 PEAK_PARENT_RUNNING=0
 LAST_LAUNCH_STAGE=""
 SDK_WHEEL_PATH=""
-SDK_WHEEL_MTIME=""
 SDK_SRC_NEWER=0
 
 usage() {
@@ -237,7 +236,6 @@ sanitize_run_name() {
 
 detect_sdk_wheel_status() {
   local wheel_path=""
-  local wheel_mtime=""
   local newest_src=""
 
   wheel_path="$(
@@ -246,15 +244,12 @@ detect_sdk_wheel_status() {
       | tail -n 1 || true
   )"
   SDK_WHEEL_PATH="${wheel_path}"
-  SDK_WHEEL_MTIME=""
   SDK_SRC_NEWER=0
 
   if [[ -z "${wheel_path}" ]]; then
     return
   fi
 
-  wheel_mtime="$(stat -f '%m' "${wheel_path}" 2>/dev/null || true)"
-  SDK_WHEEL_MTIME="${wheel_mtime}"
   newest_src="$(
     find "${REPO_ROOT}/src/flyte" -type f -newer "${wheel_path}" -print 2>/dev/null \
       | head -n 1 || true
