@@ -6,10 +6,10 @@ import pytest
 from flyteidl2.settings import settings_definition_pb2, settings_service_pb2
 
 from flyte.remote._settings import (
-    UNSET,
     _LEAF_DESCRIPTIONS,
     _LEAF_EXAMPLES,
     _LEAF_SCHEMA,
+    UNSET,
     EffectiveSetting,
     LocalSetting,
     SettingOrigin,
@@ -375,9 +375,9 @@ class TestToYaml:
         )
         yaml = settings.to_yaml()
         lines = yaml.split("\n")
-        assert any("- " in l and "env:prod" in l for l in lines)
-        assert any("- " in l and "team:ml" in l for l in lines)
-        assert not any(l.strip().startswith("labels:") and "{" in l for l in lines)
+        assert any("- " in line and "env:prod" in line for line in lines)
+        assert any("- " in line and "team:ml" in line for line in lines)
+        assert not any(line.strip().startswith("labels:") and "{" in line for line in lines)
 
     def test_local_list_renders_as_block_yaml(self):
         settings = Settings(
@@ -387,8 +387,8 @@ class TestToYaml:
         )
         yaml = settings.to_yaml()
         lines = yaml.split("\n")
-        assert any(l.startswith("labels:") for l in lines)
-        assert any(l.startswith("  - ") and "team:ml" in l for l in lines)
+        assert any(line.startswith("labels:") for line in lines)
+        assert any(line.startswith("  - ") and "team:ml" in line for line in lines)
         assert "['team:ml']" not in yaml
 
     def test_local_list_parent_items_commented_with_origin(self):
@@ -405,7 +405,7 @@ class TestToYaml:
         )
         yaml = settings.to_yaml()
         lines = yaml.split("\n")
-        assert any(l.startswith("  # - ") and "env:prod" in l and "defined at ORG" in l for l in lines)
+        assert any(line.startswith("  # - ") and "env:prod" in line and "defined at ORG" in line for line in lines)
 
     def test_local_list_local_item_not_duplicated_as_comment(self):
         settings = Settings(
@@ -421,8 +421,8 @@ class TestToYaml:
         )
         yaml = settings.to_yaml()
         lines = yaml.split("\n")
-        assert any(l.startswith("  - ") and "env:prod" in l for l in lines)
-        assert not any(l.startswith("  # - ") and "env:prod" in l for l in lines)
+        assert any(line.startswith("  - ") and "env:prod" in line for line in lines)
+        assert not any(line.startswith("  # - ") and "env:prod" in line for line in lines)
 
     def test_local_list_how_lists_work_comment_present(self):
         settings = Settings(
@@ -449,9 +449,9 @@ class TestToYaml:
         )
         yaml = settings.to_yaml()
         lines = yaml.split("\n")
-        inherited_idx = next(i for i, l in enumerate(lines) if "### Inherited settings" in l)
-        available_idx = next(i for i, l in enumerate(lines) if "### Available settings" in l)
-        labels_idx = next(i for i, l in enumerate(lines) if "labels:" in l)
+        inherited_idx = next(i for i, line in enumerate(lines) if "### Inherited settings" in line)
+        available_idx = next(i for i, line in enumerate(lines) if "### Available settings" in line)
+        labels_idx = next(i for i, line in enumerate(lines) if "labels:" in line)
         assert inherited_idx < labels_idx < available_idx
         assert "### Local overrides" not in yaml
 
@@ -491,9 +491,9 @@ class TestToYaml:
         )
         yaml = settings.to_yaml()
         lines = yaml.split("\n")
-        inherited_idx = next(i for i, l in enumerate(lines) if "### Inherited settings" in l)
-        available_idx = next(i for i, l in enumerate(lines) if "### Available settings" in l)
-        annotations_idx = next(i for i, l in enumerate(lines) if "annotations:" in l)
+        inherited_idx = next(i for i, line in enumerate(lines) if "### Inherited settings" in line)
+        available_idx = next(i for i, line in enumerate(lines) if "### Available settings" in line)
+        annotations_idx = next(i for i, line in enumerate(lines) if "annotations:" in line)
         assert inherited_idx < annotations_idx < available_idx, (
             "annotations should appear in Inherited settings, not Local overrides"
         )
@@ -600,7 +600,7 @@ class TestToYaml:
         )
         yaml = settings.to_yaml()
         lines = yaml.split("\n")
-        local_line_idx = next(i for i, l in enumerate(lines) if l == "run.default_queue: gpu")
+        local_line_idx = next(i for i, line in enumerate(lines) if line == "run.default_queue: gpu")
         assert lines[local_line_idx + 1] == "# overridden value: cpu  ## defined at DOMAIN(prod)"
 
     def test_local_override_no_parent_shows_no_overridden_comment(self):
@@ -893,10 +893,8 @@ class TestSettingsGet:
     def test_get_populates_list_item_origins_from_parent_levels(
         self, mock_client, mock_settings_service, mock_init_config
     ):
-        org_record = _make_record(org="myorg", version=1, **{"labels": ["env:prod", "team:ml"]})
-        project_record = _make_record(
-            org="myorg", domain="prod", project="ml", version=2, **{"labels": ["oncall:ml-team"]}
-        )
+        org_record = _make_record(org="myorg", version=1, labels=["env:prod", "team:ml"])
+        project_record = _make_record(org="myorg", domain="prod", project="ml", version=2, labels=["oncall:ml-team"])
         mock_settings_service.get_settings_for_edit.return_value = settings_service_pb2.GetSettingsForEditResponse(
             requestedKey=settings_definition_pb2.SettingsKey(org="myorg", domain="prod", project="ml"),
             levels=[org_record, project_record],
@@ -913,12 +911,8 @@ class TestSettingsGet:
         assert items["team:ml"].origin.scope_type == "ORG"
         assert "oncall:ml-team" not in items
 
-    def test_get_list_item_origins_excludes_local_scope(
-        self, mock_client, mock_settings_service, mock_init_config
-    ):
-        project_record = _make_record(
-            org="myorg", domain="prod", project="ml", version=1, **{"labels": ["env:prod"]}
-        )
+    def test_get_list_item_origins_excludes_local_scope(self, mock_client, mock_settings_service, mock_init_config):
+        project_record = _make_record(org="myorg", domain="prod", project="ml", version=1, labels=["env:prod"])
         mock_settings_service.get_settings_for_edit.return_value = settings_service_pb2.GetSettingsForEditResponse(
             requestedKey=settings_definition_pb2.SettingsKey(org="myorg", domain="prod", project="ml"),
             levels=[project_record],
@@ -932,14 +926,10 @@ class TestSettingsGet:
 
         assert "labels" not in settings._list_item_origins
 
-    def test_get_unset_at_parent_clears_ancestor_list_items(
-        self, mock_client, mock_settings_service, mock_init_config
-    ):
-        org_record = _make_record(org="myorg", version=1, **{"labels": ["env:prod"]})
-        domain_record = _make_record(org="myorg", domain="prod", version=2, **{"labels": UNSET})
-        project_record = _make_record(
-            org="myorg", domain="prod", project="ml", version=3, **{"labels": ["team:ml"]}
-        )
+    def test_get_unset_at_parent_clears_ancestor_list_items(self, mock_client, mock_settings_service, mock_init_config):
+        org_record = _make_record(org="myorg", version=1, labels=["env:prod"])
+        domain_record = _make_record(org="myorg", domain="prod", version=2, labels=UNSET)
+        project_record = _make_record(org="myorg", domain="prod", project="ml", version=3, labels=["team:ml"])
         mock_settings_service.get_settings_for_edit.return_value = settings_service_pb2.GetSettingsForEditResponse(
             requestedKey=settings_definition_pb2.SettingsKey(org="myorg", domain="prod", project="ml"),
             levels=[org_record, domain_record, project_record],
@@ -958,9 +948,9 @@ class TestSettingsGet:
         self, mock_client, mock_settings_service, mock_init_config
     ):
         """Each parent-scope map entry is recorded with the scope it came from."""
-        org_record = _make_record(org="myorg", version=1, **{"annotations": {"team": "ml", "env": "prod"}})
+        org_record = _make_record(org="myorg", version=1, annotations={"team": "ml", "env": "prod"})
         project_record = _make_record(
-            org="myorg", domain="prod", project="ml", version=2, **{"annotations": {"oncall": "ml-team"}}
+            org="myorg", domain="prod", project="ml", version=2, annotations={"oncall": "ml-team"}
         )
         mock_settings_service.get_settings_for_edit.return_value = settings_service_pb2.GetSettingsForEditResponse(
             requestedKey=settings_definition_pb2.SettingsKey(org="myorg", domain="prod", project="ml"),
@@ -985,7 +975,7 @@ class TestSettingsGet:
     ):
         """Entries that exist only at the local scope do not appear in map_entry_origins."""
         project_record = _make_record(
-            org="myorg", domain="prod", project="ml", version=1, **{"annotations": {"oncall": "ml-team"}}
+            org="myorg", domain="prod", project="ml", version=1, annotations={"oncall": "ml-team"}
         )
         mock_settings_service.get_settings_for_edit.return_value = settings_service_pb2.GetSettingsForEditResponse(
             requestedKey=settings_definition_pb2.SettingsKey(org="myorg", domain="prod", project="ml"),
@@ -1005,10 +995,10 @@ class TestSettingsGet:
         self, mock_client, mock_settings_service, mock_init_config
     ):
         """If ORG and DOMAIN both set the same map entry key, the DOMAIN value appears in origins."""
-        org_record = _make_record(org="myorg", version=1, **{"annotations": {"team": "ml"}})
-        domain_record = _make_record(org="myorg", domain="prod", version=2, **{"annotations": {"team": "engineering"}})
+        org_record = _make_record(org="myorg", version=1, annotations={"team": "ml"})
+        domain_record = _make_record(org="myorg", domain="prod", version=2, annotations={"team": "engineering"})
         project_record = _make_record(
-            org="myorg", domain="prod", project="ml", version=3, **{"annotations": {"oncall": "ml-team"}}
+            org="myorg", domain="prod", project="ml", version=3, annotations={"oncall": "ml-team"}
         )
         mock_settings_service.get_settings_for_edit.return_value = settings_service_pb2.GetSettingsForEditResponse(
             requestedKey=settings_definition_pb2.SettingsKey(org="myorg", domain="prod", project="ml"),
@@ -1076,10 +1066,10 @@ class TestSettingsGet:
         self, mock_client, mock_settings_service, mock_init_config
     ):
         """When a parent scope sets a map to UNSET, ancestor map entries must not appear in _map_entry_origins."""
-        org_record = _make_record(org="myorg", version=1, **{"annotations": {"team": "ml", "env": "prod"}})
-        domain_record = _make_record(org="myorg", domain="prod", version=2, **{"annotations": UNSET})
+        org_record = _make_record(org="myorg", version=1, annotations={"team": "ml", "env": "prod"})
+        domain_record = _make_record(org="myorg", domain="prod", version=2, annotations=UNSET)
         project_record = _make_record(
-            org="myorg", domain="prod", project="ml", version=3, **{"annotations": {"oncall": "ml-team"}}
+            org="myorg", domain="prod", project="ml", version=3, annotations={"oncall": "ml-team"}
         )
         mock_settings_service.get_settings_for_edit.return_value = settings_service_pb2.GetSettingsForEditResponse(
             requestedKey=settings_definition_pb2.SettingsKey(org="myorg", domain="prod", project="ml"),
@@ -1097,15 +1087,11 @@ class TestSettingsGet:
         assert "team" not in origins, "ORG entry 'team' should be blocked by DOMAIN's UNSET"
         assert "env" not in origins, "ORG entry 'env' should be blocked by DOMAIN's UNSET"
 
-    def test_unset_at_parent_scope_clears_ancestor_list(
-        self, mock_client, mock_settings_service, mock_init_config
-    ):
+    def test_unset_at_parent_scope_clears_ancestor_list(self, mock_client, mock_settings_service, mock_init_config):
         """When a parent scope sets a list to UNSET, the effective value must be UNSET, not the ancestor list."""
-        org_record = _make_record(org="myorg", version=1, **{"labels": ["env:prod", "team:ml"]})
-        domain_record = _make_record(org="myorg", domain="prod", version=2, **{"labels": UNSET})
-        project_record = _make_record(
-            org="myorg", domain="prod", project="ml", version=3
-        )
+        org_record = _make_record(org="myorg", version=1, labels=["env:prod", "team:ml"])
+        domain_record = _make_record(org="myorg", domain="prod", version=2, labels=UNSET)
+        project_record = _make_record(org="myorg", domain="prod", project="ml", version=3)
         mock_settings_service.get_settings_for_edit.return_value = settings_service_pb2.GetSettingsForEditResponse(
             requestedKey=settings_definition_pb2.SettingsKey(org="myorg", domain="prod", project="ml"),
             levels=[org_record, domain_record, project_record],

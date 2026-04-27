@@ -102,8 +102,12 @@ In YAML, write ``key: ~unset`` to express this state.
 """
 
 _YAML_UNSET_TOKEN = "~unset"
-_MAP_MERGE_COMMENT = "## Map entries merge across scopes — parent entries are shown below and applied unless overridden here."
-_LIST_ADDITIVE_COMMENT = "## List values add across scopes — parent items are shown below and included unless overridden here."
+_MAP_MERGE_COMMENT = (
+    "## Map entries merge across scopes — parent entries are shown below and applied unless overridden here."
+)
+_LIST_ADDITIVE_COMMENT = (
+    "## List values add across scopes — parent items are shown below and included unless overridden here."
+)
 
 # Scope level mapping from proto enum to human-readable strings
 _SCOPE_NAMES = {
