@@ -13,7 +13,7 @@ from typing import Any, Optional
 import flyte
 from flyte.errors import InvalidPackageError
 from flyte.extras._container import ContainerTask
-from flyte.io import File
+from flyte.io import Dir, File
 from flyte.models import NativeInterface
 from flyte.syncify import syncify
 
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 # Types that can be declared as sandbox inputs or outputs.
 # Anything outside this set is rejected at create() time.
-_SUPPORTED_TYPES: frozenset[type] = frozenset({int, float, str, bool, datetime.datetime, datetime.timedelta, File})
+_SUPPORTED_TYPES: frozenset[type] = frozenset({int, float, str, bool, datetime.datetime, datetime.timedelta, File, Dir})
 
 sandbox_environment = flyte.TaskEnvironment(
     name="sandbox-runtime",
@@ -131,12 +131,12 @@ class _Sandbox:
         2. Executes the user's code verbatim with those names in scope.
         3. Writes each declared scalar output variable to `/var/outputs/<name>`.
 
-        File inputs are injected as path strings.
-        File outputs must be written by user code to `/var/outputs/<name>`.
+        File and Dir inputs are injected as path strings.
+        File and Dir outputs must be written by user code to `/var/outputs/<name>`.
         """
-        scalar_inputs = {k: v for k, v in self.inputs.items() if v is not File}
-        io_inputs = {k: v for k, v in self.inputs.items() if v is File}
-        scalar_outputs = {k: v for k, v in self.outputs.items() if v is not File}
+        scalar_inputs = {k: v for k, v in self.inputs.items() if v not in (File, Dir)}
+        io_inputs = {k: v for k, v in self.inputs.items() if v in (File, Dir)}
+        scalar_outputs = {k: v for k, v in self.outputs.items() if v not in (File, Dir)}
 
         lines: list[str] = ["import argparse as _ap_", "import pathlib as _pl_"]
 
@@ -245,7 +245,7 @@ class _Sandbox:
             positional_index = 2
 
             for arg_name, arg_type in self.inputs.items():
-                if arg_type is File:
+                if arg_type in (File, Dir):
                     cli_args.extend([f"--{arg_name}", f"${positional_index}"])
                     arguments.append(f"/var/inputs/{arg_name}")
                     positional_index += 1
@@ -454,7 +454,7 @@ def create(
 
             - Primitive: `int`, `float`, `str`, `bool`
             - Date/time: `datetime.datetime`, `datetime.timedelta`
-            - IO handles: `flyte.io.File`
+            - IO handles: `flyte.io.File`, `flyte.io.Dir`
               (bind-mounted at `/var/inputs/<name>`; available as a path
               string in auto-IO mode)
 
@@ -462,8 +462,8 @@ def create(
 
             - Primitive: `int`, `float`, `str`, `bool`
             - Date/time: `datetime.datetime` (ISO-8601), `datetime.timedelta`
-            - IO handles: `flyte.io.File`
-              (user code must write the file to `/var/outputs/<name>`)
+            - IO handles: `flyte.io.File`, `flyte.io.Dir`
+              (user code must write the file or directory to `/var/outputs/<name>`)
 
         command: Entrypoint command (command mode). Mutually exclusive with `code`.
         arguments: Arguments forwarded to `command` (command mode only).
