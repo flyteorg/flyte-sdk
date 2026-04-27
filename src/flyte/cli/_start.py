@@ -25,8 +25,8 @@ def tui():
     launch_tui_explore()
 
 
-_DEFAULT_DEVBOX_IMAGE = "ghcr.io/flyteorg/flyte-devbox:nightly"
-_DEFAULT_DEVBOX_GPU_IMAGE = "ghcr.io/flyteorg/flyte-devbox:gpu-nightly"
+_DEFAULT_DEVBOX_IMAGE = "cr.flyte.org/flyteorg/flyte-devbox:nightly"
+_DEFAULT_DEVBOX_GPU_IMAGE = "cr.flyte.org/flyteorg/flyte-devbox:gpu-nightly"
 
 
 @start.command()
