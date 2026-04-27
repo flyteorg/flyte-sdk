@@ -11,12 +11,10 @@ import argparse
 import asyncio
 import os
 import pathlib
+import re
 import shutil
-import sys
 import time
 from datetime import timedelta
-
-import re
 
 RUN_URL_RE = re.compile(r"URL:\s+(\S+/runs/[^/?\s]+)")
 RUN_NAME_RE = re.compile(r"Created Run:\s+([^\s]+)")
