@@ -13,6 +13,7 @@ from flyteidl2.dataproxy import dataproxy_service_pb2
 from flyteidl2.dataproxy.dataproxy_service_connect import DataProxyServiceClient
 from flyteidl2.project.project_service_connect import ProjectServiceClient
 from flyteidl2.secret.secret_connect import SecretServiceClient
+from flyteidl2.settings.settings_service_connect import SettingsServiceClient
 from flyteidl2.task.task_service_connect import TaskServiceClient
 from flyteidl2.trigger.trigger_service_connect import TriggerServiceClient
 from flyteidl2.workflow.run_logs_service_connect import RunLogsServiceClient
@@ -27,6 +28,7 @@ from ._protocols import (
     RunLogsService,
     RunService,
     SecretService,
+    SettingsService,
     TaskService,
     TriggerService,
 )
@@ -328,6 +330,7 @@ class ClientSet:
         self._identity_service = IdentityServiceClient(**shared)
         self._trigger_service = TriggerServiceClient(**shared)
         self._cluster_service = ClusterServiceClient(**shared)
+        self._settings_service = SettingsServiceClient(**shared)
         self._dataproxy = ClusterAwareDataProxy(
             cluster_service=self._cluster_service,
             session_config=session_cfg,
@@ -398,6 +401,10 @@ class ClientSet:
     @property
     def cluster_service(self) -> ClusterService:
         return self._cluster_service
+
+    @property
+    def settings_service(self) -> SettingsService:
+        return self._settings_service
 
     @property
     def endpoint(self) -> str:

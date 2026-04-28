@@ -153,7 +153,7 @@ class ExternalFunctionBridge:
                     args = [_from_monty(a) for a in progress.args]
                     kwargs = {k: _from_monty(v) for k, v in progress.kwargs.items()}
                     result = await self._handle_flyte_map(args, kwargs)
-                    progress = progress.resume(return_value=_to_monty(result))
+                    progress = progress.resume(_to_monty(result))
                     continue
 
                 fn = ext_fns.get(progress.function_name)
@@ -172,6 +172,6 @@ class ExternalFunctionBridge:
                     result = await result
 
                 # Marshal IO types so Monty can hold the return value
-                progress = progress.resume(return_value=_to_monty(result))
+                progress = progress.resume(_to_monty(result))
             else:
                 raise RuntimeError(f"Unexpected Monty progress state: {progress!r}")
