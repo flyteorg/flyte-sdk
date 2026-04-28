@@ -95,6 +95,7 @@ class _WandBConfig:
     # Essential fields (most commonly used)
     project: Optional[str] = None
     entity: Optional[str] = None
+    host: Optional[str] = None
     id: Optional[str] = None
     name: Optional[str] = None
     tags: Optional[list[str]] = None
@@ -191,6 +192,7 @@ def get_wandb_context() -> Optional[_WandBConfig]:
 def wandb_config(
     project: Optional[str] = None,
     entity: Optional[str] = None,
+    host: Optional[str] = None,
     id: Optional[str] = None,
     name: Optional[str] = None,
     tags: Optional[list[str]] = None,
@@ -212,6 +214,7 @@ def wandb_config(
     Args:
         project: W&B project name
         entity: W&B entity (team or username)
+        host: Base W&B host URL (e.g., "https://wandb.ai" or a self-hosted instance)
         id: Unique run id (auto-generated if not provided)
         name: Human-readable run name
         tags: List of tags for organizing runs
@@ -246,6 +249,7 @@ def wandb_config(
     return _WandBConfig(
         project=project,
         entity=entity,
+        host=host,
         id=id,
         name=name,
         tags=tags,

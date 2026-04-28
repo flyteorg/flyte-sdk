@@ -9,7 +9,7 @@ from flyte.models import SerializationContext
 
 def test_connector_defaults():
     conn = ConnectorEnvironment(name="my-connector", image=Image.from_base("python:3.11"))
-    assert conn.type == "Connector"
+    assert conn.type == "connector"
     assert isinstance(conn.port, Port)
     assert conn.port.port == 8080
     assert conn.port.name == "h2c"

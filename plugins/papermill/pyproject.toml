@@ -1,0 +1,78 @@
+[project]
+name = "flyteplugins-papermill"
+dynamic = ["version"]
+description = "Papermill plugin for Flyte - Run Jupyter notebooks as Flyte tasks"
+readme = "README.md"
+authors = [{ name = "Samhita Alla", email = "samhita@union.ai" }]
+requires-python = ">=3.10"
+dependencies = [
+    "papermill",
+    "nbconvert",
+    "nbformat",
+    "ipykernel",
+    "flyte",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+]
+
+[build-system]
+requires = ["setuptools", "setuptools_scm"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+include-package-data = true
+license-files = ["licenses/*.txt", "LICENSE"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["flyteplugins*"]
+
+[tool.setuptools_scm]
+root = "../../"
+
+[tool.pytest.ini_options]
+norecursedirs = []
+log_cli = true
+log_cli_level = 20
+markers = []
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.coverage.run]
+branch = true
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    "E",
+    "W",
+    "F",
+    "I",
+    "PLW",
+    "YTT",
+    "ASYNC",
+    "C4",
+    "T10",
+    "EXE",
+    "ISC",
+    "LOG",
+    "PIE",
+    "Q",
+    "RSE",
+    "FLY",
+    "PGH",
+    "PLC",
+    "PLE",
+    "PLW",
+    "FURB",
+    "RUF",
+]
+ignore = ["PGH003", "PLC0415", "ASYNC240"]
+
+[tool.ruff.lint.per-file-ignores]
+"examples/*" = ["E402"]

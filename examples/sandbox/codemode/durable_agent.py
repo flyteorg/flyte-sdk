@@ -35,7 +35,7 @@ import flyte.report
 
 env = flyte.TaskEnvironment(
     name="llm-code-mode",
-    secrets=[flyte.Secret(key="anthropic-api-key", as_env_var="ANTHROPIC_API_KEY")],
+    secrets=[flyte.Secret(key="internal-anthropic-api-key", as_env_var="ANTHROPIC_API_KEY")],
     image=flyte.Image.from_debian_base().with_pip_packages("httpx", "pydantic-monty", "unionai-reuse"),
     reusable=flyte.ReusePolicy(
         replicas=1,

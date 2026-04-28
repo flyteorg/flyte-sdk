@@ -389,6 +389,72 @@ def test_task_no_triggers():
     assert task_no_trigger.triggers == ()
 
 
+def test_trigger_with_custom_context():
+    """Test trigger with custom_context metadata"""
+    trigger = flyte.Trigger(
+        name="with_context",
+        automation=flyte.Cron("0 * * * *"),
+        custom_context={"experiment": "v2", "team": "ml"},
+    )
+
+    assert trigger.custom_context == {"experiment": "v2", "team": "ml"}
+
+
+def test_trigger_custom_context_default_none():
+    """Test that custom_context defaults to None"""
+    trigger = flyte.Trigger(
+        name="no_context",
+        automation=flyte.Cron("0 * * * *"),
+    )
+
+    assert trigger.custom_context is None
+
+
+def test_trigger_hourly_with_custom_context():
+    """Test convenience method passes custom_context through"""
+    trigger = flyte.Trigger.hourly(
+        custom_context={"source": "scheduled"},
+    )
+
+    assert trigger.custom_context == {"source": "scheduled"}
+
+
+def test_trigger_daily_with_custom_context():
+    """Test daily convenience method passes custom_context through"""
+    trigger = flyte.Trigger.daily(
+        custom_context={"pipeline": "etl"},
+    )
+
+    assert trigger.custom_context == {"pipeline": "etl"}
+
+
+def test_trigger_weekly_with_custom_context():
+    """Test weekly convenience method passes custom_context through"""
+    trigger = flyte.Trigger.weekly(
+        custom_context={"cadence": "weekly"},
+    )
+
+    assert trigger.custom_context == {"cadence": "weekly"}
+
+
+def test_trigger_monthly_with_custom_context():
+    """Test monthly convenience method passes custom_context through"""
+    trigger = flyte.Trigger.monthly(
+        custom_context={"report_type": "monthly"},
+    )
+
+    assert trigger.custom_context == {"report_type": "monthly"}
+
+
+def test_trigger_minutely_with_custom_context():
+    """Test minutely convenience method passes custom_context through"""
+    trigger = flyte.Trigger.minutely(
+        custom_context={"debug": "true"},
+    )
+
+    assert trigger.custom_context == {"debug": "true"}
+
+
 def test_trigger_different_key_names():
     """Test triggers with different TriggerTime key names"""
     env = flyte.TaskEnvironment(name="test_env")

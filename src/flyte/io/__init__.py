@@ -10,11 +10,12 @@ __all__ = [
     "PARQUET",
     "DataFrame",
     "Dir",
+    "EmptyDir",
     "File",
     "HashFunction",
 ]
 
 from ._dataframe import PARQUET, DataFrame
-from ._dir import Dir
+from ._dir import Dir, EmptyDir
 from ._file import File
 from ._hashing_io import HashFunction

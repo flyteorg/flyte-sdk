@@ -15,6 +15,8 @@ from google.protobuf import json_format
 from snowflake.connector import SnowflakeConnection
 from snowflake.connector import connect as snowflake_connect
 
+from ._crypto import get_private_key
+
 TASK_TYPE = "snowflake"
 
 
@@ -42,36 +44,6 @@ class SnowflakeJobMetadata(ResourceMeta):
     query_id: str
     has_output: bool
     connection_kwargs: Optional[Dict[str, Any]] = None
-
-
-def _get_private_key(private_key_content: str, private_key_passphrase: Optional[str] = None) -> bytes:
-    """
-    Decode the private key from the secret and return it in DER format.
-
-    Args:
-        private_key_content: The private key content in PEM format.
-        private_key_passphrase: The passphrase for the private key, if any.
-
-    Returns:
-        The private key in DER format.
-    """
-    from cryptography.hazmat.backends import default_backend
-    from cryptography.hazmat.primitives import serialization
-
-    private_key_bytes = private_key_content.strip().encode()
-    password = private_key_passphrase.encode() if private_key_passphrase else None
-
-    private_key = serialization.load_pem_private_key(
-        private_key_bytes,
-        password=password,
-        backend=default_backend(),
-    )
-
-    return private_key.private_bytes(
-        encoding=serialization.Encoding.DER,
-        format=serialization.PrivateFormat.PKCS8,
-        encryption_algorithm=serialization.NoEncryption(),
-    )
 
 
 @alru_cache
@@ -117,7 +89,7 @@ async def _get_snowflake_connection(
 
         # Add private key authentication if provided
         if private_key_content:
-            private_key = _get_private_key(private_key_content, private_key_passphrase)
+            private_key = get_private_key(private_key_content, private_key_passphrase)
             connection_params["private_key"] = private_key
 
         # Let Snowflake connector validate authentication requirements

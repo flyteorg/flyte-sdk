@@ -228,7 +228,7 @@ def test_extended_fields():
         cache_hit=False,
         context={"env": "prod"},
         group_name="my-group",
-        log_links=[("console", "http://localhost:8080")],
+        log_links=[("console", "http://localhost:8090")],
         inputs={"x": 1},
     )
 

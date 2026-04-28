@@ -1,3 +1,4 @@
+import os
 import typing
 from collections import OrderedDict
 from unittest.mock import MagicMock, patch
@@ -125,6 +126,8 @@ async def test_to_literal_dataframe(ctx_with_test_raw_data_path, sample_datafram
     lit = await fdt.to_literal(sample_dataframe, python_type=pl.DataFrame, expected=lt)
     assert lit.scalar.structured_dataset.metadata.structured_dataset_type.format == PARQUET
     assert lit.scalar.structured_dataset.uri is not None
+    assert os.path.exists(os.path.join(lit.scalar.structured_dataset.uri, "00000"))
+    assert not os.path.exists(os.path.join(lit.scalar.structured_dataset.uri, "00000.parquet"))
 
     # Test that we can decode it back
     restored_df = await fdt.to_python_value(lit, expected_python_type=pl.DataFrame)

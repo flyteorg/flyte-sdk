@@ -1388,6 +1388,29 @@ async def test_convert_upload_default_inputs_with_defaults():
 
 
 @pytest.mark.asyncio
+async def test_convert_upload_default_inputs_with_falsy_defaults():
+    """
+    convert_upload_default_inputs must not drop defaults whose value is falsy
+    (e.g. 0, False, ""). Regression test for the `if default_value and ...` bug
+    where falsy values were silently excluded from the serialized task spec.
+    """
+
+    def func(a: int = 10, b: int = 0, c: bool = False, d: str = ""):
+        pass
+
+    interface = NativeInterface.from_callable(func)
+    result = await convert.convert_upload_default_inputs(interface)
+
+    assert [p.name for p in result] == ["a", "b", "c", "d"]
+
+    named = {p.name: p for p in result}
+    assert named["a"].parameter.default.scalar.primitive.integer == 10
+    assert named["b"].parameter.default.scalar.primitive.integer == 0
+    assert named["c"].parameter.default.scalar.primitive.boolean is False
+    assert named["d"].parameter.default.scalar.primitive.string_value == ""
+
+
+@pytest.mark.asyncio
 async def test_convert_upload_default_inputs_remote_interface():
     """
     convert_upload_default_inputs should handle remote interfaces correctly.

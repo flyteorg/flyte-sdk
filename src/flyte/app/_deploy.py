@@ -2,11 +2,9 @@ from __future__ import annotations
 
 import typing
 from dataclasses import dataclass
-from pathlib import Path
 
 import flyte._deployer as deployer
 from flyte import Image
-from flyte._code_bundle.bundle import build_code_bundle_from_relative_paths
 from flyte._initialize import ensure_client
 from flyte._logging import logger
 from flyte._status import status
@@ -83,32 +81,12 @@ async def _deploy_app(
     from flyte.app._runtime import translate_app_env_to_idl
     from flyte.remote import App
 
-    is_pkl = serialization_context.code_bundle and serialization_context.code_bundle.pkl
-    if app.include and not is_pkl:
-        # Only bundle when not pickling. If this is a pkl bundle, assume that
-        # the AppEnvironment has a server function that will be used to serve
-        # the app. This function should contain all of the code needed to serve the app.
-        app_dir = Path(app._app_filename).parent
-        bundle_root = serialization_context.root_dir or app_dir
-
-        # Resolve include paths to absolute paths relative to the app script's
-        # directory, so that relative patterns like "../temp.py" are
-        # anchored correctly before being made relative to bundle_root.
-        resolved_includes = [
-            str((app_dir / inc).resolve()) if not Path(inc).is_absolute() else inc for inc in app.include
-        ]
-
-        _preexisting_code_bundle_files = []
-        if serialization_context.code_bundle is not None:
-            _preexisting_code_bundle_files = serialization_context.code_bundle.files or []
-        files = (
-            *_preexisting_code_bundle_files,
-            *[f for f in resolved_includes if f not in _preexisting_code_bundle_files],
-        )
-        code_bundle = await build_code_bundle_from_relative_paths(files, from_dir=bundle_root)
-        serialization_context.code_bundle = code_bundle
-
     if serialization_context.code_bundle and serialization_context.code_bundle.pkl:
+        if app.include:
+            raise ValueError(
+                "AppEnvironment.include is not supported with pkl (interactive) bundles. "
+                "Use @app_env.server to package code into the pkl, or run/deploy from a file."
+            )
         assert app._server is not None, (
             "Server function is required for pkl code bundles, use the app_env.server() decorator to define the "
             "server function."

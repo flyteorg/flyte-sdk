@@ -44,9 +44,7 @@ import flyte
 import flyte.io
 
 # Create task environment with required dependencies
-img = flyte.Image.from_debian_base(name="flyteplugins-polars-image").with_pip_packages(
-    "flyteplugins-polars>=2.0.0b52", "flyte>=2.0.0b52", pre=True
-)
+img = flyte.Image.from_debian_base(name="flyteplugins-polars-image").with_pip_packages("flyteplugins-polars")
 
 env = flyte.TaskEnvironment(
     "polars_dataframe_inputs",
@@ -227,16 +225,16 @@ if __name__ == "__main__":
 
     # Example 5: Process LazyFrame
     print("\n5. Processing Polars LazyFrame...")
-    run = flyte.run(process_lf, lf=lazyframe)
+    run = flyte.with_runcontext(preserve_original_types=True).run(process_lf, lf=lazyframe)
     print(f"   URL: {run.url}")
     run.wait()
     result = run.outputs()[0]
-    print(f"   Result (collected):\n{result.collect()}\n")
+    print(f"   Result:\n{result.collect()}\n")
 
     # Example 6: Flyte DataFrame to Polars LazyFrame
     print("6. Flyte DataFrame -> Polars LazyFrame...")
     flyte_dataframe_for_lf = flyte.io.DataFrame.from_df(lazyframe)
-    run = flyte.run(process_fdf_to_lf, df=flyte_dataframe_for_lf)
+    run = flyte.with_runcontext(preserve_original_types=True).run(process_fdf_to_lf, df=flyte_dataframe_for_lf)
     print(f"   URL: {run.url}")
     run.wait()
     result: pl.LazyFrame = run.outputs()[0]
@@ -244,7 +242,7 @@ if __name__ == "__main__":
 
     # Example 7: Polars LazyFrame to Flyte DataFrame
     print("7. Polars LazyFrame -> Flyte DataFrame...")
-    run = flyte.run(process_lf_to_fdf, lf=lazyframe)
+    run = flyte.with_runcontext(preserve_original_types=True).run(process_lf_to_fdf, lf=lazyframe)
     print(f"   URL: {run.url}")
     run.wait()
     result: flyte.io.DataFrame = run.outputs()[0]
@@ -259,7 +257,7 @@ if __name__ == "__main__":
 
     # Example 8: DataFrame to LazyFrame
     print("\n8. Transform DataFrame -> LazyFrame...")
-    run = flyte.run(transform_df_to_lf, df=dataframe)
+    run = flyte.with_runcontext(preserve_original_types=True).run(transform_df_to_lf, df=dataframe)
     print(f"   URL: {run.url}")
     run.wait()
     result = run.outputs()[0]
@@ -267,7 +265,7 @@ if __name__ == "__main__":
 
     # Example 9: LazyFrame to DataFrame
     print("9. Transform LazyFrame -> DataFrame...")
-    run = flyte.run(transform_lf_to_df, lf=lazyframe)
+    run = flyte.with_runcontext(preserve_original_types=True).run(transform_lf_to_df, lf=lazyframe)
     print(f"   URL: {run.url}")
     run.wait()
     result = run.outputs()[0]
@@ -282,7 +280,7 @@ if __name__ == "__main__":
 
     # Example 10: Filter and aggregate DataFrame
     print("\n10. Filter and aggregate DataFrame...")
-    run = flyte.run(filter_and_aggregate, df=dataframe)
+    run = flyte.with_runcontext(preserve_original_types=True).run(filter_and_aggregate, df=dataframe)
     print(f"   URL: {run.url}")
     run.wait()
     result = run.outputs()[0]
@@ -290,7 +288,7 @@ if __name__ == "__main__":
 
     # Example 11: Filter and aggregate LazyFrame
     print("11. Filter and aggregate LazyFrame...")
-    run = flyte.run(lazy_filter_and_aggregate, lf=lazyframe)
+    run = flyte.with_runcontext(preserve_original_types=True).run(lazy_filter_and_aggregate, lf=lazyframe)
     print(f"   URL: {run.url}")
     run.wait()
     result = run.outputs()[0]

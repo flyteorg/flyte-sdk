@@ -149,24 +149,23 @@ USER root
 COPY --from=uv /uv /usr/bin/uv
 
 
-# Capture any existing UV_PYTHON from the base image
-ARG _EXISTING_UV_PYTHON=$${UV_PYTHON}
+# Configure default paths (can be overridden via --build-arg)
+ARG VIRTUALENV=/opt/venv
+ARG UV_PYTHON=$$VIRTUALENV/bin/python
 
 
-# Configure default envs (preserve base image values if set)
 ENV UV_COMPILE_BYTECODE=1 \
    UV_LINK_MODE=copy \
-   VIRTUALENV=$${VIRTUALENV:-/opt/venv} \
-   UV_PYTHON=$${UV_PYTHON:-/opt/venv/bin/python}
+   VIRTUALENV=$$VIRTUALENV \
+   UV_PYTHON=$$UV_PYTHON
 
 
-# Create a virtualenv only if the base image doesn't already have one
-RUN if [ -z "$${_EXISTING_UV_PYTHON}" ]; then \
+# Create virtualenv only if UV_PYTHON doesn't already exist
+RUN if [ ! -f "$$UV_PYTHON" ]; then \
        uv venv $$VIRTUALENV --python=$PYTHON_VERSION && uv run --python=$$UV_PYTHON python -m compileall $$VIRTUALENV; \
    fi
 
-# Add /opt/venv/bin to PATH only when we created the venv (no existing UV_PYTHON)
-ENV PATH="$${_EXISTING_UV_PYTHON:+$$PATH}$${_EXISTING_UV_PYTHON:-/opt/venv/bin:$$PATH}"
+ENV PATH="$$VIRTUALENV/bin:$$PATH"
 
 
 # Adds nvidia just in case it exists
@@ -350,7 +349,7 @@ class UVProjectHandler:
 
 class PoetryProjectHandler:
     @staticmethod
-    async def handel(
+    async def handle(
         layer: PoetryProject, context_path: Path, dockerfile: str, docker_ignore_patterns: list[str] = []
     ) -> str:
         secret_mounts = _get_secret_mounts_layer(layer.secret_mounts)
@@ -535,11 +534,11 @@ async def _process_layer(
 
         case PoetryProject():
             # Handle Poetry project
-            dockerfile = await PoetryProjectHandler.handel(layer, context_path, dockerfile, docker_ignore_patterns)
+            dockerfile = await PoetryProjectHandler.handle(layer, context_path, dockerfile, docker_ignore_patterns)
 
         case PoetryProject():
             # Handle Poetry project
-            dockerfile = await PoetryProjectHandler.handel(layer, context_path, dockerfile, docker_ignore_patterns)
+            dockerfile = await PoetryProjectHandler.handle(layer, context_path, dockerfile, docker_ignore_patterns)
 
         case CopyConfig():
             # Handle local files and folders
@@ -659,25 +658,44 @@ class DockerImageBuilder(ImageBuilder):
         )
         builders = result.stdout
 
-        # Check if there's any usable builder
-        if DockerImageBuilder._builder_name not in builders:
-            # No default builder found, create one
-            logger.info("No buildx builder found, creating one...")
+        # Check if there's any usable builder with the correct driver options
+        if DockerImageBuilder._builder_name in builders:
+            # Builder exists — verify it has network=host driver option
+            inspect_result = await run_sync_with_loop(
+                subprocess.run,
+                ["docker", "buildx", "inspect", DockerImageBuilder._builder_name],
+                capture_output=True,
+                text=True,
+            )
+            if inspect_result.returncode == 0 and 'network="host"' in inspect_result.stdout:
+                logger.info("Buildx builder already exists with correct config.")
+                return
+
+            # Builder exists but missing network=host, remove and recreate
+            logger.info("Buildx builder exists but missing network=host driver option, recreating...")
             await run_sync_with_loop(
                 subprocess.run,
-                [
-                    "docker",
-                    "buildx",
-                    "create",
-                    "--name",
-                    DockerImageBuilder._builder_name,
-                    "--platform",
-                    "linux/amd64,linux/arm64",
-                ],
-                check=True,
+                ["docker", "buildx", "rm", DockerImageBuilder._builder_name],
+                check=False,
             )
         else:
-            logger.info("Buildx builder already exists.")
+            logger.info("No buildx builder found, creating one...")
+
+        await run_sync_with_loop(
+            subprocess.run,
+            [
+                "docker",
+                "buildx",
+                "create",
+                "--name",
+                DockerImageBuilder._builder_name,
+                "--platform",
+                "linux/amd64,linux/arm64",
+                "--driver-opt",
+                "network=host",
+            ],
+            check=True,
+        )
 
     async def _build_image(self, image: Image, *, push: bool = True, dry_run: bool = False, wait: bool = True) -> str:
         """

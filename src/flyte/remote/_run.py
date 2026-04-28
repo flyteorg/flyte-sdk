@@ -3,8 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import AsyncGenerator, AsyncIterator, Literal, Tuple
 
-import grpc
 import rich.repr
+from connectrpc.code import Code
+from connectrpc.errors import ConnectError
 from flyteidl2.common import identifier_pb2, list_pb2, phase_pb2
 from flyteidl2.workflow import run_definition_pb2, run_service_pb2
 
@@ -131,7 +132,7 @@ class Run(ToJSONMixin):
                 sort_by=sort_pb2,
                 filters=filters,
             )
-            resp = await get_client().run_service.ListRuns(
+            resp = await get_client().run_service.list_runs(
                 run_service_pb2.ListRunsRequest(
                     request=req,
                     org=cfg.org,
@@ -306,14 +307,14 @@ class Run(ToJSONMixin):
         Aborts / Terminates the run.
         """
         try:
-            await get_client().run_service.AbortRun(
+            await get_client().run_service.abort_run(
                 run_service_pb2.AbortRunRequest(
                     run_id=self.pb2.action.id.run,
                     reason=reason,
                 )
             )
-        except grpc.aio.AioRpcError as e:
-            if e.code() == grpc.StatusCode.NOT_FOUND:
+        except ConnectError as e:
+            if e.code == Code.NOT_FOUND:
                 return
             raise
 
@@ -371,7 +372,7 @@ class RunDetails(ToJSONMixin):
         Get the details of the run. This is a placeholder for getting the run details.
         """
         ensure_client()
-        resp = await get_client().run_service.GetRunDetails(
+        resp = await get_client().run_service.get_run_details(
             run_service_pb2.GetRunDetailsRequest(
                 run_id=run_id,
             )

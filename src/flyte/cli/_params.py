@@ -315,6 +315,8 @@ class DurationParamType(click.ParamType):
     ) -> typing.Any:
         if value is None:
             raise click.BadParameter("None value cannot be converted to a Duration type.")
+        if isinstance(value, datetime.timedelta):
+            return value
         return parse_duration(value)
 
 
@@ -665,7 +667,7 @@ def literal_type_to_click_type(lt: LiteralType, python_type: typing.Type) -> cli
         python_args = typing.get_args(python_type)
         if len(python_args) == 0:
             return PickleParamType()
-        cts = []
+        cts: list[click.ParamType | None] = []
         for i in range(len(lt.union_type.variants)):
             variant = lt.union_type.variants[i]
             variant_python_type = python_args[i]

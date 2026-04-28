@@ -42,11 +42,11 @@ syncer = Syncify("my_syncer")
 The Syncify class wraps asynchronous functions, classmethods, instance methods, and static methods to
  provide a synchronous interface. The wrapped methods are always executed in the context of a background loop,
  whether they are called synchronously or asynchronously. This allows for seamless integration of async code, as
- certain async libraries capture the event loop. An example is grpc.aio, which captures the event loop.
- In such a case, the Syncify class ensures that the async function is executed in the context of the background loop.
+ certain async libraries capture the event loop. In such a case, the Syncify class ensures that the async
+ function is executed in the context of the background loop.
 
-To use it correctly with grpc.aio, you should wrap every grpc.aio channel creation, and client invocation
-with the same `Syncify` instance. This ensures that the async code runs in the correct event loop context.
+To use it correctly, you should wrap every async client creation and invocation with the same `Syncify`
+instance. This ensures that the async code runs in the correct event loop context.
 """
 
 from flyte.syncify._api import Syncify

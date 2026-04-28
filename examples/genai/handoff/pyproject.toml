@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Agent handoff system with tag-based routing and semantic similarity matching"
 requires-python = ">=3.11"
 dependencies = [
-    "flyte>=2.0.0b35",
+    "flyte",
     "openai>=1.0.0",
     "pydantic>=2.0.0",
     "unionai-reuse>=0.1.9",
@@ -14,7 +14,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=7.0.0",
+    "pytest>=9.0.3",
     "ruff>=0.1.0",
 ]
 

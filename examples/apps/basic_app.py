@@ -12,7 +12,7 @@ image = flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages("
 app_env = flyte.app.AppEnvironment(
     name="streamlit-hello-v2",
     image=image,
-    command="streamlit hello --server.port 8080",
+    args="streamlit hello --server.port 8080",
     resources=flyte.Resources(cpu="1", memory="1Gi"),
 )
 

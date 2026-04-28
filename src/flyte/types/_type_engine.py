@@ -409,7 +409,7 @@ class SimpleTransformer(TypeTransformer[T]):
         if expected_python_type is not self._type:
             if expected_python_type is None and issubclass(self._type, NoneType):
                 # If the expected type is NoneType, we can return None
-                return None
+                return None  # type: ignore[return-value]
             raise TypeTransformerFailedError(
                 f"Cannot convert to type {expected_python_type}, only {self._type} is supported"
             )
@@ -988,7 +988,7 @@ class ProtobufTransformer(TypeTransformer[Message]):
         try:
             if type(python_val) is struct_pb2.ListValue:
                 literals = []
-                for v in python_val:
+                for v in python_val:  # type: ignore[attr-defined]
                     literal_type = TypeEngine.to_literal_type(type(v))
                     # Recursively convert python native values to literals
                     literal = await TypeEngine.to_literal(v, type(v), literal_type)
@@ -1359,6 +1359,13 @@ class TypeEngine(typing.Generic[T]):
             # todo: bring in extras transformers (pytorch, etc.)
             lazy_import_dataframe_handler()
 
+            # Load type-transformer plugins registered under "flyte.plugins.types" before any transformer lookup.
+            # Task modules are often imported (decorators run) before flyte.initialize() / init_in_cluster(), so
+            # relying on init alone yields incorrect FlytePickle fallback + warnings for plugin types.
+            from flyte.types import _load_custom_type_transformers
+
+            _load_custom_type_transformers()
+
     @classmethod
     def to_literal_type(cls, python_type: Type[T]) -> LiteralType:
         """
@@ -1657,7 +1664,7 @@ class ListTransformer(TypeTransformer[T]):
             raise ValueError(f"Type of Generic List type is not supported, {e}")
 
     async def to_literal(self, python_val: T, python_type: Type[T], expected: LiteralType) -> Literal:
-        if type(python_val) is not list:
+        if not isinstance(python_val, list):
             raise TypeTransformerFailedError("Expected a list")
 
         t = self.get_sub_type(python_type)
@@ -2264,7 +2271,7 @@ def _get_element_type(
         defs = schema.get("$defs", schema.get("definitions", {}))
         # Look up for ref_name in the defs defined in the schema
         if ref_name in defs:
-            # Don't mutate the orignal schema
+            # Don't mutate the original schema
             ref_schema = defs[ref_name].copy()
             # Guard the nested enum elements inside containers
             if ref_schema.get("enum"):
@@ -2272,7 +2279,7 @@ def _get_element_type(
             # Check if the $ref matches a registered custom type
             if (matched_type := _match_registered_type_from_schema(ref_schema)) is not None:
                 return matched_type
-            # if defs not in the schema, they need to be propogated into the resolved schema
+            # if defs not in the schema, they need to be propagated into the resolved schema
             if "$defs" not in ref_schema and defs:
                 ref_schema["$defs"] = defs
             # build a dataclass from the resolved schema

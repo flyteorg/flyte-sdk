@@ -4,7 +4,8 @@ from dataclasses import dataclass
 from functools import cached_property
 from typing import AsyncIterator
 
-import grpc.aio
+from connectrpc.code import Code
+from connectrpc.errors import ConnectError
 from flyteidl2.common import identifier_pb2, list_pb2
 from flyteidl2.task import common_pb2, task_definition_pb2
 from flyteidl2.trigger import trigger_definition_pb2, trigger_service_pb2
@@ -30,7 +31,7 @@ class TriggerDetails(ToJSONMixin):
         """
         ensure_client()
         cfg = get_init_config()
-        resp = await get_client().trigger_service.GetTriggerDetails(
+        resp = await get_client().trigger_service.get_trigger_details(
             request=trigger_service_pb2.GetTriggerDetailsRequest(
                 name=identifier_pb2.TriggerName(
                     task_name=task_name,
@@ -148,7 +149,7 @@ class Trigger(ToJSONMixin):
                 task_default_inputs=list(task.pb2.spec.default_inputs),
             )
 
-            resp = await get_client().trigger_service.DeployTrigger(
+            resp = await get_client().trigger_service.deploy_trigger(
                 request=trigger_service_pb2.DeployTriggerRequest(
                     name=identifier_pb2.TriggerName(
                         name=trigger.name,
@@ -170,8 +171,8 @@ class Trigger(ToJSONMixin):
             details = TriggerDetails(pb2=resp.trigger)
 
             return cls(pb2=details.trigger, details=details)
-        except grpc.aio.AioRpcError as e:
-            if e.code() == grpc.StatusCode.NOT_FOUND:
+        except ConnectError as e:
+            if e.code == Code.NOT_FOUND:
                 raise ValueError(f"Task {task_name}:{task_version or 'latest'} not found") from e
             raise
 
@@ -220,7 +221,7 @@ class Trigger(ToJSONMixin):
             )
 
         while True:
-            resp = await get_client().trigger_service.ListTriggers(
+            resp = await get_client().trigger_service.list_triggers(
                 request=trigger_service_pb2.ListTriggersRequest(
                     project_id=project_id,
                     task_id=task_id,
@@ -245,7 +246,7 @@ class Trigger(ToJSONMixin):
         """
         ensure_client()
         cfg = get_init_config()
-        await get_client().trigger_service.UpdateTriggers(
+        await get_client().trigger_service.update_triggers(
             request=trigger_service_pb2.UpdateTriggersRequest(
                 names=[
                     identifier_pb2.TriggerName(
@@ -268,7 +269,7 @@ class Trigger(ToJSONMixin):
         """
         ensure_client()
         cfg = get_init_config()
-        await get_client().trigger_service.DeleteTriggers(
+        await get_client().trigger_service.delete_triggers(
             request=trigger_service_pb2.DeleteTriggersRequest(
                 names=[
                     identifier_pb2.TriggerName(

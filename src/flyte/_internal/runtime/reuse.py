@@ -1,11 +1,11 @@
 import hashlib
 import typing
-from venv import logger
 
 from flyteidl2.core import tasks_pb2
 
 import flyte.errors
 from flyte import ReusePolicy
+from flyte._logging import logger
 from flyte._pod import _PRIMARY_CONTAINER_DEFAULT_NAME, _PRIMARY_CONTAINER_NAME_FIELD
 from flyte.models import CodeBundle
 
@@ -120,6 +120,6 @@ def add_reusable(
     }
 
     task.type = "actor"
-    logger.info(f"Reusable task {task.id.name} with config {task.custom}")
+    logger.debug(f"Reusable task {task.id.name} with config {task.custom}")
 
     return task

@@ -601,3 +601,27 @@ def test_lookup_image_in_cache_with_ref_name_not_in_cache():
     # and environment is not found in cache
     with pytest.raises(flyte.errors.RuntimeUserError, match="Environment 'test_env' not found in image cache"):
         lookup_image_in_cache(context, "test_env", image)
+
+
+def test_entrypoint_flag_on_task_template():
+    """Verify entrypoint flag is set on the template and serde doesn't crash."""
+    env = flyte.TaskEnvironment(name="test_env_entrypoint", image="python:3.10")
+
+    @env.task(entrypoint=True)
+    async def entrypoint_task(x: int) -> int:
+        return x
+
+    assert entrypoint_task.entrypoint is True
+
+    context = SerializationContext(
+        project="test-project",
+        domain="test-domain",
+        version="test-version",
+        image_cache=None,
+        code_bundle=None,
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    proto_task = get_proto_task(entrypoint_task, context)
+    assert proto_task is not None
+    assert proto_task.metadata.is_entrypoint is True

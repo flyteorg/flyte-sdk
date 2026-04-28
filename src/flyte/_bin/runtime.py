@@ -96,7 +96,7 @@ def main(
     from flyte._internal.imagebuild.image_builder import ImageCache
     from flyte._internal.runtime.entrypoints import load_and_run_task
     from flyte._logging import logger
-    from flyte.models import ActionID, Checkpoints, CodeBundle, RawDataPath
+    from flyte.models import ActionID, CheckpointPaths, CodeBundle, RawDataPath
 
     logger.info("Registering faulthandler for SIGUSR1")
     faulthandler.register(signal.SIGUSR1)
@@ -149,7 +149,7 @@ def main(
         resolver_args=resolver_args,
         action=ActionID(name=name, run_name=run_name, project=project, domain=domain, org=org),
         raw_data_path=RawDataPath(path=raw_data_path, path_rewrite=path_rewrite),
-        checkpoints=Checkpoints(checkpoint_path, prev_checkpoint),
+        checkpoint_paths=CheckpointPaths(prev_checkpoint_path=prev_checkpoint, checkpoint_path=checkpoint_path),
         code_bundle=bundle,
         input_path=inputs,
         output_path=outputs_path,
@@ -165,7 +165,7 @@ def main(
     # Run both coroutines concurrently and wait for first to finish and cancel the other
     async def _run_and_stop():
         loop = asyncio.get_event_loop()
-        loop.set_exception_handler(flyte.errors.silence_grpc_polling_error)
+        loop.set_exception_handler(flyte.errors.silence_polling_error)
         try:
             await utils.run_coros(controller_failure, task_coroutine)
             await controller.stop()
@@ -184,9 +184,6 @@ def main(
     for h in logger.handlers:
         h.flush()
     sys.stdout.flush()
-    # We os._exit here to ensure that grpc does not block the exiting! grpc currently has a graceful shutdown system
-    # that blocks the process from exiting
-    os._exit(0)
 
 
 if __name__ == "__main__":

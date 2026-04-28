@@ -71,6 +71,99 @@ class TestAppSpecsAreEqual:
         assert result is False
 
     @pytest.mark.asyncio
+    async def test_different_parameter_values_are_not_equal(self):
+        """Test that specs with different parameter values return False."""
+        old_spec = app_definition_pb2.Spec(
+            desired_state=app_definition_pb2.Spec.DESIRED_STATE_STARTED,
+        )
+        old_spec.ingress.CopyFrom(app_definition_pb2.IngressConfig(private=False))
+        old_spec.inputs.CopyFrom(
+            app_definition_pb2.InputList(
+                items=[app_definition_pb2.Input(name="data", string_value="s3://bucket/v1/data.txt")]
+            )
+        )
+
+        new_spec = app_definition_pb2.Spec(
+            desired_state=app_definition_pb2.Spec.DESIRED_STATE_STARTED,
+        )
+        new_spec.ingress.CopyFrom(app_definition_pb2.IngressConfig(private=False))
+        new_spec.inputs.CopyFrom(
+            app_definition_pb2.InputList(
+                items=[app_definition_pb2.Input(name="data", string_value="s3://bucket/v2/data.txt")]
+            )
+        )
+
+        result = await App._app_specs_are_equal(old_spec, new_spec)
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_different_parameter_names_are_not_equal(self):
+        """Test that specs with different parameter names return False."""
+        old_spec = app_definition_pb2.Spec(
+            desired_state=app_definition_pb2.Spec.DESIRED_STATE_STARTED,
+        )
+        old_spec.ingress.CopyFrom(app_definition_pb2.IngressConfig(private=False))
+        old_spec.inputs.CopyFrom(
+            app_definition_pb2.InputList(
+                items=[app_definition_pb2.Input(name="model_v1", string_value="s3://bucket/model")]
+            )
+        )
+
+        new_spec = app_definition_pb2.Spec(
+            desired_state=app_definition_pb2.Spec.DESIRED_STATE_STARTED,
+        )
+        new_spec.ingress.CopyFrom(app_definition_pb2.IngressConfig(private=False))
+        new_spec.inputs.CopyFrom(
+            app_definition_pb2.InputList(
+                items=[app_definition_pb2.Input(name="model_v2", string_value="s3://bucket/model")]
+            )
+        )
+
+        result = await App._app_specs_are_equal(old_spec, new_spec)
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_added_parameter_is_not_equal(self):
+        """Test that adding a new parameter makes specs unequal."""
+        old_spec = app_definition_pb2.Spec(
+            desired_state=app_definition_pb2.Spec.DESIRED_STATE_STARTED,
+        )
+        old_spec.ingress.CopyFrom(app_definition_pb2.IngressConfig(private=False))
+
+        new_spec = app_definition_pb2.Spec(
+            desired_state=app_definition_pb2.Spec.DESIRED_STATE_STARTED,
+        )
+        new_spec.ingress.CopyFrom(app_definition_pb2.IngressConfig(private=False))
+        new_spec.inputs.CopyFrom(
+            app_definition_pb2.InputList(items=[app_definition_pb2.Input(name="data", string_value="s3://bucket/data")])
+        )
+
+        result = await App._app_specs_are_equal(old_spec, new_spec)
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_same_parameters_are_equal(self):
+        """Test that specs with identical parameters return True."""
+        old_spec = app_definition_pb2.Spec(
+            desired_state=app_definition_pb2.Spec.DESIRED_STATE_STARTED,
+        )
+        old_spec.ingress.CopyFrom(app_definition_pb2.IngressConfig(private=False))
+        old_spec.inputs.CopyFrom(
+            app_definition_pb2.InputList(items=[app_definition_pb2.Input(name="data", string_value="s3://bucket/data")])
+        )
+
+        new_spec = app_definition_pb2.Spec(
+            desired_state=app_definition_pb2.Spec.DESIRED_STATE_STARTED,
+        )
+        new_spec.ingress.CopyFrom(app_definition_pb2.IngressConfig(private=False))
+        new_spec.inputs.CopyFrom(
+            app_definition_pb2.InputList(items=[app_definition_pb2.Input(name="data", string_value="s3://bucket/data")])
+        )
+
+        result = await App._app_specs_are_equal(old_spec, new_spec)
+        assert result is True
+
+    @pytest.mark.asyncio
     async def test_old_spec_without_ingress_raises_assertion_error(self):
         """Test that an AssertionError is raised when old_app_spec has no ingress.
 
@@ -366,6 +459,84 @@ class TestAppReplace:
             call_args = mock_update.aio.call_args
             new_app_proto = call_args[0][0]
             assert new_app_proto.status == mock_app_pb2.status
+
+    @pytest.mark.asyncio
+    async def test_replace_updates_when_parameters_change(self, mock_app, mock_app_pb2):
+        """Test that replace calls update when parameters change."""
+        mock_app_pb2.spec.inputs.CopyFrom(
+            app_definition_pb2.InputList(
+                items=[app_definition_pb2.Input(name="data", string_value="s3://bucket/v1/data")]
+            )
+        )
+        mock_app = App(mock_app_pb2)
+
+        updated_spec = app_definition_pb2.Spec(
+            desired_state=app_definition_pb2.Spec.DESIRED_STATE_STARTED,
+        )
+        updated_spec.ingress.CopyFrom(app_definition_pb2.IngressConfig(private=False))
+        updated_spec.inputs.CopyFrom(
+            app_definition_pb2.InputList(
+                items=[app_definition_pb2.Input(name="data", string_value="s3://bucket/v2/data")]
+            )
+        )
+
+        updated_app = App(mock_app_pb2)
+
+        with (
+            patch.object(App, "get") as mock_get,
+            patch.object(App, "update") as mock_update,
+            patch("flyte.remote._app.ensure_client"),
+        ):
+            mock_get.aio = AsyncMock(return_value=mock_app)
+            mock_update.aio = AsyncMock(return_value=updated_app)
+
+            result = await App.replace.aio(
+                name="test-app",
+                updated_app_spec=updated_spec,
+                reason="parameter values changed",
+            )
+
+            mock_update.aio.assert_called_once()
+            assert result == updated_app
+
+    @pytest.mark.asyncio
+    async def test_replace_skips_update_when_parameters_same(self, mock_app, mock_app_pb2):
+        """Test that replace skips update when parameters are the same."""
+        mock_app_pb2.spec.inputs.CopyFrom(
+            app_definition_pb2.InputList(
+                items=[app_definition_pb2.Input(name="data", string_value="s3://bucket/v1/data")]
+            )
+        )
+        mock_app = App(mock_app_pb2)
+
+        updated_spec = app_definition_pb2.Spec(
+            desired_state=app_definition_pb2.Spec.DESIRED_STATE_STARTED,
+        )
+        updated_spec.ingress.CopyFrom(app_definition_pb2.IngressConfig(private=False))
+        updated_spec.inputs.CopyFrom(
+            app_definition_pb2.InputList(
+                items=[app_definition_pb2.Input(name="data", string_value="s3://bucket/v1/data")]
+            )
+        )
+
+        with (
+            patch.object(App, "get") as mock_get,
+            patch.object(App, "update") as mock_update,
+            patch("flyte.remote._app.ensure_client"),
+            patch("flyte.remote._app.logger") as mock_logger,
+        ):
+            mock_get.aio = AsyncMock(return_value=mock_app)
+            mock_update.aio = AsyncMock()
+
+            result = await App.replace.aio(
+                name="test-app",
+                updated_app_spec=updated_spec,
+                reason="no changes",
+            )
+
+            mock_update.aio.assert_not_called()
+            mock_logger.warning.assert_called_once()
+            assert result == mock_app
 
 
 class TestAppProperties:

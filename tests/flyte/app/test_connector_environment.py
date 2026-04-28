@@ -31,7 +31,7 @@ def test_connector_environment_default_values():
     )
 
     # Verify connector-specific defaults
-    assert conn_env.type == "Connector"
+    assert conn_env.type == "connector"
     assert isinstance(conn_env.port, Port)
     assert conn_env.port.port == 8080
     assert conn_env.port.name == "h2c"
@@ -287,7 +287,7 @@ def test_connector_environment_comprehensive_happy_path():
 
     # Verify basic properties
     assert conn_env.name == "my-connector-app"
-    assert conn_env.type == "Connector"
+    assert conn_env.type == "connector"
     assert conn_env.port.port == 8181
     assert conn_env.port.name == "h2c"
     assert conn_env.description == "Test connector with all features"

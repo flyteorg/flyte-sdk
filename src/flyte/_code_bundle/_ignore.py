@@ -212,6 +212,41 @@ class StandardIgnore(Ignore):
         return False
 
 
+class DockerfileIgnore(Ignore):
+    """Ignores files matching patterns in a .dockerignore file in the given root directory."""
+
+    def __init__(self, root: Path):
+        super().__init__(root)
+        self._matcher = self._load_matcher()
+
+    def _load_matcher(self):
+        dockerignore = self.root / ".dockerignore"
+        if not dockerignore.exists():
+            return None
+        patterns: List[str] = []
+        try:
+            with open(dockerignore, "r", encoding="utf-8") as f:
+                for line in f:
+                    stripped = line.strip()
+                    if stripped and not stripped.startswith("#"):
+                        patterns.append(stripped)
+        except Exception as e:
+            logger.warning(f"Failed to read .dockerignore at {dockerignore}: {e}")
+            return None
+        from flyte._internal.imagebuild.docker import PatternMatcher
+
+        return PatternMatcher(patterns) if patterns else None
+
+    def _is_ignored(self, path: pathlib.Path) -> bool:
+        if not self._matcher:
+            return False
+        try:
+            rel = path.relative_to(self.root)
+        except ValueError:
+            return False
+        return self._matcher.matches(str(rel))
+
+
 class IgnoreGroup(Ignore):
     """Groups multiple Ignores and checks a path against them. A file is ignored if any
     Ignore considers it ignored."""

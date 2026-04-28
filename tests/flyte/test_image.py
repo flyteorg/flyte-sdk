@@ -1,9 +1,20 @@
 from pathlib import Path
 from typing import cast
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from flyte._image import AptPackages, CodeBundleLayer, CopyConfig, Image, UVScript, resolve_code_bundle_layer
+from flyte._image import (
+    _BASE_REGISTRY,
+    _LOCALHOST_REGISTRY,
+    AptPackages,
+    CodeBundleLayer,
+    CopyConfig,
+    Image,
+    UVScript,
+    _get_base_registry,
+    resolve_code_bundle_layer,
+)
 from flyte._internal.imagebuild.docker_builder import PipAndRequirementsHandler
 
 
@@ -112,6 +123,15 @@ def test_with_source(tmp_path):
     file.touch()
     img.validate()
 
+    # Single-file COPY layers must hash file contents (os.walk on a file yields nothing).
+    f = tmp_path / "version.md"
+    f.write_text("first")
+    base = Image.from_debian_base(registry="localhost", name="test-image", flyte_version="0.2.0b14")
+    h1 = base.with_source_file(f)._get_hash_digest()
+    f.write_text("second")
+    h2 = base.with_source_file(f)._get_hash_digest()
+    assert h1 != h2
+
     # list of paths — each becomes its own layer
     file2 = tmp_path / "helper.py"
     file2.touch()
@@ -150,8 +170,33 @@ def test_with_workdir():
 def test_default_base_image():
     default_image = Image.from_debian_base(flyte_version="2.0.0")
     assert default_image.uri.startswith("ghcr.io/flyteorg/flyte:py3.")
+
     default_image = Image.from_debian_base(python_version="3.12")
     assert not default_image.uri.startswith("ghcr.io/flyteorg/flyte:py3.")
+
+
+def test_released_version_returns_prebuilt_image():
+    """When a released flyte_version is provided, from_debian_base should return a
+    prebuilt Image.from_base() reference with no build layers."""
+    img = Image.from_debian_base(flyte_version="2.0.7")
+    assert img.uri == "ghcr.io/flyteorg/flyte:py3.12-v2.0.7" or img.uri.startswith("ghcr.io/flyteorg/flyte:py3.")
+    assert "v2.0.7" in img.uri
+
+
+def test_released_version_with_v_prefix():
+    """flyte_version starting with 'v' should not double-prefix."""
+    img = Image.from_debian_base(flyte_version="v2.0.7")
+    assert "v2.0.7" in img.uri
+    assert "vv" not in img.uri
+
+
+def test_install_flyte_false_builds_full_image():
+    """When install_flyte=False, should build a full image (not prebuilt)."""
+    img = Image.from_debian_base(install_flyte=False)
+    # Should have layers since it's building a full image
+    assert len(img._layers) > 0
+    # Tag should not contain a version suffix
+    assert img.uri.startswith("ghcr.io/flyteorg/flyte:py3.")
 
 
 def test_image_from_uv_script():
@@ -221,6 +266,16 @@ def test_dockerfile():
         platform=("linux/amd64", "linux/arm64"),
     )
     assert img_multi.platform == ("linux/amd64", "linux/arm64")
+
+
+def test_dockerfile_with_str_path():
+    img = Image.from_dockerfile(
+        file=str(Path(__file__).parent / "resources/Dockerfile.test_sample"),
+        registry="localhost",
+        name="test-image",
+    )
+    assert img.uri.startswith("localhost/test-image"), f"Unexpected URI: {img.uri}"
+    assert img.platform == ("linux/amd64",)
 
 
 def test_image_uri_consistency_for_uvscript():
@@ -309,6 +364,164 @@ def test_uv_project_optional_uvlock():
         hash2 = hasher2.hexdigest()
 
         assert hash1 != hash2
+
+
+def test_copy_config_update_hash_respects_dockerignore(tmp_path):
+    """CopyConfig.update_hash must exclude files matched by .dockerignore."""
+    import hashlib
+
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.txt").write_text("hello")
+    (src / "b.txt").write_text("world")
+    (src / "c.txt").write_text("data")
+
+    # Hash without any .dockerignore — all three files included
+    h_all = hashlib.md5()
+    CopyConfig(path_type=1, src=src, dst="/app").update_hash(h_all)
+    digest_all = h_all.hexdigest()
+
+    # Add a .dockerignore that excludes c.txt
+    (src / ".dockerignore").write_text("c.txt\n")
+
+    h_ignored = hashlib.md5()
+    CopyConfig(path_type=1, src=src, dst="/app").update_hash(h_ignored)
+    digest_ignored = h_ignored.hexdigest()
+
+    # Hash must differ because c.txt is excluded (and .dockerignore itself is now included)
+    assert digest_all != digest_ignored
+
+
+def test_copy_config_dockerignore_itself_is_hashed(tmp_path):
+    """Changing .dockerignore content must change the hash (PatternMatcher always includes it)."""
+    import hashlib
+
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.txt").write_text("hello")
+    (src / ".dockerignore").write_text("*.log\n")
+
+    h1 = hashlib.md5()
+    CopyConfig(path_type=1, src=src, dst="/app").update_hash(h1)
+
+    # Change .dockerignore content — hash must change because the file content changed
+    (src / ".dockerignore").write_text("*.log\n*.tmp\n")
+    h2 = hashlib.md5()
+    CopyConfig(path_type=1, src=src, dst="/app").update_hash(h2)
+
+    assert h1.hexdigest() != h2.hexdigest()
+
+
+def test_uv_project_install_project_respects_dockerignore(tmp_path):
+    """UVProject (install_project mode) must exclude files matched by .dockerignore."""
+    import hashlib
+
+    from flyte._image import UVProject
+
+    project_dir = tmp_path / "myproject"
+    project_dir.mkdir()
+    (project_dir / "pyproject.toml").write_text("[project]\nname='p'\nversion='0.1.0'")
+    (project_dir / "main.py").write_text("print('hello')")
+    (project_dir / "data.bin").write_text("big data")
+
+    h_all = hashlib.md5()
+    UVProject(pyproject=project_dir / "pyproject.toml", project_install_mode="install_project").update_hash(h_all)
+    digest_all = h_all.hexdigest()
+
+    # Add .dockerignore to exclude data.bin
+    (project_dir / ".dockerignore").write_text("data.bin\n")
+
+    h_ignored = hashlib.md5()
+    UVProject(pyproject=project_dir / "pyproject.toml", project_install_mode="install_project").update_hash(h_ignored)
+
+    assert digest_all != h_ignored.hexdigest()
+
+
+def test_copy_config_respects_dockerignore_from_image_layer(tmp_path):
+    """
+    .dockerignore specified via with_dockerignore() at the project root must be
+    respected by CopyConfig even when src is a subdirectory.
+
+    The pattern is relative to the .dockerignore location (project root), so
+    a file at project/src/data.bin is excluded by the pattern 'src/data.bin'.
+    Both images share the same DockerIgnore layer so only the CopyConfig hash differs.
+    """
+    from flyte._image import Image
+
+    project = tmp_path / "project"
+    project.mkdir()
+    src = project / "src"
+    src.mkdir()
+    (src / "main.py").write_text("print('hello')")
+    (src / "data.bin").write_text("big data")
+
+    # .dockerignore is at project root, NOT inside src/.
+    # Pattern is relative to the project root.
+    di = project / ".dockerignore"
+    di.write_text("src/data.bin\n")
+
+    img = Image.from_debian_base(registry="localhost", name="test").with_dockerignore(di).with_source_folder(src)
+
+    # Reference: same dockerignore layer + same dst name, but src has no data.bin.
+    # Use the same directory name so with_source_folder produces the same dst.
+    project2 = tmp_path / "project2"
+    project2.mkdir()
+    src_clean = project2 / "src"
+    src_clean.mkdir()
+    (src_clean / "main.py").write_text("print('hello')")
+
+    img_clean = (
+        Image.from_debian_base(registry="localhost", name="test").with_dockerignore(di).with_source_folder(src_clean)
+    )
+
+    assert img.uri == img_clean.uri
+
+
+def test_dockerignore_hash_changes_with_content(tmp_path):
+    """Changing .dockerignore contents must produce a different hash."""
+    import hashlib
+
+    from flyte._image import DockerIgnore
+
+    di_file = tmp_path / ".dockerignore"
+    di_file.write_text("*.log\n")
+    h1 = hashlib.md5()
+    DockerIgnore(path=str(di_file)).update_hash(h1)
+
+    di_file.write_text("*.log\n*.pyc\n")
+    h2 = hashlib.md5()
+    DockerIgnore(path=str(di_file)).update_hash(h2)
+
+    assert h1.hexdigest() != h2.hexdigest()
+
+
+def test_dockerignore_hash_stable_for_same_content(tmp_path):
+    """Same .dockerignore contents must produce a stable hash."""
+    import hashlib
+
+    from flyte._image import DockerIgnore
+
+    di_file = tmp_path / ".dockerignore"
+    di_file.write_text("*.log\n")
+    layer = DockerIgnore(path=str(di_file))
+
+    h1, h2 = hashlib.md5(), hashlib.md5()
+    layer.update_hash(h1)
+    layer.update_hash(h2)
+    assert h1.hexdigest() == h2.hexdigest()
+
+
+def test_image_uri_changes_when_dockerignore_content_changes(tmp_path):
+    """Image URI (cache key) must differ when .dockerignore contents change."""
+    di_file = tmp_path / ".dockerignore"
+    di_file.write_text("*.log\n")
+    img1 = Image.from_debian_base(registry="localhost", name="test").with_dockerignore(di_file)
+    uri1 = img1.uri  # access before overwriting the file
+
+    di_file.write_text("*.log\n*.pyc\n")
+    img2 = Image.from_debian_base(registry="localhost", name="test").with_dockerignore(di_file)
+
+    assert uri1 != img2.uri
 
 
 def test_ids_for_different_python_version():
@@ -525,3 +738,111 @@ def test_resolve_code_bundle_loaded_modules_copy_style_none(tmp_path):
     assert bundle_layers[0].root_dir == tmp_path
     assert bundle_layers[0].copy_style == "loaded_modules"
     assert bundle_layers[0].dst == "."
+
+
+def test_get_base_registry_returns_default_when_not_initialized():
+    """When flyte is not initialized, _get_base_registry returns the default registry."""
+    with patch("flyte._initialize._get_init_config", return_value=None):
+        assert _get_base_registry() == _BASE_REGISTRY
+
+
+def test_get_base_registry_returns_default_when_no_client():
+    """When init config has no client, _get_base_registry returns the default registry."""
+    mock_config = MagicMock()
+    mock_config.client = None
+    with patch("flyte._initialize._get_init_config", return_value=mock_config):
+        assert _get_base_registry() == _BASE_REGISTRY
+
+
+def test_get_base_registry_returns_default_for_remote_endpoint():
+    """When endpoint is a remote URL, _get_base_registry returns the default registry."""
+    mock_config = MagicMock()
+    mock_config.client.endpoint = "dns:///my-cluster.example.com"
+    with patch("flyte._initialize._get_init_config", return_value=mock_config):
+        assert _get_base_registry() == _BASE_REGISTRY
+
+
+def test_get_base_registry_returns_localhost_for_localhost_endpoint():
+    """When endpoint contains 'localhost', _get_base_registry returns the localhost registry."""
+    mock_config = MagicMock()
+    mock_config.client.endpoint = "localhost:8090"
+    with patch("flyte._initialize._get_init_config", return_value=mock_config):
+        assert _get_base_registry() == _LOCALHOST_REGISTRY
+
+
+def test_get_base_registry_returns_localhost_for_localhost_in_url():
+    """When endpoint contains 'localhost' as part of a URL, _get_base_registry returns the localhost registry."""
+    mock_config = MagicMock()
+    mock_config.client.endpoint = "dns:///localhost:30080"
+    with patch("flyte._initialize._get_init_config", return_value=mock_config):
+        assert _get_base_registry() == _LOCALHOST_REGISTRY
+
+
+def test_get_base_registry_returns_default_for_empty_endpoint():
+    """When endpoint is empty string, _get_base_registry returns the default registry."""
+    mock_config = MagicMock()
+    mock_config.client.endpoint = ""
+    with patch("flyte._initialize._get_init_config", return_value=mock_config):
+        assert _get_base_registry() == _BASE_REGISTRY
+
+
+def test_released_default_image_is_not_cloned():
+    """A released, unmodified default image should have _is_cloned=False so the SDK skips building it."""
+    with patch("flyte._version.__version__", "1.2.3"):
+        image = Image.from_debian_base(python_version=(3, 12))
+    assert image._is_cloned is False
+
+
+def test_dev_default_image_is_cloned():
+    """A dev-version default image should have _is_cloned=True so the SDK builds it."""
+    with patch("flyte._version.__version__", "1.2.3.dev0+abc"):
+        image = Image.from_debian_base(python_version=(3, 12))
+    assert image._is_cloned is True
+
+
+def test_with_pip_packages_marks_image_as_cloned():
+    """Adding pip packages to a default image should flip _is_cloned to True."""
+    with patch("flyte._version.__version__", "1.2.3"):
+        image = Image.from_debian_base(
+            python_version=(3, 12),
+            registry="my-registry.example.com",
+            name="my-image",
+        )
+        assert image._is_cloned is True  # registry override already triggers clone
+        modified = image.with_pip_packages("requests")
+    assert modified._is_cloned is True
+
+
+def test_clone_marks_image_as_cloned():
+    """Explicitly calling clone() should produce an image with _is_cloned=True."""
+    image = Image.from_base("ghcr.io/example/my-image:latest")
+    assert image._is_cloned is False
+    cloned = image.clone(name="my-image")
+    assert cloned._is_cloned is True
+
+
+def test_from_debian_base_with_registry_is_cloned():
+    """Overriding the registry on from_debian_base produces a cloned image (needs build)."""
+    with patch("flyte._version.__version__", "1.2.3"):
+        image = Image.from_debian_base(python_version=(3, 12), registry="my-registry.example.com", name="my-image")
+    assert image._is_cloned is True
+
+
+def test_from_base_is_not_cloned():
+    """Image.from_base points at an existing image URI and should not be rebuilt unless modified."""
+    image = Image.from_base("my-registry.example.com/my-image:latest")
+    assert image._is_cloned is False
+
+
+def test_from_base_with_layers_is_cloned():
+    """Adding layers to a from_base image must flip _is_cloned so the SDK builds the derived image."""
+    image = Image.from_base("my-registry.example.com/my-image:latest")
+    # from_base images don't have a name, so we need to clone first to add layers.
+    cloned = image.clone(name="derived", extendable=True).with_pip_packages("requests")
+    assert cloned._is_cloned is True
+
+
+def test_from_ref_name_is_not_cloned():
+    """Image.from_ref_name is a pointer to an externally configured image and should not be rebuilt."""
+    image = Image.from_ref_name("my-ref")
+    assert image._is_cloned is False

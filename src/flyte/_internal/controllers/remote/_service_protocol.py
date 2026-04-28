@@ -19,7 +19,7 @@ class StateService(Protocol):
     Interface for the state store client, which stores the history of all subruns.
     """
 
-    async def Watch(
+    async def watch(
         self, req: state_service_pb2.WatchRequest, **kwargs
     ) -> AsyncIterator[state_service_pb2.WatchResponse]:
         """Watch for subrun updates"""
@@ -30,21 +30,21 @@ class ActionsService(Protocol):
     Interface for the unified actions service, which replaces both StateService and QueueService.
     """
 
-    async def Enqueue(
+    async def enqueue(
         self,
         req: actions_service_pb2.EnqueueRequest,
         **kwargs,
     ) -> actions_service_pb2.EnqueueResponse:
         """Enqueue an action for execution"""
 
-    async def WatchForUpdates(
+    async def watch_for_updates(
         self,
         req: actions_service_pb2.WatchForUpdatesRequest,
         **kwargs,
     ) -> AsyncIterator[actions_service_pb2.WatchForUpdatesResponse]:
         """Watch for action state updates"""
 
-    async def Abort(
+    async def abort(
         self,
         req: actions_service_pb2.AbortRequest,
         **kwargs,
@@ -57,14 +57,14 @@ class QueueService(Protocol):
     Interface for the remote queue service, which is responsible for managing the queue of tasks.
     """
 
-    async def EnqueueAction(
+    async def enqueue_action(
         self,
         req: queue_service_pb2.EnqueueActionRequest,
         **kwargs,
     ) -> queue_service_pb2.EnqueueActionResponse:
         """Enqueue a task"""
 
-    async def AbortQueuedAction(
+    async def abort_queued_action(
         self,
         req: queue_service_pb2.AbortQueuedActionRequest,
         **kwargs,

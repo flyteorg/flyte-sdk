@@ -657,6 +657,122 @@ async def test_task_with_trigger_all_options():
     assert input_dict["learning_rate"].scalar.primitive.float_value == 0.01
 
 
+class TestTriggerWithCustomContext:
+    """Test that triggers with custom_context serialize to Inputs.context"""
+
+    @pytest.mark.asyncio
+    async def test_trigger_with_custom_context(self):
+        """Test trigger with custom_context is serialized as Inputs.context KV pairs"""
+        trigger = Trigger(
+            name="context_trigger",
+            automation=Cron("0 0 * * *"),
+            custom_context={"experiment": "v2", "team": "ml"},
+        )
+
+        task_inputs = interface_pb2.VariableMap()
+        task_default_inputs = []
+
+        result = await to_task_trigger(trigger, "test_task", task_inputs, task_default_inputs)
+
+        context_dict = {kv.key: kv.value for kv in result.spec.inputs.context}
+        assert context_dict == {"experiment": "v2", "team": "ml"}
+
+    @pytest.mark.asyncio
+    async def test_trigger_without_custom_context(self):
+        """Test trigger without custom_context has no context entries"""
+        trigger = Trigger(
+            name="no_context_trigger",
+            automation=Cron("0 0 * * *"),
+        )
+
+        task_inputs = interface_pb2.VariableMap()
+        task_default_inputs = []
+
+        result = await to_task_trigger(trigger, "test_task", task_inputs, task_default_inputs)
+
+        assert len(result.spec.inputs.context) == 0
+
+    @pytest.mark.asyncio
+    async def test_trigger_with_custom_context_and_inputs(self):
+        """Test trigger with both custom_context and default inputs"""
+        trigger = Trigger(
+            name="combined_trigger",
+            automation=Cron("0 0 * * *"),
+            inputs={"num": 42},
+            custom_context={"source": "scheduled"},
+        )
+
+        task_inputs = interface_pb2.VariableMap(
+            variables=[
+                VariableEntry(
+                    key="num",
+                    value=interface_pb2.Variable(type=types_pb2.LiteralType(simple=types_pb2.SimpleType.INTEGER)),
+                ),
+            ]
+        )
+        task_default_inputs = []
+
+        result = await to_task_trigger(trigger, "test_task", task_inputs, task_default_inputs)
+
+        # Verify inputs are serialized
+        assert len(result.spec.inputs.literals) == 1
+        assert result.spec.inputs.literals[0].name == "num"
+        assert result.spec.inputs.literals[0].value.scalar.primitive.integer == 42
+
+        # Verify context is serialized
+        context_dict = {kv.key: kv.value for kv in result.spec.inputs.context}
+        assert context_dict == {"source": "scheduled"}
+
+    @pytest.mark.asyncio
+    async def test_trigger_with_custom_context_and_all_run_spec_options(self):
+        """Test trigger with custom_context alongside all other options"""
+        trigger = Trigger(
+            name="full_context_trigger",
+            automation=FixedRate(interval_minutes=30),
+            auto_activate=False,
+            env_vars={"ENV": "prod"},
+            interruptible=True,
+            overwrite_cache=True,
+            queue="ml-queue",
+            labels={"team": "ml"},
+            annotations={"owner": "data-team"},
+            custom_context={"pipeline": "training", "version": "3"},
+        )
+
+        task_inputs = interface_pb2.VariableMap()
+        task_default_inputs = []
+
+        result = await to_task_trigger(trigger, "test_task", task_inputs, task_default_inputs)
+
+        # Verify all RunSpec options
+        assert result.spec.active is False
+        assert result.spec.run_spec.overwrite_cache is True
+        assert result.spec.run_spec.interruptible.value is True
+        assert result.spec.run_spec.cluster == "ml-queue"
+        assert result.spec.run_spec.labels.values == {"team": "ml"}
+        assert result.spec.run_spec.annotations.values == {"owner": "data-team"}
+
+        # Verify custom_context
+        context_dict = {kv.key: kv.value for kv in result.spec.inputs.context}
+        assert context_dict == {"pipeline": "training", "version": "3"}
+
+    @pytest.mark.asyncio
+    async def test_trigger_with_empty_custom_context(self):
+        """Test trigger with empty custom_context dict"""
+        trigger = Trigger(
+            name="empty_context_trigger",
+            automation=Cron("0 0 * * *"),
+            custom_context={},
+        )
+
+        task_inputs = interface_pb2.VariableMap()
+        task_default_inputs = []
+
+        result = await to_task_trigger(trigger, "test_task", task_inputs, task_default_inputs)
+
+        assert len(result.spec.inputs.context) == 0
+
+
 class TestTriggerWithNotifications:
     """Test that triggers with notifications serialize correctly (notifications are stored but not yet in RunSpec)."""
 

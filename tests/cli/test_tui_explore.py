@@ -57,6 +57,7 @@ def test_run_detail_screen_tracker_reconstruction():
     RunStore.record_start_sync(run_name="run-1", action_name="a1", task_name="sub_task", parent_id="a0")
     RunStore.record_complete_sync(run_name="run-1", action_name="a1")
     RunStore.record_failure_sync(run_name="run-1", action_name="a0", error="boom")
+    actions = RunStore.list_actions_for_run_sync("run-1")
 
     from flyte.cli._tui._explore import RunDetailScreen
 
@@ -67,11 +68,15 @@ def test_run_detail_screen_tracker_reconstruction():
     assert root is not None
     assert root.task_name == "root_task"
     assert root.status == ActionStatus.FAILED
+    assert root.start_time == actions[0].start_time
+    assert root.end_time == actions[0].end_time
 
     sub = tracker.get_action("a1")
     assert sub is not None
     assert sub.task_name == "sub_task"
     assert sub.status == ActionStatus.SUCCEEDED
+    assert sub.start_time == actions[1].start_time
+    assert sub.end_time == actions[1].end_time
 
 
 def test_run_detail_screen_tracker_extended_fields():

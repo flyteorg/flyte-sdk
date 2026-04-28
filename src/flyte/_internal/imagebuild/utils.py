@@ -125,7 +125,7 @@ def get_uv_project_editable_dependencies(project_root: Path) -> list[Path]:
     paths = []
     for match in _extract_editables_from_uv_export(project_root):
         # If the the path is absolute already, keep as-is
-        # otherwise we need to complete it by pre-pending the project root where 'uv export' was run from.
+        # otherwise we need to complete it by prepending the project root where 'uv export' was run from.
         resolved_path = Path(match) if Path(match).is_absolute() else (project_root / match)
         paths.append(resolved_path)
     return paths

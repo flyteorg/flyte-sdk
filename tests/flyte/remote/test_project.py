@@ -38,10 +38,10 @@ def _make_list_response(projects, token=""):
 @pytest.fixture
 def mock_service():
     svc = MagicMock()
-    svc.CreateProject = AsyncMock(return_value=project_service_pb2.CreateProjectResponse())
-    svc.UpdateProject = AsyncMock(return_value=project_service_pb2.UpdateProjectResponse())
-    svc.GetProject = AsyncMock()
-    svc.ListProjects = AsyncMock()
+    svc.create_project = AsyncMock(return_value=project_service_pb2.CreateProjectResponse())
+    svc.update_project = AsyncMock(return_value=project_service_pb2.UpdateProjectResponse())
+    svc.get_project = AsyncMock()
+    svc.list_projects = AsyncMock()
     return svc
 
 
@@ -60,8 +60,8 @@ class TestProjectCreate:
         ):
             result = Project.create(id="my-project-id", name="My Project")
 
-        mock_service.CreateProject.assert_called_once()
-        req = mock_service.CreateProject.call_args[0][0]
+        mock_service.create_project.assert_called_once()
+        req = mock_service.create_project.call_args[0][0]
         assert req.project.id == "my-project-id"
         assert req.project.name == "My Project"
         assert req.project.description == ""
@@ -75,7 +75,7 @@ class TestProjectCreate:
         ):
             Project.create(id="my-project-id", name="My Project", description="My cool project")
 
-        req = mock_service.CreateProject.call_args[0][0]
+        req = mock_service.create_project.call_args[0][0]
         assert req.project.description == "My cool project"
 
     def test_create_with_labels(self, mock_client, mock_service):
@@ -85,7 +85,7 @@ class TestProjectCreate:
         ):
             Project.create(id="my-project-id", name="My Project", labels={"team": "ml", "env": "prod"})
 
-        req = mock_service.CreateProject.call_args[0][0]
+        req = mock_service.create_project.call_args[0][0]
         assert dict(req.project.labels.values) == {"team": "ml", "env": "prod"}
 
     def test_create_without_labels_does_not_set_labels(self, mock_client, mock_service):
@@ -95,14 +95,14 @@ class TestProjectCreate:
         ):
             Project.create(id="my-project-id", name="My Project")
 
-        req = mock_service.CreateProject.call_args[0][0]
+        req = mock_service.create_project.call_args[0][0]
         assert not req.project.labels.values
 
 
 class TestProjectUpdate:
     def test_update_description(self, mock_client, mock_service):
         existing = _make_project_pb(description="old desc")
-        mock_service.GetProject.return_value = _make_get_response(existing)
+        mock_service.get_project.return_value = _make_get_response(existing)
 
         with (
             patch("flyte.remote._project.ensure_client"),
@@ -110,15 +110,15 @@ class TestProjectUpdate:
         ):
             Project.update(id="test-project", description="new desc")
 
-        mock_service.UpdateProject.assert_called_once()
-        req = mock_service.UpdateProject.call_args[0][0]
+        mock_service.update_project.assert_called_once()
+        req = mock_service.update_project.call_args[0][0]
         assert req.project.description == "new desc"
         # Name should be preserved
         assert req.project.name == "test-project"
 
     def test_update_name(self, mock_client, mock_service):
         existing = _make_project_pb(name="Old Name")
-        mock_service.GetProject.return_value = _make_get_response(existing)
+        mock_service.get_project.return_value = _make_get_response(existing)
 
         with (
             patch("flyte.remote._project.ensure_client"),
@@ -126,12 +126,12 @@ class TestProjectUpdate:
         ):
             Project.update(id="test-project", name="New Name")
 
-        req = mock_service.UpdateProject.call_args[0][0]
+        req = mock_service.update_project.call_args[0][0]
         assert req.project.name == "New Name"
 
     def test_update_labels(self, mock_client, mock_service):
         existing = _make_project_pb(labels={"old": "label"})
-        mock_service.GetProject.return_value = _make_get_response(existing)
+        mock_service.get_project.return_value = _make_get_response(existing)
 
         with (
             patch("flyte.remote._project.ensure_client"),
@@ -139,12 +139,12 @@ class TestProjectUpdate:
         ):
             Project.update(id="test-project", labels={"new": "label"})
 
-        req = mock_service.UpdateProject.call_args[0][0]
+        req = mock_service.update_project.call_args[0][0]
         assert dict(req.project.labels.values) == {"new": "label"}
 
     def test_update_state_archived(self, mock_client, mock_service):
         existing = _make_project_pb()
-        mock_service.GetProject.return_value = _make_get_response(existing)
+        mock_service.get_project.return_value = _make_get_response(existing)
 
         with (
             patch("flyte.remote._project.ensure_client"),
@@ -152,12 +152,12 @@ class TestProjectUpdate:
         ):
             Project.update(id="test-project", state="archived")
 
-        req = mock_service.UpdateProject.call_args[0][0]
+        req = mock_service.update_project.call_args[0][0]
         assert req.project.state == project_service_pb2.PROJECT_STATE_ARCHIVED
 
     def test_update_state_active(self, mock_client, mock_service):
         existing = _make_project_pb(state=project_service_pb2.PROJECT_STATE_ARCHIVED)
-        mock_service.GetProject.return_value = _make_get_response(existing)
+        mock_service.get_project.return_value = _make_get_response(existing)
 
         with (
             patch("flyte.remote._project.ensure_client"),
@@ -165,7 +165,7 @@ class TestProjectUpdate:
         ):
             Project.update(id="test-project", state="active")
 
-        req = mock_service.UpdateProject.call_args[0][0]
+        req = mock_service.update_project.call_args[0][0]
         assert req.project.state == project_service_pb2.PROJECT_STATE_ACTIVE
 
     def test_update_preserves_unmodified_fields(self, mock_client, mock_service):
@@ -174,7 +174,7 @@ class TestProjectUpdate:
             description="Original desc",
             labels={"keep": "me"},
         )
-        mock_service.GetProject.return_value = _make_get_response(existing)
+        mock_service.get_project.return_value = _make_get_response(existing)
 
         with (
             patch("flyte.remote._project.ensure_client"),
@@ -182,7 +182,7 @@ class TestProjectUpdate:
         ):
             Project.update(id="test-project", state="archived")
 
-        req = mock_service.UpdateProject.call_args[0][0]
+        req = mock_service.update_project.call_args[0][0]
         # Only state should change; other fields preserved
         assert req.project.name == "Original Name"
         assert req.project.description == "Original desc"
@@ -191,7 +191,7 @@ class TestProjectUpdate:
 
     def test_update_fetches_project_by_id(self, mock_client, mock_service):
         existing = _make_project_pb()
-        mock_service.GetProject.return_value = _make_get_response(existing)
+        mock_service.get_project.return_value = _make_get_response(existing)
 
         with (
             patch("flyte.remote._project.ensure_client"),
@@ -199,13 +199,13 @@ class TestProjectUpdate:
         ):
             Project.update(id="my-proj", description="x")
 
-        get_req = mock_service.GetProject.call_args[0][0]
+        get_req = mock_service.get_project.call_args[0][0]
         assert get_req.id == "my-proj"
 
     def test_update_clears_domains(self, mock_client, mock_service):
         existing = _make_project_pb()
         existing.domains.append(project_service_pb2.Domain(id="production", name="production"))
-        mock_service.GetProject.return_value = _make_get_response(existing)
+        mock_service.get_project.return_value = _make_get_response(existing)
 
         with (
             patch("flyte.remote._project.ensure_client"),
@@ -213,14 +213,14 @@ class TestProjectUpdate:
         ):
             Project.update(id="test-project", description="x")
 
-        req = mock_service.UpdateProject.call_args[0][0]
+        req = mock_service.update_project.call_args[0][0]
         assert len(req.project.domains) == 0
 
 
 class TestProjectArchiveUnarchive:
     def test_archive(self, mock_client, mock_service):
         existing = _make_project_pb()
-        mock_service.GetProject.return_value = _make_get_response(existing)
+        mock_service.get_project.return_value = _make_get_response(existing)
 
         with (
             patch("flyte.remote._project.ensure_client"),
@@ -229,12 +229,12 @@ class TestProjectArchiveUnarchive:
             project = Project(existing)
             project.archive()
 
-        req = mock_service.UpdateProject.call_args[0][0]
+        req = mock_service.update_project.call_args[0][0]
         assert req.project.state == project_service_pb2.PROJECT_STATE_ARCHIVED
 
     def test_unarchive(self, mock_client, mock_service):
         existing = _make_project_pb(state=project_service_pb2.PROJECT_STATE_ARCHIVED)
-        mock_service.GetProject.return_value = _make_get_response(existing)
+        mock_service.get_project.return_value = _make_get_response(existing)
 
         with (
             patch("flyte.remote._project.ensure_client"),
@@ -243,7 +243,7 @@ class TestProjectArchiveUnarchive:
             project = Project(existing)
             project.unarchive()
 
-        req = mock_service.UpdateProject.call_args[0][0]
+        req = mock_service.update_project.call_args[0][0]
         assert req.project.state == project_service_pb2.PROJECT_STATE_ACTIVE
 
 
@@ -256,23 +256,23 @@ class TestProjectListallStateFilter:
             return list(Project.listall(archived=archived))
 
     def test_default_sends_active_filter(self, mock_client, mock_service):
-        mock_service.ListProjects.return_value = _make_list_response([_make_project_pb()])
+        mock_service.list_projects.return_value = _make_list_response([_make_project_pb()])
 
         self._call_listall(mock_client)
 
-        req = mock_service.ListProjects.call_args[0][0]
+        req = mock_service.list_projects.call_args[0][0]
         assert req.filters == f"eq(state, {project_service_pb2.PROJECT_STATE_ACTIVE})"
 
     def test_archived_sends_archived_filter(self, mock_client, mock_service):
-        mock_service.ListProjects.return_value = _make_list_response([])
+        mock_service.list_projects.return_value = _make_list_response([])
 
         self._call_listall(mock_client, archived=True)
 
-        req = mock_service.ListProjects.call_args[0][0]
+        req = mock_service.list_projects.call_args[0][0]
         assert req.filters == f"eq(state, {project_service_pb2.PROJECT_STATE_ARCHIVED})"
 
     def test_combines_with_existing_filters(self, mock_client, mock_service):
-        mock_service.ListProjects.return_value = _make_list_response([])
+        mock_service.list_projects.return_value = _make_list_response([])
 
         with (
             patch("flyte.remote._project.ensure_client"),
@@ -280,20 +280,20 @@ class TestProjectListallStateFilter:
         ):
             list(Project.listall(filters="eq(name, foo)", archived=True))
 
-        req = mock_service.ListProjects.call_args[0][0]
+        req = mock_service.list_projects.call_args[0][0]
         assert req.filters == f"eq(name, foo)+eq(state, {project_service_pb2.PROJECT_STATE_ARCHIVED})"
 
     def test_listall_paginates(self, mock_client, mock_service):
         p1 = _make_project_pb(id="proj-1")
         p2 = _make_project_pb(id="proj-2")
-        mock_service.ListProjects.side_effect = [
+        mock_service.list_projects.side_effect = [
             _make_list_response([p1], token="next"),
             _make_list_response([p2], token=""),
         ]
 
         results = self._call_listall(mock_client)
         assert len(results) == 2
-        assert mock_service.ListProjects.call_count == 2
+        assert mock_service.list_projects.call_count == 2
 
 
 class TestProjectRichRepr:

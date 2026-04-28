@@ -19,7 +19,7 @@ agent_env = flyte.TaskEnvironment(
     "openai-agent",
     resources=flyte.Resources(cpu=1),
     secrets=[flyte.Secret(key="niels_openai_api_key", as_env_var="OPENAI_API_KEY")],
-    image=flyte.Image.from_uv_script(__file__, name="openai-agent", pre=True),
+    image=flyte.Image.from_uv_script(__file__, name="openai-agent"),
 )
 
 

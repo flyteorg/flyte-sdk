@@ -140,6 +140,7 @@ async def run_tests(
     env_vars: Optional[dict[str, str]] = None,
     secrets: Optional[list] = None,
     cache: str = "auto",
+    block_network: bool = False,
     _attempt: int = 1,
 ) -> RunResult:
     """Run pytest tests against code in an isolated container.
@@ -155,6 +156,7 @@ async def run_tests(
         env_vars: Environment variables available inside the container.
         secrets: Flyte secrets to mount.
         cache: Cache behaviour — `"auto"`, `"override"`, or `"disable"`.
+        block_network: Block all outbound network access. Defaults to False.
         _attempt: Differentiates repeated calls with the same base name.
 
     Returns:
@@ -180,6 +182,7 @@ async def run_tests(
         env_vars=env_vars,
         secrets=secrets,
         cache=cache,
+        block_network=block_network,
     )
 
     try:

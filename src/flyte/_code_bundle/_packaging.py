@@ -89,6 +89,7 @@ def list_files_to_bundle(
     deref_symlinks: bool = False,
     *ignores: typing.Type[Ignore],
     copy_style: CopyFiles = "all",
+    additional_files: typing.Optional[typing.Sequence[str]] = None,
 ) -> typing.Tuple[List[str], str]:
     """
     Takes a source directory and returns a list of all files to be included in the code bundle and a hexdigest of the
@@ -97,11 +98,13 @@ def list_files_to_bundle(
     :param deref_symlinks: Whether to dereference symlinks or not
     :param ignores: A list of Ignore classes to use for ignoring files
     :param copy_style: The copy style to use for the tarball
+    :param additional_files: Extra absolute paths (under ``source``) to include alongside
+        whatever ``copy_style`` discovers. Used for ``Environment.include``.
     :return: A list of all files to be included in the code bundle and a hexdigest of the included files
     """
     ignore = IgnoreGroup(source, *ignores)
 
-    ls, ls_digest = ls_files(source, copy_style, deref_symlinks, ignore)
+    ls, ls_digest = ls_files(source, copy_style, deref_symlinks, ignore, additional_files=additional_files)
     logger.debug(f"Hash of files to be included in the code bundle: {ls_digest}")
     return ls, ls_digest
 

@@ -16,7 +16,7 @@ import typing
 from datetime import datetime, timezone
 from functools import lru_cache
 from types import ModuleType
-from typing import List, Literal, Optional, Tuple, Union
+from typing import List, Literal, Optional, Sequence, Tuple, Union
 
 from flyte._logging import logger
 
@@ -97,6 +97,7 @@ def ls_files(
     copy_file_detection: CopyFiles,
     deref_symlinks: bool = False,
     ignore_group: Optional[IgnoreGroup] = None,
+    additional_files: Optional[Sequence[str]] = None,
 ) -> Tuple[List[str], str]:
     """
     user_modules_and_packages is a list of the Python modules and packages, expressed as absolute paths, that the
@@ -110,6 +111,11 @@ def ls_files(
         representing modules under this root are included
 
     If the copy enum is set to loaded_modules, then the loaded sys modules will be used.
+
+    :param additional_files: Absolute paths that must be included in addition to the files
+        discovered via ``copy_file_detection``. Each path must be under ``source_path`` and
+        may be a file, a directory (recursively included), or a glob pattern. Used to
+        implement ``Environment.include`` across bundling strategies.
     """
 
     # Unlike the below, the value error here is useful and should be returned to the user, like if absolute and
@@ -122,6 +128,39 @@ def ls_files(
     # this is --copy all (--copy none should never invoke this function)
     else:
         all_files = list_all_files(source_path, deref_symlinks, ignore_group)
+
+    if additional_files:
+        resolved_source = source_path.resolve()
+        extra_paths: list[str] = []
+        for entry in additional_files:
+            p = pathlib.Path(entry)
+            if p.is_dir():
+                extra_paths.extend(str(child) for child in p.glob("**/*") if child.is_file())
+            elif p.is_file():
+                extra_paths.append(str(p))
+            else:
+                matched = glob.glob(str(p))
+                if not matched:
+                    raise ValueError(f"include path {entry!r} is not a file, directory, or matching glob pattern.")
+                extra_paths.extend(m for m in matched if pathlib.Path(m).is_file())
+
+        existing = set(all_files)
+        for extra in extra_paths:
+            # Verify containment on resolved paths (handles macOS /private symlinks, ..
+            # segments, etc.) but append the path in a form that is a literal subpath
+            # of `source_path`, so the downstream `relative_to(source_path)` succeeds.
+            resolved = pathlib.Path(extra).resolve()
+            try:
+                rel = resolved.relative_to(resolved_source)
+            except ValueError as exc:
+                raise ValueError(
+                    f"include path {extra!r} is outside the bundle root {source_path!s}. "
+                    f"Pass --root-dir (or configure it) one level up so every include lives under the root."
+                ) from exc
+            normalized = str(source_path / rel)
+            if normalized not in existing:
+                existing.add(normalized)
+                all_files.append(normalized)
 
     all_files.sort()
     hasher = hashlib.md5()

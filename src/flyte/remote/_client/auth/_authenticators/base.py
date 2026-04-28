@@ -6,16 +6,15 @@ from abc import abstractmethod
 from http import HTTPStatus
 
 import httpx
-from grpc.aio import Metadata
 
 from flyte.remote._client.auth._client_config import ClientConfig, ClientConfigStore
 from flyte.remote._client.auth._keyring import Credentials, KeyringStore
 
 
 @dataclasses.dataclass
-class GrpcAuthMetadata:
+class AuthHeaders:
     creds_id: str
-    pairs: Metadata
+    headers: dict[str, str]
 
 
 class Authenticator(object):
@@ -35,6 +34,7 @@ class Authenticator(object):
         verify: bool = True,
         ca_cert_path: typing.Optional[str] = None,
         default_header_key: str = "authorization",
+        disable_keyring: bool = False,
         **kwargs,
     ):
         """
@@ -68,7 +68,8 @@ class Authenticator(object):
             - app: ASGI application to handle requests
         """
         self._endpoint = endpoint
-        self._creds = credentials or KeyringStore.retrieve(endpoint)
+        self._disable_keyring = disable_keyring
+        self._creds = credentials or KeyringStore.retrieve(endpoint, disable=disable_keyring)
         self._http_proxy_url = http_proxy_url
         self._verify = verify
         self._ca_cert_path = ca_cert_path
@@ -125,11 +126,11 @@ class Authenticator(object):
         """
         self._creds = creds
 
-    async def get_grpc_call_auth_metadata(self) -> typing.Optional[GrpcAuthMetadata]:
+    async def get_auth_headers(self) -> typing.Optional[AuthHeaders]:
         """
-        Fetch the authentication metadata for gRPC calls.
+        Fetch the authentication headers.
 
-        :return: A tuple of (header_key, header_value) or None if no credentials are available
+        :return: AuthHeaders with header dict, or None if no credentials are available
         """
         creds = self.get_credentials()
         if creds:
@@ -138,9 +139,9 @@ class Authenticator(object):
                 # We only resolve the config during authentication flow, to avoid unnecessary network calls
                 # and usually the header_key is consistent.
                 header_key = self._resolved_config.header_key
-            return GrpcAuthMetadata(
+            return AuthHeaders(
                 creds_id=creds.id,
-                pairs=Metadata((header_key, f"Bearer {creds.access_token}")),
+                headers={header_key: f"Bearer {creds.access_token}"},
             )
         return None
 
@@ -178,9 +179,9 @@ class Authenticator(object):
             # Perform the actual credential refresh
             try:
                 self._creds = await self._do_refresh_credentials()
-                KeyringStore.store(self._creds)
+                KeyringStore.store(self._creds, disable=self._disable_keyring)
             except Exception:
-                KeyringStore.delete(self._endpoint)
+                KeyringStore.delete(self._endpoint, disable=self._disable_keyring)
                 raise
 
             # Update the timestamp to indicate credentials have been refreshed
@@ -271,10 +272,10 @@ class AsyncAuthenticationHTTPAdapter:
         if self.authenticator.get_credentials() is None:
             await self.authenticator.refresh_credentials()
 
-        metadata = await self.authenticator.get_grpc_call_auth_metadata()
+        metadata = await self.authenticator.get_auth_headers()
         if metadata is None:
             return None
-        for key, value in metadata.pairs.keys():
+        for key, value in metadata.headers.items():
             request.headers[key] = value
         return metadata.creds_id
 

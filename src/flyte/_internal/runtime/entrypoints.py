@@ -11,7 +11,7 @@ from flyte._internal.imagebuild.image_builder import ImageCache
 from flyte._logging import log, logger
 from flyte._metrics import Stopwatch
 from flyte._task import TaskTemplate
-from flyte.models import ActionID, Checkpoints, CodeBundle, RawDataPath
+from flyte.models import ActionID, CheckpointPaths, CodeBundle, RawDataPath
 
 from ..._utils import adjust_sys_path
 from .convert import Error, Inputs, Outputs
@@ -30,7 +30,7 @@ async def direct_dispatch(
     version: str,
     output_path: str,
     run_base_dir: str,
-    checkpoints: Checkpoints | None = None,
+    checkpoint_paths: CheckpointPaths | None = None,
     code_bundle: CodeBundle | None = None,
     inputs: Inputs | None = None,
 ) -> Tuple[Optional[Outputs], Optional[Error]]:
@@ -46,7 +46,7 @@ async def direct_dispatch(
         inputs=inputs or Inputs.empty(),
         action=action,
         raw_data_path=raw_data_path,
-        checkpoints=checkpoints,
+        checkpoint_paths=checkpoint_paths,
         code_bundle=code_bundle,
         controller=controller,
         version=version,
@@ -66,6 +66,49 @@ def load_class(qualified_name) -> Type:
     return getattr(module, class_name)  # Retrieve the class
 
 
+_SKIP_DIRS = frozenset(
+    {
+        ".git",
+        ".hg",
+        ".svn",
+        ".venv",
+        "venv",
+        "env",
+        ".local",
+        ".cache",
+        ".uv",
+        "__pycache__",
+        "node_modules",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".idea",
+        ".tox",
+        ".nox",
+        ".eggs",
+        "site-packages",
+        "dist-packages",
+        "dist",
+        "build",
+    }
+)
+
+
+def _list_user_files(cwd: str) -> list[str]:
+    """List user-relevant files under cwd, filtering out virtual envs, caches, and other non-user directories."""
+    files: list[str] = []
+    try:
+        for root, dirs, filenames in os.walk(cwd):
+            # Prune irrelevant directories in-place so os.walk won't descend into them
+            dirs[:] = [d for d in dirs if d not in _SKIP_DIRS]
+            for name in filenames:
+                rel_path = os.path.relpath(os.path.join(root, name), cwd)
+                files.append(rel_path)
+    except Exception as list_err:
+        files = [f"(Failed to list directory: {list_err})"]
+    return files
+
+
 def load_task(resolver: str, *resolver_args: str) -> TaskTemplate:
     """
     Load a task from a resolver. This is a placeholder function.
@@ -80,14 +123,7 @@ def load_task(resolver: str, *resolver_args: str) -> TaskTemplate:
         return resolver_instance.load_task(resolver_args)
     except ModuleNotFoundError as e:
         cwd = os.getcwd()
-        files = []
-        try:
-            for root, dirs, filenames in os.walk(cwd):
-                for name in dirs + filenames:
-                    rel_path = os.path.relpath(os.path.join(root, name), cwd)
-                    files.append(rel_path)
-        except Exception as list_err:
-            files = [f"(Failed to list directory: {list_err})"]
+        files = _list_user_files(cwd)
 
         msg = (
             "\n\nFull traceback:\n" + "".join(traceback.format_exc()) + f"\n[ImportError Diagnostics]\n"
@@ -177,7 +213,7 @@ async def load_and_run_task(
     controller: Controller,
     resolver: str,
     resolver_args: List[str],
-    checkpoints: Checkpoints | None = None,
+    checkpoint_paths: CheckpointPaths | None = None,
     code_bundle: CodeBundle | None = None,
     input_path: str | None = None,
     image_cache: ImageCache | None = None,
@@ -195,7 +231,7 @@ async def load_and_run_task(
     :param output_path: The output path to use for the task.
     :param run_base_dir: Base output directory to pass down to child tasks.
     :param version: The version of the task to run.
-    :param checkpoints: The checkpoints to use for the task.
+    :param checkpoint_paths: The checkpoint paths to use for the task.
     :param code_bundle: The code bundle to use for the task.
     :param input_path: The input path to use for the task.
     :param image_cache: Mappings of Image identifiers to image URIs.
@@ -214,7 +250,7 @@ async def load_and_run_task(
         raw_data_path=raw_data_path,
         output_path=output_path,
         run_base_dir=run_base_dir,
-        checkpoints=checkpoints,
+        checkpoint_paths=checkpoint_paths,
         code_bundle=code_bundle,
         input_path=input_path,
         image_cache=image_cache,

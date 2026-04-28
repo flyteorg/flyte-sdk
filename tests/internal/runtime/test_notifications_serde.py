@@ -89,8 +89,8 @@ class TestEmailTemplate:
         email = tmpl.email
         assert len(email.to) == 1
         assert email.to[0].address == "a@b.com"
-        assert email.subject == "Task {task.name} {run.phase}"
-        assert "{task.name}" in email.text_template
+        assert email.inline.subject == "Task {task.name} {run.phase}"
+        assert "{task.name}" in email.inline.text_template
 
     def test_multiple_recipients(self):
         tmpl = _to_delivery_config_template(Email(on_phase=ActionPhase.FAILED, recipients=("a@b.com", "c@d.com")))
@@ -125,18 +125,18 @@ class TestEmailTemplate:
                 html_body="<h1>{task.name}</h1>",
             )
         )
-        assert tmpl.email.html_template == "<h1>{task.name}</h1>"
+        assert tmpl.email.inline.html_template == "<h1>{task.name}</h1>"
 
     def test_no_html_body(self):
         tmpl = _to_delivery_config_template(Email(on_phase=ActionPhase.FAILED, recipients=("a@b.com",)))
-        assert tmpl.email.html_template == ""
+        assert tmpl.email.inline.html_template == ""
 
     def test_custom_subject_and_body(self):
         tmpl = _to_delivery_config_template(
             Email(on_phase=ActionPhase.FAILED, recipients=("a@b.com",), subject="Alert!", body="Details here")
         )
-        assert tmpl.email.subject == "Alert!"
-        assert tmpl.email.text_template == "Details here"
+        assert tmpl.email.inline.subject == "Alert!"
+        assert tmpl.email.inline.text_template == "Details here"
 
 
 class TestSlackTemplate:

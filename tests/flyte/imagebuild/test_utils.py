@@ -122,7 +122,7 @@ def test_get_uv_editable_install_mounts():
             mounts = get_uv_editable_install_mounts(project_root, context_path, ignore_patterns=[])
 
         # NOTE: If any library at path <PATH> should be expected under _flyte_abs_context/<PATH>.
-        # wihtin the build context.
+        # within the build context.
         # However, within the container, it should be mounted to its path relative to the project root.
         # This is done by using the relative_to method on the Path objects.
         expected_mounts = [

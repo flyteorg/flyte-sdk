@@ -1,11 +1,12 @@
 import os
 import re
 import typing
-from typing import Optional
 
 from flyte._utils import lazy_module
 from flyte.io._dataframe.dataframe import DataFrame, DataFrameDecoder, DataFrameEncoder
 from flyteidl2.core import literals_pb2, types_pb2
+
+from ._crypto import get_private_key
 
 if typing.TYPE_CHECKING:
     import pandas as pd
@@ -16,27 +17,6 @@ else:
 
 SNOWFLAKE = "snowflake"
 PROTOCOL_SEP = "\\/|://|:"
-
-
-def _get_private_key(private_key_content: str, private_key_passphrase: Optional[str] = None) -> bytes:
-    """Decode a PEM private key and return it in DER format."""
-    from cryptography.hazmat.backends import default_backend
-    from cryptography.hazmat.primitives import serialization
-
-    private_key_bytes = private_key_content.strip().encode()
-    password = private_key_passphrase.encode() if private_key_passphrase else None
-
-    private_key = serialization.load_pem_private_key(
-        private_key_bytes,
-        password=password,
-        backend=default_backend(),
-    )
-
-    return private_key.private_bytes(
-        encoding=serialization.Encoding.DER,
-        format=serialization.PrivateFormat.PKCS8,
-        encryption_algorithm=serialization.NoEncryption(),
-    )
 
 
 def _get_connection(
@@ -61,7 +41,7 @@ def _get_connection(
     private_key_content = os.environ.get("SNOWFLAKE_PRIVATE_KEY")
     if private_key_content:
         private_key_passphrase = os.environ.get("SNOWFLAKE_PRIVATE_KEY_PASSPHRASE")
-        conn_params["private_key"] = _get_private_key(private_key_content, private_key_passphrase)
+        conn_params["private_key"] = get_private_key(private_key_content, private_key_passphrase)
 
     return snowflake.connector.connect(**conn_params)
 

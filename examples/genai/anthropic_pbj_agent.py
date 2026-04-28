@@ -23,7 +23,7 @@ import flyte
 agent_env = flyte.TaskEnvironment(
     "anthropic-agent",
     resources=flyte.Resources(cpu=1),
-    secrets=[flyte.Secret(key="niels-anthropic-api-key", as_env_var="ANTHROPIC_API_KEY")],
+    secrets=[flyte.Secret(key="internal-anthropic-api-key", as_env_var="ANTHROPIC_API_KEY")],
     image=flyte.Image.from_uv_script(__file__, name="anthropic-agent"),
 )
 

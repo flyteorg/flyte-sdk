@@ -46,6 +46,10 @@ Warning: Experimental feature: alpha — APIs may change without notice.
     - Verbatim mode — run a script that manages its own I/O via /var/inputs and /var/outputs.
     - Command mode — execute an arbitrary command or entrypoint.
 
+    Network access is allowed by default. Pass `block_network=True` to block all
+    outbound access — locally via Docker `network_mode=none`, on-cluster via a
+    `NetworkPolicy`.
+
     Examples
     --------
 

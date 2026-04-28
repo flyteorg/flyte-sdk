@@ -1,16 +1,11 @@
-from typing import Any
-
 import polars as pl
-from polars.lazyframe.frame import LazyFrame
 
 import flyte
 
 env = flyte.TaskEnvironment(
     name="polars",
     resources=flyte.Resources(memory="1Gi"),
-    image=flyte.Image.from_debian_base(install_flyte=True, flyte_version="2.0.0b52").with_pip_packages(
-        "flyteplugins-polars", pre=True
-    ),
+    image=flyte.Image.from_debian_base().with_pip_packages("flyteplugins-polars"),
 )
 
 
@@ -44,7 +39,7 @@ async def preprocess_data(lf: pl.LazyFrame) -> str:
 @env.task
 async def main() -> str:
     print("polars fun")
-    lf = await get_big_lazyframe[Any, Any, LazyFrame]()
+    lf = await get_big_lazyframe()
     return await preprocess_data(lf=lf)
 
 

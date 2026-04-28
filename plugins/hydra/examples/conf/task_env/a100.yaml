@@ -1,0 +1,9 @@
+pipeline:
+  resources:
+    cpu: "2"
+    memory: "8Gi"
+train_model:
+  resources:
+    cpu: "16"
+    memory: "64Gi"
+    gpu: "A100:1"
