@@ -34,6 +34,11 @@ def _subprocess_env() -> dict[str, str]:
     return env
 
 
+def _append_run_name(path: str, name: str) -> None:
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(f"{name}\n")
+
+
 async def submit_one(sem: asyncio.Semaphore, idx: int, n_children: int, sleep_duration: timedelta) -> str | None:
     async with sem:
         os.environ.setdefault("_U_USE_ACTIONS", "1")
@@ -131,8 +136,7 @@ async def submit_many(total: int, concurrency: int, n_children: int, sleep_durat
             submitted += 1
             if RUNS_FILE:
                 async with runs_file_lock:
-                    with open(RUNS_FILE, "a", encoding="utf-8") as f:
-                        f.write(f"{name}\n")
+                    await asyncio.to_thread(_append_run_name, RUNS_FILE, name)
             print(f"submitted_run idx={i} url={name}", flush=True)
         done = submitted + failed
         if done % 100 == 0:
