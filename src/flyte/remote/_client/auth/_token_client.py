@@ -17,6 +17,10 @@ utf_8 = "utf-8"
 error_slow_down = "slow_down"
 error_auth_pending = "authorization_pending"
 
+_TOKEN_REQUEST_MAX_ATTEMPTS = 3
+_TOKEN_REQUEST_INITIAL_BACKOFF_SECONDS = 0.5
+_TOKEN_REQUEST_MAX_BACKOFF_SECONDS = 2.0
+
 
 # Grant Types
 class GrantType(str, enum.Enum):
@@ -80,6 +84,36 @@ def get_basic_authorization_header(client_id: str, client_secret: str) -> str:
     encoded = urllib.parse.quote_plus(client_secret)
     concatenated = "{}:{}".format(client_id, encoded)
     return "Basic {}".format(base64.b64encode(concatenated.encode(utf_8)).decode(utf_8))
+
+
+async def _post_token_request(
+    http_session: httpx.AsyncClient,
+    token_endpoint: str,
+    *,
+    data: dict[str, str],
+    headers: dict[str, str],
+) -> httpx.Response:
+    """POST to the token endpoint with bounded retries for transient transport failures."""
+    for attempt in range(1, _TOKEN_REQUEST_MAX_ATTEMPTS + 1):
+        try:
+            return await http_session.post(token_endpoint, data=data, headers=headers)
+        except httpx.TransportError:
+            if attempt >= _TOKEN_REQUEST_MAX_ATTEMPTS:
+                raise
+            backoff = min(
+                _TOKEN_REQUEST_INITIAL_BACKOFF_SECONDS * (2 ** (attempt - 1)),
+                _TOKEN_REQUEST_MAX_BACKOFF_SECONDS,
+            )
+            logger.warning(
+                "Token endpoint request failed for %s, retrying in %.1fs (%d/%d)",
+                token_endpoint,
+                backoff,
+                attempt,
+                _TOKEN_REQUEST_MAX_ATTEMPTS,
+                exc_info=True,
+            )
+            await asyncio.sleep(backoff)
+    raise RuntimeError("unreachable")
 
 
 async def get_token(
@@ -149,7 +183,7 @@ async def get_token(
     if refresh_token:
         body["refresh_token"] = refresh_token
 
-    response = await http_session.post(token_endpoint, data=body, headers=headers)
+    response = await _post_token_request(http_session, token_endpoint, data=body, headers=headers)
 
     if not response.is_success:
         j = response.json()
