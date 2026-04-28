@@ -15,6 +15,10 @@ These tests verify the FlyteMCPAppEnvironment functionality including:
 import pathlib
 
 import pytest
+
+from flyte._image import Image
+from flyte._resources import Resources
+from flyte.ai.mcp import FlyteMCPAppEnvironment
 from flyte.ai.mcp._mcp_app import (
     ALL_MCP_TOOL_GROUPS,
     ALL_MCP_TOOLS,
@@ -27,10 +31,6 @@ from flyte.ai.mcp._mcp_app import (
     _resolve_tools,
     _search_files,
 )
-
-from flyte._image import Image
-from flyte._resources import Resources
-from flyte.ai.mcp import FlyteMCPAppEnvironment
 from flyte.app._types import Domain, Scaling
 from flyte.models import SerializationContext
 
