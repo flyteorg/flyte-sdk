@@ -24,6 +24,18 @@ _PORTS = ["6443:6443", "30000:30000", "30001:30001", "30002:30002", "30003:30003
 _CONSOLE_READYZ_URL = "http://localhost:30080/readyz"
 
 
+def _ensure_docker_available() -> None:
+    if shutil.which("docker") is None:
+        raise click.ClickException(
+            "Docker is not installed or not on PATH. Install Docker Desktop (or the Docker Engine) and try again."
+        )
+    result = subprocess.run(["docker", "info"], capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        raise click.ClickException(
+            f"Docker daemon is not running or not reachable. Start Docker and try again.\n{result.stderr.strip()}"
+        )
+
+
 def _ensure_volume(volume_name: str) -> None:
     result = subprocess.run(
         ["docker", "volume", "ls", "--filter", f"name=^{volume_name}$", "--format", "{{.Name}}"],
@@ -231,6 +243,7 @@ def stop_devbox() -> None:
 
 @_sentry.capture_errors
 def launch_devbox(image_name: str, is_dev_mode: bool, gpu: bool = False, log_format: str = "console") -> None:
+    _ensure_docker_available()
     _ensure_volume(_VOLUME_NAME)
     if _container_is_paused(_CONTAINER_NAME):
         console.print("[cyan]Resuming paused devbox cluster...[/cyan]")
