@@ -41,7 +41,7 @@ async def test_get_token_retries_transient_transport_errors(monkeypatch):
     assert refresh_token == "refresh-token"
     assert expires_in == 3600
     assert session.post.await_count == 2
-    sleep.assert_awaited_once_with(0.5)
+    sleep.assert_awaited_once_with(1.0)
 
 
 @pytest.mark.asyncio
@@ -58,5 +58,5 @@ async def test_get_token_raises_after_retry_budget_exhausted(monkeypatch):
             client_id="client-id",
         )
 
-    assert session.post.await_count == 3
-    assert sleep.await_count == 2
+    assert session.post.await_count == 5
+    assert sleep.await_count == 4
