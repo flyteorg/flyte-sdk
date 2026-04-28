@@ -176,15 +176,6 @@ ENV PATH="$$PATH:/usr/local/nvidia/bin:/usr/local/cuda/bin" \
 # This gets added on to the end of the dockerfile
 DOCKER_FILE_BASE_FOOTER = Template("""\
 ENV _F_IMG_ID=$F_IMG_ID
-# Ensure a non-root `flyte` user exists and owns the venv so the runtime user
-# can read installed packages. This is a no-op for the default base image
-# (the user is already created), but makes custom base images safe by default.
-RUN if ! id -u flyte >/dev/null 2>&1; then \\
-       useradd --create-home --shell /bin/bash flyte; \\
-   fi && \\
-   mkdir -p /home/flyte && \\
-   chown -R flyte:flyte /home/flyte && \\
-   if [ -d /opt/venv ]; then chown -R flyte:flyte /opt/venv; fi
 USER flyte
 WORKDIR /home/flyte
 SHELL ["/bin/bash", "-c"]
