@@ -176,7 +176,17 @@ ENV PATH="$$PATH:/usr/local/nvidia/bin:/usr/local/cuda/bin" \
 # This gets added on to the end of the dockerfile
 DOCKER_FILE_BASE_FOOTER = Template("""\
 ENV _F_IMG_ID=$F_IMG_ID
-WORKDIR /root
+# Ensure a non-root `flyte` user exists and owns the venv so the runtime user
+# can read installed packages. This is a no-op for the default base image
+# (the user is already created), but makes custom base images safe by default.
+RUN if ! id -u flyte >/dev/null 2>&1; then \\
+       useradd --create-home --shell /bin/bash flyte; \\
+   fi && \\
+   mkdir -p /home/flyte && \\
+   chown -R flyte:flyte /home/flyte && \\
+   if [ -d /opt/venv ]; then chown -R flyte:flyte /opt/venv; fi
+USER flyte
+WORKDIR /home/flyte
 SHELL ["/bin/bash", "-c"]
 """)
 
@@ -399,7 +409,7 @@ class CopyConfigHandler:
         layer: CopyConfig, context_path: Path, dockerfile: str, docker_ignore_patterns: list[str] = []
     ) -> str:
         dst_path = copy_files_to_context(layer.src, context_path, docker_ignore_patterns)
-        dockerfile += f"\nCOPY {dst_path.relative_to(context_path)} {layer.dst}\n"
+        dockerfile += f"\nCOPY --chown=flyte:flyte {dst_path.relative_to(context_path)} {layer.dst}\n"
         return dockerfile
 
 
@@ -408,7 +418,7 @@ class _CodeBundleHandler:
     async def handle(layer: CodeBundleLayer, context_path: Path, dockerfile: str) -> str:
         assert layer.root_dir is not None
         dst_path = copy_code_bundle_to_context(layer.root_dir, layer.copy_style, context_path)
-        dockerfile += f"\nCOPY {dst_path.relative_to(context_path)} {layer.dst}\n"
+        dockerfile += f"\nCOPY --chown=flyte:flyte {dst_path.relative_to(context_path)} {layer.dst}\n"
         return dockerfile
 
 

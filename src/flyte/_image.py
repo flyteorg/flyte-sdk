@@ -625,16 +625,28 @@ class Image:
             platform=("linux/amd64", "linux/arm64") if platform is None else platform,
             extendable=True,
         )
-        labels_and_user = _DockerLines(
+        labels = _DockerLines(
             (
                 "LABEL org.opencontainers.image.authors='Union.AI <info@union.ai>'",
                 "LABEL org.opencontainers.image.source=https://github.com/flyteorg/flyte",
-                "RUN useradd --create-home --shell /bin/bash flytekit &&"
-                " chown -R flytekit /root && chown -R flytekit /home",
-                "WORKDIR /root",
             )
         )
-        image = image.clone(addl_layer=labels_and_user)
+        # Use Commands + WorkDir (rather than _DockerLines) so both the local docker
+        # builder and the remote builder pick up the flyte user setup, since the
+        # remote builder protobuf IDL only understands Layer types like Commands.
+        create_flyte_user = Commands(
+            commands=(
+                "if ! id -u flyte >/dev/null 2>&1; then"
+                " useradd --create-home --shell /bin/bash flyte; fi &&"
+                " mkdir -p /home/flyte &&"
+                " chown -R flyte:flyte /home/flyte &&"
+                " chown -R flyte:flyte /root &&"
+                " if [ -d /opt/venv ]; then chown -R flyte:flyte /opt/venv; fi",
+            ),
+        )
+        image = image.clone(addl_layer=labels)
+        image = image.clone(addl_layer=create_flyte_user)
+        image = image.clone(addl_layer=WorkDir(workdir="/home/flyte"))
         image = image.with_env_vars(
             {
                 "VIRTUAL_ENV": "/opt/venv",
