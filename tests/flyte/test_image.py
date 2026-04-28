@@ -212,6 +212,41 @@ def test_image_from_uv_script():
     assert img.uri.startswith("localhost/uvtest:")
 
 
+def test_default_image_creates_flyte_user():
+    """The default debian-base image should add a Commands layer that creates the flyte user
+    and a WorkDir layer that sets the working directory to /home/flyte. Both layers are
+    proto-backed so they're picked up by the remote image builder as well."""
+    from flyte._image import Commands, WorkDir
+
+    img = Image.from_debian_base(install_flyte=False)
+    layer_types = [type(layer) for layer in img._layers]
+
+    # Should contain a Commands layer (user creation) and a WorkDir layer
+    assert Commands in layer_types, f"Default image is missing a Commands layer. Got: {layer_types}"
+    assert WorkDir in layer_types, f"Default image is missing a WorkDir layer. Got: {layer_types}"
+
+    # Find the Commands layer for user creation and verify its contents
+    commands_layers = [layer for layer in img._layers if isinstance(layer, Commands)]
+    user_commands = [
+        cmd for layer in commands_layers for cmd in layer.commands if "useradd" in cmd and "flyte" in cmd
+    ]
+    assert user_commands, f"Expected a Commands layer that creates the flyte user. Got: {commands_layers}"
+
+    user_create_cmd = user_commands[0]
+    # Idempotent user creation
+    assert "id -u flyte" in user_create_cmd
+    assert "useradd --create-home --shell /bin/bash flyte" in user_create_cmd
+    # Should chown the home directory and /root so the runtime user can write there
+    assert "chown -R flyte:flyte /home/flyte" in user_create_cmd
+    assert "chown -R flyte:flyte /root" in user_create_cmd
+
+    # Verify WorkDir is /home/flyte
+    workdir_layers = [layer for layer in img._layers if isinstance(layer, WorkDir)]
+    assert any(layer.workdir == "/home/flyte" for layer in workdir_layers), (
+        f"Expected WorkDir(/home/flyte). Got: {workdir_layers}"
+    )
+
+
 def test_image_no_direct():
     with pytest.raises(TypeError):
         Image(base_image="python:3.13", name="test-image", registry="localhost:30000")

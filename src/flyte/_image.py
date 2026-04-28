@@ -640,8 +640,7 @@ class Image:
                 " useradd --create-home --shell /bin/bash flyte; fi &&"
                 " mkdir -p /home/flyte &&"
                 " chown -R flyte:flyte /home/flyte &&"
-                " chown -R flyte:flyte /root &&"
-                " if [ -d /opt/venv ]; then chown -R flyte:flyte /opt/venv; fi",
+                " chown -R flyte:flyte /root",
             ),
         )
         image = image.clone(addl_layer=labels)
