@@ -227,9 +227,7 @@ def test_default_image_creates_flyte_user():
 
     # Find the Commands layer for user creation and verify its contents
     commands_layers = [layer for layer in img._layers if isinstance(layer, Commands)]
-    user_commands = [
-        cmd for layer in commands_layers for cmd in layer.commands if "useradd" in cmd and "flyte" in cmd
-    ]
+    user_commands = [cmd for layer in commands_layers for cmd in layer.commands if "useradd" in cmd and "flyte" in cmd]
     assert user_commands, f"Expected a Commands layer that creates the flyte user. Got: {commands_layers}"
 
     user_create_cmd = user_commands[0]
