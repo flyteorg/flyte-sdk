@@ -15,8 +15,61 @@ Usage:
     # Deploy all tools
     python examples/mcp/mcp_app.py
 
-    # Or serve locally for development
-    flyte serve examples/mcp/mcp_app.py
+    # Or serve locally for development (recommended: `uvx`)
+    #   uvx --from "flyte[mcp]" flyte-mcp
+    #
+    # If you're running from this repo checkout:
+    #   uvx --from . flyte-mcp
+
+    # ------------------------------
+    # Connect from Claude Code
+    # ------------------------------
+    # Some agent harnesses can't reach `localhost` URLs. For local usage, prefer
+    # configuring Claude Code to launch the server via `uvx` (process-based setup).
+    #
+    # Add as a local stdio MCP server:
+    #   claude mcp add --transport stdio flyte-mcp -- uvx --with "flyte[mcp]" flyte-mcp
+    #
+    # If you deploy this app remotely (so it has a public base URL), use that URL instead:
+    #   claude mcp add --transport http flyte-mcp-remote https://YOUR_HOST/mcp
+    #
+    # If your remote deployment requires auth, add headers (example):
+    #   claude mcp add --transport http \
+    #     --header "Authorization: Bearer $TOKEN" \
+    #     flyte-mcp-remote https://YOUR_HOST/mcp
+    #
+    # ------------------------------
+    # Connect from OpenCode
+    # ------------------------------
+    # For local usage (no `localhost` required), configure OpenCode to launch the
+    # server as a local MCP process:
+    #
+    # {
+    #   "$schema": "https://opencode.ai/config.json",
+    #   "mcp": {
+    #     "flyte-mcp": {
+    #       "type": "local",
+    #       "command": ["uvx", "--with", "flyte[mcp]", "flyte-mcp"],
+    #       "enabled": true
+    #     }
+    #   }
+    # }
+    #
+    # For a remote deployment:
+    #
+    # {
+    #   "$schema": "https://opencode.ai/config.json",
+    #   "mcp": {
+    #     "flyte-mcp": {
+    #       "type": "remote",
+    #       "url": "https://YOUR_HOST/mcp",
+    #       "enabled": true,
+    #       "headers": {
+    #         "Authorization": "Bearer YOUR_TOKEN"
+    #       }
+    #     }
+    #   }
+    # }
 """
 
 import flyte

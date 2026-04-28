@@ -35,6 +35,7 @@ flyte = "flyte.cli.main:main"
 a0 = "flyte._bin.runtime:main"
 fserve = "flyte._bin.serve:main"
 c0 = "flyte._bin.connect:main"
+flyte-mcp = "flyte._bin.mcp:main"
 
 [project.entry-points."keyring.backends"]
 flyte_keyring_file = "flyte._keyring.file"
