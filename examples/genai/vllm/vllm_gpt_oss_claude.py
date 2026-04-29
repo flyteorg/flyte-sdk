@@ -88,7 +88,7 @@ vllm_app = VLLMAppEnvironment(
     name="gpt-oss-claude-code",
     model_hf_path="openai/gpt-oss-20b",
     model_id="gpt-oss-20b",
-    resources=flyte.Resources(cpu="8", memory="64Gi", gpu="L40s:1", disk="200Gi"),
+    resources=flyte.Resources(cpu="6", memory="24Gi", gpu="A10G:1", disk="200Gi"),
     image=(
         flyte.Image.from_debian_base(
             name="vllm-claude-image",
