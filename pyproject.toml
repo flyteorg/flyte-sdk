@@ -16,7 +16,7 @@ dependencies = [
     "protobuf>=6.30.1",
     "pydantic>=2.10.6",
     "pyyaml>=6.0.2",
-    "rich-click==1.8.9", # As we are installing flyte in --pre mode, we need to pin rich-click to a stable version
+    "rich-click==1.8.9",
     "httpx>=0.28.1,<1.0.0",
     "keyring>=25.6.0",
     "msgpack>=1.1.0",
@@ -172,6 +172,7 @@ ignore = ["PGH003", "PLC0415", "ASYNC210", "ASYNC240", "FURB122"]
 [tool.ruff.lint.per-file-ignores]
 "examples/*" = ["E402"]
 "plugins/pandera/tests/test_pyspark_sql_transformer.py" = ["E402"]
+"src/flyte/ai/agents/_html.py" = ["E501"]
 
 
 [tool.mypy]
