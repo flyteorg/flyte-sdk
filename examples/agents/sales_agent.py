@@ -166,7 +166,7 @@ _FLYTE_OVERVIEW = {
     },
     "features": [
         "Kubernetes-native — runs anywhere K8s runs",
-        "Strongly typed tasks and workflows with automatic ser/de",
+        "Strongly typed tasks and workflows with automatic serdes",
         "Immutable, versioned, and reproducible executions",
         "First-class caching with cache keys and cache versions",
         "Intra-task checkpointing for long-running jobs",
