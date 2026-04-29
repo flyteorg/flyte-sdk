@@ -110,7 +110,7 @@ vllm_app = VLLMAppEnvironment(
         "--enable-auto-tool-choice",
         "--tool-call-parser openai",
         "--max-model-len 131072",
-        "--gpu-memory-utilization 0.92"
+        "--gpu-memory-utilization 0.92",
     ],
 )
 
