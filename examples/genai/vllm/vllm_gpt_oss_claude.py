@@ -1,5 +1,5 @@
 """
-Serve a model with vLLM and connect Claude Code to it.
+Serve openai/gpt-oss-20b with vLLM and connect Claude Code to it.
 
 vLLM exposes an OpenAI-compatible API (``/v1/chat/completions``), but Claude
 Code speaks the Anthropic API (``/v1/messages``). To bridge them we run
@@ -10,7 +10,7 @@ Deploy
 ------
 
 ```
-flyte deploy examples/genai/vllm/vllm_claude.py vllm_app
+flyte deploy examples/genai/vllm/vllm_gpt_oss_claude.py vllm_app
 ```
 
 The deploy prints the app URL, e.g.
@@ -35,16 +35,16 @@ Create ``~/.claude-code-router/config.json``:
       "name": "vllm",
       "api_base_url": "https://<app-name>.apps.<your-domain>/v1/chat/completions",
       "api_key": "dummy",
-      "models": ["my-model"]
+      "models": ["gpt-oss-20b"]
     }
   ],
   "Router": {
-    "default": "vllm,my-model",
-    "background": "vllm,my-model",
-    "think": "vllm,my-model",
-    "longContext": "vllm,my-model",
+    "default": "vllm,gpt-oss-20b",
+    "background": "vllm,gpt-oss-20b",
+    "think": "vllm,gpt-oss-20b",
+    "longContext": "vllm,gpt-oss-20b",
     "longContextThreshold": 120000,
-    "webSearch": "vllm,my-model"
+    "webSearch": "vllm,gpt-oss-20b"
   }
 }
 ```
@@ -59,6 +59,7 @@ unset ANTHROPIC_BASE_URL ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN \
       ANTHROPIC_DEFAULT_HAIKU_MODEL
 
 ccr code
+/model vllm,gpt-oss-20b
 ```
 
 ``ccr code`` starts a local proxy on ``127.0.0.1:3456``, points Claude Code
@@ -86,7 +87,7 @@ import flyte.app
 vllm_app = VLLMAppEnvironment(
     name="gpt-oss-claude-code",
     model_hf_path="openai/gpt-oss-20b",
-    model_id="my-model",
+    model_id="gpt-oss-20b",
     resources=flyte.Resources(cpu="8", memory="64Gi", gpu="L40s:1", disk="200Gi"),
     image=(
         flyte.Image.from_debian_base(
@@ -101,11 +102,11 @@ vllm_app = VLLMAppEnvironment(
     stream_model=True,
     scaling=flyte.app.Scaling(
         replicas=(0, 1),
-        scaledown_after=60,
+        scaledown_after=3600,
     ),
     requires_auth=False,
     extra_args=[
-        "--served-model-name my-model",
+        "--served-model-name gpt-oss-20b",
         "--enable-auto-tool-choice",
         "--tool-call-parser openai",
         "--max-model-len 131072",
