@@ -790,3 +790,56 @@ body {
     margin: 0;
 }
 """
+
+
+CUSTOM_THEME_CSS_TEMPLATE = """\
+.tool-card .sig {{ color: {ac}; }}
+.tool-count-badge {{ color: {ac_rgba_085}; border-color: {ac_rgba_02}; background: {ac_rgba_008}; }}
+.tool-filter-input:focus {{ border-color: {ac_rgba_045}; }}
+.tool-toolbar-btn:hover {{ color: {ah}; }}
+.tool-card-header:hover {{ background: {ac_rgba_006}; }}
+.tool-card.expanded .tool-card-chevron {{ color: {ac}; }}
+.msg.assistant-pending .bubble {{
+    border-color: {ac_rgba_022};
+    background: {ac_rgba_004};
+}}
+@keyframes pendingPulse {{
+    0%, 100% {{ border-color: {ac_rgba_018}; }}
+    50% {{ border-color: {ac_rgba_038}; }}
+}}
+.progress-step.done .progress-step-dot {{
+    background: {ac};
+    border-color: {ac_rgba_05};
+}}
+.progress-step.active .progress-step-dot {{
+    background: {ac};
+    border-color: {ah_rgba_085};
+    box-shadow: 0 0 0 3px {ac_rgba_022};
+}}
+.msg.user .bubble {{
+    background: {ac_rgba_010};
+    border-color: {ac_rgba_022};
+}}
+.msg.assistant details summary {{ color: {ac}; }}
+.sidebar-toggle:hover,
+.sidebar-toggle-float:hover {{ background: {ac_rgba_012}; }}
+.summary-text a {{ color: {ac}; }}
+.summary-text blockquote {{ border-left-color: {ac_rgba_03}; }}
+.input-bar input:focus {{ border-color: {ac_rgba_05}; }}
+.input-bar button {{ background: {ac}; color: {bt}; }}
+.input-bar button:hover {{ background: {ah}; }}
+.nudge-card:hover {{
+    background: {ac_rgba_008};
+    border-color: {ac_rgba_025};
+}}
+.action-btn-group .action-primary {{
+    background: {ac};
+    color: {bt};
+}}
+.action-btn-group .action-primary:hover {{ background: {ah}; }}
+.action-btn-group .action-chevron {{
+    background: {ac};
+    color: {bt};
+}}
+.action-btn-group .action-chevron:hover {{ background: {ah}; }}
+"""

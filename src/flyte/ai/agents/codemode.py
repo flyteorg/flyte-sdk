@@ -32,7 +32,10 @@ async def _default_call_llm(
     messages: list[dict[str, str]],
 ) -> str:
     """Send a chat-completion request via *litellm* and return the text."""
-    from litellm import acompletion
+    try:
+        from litellm import acompletion
+    except ImportError:
+        raise ImportError("litellm is not installed. Please install it with `pip install litellm`.")
 
     all_messages: list[dict[str, str]] = [
         {"role": "system", "content": system},

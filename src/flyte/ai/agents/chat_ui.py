@@ -13,6 +13,7 @@ from pydantic import BaseModel
 import flyte.app
 from flyte.models import SerializationContext
 
+from ._css import CUSTOM_THEME_CSS_TEMPLATE
 from ._html import build_chat_html
 from .protocol import Agent
 
@@ -71,57 +72,25 @@ class CustomTheme:
         ac = self.accent_color
         ah = self.accent_hover_color
         bt = self.button_text_color
-        return (
-            f".tool-card .sig {{ color: {ac}; }}\n"
-            f".tool-count-badge {{ color: {_rgba(ac, 0.85)}; border-color: {_rgba(ac, 0.2)}; "
-            f"background: {_rgba(ac, 0.08)}; }}\n"
-            f".tool-filter-input:focus {{ border-color: {_rgba(ac, 0.45)}; }}\n"
-            f".tool-toolbar-btn:hover {{ color: {ah}; }}\n"
-            f".tool-card-header:hover {{ background: {_rgba(ac, 0.06)}; }}\n"
-            f".tool-card.expanded .tool-card-chevron {{ color: {ac}; }}\n"
-            f".msg.assistant-pending .bubble {{\n"
-            f"    border-color: {_rgba(ac, 0.22)};\n"
-            f"    background: {_rgba(ac, 0.04)};\n"
-            f"}}\n"
-            f"@keyframes pendingPulse {{\n"
-            f"    0%, 100% {{ border-color: {_rgba(ac, 0.18)}; }}\n"
-            f"    50% {{ border-color: {_rgba(ac, 0.38)}; }}\n"
-            f"}}\n"
-            f".progress-step.done .progress-step-dot {{\n"
-            f"    background: {ac};\n"
-            f"    border-color: {_rgba(ac, 0.5)};\n"
-            f"}}\n"
-            f".progress-step.active .progress-step-dot {{\n"
-            f"    background: {ac};\n"
-            f"    border-color: {_rgba(ah, 0.85)};\n"
-            f"    box-shadow: 0 0 0 3px {_rgba(ac, 0.22)};\n"
-            f"}}\n"
-            f".msg.user .bubble {{\n"
-            f"    background: {_rgba(ac, 0.10)};\n"
-            f"    border-color: {_rgba(ac, 0.22)};\n"
-            f"}}\n"
-            f".msg.assistant details summary {{ color: {ac}; }}\n"
-            f".sidebar-toggle:hover,\n"
-            f".sidebar-toggle-float:hover {{ background: {_rgba(ac, 0.12)}; }}\n"
-            f".summary-text a {{ color: {ac}; }}\n"
-            f".summary-text blockquote {{ border-left-color: {_rgba(ac, 0.3)}; }}\n"
-            f".input-bar input:focus {{ border-color: {_rgba(ac, 0.5)}; }}\n"
-            f".input-bar button {{ background: {ac}; color: {bt}; }}\n"
-            f".input-bar button:hover {{ background: {ah}; }}\n"
-            f".nudge-card:hover {{\n"
-            f"    background: {_rgba(ac, 0.08)};\n"
-            f"    border-color: {_rgba(ac, 0.25)};\n"
-            f"}}\n"
-            f".action-btn-group .action-primary {{\n"
-            f"    background: {ac};\n"
-            f"    color: {bt};\n"
-            f"}}\n"
-            f".action-btn-group .action-primary:hover {{ background: {ah}; }}\n"
-            f".action-btn-group .action-chevron {{\n"
-            f"    background: {ac};\n"
-            f"    color: {bt};\n"
-            f"}}\n"
-            f".action-btn-group .action-chevron:hover {{ background: {ah}; }}\n"
+        return CUSTOM_THEME_CSS_TEMPLATE.format(
+            ac=ac,
+            ah=ah,
+            bt=bt,
+            ac_rgba_085=_rgba(ac, 0.85),
+            ac_rgba_02=_rgba(ac, 0.2),
+            ac_rgba_008=_rgba(ac, 0.08),
+            ac_rgba_045=_rgba(ac, 0.45),
+            ac_rgba_006=_rgba(ac, 0.06),
+            ac_rgba_022=_rgba(ac, 0.22),
+            ac_rgba_004=_rgba(ac, 0.04),
+            ac_rgba_018=_rgba(ac, 0.18),
+            ac_rgba_038=_rgba(ac, 0.38),
+            ac_rgba_05=_rgba(ac, 0.5),
+            ah_rgba_085=_rgba(ah, 0.85),
+            ac_rgba_010=_rgba(ac, 0.10),
+            ac_rgba_012=_rgba(ac, 0.12),
+            ac_rgba_03=_rgba(ac, 0.3),
+            ac_rgba_025=_rgba(ac, 0.25),
         )
 
 
