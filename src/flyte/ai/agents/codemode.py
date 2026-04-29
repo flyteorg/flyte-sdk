@@ -144,7 +144,7 @@ class CodeModeAgent:
         tools: Sequence[Callable] | dict[str, Callable],
         *,
         execution_tools: Sequence[Callable] | dict[str, Callable] | None = None,
-        model: str = "claude-sonnet-4-6",
+        model: str = "claude-haiku-4-5",
         max_retries: int = 2,
         skills: Sequence[str | pathlib.Path] = (),
         call_llm: Callable[..., Any] = _default_call_llm,
