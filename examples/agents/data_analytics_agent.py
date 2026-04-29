@@ -281,7 +281,7 @@ env = AgentChatAppEnvironment(
         },
     ],
     image=flyte.Image.from_debian_base(install_flyte=False)
-    .with_pip_packages("litellm", "pydantic-monty==0.0.8", "uvicorn", "fastapi", "flyte[sandbox]")
+    .with_pip_packages("litellm", "pydantic-monty==0.0.17", "uvicorn", "fastapi", "flyte[sandbox]")
     .with_local_v2(),
     resources=flyte.Resources(cpu=2, memory="4Gi"),
     secrets=flyte.Secret("internal-anthropic-api-key", as_env_var="ANTHROPIC_API_KEY"),

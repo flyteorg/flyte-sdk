@@ -24,10 +24,20 @@ $CSS
 
 <div class="sidebar" id="sidebar">
     <div class="sidebar-header">
-        <h2>Available Tools</h2>
+        <h2>Available tools <span class="tool-count-wrap" id="toolCountWrap" hidden><span id="toolCount" class="tool-count-badge">0</span></span></h2>
         <button class="sidebar-toggle" id="sidebarToggle" title="Collapse sidebar">&#x2630;</button>
     </div>
-    <div id="toolCards"><p style="color:#666;font-size:13px;">Loading...</p></div>
+    <div class="tool-sidebar-toolbar" id="toolSidebarToolbar" hidden>
+        <input type="search" id="toolFilter" class="tool-filter-input" placeholder="Filter tools…" autocomplete="off" />
+        <div class="tool-toolbar-row">
+            <button type="button" class="tool-toolbar-btn" id="expandAllTools">Expand all</button>
+            <span class="tool-toolbar-sep">·</span>
+            <button type="button" class="tool-toolbar-btn" id="collapseAllTools">Collapse all</button>
+        </div>
+    </div>
+    <div class="tool-cards-scroll" id="toolCardsScroll">
+        <div id="toolCards"><p class="tool-cards-loading">Loading…</p></div>
+    </div>
 </div>
 
 <div class="main">
@@ -56,6 +66,7 @@ const nudgesDiv   = document.getElementById('nudges');
 const sidebar     = document.getElementById('sidebar');
 
 let history = [];
+let allTools = [];
 
 if (typeof marked !== 'undefined' && typeof hljs !== 'undefined') {
     const renderer = new marked.Renderer();
@@ -76,40 +87,110 @@ document.getElementById('sidebarToggleFloat').addEventListener('click', () => {
     sidebar.classList.remove('collapsed');
 });
 
+function truncateText(s, maxLen) {
+    if (!s || s.length <= maxLen) return s || '';
+    return s.slice(0, maxLen - 1).trim() + '\u2026';
+}
+
+function buildToolCard(t) {
+    const card = document.createElement('div');
+    card.className = 'tool-card';
+    const displayName = (t.name || '').replaceAll('_', ' ');
+    const desc = t.description || '';
+    const preview = truncateText(desc.replace(/\\s+/g, ' '), 72);
+
+    const header = document.createElement('div');
+    header.className = 'tool-card-header';
+    header.setAttribute('role', 'button');
+    header.setAttribute('aria-expanded', 'false');
+    header.innerHTML =
+        '<div class="tool-card-header-text">'
+        + '<h3>' + escapeHtml(displayName) + '</h3>'
+        + '<p class="tool-card-preview">' + escapeHtml(preview) + '</p>'
+        + '</div>'
+        + '<span class="tool-card-chevron" aria-hidden="true">&#x25B6;</span>';
+    header.addEventListener('click', () => {
+        const on = card.classList.toggle('expanded');
+        header.setAttribute('aria-expanded', on ? 'true' : 'false');
+    });
+
+    const body = document.createElement('div');
+    body.className = 'tool-card-body';
+    body.innerHTML =
+        '<div class="tool-card-body-inner">'
+        + '<p class="tool-card-desc">' + escapeHtml(desc) + '</p>'
+        + '<div class="sig">' + escapeHtml(t.signature || '') + '</div>'
+        + '</div>';
+
+    card.appendChild(header);
+    card.appendChild(body);
+    return card;
+}
+
+function renderToolCards(tools) {
+    const container = document.getElementById('toolCards');
+    const countEl = document.getElementById('toolCount');
+    const countWrap = document.getElementById('toolCountWrap');
+    const toolbar = document.getElementById('toolSidebarToolbar');
+    container.innerHTML = '';
+    countEl.textContent = tools.length === allTools.length
+        ? String(tools.length)
+        : tools.length + ' / ' + allTools.length;
+    countWrap.hidden = false;
+    toolbar.hidden = allTools.length === 0;
+    if (allTools.length === 0) {
+        countWrap.hidden = true;
+        container.innerHTML = '<p class="tool-cards-empty">No tools registered for this agent.</p>';
+        return;
+    }
+    if (tools.length === 0) {
+        container.innerHTML = '<p class="tool-cards-empty">No tools match your filter.</p>';
+        return;
+    }
+    tools.forEach(t => container.appendChild(buildToolCard(t)));
+}
+
 (async () => {
     try {
         const resp = await fetch('/api/tools');
         const tools = await resp.json();
-        const container = document.getElementById('toolCards');
-        container.innerHTML = '';
-        tools.forEach(t => {
-            const card = document.createElement('div');
-            card.className = 'tool-card';
-
-            const header = document.createElement('div');
-            header.className = 'tool-card-header';
-            header.innerHTML =
-                '<h3>' + escapeHtml(t.name.replaceAll('_', ' ')) + '</h3>'
-                + '<span class="tool-card-chevron">&#x25B6;</span>';
-            header.addEventListener('click', () => card.classList.toggle('expanded'));
-
-            const body = document.createElement('div');
-            body.className = 'tool-card-body';
-            body.innerHTML =
-                '<div class="tool-card-body-inner">'
-                + '<p>' + escapeHtml(t.description) + '</p>'
-                + '<div class="sig">' + escapeHtml(t.signature) + '</div>'
-                + '</div>';
-
-            card.appendChild(header);
-            card.appendChild(body);
-            container.appendChild(card);
-        });
+        allTools = Array.isArray(tools) ? tools : [];
+        renderToolCards(allTools);
     } catch(e) {
         document.getElementById('toolCards').innerHTML =
-            '<p style="color:#ff8888;font-size:13px;">Failed to load tools</p>';
+            '<p class="tool-cards-error">Failed to load tools</p>';
     }
 })();
+
+document.getElementById('toolFilter').addEventListener('input', e => {
+    const q = (e.target.value || '').trim().toLowerCase();
+    if (!q) {
+        renderToolCards(allTools);
+        return;
+    }
+    const filtered = allTools.filter(t => {
+        const name = (t.name || '').toLowerCase();
+        const desc = (t.description || '').toLowerCase();
+        const sig = (t.signature || '').toLowerCase();
+        return name.includes(q) || desc.includes(q) || sig.includes(q);
+    });
+    renderToolCards(filtered);
+});
+
+document.getElementById('expandAllTools').addEventListener('click', () => {
+    document.querySelectorAll('#toolCards .tool-card').forEach(card => {
+        card.classList.add('expanded');
+        const h = card.querySelector('.tool-card-header');
+        if (h) h.setAttribute('aria-expanded', 'true');
+    });
+});
+document.getElementById('collapseAllTools').addEventListener('click', () => {
+    document.querySelectorAll('#toolCards .tool-card').forEach(card => {
+        card.classList.remove('expanded');
+        const h = card.querySelector('.tool-card-header');
+        if (h) h.setAttribute('aria-expanded', 'false');
+    });
+});
 
 (async () => {
     try {
@@ -137,12 +218,56 @@ document.getElementById('sidebarToggleFloat').addEventListener('click', () => {
 const PROGRESS_PHASES = [
     'Understanding question...',
     'Creating plan...',
-    'Looking up information...',
     'Executing plan...',
-    'Analyzing results...',
     'Refining response...',
     'Formatting answer...',
 ];
+
+function createPendingAssistantBubble() {
+    const msg = document.createElement('div');
+    msg.className = 'msg assistant assistant-pending';
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble';
+    const panel = document.createElement('div');
+    panel.className = 'generating-panel';
+    const label = document.createElement('div');
+    label.className = 'generating-label';
+    label.textContent = 'Working on your answer';
+    const sub = document.createElement('div');
+    sub.className = 'generating-sub';
+    sub.textContent = 'This may take a little while for complex questions.';
+    const track = document.createElement('div');
+    track.className = 'progress-steps';
+    PROGRESS_PHASES.forEach((text, i) => {
+        const step = document.createElement('div');
+        step.className = 'progress-step pending';
+        step.dataset.stepIndex = String(i);
+        const dot = document.createElement('span');
+        dot.className = 'progress-step-dot';
+        const tx = document.createElement('span');
+        tx.className = 'progress-step-text';
+        tx.textContent = text;
+        step.appendChild(dot);
+        step.appendChild(tx);
+        track.appendChild(step);
+    });
+    panel.appendChild(label);
+    panel.appendChild(sub);
+    panel.appendChild(track);
+    bubble.appendChild(panel);
+    msg.appendChild(bubble);
+    return { msg, track };
+}
+
+function setProgressUI(trackEl, phaseIndex) {
+    if (!trackEl) return;
+    trackEl.querySelectorAll('.progress-step').forEach((el, i) => {
+        el.classList.remove('done', 'active', 'pending');
+        if (i < phaseIndex) el.classList.add('done');
+        else if (i === phaseIndex) el.classList.add('active');
+        else el.classList.add('pending');
+    });
+}
 
 async function sendMessage() {
     const text = userInput.value.trim();
@@ -153,17 +278,18 @@ async function sendMessage() {
     userInput.value = '';
     sendBtn.disabled = true;
 
-    const statusEl = document.createElement('div');
-    statusEl.className = 'typing';
-    statusEl.textContent = PROGRESS_PHASES[0];
-    messagesDiv.appendChild(statusEl);
+    const { msg: pendingMsg, track: progressTrack } = createPendingAssistantBubble();
+    messagesDiv.appendChild(pendingMsg);
+    updateClearButton();
     scrollBottom();
 
     let phase = 0;
+    setProgressUI(progressTrack, 0);
     const progressTimer = setInterval(() => {
         phase = Math.min(phase + 1, PROGRESS_PHASES.length - 1);
-        statusEl.textContent = PROGRESS_PHASES[phase];
-    }, 4000);
+        setProgressUI(progressTrack, phase);
+        scrollBottom();
+    }, 2500);
 
     try {
         const resp = await fetch('/api/chat', {
@@ -173,7 +299,6 @@ async function sendMessage() {
         });
 
         clearInterval(progressTimer);
-        statusEl.remove();
 
         if (!resp.ok) {
             let errMsg = 'Server error (' + resp.status + ')';
@@ -181,10 +306,19 @@ async function sendMessage() {
                 const body = await resp.json();
                 if (body.detail) errMsg += ': ' + JSON.stringify(body.detail);
             } catch(_) {}
+            if (pendingMsg.parentNode) pendingMsg.remove();
             appendAssistant({ error: errMsg });
         } else {
             const data = await resp.json();
-            appendAssistant(data);
+            if (!pendingMsg.parentNode) {
+                appendAssistant(data);
+            } else {
+                pendingMsg.classList.remove('assistant-pending');
+                const bubble = pendingMsg.querySelector('.bubble');
+                bubble.innerHTML = '';
+                fillAssistantBubble(bubble, data);
+                wireAssistantBubble(pendingMsg, data);
+            }
             history.push({ role: 'user', content: text });
             const assistantContent = data.summary || data.error || '';
             if (assistantContent) {
@@ -193,11 +327,12 @@ async function sendMessage() {
         }
     } catch(e) {
         clearInterval(progressTimer);
-        statusEl.remove();
+        if (pendingMsg.parentNode) pendingMsg.remove();
         appendAssistant({ error: 'Request failed: ' + e.message });
     } finally {
         sendBtn.disabled = false;
         userInput.focus();
+        scrollBottom();
     }
 }
 
@@ -210,11 +345,8 @@ function appendUser(text) {
     scrollBottom();
 }
 
-function appendAssistant(data) {
-    const msg = document.createElement('div');
-    msg.className = 'msg assistant';
-
-    let html = '<div class="bubble">';
+function fillAssistantBubble(bubble, data) {
+    let html = '';
 
     if (data.summary) {
         html += '<div class="summary-text">'
@@ -234,11 +366,11 @@ function appendAssistant(data) {
 
     if (data.code) {
         html += '<details><summary>Executed Plan</summary>'
-              + '<pre>' + escapeHtml(data.code) + '</pre></details>';
+              + '<pre><code class="language-python">' + escapeHtml(data.code) + '</code></pre></details>';
     }
 
     html += '<div class="bubble-footer">';
-    let metaParts = [];
+    const metaParts = [];
     if (data.elapsed_ms) metaParts.push('<span>' + (data.elapsed_ms / 1000).toFixed(1) + 's</span>');
     if (data.attempts > 1) metaParts.push('<span>' + data.attempts + ' attempts</span>');
     if (metaParts.length) html += '<div class="meta-badge">' + metaParts.join('') + '</div>';
@@ -250,24 +382,37 @@ function appendAssistant(data) {
     }
     html += '</div>';
 
-    html += '</div>';
-    msg.innerHTML = html;
-    messagesDiv.appendChild(msg);
+    bubble.innerHTML = html;
+}
 
+function wireAssistantBubble(msg, data) {
     if (data.summary) {
         const summaryText = data.summary;
-        msg.querySelector('.download-card-btn[data-fmt="md"]').addEventListener('click', () => downloadFile(summaryText, 'text/markdown', '.md'));
-        msg.querySelector('.download-card-btn[data-fmt="html"]').addEventListener('click', () => {
-            const rendered = msg.querySelector('.summary-text').innerHTML;
-            downloadHtml(rendered);
+        const mdBtn = msg.querySelector('.download-card-btn[data-fmt="md"]');
+        const htmlBtn = msg.querySelector('.download-card-btn[data-fmt="html"]');
+        if (mdBtn) mdBtn.addEventListener('click', () => downloadFile(summaryText, 'text/markdown', '.md'));
+        if (htmlBtn) htmlBtn.addEventListener('click', () => {
+            const st = msg.querySelector('.summary-text');
+            if (st) downloadHtml(st.innerHTML);
         });
     }
-
     executeScripts(msg);
     if (typeof hljs !== 'undefined') {
         msg.querySelectorAll('pre code').forEach(el => hljs.highlightElement(el));
     }
     scrollBottom();
+}
+
+function appendAssistant(data) {
+    const msg = document.createElement('div');
+    msg.className = 'msg assistant';
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble';
+    fillAssistantBubble(bubble, data);
+    msg.appendChild(bubble);
+    messagesDiv.appendChild(msg);
+    wireAssistantBubble(msg, data);
+    updateClearButton();
 }
 
 function downloadFile(content, mimeType, ext) {
