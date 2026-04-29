@@ -410,13 +410,20 @@ class Controller:
                     if e.code == Code.ALREADY_EXISTS:
                         logger.info(f"Action {action.name} already exists, continuing to monitor.")
                         return
+                    if e.code == Code.ABORTED:
+                        # The run was aborted; engine will auto-abort other in-flight actions.
+                        # Surface as a system error — outer handler in _bg_run wraps and exits.
+                        raise flyte.errors.RuntimeSystemError(e.code.name, f"Run aborted: {e.message}") from e
                     if e.code in [
-                        Code.FAILED_PRECONDITION,
                         Code.INVALID_ARGUMENT,
                         Code.NOT_FOUND,
                     ]:
-                        raise flyte.errors.RuntimeSystemError(e.code.name, f"Precondition failed: {e.message}") from e
-                    # For all other errors, we will retry with backoff
+                        # Not retryable; surface as a per-action system error.
+                        raise flyte.errors.RuntimeSystemError(
+                            e.code.name, f"Action launch failed ({e.code.name}): {e.message}"
+                        ) from e
+                    # FAILED_PRECONDITION indicates the shard is wrong or we've hit a limit — retry with backoff.
+                    # For all other errors, we will also retry with backoff.
                     logger.error(
                         f"Failed to launch action: {action.name}, Code: {e.code}, Details {e.message} backing off..."
                     )
