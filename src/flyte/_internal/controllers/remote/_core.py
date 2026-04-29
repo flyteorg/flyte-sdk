@@ -413,9 +413,7 @@ class Controller:
                     if e.code == Code.ABORTED:
                         # The run was aborted; engine will auto-abort other in-flight actions.
                         # Surface as a system error — outer handler in _bg_run wraps and exits.
-                        raise flyte.errors.RuntimeSystemError(
-                            e.code.name, f"Run aborted: {e.message}"
-                        ) from e
+                        raise flyte.errors.RuntimeSystemError(e.code.name, f"Run aborted: {e.message}") from e
                     if e.code in [
                         Code.INVALID_ARGUMENT,
                         Code.NOT_FOUND,
