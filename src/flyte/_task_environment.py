@@ -288,11 +288,14 @@ class TaskEnvironment(Environment):
             does not change the task's fully-qualified name.
         :param cache: Optional The cache policy for the task, defaults to auto, which will cache the results of the
         task.
-        :param retries: Number of retries (`int`) or a `RetryStrategy` object that
-            defines retry behavior. Defaults to `0` (no retries).
+        :param retries: Number of user retries (`int`) or a `RetryStrategy` object.
+            `RetryStrategy` accepts an optional `backoff=Backoff(base, factor, cap)` to
+            pace retries exponentially. Defaults to `0` (no retries).
         :param docs: Optional The documentation for the task, if not provided the function docstring will be used.
-        :param timeout: Task timeout, as a `timedelta` object or an integer number
-            of seconds. `0` means no timeout.
+        :param timeout: Task timeout. Accepts a `timedelta`, an integer number of seconds,
+            or a `Timeout` object carrying any combination of `max_runtime`,
+            `max_queued_time`, and `deadline`. A bare `timedelta`/`int` is interpreted
+            as `max_runtime`. Unset bounds are unlimited.
         :param pod_template: Optional The pod template for the task, if not provided the default pod template will be
         used.
         :param report: Optional Whether to generate the html report for the task, defaults to False.

@@ -26,10 +26,9 @@ from flyte.storage._storage import strip_file_header
 
 R = TypeVar("R")
 
-# Local retry backoff defaults for task errors during local runs. Do not
-# expose these to the user since RetryStrategy only supports a count of retries.
-# This is because currently the backend implements the underlying retry strategy,
-# and does not allow for custom backoff strategies.
+# Fallback backoff used when the task's RetryStrategy has no Backoff set.
+# When `RetryStrategy.backoff` is supplied, the local controller honors it
+# directly so behavior matches the platform's leasor.
 _MIN_BACKOFF_ON_ERR_SEC = 0.5
 _BACKOFF_MULTIPLIER = 2.0
 
@@ -255,7 +254,11 @@ class LocalController:
                     )
                     break
                 if attempt_num < max_attempts:
-                    backoff = _MIN_BACKOFF_ON_ERR_SEC * (_BACKOFF_MULTIPLIER ** (attempt_num - 1))
+                    user_backoff = getattr(_task.retries, "backoff", None)
+                    if user_backoff is not None:
+                        backoff = user_backoff.compute_delay(attempt_num - 1).total_seconds()
+                    else:
+                        backoff = _MIN_BACKOFF_ON_ERR_SEC * (_BACKOFF_MULTIPLIER ** (attempt_num - 1))
                     logger.warning(
                         f"Task '{_task.name}' action '{sub_action_id.name}' failed on attempt "
                         f"{attempt_num}/{max_attempts}; retrying in {backoff:.2f}s..."

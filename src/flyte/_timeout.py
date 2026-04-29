@@ -1,3 +1,26 @@
+"""
+Wall-clock bounds on a Flyte action.
+
+Three orthogonal fields, each independently optional. An unset field is
+treated as **unlimited** — the default state of an action is "no time bound."
+
+- ``max_runtime``     — wall-clock spent in the RUNNING phase. Per attempt;
+                        resets on each retry. Enforced by the lease worker.
+- ``max_queued_time`` — wall-clock spent in QUEUED + WAITING_FOR_RESOURCES
+                        before the action enters INITIALIZING. Per attempt;
+                        resets on each retry. Maps to proto
+                        ``TimeoutStrategy.queued_timeout``.
+- ``deadline``        — max elapsed wall-clock from the first QUEUED timestamp
+                        to a terminal phase, across **all** attempts (user *or*
+                        system). One-time, absolute. The strongest of the
+                        three: when it fires mid-attempt, the action terminates
+                        as TIMED_OUT regardless of remaining retry budget or
+                        per-attempt timer state.
+
+Bare ``int`` (seconds) and bare ``timedelta`` are accepted on the task
+``timeout=`` parameter and interpreted as ``max_runtime``.
+"""
+
 from dataclasses import dataclass
 from datetime import timedelta
 
@@ -5,27 +28,27 @@ from datetime import timedelta
 @dataclass
 class Timeout:
     """
-    Timeout class to define a timeout for a task.
-    The task timeout can be set to a maximum runtime and a maximum queued time.
-    Maximum runtime is the maximum time the task can run for (in one attempt).
-    Maximum queued time is the maximum time the task can stay in the queue before it starts executing.
+    Timeout bounds for a task. See module docstring for semantics.
 
-    Example usage:
-    ```python
-    timeout = Timeout(max_runtime=timedelta(minutes=5), max_queued_time=timedelta(minutes=10))
-    @env.task(timeout=timeout)
-    async def my_task():
-        pass
-    ```
-    :param max_runtime: timedelta or int - Maximum runtime for the task. If specified int, it will be converted to
-    timedelta as seconds.
-    :param max_queued_time: optional, timedelta or int - Maximum queued time for the task. If specified int,
-    it will be converted to timedelta as seconds. Defaults to None.
+    Example::
 
+        flyte.Timeout(
+            max_runtime=timedelta(minutes=30),
+            max_queued_time=timedelta(minutes=15),
+            deadline=timedelta(hours=2),
+        )
+
+    :param max_runtime: Per-attempt RUNNING-phase bound. ``int`` is interpreted
+                        as seconds.
+    :param max_queued_time: Per-attempt queue-wait bound. ``int`` is
+                            interpreted as seconds.
+    :param deadline: Absolute wall-clock budget across all attempts. ``int``
+                     is interpreted as seconds.
     """
 
-    max_runtime: timedelta | int
+    max_runtime: timedelta | int | None = None
     max_queued_time: timedelta | int | None = None
+    deadline: timedelta | int | None = None
 
 
 TimeoutType = Timeout | int | timedelta
@@ -33,15 +56,16 @@ TimeoutType = Timeout | int | timedelta
 
 def timeout_from_request(timeout: TimeoutType) -> Timeout:
     """
-    Converts a timeout request into a Timeout object.
+    Normalize a user-supplied timeout into a :class:`Timeout`.
+
+    A bare ``int`` (seconds) or ``timedelta`` is interpreted as
+    ``max_runtime`` for backward compatibility with the original single-bound
+    API.
     """
     if isinstance(timeout, Timeout):
         return timeout
-    else:
-        if isinstance(timeout, int):
-            timeout = timedelta(seconds=timeout)
-        elif isinstance(timeout, timedelta):
-            pass
-        else:
-            raise ValueError("Timeout must be an instance of Timeout, int, or timedelta.")
+    if isinstance(timeout, int):
+        return Timeout(max_runtime=timedelta(seconds=timeout))
+    if isinstance(timeout, timedelta):
         return Timeout(max_runtime=timeout)
+    raise ValueError("Timeout must be an instance of Timeout, int, or timedelta.")
