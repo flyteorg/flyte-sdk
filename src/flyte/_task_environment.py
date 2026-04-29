@@ -28,6 +28,7 @@ from ._link import Link
 from ._pod import PodTemplate
 from ._resources import Resources
 from ._retry import RetryStrategy
+from ._timeout import TimeoutType
 from ._reusable_environment import ReusePolicy
 from ._secret import SecretRequest
 from ._task import AsyncFunctionTaskTemplate, TaskTemplate
@@ -239,7 +240,7 @@ class TaskEnvironment(Environment):
         short_name: Optional[str] = None,
         cache: CacheRequest | None = None,
         retries: Union[int, RetryStrategy] = 0,
-        timeout: Union[timedelta, int] = 0,
+        timeout: TimeoutType = 0,
         docs: Optional[Documentation] = None,
         pod_template: Optional[Union[str, PodTemplate]] = None,
         report: bool = False,
@@ -266,7 +267,7 @@ class TaskEnvironment(Environment):
         short_name: Optional[str] = None,
         cache: CacheRequest | None = None,
         retries: Union[int, RetryStrategy] = 0,
-        timeout: Union[timedelta, int] = 0,
+        timeout: TimeoutType = 0,
         docs: Optional[Documentation] = None,
         pod_template: Optional[Union[str, PodTemplate]] = None,
         report: bool = False,
@@ -295,7 +296,9 @@ class TaskEnvironment(Environment):
         :param timeout: Task timeout. Accepts a `timedelta`, an integer number of seconds,
             or a `Timeout` object carrying any combination of `max_runtime`,
             `max_queued_time`, and `deadline`. A bare `timedelta`/`int` is interpreted
-            as `max_runtime`. Unset bounds are unlimited.
+            as `max_runtime`. A bound is treated as unlimited when unset (`None`) or
+            zero (`0` / `timedelta(0)`); `timeout=0` is the default and means no
+            time bound.
         :param pod_template: Optional The pod template for the task, if not provided the default pod template will be
         used.
         :param report: Optional Whether to generate the html report for the task, defaults to False.

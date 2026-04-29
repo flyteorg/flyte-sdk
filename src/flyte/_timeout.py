@@ -1,8 +1,9 @@
 """
 Wall-clock bounds on a Flyte action.
 
-Three orthogonal fields, each independently optional. An unset field is
-treated as **unlimited** — the default state of an action is "no time bound."
+Three orthogonal fields, each independently optional. A field is treated as
+**unlimited** when it is unset (``None``) or zero (``0`` / ``timedelta(0)``) —
+the default state of an action is "no time bound."
 
 - ``max_runtime``     — wall-clock spent in the RUNNING phase. Per attempt;
                         resets on each retry. Enforced by the lease worker.
@@ -18,7 +19,8 @@ treated as **unlimited** — the default state of an action is "no time bound."
                         per-attempt timer state.
 
 Bare ``int`` (seconds) and bare ``timedelta`` are accepted on the task
-``timeout=`` parameter and interpreted as ``max_runtime``.
+``timeout=`` parameter and interpreted as ``max_runtime``. ``timeout=0`` is
+equivalent to leaving the timeout unset (unlimited).
 """
 
 from dataclasses import dataclass
@@ -39,11 +41,13 @@ class Timeout:
         )
 
     :param max_runtime: Per-attempt RUNNING-phase bound. ``int`` is interpreted
-                        as seconds.
+                        as seconds. ``None`` or ``0`` means unlimited.
     :param max_queued_time: Per-attempt queue-wait bound. ``int`` is
-                            interpreted as seconds.
+                            interpreted as seconds. ``None`` or ``0`` means
+                            unlimited.
     :param deadline: Absolute wall-clock budget across all attempts. ``int``
-                     is interpreted as seconds.
+                     is interpreted as seconds. ``None`` or ``0`` means
+                     unlimited.
     """
 
     max_runtime: timedelta | int | None = None

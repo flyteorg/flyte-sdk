@@ -105,6 +105,18 @@ def _to_duration(value: timedelta | int | None) -> Optional[duration_pb2.Duratio
     return duration_pb2.Duration(seconds=seconds, nanos=nanos)
 
 
+def _to_timeout_duration(value: timedelta | int | None) -> Optional[duration_pb2.Duration]:
+    """Like :func:`_to_duration`, but for timeout/deadline fields where ``0``
+    means "unlimited" (same as ``None``) and is omitted on the wire."""
+    if value is None:
+        return None
+    if isinstance(value, int):
+        value = timedelta(seconds=value)
+    if value.total_seconds() == 0:
+        return None
+    return _to_duration(value)
+
+
 def _backoff_to_proto(backoff: Backoff) -> literals_pb2.Backoff:
     proto = literals_pb2.Backoff(base=_to_duration(backoff.base), factor=backoff.factor)
     if backoff.cap is not None:
@@ -128,30 +140,35 @@ def get_proto_retry_strategy(
 
 
 def get_proto_max_runtime(timeout: TimeoutType | None) -> Optional[duration_pb2.Duration]:
-    """Serialize ``Timeout.max_runtime`` for ``TaskMetadata.timeout``."""
+    """Serialize ``Timeout.max_runtime`` for ``TaskMetadata.timeout``. Returns
+    ``None`` (omits the wire field) when the bound is unset or zero — both
+    mean unlimited."""
     if timeout is None:
         return None
-    return _to_duration(timeout_from_request(timeout).max_runtime)
+    return _to_timeout_duration(timeout_from_request(timeout).max_runtime)
 
 
 def get_proto_timeout_strategy(timeout: TimeoutType | None) -> Optional[literals_pb2.TimeoutStrategy]:
     """
     Serialize the queued-timeout and deadline fields into
-    ``TaskMetadata.timeouts``. Returns ``None`` if neither is set, so the
-    caller can leave the wire field unset (= unlimited).
+    ``TaskMetadata.timeouts``. Returns ``None`` if neither bound is set, so
+    the caller can leave the wire field unset (= unlimited). A bound is
+    considered unset when it is ``None`` or zero.
 
     SDK ``Timeout.max_queued_time`` maps to proto ``TimeoutStrategy.queued_timeout``.
     """
     if timeout is None:
         return None
     t: Timeout = timeout_from_request(timeout)
-    if t.max_queued_time is None and t.deadline is None:
+    queued = _to_timeout_duration(t.max_queued_time)
+    deadline = _to_timeout_duration(t.deadline)
+    if queued is None and deadline is None:
         return None
     proto = literals_pb2.TimeoutStrategy()
-    if t.max_queued_time is not None:
-        proto.queued_timeout.CopyFrom(_to_duration(t.max_queued_time))
-    if t.deadline is not None:
-        proto.deadline.CopyFrom(_to_duration(t.deadline))
+    if queued is not None:
+        proto.queued_timeout.CopyFrom(queued)
+    if deadline is not None:
+        proto.deadline.CopyFrom(deadline)
     return proto
 
 
