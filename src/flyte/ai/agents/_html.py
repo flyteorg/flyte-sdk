@@ -216,7 +216,6 @@ document.getElementById('collapseAllTools').addEventListener('click', () => {
 })();
 
 const PROGRESS_PHASES = [
-    'Understanding question...',
     'Creating plan...',
     'Executing plan...',
     'Refining response...',
