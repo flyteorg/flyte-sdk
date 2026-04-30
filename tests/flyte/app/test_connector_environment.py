@@ -589,10 +589,7 @@ def test_connector_environment_caller_frame_with_custom_subclass():
         def __post_init__(self):
             super().__post_init__()
 
-    user_code = (
-        "def make(cls, Image):\n"
-        "    return cls(name='c', image=Image.from_base('python:3.11'))\n"
-    )
+    user_code = "def make(cls, Image):\n    return cls(name='c', image=Image.from_base('python:3.11'))\n"
     namespace = {"__file__": "/tmp/fake_user_subclass.py"}
     exec(compile(user_code, "/tmp/fake_user_subclass.py", "exec"), namespace)
     conn = namespace["make"](MyConnector, Image)
