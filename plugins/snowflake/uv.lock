@@ -523,11 +523,9 @@ requires-dist = [
     { name = "rich-click", specifier = "==1.8.9" },
     { name = "scikit-learn", marker = "extra == 'examples-test'" },
     { name = "sentry-sdk", specifier = ">=2.0" },
-    { name = "starlette", marker = "extra == 'mcp'" },
     { name = "textual", marker = "extra == 'tui'", specifier = ">=0.80" },
     { name = "toml", specifier = ">=0.10.2" },
     { name = "uvicorn", marker = "extra == 'examples-test'" },
-    { name = "uvicorn", marker = "extra == 'mcp'" },
 ]
 provides-extras = ["aiosqlite", "connector", "examples-test", "sandbox", "mcp", "tui"]
 

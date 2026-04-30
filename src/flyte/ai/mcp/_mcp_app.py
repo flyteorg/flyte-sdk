@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 import pathlib
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, get_args
 
@@ -9,6 +10,7 @@ import rich.repr
 
 import flyte
 import flyte.app
+import flyte.remote
 from flyte._image import Image
 from flyte._resources import Resources
 from flyte.app._types import Link
@@ -351,7 +353,8 @@ class FlyteMCPAppEnvironment(flyte.app.AppEnvironment):
     instructions: str | None = None
 
     # MCP/HTTP
-    mcp_mount_path: str = "/mcp"
+    mcp_mount_path: str = "/flyte"
+    transport: Literal["stdio", "sse", "streamable-http"] = "streamable-http"
     uvicorn_config: uvicorn.Config | None = None
 
     # Tool filtering
@@ -385,6 +388,10 @@ class FlyteMCPAppEnvironment(flyte.app.AppEnvironment):
         if self.tools is not None and self.tool_groups is not None:
             raise ValueError("Cannot specify both tools and tool_groups.")
 
+        if self.transport not in ["stdio", "sse", "streamable-http"]:
+            raise ValueError("transport must be either 'stdio', 'sse', or 'streamable-http'.")
+
+        # Starlette Mount prefix for HTTP only; FastMCP mount_path/streamable_http_path are set in _create_mcp_server.
         if not isinstance(self.mcp_mount_path, str) or not self.mcp_mount_path.startswith("/"):
             raise ValueError("mcp_mount_path must be an absolute path starting with '/'.")
 
@@ -400,8 +407,14 @@ class FlyteMCPAppEnvironment(flyte.app.AppEnvironment):
         self._starlette_app = self._create_starlette_app()
 
         # Links for the UI.
+        mcp_link = self.mcp_mount_path
+        if self.transport == "streamable-http":
+            mcp_link = f"{self.mcp_mount_path}/mcp"
+        elif self.transport == "sse":
+            mcp_link = f"{self.mcp_mount_path}/sse"
+
         self.links = [
-            Link(path=self.mcp_mount_path, title="MCP", is_relative=True),
+            Link(path=mcp_link, title="MCP Endpoint", is_relative=True),
             Link(path="/health", title="Health", is_relative=True),
             *self.links,
         ]
@@ -421,7 +434,7 @@ class FlyteMCPAppEnvironment(flyte.app.AppEnvironment):
                 "mcp is not installed. Please install 'flyte[mcp]' to use FlyteMCPAppEnvironment."
             ) from e
 
-        # Optional hardening settings (available in union-mcp).
+        # Optional hardening settings
         transport_security: Any | None = None
         try:  # pragma: no cover
             from mcp.server.transport_security import TransportSecuritySettings
@@ -433,8 +446,8 @@ class FlyteMCPAppEnvironment(flyte.app.AppEnvironment):
         mcp = FastMCP(
             name=self.title or self.name,
             instructions=self.instructions,
-            stateless_http=True,
-            json_response=True,
+            stateless_http=self.transport == "streamable-http",
+            json_response=self.transport == "streamable-http",
             transport_security=transport_security,
         )
 
@@ -638,15 +651,14 @@ class FlyteMCPAppEnvironment(flyte.app.AppEnvironment):
         @mcp.tool()
         async def build_uv_script_image_remote(script: str, ctx: MCPContext | None = None) -> dict:
             raise NotImplementedError(
-                "Remote UV script image builds require a remote MCP backend (e.g. union-mcp). "
+                "Remote UV script image builds require a remote MCP backend "
                 "Use a connected remote MCP server for this tool."
             )
 
         @mcp.tool()
         async def run_uv_script_remote(script: str, ctx: MCPContext | None = None) -> dict:
             raise NotImplementedError(
-                "Remote UV script runs require a remote MCP backend (e.g. union-mcp). "
-                "Use a connected remote MCP server for this tool."
+                "Remote UV script runs require a remote MCP backend Use a connected remote MCP server for this tool."
             )
 
         @mcp.tool()
@@ -721,26 +733,31 @@ class FlyteMCPAppEnvironment(flyte.app.AppEnvironment):
 
         assert self._mcp_server is not None
 
+        async def _health(_: Any) -> JSONResponse:
+            return JSONResponse({"status": "healthy"})
+
         # FastMCP provides an ASGI app for HTTP transport.
         mcp_asgi = None
         if hasattr(self._mcp_server, "streamable_http_app"):
             mcp_asgi = self._mcp_server.streamable_http_app()
-        elif hasattr(self._mcp_server, "asgi_app"):  # pragma: no cover
-            mcp_asgi = self._mcp_server.asgi_app()
         elif hasattr(self._mcp_server, "sse_app"):  # pragma: no cover
             mcp_asgi = self._mcp_server.sse_app()
         else:  # pragma: no cover
             raise RuntimeError("FastMCP does not expose an ASGI app (expected streamable_http_app/asgi_app/sse_app).")
-
-        async def _health(_: Any) -> JSONResponse:
-            return JSONResponse({"status": "healthy"})
 
         routes = [
             Mount(self.mcp_mount_path, app=mcp_asgi),
             Route("/health", endpoint=_health, methods=["GET"]),
         ]
 
-        return Starlette(routes=routes)
+        # The mounted FastMCP app registers a lifespan (starts StreamableHTTPSessionManager).
+        # Starlette does not run mounted apps' lifespans unless we compose them here.
+        @asynccontextmanager
+        async def lifespan(_app: Starlette):
+            async with mcp_asgi.router.lifespan_context(mcp_asgi):
+                yield
+
+        return Starlette(routes=routes, lifespan=lifespan)
 
     async def _starlette_app_server(self):
         try:
