@@ -542,3 +542,61 @@ def test_connector_environment_empty_args_vs_none_args():
         args=[],
     )
     assert conn_empty.container_args(ctx) == []
+
+
+def test_connector_environment_caller_frame_points_to_user_code():
+    """
+    GOAL: Verify _caller_frame skips the subclass __post_init__ chain.
+
+    ConnectorEnvironment.__post_init__ calls super().__post_init__(), which
+    used to push _caller_frame onto the synthesized dataclass __init__ frame
+    instead of the user's module. That broke `flyte.deploy` for connectors
+    when the SDK was installed in editable mode, because the resolver fell
+    back to the class definition file as the module.
+    """
+    user_code = (
+        "import flyte\n"
+        "from flyte.app import ConnectorEnvironment\n"
+        "from flyte._image import Image\n"
+        "connector = ConnectorEnvironment(\n"
+        "    name='my-connector',\n"
+        "    image=Image.from_base('python:3.11'),\n"
+        "    include=['my_connector'],\n"
+        ")\n"
+    )
+    namespace = {"__file__": "/tmp/fake_user_app.py"}
+    exec(compile(user_code, "/tmp/fake_user_app.py", "exec"), namespace)
+    connector = namespace["connector"]
+
+    assert connector._caller_frame is not None
+    assert connector._caller_frame.filename == "/tmp/fake_user_app.py"
+    assert connector._caller_frame.function == "<module>"
+
+
+def test_connector_environment_caller_frame_with_custom_subclass():
+    """
+    GOAL: Verify _caller_frame works when a user adds another __post_init__
+    layer by subclassing ConnectorEnvironment, exercising the loop that
+    skips chained __post_init__/__init__ frames.
+    """
+    from dataclasses import dataclass
+
+    from flyte._image import Image
+    from flyte.app import ConnectorEnvironment
+
+    @dataclass
+    class MyConnector(ConnectorEnvironment):
+        def __post_init__(self):
+            super().__post_init__()
+
+    user_code = (
+        "def make(cls, Image):\n"
+        "    return cls(name='c', image=Image.from_base('python:3.11'))\n"
+    )
+    namespace = {"__file__": "/tmp/fake_user_subclass.py"}
+    exec(compile(user_code, "/tmp/fake_user_subclass.py", "exec"), namespace)
+    conn = namespace["make"](MyConnector, Image)
+
+    assert conn._caller_frame is not None
+    assert conn._caller_frame.filename == "/tmp/fake_user_subclass.py"
+    assert conn._caller_frame.function == "make"
