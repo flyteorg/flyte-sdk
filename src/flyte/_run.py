@@ -44,7 +44,7 @@ if TYPE_CHECKING:
     from ._code_bundle import CopyFiles
     from ._internal.imagebuild.image_builder import ImageCache
 
-Mode = Literal["local", "remote", "hybrid"]
+Mode = Literal["local", "local-multi", "remote", "hybrid"]
 CacheLookupScope = Literal["global", "project-domain"]
 
 
@@ -136,6 +136,14 @@ class _Runner:
         force_mode = force_mode or "local"
         logger.debug(f"Effective run mode: `{force_mode}`, client configured: `{client is not None}`")
         self._mode = force_mode
+        if force_mode == "local-multi":
+            # _Runner.__init__ runs on the user's main thread (before the
+            # syncify boundary), which is the only place we can register
+            # SIGINT/SIGTERM handlers that synchronously terminate the
+            # worker pool on Ctrl-C / kill so children don't leak.
+            from flyte._internal.controllers.multi import install_signal_handlers
+
+            install_signal_handlers()
         self._name = name
         self._service_account = service_account
         self._version = version
@@ -644,11 +652,13 @@ class _Runner:
         from flyteidl2.task import common_pb2
 
         from flyte._internal.controllers import create_controller
+        from flyte._internal.controllers import ControllerType
         from flyte._internal.controllers._local_controller import LocalController
         from flyte.remote import ActionOutputs, Run
         from flyte.report import Report
 
-        controller = cast(LocalController, create_controller("local"))
+        controller_type: ControllerType = "local-multi" if self._mode == "local-multi" else "local"
+        controller = cast(LocalController, create_controller(controller_type))
 
         if self._name is None:
             action = ActionID.create_random()
@@ -703,29 +713,49 @@ class _Runner:
 
         recorder = RunRecorder(tracker=self._tracker, persist=persist, run_name=run_name)
         controller.set_recorder(recorder)
+        if self._mode == "local-multi":
+            from flyte._internal.controllers.multi import LocalMultiController
+
+            cast(LocalMultiController, controller).set_root_action(action.name)
 
         recorder.record_root_start(task_name=obj.name)
 
         try:
-            with ctx.replace_task_context(tctx):
-                # make the local version always runs on a different thread, returns a wrapped future.
-                if obj._call_as_synchronous:
-                    fut = controller.submit_sync(obj, *args, **kwargs)
-                    awaitable = asyncio.wrap_future(fut)
-                    outputs = await awaitable
-                else:
-                    outputs = await controller.submit(obj, *args, **kwargs)
-        except Exception as e:
-            recorder.record_root_failure(error=str(e))
-            if self._notifications:
-                await self._send_local_notifications(
-                    phase=ActionPhase.FAILED, task_name=obj.name, run_name=run_name, error=str(e)
-                )
-            raise
-        else:
-            recorder.record_root_complete()
-            if self._notifications:
-                await self._send_local_notifications(phase=ActionPhase.SUCCEEDED, task_name=obj.name, run_name=run_name)
+            try:
+                with ctx.replace_task_context(tctx):
+                    # make the local version always runs on a different thread, returns a wrapped future.
+                    if obj._call_as_synchronous:
+                        fut = controller.submit_sync(obj, *args, **kwargs)
+                        awaitable = asyncio.wrap_future(fut)
+                        outputs = await awaitable
+                    else:
+                        outputs = await controller.submit(obj, *args, **kwargs)
+            except (KeyboardInterrupt, asyncio.CancelledError) as e:
+                # User-initiated cancellation. Record as a failure and let
+                # the finally below tear down the controller (including
+                # any worker subprocesses) before propagating.
+                recorder.record_root_failure(error=str(e) or type(e).__name__)
+                raise
+            except Exception as e:
+                recorder.record_root_failure(error=str(e))
+                if self._notifications:
+                    await self._send_local_notifications(
+                        phase=ActionPhase.FAILED, task_name=obj.name, run_name=run_name, error=str(e)
+                    )
+                raise
+            else:
+                recorder.record_root_complete()
+                if self._notifications:
+                    await self._send_local_notifications(
+                        phase=ActionPhase.SUCCEEDED, task_name=obj.name, run_name=run_name
+                    )
+        finally:
+            # Always stop the controller so worker subprocesses don't leak
+            # on Ctrl-C, unhandled exceptions, or normal completion.
+            try:
+                await controller.stop()
+            except Exception as stop_exc:
+                logger.debug("controller.stop() raised during cleanup: %s", stop_exc)
 
         class _LocalRun(Run):
             def __init__(self, outputs: Tuple[Any, ...] | Any):
