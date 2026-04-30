@@ -6,6 +6,68 @@ tasks can be accessed and configurable search paths for documentation.
 
 Requirements:
     pip install 'flyte[mcp]'
+
+Usage:
+
+    $ python examples/mcp/mcp_app_filtered.py
+
+    Or serve locally for development (recommended: `uvx`)
+
+    $ uvx --from "flyte[mcp]" flyte-mcp-filtered
+
+    If you're running from this repo checkout:
+    $ uvx --from . flyte-mcp-filtered
+
+    ------------------------------
+    Connect from Claude Code
+    ------------------------------
+    Some agent harnesses can't reach `localhost` URLs. For local usage, prefer
+    configuring Claude Code to launch the server via `uvx` (process-based setup).
+    
+    Add as a local stdio MCP server:
+    $ claude mcp add --transport stdio flyte-mcp-filtered -- uvx --with "flyte[mcp]" flyte-mcp-filtered
+
+    If you deploy this app remotely (so it has a public base URL), use that URL instead:
+    $ claude mcp add --transport http flyte-mcp-filtered-remote https://<YOUR_HOST>/mcp
+
+    If your remote deployment requires auth, add headers (example):
+    $ claude mcp add --transport http \
+      --header "Authorization: Bearer $TOKEN" \
+      flyte-mcp-filtered-remote https://<YOUR_HOST>/mcp
+
+    ------------------------------
+    Connect from OpenCode
+    ------------------------------
+
+    For local usage (no `localhost` required), configure OpenCode to launch the
+    server as a local MCP process:
+    
+    {
+      "$schema": "https://opencode.ai/config.json",
+      "mcp": {
+        "flyte-mcp-filtered": {
+          "type": "local",
+          "command": ["uvx", "--with", "flyte[mcp]", "flyte-mcp-filtered"],
+          "enabled": true
+        }
+      }
+    }
+    
+    For a remote deployment:
+
+    {
+      "$schema": "https://opencode.ai/config.json",
+      "mcp": {
+        "flyte-mcp-filtered": {
+          "type": "remote",
+          "url": "https://<YOUR_HOST>/mcp",
+          "enabled": true,
+          "headers": {
+            "Authorization": "Bearer YOUR_TOKEN"
+          }
+        }
+      }
+    }
 """
 
 import flyte
@@ -17,6 +79,7 @@ mcp_env = FlyteMCPAppEnvironment(
     name="restricted-mcp",
     image=image,
     resources=flyte.Resources(cpu=1, memory="512Mi"),
+    transport="streamable-http",
     tool_groups=["task", "run", "script", "search"],
     task_allowlist=["my-project/my-task", "another-task"],
     sdk_examples_path="/root/flyte-sdk/examples",
@@ -31,4 +94,6 @@ mcp_env = FlyteMCPAppEnvironment(
 
 if __name__ == "__main__":
     flyte.init_from_config()
-    flyte.serve(mcp_env)
+    app_handle = flyte.serve(mcp_env)
+    app_handle.activate(wait=True)
+    print(f"App is ready at {app_handle.endpoint}")
