@@ -11,6 +11,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
+from flyteidl2.connector.connector_pb2 import GetTaskLogsResponse, GetTaskLogsResponseBody
 from flyteidl2.core.execution_pb2 import TaskExecution
 
 from flyte import logger
@@ -57,6 +58,18 @@ class BatchJobConnector(AsyncConnector):
 
     async def delete(self, resource_meta: BatchJobMetadata, **kwargs):
         logger.info(f"Cancelled job {resource_meta.job_id}")
+
+    async def get_logs(self, resource_meta: BatchJobMetadata, **kwargs) -> GetTaskLogsResponse:
+        logger.info(f"Fetching logs for job {resource_meta.job_id}")
+        return GetTaskLogsResponse(
+            body=GetTaskLogsResponseBody(
+                results=[
+                    f"[INFO] Job {resource_meta.job_id} started at {resource_meta.created_at}",
+                    f"[INFO] Job {resource_meta.job_id} is processing...",
+                    f"[INFO] Job {resource_meta.job_id} finished",
+                ],
+            ),
+        )
 
 
 ConnectorRegistry.register(BatchJobConnector())
