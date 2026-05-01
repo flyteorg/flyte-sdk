@@ -176,7 +176,8 @@ ENV PATH="$$PATH:/usr/local/nvidia/bin:/usr/local/cuda/bin" \
 # This gets added on to the end of the dockerfile
 DOCKER_FILE_BASE_FOOTER = Template("""\
 ENV _F_IMG_ID=$F_IMG_ID
-WORKDIR /root
+USER flyte
+WORKDIR /home/flyte
 SHELL ["/bin/bash", "-c"]
 """)
 
@@ -399,7 +400,7 @@ class CopyConfigHandler:
         layer: CopyConfig, context_path: Path, dockerfile: str, docker_ignore_patterns: list[str] = []
     ) -> str:
         dst_path = copy_files_to_context(layer.src, context_path, docker_ignore_patterns)
-        dockerfile += f"\nCOPY {dst_path.relative_to(context_path)} {layer.dst}\n"
+        dockerfile += f"\nCOPY --chown=flyte:flyte {dst_path.relative_to(context_path)} {layer.dst}\n"
         return dockerfile
 
 
@@ -408,7 +409,7 @@ class _CodeBundleHandler:
     async def handle(layer: CodeBundleLayer, context_path: Path, dockerfile: str) -> str:
         assert layer.root_dir is not None
         dst_path = copy_code_bundle_to_context(layer.root_dir, layer.copy_style, context_path)
-        dockerfile += f"\nCOPY {dst_path.relative_to(context_path)} {layer.dst}\n"
+        dockerfile += f"\nCOPY --chown=flyte:flyte {dst_path.relative_to(context_path)} {layer.dst}\n"
         return dockerfile
 
 
