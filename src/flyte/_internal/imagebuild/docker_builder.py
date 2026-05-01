@@ -55,7 +55,7 @@ if TYPE_CHECKING:
 _F_IMG_ID = "_F_IMG_ID"
 FLYTE_DOCKER_BUILDER_CACHE_FROM = "FLYTE_DOCKER_BUILDER_CACHE_FROM"
 FLYTE_DOCKER_BUILDER_CACHE_TO = "FLYTE_DOCKER_BUILDER_CACHE_TO"
-FLYTE_DOCKER_BUILDER_NAME = "FLYTE_DOCKER_BUILDER_NAME"
+FLYTE_DOCKER_BUILDKIT_BUILDER_NAME = "FLYTE_DOCKER_BUILDKIT_BUILDER_NAME"
 
 UV_LOCK_WITHOUT_PROJECT_INSTALL_TEMPLATE = Template("""\
 RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
@@ -606,7 +606,7 @@ class DockerImageBuilder(ImageBuilder):
     @staticmethod
     async def _resolve_builder_name() -> str:
         """Return the buildx builder to use, ensuring the default one exists if no override is set."""
-        builder_name = os.getenv(FLYTE_DOCKER_BUILDER_NAME)
+        builder_name = os.getenv(FLYTE_DOCKER_BUILDKIT_BUILDER_NAME)
         if builder_name:
             return builder_name
         await DockerImageBuilder._ensure_buildx_builder()

@@ -816,10 +816,10 @@ async def test_ensure_buildx_builder_recreates_when_network_host_missing():
 
 @pytest.mark.asyncio
 async def test_build_image_uses_custom_builder_from_env(monkeypatch):
-    """When FLYTE_DOCKER_BUILDER_NAME is set, _build_image should use it and skip _ensure_buildx_builder."""
+    """When FLYTE_DOCKER_BUILDKIT_BUILDER_NAME is set, _build_image should use it and skip _ensure_buildx_builder."""
     from flyte._internal.imagebuild import docker_builder as db
 
-    monkeypatch.setenv("FLYTE_DOCKER_BUILDER_NAME", "my-custom-builder")
+    monkeypatch.setenv("FLYTE_DOCKER_BUILDKIT_BUILDER_NAME", "my-custom-builder")
 
     calls = []
 
@@ -853,10 +853,10 @@ async def test_build_image_uses_custom_builder_from_env(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_build_image_uses_default_builder_when_env_unset(monkeypatch):
-    """When FLYTE_DOCKER_BUILDER_NAME is unset, _build_image should call _ensure_buildx_builder and use the default name."""
+    """When FLYTE_DOCKER_BUILDKIT_BUILDER_NAME is unset, _build_image should call _ensure_buildx_builder and use the default name."""
     from flyte._internal.imagebuild import docker_builder as db
 
-    monkeypatch.delenv("FLYTE_DOCKER_BUILDER_NAME", raising=False)
+    monkeypatch.delenv("FLYTE_DOCKER_BUILDKIT_BUILDER_NAME", raising=False)
 
     calls = []
 
@@ -890,10 +890,10 @@ async def test_build_image_uses_default_builder_when_env_unset(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_build_from_dockerfile_uses_custom_builder_from_env(monkeypatch):
-    """_build_from_dockerfile should respect FLYTE_DOCKER_BUILDER_NAME and skip ensure when set."""
+    """_build_from_dockerfile should respect FLYTE_DOCKER_BUILDKIT_BUILDER_NAME and skip ensure when set."""
     from flyte._internal.imagebuild import docker_builder as db
 
-    monkeypatch.setenv("FLYTE_DOCKER_BUILDER_NAME", "my-custom-builder")
+    monkeypatch.setenv("FLYTE_DOCKER_BUILDKIT_BUILDER_NAME", "my-custom-builder")
 
     calls = []
 
