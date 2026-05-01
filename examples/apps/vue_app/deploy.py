@@ -3,10 +3,7 @@ from flyte.app import AppEnvironment
 
 env = AppEnvironment(
     name="vue-union-app",
-    image=(
-        flyte.Image.from_debian_base()
-        .with_apt_packages("nodejs", "npm")
-    ),
+    image=(flyte.Image.from_debian_base().with_apt_packages("nodejs", "npm")),
     args="sh start.sh",
     port=8080,
     resources=flyte.Resources(cpu=2, memory="2Gi"),
