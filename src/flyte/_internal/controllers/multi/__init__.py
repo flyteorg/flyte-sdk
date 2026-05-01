@@ -7,6 +7,6 @@ workflows. The root task body itself runs in-process so its
 ``await child(...)`` calls can fan out across the pool.
 """
 
-from ._controller import LocalMultiController, install_signal_handlers
+from ._controller import LocalMultiController, install_signal_handlers, prewarm_resource_tracker
 
-__all__ = ["LocalMultiController", "install_signal_handlers"]
+__all__ = ["LocalMultiController", "install_signal_handlers", "prewarm_resource_tracker"]

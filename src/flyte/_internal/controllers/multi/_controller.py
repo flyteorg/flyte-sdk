@@ -98,6 +98,27 @@ def install_signal_handlers() -> None:
         logger.debug("install_signal_handlers failed: %s", exc)
 
 
+def prewarm_resource_tracker() -> None:
+    """Force-spawn the multiprocessing resource_tracker subprocess now, while
+    the real ``sys.stderr`` is still installed.
+
+    Lazy startup happens later (inside ``ProcessPoolExecutor`` worker spawn)
+    via ``resource_tracker.ensure_running()``, which builds its child's
+    ``pass_fds`` from ``sys.stderr.fileno()``. A TUI like Textual replaces
+    ``sys.stderr`` with a capture stream whose ``fileno()`` returns ``-1``,
+    and ``_posixsubprocess.fork_exec`` rejects negative fds with
+    ``ValueError('bad value(s) in fds_to_keep')``. Pre-warming sidesteps
+    this: once the tracker is up, subsequent spawns reuse its existing fd
+    and never touch ``sys.stderr`` again. Must be called from the parent
+    process before TUI initialization."""
+    try:
+        from multiprocessing import resource_tracker
+
+        resource_tracker._resource_tracker.ensure_running()
+    except Exception as exc:
+        logger.debug("prewarm_resource_tracker failed: %s", exc)
+
+
 def _register_controller(ctrl: "LocalMultiController") -> None:
     with _active_lock:
         _active_controllers.append(ctrl)

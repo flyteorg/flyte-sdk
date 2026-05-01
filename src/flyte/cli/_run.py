@@ -396,6 +396,15 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
 
         tui_mode: Mode = "local-multi" if self.run_args.local_multi else "local"
 
+        if self.run_args.local_multi:
+            # Spawn the multiprocessing resource_tracker now, while real stderr
+            # is still in place. Once Textual replaces sys.stderr with a stream
+            # whose fileno() returns -1, the tracker's lazy spawn would pass -1
+            # to fork_exec and fail with 'bad value(s) in fds_to_keep'.
+            from flyte._internal.controllers.multi import prewarm_resource_tracker
+
+            prewarm_resource_tracker()
+
         async def execute_fn():
             import flyte
 

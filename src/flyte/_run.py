@@ -651,8 +651,7 @@ class _Runner:
         from flyteidl2.common import identifier_pb2
         from flyteidl2.task import common_pb2
 
-        from flyte._internal.controllers import create_controller
-        from flyte._internal.controllers import ControllerType
+        from flyte._internal.controllers import ControllerType, create_controller
         from flyte._internal.controllers._local_controller import LocalController
         from flyte.remote import ActionOutputs, Run
         from flyte.report import Report
