@@ -55,6 +55,7 @@ if TYPE_CHECKING:
 _F_IMG_ID = "_F_IMG_ID"
 FLYTE_DOCKER_BUILDER_CACHE_FROM = "FLYTE_DOCKER_BUILDER_CACHE_FROM"
 FLYTE_DOCKER_BUILDER_CACHE_TO = "FLYTE_DOCKER_BUILDER_CACHE_TO"
+FLYTE_DOCKER_BUILDER_NAME = "FLYTE_DOCKER_BUILDER_NAME"
 
 UV_LOCK_WITHOUT_PROJECT_INSTALL_TEMPLATE = Template("""\
 RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
@@ -607,14 +608,17 @@ class DockerImageBuilder(ImageBuilder):
         Build the image from a provided Dockerfile.
         """
         assert image.dockerfile  # for mypy
-        await DockerImageBuilder._ensure_buildx_builder()
+        builder_name = os.getenv(FLYTE_DOCKER_BUILDER_NAME)
+        if not builder_name:
+            await DockerImageBuilder._ensure_buildx_builder()
+            builder_name = DockerImageBuilder._builder_name
 
         command = [
             "docker",
             "buildx",
             "build",
             "--builder",
-            DockerImageBuilder._builder_name,
+            builder_name,
             "-f",
             str(image.dockerfile),
             "--tag",
@@ -717,7 +721,10 @@ class DockerImageBuilder(ImageBuilder):
         # For testing, set `push=False` to just build the image locally and not push to
         # registry.
 
-        await DockerImageBuilder._ensure_buildx_builder()
+        builder_name = os.getenv(FLYTE_DOCKER_BUILDER_NAME)
+        if not builder_name:
+            await DockerImageBuilder._ensure_buildx_builder()
+            builder_name = DockerImageBuilder._builder_name
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             logger.warning(f"Temporary directory: {tmp_dir}")
@@ -745,7 +752,7 @@ class DockerImageBuilder(ImageBuilder):
                 "buildx",
                 "build",
                 "--builder",
-                DockerImageBuilder._builder_name,
+                builder_name,
                 "--tag",
                 f"{image.uri}",
                 "--platform",
