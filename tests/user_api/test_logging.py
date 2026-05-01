@@ -4,8 +4,10 @@ import logging
 import flyte
 from flyte._logging import (
     DEFAULT_LOG_LEVEL,
+    DEFAULT_USER_LOG_LEVEL,
     JSONFormatter,
     get_env_log_level,
+    get_env_user_log_level,
     is_rich_logging_disabled,
     log_format_from_env,
     make_hyperlink,
@@ -14,10 +16,7 @@ from flyte._logging import (
 
 def test_logger_exists():
     assert flyte.logger is not None
-    assert flyte.logger.name == "flyte"
-
-
-def test_logger_is_logging_logger():
+    assert flyte.logger.name == "flyte.user"
     assert isinstance(flyte.logger, logging.Logger)
 
 
@@ -92,6 +91,47 @@ def test_json_formatter():
     assert parsed["message"] == "Test message"
     assert parsed["level"] == "INFO"
     assert "timestamp" in parsed
+
+
+def test_user_logger_exists():
+    assert flyte.logger is not None
+    assert flyte.logger.name == "flyte.user"
+    assert isinstance(flyte.logger, logging.Logger)
+
+
+def test_user_logger_default_level():
+    assert DEFAULT_USER_LOG_LEVEL == logging.INFO
+
+
+def test_user_logger_independent_of_internal_level():
+    from flyte._logging import logger as internal_logger
+
+    original_internal = internal_logger.level
+    original_user = flyte.logger.level
+    try:
+        internal_logger.setLevel(logging.CRITICAL)
+        assert flyte.logger.level != logging.CRITICAL
+    finally:
+        internal_logger.setLevel(original_internal)
+        flyte.logger.setLevel(original_user)
+
+
+def test_user_log_level_env_var(monkeypatch):
+    monkeypatch.setenv("USER_LOG_LEVEL", "debug")
+    assert get_env_user_log_level() == logging.DEBUG
+
+
+def test_user_log_level_env_var_default(monkeypatch):
+    monkeypatch.delenv("USER_LOG_LEVEL", raising=False)
+    assert get_env_user_log_level() == logging.INFO
+
+
+def test_user_logger_no_flyte_prefix():
+    from flyte._logging import FlyteInternalFilter
+
+    for handler in flyte.logger.handlers:
+        for f in handler.filters:
+            assert not isinstance(f, FlyteInternalFilter), "user_logger must not have FlyteInternalFilter"
 
 
 def test_json_formatter_with_context():
