@@ -853,7 +853,8 @@ async def test_build_image_uses_custom_builder_from_env(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_build_image_uses_default_builder_when_env_unset(monkeypatch):
-    """When FLYTE_DOCKER_BUILDKIT_BUILDER_NAME is unset, _build_image should call _ensure_buildx_builder and use the default name."""
+    # When FLYTE_DOCKER_BUILDKIT_BUILDER_NAME is unset, _build_image should
+    # call _ensure_buildx_builder and use the default name.
     from flyte._internal.imagebuild import docker_builder as db
 
     monkeypatch.delenv("FLYTE_DOCKER_BUILDKIT_BUILDER_NAME", raising=False)
@@ -911,9 +912,7 @@ async def test_build_from_dockerfile_uses_custom_builder_from_env(monkeypatch):
         dockerfile = Path(tmp_dir) / "Dockerfile"
         dockerfile.write_text("FROM python:3.12\n")
 
-        img = Image.from_dockerfile(
-            file=dockerfile, registry="localhost:30000", name="custom_dockerfile_test"
-        )
+        img = Image.from_dockerfile(file=dockerfile, registry="localhost:30000", name="custom_dockerfile_test")
 
         with patch.object(db.DockerImageBuilder, "_ensure_buildx_builder", side_effect=fake_ensure):
             with patch(
