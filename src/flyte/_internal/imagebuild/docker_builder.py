@@ -603,15 +603,21 @@ class DockerImageBuilder(ImageBuilder):
         )
         return ImageBuild(uri=uri, remote_run=None)
 
+    @staticmethod
+    async def _resolve_builder_name() -> str:
+        """Return the buildx builder to use, ensuring the default one exists if no override is set."""
+        builder_name = os.getenv(FLYTE_DOCKER_BUILDER_NAME)
+        if builder_name:
+            return builder_name
+        await DockerImageBuilder._ensure_buildx_builder()
+        return DockerImageBuilder._builder_name
+
     async def _build_from_dockerfile(self, image: Image, push: bool, wait: bool = True) -> str:
         """
         Build the image from a provided Dockerfile.
         """
         assert image.dockerfile  # for mypy
-        builder_name = os.getenv(FLYTE_DOCKER_BUILDER_NAME)
-        if not builder_name:
-            await DockerImageBuilder._ensure_buildx_builder()
-            builder_name = DockerImageBuilder._builder_name
+        builder_name = await DockerImageBuilder._resolve_builder_name()
 
         command = [
             "docker",
@@ -721,10 +727,7 @@ class DockerImageBuilder(ImageBuilder):
         # For testing, set `push=False` to just build the image locally and not push to
         # registry.
 
-        builder_name = os.getenv(FLYTE_DOCKER_BUILDER_NAME)
-        if not builder_name:
-            await DockerImageBuilder._ensure_buildx_builder()
-            builder_name = DockerImageBuilder._builder_name
+        builder_name = await DockerImageBuilder._resolve_builder_name()
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             logger.warning(f"Temporary directory: {tmp_dir}")
