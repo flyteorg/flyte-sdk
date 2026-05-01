@@ -23,8 +23,8 @@ from flyte._task import AsyncFunctionTaskTemplate, TaskTemplate
 from flyte.models import CodeBundle, SerializationContext, TaskContext
 
 from ... import ReusePolicy
-from ..._retry import RetryStrategy
-from ..._timeout import TimeoutType, timeout_from_request
+from ..._retry import Backoff, RetryStrategy
+from ..._timeout import Timeout, TimeoutType, timeout_from_request
 from .resources_serde import get_proto_extended_resources, get_proto_resources
 from .reuse import add_reusable
 from .types_serde import transform_native_to_typed_interface
@@ -93,6 +93,37 @@ def get_security_context(
     )
 
 
+def _to_duration(value: timedelta | int | None) -> Optional[duration_pb2.Duration]:
+    """timedelta/int (seconds) -> google.protobuf.Duration; None passes through."""
+    if value is None:
+        return None
+    if isinstance(value, int):
+        value = timedelta(seconds=value)
+    total = value.total_seconds()
+    seconds = int(total)
+    nanos = int(round((total - seconds) * 1_000_000_000))
+    return duration_pb2.Duration(seconds=seconds, nanos=nanos)
+
+
+def _to_timeout_duration(value: timedelta | int | None) -> Optional[duration_pb2.Duration]:
+    """Like :func:`_to_duration`, but for timeout/deadline fields where ``0``
+    means "unlimited" (same as ``None``) and is omitted on the wire."""
+    if value is None:
+        return None
+    if isinstance(value, int):
+        value = timedelta(seconds=value)
+    if value.total_seconds() == 0:
+        return None
+    return _to_duration(value)
+
+
+def _backoff_to_proto(backoff: Backoff) -> literals_pb2.Backoff:
+    proto = literals_pb2.Backoff(base=_to_duration(backoff.base), factor=backoff.factor)
+    if backoff.cap is not None:
+        proto.cap.CopyFrom(_to_duration(backoff.cap))
+    return proto
+
+
 def get_proto_retry_strategy(
     retries: RetryStrategy | int | None,
 ) -> Optional[literals_pb2.RetryStrategy]:
@@ -102,16 +133,43 @@ def get_proto_retry_strategy(
     if isinstance(retries, int):
         raise AssertionError("Retries should be an instance of RetryStrategy, not int")
 
-    return literals_pb2.RetryStrategy(retries=retries.count)
+    proto = literals_pb2.RetryStrategy(retries=retries.count)
+    if retries.backoff is not None:
+        proto.backoff.CopyFrom(_backoff_to_proto(retries.backoff))
+    return proto
 
 
-def get_proto_timeout(timeout: TimeoutType | None) -> Optional[duration_pb2.Duration]:
+def get_proto_max_runtime(timeout: TimeoutType | None) -> Optional[duration_pb2.Duration]:
+    """Serialize ``Timeout.max_runtime`` for ``TaskMetadata.timeout``. Returns
+    ``None`` (omits the wire field) when the bound is unset or zero — both
+    mean unlimited."""
     if timeout is None:
         return None
-    max_runtime_timeout = timeout_from_request(timeout).max_runtime
-    if isinstance(max_runtime_timeout, int):
-        max_runtime_timeout = timedelta(seconds=max_runtime_timeout)
-    return duration_pb2.Duration(seconds=max_runtime_timeout.seconds)
+    return _to_timeout_duration(timeout_from_request(timeout).max_runtime)
+
+
+def get_proto_timeout_strategy(timeout: TimeoutType | None) -> Optional[literals_pb2.TimeoutStrategy]:
+    """
+    Serialize the queued-timeout and deadline fields into
+    ``TaskMetadata.timeouts``. Returns ``None`` if neither bound is set, so
+    the caller can leave the wire field unset (= unlimited). A bound is
+    considered unset when it is ``None`` or zero.
+
+    SDK ``Timeout.max_queued_time`` maps to proto ``TimeoutStrategy.queued_timeout``.
+    """
+    if timeout is None:
+        return None
+    t: Timeout = timeout_from_request(timeout)
+    queued = _to_timeout_duration(t.max_queued_time)
+    deadline = _to_timeout_duration(t.deadline)
+    if queued is None and deadline is None:
+        return None
+    proto = literals_pb2.TimeoutStrategy()
+    if queued is not None:
+        proto.queued_timeout.CopyFrom(queued)
+    if deadline is not None:
+        proto.deadline.CopyFrom(deadline)
+    return proto
 
 
 def get_proto_task(
@@ -198,7 +256,8 @@ def get_proto_task(
                 flavor="python",
             ),
             retries=get_proto_retry_strategy(task.retries),
-            timeout=get_proto_timeout(task.timeout),
+            timeout=get_proto_max_runtime(task.timeout),
+            timeouts=get_proto_timeout_strategy(task.timeout),
             pod_template_name=(task.pod_template if task.pod_template and isinstance(task.pod_template, str) else None),
             interruptible=task.interruptible,
             generates_deck=wrappers_pb2.BoolValue(value=task.report),
