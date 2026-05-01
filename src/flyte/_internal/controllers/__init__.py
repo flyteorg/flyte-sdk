@@ -47,7 +47,7 @@ class TaskCallSequencer:
 if TYPE_CHECKING:
     import concurrent.futures
 
-ControllerType = Literal["local", "remote"]
+ControllerType = Literal["local", "local-multi", "remote"]
 
 R = TypeVar("R")
 
@@ -149,6 +149,10 @@ def create_controller(
             from ._local_controller import LocalController
 
             controller = LocalController()
+        case "local-multi":
+            from .multi import LocalMultiController
+
+            controller = LocalMultiController(**kwargs)
         case "remote" | "hybrid":
             from flyte._internal.controllers.remote import create_remote_controller
 

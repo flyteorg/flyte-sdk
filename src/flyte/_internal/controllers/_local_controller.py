@@ -13,6 +13,7 @@ from flyte._cache.cache import VersionParameters, cache_from_request
 from flyte._context import internal_ctx
 from flyte._internal.controllers import TaskCallSequencer, TraceInfo
 from flyte._internal.runtime import convert
+from flyte._internal.runtime.convert import Error, Inputs, Outputs
 from flyte._internal.runtime.entrypoints import direct_dispatch
 from flyte._internal.runtime.types_serde import transform_native_to_typed_interface
 from flyte._logging import log, logger
@@ -20,7 +21,7 @@ from flyte._persistence._recorder import RunRecorder
 from flyte._persistence._task_cache import LocalTaskCache
 from flyte._task import AsyncFunctionTaskTemplate, TaskTemplate
 from flyte._utils.helpers import _selector_policy
-from flyte.models import ActionID, CheckpointPaths, NativeInterface
+from flyte.models import ActionID, CheckpointPaths, CodeBundle, NativeInterface, RawDataPath
 from flyte.remote._task import TaskDetails
 from flyte.storage._storage import strip_file_header
 
@@ -224,9 +225,8 @@ class LocalController:
                     action_id=sub_action_id.name,
                     attempt_num=attempt_num,
                 )
-                out, err = await direct_dispatch(
+                out, err = await self._run_dispatch(
                     _task,
-                    controller=self,
                     action=sub_action_id,
                     raw_data_path=sub_action_raw_data_path,
                     inputs=inputs,
@@ -282,6 +282,34 @@ class LocalController:
             result = await convert.convert_outputs_to_native(_task.native_interface, out)
             return result
         return None
+
+    async def _run_dispatch(
+        self,
+        _task: TaskTemplate,
+        *,
+        action: ActionID,
+        raw_data_path: RawDataPath,
+        inputs: Inputs,
+        version: str,
+        checkpoint_paths: CheckpointPaths | None,
+        code_bundle: CodeBundle | None,
+        output_path: str,
+        run_base_dir: str,
+    ) -> Tuple[Outputs | None, Error | None]:
+        """Hook that actually executes the task body. Subclasses can override this
+        to dispatch to a worker process or remote runtime instead of in-process."""
+        return await direct_dispatch(
+            _task,
+            controller=self,
+            action=action,
+            raw_data_path=raw_data_path,
+            inputs=inputs,
+            version=version,
+            checkpoint_paths=checkpoint_paths,
+            code_bundle=code_bundle,
+            output_path=output_path,
+            run_base_dir=run_base_dir,
+        )
 
     def submit_sync(self, _task: TaskTemplate, *args, **kwargs) -> concurrent.futures.Future:
         name = threading.current_thread().name + f"PID:{os.getpid()}"
