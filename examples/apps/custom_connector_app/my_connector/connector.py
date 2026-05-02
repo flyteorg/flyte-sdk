@@ -11,8 +11,15 @@ import uuid
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
-from flyteidl2.connector.connector_pb2 import GetTaskLogsResponse, GetTaskLogsResponseBody
+from google.protobuf.timestamp_pb2 import Timestamp
+
+from flyteidl2.connector.connector_pb2 import (
+    GetTaskLogsResponse,
+    GetTaskLogsResponseBody,
+    GetTaskLogsResponseHeader,
+)
 from flyteidl2.core.execution_pb2 import TaskExecution
+from flyteidl2.logs.dataplane.payload_pb2 import LogLine, LogLineOriginator
 
 from flyte import logger
 from flyte.connectors import AsyncConnector, ConnectorRegistry, Resource, ResourceMeta
@@ -32,10 +39,10 @@ class BatchJobConnector(AsyncConnector):
     metadata_type = BatchJobMetadata
 
     async def create(
-        self,
-        task_template,
-        inputs: Optional[Dict[str, Any]] = None,
-        **kwargs,
+            self,
+            task_template,
+            inputs: Optional[Dict[str, Any]] = None,
+            **kwargs,
     ) -> BatchJobMetadata:
         job_id = str(uuid.uuid4())[:8]
         logger.info(f"Submitted batch job {job_id}")
@@ -59,17 +66,55 @@ class BatchJobConnector(AsyncConnector):
     async def delete(self, resource_meta: BatchJobMetadata, **kwargs):
         logger.info(f"Cancelled job {resource_meta.job_id}")
 
-    async def get_logs(self, resource_meta: BatchJobMetadata, **kwargs) -> GetTaskLogsResponse:
-        logger.info(f"Fetching logs for job {resource_meta.job_id}")
-        return GetTaskLogsResponse(
-            body=GetTaskLogsResponseBody(
-                results=[
-                    f"[INFO] Job {resource_meta.job_id} started at {resource_meta.created_at}",
-                    f"[INFO] Job {resource_meta.job_id} is processing...",
-                    f"[INFO] Job {resource_meta.job_id} finished",
+    async def get_logs(self, resource_meta: BatchJobMetadata, token: str = "", **kwargs):
+        # `get_logs` is an async generator: yield one or more
+        # GetTaskLogsResponse messages per call. GetTaskLogsResponse.part is a
+        # proto3 oneof of {header, body}, so each yielded message carries
+        # exactly one. The pattern below yields the page's body first and then
+        # a header whose token points to the next page; the operator dataproxy
+        # records the token and re-calls GetTaskLogs(token=...) until a call
+        # finishes without emitting a non-empty next-page token.
+        logger.info(f"Fetching logs for job {resource_meta.job_id} (token={token!r})")
+
+        def line(message: str, ts: float) -> LogLine:
+            t = Timestamp()
+            t.FromSeconds(int(ts))
+            return LogLine(timestamp=t, message=message, originator=LogLineOriginator.USER)
+
+        start = resource_meta.created_at
+        job_id = resource_meta.job_id
+        pages = {
+            "": GetTaskLogsResponseBody(
+                lines=[
+                    line(f"[INFO] Job {job_id} submitted", start),
+                    line(f"[INFO] Job {job_id} started", start + 1),
                 ],
             ),
-        )
+            "page-2": GetTaskLogsResponseBody(
+                lines=[
+                    line(f"[INFO] Job {job_id} is processing...", start + 2),
+                    line(f"[INFO] Job {job_id} step 1 complete", start + 3),
+                ],
+            ),
+            "page-3": GetTaskLogsResponseBody(
+                lines=[
+                    line(f"[INFO] Job {job_id} step 2 complete", start + 4),
+                    line(f"[INFO] Job {job_id} finished", start + 5),
+                ],
+            ),
+        }
+        next_tokens = {"": "page-2", "page-2": "page-3", "page-3": ""}
+
+        body = pages.get(token, GetTaskLogsResponseBody(lines=[]))
+        next_token = next_tokens.get(token, "")
+
+        # Body first, then a header carrying the next-page token (omitted on
+        # the final page so the operator stops paging).
+        yield GetTaskLogsResponse(body=body)
+        if next_token:
+            yield GetTaskLogsResponse(
+                header=GetTaskLogsResponseHeader(token=next_token),
+            )
 
 
 ConnectorRegistry.register(BatchJobConnector())
