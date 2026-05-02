@@ -107,6 +107,7 @@ class CLIConfig:
     log_level: int | None = logging.ERROR
     log_format: LogFormat = "console"
     reset_root_logger: bool = False
+    user_log_level: int | None = None
     endpoint: str | None = None
     insecure: bool = False
     image_builder: str | None = None
@@ -178,6 +179,7 @@ class CLIConfig:
             updated_config,
             log_level=self.log_level,
             log_format=self.log_format,
+            user_log_level=self.user_log_level,
             root_dir=pathlib.Path(root_dir).resolve() if root_dir else None,
             images=images,
             image_builder=self.image_builder,

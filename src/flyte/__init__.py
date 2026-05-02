@@ -26,7 +26,7 @@ from ._initialize import (
     init_passthrough,
 )
 from ._link import Link
-from ._logging import logger
+from ._logging import user_logger as logger
 from ._map import map
 from ._pod import PodTemplate
 from ._resources import AMD_GPU, GPU, HABANA_GAUDI, TPU, Device, DeviceClass, Neuron, Resources
