@@ -132,7 +132,6 @@ class Logs:
                     dataproxy_service_pb2.TailLogsRequest(
                         action_id=action_id,
                         attempt=attempt,
-                        connector_endpoint="batch-job-connector.flytesnacks-development.svc.cluster.local:80",
                     )
                 )
                 async for log_set in resp:

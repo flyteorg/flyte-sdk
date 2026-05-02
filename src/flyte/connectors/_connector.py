@@ -143,8 +143,7 @@ class AsyncConnector(ABC):
         """
         Return the task execution logs. Populate `body.lines` (structured
         LogLine entries with timestamp + originator) in the returned
-        GetTaskLogsResponse. The deprecated `body.results` []string is still
-        accepted by the operator dataproxy as a fallback.
+        GetTaskLogsResponse.
         """
         raise NotImplementedError
 

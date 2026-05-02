@@ -66,13 +66,6 @@ class BatchJobConnector(AsyncConnector):
         logger.info(f"Cancelled job {resource_meta.job_id}")
 
     async def get_logs(self, resource_meta: BatchJobMetadata, token: str = "", **kwargs):
-        # `get_logs` is an async generator: yield one or more
-        # GetTaskLogsResponse messages per call. GetTaskLogsResponse.part is a
-        # proto3 oneof of {header, body}, so each yielded message carries
-        # exactly one. The pattern below yields the page's body first and then
-        # a header whose token points to the next page; the operator dataproxy
-        # records the token and re-calls GetTaskLogs(token=...) until a call
-        # finishes without emitting a non-empty next-page token.
         logger.info(f"Fetching logs for job {resource_meta.job_id} (token={token!r})")
 
         def line(message: str, ts: float) -> LogLine:

@@ -12,6 +12,7 @@ from flyteidl2.connector.connector_pb2 import (
     GetConnectorRequest,
     GetConnectorResponse,
     GetTaskLogsRequest,
+    GetTaskLogsResponse,
     GetTaskMetricsRequest,
     GetTaskMetricsResponse,
     GetTaskRequest,
@@ -177,7 +178,7 @@ class AsyncConnectorService(AsyncConnectorServiceServicer):
         logger.info(f"{connector.name} start getting metrics of the job")
         return await connector.get_metrics(resource_meta=connector.metadata_type.decode(request.resource_meta))
 
-    async def GetTaskLogs(self, request: GetTaskLogsRequest, context: grpc.ServicerContext):
+    async def GetTaskLogs(self, request: GetTaskLogsRequest, context: grpc.ServicerContext) -> GetTaskLogsResponse:
         connector = ConnectorRegistry.get_connector(request.task_category.name, request.task_category.version)
         logger.info(f"{connector.name} start getting logs of the job")
         # `get_logs` may be either:
