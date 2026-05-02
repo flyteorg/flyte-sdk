@@ -197,7 +197,7 @@ def main(
     config_file: str | None,
     auth_type: str | None = None,
     output_format: common.OutputFormat = "table",
-    user_log_level: str | None = None,
+    user_log_level: str = "info",
 ):
     """
     The Flyte CLI is the command line interface for working with the Flyte SDK and backend.
