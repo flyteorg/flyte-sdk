@@ -2,7 +2,7 @@ import rich_click as click
 from typing_extensions import get_args
 
 import flyte
-from flyte._logging import LogFormat, _LOG_LEVEL_MAP, initialize_logger, logger
+from flyte._logging import _LOG_LEVEL_MAP, LogFormat, initialize_logger, logger
 
 from . import _common as common
 from ._abort import abort
