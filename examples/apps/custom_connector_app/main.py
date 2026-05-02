@@ -17,5 +17,5 @@ flyte.TaskEnvironment.from_task("batch-job-env", batch_job)
 
 if __name__ == "__main__":
     flyte.init_from_config(root_dir=Path(__file__).parent)
-    result = flyte.run(batch_job, name="hello")
+    result = flyte.with_runcontext(env_vars={"_U_USE_ACTIONS": "1"}).run(batch_job, name="hello")
     print(result.url)

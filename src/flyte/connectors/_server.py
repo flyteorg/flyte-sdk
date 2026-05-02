@@ -12,7 +12,6 @@ from flyteidl2.connector.connector_pb2 import (
     GetConnectorRequest,
     GetConnectorResponse,
     GetTaskLogsRequest,
-    GetTaskLogsResponse,
     GetTaskMetricsRequest,
     GetTaskMetricsResponse,
     GetTaskRequest,
@@ -178,10 +177,24 @@ class AsyncConnectorService(AsyncConnectorServiceServicer):
         logger.info(f"{connector.name} start getting metrics of the job")
         return await connector.get_metrics(resource_meta=connector.metadata_type.decode(request.resource_meta))
 
-    async def GetTaskLogs(self, request: GetTaskLogsRequest, context: grpc.ServicerContext) -> GetTaskLogsResponse:
+    async def GetTaskLogs(self, request: GetTaskLogsRequest, context: grpc.ServicerContext):
         connector = ConnectorRegistry.get_connector(request.task_category.name, request.task_category.version)
         logger.info(f"{connector.name} start getting logs of the job")
-        return await connector.get_logs(resource_meta=connector.metadata_type.decode(request.resource_meta))
+        # `get_logs` may be either:
+        #   - an async generator yielding multiple GetTaskLogsResponse messages
+        #     (preferred — supports interleaved body/header/body pagination, since
+        #     proto3 oneof keeps only one of body/header per message),
+        #   - or an async function returning a single GetTaskLogsResponse.
+        result = connector.get_logs(
+            resource_meta=connector.metadata_type.decode(request.resource_meta),
+            token=request.token,
+        )
+        if inspect.isasyncgen(result):
+            async for msg in result:
+                yield msg
+            return
+        response = await result
+        yield response
 
 
 class ConnectorMetadataService(ConnectorMetadataServiceServicer):

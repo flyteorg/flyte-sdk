@@ -11,8 +11,6 @@ import uuid
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
-from google.protobuf.timestamp_pb2 import Timestamp
-
 from flyteidl2.connector.connector_pb2 import (
     GetTaskLogsResponse,
     GetTaskLogsResponseBody,
@@ -20,6 +18,7 @@ from flyteidl2.connector.connector_pb2 import (
 )
 from flyteidl2.core.execution_pb2 import TaskExecution
 from flyteidl2.logs.dataplane.payload_pb2 import LogLine, LogLineOriginator
+from google.protobuf.timestamp_pb2 import Timestamp
 
 from flyte import logger
 from flyte.connectors import AsyncConnector, ConnectorRegistry, Resource, ResourceMeta
@@ -39,10 +38,10 @@ class BatchJobConnector(AsyncConnector):
     metadata_type = BatchJobMetadata
 
     async def create(
-            self,
-            task_template,
-            inputs: Optional[Dict[str, Any]] = None,
-            **kwargs,
+        self,
+        task_template,
+        inputs: Optional[Dict[str, Any]] = None,
+        **kwargs,
     ) -> BatchJobMetadata:
         job_id = str(uuid.uuid4())[:8]
         logger.info(f"Submitted batch job {job_id}")
