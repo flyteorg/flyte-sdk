@@ -6,11 +6,9 @@ Minimal example: a sandbox whose code always raises. Run remotely to see
 the failure surface as a task error.
 """
 
-from pathlib import Path
 
 import flyte
 import flyte.sandbox
-from flyte._image import PythonWheels
 from flyte.sandbox import sandbox_environment
 
 env = flyte.TaskEnvironment(
