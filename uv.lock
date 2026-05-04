@@ -1134,7 +1134,7 @@ requires-dist = [
     { name = "deltalake", marker = "extra == 'examples-test'" },
     { name = "docstring-parser", specifier = ">=0.16" },
     { name = "fastapi", marker = "extra == 'examples-test'" },
-    { name = "flyteidl2", specifier = "==2.0.13" },
+    { name = "flyteidl2", specifier = "==2.0.14" },
     { name = "fsspec", specifier = ">=2025.3.0" },
     { name = "grpcio", marker = "extra == 'connector'", specifier = ">=1.71.0" },
     { name = "grpcio-health-checking", marker = "extra == 'connector'" },
@@ -1195,7 +1195,7 @@ dev = [
 
 [[package]]
 name = "flyteidl2"
-version = "2.0.13"
+version = "2.0.14"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "googleapis-common-protos" },
@@ -1204,7 +1204,7 @@ dependencies = [
     { name = "protovalidate" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b7/39/39714f95709e042a5a34711cabdf77fe3e438a3079f4b9c8c6b330f58591/flyteidl2-2.0.13-py3-none-any.whl", hash = "sha256:4a280546a695d372f80bbc5989e3c0572e0f0cea69e9f8235aa2c449cefea927", size = 339889 },
+    { url = "https://files.pythonhosted.org/packages/bd/3b/0b3db2c6b7dc223fd17a8d6c993eb9b9424d8a309dcd46e65ee7ebd8675e/flyteidl2-2.0.14-py3-none-any.whl", hash = "sha256:e0464ca9208c18670049dbf96db680691d2dd2b48392bb9ae2b74928ed72e257", size = 339932 },
 ]
 
 [[package]]

@@ -3,7 +3,6 @@ from __future__ import annotations
 import inspect
 import weakref
 from dataclasses import dataclass, field, replace
-from datetime import timedelta
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -28,10 +27,10 @@ from ._link import Link
 from ._pod import PodTemplate
 from ._resources import Resources
 from ._retry import RetryStrategy
-from ._timeout import TimeoutType
 from ._reusable_environment import ReusePolicy
 from ._secret import SecretRequest
 from ._task import AsyncFunctionTaskTemplate, TaskTemplate
+from ._timeout import TimeoutType
 from ._trigger import Trigger
 from .models import MAX_INLINE_IO_BYTES, NativeInterface
 

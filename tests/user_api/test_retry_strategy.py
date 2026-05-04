@@ -70,7 +70,7 @@ def test_backoff_negative_base_rejected():
 
 
 def test_backoff_factor_below_one_rejected():
-    with pytest.raises(ValueError, match="factor must be >= 1.0"):
+    with pytest.raises(ValueError, match=r"factor must be >= 1.0"):
         Backoff(base=timedelta(seconds=1), factor=0.5)
 
 
@@ -80,7 +80,7 @@ def test_backoff_negative_cap_rejected():
 
 
 def test_backoff_factor_gt_one_requires_cap():
-    with pytest.raises(ValueError, match="cap is required when factor > 1.0"):
+    with pytest.raises(ValueError, match=r"cap is required when factor > 1.0"):
         Backoff(base=timedelta(seconds=1), factor=2.0)
 
 

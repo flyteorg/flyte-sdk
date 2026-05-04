@@ -101,7 +101,7 @@ def _to_duration(value: timedelta | int | None) -> Optional[duration_pb2.Duratio
         value = timedelta(seconds=value)
     total = value.total_seconds()
     seconds = int(total)
-    nanos = int(round((total - seconds) * 1_000_000_000))
+    nanos = round((total - seconds) * 1_000_000_000)
     return duration_pb2.Duration(seconds=seconds, nanos=nanos)
 
 

@@ -64,7 +64,7 @@ async def flaky_call() -> str:
     above — this works only because the local controller runs every retry
     in the same Python process.
     """
-    global _attempts
+    global _attempts  # noqa: PLW0603
     _attempts += 1
     if _attempts < 3:
         raise RuntimeError(f"transient failure on attempt {_attempts}")

@@ -24,7 +24,7 @@ dependencies = [
     "async-lru>=2.0.5",
     "mashumaro",
     "aiolimiter>=1.2.1",
-    "flyteidl2==2.0.13",
+    "flyteidl2==2.0.14",
     "packaging",
     "sentry-sdk>=2.0",
     "pyOpenSSL>=24.0.0",
