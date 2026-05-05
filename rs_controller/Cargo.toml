@@ -33,8 +33,14 @@ tracing-subscriber = "0.3"
 async-trait = "0.1"
 thiserror = "1.0"
 # Uncomment this if you need to use local flyteidl2
-#flyteidl2 = { path = "/Users/ytong/go/src/github.com/flyteorg/flyte/gen/rust" }
-flyteidl2 = "=2.0.0"
+#flyteidl2 = { path = "/path/to/flyteorg/flyte/gen/rust" }
+# Keep this in sync with the Python flyteidl2 pin in pyproject.toml.
+# NOTE: the Rust crate does not yet expose the unified `actions` service
+# (flyteidl2.actions.actions_service_pb2 in Python). Until it does, the
+# Rust controller only supports the legacy QueueService + StateService
+# path; runs that opt into the actions service via _U_USE_ACTIONS=1 must
+# use the Python RemoteController.
+flyteidl2 = "=2.0.13"
 reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

@@ -340,6 +340,11 @@ class _Runner:
         if os.getenv("_U_USE_ACTIONS") == "1":
             env["_U_USE_ACTIONS"] = "1"
 
+        # Forward the Rust-controller opt-in to spawned task containers so child
+        # actions use the same controller implementation as the parent.
+        if os.getenv("_F_USE_RUST_CONTROLLER") == "1":
+            env["_F_USE_RUST_CONTROLLER"] = "1"
+
         if not self._dry_run:
             if get_client() is None:
                 # This can only happen, if the user forces flyte.run(mode="remote") without initializing the client

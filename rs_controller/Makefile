@@ -8,11 +8,11 @@ build-builders: build-arm64 build-amd64
 
 # Build the arm64 builder image
 build-arm64:
-	docker buildx build --platform linux/arm64 --build-arg ARCH=aarch64 -f Dockerfile.maturinx -t wheel-builder:arm64 .
+	docker buildx build --platform linux/arm64 --build-arg ARCH=aarch64 -f Dockerfile.maturin -t wheel-builder:arm64 .
 
 # Build the amd64 builder image (emulated on arm64 host)
 build-amd64:
-	docker buildx build --platform linux/amd64 --build-arg ARCH=x86_64 -f Dockerfile.maturinx -t wheel-builder:amd64 .
+	docker buildx build --platform linux/amd64 --build-arg ARCH=x86_64 -f Dockerfile.maturin -t wheel-builder:amd64 .
 
 CARGO_CACHE_DIR := docker_cargo_cache
 DIST_DIRS       := dist
@@ -22,14 +22,21 @@ VERSION         := $(shell git describe --tags --always --dirty 2>/dev/null | se
 dist-dirs:
 	mkdir -p $(DIST_DIRS) $(CARGO_CACHE_DIR)
 
-# Add the below to use local flyteidl2
-# -v /Users/ytong/go/src/github.com/flyteorg/flyte/gen/rust:/Users/ytong/go/src/github.com/flyteorg/flyte/gen/rust
+# To use a local flyteidl2 checkout, set FLYTEIDL2_LOCAL=/path/to/flyte/gen/rust
+# in your environment and the build will mount it at the same path inside the container.
+
+FLYTEIDL2_LOCAL ?=
+ifneq ($(FLYTEIDL2_LOCAL),)
+EXTRA_MOUNTS := -v $(FLYTEIDL2_LOCAL):$(FLYTEIDL2_LOCAL)
+else
+EXTRA_MOUNTS :=
+endif
 
 define BUILD_WHEELS_RECIPE
 docker run --rm \
   -v $(PWD):/io \
   -v $(PWD)/docker_cargo_cache:/root/.cargo/registry \
-  -v $(CLOUD_REPO):/cloud \
+  $(EXTRA_MOUNTS) \
   wheel-builder:$(1) /bin/bash -c "\
     cd /io; \
     sed -i 's/^version = .*/version = \"$(VERSION)\"/' pyproject.toml; \

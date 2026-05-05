@@ -56,17 +56,28 @@ async def hybrid_parent_placeholder():
 
 
 if __name__ == "__main__":
-    # Get current working directory
+    # Configurable via env vars so the example doesn't bake in machine-local paths.
+    #   FLYTE_CONFIG       -> path to flyte config yaml (default: ~/.flyte/config.yaml)
+    #   FLYTE_HYBRID_RUN_NAME -> the long-running parent run id to attach hybrid sub-actions to
+    #   FLYTE_HYBRID_RUN_BASE -> s3 base dir for the hybrid run
     current_directory = Path(os.getcwd())
     repo_root = current_directory.parent.parent
     s3_sandbox = S3.for_sandbox()
-    flyte.init_from_config("/Users/ytong/.flyte/config-k3d.yaml", root_dir=repo_root, storage=s3_sandbox)
 
-    # Kick off a run of hybrid_parent_placeholder and fill in with kicked off things.
-    run_name = "r9sfvk6plj7gld7fds6f"
+    config_path = os.getenv("FLYTE_CONFIG") or str(Path.home() / ".flyte" / "config.yaml")
+    flyte.init_from_config(config_path, root_dir=repo_root, storage=s3_sandbox)
+
+    run_name = os.getenv("FLYTE_HYBRID_RUN_NAME")
+    run_base_dir = os.getenv("FLYTE_HYBRID_RUN_BASE")
+    if not run_name or not run_base_dir:
+        raise SystemExit(
+            "Set FLYTE_HYBRID_RUN_NAME and FLYTE_HYBRID_RUN_BASE to the parent run id "
+            "and s3 base dir of an already-launched hybrid run before invoking this example."
+        )
+
     outputs = flyte.with_runcontext(
         mode="hybrid",
         name=run_name,
-        run_base_dir=f"s3://bucket/metadata/v2/testorg/testproject/development/{run_name}",
+        run_base_dir=run_base_dir,
     ).run(say_hello_hybrid_nested, data="hello world")
     print("Output:", outputs)

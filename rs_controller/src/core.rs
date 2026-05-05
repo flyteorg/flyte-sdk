@@ -625,30 +625,45 @@ impl CoreBaseController {
                     Ok(response.into_inner())
                 }
                 Err(e) => {
-                    if e.code() == tonic::Code::AlreadyExists {
+                    let code = e.code();
+                    // Mirrors flyte._internal.controllers.remote._core launch logic
+                    // (kept in sync with PR #1020).
+                    if code == tonic::Code::AlreadyExists {
                         info!(
                             "Action {} already exists, continuing to monitor.",
                             action.action_id.name
                         );
                         Ok(EnqueueActionResponse {})
-                    } else if e.code() == tonic::Code::FailedPrecondition
-                        || e.code() == tonic::Code::InvalidArgument
-                        || e.code() == tonic::Code::NotFound
-                    {
+                    } else if code == tonic::Code::Aborted {
+                        // The run was aborted; engine will auto-abort other in-flight
+                        // actions. Surface as a system error so the worker exits fast.
                         Err(ControllerError::RuntimeError(format!(
-                            "Precondition failed: {}",
-                            e
+                            "ABORTED: Run aborted: {}",
+                            e.message()
+                        )))
+                    } else if code == tonic::Code::InvalidArgument
+                        || code == tonic::Code::NotFound
+                    {
+                        // Not retryable; surface as a per-action system error.
+                        Err(ControllerError::RuntimeError(format!(
+                            "{:?}: Action launch failed ({:?}): {}",
+                            code,
+                            code,
+                            e.message()
                         )))
                     } else {
-                        // For all other errors, retry with backoff through raising SlowDownError
+                        // FAILED_PRECONDITION indicates the shard is wrong or we've hit
+                        // a limit — retry with backoff. All other errors retry too.
                         error!(
-                            "Failed to launch action: {:?}, backing off...",
-                            action.action_id
+                            "Failed to launch action: {}, Code: {:?}, Details: {} backing off...",
+                            action.action_id.name,
+                            code,
+                            e.message()
                         );
-                        error!("Error details: {}", e);
+                        debug!("Action details: {:?}", action);
                         Err(ControllerError::SlowDownError(format!(
                             "Failed to launch action: {}",
-                            e
+                            e.message()
                         )))
                     }
                 }
