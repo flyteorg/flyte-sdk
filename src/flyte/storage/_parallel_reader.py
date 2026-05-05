@@ -14,6 +14,8 @@ import aiofiles
 import aiofiles.os
 import obstore
 
+from flyte._logging import logger
+
 if typing.TYPE_CHECKING:
     from obstore import Bytes, ObjectMeta
     from obstore.store import ObjectStore
@@ -125,6 +127,16 @@ class ObstoreParallelReader:
             length = min(cs, size - offset)
             yield offset, length
 
+    def _unwrap_single_exception_group(self, exc: BaseException) -> BaseException:
+        if sys.version_info < (3, 11):
+            return exc
+
+        from builtins import BaseExceptionGroup
+
+        while isinstance(exc, BaseExceptionGroup) and len(exc.exceptions) == 1:
+            exc = exc.exceptions[0]
+        return exc
+
     async def _as_completed(self, gen: typing.AsyncGenerator[DownloadTask, None], transformer=None):
         inq: asyncio.Queue = asyncio.Queue(self._max_concurrency * 2)
         outq: asyncio.Queue = asyncio.Queue()
@@ -157,7 +169,11 @@ class ObstoreParallelReader:
         async def _worker():
             try:
                 while not done.is_set():
-                    task: DownloadTask = await inq.get()
+                    try:
+                        task: DownloadTask = await inq.get()
+                    except Exception:
+                        logger.exception("Worker failed before receiving a task")
+                        raise
                     if task is sentinel:
                         inq.put_nowait(sentinel)
                         break
@@ -165,28 +181,36 @@ class ObstoreParallelReader:
                     # source.offset is the offset within the file where the source data starts
                     # The actual file position is the sum of both
                     file_offset = task.chunk.offset + task.source.offset
-                    buf = active[task.source.id]
-                    data_to_write = await obstore.get_range_async(
-                        self._store,
-                        str(task.source.path),
-                        start=file_offset,
-                        end=file_offset + task.chunk.length,
-                    )
-                    await buf.write(
-                        task.chunk.offset,
-                        task.chunk.length,
-                        data_to_write,
-                    )
-                    if not buf.complete:
-                        continue
-                    if transformer is not None:
-                        result = await transformer(buf, task.source)
-                    elif task.target is not None:
-                        result = task.target
-                    else:
-                        result = task.source
-                    outq.put_nowait((task.source.id, result))
-                    del active[task.source.id]
+                    try:
+                        buf = active[task.source.id]
+                        data_to_write = await obstore.get_range_async(
+                            self._store,
+                            str(task.source.path),
+                            start=file_offset,
+                            end=file_offset + task.chunk.length,
+                        )
+                        await buf.write(
+                            task.chunk.offset,
+                            task.chunk.length,
+                            data_to_write,
+                        )
+                        if not buf.complete:
+                            continue
+                        if transformer is not None:
+                            result = await transformer(buf, task.source)
+                        elif task.target is not None:
+                            result = task.target
+                        else:
+                            result = task.source
+                        outq.put_nowait((task.source.id, result))
+                        del active[task.source.id]
+                    except Exception:
+                        logger.exception(
+                            "Worker failed processing %s at offset %d",
+                            task.source.path,
+                            task.chunk.offset,
+                        )
+                        raise
             except asyncio.CancelledError:
                 pass
             finally:
@@ -194,27 +218,64 @@ class ObstoreParallelReader:
 
         # Yield results as they are completed
         if sys.version_info >= (3, 11):
-            async with asyncio.TaskGroup() as tg:
-                tg.create_task(_fill())
-                for _ in range(self._max_concurrency):
-                    tg.create_task(_worker())
-                while not done.is_set():
-                    yield await outq.get()
+            try:
+                async with asyncio.TaskGroup() as tg:
+                    tg.create_task(_fill())
+                    for _ in range(self._max_concurrency):
+                        tg.create_task(_worker())
+                    while not done.is_set():
+                        yield await outq.get()
+            except BaseException as exc:
+                unwrapped = self._unwrap_single_exception_group(exc)
+                if unwrapped is exc:
+                    raise
+                # Hide the original exception when raising the unwrapped one,
+                # since the original is just a wrapper that adds no information
+                raise unwrapped from None
         else:
             fill_task = asyncio.create_task(_fill())
             worker_tasks = [asyncio.create_task(_worker()) for _ in range(self._max_concurrency)]
+            outq_get_task: asyncio.Task | None = None
             try:
-                while not done.is_set():
-                    yield await outq.get()
-            except Exception as e:
+                while True:
+                    if outq_get_task is None and not done.is_set():
+                        outq_get_task = asyncio.create_task(outq.get())
+
+                    pending = {task for task in (fill_task, *worker_tasks) if not task.done()}
+                    if outq_get_task is not None:
+                        pending.add(outq_get_task)
+                    if not pending:
+                        break
+
+                    completed, _ = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                    if outq_get_task in completed:
+                        yield outq_get_task.result()
+                        outq_get_task = None
+                        continue
+
+                    for task in completed:
+                        if task.cancelled():
+                            continue
+                        exc = task.exception()
+                        if exc is not None:
+                            raise exc
+
+                    if done.is_set():
+                        break
+            except BaseException as e:
                 if not fill_task.done():
                     fill_task.cancel()
                 for wt in worker_tasks:
                     if not wt.done():
                         wt.cancel()
+                if outq_get_task is not None and not outq_get_task.done():
+                    outq_get_task.cancel()
                 raise e
             finally:
-                await asyncio.gather(fill_task, *worker_tasks, return_exceptions=True)
+                await asyncio.gather(
+                    *(task for task in (fill_task, *worker_tasks, outq_get_task) if task is not None),
+                    return_exceptions=True,
+                )
 
         # Drain the output queue
         try:
@@ -284,6 +345,10 @@ class ObstoreParallelReader:
 
             return _transformer
 
-        with tempfile.TemporaryDirectory() as temporary_dir:
+        # Create the temp dir on the same filesystem as target_prefix to avoid
+        # cross-device rename failures (EXDEV/errno 18) when the container has
+        # /tmp on a separate mount (e.g. tmpfs) from the destination directory.
+        target_prefix.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix=".flyte-download-", dir=target_prefix) as temporary_dir:
             async for _ in self._as_completed(_gen(temporary_dir), transformer=_transform_decorator(temporary_dir)):
                 pass

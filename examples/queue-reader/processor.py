@@ -1,7 +1,7 @@
 # /// script
 # requires-python = "==3.13"
 # dependencies = [
-#    "flyte>=0.2.0b17",
+#    "flyte",
 #    "aioboto3>=11.3.0",
 #    "asyncio",
 # ]

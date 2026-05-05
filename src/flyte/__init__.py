@@ -8,6 +8,7 @@ import sys
 
 from ._build import ImageBuild, build
 from ._cache import Cache, CachePolicy, CacheRequest
+from ._checkpoint import BaseCheckpoint, Checkpoint, latest_checkpoint
 from ._context import ctx
 from ._custom_context import custom_context, get_custom_context
 from ._deploy import build_images, deploy
@@ -32,6 +33,7 @@ from ._resources import AMD_GPU, GPU, HABANA_GAUDI, TPU, Device, DeviceClass, Ne
 from ._retry import RetryStrategy
 from ._reusable_environment import ReusePolicy
 from ._run import run, with_runcontext
+from ._run_python_script import run_python_script
 from ._secret import Secret, SecretRequest
 from ._serve import AppHandle, serve, with_servecontext
 from ._task_environment import TaskEnvironment
@@ -41,27 +43,6 @@ from ._trigger import Cron, FixedRate, Trigger, TriggerTime
 from ._version import __version__
 
 sys.excepthook = custom_excepthook
-
-
-def _silence_grpc_warnings():
-    """
-    Silences gRPC warnings that can clutter the output.
-    """
-    import os
-
-    # Set environment variables for gRPC, this reduces log spew and avoids unnecessary warnings
-    # before importing grpc
-    if "GRPC_VERBOSITY" not in os.environ:
-        os.environ["GRPC_VERBOSITY"] = "ERROR"
-        os.environ["GRPC_CPP_MIN_LOG_LEVEL"] = "ERROR"
-        # Disable fork support (stops "skipping fork() handlers")
-        os.environ["GRPC_ENABLE_FORK_SUPPORT"] = "0"
-        # Reduce absl/glog verbosity
-        os.environ["GLOG_minloglevel"] = "2"
-        os.environ["ABSL_LOG"] = "0"
-
-
-_silence_grpc_warnings()
 
 
 def version() -> str:
@@ -77,9 +58,11 @@ __all__ = [
     "HABANA_GAUDI",
     "TPU",
     "AppHandle",
+    "BaseCheckpoint",
     "Cache",
     "CachePolicy",
     "CacheRequest",
+    "Checkpoint",
     "Cron",
     "Device",
     "DeviceClass",
@@ -115,9 +98,11 @@ __all__ = [
     "init_from_config",
     "init_in_cluster",
     "init_passthrough",
+    "latest_checkpoint",
     "logger",
     "map",
     "run",
+    "run_python_script",
     "serve",
     "trace",
     "version",

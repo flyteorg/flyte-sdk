@@ -40,6 +40,7 @@ class Outputs:
 @dataclass
 class Error:
     err: execution_pb2.ExecutionError
+    recoverable: bool = True
 
 
 # ------------------------------- CONVERT Methods ------------------------------- #
@@ -66,7 +67,9 @@ async def convert_inputs_to_native(inputs: Inputs, python_interface: NativeInter
     return native_vals
 
 
-async def convert_upload_default_inputs(interface: NativeInterface) -> List[common_pb2.NamedParameter]:
+async def convert_upload_default_inputs(
+    interface: NativeInterface,
+) -> List[common_pb2.NamedParameter]:
     """
     Converts the default inputs of a NativeInterface to a list of NamedParameters for upload.
     This is used to upload default inputs to the Flyte backend.
@@ -77,7 +80,7 @@ async def convert_upload_default_inputs(interface: NativeInterface) -> List[comm
     vars = []
     literal_coros = []
     for input_name, (input_type, default_value) in interface.inputs.items():
-        if default_value and default_value is not inspect.Parameter.empty:
+        if default_value is not None and default_value is not inspect.Parameter.empty:
             lt = TypeEngine.to_literal_type(input_type)
             literal_coros.append(TypeEngine.to_literal(default_value, input_type, lt))
             vars.append((input_name, lt))
@@ -111,7 +114,19 @@ def is_optional_type(tp) -> bool:
 
 
 async def convert_from_native_to_inputs(
-    interface: NativeInterface, *args, custom_context: Dict[str, str] | None = None, **kwargs
+    interface: NativeInterface,
+    *args,
+    custom_context: Dict[str, str] | None = None,
+    **kwargs,
+) -> Inputs:
+    return await _convert_from_native_to_inputs_impl(interface, args, custom_context, kwargs)
+
+
+async def _convert_from_native_to_inputs_impl(
+    interface: NativeInterface,
+    args: Tuple[Any, ...],
+    custom_context: Dict[str, str] | None,
+    kwargs: Dict[str, Any],
 ) -> Inputs:
     kwargs = interface.convert_to_kwargs(*args, **kwargs)
 
@@ -232,11 +247,9 @@ async def convert_outputs_to_native(interface: NativeInterface, outputs: Outputs
     elif len(kwargs) == 1:
         return next(iter(kwargs.values()))
     else:
-        # Return as tuple if multiple outputs, using the order from the proto literals list
-        # (which preserves the original serialization order) rather than interface.outputs.keys()
-        # (which may have different order due to protobuf map not preserving order)
-        output_order = [named_literal.name for named_literal in outputs.proto_outputs.literals]
-        return tuple(kwargs[k] for k in output_order)
+        # Return as tuple if multiple outputs are defined in the interface,
+        # to match the order of outputs in the interface
+        return tuple(kwargs[k] for k in interface.outputs.keys())
 
 
 def convert_error_to_native(
@@ -279,7 +292,17 @@ def convert_error_to_native(
 
 
 def convert_from_native_to_error(err: BaseException) -> Error:
-    if isinstance(err, flyte.errors.RuntimeUnknownError):
+    if isinstance(err, flyte.errors.NonRecoverableError):
+        return Error(
+            err=execution_pb2.ExecutionError(
+                kind=execution_pb2.ExecutionError.USER,
+                code=err.code,
+                message=str(err),
+                worker=err.worker,
+            ),
+            recoverable=False,
+        )
+    elif isinstance(err, flyte.errors.RuntimeUnknownError):
         return Error(
             err=execution_pb2.ExecutionError(
                 kind=execution_pb2.ExecutionError.UNKNOWN,
@@ -380,7 +403,9 @@ def generate_inputs_repr_for_literal(literal: literals_pb2.Literal) -> bytes:
     return literal.SerializeToString(deterministic=True)
 
 
-def generate_inputs_hash_for_named_literals(inputs: list[common_pb2.NamedLiteral]) -> str:
+def generate_inputs_hash_for_named_literals(
+    inputs: list[common_pb2.NamedLiteral],
+) -> str:
     """
     Generate a hash for the inputs using the new literal representation approach that respects
     hash values already present in literals. This is used to uniquely identify the inputs for a task

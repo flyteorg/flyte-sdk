@@ -1,12 +1,29 @@
 from __future__ import annotations
 
 import inspect
+import sys
+import types
 from dataclasses import replace
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock, patch
+
+import pytest
 
 import flyte
-from flyte._deploy import _get_documentation_entity, _update_interface_inputs_and_outputs_docstring
+from flyte._build import ImageBuild
+from flyte._deploy import (
+    DeploymentPlan,
+    _build_image_bg,
+    _build_images,
+    _check_duplicate_env,
+    _get_documentation_entity,
+    _recursive_discover,
+    _update_interface_inputs_and_outputs_docstring,
+    build_images,
+    plan_deploy,
+)
 from flyte._docstring import Docstring
+from flyte._image import CodeBundleLayer, resolve_code_bundle_layer
+from flyte._internal.imagebuild.image_builder import ImageCache
 from flyte._internal.runtime.types_serde import transform_native_to_typed_interface
 from flyte.models import NativeInterface
 
@@ -181,3 +198,256 @@ def test_update_interface_mismatched_names():
     result_inputs = {entry.key: entry.value for entry in result.inputs.variables}
     assert result_inputs["x"].description == ""
     assert result_inputs["y"].description == ""
+
+
+# ---------------------------------------------------------------------------
+# _check_duplicate_env / plan_deploy — duplicate detection tests
+# ---------------------------------------------------------------------------
+
+
+def _make_module(name: str, file: str, env: flyte.TaskEnvironment) -> types.ModuleType:
+    mod = types.ModuleType(name)
+    mod.__file__ = file
+    mod.env = env
+    return mod
+
+
+@pytest.fixture()
+def dual_import_envs():
+    """Two distinct env objects with the same name, each registered to a module
+    that points at the same physical file (the classic src/ dual-import scenario)."""
+    env1 = flyte.TaskEnvironment(name="my_env", image="python:3.10")
+    env2 = flyte.TaskEnvironment(name="my_env", image="python:3.10")
+    mod1 = _make_module("my_module.envs", "/project/src/my_module/envs.py", env1)
+    mod2 = _make_module("src.my_module.envs", "/project/src/my_module/envs.py", env2)
+    modules = {"my_module.envs": mod1, "src.my_module.envs": mod2}
+    return env1, env2, modules
+
+
+def test_check_duplicate_env_dual_import(dual_import_envs):
+    """Same physical file imported under two module names → dual-import hint."""
+    env1, env2, modules = dual_import_envs
+    with (
+        patch.dict(sys.modules, modules),
+        patch("flyte._deploy.os.path.samefile", return_value=True),
+        pytest.raises(ValueError, match="imported twice under different module names"),
+    ):
+        _check_duplicate_env(env1, env2)
+
+
+def test_check_duplicate_env_true_duplicate():
+    """Two envs with the same name from genuinely different files → plain duplicate error."""
+    env1 = flyte.TaskEnvironment(name="my_env", image="python:3.10")
+    env2 = flyte.TaskEnvironment(name="my_env", image="python:3.10")
+    mod1 = _make_module("module_a.envs", "/project/module_a/envs.py", env1)
+    mod2 = _make_module("module_b.envs", "/project/module_b/envs.py", env2)
+    with (
+        patch.dict(sys.modules, {"module_a.envs": mod1, "module_b.envs": mod2}),
+        patch("flyte._deploy.os.path.samefile", return_value=False),
+        pytest.raises(ValueError, match="Duplicate environment name 'my_env'"),
+    ):
+        _check_duplicate_env(env1, env2)
+
+
+def test_plan_deploy_dual_import_raises(dual_import_envs):
+    """plan_deploy surfaces the dual-import error when the same env name appears twice."""
+    env1, env2, modules = dual_import_envs
+    with (
+        patch.dict(sys.modules, modules),
+        patch("flyte._deploy.os.path.samefile", return_value=True),
+        pytest.raises(ValueError, match="imported twice under different module names"),
+    ):
+        plan_deploy(env1, env2)
+
+
+def test_plan_deploy_explicit_dep_no_false_positive():
+    """flyte.deploy(env_a, env_b) where env_a.depends_on=[env_b] must not raise."""
+    env_b = flyte.TaskEnvironment(name="b", image="python:3.10")
+    env_a = flyte.TaskEnvironment(name="a", image="python:3.10", depends_on=[env_b])
+    plans = plan_deploy(env_a, env_b)  # must not raise
+    assert len(plans) == 1  # env_b already covered, no second plan
+
+
+def test_recursive_discover_dual_import_raises(dual_import_envs):
+    """_recursive_discover surfaces the dual-import error via the identity guard."""
+    env1, env2, modules = dual_import_envs
+    with (
+        patch.dict(sys.modules, modules),
+        patch("flyte._deploy.os.path.samefile", return_value=True),
+        pytest.raises(ValueError, match="imported twice under different module names"),
+    ):
+        _recursive_discover({"my_env": env1}, env2)
+
+
+# ---------------------------------------------------------------------------
+# _build_image_bg and _build_images tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_build_image_bg_captures_remote_run_url():
+    """RunIdentifierData is extracted from remote_run when using the remote builder."""
+    from flyte._internal.imagebuild.image_builder import RunIdentifierData
+
+    image = flyte.Image.from_base("python:3.10")
+    mock_run_id = Mock()
+    mock_run_id.org = "my-org"
+    mock_run_id.project = "my-project"
+    mock_run_id.domain = "development"
+    mock_run_id.name = "abc123"
+    mock_run = Mock()
+    mock_run.pb2.action.id.run = mock_run_id
+    mock_result = ImageBuild(uri="registry/my-image:sha256abc", remote_run=mock_run)
+
+    with patch("flyte._build.build") as mock_build:
+        mock_build.aio = AsyncMock(return_value=mock_result)
+        env_name, uri, run_id_data = await _build_image_bg("my-env", image)
+
+    assert env_name == "my-env"
+    assert uri == "registry/my-image:sha256abc"
+    assert run_id_data == RunIdentifierData(org="my-org", project="my-project", domain="development", name="abc123")
+
+
+@pytest.mark.asyncio
+async def test_build_image_bg_no_url_for_local_build():
+    """Build URL is None when using the local builder (remote_run is None)."""
+    image = flyte.Image.from_base("python:3.10")
+    mock_result = ImageBuild(uri="registry/my-image:sha256abc", remote_run=None)
+
+    with patch("flyte._build.build") as mock_build:
+        mock_build.aio = AsyncMock(return_value=mock_result)
+        _env_name, _uri, build_url = await _build_image_bg("my-env", image)
+
+    assert build_url is None
+
+
+@pytest.mark.asyncio
+async def test_build_images_stores_build_run_urls_in_cache():
+    """build_run_ids in ImageCache is populated when remote builder provides a run identifier."""
+    from flyte._internal.imagebuild.image_builder import RunIdentifierData
+
+    flyte.init()
+    image = flyte.Image.from_base("python:3.10")
+    env = flyte.TaskEnvironment(name="my-env", image=image)
+    plan = DeploymentPlan(envs={"my-env": env})
+
+    mock_run_id = Mock()
+    mock_run_id.org = "my-org"
+    mock_run_id.project = "my-project"
+    mock_run_id.domain = "development"
+    mock_run_id.name = "abc123"
+    mock_run = Mock()
+    mock_run.pb2.action.id.run = mock_run_id
+    mock_result = ImageBuild(uri="registry/my-image:sha256abc", remote_run=mock_run)
+
+    with patch("flyte._build.build") as mock_build:
+        mock_build.aio = AsyncMock(return_value=mock_result)
+        cache: ImageCache = await _build_images(plan)
+
+    assert cache.image_lookup["my-env"] == "registry/my-image:sha256abc"
+    assert cache.build_run_ids["my-env"] == RunIdentifierData(
+        org="my-org", project="my-project", domain="development", name="abc123"
+    )
+
+
+@pytest.mark.asyncio
+async def test_build_images_no_build_run_urls_for_local_build():
+    """build_run_ids in ImageCache is empty when local builder is used."""
+    flyte.init()
+    image = flyte.Image.from_base("python:3.10")
+    env = flyte.TaskEnvironment(name="my-env", image=image)
+    plan = DeploymentPlan(envs={"my-env": env})
+
+    mock_result = ImageBuild(uri="registry/my-image:sha256abc", remote_run=None)
+
+    with patch("flyte._build.build") as mock_build:
+        mock_build.aio = AsyncMock(return_value=mock_result)
+        cache: ImageCache = await _build_images(plan)
+
+    assert cache.image_lookup["my-env"] == "registry/my-image:sha256abc"
+    assert cache.build_run_ids == {}
+
+
+# ---------------------------------------------------------------------------
+# resolve_code_bundle_layer across depends_on environments
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_covers_depends_on_envs():
+    """plan_deploy + resolve_code_bundle_layer must strip CodeBundleLayer from
+    depends_on environments, not just the parent env.
+
+    Regression test: _run_remote and _run_hybrid previously only resolved
+    parent_env.image, leaving depends_on images with root_dir=None, which
+    caused 'root_dir not set for CodeBundleLayer' when computing image hashes.
+    """
+    from pathlib import Path
+
+    dep_image = flyte.Image.from_base("python:3.10").clone(registry="r", name="dep", extendable=True).with_code_bundle()
+    parent_image = (
+        flyte.Image.from_base("python:3.10").clone(registry="r", name="parent", extendable=True).with_code_bundle()
+    )
+
+    env_dep = flyte.TaskEnvironment(name="dep", image=dep_image)
+    env_parent = flyte.TaskEnvironment(name="parent", image=parent_image, depends_on=[env_dep])
+
+    # Simulate exactly what the fixed _run_remote / _run_hybrid does.
+    for _env in plan_deploy(env_parent)[0].envs.values():
+        from flyte._image import Image
+
+        if isinstance(_env.image, Image):
+            _env.image = resolve_code_bundle_layer(_env.image, "loaded_modules", Path("/tmp"))
+
+    # Both images must have their CodeBundleLayer stripped.
+    assert not any(isinstance(layer, CodeBundleLayer) for layer in env_parent.image._layers), (
+        "parent env still has CodeBundleLayer after resolution"
+    )
+    assert not any(isinstance(layer, CodeBundleLayer) for layer in env_dep.image._layers), (
+        "depends_on env still has CodeBundleLayer after resolution — regression"
+    )
+
+
+# ---------------------------------------------------------------------------
+# build_images resolves CodeBundleLayer (regression for flyte build CLI)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_build_images_resolves_code_bundle_layer_default_copy_style():
+    """`flyte build` would previously raise 'root_dir not set for CodeBundleLayer'
+    on any image that used `.with_code_bundle()`, because build_images did not
+    run resolve_code_bundle_layer the way apply() does. With the default
+    copy_style='loaded_modules', the bundle layer must be stripped before build.
+    """
+    flyte.init()
+
+    image = flyte.Image.from_base("python:3.10").clone(registry="r", name="img", extendable=True).with_code_bundle()
+    env = flyte.TaskEnvironment(name="e", image=image)
+
+    with patch("flyte._build.build") as mock_build:
+        mock_build.aio = AsyncMock(return_value=ImageBuild(uri="registry/img:abc", remote_run=None))
+        await build_images.aio(env)
+
+    assert not any(isinstance(layer, CodeBundleLayer) for layer in env.image._layers), (
+        "CodeBundleLayer not stripped at copy_style='loaded_modules'"
+    )
+
+
+@pytest.mark.asyncio
+async def test_build_images_resolves_code_bundle_layer_copy_style_none():
+    """At copy_style='none', CodeBundleLayer is resolved in place (not stripped)
+    so the source gets baked into the image via a COPY instruction.
+    """
+    flyte.init()
+
+    image = flyte.Image.from_base("python:3.10").clone(registry="r", name="img", extendable=True).with_code_bundle()
+    env = flyte.TaskEnvironment(name="e", image=image)
+
+    with patch("flyte._build.build") as mock_build:
+        mock_build.aio = AsyncMock(return_value=ImageBuild(uri="registry/img:abc", remote_run=None))
+        await build_images.aio(env, copy_style="none")
+
+    # Layer should still be present (resolved, with root_dir populated), not stripped.
+    bundle_layers = [layer for layer in env.image._layers if isinstance(layer, CodeBundleLayer)]
+    assert len(bundle_layers) == 1, "CodeBundleLayer should remain (resolved) at copy_style='none'"
+    assert bundle_layers[0].root_dir is not None, "resolved CodeBundleLayer must have root_dir set"

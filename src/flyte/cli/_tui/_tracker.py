@@ -28,9 +28,13 @@ class ActionNode:
     has_report: bool = False
     cache_enabled: bool = False
     cache_hit: bool = False
+    disable_run_cache: bool = False
     context: dict | None = None
     group: str | None = None
     log_links: list[tuple[str, str]] | None = None
+    attempt_count: int = 0
+    attempts: list[dict[str, Any]] = field(default_factory=list)
+    selected_attempt: int | None = None
     start_time: float = field(default_factory=time.monotonic)
     end_time: float | None = None
 
@@ -38,8 +42,8 @@ class ActionNode:
 def _safe_json(obj: Any) -> Any:
     """Convert *obj* to a JSON-safe structure.
 
-    Tries ``json.dumps`` first; on failure recurses into dicts/lists and
-    falls back to ``repr()`` for non-serializable leaves (FlyteFile,
+    Tries `json.dumps` first; on failure recurses into dicts/lists and
+    falls back to `repr()` for non-serializable leaves (FlyteFile,
     DataFrame, etc.).
     """
     if obj is None or isinstance(obj, (bool, int, float, str)):
@@ -82,11 +86,19 @@ class ActionTracker:
         has_report: bool = False,
         cache_enabled: bool = False,
         cache_hit: bool = False,
+        disable_run_cache: bool = False,
         context: dict | None = None,
         group: str | None = None,
         log_links: list[tuple[str, str]] | None = None,
+        attempt_count: int = 0,
+        attempts: list[dict[str, Any]] | None = None,
+        start_time: float | None = None,
     ) -> None:
         with self._lock:
+            initial_attempts = [_safe_json(a) for a in (attempts or []) if isinstance(a, dict)]
+            selected_attempt = None
+            if initial_attempts:
+                selected_attempt = max(int(a.get("attempt_num", 0)) for a in initial_attempts)
             node = ActionNode(
                 action_id=action_id,
                 task_name=task_name,
@@ -98,11 +110,17 @@ class ActionTracker:
                 has_report=has_report,
                 cache_enabled=cache_enabled,
                 cache_hit=cache_hit,
+                disable_run_cache=disable_run_cache,
                 context=_safe_json(context) if context else None,
                 group=group,
                 log_links=log_links,
+                attempt_count=max(attempt_count, len(initial_attempts)),
+                attempts=initial_attempts,
+                selected_attempt=selected_attempt,
             )
             self._nodes[action_id] = node
+            if start_time:
+                node.start_time = start_time
 
             if group and parent_id is not None:
                 group_key = f"__group__{parent_id}__{group}"
@@ -124,14 +142,66 @@ class ActionTracker:
                 self._children.setdefault(parent_id, []).append(action_id)
             self._version += 1
 
-    def record_complete(self, *, action_id: str, outputs: Any = None) -> None:
+    def _get_or_create_attempt(self, node: ActionNode, attempt_num: int) -> dict[str, Any]:
+        for attempt in node.attempts:
+            if int(attempt.get("attempt_num", -1)) == attempt_num:
+                return attempt
+        attempt = {"attempt_num": attempt_num}
+        node.attempts.append(attempt)
+        node.attempts.sort(key=lambda a: int(a.get("attempt_num", 0)))
+        return attempt
+
+    def record_attempt_start(self, *, action_id: str, attempt_num: int) -> None:
+        with self._lock:
+            node = self._nodes.get(action_id)
+            if node is None:
+                return
+            attempt = self._get_or_create_attempt(node, attempt_num)
+            attempt["status"] = ActionStatus.RUNNING.value
+            attempt["start_time"] = time.monotonic()
+            attempt["end_time"] = None
+            attempt["outputs"] = None
+            attempt["error"] = None
+            node.attempt_count = max(node.attempt_count, attempt_num, len(node.attempts))
+            node.selected_attempt = attempt_num
+            self._version += 1
+
+    def record_attempt_complete(self, *, action_id: str, attempt_num: int, outputs: Any = None) -> None:
+        with self._lock:
+            node = self._nodes.get(action_id)
+            if node is None:
+                return
+            attempt = self._get_or_create_attempt(node, attempt_num)
+            attempt["status"] = ActionStatus.SUCCEEDED.value
+            attempt["end_time"] = time.monotonic()
+            attempt["outputs"] = outputs
+            attempt["error"] = None
+            node.attempt_count = max(node.attempt_count, attempt_num, len(node.attempts))
+            node.selected_attempt = attempt_num
+            self._version += 1
+
+    def record_attempt_failure(self, *, action_id: str, attempt_num: int, error: str) -> None:
+        with self._lock:
+            node = self._nodes.get(action_id)
+            if node is None:
+                return
+            attempt = self._get_or_create_attempt(node, attempt_num)
+            attempt["status"] = ActionStatus.FAILED.value
+            attempt["end_time"] = time.monotonic()
+            attempt["outputs"] = None
+            attempt["error"] = error
+            node.attempt_count = max(node.attempt_count, attempt_num, len(node.attempts))
+            node.selected_attempt = attempt_num
+            self._version += 1
+
+    def record_complete(self, *, action_id: str, outputs: Any = None, end_time: float | None = None) -> None:
         with self._lock:
             node = self._nodes.get(action_id)
             if node is None:
                 return
             node.status = ActionStatus.SUCCEEDED
             node.outputs = outputs
-            node.end_time = time.monotonic()
+            node.end_time = end_time or time.monotonic()
             self._update_group_status(action_id)
             self._version += 1
 
@@ -143,7 +213,7 @@ class ActionTracker:
             node.log_links = log_links
             self._version += 1
 
-    def record_failure(self, *, action_id: str, error: str) -> None:
+    def record_failure(self, *, action_id: str, error: str, end_time: float | None = None) -> None:
         from flyte._internal.runtime.convert import Error
 
         with self._lock:
@@ -155,14 +225,14 @@ class ActionTracker:
                 node.error = error.err
             else:
                 node.error = error
-            node.end_time = time.monotonic()
+            node.end_time = end_time or time.monotonic()
             self._update_group_status(action_id)
             self._version += 1
 
     def _update_group_status(self, action_id: str) -> None:
         """If action belongs to a group, recompute the group node's status.
 
-        Must be called while ``self._lock`` is held.
+        Must be called while `self._lock` is held.
         """
         node = self._nodes.get(action_id)
         if node is None or node.group is None:

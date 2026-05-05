@@ -1,85 +1,37 @@
-# Flyte 2 SDK 🚀
+> [!IMPORTANT]
+> ## Flyte 2 Devbox is now available!
+>
+> Check out the guide [here](https://www.union.ai/docs/v2/flyte/user-guide/run-modes/running-devbox/) to get started.
 
-**Type-safe, distributed orchestration of agents, ML pipelines, and more — in pure Python with async/await or sync!**
+---
+
+# Flyte 2 SDK
+
+**Reliably orchestrate ML pipelines, models, and agents at scale — in pure Python.**
 
 [![Version](https://img.shields.io/pypi/v/flyte?label=version&color=blue)](https://pypi.org/project/flyte/)
 [![Python](https://img.shields.io/pypi/pyversions/flyte?color=brightgreen)](https://pypi.org/project/flyte/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-orange)](LICENSE)
+[![Try in Browser](https://img.shields.io/badge/Try%20in%20Browser-Live%20Demo-7652a2)](https://flyte2intro.apps.demo.hosted.unionai.cloud/)
+[![Docs](https://img.shields.io/badge/Docs-flyte-blue)](https://www.union.ai/docs/v2/flyte/user-guide/running-locally/)
+[![SDK Reference](https://img.shields.io/badge/SDK%20Reference-API-brightgreen)](https://www.union.ai/docs/v2/union/api-reference/flyte-sdk/)
+[![CLI Reference](https://img.shields.io/badge/CLI%20Reference-API-brightgreen)](https://www.union.ai/docs/v2/union/api-reference/flyte-cli/)
 
-> ⚡ **Pure Python workflows** • 🔄 **Async-first parallelism** • 🛠️ **Zero DSL constraints** • 📊 **Sub-task observability**
-
-## 🌍 Ecosystem & Resources
-
-- **📖 Documentation**: [Docs Link](https://www.union.ai/docs/v2/flyte/user-guide/)
-- **▶️ Getting Started**: [Docs Link](https://www.union.ai/docs/v2/flyte/user-guide/getting-started/)
-- **💬 Community**: [Slack](https://slack.flyte.org/) | [GitHub Discussions](https://github.com/flyteorg/flyte/discussions)  
-- **🎓 Examples**: [GitHub Examples](https://github.com/flyteorg/flyte-sdk/tree/main/examples)
-- **🐛 Issues**: [Bug Reports](https://github.com/flyteorg/flyte/issues)
-
-## What is Flyte 2?
-
-Flyte 2 represents a fundamental shift from constrained domain-specific languages to **pure Python workflows**. Write data pipelines, ML training jobs, and distributed compute exactly like you write Python—because it *is* Python.
-
-```python
-import flyte
-
-env = flyte.TaskEnvironment("hello_world")
-
-@env.task
-async def process_data(data: list[str]) -> list[str]:
-    # Use any Python construct: loops, conditionals, try/except
-    results = []
-    for item in data:
-        if len(item) > 5:
-            results.append(await transform_item(item))
-    return results
-
-@env.task
-async def transform_item(item: str) -> str:
-    return f"processed: {item.upper()}"
-
-if __name__ == "__main__":
-    flyte.init()
-    result = flyte.run(process_data, data=["hello", "world", "flyte"])
-```
-
-## 🌟 Why Flyte 2?
-
-| Feature Highlight | Flyte 1 | Flyte 2 |
-|-| ------- | ------- |
-| **No More Workflow DSL** | ❌ `@workflow` decorators with Python subset limitations | ✅ **Pure Python**: loops, conditionals, error handling, dynamic structures |
-| **Async-First Parallelism** | ❌ Custom `map()` functions and workflow-specific parallel constructs | ✅ **Native `asyncio`**: `await asyncio.gather()` for distributed parallel execution |
-| **Fine-Grained Observability** | ❌ Task-level logging only | ✅ **Function-level tracing** with `@flyte.trace` for sub-task checkpoints |
-
-## 🚀 Quick Start
-
-### Installation
+## Install
 
 ```bash
-# Install uv package manager
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Create virtual environment
-uv venv && source .venv/bin/activate
-
-# Install Flyte 2 (beta)
-uv pip install --prerelease=allow flyte
+pip install flyte
 ```
 
-### Your First Workflow
+## Example
 
 ```python
-# hello.py
-# /// script
-# requires-python = ">=3.10"
-# dependencies = ["flyte>=2.0.0b0"]
-# ///
-
+import asyncio
 import flyte
 
 env = flyte.TaskEnvironment(
     name="hello_world",
-    resources=flyte.Resources(memory="250Mi")
+    image=flyte.Image.from_debian_base(python_version=(3, 12)),
 )
 
 @env.task
@@ -88,290 +40,176 @@ def calculate(x: int) -> int:
 
 @env.task
 async def main(numbers: list[int]) -> float:
-    # Parallel execution across distributed containers
     results = await asyncio.gather(*[
         calculate.aio(num) for num in numbers
     ])
     return sum(results) / len(results)
 
 if __name__ == "__main__":
-    flyte.init_from_config("config.yaml")
+    flyte.init()
     run = flyte.run(main, numbers=list(range(10)))
     print(f"Result: {run.result}")
-    print(f"View at: {run.url}")
 ```
+
+<table>
+<tr><td><b>Python</b></td><td><b>Flyte CLI</b></td></tr>
+<tr>
+<td>
 
 ```bash
-# Run locally, execute remotely
-uv run --prerelease=allow hello.py
+python hello.py
 ```
 
-## 🏗️ Core Concepts
+</td>
+<td>
 
-### **TaskEnvironments**: Container Configuration Made Simple
+```bash
+flyte run hello.py main --numbers '[1,2,3]'
+```
+
+</td>
+</tr>
+</table>
+
+## Serve a Model
 
 ```python
-# Group tasks with shared configuration
-env = flyte.TaskEnvironment(
-    name="ml_pipeline",
-    image=flyte.Image.from_debian_base().with_pip_packages(
-        "torch", "pandas", "scikit-learn"
+# serving.py
+from fastapi import FastAPI
+import flyte
+from flyte.app.extras import FastAPIAppEnvironment
+
+app = FastAPI()
+env = FastAPIAppEnvironment(
+    name="my-model",
+    app=app,
+    image=flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages(
+        "fastapi", "uvicorn"
     ),
-    resources=flyte.Resources(cpu=4, memory="8Gi", gpu=1),
-    reusable=flyte.ReusePolicy(replicas=3, idle_ttl=300)
 )
 
-@env.task
-def train_model(data: flyte.io.File) -> flyte.io.File:
-    # Runs in configured container with GPU access
-    pass
+@app.get("/predict")
+async def predict(x: float) -> dict:
+    return {"result": x * 2 + 5}
 
-@env.task
-def evaluate_model(model: flyte.io.File, test_data: flyte.io.File) -> dict:
-    # Same container configuration, different instance
-    pass
+if __name__ == "__main__":
+    flyte.init_from_config()
+    flyte.serve(env)
 ```
 
-### **Pure Python Workflows**: No More DSL Constraints
-
-```python
-@env.task
-async def dynamic_pipeline(config: dict) -> list[str]:
-    results = []
-
-    # ✅ Use any Python construct
-    for dataset in config["datasets"]:
-        try:
-            # ✅ Native error handling
-            if dataset["type"] == "batch":
-                result = await process_batch(dataset)
-            else:
-                result = await process_stream(dataset)
-            results.append(result)
-        except ValidationError as e:
-            # ✅ Custom error recovery
-            result = await handle_error(dataset, e)
-            results.append(result)
-
-    return results
-```
-
-### **Async Parallelism**: Distributed by Default
-
-```python
-@env.task
-async def parallel_training(hyperparams: list[dict]) -> dict:
-    # Each model trains on separate infrastructure
-    models = await asyncio.gather(*[
-        train_model.aio(params) for params in hyperparams
-    ])
-
-    # Evaluate all models in parallel
-    evaluations = await asyncio.gather(*[
-        evaluate_model.aio(model) for model in models
-    ])
-
-    # Find best model
-    best_idx = max(range(len(evaluations)),
-                   key=lambda i: evaluations[i]["accuracy"])
-    return {"best_model": models[best_idx], "accuracy": evaluations[best_idx]}
-```
-
-## 🎯 Advanced Features
-
-### **Sub-Task Observability with Tracing**
-
-```python
-@flyte.trace
-async def expensive_computation(data: str) -> str:
-    # Function-level checkpointing - recoverable on failure
-    result = await call_external_api(data)
-    return process_result(result)
-
-@env.task(cache=flyte.Cache(behavior="auto"))
-async def main_task(inputs: list[str]) -> list[str]:
-    results = []
-    for inp in inputs:
-        # If task fails here, it resumes from the last successful trace
-        result = await expensive_computation(inp)
-        results.append(result)
-    return results
-```
-
-### **Remote Task Execution**
-
-```python
-import flyte.remote
-
-# Remote tasks deployed elsewhere
-torch_task = flyte.remote.Task.get("torch_env.train_model", auto_version="latest")
-spark_task = flyte.remote.Task.get("spark_env.process_data", auto_version="latest")
-
-@env.task
-async def orchestrator(raw_data: flyte.io.File) -> flyte.io.File:
-    # Execute Spark job on big data cluster
-    processed = await spark_task(raw_data)
-
-    # Execute PyTorch training on GPU cluster
-    model = await torch_task(processed)
-
-    return model
-```
-
-## 📊 Native Jupyter Integration
-
-Run and monitor workflows directly from notebooks:
-
-```python
-# In Jupyter cell
-import flyte
-
-flyte.init_from_config()
-run = flyte.run(my_workflow, data=large_dataset)
-
-# Stream logs in real-time
-run.logs.stream()
-
-# Get outputs when complete
-results = run.wait()
-```
-
-## 🔧 Configuration & Deployment
-
-### Configuration File
-
-```yaml
-# config.yaml
-endpoint: https://my-flyte-instance.com
-project: ml-team
-domain: production
-image:
-  builder: local
-  registry: ghcr.io/my-org
-auth:
-  type: oauth2
-```
-
-### Deploy and Run
+<table>
+<tr><td><b>Python</b></td><td><b>Flyte CLI</b></td></tr>
+<tr>
+<td>
 
 ```bash
-# Deploy tasks to remote cluster
-flyte deploy my_workflow.py
-
-# Run deployed workflow
-flyte run my_workflow --input-file params.json
-
-# Monitor execution
-flyte logs <execution-id>
+python serving.py
 ```
 
-## Migration from Flyte 1
-
-| Flyte 1 | Flyte 2 |
-|---------|---------|
-| `@workflow` + `@task` | `@env.task` only |
-| `flytekit.map()` | `await asyncio.gather()` |
-| `@dynamic` workflows | Regular `@env.task` with loops |
-| `flytekit.conditional()` | Python `if/else` |
-| `LaunchPlan` schedules | `@env.task(on_schedule=...)` |
-| Workflow failure handlers | Python `try/except` |
-
-## 🤝 Contributing
-
-We welcome contributions! Whether it's:
-
-- 🐛 **Bug fixes**
-- ✨ **New features**
-- 📚 **Documentation improvements**
-- 🧪 **Testing enhancements**
-
-### Setup & Iteration Cycle
-To get started, make sure you start from a new virtual environment and install this package in editable mode with any of the supported Python versions, from 3.10 to 3.13.
+</td>
+<td>
 
 ```bash
-uv venv --python 3.13
-uv pip install -e .
+flyte serve serving.py env
 ```
 
-Besides from picking up local code changes, installing the package in editable mode
-also changes the definition of the default `Image()` object to use a locally
-build wheel. You will need to build said wheel by yourself though, with the `make dist` target.
+</td>
+</tr>
+</table>
+
+### Local Development Experience
+
+Install the TUI for a rich local development experience:
+
+```bash
+pip install flyte[tui]
+```
+
+[![Watch the local development experience](https://img.youtube.com/vi/lsfy-7DbbRM/maxresdefault.jpg)](https://www.youtube.com/watch?v=lsfy-7DbbRM)
+
+## Learn More
+
+- **[Live Demo](https://flyte2intro.apps.demo.hosted.unionai.cloud/)** — Try Flyte 2 in your browser
+- **[Documentation](https://www.union.ai/docs/v2/flyte/user-guide/running-locally/)** — Get started running locally
+- **[SDK Reference](https://www.union.ai/docs/v2/union/api-reference/flyte-sdk/)** — API reference docs
+- **[CLI Reference](https://www.union.ai/docs/v2/union/api-reference/flyte-cli/)** — CLI docs
+- **[Join the Flyte 2 Production Preview](https://www.union.ai/try-flyte-2)** — Get early access
+- **[Features](FEATURES.md)** — Async parallelism, app serving, tracing, and more
+- **[Examples](examples/)** — Ready-to-run examples for every feature
+- **[Contributing](CONTRIBUTING.md)** — Set up a dev environment and contribute
+- **[Slack](https://slack.flyte.org/)** | **[GitHub Discussions](https://github.com/flyteorg/flyte/discussions)** | **[Issues](https://github.com/flyteorg/flyte/issues)**
+
+## License
+
+Apache 2.0 — see [LICENSE](LICENSE).
+
+## Developing the Rust Core Controller
+
+The Rust core controller (`flyte_controller_base`) ships as a separate PyPI wheel from the main
+SDK. Keeping it separate avoids forcing the whole SDK build toolchain to become maturin-based;
+we may revisit that decision once the Rust controller is the default execution path.
+
+When iterating, keep `flyteidl2` pinned to the same version on both the Python and Rust sides
+(see `pyproject.toml` and `rs_controller/Cargo.toml`).
+
+### One-time builder setup
+
+`cd` into `rs_controller` and run:
+
+```bash
+make build-builders
+```
+
+This builds the manylinux builder images once. They can be reused as the Rust source changes.
+
+### Iteration cycle
+
+Build the multi-arch wheels (linux/amd64 and linux/arm64):
+
+```bash
+cd rs_controller
+make build-wheels
+```
+
+`make build-wheel-local` builds a macOS wheel for local Rust development.
+
+`cd` back up to the repo root, then:
 
 ```bash
 make dist
 python maint_tools/build_default_image.py
 ```
-You'll need to have a local docker daemon running for this. The build script does nothing
-more than invoke the local image builder, which will create a buildx builder named `flytex` if not present. Note that only members of the `Flyte Maintainers` group has
-access to push to the default registry. If you don't have access, please make sure to
-specify the registry and name to the build script.
 
-```bash
-python maint_tools/build_default_image.py --registry ghcr.io/my-org --name my-flyte-image
-```
+Install the freshly-built wheel into your venv:
 
-## 📄 License
-
-Flyte 2 is licensed under the [Apache 2.0 License](LICENSE).
-
-## Developing the Core Controller
-
-Create a separate virtual environment for the Rust contoller inside the rs_controller folder. The reason for this is
-because the rust controller should be a separate pypi package. The reason it should be a separate pypi package is that
-including it into the main SDK as a core component means the entire build toolchain for the SDK will need to become
-rust/maturin based. We should probably move to this model in the future though.
-
-Keep important dependencies the same though, namely flyteidl2.
-
-The following instructions are for helping to build the default multi-arch image. Each architecture needs a different wheel. Each wheel needs to be built by a different docker image.
-
-### Setup Builders
-`cd` into `rs_controller` and run `make build-builders`. This will build the builder images once, so you can keep using them as the rust code changes.
-
-### Iteration Cycle
-Run `make build-wheels` to actually build the multi-arch wheels. This command should probably be updated to build all three,
-currently it only builds for linux/amd64 and linux/arm64... the `make build-wheel-local` command builds a macosx wheel,
-unclear what the difference is between that and the arm64 one, and unclear if both are present, which one pip chooses.
-
-`cd` back up to the root folder of this project and proceed with
-```bash
-make dist
-python maint_tools/build_default_image.py
-```
-
-To install the wheel locally for testing, use the following command with your venv active.
 ```bash
 uv pip install --find-links ./rs_controller/dist --no-index --force-reinstall --no-deps flyte_controller_base
 ```
-Repeat this process to iterate - build new wheels, force reinstall the controller package.
 
-### Build Configuration Summary
+Repeat this loop — build new wheels, force-reinstall — to iterate.
 
-In order to support both Rust crate publication and Python wheel distribution, we have
-to sometimes use and sometimes not use the 'pyo3/extension-module' feature. To do this, this
-project's Cargo.toml itself can toggle this on and off.
+### Build configuration
 
-  [features]
-  default = ["pyo3/auto-initialize"]     # For Rust crate users (links to libpython)
-  extension-module = ["pyo3/extension-module"]  # For Python wheels (no libpython linking)
+To support both Rust crate use and Python wheel distribution, the crate toggles the
+`pyo3/extension-module` feature via Cargo features:
 
-The cargo file contains
+```toml
+# rs_controller/Cargo.toml
+[features]
+default = ["pyo3/auto-initialize"]              # For local cargo run / cargo test (links libpython)
+extension-module = ["pyo3/extension-module"]    # For Python wheels (no libpython linking)
 
-  # Cargo.toml
-  [lib]
-  crate-type = ["rlib", "cdylib"]  # Support both Rust and Python usage
+[lib]
+crate-type = ["rlib", "cdylib"]                 # Both Rust and Python consumers
+```
 
-When using 'default', 'auto-initialize' is turned on, which requires linking to libpython, which exists on local Mac so
-this works nicely. It is not available in manylinux however, so trying to build with this feature in a manylinux docker
-image will fail. But that's okay, because the purpose of the manylinux container is to build wheels,
-and for wheels, we need the 'extension-module' feature, which disables linking to libpython.
+`auto-initialize` embeds Python in Rust binaries — convenient on macOS where libpython is
+linkable, but not available in manylinux. `extension-module` extends Python from Rust and
+must *not* link libpython for wheel portability. The maturin pyproject opts into the
+extension-module feature explicitly:
 
-The key insight: auto-initialize is for embedding Python in Rust (needs libpython), while
-extension-module is for extending Python with Rust (must NOT link libpython for portability).
-
-This setup makes it possible to build wheels and also run Rust binaries with `cargo run --bin`. 
-
-(not sure if this is needed)
-  # pyproject.toml
-  [tool.maturin]
-  features = ["extension-module"]  # Tells maturin to use extension-module feature
+```toml
+# rs_controller/pyproject.toml
+[tool.maturin]
+features = ["extension-module"]
+```

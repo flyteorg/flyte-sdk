@@ -1,11 +1,12 @@
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Dict, List, cast
+from typing import Any, Dict, List, cast, get_args
 
 import rich_click as click
 
 import flyte
+from flyte._code_bundle._utils import CopyFiles
 
 from . import _common as common
 from ._common import CLIConfig
@@ -13,13 +14,25 @@ from ._common import CLIConfig
 
 @dataclass
 class BuildArguments:
-    noop: bool = field(
-        default=False,
+    copy_style: CopyFiles = field(
+        default="loaded_modules",
         metadata={
             "click.option": click.Option(
-                ["--noop"],
-                type=bool,
-                help="Dummy parameter, placeholder for future use. Does not affect the build process.",
+                ["--copy-style"],
+                type=click.Choice(get_args(CopyFiles)),
+                default="loaded_modules",
+                help="Copy style of the eventual deploy. Must match the deploy's --copy-style "
+                "so the image content hash — and therefore the registry tag — lines up.",
+            )
+        },
+    )
+    root_dir: str | None = field(
+        default=None,
+        metadata={
+            "click.option": click.Option(
+                ["--root-dir"],
+                type=str,
+                help="Override the root source directory, helpful when working with monorepos.",
             )
         },
     )
@@ -31,7 +44,7 @@ class BuildArguments:
     @classmethod
     def options(cls) -> List[click.Option]:
         """
-        Return the set of base parameters added to every flyte run workflow subcommand.
+        Return the set of base parameters added to every flyte build subcommand.
         """
         return [common.get_option_from_metadata(f.metadata) for f in fields(cls) if f.metadata]
 
@@ -44,14 +57,16 @@ class BuildEnvCommand(click.Command):
         super().__init__(*args, **kwargs)
 
     def invoke(self, ctx: click.Context):
-        console = common.get_console()
-        console.print(f"Building Environment: {self.obj_name}")
-        obj: CLIConfig = ctx.obj
-        obj.init()
-        with console.status("Building...", spinner="dots"):
-            image_cache = flyte.build_images(self.obj)
+        from flyte._status import status
 
-        console.print(common.format("Images", image_cache.repr(), obj.output_format))
+        obj: CLIConfig = ctx.obj
+        status.step(f"Building environment: {self.obj_name}")
+        obj.init(root_dir=self.build_args.root_dir)
+        with common.cli_status(obj.output_format, "Building...", spinner="dots"):
+            image_cache = flyte.build_images(self.obj, copy_style=self.build_args.copy_style)
+
+        status.success(f"Environment {self.obj_name} built")
+        common.print_output(common.format("Images", image_cache.repr(), obj.output_format), obj.output_format)
 
 
 class EnvPerFileGroup(common.ObjectsPerFileGroup):

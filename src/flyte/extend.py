@@ -7,6 +7,7 @@ from ._internal.runtime.resources_serde import get_proto_resources
 from ._resources import PRIMARY_CONTAINER_DEFAULT_NAME, pod_spec_from_resources
 from ._task import AsyncFunctionTaskTemplate, TaskTemplate
 from ._task_plugins import TaskPluginRegistry
+from ._utils import lazy_module
 
 __all__ = [
     "PRIMARY_CONTAINER_DEFAULT_NAME",
@@ -20,5 +21,6 @@ __all__ = [
     "download_code_bundle",
     "get_proto_resources",
     "is_initialized",
+    "lazy_module",
     "pod_spec_from_resources",
 ]

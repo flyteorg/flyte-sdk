@@ -3,9 +3,10 @@
 import pytest
 
 import flyte
+import flyte.notify as notify
 from flyte._context import internal_ctx
 from flyte._run import with_runcontext
-from flyte.models import ActionID, RawDataPath, TaskContext
+from flyte.models import ActionID, ActionPhase, RawDataPath, TaskContext
 from flyte.report import Report
 
 
@@ -404,3 +405,73 @@ def test_with_runcontext_isolation():
     # Third execution without context
     result3 = with_runcontext(mode="local").run(test_task)
     assert result3.outputs()[0] == {}
+
+
+def test_with_runcontext_single_notification():
+    """Test that with_runcontext accepts a single notification."""
+    runner = with_runcontext(
+        mode="local",
+        notifications=notify.Slack(
+            on_phase=ActionPhase.FAILED,
+            webhook_url="https://hooks.slack.com/services/T/B/X",
+            message="Task failed: {run.error}",
+        ),
+    )
+
+    assert isinstance(runner._notifications, notify.Slack)
+    assert runner._notifications.on_phase == (ActionPhase.FAILED,)
+    assert runner._notifications.webhook_url == "https://hooks.slack.com/services/T/B/X"
+
+
+def test_with_runcontext_multiple_notifications():
+    """Test that with_runcontext accepts a tuple of notifications."""
+    notifications = (
+        notify.Slack(
+            on_phase=ActionPhase.FAILED,
+            webhook_url="https://hooks.slack.com/services/T/B/X",
+            message="Task failed",
+        ),
+        notify.Email(
+            on_phase=ActionPhase.SUCCEEDED,
+            recipients=("oncall@example.com",),
+        ),
+        notify.Webhook(
+            on_phase=(ActionPhase.FAILED, ActionPhase.TIMED_OUT),
+            url="https://api.example.com/alerts",
+        ),
+    )
+
+    runner = with_runcontext(mode="local", notifications=notifications)
+
+    assert isinstance(runner._notifications, tuple)
+    assert len(runner._notifications) == 3
+    assert isinstance(runner._notifications[0], notify.Slack)
+    assert isinstance(runner._notifications[1], notify.Email)
+    assert isinstance(runner._notifications[2], notify.Webhook)
+
+
+def test_with_runcontext_no_notifications():
+    """Test that with_runcontext defaults to no notifications."""
+    runner = with_runcontext(mode="local")
+
+    assert runner._notifications is None
+
+
+def test_with_runcontext_notifications_with_other_params():
+    """Test that notifications work alongside other run context parameters."""
+    runner = with_runcontext(
+        mode="local",
+        name="test-run",
+        labels={"team": "ml"},
+        notifications=notify.Email(
+            on_phase=ActionPhase.FAILED,
+            recipients=("oncall@example.com",),
+        ),
+        custom_context={"project": "test"},
+    )
+
+    assert runner._name == "test-run"
+    assert runner._labels == {"team": "ml"}
+    assert runner._custom_context == {"project": "test"}
+    assert isinstance(runner._notifications, notify.Email)
+    assert runner._notifications.recipients == ("oncall@example.com",)

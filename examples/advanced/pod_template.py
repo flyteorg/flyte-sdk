@@ -27,7 +27,7 @@ pod_template = flyte.PodTemplate(
 env = flyte.TaskEnvironment(
     name="hello_world",
     pod_template=pod_template,
-    image=flyte.Image.from_uv_script(__file__, name="flyte", pre=True),
+    image=flyte.Image.from_uv_script(__file__, name="flyte"),
 )
 
 

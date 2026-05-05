@@ -18,9 +18,16 @@ class SparkToParquetEncoder(DataFrameEncoder):
         structured_dataset_type: types_pb2.StructuredDatasetType,
     ) -> literals_pb2.StructuredDataset:
         path = dataframe.uri
-        ctx = flyte.ctx()
-        if ctx and not path:
-            path = ctx.raw_data_path.get_random_remote_path()
+        from flyte._context import internal_ctx
+
+        if not path:
+            tctx = flyte.ctx()
+            if tctx is not None:
+                path = tctx.raw_data_path.get_random_remote_path()
+            else:
+                ic = internal_ctx()
+                if ic.has_raw_data:
+                    path = ic.raw_data.get_random_remote_path()
 
         ss = pyspark.sql.SparkSession.builder.getOrCreate()
 

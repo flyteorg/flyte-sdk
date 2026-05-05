@@ -35,7 +35,7 @@ class YamlConfigEntry(object):
     def read_from_env(self, transform: typing.Optional[typing.Callable] = None) -> typing.Optional[typing.Any]:
         """
         Reads the config entry from environment variable, the structure of the env var is current
-        ``FLYTE_{SECTION}_{OPTION}`` all upper cased. We will change this in the future.
+        `FLYTE_{SECTION}_{OPTION}` all upper cased. We will change this in the future.
         :return:
         """
         env = self.get_env_name()
