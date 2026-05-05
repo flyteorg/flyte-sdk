@@ -132,15 +132,20 @@ class RemoteController(BaseController):
     def __new__(
         cls,
         endpoint: str | None = None,
+        api_key: str | None = None,
         workers: int = 20,
         max_system_retries: int = 10,
     ):
-        # No endpoint means must have the api key env var
-        return super().__new__(cls, endpoint=endpoint)
+        # Selection rules (mirrored on the Rust side):
+        #   - api_key set     -> Rust decodes the key, derives endpoint, uses OAuth
+        #   - endpoint only   -> plain unauthenticated channel
+        #   - neither         -> Rust falls back to _UNION_EAGER_API_KEY env var
+        return super().__new__(cls, endpoint=endpoint, api_key=api_key, workers=workers)
 
     def __init__(
         self,
         endpoint: str | None = None,
+        api_key: str | None = None,
         workers: int = 20,
         max_system_retries: int = 10,
     ):

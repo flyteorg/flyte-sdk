@@ -58,9 +58,19 @@ def create_remote_controller(
 
             logger.info("Using Rust-backed RemoteController (flyte_controller_base).")
             # The Rust controller manages its own gRPC channel, auth, and
-            # informer loop. It only needs the endpoint; api-key auth is
-            # picked up from the FLYTE_API_KEY env var by the Rust side.
-            return RustRemoteController(endpoint=endpoint)
+            # informer loop. We pass the same {endpoint, api_key} pair that
+            # would feed Python's SessionConfig, so both code paths see the
+            # same source of truth. TLS knobs (insecure_skip_verify,
+            # ca_cert_file_path) are not yet supported by the Rust side and
+            # are silently ignored here; they take effect on the Python
+            # path only.
+            if insecure_skip_verify or ca_cert_file_path:
+                logger.warning(
+                    "insecure_skip_verify / ca_cert_file_path are not yet supported by the "
+                    "Rust controller and will be ignored. Unset _F_USE_RUST_CONTROLLER to "
+                    "use the Python controller if you need these knobs."
+                )
+            return RustRemoteController(endpoint=endpoint, api_key=api_key)
         except ImportError as e:
             logger.warning(
                 f"_F_USE_RUST_CONTROLLER=1 was set but flyte_controller_base is not "

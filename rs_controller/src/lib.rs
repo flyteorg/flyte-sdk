@@ -44,21 +44,42 @@ struct BaseController(Arc<CoreBaseController>);
 #[pymethods]
 impl BaseController {
     #[new]
-    #[pyo3(signature = (*, endpoint=None, workers=None))]
-    fn new(endpoint: Option<String>, workers: Option<usize>) -> PyResult<Self> {
+    #[pyo3(signature = (*, endpoint=None, api_key=None, workers=None))]
+    fn new(
+        endpoint: Option<String>,
+        api_key: Option<String>,
+        workers: Option<usize>,
+    ) -> PyResult<Self> {
         let workers = workers.unwrap_or(20);
-        let core_base = if let Some(ep) = endpoint {
-            info!(
-                "Creating controller wrapper with endpoint {:?} and {} workers",
-                ep, workers
-            );
-            CoreBaseController::new_without_auth(ep, workers)?
-        } else {
-            info!(
-                "Creating controller wrapper from _UNION_EAGER_API_KEY env var with {} workers",
-                workers
-            );
-            CoreBaseController::new_with_auth(workers)?
+        // Selection rules:
+        //   - api_key supplied -> use it directly (decoded the same way as
+        //     flyte.remote._client.auth._auth_utils.decode_api_key on the
+        //     Python side); endpoint is derived from the key.
+        //   - endpoint without api_key -> plain (no-auth) channel; useful for
+        //     local sandbox / smoke tests.
+        //   - neither -> fall back to the legacy _UNION_EAGER_API_KEY env var.
+        let core_base = match (api_key, endpoint) {
+            (Some(key), _) => {
+                info!(
+                    "Creating controller wrapper with explicit api_key and {} workers",
+                    workers
+                );
+                CoreBaseController::new_with_api_key(key, workers)?
+            }
+            (None, Some(ep)) => {
+                info!(
+                    "Creating controller wrapper with endpoint {:?} (no auth) and {} workers",
+                    ep, workers
+                );
+                CoreBaseController::new_without_auth(ep, workers)?
+            }
+            (None, None) => {
+                info!(
+                    "Creating controller wrapper from _UNION_EAGER_API_KEY env var with {} workers",
+                    workers
+                );
+                CoreBaseController::new_with_auth(workers)?
+            }
         };
         Ok(BaseController(core_base))
     }

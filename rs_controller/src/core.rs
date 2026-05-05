@@ -122,14 +122,33 @@ pub struct CoreBaseController {
 }
 
 impl CoreBaseController {
+    /// Construct a CoreBaseController by reading the API key from the
+    /// `_UNION_EAGER_API_KEY` env var. Kept for backwards compatibility with
+    /// callers that haven't been updated to pass the API key explicitly;
+    /// new callers should use `new_with_api_key` and have Python resolve the
+    /// API key from `SessionConfig`.
     pub fn new_with_auth(workers: usize) -> Result<Arc<Self>, ControllerError> {
-        info!("Creating CoreBaseController from _UNION_EAGER_API_KEY env var (with auth) with {} workers", workers);
-        // Read from env var and use auth
         let api_key = std::env::var("_UNION_EAGER_API_KEY").map_err(|_| {
             ControllerError::SystemError(
-                "_UNION_EAGER_API_KEY env var must be provided".to_string(),
+                "_UNION_EAGER_API_KEY env var must be provided when no api_key is supplied"
+                    .to_string(),
             )
         })?;
+        Self::new_with_api_key(api_key, workers)
+    }
+
+    /// Construct a CoreBaseController with an explicit API key, decoded the
+    /// same way as the Python SDK's `decode_api_key` (base64 of
+    /// `endpoint:client_id:client_secret:org`). Use this when the caller
+    /// already has a resolved API key — typically from a Python SessionConfig.
+    pub fn new_with_api_key(
+        api_key: String,
+        workers: usize,
+    ) -> Result<Arc<Self>, ControllerError> {
+        info!(
+            "Creating CoreBaseController with explicit API key and {} workers",
+            workers
+        );
         let auth_config = AuthConfig::new_from_api_key(&api_key)?;
         let endpoint_url = auth_config.endpoint.clone();
 
