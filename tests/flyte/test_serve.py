@@ -1324,8 +1324,9 @@ async def test_serve_remote_sets_user_log_level_env():
     mock_cfg.project = "test-project"
     mock_cfg.domain = "development"
 
-    with patch("flyte._serve.get_init_config", return_value=mock_cfg), patch(
-        "flyte._deploy.plan_deploy", side_effect=RuntimeError("stop")
+    with (
+        patch("flyte._serve.get_init_config", return_value=mock_cfg),
+        patch("flyte._deploy.plan_deploy", side_effect=RuntimeError("stop")),
     ):
         with pytest.raises(RuntimeError):
             await serve._serve_remote(MagicMock())
@@ -1344,8 +1345,9 @@ async def test_serve_remote_omits_user_log_level_when_not_set():
     mock_cfg.project = "test-project"
     mock_cfg.domain = "development"
 
-    with patch("flyte._serve.get_init_config", return_value=mock_cfg), patch(
-        "flyte._deploy.plan_deploy", side_effect=RuntimeError("stop")
+    with (
+        patch("flyte._serve.get_init_config", return_value=mock_cfg),
+        patch("flyte._deploy.plan_deploy", side_effect=RuntimeError("stop")),
     ):
         with pytest.raises(RuntimeError):
             await serve._serve_remote(MagicMock())
@@ -1367,8 +1369,9 @@ async def test_serve_remote_user_log_level_overwrites_explicit_env_var():
     mock_cfg.project = "test-project"
     mock_cfg.domain = "development"
 
-    with patch("flyte._serve.get_init_config", return_value=mock_cfg), patch(
-        "flyte._deploy.plan_deploy", side_effect=RuntimeError("stop")
+    with (
+        patch("flyte._serve.get_init_config", return_value=mock_cfg),
+        patch("flyte._deploy.plan_deploy", side_effect=RuntimeError("stop")),
     ):
         with pytest.raises(RuntimeError):
             await serve._serve_remote(MagicMock())
