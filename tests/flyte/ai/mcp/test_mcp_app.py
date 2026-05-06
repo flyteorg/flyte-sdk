@@ -19,7 +19,7 @@ import pytest
 from flyte._image import Image
 from flyte._resources import Resources
 from flyte.ai.mcp import FlyteMCPAppEnvironment
-from flyte.ai.mcp._mcp_app import (
+from flyte.ai.mcp._flyte_mcp_app import (
     ALL_MCP_TOOL_GROUPS,
     ALL_MCP_TOOLS,
     TOOL_GROUP_MAPPING,
@@ -175,11 +175,19 @@ class TestFlyteMCPAppEnvironmentStarletteApp:
 
 
 class TestFlyteMCPAppEnvironmentInheritance:
-    """Tests for inheritance from AppEnvironment."""
+    """Tests for inheritance from ``MCPAppEnvironment`` / ``AppEnvironment``."""
 
     def test_inherits_from_app_environment(self):
+        import flyte.app
+
         env = FlyteMCPAppEnvironment(name="test-mcp")
-        assert isinstance(env, FlyteMCPAppEnvironment)
+        assert isinstance(env, flyte.app.AppEnvironment)
+
+    def test_inherits_from_mcp_app_environment(self):
+        from flyte.ai.mcp import MCPAppEnvironment
+
+        env = FlyteMCPAppEnvironment(name="test-mcp")
+        assert isinstance(env, MCPAppEnvironment)
 
     def test_has_uvicorn_config_attribute(self):
         env = FlyteMCPAppEnvironment(name="test-mcp")

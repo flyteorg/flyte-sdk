@@ -30,7 +30,7 @@ Usage:
 
     From the repo root:
 
-    $ python examples/mcp/mcp_app_filtered.py
+    $ python examples/mcp/flyte_mcp_app_filtered.py
 
     For a generic MCP server without editing this file, use the packaged CLI and flags
     (see ``flyte-mcp --help``); allowlists are only configured via code as in this example.

@@ -15,7 +15,7 @@ Usage:
 
     Deploy all tools
 
-    $ python examples/mcp/mcp_app.py
+    $ python examples/mcp/flyte_mcp_app.py
 
     Or serve locally for development (recommended: `uvx`)
 
