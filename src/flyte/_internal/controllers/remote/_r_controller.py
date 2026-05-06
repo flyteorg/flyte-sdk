@@ -131,16 +131,16 @@ class RemoteController(BaseController):
         cls,
         endpoint: str | None = None,
         workers: int = 20,
-        max_system_retries: int = 10,
+        max_system_retries: int = 10,  # TODO: pass into Rust controller (currently hard-coded MAX_RETRIES = 5 in core.rs)
     ):
         # No endpoint means must have the api key env var
-        return super().__new__(cls, endpoint=endpoint)
+        return super().__new__(cls, endpoint=endpoint, workers=workers)
 
     def __init__(
         self,
         endpoint: str | None = None,
         workers: int = 20,
-        max_system_retries: int = 10,
+        max_system_retries: int = 10,  # TODO: pass into Rust controller (currently hard-coded MAX_RETRIES = 5 in core.rs)
     ):
         default_parent_concurrency = int(os.getenv("_F_P_CNC", "1000"))
         self._default_parent_concurrency = default_parent_concurrency
@@ -196,7 +196,7 @@ class RemoteController(BaseController):
             root_dir=root_dir,
         )
 
-        task_spec = translate_task_to_wire(_task, new_serialization_context)
+        task_spec = translate_task_to_wire(_task, new_serialization_context, task_context=tctx)
         inputs_hash = convert.generate_inputs_hash_from_proto(inputs.proto_inputs)
         sub_action_id, sub_action_output_path = convert.generate_sub_action_id_and_output_path(
             tctx, task_spec, inputs_hash, _task_call_seq
