@@ -1,4 +1,5 @@
 import os
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -12,8 +13,10 @@ import click
 
 from flyte import Secret
 from flyte._code_bundle._ignore import STANDARD_IGNORE_PATTERNS
+from flyte._code_bundle._utils import copy_code_bundle_to_context
 from flyte._image import (
     AptPackages,
+    CodeBundleLayer,
     Commands,
     CopyConfig,
     DockerIgnore,
@@ -146,16 +149,23 @@ USER root
 COPY --from=uv /uv /usr/bin/uv
 
 
-# Configure default envs
+# Configure default paths (can be overridden via --build-arg)
+ARG VIRTUALENV=/opt/venv
+ARG UV_PYTHON=$$VIRTUALENV/bin/python
+
+
 ENV UV_COMPILE_BYTECODE=1 \
    UV_LINK_MODE=copy \
-   VIRTUALENV=/opt/venv \
-   UV_PYTHON=/opt/venv/bin/python \
-   PATH="/opt/venv/bin:$$PATH"
+   VIRTUALENV=$$VIRTUALENV \
+   UV_PYTHON=$$UV_PYTHON
 
 
-# Create a virtualenv with the user specified python version
-RUN uv venv $$VIRTUALENV --python=$PYTHON_VERSION && uv run --python=$$UV_PYTHON python -m compileall $$VIRTUALENV
+# Create virtualenv only if UV_PYTHON doesn't already exist
+RUN if [ ! -f "$$UV_PYTHON" ]; then \
+       uv venv $$VIRTUALENV --python=$PYTHON_VERSION && uv run --python=$$UV_PYTHON python -m compileall $$VIRTUALENV; \
+   fi
+
+ENV PATH="$$VIRTUALENV/bin:$$PATH"
 
 
 # Adds nvidia just in case it exists
@@ -166,7 +176,8 @@ ENV PATH="$$PATH:/usr/local/nvidia/bin:/usr/local/cuda/bin" \
 # This gets added on to the end of the dockerfile
 DOCKER_FILE_BASE_FOOTER = Template("""\
 ENV _F_IMG_ID=$F_IMG_ID
-WORKDIR /root
+USER flyte
+WORKDIR /home/flyte
 SHELL ["/bin/bash", "-c"]
 """)
 
@@ -197,7 +208,7 @@ class PipAndRequirementsHandler:
         else:
             mount = ""
             requirements = list(layer.packages) if layer.packages else []
-            reqs = " ".join(requirements)
+            reqs = " ".join(shlex.quote(r) for r in requirements)
             pip_install_args = layer.get_pip_install_args()
             pip_install_args.append(reqs)
 
@@ -339,7 +350,7 @@ class UVProjectHandler:
 
 class PoetryProjectHandler:
     @staticmethod
-    async def handel(
+    async def handle(
         layer: PoetryProject, context_path: Path, dockerfile: str, docker_ignore_patterns: list[str] = []
     ) -> str:
         secret_mounts = _get_secret_mounts_layer(layer.secret_mounts)
@@ -389,7 +400,16 @@ class CopyConfigHandler:
         layer: CopyConfig, context_path: Path, dockerfile: str, docker_ignore_patterns: list[str] = []
     ) -> str:
         dst_path = copy_files_to_context(layer.src, context_path, docker_ignore_patterns)
-        dockerfile += f"\nCOPY {dst_path.relative_to(context_path)} {layer.dst}\n"
+        dockerfile += f"\nCOPY --chown=flyte:flyte {dst_path.relative_to(context_path)} {layer.dst}\n"
+        return dockerfile
+
+
+class _CodeBundleHandler:
+    @staticmethod
+    async def handle(layer: CodeBundleLayer, context_path: Path, dockerfile: str) -> str:
+        assert layer.root_dir is not None
+        dst_path = copy_code_bundle_to_context(layer.root_dir, layer.copy_style, context_path)
+        dockerfile += f"\nCOPY --chown=flyte:flyte {dst_path.relative_to(context_path)} {layer.dst}\n"
         return dockerfile
 
 
@@ -515,11 +535,11 @@ async def _process_layer(
 
         case PoetryProject():
             # Handle Poetry project
-            dockerfile = await PoetryProjectHandler.handel(layer, context_path, dockerfile, docker_ignore_patterns)
+            dockerfile = await PoetryProjectHandler.handle(layer, context_path, dockerfile, docker_ignore_patterns)
 
         case PoetryProject():
             # Handle Poetry project
-            dockerfile = await PoetryProjectHandler.handel(layer, context_path, dockerfile, docker_ignore_patterns)
+            dockerfile = await PoetryProjectHandler.handle(layer, context_path, dockerfile, docker_ignore_patterns)
 
         case CopyConfig():
             # Handle local files and folders
@@ -545,6 +565,10 @@ async def _process_layer(
             # Only for internal use
             dockerfile = await _DockerLinesHandler.handle(layer, context_path, dockerfile)
 
+        case CodeBundleLayer():
+            # Resolved CodeBundleLayer — copy filtered files from root_dir into context
+            dockerfile = await _CodeBundleHandler.handle(layer, context_path, dockerfile)
+
         case _:
             raise NotImplementedError(f"Layer type {type(layer)} not supported")
 
@@ -561,7 +585,9 @@ class DockerImageBuilder(ImageBuilder):
         # Can get a public token for docker.io but ghcr requires a pat, so harder to get the manifest anonymously
         return [LocalDockerCommandImageChecker, LocalPodmanCommandImageChecker, DockerAPIImageChecker]
 
-    async def build_image(self, image: Image, dry_run: bool = False, wait: bool = True) -> "ImageBuild":
+    async def build_image(
+        self, image: Image, dry_run: bool = False, wait: bool = True, force: bool = False
+    ) -> "ImageBuild":
         from flyte._build import ImageBuild
 
         if image.dockerfile:
@@ -633,25 +659,44 @@ class DockerImageBuilder(ImageBuilder):
         )
         builders = result.stdout
 
-        # Check if there's any usable builder
-        if DockerImageBuilder._builder_name not in builders:
-            # No default builder found, create one
-            logger.info("No buildx builder found, creating one...")
+        # Check if there's any usable builder with the correct driver options
+        if DockerImageBuilder._builder_name in builders:
+            # Builder exists — verify it has network=host driver option
+            inspect_result = await run_sync_with_loop(
+                subprocess.run,
+                ["docker", "buildx", "inspect", DockerImageBuilder._builder_name],
+                capture_output=True,
+                text=True,
+            )
+            if inspect_result.returncode == 0 and 'network="host"' in inspect_result.stdout:
+                logger.info("Buildx builder already exists with correct config.")
+                return
+
+            # Builder exists but missing network=host, remove and recreate
+            logger.info("Buildx builder exists but missing network=host driver option, recreating...")
             await run_sync_with_loop(
                 subprocess.run,
-                [
-                    "docker",
-                    "buildx",
-                    "create",
-                    "--name",
-                    DockerImageBuilder._builder_name,
-                    "--platform",
-                    "linux/amd64,linux/arm64",
-                ],
-                check=True,
+                ["docker", "buildx", "rm", DockerImageBuilder._builder_name],
+                check=False,
             )
         else:
-            logger.info("Buildx builder already exists.")
+            logger.info("No buildx builder found, creating one...")
+
+        await run_sync_with_loop(
+            subprocess.run,
+            [
+                "docker",
+                "buildx",
+                "create",
+                "--name",
+                DockerImageBuilder._builder_name,
+                "--platform",
+                "linux/amd64,linux/arm64",
+                "--driver-opt",
+                "network=host",
+            ],
+            check=True,
+        )
 
     async def _build_image(self, image: Image, *, push: bool = True, dry_run: bool = False, wait: bool = True) -> str:
         """

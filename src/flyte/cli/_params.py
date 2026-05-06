@@ -315,12 +315,14 @@ class DurationParamType(click.ParamType):
     ) -> typing.Any:
         if value is None:
             raise click.BadParameter("None value cannot be converted to a Duration type.")
+        if isinstance(value, datetime.timedelta):
+            return value
         return parse_duration(value)
 
 
 class EnumParamType(click.Choice):
     def __init__(self, enum_type: typing.Type[enum.Enum]):
-        super().__init__([str(e.value) for e in enum_type])
+        super().__init__([e.name for e in enum_type])
         self._enum_type = enum_type
 
     def convert(
@@ -328,7 +330,7 @@ class EnumParamType(click.Choice):
     ) -> enum.Enum:
         if isinstance(value, self._enum_type):
             return value
-        return self._enum_type(super().convert(value, param, ctx))
+        return self._enum_type[super().convert(value, param, ctx)]
 
 
 class UnionParamType(click.ParamType):
@@ -665,7 +667,7 @@ def literal_type_to_click_type(lt: LiteralType, python_type: typing.Type) -> cli
         python_args = typing.get_args(python_type)
         if len(python_args) == 0:
             return PickleParamType()
-        cts = []
+        cts: list[click.ParamType | None] = []
         for i in range(len(lt.union_type.variants)):
             variant = lt.union_type.variants[i]
             variant_python_type = python_args[i]

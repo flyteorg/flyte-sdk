@@ -7,8 +7,10 @@ import threading
 from asyncio import Event
 from typing import Awaitable, Coroutine, Optional
 
-import grpc.aio
 from aiolimiter import AsyncLimiter
+from connectrpc.code import Code
+from connectrpc.errors import ConnectError
+from flyteidl2.actions import actions_service_pb2
 from flyteidl2.common import identifier_pb2
 from flyteidl2.task import task_definition_pb2
 from flyteidl2.workflow import queue_service_pb2, run_definition_pb2
@@ -19,7 +21,18 @@ from flyte._logging import log, logger
 
 from ._action import Action
 from ._informer import InformerCache
-from ._service_protocol import ClientSet, QueueService, StateService
+from ._service_protocol import ActionsService, ClientSet, QueueService, StateService
+
+
+def _actions_metadata(action: Action) -> dict[str, str]:
+    """Build request headers for Actions service calls."""
+    run = action.action_id.run
+    return {
+        "x-actions-project": run.project,
+        "x-actions-domain": run.domain,
+        "x-actions-run": run.name,
+        "x-actions-parent-action": action.parent_action_name,
+    }
 
 
 class Controller:
@@ -193,6 +206,7 @@ class Controller:
         client_set = await self._client_coro
         self._state_service: StateService = client_set.state_service
         self._queue_service: QueueService = client_set.queue_service
+        self._actions_service: ActionsService | None = client_set.actions_service
         self._resource_log_task = asyncio.create_task(self._bg_log_stats())
         # We will wait for this to signal that the thread is ready
         # Signal the main thread that we're ready
@@ -216,7 +230,7 @@ class Controller:
             with self._thread_com_lock:
                 self._loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(self._loop)
-                self._loop.set_exception_handler(flyte.errors.silence_grpc_polling_error)
+                self._loop.set_exception_handler(flyte.errors.silence_polling_error)
             logger.debug(f"Controller thread started with new event loop: {threading.current_thread().name}")
 
             # Create an event to signal the errors were observed in the thread's loop
@@ -244,6 +258,7 @@ class Controller:
             self._state_service,
             fn=self._bg_handle_informer_error,
             timeout=self._informer_start_wait_timeout,
+            actions_service=self._actions_service,
         )
         if informer:
             return await informer.get(action_id.name)
@@ -269,6 +284,7 @@ class Controller:
             self._state_service,
             fn=self._bg_handle_informer_error,
             timeout=self._informer_start_wait_timeout,
+            actions_service=self._actions_service,
         )
         await informer.submit(action)
 
@@ -300,15 +316,20 @@ class Controller:
             async with self._rate_limiter:
                 logger.info(f"Cancelling action: {action.name}")
                 try:
-                    await self._queue_service.AbortQueuedAction(
-                        queue_service_pb2.AbortQueuedActionRequest(action_id=action.action_id),
-                        wait_for_ready=True,
-                    )
+                    if self._actions_service:
+                        await self._actions_service.abort(
+                            actions_service_pb2.AbortRequest(action_id=action.action_id),
+                            headers=_actions_metadata(action),
+                        )
+                    else:
+                        await self._queue_service.abort_queued_action(
+                            queue_service_pb2.AbortQueuedActionRequest(action_id=action.action_id),
+                        )
                     logger.info(f"Successfully cancelled action: {action.name}")
-                except grpc.aio.AioRpcError as e:
-                    if e.code() in [
-                        grpc.StatusCode.NOT_FOUND,
-                        grpc.StatusCode.FAILED_PRECONDITION,
+                except ConnectError as e:
+                    if e.code in [
+                        Code.NOT_FOUND,
+                        Code.FAILED_PRECONDITION,
                     ]:
                         logger.info(f"Action {action.name} not found, assumed completed or cancelled.")
                         return
@@ -353,42 +374,61 @@ class Controller:
                 elif action.type == "trace":
                     trace = action.trace
 
-                logger.debug(f"Attempting to launch action: {action.name}")
+                logger.debug(f"Attempting to launch action: {action.name}, actions? {bool(self._actions_service)}")
                 try:
-                    await self._queue_service.EnqueueAction(
-                        queue_service_pb2.EnqueueActionRequest(
-                            action_id=action.action_id,
-                            parent_action_name=action.parent_action_name,
-                            task=task,
-                            trace=trace,
-                            input_uri=action.inputs_uri,
-                            run_output_base=action.run_output_base,
-                            group=action.group.name if action.group else None,
-                            # Subject is not used in the current implementation
-                        ),
-                        wait_for_ready=True,
-                        timeout=self._enqueue_timeout,
-                    )
+                    if self._actions_service:
+                        await self._actions_service.enqueue(
+                            actions_service_pb2.EnqueueRequest(
+                                action=actions_service_pb2.Action(
+                                    action_id=action.action_id,
+                                    parent_action_name=action.parent_action_name,
+                                    task=task,
+                                    trace=trace,
+                                    input_uri=action.inputs_uri,
+                                    run_output_base=action.run_output_base,
+                                    group=action.group.name if action.group else None,
+                                ),
+                            ),
+                            timeout_ms=int(self._enqueue_timeout * 1000),
+                            headers=_actions_metadata(action),
+                        )
+                    else:
+                        await self._queue_service.enqueue_action(
+                            queue_service_pb2.EnqueueActionRequest(
+                                action_id=action.action_id,
+                                parent_action_name=action.parent_action_name,
+                                task=task,
+                                trace=trace,
+                                input_uri=action.inputs_uri,
+                                run_output_base=action.run_output_base,
+                                group=action.group.name if action.group else None,
+                            ),
+                            timeout_ms=int(self._enqueue_timeout * 1000),
+                        )
                     logger.info(f"Successfully launched action: {action.name}")
-                except grpc.aio.AioRpcError as e:
-                    if e.code() == grpc.StatusCode.ALREADY_EXISTS:
+                except ConnectError as e:
+                    if e.code == Code.ALREADY_EXISTS:
                         logger.info(f"Action {action.name} already exists, continuing to monitor.")
                         return
-                    if e.code() in [
-                        grpc.StatusCode.FAILED_PRECONDITION,
-                        grpc.StatusCode.INVALID_ARGUMENT,
-                        grpc.StatusCode.NOT_FOUND,
+                    if e.code == Code.ABORTED:
+                        # The run was aborted; engine will auto-abort other in-flight actions.
+                        # Surface as a system error — outer handler in _bg_run wraps and exits.
+                        raise flyte.errors.RuntimeSystemError(e.code.name, f"Run aborted: {e.message}") from e
+                    if e.code in [
+                        Code.INVALID_ARGUMENT,
+                        Code.NOT_FOUND,
                     ]:
+                        # Not retryable; surface as a per-action system error.
                         raise flyte.errors.RuntimeSystemError(
-                            e.code().name, f"Precondition failed: {e.details()}"
+                            e.code.name, f"Action launch failed ({e.code.name}): {e.message}"
                         ) from e
-                    # For all other errors, we will retry with backoff
+                    # FAILED_PRECONDITION indicates the shard is wrong or we've hit a limit — retry with backoff.
+                    # For all other errors, we will also retry with backoff.
                     logger.error(
-                        f"Failed to launch action: {action.name}, Code: {e.code()}, "
-                        f"Details {e.details()} backing off..."
+                        f"Failed to launch action: {action.name}, Code: {e.code}, Details {e.message} backing off..."
                     )
                     logger.debug(f"Action details: {action}")
-                    raise flyte.errors.SlowDownError(f"Failed to launch action: {e.details()}") from e
+                    raise flyte.errors.SlowDownError(f"Failed to launch action: {e.message}") from e
 
     async def _bg_process(self, action: Action):
         """Process resource updates"""

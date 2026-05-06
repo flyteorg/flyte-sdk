@@ -19,7 +19,7 @@ PATH_TO_FASTTASK_WORKER = pathlib.Path("../../../private/flyte/fasttask/worker-v
 #     .with_local_v2()
 # )
 
-actor_image = flyte.Image.from_debian_base().with_pip_packages("unionai-reuse==0.1.3")
+actor_image = flyte.Image.from_debian_base().with_pip_packages("unionai-reuse")
 
 env = flyte.TaskEnvironment(
     name="fail_reuse",

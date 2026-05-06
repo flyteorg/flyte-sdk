@@ -1,0 +1,20 @@
+[build-system]
+build-backend = "hatchling.build"
+requires = ["hatchling"]
+
+[project]
+name = "uv-project-local-dep"
+version = "0.1.0"
+description = "Example uv project with local dependencies"
+requires-python = ">=3.10"
+dependencies = ["my-app", "my-lib"]
+
+[tool.uv.sources]
+my-app = { path = "my_app", editable = true }
+my-lib = { path = "my_lib", editable = true }
+
+[tool.hatch.build.targets.wheel]
+packages = [
+  "my_app/src/my_app",
+  "my_lib/src/my_lib",
+]

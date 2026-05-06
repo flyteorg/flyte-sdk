@@ -62,13 +62,13 @@ class Snowflake(AsyncConnectorExecutorMixin, TaskTemplate):
             output_dataframe_type: If some data is produced by this query, then you can specify the
                 output dataframe type.
             secret_group: Optional group for secrets in the secret store. The environment variable
-                name is auto-generated from ``{secret_group}_{key}``, uppercased with hyphens
+                name is auto-generated from `{secret_group}_{key}`, uppercased with hyphens
                 replaced by underscores. If omitted, the key alone is used.
             snowflake_private_key: The secret key for the Snowflake private key (key-pair auth).
             snowflake_private_key_passphrase: The secret key for the private key passphrase
                 (if encrypted).
             batch: When True, list inputs are expanded into a multi-row VALUES clause. The
-                query_template should contain a single ``VALUES (%(col)s, ...)`` placeholder
+                query_template should contain a single `VALUES (%(col)s, ...)` placeholder
                 and each input should be a list of equal length.
 
         Note: For password authentication or other auth methods, pass them via `connection_kwargs`.

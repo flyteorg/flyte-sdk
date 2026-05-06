@@ -6,6 +6,7 @@ focusing on container_cmd, container_args, and Parameter handling.
 """
 
 import pathlib
+from datetime import timedelta
 
 import pytest
 
@@ -14,7 +15,7 @@ from flyte._internal.imagebuild.image_builder import ImageCache
 from flyte._resources import Resources
 from flyte.app import AppEnvironment
 from flyte.app._parameter import Parameter
-from flyte.app._types import Domain, Link, Port, Scaling
+from flyte.app._types import Domain, Link, Port, Scaling, Timeouts
 from flyte.models import CodeBundle, SerializationContext
 
 # Import flyte.io first and inject into app._input module to fix NameError bug
@@ -107,8 +108,8 @@ def test_app_environment_comprehensive_happy_path():
     assert app_env.parameters[1].download is True
     assert app_env.parameters[1].mount == "/mnt/data"
 
-    # Verify includes
-    assert app_env.include == ["*.py", "requirements.txt"]
+    # Verify includes (normalized to tuple so Environment stays hashable)
+    assert app_env.include == ("*.py", "requirements.txt")
 
     # Test container_args returns the args as-is (list format)
     ctx = SerializationContext(
@@ -239,16 +240,7 @@ def test_app_environment_container_cmd_custom_command():
     - List-format custom commands are used as-is
     - String-format custom commands are split using shlex
     - Custom commands completely replace the default fserve command
-    - Parameters are NOT added when using custom commands (they're user-managed)
     """
-    # Test with list command
-    app_env_list = AppEnvironment(
-        name="app-custom-cmd-list",
-        image=Image.from_base("python:3.11"),
-        command=["python", "app.py"],
-        parameters=[Parameter(value="config.yaml", name="config")],  # Parameters should be ignored with custom command
-    )
-
     ctx = SerializationContext(
         org="test-org",
         project="test-project",
@@ -257,9 +249,15 @@ def test_app_environment_container_cmd_custom_command():
         root_dir=pathlib.Path.cwd(),
     )
 
+    # Test with list command
+    app_env_list = AppEnvironment(
+        name="app-custom-cmd-list",
+        image=Image.from_base("python:3.11"),
+        command=["python", "app.py"],
+    )
+
     cmd_list = app_env_list.container_cmd(ctx)
     assert cmd_list == ["python", "app.py"]
-    assert "--parameters" not in cmd_list  # Parameters not added for custom commands
 
     # Test with string command (will be split using shlex)
     app_env_str = AppEnvironment(
@@ -270,6 +268,19 @@ def test_app_environment_container_cmd_custom_command():
 
     cmd_str = app_env_str.container_cmd(ctx)
     assert cmd_str == ["uvicorn", "app:main", "--host", "0.0.0.0"]
+
+
+def test_app_environment_custom_command_with_parameters_raises():
+    """
+    GOAL: Verify that combining parameters with a non-fserve custom command raises.
+    """
+    with pytest.raises(ValueError, match="Cannot use 'parameters' with a custom 'command'"):
+        AppEnvironment(
+            name="app-bad-combo",
+            image=Image.from_base("python:3.11"),
+            command=["python", "app.py"],
+            parameters=[Parameter(value="config.yaml", name="config")],
+        )
 
 
 def test_app_environment_container_args_variations():
@@ -596,7 +607,7 @@ def test_app_environment_default_values():
     assert app.links == []
     assert app.parameters == []
     assert app.cluster_pool == "default"
-    assert app.include == []
+    assert app.include == ()
     assert app.env_vars is None
     assert app.secrets is None
 
@@ -1171,3 +1182,111 @@ def test_app_environment_decorators_with_async_functions():
     assert app._server == async_server
     assert app._on_shutdown is not None
     assert app._on_shutdown == async_shutdown
+
+
+@pytest.mark.parametrize(
+    "request_timeout_val, expected_seconds",
+    [
+        (None, None),
+        (30, 30),
+        (3600, 3600),
+        (timedelta(minutes=5), 300),
+        (timedelta(hours=1), 3600),
+    ],
+)
+def test_timeouts_request_valid(request_timeout_val, expected_seconds):
+    """
+    GOAL: Validate that Timeouts.request accepts int, timedelta, and None, and normalizes int to timedelta.
+
+    Tests that:
+    - None is preserved as None
+    - int values are converted to timedelta(seconds=N)
+    - timedelta values are preserved
+    - Values up to 1 hour are accepted
+    """
+    app_env = AppEnvironment(
+        name="timeout-app",
+        image="python:3.11",
+        timeouts=Timeouts(request=request_timeout_val),
+    )
+    if expected_seconds is None:
+        assert app_env.timeouts.request is None
+    else:
+        assert isinstance(app_env.timeouts.request, timedelta)
+        assert app_env.timeouts.request.total_seconds() == expected_seconds
+
+
+@pytest.mark.parametrize(
+    "request_timeout_val, expected_error",
+    [
+        (-1, "request timeout must be non-negative"),
+        (timedelta(seconds=-1), "request timeout must be non-negative"),
+        (3601, "request timeout must not exceed"),
+        (timedelta(hours=1, seconds=1), "request timeout must not exceed"),
+        (timedelta(hours=2), "request timeout must not exceed"),
+    ],
+)
+def test_timeouts_request_invalid(request_timeout_val, expected_error):
+    """
+    GOAL: Validate that Timeouts.request rejects negative values and values exceeding 1 hour.
+
+    Tests that ValueError is raised with a clear message.
+    """
+    with pytest.raises(ValueError, match=expected_error):
+        AppEnvironment(
+            name="timeout-app",
+            image="python:3.11",
+            timeouts=Timeouts(request=request_timeout_val),
+        )
+
+
+def test_timeouts_request_invalid_type():
+    """
+    GOAL: Validate that Timeouts.request rejects invalid types.
+    """
+    with pytest.raises(TypeError, match="Expected request to be of type int or timedelta"):
+        AppEnvironment(
+            name="timeout-app",
+            image="python:3.11",
+            timeouts=Timeouts(request=30.5),
+        )
+
+
+def test_app_environment_timeouts_invalid_type():
+    """
+    GOAL: Validate that AppEnvironment rejects a non-Timeouts value for the timeouts field.
+    """
+    with pytest.raises(TypeError, match="Expected timeouts to be of type Timeouts"):
+        AppEnvironment(
+            name="timeout-app",
+            image="python:3.11",
+            timeouts="invalid",  # type: ignore
+        )
+
+
+def test_app_environment_clone_with_timeouts():
+    """
+    GOAL: Validate that clone_with can override timeouts.
+
+    Tests that:
+    - A cloned app inherits timeouts from the original when not overridden
+    - A cloned app can override timeouts with a new Timeouts object
+    - A cloned app can clear timeouts by passing Timeouts() (the default)
+    """
+    original = AppEnvironment(
+        name="original-app",
+        image="python:3.11",
+        timeouts=Timeouts(request=30),
+    )
+
+    # Clone without overriding timeouts - should inherit
+    cloned = original.clone_with(name="cloned-app")
+    assert cloned.timeouts.request == timedelta(seconds=30)
+
+    # Clone with overriding timeouts
+    cloned_override = original.clone_with(name="cloned-override", timeouts=Timeouts(request=60))
+    assert cloned_override.timeouts.request == timedelta(seconds=60)
+
+    # Clone clearing timeouts back to the default (no timeout)
+    cloned_cleared = original.clone_with(name="cloned-cleared", timeouts=Timeouts())
+    assert cloned_cleared.timeouts.request is None

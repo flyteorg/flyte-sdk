@@ -3,7 +3,9 @@ import atexit
 import concurrent.futures
 import os
 import pathlib
+import shutil
 import threading
+from contextlib import nullcontext
 from typing import Any, Callable, Protocol, Tuple, TypeVar
 
 from flyteidl2.task import task_definition_pb2
@@ -20,10 +22,36 @@ from flyte._persistence._recorder import RunRecorder
 from flyte._persistence._task_cache import LocalTaskCache
 from flyte._task import AsyncFunctionTaskTemplate, TaskTemplate
 from flyte._utils.helpers import _selector_policy
-from flyte.models import ActionID, NativeInterface
+from flyte.models import ActionID, CheckpointPaths, NativeInterface
 from flyte.remote._task import TaskDetails
+from flyte.storage._storage import strip_file_header
 
 R = TypeVar("R")
+
+# Local retry backoff defaults for task errors during local runs. Do not
+# expose these to the user since RetryStrategy only supports a count of retries.
+# This is because currently the backend implements the underlying retry strategy,
+# and does not allow for custom backoff strategies.
+_MIN_BACKOFF_ON_ERR_SEC = 0.5
+_BACKOFF_MULTIPLIER = 2.0
+
+
+def _stage_prev_checkpoint_for_local_retry(checkpoint_paths: CheckpointPaths | None) -> None:
+    """
+    Before a local retry, copy the last attempt's checkpoint object into ``prev_checkpoint`` so
+    :class:`~flyte.Checkpoint` can load it (mirrors remote behavior where the platform stages prior output).
+    """
+    if checkpoint_paths is None:
+        return
+    dest = checkpoint_paths.checkpoint_path
+    prev = checkpoint_paths.prev_checkpoint_path
+    if not dest or not prev:
+        return
+    src = pathlib.Path(strip_file_header(str(dest)))
+    dst = pathlib.Path(strip_file_header(str(prev)))
+    if src.is_file():
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
 
 
 class ControllerProtocol(Protocol):
@@ -103,7 +131,9 @@ class LocalController(ControllerProtocol):
         if not tctx:
             raise flyte.errors.RuntimeSystemError("BadContext", "Task context not initialized")
 
-        inputs = await convert.convert_from_native_to_inputs(_task.native_interface, *args, **kwargs)
+        _ctx = ctx.new_in_driver_literal_conversion(True) if ctx.is_task_context() else nullcontext()
+        with _ctx:
+            inputs = await convert.convert_from_native_to_inputs(_task.native_interface, *args, **kwargs)
         inputs_hash = convert.generate_inputs_hash_from_proto(inputs.proto_inputs)
         task_interface = transform_native_to_typed_interface(_task.interface)
 
@@ -135,7 +165,8 @@ class LocalController(ControllerProtocol):
         out = None
         cache_hit = False
         # We only get output from cache if the cache behavior is set to auto
-        if task_cache.behavior == "auto":
+        # and run cache is not disabled
+        if task_cache.behavior == "auto" and not tctx.disable_run_cache:
             out = await LocalTaskCache.get(cache_key)
             if out is not None:
                 cache_hit = True
@@ -176,6 +207,9 @@ class LocalController(ControllerProtocol):
                     )
                     rendered_links.append((link.name, uri))
 
+        # When run cache is disabled, never report cache hit to the TUI
+        effective_cache_hit = cache_hit if not tctx.disable_run_cache else False
+
         self._recorder.record_start(
             action_id=sub_action_id.name,
             task_name=_task.name,
@@ -185,25 +219,61 @@ class LocalController(ControllerProtocol):
             output_path=sub_action_output_path,
             has_report=_task.report,
             cache_enabled=cache_enabled,
-            cache_hit=cache_hit,
+            cache_hit=effective_cache_hit,
+            disable_run_cache=tctx.disable_run_cache,
             context=tctx.custom_context or None,
             group=tctx.group_data.name if tctx.group_data else None,
             log_links=rendered_links,
         )
 
         if out is None:
-            out, err = await direct_dispatch(
-                _task,
-                controller=self,
-                action=sub_action_id,
-                raw_data_path=sub_action_raw_data_path,
-                inputs=inputs,
-                version=cache_version,
-                checkpoints=tctx.checkpoints,
-                code_bundle=tctx.code_bundle,
-                output_path=sub_action_output_path,
-                run_base_dir=tctx.run_base_dir,
-            )
+            retries = _task.retries.count if hasattr(_task.retries, "count") else int(_task.retries)
+            max_attempts = retries + 1
+            err = None
+            for attempt_num in range(1, max_attempts + 1):
+                if attempt_num > 1:
+                    _stage_prev_checkpoint_for_local_retry(tctx.checkpoint_paths)
+                self._recorder.record_attempt_start(
+                    action_id=sub_action_id.name,
+                    attempt_num=attempt_num,
+                )
+                out, err = await direct_dispatch(
+                    _task,
+                    controller=self,
+                    action=sub_action_id,
+                    raw_data_path=sub_action_raw_data_path,
+                    inputs=inputs,
+                    version=cache_version,
+                    checkpoint_paths=tctx.checkpoint_paths,
+                    code_bundle=tctx.code_bundle,
+                    output_path=sub_action_output_path,
+                    run_base_dir=tctx.run_base_dir,
+                )
+                if not err:
+                    self._recorder.record_attempt_complete(
+                        action_id=sub_action_id.name,
+                        attempt_num=attempt_num,
+                        outputs=out,
+                    )
+                    break
+                self._recorder.record_attempt_failure(
+                    action_id=sub_action_id.name,
+                    attempt_num=attempt_num,
+                    error=str(err),
+                )
+                if not err.recoverable:
+                    logger.warning(
+                        f"Task '{_task.name}' raised a non-recoverable error on attempt "
+                        f"{attempt_num}/{max_attempts}, skipping remaining retries."
+                    )
+                    break
+                if attempt_num < max_attempts:
+                    backoff = _MIN_BACKOFF_ON_ERR_SEC * (_BACKOFF_MULTIPLIER ** (attempt_num - 1))
+                    logger.warning(
+                        f"Task '{_task.name}' action '{sub_action_id.name}' failed on attempt "
+                        f"{attempt_num}/{max_attempts}; retrying in {backoff:.2f}s..."
+                    )
+                    await asyncio.sleep(backoff)
 
             if err:
                 self._recorder.record_failure(action_id=sub_action_id.name, error=str(err))
@@ -213,8 +283,8 @@ class LocalController(ControllerProtocol):
                 else:
                     raise flyte.errors.RuntimeSystemError("BadError", "Unknown error")
 
-            # store into cache
-            if cache_enabled and out is not None:
+            # store into cache (skip when run cache is disabled)
+            if cache_enabled and out is not None and not tctx.disable_run_cache:
                 await LocalTaskCache.set(cache_key, out)
 
         self._recorder.record_complete(action_id=sub_action_id.name, outputs=out)
@@ -265,7 +335,9 @@ class LocalController(ControllerProtocol):
 
         converted_inputs = convert.Inputs.empty()
         if _interface.inputs:
-            converted_inputs = await convert.convert_from_native_to_inputs(_interface, *args, **kwargs)
+            _ctx = ctx.new_in_driver_literal_conversion(True) if ctx.is_task_context() else nullcontext()
+            with _ctx:
+                converted_inputs = await convert.convert_from_native_to_inputs(_interface, *args, **kwargs)
             assert converted_inputs
 
         inputs_hash = convert.generate_inputs_hash_from_proto(converted_inputs.proto_inputs)
@@ -314,16 +386,21 @@ class LocalController(ControllerProtocol):
         if not tctx:
             raise flyte.errors.NotInTaskContextError("BadContext", "Task context not initialized")
 
-        if info.interface.outputs and info.output:
-            # If the result is not an AsyncGenerator, convert it directly
-            converted_outputs = await convert.convert_from_native_to_outputs(info.output, info.interface, info.name)
-            assert converted_outputs
-            self._recorder.record_complete(action_id=info.action.name, outputs=converted_outputs)
-        elif info.error:
+        if info.error:
             # If there is an error, convert it to a native error
             converted_error = convert.convert_from_native_to_error(info.error)
             assert converted_error
             self._recorder.record_failure(action_id=info.action.name, error=str(info.error))
+        else:
+            converted_outputs = None
+            if info.interface.outputs and info.output:
+                _ctx = ctx.new_in_driver_literal_conversion(True) if ctx.is_task_context() else nullcontext()
+                with _ctx:
+                    converted_outputs = await convert.convert_from_native_to_outputs(
+                        info.output, info.interface, info.name
+                    )
+                assert converted_outputs
+            self._recorder.record_complete(action_id=info.action.name, outputs=converted_outputs)
         assert info.action
         assert info.start_time
         assert info.end_time

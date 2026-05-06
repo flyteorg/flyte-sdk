@@ -23,3 +23,42 @@ def tui():
     from flyte.cli._tui import launch_tui_explore
 
     launch_tui_explore()
+
+
+_DEFAULT_DEVBOX_IMAGE = "cr.flyte.org/flyteorg/flyte-devbox:latest"
+_DEFAULT_DEVBOX_GPU_IMAGE = "cr.flyte.org/flyteorg/flyte-devbox:gpu-latest"
+
+
+@start.command()
+@click.option(
+    "--image",
+    default=None,
+    show_default=f"{_DEFAULT_DEVBOX_IMAGE} ({_DEFAULT_DEVBOX_GPU_IMAGE} when --gpu)",
+    help="Docker image to use for the devbox cluster.",
+)
+@click.option(
+    "--dev",
+    is_flag=True,
+    default=False,
+    help="Enable dev mode inside the devbox cluster (sets FLYTE_DEV=True).",
+)
+@click.option(
+    "--gpu",
+    is_flag=True,
+    default=False,
+    help="Pass host GPUs into the devbox container (adds --gpus all to docker run). "
+    "Requires an NVIDIA-enabled host. Defaults --image to a GPU-capable image "
+    "if --image is not explicitly set.",
+)
+@click.pass_context
+def devbox(ctx: click.Context, image: str | None, dev: bool, gpu: bool):
+    """Start a local Flyte devbox cluster."""
+    from flyte._sentry import count
+    from flyte.cli._devbox import launch_devbox
+
+    if image is None:
+        image = _DEFAULT_DEVBOX_GPU_IMAGE if gpu else _DEFAULT_DEVBOX_IMAGE
+
+    count("cli.command", command="start_devbox")
+    log_format = getattr(ctx.obj, "log_format", "console") if ctx.obj else "console"
+    launch_devbox(image, dev, gpu=gpu, log_format=log_format)

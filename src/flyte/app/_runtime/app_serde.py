@@ -122,10 +122,24 @@ def _serialized_pod_spec(
 
     # Process containers
     for container in containers:
-        img = container.image
-        if isinstance(img, flyte.Image):
-            img = lookup_image_in_cache(serialization_context, container.name, img)
-        container.image = img
+        if container.name == pod_template.primary_container_name:
+            # For the primary container, merge the app_env.image if the container's image is not set
+            if container.image is None:
+                # Use app_env.image as the fallback for the primary container
+                img: flyte.Image | None = None
+                if app_env.image == "auto":
+                    img = flyte.Image.from_debian_base()
+                elif isinstance(app_env.image, str):
+                    img = flyte.Image.from_base(app_env.image)
+                else:
+                    img = app_env.image
+                container.image = lookup_image_in_cache(serialization_context, app_env.name, img) if img else None
+            elif isinstance(container.image, flyte.Image):
+                container.image = lookup_image_in_cache(serialization_context, container.name, container.image)
+        else:
+            # For non-primary containers, just resolve flyte.Image objects
+            if isinstance(container.image, flyte.Image):
+                container.image = lookup_image_in_cache(serialization_context, container.name, container.image)
 
         if container.name == pod_template.primary_container_name:
             container.args = app_env.container_args(serialization_context)
@@ -204,9 +218,9 @@ def _get_scaling_metric(
         return None
 
     if isinstance(metric, Scaling.Concurrency):
-        return app_definition_pb2.ScalingMetric(concurrency=app_definition_pb2.Concurrency(val=metric.val))
+        return app_definition_pb2.ScalingMetric(concurrency=app_definition_pb2.Concurrency(target_value=metric.val))
     elif isinstance(metric, Scaling.RequestRate):
-        return app_definition_pb2.ScalingMetric(request_rate=app_definition_pb2.RequestRate(val=metric.val))
+        return app_definition_pb2.ScalingMetric(request_rate=app_definition_pb2.RequestRate(target_value=metric.val))
 
     return None
 
@@ -354,6 +368,13 @@ async def translate_app_env_to_idl(
         short_description=app_env.description,
     )
 
+    # Build timeout config
+    timeout_config = None
+    if app_env.timeouts.request is not None:
+        timeout_dur = Duration()
+        timeout_dur.FromTimedelta(app_env.timeouts.request)
+        timeout_config = app_definition_pb2.TimeoutConfig(request_timeout=timeout_dur)
+
     # Build the full App IDL
     return app_definition_pb2.App(
         metadata=app_definition_pb2.Meta(
@@ -381,5 +402,6 @@ async def translate_app_env_to_idl(
             container=container,
             pod=pod,
             inputs=await translate_parameters(parameters),
+            timeouts=timeout_config,
         ),
     )

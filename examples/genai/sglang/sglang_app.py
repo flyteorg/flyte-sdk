@@ -60,7 +60,7 @@ image = (
     .with_pip_packages("flashinfer-python", "flashinfer-cubin")
     .with_pip_packages("flashinfer-jit-cache", index_url="https://flashinfer.ai/whl/cu128")
     .with_pip_packages("sglang==0.5.7")
-    .with_pip_packages("flyteplugins-sglang", pre=True)
+    .with_pip_packages("flyteplugins-sglang")
 )
 
 # Define the SGLang app environment for the smallest Qwen3 model

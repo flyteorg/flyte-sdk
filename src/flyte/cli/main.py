@@ -2,7 +2,7 @@ import rich_click as click
 from typing_extensions import get_args
 
 import flyte
-from flyte._logging import LogFormat, initialize_logger, logger
+from flyte._logging import _LOG_LEVEL_MAP, LogFormat, initialize_logger, logger
 
 from . import _common as common
 from ._abort import abort
@@ -11,6 +11,7 @@ from ._common import CLIConfig
 from ._create import create
 from ._delete import delete
 from ._deploy import deploy
+from ._edit import edit
 from ._gen import gen
 from ._get import get
 from ._plugins import discover_and_register_plugins
@@ -18,6 +19,7 @@ from ._prefetch import prefetch
 from ._run import run
 from ._serve import serve
 from ._start import start
+from ._stop import stop
 from ._update import update
 from ._user import whoami
 
@@ -37,6 +39,10 @@ help_config = click.RichHelpConfiguration(
             {
                 "name": "Management of various objects.",
                 "commands": ["create", "get", "delete", "update"],
+            },
+            {
+                "name": "Settings management.",
+                "commands": ["edit"],
             },
             {
                 "name": "Build and deploy environments, tasks and images.",
@@ -99,6 +105,17 @@ def _verbosity_to_loglevel(verbosity: int) -> int | None:
     show_default=True,
 )
 @click.option(
+    "--image-builder",
+    "--builder",
+    type=click.Choice(["local", "remote"]),
+    default=None,
+    help="Image builder to use for building images. Overrides the config file setting."
+    " If not specified, the builder from the config file (image.builder) is used,"
+    " falling back to 'local'.",
+    show_default=True,
+    required=False,
+)
+@click.option(
     "--auth-type",
     type=click.Choice(common.ALL_AUTH_OPTIONS, case_sensitive=False),
     default=None,
@@ -149,6 +166,15 @@ def _verbosity_to_loglevel(verbosity: int) -> int | None:
     required=False,
 )
 @click.option(
+    "--user-log-level",
+    type=click.Choice(["debug", "info", "warning", "error", "critical"], case_sensitive=False),
+    envvar="USER_LOG_LEVEL",
+    default="info",
+    show_default=True,
+    help="Log level for user task logs. Independent of the internal Flyte log level (-v).",
+    required=False,
+)
+@click.option(
     "--reset-root-logger",
     is_flag=True,
     required=False,
@@ -163,6 +189,7 @@ def main(
     ctx: click.Context,
     endpoint: str | None,
     insecure: bool,
+    image_builder: str | None,
     verbose: int,
     log_format: LogFormat,
     reset_root_logger: bool,
@@ -170,6 +197,7 @@ def main(
     config_file: str | None,
     auth_type: str | None = None,
     output_format: common.OutputFormat = "table",
+    user_log_level: str = "info",
 ):
     """
     The Flyte CLI is the command line interface for working with the Flyte SDK and backend.
@@ -209,8 +237,14 @@ def main(
     import flyte.config as config
 
     log_level = _verbosity_to_loglevel(verbose)
-    if log_level is not None or log_format != "console" or reset_root_logger:
-        initialize_logger(log_level=log_level, log_format=log_format, reset_root_logger=reset_root_logger)
+    user_log_level_int = _LOG_LEVEL_MAP[user_log_level.lower()]
+    initialize_logger(
+        log_level=log_level,
+        log_format=log_format,
+        enable_rich=True,
+        reset_root_logger=reset_root_logger,
+        user_log_level=user_log_level_int,
+    )
 
     cfg = config.auto(config_file=config_file)
     if cfg.source:
@@ -220,14 +254,20 @@ def main(
         log_level=log_level,
         log_format=log_format,
         reset_root_logger=reset_root_logger,
+        user_log_level=user_log_level_int,
         endpoint=endpoint,
         insecure=insecure,
+        image_builder=image_builder,
         org=org,
         config=cfg,
         ctx=ctx,
         auth_type=auth_type,
         output_format=output_format,
     )
+
+    from flyte._status import set_output_mode
+
+    set_output_mode("rich" if output_format == "table" else "plain")
 
 
 main.add_command(run)
@@ -242,7 +282,9 @@ main.add_command(whoami)  # type: ignore
 main.add_command(update)  # type: ignore
 main.add_command(serve)  # type: ignore
 main.add_command(start)  # type: ignore
+main.add_command(stop)  # type: ignore
 main.add_command(prefetch)  # type: ignore
+main.add_command(edit)  # type: ignore
 
 # Discover and register CLI plugins from installed packages
 discover_and_register_plugins(main)

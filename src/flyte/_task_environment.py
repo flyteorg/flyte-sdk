@@ -36,39 +36,103 @@ from .models import MAX_INLINE_IO_BYTES, NativeInterface
 
 if TYPE_CHECKING:
     from ._task import F, P, R
+    from .sandbox._code_task import CodeTaskTemplate
+    from .sandbox._task import SandboxedTaskTemplate
 
 
 @rich.repr.auto
 @dataclass(init=True, repr=True)
 class TaskEnvironment(Environment):
     """
-    Environment class to define a new environment for a set of tasks.
+    Define an execution environment for a set of tasks.
 
-    Example usage:
+    Task configuration in Flyte has three levels (most general to most specific):
+
+    1. **TaskEnvironment** — sets defaults for all tasks in the environment
+    2. **@env.task decorator** — overrides per-task settings
+    3. **task.override()** — overrides at invocation time
+
+    For shared parameters, the more specific level overrides the more general one.
+
+    Example:
+
     ```python
-    env = flyte.TaskEnvironment(name="my_env", image="my_image", resources=Resources(cpu="1", memory="1Gi"))
+    env = flyte.TaskEnvironment(
+        name="my_env",
+        image=flyte.Image.from_debian_base(python="3.12").with_pip_packages("pandas"),
+        resources=flyte.Resources(cpu="1", memory="1Gi"),
+    )
 
     @env.task
     async def my_task():
         pass
     ```
 
-    :param name: Name of the environment
-    :param image: Docker image to use for the environment. If set to "auto", will use the default image.
-    :param resources: Resources to allocate for the environment.
-    :param env_vars: Environment variables to set for the environment.
-    :param secrets: Secrets to inject into the environment.
-    :param depends_on: Environment dependencies to hint, so when you deploy the environment,
-        the dependencies are also deployed. This is useful when you have a set of environments
-        that depend on each other.
-    :param cache: Cache policy for the environment.
-    :param reusable: Reuse policy for the environment, if set, a python process may be reused for multiple tasks.
-    :param plugin_config: Optional plugin configuration for custom task types.
-        If set, all tasks in this environment will use the specified plugin configuration.
-    :param queue: Optional queue name to use for tasks in this environment.
-        If not set, the default queue will be used.
-    :param pod_template: Optional pod template to use for tasks in this environment.
-        If not set, the default pod template will be used.
+    **Parameter interaction across configuration levels:**
+
+    | Parameter | `TaskEnvironment` | `@env.task` | `task.override()` |
+    |-----------|:-----------------:|:-----------:|:-----------------:|
+    | `name` | Yes (required) | — | — |
+    | `image` | Yes | — | — |
+    | `depends_on` | Yes | — | — |
+    | `description` | Yes | — | — |
+    | `plugin_config` | Yes | — | — |
+    | `resources` | Yes | — | Yes* |
+    | `env_vars` | Yes | — | Yes* |
+    | `secrets` | Yes | — | Yes* |
+    | `cache` | Yes | Yes | Yes |
+    | `pod_template` | Yes | Yes | Yes |
+    | `reusable` | Yes | — | Yes |
+    | `interruptible` | Yes | Yes | Yes |
+    | `queue` | Yes | Yes | Yes |
+    | `short_name` | — | Yes | Yes |
+    | `retries` | — | Yes | Yes |
+    | `timeout` | — | Yes | Yes |
+    | `max_inline_io_bytes` | — | Yes | Yes |
+    | `links` | — | Yes | Yes |
+    | `report` | — | Yes | — |
+    | `triggers` | — | Yes | — |
+    | `docs` | — | Yes | — |
+
+    *When `reusable` is set, `resources`, `env_vars`, and `secrets` can only
+    be overridden via `task.override()` with `reusable="off"` in the same call.
+
+    :param name: Name of the environment (required). Must be snake_case or kebab-case.
+        TaskEnvironment level only. The fully-qualified name of each task is
+        `<env_name>.<function_name>` (e.g., environment `"my_env"` containing
+        function `my_task` produces FQN `"my_env.my_task"`). Neither component
+        is overridable.
+    :param image: Docker image for the environment. Can be a string (image URI),
+        an `Image` object, or `"auto"` to use the default image.
+        TaskEnvironment level only.
+    :param depends_on: List of other environments this one depends on. Used at deploy time
+        to ensure dependencies are also deployed. TaskEnvironment level only.
+    :param description: Human-readable description (max 255 characters).
+        TaskEnvironment level only.
+    :param plugin_config: Plugin configuration for custom task types (e.g., Ray, Spark).
+        Cannot be combined with `reusable`. TaskEnvironment level only.
+    :param resources: Compute resources (CPU, memory, GPU, disk). Overridable via
+        `task.override(resources=...)` when not using reusable containers.
+    :param env_vars: Environment variables as `dict[str, str]`. Overridable via
+        `task.override(env_vars=...)` when not using reusable containers.
+    :param secrets: Secrets to inject. Overridable via `task.override(secrets=...)`
+        when not using reusable containers.
+    :param cache: Cache policy — `"auto"`, `"override"`, `"disable"`, or a `Cache` object.
+        Also settable in `@env.task(cache=...)` and `task.override(cache=...)`.
+    :param reusable: `ReusePolicy` for container reuse. Also overridable via
+        `task.override(reusable=...)`. Note: when `reusable` is set on the
+        environment, overriding `resources`, `env_vars`, or `secrets` in
+        `task.override()` requires passing `reusable="off"` in the same call.
+        Additionally, `secrets` cannot be overridden at the `@env.task`
+        decorator level when the environment has `reusable` set.
+    :param queue: Queue name for scheduling. Queues identify specific partitions
+        of your compute infrastructure (e.g., a particular cluster in a
+        multi-cluster deployment) and are configured as part of your Flyte/Union
+        deployment. Also settable in `@env.task` and `task.override`.
+    :param pod_template: Kubernetes pod template for advanced configuration (sidecars,
+        volumes, etc.). Also settable in `@env.task` and `task.override`.
+    :param interruptible: Whether tasks can run on spot/preemptible instances. Also
+        settable in `@env.task` and `task.override`.
     """
 
     cache: CacheRequest = "disable"
@@ -97,27 +161,41 @@ class TaskEnvironment(Environment):
         depends_on: Optional[List[Environment]] = None,
         description: Optional[str] = None,
         interruptible: Optional[bool] = None,
+        include: Optional[Tuple[str, ...]] = None,
         **kwargs: Any,
     ) -> TaskEnvironment:
         """
-        Clone the TaskEnvironment with new parameters.
+        Create a new `TaskEnvironment` that shares most settings with this one
+        but differs in name and selected overrides.
 
-        Besides the base environment parameters, you can override kwargs like `cache`, `reusable`, etc.
+        Use `clone_with` when you need several environments that share a common
+        base configuration (image, resources, secrets, etc.) but vary in one or
+        two settings, avoiding repetition.
 
-        :param name: The name of the environment.
-        :param image: The image to use for the environment.
-        :param resources: The resources to allocate for the environment.
-        :param env_vars: The environment variables to set for the environment.
-        :param secrets: The secrets to inject into the environment.
-        :param depends_on: The environment dependencies to hint, so when you deploy the environment,
-            the dependencies are also deployed. This is useful when you have a set of environments
-            that depend on each other.
-        :param queue: The queue name to use for tasks in this environment.
-        :param pod_template: The pod template to use for tasks in this environment.
-        :param description: The description of the environment.
-        :param interruptible: Whether the environment is interruptible and can be scheduled on spot/preemptible
-            instances.
-        :param kwargs: Additional parameters to override the environment (e.g., cache, reusable, plugin_config).
+        ```python
+        gpu_env = flyte.TaskEnvironment(
+            name="gpu_env",
+            image=my_image,
+            resources=flyte.Resources(gpu="A100:1", memory="16Gi"),
+        )
+
+        # Same image and resources, different name and cache policy
+        gpu_env_cached = gpu_env.clone_with("gpu_env_cached", cache="auto")
+        ```
+
+        Any parameter not explicitly passed inherits the value from the
+        original environment.
+
+        :param name: Name for the new environment (required).
+        :param image: Override the container image.
+        :param resources: Override compute resources.
+        :param env_vars: Override environment variables.
+        :param secrets: Override secrets.
+        :param depends_on: Override deployment dependencies.
+        :param description: Override the description.
+        :param interruptible: Override the interruptible setting.
+        :param kwargs: Additional `TaskEnvironment`-specific overrides
+            (e.g., `cache`, `reusable`, `plugin_config`).
         """
         cache = kwargs.pop("cache", None)
         reusable = None
@@ -150,6 +228,8 @@ class TaskEnvironment(Environment):
             kwargs["description"] = description
         if interruptible is not None:
             kwargs["interruptible"] = interruptible
+        if include is not None:
+            kwargs["include"] = tuple(include) if not isinstance(include, tuple) else include
         return replace(self, **kwargs)
 
     @overload
@@ -168,6 +248,8 @@ class TaskEnvironment(Environment):
         queue: Optional[str] = None,
         triggers: Tuple[Trigger, ...] | Trigger = (),
         links: Tuple[Link, ...] | Link = (),
+        task_resolver: Any | None = None,
+        entrypoint: bool = False,
     ) -> Callable[[Callable[P, R]], AsyncFunctionTaskTemplate[P, R, Callable[P, R]]]: ...
 
     @overload
@@ -193,29 +275,39 @@ class TaskEnvironment(Environment):
         queue: Optional[str] = None,
         triggers: Tuple[Trigger, ...] | Trigger = (),
         links: Tuple[Link, ...] | Link = (),
+        task_resolver: Any | None = None,
+        entrypoint: bool = False,
     ) -> Callable[[F], AsyncFunctionTaskTemplate[P, R, F]] | AsyncFunctionTaskTemplate[P, R, F]:
         """
         Decorate a function to be a task.
 
         :param _func: Optional The function to decorate. If not provided, the decorator will return a callable that
         accepts a function to be decorated.
-        :param short_name: Optional A friendly name for the task (defaults to the function name)
+        :param short_name: Optional friendly name for the task or action, used in
+            parts of the UI (defaults to the function name). Overriding `short_name`
+            does not change the task's fully-qualified name.
         :param cache: Optional The cache policy for the task, defaults to auto, which will cache the results of the
         task.
-        :param retries: Optional The number of retries for the task, defaults to 0, which means no retries.
+        :param retries: Number of retries (`int`) or a `RetryStrategy` object that
+            defines retry behavior. Defaults to `0` (no retries).
         :param docs: Optional The documentation for the task, if not provided the function docstring will be used.
-        :param timeout: Optional The timeout for the task.
+        :param timeout: Task timeout, as a `timedelta` object or an integer number
+            of seconds. `0` means no timeout.
         :param pod_template: Optional The pod template for the task, if not provided the default pod template will be
         used.
         :param report: Optional Whether to generate the html report for the task, defaults to False.
-        :param max_inline_io_bytes: Maximum allowed size (in bytes) for all inputs and outputs passed directly to the
-         task (e.g., primitives, strings, dicts). Does not apply to files, directories, or dataframes.
+        :param max_inline_io_bytes: Maximum allowed size (in bytes) for all inputs and
+            outputs passed directly to the task (e.g., primitives, strings, dicts).
+            Does not apply to files, directories, or dataframes. Default is 10 MiB.
         :param triggers: Optional A tuple of triggers to associate with the task. This allows the task to be run on a
          schedule or in response to events. Triggers can be defined using the `flyte.trigger` module.
         :param links: Optional A tuple of links to associate with the task. Links can be used to provide
          additional context or information about the task. Links should implement the `flyte.Link` protocol
         :param interruptible: Optional Whether the task is interruptible, defaults to environment setting.
         :param queue: Optional queue name to use for this task. If not set, the environment's queue will be used.
+        :param entrypoint: Optionally mark a task as an entrypoint task, defaults to False. This serves as a hint to
+            the UI.
+        :param task_resolver: Optional TaskResolver protocol to load tasks using custom policy.
 
         :return: A TaskTemplate that can be used to deploy the task.
         """
@@ -273,8 +365,10 @@ class TaskEnvironment(Environment):
                 max_inline_io_bytes=max_inline_io_bytes,
                 queue=queue or self.queue,
                 interruptible=interruptible if interruptible is not None else self.interruptible,
+                entrypoint=entrypoint,
                 triggers=triggers if isinstance(triggers, tuple) else (triggers,),
                 links=links if isinstance(links, tuple) else (links,),
+                task_resolver=task_resolver,
             )
             self._tasks[task_name] = tmpl
             return tmpl
@@ -284,6 +378,11 @@ class TaskEnvironment(Environment):
         return cast(AsyncFunctionTaskTemplate[P, R, F], decorator(_func))
 
     @property
+    def sandbox(self) -> _SandboxNamespace:
+        """Access the sandbox namespace for creating sandboxed tasks."""
+        return _SandboxNamespace(self)
+
+    @property
     def tasks(self) -> Dict[str, TaskTemplate]:
         """
         Get all tasks defined in the environment.
@@ -291,7 +390,12 @@ class TaskEnvironment(Environment):
         return self._tasks
 
     @classmethod
-    def from_task(cls, name: str, *tasks: TaskTemplate) -> TaskEnvironment:
+    def from_task(
+        cls,
+        name: str,
+        *tasks: TaskTemplate,
+        depends_on: Optional[List["Environment"]] = None,
+    ) -> TaskEnvironment:
         """
         Create a TaskEnvironment from a list of tasks. All tasks should have the same image or no Image defined.
         Similarity of Image is determined by the python reference, not by value.
@@ -303,6 +407,7 @@ class TaskEnvironment(Environment):
 
         :param name: The name of the environment.
         :param tasks: The list of tasks to create the environment from.
+        :param depends_on: Optional list of environments that this environment depends on.
 
         :raises ValueError: If tasks are assigned to multiple environments or have different images.
         :return: The created TaskEnvironment.
@@ -314,9 +419,175 @@ class TaskEnvironment(Environment):
         if len(images) > 1:
             raise ValueError("Tasks must have the same image to be in the same environment.")
         image: Union[str, Image, None] = images.pop() if images else "auto"
-        env = cls(name, image=image)
+        env = cls(name, image=image, depends_on=depends_on or [])
         for t in tasks:
             env._tasks[t.name] = t
             t.parent_env = weakref.ref(env)
             t.parent_env_name = name
         return env
+
+
+class _SandboxNamespace:
+    """Namespace for sandbox operations on a `TaskEnvironment`.
+
+    Accessed via `env.sandbox`.  Provides a unified `orchestrator()`
+    method that acts as a decorator (when given a callable), a code-string
+    task factory (when given a string), or a decorator factory (when given
+    only keyword arguments).
+    """
+
+    def __init__(self, env: TaskEnvironment) -> None:
+        self._env = env
+
+    @overload
+    def orchestrator(
+        self,
+        _func_or_source: Callable,
+        /,
+    ) -> "SandboxedTaskTemplate": ...
+
+    @overload
+    def orchestrator(
+        self,
+        _func_or_source: str,
+        /,
+        *,
+        tasks: list[Any] | None = None,
+        inputs: dict[str, type] | None = None,
+        output: type = type(None),
+        name: str | None = None,
+        timeout_ms: int = 30_000,
+        cache: CacheRequest | None = None,
+        retries: int = 0,
+    ) -> "CodeTaskTemplate": ...
+
+    @overload
+    def orchestrator(
+        self,
+        *,
+        timeout_ms: int = 30_000,
+        max_memory: int = 50 * 1024 * 1024,
+        max_stack_depth: int = 256,
+        type_check: bool = True,
+        name: str | None = None,
+        cache: CacheRequest | None = None,
+        retries: int = 0,
+    ) -> "Callable[[Callable], SandboxedTaskTemplate]": ...
+
+    def orchestrator(  # type: ignore[misc]
+        self,
+        _func_or_source: Any = None,
+        /,
+        *,
+        tasks: list[Any] | None = None,
+        inputs: dict[str, type] | None = None,
+        output: type = type(None),
+        timeout_ms: int = 30_000,
+        max_memory: int = 50 * 1024 * 1024,
+        max_stack_depth: int = 256,
+        type_check: bool = True,
+        name: str | None = None,
+        cache: CacheRequest | None = None,
+        retries: int = 0,
+    ) -> Any:
+        """Unified sandbox orchestration on a `TaskEnvironment`.
+
+        Three usage modes:
+
+        1. **Decorator** (callable) — creates a `SandboxedTaskTemplate`::
+
+            @env.sandbox.orchestrator
+            def pipeline(n: int) -> dict: ...
+
+        2. **Code string** — creates a `CodeTaskTemplate`::
+
+            task = env.sandbox.orchestrator(
+                "add(x, y) * 2",
+                tasks=[add],
+                inputs={"x": int},
+                output=int,
+            )
+
+        3. **Decorator factory** (keyword-only) — returns a decorator::
+
+            @env.sandbox.orchestrator(timeout_ms=5000)
+            def pipeline(n: int) -> dict: ...
+        """
+        from .sandbox._config import SandboxedConfig
+        from .sandbox._task import SandboxedTaskTemplate
+
+        env = self._env
+
+        if _func_or_source is None:
+            # Mode 3: decorator factory — keyword-only args
+            config = SandboxedConfig(
+                max_memory=max_memory,
+                max_stack_depth=max_stack_depth,
+                timeout_ms=timeout_ms,
+                type_check=type_check,
+            )
+
+            def decorator(func: Callable) -> SandboxedTaskTemplate:
+                task_name = name or (env.name + "." + func.__name__)
+                interface = NativeInterface.from_callable(func)
+                tmpl = SandboxedTaskTemplate(
+                    func=func,
+                    name=task_name,
+                    interface=interface,
+                    plugin_config=config,
+                    image=env.image,
+                    cache=cache or env.cache,
+                    retries=retries,
+                    parent_env=weakref.ref(env),
+                    parent_env_name=env.name,
+                )
+                env._tasks[task_name] = tmpl
+                return tmpl
+
+            return decorator
+
+        if callable(_func_or_source) and not isinstance(_func_or_source, str):
+            # Mode 1: bare decorator
+            func = _func_or_source
+            config = SandboxedConfig(
+                max_memory=max_memory,
+                max_stack_depth=max_stack_depth,
+                timeout_ms=timeout_ms,
+                type_check=type_check,
+            )
+            task_name = name or (env.name + "." + func.__name__)
+            interface = NativeInterface.from_callable(func)
+            tmpl = SandboxedTaskTemplate(
+                func=func,
+                name=task_name,
+                interface=interface,
+                plugin_config=config,
+                image=env.image,
+                cache=cache or env.cache,
+                retries=retries,
+                parent_env=weakref.ref(env),
+                parent_env_name=env.name,
+            )
+            env._tasks[task_name] = tmpl
+            return tmpl
+
+        if isinstance(_func_or_source, str):
+            # Mode 2: code string
+            import sys
+
+            from .sandbox._api import _orchestrator_impl
+
+            return _orchestrator_impl(
+                _func_or_source,
+                inputs=inputs or {},
+                output=output,
+                tasks=tasks,
+                name=name or "sandboxed-code",
+                timeout_ms=timeout_ms,
+                cache=cache or env.cache,
+                retries=retries,
+                image=env.image,
+                caller_module=sys._getframe(1).f_globals.get("__name__", "__main__"),
+            )
+
+        raise TypeError(f"orchestrator() expects a callable, string, or keyword arguments, got {type(_func_or_source)}")
