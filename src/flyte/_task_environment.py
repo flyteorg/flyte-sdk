@@ -3,7 +3,6 @@ from __future__ import annotations
 import inspect
 import weakref
 from dataclasses import dataclass, field, replace
-from datetime import timedelta
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -31,6 +30,7 @@ from ._retry import RetryStrategy
 from ._reusable_environment import ReusePolicy
 from ._secret import SecretRequest
 from ._task import AsyncFunctionTaskTemplate, TaskTemplate
+from ._timeout import TimeoutType
 from ._trigger import Trigger
 from .models import MAX_INLINE_IO_BYTES, NativeInterface
 
@@ -239,7 +239,7 @@ class TaskEnvironment(Environment):
         short_name: Optional[str] = None,
         cache: CacheRequest | None = None,
         retries: Union[int, RetryStrategy] = 0,
-        timeout: Union[timedelta, int] = 0,
+        timeout: TimeoutType = 0,
         docs: Optional[Documentation] = None,
         pod_template: Optional[Union[str, PodTemplate]] = None,
         report: bool = False,
@@ -266,7 +266,7 @@ class TaskEnvironment(Environment):
         short_name: Optional[str] = None,
         cache: CacheRequest | None = None,
         retries: Union[int, RetryStrategy] = 0,
-        timeout: Union[timedelta, int] = 0,
+        timeout: TimeoutType = 0,
         docs: Optional[Documentation] = None,
         pod_template: Optional[Union[str, PodTemplate]] = None,
         report: bool = False,
@@ -288,11 +288,16 @@ class TaskEnvironment(Environment):
             does not change the task's fully-qualified name.
         :param cache: Optional The cache policy for the task, defaults to auto, which will cache the results of the
         task.
-        :param retries: Number of retries (`int`) or a `RetryStrategy` object that
-            defines retry behavior. Defaults to `0` (no retries).
+        :param retries: Number of user retries (`int`) or a `RetryStrategy` object.
+            `RetryStrategy` accepts an optional `backoff=Backoff(base, factor, cap)` to
+            pace retries exponentially. Defaults to `0` (no retries).
         :param docs: Optional The documentation for the task, if not provided the function docstring will be used.
-        :param timeout: Task timeout, as a `timedelta` object or an integer number
-            of seconds. `0` means no timeout.
+        :param timeout: Task timeout. Accepts a `timedelta`, an integer number of seconds,
+            or a `Timeout` object carrying any combination of `max_runtime`,
+            `max_queued_time`, and `deadline`. A bare `timedelta`/`int` is interpreted
+            as `max_runtime`. A bound is treated as unlimited when unset (`None`) or
+            zero (`0` / `timedelta(0)`); `timeout=0` is the default and means no
+            time bound.
         :param pod_template: Optional The pod template for the task, if not provided the default pod template will be
         used.
         :param report: Optional Whether to generate the html report for the task, defaults to False.
