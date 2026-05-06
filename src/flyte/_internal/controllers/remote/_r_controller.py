@@ -131,7 +131,7 @@ class RemoteController(BaseController):
         cls,
         endpoint: str | None = None,
         workers: int = 20,
-        max_system_retries: int = 10,  # TODO: pass into Rust controller (currently hard-coded MAX_RETRIES = 5 in core.rs)
+        max_system_retries: int = 10,  # TODO: pass in Rust controller (hard-coded MAX_RETRIES = 5 in core.rs)
     ):
         # No endpoint means must have the api key env var
         return super().__new__(cls, endpoint=endpoint, workers=workers)
@@ -140,7 +140,7 @@ class RemoteController(BaseController):
         self,
         endpoint: str | None = None,
         workers: int = 20,
-        max_system_retries: int = 10,  # TODO: pass into Rust controller (currently hard-coded MAX_RETRIES = 5 in core.rs)
+        max_system_retries: int = 10,  # TODO: pass in Rust controller (hard-coded MAX_RETRIES = 5 in core.rs)
     ):
         default_parent_concurrency = int(os.getenv("_F_P_CNC", "1000"))
         self._default_parent_concurrency = default_parent_concurrency
