@@ -33,17 +33,28 @@ jobs:
         uses: codecov/codecov-action@v4
         if: ${{ matrix.python-version == '3.11' }}
 
+  discover-plugins:
+    runs-on: ubuntu-latest
+    outputs:
+      plugins: ${{ steps.find.outputs.plugins }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Find plugins with tests
+        id: find
+        run: |
+          # Auto-discover all plugins that have a tests/ directory
+          plugins=$(find plugins -mindepth 1 -maxdepth 1 -type d -exec test -d '{}/tests' \; -print \
+            | xargs -n1 basename | sort | jq -R -s -c 'split("\n") | map(select(. != ""))')
+          echo "plugins=$plugins" >> "$GITHUB_OUTPUT"
+
   unit-tests-plugins:
+    needs: discover-plugins
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        plugin:
-          - bigquery
-          - databricks
-          - openai
-          - polars
-          - snowflake
-          - wandb
+        plugin: ${{ fromJson(needs.discover-plugins.outputs.plugins) }}
         python-version: ["3.12"]
       fail-fast: false
     defaults:

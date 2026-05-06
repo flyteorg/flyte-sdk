@@ -3,7 +3,7 @@
 # dependencies = [
 #    "anyio",
 #    "aioresult",
-#    "flyte>=2.0.0b6",
+#    "flyte",
 # ]
 # ///
 from dataclasses import dataclass

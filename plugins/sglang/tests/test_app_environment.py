@@ -22,7 +22,7 @@ def test_basic_init_with_model_path():
     assert app.name == "test-app"
     assert app.model_path == "s3://bucket/model"
     assert app.model_id == "test-model"
-    assert app.port.port == 8000
+    assert app.port.port == 8080
     assert app.type == "SGLang"
     assert app.stream_model is True
     assert app.image == DEFAULT_SGLANG_IMAGE
@@ -38,11 +38,11 @@ def test_basic_init_with_model_hf_path():
     assert app.name == "test-app"
     assert app.model_hf_path == "Qwen/Qwen3-0.6B"
     assert app.model_id == "test-model"
-    assert app.port.port == 8000
+    assert app.port.port == 8080
     assert app.type == "SGLang"
     assert app.image == DEFAULT_SGLANG_IMAGE
     # When using model_hf_path, no parameters should be created
-    assert app.inputs == []
+    assert app.parameters == []
     # The model mount path should be set to the HF path
     assert app.env_vars["FLYTE_MODEL_LOADER_LOCAL_MODEL_PATH"] == "Qwen/Qwen3-0.6B"
 
@@ -144,9 +144,9 @@ def test_stream_model_true_with_model_path():
     assert app.env_vars["FLYTE_MODEL_LOADER_LOCAL_MODEL_PATH"] == "/root/flyte"
 
     # Check parameters
-    assert len(app.inputs) == 1
-    model_input = app.inputs[0]
-    assert model_input.name == "model"
+    assert len(app.parameters) == 1
+    model_input = app.parameters[0]
+    assert model_input.name == "model_path"
     assert model_input.value == "s3://bucket/model"
     assert model_input.env_var == "FLYTE_MODEL_LOADER_REMOTE_MODEL_PATH"
     assert model_input.download is False
@@ -165,8 +165,8 @@ def test_stream_model_false_with_model_path():
     assert app.env_vars["FLYTE_MODEL_LOADER_STREAM_SAFETENSORS"] == "false"
 
     # Check parameters - should download instead of stream
-    assert len(app.inputs) == 1
-    model_input = app.inputs[0]
+    assert len(app.parameters) == 1
+    model_input = app.parameters[0]
     assert model_input.download is True
     assert model_input.mount == "/root/flyte"
 
@@ -180,7 +180,7 @@ def test_model_hf_path_no_inputs():
     )
 
     # No parameters should be created for HF path
-    assert app.inputs == []
+    assert app.parameters == []
 
     # Mount path should be set to the HF path
     assert app.env_vars["FLYTE_MODEL_LOADER_LOCAL_MODEL_PATH"] == "meta-llama/Llama-2-7b"

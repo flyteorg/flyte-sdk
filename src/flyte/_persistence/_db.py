@@ -42,6 +42,8 @@ CREATE TABLE IF NOT EXISTS runs (
     context TEXT,
     group_name TEXT,
     log_links TEXT,
+    attempt_count INTEGER DEFAULT 0,
+    attempts_json TEXT,
     PRIMARY KEY (run_name, action_name)
 )
 """
@@ -54,9 +56,12 @@ _RUNS_INDEXES = [
 
 _RUNS_MIGRATIONS = [
     "ALTER TABLE runs ADD COLUMN has_report INTEGER DEFAULT 0",
+    "ALTER TABLE runs ADD COLUMN disable_run_cache INTEGER DEFAULT 0",
     "ALTER TABLE runs ADD COLUMN context TEXT",
     "ALTER TABLE runs ADD COLUMN group_name TEXT",
     "ALTER TABLE runs ADD COLUMN log_links TEXT",
+    "ALTER TABLE runs ADD COLUMN attempt_count INTEGER DEFAULT 0",
+    "ALTER TABLE runs ADD COLUMN attempts_json TEXT",
     *_RUNS_INDEXES,
 ]
 

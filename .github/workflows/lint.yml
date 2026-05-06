@@ -135,9 +135,17 @@ jobs:
         uses: actions/checkout@v4
       - name: Set up Python 3.12
         uses: ./.github/actions/setup-python-env
-      - name: Generate docs
+      - name: Check root uv.lock
         run: |
           uv lock --check
+      - name: Check plugin uv.lock files
+        run: |
+          for dir in plugins/*/; do
+            if [ -f "$dir/uv.lock" ]; then
+              echo "Checking $dir..."
+              uv lock --check --directory "$dir"
+            fi
+          done
 #  # Disabled for now, as it is failing
 #  check-import-profile:
 #    runs-on: ubuntu-latest

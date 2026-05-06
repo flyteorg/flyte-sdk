@@ -6,6 +6,7 @@ from typing import (
     Any,
     AsyncIterator,
     Callable,
+    ClassVar,
     Coroutine,
     Dict,
     Generic,
@@ -31,6 +32,12 @@ from flyte.types import TypeEngine, TypeTransformer, TypeTransformerFailedError
 
 # Type variable for the directory format
 T = TypeVar("T")
+
+# Sentinel path stamped onto :class:`EmptyDir` instances. Anything created via ``Dir.empty()``
+# or ``EmptyDir()`` carries this path; ``Dir.is_empty`` detects it. We deliberately use a path
+# that cannot collide with any real local or object-store path users might pass (no scheme,
+# leading colons, illegal in filesystems and URIs alike).
+_EMPTY_DIR_SENTINEL = "::flyte-empty-dir::"
 
 
 class Dir(BaseModel, Generic[T], SerializableType):
@@ -219,6 +226,10 @@ class Dir(BaseModel, Generic[T], SerializableType):
 
     class Config:
         arbitrary_types_allowed = True
+        json_schema_extra: ClassVar[dict] = {
+            "description": "A directory reference with an optional format type.",
+            "x-flyte-type": "dir",
+        }
 
     @model_validator(mode="before")
     @classmethod
@@ -227,6 +238,23 @@ class Dir(BaseModel, Generic[T], SerializableType):
         if data.get("name") is None:
             data["name"] = Path(data["path"]).name
         return data
+
+    @property
+    def is_empty(self) -> bool:
+        """True when this is a sentinel ``Dir`` produced by :class:`EmptyDir`/``Dir.empty()`` —
+        i.e. the task didn't actually produce a directory. Use this to branch on whether the
+        upstream task emitted real data without dealing with ``Optional[Dir]`` (which the type
+        engine cannot round-trip correctly through ``SerializableType``)."""
+        return self.path == _EMPTY_DIR_SENTINEL
+
+    @classmethod
+    def empty(cls) -> "Dir":
+        """Return a sentinel ``Dir`` representing 'no directory was produced'.
+
+        Use as the return value when a task may or may not produce an output directory; the
+        caller can check :attr:`Dir.is_empty` to detect the sentinel. Round-trips cleanly
+        through Flyte serialization (unlike ``Optional[Dir]``)."""
+        return EmptyDir()
 
     def _serialize(self) -> Dict[str, Optional[str]]:
         """Internal: Serialize Dir to dictionary. Not intended for direct use."""
@@ -757,6 +785,35 @@ class Dir(BaseModel, Generic[T], SerializableType):
         return cls(path=resolved_remote_path, name=dirname, hash=dir_cache_key)
 
     @classmethod
+    def new_remote(cls, dir_name: Optional[str] = None, hash: Optional[str] = None) -> Dir[T]:
+        """Create a new Dir reference for a remote directory that will be written to.
+
+        Use this when you want to create a new directory and write files into it
+        directly without creating a local directory first.
+
+        Example::
+
+            @env.task
+            async def create() -> Dir:
+                d = Dir.new_remote("output")
+                # write files into d ...
+                return d
+
+        Args:
+            dir_name: Optional name for the remote directory. If not set, a
+                generated name will be used.
+            hash: Optional precomputed hash value to use for cache key computation when this Dir is used
+                as an input to discoverable tasks.
+
+        Returns:
+            A new Dir instance with a generated remote path.
+        """
+        ctx = internal_ctx()
+        remote_path = ctx.raw_data.get_random_remote_path(dir_name)
+        name = dir_name or os.path.basename(remote_path)
+        return cls(path=remote_path, name=name, hash=hash)
+
+    @classmethod
     def from_existing_remote(cls, remote_path: str, dir_cache_key: Optional[str] = None) -> Dir[T]:
         """
         Create a Dir reference from an existing remote directory.
@@ -906,6 +963,36 @@ class Dir(BaseModel, Generic[T], SerializableType):
         return None
 
 
+class EmptyDir(Dir):
+    """A sentinel :class:`Dir` representing 'no directory was produced'.
+
+    Use this as a return value when a task may or may not produce an output directory,
+    e.g. ``flyte.run_python_script`` when the user did not request ``output_dir``::
+
+        @env.task
+        async def maybe_produce_dir(...) -> Output:
+            if user_wants_dir:
+                return Output(output_dir=await Dir.from_local(path))
+            return Output(output_dir=EmptyDir())
+
+    On the receiving side, the value comes back as a plain ``Dir`` with
+    :attr:`Dir.is_empty` set to ``True`` (the deserializer doesn't preserve the
+    ``EmptyDir`` subclass identity, but the sentinel path round-trips). Callers should
+    branch on ``dir.is_empty`` rather than ``isinstance(dir, EmptyDir)``.
+
+    This exists because ``Optional[Dir]`` cannot round-trip through Flyte's
+    ``DataclassTransformer`` — mashumaro strips the ``Optional`` and calls
+    ``Dir._deserialize(None)`` which fails. ``EmptyDir`` keeps the field type as
+    plain ``Dir`` so the round-trip works.
+    """
+
+    def __init__(self, **data: Any):
+        # Force the sentinel path; ignore any caller-provided overrides for it.
+        data["path"] = _EMPTY_DIR_SENTINEL
+        data.setdefault("name", "")
+        super().__init__(**data)
+
+
 class DirTransformer(TypeTransformer[Dir]):
     """
     Transformer for Dir objects. This type transformer does not handle any i/o. That is now the responsibility of the
@@ -970,7 +1057,9 @@ class DirTransformer(TypeTransformer[Dir]):
         uri = lv.scalar.blob.uri
         filename = Path(uri).name
         hash_value = lv.hash or None
-        f: Dir = Dir(path=uri, name=filename, format=lv.scalar.blob.metadata.type.format, hash=hash_value)
+        f: Dir = expected_python_type(
+            path=uri, name=filename, format=lv.scalar.blob.metadata.type.format, hash=hash_value
+        )
         return f
 
     def guess_python_type(self, literal_type: types_pb2.LiteralType) -> Type[Dir]:

@@ -2,7 +2,6 @@ import asyncio
 from unittest import mock
 
 import pytest
-from grpc.aio import Metadata
 
 from flyte.remote._client.auth._authenticators.passthrough import PassthroughAuthenticator
 from flyte.remote._client.auth._keyring import Credentials
@@ -38,32 +37,32 @@ def test_get_credentials(authenticator):
 
 
 @pytest.mark.asyncio
-async def test_get_grpc_call_auth_metadata_with_context(authenticator):
-    """Test get_grpc_call_auth_metadata when metadata is present in context."""
+async def test_get_auth_headers_with_context(authenticator):
+    """Test get_auth_headers when metadata is present in context."""
     # Mock the context to return metadata
     with mock.patch("flyte.remote._auth_metadata.get_auth_metadata") as mock_get_metadata:
         mock_get_metadata.return_value = (("key1", "value1"), ("key2", "value2"))
 
-        result = await authenticator.get_grpc_call_auth_metadata()
+        result = await authenticator.get_auth_headers()
 
         # Verify the result
         assert result is not None
         assert result.creds_id == "passthrough"
-        assert isinstance(result.pairs, Metadata)
+        assert isinstance(result.headers, dict)
 
-        # Convert metadata to list for comparison
-        metadata_list = list(result.pairs)
+        # Convert headers to list for comparison
+        metadata_list = list(result.headers.items())
         assert metadata_list == [("key1", "value1"), ("key2", "value2")]
 
 
 @pytest.mark.asyncio
-async def test_get_grpc_call_auth_metadata_without_context(authenticator):
-    """Test get_grpc_call_auth_metadata when no metadata is in context."""
+async def test_get_auth_headers_without_context(authenticator):
+    """Test get_auth_headers when no metadata is in context."""
     # Mock the context to return None
     with mock.patch("flyte.remote._auth_metadata.get_auth_metadata") as mock_get_metadata:
         mock_get_metadata.return_value = None
 
-        result = await authenticator.get_grpc_call_auth_metadata()
+        result = await authenticator.get_auth_headers()
 
         # Should return None when no metadata is available
         assert result is None
@@ -81,6 +80,18 @@ async def test_do_refresh_credentials(authenticator):
 
 
 @pytest.mark.asyncio
+async def test_duplicate_keys_last_wins(authenticator):
+    """dict() conversion means last value wins for duplicate metadata keys."""
+    with mock.patch("flyte.remote._auth_metadata.get_auth_metadata") as mock_get_metadata:
+        mock_get_metadata.return_value = (("authorization", "first"), ("authorization", "second"))
+
+        result = await authenticator.get_auth_headers()
+
+        assert result is not None
+        assert result.headers == {"authorization": "second"}
+
+
+@pytest.mark.asyncio
 async def test_auth_metadata_context_integration(endpoint):
     """Test that auth_metadata context manager integrates with PassthroughAuthenticator."""
     from flyte._context import internal_ctx
@@ -95,11 +106,11 @@ async def test_auth_metadata_context_integration(endpoint):
         assert ctx.data.metadata is not None
         assert len(ctx.data.metadata) == 2
 
-        result = await authenticator.get_grpc_call_auth_metadata()
+        result = await authenticator.get_auth_headers()
 
         # Verify the authenticator extracted the metadata correctly
         assert result is not None
-        metadata_list = list(result.pairs)
+        metadata_list = list(result.headers.items())
         assert metadata_list == [("api-key", "test-key-123"), ("user-id", "user-456")]
 
 
@@ -109,7 +120,7 @@ async def test_auth_metadata_empty_context(endpoint):
     authenticator = PassthroughAuthenticator(endpoint=endpoint)
 
     # Outside the auth_metadata context, should return None
-    result = await authenticator.get_grpc_call_auth_metadata()
+    result = await authenticator.get_auth_headers()
     assert result is None
 
 
@@ -133,7 +144,7 @@ async def test_concurrent_auth_metadata_contexts_isolated(endpoint):
             # Small delay to ensure coroutines overlap in execution
             await asyncio.sleep(0.01)
 
-            result = await authenticator.get_grpc_call_auth_metadata()
+            result = await authenticator.get_auth_headers()
 
             # Store result for verification
             results[coroutine_id] = result
@@ -157,15 +168,15 @@ async def test_concurrent_auth_metadata_contexts_isolated(endpoint):
     assert "coro3" in results
 
     # Verify coro1's metadata
-    metadata1 = list(results["coro1"].pairs)
+    metadata1 = list(results["coro1"].headers.items())
     assert metadata1 == [("user", "alice"), ("role", "admin")]
 
     # Verify coro2's metadata
-    metadata2 = list(results["coro2"].pairs)
+    metadata2 = list(results["coro2"].headers.items())
     assert metadata2 == [("user", "bob"), ("role", "user")]
 
     # Verify coro3's metadata
-    metadata3 = list(results["coro3"].pairs)
+    metadata3 = list(results["coro3"].headers.items())
     assert metadata3 == [("user", "charlie"), ("role", "guest")]
 
 
@@ -193,7 +204,7 @@ def test_concurrent_auth_metadata_contexts_isolated_with_syncify(endpoint):
             # Small delay to ensure operations overlap
             await asyncio.sleep(0.01)
 
-            result = await authenticator.get_grpc_call_auth_metadata()
+            result = await authenticator.get_auth_headers()
 
             # Store result for verification (thread-safe)
             with results_lock:
@@ -229,13 +240,13 @@ def test_concurrent_auth_metadata_contexts_isolated_with_syncify(endpoint):
     assert "thread3" in results
 
     # Verify thread1's metadata
-    metadata1 = list(results["thread1"].pairs)
+    metadata1 = list(results["thread1"].headers.items())
     assert metadata1 == [("user", "alice"), ("role", "admin")]
 
     # Verify thread2's metadata
-    metadata2 = list(results["thread2"].pairs)
+    metadata2 = list(results["thread2"].headers.items())
     assert metadata2 == [("user", "bob"), ("role", "user")]
 
     # Verify thread3's metadata
-    metadata3 = list(results["thread3"].pairs)
+    metadata3 = list(results["thread3"].headers.items())
     assert metadata3 == [("user", "charlie"), ("role", "guest")]

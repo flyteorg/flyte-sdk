@@ -30,7 +30,7 @@ async def square(i: int = 3) -> int:
     return i * i
 
 
-@env.task
+@env.task(entrypoint=True)
 async def say_hello_nested(data: str = "default string", n: int = 3) -> str:
     print(f"Hello, nested! - {flyte.ctx().action}")
     coros = []

@@ -132,7 +132,7 @@ env = FastAPIAppEnvironment(
     app=app,
     description="Web UI for agent handoff system",
     image=flyte.Image.from_debian_base()
-    .with_uv_project(pyproject_file=pathlib.Path(__file__).parent / "pyproject.toml", pre=True)
+    .with_uv_project(pyproject_file=pathlib.Path(__file__).parent / "pyproject.toml")
     .with_local_v2(),
     resources=flyte.Resources(cpu=1, memory="1Gi"),
     include=[str(current_file.parent / "static" / "index.html"), str(current_file.parent / "agent_handoff.py")],

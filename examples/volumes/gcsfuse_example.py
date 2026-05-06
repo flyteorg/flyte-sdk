@@ -2,7 +2,7 @@
 # requires-python = "==3.12"
 # dependencies = [
 #    "kubernetes",
-#    "flyte>2.0.0b39",
+#    "flyte",
 # ]
 # ///
 """
@@ -86,7 +86,7 @@ pod_template = flyte.PodTemplate(
 env = flyte.TaskEnvironment(
     name="gcsfuse-wf",
     pod_template=pod_template,
-    image=flyte.Image.from_uv_script(__file__, name="jeevs-env", pre=True),
+    image=flyte.Image.from_uv_script(__file__, name="jeevs-env"),
 )
 
 

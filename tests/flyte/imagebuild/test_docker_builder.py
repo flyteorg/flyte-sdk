@@ -10,6 +10,7 @@ import pytest_asyncio
 from flyte import Secret
 from flyte._image import AptPackages, Commands, Image, PipPackages, PoetryProject, Requirements, UVProject
 from flyte._internal.imagebuild.docker_builder import (
+    DOCKER_FILE_UV_BASE_TEMPLATE,
     CopyConfig,
     CopyConfigHandler,
     DockerImageBuilder,
@@ -105,6 +106,22 @@ async def test_pip_package_handling(monkeypatch):
         )
         assert "--mount=type=secret" in docker_update
         assert "uv pip install --python $UV_PYTHON pkg_a pkg_b" in docker_update
+
+
+@pytest.mark.asyncio
+async def test_pip_package_handling_with_version_constraints():
+    """Package specs containing shell metacharacters (<, >) must be quoted in the generated Dockerfile
+    so that the shell does not interpret them as redirection operators."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        context_path = Path(tmpdir)
+
+        pip_packages = PipPackages(packages=("apache-airflow<=3.0.0", "requests>=2.0,<3"))
+        docker_update = await PipAndRequirementsHandler.handle(
+            layer=pip_packages, context_path=context_path, dockerfile=""
+        )
+        # Each spec with a shell metacharacter must be single-quoted
+        assert "'apache-airflow<=3.0.0'" in docker_update
+        assert "'requests>=2.0,<3'" in docker_update
 
 
 @pytest.mark.asyncio
@@ -311,7 +328,7 @@ async def test_poetry_handler_without_project_install():
             )
 
             initial_dockerfile = "FROM python:3.9\n"
-            result = await PoetryProjectHandler.handel(
+            result = await PoetryProjectHandler.handle(
                 layer=poetry_project,
                 context_path=context_path,
                 dockerfile=initial_dockerfile,
@@ -353,7 +370,7 @@ async def test_poetry_handler_with_project_install():
             (user_folder / "main.py").write_text("print('hello')")
 
             initial_dockerfile = "FROM python:3.9\n"
-            result = await PoetryProjectHandler.handel(
+            result = await PoetryProjectHandler.handle(
                 layer=poetry_project,
                 context_path=context_path,
                 dockerfile=initial_dockerfile,
@@ -658,3 +675,205 @@ def test_get_build_secrets_from_image_deduplicates_with_group():
     assert len(secrets) == 1, f"Expected 1 secret, got {len(secrets)}. Secrets: {secrets}"
     assert secrets[0].key == "mykey"
     assert secrets[0].group == "mygroup"
+
+
+def test_uv_base_template_default_venv():
+    """When base image has no UV_PYTHON, the template should default to /opt/venv and create a venv."""
+    dockerfile = DOCKER_FILE_UV_BASE_TEMPLATE.substitute(
+        BASE_IMAGE="python:3.12-slim",
+        PYTHON_VERSION="3.12",
+    )
+
+    # Should declare default paths via ARG
+    assert "ARG VIRTUALENV=/opt/venv" in dockerfile
+    assert "ARG UV_PYTHON=$VIRTUALENV/bin/python" in dockerfile
+
+    # Should set ENV from ARGs
+    assert "VIRTUALENV=$VIRTUALENV" in dockerfile
+    assert "UV_PYTHON=$UV_PYTHON" in dockerfile
+
+    # Should conditionally create venv only if UV_PYTHON binary doesn't exist
+    assert 'if [ ! -f "$UV_PYTHON" ]' in dockerfile
+    assert "uv venv $VIRTUALENV --python=3.12" in dockerfile
+
+    # Should add VIRTUALENV/bin to PATH
+    assert 'PATH="$VIRTUALENV/bin:$PATH"' in dockerfile
+
+
+def test_uv_base_template_preserves_existing_uv_python():
+    """When base image has UV_PYTHON set, the template should preserve it and skip venv creation."""
+    dockerfile = DOCKER_FILE_UV_BASE_TEMPLATE.substitute(
+        BASE_IMAGE="my-custom-image:latest",
+        PYTHON_VERSION="3.12",
+    )
+
+    # UV_PYTHON ARG defaults to $VIRTUALENV/bin/python but can be overridden by base image
+    assert "ARG UV_PYTHON=$VIRTUALENV/bin/python" in dockerfile
+
+    # The conditional block skips venv creation when UV_PYTHON binary already exists
+    assert 'if [ ! -f "$UV_PYTHON" ]' in dockerfile
+
+    # PATH includes VIRTUALENV/bin
+    assert 'PATH="$VIRTUALENV/bin:$PATH"' in dockerfile
+
+
+@pytest.mark.asyncio
+async def test_ensure_buildx_builder_creates_with_host_network():
+    """When creating a new buildx builder, it should use --driver-opt network=host."""
+    calls = []
+
+    def mock_run(cmd, **kwargs):
+        calls.append(cmd)
+        result = subprocess.CompletedProcess(cmd, 0)
+        # For 'docker buildx ls', return output without the builder name
+        if cmd == ["docker", "buildx", "ls"]:
+            result.stdout = "default"
+            result.stderr = ""
+        return result
+
+    with patch(
+        "flyte._internal.imagebuild.docker_builder.run_sync_with_loop", side_effect=lambda fn, *a, **kw: fn(*a, **kw)
+    ):
+        with patch("subprocess.run", side_effect=mock_run):
+            await DockerImageBuilder._ensure_buildx_builder()
+
+    # Find the create command
+    create_cmds = [c for c in calls if "create" in c]
+    assert len(create_cmds) == 1
+    create_cmd = create_cmds[0]
+    assert "--driver-opt" in create_cmd
+    assert "network=host" in create_cmd
+
+
+@pytest.mark.asyncio
+async def test_ensure_buildx_builder_skips_when_network_host_present():
+    """When the builder already exists with network=host, it should not recreate."""
+    calls = []
+
+    def mock_run(cmd, **kwargs):
+        calls.append(cmd)
+        result = subprocess.CompletedProcess(cmd, 0)
+        if cmd == ["docker", "buildx", "ls"]:
+            result.stdout = f"default\n{DockerImageBuilder._builder_name}  docker-container"
+            result.stderr = ""
+        elif "inspect" in cmd:
+            result.stdout = (
+                f"Name:          {DockerImageBuilder._builder_name}\n"
+                "Driver:        docker-container\n"
+                "Nodes:\n"
+                'Driver Options: network="host"\n'
+            )
+            result.stderr = ""
+        return result
+
+    with patch(
+        "flyte._internal.imagebuild.docker_builder.run_sync_with_loop", side_effect=lambda fn, *a, **kw: fn(*a, **kw)
+    ):
+        with patch("subprocess.run", side_effect=mock_run):
+            await DockerImageBuilder._ensure_buildx_builder()
+
+    # Should NOT have called create or rm
+    assert not any("create" in c for c in calls)
+    assert not any("rm" in c for c in calls)
+
+
+@pytest.mark.asyncio
+async def test_ensure_buildx_builder_recreates_when_network_host_missing():
+    """When the builder exists but is missing network=host, it should be removed and recreated."""
+    calls = []
+
+    def mock_run(cmd, **kwargs):
+        calls.append(cmd)
+        result = subprocess.CompletedProcess(cmd, 0)
+        if cmd == ["docker", "buildx", "ls"]:
+            result.stdout = f"default\n{DockerImageBuilder._builder_name}  docker-container"
+            result.stderr = ""
+        elif "inspect" in cmd:
+            result.stdout = (
+                f"Name:          {DockerImageBuilder._builder_name}\n"
+                "Driver:        docker-container\n"
+                "Nodes:\n"
+                "Driver Options: <none>\n"
+            )
+            result.stderr = ""
+        return result
+
+    with patch(
+        "flyte._internal.imagebuild.docker_builder.run_sync_with_loop", side_effect=lambda fn, *a, **kw: fn(*a, **kw)
+    ):
+        with patch("subprocess.run", side_effect=mock_run):
+            await DockerImageBuilder._ensure_buildx_builder()
+
+    # Should have called rm then create
+    rm_cmds = [c for c in calls if "rm" in c]
+    create_cmds = [c for c in calls if "create" in c]
+    assert len(rm_cmds) == 1
+    assert DockerImageBuilder._builder_name in rm_cmds[0]
+    assert len(create_cmds) == 1
+    assert "--driver-opt" in create_cmds[0]
+    assert "network=host" in create_cmds[0]
+
+
+def test_dockerfile_footer_switches_to_flyte_user():
+    """The footer should switch the runtime user to flyte and set the workdir to /home/flyte."""
+    from flyte._internal.imagebuild.docker_builder import DOCKER_FILE_BASE_FOOTER
+
+    rendered = DOCKER_FILE_BASE_FOOTER.substitute(F_IMG_ID="some-image-id")
+
+    assert "USER flyte" in rendered
+    assert "WORKDIR /home/flyte" in rendered
+    assert "ENV _F_IMG_ID=some-image-id" in rendered
+
+
+@pytest.mark.asyncio
+async def test_copy_config_handler_uses_chown_flyte():
+    """CopyConfigHandler should emit COPY --chown=flyte:flyte so the runtime user owns the
+    files added via with_source_file / with_source_folder."""
+    with tempfile.TemporaryDirectory() as tmp_context:
+        context_path = Path(tmp_context)
+
+        with tempfile.TemporaryDirectory() as tmp_src_dir:
+            src_dir = Path(tmp_src_dir)
+            test_file = src_dir / "main.py"
+            test_file.write_text("print('hello')")
+
+            copy_config = CopyConfig(
+                src=test_file,
+                dst="/home/flyte/main.py",
+                path_type=0,
+            )
+
+            result = await CopyConfigHandler.handle(
+                layer=copy_config,
+                context_path=context_path,
+                dockerfile="FROM python:3.12\n",
+                docker_ignore_patterns=[],
+            )
+
+            assert "COPY --chown=flyte:flyte" in result
+            assert "/home/flyte/main.py" in result
+
+
+@pytest.mark.asyncio
+async def test_code_bundle_handler_uses_chown_flyte():
+    """_CodeBundleHandler should emit COPY --chown=flyte:flyte for code bundles baked into the image."""
+    from flyte._image import CodeBundleLayer
+    from flyte._internal.imagebuild.docker_builder import _CodeBundleHandler
+
+    with tempfile.TemporaryDirectory() as tmp_context:
+        context_path = Path(tmp_context)
+
+        with tempfile.TemporaryDirectory() as tmp_src_dir:
+            src_dir = Path(tmp_src_dir)
+            (src_dir / "task.py").write_text("print('task')")
+
+            layer = CodeBundleLayer(copy_style="all", dst="/home/flyte/code", root_dir=src_dir)
+
+            result = await _CodeBundleHandler.handle(
+                layer=layer,
+                context_path=context_path,
+                dockerfile="FROM python:3.12\n",
+            )
+
+            assert "COPY --chown=flyte:flyte" in result
+            assert "/home/flyte/code" in result

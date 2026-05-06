@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager, contextmanager
 from typing import AsyncGenerator, AsyncIterator, Generator, Literal, Mapping, Tuple, cast
 
 import google.protobuf.json_format
-import grpc
 import rich.repr
+from connectrpc.code import Code
+from connectrpc.errors import ConnectError
 from flyteidl2.app import app_definition_pb2, app_payload_pb2
 from flyteidl2.common import identifier_pb2, list_pb2
 
@@ -16,6 +18,7 @@ from flyte.syncify import syncify
 from ._common import ToJSONMixin, filtering, sorting
 
 WaitFor = Literal["activated", "deactivated"]
+wait_for_interval = 1  # seconds
 
 
 def _is_active(state: app_definition_pb2.Status.DeploymentStatus) -> bool:
@@ -119,7 +122,7 @@ class App(ToJSONMixin):
 
         call = cast(
             AsyncIterator[app_payload_pb2.WatchResponse],
-            get_client().app_service.Watch(
+            get_client().app_service.watch(
                 request=app_payload_pb2.WatchRequest(
                     app_id=self.pb2.metadata.id,
                 )
@@ -128,6 +131,9 @@ class App(ToJSONMixin):
         async for resp in call:
             if resp.update_event:
                 updated_app = resp.update_event.updated_app
+                if not updated_app.status.conditions:
+                    await asyncio.sleep(wait_for_interval)
+                    continue
                 current_status = updated_app.status.conditions[-1].deployment_status
                 if current_status == app_definition_pb2.Status.DeploymentStatus.DEPLOYMENT_STATUS_FAILED:
                     raise RuntimeError(f"App deployment for app {self.name} has failed!")
@@ -228,7 +234,7 @@ class App(ToJSONMixin):
     @classmethod
     async def update(cls, updated_app_proto: app_definition_pb2.App, reason: str) -> App:
         ensure_client()
-        resp = await get_client().app_service.Update(
+        resp = await get_client().app_service.update(
             request=app_payload_pb2.UpdateRequest(
                 app=updated_app_proto,
                 reason=reason,
@@ -254,7 +260,7 @@ class App(ToJSONMixin):
         ensure_client()
         cfg = get_init_config()
         try:
-            await get_client().app_service.Delete(
+            await get_client().app_service.delete(
                 request=app_payload_pb2.DeleteRequest(
                     app_id=app_definition_pb2.Identifier(
                         org=cfg.org,
@@ -264,8 +270,8 @@ class App(ToJSONMixin):
                     ),
                 )
             )
-        except grpc.aio.AioRpcError as e:
-            if e.code() == grpc.StatusCode.NOT_FOUND:
+        except ConnectError as e:
+            if e.code == Code.NOT_FOUND:
                 return
             raise
 
@@ -344,7 +350,7 @@ class App(ToJSONMixin):
         """
         ensure_client()
         cfg = get_init_config()
-        resp = await get_client().app_service.Get(
+        resp = await get_client().app_service.get(
             request=app_payload_pb2.GetRequest(
                 app_id=app_definition_pb2.Identifier(
                     org=cfg.org,
@@ -388,7 +394,7 @@ class App(ToJSONMixin):
                 org=cfg.org,
                 project=project,
             )
-            resp = await get_client().app_service.List(
+            resp = await get_client().app_service.list(
                 request=req,
             )
             token = resp.token
@@ -405,15 +411,15 @@ class App(ToJSONMixin):
     async def create(cls, app: app_definition_pb2.App) -> App:
         ensure_client()
         try:
-            resp = await get_client().app_service.Create(app_payload_pb2.CreateRequest(app=app))
+            resp = await get_client().app_service.create(app_payload_pb2.CreateRequest(app=app))
             created_app = cls(resp.app)
             logger.info(f"Deployed app {created_app.name} with revision {created_app.revision}")
             return created_app
-        except grpc.aio.AioRpcError as e:
-            if e.code() in [grpc.StatusCode.ABORTED, grpc.StatusCode.ALREADY_EXISTS]:
-                if e.code() == grpc.StatusCode.ALREADY_EXISTS:
+        except ConnectError as e:
+            if e.code in [Code.ABORTED, Code.ALREADY_EXISTS]:
+                if e.code == Code.ALREADY_EXISTS:
                     logger.warning(f"App {app.metadata.id.name} already exists, updating...")
-                elif e.code() == grpc.StatusCode.ABORTED:
+                elif e.code == Code.ABORTED:
                     logger.warning(f"Create App {app.metadata.id.name} was aborted on server, check state!")
                 return await App.replace.aio(
                     name=app.metadata.id.name,

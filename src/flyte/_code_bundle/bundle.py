@@ -13,6 +13,7 @@ from async_lru import alru_cache
 from flyteidl2.core.tasks_pb2 import TaskTemplate
 
 from flyte._logging import log, logger
+from flyte._status import status
 from flyte._utils import AsyncLRUCache
 from flyte.errors import CodeBundleError
 from flyte.models import CodeBundle
@@ -124,6 +125,7 @@ async def build_code_bundle(
     dryrun: bool = False,
     copy_bundle_to: pathlib.Path | None = None,
     copy_style: CopyFiles = "loaded_modules",
+    additional_files: tuple[str, ...] = (),
 ) -> CodeBundle:
     """
     Build the code bundle for the current environment.
@@ -134,9 +136,24 @@ async def build_code_bundle(
     :param dryrun: If dryrun is enabled, files will not be uploaded to the control plane.
     :param copy_bundle_to: If set, the bundle will be copied to this path. This is used for testing purposes.
     :param copy_style: What to put into the tarball. (either all, or loaded_modules. if none, skip this function)
+    :param additional_files: Extra absolute paths to bundle in addition to whatever ``copy_style``
+        discovers. Used to implement ``Environment.include``. When ``copy_style='none'`` and
+        ``additional_files`` is non-empty, falls back to a relative-paths-only bundle.
 
     :return: The code bundle, which contains the path where the code was zipped to.
     """
+    if copy_style == "none":
+        if additional_files:
+            return await build_code_bundle_from_relative_paths(
+                additional_files,
+                from_dir=from_dir,
+                extract_dir=extract_dir,
+                dryrun=dryrun,
+                copy_bundle_to=copy_bundle_to,
+            )
+        raise ValueError("If copy_style is 'none', just don't make a code bundle")
+
+    status.step("Bundling code...")
     logger.debug("Building code bundle.")
     from flyte.remote import upload_file
 
@@ -144,7 +161,9 @@ async def build_code_bundle(
         ignore = (StandardIgnore, GitIgnore)
 
     logger.debug(f"Finding files to bundle, ignoring as configured by: {ignore}")
-    files, digest = list_files_to_bundle(from_dir, True, *ignore, copy_style=copy_style)
+    files, digest = list_files_to_bundle(
+        from_dir, True, *ignore, copy_style=copy_style, additional_files=additional_files or None
+    )
     if len(files) == 0:
         raise CodeBundleError(
             f"No files found to bundle in '{from_dir}'.\n"
@@ -163,8 +182,9 @@ async def build_code_bundle(
         bundle_path, tar_size, archive_size = create_bundle(
             from_dir, pathlib.Path(tmp_dir), files, digest, deref_symlinks=True
         )
-        logger.info(f"Code bundle created at {bundle_path}, size: {tar_size} MB, archive size: {archive_size} MB")
+        status.success(f"Code bundle: {len(files)} files, {tar_size} MB (compressed {archive_size} MB)")
         if not dryrun:
+            status.step("Uploading code bundle...")
             hash_digest, remote_path = await upload_file.aio(bundle_path)
             logger.debug(f"Code bundle uploaded to {remote_path}")
         else:
@@ -203,6 +223,7 @@ async def build_code_bundle_from_relative_paths(
     :param copy_bundle_to: If set, the bundle will be copied to this path. This is used for testing purposes.
     :return: The code bundle, which contains the path where the code was zipped to.
     """
+    status.step("Bundling code...")
     logger.debug("Building code bundle from relative paths.")
     from flyte.remote import upload_file
 
@@ -214,8 +235,9 @@ async def build_code_bundle_from_relative_paths(
     logger.debug("Building code bundle.")
     with tempfile.TemporaryDirectory() as tmp_dir:
         bundle_path, tar_size, archive_size = create_bundle(from_dir, pathlib.Path(tmp_dir), files, digest)
-        logger.info(f"Code bundle created at {bundle_path}, size: {tar_size} MB, archive size: {archive_size} MB")
+        status.success(f"Code bundle: {len(files)} files, {tar_size} MB (compressed {archive_size} MB)")
         if not dryrun:
+            status.step("Uploading code bundle...")
             hash_digest, remote_path = await upload_file.aio(bundle_path)
             logger.debug(f"Code bundle uploaded to {remote_path}")
         else:
