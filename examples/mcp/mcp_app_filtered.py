@@ -4,12 +4,31 @@ This example shows how to deploy a more restricted MCP server that exposes
 task, run, script, and search tools, with a task allowlist to restrict which
 tasks can be accessed and configurable search paths for documentation.
 
+**Search paths (`FlyteMCPAppEnvironment`)**
+
+The ``search`` tool group reads from up to three filesystem locations. For a
+remote deployment the image must contain those paths. This example bakes them
+in at build time:
+
+- ``sdk_examples_path``: ``/root/flyte-sdk/examples`` — clone
+  [flyteorg/flyte-sdk](https://github.com/flyteorg/flyte-sdk) into
+  ``/root/flyte-sdk``.
+- ``docs_examples_path``: ``/root/unionai-examples/v2`` — clone
+  [unionai/unionai-examples](https://github.com/unionai/unionai-examples) into
+  ``/root/unionai-examples``.
+- ``full_docs_path``: ``/root/llms.txt`` — fetch
+  [Union docs llms.txt](https://www.union.ai/docs/v2/union/llms.txt) to that
+  path (e.g. ``curl``).
+
+Image build runs ``git clone`` and ``curl``; you need network access during the
+image build (and ``git`` / ``curl`` installed in the image).
+
 Requirements:
     pip install 'flyte[mcp]'
 
 Usage:
 
-    From the repo root (adjust paths for ``sdk_examples_path`` / docs paths in code):
+    From the repo root:
 
     $ python examples/mcp/mcp_app_filtered.py
 
@@ -74,7 +93,19 @@ Usage:
 import flyte
 from flyte.ai.mcp import FlyteMCPAppEnvironment
 
-image = flyte.Image.from_debian_base().with_pip_packages("mcp", "starlette", "uvicorn")
+# Bake search corpora into the app image (paths must match sdk_examples_path, docs_examples_path, full_docs_path).
+image = (
+    flyte.Image.from_debian_base()
+    .with_apt_packages("ca-certificates", "git", "curl")
+    .with_pip_packages("mcp", "starlette", "uvicorn")
+    .with_commands(
+        [
+            "git clone --depth 1 https://github.com/flyteorg/flyte-sdk.git /root/flyte-sdk",
+            "git clone --depth 1 https://github.com/unionai/unionai-examples.git /root/unionai-examples",
+            "curl -fsSL https://www.union.ai/docs/v2/union/llms.txt -o /root/llms.txt",
+        ]
+    )
+)
 
 mcp_env = FlyteMCPAppEnvironment(
     name="restricted-mcp",
@@ -83,9 +114,10 @@ mcp_env = FlyteMCPAppEnvironment(
     transport="streamable-http",
     tool_groups=["task", "run", "script", "search"],
     task_allowlist=["my-project/my-task", "another-task"],
+    # Search roots (see module docstring): clone/fetch above must populate these paths.
     sdk_examples_path="/root/flyte-sdk/examples",
-    docs_examples_path="/root/docs-examples",
-    full_docs_path="/root/full-docs.txt",
+    docs_examples_path="/root/unionai-examples/v2",
+    full_docs_path="/root/llms.txt",
     instructions=(
         "This MCP server provides tools to run and monitor specific Flyte tasks, "
         "build and run UV scripts remotely, and search Flyte SDK/docs examples. "
