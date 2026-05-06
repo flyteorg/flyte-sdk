@@ -9,10 +9,11 @@ These tests verify the serve context functionality including:
 """
 
 import json
+import logging
 import pathlib
 from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 from urllib.parse import parse_qs, urlparse
 
 import httpx
@@ -1302,3 +1303,74 @@ def test_app_handle_protocol_has_required_attributes():
     assert hasattr(AppHandle, "is_deactivated")
     assert hasattr(AppHandle, "activate")
     assert hasattr(AppHandle, "deactivate")
+
+
+# =============================================================================
+# Tests for USER_LOG_LEVEL propagation in _serve_remote
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_serve_remote_sets_user_log_level_env():
+    """
+    GOAL: Verify _serve_remote sets USER_LOG_LEVEL in env when user_log_level is provided.
+
+    Mocks out infrastructure calls so we can inspect the env dict mutation
+    that happens at the top of _serve_remote before any external I/O.
+    """
+    serve = _Serve(user_log_level=logging.DEBUG)
+
+    mock_cfg = MagicMock()
+    mock_cfg.project = "test-project"
+    mock_cfg.domain = "development"
+
+    with patch("flyte._serve.get_init_config", return_value=mock_cfg), patch(
+        "flyte._deploy.plan_deploy", side_effect=RuntimeError("stop")
+    ):
+        with pytest.raises(RuntimeError):
+            await serve._serve_remote(MagicMock())
+
+    assert serve._env_vars.get("USER_LOG_LEVEL") == str(logging.DEBUG)
+
+
+@pytest.mark.asyncio
+async def test_serve_remote_omits_user_log_level_when_not_set():
+    """
+    GOAL: Verify _serve_remote does not set USER_LOG_LEVEL when user_log_level is None.
+    """
+    serve = _Serve()  # user_log_level defaults to None
+
+    mock_cfg = MagicMock()
+    mock_cfg.project = "test-project"
+    mock_cfg.domain = "development"
+
+    with patch("flyte._serve.get_init_config", return_value=mock_cfg), patch(
+        "flyte._deploy.plan_deploy", side_effect=RuntimeError("stop")
+    ):
+        with pytest.raises(RuntimeError):
+            await serve._serve_remote(MagicMock())
+
+    assert "USER_LOG_LEVEL" not in serve._env_vars
+
+
+@pytest.mark.asyncio
+async def test_serve_remote_user_log_level_overwrites_explicit_env_var():
+    """
+    GOAL: Verify user_log_level takes precedence over an explicit USER_LOG_LEVEL in env_vars.
+
+    _serve_remote copies env_vars first, then unconditionally writes user_log_level on top,
+    so user_log_level is the authoritative knob when both are provided.
+    """
+    serve = _Serve(user_log_level=logging.DEBUG, env_vars={"USER_LOG_LEVEL": "40"})
+
+    mock_cfg = MagicMock()
+    mock_cfg.project = "test-project"
+    mock_cfg.domain = "development"
+
+    with patch("flyte._serve.get_init_config", return_value=mock_cfg), patch(
+        "flyte._deploy.plan_deploy", side_effect=RuntimeError("stop")
+    ):
+        with pytest.raises(RuntimeError):
+            await serve._serve_remote(MagicMock())
+
+    assert serve._env_vars.get("USER_LOG_LEVEL") == str(logging.DEBUG)
