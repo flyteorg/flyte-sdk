@@ -1197,7 +1197,7 @@ dev = [
 
 [[package]]
 name = "flyte-controller-base"
-version = "2.2.3.dev41+g63a2b134.dirty"
+version = "2.2.3.dev43+g3a11bd23"
 source = { directory = "rs_controller" }
 dependencies = [
     { name = "flyteidl2" },

@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "flyte_controller_base"
-version = "2.2.3.dev41+g63a2b134.dirty"
+version = "2.2.3.dev43+g3a11bd23"
 description = "Rust controller for Union"
 requires-python = ">=3.10"
 classifiers = ["Programming Language :: Python", "Programming Language :: Rust"]
