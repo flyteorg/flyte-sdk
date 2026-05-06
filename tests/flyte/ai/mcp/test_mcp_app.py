@@ -99,7 +99,7 @@ class TestFlyteMCPAppEnvironmentInstantiation:
 
     def test_default_mcp_mount_path(self):
         env = FlyteMCPAppEnvironment(name="test-mcp")
-        assert env.mcp_mount_path == "/mcp"
+        assert env.mcp_mount_path == "/flyte-mcp"
 
 
 class TestFlyteMCPAppEnvironmentMCPServer:
@@ -154,7 +154,7 @@ class TestFlyteMCPAppEnvironmentStarletteApp:
     def test_starlette_app_has_mcp_mount(self):
         env = FlyteMCPAppEnvironment(name="test-mcp")
         route_paths = [route.path for route in env._starlette_app.routes]
-        assert "/mcp" in route_paths
+        assert "/flyte-mcp" in route_paths
 
     def test_starlette_app_custom_mount_path(self):
         env = FlyteMCPAppEnvironment(name="test-mcp", mcp_mount_path="/sdk/mcp")
@@ -164,8 +164,14 @@ class TestFlyteMCPAppEnvironmentStarletteApp:
     def test_starlette_app_has_links(self):
         env = FlyteMCPAppEnvironment(name="test-mcp")
         link_paths = [link.path for link in env.links]
-        assert "/mcp" in link_paths
+        # streamable-http MCP session lives under {mcp_mount_path}/mcp
+        assert "/flyte-mcp/mcp" in link_paths
         assert "/health" in link_paths
+
+    def test_links_use_sse_path_when_transport_is_sse(self):
+        env = FlyteMCPAppEnvironment(name="test-mcp", transport="sse")
+        link_paths = [link.path for link in env.links]
+        assert "/flyte-mcp/sse" in link_paths
 
 
 class TestFlyteMCPAppEnvironmentInheritance:
@@ -247,6 +253,14 @@ class TestFlyteMCPAppEnvironmentNameValidation:
         for name in invalid_names:
             with pytest.raises(ValueError, match="must consist of lower case"):
                 FlyteMCPAppEnvironment(name=name)
+
+
+class TestFlyteMCPAppEnvironmentMountPath:
+    """Tests for ``mcp_mount_path`` validation."""
+
+    def test_relative_mount_path_rejected(self):
+        with pytest.raises(ValueError, match="absolute path"):
+            FlyteMCPAppEnvironment(name="test-mcp", mcp_mount_path="mcp")
 
 
 class TestFlyteMCPAppEnvironmentPortHandling:
@@ -355,6 +369,14 @@ class TestResolveTools:
     def test_resolve_tools_core_group_is_empty(self):
         result = _resolve_tools(["core"], None)
         assert result == set()
+
+    def test_resolve_tools_unknown_tool_raises(self):
+        with pytest.raises(ValueError, match="Unknown tool"):
+            _resolve_tools(None, ["not_a_real_tool"])
+
+    def test_resolve_tools_unknown_group_raises(self):
+        with pytest.raises(ValueError, match="Unknown tool group"):
+            _resolve_tools(["not_a_group"], None)
 
 
 class TestAllowlistFunctions:

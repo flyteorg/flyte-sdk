@@ -9,31 +9,32 @@ Requirements:
 
 Usage:
 
+    From the repo root (adjust paths for ``sdk_examples_path`` / docs paths in code):
+
     $ python examples/mcp/mcp_app_filtered.py
 
-    Or serve locally for development (recommended: `uvx`)
-
-    $ uvx --from "flyte[mcp]" flyte-mcp-filtered
-
-    If you're running from this repo checkout:
-    $ uvx --from . flyte-mcp-filtered
+    For a generic MCP server without editing this file, use the packaged CLI and flags
+    (see ``flyte-mcp --help``); allowlists are only configured via code as in this example.
 
     ------------------------------
     Connect from Claude Code
     ------------------------------
     Some agent harnesses can't reach `localhost` URLs. For local usage, prefer
     configuring Claude Code to launch the server via `uvx` (process-based setup).
-    
-    Add as a local stdio MCP server:
-    $ claude mcp add --transport stdio flyte-mcp-filtered -- uvx --with "flyte[mcp]" flyte-mcp-filtered
 
-    If you deploy this app remotely (so it has a public base URL), use that URL instead:
-    $ claude mcp add --transport http flyte-mcp-filtered-remote https://<YOUR_HOST>/mcp
+    Add as a local stdio MCP server:
+    $ claude mcp add --transport stdio flyte-mcp-filtered -- uvx --with "flyte[mcp]" flyte-mcp
+
+    If you deploy this app remotely (so it has a public base URL), use that URL instead.
+    With default ``transport="streamable-http"`` and ``mcp_mount_path="/flyte-mcp"``, use the
+    MCP session URL ``https://<YOUR_HOST>/flyte-mcp/mcp``.
+
+    $ claude mcp add --transport http flyte-mcp-filtered-remote https://<YOUR_HOST>/flyte-mcp/mcp
 
     If your remote deployment requires auth, add headers (example):
     $ claude mcp add --transport http \
       --header "Authorization: Bearer $TOKEN" \
-      flyte-mcp-filtered-remote https://<YOUR_HOST>/mcp
+      flyte-mcp-filtered-remote https://<YOUR_HOST>/flyte-mcp/mcp
 
     ------------------------------
     Connect from OpenCode
@@ -41,18 +42,18 @@ Usage:
 
     For local usage (no `localhost` required), configure OpenCode to launch the
     server as a local MCP process:
-    
+
     {
       "$schema": "https://opencode.ai/config.json",
       "mcp": {
         "flyte-mcp-filtered": {
           "type": "local",
-          "command": ["uvx", "--with", "flyte[mcp]", "flyte-mcp-filtered"],
+          "command": ["uvx", "--with", "flyte[mcp]", "flyte-mcp", "--tool-groups", "task,run,script,search"],
           "enabled": true
         }
       }
     }
-    
+
     For a remote deployment:
 
     {
@@ -60,7 +61,7 @@ Usage:
       "mcp": {
         "flyte-mcp-filtered": {
           "type": "remote",
-          "url": "https://<YOUR_HOST>/mcp",
+          "url": "https://<YOUR_HOST>/flyte-mcp/mcp",
           "enabled": true,
           "headers": {
             "Authorization": "Bearer YOUR_TOKEN"

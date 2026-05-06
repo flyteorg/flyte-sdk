@@ -23,7 +23,7 @@ def _csv_callback(ctx: click.Context, param: click.Parameter, value: str | None)
 @click.option("--title", default=None, help="Optional MCP server title (defaults to --name).")
 @click.option("--instructions", default=None, help="Optional MCP server instructions string.")
 @click.option("--port", type=int, default=8080, show_default=True, help="HTTP port to bind.")
-@click.option("--mcp-mount-path", default="/mcp", show_default=True, help="Mount path for MCP endpoint.")
+@click.option("--mcp-mount-path", default="/flyte-mcp", show_default=True, help="Mount path for MCP endpoint.")
 @click.option(
     "--tool-groups",
     default=None,

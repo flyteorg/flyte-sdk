@@ -30,17 +30,20 @@ Usage:
 
     Some agent harnesses can't reach `localhost` URLs. For local usage, prefer
     configuring Claude Code to launch the server via `uvx` (process-based setup).
-    
+
     Add as a local stdio MCP server:
     $ claude mcp add --transport stdio flyte-mcp -- uvx --with "flyte[mcp]" flyte-mcp
 
-    If you deploy this app remotely (so it has a public base URL), use that URL instead:
-    $ claude mcp add --transport http flyte-mcp-remote https://<YOUR_HOST>/mcp
+    If you deploy this app remotely (so it has a public base URL), use that URL instead.
+    With default ``transport="streamable-http"`` and ``mcp_mount_path="/flyte-mcp"``, the MCP
+    session URL is ``/flyte-mcp/mcp`` (Mount ``/flyte-mcp`` plus the FastMCP streamable path).
+
+    $ claude mcp add --transport http flyte-mcp-remote https://<YOUR_HOST>/flyte-mcp/mcp
 
     If your remote deployment requires auth, add headers (example):
     $ claude mcp add --transport http \
       --header "Authorization: Bearer $TOKEN" \
-      flyte-mcp-remote https://<YOUR_HOST>/mcp
+      flyte-mcp-remote https://<YOUR_HOST>/flyte-mcp/mcp
 
     ------------------------------
     Connect from OpenCode
@@ -48,7 +51,7 @@ Usage:
 
     For local usage (no `localhost` required), configure OpenCode to launch the
     server as a local MCP process:
-    
+
     {
       "$schema": "https://opencode.ai/config.json",
       "mcp": {
@@ -59,7 +62,7 @@ Usage:
         }
       }
     }
-    
+
     For a remote deployment:
 
     {
@@ -67,10 +70,10 @@ Usage:
       "mcp": {
       "flyte-mcp": {
         "type": "remote",
-        "url": "https://<YOUR_HOST>/mcp",
+        "url": "https://<YOUR_HOST>/flyte-mcp/mcp",
         "enabled": true,
         "headers": {
-          "Authorization": "Bearer YOUR_TOKEN"
+          "Authorization": "Bearer $YOUR_TOKEN"
         }
       }
     }

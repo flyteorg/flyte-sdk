@@ -86,7 +86,7 @@ ALL_MCP_TOOL_GROUPS: tuple[MCPToolGroup, ...] = get_args(MCPToolGroup)
 
 TOOL_GROUP_MAPPING: dict[MCPToolGroup, tuple[MCPTool, ...]] = {
     "all": ALL_MCP_TOOLS,
-    # Core group is intentionally empty - the transport endpoints (/mcp, /health)
+    # Core group is intentionally empty - the transport endpoints (MCP mount, /health)
     # are HTTP routes, not MCP "tools".
     "core": (),
     "task": ("run_task", "get_task", "list_tasks"),
@@ -105,11 +105,11 @@ TOOL_GROUP_MAPPING: dict[MCPToolGroup, tuple[MCPTool, ...]] = {
 
 
 def _resolve_tools(tool_groups: list[str] | None, tools: list[str] | None) -> set[str]:
-    """
-    Resolve enabled tool names from either tool_groups or tools.
+    """Return the set of MCP tool names to expose.
 
-    - When both are None: all tools are enabled.
-    - tool_groups=["core"] yields no MCP tools (core is HTTP routes only).
+    If both arguments are omitted, all tools are enabled. Otherwise pass either
+    ``tool_groups`` or ``tools`` (not both). The ``core`` group selects no tools;
+    only the HTTP routes are served.
     """
     if tool_groups is None and tools is None:
         return set(ALL_MCP_TOOLS)
@@ -262,9 +262,11 @@ async def _search_files(
     before_context_lines: int = 5,
     after_context_lines: int = 5,
 ) -> str:
-    """
-    Search for a pattern under a directory (or in a single file) and return a markdown string
-    containing the top N matching files (ranked by match count).
+    """Search files for ``pattern`` and return Markdown with excerpt blocks.
+
+    Recursively scans up to 5000 files under ``path`` (or reads ``path`` if it is
+    a file). Files are ranked by match count; the top ``top_n`` files get merged
+    context windows around each hit.
     """
     try:
         p = pathlib.Path(path)
@@ -339,11 +341,30 @@ async def _search_files(
 
 @dataclass(kw_only=True, repr=True)
 class FlyteMCPAppEnvironment(flyte.app.AppEnvironment):
-    """
-    An AppEnvironment that serves an MCP server over HTTP via Starlette.
+    """Serve a Flyte-facing MCP server over HTTP (FastMCP + Starlette + Uvicorn).
 
-    The server is mounted at `mcp_mount_path` (default: `/mcp`) and provides a `/health`
-    endpoint for readiness checks.
+    Use this environment when you want LLM clients to call Flyte operations
+    (tasks, runs, apps, triggers, image builds, UV scripts, docs search) through
+    the Model Context Protocol. Install extras with ``pip install 'flyte[mcp]'``.
+
+    **HTTP layout**
+
+    - ``GET /health`` — liveness/readiness JSON ``{"status": "healthy"}``.
+    - The MCP ASGI app is mounted at ``mcp_mount_path`` (default ``/flyte-mcp``). With
+      the default ``transport="streamable-http"``, the session endpoint is
+      ``{mcp_mount_path}/mcp`` (for example ``/flyte-mcp/mcp``). SSE transport uses
+      ``{mcp_mount_path}/sse`` instead.
+
+    **Tool selection**
+
+    Pass ``tool_groups`` *or* ``tools`` to restrict which MCP tools are
+    registered (not both). Omit both to enable all tools. Optional allowlists
+    limit which tasks, apps, or triggers remote calls may target. Search tools
+    require ``sdk_examples_path``, ``docs_examples_path``, and/or
+    ``full_docs_path`` when those tools are enabled.
+
+    The UV script remote build/run tools are placeholders when not backed by a
+    remote MCP deployment that implements them.
     """
 
     type: str = "FlyteMCPApp"
@@ -353,7 +374,7 @@ class FlyteMCPAppEnvironment(flyte.app.AppEnvironment):
     instructions: str | None = None
 
     # MCP/HTTP
-    mcp_mount_path: str = "/flyte"
+    mcp_mount_path: str = "/flyte-mcp"
     transport: Literal["stdio", "sse", "streamable-http"] = "streamable-http"
     uvicorn_config: uvicorn.Config | None = None
 
@@ -651,14 +672,14 @@ class FlyteMCPAppEnvironment(flyte.app.AppEnvironment):
         @mcp.tool()
         async def build_uv_script_image_remote(script: str, ctx: MCPContext | None = None) -> dict:
             raise NotImplementedError(
-                "Remote UV script image builds require a remote MCP backend "
+                "Remote UV script image builds require a remote MCP backend. "
                 "Use a connected remote MCP server for this tool."
             )
 
         @mcp.tool()
         async def run_uv_script_remote(script: str, ctx: MCPContext | None = None) -> dict:
             raise NotImplementedError(
-                "Remote UV script runs require a remote MCP backend Use a connected remote MCP server for this tool."
+                "Remote UV script runs require a remote MCP backend. Use a connected remote MCP server for this tool."
             )
 
         @mcp.tool()
@@ -736,14 +757,19 @@ class FlyteMCPAppEnvironment(flyte.app.AppEnvironment):
         async def _health(_: Any) -> JSONResponse:
             return JSONResponse({"status": "healthy"})
 
-        # FastMCP provides an ASGI app for HTTP transport.
+        # FastMCP exposes different ASGI apps; pick one consistent with ``transport``.
         mcp_asgi = None
-        if hasattr(self._mcp_server, "streamable_http_app"):
+        if self.transport == "sse":
+            if hasattr(self._mcp_server, "sse_app"):
+                mcp_asgi = self._mcp_server.sse_app()
+            else:  # pragma: no cover
+                raise RuntimeError("FastMCP does not expose sse_app(); cannot use transport='sse'.")
+        elif hasattr(self._mcp_server, "streamable_http_app"):
             mcp_asgi = self._mcp_server.streamable_http_app()
         elif hasattr(self._mcp_server, "sse_app"):  # pragma: no cover
             mcp_asgi = self._mcp_server.sse_app()
         else:  # pragma: no cover
-            raise RuntimeError("FastMCP does not expose an ASGI app (expected streamable_http_app/asgi_app/sse_app).")
+            raise RuntimeError("FastMCP does not expose an ASGI app (expected streamable_http_app or sse_app).")
 
         routes = [
             Mount(self.mcp_mount_path, app=mcp_asgi),
