@@ -6,7 +6,6 @@ Minimal example: a sandbox whose code always raises. Run remotely to see
 the failure surface as a task error.
 """
 
-
 import flyte
 import flyte.sandbox
 from flyte.sandbox import sandbox_environment
