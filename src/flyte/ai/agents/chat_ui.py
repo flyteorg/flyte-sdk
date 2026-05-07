@@ -16,7 +16,7 @@ from flyte.models import SerializationContext
 
 from ._css import CUSTOM_THEME_CSS_TEMPLATE
 from ._html import build_chat_html
-from .protocol import Agent
+from .protocol import Agent, AgentResult
 
 # ------------------------------------------------------------------
 # CustomTheme — human-readable color theming for the chat UI
@@ -114,6 +114,32 @@ class _ChatResponse(BaseModel):
     attempts: int = 1
 
 
+async def _task_run_error_message(run_handle: Any) -> str:
+    """Human-readable explanation when a remote :class:`~flyte.remote.Run` ends unsuccessfully."""
+    phase = getattr(run_handle, "phase", "unknown")
+    parts: list[str] = [f"Task run ended in state {phase}."]
+    details_aio = getattr(getattr(run_handle, "details", None), "aio", None)
+    if not callable(details_aio):
+        return " ".join(parts)
+    try:
+        details = await details_aio()
+        ad = getattr(details, "action_details", None)
+        if ad is None:
+            return " ".join(parts)
+        err = getattr(ad, "error_info", None)
+        if err is not None:
+            kind = getattr(err, "kind", "error")
+            message = getattr(err, "message", "") or ""
+            parts.append(f"{kind}: {message}".strip())
+        abort = getattr(ad, "abort_info", None)
+        if err is None and abort is not None:
+            reason = getattr(abort, "reason", "") or str(abort)
+            parts.append(f"Aborted: {reason}".strip())
+    except Exception as e:
+        parts.append(f"(Could not load error details: {e})")
+    return " ".join(parts)
+
+
 # ------------------------------------------------------------------
 # AgentChatAppEnvironment
 # ------------------------------------------------------------------
@@ -168,6 +194,22 @@ class AgentChatAppEnvironment(flyte.app.AppEnvironment):
     passthrough_auth_excluded_paths:
         Paths skipped by passthrough middleware (defaults to common docs and
         health routes). Only used when ``passthrough_auth`` is ``True``.
+    task_entrypoint:
+        Optional Flyte task used as the chat handler entrypoint.
+
+        When set, ``/api/chat`` calls the task (via ``task_entrypoint.aio``)
+        instead of calling ``agent.run`` directly. This is useful for agents
+        whose tool calls must run under a parent task context (e.g. a
+        ``CodeModeAgent`` using durable ``@env.task`` tools).
+
+        The entrypoint may accept either:
+
+        - ``(message: str, history: list[dict[str, str]])``; or
+        - ``(message: str)``.
+
+        The return value may be an :class:`~flyte.ai.agents.protocol.AgentResult`,
+        a dict with keys like ``summary``/``charts``/``code``, or a plain string
+        (treated as ``summary``).
     """
 
     agent: Any = field(default=None)
@@ -180,6 +222,7 @@ class AgentChatAppEnvironment(flyte.app.AppEnvironment):
     additional_buttons: list[dict[str, str]] = field(default_factory=list)
     passthrough_auth: bool = False
     passthrough_auth_excluded_paths: frozenset[str] | None = None
+    task_entrypoint: Any | None = None
     type: str = "AgentChat"
     _caller_frame: inspect.FrameInfo | None = None
 
@@ -190,6 +233,11 @@ class AgentChatAppEnvironment(flyte.app.AppEnvironment):
         if not isinstance(self.agent, Agent):
             raise TypeError(
                 f"'agent' must implement the Agent protocol (run and tool_descriptions), got {type(self.agent)}"
+            )
+
+        if self.task_entrypoint is not None and not self.passthrough_auth:
+            raise ValueError(
+                "task_entrypoint requires passthrough_auth=True so the app can run tasks with caller credentials."
             )
 
         super().__post_init__()
@@ -213,6 +261,7 @@ class AgentChatAppEnvironment(flyte.app.AppEnvironment):
         from fastapi.responses import HTMLResponse, JSONResponse
 
         agent = self.agent
+        task_entrypoint = self.task_entrypoint
 
         if self.passthrough_auth:
             import flyte
@@ -251,7 +300,71 @@ class AgentChatAppEnvironment(flyte.app.AppEnvironment):
         @fastapi_app.post("/api/chat")
         async def chat(req: _ChatRequest) -> _ChatResponse:
             t0 = time.monotonic()
-            result = await agent.run(req.message, req.history)
+            if task_entrypoint is None:
+                result_obj: Any = await agent.run(req.message, req.history)
+            else:
+                import flyte
+                from flyte.models import ActionPhase
+
+                # Prefer introspecting the underlying Python function if present
+                fn = getattr(task_entrypoint, "func", None)
+                n_params = 1
+                if fn is not None:
+                    try:
+                        n_params = len(inspect.signature(fn).parameters)
+                    except Exception:
+                        n_params = 1
+
+                try:
+                    if n_params >= 2:
+                        run_handle = await flyte.run.aio(task_entrypoint, req.message, req.history)
+                    else:
+                        run_handle = await flyte.run.aio(task_entrypoint, req.message)
+
+                    # In remote/hybrid mode flyte.run returns a Run; wait + fetch outputs.
+                    if hasattr(run_handle, "wait") and hasattr(run_handle, "outputs"):
+                        await run_handle.wait.aio(quiet=True)
+                        phase = getattr(run_handle, "phase", ActionPhase.SUCCEEDED)
+                        if phase != ActionPhase.SUCCEEDED:
+                            result_obj = AgentResult(
+                                summary="",
+                                error=await _task_run_error_message(run_handle),
+                            )
+                        else:
+                            try:
+                                outs = await run_handle.outputs.aio()
+                            except Exception as e:
+                                result_obj = AgentResult(
+                                    summary="",
+                                    error=f"Task succeeded but outputs could not be loaded: {e}",
+                                )
+                            else:
+                                result_obj = outs[0] if len(outs) > 0 else None
+                    else:
+                        # Local mode may return the raw result directly
+                        result_obj = run_handle
+                except Exception as e:
+                    result_obj = AgentResult(summary="", error=f"Task run failed: {e}")
+
+            # In local mode, Flyte task `.aio()` may yield an un-awaited coroutine
+            # (e.g. from forward() returning a coroutine for async functions).
+            while inspect.iscoroutine(result_obj):
+                result_obj = await result_obj
+
+            if isinstance(result_obj, AgentResult):
+                result = result_obj
+            elif isinstance(result_obj, dict):
+                result = AgentResult(
+                    code=str(result_obj.get("code", "")),
+                    charts=list(result_obj.get("charts", [])) if "charts" in result_obj else [],
+                    summary=str(result_obj.get("summary", "")),
+                    error=str(result_obj.get("error", "")),
+                    attempts=int(result_obj.get("attempts", 1)),
+                )
+            elif isinstance(result_obj, str):
+                result = AgentResult(summary=result_obj)
+            else:
+                result = AgentResult(summary=str(result_obj))
             elapsed_ms = int((time.monotonic() - t0) * 1000)
             return _ChatResponse(
                 code=result.code,

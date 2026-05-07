@@ -1,13 +1,15 @@
 """Tests for flyte.ai.agents.chat_ui."""
 
-from unittest.mock import MagicMock
+from typing import Any
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from flyte.ai.agents import AgentChatAppEnvironment, AgentResult, CustomTheme
-from flyte.ai.agents.chat_ui import _hex_to_rgb, _rgba
+from flyte.ai.agents.chat_ui import _ChatRequest, _hex_to_rgb, _rgba
 from flyte.ai.agents.protocol import Agent
 from flyte.app.extras import FastAPIPassthroughAuthMiddleware
+from flyte.models import ActionPhase
 
 
 class _StubAgent:
@@ -107,3 +109,205 @@ class TestAgentChatAppEnvironment:
         )
         app = env.build_fastapi_app()
         assert any(m.cls == FastAPIPassthroughAuthMiddleware for m in app.user_middleware)
+
+    @pytest.mark.asyncio
+    async def test_task_entrypoint_used_for_chat(self):
+        # Ensure passthrough_auth is required when task_entrypoint is set.
+        entry = MagicMock()
+        env = AgentChatAppEnvironment(
+            name="test-app",
+            image="auto",
+            agent=_StubAgent(),
+            task_entrypoint=entry,
+            passthrough_auth=True,
+        )
+        app = env.build_fastapi_app()
+        route = next(r for r in app.routes if getattr(r, "path", None) == "/api/chat")
+
+        class _FakeRun:
+            def __init__(self, value: Any):
+                self._value = value
+
+                async def _wait(*args, **kwargs):
+                    return None
+
+                async def _outputs(*args, **kwargs):
+                    return (self._value,)
+
+                self.wait = MagicMock()
+                self.wait.aio = _wait
+                self.outputs = MagicMock()
+                self.outputs.aio = _outputs
+
+        async def _run(task, *args, **kwargs):
+            # Return a dict shaped like AgentResult payload.
+            return _FakeRun({"summary": f"task:{args[0]}", "attempts": 2})
+
+        with patch("flyte.run", new=MagicMock(aio=_run)):
+            out = await route.endpoint(_ChatRequest(message="hi", history=[{"role": "user", "content": "prev"}]))
+        assert out.summary == "task:hi"
+        assert out.attempts == 2
+
+    @pytest.mark.asyncio
+    async def test_task_entrypoint_one_arg(self):
+        entry = MagicMock()
+
+        # Signature introspection uses task_entrypoint.func when present.
+        def func(message: str) -> str:
+            return ""
+
+        entry.func = func
+
+        env = AgentChatAppEnvironment(
+            name="test-app",
+            image="auto",
+            agent=_StubAgent(),
+            task_entrypoint=entry,
+            passthrough_auth=True,
+        )
+        app = env.build_fastapi_app()
+        route = next(r for r in app.routes if getattr(r, "path", None) == "/api/chat")
+
+        class _FakeRun:
+            def __init__(self, value: Any):
+                self._value = value
+
+                async def _wait(*args, **kwargs):
+                    return None
+
+                async def _outputs(*args, **kwargs):
+                    return (self._value,)
+
+                self.wait = MagicMock()
+                self.wait.aio = _wait
+                self.outputs = MagicMock()
+                self.outputs.aio = _outputs
+
+        async def _run(task, *args, **kwargs):
+            return _FakeRun({"summary": f"ok:{args[0]}", "attempts": 3})
+
+        with patch("flyte.run", new=MagicMock(aio=_run)):
+            out = await route.endpoint(_ChatRequest(message="yo", history=[]))
+        assert out.summary == "ok:yo"
+        assert out.attempts == 3
+
+    @pytest.mark.asyncio
+    async def test_task_entrypoint_failed_run_surfaces_error_in_response(self):
+        entry = MagicMock()
+        env = AgentChatAppEnvironment(
+            name="test-app",
+            image="auto",
+            agent=_StubAgent(),
+            task_entrypoint=entry,
+            passthrough_auth=True,
+        )
+        app = env.build_fastapi_app()
+        route = next(r for r in app.routes if getattr(r, "path", None) == "/api/chat")
+
+        class _FakeRunFailed:
+            phase = ActionPhase.FAILED
+
+            async def _wait(*args, **kwargs):
+                return None
+
+            async def _details():
+                ad = MagicMock()
+                ei = MagicMock()
+                ei.kind = "USER"
+                ei.message = "task exploded"
+                ad.error_info = ei
+                ad.abort_info = None
+                d = MagicMock()
+                d.action_details = ad
+                return d
+
+            wait = MagicMock()
+            wait.aio = _wait
+            outputs = MagicMock()
+            details = MagicMock()
+            details.aio = _details
+
+        async def _run(task, *args, **kwargs):
+            return _FakeRunFailed()
+
+        with patch("flyte.run", new=MagicMock(aio=_run)):
+            out = await route.endpoint(_ChatRequest(message="hi", history=[]))
+        assert "failed" in out.error.lower() or "USER" in out.error
+        assert "task exploded" in out.error
+        assert out.summary == ""
+
+    @pytest.mark.asyncio
+    async def test_task_entrypoint_outputs_error_surfaces_in_response(self):
+        entry = MagicMock()
+        env = AgentChatAppEnvironment(
+            name="test-app",
+            image="auto",
+            agent=_StubAgent(),
+            task_entrypoint=entry,
+            passthrough_auth=True,
+        )
+        app = env.build_fastapi_app()
+        route = next(r for r in app.routes if getattr(r, "path", None) == "/api/chat")
+
+        class _FakeRunOkNoOutputs:
+            phase = ActionPhase.SUCCEEDED
+
+            async def _wait(*args, **kwargs):
+                return None
+
+            async def _outputs(*args, **kwargs):
+                raise RuntimeError("no outputs on blob store")
+
+            wait = MagicMock()
+            wait.aio = _wait
+            outputs = MagicMock()
+            outputs.aio = _outputs
+
+        async def _run(task, *args, **kwargs):
+            return _FakeRunOkNoOutputs()
+
+        with patch("flyte.run", new=MagicMock(aio=_run)):
+            out = await route.endpoint(_ChatRequest(message="hi", history=[]))
+        assert "outputs could not be loaded" in out.error
+        assert "no outputs on blob store" in out.error
+
+    @pytest.mark.asyncio
+    async def test_task_entrypoint_nested_coroutine_is_fully_awaited(self):
+        # Now that we use flyte.run, nested coroutine handling is validated
+        # by treating outputs[0] as a coroutine.
+        entry = MagicMock()
+        env = AgentChatAppEnvironment(
+            name="test-app",
+            image="auto",
+            agent=_StubAgent(),
+            task_entrypoint=entry,
+            passthrough_auth=True,
+        )
+        app = env.build_fastapi_app()
+        route = next(r for r in app.routes if getattr(r, "path", None) == "/api/chat")
+
+        async def inner(message: str) -> str:
+            return f"inner:{message}"
+
+        class _FakeRun:
+            def __init__(self, value: Any):
+                self._value = value
+
+                async def _wait(*args, **kwargs):
+                    return None
+
+                async def _outputs(*args, **kwargs):
+                    return (self._value,)
+
+                self.wait = MagicMock()
+                self.wait.aio = _wait
+                self.outputs = MagicMock()
+                self.outputs.aio = _outputs
+
+        async def _run(task, *args, **kwargs):
+            # outputs[0] is an un-awaited coroutine
+            return _FakeRun(inner(args[0]))
+
+        with patch("flyte.run", new=MagicMock(aio=_run)):
+            out = await route.endpoint(_ChatRequest(message="zz", history=[]))
+        assert out.summary == "inner:zz"

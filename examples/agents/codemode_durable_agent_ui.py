@@ -25,9 +25,9 @@ import flyte
 from flyte.ai import AgentChatAppEnvironment, CodeModeAgent, CustomTheme
 
 task_env = flyte.TaskEnvironment(
-    name="codemode-durable-analytics-ui",
-    secrets=[flyte.Secret(key="internal-anthropic-api-key", as_env_var="ANTHROPIC_API_KEY")],
-    image=flyte.Image.from_debian_base().with_pip_packages("httpx", "pydantic-monty", "litellm"),
+    name="codemode-durable-analytics-tools",
+    image=flyte.Image.from_debian_base().with_pip_packages("httpx", "pydantic-monty", "litellm", "unionai-reuse"),
+    resources=flyte.Resources(cpu=2, memory="1Gi"),
     reusable=flyte.ReusePolicy(replicas=1, concurrency=10),
 )
 
@@ -220,16 +220,41 @@ agent = CodeModeAgent(
     system_prompt_prefix=SYSTEM_PROMPT_PREFIX,
 )
 
+
+@task_env.task(report=True)
+async def task_entrypoint(message: str, history: list[dict[str, str]]) -> dict[str, object]:
+    """Entrypoint for the durable CodeModeAgent analysis inside a Flyte task."""
+    result = await agent.run(message, history=history)
+    return {
+        "code": result.code,
+        "charts": result.charts,
+        "summary": result.summary,
+        "error": result.error,
+        "attempts": result.attempts,
+    }
+
+
 env = AgentChatAppEnvironment(
     name="codemode-durable-analytics-ui",
     agent=agent,
+    task_entrypoint=task_entrypoint,
     title="Durable analytics CodeModeAgent",
     subtitle="LLM-generated Monty code calling durable Flyte task tools.",
     theme=CustomTheme(accent_color="#e69812", accent_hover_color="#f2bd52", button_text_color="#0a0a0f"),
     passthrough_auth=True,
+    prompt_nudges=[
+        {
+            "label": "Show me the data",
+            "prompt": "I want to see the data for the sales_2024 dataset.",
+        },
+        {
+            "label": "Monthly revenue trends",
+            "prompt": "I want to see the monthly revenue trends for 2024, broken down by region.",
+        },
+    ],
     depends_on=[task_env],
     image=(
-        flyte.Image.from_debian_base(install_flyte=False)
+        flyte.Image.from_debian_base()
         .with_pip_packages("litellm", "pydantic-monty==0.0.17", "uvicorn", "fastapi", "flyte[sandbox]")
         .with_local_v2()
     ),
@@ -240,5 +265,5 @@ env = AgentChatAppEnvironment(
 
 if __name__ == "__main__":
     flyte.init_from_config(root_dir=pathlib.Path(__file__).parent)
-    handle = flyte.serve(env)
-    print(f"Durable CodeModeAgent UI: {handle.url}")
+    deployments = flyte.deploy(env)
+    print(f"Durable CodeModeAgent UI: {deployments[0].summary_repr()}")
