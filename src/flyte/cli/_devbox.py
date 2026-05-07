@@ -57,16 +57,6 @@ def _container_is_running(container_name: str) -> bool:
     return container_name in result.stdout
 
 
-def _container_exists(container_name: str) -> bool:
-    result = subprocess.run(
-        ["docker", "ps", "-a", "--filter", f"name=^{container_name}$", "--format", "{{.Names}}"],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    return container_name in result.stdout
-
-
 def _container_is_paused(container_name: str) -> bool:
     result = subprocess.run(
         [
@@ -264,9 +254,7 @@ def launch_devbox(image_name: str, is_dev_mode: bool, gpu: bool = False, log_for
         console.print("[yellow]Flyte devbox cluster is already running.[/yellow]")
         if not click.confirm("Do you want to delete the existing devbox cluster and start a new one?"):
             return
-        subprocess.run(["docker", "rm", "-f", _CONTAINER_NAME], check=True, capture_output=True)
-    elif _container_exists(_CONTAINER_NAME):
-        subprocess.run(["docker", "rm", "-f", _CONTAINER_NAME], check=True, capture_output=True)
+    subprocess.run(["docker", "rm", "-f", _CONTAINER_NAME], check=False, capture_output=True)
 
     _KUBE_DIR.mkdir(parents=True, exist_ok=True)
     # This step makes sure that we always used the latest k3s kubeconfig file
