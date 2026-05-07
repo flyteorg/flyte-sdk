@@ -90,7 +90,9 @@ jobs:
           - "plugins/mlflow"
           - "plugins/papermill"
           - "plugins/pandera"
+          - "plugins/hydra"
           - "plugins/omegaconf"
+          - "plugins/huggingface"
         include:
           - workdir: "plugins/sglang"
             image-type: sglang

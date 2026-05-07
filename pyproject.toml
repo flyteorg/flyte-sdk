@@ -24,8 +24,9 @@ dependencies = [
     "async-lru>=2.0.5",
     "mashumaro",
     "aiolimiter>=1.2.1",
-    "flyteidl2==2.0.12",
+    "flyteidl2==2.0.13",
     "packaging",
+    "sentry-sdk>=2.0",
     "pyOpenSSL>=24.0.0",
 ]
 
@@ -66,7 +67,7 @@ examples-test = [
     "lightning",
 ]
 sandbox = [
-    "pydantic-monty>=0.0.8",
+    "pydantic-monty==0.0.17",
 ]
 tui = [
     "textual>=0.80",
@@ -74,7 +75,7 @@ tui = [
 
 [dependency-groups]
 dev = [
-    "pydantic-monty>=0.0.8",
+    "pydantic-monty==0.0.17",
     "build>=1.2.2.post1",
     "fastapi>=0.128.0",
     "uvicorn>=0.40.0",

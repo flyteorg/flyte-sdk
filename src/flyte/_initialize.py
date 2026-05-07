@@ -120,13 +120,20 @@ async def _initialize_client(
 
 
 def _initialize_logger(
-    log_level: int | None = None, log_format: LogFormat | None = None, reset_root_logger: bool = False
+    log_level: int | None = None,
+    log_format: LogFormat | None = None,
+    reset_root_logger: bool = False,
+    user_log_level: int | None = None,
 ) -> None:
     # In-cluster runtimes never render Rich output (stdout is captured), so skip the Rich handler
     # — this avoids rich.logging and the transitive ipython_check -> IPython import at startup.
     enable_rich = os.environ.get("FLYTE_INTERNAL_EXECUTION_PROJECT") is None
     initialize_logger(
-        log_level=log_level, log_format=log_format, enable_rich=enable_rich, reset_root_logger=reset_root_logger
+        log_level=log_level,
+        log_format=log_format,
+        enable_rich=enable_rich,
+        reset_root_logger=reset_root_logger,
+        user_log_level=user_log_level,
     )
 
 
@@ -139,6 +146,7 @@ async def init(
     log_level: int | None = None,
     log_format: LogFormat | None = None,
     reset_root_logger: bool = False,
+    user_log_level: int | None = None,
     endpoint: str | None = None,
     headless: bool = False,
     insecure: bool = False,
@@ -211,7 +219,12 @@ async def init(
     from flyte._utils import org_from_endpoint, sanitize_endpoint
     from flyte.types import _load_custom_type_transformers
 
-    _initialize_logger(log_level=log_level, log_format=log_format, reset_root_logger=reset_root_logger)
+    _initialize_logger(
+        log_level=log_level,
+        log_format=log_format,
+        reset_root_logger=reset_root_logger,
+        user_log_level=user_log_level,
+    )
     if load_plugin_type_transformers:
         _load_custom_type_transformers()
 
@@ -269,6 +282,7 @@ async def init_from_config(
     root_dir: Path | None = None,
     log_level: int | None = None,
     log_format: LogFormat = "console",
+    user_log_level: int | None = None,
     project: str | None = None,
     domain: str | None = None,
     storage: Storage | None = None,
@@ -347,7 +361,8 @@ async def init_from_config(
         root_dir=root_dir,
         log_level=log_level,
         log_format=log_format,
-        image_builder=image_builder or cfg.image.builder,
+        user_log_level=user_log_level,
+        image_builder=image_builder or cfg.image.builder or "local",
         batch_size=batch_size,
         images=cfg.image.image_refs,
         storage=storage,
