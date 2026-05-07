@@ -8,8 +8,12 @@ use std::{
 };
 
 use flyteidl2::flyteidl::{
+    actions::{watch_for_updates_request, WatchForUpdatesRequest},
     common::{ActionIdentifier, RunIdentifier},
-    workflow::{watch_request, watch_response::Message, WatchRequest, WatchResponse},
+    workflow::{
+        watch_request, watch_response::Message, ActionUpdate, ControlMessage, WatchRequest,
+        WatchResponse,
+    },
 };
 use tokio::{
     select,
@@ -21,7 +25,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::{
     action::Action,
-    core::StateClient,
+    core::{actions_metadata, ActionsClient, StateClient},
     error::{ControllerError, InformerError},
 };
 
@@ -43,6 +47,9 @@ fn is_retryable_error(err: &InformerError) -> bool {
 #[derive(Clone, Debug)]
 pub struct Informer {
     client: StateClient,
+    /// Optional unified ActionsService client. When `Some`, watch goes through
+    /// `ActionsService.WatchForUpdates`; when `None`, falls back to `StateService.Watch`.
+    actions_client: Option<ActionsClient>,
     run_id: RunIdentifier,
     action_cache: Arc<RwLock<HashMap<String, Action>>>,
     parent_action_name: String,
@@ -57,12 +64,14 @@ pub struct Informer {
 impl Informer {
     pub fn new(
         client: StateClient,
+        actions_client: Option<ActionsClient>,
         run_id: RunIdentifier,
         parent_action_name: String,
         shared_queue: mpsc::Sender<Action>,
     ) -> Self {
         Informer {
             client,
+            actions_client,
             run_id,
             action_cache: Arc::new(RwLock::new(HashMap::new())),
             parent_action_name,
@@ -93,63 +102,94 @@ impl Informer {
         }
     }
 
+    /// Handle a control message - same payload for both StateService and ActionsService.
+    fn handle_control_message(&self, _ctrl: &ControlMessage) {
+        debug!("Received sentinel for parent {}", self.parent_action_name);
+        self.is_ready.store(true, Ordering::Release);
+        self.ready.notify_waiters();
+    }
+
+    /// Handle an action update payload — shared between StateService and ActionsService paths.
+    async fn handle_action_update(
+        &self,
+        action_update: ActionUpdate,
+    ) -> Result<Action, InformerError> {
+        debug!("Received action update: {:?}", action_update.action_id);
+        let mut cache = self.action_cache.write().await;
+        let action_name = action_update
+            .action_id
+            .as_ref()
+            .map(|act_id| act_id.name.clone())
+            .ok_or(InformerError::StreamError(format!(
+                "Action update received without a name: {:?}",
+                action_update
+            )))?;
+
+        if let Some(existing) = cache.get_mut(&action_name) {
+            existing.merge_update(&action_update);
+
+            // Don't fire a completion event here either - successful return of this
+            // function should re-enqueue the action for processing, and the controller
+            // will detect and fire completion
+        } else {
+            debug!(
+                "Action update for {:?} not in cache, adding",
+                action_update.action_id
+            );
+            let action_from_update =
+                Action::new_from_update(self.parent_action_name.clone(), action_update);
+            cache.insert(action_name.clone(), action_from_update);
+
+            // don't fire completion events here because we may not have a completion event yet
+            // i.e. the submit that creates the completion event may not have fired yet, so just
+            // add to the cache for now.
+        }
+
+        Ok(cache.get(&action_name).unwrap().clone())
+    }
+
     async fn handle_watch_response(
         &self,
         response: WatchResponse,
     ) -> Result<Option<Action>, InformerError> {
         debug!(
-            "Informer for {:?}::{} processing incoming message {:?}",
+            "Informer for {:?}::{} processing incoming StateService message {:?}",
             self.run_id.name, self.parent_action_name, &response
         );
-        if let Some(msg) = response.message {
-            match msg {
-                Message::ControlMessage(_) => {
-                    // Handle control messages if needed
-                    debug!("Received sentinel for parent {}", self.parent_action_name);
-                    self.is_ready.store(true, Ordering::Release);
-                    self.ready.notify_waiters();
-                    Ok(None)
-                }
-                Message::ActionUpdate(action_update) => {
-                    // Handle action updates
-                    debug!("Received action update: {:?}", action_update.action_id);
-                    let mut cache = self.action_cache.write().await;
-                    let action_name = action_update
-                        .action_id
-                        .as_ref()
-                        .map(|act_id| act_id.name.clone())
-                        .ok_or(InformerError::StreamError(format!(
-                            "Action update received without a name: {:?}",
-                            action_update
-                        )))?;
-
-                    if let Some(existing) = cache.get_mut(&action_name) {
-                        existing.merge_update(&action_update);
-
-                        // Don't fire a completion event here either - successful return of this
-                        // function should re-enqueue the action for processing, and the controller
-                        // will detect and fire completion
-                    } else {
-                        debug!(
-                            "Action update for {:?} not in cache, adding",
-                            action_update.action_id
-                        );
-                        let action_from_update =
-                            Action::new_from_update(self.parent_action_name.clone(), action_update);
-                        cache.insert(action_name.clone(), action_from_update);
-
-                        // don't fire completion events here because we may not have a completion event yet
-                        // i.e. the submit that creates the completion event may not have fired yet, so just
-                        // add to the cache for now.
-                    }
-
-                    Ok(Some(cache.get(&action_name).unwrap().clone()))
-                }
+        let msg = response.message.ok_or_else(|| {
+            InformerError::BadContext("No message in response".to_string())
+        })?;
+        match msg {
+            Message::ControlMessage(ctrl) => {
+                self.handle_control_message(&ctrl);
+                Ok(None)
             }
-        } else {
-            Err(InformerError::BadContext(
-                "No message in response".to_string(),
-            ))
+            Message::ActionUpdate(action_update) => {
+                Ok(Some(self.handle_action_update(action_update).await?))
+            }
+        }
+    }
+
+    async fn handle_actions_watch_response(
+        &self,
+        response: flyteidl2::flyteidl::actions::WatchForUpdatesResponse,
+    ) -> Result<Option<Action>, InformerError> {
+        use flyteidl2::flyteidl::actions::watch_for_updates_response::Message as ActionsMessage;
+        debug!(
+            "Informer for {:?}::{} processing incoming ActionsService message {:?}",
+            self.run_id.name, self.parent_action_name, &response
+        );
+        let msg = response.message.ok_or_else(|| {
+            InformerError::BadContext("No message in response".to_string())
+        })?;
+        match msg {
+            ActionsMessage::ControlMessage(ctrl) => {
+                self.handle_control_message(&ctrl);
+                Ok(None)
+            }
+            ActionsMessage::ActionUpdate(action_update) => {
+                Ok(Some(self.handle_action_update(action_update).await?))
+            }
         }
     }
 
@@ -158,6 +198,19 @@ impl Informer {
             name: self.parent_action_name.clone(),
             run: Some(self.run_id.clone()),
         };
+
+        if let Some(actions_client) = self.actions_client.as_ref() {
+            self.watch_via_actions_service(actions_client.clone(), action_id)
+                .await
+        } else {
+            self.watch_via_state_service(action_id).await
+        }
+    }
+
+    async fn watch_via_state_service(
+        &self,
+        action_id: ActionIdentifier,
+    ) -> Result<(), InformerError> {
         let request = WatchRequest {
             filter: Some(watch_request::Filter::ParentActionId(action_id)),
         };
@@ -167,7 +220,7 @@ impl Informer {
         let mut stream = match stream {
             Ok(s) => s.into_inner(),
             Err(e) => {
-                error!("Failed to start watch stream: {:?}", e);
+                error!("Failed to start StateService watch stream: {:?}", e);
                 return Err(InformerError::from(e));
             }
         };
@@ -182,27 +235,12 @@ impl Informer {
                 result = stream.message() => {
                     match result {
                         Ok(Some(response)) => {
-                            let handle_response = self.handle_watch_response(response).await;
-                            match handle_response {
-                                Ok(Some(action)) => match self.shared_queue.send(action).await {
-                                    Ok(_) => {
-                                        continue;
-                                    }
-                                    Err(e) => {
-                                        error!("Informer watch failed sending action back to shared queue: {:?}", e);
-                                        return Err(InformerError::QueueSendError(format!(
-                                            "Failed to send action to shared queue: {}",
-                                            e
-                                        )));
-                                    }
-                                },
+                            match self.handle_watch_response(response).await {
+                                Ok(Some(action)) => self.send_to_shared_queue(action).await?,
                                 Ok(None) => {
-                                    debug!(
-                                        "Received None from handle_watch_response, continuing watch loop."
-                                    );
+                                    debug!("Received None from handle_watch_response, continuing watch loop.");
                                 }
                                 Err(err) => {
-                                    // this should cascade up to retry logic
                                     error!("Error in informer watch {:?}", err);
                                     return Err(err);
                                 }
@@ -210,7 +248,7 @@ impl Informer {
                         }
                         Ok(None) => {
                             debug!("Stream received empty message, maybe no more messages? Repeating watch loop.");
-                        } // Stream ended, exit loop
+                        }
                         Err(e) => {
                             error!("Error receiving message from stream: {:?}", e);
                             return Err(InformerError::from(e));
@@ -221,15 +259,87 @@ impl Informer {
         }
     }
 
+    async fn watch_via_actions_service(
+        &self,
+        mut actions_client: ActionsClient,
+        action_id: ActionIdentifier,
+    ) -> Result<(), InformerError> {
+        let request = WatchForUpdatesRequest {
+            filter: Some(watch_for_updates_request::Filter::ParentActionId(action_id)),
+        };
+        let mut req = tonic::Request::new(request);
+        *req.metadata_mut() = actions_metadata(Some(&self.run_id), &self.parent_action_name);
+
+        let stream = actions_client.watch_for_updates(req).await;
+
+        let mut stream = match stream {
+            Ok(s) => s.into_inner(),
+            Err(e) => {
+                error!("Failed to start ActionsService watch stream: {:?}", e);
+                return Err(InformerError::from(e));
+            }
+        };
+
+        loop {
+            select! {
+                _ = self.cancellation_token.cancelled() => {
+                    warn!("Cancellation token got - exiting from watch_actions: {}", self.parent_action_name);
+                    return Err(InformerError::Cancelled)
+                }
+
+                result = stream.message() => {
+                    match result {
+                        Ok(Some(response)) => {
+                            match self.handle_actions_watch_response(response).await {
+                                Ok(Some(action)) => self.send_to_shared_queue(action).await?,
+                                Ok(None) => {
+                                    debug!("Received None from handle_actions_watch_response, continuing watch loop.");
+                                }
+                                Err(err) => {
+                                    error!("Error in informer watch {:?}", err);
+                                    return Err(err);
+                                }
+                            }
+                        }
+                        Ok(None) => {
+                            debug!("Stream received empty message, maybe no more messages? Repeating watch loop.");
+                        }
+                        Err(e) => {
+                            error!("Error receiving message from stream: {:?}", e);
+                            return Err(InformerError::from(e));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    async fn send_to_shared_queue(&self, action: Action) -> Result<(), InformerError> {
+        self.shared_queue.send(action).await.map_err(|e| {
+            error!(
+                "Informer watch failed sending action back to shared queue: {:?}",
+                e
+            );
+            InformerError::QueueSendError(format!("Failed to send action to shared queue: {}", e))
+        })
+    }
+
     pub async fn get_action(&self, action_name: &str) -> Option<Action> {
         let cache = self.action_cache.read().await;
         cache.get(action_name).cloned()
     }
 
     pub async fn remove_action(&self, action_name: &str) -> Option<Action> {
-        let mut cache = self.action_cache.write().await;
-        let dropped_action = cache.remove(action_name);
-        self.completion_events.write().await.remove(action_name);
+        let dropped_action = {
+            let mut cache = self.action_cache.write().await;
+            cache.remove(action_name)
+        };
+
+        {
+            let mut events = self.completion_events.write().await;
+            events.remove(action_name);
+        }
+
         debug!("Removed action and completion event for {}", action_name);
         dropped_action
     }
@@ -310,6 +420,7 @@ impl Informer {
 pub struct InformerCache {
     cache: Arc<RwLock<HashMap<String, Arc<Informer>>>>,
     client: StateClient,
+    actions_client: Option<ActionsClient>,
     shared_queue: mpsc::Sender<Action>,
     failure_tx: mpsc::Sender<InformerError>,
 }
@@ -317,12 +428,14 @@ pub struct InformerCache {
 impl InformerCache {
     pub fn new(
         client: StateClient,
+        actions_client: Option<ActionsClient>,
         shared_queue: mpsc::Sender<Action>,
         failure_tx: mpsc::Sender<InformerError>,
     ) -> Self {
         Self {
             cache: Arc::new(RwLock::new(HashMap::new())),
             client,
+            actions_client,
             shared_queue,
             failure_tx,
         }
@@ -385,6 +498,7 @@ impl InformerCache {
         info!("CREATING new informer for: {}", informer_name);
         let informer = Arc::new(Informer::new(
             self.client.clone(),
+            self.actions_client.clone(),
             run_id.clone(),
             parent_action_name.to_string(),
             self.shared_queue.clone(),
@@ -607,7 +721,8 @@ mod tests {
         };
         let (failure_tx, _failure_rx) = mpsc::channel::<InformerError>(1);
 
-        let informer_cache = InformerCache::new(StateClient::Plain(client), tx.clone(), failure_tx);
+        let informer_cache =
+            InformerCache::new(StateClient::Plain(client), None, tx.clone(), failure_tx);
         let informer = informer_cache.get_or_create_informer(&run_id, "a0").await;
 
         println!("{:?}", informer);
