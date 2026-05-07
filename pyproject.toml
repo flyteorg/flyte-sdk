@@ -107,6 +107,9 @@ dev = [
     "types-aiofiles",
     "kubernetes",
     "textual>=0.80",
+    "mcp>=1.26.0",
+    "starlette",
+    "uvicorn",
 ]
 
 [tool.setuptools]

@@ -511,6 +511,7 @@ dev = [
     { name = "ipywidgets", specifier = ">=8.1.7" },
     { name = "jupyterlab", specifier = ">=4.4.3" },
     { name = "kubernetes" },
+    { name = "mcp", specifier = ">=1.26.0" },
     { name = "mock", specifier = ">=5.2.0" },
     { name = "mypy", specifier = ">=1.16.0" },
     { name = "orjson" },
@@ -523,9 +524,11 @@ dev = [
     { name = "pytest-xdist" },
     { name = "ruff", specifier = ">=0.11.0" },
     { name = "setuptools-scm", specifier = ">=8.2.0" },
+    { name = "starlette" },
     { name = "textual", specifier = ">=0.80" },
     { name = "types-aiofiles" },
     { name = "types-pyyaml" },
+    { name = "uvicorn" },
     { name = "uvicorn", specifier = ">=0.40.0" },
 ]
 
