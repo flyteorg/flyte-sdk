@@ -149,7 +149,7 @@ def _get_console():
     return Console(width=width)
 
 
-def get_rich_handler(log_level: int) -> Optional[logging.Handler]:
+def get_rich_handler(log_level: int, internal_prefix: bool = True) -> Optional[logging.Handler]:
     """
     Upgrades the global loggers to use Rich logging.
     """
@@ -175,7 +175,7 @@ def get_rich_handler(log_level: int) -> Optional[logging.Handler]:
         markup=True,
     )
 
-    formatter = ContextFormatter(fmt="%(filename)s:%(lineno)d - %(message)s", internal_prefix=True)
+    formatter = ContextFormatter(fmt="%(filename)s:%(lineno)d - %(message)s", internal_prefix=internal_prefix)
     handler.setFormatter(formatter)
     return handler
 
@@ -288,7 +288,7 @@ def initialize_logger(
         user_handler.setLevel(user_log_level)
         user_handler.setFormatter(JSONFormatter())
     elif use_rich:
-        rich_handler = get_rich_handler(user_log_level)
+        rich_handler = get_rich_handler(user_log_level, internal_prefix=False)
         user_handler = rich_handler if rich_handler is not None else logging.StreamHandler()
         user_handler.setLevel(user_log_level)
         if not rich_handler:

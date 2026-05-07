@@ -136,6 +136,25 @@ def test_user_logger_no_flyte_prefix():
             assert not formatter._internal_prefix, "user_logger formatter must not use internal_prefix"
 
 
+def test_user_logger_no_flyte_prefix_after_rich_init():
+    """
+    Regression: when initialize_logger(enable_rich=True) is called (e.g. via flyte.init()),
+    the rich handler attached to the user logger must not carry an internal_prefix formatter.
+    """
+    from flyte._logging import ContextFormatter, initialize_logger
+
+    initialize_logger(enable_rich=True)
+    try:
+        for handler in flyte.logger.handlers:
+            formatter = handler.formatter
+            if isinstance(formatter, ContextFormatter):
+                assert not formatter._internal_prefix, (
+                    "user_logger formatter must not use internal_prefix even with rich handler"
+                )
+    finally:
+        initialize_logger(enable_rich=False)
+
+
 def test_json_formatter_with_context():
     formatter = JSONFormatter()
     record = logging.LogRecord(
