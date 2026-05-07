@@ -127,11 +127,13 @@ def test_user_log_level_env_var_default(monkeypatch):
 
 
 def test_user_logger_no_flyte_prefix():
-    from flyte._logging import FlyteInternalFilter
+    """The user logger's formatter must not stamp the [flyte] internal prefix."""
+    from flyte._logging import ContextFormatter
 
     for handler in flyte.logger.handlers:
-        for f in handler.filters:
-            assert not isinstance(f, FlyteInternalFilter), "user_logger must not have FlyteInternalFilter"
+        formatter = handler.formatter
+        if isinstance(formatter, ContextFormatter):
+            assert not formatter._internal_prefix, "user_logger formatter must not use internal_prefix"
 
 
 def test_json_formatter_with_context():

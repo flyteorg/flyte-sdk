@@ -1,15 +1,73 @@
 from __future__ import annotations
 
+import contextvars
 import logging
 import os
 from datetime import datetime
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 import flyte
 
 from ._tools import ipython_check
 
 LogFormat = Literal["console", "json"]
+
+# Registry of contextvars to stamp onto every LogRecord.
+# Map of attribute name -> ContextVar. Populated via register_log_context().
+_LOG_CONTEXT_VARS: dict[str, contextvars.ContextVar] = {}
+
+
+def register_log_context(name: str, var: contextvars.ContextVar[Any]) -> None:
+    """
+    Register a contextvar to be stamped on every LogRecord as `record.<name>`.
+
+    The value is pulled at record-creation time, so it reflects the context the
+    log call was issued in (not the context the handler runs in). JSON output
+    will include the attribute when its value is not None; console output can
+    reference it via `%(<name>)s` in a Formatter string.
+    """
+    _LOG_CONTEXT_VARS[name] = var
+
+
+def unregister_log_context(name: str) -> None:
+    """Remove a previously-registered contextvar from the log record factory."""
+    _LOG_CONTEXT_VARS.pop(name, None)
+
+
+_orig_record_factory = logging.getLogRecordFactory()
+
+
+def _flyte_record_factory(*args: Any, **kwargs: Any) -> logging.LogRecord:
+    record = _orig_record_factory(*args, **kwargs)
+
+    for attr, var in _LOG_CONTEXT_VARS.items():
+        if not hasattr(record, attr):
+            setattr(record, attr, var.get(None))
+
+    # Stamp the active flyte action context, if any. Imported lazily because
+    # this factory runs on every record, including during flyte's own import.
+    try:
+        from flyte._context import ctx as _flyte_ctx
+
+        c = _flyte_ctx()
+    except Exception:
+        c = None
+    if c is not None:
+        record.run_name = c.action.run_name
+        record.action_name = c.action.name
+    else:
+        record.run_name = None
+        record.action_name = None
+
+    record.is_flyte_internal = record.name == "flyte" or (
+        record.name.startswith("flyte.") and not record.name.startswith("flyte.user")
+    )
+    return record
+
+
+logging.setLogRecordFactory(_flyte_record_factory)
+
+
 _LOG_LEVEL_MAP = {
     "critical": logging.CRITICAL,  # 50
     "error": logging.ERROR,  # 40
@@ -117,7 +175,7 @@ def get_rich_handler(log_level: int) -> Optional[logging.Handler]:
         markup=True,
     )
 
-    formatter = logging.Formatter(fmt="%(filename)s:%(lineno)d - %(message)s")
+    formatter = ContextFormatter(fmt="%(filename)s:%(lineno)d - %(message)s", internal_prefix=True)
     handler.setFormatter(formatter)
     return handler
 
@@ -147,6 +205,14 @@ class JSONFormatter(logging.Formatter):
             log_data["action_name"] = record.action_name  # type: ignore[attr-defined]
         if getattr(record, "is_flyte_internal", False):
             log_data["is_flyte_internal"] = True
+
+        # Add any user-registered contextvars stamped by the record factory.
+        for attr in _LOG_CONTEXT_VARS:
+            if attr in log_data:
+                continue
+            val = getattr(record, attr, None)
+            if val is not None:
+                log_data[attr] = val
 
         # Add metric fields if present
         if getattr(record, "metric_type", None):
@@ -189,10 +255,6 @@ def initialize_logger(
     reset_root_logger = reset_root_logger or os.environ.get("FLYTE_RESET_ROOT_LOGGER") == "1"
     if reset_root_logger:
         _setup_root_logger(use_json=use_json, use_rich=use_rich, log_level=log_level)
-    else:
-        root_logger = logging.getLogger()
-        for h in root_logger.handlers:
-            h.addFilter(ContextFilter())
 
     # Set up Flyte logger handler
     flyte_handler: logging.Handler | None = None
@@ -206,12 +268,7 @@ def initialize_logger(
     if flyte_handler is None:
         flyte_handler = logging.StreamHandler()
         flyte_handler.setLevel(log_level)
-        formatter = logging.Formatter(fmt="%(message)s")
-        flyte_handler.setFormatter(formatter)
-
-    # Add both filters to Flyte handler
-    flyte_handler.addFilter(FlyteInternalFilter())
-    flyte_handler.addFilter(ContextFilter())
+        flyte_handler.setFormatter(ContextFormatter(fmt="%(message)s", internal_prefix=True))
 
     flyte_logger.addHandler(flyte_handler)
     flyte_logger.setLevel(log_level)
@@ -235,13 +292,12 @@ def initialize_logger(
         user_handler = rich_handler if rich_handler is not None else logging.StreamHandler()
         user_handler.setLevel(user_log_level)
         if not rich_handler:
-            user_handler.setFormatter(logging.Formatter(fmt="%(message)s"))
+            user_handler.setFormatter(ContextFormatter(fmt="%(message)s"))
     else:
         user_handler = logging.StreamHandler()
         user_handler.setLevel(user_log_level)
-        user_handler.setFormatter(logging.Formatter(fmt="%(message)s"))
+        user_handler.setFormatter(ContextFormatter(fmt="%(message)s"))
 
-    user_handler.addFilter(ContextFilter())
     user_flyte_logger.addHandler(user_handler)
     user_flyte_logger.setLevel(user_log_level)
     user_flyte_logger.propagate = False
@@ -274,42 +330,30 @@ def log(fn=None, *, level=logging.DEBUG, entry=True, exit=True):
     return decorator(fn)
 
 
-class ContextFilter(logging.Filter):
+class ContextFormatter(logging.Formatter):
     """
-    A logging filter that adds the current action's run name and name to all log records.
-    Applied globally to capture context for both user and Flyte internal logging.
-    """
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        from flyte._context import ctx
-
-        c = ctx()
-        if c:
-            action = c.action
-            # Add as attributes for structured logging (JSON)
-            record.run_name = action.run_name
-            record.action_name = action.name
-            # Also modify message for console/Rich output
-            record.msg = f"[{action.run_name}][{action.name}] {record.msg}"
-        else:
-            record.run_name = None
-            record.action_name = None
-        return True
-
-
-class FlyteInternalFilter(logging.Filter):
-    """
-    A logging filter that adds [flyte] prefix to internal Flyte logging only.
+    Console formatter that prefixes records with action context and an optional
+    [flyte] marker, both pulled from attributes stamped by _flyte_record_factory.
+    Does not mutate record state, so the same record can be formatted by
+    multiple handlers without compounding prefixes.
     """
 
-    def filter(self, record: logging.LogRecord) -> bool:
-        is_internal = record.name.startswith("flyte")
-        # Add as attribute for structured logging (JSON)
-        record.is_flyte_internal = is_internal
-        # Also modify message for console/Rich output
-        if is_internal:
-            record.msg = f"[flyte] {record.msg}"
-        return True
+    def __init__(self, fmt: str = "%(message)s", *, internal_prefix: bool = False, **kwargs: Any) -> None:
+        super().__init__(fmt=fmt, **kwargs)
+        self._internal_prefix = internal_prefix
+
+    def format(self, record: logging.LogRecord) -> str:
+        base = super().format(record)
+        parts: list[str] = []
+        run_name = getattr(record, "run_name", None)
+        action_name = getattr(record, "action_name", None)
+        if run_name and action_name:
+            parts.append(f"[{run_name}][{action_name}]")
+        if self._internal_prefix and getattr(record, "is_flyte_internal", False):
+            parts.append("[flyte]")
+        if not parts:
+            return base
+        return f"{' '.join(parts)} {base}"
 
 
 def _setup_root_logger(use_json: bool, use_rich: bool, log_level: int):
@@ -330,11 +374,9 @@ def _setup_root_logger(use_json: bool, use_rich: bool, log_level: int):
     # get_rich_handler can return None in some environments
     if not root_handler:
         root_handler = logging.StreamHandler()
+        root_handler.setFormatter(ContextFormatter(fmt="%(message)s"))
 
-    # Add context filter to ALL logging
-    root_handler.addFilter(ContextFilter())
     root_handler.setLevel(log_level)
-
     root.addHandler(root_handler)
     root.setLevel(log_level)
 
@@ -342,7 +384,7 @@ def _setup_root_logger(use_json: bool, use_rich: bool, log_level: int):
 def _create_user_logger() -> logging.Logger:
     """
     Create the user-facing logger. Defaults to INFO so user logs are visible by default.
-    Does not use FlyteInternalFilter — no [flyte] prefix on user messages.
+    No [flyte] prefix on user messages.
     """
     user_flyte_logger = logging.getLogger("flyte.user")
     user_log_level = get_env_user_log_level()
@@ -350,8 +392,7 @@ def _create_user_logger() -> logging.Logger:
 
     handler = logging.StreamHandler()
     handler.setLevel(user_log_level)
-    handler.addFilter(ContextFilter())
-    handler.setFormatter(logging.Formatter(fmt="%(message)s"))
+    handler.setFormatter(ContextFormatter(fmt="%(message)s"))
 
     user_flyte_logger.propagate = False
     user_flyte_logger.addHandler(handler)
@@ -366,14 +407,9 @@ def _create_flyte_logger() -> logging.Logger:
     flyte_logger = logging.getLogger("flyte")
     flyte_logger.setLevel(get_env_log_level())
 
-    # Add a handler specifically for flyte logging with the prefix filter
     handler = logging.StreamHandler()
     handler.setLevel(get_env_log_level())
-    handler.addFilter(FlyteInternalFilter())
-    handler.addFilter(ContextFilter())
-
-    formatter = logging.Formatter(fmt="%(message)s")
-    handler.setFormatter(formatter)
+    handler.setFormatter(ContextFormatter(fmt="%(message)s", internal_prefix=True))
 
     # Prevent propagation to root to avoid double logging
     flyte_logger.propagate = False
