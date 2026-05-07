@@ -14,7 +14,7 @@ import inspect
 import pathlib
 import re
 import textwrap
-from typing import Any, Callable, Sequence
+from typing import Any, Callable, Sequence, cast
 
 import flyte
 import flyte.sandbox
@@ -58,19 +58,75 @@ def _extract_code(text: str) -> str:
     return text.strip()
 
 
-def _resolve_tools(
-    tools: Sequence[Callable] | dict[str, Callable],
-) -> dict[str, Callable]:
-    """Normalise *tools* into a ``{name: callable}`` dict.
+def _tool_registry_key(obj: Any) -> str:
+    """Stable sandbox tool name (matches :func:`flyte.sandbox.orchestrate_local` / ``_tasks_to_dict``)."""
+    from flyte._task import TaskTemplate
+    from flyte.remote._task import LazyEntity
 
-    Accepts either a dict (returned as-is) or a sequence of callables whose
-    ``__name__`` attribute is used as the key.
+    if isinstance(obj, TaskTemplate):
+        # TaskTemplate itself doesn't type-expose `.func`, but AsyncFunctionTaskTemplate does.
+        func = cast(Any, obj).func
+        return func.__name__
+    if isinstance(obj, LazyEntity):
+        return obj.name.rsplit("/", maxsplit=1)[-1]
+    if callable(obj):
+        name = getattr(obj, "__name__", None)
+        if name:
+            return name
+    raise TypeError(f"Cannot derive a sandbox tool name from {type(obj).__name__!r}")
+
+
+def _underlying_fn_for_prompt(obj: Any) -> Callable[..., Any]:
+    """Return the user function used for signatures and docstrings in prompts.
+
+    ``TaskTemplate`` wrappers expose a generic ``(*args, **kwargs)`` signature;
+    we introspect ``.func`` instead. Remote lazy task references have no local
+    signature — we surface a small placeholder callable.
+    """
+    from flyte._task import TaskTemplate
+    from flyte.remote._task import LazyEntity
+
+    if isinstance(obj, TaskTemplate):
+        # TaskTemplate itself doesn't type-expose `.func`, but AsyncFunctionTaskTemplate does.
+        return cast(Any, obj).func
+    if isinstance(obj, LazyEntity):
+
+        async def _remote_task_stub(*args: Any, **kwargs: Any) -> Any:
+            raise RuntimeError("LazyEntity tasks are resolved only inside a Flyte run.")
+
+        ident = obj.name.rsplit("/", maxsplit=1)[-1]
+        _remote_task_stub.__name__ = ident
+        _remote_task_stub.__doc__ = (
+            f"Remote Flyte task `{obj.name}` (lazy reference). "
+            "Calls execute on the control plane when invoked from the sandbox."
+        )
+        return _remote_task_stub
+    if callable(obj):
+        return obj
+    raise TypeError(f"Expected a callable or task reference, got {type(obj).__name__!r}")
+
+
+def _registry_contains_task_template(reg: dict[str, Any]) -> bool:
+    from flyte._task import TaskTemplate
+    from flyte.remote._task import LazyEntity
+
+    return any(isinstance(v, (TaskTemplate, LazyEntity)) for v in reg.values())
+
+
+def _resolve_tools(
+    tools: Sequence[Any] | dict[str, Any],
+) -> dict[str, Any]:
+    """Normalise *tools* into a ``{name: callable-or-task}`` dict.
+
+    Accepts either a dict (shallow-copied) or a sequence of callables / task
+    templates. Sequence entries use :func:`_tool_registry_key` for names
+    (``TaskTemplate.func.__name__``, not ``str(task)``).
     """
     if isinstance(tools, dict):
         return dict(tools)
-    result: dict[str, Callable] = {}
+    result: dict[str, Any] = {}
     for fn in tools:
-        name = getattr(fn, "__name__", None) or str(fn)
+        name = _tool_registry_key(fn)
         if name in result:
             raise ValueError(f"Duplicate tool name '{name}'")
         result[name] = fn
@@ -118,13 +174,20 @@ class CodeModeAgent:
     ----------
     tools:
         The callables available inside the sandbox. Accepts either a
-        ``dict[str, Callable]`` mapping or a sequence of callables (whose
-        ``__name__`` becomes the key). These can be flyte tasks,
-        ``@flyte.trace`` functions, or plain Python functions.
-    execution_tools:
-        Optional mapping used at *execution* time in the sandbox. When
-        ``None`` (the default), *tools* is used for both prompt generation
-        and execution.
+        ``dict[str, Callable]`` mapping or a sequence containing any mix of:
+
+        - plain Python functions
+        - ``@flyte.trace`` helpers
+        - ``@env.task`` :class:`~flyte.TaskTemplate` instances (durable)
+        - :class:`~flyte.remote._task.LazyEntity` references to remote tasks
+
+        Sequence entries are keyed by ``TaskTemplate.func.__name__`` for tasks
+        (and ``__name__`` for plain callables). Pass a dict to expose a tool
+        under a different name to the LLM (e.g.
+        ``tools={"fetch_data": durable_fetch_with_retries}``). The sandbox
+        receives the original objects, so ``@env.task`` entries execute
+        durably on the cluster; the prompt introspects ``TaskTemplate.func``
+        to surface the underlying signature and docstring.
     model:
         Model identifier passed to *call_llm*.
     max_retries:
@@ -146,7 +209,6 @@ class CodeModeAgent:
         self,
         tools: Sequence[Callable] | dict[str, Callable],
         *,
-        execution_tools: Sequence[Callable] | dict[str, Callable] | None = None,
         model: str = "claude-haiku-4-5",
         max_retries: int = 2,
         skills: Sequence[str | pathlib.Path] = (),
@@ -154,13 +216,16 @@ class CodeModeAgent:
         system_prompt_prefix: str | None = None,
     ) -> None:
         self._tools = _resolve_tools(tools)
-        self._execution_tools = _resolve_tools(execution_tools) if execution_tools else self._tools
         self._model = model
         self._max_retries = max_retries
         self._skills = skills
         self._call_llm = call_llm
         self._system_prompt_prefix = system_prompt_prefix
         self.system_prompt = self._build_system_prompt()
+
+    def uses_flyte_tools(self) -> bool:
+        """True when the tool registry contains Flyte tasks or remote lazy tasks."""
+        return _registry_contains_task_template(self._tools)
 
     # ------------------------------------------------------------------
     # Prompt generation
@@ -169,8 +234,9 @@ class CodeModeAgent:
     def _build_system_prompt(self) -> str:
         tool_lines: list[str] = []
         for name, fn in self._tools.items():
-            sig = inspect.signature(fn)
-            doc = inspect.getdoc(fn) or ""
+            u = _underlying_fn_for_prompt(fn)
+            sig = inspect.signature(u)
+            doc = inspect.getdoc(u) or ""
             indented_doc = textwrap.indent(doc, "        ")
             tool_lines.append(f"    - {name}{sig}\n{indented_doc}")
 
@@ -211,8 +277,9 @@ class CodeModeAgent:
         """Return JSON-friendly metadata for every registered tool."""
         descs: list[dict[str, str]] = []
         for name, fn in self._tools.items():
-            sig = f"{name}{inspect.signature(fn)}"
-            doc = inspect.getdoc(fn) or ""
+            u = _underlying_fn_for_prompt(fn)
+            sig = f"{name}{inspect.signature(u)}"
+            doc = inspect.getdoc(u) or ""
             short_doc = doc.split("\n\n")[0].replace("\n", " ").strip()
             descs.append({"name": name, "signature": sig, "description": short_doc})
         return descs
@@ -226,7 +293,7 @@ class CodeModeAgent:
         return await flyte.sandbox.orchestrate_local(
             code,
             inputs={"_unused": 0},
-            tasks=list(self._execution_tools.values()),
+            tasks=list(self._tools.values()),
         )
 
     # ------------------------------------------------------------------

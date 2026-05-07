@@ -7,8 +7,15 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from flyte import TaskEnvironment
 from flyte.ai.agents import codemode
-from flyte.ai.agents.codemode import CodeModeAgent, _extract_code, _load_skills, _resolve_tools
+from flyte.ai.agents.codemode import (
+    CodeModeAgent,
+    _extract_code,
+    _load_skills,
+    _resolve_tools,
+    _tool_registry_key,
+)
 from flyte.ai.agents.protocol import AgentResult
 
 
@@ -62,6 +69,17 @@ class TestResolveTools:
             _resolve_tools([dup, other])
 
 
+class TestToolRegistryKey:
+    def test_task_template_uses_func_name(self):
+        env = TaskEnvironment(name="reg_env", image="auto")
+
+        @env.task
+        async def gamma(x: int) -> int:
+            return x
+
+        assert _tool_registry_key(gamma) == "gamma"
+
+
 class TestLoadSkills:
     def test_strings_only(self):
         assert _load_skills(["a", "b"]) == "a\n\nb"
@@ -98,6 +116,20 @@ class TestCodeModeAgentToolDescriptions:
 
 
 class TestCodeModeAgentSystemPrompt:
+    def test_task_template_signature_in_prompt(self):
+        env = TaskEnvironment(name="prompt_env", image="auto")
+
+        @env.task
+        async def ranked_metric(rank: int, label: str) -> str:
+            """Ranked lookup."""
+            return f"{rank}:{label}"
+
+        agent = CodeModeAgent([ranked_metric], call_llm=AsyncMock(), max_retries=0)
+        assert "rank:" in agent.system_prompt and "label:" in agent.system_prompt
+        assert "ranked_metric" in agent.system_prompt
+
+
+class TestCodeModeAgentSystemPromptSkills:
     def test_skills_injected(self, tmp_path: pathlib.Path):
         skill_file = tmp_path / "s.txt"
         skill_file.write_text("SKILL_BODY")
@@ -117,6 +149,20 @@ class TestCodeModeAgentSystemPrompt:
     def test_default_prefix_when_none(self):
         agent = CodeModeAgent([_add], call_llm=AsyncMock(), max_retries=0)
         assert "You are a helpful assistant" in agent.system_prompt
+
+
+class TestCodeModeAgentFlyteTools:
+    def test_uses_flyte_tools_detection(self):
+        env = TaskEnvironment(name="detect_env", image="auto")
+
+        @env.task
+        async def remote_tool() -> int:
+            return 7
+
+        agent = CodeModeAgent([remote_tool], call_llm=AsyncMock(), max_retries=0)
+        assert agent.uses_flyte_tools() is True
+        plain = CodeModeAgent([_add], call_llm=AsyncMock(), max_retries=0)
+        assert plain.uses_flyte_tools() is False
 
 
 @pytest.mark.asyncio
@@ -198,11 +244,13 @@ class TestCodeModeAgentRun:
             assert "Sandbox execution failed" in out.error
             assert "attempt" in out.error.lower()
 
-    async def test_execution_tools_override(self):
-        async def exec_only():
-            return 0
+    async def test_task_template_in_tools_used_for_execution(self):
+        env = TaskEnvironment(name="exec_env", image="auto")
 
-        exec_only.__name__ = "exec_only"
+        @env.task
+        async def fetch_metric(name: str) -> dict[str, float]:
+            """Durable fetch."""
+            return {"jan": 10.0}
 
         with (
             patch.object(codemode, "generate_code", new_callable=AsyncMock) as gen,
@@ -211,14 +259,43 @@ class TestCodeModeAgentRun:
             gen.return_value = "pass"
             orch.return_value = {"summary": "ok"}
             agent = CodeModeAgent(
-                [_add],
-                execution_tools=[exec_only],
+                [fetch_metric, _add],
                 call_llm=AsyncMock(),
                 max_retries=0,
             )
+            assert "fetch_metric(name:" in agent.system_prompt
+            assert "Durable fetch." in agent.system_prompt
+
             await agent.run("x", [])
             _, kwargs = orch.await_args
-            assert kwargs["tasks"] == [exec_only]
+            assert list(kwargs["tasks"]) == [fetch_metric, _add]
+
+    async def test_dict_renames_tool_for_llm(self):
+        env = TaskEnvironment(name="dict_env", image="auto")
+
+        @env.task
+        async def fetch_metric_remote(name: str) -> dict[str, float]:
+            """Durable fetch."""
+            return {"jan": 10.0}
+
+        with (
+            patch.object(codemode, "generate_code", new_callable=AsyncMock) as gen,
+            patch.object(codemode.flyte.sandbox, "orchestrate_local", new_callable=AsyncMock) as orch,
+        ):
+            gen.return_value = "pass"
+            orch.return_value = {"summary": "ok"}
+            agent = CodeModeAgent(
+                {"fetch_metric": fetch_metric_remote},
+                call_llm=AsyncMock(),
+                max_retries=0,
+            )
+            descs = agent.tool_descriptions()
+            assert [d["name"] for d in descs] == ["fetch_metric"]
+            assert descs[0]["signature"].startswith("fetch_metric(name:")
+
+            await agent.run("x", [])
+            _, kwargs = orch.await_args
+            assert list(kwargs["tasks"]) == [fetch_metric_remote]
 
 
 @pytest.mark.asyncio

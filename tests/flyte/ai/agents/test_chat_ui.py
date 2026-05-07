@@ -7,6 +7,7 @@ import pytest
 from flyte.ai.agents import AgentChatAppEnvironment, AgentResult, CustomTheme
 from flyte.ai.agents.chat_ui import _hex_to_rgb, _rgba
 from flyte.ai.agents.protocol import Agent
+from flyte.app.extras import FastAPIPassthroughAuthMiddleware
 
 
 class _StubAgent:
@@ -73,3 +74,36 @@ class TestAgentChatAppEnvironment:
     def test_container_command_empty(self):
         env = AgentChatAppEnvironment(name="test-app", image="auto", agent=_StubAgent())
         assert env.container_command(MagicMock()) == []
+
+    def test_build_fastapi_app_passthrough_adds_middleware(self):
+        env = AgentChatAppEnvironment(
+            name="test-app",
+            image="auto",
+            agent=_StubAgent(),
+            passthrough_auth=True,
+        )
+        app = env.build_fastapi_app()
+        middleware_classes = [m.cls for m in app.user_middleware]
+        assert FastAPIPassthroughAuthMiddleware in middleware_classes
+
+    def test_build_fastapi_app_without_passthrough_skips_middleware(self):
+        env = AgentChatAppEnvironment(
+            name="test-app",
+            image="auto",
+            agent=_StubAgent(),
+            passthrough_auth=False,
+        )
+        app = env.build_fastapi_app()
+        middleware_classes = [m.cls for m in app.user_middleware]
+        assert FastAPIPassthroughAuthMiddleware not in middleware_classes
+
+    def test_passthrough_custom_excluded_paths(self):
+        env = AgentChatAppEnvironment(
+            name="test-app",
+            image="auto",
+            agent=_StubAgent(),
+            passthrough_auth=True,
+            passthrough_auth_excluded_paths=frozenset({"/health", "/api/chat"}),
+        )
+        app = env.build_fastapi_app()
+        assert any(m.cls == FastAPIPassthroughAuthMiddleware for m in app.user_middleware)

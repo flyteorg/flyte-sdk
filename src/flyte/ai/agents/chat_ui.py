@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import re
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -157,6 +158,16 @@ class AgentChatAppEnvironment(flyte.app.AppEnvironment):
         ``"button_url"`` keys.  The first entry is displayed as a
         prominent primary button; any extra entries appear in a
         drop-up menu accessed via a chevron.
+    passthrough_auth:
+        When ``True``, the FastAPI app initializes ``flyte.init_passthrough`` at
+        startup and adds ``FastAPIPassthroughAuthMiddleware`` so incoming
+        ``Authorization`` / cookie headers are forwarded to Flyte remote calls.
+        Enable this when using ``CodeModeAgent`` with ``@env.task`` tools —
+        nested task execution needs caller credentials (same pattern as
+        ``FlyteWebhookAppEnvironment``).
+    passthrough_auth_excluded_paths:
+        Paths skipped by passthrough middleware (defaults to common docs and
+        health routes). Only used when ``passthrough_auth`` is ``True``.
     """
 
     agent: Any = field(default=None)
@@ -167,6 +178,8 @@ class AgentChatAppEnvironment(flyte.app.AppEnvironment):
     custom_css: str = ""
     logo_url: str | None = None
     additional_buttons: list[dict[str, str]] = field(default_factory=list)
+    passthrough_auth: bool = False
+    passthrough_auth_excluded_paths: frozenset[str] | None = None
     type: str = "AgentChat"
     _caller_frame: inspect.FrameInfo | None = None
 
@@ -188,15 +201,38 @@ class AgentChatAppEnvironment(flyte.app.AppEnvironment):
             if caller_frame and caller_frame.f_back:
                 self._caller_frame = inspect.getframeinfo(caller_frame.f_back)
 
-    async def _fastapi_server(self):
+    def build_fastapi_app(self) -> Any:
+        """Construct the FastAPI application (routes, HTML shell, optional auth).
+
+        Useful for tests and advanced mounting; the deployed server uses this via
+        :meth:`_fastapi_server`.
+        """
         import time
 
-        import uvicorn
         from fastapi import FastAPI
         from fastapi.responses import HTMLResponse, JSONResponse
 
         agent = self.agent
-        fastapi_app = FastAPI(title=self.title or self.name)
+
+        if self.passthrough_auth:
+            import flyte
+            from flyte.app.extras import FastAPIPassthroughAuthMiddleware
+
+            @asynccontextmanager
+            async def lifespan(app: FastAPI):
+                await flyte.init_passthrough.aio(
+                    project=flyte.current_project(),
+                    domain=flyte.current_domain(),
+                )
+                yield
+
+            fastapi_app = FastAPI(title=self.title or self.name, lifespan=lifespan)
+            excluded = self.passthrough_auth_excluded_paths or frozenset(
+                {"/health", "/docs", "/openapi.json", "/redoc"}
+            )
+            fastapi_app.add_middleware(FastAPIPassthroughAuthMiddleware, excluded_paths=set(excluded))
+        else:
+            fastapi_app = FastAPI(title=self.title or self.name)
 
         @fastapi_app.get("/health")
         async def health() -> dict[str, str]:
@@ -244,6 +280,12 @@ class AgentChatAppEnvironment(flyte.app.AppEnvironment):
         async def index() -> HTMLResponse:
             return HTMLResponse(content=chat_html)
 
+        return fastapi_app
+
+    async def _fastapi_server(self):
+        import uvicorn
+
+        fastapi_app = self.build_fastapi_app()
         config = uvicorn.Config(fastapi_app, port=self.port.port)
         await uvicorn.Server(config).serve()
 
