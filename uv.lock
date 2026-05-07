@@ -1046,7 +1046,6 @@ dependencies = [
     { name = "cloudpickle" },
     { name = "connectrpc" },
     { name = "docstring-parser" },
-    { name = "flyte-controller-base" },
     { name = "flyteidl2" },
     { name = "fsspec" },
     { name = "httpx" },
@@ -1087,6 +1086,9 @@ examples-test = [
     { name = "scikit-learn", version = "1.7.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "scikit-learn", version = "1.8.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "uvicorn" },
+]
+rust-controller = [
+    { name = "flyte-controller-base" },
 ]
 sandbox = [
     { name = "pydantic-monty" },
@@ -1135,7 +1137,7 @@ requires-dist = [
     { name = "deltalake", marker = "extra == 'examples-test'" },
     { name = "docstring-parser", specifier = ">=0.16" },
     { name = "fastapi", marker = "extra == 'examples-test'" },
-    { name = "flyte-controller-base", directory = "rs_controller" },
+    { name = "flyte-controller-base", marker = "extra == 'rust-controller'", directory = "rs_controller" },
     { name = "flyteidl2", specifier = "==2.0.13" },
     { name = "fsspec", specifier = ">=2025.3.0" },
     { name = "grpcio", marker = "extra == 'connector'", specifier = ">=1.71.0" },
@@ -1166,7 +1168,7 @@ requires-dist = [
     { name = "toml", specifier = ">=0.10.2" },
     { name = "uvicorn", marker = "extra == 'examples-test'" },
 ]
-provides-extras = ["aiosqlite", "connector", "examples-test", "sandbox", "tui"]
+provides-extras = ["aiosqlite", "connector", "examples-test", "sandbox", "tui", "rust-controller"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -1197,7 +1199,7 @@ dev = [
 
 [[package]]
 name = "flyte-controller-base"
-version = "2.2.3.dev43+g3a11bd23"
+version = "2.2.3.dev47+g88a0634a.dirty"
 source = { directory = "rs_controller" }
 dependencies = [
     { name = "flyteidl2" },

@@ -25,7 +25,6 @@ dependencies = [
     "mashumaro",
     "aiolimiter>=1.2.1",
     "flyteidl2==2.0.13",
-    "flyte_controller_base>=2.0.0b0",
     "packaging",
     "sentry-sdk>=2.0",
     "pyOpenSSL>=24.0.0",
@@ -72,6 +71,9 @@ sandbox = [
 ]
 tui = [
     "textual>=0.80",
+]
+rust-controller = [
+    "flyte_controller_base>=2.0.0b0",
 ]
 
 [dependency-groups]

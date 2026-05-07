@@ -78,6 +78,11 @@ async def handle_action_failure(action: Action, task_name: str) -> Exception:
         err = err_pb
 
     err = err or action.client_err
+    # `client_err` from the Rust controller is a string representation of the underlying
+    # tonic Status, not an ExecutionError or Exception. Wrap it so downstream conversion
+    # sees something with `.code` (or short-circuits via `isinstance(Exception)`).
+    if isinstance(err, str):
+        err = flyte.errors.RuntimeSystemError("RustControllerError", err)
     if not err and action.phase_value == phase_pb2.ACTION_PHASE_FAILED:
         logger.error(f"Server reported failure for action {action.name}, checking error file.")
         try:
