@@ -26,9 +26,15 @@ from flyte.ai import AgentChatAppEnvironment, CodeModeAgent, CustomTheme
 
 task_env = flyte.TaskEnvironment(
     name="codemode-durable-analytics-tools",
-    image=flyte.Image.from_debian_base().with_pip_packages("httpx", "pydantic-monty", "litellm", "unionai-reuse"),
+    secrets=flyte.Secret("internal-anthropic-api-key", as_env_var="ANTHROPIC_API_KEY"),
+    image=(
+        flyte.Image.from_debian_base()
+        .with_apt_packages("git")
+        .with_pip_packages("httpx", "pydantic-monty", "litellm", "unionai-reuse")
+        .with_commands(["uv pip install git+https://www.github.com/flyteorg/flyte-sdk.git@ef1fdf45"])
+    ),
     resources=flyte.Resources(cpu=2, memory="1Gi"),
-    reusable=flyte.ReusePolicy(replicas=1, concurrency=10),
+    # reusable=flyte.ReusePolicy(replicas=1, concurrency=10),
 )
 
 # ---------------------------------------------------------------------------
