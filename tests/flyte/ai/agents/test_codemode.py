@@ -15,6 +15,7 @@ from flyte.ai.agents.codemode import (
     _load_skills,
     _resolve_tools,
     _tool_registry_key,
+    codemode_progress_cb,
 )
 from flyte.ai.agents.protocol import AgentResult
 
@@ -175,7 +176,16 @@ class TestCodeModeAgentRun:
             gen.return_value = "result = {}"
             orch.return_value = {"summary": "S", "charts": ["chart1"]}
             agent = CodeModeAgent([_add], call_llm=AsyncMock(), max_retries=0)
-            out = await agent.run("hi", [{"role": "user", "content": "prev"}])
+            events: list[tuple[str, dict]] = []
+
+            async def on_progress(phase: str, data: dict) -> None:
+                events.append((phase, dict(data)))
+
+            token = codemode_progress_cb.set(on_progress)
+            try:
+                out = await agent.run("hi", [{"role": "user", "content": "prev"}])
+            finally:
+                codemode_progress_cb.reset(token)
             assert isinstance(out, AgentResult)
             assert out.code == "result = {}"
             assert out.summary == "S"
@@ -185,6 +195,10 @@ class TestCodeModeAgentRun:
             orch.assert_awaited_once()
             _, kwargs = orch.await_args
             assert kwargs["tasks"] == [_add]
+            assert [p for p, _ in events] == ["generating_code", "executing", "formatting"]
+            assert events[0][1] == {"attempt": 1, "max_attempts": 1}
+            assert events[1][1] == {"attempt": 1, "max_attempts": 1}
+            assert events[2][1] == {"attempt": 1, "max_attempts": 1}
 
     async def test_success_non_dict_result(self):
         with (
@@ -214,11 +228,24 @@ class TestCodeModeAgentRun:
             gen.side_effect = ["bad", "good"]
             orch.side_effect = [ValueError("sandbox oops"), {"summary": "fixed", "charts": []}]
             agent = CodeModeAgent([_add], call_llm=AsyncMock(), max_retries=2)
-            out = await agent.run("q", [])
+            events: list[tuple[str, dict]] = []
+
+            async def on_progress(phase: str, data: dict) -> None:
+                events.append((phase, dict(data)))
+
+            token = codemode_progress_cb.set(on_progress)
+            try:
+                out = await agent.run("q", [])
+            finally:
+                codemode_progress_cb.reset(token)
             assert out.summary == "fixed"
             assert out.code == "good"
             assert out.attempts == 2
             assert orch.await_count == 2
+            exec_attempts = [d["attempt"] for p, d in events if p == "executing"]
+            assert exec_attempts == [1, 2]
+            gen_attempts = [d["attempt"] for p, d in events if p == "generating_code"]
+            assert gen_attempts == [1, 2]
 
     async def test_retry_llm_fails_returns_partial_error(self):
         with (

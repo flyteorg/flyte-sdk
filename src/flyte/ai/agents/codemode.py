@@ -10,16 +10,35 @@ strings or ``pathlib.Path`` objects pointing to local files.
 
 from __future__ import annotations
 
+import contextvars
 import inspect
 import pathlib
 import re
 import textwrap
-from typing import Any, Callable, Sequence, cast
+from typing import Any, Awaitable, Callable, Sequence, cast
 
 import flyte
 import flyte.sandbox
 
 from .protocol import AgentResult
+
+# Per-request progress hook for UIs (e.g. Agent Chat NDJSON stream). Set by the
+# HTTP layer via :data:`codemode_progress_cb`; :class:`CodeModeAgent` invokes it
+# from :meth:`CodeModeAgent.run` when present.
+CodemodeProgressCallback = Callable[[str, dict[str, Any]], Awaitable[None]]
+
+codemode_progress_cb: contextvars.ContextVar[CodemodeProgressCallback | None] = contextvars.ContextVar(
+    "codemode_progress_cb",
+    default=None,
+)
+
+
+async def _emit_codemode_progress(phase: str, **kwargs: Any) -> None:
+    cb = codemode_progress_cb.get()
+    if cb is None:
+        return
+    await cb(phase, dict(kwargs))
+
 
 # ------------------------------------------------------------------
 # Default LLM callback (litellm)
@@ -303,8 +322,10 @@ class CodeModeAgent:
     async def run(self, message: str, history: list[dict[str, str]]) -> AgentResult:
         """Generate code, execute in sandbox, retry on failure."""
         messages: list[dict[str, str]] = [*history, {"role": "user", "content": message}]
+        max_attempts = 1 + self._max_retries
 
         try:
+            await _emit_codemode_progress("generating_code", attempt=1, max_attempts=max_attempts)
             code = await generate_code(self._call_llm, self._model, self.system_prompt, messages)
         except Exception as exc:
             return AgentResult(error=f"Code generation failed: {exc}")
@@ -313,7 +334,8 @@ class CodeModeAgent:
 
         for attempt in range(1 + self._max_retries):
             attempts = attempt + 1
-            with flyte.group(f"codemode-attempt-{attempt}"):
+            await _emit_codemode_progress("executing", attempt=attempts, max_attempts=max_attempts)
+            with flyte.group(f"codemode-agent-attempt-{attempt}"):
                 try:
                     result = await self._execute(code)
                 except Exception as exc:
@@ -331,6 +353,9 @@ class CodeModeAgent:
                             {"role": "user", "content": retry_content},
                         ]
                         try:
+                            await _emit_codemode_progress(
+                                "generating_code", attempt=attempts + 1, max_attempts=max_attempts
+                            )
                             code = await generate_code(
                                 self._call_llm,
                                 self._model,
@@ -350,6 +375,7 @@ class CodeModeAgent:
                         attempts=attempts,
                     )
 
+            await _emit_codemode_progress("formatting", attempt=attempts, max_attempts=max_attempts)
             charts = result.get("charts", []) if isinstance(result, dict) else []
             summary = result.get("summary", "No summary generated.") if isinstance(result, dict) else str(result)
             return AgentResult(code=code, charts=charts, summary=summary, attempts=attempts)

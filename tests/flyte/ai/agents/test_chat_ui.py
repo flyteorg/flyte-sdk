@@ -1,5 +1,6 @@
 """Tests for flyte.ai.agents.chat_ui."""
 
+import json
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -72,6 +73,28 @@ class TestAgentChatAppEnvironment:
         env = AgentChatAppEnvironment(name="test-app", image="auto", agent=_StubAgent())
         assert env.agent is not None
         assert isinstance(env.agent, Agent)
+
+    @pytest.mark.asyncio
+    async def test_chat_stream_returns_ndjson_done_line(self):
+        env = AgentChatAppEnvironment(name="test-app", image="auto", agent=_StubAgent())
+        app = env.build_fastapi_app()
+        from starlette.testclient import TestClient
+
+        client = TestClient(app)
+        with client.stream(
+            "POST",
+            "/api/chat",
+            json={"message": "hi", "history": [], "stream": True},
+        ) as resp:
+            assert resp.status_code == 200
+            assert "ndjson" in (resp.headers.get("content-type") or "").lower()
+            body = b"".join(resp.iter_bytes())
+        lines = [ln for ln in body.decode().split("\n") if ln.strip()]
+        assert len(lines) >= 1
+        last = json.loads(lines[-1])
+        assert last["type"] == "done"
+        assert last["summary"] == "echo:hi"
+        assert last["elapsed_ms"] >= 0
 
     def test_container_command_empty(self):
         env = AgentChatAppEnvironment(name="test-app", image="auto", agent=_StubAgent())

@@ -31,7 +31,7 @@ task_env = flyte.TaskEnvironment(
         flyte.Image.from_debian_base()
         .with_apt_packages("git")
         .with_pip_packages("httpx", "pydantic-monty", "litellm", "unionai-reuse")
-        .with_commands(["uv pip install git+https://www.github.com/flyteorg/flyte-sdk.git@a903fc14"])
+        .with_commands(["uv pip install git+https://www.github.com/flyteorg/flyte-sdk.git@7cc630bc"])
     ),
     resources=flyte.Resources(cpu=2, memory="1Gi"),
     # reusable=flyte.ReusePolicy(replicas=1, concurrency=10),
@@ -234,7 +234,7 @@ agent = CodeModeAgent(
 
 
 @task_env.task(report=True)
-async def task_entrypoint(message: str, history: list[dict[str, str]]) -> dict[str, object]:
+async def codemode_agent_task_entrypoint(message: str, history: list[dict[str, str]]) -> dict[str, object]:
     """Entrypoint for the durable CodeModeAgent analysis inside a Flyte task."""
     result = await agent.run(message, history=history)
     return {
@@ -249,7 +249,7 @@ async def task_entrypoint(message: str, history: list[dict[str, str]]) -> dict[s
 env = AgentChatAppEnvironment(
     name="codemode-durable-analytics-ui",
     agent=agent,
-    task_entrypoint=task_entrypoint,
+    task_entrypoint=codemode_agent_task_entrypoint,
     title="Durable analytics CodeModeAgent",
     subtitle="LLM-generated Monty code calling durable Flyte task tools.",
     theme=CustomTheme(accent_color="#e69812", accent_hover_color="#f2bd52", button_text_color="#0a0a0f"),

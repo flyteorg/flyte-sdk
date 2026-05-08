@@ -103,6 +103,7 @@ class CustomTheme:
 class _ChatRequest(BaseModel):
     message: str
     history: list[dict] = []
+    stream: bool = False
 
 
 class _ChatResponse(BaseModel):
@@ -255,10 +256,12 @@ class AgentChatAppEnvironment(flyte.app.AppEnvironment):
         Useful for tests and advanced mounting; the deployed server uses this via
         :meth:`_fastapi_server`.
         """
+        import asyncio
+        import json
         import time
 
         from fastapi import FastAPI
-        from fastapi.responses import HTMLResponse, JSONResponse
+        from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 
         agent = self.agent
         task_entrypoint = self.task_entrypoint
@@ -297,16 +300,13 @@ class AgentChatAppEnvironment(flyte.app.AppEnvironment):
         async def get_nudges() -> JSONResponse:
             return JSONResponse(content=nudges)
 
-        @fastapi_app.post("/api/chat")
-        async def chat(req: _ChatRequest) -> _ChatResponse:
-            t0 = time.monotonic()
+        async def run_chat_and_normalize(chat_req: _ChatRequest) -> AgentResult:
             if task_entrypoint is None:
-                result_obj: Any = await agent.run(req.message, req.history)
+                result_obj: Any = await agent.run(chat_req.message, chat_req.history)
             else:
                 import flyte
                 from flyte.models import ActionPhase
 
-                # Prefer introspecting the underlying Python function if present
                 fn = getattr(task_entrypoint, "func", None)
                 n_params = 1
                 if fn is not None:
@@ -317,11 +317,10 @@ class AgentChatAppEnvironment(flyte.app.AppEnvironment):
 
                 try:
                     if n_params >= 2:
-                        run_handle = await flyte.run.aio(task_entrypoint, req.message, req.history)
+                        run_handle = await flyte.run.aio(task_entrypoint, chat_req.message, chat_req.history)
                     else:
-                        run_handle = await flyte.run.aio(task_entrypoint, req.message)
+                        run_handle = await flyte.run.aio(task_entrypoint, chat_req.message)
 
-                    # In remote/hybrid mode flyte.run returns a Run; wait + fetch outputs.
                     if hasattr(run_handle, "wait") and hasattr(run_handle, "outputs"):
                         await run_handle.wait.aio(quiet=True)
                         phase = getattr(run_handle, "phase", ActionPhase.SUCCEEDED)
@@ -341,39 +340,81 @@ class AgentChatAppEnvironment(flyte.app.AppEnvironment):
                             else:
                                 result_obj = outs[0] if len(outs) > 0 else None
                     else:
-                        # Local mode may return the raw result directly
                         result_obj = run_handle
                 except Exception as e:
                     result_obj = AgentResult(summary="", error=f"Task run failed: {e}")
 
-            # In local mode, Flyte task `.aio()` may yield an un-awaited coroutine
-            # (e.g. from forward() returning a coroutine for async functions).
             while inspect.iscoroutine(result_obj):
                 result_obj = await result_obj
 
             if isinstance(result_obj, AgentResult):
-                result = result_obj
-            elif isinstance(result_obj, dict):
-                result = AgentResult(
+                return result_obj
+            if isinstance(result_obj, dict):
+                return AgentResult(
                     code=str(result_obj.get("code", "")),
                     charts=list(result_obj.get("charts", [])) if "charts" in result_obj else [],
                     summary=str(result_obj.get("summary", "")),
                     error=str(result_obj.get("error", "")),
                     attempts=int(result_obj.get("attempts", 1)),
                 )
-            elif isinstance(result_obj, str):
-                result = AgentResult(summary=result_obj)
-            else:
-                result = AgentResult(summary=str(result_obj))
-            elapsed_ms = int((time.monotonic() - t0) * 1000)
-            return _ChatResponse(
-                code=result.code,
-                charts=result.charts,
-                summary=result.summary,
-                error=result.error,
-                elapsed_ms=elapsed_ms,
-                attempts=result.attempts,
-            )
+            if isinstance(result_obj, str):
+                return AgentResult(summary=result_obj)
+            return AgentResult(summary=str(result_obj))
+
+        @fastapi_app.post("/api/chat")
+        async def chat(req: _ChatRequest):
+            t0 = time.monotonic()
+            if not req.stream:
+                result = await run_chat_and_normalize(req)
+                elapsed_ms = int((time.monotonic() - t0) * 1000)
+                return _ChatResponse(
+                    code=result.code,
+                    charts=result.charts,
+                    summary=result.summary,
+                    error=result.error,
+                    elapsed_ms=elapsed_ms,
+                    attempts=result.attempts,
+                )
+
+            from .codemode import codemode_progress_cb
+
+            queue: asyncio.Queue[str | None] = asyncio.Queue()
+
+            async def on_progress(phase: str, data: dict[str, Any]) -> None:
+                payload = {"type": "progress", "phase": phase, **data}
+                await queue.put(json.dumps(payload) + "\n")
+
+            async def stream_worker() -> None:
+                token = codemode_progress_cb.set(on_progress)
+                try:
+                    result = await run_chat_and_normalize(req)
+                except Exception as e:
+                    result = AgentResult(summary="", error=str(e))
+                finally:
+                    codemode_progress_cb.reset(token)
+                elapsed_ms = int((time.monotonic() - t0) * 1000)
+                done_payload = {
+                    "type": "done",
+                    "code": result.code,
+                    "charts": result.charts,
+                    "summary": result.summary,
+                    "error": result.error,
+                    "elapsed_ms": elapsed_ms,
+                    "attempts": result.attempts,
+                }
+                await queue.put(json.dumps(done_payload) + "\n")
+                await queue.put(None)
+
+            async def ndjson_body():
+                worker = asyncio.create_task(stream_worker())
+                while True:
+                    item = await queue.get()
+                    if item is None:
+                        break
+                    yield item
+                await worker
+
+            return StreamingResponse(ndjson_body(), media_type="application/x-ndjson")
 
         display_title = self.title or self.name
         css_parts: list[str] = []

@@ -215,12 +215,18 @@ document.getElementById('collapseAllTools').addEventListener('click', () => {
     }
 })();
 
-const PROGRESS_PHASES = [
+// Steps align with CodeModeAgent progress phases (generating_code / executing / formatting).
+const PROGRESS_STEP_LABELS = [
     'Creating plan...',
     'Executing plan...',
-    'Refining response...',
     'Formatting answer...',
 ];
+
+const CODE_MODE_PHASE_TO_STEP = {
+    generating_code: 0,
+    executing: 1,
+    formatting: 2,
+};
 
 function createPendingAssistantBubble() {
     const msg = document.createElement('div');
@@ -234,10 +240,10 @@ function createPendingAssistantBubble() {
     label.textContent = 'Working on your answer';
     const sub = document.createElement('div');
     sub.className = 'generating-sub';
-    sub.textContent = 'This may take a little while for complex questions.';
+    sub.textContent = 'In progress…';
     const track = document.createElement('div');
     track.className = 'progress-steps';
-    PROGRESS_PHASES.forEach((text, i) => {
+    PROGRESS_STEP_LABELS.forEach((text, i) => {
         const step = document.createElement('div');
         step.className = 'progress-step pending';
         step.dataset.stepIndex = String(i);
@@ -255,14 +261,25 @@ function createPendingAssistantBubble() {
     panel.appendChild(track);
     bubble.appendChild(panel);
     msg.appendChild(bubble);
-    return { msg, track };
+    return { msg, track, sub };
+}
+
+function applyCodemodeProgress(trackEl, subEl, evt) {
+    if (!evt || !evt.phase) return;
+    const idx = CODE_MODE_PHASE_TO_STEP[evt.phase];
+    if (idx !== undefined) setProgressUI(trackEl, idx);
+    if (subEl && evt.attempt != null && evt.max_attempts != null) {
+        subEl.textContent = 'Attempt ' + evt.attempt + ' of ' + evt.max_attempts;
+    }
 }
 
 function setProgressUI(trackEl, phaseIndex) {
     if (!trackEl) return;
     trackEl.querySelectorAll('.progress-step').forEach((el, i) => {
         el.classList.remove('done', 'active', 'pending');
-        if (i < phaseIndex) el.classList.add('done');
+        if (phaseIndex < 0) {
+            el.classList.add('pending');
+        } else if (i < phaseIndex) el.classList.add('done');
         else if (i === phaseIndex) el.classList.add('active');
         else el.classList.add('pending');
     });
@@ -277,27 +294,19 @@ async function sendMessage() {
     userInput.value = '';
     sendBtn.disabled = true;
 
-    const { msg: pendingMsg, track: progressTrack } = createPendingAssistantBubble();
+    const { msg: pendingMsg, track: progressTrack, sub: progressSub } = createPendingAssistantBubble();
     messagesDiv.appendChild(pendingMsg);
     updateClearButton();
     scrollBottom();
 
-    let phase = 0;
-    setProgressUI(progressTrack, 0);
-    const progressTimer = setInterval(() => {
-        phase = Math.min(phase + 1, PROGRESS_PHASES.length - 1);
-        setProgressUI(progressTrack, phase);
-        scrollBottom();
-    }, 2500);
+    setProgressUI(progressTrack, -1);
 
     try {
         const resp = await fetch('/api/chat', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ message: text, history: history }),
+            body: JSON.stringify({ message: text, history: history, stream: true }),
         });
-
-        clearInterval(progressTimer);
 
         if (!resp.ok) {
             let errMsg = 'Server error (' + resp.status + ')';
@@ -308,24 +317,61 @@ async function sendMessage() {
             if (pendingMsg.parentNode) pendingMsg.remove();
             appendAssistant({ error: errMsg });
         } else {
-            const data = await resp.json();
-            if (!pendingMsg.parentNode) {
-                appendAssistant(data);
+            const ct = (resp.headers.get('Content-Type') || '').toLowerCase();
+            let data = null;
+            if (ct.includes('ndjson') && resp.body) {
+                const reader = resp.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop() || '';
+                    for (const line of lines) {
+                        if (!line.trim()) continue;
+                        let obj;
+                        try { obj = JSON.parse(line); } catch (_) { continue; }
+                        if (obj.type === 'progress') {
+                            applyCodemodeProgress(progressTrack, progressSub, obj);
+                            scrollBottom();
+                        } else if (obj.type === 'done') {
+                            data = obj;
+                        }
+                    }
+                }
+                if (buffer.trim()) {
+                    try {
+                        const obj = JSON.parse(buffer);
+                        if (obj.type === 'done') data = obj;
+                    } catch (_) {}
+                }
             } else {
-                pendingMsg.classList.remove('assistant-pending');
-                const bubble = pendingMsg.querySelector('.bubble');
-                bubble.innerHTML = '';
-                fillAssistantBubble(bubble, data);
-                wireAssistantBubble(pendingMsg, data);
+                data = await resp.json();
             }
-            history.push({ role: 'user', content: text });
-            const assistantContent = data.summary || data.error || '';
-            if (assistantContent) {
-                history.push({ role: 'assistant', content: assistantContent });
+
+            if (!data) {
+                if (pendingMsg.parentNode) pendingMsg.remove();
+                appendAssistant({ error: 'Empty response from server' });
+            } else {
+                if (!pendingMsg.parentNode) {
+                    appendAssistant(data);
+                } else {
+                    pendingMsg.classList.remove('assistant-pending');
+                    const bubble = pendingMsg.querySelector('.bubble');
+                    bubble.innerHTML = '';
+                    fillAssistantBubble(bubble, data);
+                    wireAssistantBubble(pendingMsg, data);
+                }
+                history.push({ role: 'user', content: text });
+                const assistantContent = data.summary || data.error || '';
+                if (assistantContent) {
+                    history.push({ role: 'assistant', content: assistantContent });
+                }
             }
         }
     } catch(e) {
-        clearInterval(progressTimer);
         if (pendingMsg.parentNode) pendingMsg.remove();
         appendAssistant({ error: 'Request failed: ' + e.message });
     } finally {
