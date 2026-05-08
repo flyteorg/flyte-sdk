@@ -19,6 +19,7 @@ _LOG_LEVEL_MAP = {
     "debug": logging.DEBUG,  # 10
 }
 DEFAULT_LOG_LEVEL = logging.WARNING
+DEFAULT_USER_LOG_LEVEL = logging.INFO
 
 
 def make_hyperlink(label: str, url: str):
@@ -52,6 +53,17 @@ def get_env_log_level() -> int:
         return _LOG_LEVEL_MAP[value.lower()]
 
     return DEFAULT_LOG_LEVEL
+
+
+def get_env_user_log_level() -> int:
+    value = os.getenv("USER_LOG_LEVEL")
+    if value is None:
+        return DEFAULT_USER_LOG_LEVEL
+    if value.isdigit():
+        return int(value)
+    if value.lower() in _LOG_LEVEL_MAP:
+        return _LOG_LEVEL_MAP[value.lower()]
+    return DEFAULT_USER_LOG_LEVEL
 
 
 def log_format_from_env() -> LogFormat:
@@ -154,6 +166,7 @@ def initialize_logger(
     log_format: LogFormat | None = None,
     enable_rich: bool = False,
     reset_root_logger: bool = False,
+    user_log_level: int | None = None,
 ):
     """
     Initializes the global loggers to the default configuration.
@@ -205,6 +218,35 @@ def initialize_logger(
     flyte_logger.propagate = False  # Prevent double logging
 
     logger = flyte_logger
+
+    # Reconfigure the user-facing logger with the same format, but its own level
+    global user_logger  # noqa: PLW0603
+    user_log_level = user_log_level if user_log_level is not None else get_env_user_log_level()
+    user_flyte_logger = logging.getLogger("flyte.user")
+    user_flyte_logger.handlers.clear()
+
+    user_handler: logging.Handler
+    if use_json:
+        user_handler = logging.StreamHandler()
+        user_handler.setLevel(user_log_level)
+        user_handler.setFormatter(JSONFormatter())
+    elif use_rich:
+        rich_handler = get_rich_handler(user_log_level)
+        user_handler = rich_handler if rich_handler is not None else logging.StreamHandler()
+        user_handler.setLevel(user_log_level)
+        if not rich_handler:
+            user_handler.setFormatter(logging.Formatter(fmt="%(message)s"))
+    else:
+        user_handler = logging.StreamHandler()
+        user_handler.setLevel(user_log_level)
+        user_handler.setFormatter(logging.Formatter(fmt="%(message)s"))
+
+    user_handler.addFilter(ContextFilter())
+    user_flyte_logger.addHandler(user_handler)
+    user_flyte_logger.setLevel(user_log_level)
+    user_flyte_logger.propagate = False
+
+    user_logger = user_flyte_logger
 
 
 def log(fn=None, *, level=logging.DEBUG, entry=True, exit=True):
@@ -297,6 +339,26 @@ def _setup_root_logger(use_json: bool, use_rich: bool, log_level: int):
     root.setLevel(log_level)
 
 
+def _create_user_logger() -> logging.Logger:
+    """
+    Create the user-facing logger. Defaults to INFO so user logs are visible by default.
+    Does not use FlyteInternalFilter — no [flyte] prefix on user messages.
+    """
+    user_flyte_logger = logging.getLogger("flyte.user")
+    user_log_level = get_env_user_log_level()
+    user_flyte_logger.setLevel(user_log_level)
+
+    handler = logging.StreamHandler()
+    handler.setLevel(user_log_level)
+    handler.addFilter(ContextFilter())
+    handler.setFormatter(logging.Formatter(fmt="%(message)s"))
+
+    user_flyte_logger.propagate = False
+    user_flyte_logger.addHandler(handler)
+
+    return user_flyte_logger
+
+
 def _create_flyte_logger() -> logging.Logger:
     """
     Create the internal Flyte logger with [flyte] prefix.
@@ -322,3 +384,6 @@ def _create_flyte_logger() -> logging.Logger:
 
 # Create the Flyte internal logger
 logger = _create_flyte_logger()
+
+# Create the user-facing logger
+user_logger = _create_user_logger()
