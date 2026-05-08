@@ -254,7 +254,7 @@ def launch_devbox(image_name: str, is_dev_mode: bool, gpu: bool = False, log_for
         console.print("[yellow]Flyte devbox cluster is already running.[/yellow]")
         if not click.confirm("Do you want to delete the existing devbox cluster and start a new one?"):
             return
-        subprocess.run(["docker", "stop", _CONTAINER_NAME], check=True, capture_output=True)
+    subprocess.run(["docker", "rm", "-f", _CONTAINER_NAME], check=False, capture_output=True)
 
     _KUBE_DIR.mkdir(parents=True, exist_ok=True)
     # This step makes sure that we always used the latest k3s kubeconfig file
