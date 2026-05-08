@@ -24,6 +24,21 @@ from .protocol import Agent, AgentResult
 
 _HEX_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}){1,2}$")
 
+# When passthrough auth is enabled, the chat shell and read-only metadata routes must
+# stay reachable without browser credentials so /api/tools and /api/nudges work from
+# the static page; /api/chat remains protected.
+_DEFAULT_PASSTHROUGH_AUTH_EXCLUDED_PATHS: frozenset[str] = frozenset(
+    {
+        "/",
+        "/health",
+        "/docs",
+        "/openapi.json",
+        "/redoc",
+        "/api/tools",
+        "/api/nudges",
+    }
+)
+
 
 def _hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
     h = hex_color.lstrip("#")
@@ -193,8 +208,11 @@ class AgentChatAppEnvironment(flyte.app.AppEnvironment):
         nested task execution needs caller credentials (same pattern as
         ``FlyteWebhookAppEnvironment``).
     passthrough_auth_excluded_paths:
-        Paths skipped by passthrough middleware (defaults to common docs and
-        health routes). Only used when ``passthrough_auth`` is ``True``.
+        Paths skipped by passthrough middleware. When omitted, defaults include
+        the HTML shell (``/``), ``/api/tools``, ``/api/nudges``, health, and docs
+        routes so the sidebar and nudges load without ``Authorization`` headers;
+        ``/api/chat`` still requires credentials. Only used when ``passthrough_auth``
+        is ``True``.
     task_entrypoint:
         Optional Flyte task used as the chat handler entrypoint.
 
@@ -279,9 +297,7 @@ class AgentChatAppEnvironment(flyte.app.AppEnvironment):
                 yield
 
             fastapi_app = FastAPI(title=self.title or self.name, lifespan=lifespan)
-            excluded = self.passthrough_auth_excluded_paths or frozenset(
-                {"/health", "/docs", "/openapi.json", "/redoc"}
-            )
+            excluded = self.passthrough_auth_excluded_paths or _DEFAULT_PASSTHROUGH_AUTH_EXCLUDED_PATHS
             fastapi_app.add_middleware(FastAPIPassthroughAuthMiddleware, excluded_paths=set(excluded))
         else:
             fastapi_app = FastAPI(title=self.title or self.name)

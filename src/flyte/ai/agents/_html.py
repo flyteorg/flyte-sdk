@@ -69,16 +69,20 @@ const sidebar     = document.getElementById('sidebar');
 let history = [];
 let allTools = [];
 
-if (typeof marked !== 'undefined' && typeof hljs !== 'undefined') {
-    const renderer = new marked.Renderer();
-    renderer.code = function({ text, lang }) {
-        const language = lang && hljs.getLanguage(lang) ? lang : null;
-        const highlighted = language
-            ? hljs.highlight(text, { language }).value
-            : hljs.highlightAuto(text).value;
-        return '<pre><code class="hljs">' + highlighted + '</code></pre>';
-    };
-    marked.use({ renderer });
+try {
+    if (typeof marked !== 'undefined' && typeof hljs !== 'undefined') {
+        const renderer = new marked.Renderer();
+        renderer.code = function({ text, lang }) {
+            const language = lang && hljs.getLanguage(lang) ? lang : null;
+            const highlighted = language
+                ? hljs.highlight(text, { language }).value
+                : hljs.highlightAuto(text).value;
+            return '<pre><code class="hljs">' + highlighted + '</code></pre>';
+        };
+        marked.use({ renderer });
+    }
+} catch (e) {
+    console.warn('Chat UI: markdown/highlighter setup failed', e);
 }
 
 document.getElementById('sidebarToggle').addEventListener('click', () => {
@@ -96,7 +100,7 @@ function truncateText(s, maxLen) {
 function buildToolCard(t) {
     const card = document.createElement('div');
     card.className = 'tool-card';
-    const displayName = (t.name || '').replaceAll('_', ' ');
+    const displayName = (t.name || '').replace(/_/g, ' ');
     const desc = t.description || '';
     const preview = truncateText(desc.replace(/\\s+/g, ' '), 72);
 
@@ -152,51 +156,71 @@ function renderToolCards(tools) {
 }
 
 (async () => {
+    const toolCardsEl = document.getElementById('toolCards');
     try {
         const resp = await fetch('/api/tools');
+        if (!resp.ok) {
+            toolCardsEl.innerHTML =
+                '<p class="tool-cards-error">Failed to load tools (HTTP ' + resp.status + ')</p>';
+            return;
+        }
         const tools = await resp.json();
         allTools = Array.isArray(tools) ? tools : [];
         renderToolCards(allTools);
-    } catch(e) {
-        document.getElementById('toolCards').innerHTML =
+    } catch (e) {
+        toolCardsEl.innerHTML =
             '<p class="tool-cards-error">Failed to load tools</p>';
     }
 })();
 
-document.getElementById('toolFilter').addEventListener('input', e => {
-    const q = (e.target.value || '').trim().toLowerCase();
-    if (!q) {
-        renderToolCards(allTools);
-        return;
-    }
-    const filtered = allTools.filter(t => {
-        const name = (t.name || '').toLowerCase();
-        const desc = (t.description || '').toLowerCase();
-        const sig = (t.signature || '').toLowerCase();
-        return name.includes(q) || desc.includes(q) || sig.includes(q);
+const toolFilterEl = document.getElementById('toolFilter');
+if (toolFilterEl) {
+    toolFilterEl.addEventListener('input', e => {
+        const q = (e.target.value || '').trim().toLowerCase();
+        if (!q) {
+            renderToolCards(allTools);
+            return;
+        }
+        const filtered = allTools.filter(t => {
+            const name = (t.name || '').toLowerCase();
+            const desc = (t.description || '').toLowerCase();
+            const sig = (t.signature || '').toLowerCase();
+            return name.includes(q) || desc.includes(q) || sig.includes(q);
+        });
+        renderToolCards(filtered);
     });
-    renderToolCards(filtered);
-});
+}
 
-document.getElementById('expandAllTools').addEventListener('click', () => {
-    document.querySelectorAll('#toolCards .tool-card').forEach(card => {
-        card.classList.add('expanded');
-        const h = card.querySelector('.tool-card-header');
-        if (h) h.setAttribute('aria-expanded', 'true');
+const expandAllToolsBtn = document.getElementById('expandAllTools');
+if (expandAllToolsBtn) {
+    expandAllToolsBtn.addEventListener('click', () => {
+        document.querySelectorAll('#toolCards .tool-card').forEach(card => {
+            card.classList.add('expanded');
+            const h = card.querySelector('.tool-card-header');
+            if (h) h.setAttribute('aria-expanded', 'true');
+        });
     });
-});
-document.getElementById('collapseAllTools').addEventListener('click', () => {
-    document.querySelectorAll('#toolCards .tool-card').forEach(card => {
-        card.classList.remove('expanded');
-        const h = card.querySelector('.tool-card-header');
-        if (h) h.setAttribute('aria-expanded', 'false');
+}
+const collapseAllToolsBtn = document.getElementById('collapseAllTools');
+if (collapseAllToolsBtn) {
+    collapseAllToolsBtn.addEventListener('click', () => {
+        document.querySelectorAll('#toolCards .tool-card').forEach(card => {
+            card.classList.remove('expanded');
+            const h = card.querySelector('.tool-card-header');
+            if (h) h.setAttribute('aria-expanded', 'false');
+        });
     });
-});
+}
 
 (async () => {
     try {
         const resp = await fetch('/api/nudges');
-        const nudges = await resp.json();
+        if (!resp.ok) {
+            nudgesDiv.style.display = 'none';
+            return;
+        }
+        const raw = await resp.json();
+        const nudges = Array.isArray(raw) ? raw : [];
         nudgesDiv.innerHTML = '';
         nudges.forEach(n => {
             const card = document.createElement('div');
@@ -211,7 +235,7 @@ document.getElementById('collapseAllTools').addEventListener('click', () => {
             nudgesDiv.appendChild(card);
         });
         if (!nudges.length) nudgesDiv.style.display = 'none';
-    } catch(e) {
+    } catch (e) {
         nudgesDiv.style.display = 'none';
     }
 })();
