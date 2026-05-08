@@ -156,9 +156,9 @@ impl Informer {
             "Informer for {:?}::{} processing incoming StateService message {:?}",
             self.run_id.name, self.parent_action_name, &response
         );
-        let msg = response.message.ok_or_else(|| {
-            InformerError::BadContext("No message in response".to_string())
-        })?;
+        let msg = response
+            .message
+            .ok_or_else(|| InformerError::BadContext("No message in response".to_string()))?;
         match msg {
             Message::ControlMessage(ctrl) => {
                 self.handle_control_message(&ctrl);
@@ -179,9 +179,9 @@ impl Informer {
             "Informer for {:?}::{} processing incoming ActionsService message {:?}",
             self.run_id.name, self.parent_action_name, &response
         );
-        let msg = response.message.ok_or_else(|| {
-            InformerError::BadContext("No message in response".to_string())
-        })?;
+        let msg = response
+            .message
+            .ok_or_else(|| InformerError::BadContext("No message in response".to_string()))?;
         match msg {
             ActionsMessage::ControlMessage(ctrl) => {
                 self.handle_control_message(&ctrl);

@@ -352,6 +352,7 @@ requires-dist = [
     { name = "deltalake", marker = "extra == 'examples-test'" },
     { name = "docstring-parser", specifier = ">=0.16" },
     { name = "fastapi", marker = "extra == 'examples-test'" },
+    { name = "flyte-controller-base", marker = "extra == 'rust-controller'", directory = "../../rs_controller" },
     { name = "flyteidl2", specifier = "==2.0.15" },
     { name = "fsspec", specifier = ">=2025.3.0" },
     { name = "grpcio", marker = "extra == 'connector'", specifier = ">=1.71.0" },
@@ -382,7 +383,7 @@ requires-dist = [
     { name = "toml", specifier = ">=0.10.2" },
     { name = "uvicorn", marker = "extra == 'examples-test'" },
 ]
-provides-extras = ["aiosqlite", "connector", "examples-test", "sandbox", "tui"]
+provides-extras = ["aiosqlite", "connector", "examples-test", "sandbox", "tui", "rust-controller"]
 
 [package.metadata.requires-dev]
 dev = [
