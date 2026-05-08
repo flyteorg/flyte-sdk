@@ -240,17 +240,19 @@ if (collapseAllToolsBtn) {
     }
 })();
 
-// Steps align with CodeModeAgent progress phases (generating_code / executing / formatting).
+// Step 0 is client-only until the first server progress event; steps 1-3 align with
+// CodeModeAgent phases (generating_code / executing / formatting).
 const PROGRESS_STEP_LABELS = [
+    'Preparing runtime environment...',
     'Creating plan...',
     'Executing plan...',
     'Formatting answer...',
 ];
 
 const CODE_MODE_PHASE_TO_STEP = {
-    generating_code: 0,
-    executing: 1,
-    formatting: 2,
+    generating_code: 1,
+    executing: 2,
+    formatting: 3,
 };
 
 function createPendingAssistantBubble() {
@@ -324,7 +326,8 @@ async function sendMessage() {
     updateClearButton();
     scrollBottom();
 
-    setProgressUI(progressTrack, -1);
+    // Active until first NDJSON progress event (e.g. generating_code from CodeModeAgent).
+    setProgressUI(progressTrack, 0);
 
     try {
         const resp = await fetch('/api/chat', {
