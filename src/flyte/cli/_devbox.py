@@ -36,6 +36,14 @@ def _ensure_docker_available() -> None:
         )
 
 
+def _ensure_kubectl_available() -> None:
+    if shutil.which("kubectl") is None:
+        raise click.ClickException(
+            "kubectl is not installed or not on PATH. Install kubectl "
+            "(https://kubernetes.io/docs/tasks/tools/) and try again."
+        )
+
+
 def _ensure_volume(volume_name: str) -> None:
     result = subprocess.run(
         ["docker", "volume", "ls", "--filter", f"name=^{volume_name}$", "--format", "{{.Name}}"],
@@ -186,6 +194,8 @@ def _flatten_kubeconfig(default_kubeconfig: Path, kubeconfig_path: Path) -> subp
 
 def _merge_kubeconfig(kubeconfig_path: Path, container_name: str) -> None:
     import tempfile
+
+    _ensure_kubectl_available()
 
     default_kubeconfig = Path.home() / ".kube" / "config"
     default_kubeconfig.parent.mkdir(parents=True, exist_ok=True)

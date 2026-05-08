@@ -10,10 +10,11 @@ import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import click
 import pytest
 from click.testing import CliRunner
 
-from flyte.cli._devbox import _merge_kubeconfig, _run_container
+from flyte.cli._devbox import _ensure_kubectl_available, _merge_kubeconfig, _run_container
 from flyte.cli._start import devbox
 
 
@@ -131,6 +132,31 @@ class TestMergeKubeconfigRetry:
             mock_flatten.side_effect = [err, err]
 
             with pytest.raises(subprocess.CalledProcessError):
+                _merge_kubeconfig(kubeconfig, "flyte-devbox")
+
+
+class TestEnsureKubectlAvailable:
+    """`_merge_kubeconfig` must surface a friendly ClickException when kubectl is missing,
+    instead of leaking a raw FileNotFoundError from `subprocess.run`."""
+
+    def test_missing_kubectl_raises_click_exception(self):
+        with patch("flyte.cli._devbox.shutil.which", return_value=None):
+            with pytest.raises(click.ClickException) as excinfo:
+                _ensure_kubectl_available()
+            assert "kubectl" in str(excinfo.value.message)
+
+    def test_present_kubectl_does_not_raise(self):
+        with patch("flyte.cli._devbox.shutil.which", return_value="/usr/local/bin/kubectl"):
+            _ensure_kubectl_available()
+
+    def test_merge_kubeconfig_raises_click_exception_when_kubectl_missing(self, tmp_path):
+        kubeconfig = tmp_path / "kubeconfig"
+        kubeconfig.write_text("")
+        with (
+            patch("flyte.cli._devbox.shutil.which", return_value=None),
+            patch("flyte.cli._devbox.Path.home", return_value=tmp_path),
+        ):
+            with pytest.raises(click.ClickException):
                 _merge_kubeconfig(kubeconfig, "flyte-devbox")
 
 
