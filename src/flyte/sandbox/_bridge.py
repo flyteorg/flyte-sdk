@@ -45,24 +45,6 @@ def _from_monty(value: Any) -> Any:
     return value
 
 
-def _resume_monty_snapshot(snapshot: Any, return_value: Any) -> Any:
-    """Pass a tool return value into ``FunctionSnapshot.resume``.
-
-    pydantic-monty 0.0.17+ expects ``resume({"return_value": ...})`` (an
-    ``ExternalResult`` dict). Older releases used ``resume(return_value=...)``
-    only.
-
-    Without this wrapper, returning a plain dict from a tool (e.g.
-    ``{"summary": "..."}``) is mistaken for an ``ExternalResult`` and Monty
-    raises about invalid ``ExternalResult`` keys.
-    """
-    marshaled = _to_monty(return_value)
-    sig = inspect.signature(snapshot.resume)
-    if "result" in sig.parameters:
-        return snapshot.resume({"return_value": marshaled})
-    return snapshot.resume(return_value=marshaled)
-
-
 class ExternalFunctionBridge:
     """Drives Monty execution with external function dispatch.
 
@@ -170,7 +152,7 @@ class ExternalFunctionBridge:
                     args = [_from_monty(a) for a in progress.args]
                     kwargs = {k: _from_monty(v) for k, v in progress.kwargs.items()}
                     result = await self._handle_flyte_map(args, kwargs)
-                    progress = _resume_monty_snapshot(progress, result)
+                    progress = progress.resume({"return_value": _to_monty(result)})
                     continue
 
                 fn = ext_fns.get(progress.function_name)
@@ -188,6 +170,6 @@ class ExternalFunctionBridge:
                 while inspect.iscoroutine(result):
                     result = await result
 
-                progress = _resume_monty_snapshot(progress, result)
+                progress = progress.resume({"return_value": _to_monty(result)})
             else:
                 raise RuntimeError(f"Unexpected Monty progress state: {progress!r}")
