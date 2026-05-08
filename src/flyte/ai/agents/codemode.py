@@ -313,41 +313,42 @@ class CodeModeAgent:
 
         for attempt in range(1 + self._max_retries):
             attempts = attempt + 1
-            try:
-                result = await self._execute(code)
-            except Exception as exc:
-                if attempt < self._max_retries:
-                    retry_content = (
-                        f"Your previous code failed with this error:\n\n"
-                        f"```\n{exc}\n```\n\n"
-                        f"The code that failed:\n\n"
-                        f"```python\n{code}\n```\n\n"
-                        f"Please fix the code. Remember the Monty sandbox restrictions."
+            with flyte.group(f"codemode-attempt-{attempt}"):
+                try:
+                    result = await self._execute(code)
+                except Exception as exc:
+                    if attempt < self._max_retries:
+                        retry_content = (
+                            f"Your previous code failed with this error:\n\n"
+                            f"```\n{exc}\n```\n\n"
+                            f"The code that failed:\n\n"
+                            f"```python\n{code}\n```\n\n"
+                            f"Please fix the code. Remember the Monty sandbox restrictions."
+                        )
+                        retry_messages = [
+                            *messages,
+                            {"role": "assistant", "content": f"```python\n{code}\n```"},
+                            {"role": "user", "content": retry_content},
+                        ]
+                        try:
+                            code = await generate_code(
+                                self._call_llm,
+                                self._model,
+                                self.system_prompt,
+                                retry_messages,
+                            )
+                        except Exception as llm_exc:
+                            return AgentResult(
+                                code=code,
+                                error=f"Retry LLM call failed: {llm_exc}",
+                                attempts=attempts,
+                            )
+                        continue
+                    return AgentResult(
+                        code=code,
+                        error=f"Sandbox execution failed after {attempts} attempt(s): {exc}",
+                        attempts=attempts,
                     )
-                    retry_messages = [
-                        *messages,
-                        {"role": "assistant", "content": f"```python\n{code}\n```"},
-                        {"role": "user", "content": retry_content},
-                    ]
-                    try:
-                        code = await generate_code(
-                            self._call_llm,
-                            self._model,
-                            self.system_prompt,
-                            retry_messages,
-                        )
-                    except Exception as llm_exc:
-                        return AgentResult(
-                            code=code,
-                            error=f"Retry LLM call failed: {llm_exc}",
-                            attempts=attempts,
-                        )
-                    continue
-                return AgentResult(
-                    code=code,
-                    error=f"Sandbox execution failed after {attempts} attempt(s): {exc}",
-                    attempts=attempts,
-                )
 
             charts = result.get("charts", []) if isinstance(result, dict) else []
             summary = result.get("summary", "No summary generated.") if isinstance(result, dict) else str(result)
