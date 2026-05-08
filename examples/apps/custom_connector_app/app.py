@@ -5,11 +5,7 @@ from pathlib import Path
 import flyte
 import flyte.app
 
-image = (
-    flyte.Image.from_debian_base(python_version=(3, 12))
-    .with_apt_packages("git")
-    .with_pip_packages("flyte[connector]")
-)
+image = flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages("flyte[connector]")
 
 connector = flyte.app.ConnectorEnvironment(
     name="batch-job-connector",
