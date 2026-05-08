@@ -262,7 +262,7 @@ class _Sandbox:
                 "echo '--- script ---' && cat \"$1\" && "
                 "echo '--- running ---' && "
                 f"{python_cmd}; "
-                "_exit=$?; echo $_exit > /var/outputs/exit_code"
+                "_exit=$?; echo $_exit > /var/outputs/exit_code; exit $_exit"
             )
 
             return ContainerTask(

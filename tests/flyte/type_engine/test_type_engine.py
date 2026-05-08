@@ -10,7 +10,7 @@ from enum import Enum, auto
 from typing import Dict, List
 
 import pytest
-from flyteidl2.core import errors_pb2, literals_pb2, types_pb2
+from flyteidl2.core import execution_pb2, literals_pb2, types_pb2
 from flyteidl2.core.literals_pb2 import (
     Literal,
     LiteralCollection,
@@ -486,25 +486,25 @@ async def test_list_transformer():
 
 @pytest.mark.asyncio
 async def test_protos():
-    pb = errors_pb2.ContainerError(code="code", message="message")
-    lt = TypeEngine.to_literal_type(errors_pb2.ContainerError)
+    pb = execution_pb2.ContainerError(code="code", message="message")
+    lt = TypeEngine.to_literal_type(execution_pb2.ContainerError)
     assert lt.simple == SimpleType.STRUCT
-    assert lt.metadata["pb_type"] == "flyteidl2.core.errors_pb2.ContainerError"
+    assert lt.metadata["pb_type"] == "flyteidl2.core.execution_pb2.ContainerError"
 
-    lit = await TypeEngine.to_literal(pb, errors_pb2.ContainerError, lt)
-    new_python_val = await TypeEngine.to_python_value(lit, errors_pb2.ContainerError)
+    lit = await TypeEngine.to_literal(pb, execution_pb2.ContainerError, lt)
+    new_python_val = await TypeEngine.to_python_value(lit, execution_pb2.ContainerError)
     assert new_python_val == pb
 
     # Test error
     l0 = Literal(scalar=Scalar(primitive=Primitive(integer=4)))
     with pytest.raises(AssertionError):
-        await TypeEngine.to_python_value(l0, errors_pb2.ContainerError)
+        await TypeEngine.to_python_value(l0, execution_pb2.ContainerError)
 
-    default_proto = errors_pb2.ContainerError()
-    lit = await TypeEngine.to_literal(default_proto, errors_pb2.ContainerError, lt)
+    default_proto = execution_pb2.ContainerError()
+    lit = await TypeEngine.to_literal(default_proto, execution_pb2.ContainerError, lt)
     assert lit.HasField("scalar")
     assert lit.scalar.HasField("generic")
-    new_python_val = await TypeEngine.to_python_value(lit, errors_pb2.ContainerError)
+    new_python_val = await TypeEngine.to_python_value(lit, execution_pb2.ContainerError)
     assert new_python_val == default_proto
 
 
