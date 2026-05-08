@@ -31,7 +31,7 @@ task_env = flyte.TaskEnvironment(
         flyte.Image.from_debian_base()
         .with_apt_packages("git")
         .with_pip_packages("httpx", "pydantic-monty", "litellm", "unionai-reuse")
-        .with_commands(["uv pip install git+https://www.github.com/flyteorg/flyte-sdk.git@58c927b6"])
+        .with_commands(["uv pip install git+https://www.github.com/flyteorg/flyte-sdk.git@8b5ba0a4"])
     ),
     resources=flyte.Resources(cpu=2, memory="1Gi"),
     # reusable=flyte.ReusePolicy(replicas=1, concurrency=10),

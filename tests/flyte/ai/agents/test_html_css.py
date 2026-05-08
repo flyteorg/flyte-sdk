@@ -1,5 +1,7 @@
 """Tests for flyte.ai.agents._html and _css."""
 
+import re
+
 import flyte.ai.agents as agents_pkg
 from flyte.ai.agents import (
     DEFAULT_CSS,
@@ -86,6 +88,14 @@ class TestBuildChatHtml:
         assert "$LOGO" not in out
         assert "$SUBTITLE" not in out
         assert "$ACTION_BUTTONS" not in out
+
+    def test_inline_script_ndjson_split_uses_backslash_n_escape(self):
+        """Avoid Python newline escapes inside CHAT_HTML_TEMPLATE breaking JS (SyntaxError)."""
+        html = build_chat_html(title="T")
+        m = re.search(r"<script>(.*?)</script>", html, re.DOTALL)
+        assert m is not None
+        script_body = m.group(1)
+        assert "buffer.split('\\n')" in script_body
 
 
 class TestPackageExports:
