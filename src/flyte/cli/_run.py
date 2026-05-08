@@ -12,6 +12,7 @@ import rich_click as click
 from typing_extensions import get_args
 
 from .._code_bundle._utils import CopyFiles
+from .._run import Mode
 from .._sentry import capture_exception, count
 from .._task import TaskTemplate
 from ..errors import RuntimeSystemError
@@ -82,6 +83,17 @@ class RunArguments:
                 ["--local"],
                 is_flag=True,
                 help="Run the task locally",
+            )
+        },
+    )
+    local_multi: bool = field(
+        default=False,
+        metadata={
+            "click.option": click.Option(
+                ["--local-multi"],
+                is_flag=True,
+                help="Run the task locally with the multiprocessing controller (CPU parallelism). "
+                "Implies local execution; mutually exclusive with --local.",
             )
         },
     )
@@ -316,12 +328,15 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
 
         console = common.get_console()
 
+        is_local = self.run_args.local or self.run_args.local_multi
+        run_mode: Mode = "local-multi" if self.run_args.local_multi else ("local" if self.run_args.local else "remote")
+
         # 2. Execute — status messages are emitted by the subsystems (image builder, deployer, etc.)
         try:
-            status.step(f"Launching {'local' if self.run_args.local else 'remote'} execution...")
+            status.step(f"Launching {run_mode} execution...")
             execution_context = flyte.with_runcontext(
                 copy_style=self.run_args.copy_style,
-                mode="local" if self.run_args.local else "remote",
+                mode=run_mode,
                 name=self.run_args.name,
                 raw_data_path=self.run_args.raw_data_path,
                 service_account=self.run_args.service_account,
@@ -339,7 +354,7 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
             exit(1)
 
         # 3. UI Branching
-        if self.run_args.local:
+        if is_local:
             self._render_local_success(console, result, config)
         else:
             await self._render_remote_success(console, result, config)
@@ -379,12 +394,23 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
 
         tracker = ActionTracker()
 
+        tui_mode: Mode = "local-multi" if self.run_args.local_multi else "local"
+
+        if self.run_args.local_multi:
+            # Spawn the multiprocessing resource_tracker now, while real stderr
+            # is still in place. Once Textual replaces sys.stderr with a stream
+            # whose fileno() returns -1, the tracker's lazy spawn would pass -1
+            # to fork_exec and fail with 'bad value(s) in fds_to_keep'.
+            from flyte._internal.controllers.multi import prewarm_resource_tracker
+
+            prewarm_resource_tracker()
+
         async def execute_fn():
             import flyte
 
             execution_context = flyte.with_runcontext(
                 copy_style=self.run_args.copy_style,
-                mode="local",
+                mode=tui_mode,
                 name=self.run_args.name,
                 raw_data_path=self.run_args.raw_data_path,
                 service_account=self.run_args.service_account,
@@ -408,9 +434,11 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
             not self.run_args.no_sync_local_sys_paths,
         )
         self._validate_required_params(ctx)
+        if self.run_args.local and self.run_args.local_multi:
+            raise click.UsageError("--local and --local-multi are mutually exclusive")
         if self.run_args.tui:
-            if not self.run_args.local:
-                raise click.UsageError("--tui can only be used with --local")
+            if not (self.run_args.local or self.run_args.local_multi):
+                raise click.UsageError("--tui can only be used with --local or --local-multi")
             self._run_with_tui(ctx, config)
             return
         # Main entry point remains very thin
@@ -541,12 +569,15 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
                 f"Separate Run project/domain set, using {self.run_args.run_project} and {self.run_args.run_domain}"
             )
 
+        is_local = self.run_args.local or self.run_args.local_multi
+        run_mode: Mode = "local-multi" if self.run_args.local_multi else ("local" if self.run_args.local else "remote")
+
         # 2. Execute — status messages are emitted by the subsystems (image builder, deployer, etc.)
         try:
-            status.step(f"Launching {'local' if self.run_args.local else 'remote'} execution...")
+            status.step(f"Launching {run_mode} execution...")
             execution_context = flyte.with_runcontext(
                 copy_style=self.run_args.copy_style,
-                mode="local" if self.run_args.local else "remote",
+                mode=run_mode,
                 name=self.run_args.name,
                 project=self.run_args.run_project,
                 domain=self.run_args.run_domain,
@@ -559,7 +590,7 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
             return
 
         # 3. UI Branching
-        if self.run_args.local:
+        if is_local:
             self._render_local_success(console, result, config)
         else:
             await self._render_remote_success(console, result, config)

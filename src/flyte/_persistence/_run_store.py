@@ -301,13 +301,13 @@ class RunStore:
             """,
             params,
         )
+        column_names = [d[0] for d in cursor.description]
         records: list[RunRecord] = []
         for row in cursor.fetchall():
-            # r.* columns, then max_attempts_used, retried_actions
-            base_cols = len(row) - 2
-            base = RunStore._row_to_record(row[:base_cols])
-            base.max_attempts_used = int(row[base_cols] or 1)
-            base.retried_actions = int(row[base_cols + 1] or 0)
+            row_map = dict(zip(column_names, row))
+            base = RunStore._row_to_record(row_map)
+            base.max_attempts_used = int(row_map.get("max_attempts_used") or 1)
+            base.retried_actions = int(row_map.get("retried_actions") or 0)
             records.append(base)
         return records
 
@@ -319,7 +319,8 @@ class RunStore:
             "SELECT * FROM runs WHERE run_name=? ORDER BY start_time ASC",
             (run_name,),
         )
-        return [RunStore._row_to_record(row) for row in cursor.fetchall()]
+        column_names = [d[0] for d in cursor.description]
+        return [RunStore._row_to_record(dict(zip(column_names, row))) for row in cursor.fetchall()]
 
     @staticmethod
     def get_action_sync(run_name: str, action_name: str) -> RunRecord | None:
@@ -329,7 +330,10 @@ class RunStore:
             (run_name, action_name),
         )
         row = cursor.fetchone()
-        return RunStore._row_to_record(row) if row else None
+        if row is None:
+            return None
+        column_names = [d[0] for d in cursor.description]
+        return RunStore._row_to_record(dict(zip(column_names, row)))
 
     # -- Management --
 
@@ -360,27 +364,31 @@ class RunStore:
     # -- Internal --
 
     @staticmethod
-    def _row_to_record(row: tuple) -> RunRecord:
+    def _row_to_record(row: dict) -> RunRecord:
+        """Build a ``RunRecord`` from a column-name → value mapping. Reading
+        by name (instead of positional indexing) is required because old
+        DBs accumulated migrated columns at the tail in a different order
+        than freshly-created DBs from the current ``_RUNS_DDL``."""
         return RunRecord(
-            run_name=row[0],
-            action_name=row[1],
-            task_name=row[2],
-            status=row[3],
-            inputs=row[4],
-            outputs=row[5],
-            error=row[6],
-            start_time=row[7],
-            end_time=row[8],
-            parent_id=row[9],
-            short_name=row[10],
-            output_path=row[11],
-            cache_enabled=bool(row[12]),
-            cache_hit=bool(row[13]),
-            disable_run_cache=bool(row[20]) if len(row) > 20 else False,
-            has_report=bool(row[14]),
-            context=row[15],
-            group_name=row[16],
-            log_links=row[17],
-            attempt_count=int(row[18] or 0),
-            attempts_json=row[19],
+            run_name=row["run_name"],
+            action_name=row["action_name"],
+            task_name=row.get("task_name"),
+            status=row.get("status") or "running",
+            inputs=row.get("inputs"),
+            outputs=row.get("outputs"),
+            error=row.get("error"),
+            start_time=row.get("start_time"),
+            end_time=row.get("end_time"),
+            parent_id=row.get("parent_id"),
+            short_name=row.get("short_name"),
+            output_path=row.get("output_path"),
+            cache_enabled=bool(row.get("cache_enabled")),
+            cache_hit=bool(row.get("cache_hit")),
+            disable_run_cache=bool(row.get("disable_run_cache")),
+            has_report=bool(row.get("has_report")),
+            context=row.get("context"),
+            group_name=row.get("group_name"),
+            log_links=row.get("log_links"),
+            attempt_count=int(row.get("attempt_count") or 0),
+            attempts_json=row.get("attempts_json"),
         )
