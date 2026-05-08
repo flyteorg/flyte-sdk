@@ -9,13 +9,10 @@ image = (
     flyte.Image.from_debian_base(python_version=(3, 12))
     .with_apt_packages("git")
     .with_pip_packages("flyte[connector]")
-    .with_pip_packages(
-        "git+https://github.com/pingsutw/flyte.git@5c4b05b50fef993e4bbf36243a3bcd492fb604f5#subdirectory=gen/python"
-    )
 )
 
 connector = flyte.app.ConnectorEnvironment(
-    name="batch-job-connector123",
+    name="batch-job-connector",
     image=image,
     resources=flyte.Resources(cpu="1", memory="1Gi"),
     include=["my_connector"],

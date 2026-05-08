@@ -28,7 +28,7 @@ def main(x_list: list[int] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) -> float:
 
 if __name__ == "__main__":
     flyte.init_from_config()  # establish remote connection from within your script.
-    run = flyte.with_runcontext(env_vars={"_U_USE_ACTIONS": "1"}).run(
+    run = flyte.run(
         main, x_list=list(range(10))
     )  # run remotely inline and pass data.
 
