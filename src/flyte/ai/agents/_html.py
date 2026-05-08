@@ -240,8 +240,8 @@ if (collapseAllToolsBtn) {
     }
 })();
 
-// Step 0 is client-only until the first server progress event; steps 1-3 align with
-// CodeModeAgent phases (generating_code / executing / formatting).
+// Step 0 ("Preparing…") only on the first assistant reply in the session; later
+// replies use three steps. Steps 1-3 align with CodeModeAgent phases on first turn.
 const PROGRESS_STEP_LABELS = [
     'Preparing runtime environment...',
     'Creating plan...',
@@ -255,7 +255,7 @@ const CODE_MODE_PHASE_TO_STEP = {
     formatting: 3,
 };
 
-function createPendingAssistantBubble() {
+function createPendingAssistantBubble(includePreparingStep) {
     const msg = document.createElement('div');
     msg.className = 'msg assistant assistant-pending';
     const bubble = document.createElement('div');
@@ -270,7 +270,11 @@ function createPendingAssistantBubble() {
     sub.textContent = 'In progress…';
     const track = document.createElement('div');
     track.className = 'progress-steps';
-    PROGRESS_STEP_LABELS.forEach((text, i) => {
+    const labels = includePreparingStep
+        ? PROGRESS_STEP_LABELS
+        : PROGRESS_STEP_LABELS.slice(1);
+    if (!includePreparingStep) track.dataset.compact = '1';
+    labels.forEach((text, i) => {
         const step = document.createElement('div');
         step.className = 'progress-step pending';
         step.dataset.stepIndex = String(i);
@@ -293,8 +297,10 @@ function createPendingAssistantBubble() {
 
 function applyCodemodeProgress(trackEl, subEl, evt) {
     if (!evt || !evt.phase) return;
-    const idx = CODE_MODE_PHASE_TO_STEP[evt.phase];
-    if (idx !== undefined) setProgressUI(trackEl, idx);
+    let idx = CODE_MODE_PHASE_TO_STEP[evt.phase];
+    if (idx === undefined) return;
+    if (trackEl && trackEl.dataset.compact === '1') idx -= 1;
+    setProgressUI(trackEl, idx);
     if (subEl && evt.attempt != null && evt.max_attempts != null) {
         subEl.textContent = 'Attempt ' + evt.attempt + ' of ' + evt.max_attempts;
     }
@@ -321,13 +327,19 @@ async function sendMessage() {
     userInput.value = '';
     sendBtn.disabled = true;
 
-    const { msg: pendingMsg, track: progressTrack, sub: progressSub } = createPendingAssistantBubble();
+    const includePreparing = !history.some(h => h.role === 'assistant');
+    const { msg: pendingMsg, track: progressTrack, sub: progressSub } =
+        createPendingAssistantBubble(includePreparing);
     messagesDiv.appendChild(pendingMsg);
     updateClearButton();
     scrollBottom();
 
-    // Step 0 until server sends generating_code (CodeModeAgent, in-process run only).
-    setProgressUI(progressTrack, 0);
+    // Step 0 ("Preparing…") only on the first assistant turn; later turns skip it.
+    if (includePreparing) {
+        setProgressUI(progressTrack, 0);
+    } else {
+        setProgressUI(progressTrack, -1);
+    }
 
     try {
         const resp = await fetch('/api/chat', {
