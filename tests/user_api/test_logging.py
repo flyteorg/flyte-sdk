@@ -127,11 +127,64 @@ def test_user_log_level_env_var_default(monkeypatch):
 
 
 def test_user_logger_no_flyte_prefix():
-    from flyte._logging import FlyteInternalFilter
+    """The user logger's formatter must not stamp the [flyte] internal prefix."""
+    from flyte._logging import ContextFormatter
 
     for handler in flyte.logger.handlers:
-        for f in handler.filters:
-            assert not isinstance(f, FlyteInternalFilter), "user_logger must not have FlyteInternalFilter"
+        formatter = handler.formatter
+        if isinstance(formatter, ContextFormatter):
+            assert not formatter._internal_prefix, "user_logger formatter must not use internal_prefix"
+
+
+def test_initialize_logger_wraps_existing_root_handlers():
+    """
+    initialize_logger(reset_root_logger=False) must wrap any pre-existing
+    root-handler formatter so third-party log lines render with [run][action]
+    once the factory has stamped them. Mirrors main's ContextFilter behavior.
+    """
+    import io
+
+    from flyte._logging import ContextFormatter, initialize_logger
+
+    root = logging.getLogger()
+    saved_handlers = list(root.handlers)
+    root.handlers.clear()
+
+    buf = io.StringIO()
+    h = logging.StreamHandler(buf)
+    h.setFormatter(logging.Formatter("%(message)s"))
+    root.addHandler(h)
+
+    try:
+        initialize_logger(reset_root_logger=False)
+        assert isinstance(h.formatter, ContextFormatter)
+        # Idempotent: a second call must not re-wrap.
+        initialize_logger(reset_root_logger=False)
+        assert isinstance(h.formatter, ContextFormatter)
+        assert not isinstance(h.formatter._inner, ContextFormatter)
+    finally:
+        root.handlers.clear()
+        root.handlers.extend(saved_handlers)
+        initialize_logger()
+
+
+def test_user_logger_no_flyte_prefix_after_rich_init():
+    """
+    Regression: when initialize_logger(enable_rich=True) is called (e.g. via flyte.init()),
+    the rich handler attached to the user logger must not carry an internal_prefix formatter.
+    """
+    from flyte._logging import ContextFormatter, initialize_logger
+
+    initialize_logger(enable_rich=True)
+    try:
+        for handler in flyte.logger.handlers:
+            formatter = handler.formatter
+            if isinstance(formatter, ContextFormatter):
+                assert not formatter._internal_prefix, (
+                    "user_logger formatter must not use internal_prefix even with rich handler"
+                )
+    finally:
+        initialize_logger(enable_rich=False)
 
 
 def test_json_formatter_with_context():
