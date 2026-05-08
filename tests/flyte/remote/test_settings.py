@@ -175,14 +175,12 @@ class TestProtoFlatRoundtrip:
     def test_all_leaf_types_roundtrip(self):
         overrides = {
             "run.default_queue": "gpu",
-            "run.run_concurrency": 10,
-            "run.action_concurrency": 5,
             "security.service_account": "ml-sa",
             "storage.raw_data_path": "s3://bucket/data",
             "task_resource.min.cpu": "2",
             "task_resource.max.memory": "8Gi",
             "task_resource.mirror_limits_request": True,
-            "labels": ["env:prod", "team:ml"],
+            "labels": {"env": "prod", "team": "ml"},
             "annotations": {"oncall": "ml-team"},
             "environment_variables": {"DEBUG": "0"},
         }
@@ -209,10 +207,12 @@ class TestProtoFlatRoundtrip:
         proto = settings_definition_pb2.Settings(
             run=settings_definition_pb2.RunSettings(
                 default_queue=_sv_string("gpu"),
-                run_concurrency=settings_definition_pb2.Int64Setting(
+            ),
+            security=settings_definition_pb2.SecuritySettings(
+                service_account=settings_definition_pb2.StringSetting(
                     state=settings_definition_pb2.SETTING_STATE_INHERIT,
                 ),
-            )
+            ),
         )
         flat = dict(_proto_to_flat(proto))
         assert flat == {"run.default_queue": "gpu"}
@@ -221,25 +221,27 @@ class TestProtoFlatRoundtrip:
         proto = settings_definition_pb2.Settings(
             run=settings_definition_pb2.RunSettings(
                 default_queue=settings_definition_pb2.StringSetting(state=settings_definition_pb2.SETTING_STATE_UNSET),
-                run_concurrency=_sv_int(5),
-            )
+            ),
+            security=settings_definition_pb2.SecuritySettings(
+                service_account=_sv_string("ml-sa"),
+            ),
         )
         flat = dict(_proto_to_flat(proto))
         assert flat["run.default_queue"] is UNSET
-        assert flat["run.run_concurrency"] == 5
+        assert flat["security.service_account"] == "ml-sa"
 
     def test_flat_to_proto_with_unset_value(self):
         proto = _flat_to_proto({"run.default_queue": UNSET})
         assert proto.run.default_queue.state == settings_definition_pb2.SETTING_STATE_UNSET
 
     def test_unset_roundtrip(self):
-        overrides = {"run.default_queue": UNSET, "run.run_concurrency": 10}
+        overrides = {"run.default_queue": UNSET, "security.service_account": "ml-sa"}
         proto = _flat_to_proto(overrides)
         wire = proto.SerializeToString()
         restored = settings_definition_pb2.Settings.FromString(wire)
         flat = dict(_proto_to_flat(restored))
         assert flat["run.default_queue"] is UNSET
-        assert flat["run.run_concurrency"] == 10
+        assert flat["security.service_account"] == "ml-sa"
 
 
 class TestWalkLeaf:
@@ -284,7 +286,9 @@ class TestToYaml:
         settings = Settings(
             effective_settings=[
                 EffectiveSetting(key="run.default_queue", value="gpu", origin=SettingOrigin("PROJECT", "prod", "ml")),
-                EffectiveSetting(key="run.run_concurrency", value=10, origin=SettingOrigin("DOMAIN", "prod")),
+                EffectiveSetting(
+                    key="storage.raw_data_path", value="s3://bucket/data", origin=SettingOrigin("DOMAIN", "prod")
+                ),
                 EffectiveSetting(key="security.service_account", value="sa", origin=SettingOrigin("ORG")),
             ],
             local_settings=[
@@ -300,12 +304,12 @@ class TestToYaml:
         assert "### Inherited settings" in yaml
         assert "### Available settings" in yaml
         assert "run.default_queue: gpu" in yaml
-        assert "# run.run_concurrency: 10" in yaml
+        assert '# storage.raw_data_path: "s3://bucket/data"' in yaml
         assert "# security.service_account: sa" in yaml
         assert "## inherited from DOMAIN(prod)" in yaml
         assert "## inherited from ORG" in yaml
         for key in Settings.available_keys():
-            if key in {"run.default_queue", "run.run_concurrency", "security.service_account"}:
+            if key in {"run.default_queue", "storage.raw_data_path", "security.service_account"}:
                 continue
             assert f"# {key}: {_LEAF_EXAMPLES[key]}" in yaml
 
@@ -359,101 +363,6 @@ class TestToYaml:
                 assert lines[idx - 1] == f"## {description}", (
                     f"expected description above {dotkey!r}; got {lines[idx - 1]!r}"
                 )
-
-    def test_inherited_list_renders_one_line_per_item(self):
-        settings = Settings(
-            effective_settings=[
-                EffectiveSetting(
-                    key="labels",
-                    value=["env:prod", "team:ml"],
-                    origin=SettingOrigin("DOMAIN", "prod"),
-                ),
-            ],
-            local_settings=[],
-            domain="prod",
-            project="ml",
-        )
-        yaml = settings.to_yaml()
-        lines = yaml.split("\n")
-        assert any("- " in line and "env:prod" in line for line in lines)
-        assert any("- " in line and "team:ml" in line for line in lines)
-        assert not any(line.strip().startswith("labels:") and "{" in line for line in lines)
-
-    def test_local_list_renders_as_block_yaml(self):
-        settings = Settings(
-            effective_settings=[],
-            local_settings=[LocalSetting(key="labels", value=["team:ml"])],
-            domain="prod",
-        )
-        yaml = settings.to_yaml()
-        lines = yaml.split("\n")
-        assert any(line.startswith("labels:") for line in lines)
-        assert any(line.startswith("  - ") and "team:ml" in line for line in lines)
-        assert "['team:ml']" not in yaml
-
-    def test_local_list_parent_items_commented_with_origin(self):
-        settings = Settings(
-            effective_settings=[],
-            local_settings=[LocalSetting(key="labels", value=["team:ml"])],
-            domain="prod",
-            project="ml",
-            _list_item_origins={
-                "labels": [
-                    EffectiveSetting(key="labels", value="env:prod", origin=SettingOrigin("ORG")),
-                ]
-            },
-        )
-        yaml = settings.to_yaml()
-        lines = yaml.split("\n")
-        assert any(line.startswith("  # - ") and "env:prod" in line and "defined at ORG" in line for line in lines)
-
-    def test_local_list_local_item_not_duplicated_as_comment(self):
-        settings = Settings(
-            effective_settings=[],
-            local_settings=[LocalSetting(key="labels", value=["env:prod"])],
-            domain="prod",
-            project="ml",
-            _list_item_origins={
-                "labels": [
-                    EffectiveSetting(key="labels", value="env:prod", origin=SettingOrigin("ORG")),
-                ]
-            },
-        )
-        yaml = settings.to_yaml()
-        lines = yaml.split("\n")
-        assert any(line.startswith("  - ") and "env:prod" in line for line in lines)
-        assert not any(line.startswith("  # - ") and "env:prod" in line for line in lines)
-
-    def test_local_list_how_lists_work_comment_present(self):
-        settings = Settings(
-            effective_settings=[],
-            local_settings=[LocalSetting(key="labels", value=["team:ml"])],
-            domain="prod",
-        )
-        yaml = settings.to_yaml()
-        assert "List values add across scopes" in yaml
-
-    def test_list_with_only_inherited_items_appears_in_inherited_section(self):
-        settings = Settings(
-            effective_settings=[
-                EffectiveSetting(key="labels", value=["env:prod"], origin=SettingOrigin("ORG")),
-            ],
-            local_settings=[LocalSetting(key="labels", value=[])],
-            domain="prod",
-            project="ml",
-            _list_item_origins={
-                "labels": [
-                    EffectiveSetting(key="labels", value="env:prod", origin=SettingOrigin("ORG")),
-                ]
-            },
-        )
-        yaml = settings.to_yaml()
-        lines = yaml.split("\n")
-        inherited_idx = next(i for i, line in enumerate(lines) if "### Inherited settings" in line)
-        available_idx = next(i for i, line in enumerate(lines) if "### Available settings" in line)
-        labels_idx = next(i for i, line in enumerate(lines) if "labels:" in line)
-        assert inherited_idx < labels_idx < available_idx
-        assert "### Local overrides" not in yaml
 
     def test_inherited_map_renders_one_line_per_entry(self):
         settings = Settings(
@@ -657,7 +566,7 @@ class TestParseYaml:
     def test_parse_overrides(self):
         yaml_content = """# Local overrides
 run.default_queue: gpu
-run.run_concurrency: 10
+task_resource.min.cpu: '2'
 security.service_account: my-sa
 
 # Inherited settings (uncomment to override)
@@ -666,7 +575,7 @@ security.service_account: my-sa
         overrides = Settings.parse_yaml(yaml_content)
         assert overrides == {
             "run.default_queue": "gpu",
-            "run.run_concurrency": 10,
+            "task_resource.min.cpu": "2",
             "security.service_account": "my-sa",
         }
 
@@ -710,14 +619,14 @@ security.service_account: my-sa
         assert overrides["run.default_queue"] is UNSET
 
     def test_parse_tilde_unset_roundtrips_to_proto(self):
-        overrides = Settings.parse_yaml("run.default_queue: ~unset\nrun.run_concurrency: 5\n")
+        overrides = Settings.parse_yaml("run.default_queue: ~unset\nsecurity.service_account: ml-sa\n")
         assert overrides["run.default_queue"] is UNSET
         proto = _flat_to_proto(overrides)
         assert proto.run.default_queue.state == settings_definition_pb2.SETTING_STATE_UNSET
-        assert proto.run.run_concurrency.int_value == 5
+        assert proto.security.service_account.string_value == "ml-sa"
 
     def test_parse_tilde_unset_only_in_values_not_keys(self):
-        overrides = Settings.parse_yaml("run.run_concurrency: 3\n")
+        overrides = Settings.parse_yaml("security.service_account: ml-sa\n")
         assert "~unset" not in overrides
 
 
@@ -890,60 +799,6 @@ class TestSettingsGet:
         # Effective still surfaces the DOMAIN-level value.
         assert any(s.key == "run.default_queue" and s.value == "gpu" for s in settings.effective_settings)
 
-    def test_get_populates_list_item_origins_from_parent_levels(
-        self, mock_client, mock_settings_service, mock_init_config
-    ):
-        org_record = _make_record(org="myorg", version=1, labels=["env:prod", "team:ml"])
-        project_record = _make_record(org="myorg", domain="prod", project="ml", version=2, labels=["oncall:ml-team"])
-        mock_settings_service.get_settings_for_edit.return_value = settings_service_pb2.GetSettingsForEditResponse(
-            requestedKey=settings_definition_pb2.SettingsKey(org="myorg", domain="prod", project="ml"),
-            levels=[org_record, project_record],
-        )
-        with (
-            patch(_PATCH_ENSURE, new_callable=AsyncMock),
-            patch(_PATCH_CLIENT, return_value=mock_client),
-            patch(_PATCH_CONFIG, return_value=mock_init_config),
-        ):
-            settings = Settings.get_settings_for_edit(domain="prod", project="ml")
-
-        items = {es.value: es for es in settings._list_item_origins["labels"]}
-        assert items["env:prod"].origin.scope_type == "ORG"
-        assert items["team:ml"].origin.scope_type == "ORG"
-        assert "oncall:ml-team" not in items
-
-    def test_get_list_item_origins_excludes_local_scope(self, mock_client, mock_settings_service, mock_init_config):
-        project_record = _make_record(org="myorg", domain="prod", project="ml", version=1, labels=["env:prod"])
-        mock_settings_service.get_settings_for_edit.return_value = settings_service_pb2.GetSettingsForEditResponse(
-            requestedKey=settings_definition_pb2.SettingsKey(org="myorg", domain="prod", project="ml"),
-            levels=[project_record],
-        )
-        with (
-            patch(_PATCH_ENSURE, new_callable=AsyncMock),
-            patch(_PATCH_CLIENT, return_value=mock_client),
-            patch(_PATCH_CONFIG, return_value=mock_init_config),
-        ):
-            settings = Settings.get_settings_for_edit(domain="prod", project="ml")
-
-        assert "labels" not in settings._list_item_origins
-
-    def test_get_unset_at_parent_clears_ancestor_list_items(self, mock_client, mock_settings_service, mock_init_config):
-        org_record = _make_record(org="myorg", version=1, labels=["env:prod"])
-        domain_record = _make_record(org="myorg", domain="prod", version=2, labels=UNSET)
-        project_record = _make_record(org="myorg", domain="prod", project="ml", version=3, labels=["team:ml"])
-        mock_settings_service.get_settings_for_edit.return_value = settings_service_pb2.GetSettingsForEditResponse(
-            requestedKey=settings_definition_pb2.SettingsKey(org="myorg", domain="prod", project="ml"),
-            levels=[org_record, domain_record, project_record],
-        )
-        with (
-            patch(_PATCH_ENSURE, new_callable=AsyncMock),
-            patch(_PATCH_CLIENT, return_value=mock_client),
-            patch(_PATCH_CONFIG, return_value=mock_init_config),
-        ):
-            settings = Settings.get_settings_for_edit(domain="prod", project="ml")
-
-        items = {es.value for es in settings._list_item_origins.get("labels", [])}
-        assert "env:prod" not in items, "ORG item should be cleared by DOMAIN's UNSET"
-
     def test_get_populates_map_entry_origins_from_parent_levels(
         self, mock_client, mock_settings_service, mock_init_config
     ):
@@ -1087,25 +942,6 @@ class TestSettingsGet:
         assert "team" not in origins, "ORG entry 'team' should be blocked by DOMAIN's UNSET"
         assert "env" not in origins, "ORG entry 'env' should be blocked by DOMAIN's UNSET"
 
-    def test_unset_at_parent_scope_clears_ancestor_list(self, mock_client, mock_settings_service, mock_init_config):
-        """When a parent scope sets a list to UNSET, the effective value must be UNSET, not the ancestor list."""
-        org_record = _make_record(org="myorg", version=1, labels=["env:prod", "team:ml"])
-        domain_record = _make_record(org="myorg", domain="prod", version=2, labels=UNSET)
-        project_record = _make_record(org="myorg", domain="prod", project="ml", version=3)
-        mock_settings_service.get_settings_for_edit.return_value = settings_service_pb2.GetSettingsForEditResponse(
-            requestedKey=settings_definition_pb2.SettingsKey(org="myorg", domain="prod", project="ml"),
-            levels=[org_record, domain_record, project_record],
-        )
-        with (
-            patch(_PATCH_ENSURE, new_callable=AsyncMock),
-            patch(_PATCH_CLIENT, return_value=mock_client),
-            patch(_PATCH_CONFIG, return_value=mock_init_config),
-        ):
-            settings = Settings.get_settings_for_edit(domain="prod", project="ml")
-
-        effective = {s.key: s.value for s in settings.effective_settings}
-        assert effective.get("labels") is UNSET, "ORG list should be blocked by DOMAIN's UNSET"
-
     def test_get_surfaces_unset_from_local_scope(self, mock_client, mock_settings_service, mock_init_config):
         """A SETTING_STATE_UNSET leaf in the server response appears as UNSET in local_settings."""
         unset_proto = settings_definition_pb2.Settings(
@@ -1165,7 +1001,7 @@ class TestSettingsUpdate:
             patch(_PATCH_CLIENT, return_value=mock_client),
             patch(_PATCH_CONFIG, return_value=mock_init_config),
         ):
-            settings.update_settings({"run.default_queue": "gpu", "run.run_concurrency": 5})
+            settings.update_settings({"run.default_queue": "gpu", "security.service_account": "ml-sa"})
 
         mock_settings_service.update_settings.assert_called_once()
         req = mock_settings_service.update_settings.call_args[0][0]
@@ -1175,7 +1011,7 @@ class TestSettingsUpdate:
         assert req.version == 7
         assert req.settings.run.default_queue.string_value == "gpu"
         assert req.settings.run.default_queue.state == settings_definition_pb2.SETTING_STATE_VALUE
-        assert req.settings.run.run_concurrency.int_value == 5
+        assert req.settings.security.service_account.string_value == "ml-sa"
 
     def test_update_refreshes_local_state(self, mock_client, mock_settings_service, mock_init_config):
         settings = Settings(
@@ -1319,9 +1155,11 @@ class TestProgrammaticAccess:
         settings = Settings(
             effective_settings=[
                 EffectiveSetting(key="run.default_queue", value="gpu", origin=SettingOrigin("PROJECT", "prod", "ml")),
-                EffectiveSetting(key="run.run_concurrency", value=10, origin=SettingOrigin("DOMAIN", "prod")),
+                EffectiveSetting(
+                    key="security.service_account", value="ml-sa", origin=SettingOrigin("DOMAIN", "prod")
+                ),
             ],
             local_settings=[LocalSetting(key="run.default_queue", value="gpu")],
         )
         assert settings.local_overrides() == {"run.default_queue": "gpu"}
-        assert settings.effective_values() == {"run.default_queue": "gpu", "run.run_concurrency": 10}
+        assert settings.effective_values() == {"run.default_queue": "gpu", "security.service_account": "ml-sa"}
