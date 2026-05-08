@@ -12,37 +12,11 @@ from ._tools import ipython_check
 
 LogFormat = Literal["console", "json"]
 
-# Registry of contextvars to stamp onto every LogRecord.
-# Map of attribute name -> ContextVar. Populated via register_log_context().
-_LOG_CONTEXT_VARS: dict[str, contextvars.ContextVar] = {}
-
-
-def register_log_context(name: str, var: contextvars.ContextVar[Any]) -> None:
-    """
-    Register a contextvar to be stamped on every LogRecord as `record.<name>`.
-
-    The value is pulled at record-creation time, so it reflects the context the
-    log call was issued in (not the context the handler runs in). JSON output
-    will include the attribute when its value is not None; console output can
-    reference it via `%(<name>)s` in a Formatter string.
-    """
-    _LOG_CONTEXT_VARS[name] = var
-
-
-def unregister_log_context(name: str) -> None:
-    """Remove a previously-registered contextvar from the log record factory."""
-    _LOG_CONTEXT_VARS.pop(name, None)
-
-
 _orig_record_factory = logging.getLogRecordFactory()
 
 
 def _flyte_record_factory(*args: Any, **kwargs: Any) -> logging.LogRecord:
     record = _orig_record_factory(*args, **kwargs)
-
-    for attr, var in _LOG_CONTEXT_VARS.items():
-        if not hasattr(record, attr):
-            setattr(record, attr, var.get(None))
 
     # Stamp the active flyte action context, if any. Imported lazily because
     # this factory runs on every record, including during flyte's own import.
@@ -206,14 +180,6 @@ class JSONFormatter(logging.Formatter):
         if getattr(record, "is_flyte_internal", False):
             log_data["is_flyte_internal"] = True
 
-        # Add any user-registered contextvars stamped by the record factory.
-        for attr in _LOG_CONTEXT_VARS:
-            if attr in log_data:
-                continue
-            val = getattr(record, attr, None)
-            if val is not None:
-                log_data[attr] = val
-
         # Add metric fields if present
         if getattr(record, "metric_type", None):
             log_data["metric_type"] = record.metric_type  # type: ignore[attr-defined]
@@ -255,6 +221,17 @@ def initialize_logger(
     reset_root_logger = reset_root_logger or os.environ.get("FLYTE_RESET_ROOT_LOGGER") == "1"
     if reset_root_logger:
         _setup_root_logger(use_json=use_json, use_rich=use_rich, log_level=log_level)
+    else:
+        # Wrap each existing root-handler formatter so third-party log lines
+        # routed through root render with [run][action]. Captures handlers
+        # registered before this call; handlers added later won't be wrapped
+        # (factory still stamps the attrs, so callers can format them).
+        root_logger = logging.getLogger()
+        for h in root_logger.handlers:
+            existing = h.formatter
+            if isinstance(existing, ContextFormatter):
+                continue
+            h.setFormatter(ContextFormatter(inner=existing))
 
     # Set up Flyte logger handler
     flyte_handler: logging.Handler | None = None
@@ -338,12 +315,20 @@ class ContextFormatter(logging.Formatter):
     multiple handlers without compounding prefixes.
     """
 
-    def __init__(self, fmt: str = "%(message)s", *, internal_prefix: bool = False, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        fmt: str = "%(message)s",
+        *,
+        internal_prefix: bool = False,
+        inner: logging.Formatter | None = None,
+        **kwargs: Any,
+    ) -> None:
         super().__init__(fmt=fmt, **kwargs)
         self._internal_prefix = internal_prefix
+        self._inner = inner
 
     def format(self, record: logging.LogRecord) -> str:
-        base = super().format(record)
+        base = self._inner.format(record) if self._inner is not None else super().format(record)
         parts: list[str] = []
         run_name = getattr(record, "run_name", None)
         action_name = getattr(record, "action_name", None)
