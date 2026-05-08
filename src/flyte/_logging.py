@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import contextvars
 import logging
 import os
 from datetime import datetime
