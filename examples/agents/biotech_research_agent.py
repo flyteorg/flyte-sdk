@@ -212,7 +212,7 @@ experiments and CRO handoff. Always end with format_response(title, body, links)
 
 agent = CodeModeAgent(
     tools=ALL_TOOLS,
-    model="claude-sonnet-4-6",
+    model="claude-haiku-4-5",
     max_retries=2,
     system_prompt_prefix=SYSTEM_PROMPT_PREFIX,
 )

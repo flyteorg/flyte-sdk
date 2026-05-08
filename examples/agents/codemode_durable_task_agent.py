@@ -70,7 +70,9 @@ async def group_and_aggregate(data: list, group_by: str, agg_column: str, agg_fu
         agg_func: One of "sum", "mean", "count", "min", "max".
 
     Returns:
-        List of {"group": key, "value": aggregated_value} dicts.
+        List of row dicts containing the original column names:
+        - the grouping column name (e.g. "month") mapped to the group key
+        - the aggregated column name (e.g. "revenue") mapped to the aggregated value
     """
     groups: dict[Any, list[Any]] = {}
     for row in data:
@@ -97,7 +99,7 @@ async def group_and_aggregate(data: list, group_by: str, agg_column: str, agg_fu
             val = max(nums)
         else:
             val = sum(nums)
-        out.append({"group": k, "value": val})
+        out.append({group_by: k, agg_column: val})
     return out
 
 
@@ -111,7 +113,7 @@ You are a data analyst copilot.
 
 agent = CodeModeAgent(
     tools=[fetch_data, group_and_aggregate],
-    model="claude-sonnet-4-6",
+    model="claude-haiku-4-5",
     max_retries=2,
     system_prompt_prefix=SYSTEM_PROMPT_PREFIX,
 )

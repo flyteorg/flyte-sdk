@@ -31,7 +31,7 @@ task_env = flyte.TaskEnvironment(
         flyte.Image.from_debian_base()
         .with_apt_packages("git")
         .with_pip_packages("httpx", "pydantic-monty", "litellm", "unionai-reuse")
-        .with_commands(["uv pip install git+https://www.github.com/flyteorg/flyte-sdk.git@ef1fdf45"])
+        .with_commands(["uv pip install git+https://www.github.com/flyteorg/flyte-sdk.git@a903fc14"])
     ),
     resources=flyte.Resources(cpu=2, memory="1Gi"),
     # reusable=flyte.ReusePolicy(replicas=1, concurrency=10),
@@ -144,10 +144,14 @@ async def calculate_statistics(data: list, column: str) -> dict:
     """Calculate basic descriptive statistics for a numeric column."""
     vals = [row[column] for row in data if isinstance(row, dict) and column in row]
     if not vals:
-        return {"count": 0, "mean": 0, "min": 0, "max": 0}
+        return {"count": 0, "mean": 0, "min": 0, "max": 0, "sum": 0, "std": 0}
     n = len(vals)
     total = sum(vals)
-    return {"count": n, "mean": total / n, "min": min(vals), "max": max(vals)}
+    mean = total / n
+    # Population standard deviation (no imports; Monty-safe arithmetic).
+    var = sum([(v - mean) * (v - mean) for v in vals]) / n
+    std = var**0.5
+    return {"count": n, "mean": mean, "min": min(vals), "max": max(vals), "sum": total, "std": std}
 
 
 @task_env.task
@@ -200,7 +204,9 @@ async def group_and_aggregate(data: list, group_by: str, agg_column: str, agg_fu
             val = max(nums)
         else:
             val = sum(nums)
-        out.append({"group": k, "value": val})
+        # Preserve the original column names so downstream code can sort/group
+        # using the same keys it requested (e.g. sort by "month" after grouping by "month").
+        out.append({group_by: k, agg_column: val})
     return out
 
 
@@ -221,8 +227,8 @@ You are a data analyst copilot.
 
 agent = CodeModeAgent(
     tools=[fetch_data, create_chart, calculate_statistics, filter_data, group_and_aggregate, sort_data],
-    model="claude-sonnet-4-6",
-    max_retries=2,
+    model="claude-haiku-4-5",
+    max_retries=5,
     system_prompt_prefix=SYSTEM_PROMPT_PREFIX,
 )
 
