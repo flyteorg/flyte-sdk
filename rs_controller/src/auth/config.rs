@@ -1,0 +1,40 @@
+use base64::{engine, Engine};
+
+use crate::auth::errors::AuthConfigError;
+
+/// Configuration for authentication
+#[derive(Debug, Clone)]
+pub struct AuthConfig {
+    pub endpoint: String,
+    pub client_id: String,
+    pub client_secret: String,
+}
+
+impl AuthConfig {
+    pub fn new_from_api_key(api_key: &str) -> Result<Self, AuthConfigError> {
+        let decoded = engine::general_purpose::STANDARD.decode(api_key)?;
+        let api_key_str = String::from_utf8(decoded)?;
+        let split: Vec<_> = api_key_str.split(':').collect();
+
+        if split.len() != 4 {
+            return Err(AuthConfigError::InvalidFormat(split.len()));
+        }
+
+        let parts: [String; 4] = split
+            .into_iter()
+            .map(String::from)
+            .collect::<Vec<_>>()
+            .try_into()
+            .unwrap();
+        let [endpoint, client_id, client_secret, _org] = parts;
+
+        // the api key comes back just with the domain, we add https:// to it for rust rather than dns:///
+        let endpoint = "https://".to_owned() + &endpoint;
+
+        Ok(AuthConfig {
+            endpoint,
+            client_id,
+            client_secret,
+        })
+    }
+}
