@@ -1155,9 +1155,7 @@ class TestProgrammaticAccess:
         settings = Settings(
             effective_settings=[
                 EffectiveSetting(key="run.default_queue", value="gpu", origin=SettingOrigin("PROJECT", "prod", "ml")),
-                EffectiveSetting(
-                    key="security.service_account", value="ml-sa", origin=SettingOrigin("DOMAIN", "prod")
-                ),
+                EffectiveSetting(key="security.service_account", value="ml-sa", origin=SettingOrigin("DOMAIN", "prod")),
             ],
             local_settings=[LocalSetting(key="run.default_queue", value="gpu")],
         )

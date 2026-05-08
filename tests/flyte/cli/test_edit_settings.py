@@ -100,9 +100,7 @@ def _invoke_from_file(body: str, *, tmp_path: Path, local_overrides: dict | None
 
 
 def test_from_file_applies_overrides(tmp_path: Path):
-    result, s, _ = _invoke_from_file(
-        "run.default_queue: gpu\nsecurity.service_account: ml-sa\n", tmp_path=tmp_path
-    )
+    result, s, _ = _invoke_from_file("run.default_queue: gpu\nsecurity.service_account: ml-sa\n", tmp_path=tmp_path)
     assert result.exit_code == 0, result.output
     s.update_settings.assert_called_once_with({"run.default_queue": "gpu", "security.service_account": "ml-sa"})
     assert "Settings updated successfully" in result.output
