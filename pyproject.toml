@@ -72,6 +72,9 @@ sandbox = [
 tui = [
     "textual>=0.80",
 ]
+rust-controller = [
+    "flyte_controller_base>=2.0.0b0",
+]
 
 [dependency-groups]
 dev = [
@@ -177,6 +180,9 @@ ignore = ["PGH003", "PLC0415", "ASYNC210", "ASYNC240", "FURB122"]
 [tool.mypy]
 disable_error_code = ["import-untyped"]
 ignore_missing_imports = true
+
+[tool.uv.sources]
+flyte_controller_base = { path = "rs_controller" }
 
 [tool.ty.rules]
 unused-ignore-comment = "warn"

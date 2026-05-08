@@ -26,6 +26,13 @@ def main(x_list: list[int] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) -> float:
     return y_mean
 
 
+@env.task
+def main2(x_list: list[int]) -> float:
+    y = fn(x_list[0])
+    print(f"y = {y}!!!", flush=True)
+    return float(y)
+
+
 if __name__ == "__main__":
     flyte.init_from_config()  # establish remote connection from within your script.
     run = flyte.run(main, x_list=list(range(10)))  # run remotely inline and pass data.
