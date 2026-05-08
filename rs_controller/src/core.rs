@@ -5,6 +5,11 @@ use std::{sync::Arc, time::Duration};
 
 use flyteidl2::{
     flyteidl::{
+        actions::{
+            self as actions_pb, action as actions_action,
+            actions_service_client::ActionsServiceClient, AbortRequest, AbortResponse,
+            EnqueueRequest, EnqueueResponse, WatchForUpdatesRequest, WatchForUpdatesResponse,
+        },
         common::{ActionIdentifier, RunIdentifier},
         task::TaskIdentifier,
         workflow::{
@@ -21,7 +26,7 @@ use tokio::{
     sync::{mpsc, oneshot},
     time::sleep,
 };
-use tonic::transport::{Certificate, ClientTlsConfig, Endpoint};
+use tonic::transport::{Channel, ClientTlsConfig, Endpoint};
 use tower::ServiceBuilder;
 use tracing::{debug, error, info, warn};
 
@@ -32,42 +37,17 @@ use crate::{
     informer::{Informer, InformerCache},
 };
 
-// Fetches Amazon root CA certificate from Amazon Trust Services
-pub async fn fetch_amazon_root_ca() -> Result<Certificate, ControllerError> {
-    // Amazon Root CA 1 - the main root used by AWS services
-    let url = "https://www.amazontrust.com/repository/AmazonRootCA1.pem";
-
-    let response = reqwest::get(url)
-        .await
-        .map_err(|e| ControllerError::SystemError(format!("Failed to fetch certificate: {}", e)))?;
-
-    let cert_pem = response
-        .text()
-        .await
-        .map_err(|e| ControllerError::SystemError(format!("Failed to read certificate: {}", e)))?;
-
-    Ok(Certificate::from_pem(cert_pem))
-}
-
-// Helper to create TLS-configured endpoint with Amazon CA certificate
-// todo: when we resolve the pem issue, also remove the need to have both inputs which are basically the same
-pub async fn create_tls_endpoint(
-    url: &'static str,
-    domain: &str,
-) -> Result<Endpoint, ControllerError> {
-    // Fetch Amazon root CA dynamically
-    let cert = fetch_amazon_root_ca().await?;
-
-    let tls_config = ClientTlsConfig::new()
-        .domain_name(domain)
-        .ca_certificate(cert);
-
+// Helper to create TLS-configured channel
+// todo: support no verify https://github.com/flyteorg/flyte-sdk/pull/299/files
+pub async fn create_tls_channel(url: &'static str) -> Result<Channel, ControllerError> {
     let endpoint = Endpoint::from_static(url)
-        .tls_config(tls_config)
+        .tls_config(ClientTlsConfig::new().with_native_roots())
         .map_err(|e| ControllerError::SystemError(format!("TLS config error: {}", e)))?
         .keep_alive_while_idle(true);
 
-    Ok(endpoint)
+    let channel = endpoint.connect().await.map_err(ControllerError::from)?;
+
+    Ok(channel)
 }
 
 enum ChannelType {
@@ -111,9 +91,82 @@ impl QueueClient {
     }
 }
 
+#[derive(Clone, Debug)]
+pub enum ActionsClient {
+    Plain(ActionsServiceClient<tonic::transport::Channel>),
+    Authenticated(ActionsServiceClient<crate::auth::AuthService<tonic::transport::Channel>>),
+}
+
+impl ActionsClient {
+    pub async fn enqueue(
+        &mut self,
+        request: impl tonic::IntoRequest<EnqueueRequest>,
+    ) -> Result<tonic::Response<EnqueueResponse>, tonic::Status> {
+        match self {
+            ActionsClient::Plain(client) => client.enqueue(request).await,
+            ActionsClient::Authenticated(client) => client.enqueue(request).await,
+        }
+    }
+
+    pub async fn abort(
+        &mut self,
+        request: impl tonic::IntoRequest<AbortRequest>,
+    ) -> Result<tonic::Response<AbortResponse>, tonic::Status> {
+        match self {
+            ActionsClient::Plain(client) => client.abort(request).await,
+            ActionsClient::Authenticated(client) => client.abort(request).await,
+        }
+    }
+
+    pub async fn watch_for_updates(
+        &mut self,
+        request: impl tonic::IntoRequest<WatchForUpdatesRequest>,
+    ) -> Result<tonic::Response<tonic::codec::Streaming<WatchForUpdatesResponse>>, tonic::Status>
+    {
+        match self {
+            ActionsClient::Plain(client) => client.watch_for_updates(request).await,
+            ActionsClient::Authenticated(client) => client.watch_for_updates(request).await,
+        }
+    }
+}
+
+/// Check if the unified ActionsService should be used instead of QueueService + StateService.
+/// Mirrors `flyte._internal.controllers.remote._service_protocol.use_actions_service`.
+pub fn use_actions_service() -> bool {
+    std::env::var("_U_USE_ACTIONS")
+        .map(|v| v == "1")
+        .unwrap_or(false)
+}
+
+/// Build the metadata headers for ActionsService RPC calls.
+pub fn actions_metadata(
+    run: Option<&RunIdentifier>,
+    parent_action_name: &str,
+) -> tonic::metadata::MetadataMap {
+    let mut metadata = tonic::metadata::MetadataMap::new();
+    if let Some(run) = run {
+        if let Ok(v) = run.project.parse() {
+            metadata.insert("x-actions-project", v);
+        }
+        if let Ok(v) = run.domain.parse() {
+            metadata.insert("x-actions-domain", v);
+        }
+        if let Ok(v) = run.name.parse() {
+            metadata.insert("x-actions-run", v);
+        }
+    }
+    if let Ok(v) = parent_action_name.parse() {
+        metadata.insert("x-actions-parent-action", v);
+    }
+    metadata
+}
+
 pub struct CoreBaseController {
     informer_cache: InformerCache,
     queue_client: QueueClient,
+    /// Unified ActionsService client. `Some` when `_U_USE_ACTIONS=1`; otherwise `None` and the
+    /// controller uses `queue_client` (with informer's StateService) for the legacy split path.
+    actions_client: Option<ActionsClient>,
     shared_queue: mpsc::Sender<Action>,
     shared_queue_rx: Arc<tokio::sync::Mutex<mpsc::Receiver<Action>>>,
     failure_rx: Arc<std::sync::Mutex<Option<mpsc::Receiver<InformerError>>>>,
@@ -141,17 +194,8 @@ impl CoreBaseController {
         let rt = get_runtime();
         let channel = rt.block_on(async {
             // todo: escape hatch for localhost
-            // Strip "https://" to get just the hostname for TLS config
-            let domain = endpoint_url.strip_prefix("https://").ok_or_else(|| {
-                ControllerError::SystemError(
-                    "Endpoint must start with https:// when using auth".to_string(),
-                )
-            })?;
-
-            // Create TLS-configured endpoint
-            let endpoint = create_tls_endpoint(endpoint_static, domain).await?;
-            let channel = endpoint.connect().await.map_err(ControllerError::from)?;
-
+            // Create TLS-configured channel
+            let channel = create_tls_channel(endpoint_static).await?;
             let authenticator = Arc::new(ClientCredentialsAuthenticator::new(auth_config.clone()));
             let auth_channel = ServiceBuilder::new()
                 .layer(AuthLayer::new(authenticator, channel.clone()))
@@ -176,12 +220,31 @@ impl CoreBaseController {
             }
         };
 
-        let informer_cache =
-            InformerCache::new(state_client.clone(), shared_tx.clone(), failure_tx);
+        let actions_client = if use_actions_service() {
+            info!("_U_USE_ACTIONS=1 set, initializing ActionsService client");
+            Some(match &channel {
+                ChannelType::Plain(ch) => {
+                    ActionsClient::Plain(ActionsServiceClient::new(ch.clone()))
+                }
+                ChannelType::Authenticated(ch) => {
+                    ActionsClient::Authenticated(ActionsServiceClient::new(ch.clone()))
+                }
+            })
+        } else {
+            None
+        };
+
+        let informer_cache = InformerCache::new(
+            state_client.clone(),
+            actions_client.clone(),
+            shared_tx.clone(),
+            failure_tx,
+        );
 
         let real_base_controller = CoreBaseController {
             informer_cache,
             queue_client,
+            actions_client,
             shared_queue: shared_tx,
             shared_queue_rx: Arc::new(tokio::sync::Mutex::new(shared_queue_rx)),
             failure_rx: Arc::new(std::sync::Mutex::new(Some(failure_rx))),
@@ -216,14 +279,9 @@ impl CoreBaseController {
                 let endpoint = Endpoint::from_static(endpoint_static).keep_alive_while_idle(true);
                 endpoint.connect().await.map_err(ControllerError::from)?
             } else if endpoint.starts_with("https://") {
-                // Strip "https://" to get just the hostname for TLS config
-                let domain = endpoint.strip_prefix("https://").ok_or_else(|| {
-                    ControllerError::SystemError("Endpoint must start with https://".to_string())
-                })?;
-
-                // Create TLS-configured endpoint
-                let endpoint = create_tls_endpoint(endpoint_static, domain).await?;
-                endpoint.connect().await.map_err(ControllerError::from)?
+                // Create TLS-configured channel
+                let channel = create_tls_channel(endpoint_static).await?;
+                channel
             } else {
                 return Err(ControllerError::SystemError(format!(
                     "Malformed endpoint {}",
@@ -249,12 +307,31 @@ impl CoreBaseController {
             }
         };
 
-        let informer_cache =
-            InformerCache::new(state_client.clone(), shared_tx.clone(), failure_tx);
+        let actions_client = if use_actions_service() {
+            info!("_U_USE_ACTIONS=1 set, initializing ActionsService client");
+            Some(match &channel {
+                ChannelType::Plain(ch) => {
+                    ActionsClient::Plain(ActionsServiceClient::new(ch.clone()))
+                }
+                ChannelType::Authenticated(ch) => {
+                    ActionsClient::Authenticated(ActionsServiceClient::new(ch.clone()))
+                }
+            })
+        } else {
+            None
+        };
+
+        let informer_cache = InformerCache::new(
+            state_client.clone(),
+            actions_client.clone(),
+            shared_tx.clone(),
+            failure_tx,
+        );
 
         let real_base_controller = CoreBaseController {
             informer_cache,
             queue_client,
+            actions_client,
             shared_queue: shared_tx,
             shared_queue_rx: Arc::new(tokio::sync::Mutex::new(shared_queue_rx)),
             failure_rx: Arc::new(std::sync::Mutex::new(Some(failure_rx))),
@@ -541,7 +618,7 @@ impl CoreBaseController {
             .get_or_create_informer(run, parent_action_name)
             .await;
         let action_name = action_id.name.clone();
-        match informer.get_action(action_name).await {
+        match informer.get_action(&action_name).await {
             Some(action) => Ok(Some(action)),
             None => {
                 debug!("Action not found getting from action_id: {:?}", action_id);
@@ -550,10 +627,12 @@ impl CoreBaseController {
         }
     }
 
-    fn create_enqueue_action_request(
+    /// Build the TaskAction common to both QueueService and ActionsService enqueue paths,
+    /// and return the per-path scalar fields (input_uri, run_output_base, group).
+    fn build_task_action(
         &self,
         action: &Action,
-    ) -> Result<EnqueueActionRequest, ControllerError> {
+    ) -> Result<(TaskAction, String, String, String), ControllerError> {
         // todo-pr: handle trace action
         let task_identifier = action
             .task
@@ -598,6 +677,14 @@ impl CoreBaseController {
             cluster: action.queue.clone().unwrap_or("".to_string()),
         };
 
+        Ok((task_action, input_uri, run_output_base, group))
+    }
+
+    fn create_enqueue_action_request(
+        &self,
+        action: &Action,
+    ) -> Result<EnqueueActionRequest, ControllerError> {
+        let (task_action, input_uri, run_output_base, group) = self.build_task_action(action)?;
         Ok(EnqueueActionRequest {
             action_id: Some(action.action_id.clone()),
             parent_action_name: Some(action.parent_action_name.clone()),
@@ -610,47 +697,89 @@ impl CoreBaseController {
         })
     }
 
-    async fn launch_task(&self, action: &Action) -> Result<EnqueueActionResponse, ControllerError> {
-        if !action.started && action.task.is_some() {
-            let enqueue_request = self
-                .create_enqueue_action_request(action)
-                .expect("Failed to create EnqueueActionRequest");
-            let mut client = self.queue_client.clone();
-            // todo: tonic doesn't seem to have wait_for_ready, or maybe the .ready is already doing this.
-            let enqueue_result = client.enqueue_action(enqueue_request).await;
+    /// Build an ActionsService EnqueueRequest.
+    fn create_actions_enqueue_request(
+        &self,
+        action: &Action,
+    ) -> Result<EnqueueRequest, ControllerError> {
+        let (task_action, input_uri, run_output_base, group) = self.build_task_action(action)?;
+        let pb_action = actions_pb::Action {
+            action_id: Some(action.action_id.clone()),
+            parent_action_name: Some(action.parent_action_name.clone()),
+            input_uri,
+            run_output_base,
+            group,
+            subject: String::default(),
+            spec: Some(actions_action::Spec::Task(task_action)),
+        };
+        Ok(EnqueueRequest {
+            action: Some(pb_action),
+            run_spec: None,
+        })
+    }
 
-            match enqueue_result {
-                Ok(response) => {
-                    debug!("Successfully enqueued action: {:?}", action.action_id);
-                    Ok(response.into_inner())
-                }
-                Err(e) => {
-                    if e.code() == tonic::Code::AlreadyExists {
-                        info!(
-                            "Action {} already exists, continuing to monitor.",
-                            action.action_id.name
-                        );
-                        Ok(EnqueueActionResponse {})
-                    } else if e.code() == tonic::Code::FailedPrecondition
-                        || e.code() == tonic::Code::InvalidArgument
-                        || e.code() == tonic::Code::NotFound
-                    {
-                        Err(ControllerError::RuntimeError(format!(
-                            "Precondition failed: {}",
-                            e
-                        )))
-                    } else {
-                        // For all other errors, retry with backoff through raising SlowDownError
-                        error!(
-                            "Failed to launch action: {:?}, backing off...",
+    /// Map a tonic Status from an enqueue RPC into a ControllerError, applying the same
+    /// retry/non-retry policy regardless of which underlying service was called.
+    fn map_enqueue_error(action_name: &str, e: tonic::Status) -> Result<(), ControllerError> {
+        if e.code() == tonic::Code::AlreadyExists {
+            info!(
+                "Action {} already exists, continuing to monitor.",
+                action_name
+            );
+            Ok(())
+        } else if e.code() == tonic::Code::FailedPrecondition
+            || e.code() == tonic::Code::InvalidArgument
+            || e.code() == tonic::Code::NotFound
+        {
+            Err(ControllerError::RuntimeError(format!(
+                "Precondition failed: {}",
+                e
+            )))
+        } else {
+            error!(
+                "Failed to launch action: {}, backing off... details: {}",
+                action_name, e
+            );
+            Err(ControllerError::SlowDownError(format!(
+                "Failed to launch action: {}",
+                e
+            )))
+        }
+    }
+
+    async fn launch_task(&self, action: &Action) -> Result<(), ControllerError> {
+        if !action.started && action.task.is_some() {
+            if let Some(actions_client) = self.actions_client.as_ref() {
+                // ActionsService path
+                let enqueue_request = self.create_actions_enqueue_request(action)?;
+                let mut req = tonic::Request::new(enqueue_request);
+                *req.metadata_mut() =
+                    actions_metadata(action.action_id.run.as_ref(), &action.parent_action_name);
+                let mut client = actions_client.clone();
+                match client.enqueue(req).await {
+                    Ok(_) => {
+                        debug!(
+                            "Successfully enqueued action via ActionsService: {:?}",
                             action.action_id
                         );
-                        error!("Error details: {}", e);
-                        Err(ControllerError::SlowDownError(format!(
-                            "Failed to launch action: {}",
-                            e
-                        )))
+                        Ok(())
                     }
+                    Err(e) => Self::map_enqueue_error(&action.action_id.name, e),
+                }
+            } else {
+                // Legacy QueueService path
+                let enqueue_request = self.create_enqueue_action_request(action)?;
+                let mut client = self.queue_client.clone();
+                // todo: tonic doesn't seem to have wait_for_ready, or maybe the .ready is already doing this.
+                match client.enqueue_action(enqueue_request).await {
+                    Ok(_) => {
+                        debug!(
+                            "Successfully enqueued action via QueueService: {:?}",
+                            action.action_id
+                        );
+                        Ok(())
+                    }
+                    Err(e) => Self::map_enqueue_error(&action.action_id.name, e),
                 }
             }
         } else {
@@ -658,7 +787,7 @@ impl CoreBaseController {
                 "Action {} is already started or has no task, skipping launch.",
                 action.action_id.name
             );
-            Ok(EnqueueActionResponse {})
+            Ok(())
         }
     }
 
@@ -692,10 +821,13 @@ impl CoreBaseController {
         );
 
         // get the action and return it
-        let final_action = informer.get_action(action_name).await;
-        final_action.ok_or(ControllerError::BadContext(String::from(
+        let final_action = informer.get_action(&action_name).await;
+        let final_action = final_action.ok_or(ControllerError::BadContext(String::from(
             "Action not found after done",
-        )))
+        )));
+        // Also remove. May be can do with prior step in the future.
+        informer.remove_action(&action_name).await;
+        final_action
     }
 
     pub async fn finalize_parent_action(&self, run_id: &RunIdentifier, parent_action_name: &str) {

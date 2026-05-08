@@ -17,7 +17,7 @@ import flyte.errors
 import flyte.storage as storage
 from flyte._code_bundle import build_pkl_bundle
 from flyte._context import internal_ctx
-from flyte._internal.controllers import TraceInfo
+from flyte._internal.controllers import TaskCallSequencer, TraceInfo
 from flyte._internal.runtime import convert, io
 from flyte._internal.runtime.task_serde import translate_task_to_wire
 from flyte._internal.runtime.types_serde import transform_native_to_typed_interface
@@ -78,6 +78,11 @@ async def handle_action_failure(action: Action, task_name: str) -> Exception:
         err = err_pb
 
     err = err or action.client_err
+    # `client_err` from the Rust controller is a string representation of the underlying
+    # tonic Status, not an ExecutionError or Exception. Wrap it so downstream conversion
+    # sees something with `.code` (or short-circuits via `isinstance(Exception)`).
+    if isinstance(err, str):
+        err = flyte.errors.RuntimeSystemError("RustControllerError", err)
     if not err and action.phase_value == phase_pb2.ACTION_PHASE_FAILED:
         logger.error(f"Server reported failure for action {action.name}, checking error file.")
         try:
@@ -131,25 +136,23 @@ class RemoteController(BaseController):
         cls,
         endpoint: str | None = None,
         workers: int = 20,
-        max_system_retries: int = 10,
+        max_system_retries: int = 10,  # TODO: pass in Rust controller (hard-coded MAX_RETRIES = 5 in core.rs)
     ):
         # No endpoint means must have the api key env var
-        return super().__new__(cls, endpoint=endpoint)
+        return super().__new__(cls, endpoint=endpoint, workers=workers)
 
     def __init__(
         self,
         endpoint: str | None = None,
         workers: int = 20,
-        max_system_retries: int = 10,
+        max_system_retries: int = 10,  # TODO: pass in Rust controller (hard-coded MAX_RETRIES = 5 in core.rs)
     ):
         default_parent_concurrency = int(os.getenv("_F_P_CNC", "1000"))
         self._default_parent_concurrency = default_parent_concurrency
         self._parent_action_semaphore: DefaultDict[str, asyncio.Semaphore] = defaultdict(
             lambda: asyncio.Semaphore(default_parent_concurrency)
         )
-        self._parent_action_task_call_sequence: DefaultDict[str, DefaultDict[int, int]] = defaultdict(
-            lambda: defaultdict(int)
-        )
+        self._sequencer = TaskCallSequencer()
         self._submit_loop: asyncio.AbstractEventLoop | None = None
         self._submit_thread: threading.Thread | None = None
 
@@ -158,19 +161,10 @@ class RemoteController(BaseController):
         Generate a task call sequence for the given task object and action ID.
         This is used to track the number of times a task is called within an action.
         """
-        uniq = unique_action_name(action_id)
-        current_action_sequencer = self._parent_action_task_call_sequence[uniq]
-        current_task_id = id(task_obj)
-        v = current_action_sequencer[current_task_id]
-        new_seq = v + 1
-        current_action_sequencer[current_task_id] = new_seq
-        name = ""
-        if hasattr(task_obj, "__name__"):
-            name = task_obj.__name__
-        elif hasattr(task_obj, "name"):
-            name = task_obj.name
-        logger.info(f"For action {uniq}, task {name} call sequence is {new_seq}")
-        return new_seq
+        action_key = unique_action_name(action_id)
+        seq = self._sequencer.next_seq(task_obj, action_key)
+        logger.info(f"For action {action_key}, task call sequence is {seq}")
+        return seq
 
     async def _submit(self, _task_call_seq: int, _task: TaskTemplate, *args, **kwargs) -> Any:
         ctx = internal_ctx()
@@ -207,7 +201,7 @@ class RemoteController(BaseController):
             root_dir=root_dir,
         )
 
-        task_spec = translate_task_to_wire(_task, new_serialization_context)
+        task_spec = translate_task_to_wire(_task, new_serialization_context, task_context=tctx)
         inputs_hash = convert.generate_inputs_hash_from_proto(inputs.proto_inputs)
         sub_action_id, sub_action_output_path = convert.generate_sub_action_id_and_output_path(
             tctx, task_spec, inputs_hash, _task_call_seq
@@ -282,7 +276,7 @@ class RemoteController(BaseController):
             logger.warning(
                 f"Action {n_action_id_pb.name} was aborted, aborting current Action {current_action_id.name}"
             )
-            raise flyte.errors.RunAbortedError(
+            raise flyte.errors.ActionAbortedError(
                 f"Action {n_action_id_pb.name} was aborted, aborting current Action {current_action_id.name}"
             )
 
@@ -402,7 +396,7 @@ class RemoteController(BaseController):
         )
         await super().finalize_parent_action(run_id_bytes=run_id.SerializeToString(), parent_action_name=action_id.name)
         self._parent_action_semaphore.pop(unique_action_name(action_id), None)
-        self._parent_action_task_call_sequence.pop(unique_action_name(action_id), None)
+        self._sequencer.clear(unique_action_name(action_id))
 
     async def get_action_outputs(
         self, _interface: NativeInterface, _func: Callable, *args, **kwargs

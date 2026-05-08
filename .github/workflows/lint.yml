@@ -27,12 +27,51 @@ jobs:
         run: |
           make fmt
           git diff --exit-code
+  check-flyteidl2-versions:
+    name: check flyteidl2 versions
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch the code
+        uses: actions/checkout@v4
+      - name: Check flyteidl2 version consistency
+        run: |
+          # Extract flyteidl2 version from root pyproject.toml
+          ROOT_VER=$(grep 'flyteidl2==' pyproject.toml | head -1 | sed 's/.*flyteidl2==\([^"]*\).*/\1/')
+          echo "Root pyproject.toml: flyteidl2==$ROOT_VER"
+
+          # Extract flyteidl2 version from rs_controller/Cargo.toml
+          CARGO_VER=$(grep 'flyteidl2' rs_controller/Cargo.toml | grep -v '^#' | sed 's/.*"=\(.*\)".*/\1/')
+          echo "rs_controller/Cargo.toml: flyteidl2=$CARGO_VER"
+
+          # Extract flyteidl2 version from rs_controller/pyproject.toml
+          RS_VER=$(grep 'flyteidl2==' rs_controller/pyproject.toml | head -1 | sed 's/.*flyteidl2==\([^"]*\).*/\1/')
+          echo "rs_controller/pyproject.toml: flyteidl2==$RS_VER"
+
+          # Compare all three
+          if [ "$ROOT_VER" != "$CARGO_VER" ] || [ "$ROOT_VER" != "$RS_VER" ]; then
+            echo "ERROR: flyteidl2 versions do not match!"
+            echo "  pyproject.toml:                $ROOT_VER"
+            echo "  rs_controller/Cargo.toml:      $CARGO_VER"
+            echo "  rs_controller/pyproject.toml:  $RS_VER"
+            exit 1
+          fi
+          echo "All flyteidl2 versions match: $ROOT_VER"
   rs-fmt:
     name: rust fmt
     runs-on: ubuntu-latest
     steps:
       - name: Fetch the code
         uses: actions/checkout@v4
+      - name: Cache Cargo registry and build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rs_controller/target
+          key: ${{ runner.os }}-cargo-fmt-${{ hashFiles('rs_controller/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-fmt-
       - name: Install nightly toolchain
         run: |
           rustup toolchain install nightly
@@ -46,6 +85,16 @@ jobs:
     steps:
       - name: Fetch the code
         uses: actions/checkout@v4
+      - name: Cache Cargo registry and build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rs_controller/target
+          key: ${{ runner.os }}-cargo-lint-${{ hashFiles('rs_controller/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-lint-
       - name: Install toolchain
         run: |
           rustup toolchain install

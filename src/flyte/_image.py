@@ -26,6 +26,7 @@ PYTHON_3_14 = (3, 14)
 CopyConfigType = Literal[0, 1]
 SOURCE_ROOT = Path(__file__).parent.parent.parent
 DIST_FOLDER = SOURCE_ROOT / "dist"
+RS_CONTROLLER_DIST_FOLDER = SOURCE_ROOT / "rs_controller" / "dist"
 
 T = TypeVar("T")
 
@@ -657,6 +658,10 @@ class Image:
         image = image.with_apt_packages("build-essential", "ca-certificates")
         if install_flyte and dev_mode and os.path.exists(DIST_FOLDER):
             image = image.with_local_v2()
+            # Also bake the Rust controller wheel, but only when the user opted in via `_F_USE_RUST_CONTROLLER=1`
+            use_rust = os.getenv("_F_USE_RUST_CONTROLLER", "").lower() in ("1", "true", "yes")
+            if use_rust and os.path.exists(RS_CONTROLLER_DIST_FOLDER):
+                image = image.with_local_rs_controller()
         if not dev_mode:
             object.__setattr__(image, "_tag", preset_tag)
 
@@ -1286,6 +1291,17 @@ class Image:
         # used to compute the identifier. Can remove if we ever decide to expose the lambda in with_ commands
         with_dist = self.clone(addl_layer=PythonWheels(wheel_dir=DIST_FOLDER, package_name="flyte"))
         return with_dist
+
+    def with_local_rs_controller(self) -> Image:
+        """
+        Bake the locally-built flyte_controller_base wheel from rs_controller/dist into this image.
+
+        Required when running with `_F_USE_RUST_CONTROLLER=1` against an image that does not already
+        ship the Rust controller wheel.
+        """
+        return self.clone(
+            addl_layer=PythonWheels(wheel_dir=RS_CONTROLLER_DIST_FOLDER, package_name="flyte_controller_base")
+        )
 
     def with_local_v2_plugins(self, plugins: str | list[str] | None = None) -> Image:
         """
