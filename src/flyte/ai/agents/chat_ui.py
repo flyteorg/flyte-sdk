@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
+import json
 import re
+import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any
@@ -156,6 +159,43 @@ async def _task_run_error_message(run_handle: Any) -> str:
     return " ".join(parts)
 
 
+async def _forward_remote_run_watch_to_progress_queue(
+    run_handle: Any,
+    queue: asyncio.Queue[str | None],
+) -> None:
+    """Push NDJSON progress lines while a Flyte run executes (``task_entrypoint`` chat).
+
+    ``CodeModeAgent`` runs inside the worker; ``codemode_progress_cb`` never fires in the
+    FastAPI process. We approximate codemode phases from :meth:`~flyte.remote.Run.watch`:
+
+    - First ``RUNNING`` → ``generating_code`` (task process is executing; matches starting codegen).
+    - Next ``RUNNING`` update → ``executing`` (best-effort: often past first LLM round).
+    """
+    from flyte.models import ActionPhase
+
+    emitted_gen = False
+    emitted_exec = False
+    try:
+        watch_fn = getattr(run_handle, "watch", None)
+        if watch_fn is None:
+            return
+        async for ad in watch_fn():
+            ph = ad.phase
+            if ph == ActionPhase.RUNNING:
+                if not emitted_gen:
+                    await queue.put(json.dumps({"type": "progress", "phase": "generating_code", "attempt": 1}) + "\n")
+                    emitted_gen = True
+                elif not emitted_exec:
+                    await queue.put(json.dumps({"type": "progress", "phase": "executing", "attempt": 1}) + "\n")
+                    emitted_exec = True
+            if ad.done():
+                break
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        return
+
+
 # ------------------------------------------------------------------
 # AgentChatAppEnvironment
 # ------------------------------------------------------------------
@@ -219,10 +259,11 @@ class AgentChatAppEnvironment(flyte.app.AppEnvironment):
         When set, ``/api/chat`` calls the task (via ``task_entrypoint.aio``)
         instead of calling ``agent.run`` directly. This is useful for agents
         whose tool calls must run under a parent task context (e.g. a
-        ``CodeModeAgent`` using durable ``@env.task`` tools). NDJSON chat
-        progress (beyond ``Preparing``) is emitted only when ``agent.run``
-        executes in this process; remote tasks do not stream codemode phases
-        to the browser unless you add your own signaling.
+        ``CodeModeAgent`` using durable ``@env.task`` tools). When streaming
+        chat (``stream: true``), progress lines use :meth:`~flyte.remote.Run.watch`
+        on the returned run (first ``RUNNING`` → ``generating_code``, next →
+        ``executing``). Fine-grained codemode phases still require
+        ``agent.run`` in the web process, or future worker-side signaling.
 
         The entrypoint may accept either:
 
@@ -277,10 +318,6 @@ class AgentChatAppEnvironment(flyte.app.AppEnvironment):
         Useful for tests and advanced mounting; the deployed server uses this via
         :meth:`_fastapi_server`.
         """
-        import asyncio
-        import json
-        import time
-
         from fastapi import FastAPI
         from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 
@@ -319,7 +356,11 @@ class AgentChatAppEnvironment(flyte.app.AppEnvironment):
         async def get_nudges() -> JSONResponse:
             return JSONResponse(content=nudges)
 
-        async def run_chat_and_normalize(chat_req: _ChatRequest) -> AgentResult:
+        async def run_chat_and_normalize(
+            chat_req: _ChatRequest,
+            *,
+            progress_queue: asyncio.Queue[str | None] | None = None,
+        ) -> AgentResult:
             if task_entrypoint is None:
                 result_obj: Any = await agent.run(chat_req.message, chat_req.history)
             else:
@@ -341,7 +382,20 @@ class AgentChatAppEnvironment(flyte.app.AppEnvironment):
                         run_handle = await flyte.run.aio(task_entrypoint, chat_req.message)
 
                     if hasattr(run_handle, "wait") and hasattr(run_handle, "outputs"):
-                        await run_handle.wait.aio(quiet=True)
+                        forwarder: asyncio.Task[None] | None = None
+                        if progress_queue is not None and hasattr(run_handle, "watch"):
+                            forwarder = asyncio.create_task(
+                                _forward_remote_run_watch_to_progress_queue(run_handle, progress_queue)
+                            )
+                        try:
+                            await run_handle.wait.aio(quiet=True)
+                        finally:
+                            if forwarder is not None:
+                                forwarder.cancel()
+                                try:
+                                    await forwarder
+                                except asyncio.CancelledError:
+                                    pass
                         phase = getattr(run_handle, "phase", ActionPhase.SUCCEEDED)
                         if phase != ActionPhase.SUCCEEDED:
                             result_obj = AgentResult(
@@ -406,7 +460,7 @@ class AgentChatAppEnvironment(flyte.app.AppEnvironment):
             async def stream_worker() -> None:
                 token = codemode_progress_cb.set(on_progress)
                 try:
-                    result = await run_chat_and_normalize(req)
+                    result = await run_chat_and_normalize(req, progress_queue=queue)
                 except Exception as e:
                     result = AgentResult(summary="", error=str(e))
                 finally:
