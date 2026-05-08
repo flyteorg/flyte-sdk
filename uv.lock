@@ -1087,9 +1087,6 @@ examples-test = [
     { name = "scikit-learn", version = "1.8.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "uvicorn" },
 ]
-rust-controller = [
-    { name = "flyte-controller-base" },
-]
 sandbox = [
     { name = "pydantic-monty" },
 ]
@@ -1137,7 +1134,6 @@ requires-dist = [
     { name = "deltalake", marker = "extra == 'examples-test'" },
     { name = "docstring-parser", specifier = ">=0.16" },
     { name = "fastapi", marker = "extra == 'examples-test'" },
-    { name = "flyte-controller-base", marker = "extra == 'rust-controller'", directory = "rs_controller" },
     { name = "flyteidl2", specifier = "==2.0.15" },
     { name = "fsspec", specifier = ">=2025.3.0" },
     { name = "grpcio", marker = "extra == 'connector'", specifier = ">=1.71.0" },
@@ -1168,7 +1164,7 @@ requires-dist = [
     { name = "toml", specifier = ">=0.10.2" },
     { name = "uvicorn", marker = "extra == 'examples-test'" },
 ]
-provides-extras = ["aiosqlite", "connector", "examples-test", "sandbox", "tui", "rust-controller"]
+provides-extras = ["aiosqlite", "connector", "examples-test", "sandbox", "tui"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -1196,17 +1192,6 @@ dev = [
     { name = "types-pyyaml" },
     { name = "uvicorn", specifier = ">=0.40.0" },
 ]
-
-[[package]]
-name = "flyte-controller-base"
-version = "2.2.3.dev56+g4e4a6d54"
-source = { directory = "rs_controller" }
-dependencies = [
-    { name = "flyteidl2" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "flyteidl2", specifier = "==2.0.15" }]
 
 [[package]]
 name = "flyteidl2"

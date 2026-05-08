@@ -706,7 +706,6 @@ dependencies = [
     { name = "cloudpickle" },
     { name = "connectrpc" },
     { name = "docstring-parser" },
-    { name = "flyte-controller-base" },
     { name = "flyteidl2" },
     { name = "fsspec" },
     { name = "httpx" },
@@ -736,8 +735,7 @@ requires-dist = [
     { name = "deltalake", marker = "extra == 'examples-test'" },
     { name = "docstring-parser", specifier = ">=0.16" },
     { name = "fastapi", marker = "extra == 'examples-test'" },
-    { name = "flyte-controller-base", directory = "../../rs_controller" },
-    { name = "flyteidl2", specifier = "==2.0.13" },
+    { name = "flyteidl2", specifier = "==2.0.15" },
     { name = "fsspec", specifier = ">=2025.3.0" },
     { name = "grpcio", marker = "extra == 'connector'", specifier = ">=1.71.0" },
     { name = "grpcio-health-checking", marker = "extra == 'connector'" },
@@ -797,19 +795,8 @@ dev = [
 ]
 
 [[package]]
-name = "flyte-controller-base"
-version = "2.2.3.dev43+g3a11bd23"
-source = { directory = "../../rs_controller" }
-dependencies = [
-    { name = "flyteidl2" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "flyteidl2", specifier = "==2.0.13" }]
-
-[[package]]
 name = "flyteidl2"
-version = "2.0.13"
+version = "2.0.15"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "googleapis-common-protos" },
@@ -818,7 +805,7 @@ dependencies = [
     { name = "protovalidate" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b7/39/39714f95709e042a5a34711cabdf77fe3e438a3079f4b9c8c6b330f58591/flyteidl2-2.0.13-py3-none-any.whl", hash = "sha256:4a280546a695d372f80bbc5989e3c0572e0f0cea69e9f8235aa2c449cefea927", size = 339889, upload-time = "2026-04-18T01:01:40.754Z" },
+    { url = "https://files.pythonhosted.org/packages/e1/2e/f2e2c5fb6f3e4a089501a7c79838e0567f303d02306d1c3522730c4fca6d/flyteidl2-2.0.15-py3-none-any.whl", hash = "sha256:43da4e04e52e04396ff2d44f784fcf6c7358a2956f63c77561689fdf7c6ee9cd", size = 340049, upload-time = "2026-05-07T18:39:19.607Z" },
 ]
 
 [[package]]
