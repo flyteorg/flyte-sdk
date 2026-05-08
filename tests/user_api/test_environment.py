@@ -167,6 +167,55 @@ def test_environment_include_populates_declaring_file():
     assert env._declaring_file.endswith("test_environment.py")
 
 
+def test_is_user_file_rejects_windows_sdk_paths(monkeypatch):
+    # Regression: substring checks in `_is_user_file` must work on Windows
+    # paths. Without backslash normalization, a path like
+    # `C:\...\site-packages\flyte\_environment.py` does not contain
+    # "site-packages/flyte" or "/flyte/", so SDK frames get classified as
+    # user files and `_declaring_file` ends up pointing inside the flyte
+    # package — relative `include` paths then fail to resolve.
+    from flyte import _environment
+
+    monkeypatch.setattr(_environment.os.path, "exists", lambda _p: True)
+    monkeypatch.setattr(_environment.os.path, "abspath", lambda p: p)
+
+    assert _environment._is_user_file(
+        r"C:\Users\xzhang\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0"
+        r"\LocalCache\local-packages\Python312\site-packages\flyte\_environment.py"
+    ) is False
+    assert _environment._is_user_file(
+        r"C:\Users\xzhang\AppData\Local\...\site-packages\flyte\app\_app_environment.py"
+    ) is False
+
+
+def test_is_user_file_accepts_windows_user_paths(monkeypatch):
+    from flyte import _environment
+
+    monkeypatch.setattr(_environment.os.path, "exists", lambda _p: True)
+    monkeypatch.setattr(_environment.os.path, "abspath", lambda p: p)
+
+    assert _environment._is_user_file(r"C:\source\ai-apps\k8s_union_flyte\streamlit\app.py") is True
+    # Examples carve-out: a checkout living under a directory named `flyte`
+    # should still be treated as user code.
+    assert _environment._is_user_file(r"C:\Users\me\projects\flyte\examples\apps\streamlit\app.py") is True
+
+
+def test_is_user_file_rejects_posix_sdk_paths(monkeypatch):
+    from flyte import _environment
+
+    monkeypatch.setattr(_environment.os.path, "exists", lambda _p: True)
+    monkeypatch.setattr(_environment.os.path, "abspath", lambda p: p)
+
+    assert _environment._is_user_file(
+        "/usr/lib/python3.12/site-packages/flyte/_environment.py"
+    ) is False
+    assert _environment._is_user_file(
+        "/repo/src/flyte/app/_app_environment.py"
+    ) is False
+    assert _environment._is_user_file("/home/user/projects/myapp/app.py") is True
+    assert _environment._is_user_file("/repo/examples/apps/streamlit/app.py") is True
+
+
 def test_environment_include_in_get_kwargs_when_nonempty():
     env = Environment(name="inc_kwargs", include=("t.html",))
     kwargs = env._get_kwargs()

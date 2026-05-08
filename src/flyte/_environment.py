@@ -29,6 +29,25 @@ def is_snake_or_kebab_with_numbers(s: str) -> bool:
     return re.fullmatch(r"^[a-z0-9]+([_-][a-z0-9]+)*$", s) is not None
 
 
+def _is_user_file(filename: str) -> bool:
+    """Return True if `filename` looks like a user file (not flyte SDK code).
+
+    Used by `Environment._get_declaring_file` to skip over SDK frames during a
+    stack walk. Backslashes are normalized to forward slashes so the same
+    substring checks identify SDK paths on POSIX and Windows alike — without
+    this, a Windows path like ``C:\\...\\site-packages\\flyte\\_environment.py``
+    would not contain the substrings ``site-packages/flyte`` or ``/flyte/`` and
+    would be misclassified as a user file, sending relative ``include`` paths
+    into the flyte package directory.
+    """
+    if filename in ("<string>", "<stdin>"):
+        return False
+    if not os.path.exists(filename):
+        return False
+    abs_path = os.path.abspath(filename).replace("\\", "/")
+    return ("site-packages/flyte" not in abs_path and "/flyte/" not in abs_path) or "/examples/" in abs_path
+
+
 @rich.repr.auto
 @dataclass(init=True, repr=True)
 class Environment:
@@ -89,26 +108,17 @@ class Environment:
         `include` paths. Returns ``None`` only if no user file is discoverable
         (shouldn't happen in normal usage).
         """
-
-        def is_user_file(filename: str) -> bool:
-            if filename in ("<string>", "<stdin>"):
-                return False
-            if not os.path.exists(filename):
-                return False
-            abs_path = os.path.abspath(filename)
-            return ("site-packages/flyte" not in abs_path and "/flyte/" not in abs_path) or "/examples/" in abs_path
-
         frame = inspect.currentframe()
         while frame is not None:
             filename = frame.f_code.co_filename
-            if is_user_file(filename):
+            if _is_user_file(filename):
                 return os.path.abspath(filename)
             frame = frame.f_back
 
         stack = inspect.stack()
         for frame_info in stack:
             filename = frame_info.filename
-            if is_user_file(filename):
+            if _is_user_file(filename):
                 return os.path.abspath(filename)
 
         import sys
