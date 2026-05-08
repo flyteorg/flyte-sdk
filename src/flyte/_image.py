@@ -364,6 +364,8 @@ class CopyConfig(Layer):
     def __post_init__(self):
         if self.path_type not in (0, 1):
             raise ValueError(f"Invalid path_type {self.path_type}, must be 0 (file) or 1 (directory)")
+        if not isinstance(self.src, Path):
+            object.__setattr__(self, "src", Path(self.src))
 
     def validate(self):
         if not self.src.exists():
