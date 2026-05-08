@@ -326,7 +326,7 @@ async function sendMessage() {
     updateClearButton();
     scrollBottom();
 
-    // Active until first NDJSON progress event (e.g. generating_code from CodeModeAgent).
+    // Step 0 until server sends generating_code (CodeModeAgent, in-process run only).
     setProgressUI(progressTrack, 0);
 
     try {

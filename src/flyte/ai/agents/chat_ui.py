@@ -219,7 +219,10 @@ class AgentChatAppEnvironment(flyte.app.AppEnvironment):
         When set, ``/api/chat`` calls the task (via ``task_entrypoint.aio``)
         instead of calling ``agent.run`` directly. This is useful for agents
         whose tool calls must run under a parent task context (e.g. a
-        ``CodeModeAgent`` using durable ``@env.task`` tools).
+        ``CodeModeAgent`` using durable ``@env.task`` tools). NDJSON chat
+        progress (beyond ``Preparing``) is emitted only when ``agent.run``
+        executes in this process; remote tasks do not stream codemode phases
+        to the browser unless you add your own signaling.
 
         The entrypoint may accept either:
 
@@ -430,7 +433,15 @@ class AgentChatAppEnvironment(flyte.app.AppEnvironment):
                     yield item
                 await worker
 
-            return StreamingResponse(ndjson_body(), media_type="application/x-ndjson")
+            return StreamingResponse(
+                ndjson_body(),
+                media_type="application/x-ndjson",
+                headers={
+                    "Cache-Control": "no-cache",
+                    # Hint for nginx (and similar) not to buffer the whole stream.
+                    "X-Accel-Buffering": "no",
+                },
+            )
 
         display_title = self.title or self.name
         css_parts: list[str] = []
