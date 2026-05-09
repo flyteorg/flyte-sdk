@@ -1,76 +1,39 @@
 """
-Probe: when a raw container task takes list[File] / dict[str, File] inputs,
-does Flyte CoPilot
-  (a) localize every nested blob under /var/inputs/, and
-  (b) rewrite the URIs inside /var/inputs/inputs.json to those local paths?
+Demonstrates `cli_container_task` from cli_container_task_helper.py.
 
-The container just dumps the inputs directory listing and inputs.json so we
-can read it from the streamed logs.
+This file used to be a hand-rolled probe that investigated how Flyte CoPilot
+localizes list[File] / dict[str, File] inputs and composes argv via shell jq.
+The findings of that probe are now baked into `cli_container_task`, so this
+example just exercises the helper end-to-end:
+
+  - list[str] flags are passed through verbatim
+  - dict[str, str] kwargs become "<key> <value>" pairs (NUL-safe, so values
+    can contain tabs/spaces — e.g. SAM read groups)
+  - list[File] inputs are localized under /var/inputs/<name>/ and globbed in
+    deterministic sorted order
+
+dict[str, File] is intentionally not exercised — the helper doesn't expose it
+because there's no canonical bio-CLI mapping (positional? --key value? sorted?).
+If a real workflow needs it, declare each file as its own input.
 """
 
 import tempfile
 
 import flyte
-from flyte.extras import ContainerTask
+from examples.advanced.cli_container_task_helper import cli_container_task
 from flyte.io import File
 
-probe = ContainerTask(
+probe = cli_container_task(
     name="probe_inputs_json",
     image=flyte.Image.from_debian_base().with_apt_packages("jq"),
-    inputs={
-        "files_list": list[File],
-        "files_map": dict[str, File],
-        "flags": list[str],
-        "extras": dict[str, str],
-    },
-    outputs={"inputs_json": File},
-    metadata_format="JSON",
-    command=[
-        "/bin/sh",
-        "-c",
-        r"""
-set -eu
-echo "==================== /var/inputs LISTING ===================="
-ls -laR /var/inputs/ || true
-echo
-echo "==================== inputs.json (pretty) ===================="
-if [ -f /var/inputs/inputs.json ]; then
-  jq . /var/inputs/inputs.json || cat /var/inputs/inputs.json
-  cp /var/inputs/inputs.json /var/outputs/inputs_json
-else
-  echo "no inputs.json found; listing what is there:"
-  ls -la /var/inputs/
-  # still satisfy the output so the task can complete
-  echo "{}" > /var/outputs/inputs_json
-fi
-echo
-echo "==================== blob URIs from inputs.json ============="
-if command -v jq >/dev/null 2>&1 && [ -f /var/inputs/inputs.json ]; then
-  echo "-- files_list URIs --"
-  jq -r '..|.uri? // empty' /var/inputs/inputs.json || true
-fi
-echo
-echo "==================== read each list file =============="
-for f in /var/inputs/files_list/*; do
-  [ -f "$f" ] || continue
-  echo "FILE: $f"
-  head -c 200 "$f"
-  echo
-done
-echo "==================== read each map file =============="
-for f in /var/inputs/files_map/*; do
-  [ -f "$f" ] || continue
-  echo "FILE: $f"
-  head -c 200 "$f"
-  echo
-done
-echo "==================== build argv from inputs.json (jq) =============="
-ARGS=$(jq -r '.flags[]' /var/inputs/inputs.json | tr '\n' ' ')
-KW=$(jq -r '.extras | to_entries[] | "\(.key) \(.value)"' /var/inputs/inputs.json | tr '\n' ' ')
-BAMS=$(jq -r '.files_list[]' /var/inputs/inputs.json | tr '\n' ' ')
-echo "Composed argv:  some_tool $ARGS $KW $BAMS"
-""",
-    ],
+    # The "tool" here is just `echo`, so the captured stdout shows the
+    # composed argv that the helper would have handed to a real bio CLI.
+    tool=["echo", "ARGV:"],
+    flag_inputs={"flags": list[str]},
+    kwarg_inputs={"extras": dict[str, str]},
+    file_inputs={"ref": File, "reads": list[File]},
+    outputs={"composed": File},
+    stdout_to="composed",
 )
 
 env = flyte.TaskEnvironment(
@@ -81,7 +44,6 @@ env = flyte.TaskEnvironment(
 
 @env.task
 async def main() -> File:
-    # Generate two tiny files locally and upload them as File inputs.
     paths = []
     for i, body in enumerate(["hello from file 0\n", "hello from file 1\n"]):
         with tempfile.NamedTemporaryFile(
@@ -90,17 +52,16 @@ async def main() -> File:
             f.write(body)
             paths.append(f.name)
 
-    files_list = [await File.from_local(p) for p in paths]
-    files_map = {
-        "alpha": await File.from_local(paths[0]),
-        "beta": await File.from_local(paths[1]),
-    }
+    with tempfile.NamedTemporaryFile(mode="w", suffix="_ref.txt", delete=False) as f:
+        f.write("reference\n")
+        ref_path = f.name
 
     return await probe(
-        files_list=files_list,
-        files_map=files_map,
         flags=["--threads", "8", "-v"],
-        extras={"--memory": "4G", "--out": "/tmp/out"},
+        # Tab in the value proves NUL-delimited handling preserves whitespace.
+        extras={"--memory": "4G", "--out": "/tmp/out", "-R": "@RG\tID:x"},
+        ref=await File.from_local(ref_path),
+        reads=[await File.from_local(p) for p in paths],
     )
 
 
