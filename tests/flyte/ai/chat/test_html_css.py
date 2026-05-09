@@ -1,17 +1,17 @@
-"""Tests for flyte.ai.agents._html and _css."""
+"""Tests for flyte.ai.chat._html and _css."""
 
 import re
 
 import flyte.ai.agents as agents_pkg
 from flyte.ai.agents import (
-    DEFAULT_CSS,
     Agent,
     AgentChatAppEnvironment,
     AgentResult,
     CodeModeAgent,
     CustomTheme,
 )
-from flyte.ai.agents._html import CHAT_HTML_TEMPLATE, _build_action_buttons_html, build_chat_html
+from flyte.ai.chat import DEFAULT_CSS
+from flyte.ai.chat._html import CHAT_HTML_TEMPLATE, _build_action_buttons_html, build_chat_html
 
 
 class TestDefaultCss:
@@ -101,7 +101,6 @@ class TestBuildChatHtml:
 class TestPackageExports:
     def test_public_import_surface(self):
         assert set(agents_pkg.__all__) == {
-            "DEFAULT_CSS",
             "Agent",
             "AgentChatAppEnvironment",
             "AgentResult",

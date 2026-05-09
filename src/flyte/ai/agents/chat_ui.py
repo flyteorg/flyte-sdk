@@ -17,8 +17,8 @@ from pydantic import BaseModel
 import flyte.app
 from flyte.models import SerializationContext
 
-from ._css import CUSTOM_THEME_CSS_TEMPLATE
-from ._html import build_chat_html
+from ..chat._css import CUSTOM_THEME_CSS_TEMPLATE
+from ..chat._html import build_chat_html
 from .protocol import Agent, AgentResult
 
 # ------------------------------------------------------------------
