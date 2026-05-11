@@ -14,12 +14,6 @@ open / open_sync in ``"wb"`` mode) so explicit `file://` checkpoint URIs work wi
 that downloads the previous attempt's **blob** into a temp workspace and uploads a new blob to the
 task output prefix (including tarball encoding when you save a directory).
 
-- **Previous-checkpoint URI repair:** For remote prev URIs (e.g. `s3://`), if the path uses the **current**
-  attempt directory (`…/{run}/{action}/{n}/…`), `flyte.Checkpoint` rewrites *n* to *n-1* when *n > 1*,
-  using `flyte.ctx` `action.run_name` and `action.name` (Union executor v2). If `FLYTE_ATTEMPT_NUMBER`
-  is `>= 1`, the attempt directory integer must match the buggy current-attempt value (`FLYTE_ATTEMPT_NUMBER`
-  or `FLYTE_ATTEMPT_NUMBER + 1`). Local `file:` paths are not modified.
-
 Remote checkpoint URIs are a **single object** (e.g. `.../_flytecheckpoints`). `flyte.Checkpoint.save`
 uploads a **file** as-is; a **directory** is stored as a gzip-compressed tar. `flyte.Checkpoint.load`
 downloads that object, extracts a tar into `flyte.Checkpoint.path`, or moves a single downloaded file to
@@ -32,7 +26,6 @@ from __future__ import annotations
 
 import os
 import pathlib
-import re
 import shutil
 import sys
 import tarfile
@@ -57,16 +50,6 @@ _IO_CHUNK = 8 * 1024 * 1024
 
 # Basename under `Checkpoint.path` when the remote checkpoint is a single file (not a tarball).
 _PAYLOAD_BASENAME = "payload"
-
-# Object-store schemes for which Union executor may pass a prev-checkpoint URI with the wrong attempt segment.
-_REMOTE_CHECKPOINT_SCHEMES: tuple[str, ...] = (
-    "s3://",
-    "gs://",
-    "gcs://",
-    "s3a://",
-    "abfss://",
-    "az://",
-)
 
 
 def latest_checkpoint(
@@ -96,59 +79,6 @@ def latest_checkpoint(
     matches.sort(key=sort_key, reverse=True)
     return matches[0]
 
-
-def repair_union_prev_checkpoint_uri(
-    prev_uri: str,
-    *,
-    run_name: str | None = None,
-    action_name: str | None = None,
-) -> str:
-    """
-    Fix **prev-checkpoint** URIs when the executor passes the **current** attempt directory segment
-    (`…/{run_name}/{action}/{n}/…`) instead of the prior attempt (`n-1`).
-
-    Flyte executor v2 encodes *n* as `GetAttempts()+1` in the raw-data prefix; the checkpoint
-    path for the previous attempt must use `n-1` when `n > 1`. When *run_name* / *action_name*
-    are omitted, they are read from `flyte.ctx` (`action.run_name`, `action.name`).
-
-    If there is no task context, the pattern does not match, or `n <= 1`, *prev_uri* is returned unchanged.
-
-    When `FLYTE_ATTEMPT_NUMBER` is set and `>= 1`, the path segment *n* must match the known executor bug
-    (current attempt directory): either `n == FLYTE_ATTEMPT_NUMBER` (1-based attempt matching the directory)
-    or `n == FLYTE_ATTEMPT_NUMBER + 1` (0-based `flyte.models.TaskContext.attempt_number` with a
-    `GetAttempts()+1`-style directory). Otherwise the URI is left unchanged so a correct prev path is not rewritten.
-    When the variable is unset or `< 1`, only `n > 1` is required (backward compatible).
-
-    NOTE: This function will be removed once the backend is updated to use the correct attempt number.
-    """
-    if run_name is None or action_name is None:
-        from flyte._context import ctx
-
-        tctx = ctx()
-        if tctx is None:
-            return prev_uri
-        run_name = tctx.action.run_name
-        action_name = tctx.action.name
-    if not run_name or not action_name:
-        return prev_uri
-    pattern = re.compile(
-        rf"(/{re.escape(run_name)}/{re.escape(action_name)}/)(\d+)(/)",
-    )
-    m = pattern.search(prev_uri)
-    if not m:
-        return prev_uri
-    n = int(m.group(2))
-    if n <= 1:
-        return prev_uri
-    flyte_attempt = int(os.environ.get("FLYTE_ATTEMPT_NUMBER", "0"))
-    if flyte_attempt >= 1:
-        # Executor bug: prev URI uses the current attempt directory *n*; correct previous dir is *n - 1*,
-        # which equals flyte_attempt - 1 when flyte/segment share the same numbering, or flyte_attempt when
-        # flyte is 0-based (segment = flyte + 1). Only rewrite when *n* matches one of those bug shapes.
-        if not (n == flyte_attempt or n == flyte_attempt + 1):
-            return prev_uri
-    start, end = m.span(2)
-    return f"{prev_uri[:start]}{n - 1}{prev_uri[end:]}"
 
 
 def _is_recoverable_checkpoint_load_error(exc: BaseException) -> bool:
@@ -323,8 +253,6 @@ class Checkpoint(BaseCheckpoint):
         self._checkpoint_dest = checkpoint_dest
         self._checkpoint_src: str | None = None
         if checkpoint_src is not None and (src := checkpoint_src.strip().strip('"')) != "":
-            if src.startswith(_REMOTE_CHECKPOINT_SCHEMES):
-                src = repair_union_prev_checkpoint_uri(src)
             self._checkpoint_src = src
         # Temp workspace: extracted checkpoint tree and single-file `payload` live under this directory.
         self._td = tempfile.TemporaryDirectory(prefix="flyte-cp-")
