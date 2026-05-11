@@ -60,8 +60,35 @@ def init() -> None:
         logger.debug("Failed to initialize Sentry", exc_info=True)
 
 
+def _is_user_error(exc: BaseException) -> bool:
+    """Errors raised intentionally as user-facing messages — not crash reports."""
+    try:
+        import click
+
+        if isinstance(exc, (click.Abort, click.exceptions.Exit, click.ClickException)):
+            return True
+    except ImportError:
+        pass
+
+    # Errors raised by the deploy / image-build pipeline that always carry an
+    # actionable, user-facing message (bad trigger config, image build failure
+    # from the remote builder, etc.). Treat them like ClickException so we
+    # don't flood Sentry with what is fundamentally user input feedback.
+    try:
+        from flyte.errors import DeploymentError, ImageBuildError
+
+        if isinstance(exc, (DeploymentError, ImageBuildError)):
+            return True
+    except ImportError:
+        pass
+
+    return False
+
+
 def capture_exception(exc: BaseException) -> None:
     """Capture an exception and send it to Sentry."""
+    if _is_user_error(exc):
+        return
     try:
         init()
         import sentry_sdk

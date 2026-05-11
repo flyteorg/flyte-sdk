@@ -107,6 +107,7 @@ class CLIConfig:
     log_level: int | None = logging.ERROR
     log_format: LogFormat = "console"
     reset_root_logger: bool = False
+    user_log_level: int | None = None
     endpoint: str | None = None
     insecure: bool = False
     image_builder: str | None = None
@@ -178,6 +179,7 @@ class CLIConfig:
             updated_config,
             log_level=self.log_level,
             log_format=self.log_format,
+            user_log_level=self.user_log_level,
             root_dir=pathlib.Path(root_dir).resolve() if root_dir else None,
             images=images,
             image_builder=self.image_builder,
@@ -326,7 +328,12 @@ class ObjectsPerFileGroup(GroupBase):
         sys.modules[module_name] = module
 
         sys.path.append(module_path)
-        spec.loader.exec_module(module)
+        try:
+            spec.loader.exec_module(module)
+        except click.ClickException:
+            raise
+        except (ImportError, SyntaxError, NameError, AttributeError, TypeError, ValueError) as e:
+            raise click.ClickException(f"Failed to load {self.filename}: {type(e).__name__}: {e}") from e
 
         self._objs = self._filter_objects(module)
         if not self._objs:

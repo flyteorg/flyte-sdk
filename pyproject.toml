@@ -16,7 +16,7 @@ dependencies = [
     "protobuf>=6.30.1",
     "pydantic>=2.10.6",
     "pyyaml>=6.0.2",
-    "rich-click==1.8.9", # As we are installing flyte in --pre mode, we need to pin rich-click to a stable version
+    "rich-click==1.8.9",
     "httpx>=0.28.1,<1.0.0",
     "keyring>=25.6.0",
     "msgpack>=1.1.0",
@@ -24,7 +24,7 @@ dependencies = [
     "async-lru>=2.0.5",
     "mashumaro",
     "aiolimiter>=1.2.1",
-    "flyteidl2==2.0.13",
+    "flyteidl2==2.0.15",
     "packaging",
     "sentry-sdk>=2.0",
     "pyOpenSSL>=24.0.0",
@@ -35,6 +35,7 @@ flyte = "flyte.cli.main:main"
 a0 = "flyte._bin.runtime:main"
 fserve = "flyte._bin.serve:main"
 c0 = "flyte._bin.connect:main"
+flyte-mcp = "flyte._bin.mcp:main"
 
 [project.entry-points."keyring.backends"]
 flyte_keyring_file = "flyte._keyring.file"
@@ -69,8 +70,16 @@ examples-test = [
 sandbox = [
     "pydantic-monty==0.0.17",
 ]
+mcp = [
+    "mcp>=1.26.0",
+    "starlette",
+    "uvicorn",
+]
 tui = [
     "textual>=0.80",
+]
+rust-controller = [
+    "flyte_controller_base>=2.0.0b0",
 ]
 
 [dependency-groups]
@@ -98,6 +107,9 @@ dev = [
     "types-aiofiles",
     "kubernetes",
     "textual>=0.80",
+    "mcp>=1.26.0",
+    "starlette",
+    "uvicorn",
 ]
 
 [tool.setuptools]
@@ -172,11 +184,15 @@ ignore = ["PGH003", "PLC0415", "ASYNC210", "ASYNC240", "FURB122"]
 [tool.ruff.lint.per-file-ignores]
 "examples/*" = ["E402"]
 "plugins/pandera/tests/test_pyspark_sql_transformer.py" = ["E402"]
+"src/flyte/ai/chat/_html.py" = ["E501"]
 
 
 [tool.mypy]
 disable_error_code = ["import-untyped"]
 ignore_missing_imports = true
+
+[tool.uv.sources]
+flyte_controller_base = { path = "rs_controller" }
 
 [tool.ty.rules]
 unused-ignore-comment = "warn"

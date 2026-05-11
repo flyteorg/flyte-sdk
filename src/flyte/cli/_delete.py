@@ -80,9 +80,8 @@ def devbox(volume: bool):
     Stop and remove the local Flyte devbox cluster container.
     """
     console = common.get_console()
-    result = subprocess.run(["docker", "stop", "flyte-devbox"], capture_output=True, check=False)
+    result = subprocess.run(["docker", "rm", "-f", "flyte-devbox"], capture_output=True, check=False)
     if result.returncode == 0:
-        subprocess.run(["docker", "wait", "flyte-devbox"], capture_output=True, check=False)
         console.print("[green]Devbox cluster stopped.[/green]")
     else:
         console.print("[yellow]Devbox cluster is not running.[/yellow]")
