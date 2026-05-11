@@ -3,7 +3,6 @@ from __future__ import annotations
 import click
 
 import flyte
-from flyte.ai.mcp import FlyteMCPAppEnvironment
 
 
 def _comma_list(value: str | None) -> list[str] | None:
@@ -60,6 +59,8 @@ def main(
 ) -> None:
     if init_from_config:
         flyte.init_from_config()
+
+    from flyte.ai.mcp import FlyteMCPAppEnvironment
 
     env = FlyteMCPAppEnvironment(
         name=name,
