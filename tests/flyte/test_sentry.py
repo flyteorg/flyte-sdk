@@ -41,3 +41,21 @@ def test_capture_errors_decorator_filters_click_abort():
         with pytest.raises(click.Abort):
             fn()
     init_mock.assert_not_called()
+
+
+def test_capture_exception_skips_deployment_error():
+    from flyte.errors import DeploymentError
+
+    err = DeploymentError("bad trigger config")
+    with mock.patch.object(_sentry, "init") as init_mock:
+        _sentry.capture_exception(err)
+    init_mock.assert_not_called()
+
+
+def test_capture_exception_skips_image_build_error():
+    from flyte.errors import ImageBuildError
+
+    err = ImageBuildError("build failed")
+    with mock.patch.object(_sentry, "init") as init_mock:
+        _sentry.capture_exception(err)
+    init_mock.assert_not_called()
