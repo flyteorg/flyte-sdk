@@ -80,7 +80,6 @@ def latest_checkpoint(
     return matches[0]
 
 
-
 def _is_recoverable_checkpoint_load_error(exc: BaseException) -> bool:
     """
     True for missing/empty checkpoint data. Obstore parallel download raises
