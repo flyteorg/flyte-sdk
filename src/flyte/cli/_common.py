@@ -328,7 +328,12 @@ class ObjectsPerFileGroup(GroupBase):
         sys.modules[module_name] = module
 
         sys.path.append(module_path)
-        spec.loader.exec_module(module)
+        try:
+            spec.loader.exec_module(module)
+        except click.ClickException:
+            raise
+        except (ImportError, SyntaxError, NameError, AttributeError, TypeError, ValueError) as e:
+            raise click.ClickException(f"Failed to load {self.filename}: {type(e).__name__}: {e}") from e
 
         self._objs = self._filter_objects(module)
         if not self._objs:
