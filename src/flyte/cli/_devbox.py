@@ -36,6 +36,14 @@ def _ensure_docker_available() -> None:
         )
 
 
+def _ensure_kubectl_available() -> None:
+    if shutil.which("kubectl") is None:
+        raise click.ClickException(
+            "kubectl is not installed or not on PATH. Install kubectl "
+            "(https://kubernetes.io/docs/tasks/tools/) and try again."
+        )
+
+
 def _run_docker(cmd: list[str], failure_message: str) -> subprocess.CompletedProcess:
     """Run a docker command and translate failure into a user-facing ClickException."""
     result = subprocess.run(cmd, capture_output=True, text=True, check=False)
@@ -192,6 +200,8 @@ def _flatten_kubeconfig(default_kubeconfig: Path, kubeconfig_path: Path) -> subp
 
 def _merge_kubeconfig(kubeconfig_path: Path, container_name: str) -> None:
     import tempfile
+
+    _ensure_kubectl_available()
 
     default_kubeconfig = Path.home() / ".kube" / "config"
     default_kubeconfig.parent.mkdir(parents=True, exist_ok=True)
