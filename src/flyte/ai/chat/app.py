@@ -17,9 +17,9 @@ from pydantic import BaseModel
 import flyte.app
 from flyte.models import SerializationContext
 
-from ..chat._css import CUSTOM_THEME_CSS_TEMPLATE
-from ..chat._html import build_chat_html
-from .protocol import Agent, AgentResult
+from ..agents.protocol import Agent, AgentResult
+from ._css import CUSTOM_THEME_CSS_TEMPLATE
+from ._html import build_chat_html
 
 # ------------------------------------------------------------------
 # CustomTheme — human-readable color theming for the chat UI
@@ -449,7 +449,7 @@ class AgentChatAppEnvironment(flyte.app.AppEnvironment):
                     attempts=result.attempts,
                 )
 
-            from .codemode import codemode_progress_cb
+            from ..agents.codemode import codemode_progress_cb
 
             queue: asyncio.Queue[str | None] = asyncio.Queue()
 

@@ -1,4 +1,4 @@
-"""Tests for flyte.ai.agents.chat_ui."""
+"""Tests for flyte.ai.chat.app."""
 
 import json
 from typing import Any
@@ -6,9 +6,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from flyte.ai.agents import AgentChatAppEnvironment, AgentResult, CustomTheme
-from flyte.ai.agents.chat_ui import _ChatRequest, _hex_to_rgb, _rgba
+from flyte.ai.agents import AgentResult
 from flyte.ai.agents.protocol import Agent
+from flyte.ai.chat import AgentChatAppEnvironment, CustomTheme
+from flyte.ai.chat.app import _ChatRequest, _hex_to_rgb, _rgba
 from flyte.app.extras import FastAPIPassthroughAuthMiddleware
 from flyte.models import ActionPhase
 

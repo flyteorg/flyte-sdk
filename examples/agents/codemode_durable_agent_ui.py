@@ -22,7 +22,8 @@ import pathlib
 from typing import Any
 
 import flyte
-from flyte.ai import AgentChatAppEnvironment, CodeModeAgent, CustomTheme
+from flyte.ai.agents import CodeModeAgent
+from flyte.ai.chat import AgentChatAppEnvironment, CustomTheme
 
 task_env = flyte.TaskEnvironment(
     name="codemode-durable-analytics-tools",

@@ -16,7 +16,8 @@ import pathlib
 from typing import Callable, Literal, TypedDict
 
 import flyte
-from flyte.ai import AgentChatAppEnvironment, CodeModeAgent, CustomTheme
+from flyte.ai.agents import CodeModeAgent
+from flyte.ai.chat import AgentChatAppEnvironment, CustomTheme
 
 
 class FormattedResponse(TypedDict):

@@ -1,7 +1,7 @@
 """Durable CodeModeAgent in a pure task context (no UI).
 
 This mirrors the execution style of `examples/sandbox/codemode/durable_agent.py`,
-but uses the SDK `flyte.ai.CodeModeAgent` and keeps everything in one file.
+but uses the SDK `flyte.ai.agents.CodeModeAgent` and keeps everything in one file.
 
 The agent generates Monty-safe Python code and executes it in a sandbox. Tool
 calls dispatch as durable Flyte tasks because the tools are defined as
@@ -18,7 +18,7 @@ from __future__ import annotations
 from typing import Any
 
 import flyte
-from flyte.ai import CodeModeAgent
+from flyte.ai.agents import CodeModeAgent
 
 task_env = flyte.TaskEnvironment(
     name="codemode-durable-task-agent",

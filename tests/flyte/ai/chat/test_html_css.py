@@ -3,15 +3,16 @@
 import re
 
 import flyte.ai.agents as agents_pkg
-from flyte.ai.agents import (
-    Agent,
+import flyte.ai.chat as chat_pkg
+from flyte.ai.agents import Agent, AgentResult, CodeModeAgent
+from flyte.ai.chat import (
+    CHAT_HTML_TEMPLATE,
+    DEFAULT_CSS,
     AgentChatAppEnvironment,
-    AgentResult,
-    CodeModeAgent,
     CustomTheme,
+    build_chat_html,
 )
-from flyte.ai.chat import DEFAULT_CSS
-from flyte.ai.chat._html import CHAT_HTML_TEMPLATE, _build_action_buttons_html, build_chat_html
+from flyte.ai.chat._html import _build_action_buttons_html
 
 
 class TestDefaultCss:
@@ -99,16 +100,24 @@ class TestBuildChatHtml:
 
 
 class TestPackageExports:
-    def test_public_import_surface(self):
+    def test_agents_public_import_surface(self):
         assert set(agents_pkg.__all__) == {
             "Agent",
-            "AgentChatAppEnvironment",
             "AgentResult",
             "CodeModeAgent",
-            "CustomTheme",
         }
-        assert AgentChatAppEnvironment.__name__ == "AgentChatAppEnvironment"
         assert CodeModeAgent.__name__ == "CodeModeAgent"
-        assert CustomTheme.__name__ == "CustomTheme"
         assert AgentResult.__name__ == "AgentResult"
         assert hasattr(Agent, "run")
+
+    def test_chat_public_import_surface(self):
+        assert set(chat_pkg.__all__) == {
+            "AgentChatAppEnvironment",
+            "CHAT_HTML_TEMPLATE",
+            "CUSTOM_THEME_CSS_TEMPLATE",
+            "CustomTheme",
+            "DEFAULT_CSS",
+            "build_chat_html",
+        }
+        assert AgentChatAppEnvironment.__name__ == "AgentChatAppEnvironment"
+        assert CustomTheme.__name__ == "CustomTheme"
