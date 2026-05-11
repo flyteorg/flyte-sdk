@@ -35,6 +35,7 @@ flyte = "flyte.cli.main:main"
 a0 = "flyte._bin.runtime:main"
 fserve = "flyte._bin.serve:main"
 c0 = "flyte._bin.connect:main"
+flyte-mcp = "flyte._bin.mcp:main"
 
 [project.entry-points."keyring.backends"]
 flyte_keyring_file = "flyte._keyring.file"
@@ -69,6 +70,11 @@ examples-test = [
 sandbox = [
     "pydantic-monty==0.0.17",
 ]
+mcp = [
+    "mcp>=1.26.0",
+    "starlette",
+    "uvicorn",
+]
 tui = [
     "textual>=0.80",
 ]
@@ -101,6 +107,9 @@ dev = [
     "types-aiofiles",
     "kubernetes",
     "textual>=0.80",
+    "mcp>=1.26.0",
+    "starlette",
+    "uvicorn",
 ]
 
 [tool.setuptools]
