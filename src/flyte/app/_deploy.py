@@ -55,11 +55,11 @@ class DeployedAppEnvironment:
                 ),
                 (
                     "public_url",
-                    f"[link={self.deployed_app.url}]{self.deployed_app.url}[/link]",
+                    f"[link={self.deployed_app.endpoint}]{self.deployed_app.endpoint}[/link]",
                 ),
                 (
                     "console_url",
-                    f"[link={self.deployed_app.endpoint}]{self.deployed_app.endpoint}[/link]",
+                    f"[link={self.deployed_app.url}]{self.deployed_app.url}[/link]",
                 ),
             ],
         ]

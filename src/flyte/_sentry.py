@@ -69,6 +69,19 @@ def _is_user_error(exc: BaseException) -> bool:
             return True
     except ImportError:
         pass
+
+    # Errors raised by the deploy / image-build pipeline that always carry an
+    # actionable, user-facing message (bad trigger config, image build failure
+    # from the remote builder, etc.). Treat them like ClickException so we
+    # don't flood Sentry with what is fundamentally user input feedback.
+    try:
+        from flyte.errors import DeploymentError, ImageBuildError
+
+        if isinstance(exc, (DeploymentError, ImageBuildError)):
+            return True
+    except ImportError:
+        pass
+
     return False
 
 
