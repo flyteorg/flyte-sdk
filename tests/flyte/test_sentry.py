@@ -59,3 +59,12 @@ def test_capture_exception_skips_image_build_error():
     with mock.patch.object(_sentry, "init") as init_mock:
         _sentry.capture_exception(err)
     init_mock.assert_not_called()
+
+
+def test_capture_exception_skips_initialization_error():
+    from flyte.errors import InitializationError
+
+    err = InitializationError("NotInitialized", "user", "Client has not been initialized.")
+    with mock.patch.object(_sentry, "init") as init_mock:
+        _sentry.capture_exception(err)
+    init_mock.assert_not_called()
