@@ -4,8 +4,10 @@ import asyncio
 import concurrent.futures
 import os
 import threading
+import time
 from collections import defaultdict
 from collections.abc import Callable
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, Awaitable, DefaultDict, Tuple, TypeVar
 
@@ -152,6 +154,7 @@ class RemoteController(Controller):
         if tctx is None:
             raise flyte.errors.RuntimeSystemError("BadContext", "Task context not initialized")
         current_action_id = tctx.action
+        trace_enabled = self._should_trace_sequence(_task_call_seq)
 
         # In the case of a regular code bundle, we will just pass it down as it is to the downstream tasks
         # It is not allowed to change the code bundle (for regular code bundles) in the middle of a run.
@@ -165,10 +168,15 @@ class RemoteController(Controller):
                 upload_from_dataplane_base_path=tctx.run_base_dir,
             )
 
-        inputs = await convert.convert_from_native_to_inputs(_task.native_interface, *args, **kwargs)
+        _ctx = ctx.new_in_driver_literal_conversion(True) if ctx.is_task_context() else nullcontext()
+        sdk_inputs_start = time.monotonic()
+        with _ctx:
+            inputs = await convert.convert_from_native_to_inputs(_task.native_interface, *args, **kwargs)
+        sdk_inputs_ms = (time.monotonic() - sdk_inputs_start) * 1000
 
         root_dir = Path(code_bundle.destination).absolute() if code_bundle else Path.cwd()
         # Don't set output path in sec context because node executor will set it
+        sdk_serialize_start = time.monotonic()
         new_serialization_context = SerializationContext(
             project=current_action_id.project,
             domain=current_action_id.domain,
@@ -186,12 +194,17 @@ class RemoteController(Controller):
         sub_action_id, sub_action_output_path = convert.generate_sub_action_id_and_output_path(
             tctx, task_spec, inputs_hash, _task_call_seq
         )
+        sdk_serialize_ms = (time.monotonic() - sdk_serialize_start) * 1000
         logger.info(f"Sub action {sub_action_id} output path {sub_action_output_path}")
 
         serialized_inputs = inputs.proto_inputs.SerializeToString(deterministic=True)
+        serialized_input_bytes = len(serialized_inputs)
         inputs_uri = io.inputs_path(sub_action_output_path)
+        storage_put_start = time.monotonic()
         await upload_inputs_with_retry(serialized_inputs, inputs_uri, max_bytes=_task.max_inline_io_bytes)
+        storage_put_ms = (time.monotonic() - storage_put_start) * 1000
 
+        sdk_cache_start = time.monotonic()
         md = task_spec.task_template.metadata
         ignored_input_vars = []
         if len(md.cache_ignore_input_vars) > 0:
@@ -207,6 +220,7 @@ class RemoteController(Controller):
                 ignored_input_vars,
                 inputs.proto_inputs,
             )
+        sdk_cache_ms = (time.monotonic() - sdk_cache_start) * 1000
 
         # Clear to free memory
         serialized_inputs = None  # type: ignore
@@ -230,13 +244,41 @@ class RemoteController(Controller):
             cache_key=cache_key,
             queue=_task.queue,
         )
+        self._mark_action_for_trace(action.name)
+        if trace_enabled:
+            self._trace_log(
+                action.name,
+                "sdk_prepare",
+                kind="sdk_only",
+                seq=_task_call_seq,
+                task=_task.name,
+                sdk_inputs_ms=f"{sdk_inputs_ms:.1f}",
+                sdk_serialize_ms=f"{sdk_serialize_ms:.1f}",
+                sdk_cache_ms=f"{sdk_cache_ms:.1f}",
+                input_bytes=serialized_input_bytes,
+            )
+            self._trace_log(
+                action.name,
+                "storage_put_inputs",
+                kind="storage_api",
+                elapsed_ms=f"{storage_put_ms:.1f}",
+                input_bytes=serialized_input_bytes,
+            )
 
         try:
             logger.info(
                 f"Submitting action Run:[{action.run_name}, Parent:[{action.parent_action_name}], "
                 f"task:[{_task.name}], action:[{action.name}]"
             )
+            submit_start = time.monotonic()
             n = await self.submit_action(action)
+            if trace_enabled:
+                self._trace_log(
+                    action.name,
+                    "submit_action_done",
+                    kind="mixed",
+                    elapsed_ms=f"{(time.monotonic() - submit_start) * 1000:.1f}",
+                )
             logger.info(f"Action for task [{_task.name}] action id: {action.name}, completed!")
         except asyncio.CancelledError:
             # If the action is cancelled, we need to cancel the action on the server as well
@@ -269,9 +311,11 @@ class RemoteController(Controller):
                     "RuntimeError",
                     f"Task {n.action_id.name} did not return an output path, but the task has outputs defined.",
                 )
-            return await load_and_convert_outputs(
-                _task.native_interface, n.realized_outputs_uri, max_bytes=_task.max_inline_io_bytes
-            )
+            _ctx = ctx.new_in_driver_literal_conversion(True) if ctx.is_task_context() else nullcontext()
+            with _ctx:
+                return await load_and_convert_outputs(
+                    _task.native_interface, n.realized_outputs_uri, max_bytes=_task.max_inline_io_bytes
+                )
         return None
 
     async def submit(self, _task: TaskTemplate, *args, **kwargs) -> Any:
@@ -371,7 +415,9 @@ class RemoteController(Controller):
         func_name = _func.__name__
         invoke_seq_num = self.generate_task_call_sequence(_func, current_action_id)
 
-        inputs = await convert.convert_from_native_to_inputs(_interface, *args, **kwargs)
+        _ctx = ctx.new_in_driver_literal_conversion(True) if ctx.is_task_context() else nullcontext()
+        with _ctx:
+            inputs = await convert.convert_from_native_to_inputs(_interface, *args, **kwargs)
         serialized_inputs = inputs.proto_inputs.SerializeToString(deterministic=True)
         inputs_hash = convert.generate_inputs_hash_from_proto(inputs.proto_inputs)
 
@@ -411,7 +457,9 @@ class RemoteController(Controller):
                 logger.warning(f"Action {prev_action.action_id.name} failed, but no error was found, re-running trace!")
         elif prev_action.realized_outputs_uri is not None:
             o = await io.load_outputs(prev_action.realized_outputs_uri, max_bytes=MAX_TRACE_BYTES)
-            outputs = await convert.convert_outputs_to_native(_interface, o)
+            _ctx = ctx.new_in_driver_literal_conversion(True) if ctx.is_task_context() else nullcontext()
+            with _ctx:
+                outputs = await convert.convert_outputs_to_native(_interface, o)
             return (
                 TraceInfo(func_name, sub_action_id, _interface, inputs_uri, output=outputs),
                 True,
@@ -439,7 +487,9 @@ class RemoteController(Controller):
                 err = convert.convert_from_native_to_error(info.error)
                 await io.upload_error(err.err, sub_run_output_path)
             else:
-                outputs = await convert.convert_from_native_to_outputs(info.output, info.interface)
+                _ctx = ctx.new_in_driver_literal_conversion(True) if ctx.is_task_context() else nullcontext()
+                with _ctx:
+                    outputs = await convert.convert_from_native_to_outputs(info.output, info.interface)
                 outputs_file_path = io.outputs_path(sub_run_output_path)
                 await io.upload_outputs(outputs, sub_run_output_path, max_bytes=MAX_TRACE_BYTES)
 
@@ -490,7 +540,9 @@ class RemoteController(Controller):
         native_interface = _task.interface
         pb_interface = _task.pb2.spec.task_template.interface
 
-        inputs = await convert.convert_from_native_to_inputs(native_interface, *args, **kwargs)
+        _ctx = ctx.new_in_driver_literal_conversion(True) if ctx.is_task_context() else nullcontext()
+        with _ctx:
+            inputs = await convert.convert_from_native_to_inputs(native_interface, *args, **kwargs)
         inputs_hash = convert.generate_inputs_hash_from_proto(inputs.proto_inputs)
         sub_action_id, sub_action_output_path = convert.generate_sub_action_id_and_output_path(
             tctx, task_name, inputs_hash, invoke_seq_num

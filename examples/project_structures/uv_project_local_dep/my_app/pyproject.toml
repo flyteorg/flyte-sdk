@@ -1,0 +1,12 @@
+[project]
+name = "my-app"
+version = "0.1.0"
+description = "A flyte project that depends on a sibling local library via [tool.uv.sources]"
+requires-python = ">=3.10"
+dependencies = ["my-lib", "flyte"]
+
+[tool.uv]
+package = true
+
+[tool.uv.sources]
+my-lib = { path = "../my_lib", editable = true }

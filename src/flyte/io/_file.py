@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import typing
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
@@ -10,6 +11,7 @@ from typing import (
     Any,
     AsyncGenerator,
     Callable,
+    ClassVar,
     Coroutine,
     Dict,
     Generator,
@@ -40,6 +42,8 @@ if typing.TYPE_CHECKING:
 
 if typing.TYPE_CHECKING:
     from obstore import AsyncReadableFile, AsyncWritableFile
+
+_COPY_BUFSIZE = 8 * 1024 * 1024  # 8 MiB chunks for large-file transfers
 
 # Type variable for the file format
 T = TypeVar("T")
@@ -200,6 +204,10 @@ class File(BaseModel, Generic[T], SerializableType):
 
     class Config:
         arbitrary_types_allowed = True
+        json_schema_extra: ClassVar[dict] = {
+            "description": "A file reference with an optional format type.",
+            "x-flyte-type": "file",
+        }
 
     @model_validator(mode="before")
     @classmethod
@@ -288,7 +296,7 @@ class File(BaseModel, Generic[T], SerializableType):
         """
         Create a File reference whose remote path is derived deterministically from *name*.
 
-        Unlike :meth:`new_remote`, which generates a random path on every call, this method
+        Unlike `new_remote`, which generates a random path on every call, this method
         produces the same path for the same *name* within a given task execution. This makes
         it safe across retries: the first attempt uploads to the path and subsequent retries
         resolve to the identical location without re-uploading.
@@ -304,7 +312,7 @@ class File(BaseModel, Generic[T], SerializableType):
             name: Plain filename (e.g., "data.csv"). Must not contain path separators.
 
         Returns:
-            A :class:`File` instance whose path is stable across retries.
+            A `File` instance whose path is stable across retries.
         """
         import fsspec
 
@@ -455,7 +463,7 @@ class File(BaseModel, Generic[T], SerializableType):
             # Fall back to aiofiles
             fs = storage.get_underlying_filesystem(path=self.path)
             if "file" in fs.protocol:
-                async with aiofiles.open(self.path, mode=mode, **kwargs) as f:
+                async with aiofiles.open(self.path, mode=mode, **kwargs) as f:  # type: ignore[call-overload]
                     yield f
                 return
             raise
@@ -699,17 +707,11 @@ class File(BaseModel, Generic[T], SerializableType):
             # Ensure parent directory exists
             Path(local_path_for_copy).parent.mkdir(parents=True, exist_ok=True)
 
-            # Use standard file operations for sync copy
-            import shutil
-
             shutil.copy2(self.path, local_path_for_copy)
             return str(local_path_for_copy)
 
         # Otherwise download from remote using sync functionality
-        # Use the sync version of storage operations
-        with fs.open(self.path, "rb") as src:
-            with open(local_path, "wb") as dst:
-                dst.write(src.read())
+        fs.get(self.path, local_path)
         return str(local_path)
 
     @classmethod
@@ -794,50 +796,31 @@ class File(BaseModel, Generic[T], SerializableType):
             if remote_destination is None:
                 path = str(Path(local_path).absolute())
             else:
-                # Otherwise, actually make a copy of the file
-                import shutil
-
                 if hash_method_obj:
-                    # For hash computation, we need to read and write manually
                     with open(local_path, "rb") as src:
                         with open(remote_path, "wb") as dst:
                             dst_wrapper = HashingWriter(dst, accumulator=hash_method_obj)
-                            dst_wrapper.write(src.read())
+                            shutil.copyfileobj(src, dst_wrapper, length=_COPY_BUFSIZE)
                             hash_value = dst_wrapper.result()
-                            dst_wrapper.close()
                 else:
                     shutil.copy2(local_path, remote_path)
                 path = str(Path(remote_path).absolute())
         else:
-            # Otherwise upload to remote using sync storage layer
             fs = storage.get_underlying_filesystem(path=remote_path)
 
-            if hash_method_obj:
-                # We can skip the wrapper if the hash method is just a precomputed value
-                if not isinstance(hash_method_obj, PrecomputedValue):
-                    with open(local_path, "rb") as src:
-                        # For sync operations, we need to compute hash manually
-                        data = src.read()
-                        hash_method_obj.update(memoryview(data))
-                        hash_value = hash_method_obj.result()
-
-                    # Now write the data to remote
-                    with fs.open(remote_path, "wb") as dst:
-                        dst.write(data)
-                    path = remote_path
-                else:
-                    # Use sync file operations
-                    with open(local_path, "rb") as src:
-                        with fs.open(remote_path, "wb") as dst:
-                            dst.write(src.read())
-                    path = remote_path
-                    hash_value = hash_method_obj.result()
-            else:
-                # Simple sync copy
+            if hash_method_obj and not isinstance(hash_method_obj, PrecomputedValue):
                 with open(local_path, "rb") as src:
                     with fs.open(remote_path, "wb") as dst:
-                        dst.write(src.read())
-                path = remote_path
+                        dst_wrapper = HashingWriter(dst, accumulator=hash_method_obj)
+                        shutil.copyfileobj(src, dst_wrapper, length=_COPY_BUFSIZE)
+                        hash_value = dst_wrapper.result()
+            else:
+                with open(local_path, "rb") as src:
+                    with fs.open(remote_path, "wb") as dst:
+                        shutil.copyfileobj(src, dst, length=_COPY_BUFSIZE)
+                if hash_method_obj:
+                    hash_value = hash_method_obj.result()
+            path = remote_path
 
         f = cls(path=path, name=filename, hash_method=hash_method_obj, hash=hash_value)
         return f
@@ -1015,7 +998,9 @@ class FileTransformer(TypeTransformer[File]):
         uri = lv.scalar.blob.uri
         filename = Path(uri).name
         hash_value = lv.hash or None
-        f: File = File(path=uri, name=filename, format=lv.scalar.blob.metadata.type.format, hash=hash_value)
+        f: File = expected_python_type(
+            path=uri, name=filename, format=lv.scalar.blob.metadata.type.format, hash=hash_value
+        )
         return f
 
     def guess_python_type(self, literal_type: types_pb2.LiteralType) -> Type[File]:

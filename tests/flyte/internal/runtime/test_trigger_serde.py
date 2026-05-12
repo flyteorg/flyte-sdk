@@ -12,6 +12,8 @@ from flyte._internal.runtime.trigger_serde import (
     process_default_inputs,
     to_task_trigger,
 )
+from flyte.models import ActionPhase
+from flyte.notify import Email, Slack, Webhook
 from flyte.types import TypeEngine
 
 DEFAULT_TIMEZONE = "UTC"
@@ -653,3 +655,229 @@ async def test_task_with_trigger_all_options():
 
     assert "learning_rate" in input_dict
     assert input_dict["learning_rate"].scalar.primitive.float_value == 0.01
+
+
+class TestTriggerWithCustomContext:
+    """Test that triggers with custom_context serialize to Inputs.context"""
+
+    @pytest.mark.asyncio
+    async def test_trigger_with_custom_context(self):
+        """Test trigger with custom_context is serialized as Inputs.context KV pairs"""
+        trigger = Trigger(
+            name="context_trigger",
+            automation=Cron("0 0 * * *"),
+            custom_context={"experiment": "v2", "team": "ml"},
+        )
+
+        task_inputs = interface_pb2.VariableMap()
+        task_default_inputs = []
+
+        result = await to_task_trigger(trigger, "test_task", task_inputs, task_default_inputs)
+
+        context_dict = {kv.key: kv.value for kv in result.spec.inputs.context}
+        assert context_dict == {"experiment": "v2", "team": "ml"}
+
+    @pytest.mark.asyncio
+    async def test_trigger_without_custom_context(self):
+        """Test trigger without custom_context has no context entries"""
+        trigger = Trigger(
+            name="no_context_trigger",
+            automation=Cron("0 0 * * *"),
+        )
+
+        task_inputs = interface_pb2.VariableMap()
+        task_default_inputs = []
+
+        result = await to_task_trigger(trigger, "test_task", task_inputs, task_default_inputs)
+
+        assert len(result.spec.inputs.context) == 0
+
+    @pytest.mark.asyncio
+    async def test_trigger_with_custom_context_and_inputs(self):
+        """Test trigger with both custom_context and default inputs"""
+        trigger = Trigger(
+            name="combined_trigger",
+            automation=Cron("0 0 * * *"),
+            inputs={"num": 42},
+            custom_context={"source": "scheduled"},
+        )
+
+        task_inputs = interface_pb2.VariableMap(
+            variables=[
+                VariableEntry(
+                    key="num",
+                    value=interface_pb2.Variable(type=types_pb2.LiteralType(simple=types_pb2.SimpleType.INTEGER)),
+                ),
+            ]
+        )
+        task_default_inputs = []
+
+        result = await to_task_trigger(trigger, "test_task", task_inputs, task_default_inputs)
+
+        # Verify inputs are serialized
+        assert len(result.spec.inputs.literals) == 1
+        assert result.spec.inputs.literals[0].name == "num"
+        assert result.spec.inputs.literals[0].value.scalar.primitive.integer == 42
+
+        # Verify context is serialized
+        context_dict = {kv.key: kv.value for kv in result.spec.inputs.context}
+        assert context_dict == {"source": "scheduled"}
+
+    @pytest.mark.asyncio
+    async def test_trigger_with_custom_context_and_all_run_spec_options(self):
+        """Test trigger with custom_context alongside all other options"""
+        trigger = Trigger(
+            name="full_context_trigger",
+            automation=FixedRate(interval_minutes=30),
+            auto_activate=False,
+            env_vars={"ENV": "prod"},
+            interruptible=True,
+            overwrite_cache=True,
+            queue="ml-queue",
+            labels={"team": "ml"},
+            annotations={"owner": "data-team"},
+            custom_context={"pipeline": "training", "version": "3"},
+        )
+
+        task_inputs = interface_pb2.VariableMap()
+        task_default_inputs = []
+
+        result = await to_task_trigger(trigger, "test_task", task_inputs, task_default_inputs)
+
+        # Verify all RunSpec options
+        assert result.spec.active is False
+        assert result.spec.run_spec.overwrite_cache is True
+        assert result.spec.run_spec.interruptible.value is True
+        assert result.spec.run_spec.cluster == "ml-queue"
+        assert result.spec.run_spec.labels.values == {"team": "ml"}
+        assert result.spec.run_spec.annotations.values == {"owner": "data-team"}
+
+        # Verify custom_context
+        context_dict = {kv.key: kv.value for kv in result.spec.inputs.context}
+        assert context_dict == {"pipeline": "training", "version": "3"}
+
+    @pytest.mark.asyncio
+    async def test_trigger_with_empty_custom_context(self):
+        """Test trigger with empty custom_context dict"""
+        trigger = Trigger(
+            name="empty_context_trigger",
+            automation=Cron("0 0 * * *"),
+            custom_context={},
+        )
+
+        task_inputs = interface_pb2.VariableMap()
+        task_default_inputs = []
+
+        result = await to_task_trigger(trigger, "test_task", task_inputs, task_default_inputs)
+
+        assert len(result.spec.inputs.context) == 0
+
+
+class TestTriggerWithNotifications:
+    """Test that triggers with notifications serialize correctly (notifications are stored but not yet in RunSpec)."""
+
+    @pytest.mark.asyncio
+    async def test_trigger_with_single_notification(self):
+        """Test trigger with a single notification preserves it on the Trigger object."""
+        trigger = Trigger(
+            name="notified_trigger",
+            automation=Cron("0 0 * * *"),
+            notifications=Slack(
+                on_phase=ActionPhase.FAILED,
+                webhook_url="https://hooks.slack.com/services/T/B/X",
+                message="Task {task.name} failed",
+            ),
+        )
+
+        assert isinstance(trigger.notifications, Slack)
+        assert trigger.notifications.on_phase == (ActionPhase.FAILED,)
+
+        # Serialization should still work — notifications not in RunSpec yet
+        task_inputs = interface_pb2.VariableMap()
+        result = await to_task_trigger(trigger, "test_task", task_inputs, [])
+
+        assert result.name == "notified_trigger"
+        assert result.automation_spec.schedule.cron.expression == "0 0 * * *"
+
+    @pytest.mark.asyncio
+    async def test_trigger_with_multiple_notifications(self):
+        """Test trigger with multiple notifications preserves them on the Trigger object."""
+        trigger = Trigger(
+            name="multi_notify_trigger",
+            automation=Cron("0 0 * * *"),
+            notifications=(
+                Slack(
+                    on_phase=(ActionPhase.FAILED, ActionPhase.TIMED_OUT),
+                    webhook_url="https://hooks.slack.com/services/T/B/X",
+                    message="Task failed",
+                ),
+                Email(
+                    on_phase=ActionPhase.SUCCEEDED,
+                    recipients=("oncall@example.com",),
+                ),
+                Webhook(
+                    on_phase=ActionPhase.FAILED,
+                    url="https://api.example.com/alerts",
+                    headers={"Content-Type": "application/json"},
+                ),
+            ),
+        )
+
+        assert isinstance(trigger.notifications, tuple)
+        assert len(trigger.notifications) == 3
+        assert isinstance(trigger.notifications[0], Slack)
+        assert isinstance(trigger.notifications[1], Email)
+        assert isinstance(trigger.notifications[2], Webhook)
+
+        # Serialization should still work — notifications not in RunSpec yet
+        task_inputs = interface_pb2.VariableMap()
+        result = await to_task_trigger(trigger, "test_task", task_inputs, [])
+
+        assert result.name == "multi_notify_trigger"
+
+    @pytest.mark.asyncio
+    async def test_trigger_without_notifications(self):
+        """Test trigger without notifications serializes normally."""
+        trigger = Trigger(
+            name="no_notify_trigger",
+            automation=Cron("0 0 * * *"),
+        )
+
+        assert trigger.notifications is None
+
+        task_inputs = interface_pb2.VariableMap()
+        result = await to_task_trigger(trigger, "test_task", task_inputs, [])
+
+        assert result.name == "no_notify_trigger"
+
+    @pytest.mark.asyncio
+    async def test_trigger_notifications_with_all_options(self):
+        """Test trigger with notifications alongside all other RunSpec options."""
+        trigger = Trigger(
+            name="full_trigger_with_notify",
+            automation=FixedRate(interval_minutes=30),
+            auto_activate=False,
+            env_vars={"ENV": "prod"},
+            interruptible=True,
+            overwrite_cache=True,
+            queue="ml-queue",
+            labels={"team": "ml"},
+            annotations={"owner": "data-team"},
+            notifications=Slack(
+                on_phase=ActionPhase.FAILED,
+                webhook_url="https://hooks.slack.com/services/T/B/X",
+            ),
+        )
+
+        task_inputs = interface_pb2.VariableMap()
+        result = await to_task_trigger(trigger, "test_task", task_inputs, [])
+
+        # All other RunSpec fields should still be serialized correctly
+        assert result.spec.active is False
+        assert result.spec.run_spec.overwrite_cache is True
+        assert result.spec.run_spec.interruptible.value is True
+        assert result.spec.run_spec.cluster == "ml-queue"
+        assert result.spec.run_spec.labels.values == {"team": "ml"}
+        assert result.spec.run_spec.annotations.values == {"owner": "data-team"}
+        env_dict = {kv.key: kv.value for kv in result.spec.run_spec.envs.values}
+        assert env_dict == {"ENV": "prod"}

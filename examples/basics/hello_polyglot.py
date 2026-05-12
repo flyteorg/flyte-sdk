@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
-#    "flyte>=2.0.0b0",
+#    "flyte",
 #    "polyglot-hello>=0.1.3",
 # ]
 # ///

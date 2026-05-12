@@ -59,7 +59,7 @@ class PysparkFunctionTask(AsyncFunctionTaskTemplate):
 
         sess = _pyspark.sql.SparkSession.builder.appName(DEFAULT_SPARK_CONTEXT_NAME).getOrCreate()
 
-        if flyte.ctx().is_in_cluster():
+        if flyte.ctx().is_in_cluster() and flyte.ctx().code_bundle is not None:
             base_dir = tempfile.mkdtemp()
             code_bundle_dir = flyte.ctx().code_bundle.destination
             file_name = "flyte_code_bundle"

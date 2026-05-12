@@ -180,6 +180,39 @@ def test_task_with_multiple_triggers():
     assert len(task_with_triggers.triggers) == 2
 
 
+def test_task_with_triggers_as_list():
+    """Triggers passed as a list must be normalized to a tuple of Trigger objects.
+
+    Regression: a list was being wrapped into a 1-tuple containing the list, which
+    later surfaced as `'list' object has no attribute 'env_vars'` during deploy.
+    """
+    env = flyte.TaskEnvironment(name="test_env")
+
+    trigger1 = flyte.Trigger.hourly(trigger_time_input_key="trigger_time")
+    trigger2 = flyte.Trigger.daily(trigger_time_input_key="trigger_time")
+
+    @env.task(triggers=[trigger1, trigger2])
+    async def task_with_list_triggers(trigger_time: datetime, x: int = 1) -> str:
+        return f"Executed at {trigger_time.isoformat()}"
+
+    assert task_with_list_triggers.triggers == (trigger1, trigger2)
+    assert all(isinstance(t, flyte.Trigger) for t in task_with_list_triggers.triggers)
+
+
+def test_task_with_single_element_list_trigger():
+    """A single-element list of triggers should not be wrapped twice."""
+    env = flyte.TaskEnvironment(name="test_env")
+
+    trigger = flyte.Trigger.hourly(trigger_time_input_key="trigger_time")
+
+    @env.task(triggers=[trigger])
+    async def task_single_list_trigger(trigger_time: datetime, x: int = 1) -> str:
+        return f"Executed at {trigger_time.isoformat()}"
+
+    assert task_single_list_trigger.triggers == (trigger,)
+    assert isinstance(task_single_list_trigger.triggers[0], flyte.Trigger)
+
+
 def test_task_with_trigger_defaults_no_overlap():
     """Test task with defaults that don't overlap with trigger inputs"""
     env = flyte.TaskEnvironment(name="test_env")
@@ -387,6 +420,72 @@ def test_task_no_triggers():
         return x + y
 
     assert task_no_trigger.triggers == ()
+
+
+def test_trigger_with_custom_context():
+    """Test trigger with custom_context metadata"""
+    trigger = flyte.Trigger(
+        name="with_context",
+        automation=flyte.Cron("0 * * * *"),
+        custom_context={"experiment": "v2", "team": "ml"},
+    )
+
+    assert trigger.custom_context == {"experiment": "v2", "team": "ml"}
+
+
+def test_trigger_custom_context_default_none():
+    """Test that custom_context defaults to None"""
+    trigger = flyte.Trigger(
+        name="no_context",
+        automation=flyte.Cron("0 * * * *"),
+    )
+
+    assert trigger.custom_context is None
+
+
+def test_trigger_hourly_with_custom_context():
+    """Test convenience method passes custom_context through"""
+    trigger = flyte.Trigger.hourly(
+        custom_context={"source": "scheduled"},
+    )
+
+    assert trigger.custom_context == {"source": "scheduled"}
+
+
+def test_trigger_daily_with_custom_context():
+    """Test daily convenience method passes custom_context through"""
+    trigger = flyte.Trigger.daily(
+        custom_context={"pipeline": "etl"},
+    )
+
+    assert trigger.custom_context == {"pipeline": "etl"}
+
+
+def test_trigger_weekly_with_custom_context():
+    """Test weekly convenience method passes custom_context through"""
+    trigger = flyte.Trigger.weekly(
+        custom_context={"cadence": "weekly"},
+    )
+
+    assert trigger.custom_context == {"cadence": "weekly"}
+
+
+def test_trigger_monthly_with_custom_context():
+    """Test monthly convenience method passes custom_context through"""
+    trigger = flyte.Trigger.monthly(
+        custom_context={"report_type": "monthly"},
+    )
+
+    assert trigger.custom_context == {"report_type": "monthly"}
+
+
+def test_trigger_minutely_with_custom_context():
+    """Test minutely convenience method passes custom_context through"""
+    trigger = flyte.Trigger.minutely(
+        custom_context={"debug": "true"},
+    )
+
+    assert trigger.custom_context == {"debug": "true"}
 
 
 def test_trigger_different_key_names():

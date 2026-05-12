@@ -26,7 +26,7 @@ def _lazy_import_monty():
 def _discover_external_refs(func) -> Dict[str, Dict[str, Any]]:
     """Discover external references (tasks, traces, durables) in the function's globals.
 
-    Returns a dict with keys ``task_refs``, ``trace_refs``, ``durable_refs``.
+    Returns a dict with keys `task_refs`, `trace_refs`, `durable_refs`.
     """
     from flyte._task import TaskTemplate
     from flyte.remote._task import LazyEntity
@@ -69,7 +69,7 @@ class SandboxedTaskTemplate(AsyncFunctionTaskTemplate):
 
     For pure Python functions (no external calls), Monty executes the
     entire body without pausing. For functions that call other tasks or
-    durable operations, ``run_monty_async`` handles async dispatch.
+    durable operations, `run_monty_async` handles async dispatch.
     """
 
     task_type: str = "sandboxed-python"

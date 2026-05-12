@@ -65,7 +65,7 @@ def validate_sandboxed_interface(
 ) -> None:
     """Validate that all input and output types are Monty-compatible.
 
-    Raises ``TypeError`` if any type is unsupported.
+    Raises `TypeError` if any type is unsupported.
     """
     import inspect
 

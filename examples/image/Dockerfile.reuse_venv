@@ -1,0 +1,21 @@
+#syntax=docker/dockerfile:1.5
+FROM ghcr.io/astral-sh/uv:0.8 as uv
+FROM python:3.12-slim-bookworm
+
+USER root
+
+# Copy uv binary from the official image
+COPY --from=uv /uv /usr/bin/uv
+
+# Create a custom venv at /app/venv and configure UV to use it
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PYTHON=/app/venv/bin/python \
+    PATH="/app/venv/bin:$PATH"
+
+RUN uv venv /app/venv --python=3.12
+
+# Install a package into the custom venv
+RUN uv pip install --python $UV_PYTHON requests
+
+WORKDIR /root

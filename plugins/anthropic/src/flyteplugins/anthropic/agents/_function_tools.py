@@ -49,12 +49,14 @@ class FunctionTool:
     async def execute(self, **kwargs) -> typing.Any:
         """Execute the tool with the given arguments.
 
-        Async functions are awaited directly. Sync functions are run in a
-        thread executor to avoid blocking the event loop.
+        If a Flyte task is associated, task.aio() is always used — this routes
+        through the Flyte controller in a task context (handling both sync and
+        async tasks correctly) and falls back to forward() locally.
+        For plain callables, async functions are awaited directly and sync
+        functions are run in a thread executor to avoid blocking the event loop.
         """
         if self.task is not None:
-            if self.is_async:
-                return await self.task.aio(**kwargs)
+            return await self.task.aio(**kwargs)
         if self.is_async:
             return await self.func(**kwargs)
         return await asyncio.to_thread(self.func, **kwargs)
@@ -141,6 +143,18 @@ class Agent:
 
     This class represents the configuration for a Claude agent, including
     the model to use, system instructions, and available tools.
+
+    Attributes:
+        name: A human-readable name for this agent. Used for logging and
+            identification only; not sent to the API.
+        instructions: The system prompt passed to Claude on every turn.
+            Describes the agent's role, tone, and constraints.
+        model: The Claude model ID to use, e.g. `"claude-sonnet-4-20250514"`.
+        tools: List of `FunctionTool` instances the agent can invoke.
+            Create tools with `function_tool()`.
+        max_tokens: Maximum number of tokens in each Claude response.
+        max_iterations: Maximum number of tool-call / response cycles before
+            `run_agent` returns with a timeout message.
     """
 
     name: str = "assistant"

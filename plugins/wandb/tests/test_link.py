@@ -244,6 +244,107 @@ class TestWandbLink:
 
         assert uri == "https://custom.wandb.io/test-entity/test-project/runs/test-run-{{.actionName}}"
 
+    def test_wandb_link_host_from_context(self):
+        """Test link generation with host override from wandb_config context."""
+        link = Wandb(project="test-project", entity="test-entity")
+
+        uri = link.get_link(
+            run_name="test-run",
+            project="flyte-project",
+            domain="development",
+            context={
+                "wandb_host": "https://my-wandb.example.com",
+            },
+            parent_action_name="parent",
+            action_name="{{.actionName}}",
+            pod_name="{{.podName}}",
+        )
+
+        assert uri == "https://my-wandb.example.com/test-entity/test-project/runs/test-run-{{.actionName}}"
+
+    def test_wandb_link_decorator_host_used_when_no_context_host(self):
+        """Test that decorator host is used when context doesn't provide one."""
+        link = Wandb(
+            host="https://decorator.wandb.io",
+            project="test-project",
+            entity="test-entity",
+        )
+
+        uri = link.get_link(
+            run_name="test-run",
+            project="flyte-project",
+            domain="development",
+            context={},
+            parent_action_name="parent",
+            action_name="{{.actionName}}",
+            pod_name="{{.podName}}",
+        )
+
+        assert uri == "https://decorator.wandb.io/test-entity/test-project/runs/test-run-{{.actionName}}"
+
+    def test_wandb_link_context_host_overrides_decorator_host(self):
+        """Test that context host overrides decorator-level host."""
+        link = Wandb(
+            host="https://decorator.wandb.io",
+            project="test-project",
+            entity="test-entity",
+        )
+
+        uri = link.get_link(
+            run_name="test-run",
+            project="flyte-project",
+            domain="development",
+            context={
+                "wandb_host": "https://context.wandb.io",
+            },
+            parent_action_name="parent",
+            action_name="{{.actionName}}",
+            pod_name="{{.podName}}",
+        )
+
+        assert uri == "https://context.wandb.io/test-entity/test-project/runs/test-run-{{.actionName}}"
+
+    def test_wandb_link_context_host_used_in_fallback_when_missing_project(self):
+        """Test that context host is used in fallback URL when project/entity missing."""
+        link = Wandb()
+
+        uri = link.get_link(
+            run_name="test-run",
+            project="flyte-project",
+            domain="development",
+            context={
+                "wandb_host": "https://my-wandb.example.com",
+            },
+            parent_action_name="parent",
+            action_name="{{.actionName}}",
+            pod_name="{{.podName}}",
+        )
+
+        assert uri == "https://my-wandb.example.com"
+
+    def test_wandb_link_context_host_with_distributed(self):
+        """Test that context host works with distributed training links."""
+        link = Wandb(
+            project="test-project",
+            entity="test-entity",
+            _is_distributed=True,
+            _worker_index=None,
+        )
+
+        uri = link.get_link(
+            run_name="test-run",
+            project="flyte-project",
+            domain="development",
+            context={
+                "wandb_host": "https://my-wandb.example.com",
+            },
+            parent_action_name="parent",
+            action_name="train-task",
+            pod_name="{{.podName}}",
+        )
+
+        assert uri == "https://my-wandb.example.com/test-entity/test-project/runs/test-run-train-task"
+
     def test_wandb_link_empty_context(self):
         """Test link generation with empty context dict."""
         link = Wandb(project="test-project", entity="test-entity")
@@ -743,6 +844,65 @@ class TestWandbSweepLink:
         )
 
         assert uri == "https://custom.wandb.io/test-entity/test-project/sweeps"
+
+    def test_wandb_sweep_link_host_from_context(self):
+        """Test sweep link generation with host override from wandb_config context."""
+        link = WandbSweep(project="test-project", entity="test-entity")
+
+        uri = link.get_link(
+            run_name="test-run",
+            project="flyte-project",
+            domain="development",
+            context={
+                "wandb_host": "https://my-wandb.example.com",
+            },
+            parent_action_name="parent",
+            action_name="{{.actionName}}",
+            pod_name="{{.podName}}",
+        )
+
+        assert uri == "https://my-wandb.example.com/test-entity/test-project/sweeps"
+
+    def test_wandb_sweep_link_context_host_overrides_decorator_host(self):
+        """Test that context host overrides decorator-level host for sweeps."""
+        link = WandbSweep(
+            host="https://decorator.wandb.io",
+            project="test-project",
+            entity="test-entity",
+        )
+
+        uri = link.get_link(
+            run_name="test-run",
+            project="flyte-project",
+            domain="development",
+            context={
+                "wandb_host": "https://context.wandb.io",
+            },
+            parent_action_name="parent",
+            action_name="{{.actionName}}",
+            pod_name="{{.podName}}",
+        )
+
+        assert uri == "https://context.wandb.io/test-entity/test-project/sweeps"
+
+    def test_wandb_sweep_link_context_host_with_sweep_id(self):
+        """Test that context host works with sweep ID links."""
+        link = WandbSweep(project="test-project", entity="test-entity")
+
+        uri = link.get_link(
+            run_name="test-run",
+            project="flyte-project",
+            domain="development",
+            context={
+                "wandb_host": "https://my-wandb.example.com",
+                "_wandb_sweep_id": "sweep-abc123",
+            },
+            parent_action_name="parent",
+            action_name="{{.actionName}}",
+            pod_name="{{.podName}}",
+        )
+
+        assert uri == "https://my-wandb.example.com/test-entity/test-project/sweeps/sweep-abc123"
 
     def test_wandb_sweep_link_empty_context(self):
         """Test sweep link generation with empty context dict."""

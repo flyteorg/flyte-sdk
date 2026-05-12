@@ -16,13 +16,13 @@ import typing
 from datetime import datetime, timezone
 from functools import lru_cache
 from types import ModuleType
-from typing import List, Literal, Optional, Tuple, Union
+from typing import List, Literal, Optional, Sequence, Tuple, Union
 
 from flyte._logging import logger
 
-from ._ignore import IgnoreGroup
+from ._ignore import Ignore, IgnoreGroup, StandardIgnore
 
-CopyFiles = Literal["loaded_modules", "all", "none"]
+CopyFiles = Literal["loaded_modules", "all", "none", "custom"]
 
 
 def compress_scripts(source_path: str, destination: str, modules: List[ModuleType]):
@@ -97,6 +97,7 @@ def ls_files(
     copy_file_detection: CopyFiles,
     deref_symlinks: bool = False,
     ignore_group: Optional[IgnoreGroup] = None,
+    additional_files: Optional[Sequence[str]] = None,
 ) -> Tuple[List[str], str]:
     """
     user_modules_and_packages is a list of the Python modules and packages, expressed as absolute paths, that the
@@ -110,6 +111,11 @@ def ls_files(
         representing modules under this root are included
 
     If the copy enum is set to loaded_modules, then the loaded sys modules will be used.
+
+    :param additional_files: Absolute paths that must be included in addition to the files
+        discovered via ``copy_file_detection``. Each path must be under ``source_path`` and
+        may be a file, a directory (recursively included), or a glob pattern. Used to
+        implement ``Environment.include`` across bundling strategies.
     """
 
     # Unlike the below, the value error here is useful and should be returned to the user, like if absolute and
@@ -122,6 +128,39 @@ def ls_files(
     # this is --copy all (--copy none should never invoke this function)
     else:
         all_files = list_all_files(source_path, deref_symlinks, ignore_group)
+
+    if additional_files:
+        resolved_source = source_path.resolve()
+        extra_paths: list[str] = []
+        for entry in additional_files:
+            p = pathlib.Path(entry)
+            if p.is_dir():
+                extra_paths.extend(str(child) for child in p.glob("**/*") if child.is_file())
+            elif p.is_file():
+                extra_paths.append(str(p))
+            else:
+                matched = glob.glob(str(p))
+                if not matched:
+                    raise ValueError(f"include path {entry!r} is not a file, directory, or matching glob pattern.")
+                extra_paths.extend(m for m in matched if pathlib.Path(m).is_file())
+
+        existing = set(all_files)
+        for extra in extra_paths:
+            # Verify containment on resolved paths (handles macOS /private symlinks, ..
+            # segments, etc.) but append the path in a form that is a literal subpath
+            # of `source_path`, so the downstream `relative_to(source_path)` succeeds.
+            resolved = pathlib.Path(extra).resolve()
+            try:
+                rel = resolved.relative_to(resolved_source)
+            except ValueError as exc:
+                raise ValueError(
+                    f"include path {extra!r} is outside the bundle root {source_path!s}. "
+                    f"Pass --root-dir (or configure it) one level up so every include lives under the root."
+                ) from exc
+            normalized = str(source_path / rel)
+            if normalized not in existing:
+                existing.add(normalized)
+                all_files.append(normalized)
 
     all_files.sort()
     hasher = hashlib.md5()
@@ -158,10 +197,12 @@ def ls_relative_files(relative_paths: list[str], source_path: pathlib.Path) -> t
                 raise ValueError(f"File {path} is not a valid file, directory, or glob pattern")
 
     all_files.sort()
+    resolved_source = source_path.resolve()
     for p in all_files:
         _filehash_update(p, hasher)
-        # Use POSIX-style path for hashing to ensure consistent hashes across platforms
-        rel_path = pathlib.Path(p).relative_to(source_path).as_posix()
+        # Resolve before relative_to to normalize any ".." in the path — un-normalized
+        # paths would produce inconsistent hashes across equivalent paths.
+        rel_path = pathlib.Path(p).resolve().relative_to(resolved_source).as_posix()
         _pathhash_update(rel_path, hasher)
 
     digest = hasher.hexdigest()
@@ -185,7 +226,7 @@ def _pathhash_update(path: Union[os.PathLike, str], hasher: hashlib._Hash) -> No
 EXCLUDE_DIRS = {".git"}
 
 
-def list_all_files(source_path: pathlib.Path, deref_symlinks, ignore_group: Optional[IgnoreGroup] = None) -> List[str]:
+def list_all_files(source_path: pathlib.Path, deref_symlinks, ignore_group: Optional[Ignore] = None) -> List[str]:
     all_files = []
     source_path_str = str(source_path.absolute())
 
@@ -319,6 +360,46 @@ def add_imported_modules_from_source(source_path: str, destination: str, modules
 
         os.makedirs(os.path.dirname(new_destination), exist_ok=True)
         shutil.copy(file, new_destination)
+
+
+def copy_code_bundle_to_context(
+    root_dir: pathlib.Path,
+    copy_style: CopyFiles,
+    context_path: pathlib.Path,
+    ignore_patterns: Optional[List[str]] = None,
+) -> pathlib.Path:
+    """Copy source files for a CodeBundleLayer into a build context directory.
+
+    :param root_dir: The root directory to copy files from.
+    :param copy_style: "loaded_modules" to copy only imported modules, "all" to copy everything.
+    :param context_path: The build context directory.
+    :param ignore_patterns: Ignore patterns for the "all" case.  When *None* the
+        `STANDARD_IGNORE_PATTERNS` are used.
+    :return: The path within context_path where files were copied.
+    """
+    resolved_root = root_dir.resolve()
+
+    # Determine destination path (absolute roots go under _flyte_abs_context)
+    if root_dir.is_absolute():
+        rel_path = pathlib.PurePath(*root_dir.parts[1:])
+        dst_path = context_path / "_flyte_abs_context" / rel_path
+    else:
+        dst_path = context_path / root_dir
+
+    # Reuse ls_files to list files (handles both "loaded_modules" and "all")
+    ignore = IgnoreGroup(resolved_root, StandardIgnore)
+    if ignore_patterns is not None:
+        ignore.ignores = [StandardIgnore(resolved_root, ignore_patterns)]
+    all_files, _ = ls_files(resolved_root, copy_style, deref_symlinks=False, ignore_group=ignore)
+
+    # Copy listed files into the context
+    for abs_path in all_files:
+        rel = pathlib.Path(abs_path).relative_to(resolved_root)
+        dest = dst_path / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(abs_path, dest)
+
+    return dst_path
 
 
 def import_module_from_file(module_name, file):

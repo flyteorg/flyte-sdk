@@ -1,8 +1,8 @@
 """Sandbox utilities for running isolated code inside Flyte tasks.
 
-.. warning:: Experimental feature: alpha — APIs may change without notice.
+Warning: Experimental feature: alpha — APIs may change without notice.
 
-``flyte.sandbox`` provides two distinct sandboxing approaches:
+`flyte.sandbox` provides two distinct sandboxing approaches:
 
 ---
 
@@ -10,7 +10,7 @@
     Runs pure Python *orchestration logic* (control flow, routing, aggregation)
     with zero overhead. The Monty runtime enforces strong restrictions:
     no imports, no IO, no network access, microsecond startup.  Used via
-    ``@env.sandbox.orchestrator`` or ``flyte.sandbox.orchestrator_from_str()``.
+    `@env.sandbox.orchestrator` or `flyte.sandbox.orchestrator_from_str()`.
 
     Sandboxed orchestrators are:
 
@@ -37,16 +37,18 @@
 
 **2. Code sandbox** — arbitrary code in an isolated container
     Runs arbitrary Python scripts or shell commands inside an ephemeral Docker
-    container. The image is built on demand from declared ``packages`` and
-    ``system_packages``, executed once, then discarded. Network is blocked by
-    default (``block_network=True``), preventing outbound calls from untrusted
-    code.  Used via ``flyte.sandbox.create()``.
+    container. The image is built on demand from declared `packages` and
+    `system_packages`, executed once, then discarded. Used via `flyte.sandbox.create()`.
 
     Three execution modes are supported:
 
     - Code mode — provide Python source that runs with automatic input/output wiring.
     - Verbatim mode — run a script that manages its own I/O via /var/inputs and /var/outputs.
     - Command mode — execute an arbitrary command or entrypoint.
+
+    Network access is allowed by default. Pass `block_network=True` to block all
+    outbound access — locally via Docker `network_mode=none`, on-cluster via a
+    `NetworkPolicy`.
 
     Examples
     --------
@@ -171,7 +173,14 @@ Type restrictions:
 - Optional[T] and Union of allowed types are permitted.
 - Custom classes, dataclasses, Pydantic models, and any other user-defined types are NOT allowed.
 - set and frozenset are allowed as function parameter/return types but set literals and \
-set comprehensions are not supported in code."""
+set comprehensions are not supported in code.
+
+Built-in functions:
+- `flyte_map(task_name, *iterables, concurrency=0, group_name=None, return_exceptions=True)` \
+— Run a task over one or more iterables in parallel. The first argument is the task name as a \
+string (e.g. `"double"`). Returns a list of results. Mirrors `flyte.map` semantics including \
+concurrency limits and exception handling. Example: `flyte_map("double", items)` or \
+`flyte_map("add", xs, ys, concurrency=4)`."""
 
 __all__ = [
     "ORCHESTRATOR_SYNTAX_PROMPT",

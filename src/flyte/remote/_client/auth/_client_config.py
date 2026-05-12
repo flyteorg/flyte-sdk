@@ -2,10 +2,9 @@ import asyncio
 import typing
 from abc import abstractmethod
 
-import grpc.aio
 import pydantic
+from flyteidl2.auth.auth_service_connect import AuthMetadataServiceClient
 from flyteidl2.auth.auth_service_pb2 import GetOAuth2MetadataRequest, GetPublicClientConfigRequest
-from flyteidl2.auth.auth_service_pb2_grpc import AuthMetadataServiceStub
 
 AuthType = typing.Literal["ClientSecret", "Pkce", "ExternalCommand", "DeviceFlow", "Passthrough"]
 
@@ -62,16 +61,15 @@ class RemoteClientConfigStore(ClientConfigStore):
     This class implements the ClientConfigStore that is served by the Flyte Server, that implements AuthMetadataService
     """
 
-    def __init__(self, unauthenticated_channel: grpc.aio.Channel):
-        self._unauthenticated_channel = unauthenticated_channel
+    def __init__(self, endpoint: str, http_client=None):
+        self._client = AuthMetadataServiceClient(address=endpoint, http_client=http_client)
 
     async def get_client_config(self) -> ClientConfig:
         """
-        Retrieves the ClientConfig from the given grpc.Channel assuming  AuthMetadataService is available
+        Retrieves the ClientConfig from the AuthMetadataService via ConnectRPC.
         """
-        metadata_service = AuthMetadataServiceStub(self._unauthenticated_channel)
-        oauth2_metadata_task = metadata_service.GetOAuth2Metadata(GetOAuth2MetadataRequest())
-        public_client_config_task = metadata_service.GetPublicClientConfig(GetPublicClientConfigRequest())
+        oauth2_metadata_task = self._client.get_o_auth2_metadata(GetOAuth2MetadataRequest())
+        public_client_config_task = self._client.get_public_client_config(GetPublicClientConfigRequest())
         oauth2_metadata, public_client_config = await asyncio.gather(oauth2_metadata_task, public_client_config_task)
         return ClientConfig(
             token_endpoint=oauth2_metadata.token_endpoint,

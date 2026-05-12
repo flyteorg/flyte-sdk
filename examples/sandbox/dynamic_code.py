@@ -163,6 +163,96 @@ map_scale_sum = make_map_reduce("scale", "+", scale)
 # → scale(1,10) + scale(2,10) + scale(3,10) = 10 + 20 + 30 = 60
 
 
+# --- Pattern 5: Parallel mapping with flyte_map ------------------------------
+# ``flyte_map`` is a sandbox built-in that delegates to ``flyte.map``.
+# It runs a task over an iterable in parallel and returns a list of results.
+# Use it instead of sequential for-loops when you want concurrency.
+
+
+@env.task
+def square(x: int) -> int:
+    return x * x
+
+
+# flyte_map with a single iterable
+parallel_squares = flyte.sandbox.orchestrator_from_str(
+    """
+    flyte_map("square", items)
+    """,
+    inputs={"items": list[int]},
+    output=list[int],
+    tasks=[square],
+    name="parallel-squares",
+)
+# flyte.run(parallel_squares, items=[1, 2, 3, 4])  → [1, 4, 9, 16]
+
+
+# flyte_map with multiple iterables (zipped) and concurrency limit
+parallel_add = flyte.sandbox.orchestrator_from_str(
+    """
+    flyte_map("add", xs, ys, concurrency=4)
+    """,
+    inputs={"xs": list, "ys": list},
+    output=list,
+    tasks=[add],
+    name="parallel-add",
+)
+# flyte.run(parallel_add, xs=[1, 2, 3], ys=[10, 20, 30])  → [11, 22, 33]
+
+
+# flyte_map results fed into further sandbox logic
+map_and_sum = flyte.sandbox.orchestrator_from_str(
+    """
+    squared = flyte_map("square", items)
+    total = 0
+    for v in squared:
+        total = total + v
+    total
+    """,
+    inputs={"items": list},
+    output=int,
+    tasks=[square],
+    name="map-and-sum",
+)
+# flyte.run(map_and_sum, items=[1, 2, 3])  → 14  (1 + 4 + 9)
+
+
+async def flyte_map_local():
+    """Run flyte_map examples locally via orchestrate_local()."""
+    # Basic parallel map
+    result = await flyte.sandbox.orchestrate_local(
+        'flyte_map("square", items)',
+        inputs={"items": [1, 2, 3, 4, 5]},
+        tasks=[square],
+    )
+    print(f"  squares: {result}")
+    assert result == [1, 4, 9, 16, 25]
+
+    # Multiple iterables
+    result = await flyte.sandbox.orchestrate_local(
+        'flyte_map("add", xs, ys)',
+        inputs={"xs": [1, 2, 3], "ys": [10, 20, 30]},
+        tasks=[add],
+    )
+    print(f"  pairwise add: {result}")
+    assert result == [11, 22, 33]
+
+    # Map then reduce
+    result = await flyte.sandbox.orchestrate_local(
+        """
+        squared = flyte_map("square", items)
+        total = 0
+        for v in squared:
+            total = total + v
+        total
+        """,
+        inputs={"items": [1, 2, 3, 4]},
+        tasks=[square],
+    )
+    print(f"  sum of squares: {result}")
+    assert result == 30  # 1 + 4 + 9 + 16
+
+
 # --- Attach to an environment for ``flyte run`` -----------------------------
 
 sandbox_env = flyte.TaskEnvironment.from_task(
@@ -173,6 +263,9 @@ sandbox_env = flyte.TaskEnvironment.from_task(
     area_of_triangle,
     bmi,
     map_scale_sum,
+    parallel_squares,
+    parallel_add,
+    map_and_sum,
 )
 
 
@@ -192,3 +285,6 @@ if __name__ == "__main__":
 
     print("\n--- Map-reduce pipeline ---")
     print(f"map_scale_sum: {map_scale_sum.name}, has_external_refs={map_scale_sum._has_external_refs}")
+
+    print("\n--- flyte_map local execution ---")
+    asyncio.run(flyte_map_local())

@@ -16,7 +16,6 @@ Three modes:
 - **Verbatim mode** (``code=``, ``auto_io=False``): run a complete Python script as-is.
   CLI args are forwarded but the script handles all I/O itself.
 - **Command mode** (``command=``): run any shell command (pytest, binary, non-Python code, etc.).
-
 """
 
 import asyncio
@@ -28,7 +27,7 @@ import nest_asyncio
 import flyte
 import flyte.sandbox
 from flyte._image import PythonWheels
-from flyte.io import File
+from flyte.io import Dir, File
 from flyte.sandbox import sandbox_environment
 
 nest_asyncio.apply()
@@ -125,8 +124,69 @@ linecount_sandbox = flyte.sandbox.create(
     outputs={"line_count": str},
 )
 
+# Example 5 — Dir input/output support
+#
+# ``Dir`` inputs arrive as local directory paths in auto-IO mode. To return a
+# ``Dir``, create the directory at ``/var/outputs/<name>`` and write files
+# inside it.
 
-# Example 5 — as_task() + deploy: build a deployable sandbox task
+_dir_transform_code = """\
+import pathlib
+
+src = pathlib.Path(source_dir)
+dst = pathlib.Path("/var/outputs/processed_dir")
+dst.mkdir()
+
+copied_files = 0
+for path in sorted(src.rglob("*")):
+    if not path.is_file():
+        continue
+    rel = path.relative_to(src)
+    target = dst / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(path.read_text().upper())
+    copied_files += 1
+
+(dst / "summary.txt").write_text(f"copied_files={copied_files}\\n")
+"""
+
+dir_sandbox = flyte.sandbox.create(
+    name="dir-transform",
+    code=_dir_transform_code,
+    inputs={"source_dir": Dir},
+    outputs={"processed_dir": Dir, "copied_files": int},
+)
+
+# Example 6 — block_network=True: no outbound network access
+#
+# Network access is blocked by default. The sandbox can only read its inputs
+# and write its outputs — any attempt to reach the network will fail.
+
+isolated_sandbox = flyte.sandbox.create(
+    name="isolated-compute",
+    code="""\
+import urllib.request
+with urllib.request.urlopen("https://example.com") as r:
+    status = str(r.status)
+""",
+    outputs={"status": str},
+    block_network=True,
+)
+
+# Example 7 — block_network=False (default): outbound network access allowed
+
+networked_sandbox = flyte.sandbox.create(
+    name="networked-fetch",
+    code="""\
+import urllib.request
+with urllib.request.urlopen("https://example.com") as r:
+    status = str(r.status)
+""",
+    outputs={"status": str},
+)
+
+
+# Example 8 — as_task() + deploy: build a deployable sandbox task
 #
 # Use ``as_task()`` to get a ContainerTask with ``_script`` pre-filled as a
 # default.
@@ -177,6 +237,18 @@ async def payload_generator() -> File:
 
 
 @env.task
+async def create_input_dir() -> Dir:
+    """Create a small directory tree for the Dir sandbox example."""
+    base = Path("/tmp/sandbox-dir-input")
+    base.mkdir(parents=True, exist_ok=True)
+    (base / "a.txt").write_text("alpha\n")
+    nested = base / "nested"
+    nested.mkdir(exist_ok=True)
+    (nested / "b.txt").write_text("beta\n")
+    return await Dir.from_local(str(base))
+
+
+@env.task
 async def run_pipeline() -> dict:
     """Run all sandbox examples and return their outputs."""
     # Auto-inject: sum 1..10 = 55
@@ -197,6 +269,24 @@ async def run_pipeline() -> dict:
     data_file = await create_text_file()
     line_count = await linecount_sandbox.run.aio(data_file=data_file)
 
+    # Dir input/output mode: transform an input directory into an output directory
+    input_dir = await create_input_dir()
+    processed_dir, copied_files = await dir_sandbox.run.aio(source_dir=input_dir)
+    processed_dir_path = Path(await processed_dir.download())
+    dir_output_files = sorted(
+        str(path.relative_to(processed_dir_path)) for path in processed_dir_path.rglob("*") if path.is_file()
+    )
+    summary_text = (processed_dir_path / "summary.txt").read_text().strip()
+
+    # Network-blocked sandbox: pure computation, no network
+    try:
+        isolated_result = await isolated_sandbox.run.aio()
+    except Exception as e:
+        isolated_result = f"Failed to access network: {e}"
+
+    # Network-allowed sandbox: fetch external URL
+    status = await networked_sandbox.run.aio()
+
     # Deploy a sandbox task
     deployment_summary = await deploy_sandbox_task()
 
@@ -207,6 +297,11 @@ async def run_pipeline() -> dict:
         "window_end": window_end.isoformat(),
         "etl_sum_1_to_10": etl_total,
         "line_count": line_count,
+        "dir_copied_files": copied_files,
+        "dir_output_files": ",".join(dir_output_files),
+        "dir_summary": summary_text,
+        "isolated_result": isolated_result,
+        "networked_status": status,
         "deployment_summary": deployment_summary,
     }
 
@@ -224,6 +319,20 @@ def run_pipeline_sync() -> dict:
     etl_total = etl_sandbox.run(payload=payload)
     data_file = asyncio.run(create_text_file())
     line_count = linecount_sandbox.run(data_file=data_file)
+    input_dir = asyncio.run(create_input_dir())
+    processed_dir, copied_files = dir_sandbox.run(source_dir=input_dir)
+    processed_dir_path = Path(processed_dir.download_sync())
+    dir_output_files = sorted(
+        str(path.relative_to(processed_dir_path)) for path in processed_dir_path.rglob("*") if path.is_file()
+    )
+    summary_text = (processed_dir_path / "summary.txt").read_text().strip()
+
+    try:
+        isolated_result = isolated_sandbox.run()
+    except Exception as e:
+        isolated_result = f"Failed to access network: {e}"
+
+    status = networked_sandbox.run()
     deployment_summary = asyncio.run(deploy_sandbox_task())
 
     return {
@@ -233,6 +342,11 @@ def run_pipeline_sync() -> dict:
         "window_end": window_end.isoformat(),
         "etl_sum_1_to_10": etl_total,
         "line_count": line_count,
+        "dir_copied_files": copied_files,
+        "dir_output_files": ",".join(dir_output_files),
+        "dir_summary": summary_text,
+        "isolated_result": isolated_result,
+        "networked_status": status,
         "deployment_summary": deployment_summary,
     }
 

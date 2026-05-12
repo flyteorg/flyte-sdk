@@ -451,6 +451,25 @@ async def test_function_tool_execute_flyte_task():
 
 
 @pytest.mark.asyncio
+async def test_function_tool_execute_sync_flyte_task_uses_aio():
+    """Verify task.aio() is called (not self.func) for sync Flyte tasks."""
+    env = flyte.TaskEnvironment("test-exec-sync-aio-path")
+
+    @env.task
+    def multiply(a: int, b: int) -> int:
+        """Multiply two numbers."""
+        return a * b
+
+    tool = function_tool(multiply)
+
+    with patch.object(tool.task, "aio", new_callable=AsyncMock, return_value=42) as mock_aio:
+        result = await tool.execute(a=6, b=7)
+
+    mock_aio.assert_called_once_with(a=6, b=7)
+    assert result == 42
+
+
+@pytest.mark.asyncio
 async def test_function_tool_execute_async_flyte_task_uses_aio():
     """Verify task.aio() is called (not self.func) for async Flyte tasks."""
     env = flyte.TaskEnvironment("test-exec-aio-path")

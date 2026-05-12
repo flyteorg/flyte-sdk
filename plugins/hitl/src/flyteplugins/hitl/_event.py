@@ -9,15 +9,16 @@ This module provides the Event class that encapsulates the HITL functionality:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import os
 import uuid
 from dataclasses import dataclass
 from typing import Any, ClassVar, Generic, Literal, Type, TypeVar
 
 import flyte
 import flyte.app
-import flyte.durable
 import flyte.report
 import flyte.storage as storage
 from flyte.app.extras import FastAPIAppEnvironment
@@ -35,22 +36,21 @@ EventScope = Literal["run"]
 
 logger = logging.getLogger(__name__)
 
-
 # ============================================================================
 # App and Task Environment for HITL events (module-level)
 # ============================================================================
 
 event_image = (
-    flyte.Image.from_debian_base()
+    flyte.Image.from_debian_base(flyte_version=flyte.version(), name="hitl-event-app-image")
     .with_pip_packages("fastapi", "uvicorn", "python-multipart", "aiofiles")
-    .with_pip_packages("flyte>=2.0.0", "flyteplugins-hitl>=2.0.0")
+    .with_pip_packages(f"flyteplugins-hitl=={flyte.version()}")
 )
 
 event_app_env = FastAPIAppEnvironment(
     name="hitl-event-app",
     app=app,
-    domain=flyte.app.Domain(subdomain="hitl-event-app"),
     description="Human-in-the-loop event service for Flyte workflows",
+    command=["uvicorn", "flyteplugins.hitl._app:app", "--host", "0.0.0.0", "--port", "8080"],
     image=event_image,
     resources=flyte.Resources(cpu=1, memory="512Mi"),
     requires_auth=True,
@@ -148,17 +148,17 @@ class Event(Generic[T]):
     @classmethod
     async def _serve_app(cls) -> flyte.AppHandle:
         """Serve the app and return the app handle."""
-        from flyteplugins.hitl import __version__
-
         await flyte.init_in_cluster.aio()
+        project = flyte.current_project()
+        domain = flyte.current_domain()
+        org = os.getenv("_U_ORG_NAME")
+        event_app_env.domain = flyte.app.Domain(subdomain=f"hitl-event-app-{org}-{project}-{domain}")
         return await flyte.with_servecontext(
             copy_style="none",
-            version=__version__,
-            interactive_mode=True,
+            version=flyte.version(),
         ).serve.aio(event_app_env)
 
     @classmethod
-    @syncify
     async def create(
         cls,
         name: str,
@@ -277,13 +277,6 @@ class Event(Generic[T]):
             indent=2,
         )
 
-        report_html = get_event_report_html(
-            form_url=self.form_url,
-            api_url=self.api_url,
-            curl_body=curl_body,
-            type_name=self._type_name,
-        )
-
         await show_form.override(
             short_name=self.name,
             links=[
@@ -293,7 +286,7 @@ class Event(Generic[T]):
                     request_path=self._request_path,
                 )
             ],
-        )(report_html)
+        )(self.form_url, self.api_url, curl_body, self._type_name)
         return await wait_for_input_event(
             name=self.name,
             request_id=self.request_id,
@@ -338,12 +331,19 @@ class EventFormLink(flyte.Link):
 
 
 @event_task_env.task(report=True)
-async def show_form(html_report: str):
+async def show_form(form_url: str, api_url: str, curl_body: str, type_name: str) -> str:
     """
     Task that serves the event app.
     """
+    html_report = get_event_report_html(
+        form_url=form_url,
+        api_url=api_url,
+        curl_body=curl_body,
+        type_name=type_name,
+    )
     await flyte.report.replace.aio(html_report)
     await flyte.report.flush.aio()
+    return html_report
 
 
 @flyte.trace
@@ -372,7 +372,7 @@ async def wait_for_input_event(
                     return value
 
             logger.info(f"Event '{name}' waiting for human input... ({elapsed}/{timeout_seconds}s elapsed)")
-        await flyte.durable.sleep.aio(poll_interval_seconds)
+        await asyncio.sleep(poll_interval_seconds)
         elapsed += poll_interval_seconds
 
     raise TimeoutError(
@@ -420,7 +420,7 @@ async def new_event(
         event = new_event("value_event", data_type=int, scope="run", prompt="Enter a number")
         value = event.wait()
     """
-    return await Event.create.aio(
+    return await Event.create(
         name=name,
         data_type=data_type,
         scope=scope,

@@ -71,21 +71,13 @@ async def _initialize_client(
     client_credentials_secret: str | None = None,
     rpc_retries: int = 3,
     http_proxy_url: str | None = None,
+    disable_keyring: bool = False,
 ) -> ClientSet:
     """
     Initialize the client based on the execution mode.
     :return: The initialized client
     """
     from flyte.remote._client.controlplane import ClientSet
-
-    # https://grpc.io/docs/guides/keepalive/#keepalive-configuration-specification
-    channel_options = [
-        ("grpc.keepalive_permit_without_calls", 1),
-        ("grpc.keepalive_time_ms", 30000),  # Send keepalive ping every 30 seconds
-        ("grpc.keepalive_timeout_ms", 10000),  # Wait 10 seconds for keepalive response
-        ("grpc.http2.max_pings_without_data", 0),  # Allow unlimited pings without data
-        ("grpc.http2.min_ping_interval_without_data_ms", 30000),  # Min 30s between pings
-    ]
 
     if endpoint and api_key is None:
         return await ClientSet.for_endpoint(
@@ -102,7 +94,7 @@ async def _initialize_client(
             client_config=client_config,
             rpc_retries=rpc_retries,
             http_proxy_url=http_proxy_url,
-            grpc_options=channel_options,
+            disable_keyring=disable_keyring,
         )
     elif api_key:
         return await ClientSet.for_api_key(
@@ -119,7 +111,7 @@ async def _initialize_client(
             client_config=client_config,
             rpc_retries=rpc_retries,
             http_proxy_url=http_proxy_url,
-            grpc_options=channel_options,
+            disable_keyring=disable_keyring,
         )
 
     raise InitializationError(
@@ -128,9 +120,21 @@ async def _initialize_client(
 
 
 def _initialize_logger(
-    log_level: int | None = None, log_format: LogFormat | None = None, reset_root_logger: bool = False
+    log_level: int | None = None,
+    log_format: LogFormat | None = None,
+    reset_root_logger: bool = False,
+    user_log_level: int | None = None,
 ) -> None:
-    initialize_logger(log_level=log_level, log_format=log_format, enable_rich=True, reset_root_logger=reset_root_logger)
+    # In-cluster runtimes never render Rich output (stdout is captured), so skip the Rich handler
+    # — this avoids rich.logging and the transitive ipython_check -> IPython import at startup.
+    enable_rich = os.environ.get("FLYTE_INTERNAL_EXECUTION_PROJECT") is None
+    initialize_logger(
+        log_level=log_level,
+        log_format=log_format,
+        enable_rich=enable_rich,
+        reset_root_logger=reset_root_logger,
+        user_log_level=user_log_level,
+    )
 
 
 @syncify
@@ -142,6 +146,7 @@ async def init(
     log_level: int | None = None,
     log_format: LogFormat | None = None,
     reset_root_logger: bool = False,
+    user_log_level: int | None = None,
     endpoint: str | None = None,
     headless: bool = False,
     insecure: bool = False,
@@ -156,6 +161,7 @@ async def init(
     auth_client_config: ClientConfig | None = None,
     rpc_retries: int = 3,
     http_proxy_url: str | None = None,
+    disable_keyring: bool = False,
     storage: Storage | None = None,
     batch_size: int = 1000,
     image_builder: ImageBuildEngine.ImageBuilderType = "local",
@@ -207,12 +213,18 @@ async def init(
     :param load_plugin_type_transformers: If enabled (default True), load the type transformer plugins registered under
       the "flyte.plugins.types" entry point group.
     :param local_persistence: Whether to enable SQLite persistence for local run metadata (default: False).
+    :param disable_keyring: Disable storage of tokens in local keyring.
     :return: None
     """
     from flyte._utils import org_from_endpoint, sanitize_endpoint
     from flyte.types import _load_custom_type_transformers
 
-    _initialize_logger(log_level=log_level, log_format=log_format, reset_root_logger=reset_root_logger)
+    _initialize_logger(
+        log_level=log_level,
+        log_format=log_format,
+        reset_root_logger=reset_root_logger,
+        user_log_level=user_log_level,
+    )
     if load_plugin_type_transformers:
         _load_custom_type_transformers()
 
@@ -238,6 +250,7 @@ async def init(
                 client_config=auth_client_config,
                 rpc_retries=rpc_retries,
                 http_proxy_url=http_proxy_url,
+                disable_keyring=disable_keyring,
             )
 
         if not root_dir:
@@ -269,6 +282,7 @@ async def init_from_config(
     root_dir: Path | None = None,
     log_level: int | None = None,
     log_format: LogFormat = "console",
+    user_log_level: int | None = None,
     project: str | None = None,
     domain: str | None = None,
     storage: Storage | None = None,
@@ -343,10 +357,12 @@ async def init_from_config(
         proxy_command=cfg.platform.proxy_command,
         client_id=cfg.platform.client_id,
         client_credentials_secret=cfg.platform.client_credentials_secret,
+        disable_keyring=cfg.platform.disable_keyring,
         root_dir=root_dir,
         log_level=log_level,
         log_format=log_format,
-        image_builder=image_builder or cfg.image.builder,
+        user_log_level=user_log_level,
+        image_builder=image_builder or cfg.image.builder or "local",
         batch_size=batch_size,
         images=cfg.image.image_refs,
         storage=storage,
@@ -481,8 +497,20 @@ async def init_in_cluster(
         remote_kwargs["insecure_skip_verify"] = True
         logger.info("SSL certificate verification disabled (insecure_skip_verify=True)")
 
+    # Cluster runtime never benefits from keyring storage: tokens are short-lived, the pod is
+    # ephemeral, and there is no human keychain to read from. Disabling keyring also avoids the
+    # ~180ms cold-start hit from `keyring`'s backend enumeration (incl. the `keyring.backends.macOS.api`
+    # C-extension probe that runs even on Linux). Passed directly to ``init`` rather than via
+    # ``remote_kwargs`` because the returned dict is also used to construct the controller, which
+    # does not accept ``disable_keyring``.
     await init.aio(
-        org=org, project=project, domain=domain, root_dir=Path.cwd(), image_builder="remote", **remote_kwargs
+        org=org,
+        project=project,
+        domain=domain,
+        root_dir=Path.cwd(),
+        image_builder="remote",
+        disable_keyring=True,
+        **remote_kwargs,
     )
     return remote_kwargs
 

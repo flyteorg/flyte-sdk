@@ -12,13 +12,45 @@ import rich_click as click
 from typing_extensions import get_args
 
 from .._code_bundle._utils import CopyFiles
+from .._sentry import capture_exception, count
 from .._task import TaskTemplate
+from ..errors import RuntimeSystemError
 from ..remote import Run
+from ..syncify import syncify
 from . import _common as common
 from ._params import to_click_option
 
 RUN_REMOTE_CMD = "deployed-task"
+RUN_PYTHON_SCRIPT_CMD = "python-script"
 initialize_config = common.initialize_config
+
+
+@syncify
+async def _render_debug_url(console, result: Run, config: common.CLIConfig) -> None:
+    """Poll the run for the VS Code Debugger URL and print it."""
+    from flyte._debug.client import watch_for_vscode_url
+    from flyte._status import status
+
+    status.step("Waiting for VS Code Debugger URL...")
+    vscode_url = await watch_for_vscode_url(result)
+    if vscode_url:
+        if config.output_format in ("json", "table-simple"):
+            debug_info = f"VS Code Debugger URL: {vscode_url}"
+        else:
+            debug_info = (
+                f"[yellow bold]Debug mode enabled.[/yellow bold]\n"
+                f"VS Code Debugger: [blue bold][link={vscode_url}]Open VS Code Debugger[/link][/blue bold]"
+            )
+        console.print(common.get_panel("Debug", debug_info, config.output_format))
+    else:
+        if config.output_format in ("json", "table-simple"):
+            debug_info = "Debug mode enabled but VS Code Debugger URL was not found. Check the task logs."
+        else:
+            debug_info = (
+                "[yellow bold]Debug mode enabled.[/yellow bold]\n"
+                "VS Code Debugger URL was not found. Check the task logs."
+            )
+        console.print(common.get_panel("Debug", debug_info, config.output_format))
 
 
 @lru_cache()
@@ -177,11 +209,49 @@ class RunArguments:
             )
         },
     )
+    debug: bool = field(
+        default=False,
+        metadata={
+            "click.option": click.Option(
+                ["--debug"],
+                is_flag=True,
+                default=False,
+                help="Run the task as a VSCode debug task. Starts a code-server in the container "
+                "so you can connect via the UI to interactively debug/run the task.",
+            )
+        },
+    )
+    env: List[str] = field(
+        default_factory=list,
+        metadata={
+            "click.option": click.Option(
+                ["--env", "-e"],
+                type=str,
+                multiple=True,
+                help="Environment variable to set on the run context. Format: KEY=VALUE. "
+                "Can be specified multiple times, e.g. `-e LOG_LEVEL=debug -e FOO=bar`.",
+            )
+        },
+    )
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> RunArguments:
         modified = {k: v for k, v in d.items() if k in {f.name for f in fields(cls)}}
         return cls(**modified)
+
+    def parsed_env_vars(self) -> Dict[str, str] | None:
+        """Parse ``--env KEY=VALUE`` entries into a dict (returns None if none provided)."""
+        if not self.env:
+            return None
+        parsed: Dict[str, str] = {}
+        for item in self.env:
+            if "=" not in item:
+                raise click.BadParameter(f"Invalid --env value {item!r}: expected KEY=VALUE.")
+            key, value = item.split("=", 1)
+            if not key:
+                raise click.BadParameter(f"Invalid --env value {item!r}: key must not be empty.")
+            parsed[key] = value
+        return parsed
 
     @classmethod
     def options(cls) -> List[click.Option]:
@@ -257,9 +327,14 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
                 service_account=self.run_args.service_account,
                 log_format=config.log_format,
                 reset_root_logger=config.reset_root_logger,
+                debug=self.run_args.debug,
+                env_vars=self.run_args.parsed_env_vars(),
             )
             result = await execution_context.run.aio(self.obj, **ctx.params)
         except Exception as e:
+            if isinstance(e, RuntimeSystemError):
+                capture_exception(e)
+                count("flyte.run.error", error_kind="system", error_code=e.code)
             console.print(common.get_panel("Exception", f"[red]✕ Execution failed:[/red] {e}", config.output_format))
             exit(1)
 
@@ -289,6 +364,9 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
             )
         console.print(common.get_panel("Remote Run", run_info, config.output_format))
 
+        if self.run_args.debug:
+            await _render_debug_url.aio(console, result, config)
+
         if self.run_args.follow:
             from flyte._status import status
 
@@ -312,6 +390,8 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
                 service_account=self.run_args.service_account,
                 log_format=config.log_format,
                 reset_root_logger=config.reset_root_logger,
+                debug=self.run_args.debug,
+                env_vars=self.run_args.parsed_env_vars(),
                 _tracker=tracker,
             )
             return await execution_context.run.aio(self.obj, **ctx.params)
@@ -373,9 +453,23 @@ class TaskPerFileGroup(common.ObjectsPerFileGroup):
         return {k: v for k, v in module.__dict__.items() if isinstance(v, TaskTemplate)}
 
     def list_commands(self, ctx):
+        common.initialize_config(
+            ctx,
+            self.run_args.project,
+            self.run_args.domain,
+            self.run_args.root_dir,
+            sync_local_sys_paths=not self.run_args.no_sync_local_sys_paths,
+        )
         return super().list_commands(ctx)
 
     def get_command(self, ctx, obj_name):
+        common.initialize_config(
+            ctx,
+            self.run_args.project,
+            self.run_args.domain,
+            self.run_args.root_dir,
+            sync_local_sys_paths=not self.run_args.no_sync_local_sys_paths,
+        )
         return super().get_command(ctx, obj_name)
 
     def _get_command_for_obj(self, ctx: click.Context, obj_name: str, obj: Any) -> click.Command:
@@ -456,6 +550,8 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
                 name=self.run_args.name,
                 project=self.run_args.run_project,
                 domain=self.run_args.run_domain,
+                debug=self.run_args.debug,
+                env_vars=self.run_args.parsed_env_vars(),
             )
             result = await execution_context.run.aio(task, **ctx.params)
         except Exception as e:
@@ -492,6 +588,9 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
                 f"➡️  [blue bold][link={result.url}]{result.url}[/link][/blue bold]"
             )
         console.print(common.get_panel("Remote Run", run_info, config.output_format))
+
+        if self.run_args.debug:
+            await _render_debug_url.aio(console, result, config)
 
         if self.run_args.follow:
             from flyte._status import status
@@ -663,6 +762,7 @@ class TaskFiles(common.FileGroup):
     def list_commands(self, ctx):
         v = [
             RUN_REMOTE_CMD,
+            RUN_PYTHON_SCRIPT_CMD,
             *super().list_commands(ctx),
         ]
         return v
@@ -678,6 +778,11 @@ class TaskFiles(common.FileGroup):
             import flyte.config
 
             ctx.obj = common.CLIConfig(config=flyte.config.auto(), ctx=ctx, run_args=run_args)
+        if cmd_name == RUN_PYTHON_SCRIPT_CMD:
+            from ._run_python_script import python_script
+
+            return python_script
+
         if cmd_name == RUN_REMOTE_CMD:
             return RemoteTaskGroup(
                 name=cmd_name,
@@ -772,6 +877,18 @@ You can discover what deployed tasks are available by running:
 
 ```bash
 flyte run {RUN_REMOTE_CMD}
+```
+
+To run an arbitrary Python script on a remote cluster (without defining a task), use `{RUN_PYTHON_SCRIPT_CMD}`:
+
+```bash
+flyte run {RUN_PYTHON_SCRIPT_CMD} script.py --gpu 1 --gpu-type A100 --memory 64Gi
+```
+
+You can also install extra packages and wait for completion:
+
+```bash
+flyte run --follow {RUN_PYTHON_SCRIPT_CMD} train.py --packages torch,transformers
 ```
 
 Other arguments to the run command are listed below.

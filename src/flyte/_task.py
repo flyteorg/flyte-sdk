@@ -113,6 +113,7 @@ class TaskTemplate(Generic[P, R, F]):
     queue: Optional[str] = None
     debuggable: bool = False
     resolver: Optional[Resolver] = None
+    entrypoint: bool = False
 
     parent_env: Optional[weakref.ReferenceType[TaskEnvironment]] = None
     parent_env_name: Optional[str] = None
@@ -376,6 +377,7 @@ class TaskTemplate(Generic[P, R, F]):
         pod_template: Optional[Union[str, PodTemplate]] = None,
         queue: Optional[str] = None,
         interruptible: Optional[bool] = None,
+        entrypoint: Optional[bool] = None,
         links: Tuple[Link, ...] = (),
         **kwargs: Any,
     ) -> TaskTemplate:
@@ -396,6 +398,7 @@ class TaskTemplate(Generic[P, R, F]):
         :param pod_template: Optional override for the pod template to use for the task.
         :param queue: Optional override for the queue to use for the task.
         :param interruptible: Optional override for the interruptible policy for the task.
+        :param entrypoint: Optional override for the entrypoint flag for the task.
         :param links: Optional override for the Links associated with the task.
         :param kwargs: Additional keyword arguments for further overrides. Some fields like name, image, docs,
          and interface cannot be overridden.
@@ -436,6 +439,7 @@ class TaskTemplate(Generic[P, R, F]):
         secrets = secrets or self.secrets
 
         interruptible = interruptible if interruptible is not None else self.interruptible
+        entrypoint = entrypoint if entrypoint is not None else self.entrypoint
 
         for k, v in kwargs.items():
             if k == "name":
@@ -460,6 +464,7 @@ class TaskTemplate(Generic[P, R, F]):
             max_inline_io_bytes=max_inline_io_bytes,
             pod_template=pod_template or self.pod_template,
             interruptible=interruptible,
+            entrypoint=entrypoint,
             queue=queue or self.queue,
             links=links or self.links,
             **kwargs,
@@ -476,6 +481,7 @@ class AsyncFunctionTaskTemplate(TaskTemplate[P, R, F]):
     func: F
     plugin_config: Optional[Any] = None  # This is used to pass plugin specific configuration
     debuggable: bool = True
+    task_resolver: Optional[Any] = None
 
     def __post_init__(self):
         super().__post_init__()
@@ -562,21 +568,23 @@ class AsyncFunctionTaskTemplate(TaskTemplate[P, R, F]):
 
         if not serialize_context.code_bundle or not serialize_context.code_bundle.pkl:
             # If we do not have a code bundle, or if we have one, but it is not a pkl, we need to add the resolver
+            resolver = self.task_resolver or self.resolver
+            if resolver is None:
+                from flyte._internal.resolvers.default import DefaultTaskResolver
 
-            from flyte._internal.resolvers.default import DefaultTaskResolver
+                resolver = DefaultTaskResolver()
 
             if not serialize_context.root_dir:
                 raise RuntimeSystemError(
                     "SerializationError",
                     "Root dir is required for default task resolver when no code bundle is provided.",
                 )
-            _task_resolver = self.resolver or DefaultTaskResolver()
             args = [
                 *args,
                 *[
                     "--resolver",
-                    _task_resolver.import_path,
-                    *_task_resolver.loader_args(task=self, root_dir=serialize_context.root_dir),
+                    resolver.import_path,
+                    *resolver.loader_args(task=self, root_dir=serialize_context.root_dir),
                 ],
             ]
 

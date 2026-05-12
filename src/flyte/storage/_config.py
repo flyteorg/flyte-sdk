@@ -6,6 +6,7 @@ import typing
 from dataclasses import dataclass
 from typing import ClassVar, Literal
 
+from flyte._logging import logger
 from flyte.config import set_if_exists
 
 
@@ -26,11 +27,35 @@ class Storage(object):
         "backoff": "FLYTE_STORAGE_BACKOFF_SECONDS",
     }
 
+    _KEY_SKIP_SIGNATURE: ClassVar = "skip_signature"
+
     def get_fsspec_kwargs(self, anonymous: bool = False, **kwargs) -> typing.Dict[str, typing.Any]:
         """
         Returns the configuration as kwargs for constructing an fsspec filesystem.
         """
-        return {}
+        retries = kwargs.pop("retries", self.retries)
+        backoff = kwargs.pop("backoff", self.backoff)
+
+        if anonymous:
+            config = kwargs.get("config", {})
+            config[self._KEY_SKIP_SIGNATURE] = True
+            kwargs["config"] = config
+
+        kwargs.setdefault(
+            "retry_config",
+            {
+                "max_retries": retries,
+                "backoff": {
+                    "base": 2,
+                    "init_backoff": backoff,
+                    "max_backoff": datetime.timedelta(seconds=16),
+                },
+                "retry_timeout": datetime.timedelta(minutes=3),
+            },
+        )
+        kwargs.setdefault("client_options", {"timeout": "99999s", "allow_http": True})
+
+        return kwargs
 
     @classmethod
     def _auto_as_kwargs(cls) -> typing.Dict[str, typing.Any]:
@@ -55,7 +80,21 @@ class Storage(object):
 @dataclass(init=True, repr=True, eq=True, frozen=True)
 class S3(Storage):
     """
-    S3 specific configuration
+    S3 specific configuration.
+
+    Authentication resolution used by Flyte + obstore:
+
+    1. If explicit static credentials are provided via Flyte S3 inputs/environment
+    (`access_key_id`/`secret_access_key`), those are used.
+
+    2. If static credentials are not provided, and both `AWS_PROFILE` and
+    `AWS_CONFIG_FILE` are available, Flyte configures a boto3-backed obstore
+    credential provider so profile-based auth can be used. This requires that the `boto3` library
+    is installed.
+
+    3. If neither of the above applies, obstore uses the default AWS credential chain
+    (for remote runs this commonly resolves via workload identity / IAM attached to
+    the service account and then IMDS fallbacks where applicable).
     """
 
     endpoint: typing.Optional[str] = None
@@ -76,7 +115,6 @@ class S3(Storage):
     _CONFIG_KEY_FSSPEC_S3_KEY_ID: ClassVar[Literal["access_key_id"]] = "access_key_id"
     _CONFIG_KEY_FSSPEC_S3_SECRET: ClassVar = "secret_access_key"
     _CONFIG_KEY_ENDPOINT: ClassVar = "endpoint_url"
-    _KEY_SKIP_SIGNATURE: ClassVar = "skip_signature"
 
     @classmethod
     def auto(cls, region: str | None = None) -> S3:
@@ -108,12 +146,30 @@ class S3(Storage):
             "access_key_id": "minio",
             "secret_access_key": "miniostorage",
         }
-        return S3(**final_kwargs)
+        return S3(**final_kwargs)  # type: ignore[arg-type]
+
+    def _build_s3_credential_provider_from_config_file(
+        self,
+        aws_profile: str,
+        aws_config_file: str,
+        region: str | None,
+    ) -> typing.Any:
+        import boto3
+        import boto3.session
+        import botocore.session
+        from obstore.auth.boto3 import Boto3CredentialProvider
+
+        botocore_session = botocore.session.Session()
+        botocore_session.set_config_variable("config_file", aws_config_file)
+        boto3_session = boto3.session.Session(
+            profile_name=aws_profile, botocore_session=botocore_session, region_name=region
+        )
+        return Boto3CredentialProvider(session=boto3_session)
 
     def get_fsspec_kwargs(self, anonymous: bool = False, **kwargs) -> typing.Dict[str, typing.Any]:
-        # Construct the config object
-        kwargs.pop("anonymous", None)  # Remove anonymous if it exists, as we handle it separately
-        config: typing.Dict[str, typing.Any] = {}
+        kwargs = super().get_fsspec_kwargs(anonymous=anonymous, **kwargs)
+
+        config: typing.Dict[str, typing.Any] = kwargs.pop("config", {})
         if self._CONFIG_KEY_FSSPEC_S3_KEY_ID in kwargs or self.access_key_id:
             config[self._CONFIG_KEY_FSSPEC_S3_KEY_ID] = kwargs.pop(
                 self._CONFIG_KEY_FSSPEC_S3_KEY_ID, self.access_key_id
@@ -125,31 +181,37 @@ class S3(Storage):
         if self._CONFIG_KEY_ENDPOINT in kwargs or self.endpoint:
             config["endpoint"] = kwargs.pop(self._CONFIG_KEY_ENDPOINT, self.endpoint)
 
-        retries = kwargs.pop("retries", self.retries)
-        backoff = kwargs.pop("backoff", self.backoff)
-
         if self.addressing_style:
             config["virtual_hosted_style_request"] = self.addressing_style == "virtual"
 
-        if anonymous:
-            config[self._KEY_SKIP_SIGNATURE] = True
+        has_static_credentials = (
+            self._CONFIG_KEY_FSSPEC_S3_KEY_ID in config and self._CONFIG_KEY_FSSPEC_S3_SECRET in config
+        )
 
-        retry_config = {
-            "max_retries": retries,
-            "backoff": {
-                "base": 2,
-                "init_backoff": backoff,
-                "max_backoff": datetime.timedelta(seconds=16),
-            },
-            "retry_timeout": datetime.timedelta(minutes=3),
-        }
-
-        client_options = {"timeout": "99999s", "allow_http": True}
+        if not anonymous and not has_static_credentials:
+            aws_profile = os.getenv("AWS_PROFILE", None)
+            aws_config_file = os.getenv("AWS_CONFIG_FILE", None)
+            if aws_profile is not None and aws_config_file is not None:
+                try:
+                    kwargs["credential_provider"] = self._build_s3_credential_provider_from_config_file(
+                        aws_profile=aws_profile,
+                        aws_config_file=aws_config_file,
+                        region=self.region or os.getenv("AWS_REGION", None),
+                    )
+                    logger.debug(
+                        "Using S3 credentials from AWS config file with profile %s at %s",
+                        aws_profile,
+                        aws_config_file,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "Unable to initialize S3 profile/config credential provider (%s). "
+                        "Falling back to default AWS credential resolution.",
+                        e,
+                    )
 
         if config:
             kwargs["config"] = config
-        kwargs["client_options"] = client_options
-        kwargs["retry_config"] = retry_config
         if self.region:
             kwargs["region"] = self.region
 
@@ -162,23 +224,15 @@ class GCS(Storage):
     Any GCS specific configuration.
     """
 
-    gsutil_parallelism: bool = False
-
-    _KEY_ENV_VAR_MAPPING: ClassVar[dict[str, str]] = {
-        "gsutil_parallelism": "GCP_GSUTIL_PARALLELISM",
-    }
+    _KEY_ENV_VAR_MAPPING: ClassVar[dict[str, str]] = {} | Storage._KEY_ENV_VAR_MAPPING
 
     @classmethod
     def auto(cls) -> GCS:
-        gsutil_parallelism = os.getenv(cls._KEY_ENV_VAR_MAPPING["gsutil_parallelism"], None)
-
-        kwargs: typing.Dict[str, typing.Any] = {}
-        kwargs = set_if_exists(kwargs, "gsutil_parallelism", gsutil_parallelism)
+        kwargs = super()._auto_as_kwargs()
         return GCS(**kwargs)
 
     def get_fsspec_kwargs(self, anonymous: bool = False, **kwargs) -> typing.Dict[str, typing.Any]:
-        kwargs.pop("anonymous", None)
-        return kwargs
+        return super().get_fsspec_kwargs(anonymous=anonymous, **kwargs)
 
 
 @dataclass(init=True, repr=True, eq=True, frozen=True)
@@ -200,7 +254,6 @@ class ABFS(Storage):
         "client_id": "AZURE_CLIENT_ID",
         "client_secret": "AZURE_CLIENT_SECRET",
     }
-    _KEY_SKIP_SIGNATURE: ClassVar = "skip_signature"
 
     @classmethod
     def auto(cls) -> ABFS:
@@ -219,8 +272,9 @@ class ABFS(Storage):
         return ABFS(**kwargs)
 
     def get_fsspec_kwargs(self, anonymous: bool = False, **kwargs) -> typing.Dict[str, typing.Any]:
-        kwargs.pop("anonymous", None)
-        config: typing.Dict[str, typing.Any] = {}
+        kwargs = super().get_fsspec_kwargs(anonymous=anonymous, **kwargs)
+
+        config: typing.Dict[str, typing.Any] = kwargs.pop("config", {})
         if "account_name" in kwargs or self.account_name:
             config["account_name"] = kwargs.get("account_name", self.account_name)
         if "account_key" in kwargs or self.account_key:
@@ -232,13 +286,7 @@ class ABFS(Storage):
         if "tenant_id" in kwargs or self.tenant_id:
             config["tenant_id"] = kwargs.get("tenant_id", self.tenant_id)
 
-        if anonymous:
-            config[self._KEY_SKIP_SIGNATURE] = True
-
-        client_options = {"timeout": "99999s", "allow_http": True}
-
         if config:
             kwargs["config"] = config
-        kwargs["client_options"] = client_options
 
         return kwargs

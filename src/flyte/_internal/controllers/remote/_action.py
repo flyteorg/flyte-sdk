@@ -17,6 +17,7 @@ from flyte.models import GroupData
 ActionType = Literal["task", "trace"]
 
 
+# This class should be deleted following move to pyo3.
 @dataclass
 class Action:
     """

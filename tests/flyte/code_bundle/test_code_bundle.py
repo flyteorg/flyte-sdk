@@ -540,6 +540,51 @@ def test_create_bundle_with_windows_style_input_paths():
         assert "subdir/module.py" in member_names
 
 
+def test_ls_relative_files_dotdot_path_does_not_produce_dotdot_tar_entry():
+    """
+    Regression test: a relative path with '..' must not produce a tar member name
+    containing '..' — GNU tar refuses to extract such archives and some implementations
+    create a literal '..' directory instead of traversing up.
+
+    Scenario mirrors the customer bug:
+      tmpdir/
+        project/          <- source_path (root_dir)
+        sibling/
+          module.py
+    Passing "project/../sibling/module.py" simulates what happens when root_dir is
+    the common parent and a file is referenced via a path that goes through '..'.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root = pathlib.Path(tmpdir)
+        project_dir = root / "project"
+        project_dir.mkdir()
+        sibling_dir = root / "sibling"
+        sibling_dir.mkdir()
+        (sibling_dir / "module.py").write_text("x = 1")
+
+        # Path that contains '..' — simulates what happens when include contains
+        # e.g. "project/../sibling/module.py" relative to root_dir
+        dotdot_relative = "project/../sibling/module.py"
+
+        files, digest = ls_relative_files([dotdot_relative], root)
+
+        # Create the bundle and verify no tar member contains '..'
+        # (GNU tar refuses to extract archives whose members contain '..';
+        # some implementations create a literal '..' directory instead)
+        output_dir = root / "output"
+        output_dir.mkdir()
+        bundle_path, _, _ = create_bundle(root, output_dir, files, digest)
+
+        with tarfile.open(bundle_path, "r:gz") as tar:
+            member_names = tar.getnames()
+
+        assert len(member_names) == 1, f"Expected 1 member, got: {member_names}"
+        for member in member_names:
+            assert ".." not in member, f"Tar member '{member}' contains '..'. GNU tar refuses to extract such archives."
+        # Correct normalized path: sibling/module.py (not project/../sibling/module.py)
+        assert "sibling/module.py" in member_names
+
+
 def test_list_all_files_returns_strings():
     """Test that list_all_files returns string paths (not pathlib.Path objects)."""
     with tempfile.TemporaryDirectory() as tmpdir:

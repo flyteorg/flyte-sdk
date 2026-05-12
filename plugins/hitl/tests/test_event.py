@@ -43,11 +43,12 @@ class TestEventCreate:
         Event._app_served = False
         Event._app_handle = None
 
+    @pytest.mark.asyncio
     @patch("flyteplugins.hitl._event.storage")
     @patch("flyteplugins.hitl._event._get_response_path")
     @patch("flyteplugins.hitl._event._get_request_path")
-    @patch("flyteplugins.hitl._event.Event._serve_app")
-    def test_create_serves_app_if_not_served(
+    @patch("flyteplugins.hitl._event.Event._serve_app", new_callable=AsyncMock)
+    async def test_create_serves_app_if_not_served(
         self,
         mock_serve_app,
         mock_get_request_path,
@@ -63,7 +64,7 @@ class TestEventCreate:
         mock_get_response_path.return_value = "/path/to/response.json"
         mock_storage.put_stream = AsyncMock()
 
-        event = Event.create(
+        event = await Event.create(
             name="test_event",
             data_type=int,
             scope="run",
@@ -74,11 +75,12 @@ class TestEventCreate:
         assert Event._app_served is True
         assert event.name == "test_event"
 
+    @pytest.mark.asyncio
     @patch("flyteplugins.hitl._event.storage")
     @patch("flyteplugins.hitl._event._get_response_path")
     @patch("flyteplugins.hitl._event._get_request_path")
-    @patch("flyteplugins.hitl._event.Event._serve_app")
-    def test_create_does_not_serve_app_if_already_served(
+    @patch("flyteplugins.hitl._event.Event._serve_app", new_callable=AsyncMock)
+    async def test_create_does_not_serve_app_if_already_served(
         self,
         mock_serve_app,
         mock_get_request_path,
@@ -95,7 +97,7 @@ class TestEventCreate:
         mock_get_response_path.return_value = "/path/to/response.json"
         mock_storage.put_stream = AsyncMock()
 
-        Event.create(
+        await Event.create(
             name="test_event",
             data_type=str,
             scope="run",
@@ -104,11 +106,12 @@ class TestEventCreate:
 
         mock_serve_app.assert_not_called()
 
+    @pytest.mark.asyncio
     @patch("flyteplugins.hitl._event.storage")
     @patch("flyteplugins.hitl._event._get_response_path")
     @patch("flyteplugins.hitl._event._get_request_path")
-    @patch("flyteplugins.hitl._event.Event._serve_app")
-    def test_create_writes_request_metadata(
+    @patch("flyteplugins.hitl._event.Event._serve_app", new_callable=AsyncMock)
+    async def test_create_writes_request_metadata(
         self,
         mock_serve_app,
         mock_get_request_path,
@@ -125,7 +128,7 @@ class TestEventCreate:
         mock_get_response_path.return_value = "/path/to/response.json"
         mock_storage.put_stream = AsyncMock()
 
-        Event.create(
+        await Event.create(
             name="my_event",
             data_type=float,
             scope="run",
@@ -172,12 +175,10 @@ class TestWaitForInputEvent:
     """Tests for the wait_for_input_event function."""
 
     @pytest.mark.asyncio
-    @patch("flyteplugins.hitl._event.flyte.durable.sleep")
     @patch("flyteplugins.hitl._event.storage")
     async def test_wait_for_input_returns_value_when_response_exists(
         self,
         mock_storage,
-        mock_durable_sleep,
     ):
         """Test that wait returns value when response is found."""
         from flyteplugins.hitl._event import wait_for_input_event
@@ -201,12 +202,10 @@ class TestWaitForInputEvent:
         assert result == 42
 
     @pytest.mark.asyncio
-    @patch("flyteplugins.hitl._event.flyte.durable.sleep")
     @patch("flyteplugins.hitl._event.storage")
     async def test_wait_for_input_polls_until_response(
         self,
         mock_storage,
-        mock_durable_sleep,
     ):
         """Test that wait polls until response is found."""
         from flyteplugins.hitl._event import wait_for_input_event
@@ -225,7 +224,6 @@ class TestWaitForInputEvent:
 
         mock_storage.exists = mock_exists
         mock_storage.get_stream = mock_get_stream
-        mock_durable_sleep.aio = AsyncMock()
 
         result = await wait_for_input_event(
             name="test_event",
@@ -236,21 +234,17 @@ class TestWaitForInputEvent:
         )
 
         assert result == "hello"
-        assert mock_durable_sleep.aio.call_count == 2
 
     @pytest.mark.asyncio
-    @patch("flyteplugins.hitl._event.flyte.durable.sleep")
     @patch("flyteplugins.hitl._event.storage")
     async def test_wait_for_input_raises_timeout_error(
         self,
         mock_storage,
-        mock_durable_sleep,
     ):
         """Test that wait raises TimeoutError when timeout is reached."""
         from flyteplugins.hitl._event import wait_for_input_event
 
         mock_storage.exists = AsyncMock(return_value=False)
-        mock_durable_sleep.aio = AsyncMock()
 
         with pytest.raises(TimeoutError) as exc_info:
             await wait_for_input_event(

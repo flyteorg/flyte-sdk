@@ -5,23 +5,26 @@ as tools to accomplish complex tasks. The agent orchestrates multiple tool calls
 to make a sandwich.
 """
 
+# /// script
+# requires-python = "==3.13"
+# dependencies = [
+#    "flyte>=2.0.0",
+#    "flyteplugins-anthropic>=2.0.0",
+# ]
+# ///
+
 import asyncio
 from typing import Optional
 
 from flyteplugins.anthropic import function_tool, run_agent
 
 import flyte
-from flyte._image import DIST_FOLDER, PythonWheels
 
 agent_env = flyte.TaskEnvironment(
     "anthropic-agent",
     resources=flyte.Resources(cpu=1),
-    secrets=[flyte.Secret(key="niels-anthropic-api-key", as_env_var="ANTHROPIC_API_KEY")],
-    image=(
-        flyte.Image.from_debian_base(python_version=(3, 13)).clone(
-            addl_layer=PythonWheels(wheel_dir=DIST_FOLDER, package_name="flyteplugins-anthropic", pre=True),
-        )
-    ),
+    secrets=[flyte.Secret(key="internal-anthropic-api-key", as_env_var="ANTHROPIC_API_KEY")],
+    image=flyte.Image.from_uv_script(__file__, name="anthropic-agent"),
 )
 
 

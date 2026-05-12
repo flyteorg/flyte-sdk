@@ -15,7 +15,7 @@ from ._type_boundary import validate_sandboxed_interface
 def _classify_refs(functions: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     """Classify user-provided functions into task/trace/durable ref buckets.
 
-    Same classification logic as ``_discover_external_refs`` but from an
+    Same classification logic as `_discover_external_refs` but from an
     explicit dict instead of scanning function globals.
     """
     from flyte._task import TaskTemplate
@@ -48,9 +48,9 @@ def _classify_refs(functions: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
 class CodeTaskTemplate(SandboxedTaskTemplate):
     """A sandboxed task created from a code string rather than a decorated function.
 
-    Unlike ``SandboxedTaskTemplate`` (which extracts source from a Python
+    Unlike `SandboxedTaskTemplate` (which extracts source from a Python
     function), this class accepts pre-transformed source code and an explicit
-    dict of external functions.  It is constructed via :func:`flyte.sandbox.orchestrator_from_str`.
+    dict of external functions.  It is constructed via `flyte.sandbox.orchestrator_from_str`.
     """
 
     # Init fields specific to CodeTaskTemplate

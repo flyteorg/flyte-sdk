@@ -39,7 +39,7 @@ def _extract_path_command_key(cmd: str, input_data_dir: Optional[str]) -> Option
 class ContainerTask(TaskTemplate):
     """
     This is an intermediate class that represents Flyte Tasks that run a container at execution time. This is the vast
-    majority of tasks - the typical ``@task`` decorated tasks; for instance, all run a container. An example of
+    majority of tasks - the typical `@task` decorated tasks; for instance, all run a container. An example of
     something that doesn't run a container would be something like the Athena SQL task.
 
     :param name: Name of the task
@@ -52,6 +52,9 @@ class ContainerTask(TaskTemplate):
     :param output_data_dir: The directory where the output data is stored. This is a string or a Path object.
     :param metadata_format: The format of the output file. This can be "JSON", "YAML", or "PROTO".
     :param local_logs: If True, logs will be printed to the console in the local execution.
+    :param block_network: If True, blocks all outbound network access. Locally this
+        sets Docker ``network_mode=none``. On-cluster it applies the pod template
+        ``sandboxed-pod-template``. Defaults to False.
     """
 
     MetadataFormat = Literal["JSON", "YAML", "PROTO"]
@@ -68,9 +71,22 @@ class ContainerTask(TaskTemplate):
         output_data_dir: str | pathlib.Path = "/var/outputs",
         metadata_format: MetadataFormat = "JSON",
         local_logs: bool = True,
-        block_network: bool = True,
+        block_network: bool = False,
         **kwargs,
     ):
+        if block_network:
+            existing = kwargs.get("pod_template")
+            if existing is None:
+                kwargs["pod_template"] = "sandboxed-pod-template"
+            elif isinstance(existing, str):
+                raise ValueError(
+                    "block_network=True cannot be combined with a string pod_template reference. "
+                    "Use a PodTemplate object instead so the 'sandboxed: true' label can be merged in, "
+                    "or ensure the referenced cluster template already includes that label."
+                )
+            else:
+                existing.labels = {**(existing.labels or {}), "sandboxed": "true"}
+
         super().__init__(
             task_type="raw-container",
             name=name,
@@ -81,7 +97,6 @@ class ContainerTask(TaskTemplate):
             ),
             **kwargs,
         )
-        self._block_network = block_network
         self._image = image
         if isinstance(image, str):
             if image == "auto":
@@ -93,6 +108,7 @@ class ContainerTask(TaskTemplate):
             raise ValueError("All elements in the command list must be strings.")
         if arguments and any(not isinstance(a, str) for a in arguments):
             raise ValueError("All elements in the arguments list must be strings.")
+        self._block_network = block_network
         self._cmd = command
         self._args = arguments
         self._input_data_dir = input_data_dir
@@ -274,12 +290,12 @@ class ContainerTask(TaskTemplate):
         print(f"Command: {commands!r}")
 
         run_kwargs: Dict[str, Any] = {
-            "remove": True,
             "volumes": volume_bindings,
             "detach": True,
         }
         if self._block_network:
             run_kwargs["network_mode"] = "none"
+
         container = client.containers.run(uri, command=commands, **run_kwargs)
 
         # Wait for the container to finish the task
@@ -309,13 +325,6 @@ class ContainerTask(TaskTemplate):
             enabled=True,
             format=literal_to_protobuf.get(self._metadata_format, "JSON"),
         )
-
-    def config(self, sctx: SerializationContext) -> Dict[str, str]:
-        """Return the configuration for the container task, including network settings.
-        This is for remote execution."""
-        if self._block_network:
-            return {"network_mode": "none"}
-        return {}
 
     def container_args(self, sctx: SerializationContext) -> List[str]:
         return self._cmd + (self._args or [])

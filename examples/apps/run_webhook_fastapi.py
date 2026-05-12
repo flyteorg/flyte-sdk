@@ -147,7 +147,7 @@ async def run_task(
         )
 
 
-# image = flyte.Image.from_uv_script(__file__, name="webhook-runner", pre=True)
+# image = flyte.Image.from_uv_script(__file__, name="webhook-runner")
 image = flyte.Image.from_debian_base().with_pip_packages("ipdb", "fastapi", "uvicorn")
 
 task_env = flyte.TaskEnvironment(

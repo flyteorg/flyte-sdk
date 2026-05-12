@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Callable, Dict
+import inspect
+from typing import Any, Callable, Dict, List
 
 from flyte.io import DataFrame, Dir, File
 
@@ -47,7 +48,7 @@ def _from_monty(value: Any) -> Any:
 class ExternalFunctionBridge:
     """Drives Monty execution with external function dispatch.
 
-    Uses the low-level ``Monty.start()`` / ``MontySnapshot.resume()`` loop,
+    Uses the low-level `Monty.start()` / `FunctionSnapshot.resume()` loop,
     awaiting each external call before resuming. This ensures async external
     functions (task.aio, durable ops) are properly resolved.
     """
@@ -80,13 +81,51 @@ class ExternalFunctionBridge:
                 raise RuntimeError(f"External ref '{name}' is not callable")
         return result
 
+    async def _handle_flyte_map(
+        self,
+        args: List[Any],
+        kwargs: Dict[str, Any],
+    ) -> List[Any]:
+        """Handle a ``flyte_map("task_name", *iterables, **kwargs)`` call.
+
+        Resolves the task name to the real ``TaskTemplate``, then delegates
+        to ``flyte.map.aio`` so that concurrency, group tracking, and
+        ``return_exceptions`` all work identically to top-level ``flyte.map``.
+        """
+        from flyte._map import map as flyte_map
+
+        if len(args) < 2:
+            raise RuntimeError("flyte_map requires at least 2 arguments: flyte_map(task_name, iterable, ...)")
+
+        task_name = args[0]
+        if not isinstance(task_name, str):
+            raise RuntimeError(f"flyte_map first argument must be a task name string, got {type(task_name).__name__}")
+
+        task = self._all_refs.get(task_name)
+        if task is None:
+            available = ", ".join(sorted(self._all_refs.keys())) or "(none)"
+            raise RuntimeError(f"flyte_map: task '{task_name}' not found in registered tasks. Available: {available}")
+
+        iterables = [_from_monty(a) for a in args[1:]]
+
+        # Forward kwargs that flyte.map.aio accepts
+        map_kwargs: Dict[str, Any] = {}
+        for key in ("group_name", "concurrency", "return_exceptions"):
+            if key in kwargs:
+                map_kwargs[key] = kwargs[key]
+
+        results: List[Any] = []
+        async for r in flyte_map.aio(task, *iterables, **map_kwargs):
+            results.append(r)
+        return results
+
     async def execute_monty(self, monty_cls: Any, code: str, input_names: list[str], inputs: Dict[str, Any]) -> Any:
         """Run *code* in Monty, awaiting each external call before resuming.
 
         Parameters
         ----------
         monty_cls:
-            The ``pydantic_monty.Monty`` class.
+            The `pydantic_monty.Monty` class.
         code:
             The rewritten function body source.
         input_names:
@@ -94,12 +133,9 @@ class ExternalFunctionBridge:
         inputs:
             Mapping of input parameter names to values (provided at run time).
         """
-        import inspect
+        from pydantic_monty import FunctionSnapshot, MontyComplete
 
-        from pydantic_monty import MontyComplete, MontySnapshot
-
-        ext_names = list(self._all_refs.keys())
-        monty = monty_cls(code, inputs=input_names, external_functions=ext_names)
+        monty = monty_cls(code, inputs=input_names)
         ext_fns = self._build_external_functions()
 
         # Marshal any IO types in the initial inputs so Monty can hold them
@@ -110,7 +146,15 @@ class ExternalFunctionBridge:
         while True:
             if isinstance(progress, MontyComplete):
                 return _from_monty(progress.output)
-            elif isinstance(progress, MontySnapshot):
+            elif isinstance(progress, FunctionSnapshot):
+                # Handle flyte_map as a special built-in for parallel execution
+                if progress.function_name == "flyte_map":
+                    args = [_from_monty(a) for a in progress.args]
+                    kwargs = {k: _from_monty(v) for k, v in progress.kwargs.items()}
+                    result = await self._handle_flyte_map(args, kwargs)
+                    progress = progress.resume({"return_value": _to_monty(result)})
+                    continue
+
                 fn = ext_fns.get(progress.function_name)
                 if fn is None:
                     raise RuntimeError(f"Sandboxed task called unknown external function: {progress.function_name}")
@@ -126,7 +170,6 @@ class ExternalFunctionBridge:
                 while inspect.iscoroutine(result):
                     result = await result
 
-                # Marshal IO types so Monty can hold the return value
-                progress = progress.resume(return_value=_to_monty(result))
+                progress = progress.resume({"return_value": _to_monty(result)})
             else:
                 raise RuntimeError(f"Unexpected Monty progress state: {progress!r}")
