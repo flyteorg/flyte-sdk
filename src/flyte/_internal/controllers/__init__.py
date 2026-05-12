@@ -1,6 +1,7 @@
 import concurrent.futures
 import threading
-from typing import TYPE_CHECKING, Any, Callable, Literal, Optional, Protocol, Tuple, TypeVar
+from collections import defaultdict
+from typing import TYPE_CHECKING, Any, Callable, DefaultDict, Literal, Optional, Protocol, Tuple, TypeVar
 
 from flyte._task import TaskTemplate
 from flyte.models import ActionID, NativeInterface
@@ -10,12 +11,43 @@ if TYPE_CHECKING:
 
 from ._trace import TraceInfo
 
-__all__ = ["Controller", "ControllerType", "TraceInfo", "create_controller", "get_controller"]
+__all__ = ["Controller", "ControllerType", "TaskCallSequencer", "TraceInfo", "create_controller", "get_controller"]
+
+
+class TaskCallSequencer:
+    """Track per-(parent-action, task-name) call sequence numbers.
+
+    Used by both LocalController and RemoteController to generate
+    deterministic, unique sub-action IDs when the same task is invoked
+    multiple times within a single parent action.
+    """
+
+    def __init__(self) -> None:
+        self._counters: DefaultDict[str, DefaultDict[int | str, int]] = defaultdict(lambda: defaultdict(int))
+
+    def next_seq(self, task_obj: object, action_key: str) -> int:
+        """Return the next sequence number for *task_obj* under *action_key*."""
+        name = ""
+        if hasattr(task_obj, "__name__"):
+            name = task_obj.__name__
+        elif hasattr(task_obj, "name"):
+            name = task_obj.name
+
+        sequencer = self._counters[action_key]
+        task_id: int | str = name or id(task_obj)
+        seq = sequencer[task_id] + 1
+        sequencer[task_id] = seq
+        return seq
+
+    def clear(self, action_key: str) -> None:
+        """Remove all sequence state for *action_key*."""
+        self._counters.pop(action_key, None)
+
 
 if TYPE_CHECKING:
     import concurrent.futures
 
-ControllerType = Literal["local", "remote"]
+ControllerType = Literal["local", "remote", "rust"]
 
 R = TypeVar("R")
 
@@ -117,10 +149,31 @@ def create_controller(
             from ._local_controller import LocalController
 
             controller = LocalController()
-        case "remote" | "hybrid":
+        case "remote":
             from flyte._internal.controllers.remote import create_remote_controller
 
             controller = create_remote_controller(**kwargs)
+            # from flyte._internal.controllers.remote._r_controller import RemoteController
+
+            # controller = RemoteController(endpoint="http://host.docker.internal:8090", workers=10,
+            # max_system_retries=5)
+            # controller = RemoteController(workers=10, max_system_retries=5)
+        case "hybrid":
+            from flyte._internal.controllers.remote._r_controller import RemoteController
+
+            controller = RemoteController(endpoint="http://host.docker.internal:8090", workers=10, max_system_retries=5)
+            # controller = RemoteController(workers=10, max_system_retries=5)
+        case "rust":
+            # Rust controller - works for both local (endpoint-based) and remote (API key from env)
+            from flyte._internal.controllers.remote._r_controller import RemoteController
+
+            # Extract endpoint if provided, otherwise Rust controller will use API key from env var
+            endpoint = kwargs.get("endpoint")
+            # Rust requires scheme prefix (http:// or https://)
+            if endpoint and not endpoint.startswith(("http://", "https://")):
+                # Default to http:// for local endpoints
+                endpoint = f"http://{endpoint}"
+            controller = RemoteController(endpoint=endpoint, workers=10, max_system_retries=5)
         case _:
             raise ValueError(f"{ct} is not a valid controller type.")
 

@@ -40,7 +40,7 @@ async def test_flytetypes_in_pydantic_basemodel_wf(local_dummy_file, local_dummy
     class BM(BaseModel):
         file: File = Field(default_factory=lambda: File(path=local_dummy_file))
         dir: Dir = Field(default_factory=lambda: Dir(path=local_dummy_directory))
-        inner_bm: InnerBM = Field(default_factory=lambda: InnerBM())
+        inner_bm: InnerBM = Field(default_factory=InnerBM)
 
     @env.task
     async def t1(path: File) -> File:
@@ -143,7 +143,7 @@ async def test_all_types_in_pydantic_basemodel_wf(local_dummy_file, local_dummy_
         m: dict = Field(default_factory=lambda: {"key": "value"})
         n: File = Field(default_factory=lambda: File(path=local_dummy_file))
         o: Dir = Field(default_factory=lambda: Dir(path=local_dummy_directory))
-        inner_bm: InnerBM = Field(default_factory=lambda: InnerBM())
+        inner_bm: InnerBM = Field(default_factory=InnerBM)
         enum_status: Status = Field(default=Status.PENDING)
 
     @env.task
@@ -350,7 +350,7 @@ async def test_all_types_with_optional_in_pydantic_basemodel_wf(local_dummy_file
         m: Optional[dict] = Field(default_factory=lambda: {"key": "value"})
         n: Optional[File] = Field(default_factory=lambda: File(path=local_dummy_file))
         o: Optional[Dir] = Field(default_factory=lambda: Dir(path=local_dummy_directory))
-        inner_bm: Optional[InnerBM] = Field(default_factory=lambda: InnerBM())
+        inner_bm: Optional[InnerBM] = Field(default_factory=InnerBM)
         enum_status: Optional[Status] = Field(default=Status.PENDING)
 
     @env.task
@@ -632,7 +632,7 @@ async def test_input_from_ui_pydantic_basemodel(local_dummy_file, local_dummy_di
         m: dict = Field(default_factory=lambda: {"key": "value"})
         n: File = Field(default_factory=lambda: File(path=local_dummy_file))
         o: Dir = Field(default_factory=lambda: Dir(path=local_dummy_directory))
-        inner_bm: InnerBM = Field(default_factory=lambda: InnerBM())
+        inner_bm: InnerBM = Field(default_factory=InnerBM)
         enum_status: Status = Field(default=Status.PENDING)
 
     @env.task
@@ -808,24 +808,24 @@ async def test_union_in_basemodel_wf():
     async def main(bm: BM) -> Union[int, bool, str, float]:
         return await add(bm.a, bm.b)
 
-    assert flyte.run(main, bm=BM(a=1, b=2)).outputs() == 3
-    assert flyte.run(main, bm=BM(a=True, b=False)).outputs() == 1
-    assert flyte.run(main, bm=BM(a=False, b=False)).outputs() == 0
-    assert flyte.run(main, bm=BM(a="hello", b="world")).outputs() == "helloworld"
-    assert flyte.run(main, bm=BM(a=1.0, b=2.0)).outputs() == 3.0
+    assert flyte.run(main, bm=BM(a=1, b=2)).outputs()[0] == 3
+    assert flyte.run(main, bm=BM(a=True, b=False)).outputs()[0] == 1
+    assert flyte.run(main, bm=BM(a=False, b=False)).outputs()[0] == 0
+    assert flyte.run(main, bm=BM(a="hello", b="world")).outputs()[0] == "helloworld"
+    assert flyte.run(main, bm=BM(a=1.0, b=2.0)).outputs()[0] == 3.0
 
     @env.task
     async def add_bm(bm1: BM, bm2: BM) -> Union[int, bool, str, float]:
         return bm1.a + bm2.b  # type: ignore
 
     bm = BM(a=1, b=2)
-    assert flyte.run(add_bm, bm1=bm, bm2=bm).outputs() == 3
+    assert flyte.run(add_bm, bm1=bm, bm2=bm).outputs()[0] == 3
 
     @env.task
     async def return_bm(bm: BM) -> BM:
         return bm
 
-    assert flyte.run(return_bm, bm=BM(a=1, b=2)).outputs() == BM(a=1, b=2)
+    assert flyte.run(return_bm, bm=BM(a=1, b=2)).outputs()[0] == BM(a=1, b=2)
 
 
 @pytest.mark.asyncio

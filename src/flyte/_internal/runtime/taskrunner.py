@@ -11,9 +11,10 @@ import flyte.report
 from flyte._context import internal_ctx
 from flyte._internal.imagebuild.image_builder import ImageCache
 from flyte._logging import log, logger
+from flyte._metrics import Stopwatch
 from flyte._task import TaskTemplate
 from flyte.errors import CustomError, RuntimeSystemError, RuntimeUnknownError, RuntimeUserError
-from flyte.models import ActionID, Checkpoints, CodeBundle, RawDataPath, TaskContext
+from flyte.models import ActionID, CheckpointPaths, CodeBundle, RawDataPath, TaskContext
 
 from .. import Controller
 from .convert import (
@@ -119,7 +120,7 @@ async def convert_and_run(
     run_base_dir: str,
     inputs: Inputs = Inputs.empty(),
     input_path: str | None = None,
-    checkpoints: Checkpoints | None = None,
+    checkpoint_paths: CheckpointPaths | None = None,
     code_bundle: CodeBundle | None = None,
     image_cache: ImageCache | None = None,
     interactive_mode: bool = False,
@@ -132,14 +133,20 @@ async def convert_and_run(
 
     # Load inputs first to get context
     if input_path:
+        sw = Stopwatch("load_inputs")
+        sw.start()
         inputs = await load_inputs(input_path, path_rewrite_config=raw_data_path.path_rewrite)
+        sw.stop()
 
     # Extract context from inputs
     custom_context = inputs.context if inputs else {}
 
+    parent_tctx = ctx.data.task_context
+    disable_run_cache = parent_tctx.disable_run_cache if parent_tctx else False
+
     tctx = TaskContext(
         action=action,
-        checkpoints=checkpoints,
+        checkpoint_paths=checkpoint_paths,
         code_bundle=code_bundle,
         input_path=input_path,
         output_path=output_path,
@@ -148,14 +155,23 @@ async def convert_and_run(
         raw_data_path=raw_data_path,
         compiled_image_cache=image_cache,
         report=flyte.report.Report(name=action.name),
-        mode="remote" if not ctx.data.task_context else ctx.data.task_context.mode,
+        mode="remote" if not parent_tctx else parent_tctx.mode,
         interactive_mode=interactive_mode,
         custom_context=custom_context,
+        disable_run_cache=disable_run_cache,
     )
 
     with ctx.replace_task_context(tctx):
+        sw = Stopwatch("convert_inputs_to_native")
+        sw.start()
         inputs_kwargs = await convert_inputs_to_native(inputs, task.native_interface)
+        sw.stop()
+
+        sw = Stopwatch("run_task")
+        sw.start()
         out, err = await run_task(tctx=tctx, controller=controller, task=task, inputs=inputs_kwargs)
+        sw.stop()
+
         if err is not None:
             return None, convert_from_native_to_error(err)
         if task.report:
@@ -163,7 +179,12 @@ async def convert_and_run(
             # worker reports (from Elastic/distributed tasks) with empty main process report
             if ctx.get_report():
                 await flyte.report.flush.aio()
-        return await convert_from_native_to_outputs(out, task.native_interface, task.name), None
+
+        sw = Stopwatch("convert_outputs_from_native")
+        sw.start()
+        result = await convert_from_native_to_outputs(out, task.native_interface, task.name), None
+        sw.stop()
+        return result
 
 
 async def extract_download_run_upload(
@@ -175,7 +196,7 @@ async def extract_download_run_upload(
     output_path: str,
     run_base_dir: str,
     version: str,
-    checkpoints: Checkpoints | None = None,
+    checkpoint_paths: CheckpointPaths | None = None,
     code_bundle: CodeBundle | None = None,
     input_path: str | None = None,
     image_cache: ImageCache | None = None,
@@ -196,13 +217,14 @@ async def extract_download_run_upload(
         output_path=output_path,
         run_base_dir=run_base_dir,
         version=version,
-        checkpoints=checkpoints,
+        checkpoint_paths=checkpoint_paths,
         code_bundle=code_bundle,
         image_cache=image_cache,
         interactive_mode=interactive_mode,
     )
+    logger.debug(f"Task {action.name} completed at {t}, with outputs: {outputs}")
     if err is not None:
-        path = await upload_error(err.err, output_path)
+        path = await upload_error(err.err, output_path, recoverable=err.recoverable)
         logger.error(f"Task {task.name} failed with error: {err}. Uploaded error to {path}")
         return
     if outputs is None:

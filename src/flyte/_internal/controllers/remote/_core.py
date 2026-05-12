@@ -4,11 +4,14 @@ import asyncio
 import os
 import sys
 import threading
+import time
 from asyncio import Event
 from typing import Awaitable, Coroutine, Optional
 
-import grpc.aio
 from aiolimiter import AsyncLimiter
+from connectrpc.code import Code
+from connectrpc.errors import ConnectError
+from flyteidl2.actions import actions_service_pb2
 from flyteidl2.common import identifier_pb2
 from flyteidl2.task import task_definition_pb2
 from flyteidl2.workflow import queue_service_pb2, run_definition_pb2
@@ -19,7 +22,18 @@ from flyte._logging import log, logger
 
 from ._action import Action
 from ._informer import InformerCache
-from ._service_protocol import ClientSet, QueueService, StateService
+from ._service_protocol import ActionsService, ClientSet, QueueService, StateService
+
+
+def _actions_metadata(action: Action) -> dict[str, str]:
+    """Build request headers for Actions service calls."""
+    run = action.action_id.run
+    return {
+        "x-actions-project": run.project,
+        "x-actions-domain": run.domain,
+        "x-actions-run": run.name,
+        "x-actions-parent-action": action.parent_action_name,
+    }
 
 
 class Controller:
@@ -52,7 +66,7 @@ class Controller:
         self._shared_queue: asyncio.Queue[Action] = asyncio.Queue(maxsize=10000)
         self._running = False
         self._resource_log_task = None
-        self._workers = workers
+        self._workers = int(os.getenv("_F_CTRL_WORKERS", str(workers)))
         self._max_retries = int(os.getenv("_F_MAX_RETRIES", max_system_retries))
         self._resource_log_interval = resource_log_interval_sec
         self._min_backoff_on_err = min_backoff_on_err_sec
@@ -64,6 +78,10 @@ class Controller:
         self._informer_start_wait_timeout = thread_wait_timeout_sec
         max_qps = int(os.getenv("_F_MAX_QPS", "100"))
         self._rate_limiter = AsyncLimiter(max_qps, 1.0)
+        self._trace_submit = os.getenv("_F_TRACE_SUBMIT", "").lower() in {"1", "true", "yes", "on"}
+        self._trace_submit_limit = int(os.getenv("_F_TRACE_SUBMIT_LIMIT", "10"))
+        self._trace_actions: set[str] = set()
+        self._trace_lock = threading.Lock()
 
         # Thread management
         self._thread = None
@@ -72,6 +90,28 @@ class Controller:
         self._thread_exception: Optional[BaseException] = None
         self._thread_com_lock = threading.Lock()
         self._start()
+
+    def _should_trace_sequence(self, seq: int) -> bool:
+        return self._trace_submit and seq <= self._trace_submit_limit
+
+    def _mark_action_for_trace(self, action_name: str):
+        if not self._trace_submit:
+            return
+        with self._trace_lock:
+            if len(self._trace_actions) < self._trace_submit_limit:
+                self._trace_actions.add(action_name)
+
+    def _trace_enabled_for(self, action_name: str) -> bool:
+        if not self._trace_submit:
+            return False
+        with self._trace_lock:
+            return action_name in self._trace_actions
+
+    def _trace_log(self, action_name: str, phase: str, **fields):
+        if not self._trace_enabled_for(action_name):
+            return
+        payload = " ".join(f"{key}={value}" for key, value in fields.items())
+        print(f"submit_trace action={action_name} phase={phase} {payload}".rstrip(), flush=True)
 
     # ---------------- Public sync methods, we can add more sync methods if needed
     @log
@@ -149,7 +189,6 @@ class Controller:
         with self._thread_com_lock:
             return self._thread_exception
 
-    @log
     def _start(self):
         """Start the controller in a separate thread"""
         if self._thread and self._thread.is_alive():
@@ -194,6 +233,7 @@ class Controller:
         client_set = await self._client_coro
         self._state_service: StateService = client_set.state_service
         self._queue_service: QueueService = client_set.queue_service
+        self._actions_service: ActionsService | None = client_set.actions_service
         self._resource_log_task = asyncio.create_task(self._bg_log_stats())
         # We will wait for this to signal that the thread is ready
         # Signal the main thread that we're ready
@@ -214,9 +254,10 @@ class Controller:
         """Target function for the controller thread that creates and manages its own event loop"""
         try:
             # Create a new event loop for this thread
-            self._loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(self._loop)
-            self._loop.set_exception_handler(flyte.errors.silence_grpc_polling_error)
+            with self._thread_com_lock:
+                self._loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(self._loop)
+                self._loop.set_exception_handler(flyte.errors.silence_polling_error)
             logger.debug(f"Controller thread started with new event loop: {threading.current_thread().name}")
 
             # Create an event to signal the errors were observed in the thread's loop
@@ -244,6 +285,7 @@ class Controller:
             self._state_service,
             fn=self._bg_handle_informer_error,
             timeout=self._informer_start_wait_timeout,
+            actions_service=self._actions_service,
         )
         if informer:
             return await informer.get(action_id.name)
@@ -259,10 +301,11 @@ class Controller:
         if informer:
             await informer.stop()
 
-    @log
     async def _bg_submit_action(self, action: Action) -> Action:
         """Submit a resource and await its completion, returning the final state"""
         logger.debug(f"{threading.current_thread().name} Submitting action {action.name}")
+        trace_enabled = self._trace_enabled_for(action.name)
+        informer_start = time.monotonic()
         informer = await self._informers.get_or_create(
             action.action_id.run,
             action.parent_action_name,
@@ -270,12 +313,38 @@ class Controller:
             self._state_service,
             fn=self._bg_handle_informer_error,
             timeout=self._informer_start_wait_timeout,
+            actions_service=self._actions_service,
         )
+        if trace_enabled:
+            watch_api = "actions.watch_for_updates" if self._actions_service else "state.watch"
+            self._trace_log(
+                action.name,
+                "informer_ready",
+                kind="controlplane_api",
+                api=watch_api,
+                elapsed_ms=f"{(time.monotonic() - informer_start) * 1000:.1f}",
+            )
+        queue_submit_start = time.monotonic()
         await informer.submit(action)
+        if trace_enabled:
+            self._trace_log(
+                action.name,
+                "queue_submit",
+                kind="sdk_only",
+                elapsed_ms=f"{(time.monotonic() - queue_submit_start) * 1000:.1f}",
+            )
 
         logger.debug(f"{threading.current_thread().name} Waiting for completion of {action.name}")
         # Wait for completion
+        wait_start = time.monotonic()
         await informer.wait_for_action_completion(action.name)
+        if trace_enabled:
+            self._trace_log(
+                action.name,
+                "wait_for_completion",
+                kind="lifecycle_wait",
+                elapsed_ms=f"{(time.monotonic() - wait_start) * 1000:.1f}",
+            )
         logger.info(f"{threading.current_thread().name} Action {action.name} completed")
 
         # Get final resource state and clean up
@@ -284,7 +353,7 @@ class Controller:
             raise ValueError(f"Action {action.name} not found")
         logger.debug(f"{threading.current_thread().name} Removed completion event for action {action.name}")
         await informer.remove(action.name)  # TODO we should not remove maybe, we should keep a record of completed?
-        logger.debug(f"{threading.current_thread().name} Removed action {action.name}, final={final_resource}")
+        logger.debug(f"{threading.current_thread().name} Removed action {action.name}")
         return final_resource
 
     async def _bg_cancel_action(self, action: Action):
@@ -301,15 +370,20 @@ class Controller:
             async with self._rate_limiter:
                 logger.info(f"Cancelling action: {action.name}")
                 try:
-                    await self._queue_service.AbortQueuedAction(
-                        queue_service_pb2.AbortQueuedActionRequest(action_id=action.action_id),
-                        wait_for_ready=True,
-                    )
+                    if self._actions_service:
+                        await self._actions_service.abort(
+                            actions_service_pb2.AbortRequest(action_id=action.action_id),
+                            headers=_actions_metadata(action),
+                        )
+                    else:
+                        await self._queue_service.abort_queued_action(
+                            queue_service_pb2.AbortQueuedActionRequest(action_id=action.action_id),
+                        )
                     logger.info(f"Successfully cancelled action: {action.name}")
-                except grpc.aio.AioRpcError as e:
-                    if e.code() in [
-                        grpc.StatusCode.NOT_FOUND,
-                        grpc.StatusCode.FAILED_PRECONDITION,
+                except ConnectError as e:
+                    if e.code in [
+                        Code.NOT_FOUND,
+                        Code.FAILED_PRECONDITION,
                     ]:
                         logger.info(f"Action {action.name} not found, assumed completed or cancelled.")
                         return
@@ -326,7 +400,9 @@ class Controller:
         Attempt to launch an action.
         """
         if not action.is_started():
+            limiter_wait_start = time.monotonic()
             async with self._rate_limiter:
+                limiter_wait_ms = (time.monotonic() - limiter_wait_start) * 1000
                 task: run_definition_pb2.TaskAction | None = None
                 trace: run_definition_pb2.TraceAction | None = None
                 if action.type == "task":
@@ -354,44 +430,71 @@ class Controller:
                 elif action.type == "trace":
                     trace = action.trace
 
-                logger.debug(f"Attempting to launch action: {action.name}")
+                logger.debug(f"Attempting to launch action: {action.name}, actions? {bool(self._actions_service)}")
+                launch_start = time.monotonic()
                 try:
-                    await self._queue_service.EnqueueAction(
-                        queue_service_pb2.EnqueueActionRequest(
-                            action_id=action.action_id,
-                            parent_action_name=action.parent_action_name,
-                            task=task,
-                            trace=trace,
-                            input_uri=action.inputs_uri,
-                            run_output_base=action.run_output_base,
-                            group=action.group.name if action.group else None,
-                            # Subject is not used in the current implementation
-                        ),
-                        wait_for_ready=True,
-                        timeout=self._enqueue_timeout,
-                    )
+                    if self._actions_service:
+                        await self._actions_service.enqueue(
+                            actions_service_pb2.EnqueueRequest(
+                                action=actions_service_pb2.Action(
+                                    action_id=action.action_id,
+                                    parent_action_name=action.parent_action_name,
+                                    task=task,
+                                    trace=trace,
+                                    input_uri=action.inputs_uri,
+                                    run_output_base=action.run_output_base,
+                                    group=action.group.name if action.group else None,
+                                ),
+                            ),
+                            timeout_ms=int(self._enqueue_timeout * 1000),
+                            headers=_actions_metadata(action),
+                        )
+                    else:
+                        await self._queue_service.enqueue_action(
+                            queue_service_pb2.EnqueueActionRequest(
+                                action_id=action.action_id,
+                                parent_action_name=action.parent_action_name,
+                                task=task,
+                                trace=trace,
+                                input_uri=action.inputs_uri,
+                                run_output_base=action.run_output_base,
+                                group=action.group.name if action.group else None,
+                            ),
+                            timeout_ms=int(self._enqueue_timeout * 1000),
+                        )
                     logger.info(f"Successfully launched action: {action.name}")
-                except grpc.aio.AioRpcError as e:
-                    if e.code() == grpc.StatusCode.ALREADY_EXISTS:
+                    self._trace_log(
+                        action.name,
+                        "enqueue_action",
+                        kind="controlplane_api",
+                        api="actions.enqueue" if self._actions_service else "queue.enqueue_action",
+                        limiter_wait_ms=f"{limiter_wait_ms:.1f}",
+                        elapsed_ms=f"{(time.monotonic() - launch_start) * 1000:.1f}",
+                    )
+                except ConnectError as e:
+                    if e.code == Code.ALREADY_EXISTS:
                         logger.info(f"Action {action.name} already exists, continuing to monitor.")
                         return
-                    if e.code() in [
-                        grpc.StatusCode.FAILED_PRECONDITION,
-                        grpc.StatusCode.INVALID_ARGUMENT,
-                        grpc.StatusCode.NOT_FOUND,
+                    if e.code == Code.ABORTED:
+                        # The run was aborted; engine will auto-abort other in-flight actions.
+                        # Surface as a system error — outer handler in _bg_run wraps and exits.
+                        raise flyte.errors.RuntimeSystemError(e.code.name, f"Run aborted: {e.message}") from e
+                    if e.code in [
+                        Code.INVALID_ARGUMENT,
+                        Code.NOT_FOUND,
                     ]:
+                        # Not retryable; surface as a per-action system error.
                         raise flyte.errors.RuntimeSystemError(
-                            e.code().name, f"Precondition failed: {e.details()}"
+                            e.code.name, f"Action launch failed ({e.code.name}): {e.message}"
                         ) from e
-                    # For all other errors, we will retry with backoff
-                    logger.exception(
-                        f"Failed to launch action: {action.name}, Code: {e.code()}, "
-                        f"Details {e.details()} backing off..."
+                    # FAILED_PRECONDITION indicates the shard is wrong or we've hit a limit — retry with backoff.
+                    # For all other errors, we will also retry with backoff.
+                    logger.error(
+                        f"Failed to launch action: {action.name}, Code: {e.code}, Details {e.message} backing off..."
                     )
                     logger.debug(f"Action details: {action}")
-                    raise flyte.errors.SlowDownError(f"Failed to launch action: {e.details()}") from e
+                    raise flyte.errors.SlowDownError(f"Failed to launch action: {e.message}") from e
 
-    @log
     async def _bg_process(self, action: Action):
         """Process resource updates"""
         logger.debug(f"Processing action: name={action.name}, started={action.is_started()}")
@@ -416,7 +519,6 @@ class Controller:
                 logger.info(f"Resource stats: Started={started}, Pending={pending}, Terminal={terminal}")
             await asyncio.sleep(self._resource_log_interval)
 
-    @log
     async def _bg_run(self, worker_id: str):
         """Run loop with resource status logging"""
         logger.info(f"Worker {worker_id} started")

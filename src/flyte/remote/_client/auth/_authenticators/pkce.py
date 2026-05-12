@@ -17,7 +17,6 @@ from urllib.parse import urlencode as _urlencode
 import click
 import httpx
 import pydantic
-from h11 import Response
 
 from flyte._logging import logger
 from flyte.remote._client.auth._authenticators.base import Authenticator
@@ -166,10 +165,10 @@ class AuthorizationClient(object):
         :param endpoint_metadata: EndpointMetadata object to control the rendering of the page on login successful or
             failure
         :param verify: A boolean that controls whether to verify the server's TLS certificate.
-            Defaults to ``True``. When set to ``False``, requests will accept any TLS certificate
+            Defaults to `True`. When set to `False`, requests will accept any TLS certificate
             presented by the server, and will ignore hostname mismatches and/or expired certificates,
             which will make your application vulnerable to man-in-the-middle (MitM) attacks.
-            Setting verify to ``False`` may be useful during local development or testing.
+            Setting verify to `False` may be useful during local development or testing.
         :param ca_cert_path: Path to a certificate chain file for SSL verification (optional)
         :param request_auth_code_params: Dictionary of parameters to add to login URI opened in the browser (optional)
         :param request_access_token_params: Dictionary of parameters to add when exchanging the auth code for the
@@ -363,19 +362,17 @@ class AuthorizationClient(object):
 
         data.update(self._refresh_access_token_params)
 
-        async with typing.cast(
-            typing.AsyncContextManager[Response],
-            self._http_session.post(
-                url=self._token_endpoint,
-                data=data,
-                headers=self._headers,
-                follow_redirects=False,
-            ),
-        ) as resp:
-            if resp.status_code != _StatusCodes.OK:
-                raise AccessTokenNotFoundError(f"Non-200 returned from refresh token endpoint {resp.status_code}")
+        resp: httpx.Response = await self._http_session.post(
+            url=self._token_endpoint,
+            data=data,
+            headers=self._headers,
+            follow_redirects=False,
+        )
 
-            return await self._credentials_from_response(resp)
+        if resp.status_code != _StatusCodes.OK:
+            raise AccessTokenNotFoundError(f"Non-200 returned from refresh token endpoint {resp.status_code}")
+
+        return await self._credentials_from_response(resp)
 
 
 class OAuthCallbackHandler:
@@ -410,10 +407,12 @@ class OAuthCallbackHandler:
         :param reader: The StreamReader for reading the incoming request
         :param writer: The StreamWriter for writing the response
         """
-        data = await reader.read()
-        message = data.decode()
-        headers = message.split("\r\n")
-        path = headers[0].split(" ")[1]
+        # Read only the first line of the HTTP request (e.g., "GET /callback?code=...&state=... HTTP/1.1")
+        # Using readline() instead of read() because read() waits for EOF, which won't come
+        # until the client closes the connection - but the client is waiting for our response first.
+        request_line = await reader.readline()
+        # request_line looks like this: 'GET /callback?code=ABC&state=FOO HTTP/1.1'
+        path = request_line.decode().split(" ")[1]
         url = _urlparse.urlparse(path)
         if url.path.strip("/") == self.redirect_path.strip("/"):
             response = f"HTTP/1.1 {_StatusCodes.OK.value} {_StatusCodes.OK.phrase}\r\n"

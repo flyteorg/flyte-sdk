@@ -41,11 +41,7 @@ import flyte
 # Task environment for building the image
 build_env = flyte.TaskEnvironment(
     name="build_env",
-    image=(
-        flyte.Image.from_debian_base(name="base-image", python_version=(3, 12)).with_pip_packages(
-            "flyte", pre=True, extra_args="--prerelease=allow"
-        )
-    ),
+    image=(flyte.Image.from_debian_base(name="base-image", python_version=(3, 12)).with_pip_packages("flyte")),
 )
 
 image_env_var = "BASE_IMAGE"

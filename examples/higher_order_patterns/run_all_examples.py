@@ -227,7 +227,7 @@ async def run_all_higher_order_patterns() -> dict:
 
 if __name__ == "__main__":
     # Initialize Flyte with config
-    flyte.init_from_config("../config.yaml")
+    flyte.init_from_config()
 
     print("Starting higher-order patterns demonstration...")
     run = flyte.run(run_all_higher_order_patterns)

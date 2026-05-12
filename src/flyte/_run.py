@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
+import os
 import pathlib
 import sys
 import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union, cast
 
-import flyte.errors
-from flyte._context import contextual_run, internal_ctx
+from flyte._context import Context, contextual_run, internal_ctx
 from flyte._environment import Environment
 from flyte._initialize import (
     _get_init_config,
@@ -22,7 +23,8 @@ from flyte._logging import LogFormat, logger
 from flyte._task import F, P, R, TaskTemplate
 from flyte.models import (
     ActionID,
-    Checkpoints,
+    ActionPhase,
+    CheckpointPaths,
     CodeBundle,
     RawDataPath,
     SerializationContext,
@@ -30,9 +32,12 @@ from flyte.models import (
 )
 from flyte.syncify import syncify
 
+# ``flyte.storage.join`` is imported lazily inside the one method that needs it so
+# ``import flyte`` does not eagerly pull fsspec/obstore/etc. into the startup path.
 from ._constants import FLYTE_SYS_PATH
 
 if TYPE_CHECKING:
+    from flyte.notify import NamedRule, Notification
     from flyte.remote import Run
     from flyte.remote._task import LazyEntity
 
@@ -57,6 +62,11 @@ class _CacheValue:
 
 _RUN_CACHE: Dict[_CacheKey, _CacheValue] = {}
 
+# ContextVar for run mode - thread-safe and coroutine-safe alternative to a global variable.
+# This allows offloaded types (files, directories, dataframes) to be aware of the run mode
+# for controlling auto-uploading behavior (only enabled in remote mode).
+_run_mode_var: contextvars.ContextVar[Mode | None] = contextvars.ContextVar("run_mode", default=None)
+
 
 async def _get_code_bundle_for_run(name: str) -> CodeBundle | None:
     """
@@ -69,9 +79,14 @@ async def _get_code_bundle_for_run(name: str) -> CodeBundle | None:
     run = await Run.get.aio(name=name)
     if run:
         run_details = await run.details.aio()
-        spec = run_details.action_details.pb2.resolved_task_spec
+        spec = run_details.action_details.pb2.task
         return extract_code_bundle(spec)
     return None
+
+
+def _get_main_run_mode() -> Mode | None:
+    """Get the current run mode from the context variable."""
+    return _run_mode_var.get()
 
 
 class _Runner:
@@ -97,13 +112,23 @@ class _Runner:
         interruptible: bool | None = None,
         log_level: int | None = None,
         log_format: LogFormat = "console",
+        reset_root_logger: bool = False,
         disable_run_cache: bool = False,
         queue: Optional[str] = None,
         custom_context: Dict[str, str] | None = None,
+        notifications: NamedRule | Notification | Tuple[Notification, ...] | None = None,
         cache_lookup_scope: CacheLookupScope = "global",
+        preserve_original_types: bool | None = None,
+        debug: bool = False,
+        _tracker: Any = None,
+        _bundle_relative_paths: tuple[str, ...] | None = None,
+        _bundle_from_dir: pathlib.Path | None = None,
     ):
         from flyte._tools import ipython_check
 
+        self._tracker = _tracker
+        self._bundle_relative_paths = _bundle_relative_paths
+        self._bundle_from_dir = _bundle_from_dir
         init_config = _get_init_config()
         client = init_config.client if init_config else None
         if not force_mode and client is not None:
@@ -117,7 +142,7 @@ class _Runner:
         self._copy_files = copy_style
         self._dry_run = dry_run
         self._copy_bundle_to = copy_bundle_to
-        self._interactive_mode = interactive_mode if interactive_mode else ipython_check()
+        self._interactive_mode = interactive_mode or ipython_check()
         self._raw_data_path = raw_data_path
         self._metadata_path = metadata_path
         self._run_base_dir = run_base_dir
@@ -130,24 +155,33 @@ class _Runner:
         self._interruptible = interruptible
         self._log_level = log_level
         self._log_format = log_format
+        self._reset_root_logger = reset_root_logger
         self._disable_run_cache = disable_run_cache
         self._queue = queue
+        self._notifications = notifications
         self._custom_context = custom_context or {}
         self._cache_lookup_scope = cache_lookup_scope
+        self._preserve_original_types = (
+            preserve_original_types if preserve_original_types is not None else self._interactive_mode
+        )
+        self._debug = debug
 
     @requires_initialization
     async def _run_remote(self, obj: TaskTemplate[P, R, F] | LazyEntity, *args: P.args, **kwargs: P.kwargs) -> Run:
-        import grpc
+        from connectrpc.code import Code
+        from connectrpc.errors import ConnectError
         from flyteidl2.common import identifier_pb2
         from flyteidl2.core import literals_pb2, security_pb2
         from flyteidl2.task import run_pb2
         from flyteidl2.workflow import run_definition_pb2, run_service_pb2
         from google.protobuf import wrappers_pb2
 
+        import flyte.report
         from flyte.remote import Run
         from flyte.remote._task import LazyEntity, TaskDetails
 
-        from ._code_bundle import build_code_bundle, build_pkl_bundle
+        from ._code_bundle import build_code_bundle, build_code_bundle_from_relative_paths, build_pkl_bundle
+        from ._code_bundle._includes import collect_env_include_files
         from ._deploy import build_images
         from ._internal.runtime.convert import convert_from_native_to_inputs
         from ._internal.runtime.task_serde import translate_task_to_wire
@@ -157,15 +191,18 @@ class _Runner:
         domain = self._domain or cfg.domain
 
         task: TaskTemplate[P, R, F] | TaskDetails
-        if isinstance(obj, LazyEntity):
-            task = await obj.fetch.aio()
+        if isinstance(obj, (LazyEntity, TaskDetails)):
+            if isinstance(obj, LazyEntity):
+                task = await obj.fetch.aio()
+            else:
+                task = obj
             task_spec = task.pb2.spec
             inputs = await convert_from_native_to_inputs(
                 task.interface, *args, custom_context=self._custom_context, **kwargs
             )
             version = task.pb2.task_id.version
             code_bundle = None
-        else:
+        elif isinstance(obj, TaskTemplate):
             task = cast(TaskTemplate[P, R, F], obj)
             if obj.parent_env is None:
                 raise ValueError("Task is not attached to an environment. Please attach the task to an environment")
@@ -178,27 +215,64 @@ class _Runner:
                 code_bundle = cached_value.code_bundle
                 image_cache = cached_value.image_cache
             else:
+                # Resolve any CodeBundleLayer layers before building images.
+                # Must cover the parent env AND all depends_on envs (recursively)
+                # so that _build_images can compute the content hash for every image.
+                parent_env = cast(Environment, obj.parent_env())
+                from flyte._image import Image, resolve_code_bundle_layer
+
+                from ._deploy import plan_deploy
+
+                plan_envs = list(plan_deploy(parent_env)[0].envs.values())
+                for _env in plan_envs:
+                    if isinstance(_env.image, Image):
+                        _env.image = resolve_code_bundle_layer(_env.image, self._copy_files, pathlib.Path(cfg.root_dir))
+
                 if not self._dry_run:
-                    image_cache = await build_images.aio(cast(Environment, obj.parent_env()))
+                    image_cache = await build_images.aio(parent_env)
                 else:
                     image_cache = None
 
+                include_files = collect_env_include_files(plan_envs)
+
                 if self._interactive_mode:
+                    if include_files:
+                        raise ValueError(
+                            "Environment.include is not supported in interactive/pkl runs. "
+                            "Run from a file or remove `include` from the environment."
+                        )
                     code_bundle = await build_pkl_bundle(
                         obj,
                         upload_to_controlplane=not self._dry_run,
                         copy_bundle_to=self._copy_bundle_to,
                     )
+                elif self._copy_files == "custom":
+                    if not self._bundle_relative_paths or not self._bundle_from_dir:
+                        raise ValueError("copy_style='custom' requires _bundle_relative_paths and _bundle_from_dir")
+                    merged_paths = tuple(self._bundle_relative_paths) + include_files
+                    code_bundle = await build_code_bundle_from_relative_paths(
+                        merged_paths,
+                        from_dir=self._bundle_from_dir,
+                        dryrun=self._dry_run,
+                        copy_bundle_to=self._copy_bundle_to,
+                    )
+                elif self._copy_files != "none":
+                    code_bundle = await build_code_bundle(
+                        from_dir=cfg.root_dir,
+                        dryrun=self._dry_run,
+                        copy_bundle_to=self._copy_bundle_to,
+                        copy_style=self._copy_files,
+                        additional_files=include_files,
+                    )
+                elif include_files:
+                    code_bundle = await build_code_bundle_from_relative_paths(
+                        include_files,
+                        from_dir=pathlib.Path(cfg.root_dir),
+                        dryrun=self._dry_run,
+                        copy_bundle_to=self._copy_bundle_to,
+                    )
                 else:
-                    if self._copy_files != "none":
-                        code_bundle = await build_code_bundle(
-                            from_dir=cfg.root_dir,
-                            dryrun=self._dry_run,
-                            copy_bundle_to=self._copy_bundle_to,
-                            copy_style=self._copy_files,
-                        )
-                    else:
-                        code_bundle = None
+                    code_bundle = None
             if not self._disable_run_cache:
                 _RUN_CACHE[_CacheKey(obj_id=id(obj), dry_run=self._dry_run)] = _CacheValue(
                     code_bundle=code_bundle, image_cache=image_cache
@@ -215,10 +289,26 @@ class _Runner:
                 image_cache=image_cache,
                 root_dir=cfg.root_dir,
             )
-            task_spec = translate_task_to_wire(obj, s_ctx)
+            action = ActionID(
+                name="{{.actionName}}", run_name="{{.runName}}", project=project, domain=domain, org=cfg.org
+            )
+            tctx = TaskContext(
+                action=action,
+                code_bundle=code_bundle,
+                output_path="",
+                version=version or "na",
+                raw_data_path=RawDataPath(path=""),
+                compiled_image_cache=image_cache,
+                run_base_dir="",
+                report=flyte.report.Report(name=action.name),
+                custom_context=self._custom_context,
+            )
+            task_spec = translate_task_to_wire(obj, s_ctx, default_inputs=None, task_context=tctx)
             inputs = await convert_from_native_to_inputs(
                 obj.native_interface, *args, custom_context=self._custom_context, **kwargs
             )
+        else:
+            raise ValueError(f"Not supported Task Type: {type(task)}")
 
         env = self._env_vars or {}
         if env.get("LOG_LEVEL") is None:
@@ -227,12 +317,28 @@ class _Runner:
             else:
                 env["LOG_LEVEL"] = str(logger.getEffectiveLevel())
         env["LOG_FORMAT"] = self._log_format
+        if self._reset_root_logger:
+            env["FLYTE_RESET_ROOT_LOGGER"] = "1"
+        if self._debug:
+            env["_F_E_VS"] = "1"
+
+        use_rust_controller_env_var = os.getenv("_F_USE_RUST_CONTROLLER")
+        if use_rust_controller_env_var:
+            env["_F_USE_RUST_CONTROLLER"] = use_rust_controller_env_var
 
         # These paths will be appended to sys.path at runtime.
         if cfg.sync_local_sys_paths:
-            env[FLYTE_SYS_PATH] = ":".join(
-                f"./{pathlib.Path(p).relative_to(cfg.root_dir)}" for p in sys.path if p.startswith(str(cfg.root_dir))
-            )
+            root_dir_abs = pathlib.Path(cfg.root_dir).resolve()
+            added_paths = [
+                f"./{pathlib.Path(p).relative_to(root_dir_abs)}"
+                for p in sys.path
+                if pathlib.Path(p).is_relative_to(root_dir_abs)
+            ]
+            env[FLYTE_SYS_PATH] = ":".join(added_paths)
+
+        # TODO: Remove once the actions service is the default and this env var is no longer needed.
+        if os.getenv("_U_USE_ACTIONS") == "1":
+            env["_U_USE_ACTIONS"] = "1"
 
         if not self._dry_run:
             if get_client() is None:
@@ -241,7 +347,8 @@ class _Runner:
                     "ClientNotInitializedError",
                     "user",
                     "flyte.run requires client to be initialized. "
-                    "Call flyte.init() with a valid endpoint or api-key before using this function.",
+                    "Call flyte.init() with a valid endpoint/api-key before using this function"
+                    "or Call flyte.init_from_config() with a valid path to the config file",
                 )
             run_id = None
             project_id = None
@@ -250,7 +357,7 @@ class _Runner:
                     project=project,
                     domain=domain,
                     org=cfg.org,
-                    name=self._name if self._name else None,
+                    name=self._name or None,
                 )
             else:
                 project_id = identifier_pb2.ProjectIdentifier(
@@ -261,11 +368,11 @@ class _Runner:
             # Fill in task id inside the task template if it's not provided.
             # Maybe this should be done here, or the backend.
             if task_spec.task_template.id.project == "":
-                task_spec.task_template.id.project = project if project else ""
+                task_spec.task_template.id.project = project or ""
             if task_spec.task_template.id.domain == "":
-                task_spec.task_template.id.domain = domain if domain else ""
+                task_spec.task_template.id.domain = domain or ""
             if task_spec.task_template.id.org == "":
-                task_spec.task_template.id.org = cfg.org if cfg.org else ""
+                task_spec.task_template.id.org = cfg.org or ""
             if task_spec.task_template.id.version == "":
                 task_spec.task_template.id.version = version
 
@@ -297,13 +404,33 @@ class _Runner:
                 else:
                     raise ValueError(f"Unknown cache lookup scope: {scope}")
 
+            notification_rule_name = None
+            notification_rules = None
+            if self._notifications:
+                from flyte._internal.runtime.notifications_serde import resolve_notification_settings
+
+                notification_rule_name, notification_rules = resolve_notification_settings(self._notifications)
+
             try:
-                resp = await get_client().run_service.CreateRun(
+                from flyteidl2.dataproxy import dataproxy_service_pb2
+
+                upload_req = dataproxy_service_pb2.UploadInputsRequest(
+                    inputs=inputs.proto_inputs,
+                    task_spec=task_spec,
+                )
+                if run_id is not None:
+                    upload_req.run_id.CopyFrom(run_id)
+                else:
+                    upload_req.project_id.CopyFrom(project_id)
+
+                upload_resp = await get_client().dataproxy_service.upload_inputs(upload_req)
+
+                resp = await get_client().run_service.create_run(
                     run_service_pb2.CreateRunRequest(
                         run_id=run_id,
                         project_id=project_id,
                         task_spec=task_spec,
-                        inputs=inputs.proto_inputs,
+                        offloaded_input_data=upload_resp.offloaded_input_data,
                         run_spec=run_pb2.RunSpec(
                             overwrite_cache=self._overwrite_cache,
                             interruptible=wrappers_pb2.BoolValue(value=self._interruptible)
@@ -321,19 +448,21 @@ class _Runner:
                                 if self._cache_lookup_scope
                                 else None,
                             ),
+                            notification_rule_name=notification_rule_name,
+                            notification_rules=notification_rules,
                         ),
                     ),
                 )
-                return Run(pb2=resp.run)
-            except grpc.aio.AioRpcError as e:
-                if e.code() == grpc.StatusCode.UNAVAILABLE:
+                return Run(pb2=resp.run, _preserve_original_types=self._preserve_original_types)
+            except ConnectError as e:
+                if e.code == Code.UNAVAILABLE:
                     raise flyte.errors.RuntimeSystemError(
                         "SystemUnavailableError",
                         "Flyte system is currently unavailable. check your configuration, or the service status.",
                     ) from e
-                elif e.code() == grpc.StatusCode.INVALID_ARGUMENT:
-                    raise flyte.errors.RuntimeUserError("InvalidArgumentError", e.details())
-                elif e.code() == grpc.StatusCode.ALREADY_EXISTS:
+                elif e.code == Code.INVALID_ARGUMENT:
+                    raise flyte.errors.RuntimeUserError("InvalidArgumentError", e.message)
+                elif e.code == Code.ALREADY_EXISTS:
                     # TODO maybe this should be a pass and return existing run?
                     raise flyte.errors.RuntimeUserError(
                         "RunAlreadyExistsError",
@@ -342,7 +471,7 @@ class _Runner:
                 else:
                     raise flyte.errors.RuntimeSystemError(
                         "RunCreationError",
-                        f"Failed to create run: {e.details()}",
+                        f"Failed to create run: {e.message}",
                     ) from e
 
         class DryRun(Run):
@@ -372,7 +501,7 @@ class _Runner:
         over the longer term we will productize this.
         """
         import flyte.report
-        from flyte._code_bundle import build_code_bundle, build_pkl_bundle
+        from flyte._code_bundle import build_code_bundle, build_code_bundle_from_relative_paths, build_pkl_bundle
         from flyte._deploy import build_images
         from flyte.models import RawDataPath
         from flyte.storage import ABFS, GCS, S3
@@ -384,6 +513,17 @@ class _Runner:
 
         if obj.parent_env is None:
             raise ValueError("Task is not attached to an environment. Please attach the task to an environment.")
+
+        # Resolve any CodeBundleLayer layers before building images.
+        # Must cover the parent env AND all depends_on envs (recursively)
+        # so that _build_images can compute the content hash for every image.
+        env = cast(Environment, obj.parent_env())
+        from flyte._deploy import plan_deploy
+        from flyte._image import Image, resolve_code_bundle_layer
+
+        for _env in plan_deploy(env)[0].envs.values():
+            if isinstance(_env.image, Image):
+                _env.image = resolve_code_bundle_layer(_env.image, self._copy_files, pathlib.Path(cfg.root_dir))
 
         image_cache = await build_images.aio(cast(Environment, obj.parent_env()))
 
@@ -399,16 +539,24 @@ class _Runner:
                     upload_to_controlplane=not self._dry_run,
                     copy_bundle_to=self._copy_bundle_to,
                 )
+            elif self._copy_files == "custom":
+                if not self._bundle_relative_paths or not self._bundle_from_dir:
+                    raise ValueError("copy_style='custom' requires _bundle_relative_paths and _bundle_from_dir")
+                code_bundle = await build_code_bundle_from_relative_paths(
+                    self._bundle_relative_paths,
+                    from_dir=self._bundle_from_dir,
+                    dryrun=self._dry_run,
+                    copy_bundle_to=self._copy_bundle_to,
+                )
+            elif self._copy_files != "none":
+                code_bundle = await build_code_bundle(
+                    from_dir=cfg.root_dir,
+                    dryrun=self._dry_run,
+                    copy_bundle_to=self._copy_bundle_to,
+                    copy_style=self._copy_files,
+                )
             else:
-                if self._copy_files != "none":
-                    code_bundle = await build_code_bundle(
-                        from_dir=cfg.root_dir,
-                        dryrun=self._dry_run,
-                        copy_bundle_to=self._copy_bundle_to,
-                        copy_style=self._copy_files,
-                    )
-                else:
-                    code_bundle = None
+                code_bundle = None
 
         version = self._version or (
             code_bundle.computed_version if code_bundle and code_bundle.computed_version else None
@@ -423,7 +571,8 @@ class _Runner:
         run_name = self._name
         random_id = str(uuid.uuid4())[:6]
 
-        controller = create_controller("remote", endpoint="localhost:8090", insecure=True)
+        # controller = create_controller("remote", endpoint="localhost:8090", insecure=True)
+        controller = create_controller("rust", endpoint="localhost:8090", insecure=True)
         action = ActionID(name=action_name, run_name=run_name, project=project, domain=domain, org=org)
 
         inputs = obj.native_interface.convert_to_kwargs(*args, **kwargs)
@@ -444,16 +593,16 @@ class _Runner:
         raw_data_path_obj = RawDataPath(path=raw_data_path)
         checkpoint_path = f"{raw_data_path}/checkpoint"
         prev_checkpoint = f"{raw_data_path}/prev_checkpoint"
-        checkpoints = Checkpoints(checkpoint_path, prev_checkpoint)
+        checkpoint_paths = CheckpointPaths(prev_checkpoint_path=prev_checkpoint, checkpoint_path=checkpoint_path)
 
         async def _run_task() -> Tuple[Any, Optional[Exception]]:
             ctx = internal_ctx()
             tctx = TaskContext(
                 action=action,
-                checkpoints=checkpoints,
+                checkpoint_paths=checkpoint_paths,
                 code_bundle=code_bundle,
                 output_path=output_path,
-                version=version if version else "na",
+                version=version or "na",  # does na not work for rust?
                 raw_data_path=raw_data_path_obj,
                 compiled_image_cache=image_cache,
                 run_base_dir=run_base_dir,
@@ -468,8 +617,36 @@ class _Runner:
             raise err
         return outputs
 
+    async def _send_local_notifications(
+        self,
+        *,
+        phase: ActionPhase,
+        task_name: str,
+        run_name: str,
+        error: str = "",
+    ) -> None:
+        """Send notifications locally. Never raises — failures are logged."""
+        from flyte.notify._notifiers import NamedRule as _NamedRule
+        from flyte.notify._sender import send_notifications
+
+        notifications = self._notifications
+        if isinstance(notifications, _NamedRule):
+            logger.info("Skipping named rule %r in local mode", notifications.name)
+            return
+
+        await send_notifications(
+            notifications,  # type: ignore[arg-type]
+            phase=phase,
+            task_name=task_name,
+            run_name=run_name,
+            error=error,
+            project=self._project or "",
+            domain=self._domain or "",
+        )
+
     async def _run_local(self, obj: TaskTemplate[P, R, F], *args: P.args, **kwargs: P.kwargs) -> Run:
         from flyteidl2.common import identifier_pb2
+        from flyteidl2.task import common_pb2
 
         from flyte._internal.controllers import create_controller
         from flyte._internal.controllers._local_controller import LocalController
@@ -495,12 +672,15 @@ class _Runner:
         else:
             raw_data_path = RawDataPath(path=self._raw_data_path)
 
+        from flyte.storage import join as storage_join
+
         ctx = internal_ctx()
+        rd_base = raw_data_path.path
         tctx = TaskContext(
             action=action,
-            checkpoints=Checkpoints(
-                prev_checkpoint_path=internal_ctx().raw_data.path,
-                checkpoint_path=internal_ctx().raw_data.path,
+            checkpoint_paths=CheckpointPaths(
+                prev_checkpoint_path=storage_join(rd_base, "prev_checkpoint"),
+                checkpoint_path=storage_join(rd_base, "checkpoint"),
             ),
             code_bundle=None,
             output_path=str(output_path),
@@ -511,22 +691,54 @@ class _Runner:
             report=Report(name=action.name),
             mode="local",
             custom_context=self._custom_context,
+            disable_run_cache=self._disable_run_cache,
         )
 
-        with ctx.replace_task_context(tctx):
-            # make the local version always runs on a different thread, returns a wrapped future.
-            if obj._call_as_synchronous:
-                fut = controller.submit_sync(obj, *args, **kwargs)
-                awaitable = asyncio.wrap_future(fut)
-                outputs = await awaitable
-            else:
-                outputs = await controller.submit(obj, *args, **kwargs)
+        if self._tracker is not None:
+            ctx = Context(ctx.data.replace(tracker=self._tracker))
+
+        from flyte._initialize import is_persistence_enabled
+        from flyte._persistence._recorder import RunRecorder
+
+        persist = is_persistence_enabled()
+        run_name = action.run_name or action.name
+
+        if persist:
+            RunRecorder.initialize_persistence()
+
+        recorder = RunRecorder(tracker=self._tracker, persist=persist, run_name=run_name)
+        controller.set_recorder(recorder)
+
+        recorder.record_root_start(task_name=obj.name)
+
+        try:
+            with ctx.replace_task_context(tctx):
+                # make the local version always runs on a different thread, returns a wrapped future.
+                if obj._call_as_synchronous:
+                    fut = controller.submit_sync(obj, *args, **kwargs)
+                    awaitable = asyncio.wrap_future(fut)
+                    outputs = await awaitable
+                else:
+                    outputs = await controller.submit(obj, *args, **kwargs)
+        except Exception as e:
+            recorder.record_root_failure(error=str(e))
+            if self._notifications:
+                await self._send_local_notifications(
+                    phase=ActionPhase.FAILED, task_name=obj.name, run_name=run_name, error=str(e)
+                )
+            raise
+        else:
+            recorder.record_root_complete()
+            if self._notifications:
+                await self._send_local_notifications(phase=ActionPhase.SUCCEEDED, task_name=obj.name, run_name=run_name)
 
         class _LocalRun(Run):
             def __init__(self, outputs: Tuple[Any, ...] | Any):
                 from flyteidl2.workflow import run_definition_pb2
 
-                self._outputs = outputs
+                self._outputs = ActionOutputs(
+                    common_pb2.Outputs(), outputs if isinstance(outputs, tuple) else (outputs,)
+                )
                 super().__init__(
                     pb2=run_definition_pb2.Run(
                         action=run_definition_pb2.Action(
@@ -552,7 +764,7 @@ class _Runner:
 
             @syncify
             async def outputs(self) -> ActionOutputs:  # type: ignore[override]
-                return cast(ActionOutputs, self._outputs)
+                return self._outputs
 
         return _LocalRun(outputs)
 
@@ -584,25 +796,32 @@ class _Runner:
         :param kwargs: Keyword arguments to pass to the Task
         :return: Run instance or the result of the task
         """
-        from flyte.remote._task import LazyEntity
+        from flyte.remote._task import LazyEntity, TaskDetails
 
-        if isinstance(task, LazyEntity) and self._mode != "remote":
+        if isinstance(task, (LazyEntity, TaskDetails)) and self._mode != "remote":
             raise ValueError("Remote task can only be run in remote mode.")
 
-        if not isinstance(task, TaskTemplate) and not isinstance(task, LazyEntity):
+        if not isinstance(task, TaskTemplate) and not isinstance(task, (LazyEntity, TaskDetails)):
             raise TypeError(f"On Flyte tasks can be run, not generic functions or methods '{type(task)}'.")
 
-        if self._mode == "remote":
-            return await self._run_remote(task, *args, **kwargs)
-        task = cast(TaskTemplate, task)
-        if self._mode == "hybrid":
-            return await self._run_hybrid(task, *args, **kwargs)
+        # Set the run mode in the context variable so that offloaded types (files, directories, dataframes)
+        # can check the mode for controlling auto-uploading behavior (only enabled in remote mode).
+        _run_mode_var.set(self._mode)
 
-        # TODO We could use this for remote as well and users could simply pass flyte:// or s3:// or file://
-        with internal_ctx().new_raw_data_path(
-            raw_data_path=RawDataPath.from_local_folder(local_folder=self._raw_data_path)
-        ):
-            return await self._run_local(task, *args, **kwargs)
+        try:
+            if self._mode == "remote":
+                return await self._run_remote(task, *args, **kwargs)
+            task = cast(TaskTemplate, task)
+            if self._mode == "hybrid":
+                return await self._run_hybrid(task, *args, **kwargs)
+
+            # TODO We could use this for remote as well and users could simply pass flyte:// or s3:// or file://
+            with internal_ctx().new_raw_data_path(
+                raw_data_path=RawDataPath.from_local_folder(local_folder=self._raw_data_path)
+            ):
+                return await self._run_local(task, *args, **kwargs)
+        finally:
+            _run_mode_var.set(None)
 
 
 def with_runcontext(
@@ -626,10 +845,15 @@ def with_runcontext(
     interruptible: bool | None = None,
     log_level: int | None = None,
     log_format: LogFormat = "console",
+    reset_root_logger: bool = False,
     disable_run_cache: bool = False,
     queue: Optional[str] = None,
+    notifications: Notification | Tuple[Notification, ...] | None = None,
     custom_context: Dict[str, str] | None = None,
     cache_lookup_scope: CacheLookupScope = "global",
+    preserve_original_types: bool = False,
+    debug: bool = False,
+    _tracker: Any = None,
 ) -> _Runner:
     """
     Launch a new run with the given parameters as the context.
@@ -637,6 +861,9 @@ def with_runcontext(
     Example:
     ```python
     import flyte
+    import flyte.notify as notify
+    from flyte.models import ActionPhase
+
     env = flyte.TaskEnvironment("example")
 
     @env.task
@@ -644,7 +871,14 @@ def with_runcontext(
         return f"{x} {y}"
 
     if __name__ == "__main__":
-        flyte.with_runcontext(name="example_run_id").run(example_task, 1, y="hello")
+        flyte.with_runcontext(
+            name="example_run_id",
+            notifications=notify.Slack(
+                on_phase=ActionPhase.FAILED,
+                webhook_url="https://hooks.slack.com/services/YOUR/WEBHOOK/URL",
+                message="Task failed: {run.error}",
+            ),
+        ).run(example_task, 1, y="hello")
     ```
 
     :param mode: Optional The mode to use for the run, if not provided, it will be computed from flyte.init
@@ -673,20 +907,35 @@ def with_runcontext(
     :param log_level: Optional Log level to set for the run. If not provided, it will be set to the default log level
         set using `flyte.init()`
     :param log_format: Optional Log format to set for the run. If not provided, it will be set to the default log format
+    :param reset_root_logger: If true, the root logger will be preserved and not modified by Flyte.
     :param disable_run_cache: Optional If true, the run cache will be disabled. This is useful for testing purposes.
     :param queue: Optional The queue to use for the run. This is used to specify the cluster to use for the run.
+    :param notifications: Optional Notification(s) to send when the run reaches specific execution phases.
+        Accepts a single notification or a tuple of notifications. Supports Email, Slack, Teams, and Webhook types.
+        See `flyte.notify` for available notification types and template variables.
     :param custom_context: Optional global input context to pass to the task. This will be available via
         get_custom_context() within the task and will automatically propagate to sub-tasks.
         Acts as base/default values that can be overridden by context managers in the code.
     :param cache_lookup_scope: Optional Scope to use for the run. This is used to specify the scope to use for cache
         lookups. If not specified, it will be set to the default scope (global unless overridden at the system level).
+    :param preserve_original_types: Optional If true, the type engine will preserve original types (e.g., pd.DataFrame)
+        when guessing python types from literal types. If false (default), it will return the generic
+        flyte.io.DataFrame. This option is automatically set to True if interactive_mode is True unless overridden
+        explicitly by this parameter.
+    :param debug: Optional If true, the task will be run as a VSCode debug task, starting a code-server in the
+        container so users can connect via the UI to interactively debug/run the task.
+    :param _tracker: This is an internal only parameter used by the CLI to render the TUI.
 
     :return: runner
+
     """
     if mode == "hybrid" and not name and not run_base_dir:
         raise ValueError("Run name and run base dir are required for hybrid mode")
+    if copy_style == "custom":
+        raise ValueError("copy_style='custom' is not yet supported through with_runcontext.")
     if copy_style == "none" and not version:
         raise ValueError("Version is required when copy_style is 'none'")
+
     return _Runner(
         force_mode=mode,
         name=name,
@@ -707,10 +956,15 @@ def with_runcontext(
         domain=domain,
         log_level=log_level,
         log_format=log_format,
+        reset_root_logger=reset_root_logger,
         disable_run_cache=disable_run_cache,
         queue=queue,
+        notifications=notifications,
         custom_context=custom_context,
         cache_lookup_scope=cache_lookup_scope,
+        preserve_original_types=preserve_original_types,
+        debug=debug,
+        _tracker=_tracker,
     )
 
 

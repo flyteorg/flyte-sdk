@@ -33,5 +33,13 @@ TASK_FUNCTION_SOURCE_PATH = "TASK_FUNCTION_SOURCE_PATH"
 HOURS_TO_SECONDS = 60 * 60
 MAX_IDLE_SECONDS = 10 * HOURS_TO_SECONDS  # 10 hours
 
+# VSCode server port
+VSCODE_PORT = 6060
+
+# The name of the TaskLog entry in ActionDetails.attempts[].log_info
+# that contains the VS Code Debugger URI.
+VSCODE_DEBUGGER_LOG_NAME = "VS Code Debugger"
+VSCODE_READY_MESSAGE = "Vscode server is ready"
+
 # Subprocess constants
 EXIT_CODE_SUCCESS = 0

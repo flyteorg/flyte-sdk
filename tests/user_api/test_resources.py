@@ -211,6 +211,22 @@ def test_gpu_with_a100_80gb_partitions():
         assert gpu.device_class == "GPU"
 
 
+def test_gpu_with_h100_partitions():
+    """Test H100 GPU with all valid partitions"""
+    partitions = ["1g.10gb", "1g.20gb", "2g.20gb", "3g.40gb", "4g.40gb", "7g.80gb"]
+    for partition in partitions:
+        gpu = GPU(device="H100", quantity=1, partition=partition)  # type: ignore
+        assert gpu.partition == partition
+        assert gpu.device == "H100"
+        assert gpu.device_class == "GPU"
+
+
+def test_gpu_with_h100_invalid_partition():
+    """Test H100 GPU with invalid partition"""
+    with pytest.raises(ValueError, match="Invalid partition for H100"):
+        GPU(device="H100", quantity=1, partition="invalid")  # type: ignore
+
+
 def test_gpu_invalid_device():
     """Test GPU with invalid device type"""
     with pytest.raises(ValueError, match="Invalid GPU type"):

@@ -4,7 +4,8 @@ from dataclasses import dataclass
 from functools import cached_property
 from typing import AsyncIterator
 
-import grpc.aio
+from connectrpc.code import Code
+from connectrpc.errors import ConnectError
 from flyteidl2.common import identifier_pb2, list_pb2
 from flyteidl2.task import common_pb2, task_definition_pb2
 from flyteidl2.trigger import trigger_definition_pb2, trigger_service_pb2
@@ -30,7 +31,7 @@ class TriggerDetails(ToJSONMixin):
         """
         ensure_client()
         cfg = get_init_config()
-        resp = await get_client().trigger_service.GetTriggerDetails(
+        resp = await get_client().trigger_service.get_trigger_details(
             request=trigger_service_pb2.GetTriggerDetailsRequest(
                 name=identifier_pb2.TriggerName(
                     task_name=task_name,
@@ -45,34 +46,58 @@ class TriggerDetails(ToJSONMixin):
 
     @property
     def name(self) -> str:
+        """
+        Name of the trigger.
+        """
         return self.id.name.name
 
     @property
     def id(self) -> identifier_pb2.TriggerIdentifier:
+        """
+        Identifier for the trigger.
+        """
         return self.pb2.id
 
     @property
     def task_name(self) -> str:
+        """
+        Name of the associated task
+        """
         return self.pb2.id.name.task_name
 
     @property
     def automation_spec(self) -> common_pb2.TriggerAutomationSpec:
+        """
+        Get the automation specification for the trigger (e.g., schedule, event).
+        """
         return self.pb2.automation_spec
 
     @property
     def metadata(self) -> trigger_definition_pb2.TriggerMetadata:
+        """
+        Get the metadata for the trigger.
+        """
         return self.pb2.metadata
 
     @property
     def status(self) -> trigger_definition_pb2.TriggerStatus:
+        """
+        Get the current status of the trigger.
+        """
         return self.pb2.status
 
     @property
     def is_active(self) -> bool:
+        """
+        Check if the trigger is currently active.
+        """
         return self.pb2.spec.active
 
     @cached_property
     def trigger(self) -> trigger_definition_pb2.Trigger:
+        """
+        Get the trigger protobuf object constructed from the details.
+        """
         return trigger_definition_pb2.Trigger(
             id=self.pb2.id,
             automation_spec=self.automation_spec,
@@ -84,6 +109,10 @@ class TriggerDetails(ToJSONMixin):
 
 @dataclass
 class Trigger(ToJSONMixin):
+    """
+    Represents a trigger in the Flyte platform.
+    """
+
     pb2: trigger_definition_pb2.Trigger
     details: TriggerDetails | None = None
 
@@ -120,7 +149,7 @@ class Trigger(ToJSONMixin):
                 task_default_inputs=list(task.pb2.spec.default_inputs),
             )
 
-            resp = await get_client().trigger_service.DeployTrigger(
+            resp = await get_client().trigger_service.deploy_trigger(
                 request=trigger_service_pb2.DeployTriggerRequest(
                     name=identifier_pb2.TriggerName(
                         name=trigger.name,
@@ -142,8 +171,8 @@ class Trigger(ToJSONMixin):
             details = TriggerDetails(pb2=resp.trigger)
 
             return cls(pb2=details.trigger, details=details)
-        except grpc.aio.AioRpcError as e:
-            if e.code() == grpc.StatusCode.NOT_FOUND:
+        except ConnectError as e:
+            if e.code == Code.NOT_FOUND:
                 raise ValueError(f"Task {task_name}:{task_version or 'latest'} not found") from e
             raise
 
@@ -192,7 +221,7 @@ class Trigger(ToJSONMixin):
             )
 
         while True:
-            resp = await get_client().trigger_service.ListTriggers(
+            resp = await get_client().trigger_service.list_triggers(
                 request=trigger_service_pb2.ListTriggersRequest(
                     project_id=project_id,
                     task_id=task_id,
@@ -217,7 +246,7 @@ class Trigger(ToJSONMixin):
         """
         ensure_client()
         cfg = get_init_config()
-        await get_client().trigger_service.UpdateTriggers(
+        await get_client().trigger_service.update_triggers(
             request=trigger_service_pb2.UpdateTriggersRequest(
                 names=[
                     identifier_pb2.TriggerName(
@@ -234,19 +263,19 @@ class Trigger(ToJSONMixin):
 
     @syncify
     @classmethod
-    async def delete(cls, name: str, task_name: str):
+    async def delete(cls, name: str, task_name: str, project: str | None = None, domain: str | None = None):
         """
         Delete a trigger by its name.
         """
         ensure_client()
         cfg = get_init_config()
-        await get_client().trigger_service.DeleteTriggers(
+        await get_client().trigger_service.delete_triggers(
             request=trigger_service_pb2.DeleteTriggersRequest(
                 names=[
                     identifier_pb2.TriggerName(
                         org=cfg.org,
-                        project=cfg.project,
-                        domain=cfg.domain,
+                        project=project or cfg.project,
+                        domain=domain or cfg.domain,
                         name=name,
                         task_name=task_name,
                     )
@@ -256,19 +285,44 @@ class Trigger(ToJSONMixin):
 
     @property
     def id(self) -> identifier_pb2.TriggerIdentifier:
+        """
+        Get the unique identifier for the trigger.
+        """
         return self.pb2.id
 
     @property
     def name(self) -> str:
+        """
+        Get the name of the trigger.
+        """
         return self.id.name.name
 
     @property
     def task_name(self) -> str:
+        """
+        Get the name of the task associated with this trigger.
+        """
         return self.id.name.task_name
 
     @property
     def automation_spec(self) -> common_pb2.TriggerAutomationSpec:
+        """
+        Get the automation specification for the trigger.
+        """
         return self.pb2.automation_spec
+
+    @property
+    def url(self) -> str:
+        """
+        Get the console URL for viewing the trigger.
+        """
+        client = get_client()
+        return client.console.trigger_url(
+            project=self.pb2.id.name.project,
+            domain=self.pb2.id.name.domain,
+            task_name=self.pb2.id.name.task_name,
+            trigger_name=self.name,
+        )
 
     async def get_details(self) -> TriggerDetails:
         """
@@ -281,9 +335,15 @@ class Trigger(ToJSONMixin):
 
     @property
     def is_active(self) -> bool:
+        """
+        Check if the trigger is currently active.
+        """
         return self.pb2.active
 
     def _rich_automation(self, automation: common_pb2.TriggerAutomationSpec):
+        """
+        Generate rich representation fields for the automation specification.
+        """
         if automation.type == common_pb2.TriggerAutomationSpec.type.TYPE_NONE:
             yield "none", None
         elif automation.type == common_pb2.TriggerAutomationSpec.type.TYPE_SCHEDULE:
@@ -300,6 +360,9 @@ class Trigger(ToJSONMixin):
                 )
 
     def __rich_repr__(self):
+        """
+        Rich representation of the Trigger object for pretty printing.
+        """
         yield "task_name", self.task_name
         yield "name", self.name
         yield from self._rich_automation(self.pb2.automation_spec)

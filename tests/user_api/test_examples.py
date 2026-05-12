@@ -27,7 +27,7 @@ def test_none_type():
 
     flyte.init()
     result = flyte.run(foo)
-    assert result.outputs() is None
+    assert result.outputs() == (None,)
 
 
 def test_basic_types():
@@ -64,7 +64,7 @@ def test_collection_types():
     flyte.init()
     result = flyte.run(collection_types)
     outputs = result.outputs()
-    assert outputs == {"list_result": [2, 4, 6], "dict_result": [2, 4]}
+    assert outputs == ({"list_result": [2, 4, 6], "dict_result": [2, 4]},)
 
 
 def test_optional_types():
@@ -87,7 +87,7 @@ def test_optional_types():
     flyte.init()
     result = flyte.run(optional_types)
     outputs = result.outputs()
-    assert outputs == {"int_provided": True, "int_value": 10, "str_provided": False, "str_value": None}
+    assert outputs == ({"int_provided": True, "int_value": 10, "str_provided": False, "str_value": None},)
 
 
 def test_union_types():
@@ -105,11 +105,11 @@ def test_union_types():
 
     flyte.init()
     result = flyte.run(union_types)
-    assert result.outputs() == "Received string: hello"
+    assert result.outputs()[0] == "Received string: hello"
 
     # Try with an integer value
     result = flyte.run(union_types, value=42)
-    assert result.outputs() == "Received integer: 42"
+    assert result.outputs()[0] == "Received integer: 42"
 
 
 class Person:
@@ -130,7 +130,7 @@ def test_custom_class():
 
     flyte.init()
     result = flyte.run(process_person, person=Person("Alice", 25))
-    outputs = result.outputs()
+    outputs = result.outputs()[0]
     assert outputs["name"] == "Alice"
     assert outputs["age"] == 25
     assert outputs["is_adult"] is True
@@ -157,7 +157,7 @@ def test_parametrized_input(input_value, expected_output):
 
     flyte.init()
     result = flyte.run(square_number, num=input_value)
-    assert result.outputs() == expected_output
+    assert result.outputs()[0] == expected_output
 
 
 @dataclass
@@ -188,7 +188,7 @@ def test_dataclass():
     flyte.init()
     user = UserProfile(id=123, name="John Doe", email="john@example.com", tags=["customer", "premium"])
     result = flyte.run(process_user_profile, user=user)
-    outputs = result.outputs()
+    outputs = result.outputs()[0]
 
     assert outputs["id"] == 123
     assert outputs["name"] == "JOHN DOE"
@@ -226,7 +226,7 @@ def test_pydantic_model():
         metadata={"brand": "TechBrand", "weight": "1.5kg"},
     )
     result = flyte.run(process_product, product=product)
-    outputs = result.outputs()
+    outputs = result.outputs()[0]
 
     # Check that the output is a Pydantic model with the expected values
     assert isinstance(outputs, Product)
@@ -261,7 +261,7 @@ def test_pandas_dataframe():
     df = pd.DataFrame(data)
 
     result = flyte.run(process_dataframe, df=df)
-    outputs = result.outputs()
+    outputs = result.outputs()[0]
 
     assert outputs == 4  # The number of rows in the DataFrame
 
@@ -293,7 +293,7 @@ def test_file_io():
         flyte.init()
         input_file = File[str](path=temp_path)
         result = flyte.run(process_text_file, input_file=input_file)
-        outputs = result.outputs()
+        outputs = result.outputs()[0]
 
         assert outputs == 11
     finally:
@@ -331,7 +331,7 @@ def test_file_transformation():
         flyte.init()
         csv_file = File[pd.DataFrame](path=temp_path)
         result = flyte.run(transform_csv_to_json, csv_file=csv_file)
-        output_file = result.outputs()
+        output_file = result.outputs()[0]
 
         # Verify the output file exists and contains valid JSON
         assert output_file.exists_sync()
@@ -404,7 +404,7 @@ def test_directory_operations():
         flyte.init()
         dir_input = Dir[str](path=temp_dir)
         result = flyte.run(analyze_text_directory, text_dir=dir_input)
-        outputs = result.outputs()
+        outputs = result.outputs()[0]
 
         assert outputs["file_count"] == 3
         assert outputs["total_lines"] == 9  # Sum of all lines in text files
@@ -457,7 +457,7 @@ def test_complex_dataclass():
     )
 
     result = flyte.run(process_complex_data, data=complex_data)
-    outputs = result.outputs()
+    outputs = result.outputs()[0]
 
     assert outputs["id"] == 42
     assert outputs["nested_name"] == "test"

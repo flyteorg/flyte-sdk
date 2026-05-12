@@ -7,7 +7,7 @@
 #    "pyarrow",
 #    "joblib",
 #    "mashumaro",
-#    "flyte>=0.2.0b17",
+#    "flyte",
 # ]
 # ///
 

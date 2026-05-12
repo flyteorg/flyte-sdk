@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, Literal, Mapping, Union
+from typing import TYPE_CHECKING, Any, Dict, Literal, Mapping, Tuple, Union
 
 import rich.repr
+
+if TYPE_CHECKING:
+    from flyte.notify import NamedRule, Notification
 
 Timezone = Literal[
     "Etc/GMT-5",
@@ -621,16 +624,33 @@ TriggerTime = _trigger_time()
 @dataclass(frozen=True)
 class Cron:
     """
-    This class defines a Cron automation that can be associated with a Trigger in Flyte.
-    Example usage:
+    Cron-based automation schedule for use with `Trigger`.
+
+    Cron expressions use the standard five-field format:
+    `minute hour day-of-month month day-of-week`
+
+    Common patterns:
+
+    - `"0 * * * *"` — every hour (at minute 0)
+    - `"0 0 * * *"` — daily at midnight
+    - `"0 0 * * 1"` — weekly on Monday at midnight
+    - `"0 0 1 * *"` — monthly on the 1st at midnight
+    - `"*/5 * * * *"` — every 5 minutes
+
+    Example:
+
     ```python
-    from flyte.trigger import Trigger, Cron
-    my_trigger = Trigger(
+    my_trigger = flyte.Trigger(
         name="my_cron_trigger",
-        automation=Cron("0 * * * *"),  # Runs every hour
+        automation=flyte.Cron("0 * * * *"),  # Runs every hour
         description="A trigger that runs every hour",
     )
     ```
+
+    :param expression: Cron expression string (e.g., `"0 * * * *"`).
+    :param timezone: Timezone for the cron schedule (default `"UTC"`). One of the
+        standard timezone values (e.g., `"US/Eastern"`, `"Europe/London"`).
+        Note that DST transitions may cause skipped or duplicated runs.
     """
 
     expression: str
@@ -648,16 +668,26 @@ class Cron:
 @dataclass(frozen=True)
 class FixedRate:
     """
-    This class defines a FixedRate automation that can be associated with a Trigger in Flyte.
-    Example usage:
+    Fixed-rate (interval-based) automation schedule for use with `Trigger`.
+
+    Unlike `Cron`, which runs at specific clock times, `FixedRate` runs at a
+    consistent interval regardless of clock time.
+
+    Example:
+
     ```python
-    from flyte.trigger import Trigger, FixedRate
-    my_trigger = Trigger(
+    my_trigger = flyte.Trigger(
         name="my_fixed_rate_trigger",
-        automation=FixedRate(60),  # Runs every hour
+        automation=flyte.FixedRate(60),  # Runs every 60 minutes
         description="A trigger that runs every hour",
     )
     ```
+
+    :param interval_minutes: Interval between trigger activations, in minutes (e.g., `60` for hourly,
+        `1440` for daily).
+    :param start_time: Optional start time for the first trigger. Subsequent triggers follow the
+        interval from this point. If not set, the first trigger occurs `interval_minutes` after
+        deployment/activation.
     """
 
     interval_minutes: int
@@ -671,38 +701,49 @@ class FixedRate:
 @dataclass(frozen=True)
 class Trigger:
     """
-    This class defines specification of a Trigger, that can be associated with any Flyte V2 task.
-    The trigger then is deployed to the Flyte Platform.
+    Specification for a scheduled trigger that can be associated with any Flyte task.
 
-    Triggers can be used to run tasks on a schedule, in response to events, or based on other conditions.
-    The `Trigger` class encapsulates the metadata and configuration needed to define a trigger.
+    Triggers run tasks on a schedule (cron or fixed-rate). They are set only in the
+    `@env.task` decorator via the `triggers` parameter. The same `Trigger` object
+    can be associated with multiple tasks.
 
-    You can associate the same Trigger object with multiple tasks.
+    Predefined convenience constructors are available: `Trigger.hourly()`,
+    `Trigger.daily()`, `Trigger.weekly()`, `Trigger.monthly()`, and
+    `Trigger.minutely()`.
 
-    Example usage:
+    Example:
+
     ```python
-    from flyte.trigger import Trigger
-    my_trigger = Trigger(
+    my_trigger = flyte.Trigger(
         name="my_trigger",
         description="A trigger that runs every hour",
+        inputs={"start_time": flyte.TriggerTime, "x": 1},
+        automation=flyte.FixedRate(60),
     )
+
+    @env.task(triggers=[my_trigger])
+    async def my_task(start_time: datetime, x: int) -> str:
+        ...
     ```
 
-    :param name: (str) The name of the trigger.
-    :param automation: (AutomationType) The automation type, currently only supports Cron.
-    :param description: (str) A description of the trigger, default is an empty string.
-    :param auto_activate: (bool) Whether the trigger should be automatically activated, default is True.
-    :param inputs: (Dict[str, Any]) Optional inputs for the trigger, default is None. If provided, will replace the
-       values for inputs to these defaults.
-    :param env_vars: (Dict[str, str]) Optional environment variables for the trigger, default is None. If provided, will
-        replace the environment variables set in the config of the task.
-    :param interruptible: (bool) Whether the trigger run is interruptible,
-      default is None (maintains the configured behavior). If provided, it overrides whatever is set in the config
-      of the task.
-    :param overwrite_cache: (bool) Whether to overwrite the cache, default is False.
-    :param queue: (str) Optional queue to run the trigger in, default is None.
-    :param labels: (Mapping[str, str]) Optional labels to attach to the trigger, default is None.
-    :param annotations: (Mapping[str, str]) Optional annotations to attach to the trigger, default is None.
+    :param name: Unique name for the trigger (required).
+    :param automation: Schedule type — `Cron(...)` or `FixedRate(...)` (required).
+    :param description: Human-readable description (max 255 characters). Default `""`.
+    :param auto_activate: Whether to activate the trigger automatically on deployment.
+        Default `True`.
+    :param inputs: Default input values for triggered runs. Use `flyte.TriggerTime` to
+        bind the trigger's scheduled time to an input parameter.
+    :param env_vars: Environment variables for triggered runs (overrides the task's
+        configured values).
+    :param interruptible: Whether triggered runs use spot/preemptible instances.
+        `None` (default) preserves the task's configured behavior. Overrides the
+        task's configured value.
+    :param overwrite_cache: Force cache refresh on triggered runs. Default `False`.
+    :param queue: Queue name for triggered runs (overrides the task's configured value).
+    :param labels: Kubernetes labels to attach to triggered runs.
+    :param annotations: Kubernetes annotations to attach to triggered runs.
+    :param custom_context: Metadata propagated through the entire task hierarchy of
+        triggered runs. Readable inside any task via ``flyte.ctx().custom_context``.
     """
 
     name: str
@@ -716,6 +757,8 @@ class Trigger:
     queue: str | None = None
     labels: Mapping[str, str] | None = None
     annotations: Mapping[str, str] | None = None
+    notifications: NamedRule | Notification | Tuple[Notification, ...] | None = None
+    custom_context: Mapping[str, str] | None = None
 
     def __post_init__(self):
         if not self.name:
@@ -742,6 +785,7 @@ class Trigger:
         queue: str | None = None,
         labels: Mapping[str, str] | None = None,
         annotations: Mapping[str, str] | None = None,
+        custom_context: Mapping[str, str] | None = None,
     ) -> Trigger:
         """
         Creates a Cron trigger that runs daily at midnight.
@@ -759,6 +803,7 @@ class Trigger:
             queue (str | None): Optional queue to run the trigger in.
             labels (Mapping[str, str] | None): Optional labels to attach to the trigger.
             annotations (Mapping[str, str] | None): Optional annotations to attach to the trigger.
+            custom_context (Mapping[str, str] | None): Optional context metadata propagated to triggered runs.
 
         Returns:
             Trigger: A trigger that runs daily at midnight.
@@ -781,6 +826,7 @@ class Trigger:
             queue=queue,
             labels=labels,
             annotations=annotations,
+            custom_context=custom_context,
         )
 
     @classmethod
@@ -798,6 +844,7 @@ class Trigger:
         queue: str | None = None,
         labels: Mapping[str, str] | None = None,
         annotations: Mapping[str, str] | None = None,
+        custom_context: Mapping[str, str] | None = None,
     ) -> Trigger:
         """
         Creates a Cron trigger that runs every hour.
@@ -815,6 +862,7 @@ class Trigger:
             queue (str | None): Optional queue to run the trigger in.
             labels (Mapping[str, str] | None): Optional labels to attach to the trigger.
             annotations (Mapping[str, str] | None): Optional annotations to attach to the trigger.
+            custom_context (Mapping[str, str] | None): Optional context metadata propagated to triggered runs.
 
         Returns:
             Trigger: A trigger that runs every hour, on the hour.
@@ -837,6 +885,7 @@ class Trigger:
             queue=queue,
             labels=labels,
             annotations=annotations,
+            custom_context=custom_context,
         )
 
     @classmethod
@@ -854,6 +903,7 @@ class Trigger:
         queue: str | None = None,
         labels: Mapping[str, str] | None = None,
         annotations: Mapping[str, str] | None = None,
+        custom_context: Mapping[str, str] | None = None,
     ) -> Trigger:
         """
         Creates a Cron trigger that runs every minute.
@@ -871,6 +921,7 @@ class Trigger:
             queue (str | None): Optional queue to run the trigger in.
             labels (Mapping[str, str] | None): Optional labels to attach to the trigger.
             annotations (Mapping[str, str] | None): Optional annotations to attach to the trigger.
+            custom_context (Mapping[str, str] | None): Optional context metadata propagated to triggered runs.
 
         Returns:
             Trigger: A trigger that runs every minute.
@@ -893,6 +944,7 @@ class Trigger:
             queue=queue,
             labels=labels,
             annotations=annotations,
+            custom_context=custom_context,
         )
 
     @classmethod
@@ -910,6 +962,7 @@ class Trigger:
         queue: str | None = None,
         labels: Mapping[str, str] | None = None,
         annotations: Mapping[str, str] | None = None,
+        custom_context: Mapping[str, str] | None = None,
     ) -> Trigger:
         """
         Creates a Cron trigger that runs weekly on Sundays at midnight.
@@ -927,6 +980,7 @@ class Trigger:
             queue (str | None): Optional queue to run the trigger in.
             labels (Mapping[str, str] | None): Optional labels to attach to the trigger.
             annotations (Mapping[str, str] | None): Optional annotations to attach to the trigger.
+            custom_context (Mapping[str, str] | None): Optional context metadata propagated to triggered runs.
 
         Returns:
             Trigger: A trigger that runs weekly on Sundays at midnight.
@@ -949,6 +1003,7 @@ class Trigger:
             queue=queue,
             labels=labels,
             annotations=annotations,
+            custom_context=custom_context,
         )
 
     @classmethod
@@ -966,6 +1021,7 @@ class Trigger:
         queue: str | None = None,
         labels: Mapping[str, str] | None = None,
         annotations: Mapping[str, str] | None = None,
+        custom_context: Mapping[str, str] | None = None,
     ) -> Trigger:
         """
         Creates a Cron trigger that runs monthly on the 1st at midnight.
@@ -983,6 +1039,7 @@ class Trigger:
             queue (str | None): Optional queue to run the trigger in.
             labels (Mapping[str, str] | None): Optional labels to attach to the trigger.
             annotations (Mapping[str, str] | None): Optional annotations to attach to the trigger.
+            custom_context (Mapping[str, str] | None): Optional context metadata propagated to triggered runs.
 
         Returns:
             Trigger: A trigger that runs monthly on the 1st at midnight.
@@ -1005,6 +1062,7 @@ class Trigger:
             queue=queue,
             labels=labels,
             annotations=annotations,
+            custom_context=custom_context,
         )
 
 

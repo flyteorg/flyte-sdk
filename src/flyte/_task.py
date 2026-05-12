@@ -24,12 +24,13 @@ from typing import (
 )
 
 from flyte._pod import PodTemplate
-from flyte.errors import RuntimeSystemError, RuntimeUserError
+from flyte.errors import RuntimeSystemError, RuntimeUserError, TraceDoesNotAllowNestedTasksError
 
 from ._cache import Cache, CacheRequest
 from ._context import internal_ctx
 from ._doc import Documentation
 from ._image import Image
+from ._link import Link
 from ._resources import Resources
 from ._retry import RetryStrategy
 from ._reusable_environment import ReusePolicy
@@ -96,7 +97,7 @@ class TaskTemplate(Generic[P, R, F]):
     short_name: str = ""
     task_type: str = "python"
     task_type_version: int = 0
-    image: Union[str, Image, Literal["auto"]] = "auto"
+    image: Union[str, Image, Literal["auto"]] | None = "auto"
     resources: Optional[Resources] = None
     cache: CacheRequest = "disable"
     interruptible: bool = False
@@ -110,12 +111,14 @@ class TaskTemplate(Generic[P, R, F]):
     report: bool = False
     queue: Optional[str] = None
     debuggable: bool = False
+    entrypoint: bool = False
 
     parent_env: Optional[weakref.ReferenceType[TaskEnvironment]] = None
     parent_env_name: Optional[str] = None
     ref: bool = field(default=False, init=False, repr=False, compare=False)
     max_inline_io_bytes: int = MAX_INLINE_IO_BYTES
     triggers: Tuple[Trigger, ...] = field(default_factory=tuple)
+    links: Tuple[Link, ...] = field(default_factory=tuple)
 
     # Only used in python 3.10 and 3.11, where we cannot use markcoroutinefunction
     _call_as_synchronous: bool = False
@@ -262,6 +265,12 @@ class TaskTemplate(Generic[P, R, F]):
         """
         ctx = internal_ctx()
         if ctx.is_task_context():
+            if ctx.is_in_trace():
+                raise TraceDoesNotAllowNestedTasksError(
+                    f"Task {self.name} is invoked from inside a `flyte.trace`. "
+                    "You can continue using the task function, as a regular"
+                    "python function using `task`.forward(...) facade."
+                )
             from ._internal.controllers import get_controller
 
             # If we are in a task context, that implies we are executing a Run.
@@ -305,6 +314,12 @@ class TaskTemplate(Generic[P, R, F]):
         try:
             ctx = internal_ctx()
             if ctx.is_task_context():
+                if ctx.is_in_trace():
+                    raise TraceDoesNotAllowNestedTasksError(
+                        f"Task {self.name} is invoked from inside a `flyte.trace`. "
+                        "You can continue using the task function, as a regular"
+                        "python function using `task`.forward(...) facade."
+                    )
                 # If we are in a task context, that implies we are executing a Run.
                 # In this scenario, we should submit the task to the controller.
                 # We will also check if we are not initialized, It is not expected to be not initialized
@@ -356,6 +371,8 @@ class TaskTemplate(Generic[P, R, F]):
         pod_template: Optional[Union[str, PodTemplate]] = None,
         queue: Optional[str] = None,
         interruptible: Optional[bool] = None,
+        entrypoint: Optional[bool] = None,
+        links: Tuple[Link, ...] = (),
         **kwargs: Any,
     ) -> TaskTemplate:
         """
@@ -374,6 +391,9 @@ class TaskTemplate(Generic[P, R, F]):
          passed directly to the task.
         :param pod_template: Optional override for the pod template to use for the task.
         :param queue: Optional override for the queue to use for the task.
+        :param interruptible: Optional override for the interruptible policy for the task.
+        :param entrypoint: Optional override for the entrypoint flag for the task.
+        :param links: Optional override for the Links associated with the task.
         :param kwargs: Additional keyword arguments for further overrides. Some fields like name, image, docs,
          and interface cannot be overridden.
 
@@ -413,6 +433,7 @@ class TaskTemplate(Generic[P, R, F]):
         secrets = secrets or self.secrets
 
         interruptible = interruptible if interruptible is not None else self.interruptible
+        entrypoint = entrypoint if entrypoint is not None else self.entrypoint
 
         for k, v in kwargs.items():
             if k == "name":
@@ -435,9 +456,11 @@ class TaskTemplate(Generic[P, R, F]):
             env_vars=env_vars,
             secrets=secrets,
             max_inline_io_bytes=max_inline_io_bytes,
-            pod_template=pod_template,
+            pod_template=pod_template or self.pod_template,
             interruptible=interruptible,
+            entrypoint=entrypoint,
             queue=queue or self.queue,
+            links=links or self.links,
             **kwargs,
         )
 
@@ -452,6 +475,7 @@ class AsyncFunctionTaskTemplate(TaskTemplate[P, R, F]):
     func: F
     plugin_config: Optional[Any] = None  # This is used to pass plugin specific configuration
     debuggable: bool = True
+    task_resolver: Optional[Any] = None
 
     def __post_init__(self):
         super().__post_init__()
@@ -467,6 +491,15 @@ class AsyncFunctionTaskTemplate(TaskTemplate[P, R, F]):
             return self.func.__code__.co_filename
         return None
 
+    @property
+    def json_schema(self) -> Dict[str, Any]:
+        """JSON schema for the task inputs, following the Flyte standard.
+
+        Delegates to NativeInterface.json_schema, which uses the type engine to
+        produce a LiteralType per input and converts to JSON schema.
+        """
+        return self.interface.json_schema
+
     def forward(self, *args: P.args, **kwargs: P.kwargs) -> Coroutine[Any, Any, R] | R:
         # In local execution, we want to just call the function. Note we're not awaiting anything here.
         # If the function was a coroutine function, the coroutine is returned and the await that the caller has
@@ -478,6 +511,7 @@ class AsyncFunctionTaskTemplate(TaskTemplate[P, R, F]):
         This is the execute method that will be called when the task is invoked. It will call the actual function.
         # TODO We may need to keep this as the bare func execute, and need a pre and post execute some other func.
         """
+        from flyte._utils.asyncify import run_sync_with_loop
 
         ctx = internal_ctx()
         assert ctx.data.task_context is not None, "Function should have already returned if not in a task context"
@@ -487,7 +521,8 @@ class AsyncFunctionTaskTemplate(TaskTemplate[P, R, F]):
             if iscoroutinefunction(self.func):
                 v = await self.func(*args, **kwargs)
             else:
-                v = self.func(*args, **kwargs)
+                v = await run_sync_with_loop(self.func, *args, **kwargs)
+
             await self.post(v)
         return v
 
@@ -527,21 +562,23 @@ class AsyncFunctionTaskTemplate(TaskTemplate[P, R, F]):
 
         if not serialize_context.code_bundle or not serialize_context.code_bundle.pkl:
             # If we do not have a code bundle, or if we have one, but it is not a pkl, we need to add the resolver
+            resolver = self.task_resolver
+            if resolver is None:
+                from flyte._internal.resolvers.default import DefaultTaskResolver
 
-            from flyte._internal.resolvers.default import DefaultTaskResolver
+                resolver = DefaultTaskResolver()
 
             if not serialize_context.root_dir:
                 raise RuntimeSystemError(
                     "SerializationError",
                     "Root dir is required for default task resolver when no code bundle is provided.",
                 )
-            _task_resolver = DefaultTaskResolver()
             args = [
                 *args,
                 *[
                     "--resolver",
-                    _task_resolver.import_path,
-                    *_task_resolver.loader_args(task=self, root_dir=serialize_context.root_dir),
+                    resolver.import_path,
+                    *resolver.loader_args(task=self, root_dir=serialize_context.root_dir),
                 ],
             ]
 

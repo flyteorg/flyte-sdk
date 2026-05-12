@@ -8,25 +8,26 @@ requires-python = ">=3.10"
 dependencies = [
     "aiofiles>=24.1.0",
     "click>=8.2.1",
-    "flyteidl>=1.15.4b0,<2.0.0",
     "cloudpickle>=3.1.1",
     "docstring_parser>=0.16",
     "fsspec>=2025.3.0",
-    "grpcio>=1.71.0",
+    "connectrpc>=0.9.0,<1.0.0",
     "obstore>=0.7.3",
     "protobuf>=6.30.1",
     "pydantic>=2.10.6",
     "pyyaml>=6.0.2",
-    "rich-click==1.8.9", # As we are installing flyte in --pre mode, we need to pin rich-click to a stable version
+    "rich-click==1.8.9",
     "httpx>=0.28.1,<1.0.0",
     "keyring>=25.6.0",
     "msgpack>=1.1.0",
     "toml>=0.10.2",
     "async-lru>=2.0.5",
     "mashumaro",
-    "dataclasses_json", # TODO: remove this dependency once we remove dataclasses_json from the code
     "aiolimiter>=1.2.1",
-    "flyteidl2==2.0.0a16",
+    "flyteidl2==2.0.15",
+    "packaging",
+    "sentry-sdk>=2.0",
+    "pyOpenSSL>=24.0.0",
 ]
 
 [project.scripts]
@@ -34,6 +35,7 @@ flyte = "flyte.cli.main:main"
 a0 = "flyte._bin.runtime:main"
 fserve = "flyte._bin.serve:main"
 c0 = "flyte._bin.connect:main"
+flyte-mcp = "flyte._bin.mcp:main"
 
 [project.entry-points."keyring.backends"]
 flyte_keyring_file = "flyte._keyring.file"
@@ -47,14 +49,45 @@ aiosqlite = [
     "aiosqlite>=0.21.0",
 ]
 connector = [
+    "grpcio>=1.71.0",
     "grpcio-health-checking",
     "httpx",
     "prometheus-client",
 ]
+examples-test = [
+    # Dependencies for running integration tests on examples
+    "polyglot-hello>=0.1.3",
+    "pandas",
+    "pyarrow",
+    "scikit-learn",
+    "joblib",
+    "nest-asyncio",
+    "deltalake",
+    "fastapi",
+    "uvicorn",
+    "lightning",
+]
+sandbox = [
+    "pydantic-monty==0.0.17",
+]
+mcp = [
+    "mcp>=1.26.0",
+    "starlette",
+    "uvicorn",
+]
+tui = [
+    "textual>=0.80",
+]
+rust-controller = [
+    "flyte_controller_base>=2.0.0b0",
+]
 
 [dependency-groups]
 dev = [
+    "pydantic-monty==0.0.17",
     "build>=1.2.2.post1",
+    "fastapi>=0.128.0",
+    "uvicorn>=0.40.0",
     "mock>=5.2.0",
     "pytest>=8.3.5",
     "pytest-xdist",
@@ -70,7 +103,13 @@ dev = [
     "jupyterlab>=4.4.3",
     "ipywidgets>=8.1.7",
     "mypy>=1.16.0",
+    "types-PyYAML",
+    "types-aiofiles",
     "kubernetes",
+    "textual>=0.80",
+    "mcp>=1.26.0",
+    "starlette",
+    "uvicorn",
 ]
 
 [tool.setuptools]
@@ -91,9 +130,14 @@ write_to = "src/flyte/_version.py"
 
 [tool.pytest.ini_options]
 markers = [
-    "integration",
+    "integration: Integration tests against Flyte backend",
     "editable",
-    "sandbox"
+    "sandbox",
+    "apps: App deployment tests using flyte.deploy",
+    "gpu: Tests requiring GPU resources",
+    "external: Tests requiring external services (BigQuery, etc.)",
+    "stress: Stress/load tests (skip by default)",
+    "secrets: Tests requiring secrets configuration",
 ]
 norecursedirs = []
 log_cli = true
@@ -135,18 +179,35 @@ select = [
     "FURB",
     "RUF",
 ]
-ignore = ["PGH003", "PLC0415", "ASYNC210", "FURB122"]
+ignore = ["PGH003", "PLC0415", "ASYNC210", "ASYNC240", "FURB122"]
 
 [tool.ruff.lint.per-file-ignores]
 "examples/*" = ["E402"]
+"plugins/pandera/tests/test_pyspark_sql_transformer.py" = ["E402"]
+"src/flyte/ai/chat/_html.py" = ["E501"]
 
 
 [tool.mypy]
 disable_error_code = ["import-untyped"]
 ignore_missing_imports = true
 
+[tool.uv.sources]
+flyte_controller_base = { path = "rs_controller" }
+
 [tool.ty.rules]
 unused-ignore-comment = "warn"
 redundant-cast = "ignore"
 possibly-unbound-attribute = "error"
 possibly-unbound-import = "error"
+
+[tool.codespell]
+# Ref: https://github.com/codespell-project/codespell#using-a-config-file
+skip = '.git,.gitignore,.gitattributes,*.lock'
+check-hidden = true
+# Ignore embedded base64 images in notebooks
+ignore-regex = '^\s*"image/\S+": ".*'
+# ot - variable for output type, nd - NamedDelivery variable,
+# crasher - legitimate word, tru - intentional truncated JSON in test,
+# Nome - timezone "America/Nome", lits - short for "literals",
+# rouge - NLP scoring metric (not "rogue")
+ignore-words-list = 'ot,nd,crasher,tru,nome,lits,rouge'

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import glob
 import gzip
 import hashlib
 import importlib.util
@@ -15,13 +16,13 @@ import typing
 from datetime import datetime, timezone
 from functools import lru_cache
 from types import ModuleType
-from typing import List, Literal, Optional, Tuple, Union
+from typing import List, Literal, Optional, Sequence, Tuple, Union
 
 from flyte._logging import logger
 
-from ._ignore import IgnoreGroup
+from ._ignore import Ignore, IgnoreGroup, StandardIgnore
 
-CopyFiles = Literal["loaded_modules", "all", "none"]
+CopyFiles = Literal["loaded_modules", "all", "none", "custom"]
 
 
 def compress_scripts(source_path: str, destination: str, modules: List[ModuleType]):
@@ -96,6 +97,7 @@ def ls_files(
     copy_file_detection: CopyFiles,
     deref_symlinks: bool = False,
     ignore_group: Optional[IgnoreGroup] = None,
+    additional_files: Optional[Sequence[str]] = None,
 ) -> Tuple[List[str], str]:
     """
     user_modules_and_packages is a list of the Python modules and packages, expressed as absolute paths, that the
@@ -109,6 +111,11 @@ def ls_files(
         representing modules under this root are included
 
     If the copy enum is set to loaded_modules, then the loaded sys modules will be used.
+
+    :param additional_files: Absolute paths that must be included in addition to the files
+        discovered via ``copy_file_detection``. Each path must be under ``source_path`` and
+        may be a file, a directory (recursively included), or a glob pattern. Used to
+        implement ``Environment.include`` across bundling strategies.
     """
 
     # Unlike the below, the value error here is useful and should be returned to the user, like if absolute and
@@ -122,10 +129,44 @@ def ls_files(
     else:
         all_files = list_all_files(source_path, deref_symlinks, ignore_group)
 
+    if additional_files:
+        resolved_source = source_path.resolve()
+        extra_paths: list[str] = []
+        for entry in additional_files:
+            p = pathlib.Path(entry)
+            if p.is_dir():
+                extra_paths.extend(str(child) for child in p.glob("**/*") if child.is_file())
+            elif p.is_file():
+                extra_paths.append(str(p))
+            else:
+                matched = glob.glob(str(p))
+                if not matched:
+                    raise ValueError(f"include path {entry!r} is not a file, directory, or matching glob pattern.")
+                extra_paths.extend(m for m in matched if pathlib.Path(m).is_file())
+
+        existing = set(all_files)
+        for extra in extra_paths:
+            # Verify containment on resolved paths (handles macOS /private symlinks, ..
+            # segments, etc.) but append the path in a form that is a literal subpath
+            # of `source_path`, so the downstream `relative_to(source_path)` succeeds.
+            resolved = pathlib.Path(extra).resolve()
+            try:
+                rel = resolved.relative_to(resolved_source)
+            except ValueError as exc:
+                raise ValueError(
+                    f"include path {extra!r} is outside the bundle root {source_path!s}. "
+                    f"Pass --root-dir (or configure it) one level up so every include lives under the root."
+                ) from exc
+            normalized = str(source_path / rel)
+            if normalized not in existing:
+                existing.add(normalized)
+                all_files.append(normalized)
+
     all_files.sort()
     hasher = hashlib.md5()
     for abspath in all_files:
-        relpath = os.path.relpath(abspath, source_path)
+        # Use POSIX-style path for hashing to ensure consistent hashes across platforms
+        relpath = pathlib.Path(abspath).relative_to(source_path).as_posix()
         _filehash_update(abspath, hasher)
         _pathhash_update(relpath, hasher)
 
@@ -139,12 +180,30 @@ def ls_relative_files(relative_paths: list[str], source_path: pathlib.Path) -> t
     relative_paths.sort()
     hasher = hashlib.md5()
 
-    all_files = []
+    all_files: list[str] = []
     for file in relative_paths:
         path = source_path / file
-        all_files.append(str(path))
-        _filehash_update(path, hasher)
-        _pathhash_update(path, hasher)
+        if path.is_dir():
+            # Filter out directories, only include files
+            all_files.extend([str(p) for p in path.glob("**/*") if p.is_file()])
+        elif path.is_file():
+            all_files.append(str(path))
+        else:
+            glob_files = glob.glob(str(path))
+            if glob_files:
+                # Filter out directories from glob results
+                all_files.extend([str(f) for f in glob_files if pathlib.Path(f).is_file()])
+            else:
+                raise ValueError(f"File {path} is not a valid file, directory, or glob pattern")
+
+    all_files.sort()
+    resolved_source = source_path.resolve()
+    for p in all_files:
+        _filehash_update(p, hasher)
+        # Resolve before relative_to to normalize any ".." in the path — un-normalized
+        # paths would produce inconsistent hashes across equivalent paths.
+        rel_path = pathlib.Path(p).resolve().relative_to(resolved_source).as_posix()
+        _pathhash_update(rel_path, hasher)
 
     digest = hasher.hexdigest()
     return all_files, digest
@@ -167,13 +226,19 @@ def _pathhash_update(path: Union[os.PathLike, str], hasher: hashlib._Hash) -> No
 EXCLUDE_DIRS = {".git"}
 
 
-def list_all_files(source_path: pathlib.Path, deref_symlinks, ignore_group: Optional[IgnoreGroup] = None) -> List[str]:
+def list_all_files(source_path: pathlib.Path, deref_symlinks, ignore_group: Optional[Ignore] = None) -> List[str]:
     all_files = []
+    source_path_str = str(source_path.absolute())
 
     # This is needed to prevent infinite recursion when walking with followlinks
     visited_inodes = set()
-    for root, dirnames, files in os.walk(source_path, topdown=True, followlinks=deref_symlinks):
+    for root, dirnames, files in os.walk(source_path_str, topdown=True, followlinks=deref_symlinks):
         dirnames[:] = [d for d in dirnames if d not in EXCLUDE_DIRS]
+
+        # Filter out ignored directories to avoid walking into them
+        if ignore_group:
+            dirnames[:] = [d for d in dirnames if not ignore_group.is_ignored(pathlib.Path(os.path.join(root, d)))]
+
         if deref_symlinks:
             inode = os.stat(root).st_ino
             if inode in visited_inodes:
@@ -183,7 +248,7 @@ def list_all_files(source_path: pathlib.Path, deref_symlinks, ignore_group: Opti
         ff = []
         files.sort()
         for fname in files:
-            abspath = (pathlib.Path(root) / fname).absolute()
+            abspath = os.path.join(root, fname)
             # Only consider files that exist (e.g. disregard symlinks that point to non-existent files)
             if not os.path.exists(abspath):
                 logger.info(f"Skipping non-existent file {abspath}")
@@ -193,10 +258,10 @@ def list_all_files(source_path: pathlib.Path, deref_symlinks, ignore_group: Opti
                 logger.info(f"Skip socket file {abspath}")
                 continue
             if ignore_group:
-                if ignore_group.is_ignored(abspath):
+                if ignore_group.is_ignored(pathlib.Path(abspath)):
                     continue
 
-            ff.append(str(abspath))
+            ff.append(abspath)
         all_files.extend(ff)
 
         # Remove directories that we've already visited from dirnames
@@ -248,7 +313,9 @@ def list_imported_modules_as_files(source_path: str, modules: List[ModuleType]) 
             except AttributeError:
                 continue
 
-        if mod_file is None:
+        # skip if mod_file is (a) None or (b) not a string. (b) can happen if a third-party package overrides
+        # sys.modules[mod.__name__] with a custom object.
+        if mod_file is None or not isinstance(mod_file, str):
             continue
 
         if any(_file_is_in_directory(mod_file, directory) for directory in invalid_directories):
@@ -293,6 +360,46 @@ def add_imported_modules_from_source(source_path: str, destination: str, modules
 
         os.makedirs(os.path.dirname(new_destination), exist_ok=True)
         shutil.copy(file, new_destination)
+
+
+def copy_code_bundle_to_context(
+    root_dir: pathlib.Path,
+    copy_style: CopyFiles,
+    context_path: pathlib.Path,
+    ignore_patterns: Optional[List[str]] = None,
+) -> pathlib.Path:
+    """Copy source files for a CodeBundleLayer into a build context directory.
+
+    :param root_dir: The root directory to copy files from.
+    :param copy_style: "loaded_modules" to copy only imported modules, "all" to copy everything.
+    :param context_path: The build context directory.
+    :param ignore_patterns: Ignore patterns for the "all" case.  When *None* the
+        `STANDARD_IGNORE_PATTERNS` are used.
+    :return: The path within context_path where files were copied.
+    """
+    resolved_root = root_dir.resolve()
+
+    # Determine destination path (absolute roots go under _flyte_abs_context)
+    if root_dir.is_absolute():
+        rel_path = pathlib.PurePath(*root_dir.parts[1:])
+        dst_path = context_path / "_flyte_abs_context" / rel_path
+    else:
+        dst_path = context_path / root_dir
+
+    # Reuse ls_files to list files (handles both "loaded_modules" and "all")
+    ignore = IgnoreGroup(resolved_root, StandardIgnore)
+    if ignore_patterns is not None:
+        ignore.ignores = [StandardIgnore(resolved_root, ignore_patterns)]
+    all_files, _ = ls_files(resolved_root, copy_style, deref_symlinks=False, ignore_group=ignore)
+
+    # Copy listed files into the context
+    for abs_path in all_files:
+        rel = pathlib.Path(abs_path).relative_to(resolved_root)
+        dest = dst_path / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(abs_path, dest)
+
+    return dst_path
 
 
 def import_module_from_file(module_name, file):

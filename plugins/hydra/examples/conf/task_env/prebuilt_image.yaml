@@ -1,0 +1,18 @@
+pipeline:
+  image: "ghcr.io/flyteorg/flyte:py3.13-v2.0.12"
+  primary_container_name: "primary"
+  resources:
+    cpu: "4"
+    memory: "6Gi"
+pipeline_with_podtemplate:
+  image: "ghcr.io/flyteorg/flyte:py3.13-v2.0.12"
+  primary_container_name: "primary"
+  resources:
+    cpu: "4"
+    memory: "6Gi"
+train_model:
+  image: "ghcr.io/flyteorg/flyte:py3.13-v2.0.12"
+  primary_container_name: "primary"
+  resources:
+    cpu: "4"
+    memory: "6Gi"

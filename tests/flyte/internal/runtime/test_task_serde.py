@@ -21,6 +21,7 @@ from flyte._internal.runtime.task_serde import (
     _get_urun_container,
     get_proto_task,
     get_security_context,
+    lookup_image_in_cache,
     translate_task_to_wire,
 )
 from flyte._secret import Secret
@@ -133,9 +134,11 @@ def test_get_proto_container_task():
     assert proto_task.metadata.timeout.seconds == 60
 
     # Check interface
-    assert proto_task.interface.inputs.variables["a"].type.simple == types_pb2.INTEGER  # Integer
-    assert proto_task.interface.inputs.variables["b"].type.simple == types_pb2.STRING  # String
-    assert proto_task.interface.outputs.variables["o0"].type.simple == types_pb2.STRING  # String
+    inputs_dict = {entry.key: entry.value for entry in proto_task.interface.inputs.variables}
+    outputs_dict = {entry.key: entry.value for entry in proto_task.interface.outputs.variables}
+    assert inputs_dict["a"].type.simple == types_pb2.INTEGER  # Integer
+    assert inputs_dict["b"].type.simple == types_pb2.STRING  # String
+    assert outputs_dict["o0"].type.simple == types_pb2.STRING  # String
 
     # Check container
     assert proto_task.container.image.startswith("python:3.10")
@@ -358,3 +361,267 @@ def test_translate_task_to_wire_with_default_inputs(env_task_ctx):
     proto_task = translate_task_to_wire(task_template, context, default_inputs=default_inputs)
 
     assert proto_task.default_inputs == default_inputs
+
+
+def test_lookup_image_in_cache_with_cache():
+    """Test lookup_image_in_cache when image is found in cache"""
+    from flyte._internal.imagebuild.image_builder import ImageCache
+
+    # Create an image with no ref_name
+    image = flyte.Image.from_base("python:3.10")
+
+    # Create a cache with the environment
+    image_cache = ImageCache(image_lookup={"test_env": "cached-image:v1"})
+
+    context = SerializationContext(
+        project="test-project",
+        domain="test-domain",
+        version="test-version",
+        org="test-org",
+        input_path="/tmp/inputs",
+        output_path="/tmp/outputs",
+        image_cache=image_cache,
+        code_bundle=None,
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    result = lookup_image_in_cache(context, "test_env", image)
+    assert result == "cached-image:v1"
+
+
+def test_lookup_image_in_cache_no_ref_name_no_cache():
+    """Test lookup_image_in_cache when ref_name is None and no cache exists"""
+    # Create an image with no ref_name and no layers
+    image = flyte.Image.from_base("python:3.10-slim")
+
+    context = SerializationContext(
+        project="test-project",
+        domain="test-domain",
+        version="test-version",
+        org="test-org",
+        input_path="/tmp/inputs",
+        output_path="/tmp/outputs",
+        image_cache=None,
+        code_bundle=None,
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    # Should return image.uri since ref_name is None and no cache
+    result = lookup_image_in_cache(context, "test_env", image)
+    assert result == "python:3.10-slim"
+
+
+def test_lookup_image_in_cache_no_ref_name_no_layers():
+    """Test lookup_image_in_cache when ref_name is None and image has no layers"""
+    from flyte._internal.imagebuild.image_builder import ImageCache
+
+    # Create an image with no ref_name and no layers
+    image = flyte.Image.from_base("python:3.10-slim")
+
+    # Create empty cache
+    image_cache = ImageCache(image_lookup={})
+
+    context = SerializationContext(
+        project="test-project",
+        domain="test-domain",
+        version="test-version",
+        org="test-org",
+        input_path="/tmp/inputs",
+        output_path="/tmp/outputs",
+        image_cache=image_cache,
+        code_bundle=None,
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    # Should return image.uri since ref_name is None and no layers
+    result = lookup_image_in_cache(context, "test_env", image)
+    assert result == "python:3.10-slim"
+
+
+def test_get_proto_task_sets_image_build_url():
+    """image_build_run is set in TaskMetadata when a build run identifier exists in the cache."""
+    from flyte._internal.imagebuild.image_builder import ImageCache, RunIdentifierData
+
+    env = flyte.TaskEnvironment(name="test_env_build_url", image="python:3.10")
+
+    @env.task()
+    async def task_with_build_url(x: int) -> int:
+        return x
+
+    cache = ImageCache(
+        image_lookup={"test_env_build_url": "registry/my-image:sha256abc"},
+        build_run_ids={
+            "test_env_build_url": RunIdentifierData(
+                org="my-org", project="my-project", domain="development", name="abc123"
+            )
+        },
+    )
+    context = SerializationContext(
+        project="test-project",
+        domain="test-domain",
+        version="test-version",
+        image_cache=cache,
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    proto_task = get_proto_task(task_with_build_url, context)
+
+    assert proto_task.metadata.image_build_run.org == "my-org"
+    assert proto_task.metadata.image_build_run.project == "my-project"
+    assert proto_task.metadata.image_build_run.domain == "development"
+    assert proto_task.metadata.image_build_run.name == "abc123"
+
+
+def test_get_proto_task_no_image_build_url_without_cache():
+    """image_build_run is not set in TaskMetadata when no image cache is present."""
+    env = flyte.TaskEnvironment(name="test_env_no_build_url", image="python:3.10")
+
+    @env.task()
+    async def task_without_build_url(x: int) -> int:
+        return x
+
+    context = SerializationContext(
+        project="test-project",
+        domain="test-domain",
+        version="test-version",
+        image_cache=None,
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    proto_task = get_proto_task(task_without_build_url, context)
+
+    assert not proto_task.metadata.HasField("image_build_run")
+
+
+def test_get_proto_task_no_image_build_url_when_env_not_in_build_run_urls():
+    """image_build_run is not set when the task's env is not in build_run_ids."""
+    from flyte._internal.imagebuild.image_builder import ImageCache
+
+    env = flyte.TaskEnvironment(name="test_env_missing_url", image="python:3.10")
+
+    @env.task()
+    async def task_env_not_in_urls(x: int) -> int:
+        return x
+
+    cache = ImageCache(
+        image_lookup={"test_env_missing_url": "registry/my-image:sha256abc"},
+        build_run_ids={},
+    )
+    context = SerializationContext(
+        project="test-project",
+        domain="test-domain",
+        version="test-version",
+        image_cache=cache,
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    proto_task = get_proto_task(task_env_not_in_urls, context)
+
+    assert not proto_task.metadata.HasField("image_build_run")
+
+
+def test_reusable_task_disables_debuggable():
+    """When a task has reusable set, debuggable should be forced to False."""
+    env = flyte.TaskEnvironment(
+        name="test_env_reusable",
+        image="python:3.10",
+        resources=flyte.Resources(cpu="1", memory="2Gi"),
+        reusable=flyte.ReusePolicy(replicas=1, idle_ttl=300, concurrency=5),
+    )
+
+    @env.task()
+    async def reusable_task(x: int) -> int:
+        return x
+
+    # AsyncFunctionTaskTemplate defaults debuggable=True
+    assert reusable_task.debuggable is True
+
+    context = SerializationContext(
+        project="test-project",
+        domain="test-domain",
+        version="test-version",
+        image_cache=None,
+        code_bundle=None,
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    proto_task = get_proto_task(reusable_task, context)
+    assert proto_task.metadata.debuggable is False
+
+
+def test_non_reusable_task_preserves_debuggable():
+    """When a task is not reusable, debuggable should remain as set on the task."""
+    env = flyte.TaskEnvironment(
+        name="test_env_non_reusable",
+        image="python:3.10",
+    )
+
+    @env.task()
+    async def debuggable_task(x: int) -> int:
+        return x
+
+    assert debuggable_task.debuggable is True
+
+    context = SerializationContext(
+        project="test-project",
+        domain="test-domain",
+        version="test-version",
+        image_cache=None,
+        code_bundle=None,
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    proto_task = get_proto_task(debuggable_task, context)
+    assert proto_task.metadata.debuggable is True
+
+
+def test_lookup_image_in_cache_with_ref_name_not_in_cache():
+    """Test lookup_image_in_cache when image has ref_name but not found in cache"""
+    from flyte._internal.imagebuild.image_builder import ImageCache
+
+    # Create an image with a ref_name
+    image = flyte.Image.from_ref_name("my-ref")
+
+    # Create cache without the environment
+    image_cache = ImageCache(image_lookup={})
+
+    context = SerializationContext(
+        project="test-project",
+        domain="test-domain",
+        version="test-version",
+        org="test-org",
+        input_path="/tmp/inputs",
+        output_path="/tmp/outputs",
+        image_cache=image_cache,
+        code_bundle=None,
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    # Should raise RuntimeUserError because ref_name is not None
+    # and environment is not found in cache
+    with pytest.raises(flyte.errors.RuntimeUserError, match="Environment 'test_env' not found in image cache"):
+        lookup_image_in_cache(context, "test_env", image)
+
+
+def test_entrypoint_flag_on_task_template():
+    """Verify entrypoint flag is set on the template and serde doesn't crash."""
+    env = flyte.TaskEnvironment(name="test_env_entrypoint", image="python:3.10")
+
+    @env.task(entrypoint=True)
+    async def entrypoint_task(x: int) -> int:
+        return x
+
+    assert entrypoint_task.entrypoint is True
+
+    context = SerializationContext(
+        project="test-project",
+        domain="test-domain",
+        version="test-version",
+        image_cache=None,
+        code_bundle=None,
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    proto_task = get_proto_task(entrypoint_task, context)
+    assert proto_task is not None
+    assert proto_task.metadata.is_entrypoint is True

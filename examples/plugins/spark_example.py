@@ -9,8 +9,8 @@ import flyte.remote
 
 image = (
     flyte.Image.from_base("apache/spark-py:v3.4.0")
-    .clone(name="spark", python_version=(3, 10), registry="ghcr.io/flyteorg")
-    .with_pip_packages("flyteplugins-spark", pre=True)
+    .clone(name="spark", python_version=(3, 10), registry="ghcr.io/flyteorg", extendable=True)
+    .with_pip_packages("flyteplugins-spark>=2.0.0")
 )
 
 task_env = flyte.TaskEnvironment(
@@ -67,7 +67,6 @@ async def spark_overrider(executor_instances: int = 3, partitions: int = 4) -> f
 
 # ## Execute locally
 # You can execute the code locally as if it was a normal Python script.
-
 if __name__ == "__main__":
     flyte.init_from_config()
     run = flyte.run(hello_spark_nested)

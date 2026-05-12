@@ -14,25 +14,18 @@ import click
 
 from flyte.models import PathRewrite
 
-# Todo: work with pvditt to make these the names
-# ACTION_NAME = "_U_ACTION_NAME"
-# RUN_NAME = "_U_RUN_NAME"
-# PROJECT_NAME = "_U_PROJECT_NAME"
-# DOMAIN_NAME = "_U_DOMAIN_NAME"
-# ORG_NAME = "_U_ORG_NAME"
-
 ACTION_NAME = "ACTION_NAME"
 RUN_NAME = "RUN_NAME"
 PROJECT_NAME = "FLYTE_INTERNAL_EXECUTION_PROJECT"
 DOMAIN_NAME = "FLYTE_INTERNAL_EXECUTION_DOMAIN"
 ORG_NAME = "_U_ORG_NAME"
 ENDPOINT_OVERRIDE = "_U_EP_OVERRIDE"
-INSECURE_SKIP_VERIFY_OVERRIDE = "_U_INSECURE_SKIP_VERIFY"
 RUN_OUTPUT_BASE_DIR = "_U_RUN_BASE"
 FLYTE_ENABLE_VSCODE_KEY = "_F_E_VS"
 
 _UNION_EAGER_API_KEY_ENV_VAR = "_UNION_EAGER_API_KEY"
 _F_PATH_REWRITE = "_F_PATH_REWRITE"
+_F_USE_RUST_CONTROLLER = "_F_USE_RUST_CONTROLLER"
 
 
 @click.group()
@@ -103,7 +96,7 @@ def main(
     from flyte._internal.imagebuild.image_builder import ImageCache
     from flyte._internal.runtime.entrypoints import load_and_run_task
     from flyte._logging import logger
-    from flyte.models import ActionID, Checkpoints, CodeBundle, RawDataPath
+    from flyte.models import ActionID, CheckpointPaths, CodeBundle, RawDataPath
 
     logger.info("Registering faulthandler for SIGUSR1")
     faulthandler.register(signal.SIGUSR1)
@@ -127,12 +120,26 @@ def main(
 
         asyncio.run(_start_vscode_server(ctx))
 
-    controller_kwargs = init_in_cluster(org=org, project=project, domain=domain)
     bundle = None
     if tgz or pkl:
         bundle = CodeBundle(tgz=tgz, pkl=pkl, destination=dest, computed_version=version)
+
+    controller_kwargs = init_in_cluster(org=org, project=project, domain=domain)
     # Controller is created with the same kwargs as init, so that it can be used to run tasks
-    controller = create_controller(ct="remote", **controller_kwargs)
+    # Use Rust controller if env var is set, otherwise default to Python controller
+    use_rust = os.getenv(_F_USE_RUST_CONTROLLER, "").lower() in ("1", "true", "yes")
+    if use_rust:
+        try:
+            import flyte_controller_base  # noqa: F401
+        except ImportError as e:
+            raise RuntimeError(
+                f"{_F_USE_RUST_CONTROLLER}=1 was set but `flyte_controller_base` is not installed. "
+                "Install it with `pip install flyte[rust-controller]`. "
+                "For development, run `make dev-rs-dist` from the repo root."
+            ) from e
+    controller_type = "rust" if use_rust else "remote"
+    print(f"In runtime: controller kwargs are: {controller_kwargs}")
+    controller = create_controller(ct=controller_type, **controller_kwargs)  # type: ignore[arg-type]
 
     ic = ImageCache.from_transport(image_cache) if image_cache else None
 
@@ -155,7 +162,7 @@ def main(
         resolver_args=resolver_args,
         action=ActionID(name=name, run_name=run_name, project=project, domain=domain, org=org),
         raw_data_path=RawDataPath(path=raw_data_path, path_rewrite=path_rewrite),
-        checkpoints=Checkpoints(checkpoint_path, prev_checkpoint),
+        checkpoint_paths=CheckpointPaths(prev_checkpoint_path=prev_checkpoint, checkpoint_path=checkpoint_path),
         code_bundle=bundle,
         input_path=inputs,
         output_path=outputs_path,
@@ -171,24 +178,25 @@ def main(
     # Run both coroutines concurrently and wait for first to finish and cancel the other
     async def _run_and_stop():
         loop = asyncio.get_event_loop()
-        loop.set_exception_handler(flyte.errors.silence_grpc_polling_error)
+        loop.set_exception_handler(flyte.errors.silence_polling_error)
         try:
             await utils.run_coros(controller_failure, task_coroutine)
             await controller.stop()
-        except flyte.errors.RuntimeSystemError as e:
-            logger.error(f"Runtime system error: {e}")
+        except (flyte.errors.RuntimeSystemError, flyte.errors.RuntimeUserError) as e:
             from flyte._internal.runtime.convert import convert_from_native_to_error
             from flyte._internal.runtime.io import upload_error
 
             logger.error(f"Flyte runtime failed for action {name} with run name {run_name}, error: {e}")
             err = convert_from_native_to_error(e)
-            path = await upload_error(err.err, outputs_path)
+            path = await upload_error(err.err, outputs_path, recoverable=err.recoverable)
             logger.error(f"Run {run_name} Action {name} failed with error: {err}. Uploaded error to {path}")
             await controller.stop()
-            raise
 
     asyncio.run(_run_and_stop())
     logger.warning(f"Flyte runtime completed for action {name} with run name {run_name}")
+    for h in logger.handlers:
+        h.flush()
+    sys.stdout.flush()
 
 
 if __name__ == "__main__":

@@ -5,6 +5,7 @@
 #    "mashumaro",
 #    "botocore",
 #    "pyarrow",
+#    "flyte",
 # ]
 # ///
 

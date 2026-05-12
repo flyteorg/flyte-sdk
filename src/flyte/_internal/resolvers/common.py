@@ -1,8 +1,16 @@
+from __future__ import annotations
+
 from asyncio import Protocol
 from pathlib import Path
-from typing import List, Optional
+from typing import TYPE_CHECKING, List, Optional
 
 from flyte._task import TaskTemplate
+
+if TYPE_CHECKING:
+    # Annotation-only import; pulling ``flyte.app`` at module load drags ``flyte.io`` and
+    # ``flyte.io._dataframe.dataframe`` (mashumaro.jsonschema, markdown_it, pendulum) into
+    # the resolver hot path even though this Protocol's ``load_app_env`` is just a stub.
+    from flyte.app._app_environment import AppEnvironment
 
 
 class Resolver(Protocol):
@@ -23,7 +31,13 @@ class Resolver(Protocol):
         """
         raise NotImplementedError
 
-    def loader_args(self, t: TaskTemplate, root_dir: Optional[Path]) -> List[str]:
+    def load_app_env(self, loader_args: str) -> AppEnvironment:
+        """
+        Given the set of identifier keys, should return one AppEnvironment or raise an error if not found
+        """
+        raise NotImplementedError
+
+    def loader_args(self, t: TaskTemplate, root_dir: Optional[Path]) -> List[str] | str:
         """
         Return a list of strings that can help identify the parameter TaskTemplate. Each string should not have
         spaces or special characters. This is used to identify the task in the resolver.

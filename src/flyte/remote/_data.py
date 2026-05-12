@@ -10,9 +10,10 @@ from pathlib import Path
 from typing import Tuple
 
 import aiofiles
-import grpc
 import httpx
-from flyteidl.service import dataproxy_pb2
+from connectrpc.code import Code
+from connectrpc.errors import ConnectError
+from flyteidl2.dataproxy import dataproxy_service_pb2
 from google.protobuf import duration_pb2
 
 from flyte._initialize import CommonInit, ensure_client, get_client, get_init_config, require_project_and_domain
@@ -20,6 +21,8 @@ from flyte.errors import InitializationError, RuntimeSystemError
 from flyte.syncify import syncify
 
 _UPLOAD_EXPIRES_IN = timedelta(seconds=60)
+_UPLOAD_TIMEOUT_SECONDS = float(os.environ.get("FLYTE_UPLOAD_TIMEOUT", "600"))
+_UPLOAD_TIMEOUT = httpx.Timeout(timeout=_UPLOAD_TIMEOUT_SECONDS, connect=30.0)
 
 
 def get_extra_headers_for_protocol(native_url: str) -> typing.Dict[str, str]:
@@ -84,50 +87,71 @@ async def _upload_with_retry(
     from flyte._logging import logger
 
     retry_attempt = 0
-    last_error = None
+    last_error: str | Exception | None = None
 
     while retry_attempt <= max_retries:
-        async with aiofiles.open(str(fp), "rb") as file:
-            async with httpx.AsyncClient(verify=verify) as aclient:
-                put_resp = await aclient.put(signed_url, headers=extra_headers, content=file)
+        try:
+            async with aiofiles.open(str(fp), "rb") as file:
+                async with httpx.AsyncClient(verify=verify, timeout=_UPLOAD_TIMEOUT) as aclient:
+                    put_resp = await aclient.put(signed_url, headers=extra_headers, content=file)
 
-                # Success
-                if put_resp.status_code in [200, 201, 204]:
-                    if retry_attempt > 0:
-                        logger.info(f"Upload succeeded after {retry_attempt} retries for {fp.name}")
-                    return put_resp
+                    # Success
+                    if put_resp.status_code in [200, 201, 204]:
+                        if retry_attempt > 0:
+                            logger.info(f"Upload succeeded after {retry_attempt} retries for {fp.name}")
+                        return put_resp
 
-                # Check if retryable status code
-                if put_resp.status_code in [408, 429, 500, 502, 503, 504]:
-                    if retry_attempt >= max_retries:
+                    last_error = f"status {put_resp.status_code}: {put_resp.text}"
+
+                    # Check if retryable status code
+                    if put_resp.status_code in [408, 429, 500, 502, 503, 504]:
+                        if retry_attempt >= max_retries:
+                            raise RuntimeSystemError(
+                                "UploadFailed",
+                                f"Failed to upload {fp} after {max_retries} retries: {last_error}",
+                            )
+                    else:
+                        # Non-retryable HTTP error
                         raise RuntimeSystemError(
                             "UploadFailed",
-                            f"Failed to upload {fp} after {max_retries} retries: {put_resp.text}",
+                            f"Failed to upload {fp} to {signed_url}, {last_error}",
                         )
+        except RuntimeSystemError:
+            raise
+        except (httpx.TimeoutException, httpx.ConnectError, OSError) as e:
+            last_error = e
+            if retry_attempt >= max_retries:
+                raise RuntimeSystemError(
+                    "UploadFailed",
+                    f"Failed to upload {fp} after {max_retries} retries: {e}",
+                ) from e
 
-                    # Backoff and retry
-                    retry_attempt += 1
-                    if retry_attempt <= max_retries:
-                        backoff_delay = min(min_backoff_sec * (2 ** (retry_attempt - 1)), max_backoff_sec)
-                        logger.warning(
-                            f"Upload failed for {fp.name}, backing off for {backoff_delay:.2f}s "
-                            f"[retry {retry_attempt}/{max_retries}]: {last_error}"
-                        )
-                        await asyncio.sleep(backoff_delay)
-                else:
-                    # Non-retryable HTTP error
-                    raise RuntimeSystemError(
-                        "UploadFailed",
-                        f"Failed to upload {fp} to {signed_url}, status code: {put_resp.status_code}, "
-                        f"response: {put_resp.text}",
-                    )
+        # Backoff and retry
+        retry_attempt += 1
+        if retry_attempt <= max_retries:
+            backoff_delay = min(min_backoff_sec * (2 ** (retry_attempt - 1)), max_backoff_sec)
+            logger.warning(
+                f"Upload failed for {fp.name}, backing off for {backoff_delay:.2f}s "
+                f"[retry {retry_attempt}/{max_retries}]: {last_error}"
+            )
+            await asyncio.sleep(backoff_delay)
     return None
 
 
 @require_project_and_domain
 async def _upload_single_file(
-    cfg: CommonInit, fp: Path, verify: bool = True, basedir: str | None = None
+    cfg: CommonInit, fp: Path, verify: bool = True, basedir: str | None = None, fname: str | None = None
 ) -> Tuple[str, str]:
+    """
+    Upload a single file to remote storage using a signed URL.
+
+    :param cfg: Configuration containing project and domain information.
+    :param fp: Path to the file to upload.
+    :param verify: Whether to verify SSL certificates.
+    :param basedir: Optional base directory prefix for the remote path.
+    :param fname: Optional file name for the remote path.
+    :return: Tuple of (MD5 digest hex string, remote native URL).
+    """
     md5_bytes, str_digest, _ = hash_file(fp)
     from flyte._logging import logger
 
@@ -135,30 +159,31 @@ async def _upload_single_file(
         expires_in_pb = duration_pb2.Duration()
         expires_in_pb.FromTimedelta(_UPLOAD_EXPIRES_IN)
         client = get_client()
-        resp = await client.dataproxy_service.CreateUploadLocation(  # type: ignore
-            dataproxy_pb2.CreateUploadLocationRequest(
+        resp = await client.dataproxy_service.create_upload_location(  # type: ignore
+            dataproxy_service_pb2.CreateUploadLocationRequest(
                 project=cfg.project,
                 domain=cfg.domain,
+                org=cfg.org or "",
                 content_md5=md5_bytes,
-                filename=fp.name,
+                filename=fname or fp.name,
                 expires_in=expires_in_pb,
                 filename_root=basedir,
                 add_content_md5_metadata=True,
             )
         )
-    except grpc.aio.AioRpcError as e:
-        if e.code() == grpc.StatusCode.NOT_FOUND:
+    except ConnectError as e:
+        if e.code == Code.NOT_FOUND:
             raise RuntimeSystemError(
-                "NotFound", f"Failed to get signed url for {fp}, please check your project and domain: {e.details()}"
+                "NotFound", f"Failed to get signed url for {fp}, please check your project and domain: {e.message}"
             )
-        elif e.code() == grpc.StatusCode.PERMISSION_DENIED:
+        elif e.code == Code.PERMISSION_DENIED:
             raise RuntimeSystemError(
-                "PermissionDenied", f"Failed to get signed url for {fp}, please check your permissions: {e.details()}"
+                "PermissionDenied", f"Failed to get signed url for {fp}, please check your permissions: {e.message}"
             )
-        elif e.code() == grpc.StatusCode.UNAVAILABLE:
+        elif e.code == Code.UNAVAILABLE:
             raise InitializationError("EndpointUnavailable", "user", "Service is unavailable.")
         else:
-            raise RuntimeSystemError(e.code().value, f"Failed to get signed url for {fp}: {e.details()}")
+            raise RuntimeSystemError(e.code.value, f"Failed to get signed url for {fp}: {e.message}")
     except Exception as e:
         raise RuntimeSystemError(type(e).__name__, f"Failed to get signed url for {fp}.") from e
     logger.debug(f"Uploading to [link={resp.signed_url}]signed url[/link] for [link=file://{fp}]{fp}[/link]")
@@ -185,23 +210,24 @@ async def _upload_single_file(
 
 
 @syncify
-async def upload_file(fp: Path, verify: bool = True) -> Tuple[str, str]:
+async def upload_file(fp: Path, verify: bool = True, fname: str | None = None) -> Tuple[str, str]:
     """
     Uploads a file to a remote location and returns the remote URI.
 
     :param fp: The file path to upload.
     :param verify: Whether to verify the certificate for HTTPS requests.
-    :return: A tuple containing the MD5 digest and the remote URI.
+    :param fname: Optional file name for the remote path.
+    :return: Tuple of (MD5 digest hex string, remote native URL).
     """
-    # This is a placeholder implementation. Replace with actual upload logic.
     ensure_client()
     cfg = get_init_config()
     if not fp.is_file():
         raise ValueError(f"{fp} is not a single file, upload arg must be a single file.")
-    return await _upload_single_file(cfg, fp, verify=verify)
+    return await _upload_single_file(cfg, fp, verify=verify, fname=fname)
 
 
-async def upload_dir(dir_path: Path, verify: bool = True) -> str:
+@syncify
+async def upload_dir(dir_path: Path, verify: bool = True, prefix: str | None = None) -> str:
     """
     Uploads a directory to a remote location and returns the remote URI.
 
@@ -209,13 +235,13 @@ async def upload_dir(dir_path: Path, verify: bool = True) -> str:
     :param verify: Whether to verify the certificate for HTTPS requests.
     :return: The remote URI of the uploaded directory.
     """
-    # This is a placeholder implementation. Replace with actual upload logic.
     ensure_client()
     cfg = get_init_config()
     if not dir_path.is_dir():
         raise ValueError(f"{dir_path} is not a directory, upload arg must be a directory.")
 
-    prefix = uuid.uuid4().hex
+    if prefix is None:
+        prefix = uuid.uuid4().hex
 
     files = dir_path.rglob("*")
     uploaded_files = []
@@ -226,6 +252,9 @@ async def upload_dir(dir_path: Path, verify: bool = True) -> str:
     urls = await asyncio.gather(*uploaded_files)
     native_url = urls[0][1]  # Assuming all files are uploaded to the same prefix
     # native_url is of the form s3://my-s3-bucket/flytesnacks/development/{prefix}/source/empty.md
-    uri = native_url.split(prefix)[0] + "/" + prefix
+    uri = native_url.split(prefix)[0]
+    if not uri.endswith("/"):
+        uri += "/"
+    uri += prefix
 
     return uri

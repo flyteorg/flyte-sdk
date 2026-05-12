@@ -1,3 +1,4 @@
+*.parquet
 .flyte
 maint_tools/copy_pb_python_from_cloud.py
 
@@ -8,9 +9,6 @@ __pycache__/
 
 # C extensions
 *.so
-
-# Temporary
-rs_controller/
 
 # Distribution / packaging
 .Python
@@ -194,3 +192,8 @@ examples/remote_example.py
 config.yaml
 .claude/
 tests/flyte/internal/bin/flyte-inputs.json
+tests/flyte/internal/bin/flyte-parameters.json
+.cargo/
+.run/
+.flyteignore
+

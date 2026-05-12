@@ -1,11 +1,11 @@
 import hashlib
 import typing
-from venv import logger
 
 from flyteidl2.core import tasks_pb2
 
 import flyte.errors
 from flyte import ReusePolicy
+from flyte._logging import logger
 from flyte._pod import _PRIMARY_CONTAINER_DEFAULT_NAME, _PRIMARY_CONTAINER_NAME_FIELD
 from flyte.models import CodeBundle
 
@@ -52,8 +52,8 @@ def extract_unique_id_and_image(
         components += f":{reuse_policy.replicas[0]}:{reuse_policy.replicas[1]}"
     else:
         components += f":{reuse_policy.replicas}"
-    if reuse_policy.ttl is not None:
-        components += f":{reuse_policy.ttl.total_seconds()}"
+    if reuse_policy.idle_ttl:
+        components += f":{reuse_policy.idle_ttl.total_seconds()}"  # type: ignore [union-attr]
     if reuse_policy.get_scaledown_ttl() is not None:
         components += f":{reuse_policy.get_scaledown_ttl()}"
     if code_bundle is not None:
@@ -94,7 +94,7 @@ def add_reusable(
         )
 
     logger.debug(f"Adding reusable policy for task: {task.id.name}")
-    name = parent_env_name if parent_env_name else ""
+    name = parent_env_name or ""
     if parent_env_name is None:
         name = task.id.name.split(".")[0]
 
@@ -114,12 +114,12 @@ def add_reusable(
             "parallelism": reuse_policy.concurrency,
             "min_replica_count": reuse_policy.min_replicas,
             "replica_count": reuse_policy.max_replicas,
-            "ttl_seconds": reuse_policy.ttl.total_seconds() if reuse_policy.ttl else None,
+            "ttl_seconds": reuse_policy.idle_ttl.total_seconds() if reuse_policy.idle_ttl else None,  # type: ignore [union-attr]
             "scaledown_ttl_seconds": scaledown_ttl.total_seconds() if scaledown_ttl else None,
         },
     }
 
     task.type = "actor"
-    logger.info(f"Reusable task {task.id.name} with config {task.custom}")
+    logger.debug(f"Reusable task {task.id.name} with config {task.custom}")
 
     return task

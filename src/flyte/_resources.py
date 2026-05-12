@@ -11,7 +11,9 @@ if TYPE_CHECKING:
 
 PRIMARY_CONTAINER_DEFAULT_NAME = "primary"
 
-GPUType = Literal["A10", "A10G", "A100", "A100 80G", "B200", "H100", "H200", "L4", "L40s", "T4", "V100", "RTX PRO 6000"]
+GPUType = Literal[
+    "A10", "A10G", "A100", "A100 80G", "B200", "H100", "H200", "L4", "L40s", "T4", "V100", "RTX PRO 6000", "GB10"
+]
 GPUQuantity = Literal[1, 2, 3, 4, 5, 6, 7, 8]
 A100Parts = Literal["1g.5gb", "2g.10gb", "3g.20gb", "4g.20gb", "7g.40gb"]
 """
@@ -21,6 +23,11 @@ Partitions for NVIDIA A100 GPU.
 A100_80GBParts = Literal["1g.10gb", "2g.20gb", "3g.40gb", "4g.40gb", "7g.80gb"]
 """
 Partitions for NVIDIA A100 80GB GPU.
+"""
+
+H100Parts = Literal["1g.10gb", "1g.20gb", "2g.20gb", "3g.40gb", "4g.40gb", "7g.80gb"]
+"""
+Partitions for NVIDIA H100 GPU (80GB HBM3).
 """
 
 H200Parts = Literal["1g.18gb", "1g.35gb", "2g.35gb", "3g.71gb", "4g.71gb", "7g.141gb"]
@@ -142,6 +149,8 @@ Accelerators = Literal[
     "V100:8",
     # RTX 6000
     "RTX PRO 6000:1",
+    # GB10
+    "GB10:1",
     # T4
     "T4:1",
     "T4:2",
@@ -255,7 +264,7 @@ class Device:
 
 
 def GPU(
-    device: GPUType, quantity: GPUQuantity, partition: A100Parts | A100_80GBParts | H200Parts | None = None
+    device: GPUType, quantity: GPUQuantity, partition: A100Parts | A100_80GBParts | H100Parts | H200Parts | None = None
 ) -> Device:
     """
     Create a GPU device instance.
@@ -274,6 +283,9 @@ def GPU(
     elif partition is not None and device == "A100 80G":
         if partition not in get_args(A100_80GBParts):
             raise ValueError(f"Invalid partition for A100 80G: {partition}. Must be one of {get_args(A100_80GBParts)}")
+    elif partition is not None and device == "H100":
+        if partition not in get_args(H100Parts):
+            raise ValueError(f"Invalid partition for H100: {partition}. Must be one of {get_args(H100Parts)}")
     elif partition is not None and device == "H200":
         if partition not in get_args(H200Parts):
             raise ValueError(f"Invalid partition for H200: {partition}. Must be one of {get_args(H200Parts)}")
@@ -328,7 +340,7 @@ def AMD_GPU(device: AMD_GPUType) -> Device:
 def HABANA_GAUDI(device: HABANA_GAUDIType) -> Device:
     """
     Create a Habana Gaudi device instance.
-    :param device: Device type (e.g., "DL1").
+    :param device: Device type (e.g., "Gaudi1").
     :return: Device instance.
     """
     if device not in get_args(HABANA_GAUDIType):
@@ -344,26 +356,53 @@ class Resources:
     """
     Resources such as CPU, Memory, and GPU that can be allocated to a task.
 
-    Example:
-    - Single CPU, 1GiB of memory, and 1 T4 GPU:
+    Set via `TaskEnvironment(resources=...)` or `task.override(resources=...)`.
+
+    Examples:
+
     ```python
-    @task(resources=Resources(cpu=1, memory="1GiB", gpu="T4:1"))
-    def my_task() -> int:
-        return 42
-    ```
-    - 1CPU with limit upto 2CPU, 2GiB of memory, and 8 A100 GPUs and 10GiB of disk:
-    ```python
-    @task(resources=Resources(cpu=(1, 2), memory="2GiB", gpu="A100:8", disk="10GiB"))
-    def my_task() -> int:
-        return 42
+    # Simple: 1 CPU, 1 GiB memory, 1 T4 GPU
+    Resources(cpu=1, memory="1Gi", gpu="T4:1")
+
+    # Range: request 1 CPU (limit 2), 2 GiB memory, 8 A100 GPUs, 10 GiB disk
+    Resources(cpu=(1, 2), memory="2Gi", gpu="A100:8", disk="10Gi")
+
+    # Advanced GPU with partitioning
+    Resources(gpu=GPU(device="A100", quantity=1, partition="1g.5gb"))
+
+    # TPU
+    Resources(gpu=TPU(device="V5P", partition="2x2x1"))
     ```
 
-    :param cpu: The amount of CPU to allocate to the task. This can be a string, int, float, list of ints or strings,
-        or a tuple of two ints or strings.
-    :param memory: The amount of memory to allocate to the task. This can be a string, int, float, list of ints or
-        strings, or a tuple of two ints or strings.
-    :param gpu: The amount of GPU to allocate to the task. This can be an Accelerators enum, an int, or None.
-    :param disk: The amount of disk to allocate to the task. This is a string of the form "10GiB".
+    :param cpu: CPU allocation. Accepts several formats:
+
+        - `int` or `float`: CPU cores (e.g., `1`, `0.5`)
+        - `str`: Kubernetes-style (e.g., `"500m"` for 0.5 cores, `"2"` for 2 cores)
+        - `tuple`: Request/limit range (e.g., `(1, 4)` requests 1 core, limits to 4)
+
+    :param memory: Memory allocation using Kubernetes unit conventions:
+
+        - Binary units: `"512Mi"`, `"1Gi"`, `"4Gi"`
+        - Decimal units: `"500M"`, `"1G"`
+        - `tuple`: Request/limit range (e.g., `("1Gi", "4Gi")`)
+
+    :param gpu: GPU, TPU, or other accelerator allocation. Accepts:
+
+        - `int`: GPU count, any available type (e.g., `1`, `4`)
+        - `str`: Type and quantity (e.g., `"T4:1"`, `"A100:2"`, `"H100:8"`)
+        - `Device`: Advanced config via `GPU()`, `TPU()`, or `Device()` for partitioning
+          and custom device types. See `GPU`, `TPU`, `Device` for details.
+
+        Supported GPU types include T4, L4, L40s, A10, A10G, A100, A100 80G, B200, H100, H200, V100.
+        GPU partitioning (MIG) is available on A100, A100 80G, H100, and H200.
+
+    :param disk: Ephemeral disk storage as a string with Kubernetes units
+        (e.g., `"10Gi"`, `"100Gi"`, `"1Ti"`). Automatically cleaned up when the task completes.
+    :param shm: Shared memory (`/dev/shm`) allocation. Useful for ML data loading
+        and inter-process communication:
+
+        - `str`: Size with units (e.g., `"1Gi"`, `"16Gi"`)
+        - `"auto"`: Set to the maximum shared memory available on the node
     """
 
     cpu: Union[CPUBaseType, Tuple[CPUBaseType, CPUBaseType], None] = None

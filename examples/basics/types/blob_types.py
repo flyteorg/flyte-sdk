@@ -10,9 +10,9 @@ env = flyte.TaskEnvironment(name="inputs_blob_types")
 @env.task
 async def process_blob(blob: File) -> str:
     """Process a blob input file and return its content summary"""
-    async with blob.open("rb") as f:
-        content = await f.read()
-        text_content = content.decode("utf-8")
+    async with blob.open("rb") as fh:
+        contents = bytes(await fh.read())  # read() returns a memoryview; bytes() ensures bytes
+        text_content = contents.decode("utf-8")
         lines = text_content.strip().split("\n")
         return f"""Processed blob file: {blob.name}
 Total lines: {len(lines)}

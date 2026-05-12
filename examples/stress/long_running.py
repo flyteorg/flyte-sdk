@@ -27,7 +27,7 @@ async def long_running_task(duration: timedelta) -> str:
 
 
 @env.task(report=True)
-async def main_task(duration: timedelta) -> str:
+async def main_task(duration: timedelta = timedelta(days=5)) -> str:
     """
     The main task that calls the long-running task.
     """

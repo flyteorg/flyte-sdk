@@ -8,20 +8,20 @@ def _connect():
     """Debug commands for Flyte."""
 
 
-@_connect.command()
+@_connect.command(name="c0")
 @click.option(
     "--port",
     default="8000",
     is_flag=False,
     type=int,
-    help="Grpc port for the connector service",
+    help="Grpc port for the connector service. Defaults to 8000",
 )
 @click.option(
     "--prometheus_port",
     default="9090",
     is_flag=False,
     type=int,
-    help="Prometheus port for the connector service",
+    help="Prometheus port for the connector service. Defaults to 9090",
 )
 @click.option(
     "--worker",

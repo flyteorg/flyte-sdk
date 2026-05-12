@@ -89,6 +89,7 @@ def list_files_to_bundle(
     deref_symlinks: bool = False,
     *ignores: typing.Type[Ignore],
     copy_style: CopyFiles = "all",
+    additional_files: typing.Optional[typing.Sequence[str]] = None,
 ) -> typing.Tuple[List[str], str]:
     """
     Takes a source directory and returns a list of all files to be included in the code bundle and a hexdigest of the
@@ -97,11 +98,13 @@ def list_files_to_bundle(
     :param deref_symlinks: Whether to dereference symlinks or not
     :param ignores: A list of Ignore classes to use for ignoring files
     :param copy_style: The copy style to use for the tarball
+    :param additional_files: Extra absolute paths (under ``source``) to include alongside
+        whatever ``copy_style`` discovers. Used for ``Environment.include``.
     :return: A list of all files to be included in the code bundle and a hexdigest of the included files
     """
     ignore = IgnoreGroup(source, *ignores)
 
-    ls, ls_digest = ls_files(source, copy_style, deref_symlinks, ignore)
+    ls, ls_digest = ls_files(source, copy_style, deref_symlinks, ignore, additional_files=additional_files)
     logger.debug(f"Hash of files to be included in the code bundle: {ls_digest}")
     return ls, ls_digest
 
@@ -144,14 +147,19 @@ def create_bundle(
     # Compute where the archive should be written
     archive_fname = output_dir / f"{FAST_PREFIX}{ls_digest}{FAST_FILEENDING}"
     tar_path = output_dir / "tmp.tar"
+    resolved_source = source.resolve()
     with tarfile.open(str(tar_path), "w", dereference=deref_symlinks) as tar:
         for ws_file in ls:
-            rel_path = os.path.relpath(ws_file, start=source)
+            # Resolve both paths to normalize any ".." components before computing
+            # the arcname — un-normalized paths produce tar member names containing
+            # ".." which GNU tar refuses to extract (and some tools create a literal
+            # ".." directory instead).  Also ensures forward slashes on all platforms.
+            rel_path = pathlib.Path(ws_file).resolve().relative_to(resolved_source).as_posix()
             tar.add(
                 os.path.join(source, ws_file),
                 recursive=False,
                 arcname=rel_path,
-                filter=lambda x: tar_strip_file_attributes(x),
+                filter=tar_strip_file_attributes,
             )
 
     size_mbs = tar_path.stat().st_size / 1024 / 1024

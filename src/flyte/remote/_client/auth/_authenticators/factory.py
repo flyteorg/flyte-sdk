@@ -1,7 +1,5 @@
 import typing
 
-import grpc.aio
-
 from flyte.remote._client.auth._authenticators.base import Authenticator
 from flyte.remote._client.auth._authenticators.external_command import (
     AsyncCommandAuthenticator,
@@ -9,16 +7,12 @@ from flyte.remote._client.auth._authenticators.external_command import (
 from flyte.remote._client.auth._client_config import AuthType, ClientConfigStore, RemoteClientConfigStore
 
 
-def create_auth_interceptors(
-    endpoint: str, in_channel: grpc.aio.Channel, **kwargs
-) -> typing.List[grpc.aio.ClientInterceptor]:
+def create_auth_interceptors(endpoint: str, http_client=None, **kwargs) -> list:
     """
-    Async version of upgrade_channel_to_authenticated.
-    Given a grpc.Channel, preferably a secure channel, it returns a list of interceptors to
-    perform an Oauth2.0 Auth flow for all RPC call types.
+    Returns a list of ConnectRPC interceptors to perform an OAuth2.0 auth flow.
 
     :param endpoint: The endpoint URL for authentication
-    :param in_channel: grpc.Channel Precreated channel
+    :param http_client: Optional httpx.AsyncClient for the config store
     :param kwargs: Additional arguments passed to the authenticator, including:
         - insecure: Whether to use an insecure channel
         - insecure_skip_verify: Whether to skip SSL certificate verification
@@ -41,33 +35,31 @@ def create_auth_interceptors(
         - request_auth_code_params: Parameters to add to login URI opened in browser
         - request_access_token_params: Parameters to add when exchanging auth code for access token
         - refresh_access_token_params: Parameters to add when refreshing access token
-    :return: List of gRPC interceptors for different call types
+    :return: List of ConnectRPC interceptors
     """
-    from flyte.remote._client.auth._grpc_utils.auth_interceptor import (
-        AuthStreamStreamInterceptor,
-        AuthStreamUnaryInterceptor,
-        AuthUnaryStreamInterceptor,
-        AuthUnaryUnaryInterceptor,
+    from flyte.remote._client.auth._interceptors.auth import (
+        AuthBidiStreamInterceptor,
+        AuthClientStreamInterceptor,
+        AuthServerStreamInterceptor,
+        AuthUnaryInterceptor,
     )
 
     def authenticator_factory() -> Authenticator:
-        return get_async_authenticator(endpoint=endpoint, cfg_store=RemoteClientConfigStore(in_channel), **kwargs)
+        return get_async_authenticator(
+            endpoint=endpoint, cfg_store=RemoteClientConfigStore(endpoint, http_client=http_client), **kwargs
+        )
 
     return [
-        AuthUnaryUnaryInterceptor(authenticator_factory),
-        AuthUnaryStreamInterceptor(authenticator_factory),
-        AuthStreamUnaryInterceptor(authenticator_factory),
-        AuthStreamStreamInterceptor(authenticator_factory),
+        AuthUnaryInterceptor(authenticator_factory),
+        AuthClientStreamInterceptor(authenticator_factory),
+        AuthServerStreamInterceptor(authenticator_factory),
+        AuthBidiStreamInterceptor(authenticator_factory),
     ]
 
 
-def create_proxy_auth_interceptors(
-    endpoint: str, proxy_command: typing.Optional[typing.List[str]] = None, **kwargs
-) -> typing.List[grpc.aio.ClientInterceptor]:
+def create_proxy_auth_interceptors(endpoint: str, proxy_command: typing.List[str], **kwargs) -> list:
     """
-    Async version of upgrade_channel_to_proxy_authenticated.
-    If activated in the platform config, given a grpc.Channel, preferably a secure channel, it returns a list of
-    interceptors to perform authentication with a proxy in front of Flyte for all RPC call types.
+    Returns a list of ConnectRPC interceptors to perform authentication with a proxy in front of Flyte.
 
     :param endpoint: The endpoint URL for authentication
     :param proxy_command: Command to execute to get proxy authentication token
@@ -78,27 +70,24 @@ def create_proxy_auth_interceptors(
         - http_session: httpx.AsyncClient session to use for requests
         - verify: Whether to verify SSL certificates
         - ca_cert_path: Optional path to CA certificate file
-    :return: List of gRPC interceptors for different call types
+    :return: List of ConnectRPC interceptors
     """
-    if proxy_command:
-        from flyte.remote._client.auth._grpc_utils.auth_interceptor import (
-            AuthStreamStreamInterceptor,
-            AuthStreamUnaryInterceptor,
-            AuthUnaryStreamInterceptor,
-            AuthUnaryUnaryInterceptor,
-        )
+    from flyte.remote._client.auth._interceptors.auth import (
+        AuthBidiStreamInterceptor,
+        AuthClientStreamInterceptor,
+        AuthServerStreamInterceptor,
+        AuthUnaryInterceptor,
+    )
 
-        def authenticator_factory() -> Authenticator:
-            return get_async_proxy_authenticator(endpoint=endpoint, proxy_command=proxy_command, **kwargs)
+    def authenticator_factory() -> Authenticator:
+        return get_async_proxy_authenticator(endpoint=endpoint, proxy_command=proxy_command, **kwargs)
 
-        return [
-            AuthUnaryUnaryInterceptor(authenticator_factory),
-            AuthUnaryStreamInterceptor(authenticator_factory),
-            AuthStreamUnaryInterceptor(authenticator_factory),
-            AuthStreamStreamInterceptor(authenticator_factory),
-        ]
-    else:
-        return []
+    return [
+        AuthUnaryInterceptor(authenticator_factory),
+        AuthClientStreamInterceptor(authenticator_factory),
+        AuthServerStreamInterceptor(authenticator_factory),
+        AuthBidiStreamInterceptor(authenticator_factory),
+    ]
 
 
 def get_async_authenticator(
@@ -169,6 +158,10 @@ def get_async_authenticator(
             from flyte.remote._client.auth._authenticators.device_code import DeviceCodeAuthenticator
 
             return DeviceCodeAuthenticator(endpoint=endpoint, cfg_store=cfg_store, verify=verify, **kwargs)
+        case "Passthrough":
+            from flyte.remote._client.auth._authenticators.passthrough import PassthroughAuthenticator
+
+            return PassthroughAuthenticator(endpoint=endpoint, **kwargs)
         case _:
             raise ValueError(
                 f"Invalid auth mode [{auth_type}] specified. Please update the creds config to use a valid value"

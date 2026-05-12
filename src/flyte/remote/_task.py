@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from typing import Any, AsyncIterator, Callable, Coroutine, Dict, Iterator, Literal, Optional, Tuple, Union, cast
 
 import rich.repr
+from connectrpc.code import Code
+from connectrpc.errors import ConnectError
 from flyteidl2.common import identifier_pb2, list_pb2
 from flyteidl2.core import literals_pb2
 from flyteidl2.task import task_definition_pb2, task_service_pb2
@@ -52,6 +54,9 @@ class LazyEntity:
 
     @property
     def name(self) -> str:
+        """
+        Get the name of the task.
+        """
         return self._name
 
     @syncify
@@ -143,7 +148,9 @@ class TaskDetails(ToJSONMixin):
                     ):
                         tasks.append(x)
                     if not tasks:
-                        raise flyte.errors.ReferenceTaskError(f"Task {name} not found.")
+                        raise flyte.errors.RemoteTaskNotFoundError(
+                            f"No versions found for Task {name} in project {project}, domain {domain}."
+                        )
                     _version = tasks[0].version
                 elif _auto_version == "current":
                     ctx = flyte.ctx()
@@ -158,12 +165,19 @@ class TaskDetails(ToJSONMixin):
                 name=name,
                 version=_version,
             )
-            resp = await get_client().task_service.GetTaskDetails(
-                task_service_pb2.GetTaskDetailsRequest(
-                    task_id=task_id,
+            try:
+                resp = await get_client().task_service.get_task_details(
+                    task_service_pb2.GetTaskDetailsRequest(
+                        task_id=task_id,
+                    )
                 )
-            )
-            return cls(resp.details)
+                return cls(resp.details)
+            except ConnectError as err:
+                if err.code == Code.NOT_FOUND:
+                    raise flyte.errors.RemoteTaskNotFoundError(
+                        f"Task {name}, version {_version} not found in {project} {domain}."
+                    )
+                raise
 
         return LazyEntity(
             name=name, getter=functools.partial(deferred_get, _version=version, _auto_version=auto_version)
@@ -241,7 +255,7 @@ class TaskDetails(ToJSONMixin):
 
         return flyte.Cache(
             behavior=behavior,
-            version_override=metadata.discovery_version if metadata.discovery_version else None,
+            version_override=metadata.discovery_version or None,
             serialize=metadata.cache_serializable,
             ignored_inputs=tuple(metadata.cache_ignore_input_vars),
         )
@@ -249,14 +263,14 @@ class TaskDetails(ToJSONMixin):
     @property
     def secrets(self):
         """
-        The secrets of the task.
+        Get the list of secret keys required by the task.
         """
         return [s.key for s in self.pb2.spec.task_template.security_context.secrets]
 
     @property
     def resources(self):
         """
-        The resources of the task.
+        Get the resource requests and limits for the task as a tuple (requests, limits).
         """
         if self.pb2.spec.task_template.container is None:
             return ()
@@ -271,9 +285,9 @@ class TaskDetails(ToJSONMixin):
         """
         # TODO support kwargs, for this we need ordered inputs to be stored in the task spec.
         if len(args) > 0:
-            raise flyte.errors.ReferenceTaskError(
-                f"Reference task {self.name} does not support positional arguments"
-                f"currently. Please use keyword arguments."
+            raise flyte.errors.RemoteTaskUsageError(
+                f"Remote task {self.name} does not support positional arguments currently. "
+                f"Please use keyword arguments."
             )
 
         ctx = internal_ctx()
@@ -292,14 +306,14 @@ class TaskDetails(ToJSONMixin):
                     )
             if controller:
                 return await controller.submit_task_ref(self, *args, **kwargs)
-        raise flyte.errors.ReferenceTaskError(
-            f"Reference tasks [{self.name}] cannot be executed locally, only remotely."
+        raise flyte.errors.RemoteTaskUsageError(
+            f"Remote tasks [{self.name}] cannot be executed locally, only remotely."
         )
 
     @property
     def queue(self) -> Optional[str]:
         """
-        The queue to use for the task.
+        Get the queue name to use for task execution, if overridden.
         """
         return self.overriden_queue
 
@@ -317,16 +331,30 @@ class TaskDetails(ToJSONMixin):
         queue: Optional[str] = None,
         **kwargs: Any,
     ) -> TaskDetails:
+        """
+        Create a new TaskDetails with overridden properties.
+
+        :param short_name: Optional short name for the task.
+        :param resources: Optional resource requirements.
+        :param retries: Number of retries or retry strategy.
+        :param timeout: Execution timeout.
+        :param env_vars: Environment variables to set.
+        :param secrets: Secret requests for the task.
+        :param max_inline_io_bytes: Maximum inline I/O size in bytes.
+        :param cache: Cache configuration.
+        :param queue: Queue name for task execution.
+        :return: A new TaskDetails instance with the overrides applied.
+        """
         if len(kwargs) > 0:
-            raise ValueError(
-                f"ReferenceTasks [{self.name}] do not support overriding with kwargs: {kwargs}, "
+            raise flyte.errors.RemoteTaskUsageError(
+                f"RemoteTasks [{self.name}] do not support overriding with kwargs: {kwargs}, "
                 f"Check the parameters for override method."
             )
         pb2 = task_definition_pb2.TaskDetails()
         pb2.CopyFrom(self.pb2)
 
         if short_name:
-            pb2.metadata.short_name = short_name
+            pb2.spec.short_name = short_name
 
         template = pb2.spec.task_template
         if secrets:
@@ -357,7 +385,7 @@ class TaskDetails(ToJSONMixin):
                 md.discovery_version = cache.version_override
             else:
                 if cache.behavior == "auto":
-                    raise ValueError("cache.behavior must be 'disable' or 'override' for reference tasks")
+                    raise ValueError("cache.behavior must be 'disable' or 'override' for remote tasks")
                 raise ValueError(f"Invalid cache behavior: {cache.behavior}.")
             md.cache_serializable = cache.serialize
             md.cache_ignore_input_vars[:] = list(cache.ignored_inputs or ())
@@ -393,6 +421,11 @@ class Task(ToJSONMixin):
     pb2: task_definition_pb2.Task
 
     def __init__(self, pb2: task_definition_pb2.Task):
+        """
+        Initialize a Task object.
+
+        :param pb2: The task protobuf definition.
+        """
         self.pb2 = pb2
 
     @property
@@ -408,6 +441,26 @@ class Task(ToJSONMixin):
         The version of the task.
         """
         return self.pb2.task_id.version
+
+    @property
+    def entrypoint(self) -> bool:
+        """
+        Whether this task is marked as an entrypoint. Not populated in listing responses;
+        fetch ``TaskDetails`` to read the authoritative value from the task template.
+        """
+        return False
+
+    @property
+    def url(self) -> str:
+        """
+        Get the console URL for viewing the task.
+        """
+        client = get_client()
+        return client.console.task_url(
+            project=self.pb2.task_id.project,
+            domain=self.pb2.task_id.domain,
+            task_name=self.pb2.task_id.name,
+        )
 
     @classmethod
     def get(
@@ -444,9 +497,10 @@ class Task(ToJSONMixin):
         domain: str | None = None,
         sort_by: Tuple[str, Literal["asc", "desc"]] | None = None,
         limit: int = 100,
+        entrypoint: bool | None = None,
     ) -> Union[AsyncIterator[Task], Iterator[Task]]:
         """
-        Get all runs for the current project and domain.
+        Get all tasks for the current project and domain.
 
         :param by_task_name: If provided, only tasks with this name will be returned.
         :param by_task_env: If provided, only tasks with this environment prefix will be returned.
@@ -454,7 +508,8 @@ class Task(ToJSONMixin):
         :param domain: The domain to filter tasks by. If None, the current domain will be used.
         :param sort_by: The sorting criteria for the project list, in the format (field, order).
         :param limit: The maximum number of tasks to return.
-        :return: An iterator of runs.
+        :param entrypoint: If True, only entrypoint tasks will be returned.
+        :return: An iterator of tasks.
         """
         ensure_client()
         token = None
@@ -481,12 +536,15 @@ class Task(ToJSONMixin):
                     values=[f"{by_task_env}."],
                 )
             )
+        known_filters = []
+        if entrypoint is not None:
+            known_filters.append(task_service_pb2.ListTasksRequest.KnownFilter(is_entrypoint=entrypoint))
         original_limit = limit
         if limit > cfg.batch_size:
             limit = cfg.batch_size
         retrieved = 0
         while True:
-            resp = await get_client().task_service.ListTasks(
+            resp = await get_client().task_service.list_tasks(
                 task_service_pb2.ListTasksRequest(
                     org=cfg.org,
                     project_id=identifier_pb2.ProjectIdentifier(
@@ -500,6 +558,7 @@ class Task(ToJSONMixin):
                         limit=limit,
                         token=token,
                     ),
+                    known_filters=known_filters,
                 )
             )
             token = resp.token

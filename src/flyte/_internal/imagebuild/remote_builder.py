@@ -15,11 +15,13 @@ from flyteidl2.common import phase_pb2
 import flyte
 import flyte.errors
 from flyte import Image, remote
-from flyte._code_bundle._utils import tar_strip_file_attributes
+from flyte._code_bundle._ignore import STANDARD_IGNORE_PATTERNS
+from flyte._code_bundle._utils import copy_code_bundle_to_context, tar_strip_file_attributes
 from flyte._image import (
     _BASE_REGISTRY,
     AptPackages,
     Architecture,
+    CodeBundleLayer,
     Commands,
     CopyConfig,
     DockerIgnore,
@@ -34,18 +36,25 @@ from flyte._image import (
     WorkDir,
 )
 from flyte._internal.imagebuild.image_builder import ImageBuilder, ImageChecker
-from flyte._internal.imagebuild.utils import copy_files_to_context, get_and_list_dockerignore
+from flyte._internal.imagebuild.utils import (
+    copy_files_to_context,
+    get_and_list_dockerignore,
+    get_uv_project_editable_dependencies,
+)
 from flyte._internal.runtime.task_serde import get_security_context
 from flyte._logging import logger
 from flyte._secret import Secret
+from flyte._status import status
 from flyte.remote import ActionOutputs, Run
 
 if TYPE_CHECKING:
     from flyteidl2.imagebuilder import definition_pb2 as image_definition_pb2
 
+    from flyte._build import ImageBuild
+
 IMAGE_TASK_NAME = "build-image"
 IMAGE_TASK_PROJECT = "system"
-IMAGE_TASK_DOMAIN = "production"
+IMAGE_TASK_DOMAIN = os.environ.get("FLYTE_IMAGEBUILDER_TASK_DOMAIN", "production")
 
 
 class RemoteImageChecker(ImageChecker):
@@ -68,13 +77,13 @@ class RemoteImageChecker(ImageChecker):
             msg = "remote image builder is not enabled. Please contact Union support to enable it."
             raise flyte.errors.ImageBuildError(msg) from e
 
-        image_name = f"{repository.split('/')[-1]}:{tag}"
+        image_name = f"{repository.rsplit('/', maxsplit=1)[-1]}:{tag}"
 
         try:
             from flyteidl2.common.identifier_pb2 import ProjectIdentifier
             from flyteidl2.imagebuilder import definition_pb2 as image_definition__pb2
             from flyteidl2.imagebuilder import payload_pb2 as image_payload__pb2
-            from flyteidl2.imagebuilder import service_pb2_grpc as image_service_pb2_grpc
+            from flyteidl2.imagebuilder.service_connect import ImageServiceClient
 
             from flyte._initialize import _get_init_config
 
@@ -90,12 +99,12 @@ class RemoteImageChecker(ImageChecker):
             if cls._images_client is None:
                 if cfg.client is None:
                     raise ValueError("remote client should not be None")
-                cls._images_client = image_service_pb2_grpc.ImageServiceStub(cfg.client._channel)
-            resp = await cls._images_client.GetImage(req)
-            logger.warning(f"[blue]Image {resp.image.fqin} found. Skip building.[/blue]")
+                cls._images_client = ImageServiceClient(**cfg.client.session_config.connect_kwargs())
+            resp = await cls._images_client.get_image(req)
+            logger.debug(f"Image {resp.image.fqin} found in remote registry")
             return resp.image.fqin
         except Exception:
-            logger.warning(f"[blue]Image {image_name} was not found or has expired.[/blue]", extra={"highlight": False})
+            status.info(f"Image {image_name} was not found or has expired")
             return None
 
 
@@ -104,19 +113,28 @@ class RemoteImageBuilder(ImageBuilder):
         """Return the image checker."""
         return [RemoteImageChecker]
 
-    async def build_image(self, image: Image, dry_run: bool = False) -> str:
+    async def build_image(
+        self, image: Image, dry_run: bool = False, wait: bool = True, force: bool = False
+    ) -> "ImageBuild":
+        from flyte._build import ImageBuild
+
         image_name = f"{image.name}:{image._final_tag}"
         spec, context = await _validate_configuration(image)
 
         start = datetime.now(timezone.utc)
-        entity = await remote.Task.get(
-            name=IMAGE_TASK_NAME,
-            project=IMAGE_TASK_PROJECT,
-            domain=IMAGE_TASK_DOMAIN,
-            auto_version="latest",
-        ).override.aio(secrets=_get_build_secrets_from_image(image))
+        try:
+            entity = await remote.Task.get(
+                name=IMAGE_TASK_NAME,
+                project=IMAGE_TASK_PROJECT,
+                domain=IMAGE_TASK_DOMAIN,
+                auto_version="latest",
+            ).override.aio(secrets=_get_build_secrets_from_image(image))
+        except flyte.errors.RemoteTaskNotFoundError:
+            raise flyte.errors.ImageBuildError(
+                "remote image builder is not enabled. Please contact Union support to enable it."
+            )
 
-        logger.warning("[bold blue]🐳 Submitting a new build...[/bold blue]")
+        status.step("Submitting a new build...")
         if image.registry and image.registry != _BASE_REGISTRY:
             target_image = f"{image.registry}/{image_name}"
         else:
@@ -129,23 +147,31 @@ class RemoteImageBuilder(ImageBuilder):
         run = cast(
             Run,
             await flyte.with_runcontext(
-                project=cfg.project, domain=cfg.domain, cache_lookup_scope="project-domain"
+                project=cfg.project,
+                domain=cfg.domain,
+                cache_lookup_scope="project-domain",
+                overwrite_cache=force,
             ).run.aio(entity, spec=spec, context=context, target_image=target_image),
         )
-        logger.warning(f"⏳ Waiting for build to finish at: [bold cyan link={run.url}]{run.url}[/bold cyan link]")
 
+        status.step(f"Started build at: {run.url}")
+        if not wait:
+            # return the ImageBuild with the run object (uri will be None since build hasn't completed)
+            return ImageBuild(uri=None, remote_run=run)
+
+        status.step("Waiting for build to finish")
         await run.wait.aio(quiet=True)
         run_details = await run.details.aio()
-
         elapsed = str(datetime.now(timezone.utc) - start).split(".")[0]
 
         if run_details.action_details.raw_phase == phase_pb2.ACTION_PHASE_SUCCEEDED:
-            logger.warning(f"[bold green]✅ Build completed in {elapsed}![/bold green]")
+            status.success(f"Build completed in {elapsed}")
         else:
             raise flyte.errors.ImageBuildError(f"❌ Build failed in {elapsed} at {run.url}")
 
         outputs = await run_details.outputs()
-        return _get_fully_qualified_image_name(outputs)
+        uri = _get_fully_qualified_image_name(outputs)
+        return ImageBuild(uri=uri, remote_run=run)
 
 
 async def _validate_configuration(image: Image) -> Tuple[str, Optional[str]]:
@@ -184,9 +210,9 @@ async def _validate_configuration(image: Image) -> Tuple[str, Optional[str]]:
 
         context_size = tar_path.stat().st_size
         if context_size > 5 * 1024 * 1024:
-            logger.warning(
-                f"[yellow]Context size is {context_size / (1024 * 1024):.2f} MB, which is larger than 5 MB. "
-                "Upload and build speed will be impacted.[/yellow]",
+            status.warn(
+                f"Context size is {context_size / (1024 * 1024):.2f} MB, which is larger than 5 MB. "
+                "Upload and build speed will be impacted."
             )
         _, context_url = await remote.upload_file.aio(context_dst)
     else:
@@ -204,6 +230,8 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
         )
 
     layers = []
+    docker_ignore_patterns = get_and_list_dockerignore(image)
+
     for layer in image._layers:
         secret_mounts = None
         pip_options = image_definition_pb2.PipOptions()
@@ -229,13 +257,13 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
             )
             layers.append(apt_layer)
         elif isinstance(layer, PythonWheels):
-            dst_path = copy_files_to_context(layer.wheel_dir, context_path)
+            dst_path = copy_files_to_context(layer.wheel_dir, context_path, ["*.tar.gz", "*.tar.bz2", "*.zip"])
             wheel_layer = image_definition_pb2.Layer(
                 python_wheels=image_definition_pb2.PythonWheels(
                     dir=str(dst_path.relative_to(context_path)),
                     options=pip_options,
                     secret_mounts=secret_mounts,
-                )
+                ),
             )
             layers.append(wheel_layer)
 
@@ -265,21 +293,21 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
                             ),
                         )
                     )
-                    docker_ignore_patterns = get_and_list_dockerignore(image)
 
                     for pyproject in header.pyprojects:
                         pyproject_dst = copy_files_to_context(Path(pyproject), context_path, docker_ignore_patterns)
-                        uv_project_layer = image_definition_pb2.Layer(
-                            uv_project=image_definition_pb2.UVProject(
-                                pyproject=str(pyproject_dst.relative_to(context_path)),
-                                uvlock=str(
-                                    copy_files_to_context(Path(pyproject) / "uv.lock", context_path).relative_to(
-                                        context_path
-                                    )
-                                ),
-                                options=pip_options,
-                                secret_mounts=secret_mounts,
+                        uv_lock_path = Path(pyproject) / "uv.lock"
+                        uv_project_kwargs = {
+                            "pyproject": str(pyproject_dst.relative_to(context_path)),
+                            "options": pip_options,
+                            "secret_mounts": secret_mounts,
+                        }
+                        if uv_lock_path.exists():
+                            uv_project_kwargs["uvlock"] = str(
+                                copy_files_to_context(uv_lock_path, context_path).relative_to(context_path)
                             )
+                        uv_project_layer = image_definition_pb2.Layer(
+                            uv_project=image_definition_pb2.UVProject(**uv_project_kwargs)
                         )
                         layers.append(uv_project_layer)
 
@@ -294,27 +322,53 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
             )
             layers.append(pip_layer)
         elif isinstance(layer, UVProject):
-            if layer.project_install_mode == "dependencies_only":
-                # Copy pyproject itself
-                pyproject_dst = copy_files_to_context(layer.pyproject, context_path)
-                if pip_options.extra_args:
-                    if "--no-install-project" not in pip_options.extra_args:
+            pyproject_dst = copy_files_to_context(layer.pyproject, context_path)
+            # Keep track of the directory containing the pyproject.toml file
+            # this is what should be passed to the UVProject image definition proto as 'pyproject'
+            pyproject_dir_dst = pyproject_dst.parent
+            pyproject_dir_dsts = [pyproject_dir_dst]
+
+            # Copy uv.lock itself (if provided)
+            uvlock_dst = copy_files_to_context(layer.uvlock, context_path) if layer.uvlock is not None else None
+
+            # Handle the project install mode
+            match layer.project_install_mode:
+                case "dependencies_only":
+                    if pip_options.extra_args and ("--no-install-project" not in pip_options.extra_args):
                         pip_options.extra_args += " --no-install-project"
-                else:
-                    pip_options.extra_args = " --no-install-project"
-                if "--no-sources" not in pip_options.extra_args:
-                    pip_options.extra_args += " --no-sources"
-            else:
-                # Copy the entire project
-                docker_ignore_patterns = get_and_list_dockerignore(image)
-                pyproject_dst = copy_files_to_context(layer.pyproject.parent, context_path, docker_ignore_patterns)
+                    else:
+                        pip_options.extra_args = "--no-install-project"
+                    # Copy the editable dependencies defined under the [tool.uv.sources] in pyproject.toml.
+                    # We copy the entire dependency directory (not just pyproject.toml) so that uv_build
+                    # can find the source files when building the package during uv sync.
+                    standard_ignore_patterns = STANDARD_IGNORE_PATTERNS.copy()
+                    for editable_dep in get_uv_project_editable_dependencies(layer.pyproject.parent):
+                        pyproject_dir_dsts.append(
+                            copy_files_to_context(
+                                editable_dep,
+                                context_path,
+                                ignore_patterns=[*standard_ignore_patterns, *docker_ignore_patterns],
+                            )
+                        )
+                case "install_project":
+                    # Copy the entire project
+                    pyproject_dir_dst = copy_files_to_context(
+                        layer.pyproject.parent, context_path, docker_ignore_patterns
+                    )
+                case _:
+                    raise ValueError(f"Invalid project install mode: {layer.project_install_mode}")
 
             uv_layer = image_definition_pb2.Layer(
                 uv_project=image_definition_pb2.UVProject(
-                    pyproject=str(pyproject_dst.relative_to(context_path)),
-                    uvlock=str(copy_files_to_context(layer.uvlock, context_path).relative_to(context_path)),
+                    # NOTE: UVProject expects 'pyproject' to be the directory containing the pyproject.toml file
+                    # whereas it expects 'uvlock' to be the path to the uv.lock file itself.
+                    pyproject=str(pyproject_dir_dst.relative_to(context_path)),
+                    uvlock=str(uvlock_dst.relative_to(context_path)) if uvlock_dst else None,
                     options=pip_options,
                     secret_mounts=secret_mounts,
+                    # Source dir should be the common parent directory of all the pyproject.toml files
+                    # we copied for this UV project layer.
+                    source_dir=str(Path(os.path.commonpath(pyproject_dir_dsts)).relative_to(context_path)),
                 )
             )
             layers.append(uv_layer)
@@ -348,8 +402,23 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
             layers.append(commands_layer)
         elif isinstance(layer, DockerIgnore):
             shutil.copy(layer.path, context_path)
+        elif isinstance(layer, CodeBundleLayer):
+            if layer.root_dir is None:
+                # It should not be possible to have a CodeBundleLayer with a None root_dir since sdk
+                # should already have resolved it.
+                raise flyte.errors.ImageBuildError("CodeBundleLayer requires a root_dir to be specified.")
+            dst_path = copy_code_bundle_to_context(
+                layer.root_dir, layer.copy_style, context_path, ignore_patterns=docker_ignore_patterns
+            )
+            copy_layer = image_definition_pb2.Layer(
+                copy_config=image_definition_pb2.CopyConfig(
+                    src=str(dst_path.relative_to(context_path)),
+                    dst=str(layer.dst),
+                )
+            )
+            layers.append(copy_layer)
         elif isinstance(layer, CopyConfig):
-            dst_path = copy_files_to_context(layer.src, context_path)
+            dst_path = copy_files_to_context(layer.src, context_path, docker_ignore_patterns)
 
             copy_layer = image_definition_pb2.Layer(
                 copy_config=image_definition_pb2.CopyConfig(
@@ -384,21 +453,31 @@ def _get_fully_qualified_image_name(outputs: ActionOutputs) -> str:
 
 def _get_build_secrets_from_image(image: Image) -> Optional[typing.List[Secret]]:
     secrets = []
+    seen_secrets: typing.Set[typing.Tuple[typing.Optional[str], str]] = set()
     DEFAULT_SECRET_DIR = Path("/etc/flyte/secrets")
     for layer in image._layers:
         if isinstance(layer, (PipOption, Commands, AptPackages)) and layer.secret_mounts is not None:
             for secret_mount in layer.secret_mounts:
                 # Mount all the image secrets to a default directory that will be passed to the BuildKit server.
                 if isinstance(secret_mount, Secret):
-                    secrets.append(Secret(key=secret_mount.key, group=secret_mount.group, mount=DEFAULT_SECRET_DIR))
+                    secret_id = (secret_mount.group, secret_mount.key)
+                    if secret_id not in seen_secrets:
+                        seen_secrets.add(secret_id)
+                        secrets.append(Secret(key=secret_mount.key, group=secret_mount.group, mount=DEFAULT_SECRET_DIR))
                 elif isinstance(secret_mount, str):
-                    secrets.append(Secret(key=secret_mount, mount=DEFAULT_SECRET_DIR))
+                    secret_id = (None, secret_mount)
+                    if secret_id not in seen_secrets:
+                        seen_secrets.add(secret_id)
+                        secrets.append(Secret(key=secret_mount, mount=DEFAULT_SECRET_DIR))
                 else:
                     raise ValueError(f"Unsupported secret_mount type: {type(secret_mount)}")
 
     image_registry_secret = image._image_registry_secret
     if image_registry_secret:
-        secrets.append(
-            Secret(key=image_registry_secret.key, group=image_registry_secret.group, mount=DEFAULT_SECRET_DIR)
-        )
+        secret_id = (image_registry_secret.group, image_registry_secret.key)
+        if secret_id not in seen_secrets:
+            seen_secrets.add(secret_id)
+            secrets.append(
+                Secret(key=image_registry_secret.key, group=image_registry_secret.group, mount=DEFAULT_SECRET_DIR)
+            )
     return secrets

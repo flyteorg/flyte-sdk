@@ -5,11 +5,11 @@ It uses the storage module to handle the actual uploading and downloading of fil
 TODO: Convert to use streaming apis
 """
 
-from flyteidl.core import errors_pb2
 from flyteidl2.core import execution_pb2
 from flyteidl2.task import common_pb2
 
 import flyte.storage as storage
+from flyte._logging import logger
 from flyte.models import PathRewrite
 
 from .convert import Inputs, Outputs, _clean_error_code
@@ -69,22 +69,23 @@ async def upload_outputs(outputs: Outputs, output_path: str, max_bytes: int = -1
         )
     output_uri = outputs_path(output_path)
     await storage.put_stream(data_iterable=outputs.proto_outputs.SerializeToString(), to_path=output_uri)
+    logger.debug(f"Uploaded {output_uri} to {output_path}")
 
 
-async def upload_error(err: execution_pb2.ExecutionError, output_prefix: str) -> str:
+async def upload_error(err: execution_pb2.ExecutionError, output_prefix: str, recoverable: bool = True) -> str:
     """
     :param err: execution_pb2.ExecutionError
     :param output_prefix: The output prefix of the remote uri.
+    :param recoverable: If False, sets ContainerError.kind to NON_RECOVERABLE so the engine skips retries.
     """
-    # TODO - clean this up + conditionally set kind
-    error_document = errors_pb2.ErrorDocument(
-        error=errors_pb2.ContainerError(
+    error_document = execution_pb2.ErrorDocument(
+        error=execution_pb2.ContainerError(
             code=err.code,
             message=err.message,
-            kind=errors_pb2.ContainerError.RECOVERABLE,
+            kind=execution_pb2.ContainerError.RECOVERABLE
+            if recoverable
+            else execution_pb2.ContainerError.NON_RECOVERABLE,
             origin=err.kind,
-            timestamp=err.timestamp,
-            worker=err.worker,
         )
     )
     error_uri = error_path(output_prefix)
@@ -164,7 +165,7 @@ async def load_error(path: str) -> execution_pb2.ExecutionError:
     :param path: error file to be downloaded
     :return: execution_pb2.ExecutionError
     """
-    err = errors_pb2.ErrorDocument()
+    err = execution_pb2.ErrorDocument()
     proto_str = b"".join([c async for c in storage.get_stream(path=path)])
     err.ParseFromString(proto_str)
 
@@ -175,8 +176,6 @@ async def load_error(path: str) -> execution_pb2.ExecutionError:
             message=err.error.message,
             kind=err.error.origin,
             error_uri=path,
-            timestamp=err.error.timestamp,
-            worker=err.error.worker,
         )
 
     return execution_pb2.ExecutionError(

@@ -5,6 +5,8 @@ These tests verify that app_serde.py correctly converts AppEnvironment objects
 into protobuf IDL format without using mocks.
 """
 
+import pathlib
+from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -15,16 +17,160 @@ from flyte._image import Image
 from flyte._internal.imagebuild.image_builder import ImageCache
 from flyte._resources import Resources
 from flyte.app import AppEnvironment
-from flyte.app._input import Input, RunOutput
+from flyte.app._parameter import Parameter, RunOutput
 from flyte.app._runtime.app_serde import (
     _get_scaling_metric,
-    _materialize_inputs_with_delayed_values,
+    _materialize_parameters_with_delayed_values,
     _sanitize_resource_name,
+    _serialized_pod_spec,
     get_proto_container,
     translate_app_env_to_idl,
 )
-from flyte.app._types import Domain, Port, Scaling
+from flyte.app._types import Domain, Port, Scaling, Timeouts
 from flyte.models import CodeBundle, SerializationContext
+
+
+def test_serialized_pod_spec_merges_app_env_image_into_primary_container():
+    """
+    GOAL: Verify that app_env.image is merged into the primary container when pod_template is used.
+
+    Tests that when a pod_template is provided with a primary container that has no image,
+    the image from app_env.image is used as a fallback.
+    """
+    from kubernetes.client import V1Container, V1PodSpec, V1SecurityContext
+
+    import flyte
+
+    pod_template = flyte.PodTemplate(
+        primary_container_name="app",
+        pod_spec=V1PodSpec(
+            containers=[
+                V1Container(
+                    name="app",
+                    security_context=V1SecurityContext(privileged=True),
+                )
+            ]
+        ),
+    )
+
+    app_env = AppEnvironment(
+        name="test-app",
+        image=Image.from_base("python:3.11"),
+        pod_template=pod_template,
+        resources=Resources(cpu=1, memory="512Mi"),
+    )
+
+    ctx = SerializationContext(
+        org="test-org",
+        project="test-project",
+        domain="test-domain",
+        version="v1",
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    pod_spec_dict = _serialized_pod_spec(app_env, pod_template, ctx)
+
+    # Verify the primary container has the image from app_env
+    containers = pod_spec_dict.get("containers", [])
+    assert len(containers) == 1
+    primary_container = containers[0]
+    assert primary_container["name"] == "app"
+    assert primary_container["image"] is not None
+    assert "python:3.11" in primary_container["image"]
+
+    # Verify security context is preserved
+    assert primary_container.get("securityContext", {}).get("privileged") is True
+
+
+def test_serialized_pod_spec_preserves_explicit_container_image():
+    """
+    GOAL: Verify that an explicit image in the pod_template container is NOT overwritten.
+
+    Tests that when a pod_template's primary container already has an image,
+    the app_env.image does not override it.
+    """
+    from kubernetes.client import V1Container, V1PodSpec
+
+    import flyte
+
+    pod_template = flyte.PodTemplate(
+        primary_container_name="app",
+        pod_spec=V1PodSpec(
+            containers=[
+                V1Container(
+                    name="app",
+                    image="custom-image:latest",
+                )
+            ]
+        ),
+    )
+
+    app_env = AppEnvironment(
+        name="test-app",
+        image=Image.from_base("python:3.11"),
+        pod_template=pod_template,
+    )
+
+    ctx = SerializationContext(
+        org="test-org",
+        project="test-project",
+        domain="test-domain",
+        version="v1",
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    pod_spec_dict = _serialized_pod_spec(app_env, pod_template, ctx)
+
+    # Verify the primary container keeps its explicit image
+    containers = pod_spec_dict.get("containers", [])
+    assert len(containers) == 1
+    primary_container = containers[0]
+    assert primary_container["image"] == "custom-image:latest"
+
+
+def test_serialized_pod_spec_with_auto_image():
+    """
+    GOAL: Verify that app_env.image="auto" works with pod_template.
+
+    Tests that when app_env.image is "auto" and pod_template's primary container
+    has no image, a default debian base image is used.
+    """
+    from kubernetes.client import V1Container, V1PodSpec
+
+    import flyte
+
+    pod_template = flyte.PodTemplate(
+        primary_container_name="app",
+        pod_spec=V1PodSpec(
+            containers=[
+                V1Container(
+                    name="app",
+                )
+            ]
+        ),
+    )
+
+    app_env = AppEnvironment(
+        name="test-app",
+        image="auto",
+        pod_template=pod_template,
+    )
+
+    ctx = SerializationContext(
+        org="test-org",
+        project="test-project",
+        domain="test-domain",
+        version="v1",
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    pod_spec_dict = _serialized_pod_spec(app_env, pod_template, ctx)
+
+    # Verify the primary container has an image (from auto)
+    containers = pod_spec_dict.get("containers", [])
+    assert len(containers) == 1
+    primary_container = containers[0]
+    assert primary_container["image"] is not None
 
 
 def test_sanitize_resource_name():
@@ -61,26 +207,30 @@ def test_get_scaling_metric_none():
 
 def test_get_scaling_metric_concurrency():
     """
-    GOAL: Document bug in Concurrency metric serialization.
+    GOAL: Verify Concurrency metric is correctly serialized to protobuf.
 
-    The implementation uses 'val' field but protobuf expects 'target_value'.
+    Tests that Scaling.Concurrency.val is mapped to ScalingMetric.concurrency.target_value.
     """
     metric = Scaling.Concurrency(val=10)
-    # Note: Implementation currently has a bug - uses 'val' instead of 'target_value'
-    with pytest.raises(ValueError, match='has no "val" field'):
-        _get_scaling_metric(metric)
+    result = _get_scaling_metric(metric)
+
+    assert result is not None
+    assert result.HasField("concurrency")
+    assert result.concurrency.target_value == 10
 
 
 def test_get_scaling_metric_request_rate():
     """
-    GOAL: Document bug in RequestRate metric serialization.
+    GOAL: Verify RequestRate metric is correctly serialized to protobuf.
 
-    The implementation uses 'val' field but protobuf expects 'target_value'.
+    Tests that Scaling.RequestRate.val is mapped to ScalingMetric.request_rate.target_value.
     """
     metric = Scaling.RequestRate(val=100)
-    # Note: Implementation currently has a bug - uses 'val' instead of 'target_value'
-    with pytest.raises(ValueError, match='has no "val" field'):
-        _get_scaling_metric(metric)
+    result = _get_scaling_metric(metric)
+
+    assert result is not None
+    assert result.HasField("request_rate")
+    assert result.request_rate.target_value == 100
 
 
 def test_get_proto_container_basic():
@@ -102,6 +252,7 @@ def test_get_proto_container_basic():
         project="test-project",
         domain="test-domain",
         version="v1",
+        root_dir=pathlib.Path.cwd(),
     )
 
     container = get_proto_container(app_env, ctx)
@@ -129,6 +280,7 @@ def test_get_proto_container_with_resources():
         project="test-project",
         domain="test-domain",
         version="v1",
+        root_dir=pathlib.Path.cwd(),
     )
 
     container = get_proto_container(app_env, ctx)
@@ -164,6 +316,7 @@ def test_get_proto_container_with_env_vars():
         project="test-project",
         domain="test-domain",
         version="v1",
+        root_dir=pathlib.Path.cwd(),
     )
 
     container = get_proto_container(app_env, ctx)
@@ -192,6 +345,7 @@ def test_get_proto_container_with_custom_port():
         project="test-project",
         domain="test-domain",
         version="v1",
+        root_dir=pathlib.Path.cwd(),
     )
 
     container = get_proto_container(app_env, ctx)
@@ -219,6 +373,7 @@ def test_get_proto_container_with_command_and_args():
         project="test-project",
         domain="test-domain",
         version="v1",
+        root_dir=pathlib.Path.cwd(),
     )
 
     container = get_proto_container(app_env, ctx)
@@ -240,9 +395,9 @@ def test_get_proto_container_with_args_and_inputs():
         name="test-app",
         image=Image.from_base("python:3.11"),
         args=["--arg1", "value1", "--arg2", "value2"],
-        inputs=[
-            Input(value="config.yaml", name="config"),
-            Input(value="data.csv", name="data"),
+        parameters=[
+            Parameter(value="config.yaml", name="config"),
+            Parameter(value="data.csv", name="data"),
         ],
     )
 
@@ -252,6 +407,7 @@ def test_get_proto_container_with_args_and_inputs():
         domain="test-domain",
         version="v1.0.0",
         code_bundle=CodeBundle(computed_version="v1.0.0", tgz="s3://bucket/code.tgz"),
+        root_dir=pathlib.Path.cwd(),
     )
 
     container = get_proto_container(app_env, ctx)
@@ -259,29 +415,29 @@ def test_get_proto_container_with_args_and_inputs():
     # Args should be in the args field
     assert container.args == ["--arg1", "value1", "--arg2", "value2"]
 
-    # Command should contain fserve with --inputs flag
+    # Command should contain fserve with --parameters flag
     assert container.command[0] == "fserve"
-    assert "--inputs" in container.command
+    assert "--parameters" in container.command
 
-    # Verify inputs are serialized
+    # Verify parameters are serialized
     cmd_list = list(container.command)
-    inputs_idx = cmd_list.index("--inputs")
-    assert inputs_idx >= 0
-    serialized_inputs = cmd_list[inputs_idx + 1]
-    assert len(serialized_inputs) > 0  # Should have base64 gzip encoded content
+    parameters_idx = cmd_list.index("--parameters")
+    assert parameters_idx >= 0
+    serialized_parameters = cmd_list[parameters_idx + 1]
+    assert len(serialized_parameters) > 0  # Should have base64 gzip encoded content
 
 
-def test_get_proto_container_with_string_args_and_inputs():
+def test_get_proto_container_with_string_args_and_parameters():
     """
-    GOAL: Verify string args are split correctly when app has inputs.
+    GOAL: Verify string args are split correctly when app has parameters.
 
-    Tests that string args are parsed using shlex while inputs remain in command.
+    Tests that string args are parsed using shlex while parameters remain in command.
     """
     app_env = AppEnvironment(
         name="test-app",
         image=Image.from_base("python:3.11"),
         args="--host 0.0.0.0 --port 8080",
-        inputs=[Input(value="config.yaml", name="config")],
+        parameters=[Parameter(value="config.yaml", name="config")],
     )
 
     ctx = SerializationContext(
@@ -290,6 +446,7 @@ def test_get_proto_container_with_string_args_and_inputs():
         domain="test-domain",
         version="v1.0.0",
         code_bundle=CodeBundle(computed_version="v1.0.0", tgz="s3://bucket/code.tgz"),
+        root_dir=pathlib.Path.cwd(),
     )
 
     container = get_proto_container(app_env, ctx)
@@ -298,7 +455,7 @@ def test_get_proto_container_with_string_args_and_inputs():
     assert container.args == ["--host", "0.0.0.0", "--port", "8080"]
 
     # Inputs should be in command
-    assert "--inputs" in container.command
+    assert "--parameters" in container.command
 
 
 def test_get_proto_container_with_only_inputs_no_args():
@@ -312,9 +469,9 @@ def test_get_proto_container_with_only_inputs_no_args():
     app_env = AppEnvironment(
         name="test-app",
         image=Image.from_base("python:3.11"),
-        inputs=[
-            Input(value="file1.txt", name="input1"),
-            Input(value="file2.txt", name="input2"),
+        parameters=[
+            Parameter(value="file1.txt", name="input1"),
+            Parameter(value="file2.txt", name="input2"),
         ],
     )
 
@@ -324,6 +481,7 @@ def test_get_proto_container_with_only_inputs_no_args():
         domain="test-domain",
         version="v1.0.0",
         code_bundle=CodeBundle(computed_version="v1.0.0", tgz="s3://bucket/code.tgz"),
+        root_dir=pathlib.Path.cwd(),
     )
 
     container = get_proto_container(app_env, ctx)
@@ -332,24 +490,23 @@ def test_get_proto_container_with_only_inputs_no_args():
     assert container.args == []
 
     # Inputs should be in command
-    assert "--inputs" in container.command
+    assert "--parameters" in container.command
 
 
 def test_get_proto_container_with_custom_command_and_inputs():
     """
-    GOAL: Verify custom command overrides default and inputs are ignored.
+    GOAL: Verify custom command overrides default fserve and args still work.
 
     Tests that:
     - Custom command completely replaces fserve
-    - Inputs are NOT added to custom commands
-    - User is responsible for handling inputs with custom commands
+    - Args are passed through independently
+    - Parameters with a non-fserve custom command raises ValueError
     """
     app_env = AppEnvironment(
         name="test-app",
         image=Image.from_base("python:3.11"),
         command=["python", "app.py"],
         args=["--custom-arg"],
-        inputs=[Input(value="config.yaml", name="config")],  # Should be ignored
     )
 
     ctx = SerializationContext(
@@ -357,6 +514,7 @@ def test_get_proto_container_with_custom_command_and_inputs():
         project="test-project",
         domain="test-domain",
         version="v1.0.0",
+        root_dir=pathlib.Path.cwd(),
     )
 
     container = get_proto_container(app_env, ctx)
@@ -368,7 +526,20 @@ def test_get_proto_container_with_custom_command_and_inputs():
     assert container.args == ["--custom-arg"]
 
     # Inputs should NOT be in command (custom commands don't auto-add inputs)
-    assert "--inputs" not in container.command
+    assert "--parameters" not in container.command
+
+
+def test_get_proto_container_custom_command_with_parameters_raises():
+    """
+    GOAL: Verify that combining parameters with a non-fserve custom command raises.
+    """
+    with pytest.raises(ValueError, match="Cannot use 'parameters' with a custom 'command'"):
+        AppEnvironment(
+            name="test-app",
+            image=Image.from_base("python:3.11"),
+            command=["python", "app.py"],
+            parameters=[Parameter(value="config.yaml", name="config")],
+        )
 
 
 def test_get_proto_container_with_string_image():
@@ -387,6 +558,7 @@ def test_get_proto_container_with_string_image():
         project="test-project",
         domain="test-domain",
         version="v1",
+        root_dir=pathlib.Path.cwd(),
     )
 
     # AppEnvironment converts string images to Image objects in __post_init__
@@ -414,6 +586,7 @@ def test_get_proto_container_with_tuple_resources():
         project="test-project",
         domain="test-domain",
         version="v1",
+        root_dir=pathlib.Path.cwd(),
     )
 
     container = get_proto_container(app_env, ctx)
@@ -449,6 +622,7 @@ def test_get_proto_container_with_gpu():
         project="test-project",
         domain="test-domain",
         version="v1",
+        root_dir=pathlib.Path.cwd(),
     )
 
     container = get_proto_container(app_env, ctx)
@@ -477,6 +651,7 @@ def test_get_proto_container_empty_env_vars():
         project="test-project",
         domain="test-domain",
         version="v1",
+        root_dir=pathlib.Path.cwd(),
     )
 
     container = get_proto_container(app_env, ctx)
@@ -501,6 +676,7 @@ def test_get_proto_container_string_command():
         project="test-project",
         domain="test-domain",
         version="v1",
+        root_dir=pathlib.Path.cwd(),
     )
 
     container = get_proto_container(app_env, ctx)
@@ -526,6 +702,7 @@ def test_get_proto_container_string_args():
         project="test-project",
         domain="test-domain",
         version="v1",
+        root_dir=pathlib.Path.cwd(),
     )
 
     container = get_proto_container(app_env, ctx)
@@ -551,6 +728,7 @@ def test_get_proto_container_with_quoted_string_args():
         project="test-project",
         domain="test-domain",
         version="v1",
+        root_dir=pathlib.Path.cwd(),
     )
 
     container = get_proto_container(app_env, ctx)
@@ -576,9 +754,9 @@ def test_get_proto_container_comprehensive():
         args=["--arg1", "value1"],
         resources=Resources(cpu=(1, 2), memory=("1Gi", "2Gi"), gpu=1),
         env_vars={"ENV": "production", "LOG_LEVEL": "info"},
-        inputs=[
-            Input(value="config.yaml", name="config"),
-            Input(value="model.pkl", name="model"),
+        parameters=[
+            Parameter(value="config.yaml", name="config"),
+            Parameter(value="model.pkl", name="model"),
         ],
     )
 
@@ -588,6 +766,7 @@ def test_get_proto_container_comprehensive():
         domain="production",
         version="v2.0.0",
         code_bundle=CodeBundle(computed_version="v2.0.0", tgz="s3://bucket/code.tgz"),
+        root_dir=pathlib.Path.cwd(),
     )
 
     container = get_proto_container(app_env, ctx)
@@ -614,7 +793,7 @@ def test_get_proto_container_comprehensive():
 
     # Verify command has fserve and inputs
     assert container.command[0] == "fserve"
-    assert "--inputs" in container.command
+    assert "--parameters" in container.command
     assert "--version" in container.command
 
     # Verify args
@@ -638,6 +817,7 @@ def test_app_with_secrets():
         project="test-project",
         domain="test-domain",
         version="v1",
+        root_dir=pathlib.Path.cwd(),
     )
 
     app_idl = translate_app_env_to_idl(app_env, ctx)
@@ -665,6 +845,7 @@ def test_get_proto_container_with_image_cache():
         image_cache=ImageCache(
             image_lookup={"test-app": "gcr.io/my-project/python:3.11-cached"}, serialized_form="cached"
         ),
+        root_dir=pathlib.Path.cwd(),
     )
 
     container = get_proto_container(app_env, ctx)
@@ -679,17 +860,17 @@ def test_get_proto_container_with_multiple_inputs():
     GOAL: Verify multiple inputs are serialized correctly.
 
     Tests that:
-    - Multiple inputs are all included
-    - Each input's properties are preserved
+    - Multiple parameters are all included
+    - Each parameter's properties are preserved
     - Serialization is successful
     """
     app_env = AppEnvironment(
         name="test-app",
         image=Image.from_base("python:3.11"),
-        inputs=[
-            Input(value="config.yaml", name="config", env_var="CONFIG_PATH"),
-            Input(value="data.csv", name="data"),
-            Input(value="s3://bucket/model.pkl", name="model", download=True),
+        parameters=[
+            Parameter(value="config.yaml", name="config", env_var="CONFIG_PATH"),
+            Parameter(value="data.csv", name="data"),
+            Parameter(value="s3://bucket/model.pkl", name="model", download=True),
         ],
         args=["--verbose"],
     )
@@ -700,6 +881,7 @@ def test_get_proto_container_with_multiple_inputs():
         domain="test-domain",
         version="v1.0.0",
         code_bundle=CodeBundle(computed_version="v1.0.0", tgz="s3://bucket/code.tgz"),
+        root_dir=pathlib.Path.cwd(),
     )
 
     container = get_proto_container(app_env, ctx)
@@ -707,21 +889,21 @@ def test_get_proto_container_with_multiple_inputs():
     # Args should still be present
     assert container.args == ["--verbose"]
 
-    # Command should have inputs
-    assert "--inputs" in container.command
+    # Command should have parameters
+    assert "--parameters" in container.command
     cmd_list = list(container.command)
-    inputs_idx = cmd_list.index("--inputs")
-    serialized_inputs = cmd_list[inputs_idx + 1]
+    parameters_idx = cmd_list.index("--parameters")
+    serialized_parameters = cmd_list[parameters_idx + 1]
 
-    # Verify inputs can be deserialized
-    from flyte.app._input import SerializableInputCollection
+    # Verify parameters can be deserialized
+    from flyte.app._parameter import SerializableParameterCollection
 
-    deserialized = SerializableInputCollection.from_transport(serialized_inputs)
-    assert len(deserialized.inputs) == 3
-    assert deserialized.inputs[0].name == "config"
-    assert deserialized.inputs[0].env_var == "CONFIG_PATH"
-    assert deserialized.inputs[1].name == "data"
-    assert deserialized.inputs[2].name == "model"
+    deserialized = SerializableParameterCollection.from_transport(serialized_parameters)
+    assert len(deserialized.parameters) == 3
+    assert deserialized.parameters[0].name == "config"
+    assert deserialized.parameters[0].env_var == "CONFIG_PATH"
+    assert deserialized.parameters[1].name == "data"
+    assert deserialized.parameters[2].name == "model"
 
 
 @pytest.mark.parametrize(
@@ -750,6 +932,7 @@ def test_app_with_domain(domain: Domain | None):
         project="test-project",
         domain="test-domain",
         version="v1",
+        root_dir=pathlib.Path.cwd(),
     )
 
     app_idl = translate_app_env_to_idl(app_env, ctx)
@@ -760,24 +943,24 @@ def test_app_with_domain(domain: Domain | None):
 
 
 # =============================================================================
-# Tests for _materialize_inputs_with_delayed_values
+# Tests for _materialize_parameters_with_delayed_values
 # =============================================================================
 
 
 @pytest.mark.asyncio
-async def test_materialize_inputs_with_no_delayed_values():
+async def test_materialize_parameters_with_no_delayed_values():
     """
-    GOAL: Verify that inputs without delayed values pass through unchanged.
+    GOAL: Verify that parameters without delayed values pass through unchanged.
 
-    Tests that regular string, File, and Dir inputs are returned as-is.
+    Tests that regular string, File, and Dir parameters are returned as-is.
     """
-    inputs = [
-        Input(name="config", value="config.yaml"),
-        Input(name="model", value=flyte.io.File(path="s3://bucket/model.pkl")),
-        Input(name="data", value=flyte.io.Dir(path="s3://bucket/data")),
+    parameters = [
+        Parameter(name="config", value="config.yaml"),
+        Parameter(name="model", value=flyte.io.File(path="s3://bucket/model.pkl")),
+        Parameter(name="data", value=flyte.io.Dir(path="s3://bucket/data")),
     ]
 
-    result = await _materialize_inputs_with_delayed_values(inputs)
+    result = await _materialize_parameters_with_delayed_values(parameters)
 
     assert len(result) == 3
     assert result[0].name == "config"
@@ -789,11 +972,11 @@ async def test_materialize_inputs_with_no_delayed_values():
 
 
 @pytest.mark.asyncio
-async def test_materialize_inputs_with_run_output():
+async def test_materialize_parameters_with_run_output():
     """
     GOAL: Verify that RunOutput delayed values are materialized correctly.
 
-    Tests that RunOutput inputs are replaced with their materialized values.
+    Tests that RunOutput parameters are replaced with their materialized values.
     """
     # Create mock for RunOutput materialization
     mock_run_details = MagicMock()
@@ -803,9 +986,9 @@ async def test_materialize_inputs_with_run_output():
     mock_run.details = MagicMock()
     mock_run.details.aio = AsyncMock(return_value=mock_run_details)
 
-    inputs = [
-        Input(name="config", value="config.yaml"),
-        Input(name="model", value=RunOutput(type="string", run_name="my-run-123")),
+    parameters = [
+        Parameter(name="config", value="config.yaml"),
+        Parameter(name="model", value=RunOutput(type="string", run_name="my-run-123")),
     ]
 
     with (
@@ -815,7 +998,7 @@ async def test_materialize_inputs_with_run_output():
         MockRun.get = MagicMock()
         MockRun.get.aio = AsyncMock(return_value=mock_run)
 
-        result = await _materialize_inputs_with_delayed_values(inputs)
+        result = await _materialize_parameters_with_delayed_values(parameters)
 
     assert len(result) == 2
     assert result[0].name == "config"
@@ -825,7 +1008,7 @@ async def test_materialize_inputs_with_run_output():
 
 
 @pytest.mark.asyncio
-async def test_materialize_inputs_with_run_output_dir_type():
+async def test_materialize_parameters_with_run_output_dir_type():
     """
     GOAL: Verify that RunOutput with Dir type materializes to a Dir path.
 
@@ -839,8 +1022,8 @@ async def test_materialize_inputs_with_run_output_dir_type():
     mock_run.details = MagicMock()
     mock_run.details.aio = AsyncMock(return_value=mock_run_details)
 
-    inputs = [
-        Input(name="data", value=RunOutput(type=flyte.io.Dir, run_name="my-run-123")),
+    parameters = [
+        Parameter(name="data", value=RunOutput(type=flyte.io.Dir, run_name="my-run-123")),
     ]
 
     with (
@@ -850,7 +1033,7 @@ async def test_materialize_inputs_with_run_output_dir_type():
         MockRun.get = MagicMock()
         MockRun.get.aio = AsyncMock(return_value=mock_run)
 
-        result = await _materialize_inputs_with_delayed_values(inputs)
+        result = await _materialize_parameters_with_delayed_values(parameters)
 
     assert len(result) == 1
     assert result[0].name == "data"
@@ -860,20 +1043,20 @@ async def test_materialize_inputs_with_run_output_dir_type():
 
 
 @pytest.mark.asyncio
-async def test_materialize_inputs_empty_list():
+async def test_materialize_parameters_empty_list():
     """
-    GOAL: Verify that empty input list returns empty list.
+    GOAL: Verify that empty parameter list returns empty list.
 
-    Tests edge case where no inputs are provided.
+    Tests edge case where no parameters are provided.
     """
-    result = await _materialize_inputs_with_delayed_values([])
+    result = await _materialize_parameters_with_delayed_values([])
     assert result == []
 
 
 @pytest.mark.asyncio
-async def test_materialize_inputs_mixed_delayed_and_regular():
+async def test_materialize_parameters_mixed_delayed_and_regular():
     """
-    GOAL: Verify that mixed inputs with some delayed values work correctly.
+    GOAL: Verify that mixed parameters with some delayed values work correctly.
 
     Tests that only delayed values are materialized while regular values pass through.
     """
@@ -884,10 +1067,10 @@ async def test_materialize_inputs_mixed_delayed_and_regular():
     mock_run.details = MagicMock()
     mock_run.details.aio = AsyncMock(return_value=mock_run_details)
 
-    inputs = [
-        Input(name="static-config", value="static.yaml"),
-        Input(name="dynamic-model", value=RunOutput(type="string", run_name="run-1")),
-        Input(name="static-file", value=flyte.io.File(path="s3://bucket/file.txt")),
+    parameters = [
+        Parameter(name="static-config", value="static.yaml"),
+        Parameter(name="dynamic-model", value=RunOutput(type="string", run_name="run-1")),
+        Parameter(name="static-file", value=flyte.io.File(path="s3://bucket/file.txt")),
     ]
 
     with (
@@ -897,7 +1080,7 @@ async def test_materialize_inputs_mixed_delayed_and_regular():
         MockRun.get = MagicMock()
         MockRun.get.aio = AsyncMock(return_value=mock_run)
 
-        result = await _materialize_inputs_with_delayed_values(inputs)
+        result = await _materialize_parameters_with_delayed_values(parameters)
 
     assert len(result) == 3
     # Static string unchanged
@@ -910,9 +1093,9 @@ async def test_materialize_inputs_mixed_delayed_and_regular():
 
 
 @pytest.mark.asyncio
-async def test_materialize_inputs_preserves_other_input_properties():
+async def test_materialize_parameters_preserves_other_parameter_properties():
     """
-    GOAL: Verify that materialization preserves other Input properties.
+    GOAL: Verify that materialization preserves other Parameter properties.
 
     Tests that env_var, mount, download, etc. are preserved after materialization.
     """
@@ -923,8 +1106,8 @@ async def test_materialize_inputs_preserves_other_input_properties():
     mock_run.details = MagicMock()
     mock_run.details.aio = AsyncMock(return_value=mock_run_details)
 
-    inputs = [
-        Input(
+    parameters = [
+        Parameter(
             name="model",
             value=RunOutput(type="string", run_name="my-run"),
             env_var="MODEL_PATH",
@@ -940,7 +1123,7 @@ async def test_materialize_inputs_preserves_other_input_properties():
         MockRun.get = MagicMock()
         MockRun.get.aio = AsyncMock(return_value=mock_run)
 
-        result = await _materialize_inputs_with_delayed_values(inputs)
+        result = await _materialize_parameters_with_delayed_values(parameters)
 
     assert len(result) == 1
     assert result[0].name == "model"
@@ -948,3 +1131,107 @@ async def test_materialize_inputs_preserves_other_input_properties():
     assert result[0].env_var == "MODEL_PATH"
     assert result[0].mount == "/mnt/model"
     assert result[0].download is True
+
+
+def test_translate_app_env_to_idl_with_request_timeout_int():
+    """
+    GOAL: Verify that Timeouts.request (int) is serialized into TimeoutConfig on the Spec.
+
+    Tests that:
+    - An int request is serialized as a Duration with correct seconds
+    - The timeouts field is populated on the Spec
+    """
+    app_env = AppEnvironment(
+        name="timeout-app",
+        image=Image.from_base("python:3.11"),
+        timeouts=Timeouts(request=30),
+    )
+
+    ctx = SerializationContext(
+        org="test-org",
+        project="test-project",
+        domain="test-domain",
+        version="v1",
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    app_idl = translate_app_env_to_idl(app_env, ctx)
+
+    assert app_idl.spec.HasField("timeouts")
+    assert app_idl.spec.timeouts.request_timeout.seconds == 30
+    assert app_idl.spec.timeouts.request_timeout.nanos == 0
+
+
+def test_translate_app_env_to_idl_with_request_timeout_timedelta():
+    """
+    GOAL: Verify that Timeouts.request (timedelta) is serialized into TimeoutConfig on the Spec.
+
+    Tests that:
+    - A timedelta request is serialized as a Duration with correct seconds
+    """
+    app_env = AppEnvironment(
+        name="timeout-app",
+        image=Image.from_base("python:3.11"),
+        timeouts=Timeouts(request=timedelta(minutes=5)),
+    )
+
+    ctx = SerializationContext(
+        org="test-org",
+        project="test-project",
+        domain="test-domain",
+        version="v1",
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    app_idl = translate_app_env_to_idl(app_env, ctx)
+
+    assert app_idl.spec.HasField("timeouts")
+    assert app_idl.spec.timeouts.request_timeout.seconds == 300
+    assert app_idl.spec.timeouts.request_timeout.nanos == 0
+
+
+def test_translate_app_env_to_idl_without_request_timeout():
+    """
+    GOAL: Verify that when Timeouts.request is None, the timeouts field is not set on the Spec.
+    """
+    app_env = AppEnvironment(
+        name="no-timeout-app",
+        image=Image.from_base("python:3.11"),
+    )
+
+    ctx = SerializationContext(
+        org="test-org",
+        project="test-project",
+        domain="test-domain",
+        version="v1",
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    app_idl = translate_app_env_to_idl(app_env, ctx)
+
+    assert not app_idl.spec.HasField("timeouts")
+
+
+def test_translate_app_env_to_idl_with_request_timeout_zero():
+    """
+    GOAL: Verify that Timeouts.request=0 is serialized (not silently dropped).
+    """
+    app_env = AppEnvironment(
+        name="zero-timeout-app",
+        image=Image.from_base("python:3.11"),
+        timeouts=Timeouts(request=0),
+    )
+
+    ctx = SerializationContext(
+        org="test-org",
+        project="test-project",
+        domain="test-domain",
+        version="v1",
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    app_idl = translate_app_env_to_idl(app_env, ctx)
+
+    assert app_idl.spec.HasField("timeouts")
+    assert app_idl.spec.timeouts.request_timeout.seconds == 0
+    assert app_idl.spec.timeouts.request_timeout.nanos == 0

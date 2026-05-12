@@ -264,6 +264,112 @@ task:
         call_kwargs = mock_init.aio.call_args[1]
         assert call_kwargs["root_dir"] is None
 
+    @patch("flyte._initialize.init")
+    @patch("flyte.config.auto")
+    @pytest.mark.asyncio
+    async def test_init_from_config_project_domain_overrides(self, mock_config_auto, mock_init, mock_config):
+        """Test init_from_config with project and domain parameter overrides"""
+        # Config has default values
+        mock_config.task.project = "config-project"
+        mock_config.task.domain = "config-domain"
+        mock_config_auto.return_value = mock_config
+        mock_init.aio = AsyncMock()
+
+        # Override project and domain via parameters
+        override_project = "override-project"
+        override_domain = "override-domain"
+
+        await init_from_config.aio(path_or_config=None, project=override_project, domain=override_domain)
+
+        # Verify init was called with overridden values, not config values
+        mock_init.aio.assert_called_once()
+        call_kwargs = mock_init.aio.call_args[1]
+        assert call_kwargs["project"] == override_project
+        assert call_kwargs["domain"] == override_domain
+        # Verify they are different from config values
+        assert call_kwargs["project"] != mock_config.task.project
+        assert call_kwargs["domain"] != mock_config.task.domain
+
+    @patch("flyte._initialize.init")
+    @patch("flyte.config.auto")
+    @pytest.mark.asyncio
+    async def test_init_from_config_partial_override(self, mock_config_auto, mock_init, mock_config):
+        """Test init_from_config with only project override, domain from config"""
+        mock_config.task.project = "config-project"
+        mock_config.task.domain = "config-domain"
+        mock_config_auto.return_value = mock_config
+        mock_init.aio = AsyncMock()
+
+        # Override only project, domain should come from config
+        override_project = "override-project"
+
+        await init_from_config.aio(path_or_config=None, project=override_project)
+
+        mock_init.aio.assert_called_once()
+        call_kwargs = mock_init.aio.call_args[1]
+        assert call_kwargs["project"] == override_project
+        assert call_kwargs["domain"] == mock_config.task.domain
+
+    @patch("flyte._initialize.init")
+    @patch("flyte.config.auto")
+    @pytest.mark.asyncio
+    async def test_init_from_config_no_overrides_uses_config_values(self, mock_config_auto, mock_init, mock_config):
+        """Test init_from_config without overrides uses config file values"""
+        mock_config.task.project = "config-project"
+        mock_config.task.domain = "config-domain"
+        mock_config_auto.return_value = mock_config
+        mock_init.aio = AsyncMock()
+
+        # No overrides provided
+        await init_from_config.aio(path_or_config=None)
+
+        mock_init.aio.assert_called_once()
+        call_kwargs = mock_init.aio.call_args[1]
+        assert call_kwargs["project"] == mock_config.task.project
+        assert call_kwargs["domain"] == mock_config.task.domain
+
+    @patch("flyte._initialize.init")
+    @patch("flyte.config.auto")
+    @pytest.mark.asyncio
+    async def test_image_builder_explicit_overrides_config(self, mock_config_auto, mock_init, mock_config):
+        """Explicit image_builder argument wins over cfg.image.builder."""
+        mock_config.image.builder = "remote"
+        mock_config_auto.return_value = mock_config
+        mock_init.aio = AsyncMock()
+
+        await init_from_config.aio(path_or_config=None, image_builder="local")
+
+        call_kwargs = mock_init.aio.call_args[1]
+        assert call_kwargs["image_builder"] == "local"
+
+    @patch("flyte._initialize.init")
+    @patch("flyte.config.auto")
+    @pytest.mark.asyncio
+    async def test_image_builder_from_config_when_unspecified(self, mock_config_auto, mock_init, mock_config):
+        """When no image_builder is passed, cfg.image.builder is used."""
+        mock_config.image.builder = "remote"
+        mock_config_auto.return_value = mock_config
+        mock_init.aio = AsyncMock()
+
+        await init_from_config.aio(path_or_config=None)
+
+        call_kwargs = mock_init.aio.call_args[1]
+        assert call_kwargs["image_builder"] == "remote"
+
+    @patch("flyte._initialize.init")
+    @patch("flyte.config.auto")
+    @pytest.mark.asyncio
+    async def test_image_builder_falls_back_to_local(self, mock_config_auto, mock_init, mock_config):
+        """With no image_builder and no cfg.image.builder, falls back to 'local'."""
+        mock_config.image.builder = None
+        mock_config_auto.return_value = mock_config
+        mock_init.aio = AsyncMock()
+
+        await init_from_config.aio(path_or_config=None)
+
+        call_kwargs = mock_init.aio.call_args[1]
+        assert call_kwargs["image_builder"] == "local"
+
 
 class TestInitialization:
     """Test cases for core initialization functions"""
@@ -433,13 +539,10 @@ class TestInitFunction:
         init_module._init_config = None
 
     @patch("flyte._initialize._initialize_client")
-    @patch("flyte._utils.get_cwd_editable_install")
     @patch("flyte._utils.org_from_endpoint")
     @patch("flyte._utils.sanitize_endpoint")
     @pytest.mark.asyncio
-    async def test_init_with_explicit_root_dir(
-        self, mock_sanitize, mock_org_from_endpoint, mock_get_editable, mock_init_client
-    ):
+    async def test_init_with_explicit_root_dir(self, mock_sanitize, mock_org_from_endpoint, mock_init_client):
         """Test init function with explicitly provided root_dir"""
         mock_sanitize.return_value = "https://test.flyte.example.com"
         mock_org_from_endpoint.return_value = "test-org"
@@ -459,56 +562,22 @@ class TestInitFunction:
         assert config.domain == "test-domain"
         assert config.client == mock_client
 
-        # get_cwd_editable_install should not be called when root_dir is provided
-        mock_get_editable.assert_not_called()
-
     @patch("flyte._initialize._initialize_client")
-    @patch("flyte._utils.get_cwd_editable_install")
     @patch("flyte._utils.org_from_endpoint")
     @patch("flyte._utils.sanitize_endpoint")
     @pytest.mark.asyncio
-    async def test_init_with_editable_install_fallback(
-        self, mock_sanitize, mock_org_from_endpoint, mock_get_editable, mock_init_client
-    ):
-        """Test init function falls back to editable install directory"""
-        mock_sanitize.return_value = "https://test.flyte.example.com"
-        mock_org_from_endpoint.return_value = "test-org"
-        mock_client = Mock()
-        mock_init_client.return_value = mock_client
-
-        editable_root = Path("/editable/install/root")
-        mock_get_editable.return_value = editable_root
-
-        await init.aio(endpoint="test.flyte.example.com", project="test-project", domain="test-domain", org="test-org")
-
-        config = _get_init_config()
-        assert config is not None
-        assert config.root_dir == editable_root
-
-        mock_get_editable.assert_called_once()
-
-    @patch("flyte._initialize._initialize_client")
-    @patch("flyte._utils.get_cwd_editable_install")
-    @patch("flyte._utils.org_from_endpoint")
-    @patch("flyte._utils.sanitize_endpoint")
-    @pytest.mark.asyncio
-    async def test_init_with_cwd_fallback(
-        self, mock_sanitize, mock_org_from_endpoint, mock_get_editable, mock_init_client
-    ):
+    async def test_init_with_cwd_fallback(self, mock_sanitize, mock_org_from_endpoint, mock_init_client):
         """Test init function falls back to current working directory"""
         mock_sanitize.return_value = "https://test.flyte.example.com"
         mock_org_from_endpoint.return_value = "test-org"
         mock_client = Mock()
         mock_init_client.return_value = mock_client
-        mock_get_editable.return_value = None  # No editable install found
 
         await init.aio(endpoint="test.flyte.example.com", project="test-project", domain="test-domain", org="test-org")
 
         config = _get_init_config()
         assert config is not None
         assert config.root_dir == Path.cwd()
-
-        mock_get_editable.assert_called_once()
 
     @patch("flyte._initialize._initialize_client")
     @pytest.mark.asyncio

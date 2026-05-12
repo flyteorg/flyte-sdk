@@ -2,7 +2,7 @@ from unittest.mock import AsyncMock, patch
 
 import cloudpickle
 import pytest
-from flyteidl.core import literals_pb2, types_pb2
+from flyteidl2.core import literals_pb2, types_pb2
 
 from flyte.types._pickle import DEFAULT_PICKLE_BYTES_LIMIT, FlytePickle, FlytePickleTransformer
 

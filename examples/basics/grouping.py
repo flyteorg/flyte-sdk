@@ -45,6 +45,8 @@ async def group_dynamic(x: int) -> List[int]:
         o1 = await asyncio.gather(*vals["even"])
     with flyte.group("odd-group"):
         o2 = await asyncio.gather(*vals["odd"])
+    with flyte.group("root_wf"):
+        await root_wf(x=10)
 
     return o1 + o2
 
