@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
-from flyte._logging import logger
+from flyte import system_logger as logger
 from flyte.connectors import (
     AsyncConnector,
     ConnectorRegistry,

@@ -8,7 +8,7 @@ import datasets
 import flyte.storage as storage
 import pyarrow as pa
 import pyarrow.parquet as pq
-from flyte._logging import logger
+from flyte import system_logger as logger
 from flyte.io import PARQUET, DataFrame
 from flyte.io.extend import DataFrameDecoder, DataFrameEncoder
 from flyteidl2.core import literals_pb2, types_pb2
