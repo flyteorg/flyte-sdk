@@ -13,8 +13,14 @@ This package provides various utilities that make it possible to build highly cu
 
 3. Sleep: Route a task to the backend `core-sleep` plugin, which executes in leaseworker with no
                    task pod.
+
+4. Shell: Wrap a CLI tool packaged in a container image. Designed as the foundation for
+                bio module libraries (bedtools, samtools, bcftools, GATK, etc.) and any other case
+                where a user wants to call a pre-built binary in a published container with
+                typed inputs and outputs.
 """
 
+from . import shell
 from ._container import ContainerTask
 from ._dynamic_batcher import (
     BatchStats,
@@ -36,4 +42,5 @@ __all__ = [
     "SleepTask",
     "TokenBatcher",
     "TokenEstimator",
+    "shell",
 ]
