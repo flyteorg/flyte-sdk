@@ -26,6 +26,7 @@ PYTHON_3_14 = (3, 14)
 CopyConfigType = Literal[0, 1]
 SOURCE_ROOT = Path(__file__).parent.parent.parent
 DIST_FOLDER = SOURCE_ROOT / "dist"
+RS_CONTROLLER_DIST_FOLDER = SOURCE_ROOT / "rs_controller" / "dist"
 
 T = TypeVar("T")
 
@@ -364,6 +365,8 @@ class CopyConfig(Layer):
     def __post_init__(self):
         if self.path_type not in (0, 1):
             raise ValueError(f"Invalid path_type {self.path_type}, must be 0 (file) or 1 (directory)")
+        if not isinstance(self.src, Path):
+            object.__setattr__(self, "src", Path(self.src))
 
     def validate(self):
         if not self.src.exists():
@@ -625,16 +628,27 @@ class Image:
             platform=("linux/amd64", "linux/arm64") if platform is None else platform,
             extendable=True,
         )
-        labels_and_user = _DockerLines(
+        labels = _DockerLines(
             (
                 "LABEL org.opencontainers.image.authors='Union.AI <info@union.ai>'",
                 "LABEL org.opencontainers.image.source=https://github.com/flyteorg/flyte",
-                "RUN useradd --create-home --shell /bin/bash flytekit &&"
-                " chown -R flytekit /root && chown -R flytekit /home",
-                "WORKDIR /root",
             )
         )
-        image = image.clone(addl_layer=labels_and_user)
+        # Use Commands + WorkDir (rather than _DockerLines) so both the local docker
+        # builder and the remote builder pick up the flyte user setup, since the
+        # remote builder protobuf IDL only understands Layer types like Commands.
+        create_flyte_user = Commands(
+            commands=(
+                "if ! id -u flyte >/dev/null 2>&1; then"
+                " useradd --create-home --shell /bin/bash flyte; fi &&"
+                " mkdir -p /home/flyte &&"
+                " chown -R flyte:flyte /home/flyte &&"
+                " chown -R flyte:flyte /root",
+            ),
+        )
+        image = image.clone(addl_layer=labels)
+        image = image.clone(addl_layer=create_flyte_user)
+        image = image.clone(addl_layer=WorkDir(workdir="/home/flyte"))
         image = image.with_env_vars(
             {
                 "VIRTUAL_ENV": "/opt/venv",
@@ -646,6 +660,10 @@ class Image:
         image = image.with_apt_packages("build-essential", "ca-certificates")
         if install_flyte and dev_mode and os.path.exists(DIST_FOLDER):
             image = image.with_local_v2()
+            # Also bake the Rust controller wheel, but only when the user opted in via `_F_USE_RUST_CONTROLLER=1`
+            use_rust = os.getenv("_F_USE_RUST_CONTROLLER", "").lower() in ("1", "true", "yes")
+            if use_rust and os.path.exists(RS_CONTROLLER_DIST_FOLDER):
+                image = image.with_local_rs_controller()
         if not dev_mode:
             object.__setattr__(image, "_tag", preset_tag)
 
@@ -1275,6 +1293,17 @@ class Image:
         # used to compute the identifier. Can remove if we ever decide to expose the lambda in with_ commands
         with_dist = self.clone(addl_layer=PythonWheels(wheel_dir=DIST_FOLDER, package_name="flyte"))
         return with_dist
+
+    def with_local_rs_controller(self) -> Image:
+        """
+        Bake the locally-built flyte_controller_base wheel from rs_controller/dist into this image.
+
+        Required when running with `_F_USE_RUST_CONTROLLER=1` against an image that does not already
+        ship the Rust controller wheel.
+        """
+        return self.clone(
+            addl_layer=PythonWheels(wheel_dir=RS_CONTROLLER_DIST_FOLDER, package_name="flyte_controller_base")
+        )
 
     def with_local_v2_plugins(self, plugins: str | list[str] | None = None) -> Image:
         """

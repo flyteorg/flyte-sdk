@@ -1,6 +1,7 @@
 import asyncio
 import datetime as dt
-from typing import Tuple, Union
+from pathlib import Path
+from typing import Any, Tuple, Union
 
 import rich_click as click
 from rich.pretty import pretty_repr
@@ -11,6 +12,7 @@ from flyte.remote._common import TimeFilter
 
 from . import _common as common
 from . import _params
+from ._option import MutuallyExclusiveOption
 
 
 @click.group(name="get")
@@ -323,10 +325,19 @@ def logs(
 
 @get.command(cls=common.CommandBase)
 @click.argument("name", type=str, required=False)
+@click.option(
+    "--cluster-pool",
+    type=str,
+    default=None,
+    help="Scope the secret to a cluster pool. Mutually exclusive with --project and --domain.",
+    cls=MutuallyExclusiveOption,
+    mutually_exclusive=["project", "domain"],
+)
 @click.pass_obj
 def secret(
     cfg: common.CLIConfig,
     name: str | None = None,
+    cluster_pool: str | None = None,
     project: str | None = None,
     domain: str | None = None,
 ):
@@ -337,13 +348,19 @@ def secret(
         project = ""
     if domain is None:
         domain = ""
+
+    if cluster_pool and (project != "" or domain != ""):
+        raise click.ClickException("Project and domain must not be set when --cluster-pool is specified.")
+
     cfg.init(project=project, domain=domain)
 
     console = common.get_console()
     if name:
-        console.print(common.format("Secret", [remote.Secret.get(name)], "json"))
+        console.print(common.format("Secret", [remote.Secret.get(name, cluster_pool=cluster_pool)], "json"))
     else:
-        console.print(common.format("Secrets", remote.Secret.listall(), cfg.output_format))
+        console.print(
+            common.format("Secrets", remote.Secret.listall(cluster_pool=cluster_pool), cfg.output_format)
+        )
 
 
 @get.command(cls=common.CommandBase)
@@ -414,6 +431,146 @@ def io(
             cfg.output_format,
         )
     )
+
+
+@get.command(cls=common.CommandBase)
+@click.option(
+    "--to-file",
+    "-o",
+    "to_file",
+    type=click.Path(dir_okay=False, writable=True, path_type=Path),
+    default=None,
+    help="Write the scope's YAML to this file instead of printing it. The file "
+    "round-trips through `flyte edit settings --from-file`.",
+)
+@click.pass_obj
+def settings(
+    cfg: common.CLIConfig,
+    project: str | None = None,
+    domain: str | None = None,
+    to_file: Path | None = None,
+):
+    """
+    Get settings for a scope as editable YAML.
+
+    Renders three sections:
+
+    \b
+    * Local overrides — uncommented, applied at this scope.
+    * Inherited settings — commented, with the scope they come from.
+    * Available settings — commented placeholders for every key that
+      isn't set anywhere yet, so you can see what can be configured.
+
+    \b
+    Examples:
+
+    ```bash
+    # Get ORG-level settings
+    flyte get settings
+
+    # Get settings for a domain
+    flyte get settings --domain production
+
+    # Get settings for a project (inherits from domain, which inherits from org)
+    flyte get settings --domain production --project ml-pipeline
+
+    # Dump to a file, edit it, then apply non-interactively
+    flyte get settings --domain production -o prod.yaml
+    # ...edit prod.yaml...
+    flyte edit settings --domain production --from-file prod.yaml
+    ```
+
+    Use `flyte edit settings` to interactively modify these values.
+    """
+    from rich.panel import Panel
+
+    cfg.init()
+
+    console = common.get_console()
+    s = remote.Settings.get_settings_for_edit(domain=domain, project=project)
+
+    if to_file is not None:
+        # Dump the raw YAML (with ### / ## / # markers preserved) so the file
+        # round-trips through `flyte edit settings --from-file`.
+        to_file.write_text(s.to_yaml() + "\n")
+        console.print(
+            f"[green]✓ Wrote settings for {s.scope_description()} (v{s._version}) to [bold]{to_file}[/bold][/green]"
+        )
+        return
+
+    console.print(
+        Panel(
+            _stylize_settings_yaml(s.to_yaml()),
+            title=f"[bold]Settings[/bold] · [cyan]{s.scope_description()}[/cyan] · [dim]v{s._version}[/dim]",
+            title_align="left",
+            border_style="bright_black",
+            padding=(1, 2),
+        )
+    )
+
+
+def _stylize_settings_yaml(yaml_content: str) -> "Any":
+    """Render settings YAML for display, replacing comment markers with visual
+    cues. The raw ``#`` / ``##`` / ``###`` prefixes emitted by
+    ``Settings.to_yaml`` are stripped for readability — callers that need the
+    round-trippable form (``flyte edit settings``) should use ``to_yaml``
+    directly, *not* this function.
+
+    Visual hierarchy:
+
+    * ``### Section`` → ``▌ Section`` in bold bright cyan.
+    * ``## description`` → the description text only, grey50.
+    * ``# key: value`` → ``key: value`` rendered dim (clearly inactive but
+      still legible so users can see what to uncomment). Any trailing
+      ``  ## meta`` is lifted into a parenthesised italic suffix.
+    * ``key: value`` → bold bright_blue key + bright_green value.
+    """
+    from rich.text import Text
+
+    out = Text(no_wrap=False)
+    lines = yaml_content.split("\n")
+
+    def _append_kv(indent: str, key: str, value: str, key_style: str, val_style: str) -> None:
+        out.append(indent)
+        out.append(key, style=key_style)
+        out.append(":", style="white")
+        out.append(value, style=val_style)
+
+    for i, line in enumerate(lines):
+        stripped = line.lstrip()
+        indent = line[: len(line) - len(stripped)]
+
+        if stripped.startswith("### "):
+            out.append(indent)
+            out.append("▌ ", style="bold bright_cyan")
+            out.append(stripped[4:], style="bold bright_cyan")
+        elif stripped.startswith("## "):
+            out.append(indent)
+            out.append(stripped[3:], style="grey50")
+        elif stripped.startswith("# "):
+            content = stripped[2:]
+            meta = ""
+            meta_idx = content.find("  ## ")
+            if meta_idx >= 0:
+                meta = content[meta_idx + len("  ## ") :]
+                content = content[:meta_idx]
+            if ":" in content:
+                key, value = content.split(":", 1)
+                _append_kv(indent, key, value, key_style="magenta", val_style="grey66")
+            else:
+                out.append(indent)
+                out.append(content, style="grey66")
+            if meta:
+                out.append(f"  ({meta})", style="italic grey50")
+        elif ":" in stripped:
+            key, value = stripped.split(":", 1)
+            _append_kv(indent, key, value, key_style="bold bright_magenta", val_style="bright_green")
+        else:
+            out.append(line)
+
+        if i < len(lines) - 1:
+            out.append("\n")
+    return out
 
 
 @get.command(cls=click.RichCommand)

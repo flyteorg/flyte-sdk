@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from flyteidl2.cluster import payload_pb2 as cluster_payload_pb2
+from flyteidl2.common import identifier_pb2 as common_identifier_pb2
 from flyteidl2.secret import definition_pb2 as secret_definition_pb2
 from flyteidl2.secret import payload_pb2 as secret_payload_pb2
 
@@ -167,6 +168,129 @@ async def test_different_projects_get_separate_cache_entries():
 
     await wrapper.get_secret(secret_payload_pb2.GetSecretRequest(id=_secret_id(project="p1")))
     await wrapper.get_secret(secret_payload_pb2.GetSecretRequest(id=_secret_id(project="p2")))
+
+    assert cluster_service.select_cluster.await_count == 2
+
+
+# --- Routing: cluster-pool-scoped secrets ---
+
+
+@pytest.mark.asyncio
+async def test_create_secret_with_cluster_pool_routes_by_cluster_pool_id():
+    wrapper, cluster_service, default_client = _make_wrapper()
+    req = secret_payload_pb2.CreateSecretRequest(
+        id=_secret_id(project="", domain=""),
+        cluster_pool_id=common_identifier_pb2.ClusterPoolIdentifier(organization="o", name="pool-a"),
+    )
+
+    await wrapper.create_secret(req)
+
+    sent = cluster_service.select_cluster.await_args[0][0]
+    assert sent.operation == cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_USE_SECRETS
+    assert sent.WhichOneof("resource") == "cluster_pool_id"
+    assert sent.cluster_pool_id.name == "pool-a"
+    assert sent.cluster_pool_id.organization == "o"
+    default_client.create_secret.assert_awaited_once_with(req)
+
+
+@pytest.mark.asyncio
+async def test_create_secret_with_cluster_pool_ignores_org_id_path():
+    """When cluster_pool_id is set, routing must not fall back to org_id even though project/domain are empty."""
+    wrapper, cluster_service, _ = _make_wrapper()
+    req = secret_payload_pb2.CreateSecretRequest(
+        id=_secret_id(project="", domain=""),
+        cluster_pool_id=common_identifier_pb2.ClusterPoolIdentifier(organization="o", name="pool-a"),
+    )
+
+    await wrapper.create_secret(req)
+
+    sent = cluster_service.select_cluster.await_args[0][0]
+    assert sent.WhichOneof("resource") != "org_id"
+
+
+@pytest.mark.asyncio
+async def test_get_secret_with_cluster_pool_routes_by_cluster_pool_id():
+    wrapper, cluster_service, default_client = _make_wrapper()
+    req = secret_payload_pb2.GetSecretRequest(
+        id=_secret_id(project="", domain=""),
+        cluster_pool_id=common_identifier_pb2.ClusterPoolIdentifier(organization="o", name="pool-a"),
+    )
+
+    await wrapper.get_secret(req)
+
+    sent = cluster_service.select_cluster.await_args[0][0]
+    assert sent.WhichOneof("resource") == "cluster_pool_id"
+    assert sent.cluster_pool_id.name == "pool-a"
+    default_client.get_secret.assert_awaited_once_with(req)
+
+
+@pytest.mark.asyncio
+async def test_update_secret_with_cluster_pool_routes_by_cluster_pool_id():
+    wrapper, cluster_service, default_client = _make_wrapper()
+    req = secret_payload_pb2.UpdateSecretRequest(
+        id=_secret_id(project="", domain=""),
+        cluster_pool_id=common_identifier_pb2.ClusterPoolIdentifier(organization="o", name="pool-a"),
+    )
+
+    await wrapper.update_secret(req)
+
+    sent = cluster_service.select_cluster.await_args[0][0]
+    assert sent.WhichOneof("resource") == "cluster_pool_id"
+    assert sent.cluster_pool_id.name == "pool-a"
+    default_client.update_secret.assert_awaited_once_with(req)
+
+
+@pytest.mark.asyncio
+async def test_list_secrets_with_cluster_pool_routes_by_cluster_pool_id():
+    wrapper, cluster_service, default_client = _make_wrapper()
+    req = secret_payload_pb2.ListSecretsRequest(
+        organization="",
+        project="",
+        domain="",
+        cluster_pool_id=common_identifier_pb2.ClusterPoolIdentifier(organization="o", name="pool-a"),
+    )
+
+    await wrapper.list_secrets(req)
+
+    sent = cluster_service.select_cluster.await_args[0][0]
+    assert sent.WhichOneof("resource") == "cluster_pool_id"
+    assert sent.cluster_pool_id.name == "pool-a"
+    default_client.list_secrets.assert_awaited_once_with(req)
+
+
+@pytest.mark.asyncio
+async def test_delete_secret_with_cluster_pool_routes_by_cluster_pool_id():
+    wrapper, cluster_service, default_client = _make_wrapper()
+    req = secret_payload_pb2.DeleteSecretRequest(
+        id=_secret_id(project="", domain=""),
+        cluster_pool_id=common_identifier_pb2.ClusterPoolIdentifier(organization="o", name="pool-a"),
+    )
+
+    await wrapper.delete_secret(req)
+
+    sent = cluster_service.select_cluster.await_args[0][0]
+    assert sent.operation == cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_USE_SECRETS
+    assert sent.WhichOneof("resource") == "cluster_pool_id"
+    assert sent.cluster_pool_id.name == "pool-a"
+    default_client.delete_secret.assert_awaited_once_with(req)
+
+
+@pytest.mark.asyncio
+async def test_different_cluster_pools_get_separate_cache_entries():
+    wrapper, cluster_service, _ = _make_wrapper()
+
+    await wrapper.create_secret(
+        secret_payload_pb2.CreateSecretRequest(
+            id=_secret_id(project="", domain=""),
+            cluster_pool_id=common_identifier_pb2.ClusterPoolIdentifier(organization="o", name="pool-a"),
+        )
+    )
+    await wrapper.create_secret(
+        secret_payload_pb2.CreateSecretRequest(
+            id=_secret_id(project="", domain=""),
+            cluster_pool_id=common_identifier_pb2.ClusterPoolIdentifier(organization="o", name="pool-b"),
+        )
+    )
 
     assert cluster_service.select_cluster.await_count == 2
 

@@ -1080,8 +1080,9 @@ async def test_enqueue_already_exists_continues_monitoring():
 
 
 @pytest.mark.asyncio
-async def test_enqueue_failed_precondition_raises_system_error():
-    """When enqueue raises FAILED_PRECONDITION, it translates to RuntimeSystemError."""
+async def test_enqueue_failed_precondition_retries_then_fails():
+    """FAILED_PRECONDITION signals 'wrong shard / hit limit' — controller retries with backoff
+    until max_system_retries is exhausted, then surfaces a RuntimeSystemError on client_err."""
     phases = {
         "subrun-1": [
             (phase_pb2.ACTION_PHASE_SUCCEEDED, None, None),
@@ -1089,7 +1090,12 @@ async def test_enqueue_failed_precondition_raises_system_error():
     }
 
     class FailedPreconditionService(DummyService):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.enqueue_calls = 0
+
         async def enqueue_action(self, req, **kwargs):
+            self.enqueue_calls += 1
             raise ConnectError(Code.FAILED_PRECONDITION, "bad state")
 
     service = FailedPreconditionService(phases=phases)
@@ -1099,12 +1105,206 @@ async def test_enqueue_failed_precondition_raises_system_error():
 
     run_id = _ce_make_run_id()
     action = _ce_make_action("subrun-1", run_id)
-    c = Controller(client_coro=create_service(), workers=2, max_system_retries=2)
+    c = Controller(
+        client_coro=create_service(),
+        workers=2,
+        max_system_retries=2,
+        min_backoff_on_err_sec=0.01,
+    )
 
     async def _run():
         final_node = await c.submit_action(action)
         assert final_node.client_err is not None
         assert isinstance(final_node.client_err, flyte.errors.RuntimeSystemError)
+        # Retried before giving up: 1 initial attempt + max_system_retries.
+        assert service.enqueue_calls >= 3, f"expected retries; got {service.enqueue_calls} attempts"
+        await c._finalize_parent_action(run_id=run_id, parent_action_name="parent_action")
+        await c.stop()
+
+    await run_coros(_run(), c.watch_for_errors())
+
+
+@pytest.mark.asyncio
+async def test_enqueue_failed_precondition_retries_then_succeeds():
+    """FAILED_PRECONDITION followed by success: controller retries and the action completes."""
+    phases = {
+        "subrun-1": [
+            (phase_pb2.ACTION_PHASE_RUNNING, None, None),
+            (phase_pb2.ACTION_PHASE_SUCCEEDED, None, "s3://out/1"),
+        ],
+    }
+
+    class TransientFailedPreconditionService(DummyService):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.enqueue_calls = 0
+
+        async def enqueue_action(self, req, **kwargs):
+            self.enqueue_calls += 1
+            if self.enqueue_calls == 1:
+                raise ConnectError(Code.FAILED_PRECONDITION, "wrong shard")
+            return await super().enqueue_action(req, **kwargs)
+
+    service = TransientFailedPreconditionService(phases=phases)
+
+    async def create_service():
+        return service
+
+    run_id = _ce_make_run_id()
+    action = _ce_make_action("subrun-1", run_id)
+    c = Controller(
+        client_coro=create_service(),
+        workers=2,
+        max_system_retries=3,
+        min_backoff_on_err_sec=0.01,
+    )
+
+    async def _run():
+        final_node = await c.submit_action(action)
+        assert final_node.started
+        assert final_node.phase == phase_pb2.ACTION_PHASE_SUCCEEDED
+        assert final_node.client_err is None
+        assert service.enqueue_calls == 2
+        await c._finalize_parent_action(run_id=run_id, parent_action_name="parent_action")
+        await c.stop()
+
+    await run_coros(_run(), c.watch_for_errors())
+
+
+@pytest.mark.asyncio
+async def test_enqueue_aborted_raises_system_error_without_retry():
+    """ABORTED indicates the run was aborted — engine auto-aborts other in-flight actions.
+    The action surfaces a system error with no retry; the outer worker handler wraps it."""
+    phases = {
+        "subrun-1": [
+            (phase_pb2.ACTION_PHASE_SUCCEEDED, None, None),
+        ],
+    }
+
+    class AbortedService(DummyService):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.enqueue_calls = 0
+
+        async def enqueue_action(self, req, **kwargs):
+            self.enqueue_calls += 1
+            raise ConnectError(Code.ABORTED, "run aborted")
+
+    service = AbortedService(phases=phases)
+
+    async def create_service():
+        return service
+
+    run_id = _ce_make_run_id()
+    action = _ce_make_action("subrun-1", run_id)
+    c = Controller(
+        client_coro=create_service(),
+        workers=2,
+        max_system_retries=5,
+        min_backoff_on_err_sec=0.01,
+    )
+
+    final_node = await c.submit_action(action)
+    assert final_node.client_err is not None
+    assert isinstance(final_node.client_err, flyte.errors.RuntimeSystemError)
+    # No retry — exactly one launch attempt, action.retries untouched.
+    assert service.enqueue_calls == 1, f"expected no retry, got {service.enqueue_calls} attempts"
+    assert action.retries == 0
+    # Underlying cause carries the ABORTED code with the "Run aborted" message.
+    cause = final_node.client_err.__cause__
+    assert isinstance(cause, flyte.errors.RuntimeSystemError)
+    assert cause.code == Code.ABORTED.name
+    assert "Run aborted" in str(cause)
+    await c._finalize_parent_action(run_id=run_id, parent_action_name="parent_action")
+    await c.stop()
+
+
+@pytest.mark.asyncio
+async def test_enqueue_invalid_argument_raises_system_error_without_retry():
+    """INVALID_ARGUMENT is non-retryable — surfaced immediately."""
+    phases = {
+        "subrun-1": [
+            (phase_pb2.ACTION_PHASE_SUCCEEDED, None, None),
+        ],
+    }
+
+    class InvalidArgumentService(DummyService):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.enqueue_calls = 0
+
+        async def enqueue_action(self, req, **kwargs):
+            self.enqueue_calls += 1
+            raise ConnectError(Code.INVALID_ARGUMENT, "bad argument")
+
+    service = InvalidArgumentService(phases=phases)
+
+    async def create_service():
+        return service
+
+    run_id = _ce_make_run_id()
+    action = _ce_make_action("subrun-1", run_id)
+    c = Controller(
+        client_coro=create_service(),
+        workers=2,
+        max_system_retries=5,
+        min_backoff_on_err_sec=0.01,
+    )
+
+    async def _run():
+        final_node = await c.submit_action(action)
+        assert final_node.client_err is not None
+        assert isinstance(final_node.client_err, flyte.errors.RuntimeSystemError)
+        assert service.enqueue_calls == 1
+        cause = final_node.client_err.__cause__
+        assert isinstance(cause, flyte.errors.RuntimeSystemError)
+        assert cause.code == Code.INVALID_ARGUMENT.name
+        await c._finalize_parent_action(run_id=run_id, parent_action_name="parent_action")
+        await c.stop()
+
+    await run_coros(_run(), c.watch_for_errors())
+
+
+@pytest.mark.asyncio
+async def test_enqueue_not_found_raises_system_error_without_retry():
+    """NOT_FOUND on enqueue is non-retryable — surfaced immediately."""
+    phases = {
+        "subrun-1": [
+            (phase_pb2.ACTION_PHASE_SUCCEEDED, None, None),
+        ],
+    }
+
+    class NotFoundService(DummyService):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.enqueue_calls = 0
+
+        async def enqueue_action(self, req, **kwargs):
+            self.enqueue_calls += 1
+            raise ConnectError(Code.NOT_FOUND, "not found")
+
+    service = NotFoundService(phases=phases)
+
+    async def create_service():
+        return service
+
+    run_id = _ce_make_run_id()
+    action = _ce_make_action("subrun-1", run_id)
+    c = Controller(
+        client_coro=create_service(),
+        workers=2,
+        max_system_retries=5,
+        min_backoff_on_err_sec=0.01,
+    )
+
+    async def _run():
+        final_node = await c.submit_action(action)
+        assert final_node.client_err is not None
+        assert isinstance(final_node.client_err, flyte.errors.RuntimeSystemError)
+        assert service.enqueue_calls == 1
+        cause = final_node.client_err.__cause__
+        assert isinstance(cause, flyte.errors.RuntimeSystemError)
+        assert cause.code == Code.NOT_FOUND.name
         await c._finalize_parent_action(run_id=run_id, parent_action_name="parent_action")
         await c.stop()
 

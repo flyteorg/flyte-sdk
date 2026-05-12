@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import AsyncIterator, Literal, Union
 
 import rich.repr
+from flyteidl2.common import identifier_pb2
 from flyteidl2.secret import definition_pb2, payload_pb2
 
 from flyte._initialize import ensure_client, get_client, get_init_config
@@ -13,24 +14,44 @@ from flyte.syncify import syncify
 SecretTypes = Literal["regular", "image_pull"]
 
 
+def _resolve_scope(cfg, cluster_pool: str | None, op: str) -> tuple[str, str]:
+    """Return (project, domain) for a secret request, validating cluster_pool exclusivity."""
+    if cluster_pool:
+        if cfg.project or cfg.domain:
+            raise ValueError(
+                f"Project `{cfg.project}` or domain `{cfg.domain}` should not be set when "
+                f"{op} a secret scoped to cluster pool `{cluster_pool}`."
+            )
+        return "", ""
+    return cfg.project, cfg.domain
+
+
 @dataclass
 class Secret(ToJSONMixin):
     pb2: definition_pb2.Secret
 
     @syncify
     @classmethod
-    async def create(cls, name: str, value: Union[str, bytes], type: SecretTypes = "regular"):
+    async def create(
+        cls,
+        name: str,
+        value: Union[str, bytes],
+        type: SecretTypes = "regular",
+        cluster_pool: str | None = None,
+    ):
         """
         Create a new secret.
 
         :param name: The name of the secret.
         :param value: The secret value as a string or bytes.
         :param type: Type of secret - either "regular" or "image_pull".
+        :param cluster_pool: Optional cluster pool name. When set, the secret is scoped
+            to the cluster pool and project/domain must not be set.
         """
         ensure_client()
         cfg = get_init_config()
-        project = cfg.project
-        domain = cfg.domain
+
+        project, domain = _resolve_scope(cfg, cluster_pool, op="creating")
 
         if type == "regular":
             secret_type = definition_pb2.SecretType.SECRET_TYPE_GENERIC
@@ -52,63 +73,78 @@ class Secret(ToJSONMixin):
                 type=secret_type,
                 binary_value=value,
             )
-        await get_client().secrets_service.create_secret(  # type: ignore
-            request=payload_pb2.CreateSecretRequest(
-                id=definition_pb2.SecretIdentifier(
-                    organization=cfg.org,
-                    project=project,
-                    domain=domain,
-                    name=name,
-                ),
-                secret_spec=secret,
+        request = payload_pb2.CreateSecretRequest(
+            id=definition_pb2.SecretIdentifier(
+                organization=cfg.org,
+                project=project,
+                domain=domain,
+                name=name,
             ),
+            secret_spec=secret,
         )
+        if cluster_pool:
+            request.cluster_pool_id.CopyFrom(
+                identifier_pb2.ClusterPoolIdentifier(organization=cfg.org, name=cluster_pool)
+            )
+        await get_client().secrets_service.create_secret(request=request)  # type: ignore
 
     @syncify
     @classmethod
-    async def get(cls, name: str) -> Secret:
+    async def get(cls, name: str, cluster_pool: str | None = None) -> Secret:
         """
         Retrieve a secret by name.
 
         :param name: The name of the secret to retrieve.
+        :param cluster_pool: Optional cluster pool name. When set, the secret is looked up
+            in the cluster pool scope and project/domain must not be set.
         :return: A Secret object.
         """
         ensure_client()
         cfg = get_init_config()
-        resp = await get_client().secrets_service.get_secret(
-            request=payload_pb2.GetSecretRequest(
-                id=definition_pb2.SecretIdentifier(
-                    organization=cfg.org,
-                    project=cfg.project,
-                    domain=cfg.domain,
-                    name=name,
-                )
+        project, domain = _resolve_scope(cfg, cluster_pool, op="getting")
+        request = payload_pb2.GetSecretRequest(
+            id=definition_pb2.SecretIdentifier(
+                organization=cfg.org,
+                project=project,
+                domain=domain,
+                name=name,
             )
         )
+        if cluster_pool:
+            request.cluster_pool_id.CopyFrom(
+                identifier_pb2.ClusterPoolIdentifier(organization=cfg.org, name=cluster_pool)
+            )
+        resp = await get_client().secrets_service.get_secret(request=request)
         return Secret(pb2=resp.secret)
 
     @syncify
     @classmethod
-    async def listall(cls, limit: int = 10) -> AsyncIterator[Secret]:
+    async def listall(cls, limit: int = 10, cluster_pool: str | None = None) -> AsyncIterator[Secret]:
         """
         List all secrets in the current project and domain.
 
         :param limit: Maximum number of secrets to return per page.
+        :param cluster_pool: Optional cluster pool name. When set, secrets are listed
+            from the cluster pool scope and project/domain must not be set.
         :return: An async iterator of Secret objects.
         """
         ensure_client()
         cfg = get_init_config()
+        project, domain = _resolve_scope(cfg, cluster_pool, op="listing")
         per_cluster_tokens = None
         while True:
-            resp = await get_client().secrets_service.list_secrets(  # type: ignore
-                request=payload_pb2.ListSecretsRequest(
-                    organization=cfg.org,
-                    project=cfg.project,
-                    domain=cfg.domain,
-                    per_cluster_tokens=per_cluster_tokens,
-                    limit=limit,
-                ),
+            request = payload_pb2.ListSecretsRequest(
+                organization=cfg.org,
+                project=project,
+                domain=domain,
+                per_cluster_tokens=per_cluster_tokens,
+                limit=limit,
             )
+            if cluster_pool:
+                request.cluster_pool_id.CopyFrom(
+                    identifier_pb2.ClusterPoolIdentifier(organization=cfg.org, name=cluster_pool)
+                )
+            resp = await get_client().secrets_service.list_secrets(request=request)  # type: ignore
             per_cluster_tokens = resp.per_cluster_tokens
             round_items = [v for _, v in per_cluster_tokens.items() if v]
             has_next = any(round_items)
@@ -119,24 +155,31 @@ class Secret(ToJSONMixin):
 
     @syncify
     @classmethod
-    async def delete(cls, name):
+    async def delete(cls, name, cluster_pool: str | None = None):
         """
         Delete a secret by name.
 
         :param name: The name of the secret to delete.
+        :param cluster_pool: Optional cluster pool name. When set, the secret is looked up
+            in the cluster pool scope and project/domain must not be set.
         """
         ensure_client()
         cfg = get_init_config()
-        await get_client().secrets_service.delete_secret(  # type: ignore
-            request=payload_pb2.DeleteSecretRequest(
-                id=definition_pb2.SecretIdentifier(
-                    organization=cfg.org,
-                    project=cfg.project,
-                    domain=cfg.domain,
-                    name=name,
-                )
+        project, domain = _resolve_scope(cfg, cluster_pool, op="deleting")
+
+        request = payload_pb2.DeleteSecretRequest(
+            id=definition_pb2.SecretIdentifier(
+                organization=cfg.org,
+                project=project,
+                domain=domain,
+                name=name,
             )
         )
+        if cluster_pool:
+            request.cluster_pool_id.CopyFrom(
+                identifier_pb2.ClusterPoolIdentifier(organization=cfg.org, name=cluster_pool)
+            )
+        await get_client().secrets_service.delete_secret(request=request)  # type: ignore
 
     @property
     def name(self) -> str:

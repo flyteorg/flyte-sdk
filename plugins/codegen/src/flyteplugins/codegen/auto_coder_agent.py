@@ -12,7 +12,7 @@ import flyte
 import litellm
 import pandas as pd
 from flyte.errors import InvalidPackageError
-from flyte.io import File
+from flyte.io import Dir, File
 from flyte.sandbox import ImageConfig
 from flyte.syncify import syncify
 
@@ -150,9 +150,9 @@ class AutoCoderAgent:
             inputs: Optional dict declaring non-sample CLI argument types
                 (e.g., `{"threshold": float, "mode": str}`).
                 Sample entries are automatically added as File inputs — don't redeclare them here.
-                Supported types: str, int, float, bool, File.
+                Supported types: str, int, float, bool, File, Dir.
             outputs: Optional dict defining output types (e.g., `{"result": str, "report": File}`).
-                Supported types: str, int, float, bool, datetime, timedelta, File.
+                Supported types: str, int, float, bool, datetime, timedelta, File, Dir.
 
         Returns:
             CodeGenEvalResult with solution and execution details.
@@ -161,7 +161,7 @@ class AutoCoderAgent:
 
         # Input validation
         if inputs:
-            supported_input_types = (str, int, float, bool, File)
+            supported_input_types = (str, int, float, bool, File, Dir)
             for input_key, input_type in inputs.items():
                 if input_type not in supported_input_types:
                     supported_names = [t.__name__ for t in supported_input_types]
@@ -238,6 +238,7 @@ class AutoCoderAgent:
                 datetime.datetime,
                 datetime.timedelta,
                 File,
+                Dir,
             )
             for output_key, output_type in outputs.items():
                 if output_type not in supported_types:

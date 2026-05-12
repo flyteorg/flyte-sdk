@@ -6,7 +6,9 @@ import pathlib
 import shutil
 import threading
 from contextlib import nullcontext
-from typing import Any, Callable, Tuple, TypeVar
+from typing import Any, Callable, Protocol, Tuple, TypeVar
+
+from flyteidl2.task import task_definition_pb2
 
 import flyte.errors
 from flyte._cache.cache import VersionParameters, cache_from_request
@@ -50,6 +52,17 @@ def _stage_prev_checkpoint_for_local_retry(checkpoint_paths: CheckpointPaths | N
     if src.is_file():
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dst)
+
+
+class ControllerProtocol(Protocol):
+    async def submit(self, _task: "TaskTemplate", *args, **kwargs) -> Any: ...
+    def submit_sync(self, _task: "TaskTemplate", *args, **kwargs) -> concurrent.futures.Future: ...
+    async def finalize_parent_action(self, action: "ActionID"): ...
+    async def get_action_outputs(
+        self, _interface: "NativeInterface", _func: Callable, *args, **kwargs
+    ) -> Tuple["TraceInfo", bool]: ...
+    async def record_trace(self, info: "TraceInfo"): ...
+    async def submit_task_ref(self, _task: "task_definition_pb2.TaskDetails", *args, **kwargs) -> Any: ...
 
 
 class _TaskRunner:
@@ -98,7 +111,7 @@ class _TaskRunner:
         return fut
 
 
-class LocalController:
+class LocalController(ControllerProtocol):
     def __init__(self):
         logger.debug("LocalController init")
         self._runner_map: dict[str, _TaskRunner] = {}
@@ -373,18 +386,21 @@ class LocalController:
         if not tctx:
             raise flyte.errors.NotInTaskContextError("BadContext", "Task context not initialized")
 
-        if info.interface.outputs and info.output:
-            # If the result is not an AsyncGenerator, convert it directly
-            _ctx = ctx.new_in_driver_literal_conversion(True) if ctx.is_task_context() else nullcontext()
-            with _ctx:
-                converted_outputs = await convert.convert_from_native_to_outputs(info.output, info.interface, info.name)
-            assert converted_outputs
-            self._recorder.record_complete(action_id=info.action.name, outputs=converted_outputs)
-        elif info.error:
+        if info.error:
             # If there is an error, convert it to a native error
             converted_error = convert.convert_from_native_to_error(info.error)
             assert converted_error
             self._recorder.record_failure(action_id=info.action.name, error=str(info.error))
+        else:
+            converted_outputs = None
+            if info.interface.outputs and info.output:
+                _ctx = ctx.new_in_driver_literal_conversion(True) if ctx.is_task_context() else nullcontext()
+                with _ctx:
+                    converted_outputs = await convert.convert_from_native_to_outputs(
+                        info.output, info.interface, info.name
+                    )
+                assert converted_outputs
+            self._recorder.record_complete(action_id=info.action.name, outputs=converted_outputs)
         assert info.action
         assert info.start_time
         assert info.end_time

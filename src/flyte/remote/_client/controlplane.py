@@ -14,6 +14,7 @@ from flyteidl2.dataproxy.dataproxy_service_connect import DataProxyServiceClient
 from flyteidl2.project.project_service_connect import ProjectServiceClient
 from flyteidl2.secret import payload_pb2 as secret_payload_pb2
 from flyteidl2.secret.secret_connect import SecretServiceClient
+from flyteidl2.settings.settings_service_connect import SettingsServiceClient
 from flyteidl2.task.task_service_connect import TaskServiceClient
 from flyteidl2.trigger.trigger_service_connect import TriggerServiceClient
 from flyteidl2.workflow.run_logs_service_connect import RunLogsServiceClient
@@ -28,6 +29,7 @@ from ._protocols import (
     RunLogsService,
     RunService,
     SecretService,
+    SettingsService,
     TaskService,
     TriggerService,
 )
@@ -336,29 +338,59 @@ class ClusterAwareSecretService:
     async def create_secret(
         self, request: secret_payload_pb2.CreateSecretRequest
     ) -> secret_payload_pb2.CreateSecretResponse:
-        client = await self._resolve(request.id.organization, request.id.project, request.id.domain)
+        if request.HasField("cluster_pool_id"):
+            client = await self._resolve_by_cluster_pool(
+                request.cluster_pool_id.organization,
+                request.cluster_pool_id.name,
+            )
+        else:
+            client = await self._resolve(request.id.organization, request.id.project, request.id.domain)
         return await client.create_secret(request)
 
     async def update_secret(
         self, request: secret_payload_pb2.UpdateSecretRequest
     ) -> secret_payload_pb2.UpdateSecretResponse:
-        client = await self._resolve(request.id.organization, request.id.project, request.id.domain)
+        if request.HasField("cluster_pool_id"):
+            client = await self._resolve_by_cluster_pool(
+                request.cluster_pool_id.organization,
+                request.cluster_pool_id.name,
+            )
+        else:
+            client = await self._resolve(request.id.organization, request.id.project, request.id.domain)
         return await client.update_secret(request)
 
     async def get_secret(self, request: secret_payload_pb2.GetSecretRequest) -> secret_payload_pb2.GetSecretResponse:
-        client = await self._resolve(request.id.organization, request.id.project, request.id.domain)
+        if request.HasField("cluster_pool_id"):
+            client = await self._resolve_by_cluster_pool(
+                request.cluster_pool_id.organization,
+                request.cluster_pool_id.name,
+            )
+        else:
+            client = await self._resolve(request.id.organization, request.id.project, request.id.domain)
         return await client.get_secret(request)
 
     async def list_secrets(
         self, request: secret_payload_pb2.ListSecretsRequest
     ) -> secret_payload_pb2.ListSecretsResponse:
-        client = await self._resolve(request.organization, request.project, request.domain)
+        if request.HasField("cluster_pool_id"):
+            client = await self._resolve_by_cluster_pool(
+                request.cluster_pool_id.organization,
+                request.cluster_pool_id.name,
+            )
+        else:
+            client = await self._resolve(request.organization, request.project, request.domain)
         return await client.list_secrets(request)
 
     async def delete_secret(
         self, request: secret_payload_pb2.DeleteSecretRequest
     ) -> secret_payload_pb2.DeleteSecretResponse:
-        client = await self._resolve(request.id.organization, request.id.project, request.id.domain)
+        if request.HasField("cluster_pool_id"):
+            client = await self._resolve_by_cluster_pool(
+                request.cluster_pool_id.organization,
+                request.cluster_pool_id.name,
+            )
+        else:
+            client = await self._resolve(request.id.organization, request.id.project, request.id.domain)
         return await client.delete_secret(request)
 
     @alru_cache
@@ -369,8 +401,6 @@ class ClusterAwareSecretService:
         DomainIdentifier when only domain is set (domain-scoped secrets),
         or OrgIdentifier for org-wide secrets.
         """
-        from flyte._logging import logger
-
         req = cluster_payload_pb2.SelectClusterRequest(
             operation=cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_USE_SECRETS,
         )
@@ -380,6 +410,26 @@ class ClusterAwareSecretService:
             req.domain_id.CopyFrom(identifier_pb2.DomainIdentifier(name=domain, organization=org))
         else:
             req.org_id.CopyFrom(identifier_pb2.OrgIdentifier(name=org))
+        return await self._select_and_build(req)
+
+    @alru_cache
+    async def _resolve_by_cluster_pool(self, org: str, name: str) -> SecretService:
+        """Cached SelectCluster lookup, routed by ClusterPoolIdentifier."""
+        req = cluster_payload_pb2.SelectClusterRequest(
+            operation=cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_USE_SECRETS,
+        )
+        req.cluster_pool_id.CopyFrom(identifier_pb2.ClusterPoolIdentifier(organization=org, name=name))
+        return await self._select_and_build(req)
+
+    async def _select_and_build(self, req: cluster_payload_pb2.SelectClusterRequest) -> SecretService:
+        """SelectCluster + build the per-cluster Secret client.
+
+        Wrapped by the @alru_cache resolvers above; @alru_cache deduplicates
+        concurrent callers and only caches successful results, so a transient
+        failure won't poison the entry.
+        """
+        from flyte._logging import logger
+
         try:
             resp = await self._cluster_service.select_cluster(req)
         except Exception as e:
@@ -416,6 +466,7 @@ class ClientSet:
         self._identity_service = IdentityServiceClient(**shared)
         self._trigger_service = TriggerServiceClient(**shared)
         self._cluster_service = ClusterServiceClient(**shared)
+        self._settings_service = SettingsServiceClient(**shared)
         self._secrets_service = ClusterAwareSecretService(
             cluster_service=self._cluster_service,
             session_config=session_cfg,
@@ -491,6 +542,10 @@ class ClientSet:
     @property
     def cluster_service(self) -> ClusterService:
         return self._cluster_service
+
+    @property
+    def settings_service(self) -> SettingsService:
+        return self._settings_service
 
     @property
     def endpoint(self) -> str:
