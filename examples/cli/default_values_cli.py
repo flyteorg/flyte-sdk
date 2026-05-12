@@ -12,7 +12,7 @@ To exercise the deployed-task path end-to-end, deploy this file and then
 invoke each task via ``flyte run deployed-task`` with no arguments — relying
 entirely on the defaults:
 
-    flyte deploy examples/cli/default_values.py env
+    flyte deploy examples/cli/default_values_cli.py env
     flyte run deployed-task default_values_cli.task_pydantic_default
     flyte run deployed-task default_values_cli.task_dataclass_default
     flyte run deployed-task default_values_cli.task_primitive_defaults
@@ -22,9 +22,9 @@ entirely on the defaults:
 
 You can also run locally (no backend required) with:
 
-    flyte run --local examples/cli/default_values_cli.py task_primitive_defaults
-    flyte run --local examples/cli/default_values_cli.py task_pydantic_default
-    flyte run --local examples/cli/default_values_cli.py task_dataclass_default
+    flyte run examples/cli/default_values_cli.py task_primitive_defaults
+    flyte run examples/cli/default_values_cli.py task_pydantic_default
+    flyte run examples/cli/default_values_cli.py task_dataclass_default
 """
 
 from __future__ import annotations
