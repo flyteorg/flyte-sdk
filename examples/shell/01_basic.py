@@ -8,12 +8,12 @@ Run locally with::
 
 import sys
 import tempfile
+from pathlib import Path
 
 import flyte
+from flyte._image import PythonWheels
 from flyte.extras import shell
 from flyte.io import File
-from flyte._image import PythonWheels
-from pathlib import Path
 
 # Wrap `head` — emits the first N lines of an input file.
 head_task = shell.create(
@@ -60,8 +60,6 @@ if __name__ == "__main__":
         f.write("\n".join(f"line {i}" for i in range(1, 21)))
         path = f.name
 
-    run = flyte.with_runcontext(mode=mode).run(
-        take_first_lines, File.from_local_sync(path), 5
-    )
+    run = flyte.with_runcontext(mode=mode).run(take_first_lines, File.from_local_sync(path), 5)
     print(run.url if mode == "remote" else run)
     print(f"Output: {run.outputs()}")

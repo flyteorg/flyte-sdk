@@ -14,12 +14,12 @@ import pytest
 import flyte
 from flyte.extras import shell
 from flyte.extras.shell import (
+    _DICT_SEP,
     FlagSpec,
     Glob,
     Stderr,
     Stdout,
     _classify_input,
-    _DICT_SEP,
     _is_list_of,
     _is_optional,
     _read_process_result,
@@ -27,7 +27,6 @@ from flyte.extras.shell import (
     _validate_outputs,
 )
 from flyte.io import Dir, File
-
 
 # ---------------------------------------------------------------------------
 # Type classification
@@ -182,9 +181,7 @@ class TestFlagSpec:
 
 def _render(script, inputs, outputs=None, flag_aliases=None):
     """Return just the rendered bash body (drops positional_templates)."""
-    flag_specs = {
-        n: FlagSpec.coerce(n, (flag_aliases or {}).get(n)) for n in inputs
-    }
+    flag_specs = {n: FlagSpec.coerce(n, (flag_aliases or {}).get(n)) for n in inputs}
     body, _positional = _render_command(
         script=script,
         inputs=inputs,
@@ -198,9 +195,7 @@ def _render(script, inputs, outputs=None, flag_aliases=None):
 
 def _render_full(script, inputs, outputs=None, flag_aliases=None):
     """Return ``(body, positional_templates)`` for tests that inspect the argv."""
-    flag_specs = {
-        n: FlagSpec.coerce(n, (flag_aliases or {}).get(n)) for n in inputs
-    }
+    flag_specs = {n: FlagSpec.coerce(n, (flag_aliases or {}).get(n)) for n in inputs}
     return _render_command(
         script=script,
         inputs=inputs,
@@ -599,7 +594,7 @@ class TestCreate:
         body = task._build_command()[2]
         assert "rendered script" in body
         assert "cat <<'_EOF_' >&2" in body
-        assert "( echo \"${_VAL_X}\" > /var/outputs/o" not in body
+        assert '( echo "${_VAL_X}" > /var/outputs/o' not in body
 
     def test_debug_mode_dump_flows_through_declared_stderr(self):
         task = shell.create(
@@ -732,7 +727,6 @@ class TestDictInput:
         # The dict goes over the wire as a \x1e-delimited str; single quotes
         # in values never reach a shell-parsing context. We test the encoding
         # side here — the runtime decoding is exercised in TestPrepareKwargs.
-        from flyte.extras.shell import _Shell
 
         # Just verify the rendering produces no quoted substitution
         body, positional = _render_full(
@@ -753,9 +747,7 @@ class TestPrepareKwargs:
             outputs={"o": File},
             script="echo {flags.opts}",
         )
-        result = asyncio.run(
-            task._prepare_kwargs({"opts": {"--memory": "4G", "-R": "@RG\tID:x"}})
-        )
+        result = asyncio.run(task._prepare_kwargs({"opts": {"--memory": "4G", "-R": "@RG\tID:x"}}))
         # str on the wire, \x1e separating tokens.
         assert isinstance(result["opts"], str)
         parts = result["opts"].split(_DICT_SEP)
@@ -797,7 +789,7 @@ class TestStdoutStderrCollectors:
         _validate_outputs({"out": Stdout(), "err": Stderr()})
 
     def test_rejects_unsupported_type(self):
-        with pytest.raises(TypeError, match="Stdout.type must be"):
+        with pytest.raises(TypeError, match=r"Stdout\.type must be"):
             Stdout(type=list)
 
     def test_cannot_be_referenced_in_script(self):
@@ -923,14 +915,12 @@ class TestEndToEndArgvComposition:
         tmpdir = pathlib.Path(tempfile.mkdtemp(prefix="shell-e2e-"))
         body = body.replace("/var/outputs/", str(tmpdir) + "/")
         # Substitute the positional templates with the real values.
-        positional = [
-            str(vals[t.removeprefix("{{.inputs.").removesuffix("}}")])
-            for t in cmd[4:]
-        ]
+        positional = [str(vals[t.removeprefix("{{.inputs.").removesuffix("}}")]) for t in cmd[4:]]
         result = subprocess.run(
             [cmd[0], cmd[1], body, cmd[3], *positional],
             capture_output=True,
             text=True,
+            check=False,
         )
         # Find the actual stdout-capture file.
         stdout_name = "_stdout"
@@ -1017,9 +1007,7 @@ class TestOutputResolutionErrorDiagnostics:
         # Simulate a failed run: stderr has a real error, no output file at
         # the canonical /var/outputs/out path.
         (tmp_path / "_stdout").write_text("")
-        (tmp_path / "_stderr").write_text(
-            "head: cannot open '/var/inputs/src' for reading: No such file\n"
-        )
+        (tmp_path / "_stderr").write_text("head: cannot open '/var/inputs/src' for reading: No such file\n")
         (tmp_path / "_returncode").write_text("1\n")
 
         with pytest.raises(FileNotFoundError) as ei:
@@ -1139,8 +1127,6 @@ class TestLocalLogs:
         assert task.as_task().local_logs is False
 
 
-
-
 class TestResolveImageURI:
     """``shell.create`` accepts both URI strings and ``flyte.Image`` instances.
     String URIs pass through; ``flyte.Image`` is built via the configured
@@ -1152,7 +1138,10 @@ class TestResolveImageURI:
 
         async def fake_build(*a, **k):
             called["n"] += 1
-            class R: uri = None
+
+            class R:
+                uri = None
+
             return R()
 
         monkeypatch.setattr(flyte.build, "aio", fake_build)
@@ -1172,7 +1161,10 @@ class TestResolveImageURI:
         async def fake_build(image, **k):
             called["n"] += 1
             called["received"] = image
-            class R: uri = "registry.example.com/built:abc123"
+
+            class R:
+                uri = "registry.example.com/built:abc123"
+
             return R()
 
         monkeypatch.setattr(flyte.build, "aio", fake_build)
@@ -1196,7 +1188,10 @@ class TestResolveImageURI:
 
         async def fake_build(image, **k):
             called["n"] += 1
-            class R: uri = "registry.example.com/built:abc"
+
+            class R:
+                uri = "registry.example.com/built:abc"
+
             return R()
 
         monkeypatch.setattr(flyte.build, "aio", fake_build)
@@ -1212,7 +1207,9 @@ class TestResolveImageURI:
 
     def test_build_returning_no_uri_raises(self, monkeypatch):
         async def fake_build(image, **k):
-            class R: uri = None
+            class R:
+                uri = None
+
             return R()
 
         monkeypatch.setattr(flyte.build, "aio", fake_build)

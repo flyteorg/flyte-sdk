@@ -71,9 +71,7 @@ async def bool_demo() -> tuple[str, str, str]:
     # All flags on.
     a = await report(title="full", verbose=True, case_insensitive=True, threads=8)
     # Only verbose; threads omitted (None).
-    b = await report(
-        title="partial", verbose=True, case_insensitive=False, threads=None
-    )
+    b = await report(title="partial", verbose=True, case_insensitive=False, threads=None)
     # All flags off.
     c = await report(title="bare", verbose=False, case_insensitive=False, threads=None)
     return a, b, c

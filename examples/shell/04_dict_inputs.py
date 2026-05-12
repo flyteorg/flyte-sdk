@@ -46,9 +46,7 @@ echo_pairs = shell.create(
     image="debian:12-slim",
     inputs={"opts": dict[str, str]},
     outputs={"argv": Stdout(type=str)},
-    flag_aliases={
-        "opts": ""
-    },  # pairs mode is the default; no per-key prefix; keys already include `--`
+    flag_aliases={"opts": ""},  # pairs mode is the default; no per-key prefix; keys already include `--`
     script=r"""
         echo {flags.opts}
     """,
@@ -117,7 +115,7 @@ async def dict_demo() -> tuple[str, str, str, str]:
         opts={
             "--memory": "4G",
             "--threads": "8",
-            "--label": "it's a test",      # single quote — safe via positional args
+            "--label": "it's a test",  # single quote — safe via positional args
         }
     )
     equals_argv = await echo_equals(

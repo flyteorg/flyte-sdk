@@ -38,9 +38,7 @@ from flyte.io import File
 # A layered Image — base + extra apt package. shell.create builds this on
 # first call via flyte.build (using the configured builder) and passes the
 # resolved URI down to ContainerTask.
-image_with_jq = flyte.Image.from_debian_base(install_flyte=False).with_apt_packages(
-    "jq"
-)
+image_with_jq = flyte.Image.from_debian_base(install_flyte=False).with_apt_packages("jq")
 
 
 pretty_print_json = shell.create(
