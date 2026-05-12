@@ -740,9 +740,20 @@ def to_click_option(
     """
     from flyteidl2.core.types_pb2 import SimpleType
 
+    from flyte.models import NativeInterface
+
     if input_name != input_name.lower():
         # Click does not support uppercase option names: https://github.com/pallets/click/issues/837
         raise ValueError(f"Workflow input name must be lowercase: {input_name!r}")
+
+    # Guard against the `_has_default` sentinel class ever reaching click. Click treats callable
+    # defaults as factories and will silently instantiate `_has_default()`, then string-format the
+    # resulting instance — producing a corrupted default that surfaces both in `--help` and as a
+    # real input value sent to the remote pod. Callers are expected to resolve the sentinel into
+    # the real default via `NativeInterface._remote_defaults` before getting here; this is a
+    # defense-in-depth fallback that drops the bogus default rather than poisoning the option.
+    if default_val is NativeInterface.has_default or isinstance(default_val, NativeInterface.has_default):
+        default_val = None
 
     literal_converter = FlyteLiteralConverter(
         literal_type=literal_var.type,
