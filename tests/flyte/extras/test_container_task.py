@@ -1,5 +1,11 @@
+import asyncio
+import pathlib
+import sys
+
 import pytest
 
+import flyte
+from flyte.io import File
 from flyte._pod import PodTemplate
 from flyte.extras import ContainerTask
 
@@ -98,3 +104,91 @@ def test_bad_incorrect_type_in_args():
                 hyperparams_str,
             ],
         )
+
+
+def test_local_execute_materializes_list_of_files(monkeypatch, tmp_path):
+    flyte.init()
+    src_a = tmp_path / "a.txt"
+    src_b = tmp_path / "b.txt"
+    src_a.write_text("alpha\n")
+    src_b.write_text("beta\n")
+    parts = [File.from_local_sync(str(src_a)), File.from_local_sync(str(src_b))]
+
+    class FakeImages:
+        def list(self, filters=None):
+            return ["present"]
+
+        def pull(self, image):
+            raise AssertionError("image pull should not be needed in this test")
+
+    class FakeContainer:
+        def wait(self):
+            return {"StatusCode": 0}
+
+        def logs(self):
+            return b""
+
+        def remove(self):
+            return None
+
+    class FakeContainers:
+        def __init__(self):
+            self.last_run = None
+
+        def run(self, uri, command=None, **kwargs):
+            self.last_run = {"uri": uri, "command": command, "kwargs": kwargs}
+            return FakeContainer()
+
+    class FakeClient:
+        def __init__(self):
+            self.images = FakeImages()
+            self.containers = FakeContainers()
+
+    fake_client = FakeClient()
+
+    class FakeDockerModule:
+        @staticmethod
+        def from_env():
+            return fake_client
+
+    monkeypatch.setitem(sys.modules, "docker", FakeDockerModule)
+
+    task = ContainerTask(
+        name="test_list_mount",
+        image="alpine:latest",
+        command=["sh", "-c", "true"],
+        inputs={"parts": list[File]},
+        outputs={},
+    )
+
+    async def fake_get_output(output_directory):
+        return ()
+
+    monkeypatch.setattr(task, "_get_output", fake_get_output)
+
+    asyncio.run(task.execute(parts=parts))
+
+    volumes = fake_client.containers.last_run["kwargs"]["volumes"]
+    local_dir = next(
+        host_path
+        for host_path, binding in volumes.items()
+        if binding["bind"] == "/var/inputs/parts"
+    )
+
+    staged = pathlib.Path(local_dir)
+    assert (staged / "0").read_text() == "alpha\n"
+    assert (staged / "1").read_text() == "beta\n"
+
+
+def test_render_command_lowercases_bool_template_inputs():
+    task = ContainerTask(
+        name="test_bool_render",
+        image="alpine:latest",
+        command=["echo", "{{.inputs.verbose}}", "{{.inputs.quiet}}"],
+        inputs={"verbose": bool, "quiet": bool},
+        outputs={},
+    )
+
+    commands, _ = task._prepare_command_and_volumes(["{{.inputs.verbose}}", "{{.inputs.quiet}}"], verbose=True, quiet=False)
+
+    assert commands == ["true", "false"]

@@ -1,5 +1,6 @@
 import os
 import pathlib
+import shutil
 from typing import Any, Dict, List, Literal, Optional, Tuple, Type, Union
 
 from flyteidl2.core import tasks_pb2
@@ -156,7 +157,12 @@ class ContainerTask(TaskTemplate):
                         "mode": "rw",
                     }
                 else:
-                    command = command.replace(f"{{{{.inputs.{k}}}}}", str(input_val))
+                    # Keep local template rendering aligned with the shell wrapper's
+                    # boolean wire format ("true"/"false"), which is what the bash
+                    # preamble tests against. Remote serialization already uses the
+                    # lowercase string form, so local docker execution needs to match.
+                    rendered = str(input_val).lower() if isinstance(input_val, bool) else str(input_val)
+                    command = command.replace(f"{{{{.inputs.{k}}}}}", rendered)
         else:
             command = cmd
 
@@ -277,6 +283,17 @@ class ContainerTask(TaskTemplate):
                     remote_path = os.path.join(str(self._input_data_dir), k)
                     volume_bindings[local_path] = {"bind": remote_path, "mode": "rw"}
 
+        # Materialize list[File] inputs into /var/inputs/<name>/<i> so local
+        # docker execution matches the CoPilot layout used remotely.
+        for k, v in kwargs.items():
+            if isinstance(v, list) and all(isinstance(item, File) for item in v):
+                local_dir = storage.get_random_local_directory()
+                for i, item in enumerate(v):
+                    target = pathlib.Path(local_dir) / str(i)
+                    shutil.copy2(item.path, target)
+                remote_path = os.path.join(str(self._input_data_dir), k)
+                volume_bindings[str(local_dir)] = {"bind": remote_path, "mode": "rw"}
+
         volume_bindings[str(output_directory)] = {
             "bind": self._output_data_dir,
             "mode": "rw",
@@ -287,7 +304,6 @@ class ContainerTask(TaskTemplate):
             raise AssertionError(f"Only Image objects are supported, not strings. Got {self._image} instead.")
         uri = self._image.uri
         self._pull_image_if_not_exists(client, uri)
-        print(f"Command: {commands!r}")
 
         run_kwargs: Dict[str, Any] = {
             "volumes": volume_bindings,
@@ -295,6 +311,12 @@ class ContainerTask(TaskTemplate):
         }
         if self._block_network:
             run_kwargs["network_mode"] = "none"
+
+        if self.local_logs:
+            # Both the rendered command and the container's captured logs are
+            # diagnostic — emit through the flyte logger so log-level config
+            # controls them, instead of unconditional print() to stdout.
+            logger.debug(f"Container command for task {self.name!r}: {commands!r}")
 
         container = client.containers.run(uri, command=commands, **run_kwargs)
 
@@ -305,7 +327,7 @@ class ContainerTask(TaskTemplate):
         if self.local_logs:
             logs = container.logs()
             for line in logs.splitlines():
-                print(f"[Local Container] {line!r}")
+                logger.debug(f"[Local Container {self.name!r}] {line!r}")
 
         output = await self._get_output(output_directory)
 
