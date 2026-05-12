@@ -358,9 +358,7 @@ def secret(
     if name:
         console.print(common.format("Secret", [remote.Secret.get(name, cluster_pool=cluster_pool)], "json"))
     else:
-        console.print(
-            common.format("Secrets", remote.Secret.listall(cluster_pool=cluster_pool), cfg.output_format)
-        )
+        console.print(common.format("Secrets", remote.Secret.listall(cluster_pool=cluster_pool), cfg.output_format))
 
 
 @get.command(cls=common.CommandBase)

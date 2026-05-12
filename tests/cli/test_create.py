@@ -49,9 +49,7 @@ def test_create_secret_from_file(mock_cli_config, mock_secret_create, runner: Cl
 def test_create_secret_with_cluster_pool(mock_cli_config, mock_secret_create, runner: CliRunner):
     mock_secret_create.return_value = None
 
-    result = runner.invoke(
-        main, ["create", "secret", "my_secret", "--value", "my_value", "--cluster-pool", "pool-a"]
-    )
+    result = runner.invoke(main, ["create", "secret", "my_secret", "--value", "my_value", "--cluster-pool", "pool-a"])
     assert result.exit_code == 0, result.stderr
     mock_secret_create.assert_called_once_with(
         name="my_secret", value=b"my_value", type="regular", cluster_pool="pool-a"
