@@ -7,7 +7,6 @@ from typing import Any, Tuple
 
 from ._types import FlagSpec, Stderr, Stdout, _classify_input
 
-
 _PLACEHOLDER_RE = re.compile(r"\{(inputs|flags|outputs)\.([a-zA-Z_][a-zA-Z0-9_]*)\}")
 _DICT_SEP = "\x1e"
 
@@ -57,9 +56,7 @@ def _render_command(
         kind = kinds.get(name)
 
         if kind is None:
-            raise KeyError(
-                f"{{inputs.{name}}} used in script but {name!r} is not declared in inputs."
-            )
+            raise KeyError(f"{{inputs.{name}}} used in script but {name!r} is not declared in inputs.")
         if kind in ("file", "dir"):
             return str(input_data_dir / name)
         if kind == "list_file":
@@ -108,10 +105,7 @@ def _render_command(
             return render_flag_ref(name)
         if ns == "outputs":
             if name not in outputs:
-                raise KeyError(
-                    f"{{outputs.{name}}} references an unknown output. "
-                    f"Declared outputs: {list(outputs)}"
-                )
+                raise KeyError(f"{{outputs.{name}}} references an unknown output. Declared outputs: {list(outputs)}")
             spec = outputs[name]
             if isinstance(spec, (Stdout, Stderr)):
                 raise KeyError(
@@ -151,11 +145,7 @@ def _emit_flag_setter(
 
     if kind == "bool":
         val_var = alloc_slot(name)
-        return (
-            f'if [ "${{{val_var}}}" = "true" ]; then '
-            f"{flag_var}={shlex.quote(flag)}; "
-            f'else {flag_var}=""; fi'
-        )
+        return f'if [ "${{{val_var}}}" = "true" ]; then {flag_var}={shlex.quote(flag)}; else {flag_var}=""; fi'
     if kind == "scalar":
         val_var = alloc_slot(name)
         return (

@@ -57,7 +57,7 @@ Example::
 from __future__ import annotations
 
 from ._render import _DICT_SEP, _render_command
-from ._runtime import _Shell, _read_process_result, create
+from ._runtime import _read_process_result, _Shell, create
 from ._types import (
     DictMode,
     FlagSpec,
@@ -65,23 +65,21 @@ from ._types import (
     OutputSpec,
     Stderr,
     Stdout,
-    listMode,
     _classify_input,
     _is_list_of,
     _is_optional,
     _validate_outputs,
+    listMode,
 )
 
 __all__ = [
+    "_DICT_SEP",
     "DictMode",
     "FlagSpec",
     "Glob",
     "OutputSpec",
     "Stderr",
     "Stdout",
-    "create",
-    "listMode",
-    "_DICT_SEP",
     "_Shell",
     "_classify_input",
     "_is_list_of",
@@ -89,4 +87,6 @@ __all__ = [
     "_read_process_result",
     "_render_command",
     "_validate_outputs",
+    "create",
+    "listMode",
 ]

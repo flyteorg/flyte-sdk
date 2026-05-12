@@ -11,15 +11,15 @@ from flyte.io import Dir, File
 
 from ._render import _DICT_SEP, _render_command
 from ._types import (
+    _SCALAR_TYPES,
     FlagSpec,
     Glob,
     Stderr,
     Stdout,
-    _ProcessResult,
-    _SCALAR_TYPES,
     _classify_input,
     _is_dict_str_str,
     _is_optional,
+    _ProcessResult,
     _validate_outputs,
     listMode,
 )
@@ -51,8 +51,8 @@ class _Shell:
     _env: Optional["flyte.TaskEnvironment"] = field(default=None, repr=False, compare=False)
     _resolved_image_uri: Optional[str] = field(default=None, repr=False, compare=False)
 
-    def _container_inputs(self) -> dict[str, Type]:
-        wired: dict[str, Type] = {}
+    def _container_inputs(self) -> dict[str, Any]:
+        wired: dict[str, Any] = {}
         for name, tp in self.inputs.items():
             is_opt, inner = _is_optional(tp)
             if _is_dict_str_str(inner):
@@ -81,10 +81,7 @@ class _Shell:
             script=self.script,
             inputs=self.inputs,
             outputs=self.outputs,
-            flag_specs={
-                name: FlagSpec.coerce(name, self.flag_aliases.get(name))
-                for name in self.inputs
-            },
+            flag_specs={name: FlagSpec.coerce(name, self.flag_aliases.get(name)) for name in self.inputs},
             input_data_dir=self.input_data_dir,
             output_data_dir=self.output_data_dir,
         )
@@ -100,17 +97,13 @@ class _Shell:
         mkdirs = [
             f"mkdir -p {shlex.quote(str(self.output_data_dir / name))}"
             for name, spec in self.outputs.items()
-            if isinstance(spec, Glob)
-            or (isinstance(spec, type) and issubclass(spec, Dir))
+            if isinstance(spec, Glob) or (isinstance(spec, type) and issubclass(spec, Dir))
         ]
         mkdir_preamble = "; ".join(mkdirs) + ";" if mkdirs else ""
 
         debug_preamble = ""
         if self.debug:
-            debug_preamble = (
-                'echo "--- shell task: rendered script ---" >&2; '
-                f"cat <<'_EOF_' >&2\n{body}\n_EOF_\n"
-            )
+            debug_preamble = f"echo \"--- shell task: rendered script ---\" >&2; cat <<'_EOF_' >&2\n{body}\n_EOF_\n"
 
         wrapped = (
             f"{mkdir_preamble} "
@@ -187,9 +180,7 @@ class _Shell:
             if isinstance(spec, Glob) and isinstance(value, Dir):
                 local = await value.download() if hasattr(value, "download") else value.path
                 matched = sorted(pathlib.Path(str(local)).glob(spec.pattern))
-                unpacked.append(
-                    [await File.from_local(str(p)) for p in matched if p.is_file()]
-                )
+                unpacked.append([await File.from_local(str(p)) for p in matched if p.is_file()])
             else:
                 unpacked.append(value)
         return unpacked[0] if single else tuple(unpacked)
@@ -223,8 +214,7 @@ class _Shell:
                 for k, v in value.items():
                     if _DICT_SEP in k or _DICT_SEP in v:
                         raise ValueError(
-                            f"dict input {name!r}: keys/values cannot contain the "
-                            f"record-separator byte (\\x1e)."
+                            f"dict input {name!r}: keys/values cannot contain the record-separator byte (\\x1e)."
                         )
                     parts.append(k)
                     parts.append(v)
@@ -232,11 +222,7 @@ class _Shell:
                 continue
 
             if is_opt and kind in ("scalar", "bool"):
-                out[name] = (
-                    "true"
-                    if (kind == "bool" and value)
-                    else "false" if kind == "bool" else str(value)
-                )
+                out[name] = "true" if (kind == "bool" and value) else "false" if kind == "bool" else str(value)
                 continue
 
             out[name] = value
@@ -310,9 +296,7 @@ def create(
     inputs: Optional[dict[str, Type]] = None,
     outputs: Optional[dict[str, Any]] = None,
     script: str,
-    flag_aliases: Optional[
-        dict[str, Union[str, Tuple[str, listMode], FlagSpec]]
-    ] = None,
+    flag_aliases: Optional[dict[str, Union[str, Tuple[str, listMode], FlagSpec]]] = None,
     shell: str = "/bin/bash",
     debug: bool = False,
     resources: Optional[flyte.Resources] = None,
@@ -484,16 +468,11 @@ def create(
     coerced_aliases: dict[str, FlagSpec] = {}
     for n, alias in (flag_aliases or {}).items():
         if n not in inputs:
-            raise KeyError(
-                f"flag_aliases references {n!r} which is not declared in inputs."
-            )
+            raise KeyError(f"flag_aliases references {n!r} which is not declared in inputs.")
         coerced_aliases[n] = FlagSpec.coerce(n, alias)
 
     if not isinstance(image, (str, flyte.Image)):
-        raise TypeError(
-            f"image must be a URI string or a flyte.Image, got "
-            f"{type(image).__name__}."
-        )
+        raise TypeError(f"image must be a URI string or a flyte.Image, got {type(image).__name__}.")
 
     return _Shell(
         name=name,

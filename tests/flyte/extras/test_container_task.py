@@ -5,9 +5,9 @@ import sys
 import pytest
 
 import flyte
-from flyte.io import File
 from flyte._pod import PodTemplate
 from flyte.extras import ContainerTask
+from flyte.io import File
 
 
 def test_bad_incorrect_type_in_command():
@@ -169,11 +169,7 @@ def test_local_execute_materializes_list_of_files(monkeypatch, tmp_path):
     asyncio.run(task.execute(parts=parts))
 
     volumes = fake_client.containers.last_run["kwargs"]["volumes"]
-    local_dir = next(
-        host_path
-        for host_path, binding in volumes.items()
-        if binding["bind"] == "/var/inputs/parts"
-    )
+    local_dir = next(host_path for host_path, binding in volumes.items() if binding["bind"] == "/var/inputs/parts")
 
     staged = pathlib.Path(local_dir)
     assert (staged / "0").read_text() == "alpha\n"
@@ -189,6 +185,8 @@ def test_render_command_lowercases_bool_template_inputs():
         outputs={},
     )
 
-    commands, _ = task._prepare_command_and_volumes(["{{.inputs.verbose}}", "{{.inputs.quiet}}"], verbose=True, quiet=False)
+    commands, _ = task._prepare_command_and_volumes(
+        ["{{.inputs.verbose}}", "{{.inputs.quiet}}"], verbose=True, quiet=False
+    )
 
     assert commands == ["true", "false"]

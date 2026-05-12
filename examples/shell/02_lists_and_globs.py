@@ -77,9 +77,7 @@ if __name__ == "__main__":
 
     parts: list[File] = []
     for i in range(3):
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=f"_p{i}.txt", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=f"_p{i}.txt", delete=False) as f:
             f.write("\n".join(f"part-{i}/line-{j}" for j in range(10)))
             parts.append(File.from_local_sync(f.name))
 

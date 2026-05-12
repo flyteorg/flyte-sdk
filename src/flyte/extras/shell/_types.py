@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import types
 from dataclasses import dataclass
-from typing import Any, Literal, Tuple, Type, Union, get_args, get_origin
+from typing import Any, Literal, Tuple, Type, Union, cast, get_args, get_origin
 
 from flyte.io import Dir, File
 
@@ -25,10 +25,7 @@ class Stdout:
 
     def __post_init__(self):
         if self.type is not File and self.type not in _SCALAR_OUTPUT_TYPES:
-            raise TypeError(
-                f"Stdout.type must be File or a primitive (int/float/str/bool), "
-                f"got {self.type!r}."
-            )
+            raise TypeError(f"Stdout.type must be File or a primitive (int/float/str/bool), got {self.type!r}.")
 
 
 @dataclass(frozen=True)
@@ -39,10 +36,7 @@ class Stderr:
 
     def __post_init__(self):
         if self.type is not File and self.type not in _SCALAR_OUTPUT_TYPES:
-            raise TypeError(
-                f"Stderr.type must be File or a primitive (int/float/str/bool), "
-                f"got {self.type!r}."
-            )
+            raise TypeError(f"Stderr.type must be File or a primitive (int/float/str/bool), got {self.type!r}.")
 
 
 _OutputCollector = Union[Glob, Stdout, Stderr]
@@ -61,9 +55,7 @@ class FlagSpec:
     dict_mode: DictMode = "pairs"
 
     @classmethod
-    def coerce(
-        cls, name: str, alias: Union[str, Tuple[str, str], "FlagSpec", None]
-    ) -> "FlagSpec":
+    def coerce(cls, name: str, alias: Union[str, Tuple[str, str], "FlagSpec", None]) -> "FlagSpec":
         if alias is None:
             return cls(flag=f"-{name}")
         if isinstance(alias, FlagSpec):
@@ -73,9 +65,9 @@ class FlagSpec:
         if isinstance(alias, tuple) and len(alias) == 2:
             flag_str, mode = alias
             if mode in ("join", "repeat", "comma"):
-                return cls(flag=flag_str, list_mode=mode)
+                return cls(flag=flag_str, list_mode=cast(listMode, mode))
             if mode in ("pairs", "equals"):
-                return cls(flag=flag_str, dict_mode=mode)
+                return cls(flag=flag_str, dict_mode=cast(DictMode, mode))
             raise TypeError(
                 f"Invalid mode {mode!r} for flag_aliases[{name!r}]. "
                 f"Expected one of: join/repeat/comma (lists), pairs/equals (dicts)."
@@ -144,7 +136,7 @@ def _classify_input(name: str, tp: Any) -> str:
     )
 
 
-_BARE_OUTPUT_TYPES: Tuple[type, ...] = (File, Dir) + tuple(_SCALAR_OUTPUT_TYPES)
+_BARE_OUTPUT_TYPES: Tuple[type, ...] = (File, Dir, *tuple(_SCALAR_OUTPUT_TYPES))
 _OUTPUT_COLLECTOR_TYPES: Tuple[type, ...] = (Glob, Stdout, Stderr)
 
 

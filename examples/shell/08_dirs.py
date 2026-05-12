@@ -79,8 +79,6 @@ if __name__ == "__main__":
     for i, body in enumerate(["one\ntwo\nthree\n", "alpha\nbeta\n", "single\n"]):
         (tmp / f"file_{i}.txt").write_text(body)
 
-    run = flyte.with_runcontext(mode=mode).run(
-        summarize_files, Dir.from_local_sync(str(tmp))
-    )
+    run = flyte.with_runcontext(mode=mode).run(summarize_files, Dir.from_local_sync(str(tmp)))
     print(run.url if mode == "remote" else run)
     print(f"Output: {run.outputs()}")
