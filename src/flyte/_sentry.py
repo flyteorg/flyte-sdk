@@ -72,12 +72,14 @@ def _is_user_error(exc: BaseException) -> bool:
 
     # Errors raised by the deploy / image-build pipeline that always carry an
     # actionable, user-facing message (bad trigger config, image build failure
-    # from the remote builder, etc.). Treat them like ClickException so we
-    # don't flood Sentry with what is fundamentally user input feedback.
+    # from the remote builder, etc.). InitializationError means the user forgot
+    # to call flyte.init() / flyte.init_from_config() — also a user-facing
+    # message, not a crash. Treat them all like ClickException so we don't
+    # flood Sentry with what is fundamentally user input feedback.
     try:
-        from flyte.errors import DeploymentError, ImageBuildError
+        from flyte.errors import DeploymentError, ImageBuildError, InitializationError
 
-        if isinstance(exc, (DeploymentError, ImageBuildError)):
+        if isinstance(exc, (DeploymentError, ImageBuildError, InitializationError)):
             return True
     except ImportError:
         pass
