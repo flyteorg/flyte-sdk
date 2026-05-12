@@ -20,6 +20,12 @@ def test_logger_exists():
     assert isinstance(flyte.logger, logging.Logger)
 
 
+def test_system_logger_exists():
+    assert flyte.system_logger is not None
+    assert flyte.system_logger.name == "flyte"
+    assert isinstance(flyte.system_logger, logging.Logger)
+
+
 def test_default_log_level():
     assert DEFAULT_LOG_LEVEL == logging.WARNING
 
