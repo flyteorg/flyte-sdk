@@ -288,27 +288,58 @@ def _validate_defaults(defaults: dict[str, Any], inputs: dict[str, Type]) -> dic
             )
 
         _, inner = _is_optional(inputs[name])
+        kind = _classify_input(name, inputs[name])
 
-        if inner is bool:
+        if kind == "file":
+            if not isinstance(value, File):
+                raise TypeError(
+                    f"defaults[{name!r}]: expected File, got {type(value).__name__}."
+                )
+        elif kind == "dir":
+            if not isinstance(value, Dir):
+                raise TypeError(
+                    f"defaults[{name!r}]: expected Dir, got {type(value).__name__}."
+                )
+        elif kind == "list_file":
+            if not isinstance(value, list):
+                raise TypeError(
+                    f"defaults[{name!r}]: expected list[File], got {type(value).__name__}."
+                )
+            if not all(isinstance(item, File) for item in value):
+                raise TypeError(
+                    f"defaults[{name!r}]: list[File] requires every item to be a File."
+                )
+        elif kind == "bool":
             if not isinstance(value, bool):
                 raise TypeError(f"defaults[{name!r}]: expected bool, got {type(value).__name__}.")
-        elif inner is int:
-            if not isinstance(value, int) or isinstance(value, bool):
-                raise TypeError(f"defaults[{name!r}]: expected int, got {type(value).__name__}.")
-        elif inner is float:
-            if not isinstance(value, (int, float)) or isinstance(value, bool):
-                raise TypeError(f"defaults[{name!r}]: expected float, got {type(value).__name__}.")
-        elif inner is str:
-            if not isinstance(value, str):
-                raise TypeError(f"defaults[{name!r}]: expected str, got {type(value).__name__}.")
-        elif _is_dict_str_str(inner):
+        elif kind == "dict_str":
             if not isinstance(value, dict):
-                raise TypeError(f"defaults[{name!r}]: expected dict[str, str], got {type(value).__name__}.")
+                raise TypeError(
+                    f"defaults[{name!r}]: expected dict[str, str], got {type(value).__name__}."
+                )
             for k, v in value.items():
                 if not isinstance(k, str) or not isinstance(v, str):
                     raise TypeError(
                         f"defaults[{name!r}]: dict[str, str] requires string keys and values."
                     )
+        elif kind == "scalar":
+            if inner is int:
+                if not isinstance(value, int) or isinstance(value, bool):
+                    raise TypeError(
+                        f"defaults[{name!r}]: expected int, got {type(value).__name__}."
+                    )
+            elif inner is float:
+                if not isinstance(value, (int, float)) or isinstance(value, bool):
+                    raise TypeError(
+                        f"defaults[{name!r}]: expected float, got {type(value).__name__}."
+                    )
+            elif inner is str:
+                if not isinstance(value, str):
+                    raise TypeError(
+                        f"defaults[{name!r}]: expected str, got {type(value).__name__}."
+                    )
+            else:
+                raise AssertionError(inner)
     return dict(defaults)
 
 
@@ -392,28 +423,6 @@ def create(
             - ``int``, ``float``, ``str``, ``bool`` scalars
             - ``T | None`` of any of the above (``None`` collapses to empty)
 
-            **Optional File / Dir flags emit conditionally.** When
-            ``{flags.<name>}`` references an input typed as
-            ``File | None`` / ``Dir | None`` and the caller omits it, the
-            renderer guards the emission with ``if [ -e <path> ]``: no
-            flag is added to the command when the file isn't staged.
-            Non-optional ``File`` / ``Dir`` inputs are still emitted
-            unconditionally (the caller is contractually required to
-            supply them).
-
-            **Case-colliding input names are rejected at create() time.**
-            The renderer builds bash variable names by uppercasing the
-            Python identifier — so two inputs whose names differ only in
-            case (e.g. ``c`` and ``C``, common in bio CLIs like samtools
-            ``-h``/``-H`` or bedtools ``-c``/``-C``) would silently share
-            ``_VAL_*`` / ``_FLAG_*`` slots and overwrite each other.
-            ``create()`` raises ``ValueError`` listing both names; the
-            fix is to give one of them a descriptive Python name and
-            map back to the CLI flag with ``flag_aliases``::
-
-                inputs={"count_overlaps": bool | None, "count_per_file": bool | None}
-                flag_aliases={"count_overlaps": "-c", "count_per_file": "-C"}
-
             **Recipes for things that look like they need a richer dict but
             don't:**
 
@@ -465,7 +474,7 @@ def create(
             travel through bash positional args (``$1``, ``$2``) so they
             survive arbitrary content (single quotes, tabs, dollar signs)
             without escaping, and the wrapper already emits scalar
-            references as ``"${_VAL_X}"`` (quoted, single token). Wrapping
+            references as ``"${_VAL_name}"`` (quoted, single token). Wrapping
             them in ``"..."`` again breaks out of the wrapper's quoting and
             re-enables word splitting.
         flag_aliases: Per-input override for ``{flags.<name>}`` rendering.
@@ -486,17 +495,6 @@ def create(
             ``T | None``          No                         Empty value; flag suppressed
             ``T | None``          Yes                        Default used; flag emitted
             ====================  =========================  =================================
-
-            Validation at ``create()`` time:
-
-            - Keys must be present in ``inputs``.
-            - ``None`` values are rejected — use ``T | None`` and omit
-              from ``defaults`` instead.
-            - Value's Python type must match the declared input type
-              (``bool`` for ``bool``, ``int``/``float`` for ``float``, etc.).
-            - File/Dir/list[File] default values are accepted without
-              value-shape checking — supply only fully-constructed
-              :class:`~flyte.io.File` / :class:`~flyte.io.Dir` instances.
         shell: Shell binary to use. Defaults to ``/bin/bash``.
         debug: If True, container prints the rendered script to stderr
             before running. Invaluable when authoring a new wrapper.
@@ -552,21 +550,16 @@ def create(
     inputs = inputs or {}
     outputs = outputs or {}
 
-    # Reject inputs whose names differ only in case — the renderer builds
-    # bash variable names by uppercasing the Python name, so names like
-    # `c` and `C` would silently share `_VAL_C` / `_FLAG_C` and clobber
-    # each other. Common in bio CLIs (samtools -h/-H, bedtools -c/-C, etc.).
-    seen_upper: dict[str, str] = {}
+    # Sanity-check the generated helper names used by the shell renderer.
+    generated_helpers: dict[str, str] = {}
     for n in inputs:
-        up = n.upper()
-        if up in seen_upper:
-            raise ValueError(
-                f"Input names {seen_upper[up]!r} and {n!r} collide on bash variable "
-                f"'_VAL_{up}' / '_FLAG_{up}' — they differ only in case. "
-                f"Rename one (e.g. 'count_overlaps') and use flag_aliases to keep "
-                f"the CLI flag (e.g. flag_aliases={{'count_overlaps': '-c'}})."
-            )
-        seen_upper[up] = n
+        for helper in (f"_VAL_{n}", f"_FLAG_{n}", f"_ARR_{n}"):
+            if helper in generated_helpers:
+                raise ValueError(
+                    f"Input names {generated_helpers[helper]!r} and {n!r} collide in generated shell helper "
+                    f"name {helper!r}. Rename one input."
+                )
+            generated_helpers[helper] = n
 
     for n, t in inputs.items():
         _classify_input(n, t)

@@ -34,7 +34,7 @@ def _render_command(
 
         idx = len(positional_templates) + 1
         positional_templates.append(f"{{{{.inputs.{name}}}}}")
-        var = f"_VAL_{name.upper()}"
+        var = f"_VAL_{name}"
         # Brace the positional index: bash parses `$10` as `$1` + `"0"`,
         # so any task with 10+ scalar/bool inputs would silently bind
         # later variables to the wrong values. `${10}` is the only form
@@ -45,7 +45,7 @@ def _render_command(
 
     def ensure_dict_decoded(name: str) -> str:
         val_var = alloc_slot(name)
-        arr_var = f"_ARR_{name.upper()}"
+        arr_var = f"_ARR_{name}"
 
         if name not in dict_decoded:
             dict_decoded.add(name)
@@ -82,7 +82,7 @@ def _render_command(
 
         kind = kinds[name]
         spec = flag_specs[name]
-        flag_var = f"_FLAG_{name.upper()}"
+        flag_var = f"_FLAG_{name}"
 
         if name not in flag_emitted:
             flag_emitted.add(name)

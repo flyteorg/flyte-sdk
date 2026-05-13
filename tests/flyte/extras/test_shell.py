@@ -224,21 +224,21 @@ class TestRenderCommand:
         # with single quotes / tabs / specials survive without escaping.
         body, positional = _render_full("echo {inputs.x}", {"x": int})
         assert positional == ["{{.inputs.x}}"]
-        # The body binds positional $1 to _VAL_X and references it quoted.
-        assert '_VAL_X="${1}"' in body
-        assert '"${_VAL_X}"' in body
+        # The body binds positional $1 to _VAL_x and references it quoted.
+        assert '_VAL_x="${1}"' in body
+        assert '"${_VAL_x}"' in body
         # No propeller template appears inside the body string itself.
         assert "{{.inputs.x}}" not in body
 
     def test_scalar_referenced_as_quoted_token(self):
         body, _ = _render_full("echo {inputs.s}", {"s": str})
         # Reference is quoted so spaces / tabs in the value stay one bash token.
-        assert '"${_VAL_S}"' in body
+        assert '"${_VAL_s}"' in body
 
     def test_bool_flag_renders_conditional(self):
         out = _render("foo {flags.wa}", {"wa": bool})
         assert "if [" in out
-        assert "_FLAG_WA" in out
+        assert "_FLAG_wa" in out
         assert "-wa" in out
 
     def test_flag_alias_overrides_default(self):
@@ -316,7 +316,7 @@ class TestRenderCommand:
         # Non-optional File flag is hardcoded — the caller is contractually
         # required to supply it, so no runtime existence check is needed.
         out = _render("tool {flags.ref}", {"ref": File})
-        assert "_FLAG_REF=" in out
+        assert "_FLAG_ref=" in out
         assert "/var/inputs/ref" in out
         # No conditional guarding the assignment.
         assert "if [ -e " not in out
@@ -327,14 +327,14 @@ class TestRenderCommand:
         # trying to open it.
         out = _render("tool {flags.sites}", {"sites": File | None})
         assert "if [ -e /var/inputs/sites ]" in out
-        assert "_FLAG_SITES=-sites /var/inputs/sites" in out or "_FLAG_SITES='-sites /var/inputs/sites'" in out
-        assert '_FLAG_SITES=""' in out  # else branch
+        assert "_FLAG_sites=-sites /var/inputs/sites" in out or "_FLAG_sites='-sites /var/inputs/sites'" in out
+        assert '_FLAG_sites=""' in out  # else branch
 
     def test_optional_dir_flag_guarded(self):
         # Same conditional emission for optional Dir flags.
         out = _render("tool {flags.cache}", {"cache": Dir | None})
         assert "if [ -e /var/inputs/cache ]" in out
-        assert '_FLAG_CACHE=""' in out
+        assert '_FLAG_cache=""' in out
 
     def test_required_dir_flag_unconditional(self):
         out = _render("tool {flags.workdir}", {"workdir": Dir})
@@ -349,9 +349,9 @@ class TestRenderCommand:
         inputs = {f"x{i}": str for i in range(15)}
         out = _render(" ".join(f"{{inputs.{n}}}" for n in inputs), inputs)
         # Index 1 — must still work (the fix uses braces uniformly).
-        assert '_VAL_X0="${1}"' in out
+        assert '_VAL_x0="${1}"' in out
         # Index 10 — this is where the bug bit. Must be braced.
-        assert '_VAL_X9="${10}"' in out
+        assert '_VAL_x9="${10}"' in out
         # And the bare two-digit form must NOT appear anywhere.
         assert '"$10"' not in out
         assert '"$15"' not in out
@@ -593,46 +593,38 @@ class TestCreate:
                 flag_aliases={"missing": "-m"},
             )
 
-    # ---- case-colliding input names rejected ----
+    # ---- case-preserving helper names ----
 
-    def test_case_collision_lower_then_upper_rejected(self):
-        # `c` and `C` would both render to bash vars `_VAL_C` / `_FLAG_C`
-        # and silently overwrite each other. Common in bio CLIs.
-        with pytest.raises(ValueError, match="collide on bash variable"):
-            shell.create(
-                name="bad",
-                image="alpine:3.18",
-                inputs={"c": bool, "C": bool},
-                outputs={"o": File},
-                script="true",
-            )
+    def test_case_distinct_inputs_are_allowed(self):
+        shell.create(
+            name="ok_case",
+            image="alpine:3.18",
+            inputs={"c": bool, "C": bool},
+            outputs={"o": File},
+            script="true",
+        )
 
-    def test_case_collision_message_names_both_inputs(self):
-        # Error must name *both* colliding inputs so the author can find them.
-        with pytest.raises(ValueError) as exc_info:
-            shell.create(
-                name="bad",
-                image="alpine:3.18",
-                inputs={"foo": bool, "FOO": bool},
-                outputs={"o": File},
-                script="true",
-            )
-        msg = str(exc_info.value)
-        assert "'foo'" in msg and "'FOO'" in msg
+    def test_mixed_case_distinct_inputs_are_allowed(self):
+        shell.create(
+            name="ok_mixed_case",
+            image="alpine:3.18",
+            inputs={"my_flag": bool, "My_Flag": bool},
+            outputs={"o": File},
+            script="true",
+        )
 
-    def test_case_collision_mixed_case_rejected(self):
-        # Not just exact lower/upper — any `.upper()` collision is rejected.
-        with pytest.raises(ValueError, match="collide on bash variable"):
-            shell.create(
-                name="bad",
-                image="alpine:3.18",
-                inputs={"my_flag": bool, "My_Flag": bool},
-                outputs={"o": File},
-                script="true",
-            )
+    def test_helper_names_preserve_input_case(self):
+        body = shell.create(
+            name="case_helpers",
+            image="alpine:3.18",
+            inputs={"c": bool, "C": bool},
+            outputs={"o": File},
+            script="tool {flags.c} {flags.C} > {outputs.o}",
+        )._build_command()[2]
+        assert "_FLAG_c" in body
+        assert "_FLAG_C" in body
 
-    def test_no_collision_distinct_uppercase_forms(self):
-        # Distinct uppercased forms — no collision, must not raise.
+    def test_distinct_case_sensitive_names_still_validate(self):
         shell.create(
             name="ok",
             image="alpine:3.18",
@@ -671,9 +663,9 @@ class TestCreate:
         body = cmd[2]
         assert "/var/inputs/a" in body
         assert "/var/inputs/b/*" in body
-        assert "_FLAG_WA" in body
-        assert "_FLAG_LOJ" in body
-        assert "_FLAG_NAMES" in body
+        assert "_FLAG_wa" in body
+        assert "_FLAG_loj" in body
+        assert "_FLAG_names" in body
         assert "/var/outputs/_returncode" in body
 
     def test_debug_mode_emits_script_dump(self):
@@ -688,7 +680,7 @@ class TestCreate:
         body = task._build_command()[2]
         assert "rendered script" in body
         assert "cat <<'_EOF_' >&2" in body
-        assert '( echo "${_VAL_X}" > /var/outputs/o' not in body
+        assert '( echo "${_VAL_x}" > /var/outputs/o' not in body
 
     def test_debug_mode_dump_flows_through_declared_stderr(self):
         task = shell.create(
@@ -794,9 +786,9 @@ class TestDictInput:
         body, positional = _render_full("tool {inputs.opts}", {"opts": dict[str, str]})
         # Dict gets a positional slot, then a decode preamble allocates an array.
         assert positional == ["{{.inputs.opts}}"]
-        assert "_ARR_OPTS=" in body
+        assert "_ARR_opts=" in body
         assert "IFS=" in body
-        assert '"${_ARR_OPTS[@]}"' in body
+        assert '"${_ARR_opts[@]}"' in body
 
     def test_flags_pairs_mode_default(self):
         body, _ = _render_full(
@@ -804,8 +796,8 @@ class TestDictInput:
             {"opts": dict[str, str]},
         )
         # Default mode is pairs — keys/values become separate argv tokens.
-        assert "_FLAG_OPTS=" in body
-        assert '"${_FLAG_OPTS[@]}"' in body
+        assert "_FLAG_opts=" in body
+        assert '"${_FLAG_opts[@]}"' in body
 
     def test_flags_equals_mode(self):
         body, _ = _render_full(
@@ -953,6 +945,24 @@ class TestDefaults:
         # Dict defaults flow through the record-separator packing path.
         assert result["opts"].split(_DICT_SEP) == ["-k", "v"]
 
+    def test_default_for_optional_file(self):
+        f = File(path="/tmp/example.txt")
+        task = self._task({"src": File | None}, defaults={"src": f})
+        result = asyncio.run(task._prepare_kwargs({}))
+        assert result["src"] is f
+
+    def test_default_for_optional_dir(self):
+        d = Dir(path="/tmp/example_dir")
+        task = self._task({"src": Dir | None}, defaults={"src": d})
+        result = asyncio.run(task._prepare_kwargs({}))
+        assert result["src"] is d
+
+    def test_default_for_optional_list_of_files(self):
+        files = [File(path="/tmp/a.txt"), File(path="/tmp/b.txt")]
+        task = self._task({"parts": list[File] | None}, defaults={"parts": files})
+        result = asyncio.run(task._prepare_kwargs({}))
+        assert result["parts"] == files
+
     # ---- create()-time validation ----
 
     def test_validate_unknown_key_rejected(self):
@@ -991,6 +1001,25 @@ class TestDefaults:
         with pytest.raises(TypeError, match="string keys and values"):
             self._task(
                 {"opts": dict[str, str] | None}, defaults={"opts": {"k": 42}}  # type: ignore[dict-item]
+            )
+
+    def test_validate_file_type_mismatch(self):
+        with pytest.raises(TypeError, match="expected File"):
+            self._task({"src": File | None}, defaults={"src": "/tmp/example.txt"})
+
+    def test_validate_dir_type_mismatch(self):
+        with pytest.raises(TypeError, match="expected Dir"):
+            self._task({"src": Dir | None}, defaults={"src": "/tmp/example_dir"})
+
+    def test_validate_list_of_files_type_mismatch(self):
+        with pytest.raises(TypeError, match=r"expected list\[File\]"):
+            self._task({"parts": list[File] | None}, defaults={"parts": "not a list"})
+
+    def test_validate_list_of_files_item_type_mismatch(self):
+        with pytest.raises(TypeError, match=r"list\[File\] requires every item to be a File"):
+            self._task(
+                {"parts": list[File] | None},
+                defaults={"parts": [File(path="/tmp/a.txt"), "/tmp/b.txt"]},
             )
 
     # ---- no defaults parameter at all (backward compat) ----
@@ -1046,7 +1075,7 @@ class TestScalarValuesSurviveShellSpecials:
 
     Scalar values go through bash positional args, never through inline shell
     substitution. The body never contains the literal value — only a
-    `"${_VAL_X}"` reference. Propeller substitutes the literal value into the
+    `"${_VAL_x}"` reference. Propeller substitutes the literal value into the
     argv slot at runtime; bash sees it as a verbatim string.
     """
 
@@ -1064,8 +1093,8 @@ class TestScalarValuesSurviveShellSpecials:
             {"a": str, "b": int},
         )
         assert positional == ["{{.inputs.a}}", "{{.inputs.b}}"]
-        assert '_VAL_A="${1}"' in body
-        assert '_VAL_B="${2}"' in body
+        assert '_VAL_a="${1}"' in body
+        assert '_VAL_b="${2}"' in body
 
     def test_same_input_referenced_twice_reuses_slot(self):
         body, positional = _render_full(
@@ -1074,7 +1103,7 @@ class TestScalarValuesSurviveShellSpecials:
         )
         # x referenced twice — single positional slot.
         assert positional == ["{{.inputs.x}}"]
-        assert body.count('_VAL_X="${1}"') == 1
+        assert body.count('_VAL_x="${1}"') == 1
 
     def test_inputs_and_flags_for_same_var_share_slot(self):
         body, positional = _render_full(
@@ -1082,8 +1111,8 @@ class TestScalarValuesSurviveShellSpecials:
             {"f": str},
         )
         assert positional == ["{{.inputs.f}}"]
-        # _VAL_F bound once, used by both the flag setter and the inputs ref.
-        assert body.count('_VAL_F="${1}"') == 1
+        # _VAL_f bound once, used by both the flag setter and the inputs ref.
+        assert body.count('_VAL_f="${1}"') == 1
 
 
 class TestBuildCommandArgvLayout:
