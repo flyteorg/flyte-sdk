@@ -44,6 +44,7 @@ from typing import ClassVar, Dict, Optional
 
 from pydantic import BaseModel, ConfigDict
 
+from flyte._context import internal_ctx
 from flyte._logging import logger as _logger
 from flyte._pod import PodTemplate
 from flyte.io._file import File
@@ -78,11 +79,24 @@ class Volume(BaseModel):
     _live_procs: ClassVar[Dict[str, subprocess.Popen]] = {}
 
     @classmethod
-    def empty(cls, name: str, bucket: str, *, storage: str = "s3") -> "Volume":
+    def empty(
+        cls,
+        name: str,
+        bucket: Optional[str] = None,
+        *,
+        storage: str = "s3",
+    ) -> "Volume":
         """Declare a brand-new volume. The first ``mount()`` call will
         bootstrap the namespace (the underlying client refuses to format
         over a non-empty bucket prefix).
+
+        If ``bucket`` is omitted, it is derived from the currently active
+        task context as ``{raw_data_root}/{project}/{domain}/volumes`` —
+        following Flyte's own layout for offloaded data. Must be called
+        from inside a task in that case.
         """
+        if bucket is None:
+            bucket = _default_bucket()
         return cls(name=name, bucket=bucket, storage=storage, index=None, parent=None)
 
     async def mount(
@@ -115,14 +129,15 @@ class Volume(BaseModel):
 
         meta_url = f"sqlite3://{db_path}"
 
+        client_bucket = _client_bucket_uri(self.bucket, self.storage)
         if self.index is None:
             _logger.info(
                 "[Volume.mount] formatting fresh volume name=%s bucket=%s storage=%s",
-                self.name, self.bucket, self.storage,
+                self.name, client_bucket, self.storage,
             )
             await asyncio.to_thread(
                 _run_check,
-                [_CLIENT_BINARY, "format", "--storage", self.storage, "--bucket", self.bucket,
+                [_CLIENT_BINARY, "format", "--storage", self.storage, "--bucket", client_bucket,
                  meta_url, self.name],
             )
 
@@ -234,6 +249,54 @@ class Volume(BaseModel):
             index=new_index,
             parent=self.index,
         )
+
+
+def _client_bucket_uri(bucket: str, storage: str) -> str:
+    """Translate a clean storage URI (e.g. ``s3://my-bucket/prefix``) into the
+    form the volume client expects (``https://s3.{region}.amazonaws.com/my-bucket/prefix``
+    for S3). Pass-through for already-translated or other-scheme URIs.
+    """
+    if storage == "s3" and bucket.startswith("s3://"):
+        rest = bucket[len("s3://"):]
+        region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-east-1"
+        return f"https://s3.{region}.amazonaws.com/{rest}"
+    return bucket
+
+
+def _default_bucket() -> str:
+    """Derive the default volume bucket from the active task context.
+
+    Constructs ``{stable-prefix}/{project}/{domain}/volumes`` where the
+    stable-prefix is whatever Flyte's ``raw_data_path`` is rooted at — i.e.
+    everything *before* the project segment, so any org-level subprefix
+    (e.g. ``s3://foo-bucket/xy/``) is preserved.
+    """
+    ctx = internal_ctx()
+    tctx = ctx.data.task_context if ctx.data else None
+    if tctx is None:
+        raise RuntimeError(
+            "Volume.empty() requires either an explicit `bucket=` argument or "
+            "an active task context (so the bucket can be derived from raw_data_path)."
+        )
+
+    project = tctx.action.project
+    domain = tctx.action.domain
+    raw = tctx.raw_data_path.path
+    if not project or not domain:
+        raise RuntimeError(
+            f"Cannot derive default bucket: task context is missing project/domain "
+            f"(project={project!r}, domain={domain!r}). Pass `bucket=` explicitly."
+        )
+
+    marker = f"/{project}/{domain}/"
+    idx = raw.find(marker)
+    if idx < 0:
+        raise RuntimeError(
+            f"Cannot derive default bucket: raw_data_path={raw!r} doesn't contain "
+            f"/{project}/{domain}/. Pass `bucket=` explicitly."
+        )
+    base = raw[:idx]
+    return f"{base}/{project}/{domain}/volumes"
 
 
 def _run_check(cmd: list) -> None:

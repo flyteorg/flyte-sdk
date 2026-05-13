@@ -48,10 +48,6 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelna
 logger = logging.getLogger("volume-demo")
 
 
-VOL_BUCKET = os.environ.get(
-    "VOL_BUCKET",
-    "https://s3.us-east-2.amazonaws.com/union-oc-production-demo/juicefs",
-)
 VOL_NAME = os.environ.get("VOL_NAME", "demo-vol")
 
 POD = volume_pod_template()
@@ -76,8 +72,9 @@ env = flyte.TaskEnvironment(
 
 @env.task(cache="auto")
 async def init_volume(volume_name: str) -> Volume:
-    logger.info("init_volume: declaring fresh volume name=%s bucket=%s", volume_name, VOL_BUCKET)
-    vol = Volume.empty(name=volume_name, bucket=VOL_BUCKET)
+    logger.info("init_volume: declaring fresh volume name=%s", volume_name)
+    vol = Volume.empty(name=volume_name)
+    logger.info("init_volume: bucket resolved to %s", vol.bucket)
     await vol.mount()
     Path("/workspace/hello.txt").write_text("hello from volume\n")
     committed = await vol.commit()
