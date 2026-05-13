@@ -31,6 +31,7 @@ from ._dynamic_batcher import (
     TokenEstimator,
 )
 from ._sleep import Sleep, SleepTask
+from ._volume import Volume, juicefs_image, juicefs_pod_template
 
 __all__ = [
     "BatchStats",
@@ -42,5 +43,8 @@ __all__ = [
     "SleepTask",
     "TokenBatcher",
     "TokenEstimator",
+    "Volume",
+    "juicefs_image",
+    "juicefs_pod_template",
     "shell",
 ]
