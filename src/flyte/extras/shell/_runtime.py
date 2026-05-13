@@ -292,52 +292,34 @@ def _validate_defaults(defaults: dict[str, Any], inputs: dict[str, Type]) -> dic
 
         if kind == "file":
             if not isinstance(value, File):
-                raise TypeError(
-                    f"defaults[{name!r}]: expected File, got {type(value).__name__}."
-                )
+                raise TypeError(f"defaults[{name!r}]: expected File, got {type(value).__name__}.")
         elif kind == "dir":
             if not isinstance(value, Dir):
-                raise TypeError(
-                    f"defaults[{name!r}]: expected Dir, got {type(value).__name__}."
-                )
+                raise TypeError(f"defaults[{name!r}]: expected Dir, got {type(value).__name__}.")
         elif kind == "list_file":
             if not isinstance(value, list):
-                raise TypeError(
-                    f"defaults[{name!r}]: expected list[File], got {type(value).__name__}."
-                )
+                raise TypeError(f"defaults[{name!r}]: expected list[File], got {type(value).__name__}.")
             if not all(isinstance(item, File) for item in value):
-                raise TypeError(
-                    f"defaults[{name!r}]: list[File] requires every item to be a File."
-                )
+                raise TypeError(f"defaults[{name!r}]: list[File] requires every item to be a File.")
         elif kind == "bool":
             if not isinstance(value, bool):
                 raise TypeError(f"defaults[{name!r}]: expected bool, got {type(value).__name__}.")
         elif kind == "dict_str":
             if not isinstance(value, dict):
-                raise TypeError(
-                    f"defaults[{name!r}]: expected dict[str, str], got {type(value).__name__}."
-                )
+                raise TypeError(f"defaults[{name!r}]: expected dict[str, str], got {type(value).__name__}.")
             for k, v in value.items():
                 if not isinstance(k, str) or not isinstance(v, str):
-                    raise TypeError(
-                        f"defaults[{name!r}]: dict[str, str] requires string keys and values."
-                    )
+                    raise TypeError(f"defaults[{name!r}]: dict[str, str] requires string keys and values.")
         elif kind == "scalar":
             if inner is int:
                 if not isinstance(value, int) or isinstance(value, bool):
-                    raise TypeError(
-                        f"defaults[{name!r}]: expected int, got {type(value).__name__}."
-                    )
+                    raise TypeError(f"defaults[{name!r}]: expected int, got {type(value).__name__}.")
             elif inner is float:
                 if not isinstance(value, (int, float)) or isinstance(value, bool):
-                    raise TypeError(
-                        f"defaults[{name!r}]: expected float, got {type(value).__name__}."
-                    )
+                    raise TypeError(f"defaults[{name!r}]: expected float, got {type(value).__name__}.")
             elif inner is str:
                 if not isinstance(value, str):
-                    raise TypeError(
-                        f"defaults[{name!r}]: expected str, got {type(value).__name__}."
-                    )
+                    raise TypeError(f"defaults[{name!r}]: expected str, got {type(value).__name__}.")
             else:
                 raise AssertionError(inner)
     return dict(defaults)

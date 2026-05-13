@@ -164,8 +164,8 @@ def _emit_flag_setter(
         path = input_data_dir / name
         if is_optional:
             return (
-                f'if [ -e {shlex.quote(str(path))} ]; then '
-                f'{flag_var}={shlex.quote(flag + sep + str(path))}; '
+                f"if [ -e {shlex.quote(str(path))} ]; then "
+                f"{flag_var}={shlex.quote(flag + sep + str(path))}; "
                 f'else {flag_var}=""; fi'
             )
         return f"{flag_var}={shlex.quote(flag + sep + str(path))}"

@@ -865,7 +865,7 @@ class TestPrepareKwargs:
 
 
 # ---------------------------------------------------------------------------
-# Defaults — four-cell matrix of {required, optional} × {has default, none}
+# Defaults — four-cell matrix of {required, optional} x {has default, none}
 # ---------------------------------------------------------------------------
 
 
@@ -938,9 +938,7 @@ class TestDefaults:
         assert result["s"] == "hello"
 
     def test_default_for_optional_dict(self):
-        task = self._task(
-            {"opts": dict[str, str] | None}, defaults={"opts": {"-k": "v"}}
-        )
+        task = self._task({"opts": dict[str, str] | None}, defaults={"opts": {"-k": "v"}})
         result = asyncio.run(task._prepare_kwargs({}))
         # Dict defaults flow through the record-separator packing path.
         assert result["opts"].split(_DICT_SEP) == ["-k", "v"]
@@ -1000,7 +998,8 @@ class TestDefaults:
     def test_validate_dict_non_string_value_rejected(self):
         with pytest.raises(TypeError, match="string keys and values"):
             self._task(
-                {"opts": dict[str, str] | None}, defaults={"opts": {"k": 42}}  # type: ignore[dict-item]
+                {"opts": dict[str, str] | None},
+                defaults={"opts": {"k": 42}},  # type: ignore[dict-item]
             )
 
     def test_validate_file_type_mismatch(self):
