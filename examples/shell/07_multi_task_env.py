@@ -17,10 +17,8 @@ Run locally::
 
 import sys
 import tempfile
-from pathlib import Path
 
 import flyte
-from flyte._image import PythonWheels
 from flyte.extras import shell
 from flyte.io import File
 
@@ -64,19 +62,7 @@ text_utils_env = flyte.TaskEnvironment.from_task(
 )
 
 
-env = flyte.TaskEnvironment(
-    name="shell_multi_task",
-    depends_on=[text_utils_env],
-    image=(
-        flyte.Image.from_debian_base().clone(
-            addl_layer=PythonWheels(
-                wheel_dir=Path(__file__).parent.parent.parent / "dist",
-                package_name="flyte",
-            ),
-            name="shell-basic",
-        )
-    ),
-)
+env = flyte.TaskEnvironment(name="shell_multi_task", depends_on=[text_utils_env])
 
 
 @env.task

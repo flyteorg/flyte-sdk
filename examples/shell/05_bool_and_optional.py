@@ -14,10 +14,8 @@ Run locally::
 """
 
 import sys
-from pathlib import Path
 
 import flyte
-from flyte._image import PythonWheels
 from flyte.extras import shell
 from flyte.extras.shell import Stdout
 
@@ -51,19 +49,7 @@ report = shell.create(
 )
 
 
-env = flyte.TaskEnvironment(
-    name="shell_bool_optional",
-    depends_on=[report.env],
-    image=(
-        flyte.Image.from_debian_base().clone(
-            addl_layer=PythonWheels(
-                wheel_dir=Path(__file__).parent.parent.parent / "dist",
-                package_name="flyte",
-            ),
-            name="shell-basic",
-        )
-    ),
-)
+env = flyte.TaskEnvironment(name="shell_bool_optional", depends_on=[report.env])
 
 
 @env.task(cache="disable")

@@ -23,10 +23,8 @@ Run locally::
 """
 
 import sys
-from pathlib import Path
 
 import flyte
-from flyte._image import PythonWheels
 from flyte.extras import shell
 from flyte.extras.shell import Stderr, Stdout
 
@@ -68,15 +66,6 @@ echo_with_debug_dump = shell.create(
 env = flyte.TaskEnvironment(
     name="shell_error_handling",
     depends_on=[echo_with_diagnostics.env, echo_with_debug_dump.env],
-    image=(
-        flyte.Image.from_debian_base().clone(
-            addl_layer=PythonWheels(
-                wheel_dir=Path(__file__).parent.parent.parent / "dist",
-                package_name="flyte",
-            ),
-            name="shell-basic",
-        )
-    ),
 )
 
 

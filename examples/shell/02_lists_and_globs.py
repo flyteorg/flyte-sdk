@@ -24,10 +24,8 @@ Run locally::
 
 import sys
 import tempfile
-from pathlib import Path
 
 import flyte
-from flyte._image import PythonWheels
 from flyte.extras import shell
 from flyte.extras.shell import Glob
 from flyte.io import File
@@ -50,19 +48,7 @@ split_task = shell.create(
 )
 
 
-env = flyte.TaskEnvironment(
-    name="shell_lists_and_globs",
-    depends_on=[split_task.env],
-    image=(
-        flyte.Image.from_debian_base().clone(
-            addl_layer=PythonWheels(
-                wheel_dir=Path(__file__).parent.parent.parent / "dist",
-                package_name="flyte",
-            ),
-            name="shell-basic",
-        )
-    ),
-)
+env = flyte.TaskEnvironment(name="shell_lists_and_globs", depends_on=[split_task.env])
 
 
 @env.task

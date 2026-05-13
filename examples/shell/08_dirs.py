@@ -24,7 +24,6 @@ import tempfile
 from pathlib import Path
 
 import flyte
-from flyte._image import PythonWheels
 from flyte.extras import shell
 from flyte.io import Dir
 
@@ -49,19 +48,7 @@ summarize_dir = shell.create(
 )
 
 
-env = flyte.TaskEnvironment(
-    name="shell_dirs",
-    depends_on=[summarize_dir.env],
-    image=(
-        flyte.Image.from_debian_base().clone(
-            addl_layer=PythonWheels(
-                wheel_dir=Path(__file__).parent.parent.parent / "dist",
-                package_name="flyte",
-            ),
-            name="shell-basic",
-        )
-    ),
-)
+env = flyte.TaskEnvironment(name="shell_dirs", depends_on=[summarize_dir.env])
 
 
 @env.task

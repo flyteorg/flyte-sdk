@@ -15,10 +15,8 @@ Run locally::
 
 import sys
 import tempfile
-from pathlib import Path
 
 import flyte
-from flyte._image import PythonWheels
 from flyte.extras import shell
 from flyte.extras.shell import Stderr, Stdout
 from flyte.io import File
@@ -74,15 +72,6 @@ divide = shell.create(
 env = flyte.TaskEnvironment(
     name="shell_streams",
     depends_on=[line_count.env, sort_with_diagnostics.env, divide.env],
-    image=(
-        flyte.Image.from_debian_base().clone(
-            addl_layer=PythonWheels(
-                wheel_dir=Path(__file__).parent.parent.parent / "dist",
-                package_name="flyte",
-            ),
-            name="shell-basic",
-        )
-    ),
 )
 
 
