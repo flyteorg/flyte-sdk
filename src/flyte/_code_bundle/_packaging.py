@@ -147,14 +147,23 @@ def create_bundle(
     # Compute where the archive should be written
     archive_fname = output_dir / f"{FAST_PREFIX}{ls_digest}{FAST_FILEENDING}"
     tar_path = output_dir / "tmp.tar"
-    resolved_source = source.resolve()
+    abs_source = os.path.abspath(str(source))
     with tarfile.open(str(tar_path), "w", dereference=deref_symlinks) as tar:
         for ws_file in ls:
-            # Resolve both paths to normalize any ".." components before computing
-            # the arcname — un-normalized paths produce tar member names containing
-            # ".." which GNU tar refuses to extract (and some tools create a literal
-            # ".." directory instead).  Also ensures forward slashes on all platforms.
-            rel_path = pathlib.Path(ws_file).resolve().relative_to(resolved_source).as_posix()
+            # Compute the arcname relative to source using os.path.relpath, which
+            # normalizes ".." components. We deliberately use os.path.abspath rather
+            # than Path.resolve() on both sides — resolve() follows symlinks, so a
+            # symlink inside source that points outside source (e.g.
+            # .venv/bin/python -> /usr/bin/python3.10) would crash relative_to with
+            # "<target> is not in the subpath of <source>".
+            abs_ws = os.path.abspath(ws_file)
+            rel_path = pathlib.PurePath(os.path.relpath(abs_ws, abs_source)).as_posix()
+            if rel_path.startswith(".."):
+                # Defensive: skip files that land outside the source root after
+                # normalization. Callers should have filtered these, but a stray
+                # entry shouldn't abort the entire bundle.
+                logger.warning(f"Skipping {ws_file}: resolves outside source root {abs_source}")
+                continue
             tar.add(
                 os.path.join(source, ws_file),
                 recursive=False,
