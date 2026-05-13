@@ -225,7 +225,7 @@ class TestRenderCommand:
         body, positional = _render_full("echo {inputs.x}", {"x": int})
         assert positional == ["{{.inputs.x}}"]
         # The body binds positional $1 to _VAL_X and references it quoted.
-        assert '_VAL_X="$1"' in body
+        assert '_VAL_X="${1}"' in body
         assert '"${_VAL_X}"' in body
         # No propeller template appears inside the body string itself.
         assert "{{.inputs.x}}" not in body
@@ -309,6 +309,52 @@ class TestRenderCommand:
         # Repeat mode uses a bash for-loop.
         assert "for _f" in out
         assert "-I" in out
+
+    # ---- optional File / Dir flags emit conditionally ----
+
+    def test_required_file_flag_unconditional(self):
+        # Non-optional File flag is hardcoded — the caller is contractually
+        # required to supply it, so no runtime existence check is needed.
+        out = _render("tool {flags.ref}", {"ref": File})
+        assert "_FLAG_REF=" in out
+        assert "/var/inputs/ref" in out
+        # No conditional guarding the assignment.
+        assert "if [ -e " not in out
+
+    def test_optional_file_flag_guarded(self):
+        # Optional File flag must be guarded — if the caller didn't supply
+        # the file, /var/inputs/<name> won't exist and the tool would fail
+        # trying to open it.
+        out = _render("tool {flags.sites}", {"sites": File | None})
+        assert "if [ -e /var/inputs/sites ]" in out
+        assert "_FLAG_SITES=-sites /var/inputs/sites" in out or "_FLAG_SITES='-sites /var/inputs/sites'" in out
+        assert '_FLAG_SITES=""' in out  # else branch
+
+    def test_optional_dir_flag_guarded(self):
+        # Same conditional emission for optional Dir flags.
+        out = _render("tool {flags.cache}", {"cache": Dir | None})
+        assert "if [ -e /var/inputs/cache ]" in out
+        assert '_FLAG_CACHE=""' in out
+
+    def test_required_dir_flag_unconditional(self):
+        out = _render("tool {flags.workdir}", {"workdir": Dir})
+        assert "/var/inputs/workdir" in out
+        assert "if [ -e " not in out
+
+    def test_positional_index_braced_for_two_digit_indices(self):
+        # Regression: bash parses `$10` as `$1` followed by literal `"0"`,
+        # silently binding 10+-indexed inputs to the wrong values. Indices
+        # must always be braced as `${10}` for correctness, regardless of
+        # whether they happen to be single-digit.
+        inputs = {f"x{i}": str for i in range(15)}
+        out = _render(" ".join(f"{{inputs.{n}}}" for n in inputs), inputs)
+        # Index 1 — must still work (the fix uses braces uniformly).
+        assert '_VAL_X0="${1}"' in out
+        # Index 10 — this is where the bug bit. Must be braced.
+        assert '_VAL_X9="${10}"' in out
+        # And the bare two-digit form must NOT appear anywhere.
+        assert '"$10"' not in out
+        assert '"$15"' not in out
 
 
 # ---------------------------------------------------------------------------
@@ -547,6 +593,54 @@ class TestCreate:
                 flag_aliases={"missing": "-m"},
             )
 
+    # ---- case-colliding input names rejected ----
+
+    def test_case_collision_lower_then_upper_rejected(self):
+        # `c` and `C` would both render to bash vars `_VAL_C` / `_FLAG_C`
+        # and silently overwrite each other. Common in bio CLIs.
+        with pytest.raises(ValueError, match="collide on bash variable"):
+            shell.create(
+                name="bad",
+                image="alpine:3.18",
+                inputs={"c": bool, "C": bool},
+                outputs={"o": File},
+                script="true",
+            )
+
+    def test_case_collision_message_names_both_inputs(self):
+        # Error must name *both* colliding inputs so the author can find them.
+        with pytest.raises(ValueError) as exc_info:
+            shell.create(
+                name="bad",
+                image="alpine:3.18",
+                inputs={"foo": bool, "FOO": bool},
+                outputs={"o": File},
+                script="true",
+            )
+        msg = str(exc_info.value)
+        assert "'foo'" in msg and "'FOO'" in msg
+
+    def test_case_collision_mixed_case_rejected(self):
+        # Not just exact lower/upper — any `.upper()` collision is rejected.
+        with pytest.raises(ValueError, match="collide on bash variable"):
+            shell.create(
+                name="bad",
+                image="alpine:3.18",
+                inputs={"my_flag": bool, "My_Flag": bool},
+                outputs={"o": File},
+                script="true",
+            )
+
+    def test_no_collision_distinct_uppercase_forms(self):
+        # Distinct uppercased forms — no collision, must not raise.
+        shell.create(
+            name="ok",
+            image="alpine:3.18",
+            inputs={"a": bool, "b": bool, "ab": bool},
+            outputs={"o": File},
+            script="true",
+        )
+
     def test_full_bedtools_shape_validates(self):
         # End-to-end create() with the full bedtools example shape — no exec.
         task = shell.create(
@@ -779,6 +873,142 @@ class TestPrepareKwargs:
 
 
 # ---------------------------------------------------------------------------
+# Defaults — four-cell matrix of {required, optional} × {has default, none}
+# ---------------------------------------------------------------------------
+
+
+class TestDefaults:
+    def _task(self, inputs, defaults=None):
+        return shell.create(
+            name="t",
+            image="alpine:3.18",
+            inputs=inputs,
+            outputs={"o": File},
+            script="true",
+            defaults=defaults,
+        )
+
+    # ---- four-cell matrix ----
+
+    def test_required_no_default_missing_raises(self):
+        task = self._task({"wa": bool})
+        with pytest.raises(TypeError, match="Missing required input: 'wa'"):
+            asyncio.run(task._prepare_kwargs({}))
+
+    def test_required_with_default_uses_default(self):
+        task = self._task({"wa": bool}, defaults={"wa": False})
+        result = asyncio.run(task._prepare_kwargs({}))
+        # Non-optional bool flows as the native Python bool — ContainerTask
+        # lower-cases it to the bash "false" string at template-render time.
+        assert result["wa"] is False
+
+    def test_optional_no_default_missing_empty_string(self):
+        task = self._task({"wa": bool | None})
+        result = asyncio.run(task._prepare_kwargs({}))
+        assert result["wa"] == ""
+
+    def test_optional_with_default_uses_default(self):
+        task = self._task({"wa": bool | None}, defaults={"wa": True})
+        result = asyncio.run(task._prepare_kwargs({}))
+        # Optional scalars/bools are wired as str — defaults flow through
+        # the same conversion path as caller-supplied values.
+        assert result["wa"] == "true"
+
+    # ---- caller-supplied value always wins ----
+
+    def test_caller_value_overrides_default(self):
+        task = self._task({"threads": int}, defaults={"threads": 4})
+        result = asyncio.run(task._prepare_kwargs({"threads": 8}))
+        assert result["threads"] == 8
+
+    def test_caller_none_overrides_default_for_optional(self):
+        # Explicit None from caller must win even when a default exists —
+        # otherwise there's no way to opt out of an emitted flag.
+        task = self._task({"threads": int | None}, defaults={"threads": 4})
+        result = asyncio.run(task._prepare_kwargs({"threads": None}))
+        assert result["threads"] == ""
+
+    # ---- default values for various kinds ----
+
+    def test_default_for_optional_int(self):
+        task = self._task({"n": int | None}, defaults={"n": 42})
+        result = asyncio.run(task._prepare_kwargs({}))
+        assert result["n"] == "42"
+
+    def test_default_for_optional_float(self):
+        task = self._task({"f": float | None}, defaults={"f": 0.5})
+        result = asyncio.run(task._prepare_kwargs({}))
+        assert result["f"] == "0.5"
+
+    def test_default_for_optional_str(self):
+        task = self._task({"s": str | None}, defaults={"s": "hello"})
+        result = asyncio.run(task._prepare_kwargs({}))
+        assert result["s"] == "hello"
+
+    def test_default_for_optional_dict(self):
+        task = self._task(
+            {"opts": dict[str, str] | None}, defaults={"opts": {"-k": "v"}}
+        )
+        result = asyncio.run(task._prepare_kwargs({}))
+        # Dict defaults flow through the record-separator packing path.
+        assert result["opts"].split(_DICT_SEP) == ["-k", "v"]
+
+    # ---- create()-time validation ----
+
+    def test_validate_unknown_key_rejected(self):
+        with pytest.raises(KeyError, match="not declared in inputs"):
+            self._task({"wa": bool}, defaults={"unknown": True})
+
+    def test_validate_none_default_rejected(self):
+        with pytest.raises(ValueError, match="redundant"):
+            self._task({"wa": bool | None}, defaults={"wa": None})
+
+    def test_validate_bool_type_mismatch(self):
+        with pytest.raises(TypeError, match="expected bool"):
+            self._task({"wa": bool}, defaults={"wa": "yes"})
+
+    def test_validate_int_type_mismatch_rejects_bool(self):
+        # bool is a subclass of int — reject it for int defaults to keep
+        # `True` from quietly meaning `1`.
+        with pytest.raises(TypeError, match="expected int"):
+            self._task({"n": int}, defaults={"n": True})
+
+    def test_validate_float_accepts_int(self):
+        # Lenient: int → float coercion is the obvious user intent.
+        task = self._task({"f": float | None}, defaults={"f": 5})
+        result = asyncio.run(task._prepare_kwargs({}))
+        assert result["f"] == "5"
+
+    def test_validate_str_type_mismatch(self):
+        with pytest.raises(TypeError, match="expected str"):
+            self._task({"s": str | None}, defaults={"s": 42})
+
+    def test_validate_dict_type_mismatch(self):
+        with pytest.raises(TypeError, match="expected dict"):
+            self._task({"opts": dict[str, str] | None}, defaults={"opts": "not a dict"})
+
+    def test_validate_dict_non_string_value_rejected(self):
+        with pytest.raises(TypeError, match="string keys and values"):
+            self._task(
+                {"opts": dict[str, str] | None}, defaults={"opts": {"k": 42}}  # type: ignore[dict-item]
+            )
+
+    # ---- no defaults parameter at all (backward compat) ----
+
+    def test_no_defaults_param_is_backward_compatible(self):
+        task = shell.create(
+            name="t",
+            image="alpine:3.18",
+            inputs={"wa": bool | None},
+            outputs={"o": File},
+            script="true",
+        )
+        assert task.defaults == {}
+        result = asyncio.run(task._prepare_kwargs({}))
+        assert result["wa"] == ""
+
+
+# ---------------------------------------------------------------------------
 # Stdout / Stderr collectors
 # ---------------------------------------------------------------------------
 
@@ -834,8 +1064,8 @@ class TestScalarValuesSurviveShellSpecials:
             {"a": str, "b": int},
         )
         assert positional == ["{{.inputs.a}}", "{{.inputs.b}}"]
-        assert '_VAL_A="$1"' in body
-        assert '_VAL_B="$2"' in body
+        assert '_VAL_A="${1}"' in body
+        assert '_VAL_B="${2}"' in body
 
     def test_same_input_referenced_twice_reuses_slot(self):
         body, positional = _render_full(
@@ -844,7 +1074,7 @@ class TestScalarValuesSurviveShellSpecials:
         )
         # x referenced twice — single positional slot.
         assert positional == ["{{.inputs.x}}"]
-        assert body.count('_VAL_X="$1"') == 1
+        assert body.count('_VAL_X="${1}"') == 1
 
     def test_inputs_and_flags_for_same_var_share_slot(self):
         body, positional = _render_full(
@@ -853,7 +1083,7 @@ class TestScalarValuesSurviveShellSpecials:
         )
         assert positional == ["{{.inputs.f}}"]
         # _VAL_F bound once, used by both the flag setter and the inputs ref.
-        assert body.count('_VAL_F="$1"') == 1
+        assert body.count('_VAL_F="${1}"') == 1
 
 
 class TestBuildCommandArgvLayout:

@@ -35,6 +35,7 @@ class _Shell:
     outputs: dict[str, Any]
     script: str
     flag_aliases: dict[str, FlagSpec] = field(default_factory=dict)
+    defaults: dict[str, Any] = field(default_factory=dict)
     shell: str = "/bin/bash"
     debug: bool = False
     input_data_dir: pathlib.Path = pathlib.Path("/var/inputs")
@@ -186,6 +187,9 @@ class _Shell:
         return unpacked[0] if single else tuple(unpacked)
 
     async def _prepare_kwargs(self, kwargs: dict[str, Any]) -> dict[str, Any]:
+        if self.defaults:
+            kwargs = {**self.defaults, **kwargs}
+
         out: dict[str, Any] = {}
         for name, tp in self.inputs.items():
             is_opt, _ = _is_optional(tp)
@@ -267,6 +271,47 @@ class _ShellContainerTask(ContainerTask):
             ) from e
 
 
+def _validate_defaults(defaults: dict[str, Any], inputs: dict[str, Type]) -> dict[str, Any]:
+    """Validate that every default key exists in ``inputs`` and that the
+    value's Python type matches the declared input type.
+
+    A ``None`` default is rejected — the same effect is achieved by
+    declaring the input as ``T | None`` and omitting it from ``defaults``.
+    """
+    for name, value in defaults.items():
+        if name not in inputs:
+            raise KeyError(f"defaults references {name!r} which is not declared in inputs.")
+        if value is None:
+            raise ValueError(
+                f"defaults[{name!r}] = None is redundant; declare the input as "
+                f"`T | None` and omit it from defaults instead."
+            )
+
+        _, inner = _is_optional(inputs[name])
+
+        if inner is bool:
+            if not isinstance(value, bool):
+                raise TypeError(f"defaults[{name!r}]: expected bool, got {type(value).__name__}.")
+        elif inner is int:
+            if not isinstance(value, int) or isinstance(value, bool):
+                raise TypeError(f"defaults[{name!r}]: expected int, got {type(value).__name__}.")
+        elif inner is float:
+            if not isinstance(value, (int, float)) or isinstance(value, bool):
+                raise TypeError(f"defaults[{name!r}]: expected float, got {type(value).__name__}.")
+        elif inner is str:
+            if not isinstance(value, str):
+                raise TypeError(f"defaults[{name!r}]: expected str, got {type(value).__name__}.")
+        elif _is_dict_str_str(inner):
+            if not isinstance(value, dict):
+                raise TypeError(f"defaults[{name!r}]: expected dict[str, str], got {type(value).__name__}.")
+            for k, v in value.items():
+                if not isinstance(k, str) or not isinstance(v, str):
+                    raise TypeError(
+                        f"defaults[{name!r}]: dict[str, str] requires string keys and values."
+                    )
+    return dict(defaults)
+
+
 def _truncate(s: str, limit: int = 4000) -> str:
     if len(s) <= limit:
         return s if s.endswith("\n") else s + "\n"
@@ -297,6 +342,7 @@ def create(
     outputs: Optional[dict[str, Any]] = None,
     script: str,
     flag_aliases: Optional[dict[str, Union[str, Tuple[str, listMode], FlagSpec]]] = None,
+    defaults: Optional[dict[str, Any]] = None,
     shell: str = "/bin/bash",
     debug: bool = False,
     resources: Optional[flyte.Resources] = None,
@@ -345,6 +391,28 @@ def create(
               **strings only** (see recipes below)
             - ``int``, ``float``, ``str``, ``bool`` scalars
             - ``T | None`` of any of the above (``None`` collapses to empty)
+
+            **Optional File / Dir flags emit conditionally.** When
+            ``{flags.<name>}`` references an input typed as
+            ``File | None`` / ``Dir | None`` and the caller omits it, the
+            renderer guards the emission with ``if [ -e <path> ]``: no
+            flag is added to the command when the file isn't staged.
+            Non-optional ``File`` / ``Dir`` inputs are still emitted
+            unconditionally (the caller is contractually required to
+            supply them).
+
+            **Case-colliding input names are rejected at create() time.**
+            The renderer builds bash variable names by uppercasing the
+            Python identifier — so two inputs whose names differ only in
+            case (e.g. ``c`` and ``C``, common in bio CLIs like samtools
+            ``-h``/``-H`` or bedtools ``-c``/``-C``) would silently share
+            ``_VAL_*`` / ``_FLAG_*`` slots and overwrite each other.
+            ``create()`` raises ``ValueError`` listing both names; the
+            fix is to give one of them a descriptive Python name and
+            map back to the CLI flag with ``flag_aliases``::
+
+                inputs={"count_overlaps": bool | None, "count_per_file": bool | None}
+                flag_aliases={"count_overlaps": "-c", "count_per_file": "-C"}
 
             **Recipes for things that look like they need a richer dict but
             don't:**
@@ -405,6 +473,30 @@ def create(
             ``(flag, list_mode)`` to pick a list rendering mode (``"join"``,
             ``"repeat"``, ``"comma"``) or ``(flag, dict_mode)``
             for dicts (``"pairs"``, ``"equals"``).
+        defaults: Per-input fallback value used when the caller omits that
+            input at call time. Lets you mark inputs as "optional at call
+            site" while still emitting their flag, independent of the
+            ``T | None`` axis. The interaction with ``T | None`` is:
+
+            ====================  =========================  =================================
+            Type                  In ``defaults``            Behavior when caller omits
+            ====================  =========================  =================================
+            ``T``                 No                         ``TypeError`` at submit time
+            ``T``                 Yes                        Default used; flag emitted
+            ``T | None``          No                         Empty value; flag suppressed
+            ``T | None``          Yes                        Default used; flag emitted
+            ====================  =========================  =================================
+
+            Validation at ``create()`` time:
+
+            - Keys must be present in ``inputs``.
+            - ``None`` values are rejected — use ``T | None`` and omit
+              from ``defaults`` instead.
+            - Value's Python type must match the declared input type
+              (``bool`` for ``bool``, ``int``/``float`` for ``float``, etc.).
+            - File/Dir/list[File] default values are accepted without
+              value-shape checking — supply only fully-constructed
+              :class:`~flyte.io.File` / :class:`~flyte.io.Dir` instances.
         shell: Shell binary to use. Defaults to ``/bin/bash``.
         debug: If True, container prints the rendered script to stderr
             before running. Invaluable when authoring a new wrapper.
@@ -460,6 +552,22 @@ def create(
     inputs = inputs or {}
     outputs = outputs or {}
 
+    # Reject inputs whose names differ only in case — the renderer builds
+    # bash variable names by uppercasing the Python name, so names like
+    # `c` and `C` would silently share `_VAL_C` / `_FLAG_C` and clobber
+    # each other. Common in bio CLIs (samtools -h/-H, bedtools -c/-C, etc.).
+    seen_upper: dict[str, str] = {}
+    for n in inputs:
+        up = n.upper()
+        if up in seen_upper:
+            raise ValueError(
+                f"Input names {seen_upper[up]!r} and {n!r} collide on bash variable "
+                f"'_VAL_{up}' / '_FLAG_{up}' — they differ only in case. "
+                f"Rename one (e.g. 'count_overlaps') and use flag_aliases to keep "
+                f"the CLI flag (e.g. flag_aliases={{'count_overlaps': '-c'}})."
+            )
+        seen_upper[up] = n
+
     for n, t in inputs.items():
         _classify_input(n, t)
 
@@ -471,6 +579,8 @@ def create(
             raise KeyError(f"flag_aliases references {n!r} which is not declared in inputs.")
         coerced_aliases[n] = FlagSpec.coerce(n, alias)
 
+    validated_defaults: dict[str, Any] = _validate_defaults(defaults or {}, inputs)
+
     if not isinstance(image, (str, flyte.Image)):
         raise TypeError(f"image must be a URI string or a flyte.Image, got {type(image).__name__}.")
 
@@ -481,6 +591,7 @@ def create(
         outputs=dict(outputs),
         script=script,
         flag_aliases=coerced_aliases,
+        defaults=validated_defaults,
         shell=shell,
         debug=debug,
         resources=resources,
