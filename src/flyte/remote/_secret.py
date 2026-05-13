@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from typing import AsyncIterator, Literal, Union
 
 import rich.repr
-from flyteidl2.common import identifier_pb2
 from flyteidl2.secret import definition_pb2, payload_pb2
 
 from flyte._initialize import ensure_client, get_client, get_init_config
@@ -24,6 +23,25 @@ def _resolve_scope(cfg, cluster_pool: str | None, op: str) -> tuple[str, str]:
             )
         return "", ""
     return cfg.project, cfg.domain
+
+
+async def _secrets_service_for(cluster_pool: str | None, org: str):
+    """Resolve the SecretService to dispatch to.
+
+    For cluster-pool-scoped operations, ask the cluster-aware wrapper to pre-resolve
+    the per-cluster client. cluster_pool is SDK-side routing metadata and is not
+    carried in the secret request proto.
+    """
+    secrets_service = get_client().secrets_service
+    if not cluster_pool:
+        return secrets_service
+    from flyte.remote._client.controlplane import ClusterAwareSecretService
+
+    if not isinstance(secrets_service, ClusterAwareSecretService):
+        raise RuntimeError(
+            f"cluster_pool routing requires the cluster-aware secrets service; got {type(secrets_service).__name__}."
+        )
+    return await secrets_service.client_for_cluster_pool(org, cluster_pool)
 
 
 @dataclass
@@ -82,11 +100,8 @@ class Secret(ToJSONMixin):
             ),
             secret_spec=secret,
         )
-        if cluster_pool:
-            request.cluster_pool_id.CopyFrom(
-                identifier_pb2.ClusterPoolIdentifier(organization=cfg.org, name=cluster_pool)
-            )
-        await get_client().secrets_service.create_secret(request=request)  # type: ignore
+        svc = await _secrets_service_for(cluster_pool, cfg.org)
+        await svc.create_secret(request=request)  # type: ignore
 
     @syncify
     @classmethod
@@ -110,11 +125,8 @@ class Secret(ToJSONMixin):
                 name=name,
             )
         )
-        if cluster_pool:
-            request.cluster_pool_id.CopyFrom(
-                identifier_pb2.ClusterPoolIdentifier(organization=cfg.org, name=cluster_pool)
-            )
-        resp = await get_client().secrets_service.get_secret(request=request)
+        svc = await _secrets_service_for(cluster_pool, cfg.org)
+        resp = await svc.get_secret(request=request)
         return Secret(pb2=resp.secret)
 
     @syncify
@@ -131,6 +143,7 @@ class Secret(ToJSONMixin):
         ensure_client()
         cfg = get_init_config()
         project, domain = _resolve_scope(cfg, cluster_pool, op="listing")
+        svc = await _secrets_service_for(cluster_pool, cfg.org)
         per_cluster_tokens = None
         while True:
             request = payload_pb2.ListSecretsRequest(
@@ -140,11 +153,7 @@ class Secret(ToJSONMixin):
                 per_cluster_tokens=per_cluster_tokens,
                 limit=limit,
             )
-            if cluster_pool:
-                request.cluster_pool_id.CopyFrom(
-                    identifier_pb2.ClusterPoolIdentifier(organization=cfg.org, name=cluster_pool)
-                )
-            resp = await get_client().secrets_service.list_secrets(request=request)  # type: ignore
+            resp = await svc.list_secrets(request=request)  # type: ignore
             per_cluster_tokens = resp.per_cluster_tokens
             round_items = [v for _, v in per_cluster_tokens.items() if v]
             has_next = any(round_items)
@@ -175,11 +184,8 @@ class Secret(ToJSONMixin):
                 name=name,
             )
         )
-        if cluster_pool:
-            request.cluster_pool_id.CopyFrom(
-                identifier_pb2.ClusterPoolIdentifier(organization=cfg.org, name=cluster_pool)
-            )
-        await get_client().secrets_service.delete_secret(request=request)  # type: ignore
+        svc = await _secrets_service_for(cluster_pool, cfg.org)
+        await svc.delete_secret(request=request)  # type: ignore
 
     @property
     def name(self) -> str:

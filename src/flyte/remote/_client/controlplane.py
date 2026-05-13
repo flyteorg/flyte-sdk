@@ -338,87 +338,62 @@ class ClusterAwareSecretService:
     async def create_secret(
         self, request: secret_payload_pb2.CreateSecretRequest
     ) -> secret_payload_pb2.CreateSecretResponse:
-        if request.HasField("cluster_pool_id"):
-            client = await self._resolve_by_cluster_pool(
-                request.cluster_pool_id.organization,
-                request.cluster_pool_id.name,
-            )
-        else:
-            client = await self._resolve(request.id.organization, request.id.project, request.id.domain)
+        client = await self._resolve(request.id.organization, request.id.project, request.id.domain)
         return await client.create_secret(request)
 
     async def update_secret(
         self, request: secret_payload_pb2.UpdateSecretRequest
     ) -> secret_payload_pb2.UpdateSecretResponse:
-        if request.HasField("cluster_pool_id"):
-            client = await self._resolve_by_cluster_pool(
-                request.cluster_pool_id.organization,
-                request.cluster_pool_id.name,
-            )
-        else:
-            client = await self._resolve(request.id.organization, request.id.project, request.id.domain)
+        client = await self._resolve(request.id.organization, request.id.project, request.id.domain)
         return await client.update_secret(request)
 
     async def get_secret(self, request: secret_payload_pb2.GetSecretRequest) -> secret_payload_pb2.GetSecretResponse:
-        if request.HasField("cluster_pool_id"):
-            client = await self._resolve_by_cluster_pool(
-                request.cluster_pool_id.organization,
-                request.cluster_pool_id.name,
-            )
-        else:
-            client = await self._resolve(request.id.organization, request.id.project, request.id.domain)
+        client = await self._resolve(request.id.organization, request.id.project, request.id.domain)
         return await client.get_secret(request)
 
     async def list_secrets(
         self, request: secret_payload_pb2.ListSecretsRequest
     ) -> secret_payload_pb2.ListSecretsResponse:
-        if request.HasField("cluster_pool_id"):
-            client = await self._resolve_by_cluster_pool(
-                request.cluster_pool_id.organization,
-                request.cluster_pool_id.name,
-            )
-        else:
-            client = await self._resolve(request.organization, request.project, request.domain)
+        client = await self._resolve(request.organization, request.project, request.domain)
         return await client.list_secrets(request)
 
     async def delete_secret(
         self, request: secret_payload_pb2.DeleteSecretRequest
     ) -> secret_payload_pb2.DeleteSecretResponse:
-        if request.HasField("cluster_pool_id"):
-            client = await self._resolve_by_cluster_pool(
-                request.cluster_pool_id.organization,
-                request.cluster_pool_id.name,
-            )
-        else:
-            client = await self._resolve(request.id.organization, request.id.project, request.id.domain)
+        client = await self._resolve(request.id.organization, request.id.project, request.id.domain)
         return await client.delete_secret(request)
 
+    async def client_for_cluster_pool(self, org: str, name: str) -> SecretService:
+        """Resolve a per-cluster SecretService client for a cluster pool.
+
+        Used by SDK callers (e.g. flyte.remote.Secret) when an operation is scoped
+        to a cluster pool rather than to a project/domain/org. cluster_pool is
+        SDK-side routing metadata only — it is passed to SelectCluster but is not
+        carried in the secret request proto, since the resolved cluster's secret
+        service does not need it.
+        """
+        return await self._resolve(org, "", "", name)
+
     @alru_cache
-    async def _resolve(self, org: str, project: str, domain: str) -> SecretService:
+    async def _resolve(self, org: str, project: str, domain: str, cluster_pool: str | None = None) -> SecretService:
         """Cached SelectCluster lookup for secrets.
 
-        Routes by ProjectIdentifier when project and domain are set,
+        Routes by ClusterPoolIdentifier when cluster_pool is set;
+        otherwise by ProjectIdentifier when project and domain are set,
         DomainIdentifier when only domain is set (domain-scoped secrets),
         or OrgIdentifier for org-wide secrets.
         """
         req = cluster_payload_pb2.SelectClusterRequest(
             operation=cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_USE_SECRETS,
         )
-        if project and domain:
+        if cluster_pool:
+            req.cluster_pool_id.CopyFrom(identifier_pb2.ClusterPoolIdentifier(organization=org, name=cluster_pool))
+        elif project and domain:
             req.project_id.CopyFrom(identifier_pb2.ProjectIdentifier(name=project, domain=domain, organization=org))
         elif domain:
             req.domain_id.CopyFrom(identifier_pb2.DomainIdentifier(name=domain, organization=org))
         else:
             req.org_id.CopyFrom(identifier_pb2.OrgIdentifier(name=org))
-        return await self._select_and_build(req)
-
-    @alru_cache
-    async def _resolve_by_cluster_pool(self, org: str, name: str) -> SecretService:
-        """Cached SelectCluster lookup, routed by ClusterPoolIdentifier."""
-        req = cluster_payload_pb2.SelectClusterRequest(
-            operation=cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_USE_SECRETS,
-        )
-        req.cluster_pool_id.CopyFrom(identifier_pb2.ClusterPoolIdentifier(organization=org, name=name))
         return await self._select_and_build(req)
 
     async def _select_and_build(self, req: cluster_payload_pb2.SelectClusterRequest) -> SecretService:
