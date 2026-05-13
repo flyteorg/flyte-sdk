@@ -45,6 +45,7 @@ from typing import ClassVar, Dict, Optional
 from pydantic import BaseModel, ConfigDict
 
 from flyte._context import internal_ctx
+from flyte._image import Image
 from flyte._logging import logger as _logger
 from flyte._pod import PodTemplate
 from flyte.io._file import File
@@ -133,12 +134,13 @@ class Volume(BaseModel):
         if self.index is None:
             _logger.info(
                 "[Volume.mount] formatting fresh volume name=%s bucket=%s storage=%s",
-                self.name, client_bucket, self.storage,
+                self.name,
+                client_bucket,
+                self.storage,
             )
             await asyncio.to_thread(
                 _run_check,
-                [_CLIENT_BINARY, "format", "--storage", self.storage, "--bucket", client_bucket,
-                 meta_url, self.name],
+                [_CLIENT_BINARY, "format", "--storage", self.storage, "--bucket", client_bucket, meta_url, self.name],
             )
 
         _logger.info("[Volume.mount] mounting at %s", mount_path)
@@ -153,7 +155,7 @@ class Volume(BaseModel):
         deadline = asyncio.get_event_loop().time() + timeout
         while True:
             if proc.poll() is not None:
-                out = (proc.stdout.read().decode(errors="replace") if proc.stdout else "")
+                out = proc.stdout.read().decode(errors="replace") if proc.stdout else ""
                 raise RuntimeError(f"volume client exited prematurely (rc={proc.returncode}): {out}")
             if _is_fuse_mount(mount_path):
                 break
@@ -196,7 +198,7 @@ class Volume(BaseModel):
         # Force WAL pages back into the main .db before uploading.
         await asyncio.to_thread(_wal_checkpoint, str(db_path))
 
-        new_index = await File.from_local(str(db_path))
+        new_index: File = await File.from_local(str(db_path))
         return Volume(
             name=self.name,
             bucket=self.bucket,
@@ -235,7 +237,7 @@ class Volume(BaseModel):
 
         snapshot_path = await asyncio.to_thread(_backup)
         try:
-            new_index = await File.from_local(snapshot_path)
+            new_index: File = await File.from_local(snapshot_path)
         finally:
             try:
                 os.unlink(snapshot_path)
@@ -257,7 +259,7 @@ def _client_bucket_uri(bucket: str, storage: str) -> str:
     for S3). Pass-through for already-translated or other-scheme URIs.
     """
     if storage == "s3" and bucket.startswith("s3://"):
-        rest = bucket[len("s3://"):]
+        rest = bucket[len("s3://") :]
         region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-east-1"
         return f"https://s3.{region}.amazonaws.com/{rest}"
     return bucket
@@ -348,11 +350,11 @@ def _wal_checkpoint(db_path: str) -> None:
 
 
 def volume_image(
-    base: "object" = None,
+    base: Optional[Image] = None,
     *,
     version: str = _CLIENT_VERSION,
     architecture: str = "amd64",
-):
+) -> Image:
     """Layer the volume client and the ``fuse`` userspace tools onto ``base``
     (a :class:`flyte.Image`). Returns a new :class:`flyte.Image`.
 
@@ -361,9 +363,7 @@ def volume_image(
     than via a sidecar.
     """
     if base is None:
-        import flyte
-
-        base = flyte.Image.from_debian_base(install_flyte=False)
+        base = Image.from_debian_base(install_flyte=False)
 
     url = (
         f"https://github.com/juicedata/juicefs/releases/download/"
@@ -380,10 +380,7 @@ def volume_image(
         f"ln -sf /proc/mounts /etc/mtab; "
         f"{_CLIENT_BINARY} version"
     )
-    return (
-        base.with_apt_packages("ca-certificates", "curl", "fuse")
-        .with_commands([install_cmd])
-    )
+    return base.with_apt_packages("ca-certificates", "curl", "fuse").with_commands([install_cmd])
 
 
 def volume_pod_template(
