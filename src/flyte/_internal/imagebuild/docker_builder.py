@@ -655,13 +655,21 @@ class DockerImageBuilder(ImageBuilder):
     @staticmethod
     async def _ensure_buildx_builder():
         """Ensure there is a docker buildx builder called flyte"""
+        from flyte.errors import ImageBuildError
+
         # Check if buildx is available
         try:
             await run_sync_with_loop(
                 subprocess.run, ["docker", "buildx", "version"], check=True, stdout=subprocess.DEVNULL
             )
+        except FileNotFoundError:
+            raise ImageBuildError(
+                "Docker is not installed or not available in PATH. "
+                "Install Docker (https://docs.docker.com/get-docker/) and ensure it is running, "
+                "or use the remote image builder by setting `image_builder='remote'` on your `flyte.Image`."
+            )
         except subprocess.CalledProcessError:
-            raise RuntimeError("Docker buildx is not available. Make sure BuildKit is installed and enabled.")
+            raise ImageBuildError("Docker buildx is not available. Make sure BuildKit is installed and enabled.")
 
         # List builders
         result = await run_sync_with_loop(
