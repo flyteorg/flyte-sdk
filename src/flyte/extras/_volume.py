@@ -1,21 +1,21 @@
 """
-JuiceFS-backed Volume type and pod-template helper.
+Persistent ``Volume`` type and pod-template helper.
 
-A ``Volume`` is a Flyte SDK type that materializes as a JuiceFS mount inside a
-task pod. Its identity is carried by a single SQLite "index" file (the JuiceFS
-metadata DB) plus a pointer to the object-store bucket holding the immutable
-data chunks. Because the index is just a file, ``Volume`` rides through the
-normal Flyte literal system as a Pydantic model containing a ``flyte.io.File``,
-which means lineage, caching, fork, and clone are first-class.
+A ``Volume`` is a Flyte SDK type that materializes as a mountable filesystem
+inside a task pod. Its identity is carried by a single SQLite "index" file
+plus a pointer to the object-store bucket holding the immutable data chunks.
+Because the index is just a file, ``Volume`` rides through the normal Flyte
+literal system as a Pydantic model containing a ``flyte.io.File``, which
+means lineage, caching, fork, and clone are first-class.
 
 Typical usage::
 
-    from flyte.extras import Volume, juicefs_pod_template, juicefs_image
+    from flyte.extras import Volume, volume_pod_template, volume_image
 
     env = flyte.TaskEnvironment(
         name="vol-demo",
-        pod_template=juicefs_pod_template(),
-        image=juicefs_image(my_base_image),
+        pod_template=volume_pod_template(),
+        image=volume_image(my_base_image),
     )
 
     @env.task
@@ -24,18 +24,18 @@ Typical usage::
         Path("/workspace/hello.txt").write_text("hi")
         return await vol.commit()
 
-The primary container runs the ``juicefs`` binary itself (the user image bakes
-it in via :func:`juicefs_image`), so there is no sidecar and no FUSE mount-
-propagation dance. ``mount()`` spawns ``juicefs mount`` as a subprocess and
-tracks its PID; ``commit()`` runs ``juicefs umount`` and waits for the daemon
-to flush metadata to SQLite before uploading.
+The current implementation runs the filesystem client in-process inside the
+primary container (the runtime is layered onto the user image by
+:func:`volume_image`), so no sidecar or mount-propagation configuration is
+needed. ``mount()`` spawns the client as a subprocess and tracks its PID;
+``commit()`` requests a clean unmount and waits for metadata to be flushed
+to the index file before uploading.
 """
 
 from __future__ import annotations
 
 import asyncio
 import os
-import shutil
 import sqlite3
 import subprocess
 import tempfile
@@ -48,21 +48,22 @@ from flyte._logging import logger as _logger
 from flyte._pod import PodTemplate
 from flyte.io._file import File
 
-_DEFAULT_META_DIR = "/var/jfs"
-_DEFAULT_CACHE_DIR = "/var/cache/juicefs"
+_DEFAULT_META_DIR = "/var/lib/flyte-volume"
+_DEFAULT_CACHE_DIR = "/var/cache/flyte-volume"
 _DEFAULT_MOUNT_PATH = "/workspace"
-_INDEX_FILENAME = "juicefs.db"
-_DEFAULT_JUICEFS_VERSION = "1.1.2"
+_INDEX_FILENAME = "index.db"
+_CLIENT_BINARY = "juicefs"  # implementation detail
+_CLIENT_VERSION = "1.1.2"
 
 
 class Volume(BaseModel):
-    """A JuiceFS-backed volume identified by its SQLite metadata index.
+    """A persistent volume identified by its SQLite metadata index.
 
-    A ``Volume`` is content-addressable lineage on top of an object-store bucket.
-    The bucket holds the data chunks; the index (a SQLite DB) holds the entire
-    namespace. Cloning the index produces an independent fork that initially
-    sees the same file tree and shares chunk objects but diverges as either side
-    writes.
+    A ``Volume`` is content-addressable lineage on top of an object-store
+    bucket. The bucket holds the data chunks; the index (a SQLite DB) holds
+    the entire namespace. Cloning the index produces an independent fork that
+    initially sees the same file tree and shares chunk objects but diverges
+    as either side writes.
     """
 
     name: str
@@ -78,8 +79,9 @@ class Volume(BaseModel):
 
     @classmethod
     def empty(cls, name: str, bucket: str, *, storage: str = "s3") -> "Volume":
-        """Declare a brand-new volume. The first ``mount()`` call will run
-        ``juicefs format`` to bootstrap the namespace.
+        """Declare a brand-new volume. The first ``mount()`` call will
+        bootstrap the namespace (the underlying client refuses to format
+        over a non-empty bucket prefix).
         """
         return cls(name=name, bucket=bucket, storage=storage, index=None, parent=None)
 
@@ -91,7 +93,8 @@ class Volume(BaseModel):
         cache_dir: str = _DEFAULT_CACHE_DIR,
         timeout: float = 120.0,
     ) -> None:
-        """Format (if fresh) and mount JuiceFS at ``mount_path`` in this process.
+        """Format (if fresh) and mount the volume at ``mount_path`` in this
+        process.
 
         Call once near the top of a task body before reading or writing under
         ``mount_path``.
@@ -106,8 +109,8 @@ class Volume(BaseModel):
             _logger.info("[Volume.mount] downloading index %s", self.index.path)
             await self.index.download(str(db_path))
         elif db_path.exists():
-            # Stale .db from an earlier mount in the same pod (shouldn't happen
-            # in practice; tasks get fresh pods).
+            # Stale index from an earlier mount in the same pod (shouldn't
+            # happen in practice; tasks get fresh pods).
             db_path.unlink()
 
         meta_url = f"sqlite3://{db_path}"
@@ -119,13 +122,13 @@ class Volume(BaseModel):
             )
             await asyncio.to_thread(
                 _run_check,
-                ["juicefs", "format", "--storage", self.storage, "--bucket", self.bucket,
+                [_CLIENT_BINARY, "format", "--storage", self.storage, "--bucket", self.bucket,
                  meta_url, self.name],
             )
 
         _logger.info("[Volume.mount] mounting at %s", mount_path)
-        proc = subprocess.Popen(
-            ["juicefs", "mount", "--cache-dir", cache_dir, meta_url, mount_path],
+        proc = subprocess.Popen(  # noqa: ASYNC220 - long-lived daemon held in a class-level dict
+            [_CLIENT_BINARY, "mount", "--cache-dir", cache_dir, meta_url, mount_path],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             start_new_session=True,
@@ -136,14 +139,14 @@ class Volume(BaseModel):
         while True:
             if proc.poll() is not None:
                 out = (proc.stdout.read().decode(errors="replace") if proc.stdout else "")
-                raise RuntimeError(f"juicefs mount exited prematurely (rc={proc.returncode}): {out}")
+                raise RuntimeError(f"volume client exited prematurely (rc={proc.returncode}): {out}")
             if _is_fuse_mount(mount_path):
                 break
             if asyncio.get_event_loop().time() >= deadline:
-                raise TimeoutError(f"juicefs mount did not become a mountpoint within {timeout}s")
+                raise TimeoutError(f"mount at {mount_path} did not become a FUSE mountpoint within {timeout}s")
             await asyncio.sleep(0.5)
 
-        _logger.info("[Volume.mount] /%s is now a FUSE mount", mount_path)
+        _logger.info("[Volume.mount] %s is now a FUSE mount", mount_path)
 
     async def commit(
         self,
@@ -152,35 +155,31 @@ class Volume(BaseModel):
         meta_dir: str = _DEFAULT_META_DIR,
         timeout: float = 60.0,
     ) -> "Volume":
-        """Flush, unmount, then upload the updated SQLite index as a Flyte
-        ``File`` and return a new ``Volume`` whose ``parent`` points at the
-        previous index.
+        """Flush, unmount, then upload the updated index as a Flyte ``File``
+        and return a new ``Volume`` whose ``parent`` points at the previous
+        index.
         """
-        # Flush page cache so any unfsync'd writes hit JuiceFS first.
+        # Flush page cache so any unfsync'd writes hit the filesystem first.
         await asyncio.to_thread(os.sync)
 
         meta = Path(meta_dir)
         db_path = meta / _INDEX_FILENAME
 
-        # Tell the daemon to flush and exit cleanly.
-        _logger.info("[Volume.commit] juicefs umount %s", mount_path)
-        await asyncio.to_thread(_run_check, ["juicefs", "umount", mount_path])
+        # Tell the client to flush and exit cleanly.
+        _logger.info("[Volume.commit] unmounting %s", mount_path)
+        await asyncio.to_thread(_run_check, [_CLIENT_BINARY, "umount", mount_path])
 
         proc = type(self)._live_procs.pop(mount_path, None)
         if proc is not None:
             try:
                 await asyncio.to_thread(proc.wait, timeout)
             except subprocess.TimeoutExpired:
-                _logger.warning("[Volume.commit] juicefs daemon didn't exit in %ss; killing", timeout)
+                _logger.warning("[Volume.commit] client didn't exit in %ss; killing", timeout)
                 proc.kill()
                 await asyncio.to_thread(proc.wait, 5)
 
         # Force WAL pages back into the main .db before uploading.
         await asyncio.to_thread(_wal_checkpoint, str(db_path))
-
-        # Diagnostic: confirm metadata actually persisted.
-        inspect = await asyncio.to_thread(_inspect_jfs, str(db_path))
-        _logger.info("[Volume.commit] post-umount jfs counts: %s", inspect)
 
         new_index = await File.from_local(str(db_path))
         return Volume(
@@ -200,8 +199,8 @@ class Volume(BaseModel):
         """Snapshot the current live index via SQLite's online backup API and
         return a new ``Volume`` that points at the snapshot.
 
-        Both the original and the fork reference the same bucket. JuiceFS chunk
-        keys are derived from inode IDs, which diverge from the fork point, so
+        Both the original and the fork reference the same bucket. Chunk keys
+        are derived from inode IDs, which diverge from the fork point, so
         concurrent writes do not collide. Reads after the fork are namespace-
         isolated: writes from one side are invisible to the other.
         """
@@ -213,7 +212,7 @@ class Volume(BaseModel):
         await asyncio.to_thread(_wal_checkpoint, str(src))
 
         def _backup() -> str:
-            tmp = tempfile.NamedTemporaryFile(prefix="jfs-fork-", suffix=".db", delete=False)
+            tmp = tempfile.NamedTemporaryFile(prefix="vol-fork-", suffix=".db", delete=False)
             tmp.close()
             with sqlite3.connect(str(src)) as live, sqlite3.connect(tmp.name) as dst:
                 live.backup(dst)
@@ -238,7 +237,7 @@ class Volume(BaseModel):
 
 
 def _run_check(cmd: list) -> None:
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if result.returncode != 0:
         raise RuntimeError(
             f"command failed (rc={result.returncode}): {' '.join(cmd)}\n"
@@ -247,11 +246,11 @@ def _run_check(cmd: list) -> None:
 
 
 def _is_fuse_mount(path: str) -> bool:
-    """True if *path* is a JuiceFS FUSE mount (not just any mountpoint).
+    """True if *path* is a FUSE mount (not just any mountpoint).
 
     The emptyDir Kubernetes injects at the mount path is itself a bind-mount,
-    so a plain "is this a mountpoint?" check would return True before juicefs
-    has had a chance to overlay its FUSE filesystem.
+    so a plain "is this a mountpoint?" check would return True before the
+    volume client has had a chance to overlay its FUSE filesystem.
     """
     try:
         with open("/proc/self/mountinfo") as f:
@@ -285,41 +284,18 @@ def _wal_checkpoint(db_path: str) -> None:
         pass
 
 
-def _inspect_jfs(db_path: str) -> str:
-    """One-line summary of jfs_* table row counts."""
-    try:
-        conn = sqlite3.connect(db_path)
-        try:
-            rows = conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' "
-                "AND name LIKE 'jfs_%' ORDER BY name"
-            ).fetchall()
-            counts = []
-            for (t,) in rows:
-                try:
-                    n = conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
-                    counts.append(f"{t}={n}")
-                except sqlite3.Error as e:
-                    counts.append(f"{t}=err({e})")
-            return " ".join(counts) or "<no jfs_ tables>"
-        finally:
-            conn.close()
-    except sqlite3.Error as e:
-        return f"<sqlite error: {e}>"
-
-
-def juicefs_image(
+def volume_image(
     base: "object" = None,
     *,
-    version: str = _DEFAULT_JUICEFS_VERSION,
+    version: str = _CLIENT_VERSION,
     architecture: str = "amd64",
 ):
-    """Layer the JuiceFS CLI and the ``fuse`` userspace tools onto ``base`` (a
-    :class:`flyte.Image`). Returns a new :class:`flyte.Image`.
+    """Layer the volume client and the ``fuse`` userspace tools onto ``base``
+    (a :class:`flyte.Image`). Returns a new :class:`flyte.Image`.
 
-    The primary container needs the ``juicefs`` binary and the ``fusermount``
-    helper because :class:`Volume` mounts JuiceFS in-process rather than via a
-    sidecar.
+    The primary container needs the volume client binary and the
+    ``fusermount`` helper because :class:`Volume` mounts in-process rather
+    than via a sidecar.
     """
     if base is None:
         import flyte
@@ -332,14 +308,14 @@ def juicefs_image(
     )
     install_cmd = (
         f"set -e; "
-        f"curl -fsSL -o /tmp/juicefs.tar.gz {url}; "
-        f"tar -xzf /tmp/juicefs.tar.gz -C /tmp juicefs; "
-        f"install -m 0755 /tmp/juicefs /usr/local/bin/juicefs; "
-        f"rm /tmp/juicefs.tar.gz /tmp/juicefs; "
+        f"curl -fsSL -o /tmp/client.tar.gz {url}; "
+        f"tar -xzf /tmp/client.tar.gz -C /tmp {_CLIENT_BINARY}; "
+        f"install -m 0755 /tmp/{_CLIENT_BINARY} /usr/local/bin/{_CLIENT_BINARY}; "
+        f"rm /tmp/client.tar.gz /tmp/{_CLIENT_BINARY}; "
         # fusermount looks up /etc/mtab on umount; provide a symlink to
         # /proc/mounts so unmounts don't ENOENT.
         f"ln -sf /proc/mounts /etc/mtab; "
-        f"juicefs version"
+        f"{_CLIENT_BINARY} version"
     )
     return (
         base.with_apt_packages("ca-certificates", "curl", "fuse")
@@ -347,26 +323,26 @@ def juicefs_image(
     )
 
 
-def juicefs_pod_template(
+def volume_pod_template(
     *,
     mount_path: str = _DEFAULT_MOUNT_PATH,
     meta_dir: str = _DEFAULT_META_DIR,
     cache_dir: str = _DEFAULT_CACHE_DIR,
     primary_container_name: str = "primary",
 ) -> PodTemplate:
-    """Build a :class:`flyte.PodTemplate` that lets the primary container mount
-    JuiceFS in-process.
+    """Build a :class:`flyte.PodTemplate` that lets the primary container
+    mount a :class:`Volume` in-process.
 
     The returned template:
 
-    * adds ``emptyDir`` volumes for ``/var/jfs`` (metadata), ``/var/cache/juicefs``
-      (chunk cache), and ``/workspace`` (mount point);
+    * adds ``emptyDir`` volumes for the metadata directory, the chunk cache,
+      and the mount point;
     * adds a ``hostPath`` volume for ``/dev/fuse``;
-    * makes the primary container privileged with ``CAP_SYS_ADMIN`` so it can
-      perform the FUSE mount itself.
+    * makes the primary container privileged with ``CAP_SYS_ADMIN`` so it
+      can perform the FUSE mount itself.
 
-    The volume's identity (bucket, fs name, storage backend) is *not* baked
-    into the template — it is carried by the ``Volume`` input at runtime.
+    The volume's identity (bucket, name, storage backend) is *not* baked into
+    the template — it is carried by the ``Volume`` input at runtime.
     """
     from kubernetes.client import (
         V1Capabilities,
@@ -386,9 +362,9 @@ def juicefs_pod_template(
             capabilities=V1Capabilities(add=["SYS_ADMIN"]),
         ),
         volume_mounts=[
-            V1VolumeMount(name="juicefs-meta", mount_path=meta_dir),
-            V1VolumeMount(name="juicefs-cache", mount_path=cache_dir),
-            V1VolumeMount(name="juicefs-workspace", mount_path=mount_path),
+            V1VolumeMount(name="vol-meta", mount_path=meta_dir),
+            V1VolumeMount(name="vol-cache", mount_path=cache_dir),
+            V1VolumeMount(name="vol-workspace", mount_path=mount_path),
             V1VolumeMount(name="fuse-device", mount_path="/dev/fuse"),
         ],
     )
@@ -396,9 +372,9 @@ def juicefs_pod_template(
     pod_spec = V1PodSpec(
         containers=[primary],
         volumes=[
-            V1Volume(name="juicefs-meta", empty_dir=V1EmptyDirVolumeSource()),
-            V1Volume(name="juicefs-cache", empty_dir=V1EmptyDirVolumeSource()),
-            V1Volume(name="juicefs-workspace", empty_dir=V1EmptyDirVolumeSource()),
+            V1Volume(name="vol-meta", empty_dir=V1EmptyDirVolumeSource()),
+            V1Volume(name="vol-cache", empty_dir=V1EmptyDirVolumeSource()),
+            V1Volume(name="vol-workspace", empty_dir=V1EmptyDirVolumeSource()),
             V1Volume(
                 name="fuse-device",
                 host_path=V1HostPathVolumeSource(path="/dev/fuse", type="CharDevice"),
@@ -409,6 +385,4 @@ def juicefs_pod_template(
     return PodTemplate(pod_spec=pod_spec, primary_container_name=primary_container_name)
 
 
-# Backstop for unused-import warnings on `shutil` (kept for future use).
-_ = shutil
-__all__ = ["Volume", "juicefs_image", "juicefs_pod_template"]
+__all__ = ["Volume", "volume_image", "volume_pod_template"]
