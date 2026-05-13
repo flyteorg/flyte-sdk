@@ -1,5 +1,9 @@
 """flyteplugins.bio — curated bioinformatics CLI wrappers for Flyte.
 
+This package is still experimental and is not ready for general use or
+publication yet. Expect API and packaging changes while the plugin surface
+is still being shaped.
+
 See submodules:
 
 - :mod:`flyteplugins.bio.bedtools` — bedtools genome arithmetic

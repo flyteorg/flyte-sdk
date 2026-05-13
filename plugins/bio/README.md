@@ -2,6 +2,11 @@
 
 Curated bioinformatics CLI tool wrappers for Flyte.
 
+> [!WARNING]
+> This plugin is still experimental and is not ready for general use or
+> publication yet. The APIs, module layout, and packaging details may still
+> change.
+
 A collection of typed Flyte tasks for popular bioinformatics tools — bedtools,
 samtools, bcftools, GATK, Picard, BWA, STAR, salmon, kallisto, and friends —
 each shipped via its official image. Built on `flyte.extras.shell`.
@@ -50,5 +55,5 @@ async def pipeline(annotation: File, peaks: list[File]) -> list[File]:
 
 More tools are added as needed. Contributions following the same pattern (one
 file per tool family, sharing one biocontainer image, exposing a module-level
-`env`) are welcome. The package-level `flyteplugins.bio.env` is intended to
-grow alongside them.
+`env`) are welcome once the plugin is ready to stabilize. The package-level
+`flyteplugins.bio.env` is intended to grow alongside them.
