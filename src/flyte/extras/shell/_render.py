@@ -5,7 +5,7 @@ import re
 import shlex
 from typing import Any, Tuple
 
-from ._types import FlagSpec, Stderr, Stdout, _classify_input
+from ._types import FlagSpec, Stderr, Stdout, _classify_input, _is_optional
 
 _PLACEHOLDER_RE = re.compile(r"\{(inputs|flags|outputs)\.([a-zA-Z_][a-zA-Z0-9_]*)\}")
 _DICT_SEP = "\x1e"
@@ -20,6 +20,7 @@ def _render_command(
     output_data_dir: pathlib.Path,
 ) -> Tuple[str, list[str]]:
     kinds = {name: _classify_input(name, tp) for name, tp in inputs.items()}
+    optionals = {name: _is_optional(tp)[0] for name, tp in inputs.items()}
 
     preamble_lines: list[str] = []
     positional_templates: list[str] = []
@@ -33,14 +34,18 @@ def _render_command(
 
         idx = len(positional_templates) + 1
         positional_templates.append(f"{{{{.inputs.{name}}}}}")
-        var = f"_VAL_{name.upper()}"
-        preamble_lines.append(f'{var}="${idx}"')
+        var = f"_VAL_{name}"
+        # Brace the positional index: bash parses `$10` as `$1` + `"0"`,
+        # so any task with 10+ scalar/bool inputs would silently bind
+        # later variables to the wrong values. `${10}` is the only form
+        # that works for indices ≥ 10.
+        preamble_lines.append(f'{var}="${{{idx}}}"')
         slot_var_for[name] = var
         return var
 
     def ensure_dict_decoded(name: str) -> str:
         val_var = alloc_slot(name)
-        arr_var = f"_ARR_{name.upper()}"
+        arr_var = f"_ARR_{name}"
 
         if name not in dict_decoded:
             dict_decoded.add(name)
@@ -77,7 +82,7 @@ def _render_command(
 
         kind = kinds[name]
         spec = flag_specs[name]
-        flag_var = f"_FLAG_{name.upper()}"
+        flag_var = f"_FLAG_{name}"
 
         if name not in flag_emitted:
             flag_emitted.add(name)
@@ -90,6 +95,7 @@ def _render_command(
                     alloc_slot,
                     ensure_dict_decoded,
                     input_data_dir,
+                    is_optional=optionals[name],
                 )
             )
         if kind in ("list_file", "dict_str"):
@@ -139,6 +145,7 @@ def _emit_flag_setter(
     alloc_slot,
     ensure_dict_decoded,
     input_data_dir: pathlib.Path,
+    is_optional: bool = False,
 ) -> str:
     flag = spec.flag
     sep = spec.separator
@@ -155,6 +162,12 @@ def _emit_flag_setter(
         )
     if kind in ("file", "dir"):
         path = input_data_dir / name
+        if is_optional:
+            return (
+                f"if [ -e {shlex.quote(str(path))} ]; then "
+                f"{flag_var}={shlex.quote(flag + sep + str(path))}; "
+                f'else {flag_var}=""; fi'
+            )
         return f"{flag_var}={shlex.quote(flag + sep + str(path))}"
     if kind == "list_file":
         dirpath = input_data_dir / name

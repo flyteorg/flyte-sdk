@@ -224,21 +224,21 @@ class TestRenderCommand:
         # with single quotes / tabs / specials survive without escaping.
         body, positional = _render_full("echo {inputs.x}", {"x": int})
         assert positional == ["{{.inputs.x}}"]
-        # The body binds positional $1 to _VAL_X and references it quoted.
-        assert '_VAL_X="$1"' in body
-        assert '"${_VAL_X}"' in body
+        # The body binds positional $1 to _VAL_x and references it quoted.
+        assert '_VAL_x="${1}"' in body
+        assert '"${_VAL_x}"' in body
         # No propeller template appears inside the body string itself.
         assert "{{.inputs.x}}" not in body
 
     def test_scalar_referenced_as_quoted_token(self):
         body, _ = _render_full("echo {inputs.s}", {"s": str})
         # Reference is quoted so spaces / tabs in the value stay one bash token.
-        assert '"${_VAL_S}"' in body
+        assert '"${_VAL_s}"' in body
 
     def test_bool_flag_renders_conditional(self):
         out = _render("foo {flags.wa}", {"wa": bool})
         assert "if [" in out
-        assert "_FLAG_WA" in out
+        assert "_FLAG_wa" in out
         assert "-wa" in out
 
     def test_flag_alias_overrides_default(self):
@@ -309,6 +309,52 @@ class TestRenderCommand:
         # Repeat mode uses a bash for-loop.
         assert "for _f" in out
         assert "-I" in out
+
+    # ---- optional File / Dir flags emit conditionally ----
+
+    def test_required_file_flag_unconditional(self):
+        # Non-optional File flag is hardcoded — the caller is contractually
+        # required to supply it, so no runtime existence check is needed.
+        out = _render("tool {flags.ref}", {"ref": File})
+        assert "_FLAG_ref=" in out
+        assert "/var/inputs/ref" in out
+        # No conditional guarding the assignment.
+        assert "if [ -e " not in out
+
+    def test_optional_file_flag_guarded(self):
+        # Optional File flag must be guarded — if the caller didn't supply
+        # the file, /var/inputs/<name> won't exist and the tool would fail
+        # trying to open it.
+        out = _render("tool {flags.sites}", {"sites": File | None})
+        assert "if [ -e /var/inputs/sites ]" in out
+        assert "_FLAG_sites=-sites /var/inputs/sites" in out or "_FLAG_sites='-sites /var/inputs/sites'" in out
+        assert '_FLAG_sites=""' in out  # else branch
+
+    def test_optional_dir_flag_guarded(self):
+        # Same conditional emission for optional Dir flags.
+        out = _render("tool {flags.cache}", {"cache": Dir | None})
+        assert "if [ -e /var/inputs/cache ]" in out
+        assert '_FLAG_cache=""' in out
+
+    def test_required_dir_flag_unconditional(self):
+        out = _render("tool {flags.workdir}", {"workdir": Dir})
+        assert "/var/inputs/workdir" in out
+        assert "if [ -e " not in out
+
+    def test_positional_index_braced_for_two_digit_indices(self):
+        # Regression: bash parses `$10` as `$1` followed by literal `"0"`,
+        # silently binding 10+-indexed inputs to the wrong values. Indices
+        # must always be braced as `${10}` for correctness, regardless of
+        # whether they happen to be single-digit.
+        inputs = {f"x{i}": str for i in range(15)}
+        out = _render(" ".join(f"{{inputs.{n}}}" for n in inputs), inputs)
+        # Index 1 — must still work (the fix uses braces uniformly).
+        assert '_VAL_x0="${1}"' in out
+        # Index 10 — this is where the bug bit. Must be braced.
+        assert '_VAL_x9="${10}"' in out
+        # And the bare two-digit form must NOT appear anywhere.
+        assert '"$10"' not in out
+        assert '"$15"' not in out
 
 
 # ---------------------------------------------------------------------------
@@ -547,6 +593,46 @@ class TestCreate:
                 flag_aliases={"missing": "-m"},
             )
 
+    # ---- case-preserving helper names ----
+
+    def test_case_distinct_inputs_are_allowed(self):
+        shell.create(
+            name="ok_case",
+            image="alpine:3.18",
+            inputs={"c": bool, "C": bool},
+            outputs={"o": File},
+            script="true",
+        )
+
+    def test_mixed_case_distinct_inputs_are_allowed(self):
+        shell.create(
+            name="ok_mixed_case",
+            image="alpine:3.18",
+            inputs={"my_flag": bool, "My_Flag": bool},
+            outputs={"o": File},
+            script="true",
+        )
+
+    def test_helper_names_preserve_input_case(self):
+        body = shell.create(
+            name="case_helpers",
+            image="alpine:3.18",
+            inputs={"c": bool, "C": bool},
+            outputs={"o": File},
+            script="tool {flags.c} {flags.C} > {outputs.o}",
+        )._build_command()[2]
+        assert "_FLAG_c" in body
+        assert "_FLAG_C" in body
+
+    def test_distinct_case_sensitive_names_still_validate(self):
+        shell.create(
+            name="ok",
+            image="alpine:3.18",
+            inputs={"a": bool, "b": bool, "ab": bool},
+            outputs={"o": File},
+            script="true",
+        )
+
     def test_full_bedtools_shape_validates(self):
         # End-to-end create() with the full bedtools example shape — no exec.
         task = shell.create(
@@ -577,9 +663,9 @@ class TestCreate:
         body = cmd[2]
         assert "/var/inputs/a" in body
         assert "/var/inputs/b/*" in body
-        assert "_FLAG_WA" in body
-        assert "_FLAG_LOJ" in body
-        assert "_FLAG_NAMES" in body
+        assert "_FLAG_wa" in body
+        assert "_FLAG_loj" in body
+        assert "_FLAG_names" in body
         assert "/var/outputs/_returncode" in body
 
     def test_debug_mode_emits_script_dump(self):
@@ -594,7 +680,7 @@ class TestCreate:
         body = task._build_command()[2]
         assert "rendered script" in body
         assert "cat <<'_EOF_' >&2" in body
-        assert '( echo "${_VAL_X}" > /var/outputs/o' not in body
+        assert '( echo "${_VAL_x}" > /var/outputs/o' not in body
 
     def test_debug_mode_dump_flows_through_declared_stderr(self):
         task = shell.create(
@@ -700,9 +786,9 @@ class TestDictInput:
         body, positional = _render_full("tool {inputs.opts}", {"opts": dict[str, str]})
         # Dict gets a positional slot, then a decode preamble allocates an array.
         assert positional == ["{{.inputs.opts}}"]
-        assert "_ARR_OPTS=" in body
+        assert "_ARR_opts=" in body
         assert "IFS=" in body
-        assert '"${_ARR_OPTS[@]}"' in body
+        assert '"${_ARR_opts[@]}"' in body
 
     def test_flags_pairs_mode_default(self):
         body, _ = _render_full(
@@ -710,8 +796,8 @@ class TestDictInput:
             {"opts": dict[str, str]},
         )
         # Default mode is pairs — keys/values become separate argv tokens.
-        assert "_FLAG_OPTS=" in body
-        assert '"${_FLAG_OPTS[@]}"' in body
+        assert "_FLAG_opts=" in body
+        assert '"${_FLAG_opts[@]}"' in body
 
     def test_flags_equals_mode(self):
         body, _ = _render_full(
@@ -779,6 +865,178 @@ class TestPrepareKwargs:
 
 
 # ---------------------------------------------------------------------------
+# Defaults — four-cell matrix of {required, optional} x {has default, none}
+# ---------------------------------------------------------------------------
+
+
+class TestDefaults:
+    def _task(self, inputs, defaults=None):
+        return shell.create(
+            name="t",
+            image="alpine:3.18",
+            inputs=inputs,
+            outputs={"o": File},
+            script="true",
+            defaults=defaults,
+        )
+
+    # ---- four-cell matrix ----
+
+    def test_required_no_default_missing_raises(self):
+        task = self._task({"wa": bool})
+        with pytest.raises(TypeError, match="Missing required input: 'wa'"):
+            asyncio.run(task._prepare_kwargs({}))
+
+    def test_required_with_default_uses_default(self):
+        task = self._task({"wa": bool}, defaults={"wa": False})
+        result = asyncio.run(task._prepare_kwargs({}))
+        # Non-optional bool flows as the native Python bool — ContainerTask
+        # lower-cases it to the bash "false" string at template-render time.
+        assert result["wa"] is False
+
+    def test_optional_no_default_missing_empty_string(self):
+        task = self._task({"wa": bool | None})
+        result = asyncio.run(task._prepare_kwargs({}))
+        assert result["wa"] == ""
+
+    def test_optional_with_default_uses_default(self):
+        task = self._task({"wa": bool | None}, defaults={"wa": True})
+        result = asyncio.run(task._prepare_kwargs({}))
+        # Optional scalars/bools are wired as str — defaults flow through
+        # the same conversion path as caller-supplied values.
+        assert result["wa"] == "true"
+
+    # ---- caller-supplied value always wins ----
+
+    def test_caller_value_overrides_default(self):
+        task = self._task({"threads": int}, defaults={"threads": 4})
+        result = asyncio.run(task._prepare_kwargs({"threads": 8}))
+        assert result["threads"] == 8
+
+    def test_caller_none_overrides_default_for_optional(self):
+        # Explicit None from caller must win even when a default exists —
+        # otherwise there's no way to opt out of an emitted flag.
+        task = self._task({"threads": int | None}, defaults={"threads": 4})
+        result = asyncio.run(task._prepare_kwargs({"threads": None}))
+        assert result["threads"] == ""
+
+    # ---- default values for various kinds ----
+
+    def test_default_for_optional_int(self):
+        task = self._task({"n": int | None}, defaults={"n": 42})
+        result = asyncio.run(task._prepare_kwargs({}))
+        assert result["n"] == "42"
+
+    def test_default_for_optional_float(self):
+        task = self._task({"f": float | None}, defaults={"f": 0.5})
+        result = asyncio.run(task._prepare_kwargs({}))
+        assert result["f"] == "0.5"
+
+    def test_default_for_optional_str(self):
+        task = self._task({"s": str | None}, defaults={"s": "hello"})
+        result = asyncio.run(task._prepare_kwargs({}))
+        assert result["s"] == "hello"
+
+    def test_default_for_optional_dict(self):
+        task = self._task({"opts": dict[str, str] | None}, defaults={"opts": {"-k": "v"}})
+        result = asyncio.run(task._prepare_kwargs({}))
+        # Dict defaults flow through the record-separator packing path.
+        assert result["opts"].split(_DICT_SEP) == ["-k", "v"]
+
+    def test_default_for_optional_file(self):
+        f = File(path="/tmp/example.txt")
+        task = self._task({"src": File | None}, defaults={"src": f})
+        result = asyncio.run(task._prepare_kwargs({}))
+        assert result["src"] is f
+
+    def test_default_for_optional_dir(self):
+        d = Dir(path="/tmp/example_dir")
+        task = self._task({"src": Dir | None}, defaults={"src": d})
+        result = asyncio.run(task._prepare_kwargs({}))
+        assert result["src"] is d
+
+    def test_default_for_optional_list_of_files(self):
+        files = [File(path="/tmp/a.txt"), File(path="/tmp/b.txt")]
+        task = self._task({"parts": list[File] | None}, defaults={"parts": files})
+        result = asyncio.run(task._prepare_kwargs({}))
+        assert result["parts"] == files
+
+    # ---- create()-time validation ----
+
+    def test_validate_unknown_key_rejected(self):
+        with pytest.raises(KeyError, match="not declared in inputs"):
+            self._task({"wa": bool}, defaults={"unknown": True})
+
+    def test_validate_none_default_rejected(self):
+        with pytest.raises(ValueError, match="redundant"):
+            self._task({"wa": bool | None}, defaults={"wa": None})
+
+    def test_validate_bool_type_mismatch(self):
+        with pytest.raises(TypeError, match="expected bool"):
+            self._task({"wa": bool}, defaults={"wa": "yes"})
+
+    def test_validate_int_type_mismatch_rejects_bool(self):
+        # bool is a subclass of int — reject it for int defaults to keep
+        # `True` from quietly meaning `1`.
+        with pytest.raises(TypeError, match="expected int"):
+            self._task({"n": int}, defaults={"n": True})
+
+    def test_validate_float_accepts_int(self):
+        # Lenient: int → float coercion is the obvious user intent.
+        task = self._task({"f": float | None}, defaults={"f": 5})
+        result = asyncio.run(task._prepare_kwargs({}))
+        assert result["f"] == "5"
+
+    def test_validate_str_type_mismatch(self):
+        with pytest.raises(TypeError, match="expected str"):
+            self._task({"s": str | None}, defaults={"s": 42})
+
+    def test_validate_dict_type_mismatch(self):
+        with pytest.raises(TypeError, match="expected dict"):
+            self._task({"opts": dict[str, str] | None}, defaults={"opts": "not a dict"})
+
+    def test_validate_dict_non_string_value_rejected(self):
+        with pytest.raises(TypeError, match="string keys and values"):
+            self._task(
+                {"opts": dict[str, str] | None},
+                defaults={"opts": {"k": 42}},  # type: ignore[dict-item]
+            )
+
+    def test_validate_file_type_mismatch(self):
+        with pytest.raises(TypeError, match="expected File"):
+            self._task({"src": File | None}, defaults={"src": "/tmp/example.txt"})
+
+    def test_validate_dir_type_mismatch(self):
+        with pytest.raises(TypeError, match="expected Dir"):
+            self._task({"src": Dir | None}, defaults={"src": "/tmp/example_dir"})
+
+    def test_validate_list_of_files_type_mismatch(self):
+        with pytest.raises(TypeError, match=r"expected list\[File\]"):
+            self._task({"parts": list[File] | None}, defaults={"parts": "not a list"})
+
+    def test_validate_list_of_files_item_type_mismatch(self):
+        with pytest.raises(TypeError, match=r"list\[File\] requires every item to be a File"):
+            self._task(
+                {"parts": list[File] | None},
+                defaults={"parts": [File(path="/tmp/a.txt"), "/tmp/b.txt"]},
+            )
+
+    # ---- no defaults parameter at all (backward compat) ----
+
+    def test_no_defaults_param_is_backward_compatible(self):
+        task = shell.create(
+            name="t",
+            image="alpine:3.18",
+            inputs={"wa": bool | None},
+            outputs={"o": File},
+            script="true",
+        )
+        assert task.defaults == {}
+        result = asyncio.run(task._prepare_kwargs({}))
+        assert result["wa"] == ""
+
+
+# ---------------------------------------------------------------------------
 # Stdout / Stderr collectors
 # ---------------------------------------------------------------------------
 
@@ -816,7 +1074,7 @@ class TestScalarValuesSurviveShellSpecials:
 
     Scalar values go through bash positional args, never through inline shell
     substitution. The body never contains the literal value — only a
-    `"${_VAL_X}"` reference. Propeller substitutes the literal value into the
+    `"${_VAL_x}"` reference. Propeller substitutes the literal value into the
     argv slot at runtime; bash sees it as a verbatim string.
     """
 
@@ -834,8 +1092,8 @@ class TestScalarValuesSurviveShellSpecials:
             {"a": str, "b": int},
         )
         assert positional == ["{{.inputs.a}}", "{{.inputs.b}}"]
-        assert '_VAL_A="$1"' in body
-        assert '_VAL_B="$2"' in body
+        assert '_VAL_a="${1}"' in body
+        assert '_VAL_b="${2}"' in body
 
     def test_same_input_referenced_twice_reuses_slot(self):
         body, positional = _render_full(
@@ -844,7 +1102,7 @@ class TestScalarValuesSurviveShellSpecials:
         )
         # x referenced twice — single positional slot.
         assert positional == ["{{.inputs.x}}"]
-        assert body.count('_VAL_X="$1"') == 1
+        assert body.count('_VAL_x="${1}"') == 1
 
     def test_inputs_and_flags_for_same_var_share_slot(self):
         body, positional = _render_full(
@@ -852,8 +1110,8 @@ class TestScalarValuesSurviveShellSpecials:
             {"f": str},
         )
         assert positional == ["{{.inputs.f}}"]
-        # _VAL_F bound once, used by both the flag setter and the inputs ref.
-        assert body.count('_VAL_F="$1"') == 1
+        # _VAL_f bound once, used by both the flag setter and the inputs ref.
+        assert body.count('_VAL_f="${1}"') == 1
 
 
 class TestBuildCommandArgvLayout:
