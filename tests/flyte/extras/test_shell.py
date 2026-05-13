@@ -13,19 +13,10 @@ import pytest
 
 import flyte
 from flyte.extras import shell
-from flyte.extras.shell import (
-    _DICT_SEP,
-    FlagSpec,
-    Glob,
-    Stderr,
-    Stdout,
-    _classify_input,
-    _is_list_of,
-    _is_optional,
-    _read_process_result,
-    _render_command,
-    _validate_outputs,
-)
+from flyte.extras.shell import FlagSpec, Glob, Stderr, Stdout
+from flyte.extras.shell._render import _DICT_SEP, _render_command
+from flyte.extras.shell._runtime import _read_process_result
+from flyte.extras.shell._types import _classify_input, _is_list_of, _is_optional, _validate_outputs
 from flyte.io import Dir, File
 
 # ---------------------------------------------------------------------------
@@ -1276,6 +1267,24 @@ class TestOutputResolutionErrorDiagnostics:
         assert "stderr" in msg
         # The real reason surfaces in the error.
         assert "head: cannot open" in msg
+
+    def test_nonzero_exit_raises_even_when_outputs_exist(self, tmp_path, flyte_initialized):
+        task = shell.create(
+            name="t",
+            image="debian:12-slim",
+            inputs={},
+            outputs={"count": int},
+            script="true",
+        )
+        ct = task.as_task()
+
+        (tmp_path / "count").write_text("42\n")
+        (tmp_path / "_stdout").write_text("partial stdout\n")
+        (tmp_path / "_stderr").write_text("tool failed after writing output\n")
+        (tmp_path / "_returncode").write_text("1\n")
+
+        with pytest.raises(RuntimeError, match="returncode=1"):
+            asyncio.run(ct._get_output(tmp_path))
 
 
 class TestOptionalScalarWireFormat:

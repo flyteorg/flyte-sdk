@@ -30,10 +30,6 @@ Compared to :class:`flyte.extras.ContainerTask`, this layer adds:
 - when you call the Python shell wrapper (``await my_shell_task(...)``),
   that ``Dir`` is unpacked back into ``list[File]``
 
-So in the Flyte UI or on a directly executed remote shell task, a
-``Glob`` output may appear as a directory, while a surrounding Python
-task that awaits the shell task will see ``list[File]``.
-
 Example::
 
     from flyte.extras.shell import create, Glob
@@ -56,8 +52,7 @@ Example::
 
 from __future__ import annotations
 
-from ._render import _DICT_SEP, _render_command
-from ._runtime import _read_process_result, _Shell, create
+from ._runtime import create
 from ._types import (
     DictMode,
     FlagSpec,
@@ -65,28 +60,16 @@ from ._types import (
     OutputSpec,
     Stderr,
     Stdout,
-    _classify_input,
-    _is_list_of,
-    _is_optional,
-    _validate_outputs,
     listMode,
 )
 
 __all__ = [
-    "_DICT_SEP",
     "DictMode",
     "FlagSpec",
     "Glob",
     "OutputSpec",
     "Stderr",
     "Stdout",
-    "_Shell",
-    "_classify_input",
-    "_is_list_of",
-    "_is_optional",
-    "_read_process_result",
-    "_render_command",
-    "_validate_outputs",
     "create",
     "listMode",
 ]

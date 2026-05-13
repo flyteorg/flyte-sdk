@@ -157,10 +157,10 @@ class ContainerTask(TaskTemplate):
                         "mode": "rw",
                     }
                 else:
-                    # Keep local template rendering aligned with the shell wrapper's
-                    # boolean wire format ("true"/"false"), which is what the bash
-                    # preamble tests against. Remote serialization already uses the
-                    # lowercase string form, so local docker execution needs to match.
+                    # Normalize booleans to lowercase so local template
+                    # substitution matches the string form used by
+                    # container/runtime execution ("true"/"false")
+                    # instead of Python's "True"/"False".
                     rendered = str(input_val).lower() if isinstance(input_val, bool) else str(input_val)
                     command = command.replace(f"{{{{.inputs.{k}}}}}", rendered)
         else:
@@ -313,9 +313,6 @@ class ContainerTask(TaskTemplate):
             run_kwargs["network_mode"] = "none"
 
         if self.local_logs:
-            # Both the rendered command and the container's captured logs are
-            # diagnostic — emit through the flyte logger so log-level config
-            # controls them, instead of unconditional print() to stdout.
             logger.debug(f"Container command for task {self.name!r}: {commands!r}")
 
         container = client.containers.run(uri, command=commands, **run_kwargs)

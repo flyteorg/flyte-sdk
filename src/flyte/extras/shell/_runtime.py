@@ -3,7 +3,7 @@ from __future__ import annotations
 import pathlib
 import shlex
 from dataclasses import dataclass, field
-from typing import Any, Optional, Tuple, Type, Union
+from typing import Any, Tuple, Type, Union
 
 import flyte
 from flyte.extras._container import ContainerTask
@@ -40,17 +40,17 @@ class _Shell:
     debug: bool = False
     input_data_dir: pathlib.Path = pathlib.Path("/var/inputs")
     output_data_dir: pathlib.Path = pathlib.Path("/var/outputs")
-    resources: Optional[flyte.Resources] = None
+    resources: flyte.Resources | None = None
     retries: int = 0
-    timeout: Optional[int] = None
+    timeout: int | None = None
     cache: str = "auto"
     block_network: bool = False
-    env_vars: Optional[dict[str, str]] = None
-    secrets: Optional[list] = None
+    env_vars: dict[str, str] | None = None
+    secrets: list | None = None
     local_logs: bool = True
-    _task: Optional["_ShellContainerTask"] = field(default=None, repr=False, compare=False)
-    _env: Optional["flyte.TaskEnvironment"] = field(default=None, repr=False, compare=False)
-    _resolved_image_uri: Optional[str] = field(default=None, repr=False, compare=False)
+    _task: _ShellContainerTask | None = field(default=None, repr=False, compare=False)
+    _env: flyte.TaskEnvironment | None = field(default=None, repr=False, compare=False)
+    _resolved_image_uri: str | None = field(default=None, repr=False, compare=False)
 
     def _container_inputs(self) -> dict[str, Any]:
         wired: dict[str, Any] = {}
@@ -61,7 +61,7 @@ class _Shell:
             elif is_opt and inner in _SCALAR_TYPES:
                 wired[name] = str
             elif is_opt:
-                wired[name] = Optional[inner]
+                wired[name] = inner | None
             else:
                 wired[name] = inner
         return wired
@@ -259,7 +259,7 @@ class _ShellContainerTask(ContainerTask):
     async def _get_output(self, output_directory: pathlib.Path) -> Tuple[Any, ...]:  # type: ignore[override]
         pr = await _read_process_result(output_directory)
         try:
-            return await super()._get_output(output_directory)
+            output = await super()._get_output(output_directory)
         except (FileNotFoundError, ValueError, OSError) as e:
             raise FileNotFoundError(
                 f"{e}\n\n"
@@ -269,6 +269,17 @@ class _ShellContainerTask(ContainerTask):
                 f"--- stderr ({len(pr.stderr)} bytes) ---\n"
                 f"{_truncate(pr.stderr)}"
             ) from e
+
+        if pr.returncode != 0:
+            raise RuntimeError(
+                f"Script exited with returncode={pr.returncode}.\n"
+                f"--- stdout ({len(pr.stdout)} bytes) ---\n"
+                f"{_truncate(pr.stdout)}"
+                f"--- stderr ({len(pr.stderr)} bytes) ---\n"
+                f"{_truncate(pr.stderr)}"
+            )
+
+        return output
 
 
 def _validate_defaults(defaults: dict[str, Any], inputs: dict[str, Type]) -> dict[str, Any]:
@@ -351,20 +362,20 @@ def create(
     name: str,
     *,
     image: Union[str, flyte.Image],
-    inputs: Optional[dict[str, Type]] = None,
-    outputs: Optional[dict[str, Any]] = None,
+    inputs: dict[str, Type] | None = None,
+    outputs: dict[str, Any] | None = None,
     script: str,
-    flag_aliases: Optional[dict[str, Union[str, Tuple[str, listMode], FlagSpec]]] = None,
-    defaults: Optional[dict[str, Any]] = None,
+    flag_aliases: dict[str, Union[str, Tuple[str, listMode], FlagSpec]] | None = None,
+    defaults: dict[str, Any] | None = None,
     shell: str = "/bin/bash",
     debug: bool = False,
-    resources: Optional[flyte.Resources] = None,
+    resources: flyte.Resources | None = None,
     retries: int = 0,
-    timeout: Optional[int] = None,
+    timeout: int | None = None,
     cache: str = "auto",
     block_network: bool = False,
-    env_vars: Optional[dict[str, str]] = None,
-    secrets: Optional[list] = None,
+    env_vars: dict[str, str] | None = None,
+    secrets: list | None = None,
     local_logs: bool = True,
 ) -> _Shell:
     """Wrap a CLI tool packaged in a container as a Flyte task.

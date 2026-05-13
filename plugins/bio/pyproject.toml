@@ -3,7 +3,7 @@ name = "flyteplugins-bio"
 dynamic = ["version"]
 description = "Curated bioinformatics CLI tool wrappers for flyte (bedtools, samtools, bcftools, GATK, ...)"
 readme = "README.md"
-authors = [{ name = "Flyte Authors" }]
+authors = [{ name = "Kyle Hazen", email = "kyle@union.ai" }]
 requires-python = ">=3.10"
 dependencies = [
     "flyte",
