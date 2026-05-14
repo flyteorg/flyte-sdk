@@ -24,7 +24,7 @@ dependencies = [
     "async-lru>=2.0.5",
     "mashumaro",
     "aiolimiter>=1.2.1",
-    "flyteidl2==2.0.15",
+    "flyteidl2==2.0.16",
     "packaging",
     "sentry-sdk>=2.0",
     "pyOpenSSL>=24.0.0",
@@ -192,7 +192,15 @@ disable_error_code = ["import-untyped"]
 ignore_missing_imports = true
 
 [tool.uv]
-exclude-newer = "5 days"
+# Recency cutoff for external packages (matches the cutoff previously encoded
+# in uv.lock; bump as needed when ecosystem packages publish security fixes).
+exclude-newer = "2026-05-09T22:00:00Z"
+
+# Opt flyteorg packages out of the global recency cutoff so freshly published
+# flyteidl2/flyte_controller_base releases can be picked up immediately.
+[tool.uv.exclude-newer-package]
+flyteidl2 = "2099-01-01T00:00:00Z"
+flyte_controller_base = "2099-01-01T00:00:00Z"
 
 [tool.uv.sources]
 flyte_controller_base = { path = "rs_controller" }
