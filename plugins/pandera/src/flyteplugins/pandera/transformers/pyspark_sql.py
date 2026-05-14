@@ -7,7 +7,7 @@ from typing import Any
 
 import flyte
 import flyte.report
-from flyte._logging import logger
+from flyte import system_logger as logger
 from flyte.extend import lazy_module
 from flyte.types import TypeEngine, TypeTransformerFailedError
 

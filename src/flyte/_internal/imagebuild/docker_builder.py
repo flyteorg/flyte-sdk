@@ -55,6 +55,7 @@ if TYPE_CHECKING:
 _F_IMG_ID = "_F_IMG_ID"
 FLYTE_DOCKER_BUILDER_CACHE_FROM = "FLYTE_DOCKER_BUILDER_CACHE_FROM"
 FLYTE_DOCKER_BUILDER_CACHE_TO = "FLYTE_DOCKER_BUILDER_CACHE_TO"
+FLYTE_DOCKER_BUILDKIT_BUILDER_NAME = "FLYTE_DOCKER_BUILDKIT_BUILDER_NAME"
 
 UV_LOCK_WITHOUT_PROJECT_INSTALL_TEMPLATE = Template("""\
 RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
@@ -176,7 +177,8 @@ ENV PATH="$$PATH:/usr/local/nvidia/bin:/usr/local/cuda/bin" \
 # This gets added on to the end of the dockerfile
 DOCKER_FILE_BASE_FOOTER = Template("""\
 ENV _F_IMG_ID=$F_IMG_ID
-WORKDIR /root
+USER flyte
+WORKDIR /home/flyte
 SHELL ["/bin/bash", "-c"]
 """)
 
@@ -399,7 +401,7 @@ class CopyConfigHandler:
         layer: CopyConfig, context_path: Path, dockerfile: str, docker_ignore_patterns: list[str] = []
     ) -> str:
         dst_path = copy_files_to_context(layer.src, context_path, docker_ignore_patterns)
-        dockerfile += f"\nCOPY {dst_path.relative_to(context_path)} {layer.dst}\n"
+        dockerfile += f"\nCOPY --chown=flyte:flyte {dst_path.relative_to(context_path)} {layer.dst}\n"
         return dockerfile
 
 
@@ -408,7 +410,7 @@ class _CodeBundleHandler:
     async def handle(layer: CodeBundleLayer, context_path: Path, dockerfile: str) -> str:
         assert layer.root_dir is not None
         dst_path = copy_code_bundle_to_context(layer.root_dir, layer.copy_style, context_path)
-        dockerfile += f"\nCOPY {dst_path.relative_to(context_path)} {layer.dst}\n"
+        dockerfile += f"\nCOPY --chown=flyte:flyte {dst_path.relative_to(context_path)} {layer.dst}\n"
         return dockerfile
 
 
@@ -601,19 +603,28 @@ class DockerImageBuilder(ImageBuilder):
         )
         return ImageBuild(uri=uri, remote_run=None)
 
+    @staticmethod
+    async def _resolve_builder_name() -> str:
+        """Return the buildx builder to use, ensuring the default one exists if no override is set."""
+        builder_name = os.getenv(FLYTE_DOCKER_BUILDKIT_BUILDER_NAME)
+        if builder_name:
+            return builder_name
+        await DockerImageBuilder._ensure_buildx_builder()
+        return DockerImageBuilder._builder_name
+
     async def _build_from_dockerfile(self, image: Image, push: bool, wait: bool = True) -> str:
         """
         Build the image from a provided Dockerfile.
         """
         assert image.dockerfile  # for mypy
-        await DockerImageBuilder._ensure_buildx_builder()
+        builder_name = await DockerImageBuilder._resolve_builder_name()
 
         command = [
             "docker",
             "buildx",
             "build",
             "--builder",
-            DockerImageBuilder._builder_name,
+            builder_name,
             "-f",
             str(image.dockerfile),
             "--tag",
@@ -644,13 +655,21 @@ class DockerImageBuilder(ImageBuilder):
     @staticmethod
     async def _ensure_buildx_builder():
         """Ensure there is a docker buildx builder called flyte"""
+        from flyte.errors import ImageBuildError
+
         # Check if buildx is available
         try:
             await run_sync_with_loop(
                 subprocess.run, ["docker", "buildx", "version"], check=True, stdout=subprocess.DEVNULL
             )
+        except FileNotFoundError:
+            raise ImageBuildError(
+                "Docker is not installed or not available in PATH. "
+                "Install Docker (https://docs.docker.com/get-docker/) and ensure it is running, "
+                "or use the remote image builder by setting `image_builder='remote'` on your `flyte.Image`."
+            )
         except subprocess.CalledProcessError:
-            raise RuntimeError("Docker buildx is not available. Make sure BuildKit is installed and enabled.")
+            raise ImageBuildError("Docker buildx is not available. Make sure BuildKit is installed and enabled.")
 
         # List builders
         result = await run_sync_with_loop(
@@ -716,7 +735,7 @@ class DockerImageBuilder(ImageBuilder):
         # For testing, set `push=False` to just build the image locally and not push to
         # registry.
 
-        await DockerImageBuilder._ensure_buildx_builder()
+        builder_name = await DockerImageBuilder._resolve_builder_name()
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             logger.warning(f"Temporary directory: {tmp_dir}")
@@ -744,7 +763,7 @@ class DockerImageBuilder(ImageBuilder):
                 "buildx",
                 "build",
                 "--builder",
-                DockerImageBuilder._builder_name,
+                builder_name,
                 "--tag",
                 f"{image.uri}",
                 "--platform",

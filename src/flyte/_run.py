@@ -79,7 +79,7 @@ async def _get_code_bundle_for_run(name: str) -> CodeBundle | None:
     run = await Run.get.aio(name=name)
     if run:
         run_details = await run.details.aio()
-        spec = run_details.action_details.pb2.resolved_task_spec
+        spec = run_details.action_details.pb2.task
         return extract_code_bundle(spec)
     return None
 
@@ -112,6 +112,7 @@ class _Runner:
         interruptible: bool | None = None,
         log_level: int | None = None,
         log_format: LogFormat = "console",
+        user_log_level: int | None = None,
         reset_root_logger: bool = False,
         disable_run_cache: bool = False,
         queue: Optional[str] = None,
@@ -155,6 +156,7 @@ class _Runner:
         self._interruptible = interruptible
         self._log_level = log_level
         self._log_format = log_format
+        self._user_log_level = user_log_level
         self._reset_root_logger = reset_root_logger
         self._disable_run_cache = disable_run_cache
         self._queue = queue
@@ -317,10 +319,16 @@ class _Runner:
             else:
                 env["LOG_LEVEL"] = str(logger.getEffectiveLevel())
         env["LOG_FORMAT"] = self._log_format
+        if self._user_log_level is not None:
+            env["USER_LOG_LEVEL"] = str(self._user_log_level)
         if self._reset_root_logger:
             env["FLYTE_RESET_ROOT_LOGGER"] = "1"
         if self._debug:
             env["_F_E_VS"] = "1"
+
+        use_rust_controller_env_var = os.getenv("_F_USE_RUST_CONTROLLER")
+        if use_rust_controller_env_var:
+            env["_F_USE_RUST_CONTROLLER"] = use_rust_controller_env_var
 
         # These paths will be appended to sys.path at runtime.
         if cfg.sync_local_sys_paths:
@@ -567,7 +575,8 @@ class _Runner:
         run_name = self._name
         random_id = str(uuid.uuid4())[:6]
 
-        controller = create_controller("remote", endpoint="localhost:8090", insecure=True)
+        # controller = create_controller("remote", endpoint="localhost:8090", insecure=True)
+        controller = create_controller("rust", endpoint="localhost:8090", insecure=True)
         action = ActionID(name=action_name, run_name=run_name, project=project, domain=domain, org=org)
 
         inputs = obj.native_interface.convert_to_kwargs(*args, **kwargs)
@@ -597,7 +606,7 @@ class _Runner:
                 checkpoint_paths=checkpoint_paths,
                 code_bundle=code_bundle,
                 output_path=output_path,
-                version=version or "na",
+                version=version or "na",  # does na not work for rust?
                 raw_data_path=raw_data_path_obj,
                 compiled_image_cache=image_cache,
                 run_base_dir=run_base_dir,
@@ -840,6 +849,7 @@ def with_runcontext(
     interruptible: bool | None = None,
     log_level: int | None = None,
     log_format: LogFormat = "console",
+    user_log_level: int | None = None,
     reset_root_logger: bool = False,
     disable_run_cache: bool = False,
     queue: Optional[str] = None,
@@ -951,6 +961,7 @@ def with_runcontext(
         domain=domain,
         log_level=log_level,
         log_format=log_format,
+        user_log_level=user_log_level,
         reset_root_logger=reset_root_logger,
         disable_run_cache=disable_run_cache,
         queue=queue,

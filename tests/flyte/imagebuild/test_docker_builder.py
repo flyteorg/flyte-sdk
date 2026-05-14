@@ -57,6 +57,24 @@ async def test_doesnt_work_yet():
 
 
 @pytest.mark.asyncio
+async def test_ensure_buildx_builder_raises_image_build_error_when_docker_missing(monkeypatch):
+    """
+    Regression: when docker is not installed/in PATH, `subprocess.run(["docker", ...])`
+    raises `FileNotFoundError`, which previously bubbled up to Sentry as an unhandled
+    SDK crash. The user should instead get an actionable `ImageBuildError` telling
+    them docker isn't installed and pointing at the remote builder fallback.
+    """
+    from flyte.errors import ImageBuildError
+
+    def _raise_filenotfound(*args, **kwargs):
+        raise FileNotFoundError(2, "No such file or directory", "docker")
+
+    with patch("flyte._internal.imagebuild.docker_builder.subprocess.run", side_effect=_raise_filenotfound):
+        with pytest.raises(ImageBuildError, match="Docker is not installed"):
+            await DockerImageBuilder._ensure_buildx_builder()
+
+
+@pytest.mark.asyncio
 @pytest.mark.integration
 async def test_image_with_secrets(monkeypatch):
     monkeypatch.setenv("FLYTE", "test-value")
@@ -812,3 +830,184 @@ async def test_ensure_buildx_builder_recreates_when_network_host_missing():
     assert len(create_cmds) == 1
     assert "--driver-opt" in create_cmds[0]
     assert "network=host" in create_cmds[0]
+
+
+@pytest.mark.asyncio
+async def test_build_image_uses_custom_builder_from_env(monkeypatch):
+    """When FLYTE_DOCKER_BUILDKIT_BUILDER_NAME is set, _build_image should use it and skip _ensure_buildx_builder."""
+    from flyte._internal.imagebuild import docker_builder as db
+
+    monkeypatch.setenv("FLYTE_DOCKER_BUILDKIT_BUILDER_NAME", "my-custom-builder")
+
+    calls = []
+
+    def mock_run(cmd, **kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0)
+
+    ensure_called = False
+
+    async def fake_ensure():
+        nonlocal ensure_called
+        ensure_called = True
+
+    img = Image.from_debian_base(registry="localhost:30000", name="custom_builder_test", install_flyte=False)
+
+    with patch.object(db.DockerImageBuilder, "_ensure_buildx_builder", side_effect=fake_ensure):
+        with patch(
+            "flyte._internal.imagebuild.docker_builder.run_sync_with_loop",
+            side_effect=lambda fn, *a, **kw: fn(*a, **kw),
+        ):
+            with patch("subprocess.run", side_effect=mock_run):
+                await db.DockerImageBuilder()._build_image(img, push=False, dry_run=False)
+
+    assert ensure_called is False
+    build_cmds = [c for c in calls if isinstance(c, list) and "build" in c and "buildx" in c]
+    assert build_cmds, "expected a buildx build command"
+    cmd = build_cmds[0]
+    builder_idx = cmd.index("--builder")
+    assert cmd[builder_idx + 1] == "my-custom-builder"
+
+
+@pytest.mark.asyncio
+async def test_build_image_uses_default_builder_when_env_unset(monkeypatch):
+    # When FLYTE_DOCKER_BUILDKIT_BUILDER_NAME is unset, _build_image should
+    # call _ensure_buildx_builder and use the default name.
+    from flyte._internal.imagebuild import docker_builder as db
+
+    monkeypatch.delenv("FLYTE_DOCKER_BUILDKIT_BUILDER_NAME", raising=False)
+
+    calls = []
+
+    def mock_run(cmd, **kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0)
+
+    ensure_called = False
+
+    async def fake_ensure():
+        nonlocal ensure_called
+        ensure_called = True
+
+    img = Image.from_debian_base(registry="localhost:30000", name="default_builder_test", install_flyte=False)
+
+    with patch.object(db.DockerImageBuilder, "_ensure_buildx_builder", side_effect=fake_ensure):
+        with patch(
+            "flyte._internal.imagebuild.docker_builder.run_sync_with_loop",
+            side_effect=lambda fn, *a, **kw: fn(*a, **kw),
+        ):
+            with patch("subprocess.run", side_effect=mock_run):
+                await db.DockerImageBuilder()._build_image(img, push=False, dry_run=False)
+
+    assert ensure_called is True
+    build_cmds = [c for c in calls if isinstance(c, list) and "build" in c and "buildx" in c]
+    assert build_cmds
+    cmd = build_cmds[0]
+    builder_idx = cmd.index("--builder")
+    assert cmd[builder_idx + 1] == db.DockerImageBuilder._builder_name
+
+
+@pytest.mark.asyncio
+async def test_build_from_dockerfile_uses_custom_builder_from_env(monkeypatch):
+    """_build_from_dockerfile should respect FLYTE_DOCKER_BUILDKIT_BUILDER_NAME and skip ensure when set."""
+    from flyte._internal.imagebuild import docker_builder as db
+
+    monkeypatch.setenv("FLYTE_DOCKER_BUILDKIT_BUILDER_NAME", "my-custom-builder")
+
+    calls = []
+
+    def mock_run(cmd, **kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0)
+
+    ensure_called = False
+
+    async def fake_ensure():
+        nonlocal ensure_called
+        ensure_called = True
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        dockerfile = Path(tmp_dir) / "Dockerfile"
+        dockerfile.write_text("FROM python:3.12\n")
+
+        img = Image.from_dockerfile(file=dockerfile, registry="localhost:30000", name="custom_dockerfile_test")
+
+        with patch.object(db.DockerImageBuilder, "_ensure_buildx_builder", side_effect=fake_ensure):
+            with patch(
+                "flyte._internal.imagebuild.docker_builder.run_sync_with_loop",
+                side_effect=lambda fn, *a, **kw: fn(*a, **kw),
+            ):
+                with patch("subprocess.run", side_effect=mock_run):
+                    await db.DockerImageBuilder()._build_from_dockerfile(img, push=False)
+
+    assert ensure_called is False
+    build_cmds = [c for c in calls if isinstance(c, list) and "build" in c and "buildx" in c]
+    assert build_cmds
+    cmd = build_cmds[0]
+    builder_idx = cmd.index("--builder")
+    assert cmd[builder_idx + 1] == "my-custom-builder"
+
+
+def test_dockerfile_footer_switches_to_flyte_user():
+    """The footer should switch the runtime user to flyte and set the workdir to /home/flyte."""
+    from flyte._internal.imagebuild.docker_builder import DOCKER_FILE_BASE_FOOTER
+
+    rendered = DOCKER_FILE_BASE_FOOTER.substitute(F_IMG_ID="some-image-id")
+
+    assert "USER flyte" in rendered
+    assert "WORKDIR /home/flyte" in rendered
+    assert "ENV _F_IMG_ID=some-image-id" in rendered
+
+
+@pytest.mark.asyncio
+async def test_copy_config_handler_uses_chown_flyte():
+    """CopyConfigHandler should emit COPY --chown=flyte:flyte so the runtime user owns the
+    files added via with_source_file / with_source_folder."""
+    with tempfile.TemporaryDirectory() as tmp_context:
+        context_path = Path(tmp_context)
+
+        with tempfile.TemporaryDirectory() as tmp_src_dir:
+            src_dir = Path(tmp_src_dir)
+            test_file = src_dir / "main.py"
+            test_file.write_text("print('hello')")
+
+            copy_config = CopyConfig(
+                src=test_file,
+                dst="/home/flyte/main.py",
+                path_type=0,
+            )
+
+            result = await CopyConfigHandler.handle(
+                layer=copy_config,
+                context_path=context_path,
+                dockerfile="FROM python:3.12\n",
+                docker_ignore_patterns=[],
+            )
+
+            assert "COPY --chown=flyte:flyte" in result
+            assert "/home/flyte/main.py" in result
+
+
+@pytest.mark.asyncio
+async def test_code_bundle_handler_uses_chown_flyte():
+    """_CodeBundleHandler should emit COPY --chown=flyte:flyte for code bundles baked into the image."""
+    from flyte._image import CodeBundleLayer
+    from flyte._internal.imagebuild.docker_builder import _CodeBundleHandler
+
+    with tempfile.TemporaryDirectory() as tmp_context:
+        context_path = Path(tmp_context)
+
+        with tempfile.TemporaryDirectory() as tmp_src_dir:
+            src_dir = Path(tmp_src_dir)
+            (src_dir / "task.py").write_text("print('task')")
+
+            layer = CodeBundleLayer(copy_style="all", dst="/home/flyte/code", root_dir=src_dir)
+
+            result = await _CodeBundleHandler.handle(
+                layer=layer,
+                context_path=context_path,
+                dockerfile="FROM python:3.12\n",
+            )
+
+            assert "COPY --chown=flyte:flyte" in result
+            assert "/home/flyte/code" in result
