@@ -192,9 +192,7 @@ disable_error_code = ["import-untyped"]
 ignore_missing_imports = true
 
 [tool.uv]
-# Recency cutoff for external packages (matches the cutoff previously encoded
-# in uv.lock; bump as needed when ecosystem packages publish security fixes).
-exclude-newer = "2026-05-09T22:00:00Z"
+exclude-newer = "5 days"
 
 # Opt flyteorg packages out of the global recency cutoff so freshly published
 # flyteidl2/flyte_controller_base releases can be picked up immediately.
