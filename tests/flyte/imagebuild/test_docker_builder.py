@@ -57,6 +57,24 @@ async def test_doesnt_work_yet():
 
 
 @pytest.mark.asyncio
+async def test_ensure_buildx_builder_raises_image_build_error_when_docker_missing(monkeypatch):
+    """
+    Regression: when docker is not installed/in PATH, `subprocess.run(["docker", ...])`
+    raises `FileNotFoundError`, which previously bubbled up to Sentry as an unhandled
+    SDK crash. The user should instead get an actionable `ImageBuildError` telling
+    them docker isn't installed and pointing at the remote builder fallback.
+    """
+    from flyte.errors import ImageBuildError
+
+    def _raise_filenotfound(*args, **kwargs):
+        raise FileNotFoundError(2, "No such file or directory", "docker")
+
+    with patch("flyte._internal.imagebuild.docker_builder.subprocess.run", side_effect=_raise_filenotfound):
+        with pytest.raises(ImageBuildError, match="Docker is not installed"):
+            await DockerImageBuilder._ensure_buildx_builder()
+
+
+@pytest.mark.asyncio
 @pytest.mark.integration
 async def test_image_with_secrets(monkeypatch):
     monkeypatch.setenv("FLYTE", "test-value")

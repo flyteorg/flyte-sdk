@@ -197,12 +197,15 @@ def ls_relative_files(relative_paths: list[str], source_path: pathlib.Path) -> t
                 raise ValueError(f"File {path} is not a valid file, directory, or glob pattern")
 
     all_files.sort()
-    resolved_source = source_path.resolve()
+    abs_source = os.path.abspath(str(source_path))
     for p in all_files:
         _filehash_update(p, hasher)
-        # Resolve before relative_to to normalize any ".." in the path — un-normalized
-        # paths would produce inconsistent hashes across equivalent paths.
-        rel_path = pathlib.Path(p).resolve().relative_to(resolved_source).as_posix()
+        # Normalize ".." components via os.path.relpath without following symlinks.
+        # Using os.path.abspath rather than Path.resolve(): resolve() would follow
+        # symlinks, so a symlink in source pointing outside source (e.g.
+        # .venv/bin/python -> /usr/bin/python3.10) would crash with
+        # "<target> is not in the subpath of <source>".
+        rel_path = pathlib.PurePath(os.path.relpath(os.path.abspath(p), abs_source)).as_posix()
         _pathhash_update(rel_path, hasher)
 
     digest = hasher.hexdigest()

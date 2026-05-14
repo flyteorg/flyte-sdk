@@ -26,6 +26,7 @@ from ._initialize import (
     init_passthrough,
 )
 from ._link import Link
+from ._logging import logger as system_logger
 from ._logging import user_logger as logger
 from ._map import map
 from ._pod import PodTemplate
@@ -104,6 +105,7 @@ __all__ = [
     "run",
     "run_python_script",
     "serve",
+    "system_logger",
     "trace",
     "version",
     "with_runcontext",

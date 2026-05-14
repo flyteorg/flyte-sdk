@@ -5,7 +5,7 @@ from typing import Any, TypeVar
 
 import flyte
 import flyte.report
-from flyte._logging import logger
+from flyte import system_logger as logger
 from flyte.extend import lazy_module
 from flyte.io._dataframe.dataframe import DataFrame as FlyteDataFrame
 from flyte.io._dataframe.dataframe import DataFrameTransformerEngine

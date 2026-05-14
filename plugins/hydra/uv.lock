@@ -434,8 +434,7 @@ wheels = [
 
 [[package]]
 name = "flyte"
-version = "2.1.7"
-source = { registry = "https://pypi.org/simple" }
+source = { editable = "../../" }
 dependencies = [
     { name = "aiofiles" },
     { name = "aiolimiter" },
@@ -457,15 +456,91 @@ dependencies = [
     { name = "pyopenssl" },
     { name = "pyyaml" },
     { name = "rich-click" },
+    { name = "sentry-sdk" },
     { name = "toml" },
 ]
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/7c/83/6b40e896ee6cb7b53a647784e4d5cd8ffcb345cb408d23bc4d1f8ce83bdd/flyte-2.1.7-py3-none-any.whl", hash = "sha256:db80d59eb738c452dd0e699701ae8bf7df9addf89a230141ea58d70873050748", size = 628244, upload-time = "2026-04-14T20:31:42.252Z" },
+
+[package.metadata]
+requires-dist = [
+    { name = "aiofiles", specifier = ">=24.1.0" },
+    { name = "aiolimiter", specifier = ">=1.2.1" },
+    { name = "aiosqlite", marker = "extra == 'aiosqlite'", specifier = ">=0.21.0" },
+    { name = "async-lru", specifier = ">=2.0.5" },
+    { name = "click", specifier = ">=8.2.1" },
+    { name = "cloudpickle", specifier = ">=3.1.1" },
+    { name = "connectrpc", specifier = ">=0.9.0,<1.0.0" },
+    { name = "deltalake", marker = "extra == 'examples-test'" },
+    { name = "docstring-parser", specifier = ">=0.16" },
+    { name = "fastapi", marker = "extra == 'examples-test'" },
+    { name = "flyte-controller-base", marker = "extra == 'rust-controller'", directory = "../../rs_controller" },
+    { name = "flyteidl2", specifier = "==2.0.15" },
+    { name = "fsspec", specifier = ">=2025.3.0" },
+    { name = "grpcio", marker = "extra == 'connector'", specifier = ">=1.71.0" },
+    { name = "grpcio-health-checking", marker = "extra == 'connector'" },
+    { name = "httpx", specifier = ">=0.28.1,<1.0.0" },
+    { name = "httpx", marker = "extra == 'connector'" },
+    { name = "joblib", marker = "extra == 'examples-test'" },
+    { name = "keyring", specifier = ">=25.6.0" },
+    { name = "lightning", marker = "extra == 'examples-test'" },
+    { name = "mashumaro" },
+    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.26.0" },
+    { name = "msgpack", specifier = ">=1.1.0" },
+    { name = "nest-asyncio", marker = "extra == 'examples-test'" },
+    { name = "obstore", specifier = ">=0.7.3" },
+    { name = "packaging" },
+    { name = "pandas", marker = "extra == 'examples-test'" },
+    { name = "polyglot-hello", marker = "extra == 'examples-test'", specifier = ">=0.1.3" },
+    { name = "prometheus-client", marker = "extra == 'connector'" },
+    { name = "protobuf", specifier = ">=6.30.1" },
+    { name = "pyarrow", marker = "extra == 'examples-test'" },
+    { name = "pydantic", specifier = ">=2.10.6" },
+    { name = "pydantic-monty", marker = "extra == 'sandbox'", specifier = "==0.0.17" },
+    { name = "pyopenssl", specifier = ">=24.0.0" },
+    { name = "pyyaml", specifier = ">=6.0.2" },
+    { name = "rich-click", specifier = "==1.8.9" },
+    { name = "scikit-learn", marker = "extra == 'examples-test'" },
+    { name = "sentry-sdk", specifier = ">=2.0" },
+    { name = "starlette", marker = "extra == 'mcp'" },
+    { name = "textual", marker = "extra == 'tui'", specifier = ">=0.80" },
+    { name = "toml", specifier = ">=0.10.2" },
+    { name = "uvicorn", marker = "extra == 'examples-test'" },
+    { name = "uvicorn", marker = "extra == 'mcp'" },
+]
+provides-extras = ["aiosqlite", "connector", "examples-test", "sandbox", "mcp", "tui", "rust-controller"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "build", specifier = ">=1.2.2.post1" },
+    { name = "docstring-parser" },
+    { name = "fastapi", specifier = ">=0.128.0" },
+    { name = "google-cloud-bigquery", specifier = ">=3.31.0" },
+    { name = "ipywidgets", specifier = ">=8.1.7" },
+    { name = "jupyterlab", specifier = ">=4.4.3" },
+    { name = "kubernetes" },
+    { name = "mcp", specifier = ">=1.26.0" },
+    { name = "mock", specifier = ">=5.2.0" },
+    { name = "mypy", specifier = ">=1.16.0" },
+    { name = "orjson" },
+    { name = "pandas" },
+    { name = "pyarrow" },
+    { name = "pydantic-monty", specifier = "==0.0.17" },
+    { name = "pytest", specifier = ">=8.3.5" },
+    { name = "pytest-asyncio", specifier = ">=0.26.0" },
+    { name = "pytest-benchmark", specifier = ">=5.1.0" },
+    { name = "pytest-xdist" },
+    { name = "ruff", specifier = ">=0.11.0" },
+    { name = "setuptools-scm", specifier = ">=8.2.0" },
+    { name = "starlette" },
+    { name = "textual", specifier = ">=0.80" },
+    { name = "types-aiofiles" },
+    { name = "types-pyyaml" },
+    { name = "uvicorn" },
+    { name = "uvicorn", specifier = ">=0.40.0" },
 ]
 
 [[package]]
 name = "flyteidl2"
-version = "2.0.11"
+version = "2.0.15"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "googleapis-common-protos" },
@@ -474,7 +549,7 @@ dependencies = [
     { name = "protovalidate" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f4/79/ed5f10e76669eba5307f4c03fe581aa5336f306791f775a79693b6bdcc8c/flyteidl2-2.0.11-py3-none-any.whl", hash = "sha256:705d5dd5719f7988ccc8fb9c006fabd1b1b5f593360a3a2ccad165dc0e0bf24b", size = 330796, upload-time = "2026-04-03T22:48:22.073Z" },
+    { url = "https://files.pythonhosted.org/packages/e1/2e/f2e2c5fb6f3e4a089501a7c79838e0567f303d02306d1c3522730c4fca6d/flyteidl2-2.0.15-py3-none-any.whl", hash = "sha256:43da4e04e52e04396ff2d44f784fcf6c7358a2956f63c77561689fdf7c6ee9cd", size = 340049, upload-time = "2026-05-07T18:39:19.607Z" },
 ]
 
 [[package]]
@@ -495,7 +570,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "flyte" },
+    { name = "flyte", editable = "../../" },
     { name = "flyteplugins-omegaconf" },
     { name = "hydra-core" },
     { name = "kubernetes" },
@@ -1518,6 +1593,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/1c/03/e834bcd866f2f8a49a85eaff47340affa3bfa391ee9912a952a1faa68c7b/secretstorage-3.5.0.tar.gz", hash = "sha256:f04b8e4689cbce351744d5537bf6b1329c6fc68f91fa666f60a380edddcd11be", size = 19884, upload-time = "2025-11-23T19:02:53.191Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b7/46/f5af3402b579fd5e11573ce652019a67074317e18c1935cc0b4ba9b35552/secretstorage-3.5.0-py3-none-any.whl", hash = "sha256:0ce65888c0725fcb2c5bc0fdb8e5438eece02c523557ea40ce0703c266248137", size = 15554, upload-time = "2025-11-23T19:02:51.545Z" },
+]
+
+[[package]]
+name = "sentry-sdk"
+version = "2.59.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "certifi" },
+    { name = "urllib3" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/65/e0/9bf5e5fc7442b10880f3ec0eff0ef4208b84a099606f343ec4f5445227fb/sentry_sdk-2.59.0.tar.gz", hash = "sha256:cd265808ef8bf3f3edf69b527c0a0b2b6b1322762679e55b8987db2e9584aec1", size = 447331, upload-time = "2026-05-04T12:19:06.538Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/bf/00/b8cc413748fb6383d1582e7cda51314f99743351c462a92dc690d5b5853b/sentry_sdk-2.59.0-py2.py3-none-any.whl", hash = "sha256:abcf65ee9a9d9cdebf9ad369782408ecca9c1c792686ef06ba34f5ab233527fe", size = 468432, upload-time = "2026-05-04T12:19:04.741Z" },
 ]
 
 [[package]]

@@ -141,7 +141,9 @@ class AsyncConnector(ABC):
 
     async def get_logs(self, resource_meta: ResourceMeta, **kwargs) -> GetTaskLogsResponse:
         """
-        Return the metrics for the task.
+        Return the task execution logs. Populate `body.lines` (structured
+        LogLine entries with timestamp + originator) in the returned
+        GetTaskLogsResponse.
         """
         raise NotImplementedError
 
