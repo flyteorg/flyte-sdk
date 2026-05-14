@@ -24,8 +24,8 @@ resolution-markers = [
 exclude-newer = "2026-05-09T22:00:00Z"
 
 [options.exclude-newer-package]
-flyteidl2 = "2099-01-01T23:00:00Z"
-flyte-controller-base = "2099-01-01T23:00:00Z"
+flyteidl2 = "2099-01-01T00:00:00Z"
+flyte-controller-base = "2099-01-01T00:00:00Z"
 
 [[package]]
 name = "aiofiles"
