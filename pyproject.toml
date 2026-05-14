@@ -197,8 +197,8 @@ exclude-newer = "5 days"
 # Opt flyteorg packages out of the global recency cutoff so freshly published
 # flyteidl2/flyte_controller_base releases can be picked up immediately.
 [tool.uv.exclude-newer-package]
-flyteidl2 = "2099-01-01T00:00:00Z"
-flyte_controller_base = "2099-01-01T00:00:00Z"
+flyteidl2 = "0 days"
+flyte_controller_base = "0 days"
 
 [tool.uv.sources]
 flyte_controller_base = { path = "rs_controller" }
