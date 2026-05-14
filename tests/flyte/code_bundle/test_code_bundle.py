@@ -585,6 +585,55 @@ def test_ls_relative_files_dotdot_path_does_not_produce_dotdot_tar_entry():
         assert "sibling/module.py" in member_names
 
 
+def test_create_bundle_skips_symlinks_pointing_outside_source():
+    """
+    Regression: a symlink inside `source` that resolves to a path *outside* `source`
+    (e.g. `.venv/bin/python` -> `/usr/bin/python3.10`) previously crashed
+    `create_bundle` with `ValueError: '/usr/bin/python3.10' is not in the subpath of
+    '<source>'` because the arcname was computed via `Path.resolve().relative_to()`.
+
+    The arcname must reflect the file's position *within* `source`, regardless of where
+    the symlink target lives — `os.path.relpath` gives us that without following links.
+    For symlinks that already fall outside `source` after normalization, we now skip
+    them defensively rather than abort the whole bundle.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        outside = pathlib.Path(tmpdir) / "outside"
+        outside.mkdir()
+        # Target lives outside `source` — simulates /usr/bin/python3.10.
+        outside_target = outside / "python3.10"
+        outside_target.write_text("# fake interpreter")
+
+        source = pathlib.Path(tmpdir) / "source"
+        source.mkdir()
+        (source / "main.py").write_text("print('hello')")
+
+        # The symlink inside source that points outside source — the exact pattern
+        # that crashed Sentry issue FLYTE-SDK-2E.
+        symlink_path = source / "python_bin"
+        try:
+            os.symlink(str(outside_target), str(symlink_path))
+        except (OSError, NotImplementedError):
+            pytest.skip("symlinks not supported on this filesystem")
+
+        output_dir = pathlib.Path(tmpdir) / "output"
+        output_dir.mkdir()
+
+        # Include both the regular file and the dangling-outside symlink.
+        files = [str(source / "main.py"), str(symlink_path)]
+
+        # Previously raised ValueError; should now succeed and include `main.py`
+        # plus the symlink (preserved as a link since deref_symlinks defaults False).
+        archive_path, _, _ = create_bundle(source, output_dir, files, "test_digest")
+
+        with tarfile.open(archive_path, "r:gz") as tar:
+            member_names = tar.getnames()
+
+        assert "main.py" in member_names
+        # The symlink itself is preserved under its source-relative arcname.
+        assert "python_bin" in member_names
+
+
 def test_list_all_files_returns_strings():
     """Test that list_all_files returns string paths (not pathlib.Path objects)."""
     with tempfile.TemporaryDirectory() as tmpdir:

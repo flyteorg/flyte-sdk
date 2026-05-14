@@ -115,6 +115,11 @@ jobs:
           sed -i "s/flyte_controller_base>=2.0.0b0/flyte_controller_base==${VERSION}/" pyproject.toml
           echo "Pinned flyte_controller_base==${VERSION}"
           grep flyte_controller_base pyproject.toml
+          # Editing pyproject.toml above makes the git working tree dirty, which
+          # would cause setuptools_scm to produce a PEP 440 local version like
+          # "2.3.1.dev0+g<sha>.d<date>" that PyPI rejects. Pin the version
+          # explicitly to the release tag so the resulting wheel is uploadable.
+          echo "SETUPTOOLS_SCM_PRETEND_VERSION_FOR_FLYTE=${VERSION}" >> $GITHUB_ENV
       - name: Build and publish
         run: |
           uv run python -m build --wheel --installer uv
@@ -197,6 +202,18 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v6
         id: setup-uv
+      - name: Set version from tag (release only)
+        if: github.event_name == 'release'
+        run: |
+          VERSION=$(echo "$GITHUB_REF" | sed 's|refs/tags/v||')
+          # `uv run` triggers `uv sync`, which may re-resolve and rewrite the
+          # plugin's uv.lock (e.g. for plugins that pull `flyte` from PyPI rather
+          # than via `[tool.uv.sources]`). That dirties the working tree, which
+          # would cause setuptools_scm (root = "../../") to emit a PEP 440 local
+          # version like "2.3.0b1.dev0+g<sha>.d<date>" that PyPI rejects. Pinning
+          # the version explicitly bypasses git inspection entirely.
+          echo "SETUPTOOLS_SCM_PRETEND_VERSION=${VERSION}" >> $GITHUB_ENV
+          echo "Pinned SETUPTOOLS_SCM_PRETEND_VERSION=${VERSION}"
       - name: Install dependencies
         working-directory: ${{ matrix.workdir }}
         run: |
