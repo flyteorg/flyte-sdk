@@ -53,9 +53,21 @@ from flyte.io._file import File
 _DEFAULT_META_DIR = "/var/lib/flyte-volume"
 _DEFAULT_CACHE_DIR = "/var/cache/flyte-volume"
 _DEFAULT_MOUNT_PATH = "/workspace"
-_INDEX_FILENAME = "index.db"
+_SQLITE_INDEX_FILENAME = "index.db"
+_REDIS_INDEX_FILENAME = "dump.rdb"
 _CLIENT_BINARY = "juicefs"  # implementation detail
 _CLIENT_VERSION = "1.1.2"
+_REDIS_PORT = 6379
+
+
+def _index_filename(engine: str) -> str:
+    return _REDIS_INDEX_FILENAME if engine == "redis" else _SQLITE_INDEX_FILENAME
+
+
+def _meta_url(meta_dir: str, engine: str) -> str:
+    if engine == "redis":
+        return f"redis://127.0.0.1:{_REDIS_PORT}/0"
+    return f"sqlite3://{Path(meta_dir) / _SQLITE_INDEX_FILENAME}"
 
 
 class Volume(BaseModel):
@@ -73,11 +85,20 @@ class Volume(BaseModel):
     storage: str = "s3"
     index: Optional[File] = None
     parent: Optional[File] = None
+    # Metadata engine used at runtime. ``None`` resolves to ``"sqlite"`` for
+    # backward compatibility with Volumes serialized before this field existed.
+    # ``Volume.empty()`` sets this to ``"redis"`` on new volumes.
+    metadata_engine: Optional[str] = None
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     # Track active mounts so commit() can wait on the daemon.
     _live_procs: ClassVar[Dict[str, subprocess.Popen]] = {}
+    # Track in-process redis-server daemons, keyed by meta_dir.
+    _live_redis: ClassVar[Dict[str, subprocess.Popen]] = {}
+
+    def _engine(self) -> str:
+        return self.metadata_engine or "sqlite"
 
     @classmethod
     def empty(
@@ -86,6 +107,7 @@ class Volume(BaseModel):
         bucket: Optional[str] = None,
         *,
         storage: str = "s3",
+        metadata_engine: str = "redis",
     ) -> "Volume":
         """Declare a brand-new volume. The first ``mount()`` call will
         bootstrap the namespace (the underlying client refuses to format
@@ -95,10 +117,25 @@ class Volume(BaseModel):
         task context as ``{raw_data_root}/{project}/{domain}/volumes`` —
         following Flyte's own layout for offloaded data. Must be called
         from inside a task in that case.
+
+        ``metadata_engine`` controls the in-pod metadata backend. ``"redis"``
+        (default) runs an in-process ``redis-server`` and persists the
+        namespace as an RDB snapshot — faster than SQLite for metadata-heavy
+        workloads and more compact on disk. ``"sqlite"`` keeps everything
+        on local disk with no extra daemon. The choice is baked into the
+        Volume and travels with it through lineage; subsequent mounts of
+        the same Volume must use the same engine.
         """
         if bucket is None:
             bucket = _default_bucket()
-        return cls(name=name, bucket=bucket, storage=storage, index=None, parent=None)
+        return cls(
+            name=name,
+            bucket=bucket,
+            storage=storage,
+            index=None,
+            parent=None,
+            metadata_engine=metadata_engine,
+        )
 
     async def mount(
         self,
@@ -130,22 +167,27 @@ class Volume(BaseModel):
         delay; the background uploader starts as soon as a chunk is written.
         Has no effect without ``writeback=True``.
         """
+        engine = self._engine()
         meta = Path(meta_dir)
         meta.mkdir(parents=True, exist_ok=True)
         Path(cache_dir).mkdir(parents=True, exist_ok=True)
         Path(mount_path).mkdir(parents=True, exist_ok=True)
 
-        db_path = meta / _INDEX_FILENAME
+        index_path = meta / _index_filename(engine)
         if self.index is not None:
             _logger.info("[Volume.mount] downloading index %s", self.index.path)
-            await self.index.download(str(db_path))
-        elif db_path.exists():
+            await self.index.download(str(index_path))
+        elif index_path.exists():
             # Stale index from an earlier mount in the same pod (shouldn't
             # happen in practice; tasks get fresh pods).
-            db_path.unlink()
+            index_path.unlink()
 
-        meta_url = f"sqlite3://{db_path}"
+        if engine == "redis":
+            # redis-server picks up dump.rdb from the working dir at startup.
+            redis_proc = await _start_redis(meta_dir)
+            type(self)._live_redis[meta_dir] = redis_proc
 
+        meta_url = _meta_url(meta_dir, engine)
         client_bucket = _client_bucket_uri(self.bucket, self.storage)
         if self.index is None:
             _logger.info(
@@ -202,11 +244,12 @@ class Volume(BaseModel):
         and return a new ``Volume`` whose ``parent`` points at the previous
         index.
         """
+        engine = self._engine()
         # Flush page cache so any unfsync'd writes hit the filesystem first.
         await asyncio.to_thread(os.sync)
 
         meta = Path(meta_dir)
-        db_path = meta / _INDEX_FILENAME
+        index_path = meta / _index_filename(engine)
 
         # Tell the client to flush and exit cleanly.
         _logger.info("[Volume.commit] unmounting %s", mount_path)
@@ -221,16 +264,24 @@ class Volume(BaseModel):
                 proc.kill()
                 await asyncio.to_thread(proc.wait, 5)
 
-        # Force WAL pages back into the main .db before uploading.
-        await asyncio.to_thread(_wal_checkpoint, str(db_path))
+        if engine == "redis":
+            # Flush Redis state to dump.rdb, then shut it down. SHUTDOWN
+            # NOSAVE prevents a second redundant save on exit.
+            await asyncio.to_thread(_redis_save)
+            redis_proc = type(self)._live_redis.pop(meta_dir, None)
+            await asyncio.to_thread(_stop_redis, redis_proc, timeout)
+        else:
+            # Force WAL pages back into the main .db before uploading.
+            await asyncio.to_thread(_wal_checkpoint, str(index_path))
 
-        new_index: File = await File.from_local(str(db_path))
+        new_index: File = await File.from_local(str(index_path))
         return Volume(
             name=self.name,
             bucket=self.bucket,
             storage=self.storage,
             index=new_index,
             parent=self.index,
+            metadata_engine=self.metadata_engine,
         )
 
     async def fork(
@@ -239,29 +290,46 @@ class Volume(BaseModel):
         *,
         meta_dir: str = _DEFAULT_META_DIR,
     ) -> "Volume":
-        """Snapshot the current live index via SQLite's online backup API and
-        return a new ``Volume`` that points at the snapshot.
+        """Snapshot the current live index and return a new ``Volume`` that
+        points at the snapshot.
 
         Both the original and the fork reference the same bucket. Chunk keys
         are derived from inode IDs, which diverge from the fork point, so
         concurrent writes do not collide. Reads after the fork are namespace-
         isolated: writes from one side are invisible to the other.
+
+        For SQLite-backed Volumes the snapshot is produced via SQLite's
+        online backup API. For Redis-backed Volumes a synchronous ``SAVE``
+        flushes the live state to ``dump.rdb`` which is then copied.
         """
-        src = Path(meta_dir) / _INDEX_FILENAME
-        if not src.exists():
+        engine = self._engine()
+        src = Path(meta_dir) / _index_filename(engine)
+        if engine == "sqlite" and not src.exists():
             raise RuntimeError(f"Cannot fork: no live index at {src}. Call mount() first.")
 
         await asyncio.to_thread(os.sync)
-        await asyncio.to_thread(_wal_checkpoint, str(src))
 
-        def _backup() -> str:
-            tmp = tempfile.NamedTemporaryFile(prefix="vol-fork-", suffix=".db", delete=False)
-            tmp.close()
-            with sqlite3.connect(str(src)) as live, sqlite3.connect(tmp.name) as dst:
-                live.backup(dst)
-            return tmp.name
+        if engine == "redis":
+            await asyncio.to_thread(_redis_save)
 
-        snapshot_path = await asyncio.to_thread(_backup)
+            def _snapshot() -> str:
+                import shutil
+
+                tmp = tempfile.NamedTemporaryFile(prefix="vol-fork-", suffix=".rdb", delete=False)
+                tmp.close()
+                shutil.copyfile(str(src), tmp.name)
+                return tmp.name
+        else:
+            await asyncio.to_thread(_wal_checkpoint, str(src))
+
+            def _snapshot() -> str:
+                tmp = tempfile.NamedTemporaryFile(prefix="vol-fork-", suffix=".db", delete=False)
+                tmp.close()
+                with sqlite3.connect(str(src)) as live, sqlite3.connect(tmp.name) as dst:
+                    live.backup(dst)
+                return tmp.name
+
+        snapshot_path = await asyncio.to_thread(_snapshot)
         # Upload eagerly via the raw upload API (not File.from_local). Inside
         # a Flyte task `File.from_local` either (a) attaches a lazy_uploader
         # that the literal-marshaller then skips because we're in a remote
@@ -287,6 +355,7 @@ class Volume(BaseModel):
             storage=self.storage,
             index=new_index,
             parent=self.index,
+            metadata_engine=self.metadata_engine,
         )
 
 
@@ -372,6 +441,77 @@ def _is_fuse_mount(path: str) -> bool:
     return False
 
 
+async def _start_redis(meta_dir: str, timeout: float = 30.0) -> subprocess.Popen:
+    """Spawn an in-process ``redis-server`` rooted at ``meta_dir``.
+
+    Redis is configured with auto-save disabled (``--save ""``) and AOF off;
+    persistence is driven explicitly by ``commit()`` / ``fork()`` via
+    ``redis-cli SAVE``. If ``dump.rdb`` already exists in ``meta_dir``,
+    redis-server loads it during startup.
+    """
+    cmd = [
+        "redis-server",
+        "--port", str(_REDIS_PORT),
+        "--bind", "127.0.0.1",
+        "--save", "",
+        "--appendonly", "no",
+        "--dir", meta_dir,
+        "--dbfilename", _REDIS_INDEX_FILENAME,
+        "--daemonize", "no",
+    ]
+    _logger.info("[Volume.mount] starting redis-server in %s", meta_dir)
+    proc = subprocess.Popen(  # noqa: ASYNC220 - long-lived daemon held in a class-level dict
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+    )
+
+    deadline = asyncio.get_event_loop().time() + timeout
+    while True:
+        if proc.poll() is not None:
+            out = proc.stdout.read().decode(errors="replace") if proc.stdout else ""
+            raise RuntimeError(f"redis-server exited prematurely (rc={proc.returncode}): {out}")
+        r = await asyncio.to_thread(
+            subprocess.run,
+            ["redis-cli", "-p", str(_REDIS_PORT), "ping"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if r.returncode == 0 and "PONG" in r.stdout:
+            _logger.info("[Volume.mount] redis-server ready")
+            return proc
+        if asyncio.get_event_loop().time() >= deadline:
+            raise TimeoutError(f"redis-server did not become ready within {timeout}s")
+        await asyncio.sleep(0.2)
+
+
+def _redis_save() -> None:
+    """Trigger a synchronous RDB save."""
+    _run_check(["redis-cli", "-p", str(_REDIS_PORT), "SAVE"])
+
+
+def _stop_redis(proc: Optional[subprocess.Popen], timeout: float) -> None:
+    """Shut down a redis-server cleanly. Caller must have already saved if
+    they want the in-memory state persisted.
+    """
+    if proc is None:
+        return
+    # SHUTDOWN NOSAVE — we drove persistence ourselves via SAVE.
+    subprocess.run(
+        ["redis-cli", "-p", str(_REDIS_PORT), "SHUTDOWN", "NOSAVE"],
+        capture_output=True,
+        check=False,
+    )
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _logger.warning("[Volume.commit] redis-server didn't exit in %ss; killing", timeout)
+        proc.kill()
+        proc.wait(5)
+
+
 def _wal_checkpoint(db_path: str) -> None:
     """Force a TRUNCATE-mode WAL checkpoint so the on-disk .db contains all
     committed transactions. No-op if the DB isn't in WAL mode.
@@ -417,7 +557,9 @@ def volume_image(
         f"ln -sf /proc/mounts /etc/mtab; "
         f"{_CLIENT_BINARY} version"
     )
-    return base.with_apt_packages("ca-certificates", "curl", "fuse").with_commands([install_cmd])
+    return base.with_apt_packages(
+        "ca-certificates", "curl", "fuse", "redis-server", "redis-tools"
+    ).with_commands([install_cmd])
 
 
 def volume_pod_template(
