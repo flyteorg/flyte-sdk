@@ -25,7 +25,7 @@ def _resolve_scope(cfg, cluster_pool: str | None, op: str) -> tuple[str, str]:
     return cfg.project, cfg.domain
 
 
-async def _secrets_service_for(cluster_pool: str | None, org: str):
+async def _secrets_service_for(cluster_pool: str | None, org: str | None):
     """Resolve the SecretService to dispatch to.
 
     For cluster-pool-scoped operations, ask the cluster-aware wrapper to pre-resolve
@@ -41,7 +41,7 @@ async def _secrets_service_for(cluster_pool: str | None, org: str):
         raise RuntimeError(
             f"cluster_pool routing requires the cluster-aware secrets service; got {type(secrets_service).__name__}."
         )
-    return await secrets_service.client_for_cluster_pool(org, cluster_pool)
+    return await secrets_service.client_for_cluster_pool(org or "", cluster_pool)
 
 
 @dataclass

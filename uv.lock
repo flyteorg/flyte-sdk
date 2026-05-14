@@ -21,8 +21,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-05-09T06:45:39.986899Z"
-exclude-newer-span = "P5D"
+exclude-newer = "2026-05-09T22:00:00Z"
 
 [options.exclude-newer-package]
 flyteidl2 = "2099-01-01T23:00:00Z"
