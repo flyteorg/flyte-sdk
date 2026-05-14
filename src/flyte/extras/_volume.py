@@ -236,8 +236,19 @@ class Volume(BaseModel):
             return tmp.name
 
         snapshot_path = await asyncio.to_thread(_backup)
+        # Upload eagerly via the raw upload API (not File.from_local). Inside
+        # a Flyte task `File.from_local` either (a) attaches a lazy_uploader
+        # that the literal-marshaller then skips because we're in a remote
+        # context, or (b) takes the immediate-upload path but only when
+        # ``ctx.raw_data`` resolves to a remote scheme. Either way, the
+        # resulting File can end up holding a local /tmp path that the
+        # sub-action pod cannot read. ``remote.upload_file`` unconditionally
+        # pushes to object storage and returns the remote URI, which we then
+        # wrap in a File.
+        from flyte.remote import upload_file
         try:
-            new_index: File = await File.from_local(snapshot_path)
+            md5, remote_uri = await upload_file.aio(Path(snapshot_path))
+            new_index: File = File(path=remote_uri, hash=md5)
         finally:
             try:
                 os.unlink(snapshot_path)
