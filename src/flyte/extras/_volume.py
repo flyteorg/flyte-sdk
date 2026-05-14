@@ -107,12 +107,28 @@ class Volume(BaseModel):
         meta_dir: str = _DEFAULT_META_DIR,
         cache_dir: str = _DEFAULT_CACHE_DIR,
         timeout: float = 120.0,
+        writeback: bool = True,
+        upload_delay: Optional[str] = None,
     ) -> None:
         """Format (if fresh) and mount the volume at ``mount_path`` in this
         process.
 
         Call once near the top of a task body before reading or writing under
         ``mount_path``.
+
+        When ``writeback=True`` (default), writes land in the local cache
+        directory first and are uploaded asynchronously in the background.
+        This decouples write latency from object-store round-trips. The
+        pending upload queue is drained on ``commit()``; if the pod dies
+        before commit, in-flight chunks are lost — but that's fine because
+        the Volume itself is never published in that case.
+
+        ``upload_delay`` (e.g. ``"1h"``, ``"30m"``, ``"5s"``) defers uploads
+        by the given duration. Useful for write-scratchy workloads — files
+        that are written and then overwritten / deleted within the delay
+        window are never uploaded at all. Default (``None``) is no extra
+        delay; the background uploader starts as soon as a chunk is written.
+        Has no effect without ``writeback=True``.
         """
         meta = Path(meta_dir)
         meta.mkdir(parents=True, exist_ok=True)
@@ -143,9 +159,19 @@ class Volume(BaseModel):
                 [_CLIENT_BINARY, "format", "--storage", self.storage, "--bucket", client_bucket, meta_url, self.name],
             )
 
-        _logger.info("[Volume.mount] mounting at %s", mount_path)
+        mount_cmd = [_CLIENT_BINARY, "mount", "--cache-dir", cache_dir]
+        if writeback:
+            mount_cmd.append("--writeback")
+            if upload_delay:
+                mount_cmd += ["--upload-delay", upload_delay]
+        mount_cmd += [meta_url, mount_path]
+
+        _logger.info(
+            "[Volume.mount] mounting at %s (writeback=%s upload_delay=%s)",
+            mount_path, writeback, upload_delay,
+        )
         proc = subprocess.Popen(  # noqa: ASYNC220 - long-lived daemon held in a class-level dict
-            [_CLIENT_BINARY, "mount", "--cache-dir", cache_dir, meta_url, mount_path],
+            mount_cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             start_new_session=True,
@@ -399,6 +425,7 @@ def volume_pod_template(
     mount_path: str = _DEFAULT_MOUNT_PATH,
     meta_dir: str = _DEFAULT_META_DIR,
     cache_dir: str = _DEFAULT_CACHE_DIR,
+    cache_size_gb: int = 50,
     primary_container_name: str = "primary",
 ) -> PodTemplate:
     """Build a :class:`flyte.PodTemplate` that lets the primary container
@@ -406,11 +433,15 @@ def volume_pod_template(
 
     The returned template:
 
-    * adds ``emptyDir`` volumes for the metadata directory, the chunk cache,
-      and the mount point;
+    * adds ``emptyDir`` volumes for the metadata directory, the chunk cache
+      (sized via ``cache_size_gb``), and the mount point;
     * adds a ``hostPath`` volume for ``/dev/fuse``;
     * makes the primary container privileged with ``CAP_SYS_ADMIN`` so it
       can perform the FUSE mount itself.
+
+    ``cache_size_gb`` caps the on-node ephemeral storage used for the
+    write-back cache. Size it for your task's working set — writes that
+    overflow the cache will block until existing chunks finish uploading.
 
     The volume's identity (bucket, name, storage backend) is *not* baked into
     the template — it is carried by the ``Volume`` input at runtime.
@@ -444,7 +475,10 @@ def volume_pod_template(
         containers=[primary],
         volumes=[
             V1Volume(name="vol-meta", empty_dir=V1EmptyDirVolumeSource()),
-            V1Volume(name="vol-cache", empty_dir=V1EmptyDirVolumeSource()),
+            V1Volume(
+                name="vol-cache",
+                empty_dir=V1EmptyDirVolumeSource(size_limit=f"{cache_size_gb}Gi"),
+            ),
             V1Volume(name="vol-workspace", empty_dir=V1EmptyDirVolumeSource()),
             V1Volume(
                 name="fuse-device",
