@@ -11,11 +11,12 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-05-09T22:00:00Z"
+exclude-newer = "2026-05-09T15:07:28.989805Z"
+exclude-newer-span = "P5D"
 
 [options.exclude-newer-package]
-flyteidl2 = "2099-01-01T00:00:00Z"
-flyte-controller-base = "2099-01-01T00:00:00Z"
+flyteidl2 = { timestamp = "2026-05-14T15:07:28.989815Z", span = "PT0S" }
+flyte-controller-base = { timestamp = "2026-05-14T15:07:28.989819Z", span = "PT0S" }
 
 [[package]]
 name = "aiofiles"

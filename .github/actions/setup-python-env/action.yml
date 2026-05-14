@@ -9,7 +9,9 @@ inputs:
   uv-version:
     description: "uv version to use"
     required: true
-    default: "0.8.4"
+    # 0.9.x is required to parse relative durations (e.g. "5 days") in
+    # [tool.uv] exclude-newer; 0.8.x only accepts RFC 3339 timestamps.
+    default: "0.9.21"
 
 
 runs:
