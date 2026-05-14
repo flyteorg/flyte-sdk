@@ -77,10 +77,21 @@ async def convert_upload_default_inputs(
     if not interface.inputs:
         return []
 
+    # flyte.TriggerTime is a sentinel that gets bound at trigger fire time, not a
+    # serializable default. Importing lazily avoids a circular import at module load.
+    from flyte._trigger import _trigger_time
+
     vars = []
     literal_coros = []
     for input_name, (input_type, default_value) in interface.inputs.items():
         if default_value is not None and default_value is not inspect.Parameter.empty:
+            if isinstance(default_value, _trigger_time):
+                raise ValueError(
+                    f"Input '{input_name}' uses flyte.TriggerTime as its default value. "
+                    "flyte.TriggerTime is only valid as a value in `flyte.Trigger(inputs=...)` — "
+                    "it cannot be used as a regular task default. Remove the default from the "
+                    "task signature and pass it through the Trigger inputs instead."
+                )
             lt = TypeEngine.to_literal_type(input_type)
             literal_coros.append(TypeEngine.to_literal(default_value, input_type, lt))
             vars.append((input_name, lt))
