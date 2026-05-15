@@ -221,5 +221,5 @@ def read_file_if_exists(filename: typing.Optional[str], encoding=None) -> typing
         return None
 
     file = pathlib.Path(filename)
-    logger.debug(f"Reading file contents from [{file}] with current directory [{os.getcwd()}].")
+    logger.debug(f"Reading file contents from \\[{file}] with current directory \\[{os.getcwd()}].")
     return file.read_text(encoding=encoding)
