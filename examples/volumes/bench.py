@@ -159,17 +159,19 @@ async def run_cell(workload: str, engine: str, writeback: bool) -> Dict[str, flo
 
     result = await fn(vol, **params)
 
-    # Capture the index footprint *before* unmount; both engine files live
-    # under the meta dir and one of them will exist.
+    t0 = time.monotonic()
+    await vol.commit()
+    commit_ms = (time.monotonic() - t0) * 1000.0
+
+    # Capture the index footprint *after* commit. Redis only writes its
+    # dump.rdb when SAVE runs (which commit() triggers); SQLite's index.db
+    # is mutated continuously but commit() WAL-checkpoints it. Either way,
+    # post-commit is the size of the file that actually gets uploaded.
     index_bytes = 0.0
     for p in ("/var/lib/flyte-volume/index.db", "/var/lib/flyte-volume/dump.rdb"):
         if os.path.exists(p):
             index_bytes = float(os.path.getsize(p))
             break
-
-    t0 = time.monotonic()
-    await vol.commit()
-    commit_ms = (time.monotonic() - t0) * 1000.0
 
     logger.info(
         "cell done: workload=%s engine=%s writeback=%s mount=%.0fms commit=%.0fms",
