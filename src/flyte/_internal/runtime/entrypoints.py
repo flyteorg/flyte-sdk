@@ -1,7 +1,5 @@
-import dataclasses
 import importlib
 import os
-import pathlib
 import traceback
 from typing import List, Optional, Tuple, Type
 
@@ -155,45 +153,12 @@ def load_pkl_task(code_bundle: CodeBundle) -> TaskTemplate:
         raise
 
 
-_BUNDLE_FALLBACK_ROOT = pathlib.Path("/tmp/flyte-bundle")
-
-
-def _resolve_bundle_destination(code_bundle: CodeBundle) -> CodeBundle:
-    """
-    Return the bundle with a destination the current process can actually use.
-
-    Default destination is ``"."``, which resolves to whatever ``WORKDIR`` the container
-    declared. Hardened base images frequently set ``WORKDIR`` to a path the container's
-    runtime ``USER`` cannot traverse (for example ``/root`` mode ``0700`` under a
-    ``nonroot`` USER on UBI / distroless / chainguard bases). In that case we reroute the
-    code bundle to a writable scratch dir under ``/tmp`` (which is universally
-    world-writable + sticky) so ``download_bundle`` doesn't trip on a `PermissionError`
-    before any user code runs.
-
-    Only the implicit ``"."`` default is rerouted. If the caller passed an explicit
-    destination, we honor it and let any failure surface clearly.
-    """
-    if str(code_bundle.destination) not in (".", ""):
-        return code_bundle
-    if os.access(".", os.W_OK | os.X_OK):
-        return code_bundle
-    fallback = _BUNDLE_FALLBACK_ROOT / code_bundle.computed_version
-    fallback.mkdir(parents=True, exist_ok=True)
-    logger.info(
-        "CWD %s not writable for current user; rerouting code bundle to %s",
-        os.getcwd(),
-        fallback,
-    )
-    return dataclasses.replace(code_bundle, destination=str(fallback))
-
-
 async def download_code_bundle(code_bundle: CodeBundle) -> CodeBundle:
     """
     Downloads the code bundle if it is not already downloaded.
     :param code_bundle: The code bundle to download.
     :return: The code bundle with the downloaded path.
     """
-    code_bundle = _resolve_bundle_destination(code_bundle)
     adjust_sys_path([str(code_bundle.destination)])
     logger.debug(f"Downloading {code_bundle}")
     sw = Stopwatch("download_code_bundle")

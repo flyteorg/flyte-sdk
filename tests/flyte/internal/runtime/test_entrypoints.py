@@ -1,10 +1,7 @@
 import os
-import pathlib
 import tempfile
 
-from flyte._internal.runtime import entrypoints
-from flyte._internal.runtime.entrypoints import _list_user_files, _resolve_bundle_destination
-from flyte.models import CodeBundle
+from flyte._internal.runtime.entrypoints import _list_user_files
 
 
 def test_list_user_files_excludes_venv():
@@ -112,46 +109,3 @@ def test_list_user_files_empty_directory():
     with tempfile.TemporaryDirectory() as cwd:
         files = _list_user_files(cwd)
         assert files == []
-
-
-def _bundle(destination: str, version: str = "v0") -> CodeBundle:
-    return CodeBundle(tgz="s3://bucket/code.tgz", destination=destination, computed_version=version)
-
-
-def test_resolve_bundle_destination_keeps_writable_cwd(tmp_path, monkeypatch):
-    """When CWD is writable+traversable, destination is unchanged."""
-    monkeypatch.chdir(tmp_path)
-    bundle = _bundle(destination=".")
-    assert _resolve_bundle_destination(bundle) is bundle
-
-
-def test_resolve_bundle_destination_keeps_explicit_destination(monkeypatch):
-    """An explicit destination is honored verbatim, even if it would also be unwritable."""
-    monkeypatch.setattr(os, "access", lambda *a, **kw: False)
-    bundle = _bundle(destination="/some/explicit/path")
-    assert _resolve_bundle_destination(bundle) is bundle
-
-
-def test_resolve_bundle_destination_falls_back_when_cwd_not_writable(monkeypatch, tmp_path):
-    """Default '.' destination is rerouted under /tmp when CWD is not writable."""
-    fake_root = tmp_path / "flyte-bundle"
-    monkeypatch.setattr(entrypoints, "_BUNDLE_FALLBACK_ROOT", fake_root)
-    monkeypatch.setattr(os, "access", lambda path, mode: False if path == "." else True)
-    bundle = _bundle(destination=".", version="abc123")
-    resolved = _resolve_bundle_destination(bundle)
-    assert resolved is not bundle
-    assert resolved.destination == str(fake_root / "abc123")
-    assert pathlib.Path(resolved.destination).is_dir()
-    # Other fields are preserved.
-    assert resolved.tgz == bundle.tgz
-    assert resolved.computed_version == bundle.computed_version
-
-
-def test_resolve_bundle_destination_handles_empty_destination(monkeypatch, tmp_path):
-    """An empty-string destination is treated like '.' and triggers the fallback."""
-    fake_root = tmp_path / "flyte-bundle"
-    monkeypatch.setattr(entrypoints, "_BUNDLE_FALLBACK_ROOT", fake_root)
-    monkeypatch.setattr(os, "access", lambda *a, **kw: False)
-    bundle = _bundle(destination="", version="def456")
-    resolved = _resolve_bundle_destination(bundle)
-    assert resolved.destination == str(fake_root / "def456")
