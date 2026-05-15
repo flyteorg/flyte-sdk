@@ -361,6 +361,146 @@ class Volume(BaseModel):
             metadata_engine=self.metadata_engine,
         )
 
+    async def migrate_metadata_engine(
+        self,
+        new_engine: str,
+        *,
+        meta_dir: str = _DEFAULT_META_DIR,
+        new_meta_dir: Optional[str] = None,
+    ) -> "Volume":
+        """Re-host this Volume's metadata on ``new_engine`` without copying
+        data chunks.
+
+        ``new_engine`` must be ``"sqlite"`` or ``"redis"`` and differ from the
+        current engine. Implemented as ``juicefs dump | juicefs load``: the
+        full namespace is exported to JSON, then re-imported into a fresh
+        meta engine pointing at the *same* bucket. Chunks are addressed by
+        inode IDs, which are preserved across dump/load, so no chunk traffic
+        is required.
+
+        The returned Volume has a fresh ``index`` (snapshot of the loaded
+        meta engine), the original Volume's index as ``parent``, the same
+        ``bucket`` / ``storage`` / ``name``, and the new ``metadata_engine``.
+
+        Does not require a FUSE mount on either side. Safe to call from any
+        task pod that has the ``juicefs`` binary (Redis tooling is only
+        needed if one of the engines is ``"redis"``).
+        """
+        src_engine = self._engine()
+        if new_engine == src_engine:
+            raise ValueError(
+                f"Source and destination engines are both {new_engine!r}; nothing to migrate."
+            )
+        if new_engine not in ("sqlite", "redis"):
+            raise ValueError(
+                f"Unsupported metadata_engine={new_engine!r}; expected 'sqlite' or 'redis'."
+            )
+        if self.index is None:
+            raise RuntimeError(
+                "Cannot migrate metadata: this Volume has no index. Was it ever committed?"
+            )
+
+        src_meta = Path(meta_dir)
+        src_meta.mkdir(parents=True, exist_ok=True)
+        src_index = src_meta / _index_filename(src_engine)
+        _logger.info(
+            "[Volume.migrate_metadata_engine] downloading source index %s", self.index.path
+        )
+        await self.index.download(str(src_index))
+
+        new_meta = Path(new_meta_dir or f"{meta_dir}-new")
+        new_meta.mkdir(parents=True, exist_ok=True)
+
+        with tempfile.NamedTemporaryFile(prefix="vol-migrate-", suffix=".json", delete=False) as f:
+            dump_path = f.name
+
+        src_redis: Optional[subprocess.Popen] = None
+        new_redis: Optional[subprocess.Popen] = None
+        try:
+            if src_engine == "redis":
+                src_redis = await _start_redis(str(src_meta))
+
+            src_meta_url = _meta_url(str(src_meta), src_engine)
+            _logger.info(
+                "[Volume.migrate_metadata_engine] dump %s -> %s", src_meta_url, dump_path
+            )
+            await asyncio.to_thread(
+                _run_check, [_CLIENT_BINARY, "dump", src_meta_url, dump_path]
+            )
+
+            # Stop src redis before starting dst redis — both want :6379.
+            if src_redis is not None:
+                _stop_redis(src_redis, timeout=10.0)
+                src_redis = None
+
+            if new_engine == "redis":
+                new_redis = await _start_redis(str(new_meta))
+
+            new_meta_url = _meta_url(str(new_meta), new_engine)
+            _logger.info(
+                "[Volume.migrate_metadata_engine] load %s <- %s", new_meta_url, dump_path
+            )
+            await asyncio.to_thread(
+                _run_check, [_CLIENT_BINARY, "load", new_meta_url, dump_path]
+            )
+
+            new_index_path = new_meta / _index_filename(new_engine)
+            if new_engine == "redis":
+                # Flush the loaded namespace to dump.rdb and stop the daemon
+                # so we get a stable file to snapshot.
+                await asyncio.to_thread(_redis_save)
+                _stop_redis(new_redis, timeout=10.0)
+                new_redis = None
+            else:
+                await asyncio.to_thread(_wal_checkpoint, str(new_index_path))
+
+            if not new_index_path.exists():
+                raise RuntimeError(
+                    f"juicefs load did not produce {new_index_path} — migration aborted."
+                )
+
+            def _snapshot() -> str:
+                import shutil
+
+                suffix = new_index_path.suffix or ".idx"
+                tmp = tempfile.NamedTemporaryFile(
+                    prefix="vol-migrate-", suffix=suffix, delete=False
+                )
+                tmp.close()
+                shutil.copyfile(str(new_index_path), tmp.name)
+                return tmp.name
+
+            snapshot_path = await asyncio.to_thread(_snapshot)
+        finally:
+            if src_redis is not None:
+                _stop_redis(src_redis, timeout=5.0)
+            if new_redis is not None:
+                _stop_redis(new_redis, timeout=5.0)
+            try:
+                os.unlink(dump_path)
+            except OSError:
+                pass
+
+        from flyte.remote import upload_file
+
+        try:
+            md5, remote_uri = await upload_file.aio(Path(snapshot_path))
+            new_index_file: File = File(path=remote_uri, hash=md5)
+        finally:
+            try:
+                os.unlink(snapshot_path)
+            except OSError:
+                pass
+
+        return Volume(
+            name=self.name,
+            bucket=self.bucket,
+            storage=self.storage,
+            index=new_index_file,
+            parent=self.index,
+            metadata_engine=new_engine,
+        )
+
 
 def _client_bucket_uri(bucket: str, storage: str) -> str:
     """Translate a clean storage URI (e.g. ``s3://my-bucket/prefix``) into the

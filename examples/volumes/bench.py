@@ -318,7 +318,7 @@ def _render_overview(rows: List[Dict[str, object]], workloads: List[str]) -> str
 
 
 @env.task(report=True)
-async def main(
+async def volume_benchmark_driver(
     workloads: Optional[List[str]] = None,
     engines: Optional[List[str]] = None,
     writeback: Optional[List[bool]] = None,
