@@ -337,7 +337,8 @@ async def main(
         for engine in selected_engines:
             for wb in selected_writeback:
                 keys.append((wname, engine, wb))
-                coros.append(run_cell(workload=wname, engine=engine, writeback=wb))
+                short = f"{wname.replace('_', '-')}-{engine}-{'wb' if wb else 'cold'}"
+                coros.append(run_cell.override(short_name=short)(workload=wname, engine=engine, writeback=wb))
 
     logger.info("dispatching %d cells across %d workloads", len(coros), len(selected_workloads))
     raw = await asyncio.gather(*coros)
