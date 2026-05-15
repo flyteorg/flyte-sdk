@@ -210,7 +210,9 @@ class Volume(BaseModel):
 
         _logger.info(
             "[Volume.mount] mounting at %s (writeback=%s upload_delay=%s)",
-            mount_path, writeback, upload_delay,
+            mount_path,
+            writeback,
+            upload_delay,
         )
         proc = subprocess.Popen(  # noqa: ASYNC220 - long-lived daemon held in a class-level dict
             mount_cmd,
@@ -340,6 +342,7 @@ class Volume(BaseModel):
         # pushes to object storage and returns the remote URI, which we then
         # wrap in a File.
         from flyte.remote import upload_file
+
         try:
             md5, remote_uri = await upload_file.aio(Path(snapshot_path))
             new_index: File = File(path=remote_uri, hash=md5)
@@ -451,13 +454,20 @@ async def _start_redis(meta_dir: str, timeout: float = 30.0) -> subprocess.Popen
     """
     cmd = [
         "redis-server",
-        "--port", str(_REDIS_PORT),
-        "--bind", "127.0.0.1",
-        "--save", "",
-        "--appendonly", "no",
-        "--dir", meta_dir,
-        "--dbfilename", _REDIS_INDEX_FILENAME,
-        "--daemonize", "no",
+        "--port",
+        str(_REDIS_PORT),
+        "--bind",
+        "127.0.0.1",
+        "--save",
+        "",
+        "--appendonly",
+        "no",
+        "--dir",
+        meta_dir,
+        "--dbfilename",
+        _REDIS_INDEX_FILENAME,
+        "--daemonize",
+        "no",
     ]
     _logger.info("[Volume.mount] starting redis-server in %s", meta_dir)
     proc = subprocess.Popen(  # noqa: ASYNC220 - long-lived daemon held in a class-level dict
@@ -557,9 +567,9 @@ def volume_image(
         f"ln -sf /proc/mounts /etc/mtab; "
         f"{_CLIENT_BINARY} version"
     )
-    return base.with_apt_packages(
-        "ca-certificates", "curl", "fuse", "redis-server", "redis-tools"
-    ).with_commands([install_cmd])
+    return base.with_apt_packages("ca-certificates", "curl", "fuse", "redis-server", "redis-tools").with_commands(
+        [install_cmd]
+    )
 
 
 def volume_pod_template(
