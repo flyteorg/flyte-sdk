@@ -533,23 +533,31 @@ async def apply(deployment_plan: DeploymentPlan, copy_style: CopyFiles, dryrun: 
 
 
 def _find_env_module(env: Environment):
-    """Scan sys.modules to find the module that contains this env as a top-level variable."""
-    for module in list(sys.modules.values()):
+    """Scan sys.modules to find the (sys.modules key, module) that contains this env as a top-level variable.
+
+    Iterates ``sys.modules.items()`` rather than ``.values()`` so callers can show the *import
+    name* (the sys.modules key, e.g. ``examples.basics.multi_status``) in error messages. When the
+    same file is loaded twice under different names, the two module objects may share the same
+    ``__name__`` attribute (because both were created via ``importlib.util.spec_from_file_location``
+    with the file stem), but their sys.modules keys differ — that's what the user actually needs to
+    see to fix their layout. Returns ``(None, None)`` if nothing matches.
+    """
+    for key, module in list(sys.modules.items()):
         if module is None:
             continue
         try:
             # search for at least one value inside this module that is the same object as env and return it
             if any(v is env for v in vars(module).values()):
-                return module
+                return key, module
         except TypeError:
             continue
-    return None
+    return None, None
 
 
 def _check_duplicate_env(existing_env: Environment, env: Environment) -> None:
     """Raise an appropriate error when the same environment name is encountered twice."""
-    existing_module = _find_env_module(existing_env)
-    new_module = _find_env_module(env)
+    existing_key, existing_module = _find_env_module(existing_env)
+    new_key, new_module = _find_env_module(env)
     existing_file = getattr(existing_module, "__file__", None)
     new_file = getattr(new_module, "__file__", None)
 
@@ -559,8 +567,8 @@ def _check_duplicate_env(existing_env: Environment, env: Environment) -> None:
         # `my_module.envs` and `src.my_module.envs`).
         raise ValueError(
             f"Environment '{env.name}' is defined in '{existing_file}' but was imported "
-            f"twice under different module names ('{existing_module.__name__}' and "
-            f"'{new_module.__name__}'). This is usually caused by running `flyte deploy` "
+            f"twice under different module names ('{existing_key}' and "
+            f"'{new_key}'). This is usually caused by running `flyte deploy` "
             f"from the project root of a src/ layout project without --root-dir. "
             f"Try adding --root-dir src (or your source root directory)."
         )
