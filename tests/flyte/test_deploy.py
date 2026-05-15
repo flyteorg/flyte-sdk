@@ -451,3 +451,41 @@ async def test_build_images_resolves_code_bundle_layer_copy_style_none():
     bundle_layers = [layer for layer in env.image._layers if isinstance(layer, CodeBundleLayer)]
     assert len(bundle_layers) == 1, "CodeBundleLayer should remain (resolved) at copy_style='none'"
     assert bundle_layers[0].root_dir is not None, "resolved CodeBundleLayer must have root_dir set"
+
+
+@pytest.mark.asyncio
+async def test_apply_unpicklable_env_raises_click_exception():
+    """If the user's envs cannot be serialized, apply() should surface a friendly ClickException."""
+    import pathlib
+
+    import click
+
+    from flyte._deploy import apply
+
+    class _Unserializable:
+        def __reduce__(self):
+            raise TypeError("Cannot serialize objects that map to tty handles")
+
+    plan = DeploymentPlan(envs={"e": _Unserializable()}, version=None)  # type: ignore[dict-item]
+
+    fake_bundle = Mock()
+    fake_bundle.computed_version = "test-bundle-version"
+
+    fake_cfg = Mock()
+    fake_cfg.root_dir = pathlib.Path("/tmp")
+    fake_cfg.images = {}
+    fake_cfg.project = "p"
+    fake_cfg.domain = "d"
+    fake_cfg.org = "o"
+
+    with (
+        patch("flyte._initialize.is_initialized", return_value=True),
+        patch("flyte._deploy.get_init_config", return_value=fake_cfg),
+        patch("flyte._deploy._build_images", new=AsyncMock(return_value={})),
+        patch("flyte._code_bundle._includes.collect_env_include_files", return_value=[]),
+        patch("flyte._code_bundle.build_code_bundle", new=AsyncMock(return_value=fake_bundle)),
+    ):
+        with pytest.raises(click.ClickException) as excinfo:
+            await apply(plan, copy_style="loaded_modules", dryrun=True)
+    assert "unpicklable" in excinfo.value.message
+    assert "version=" in excinfo.value.message

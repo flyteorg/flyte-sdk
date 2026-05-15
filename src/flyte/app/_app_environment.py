@@ -129,14 +129,18 @@ class AppEnvironment(Environment):
         self._validate_name()
 
         # Capture the frame where this environment was instantiated
-        # This helps us find the module where the app variable is defined
+        # This helps us find the module where the app variable is defined.
+        # Walk up the stack past any frames inside this file (e.g. subclass
+        # __post_init__ chains) and the dataclass __init__ frame, until we
+        # reach the user's code.
         frame = inspect.currentframe()
-        if frame and frame.f_back:
-            # Go up the call stack to find the user's module
-            # Skip the dataclass __init__ frame
-            caller_frame = frame.f_back
-            if caller_frame and caller_frame.f_back:
-                self._caller_frame = inspect.getframeinfo(caller_frame.f_back)
+        f = frame.f_back if frame else None
+        # Skip __post_init__ frames (covers subclasses calling
+        # super().__post_init__()) and the synthesized dataclass __init__ frame.
+        while f is not None and f.f_code.co_name in ("__post_init__", "__init__"):
+            f = f.f_back
+        if f is not None:
+            self._caller_frame = inspect.getframeinfo(f)
 
     def container_args(self, serialize_context: SerializationContext) -> List[str]:
         if self.args is None:

@@ -366,8 +366,8 @@ class TaskEnvironment(Environment):
                 queue=queue or self.queue,
                 interruptible=interruptible if interruptible is not None else self.interruptible,
                 entrypoint=entrypoint,
-                triggers=triggers if isinstance(triggers, tuple) else (triggers,),
-                links=links if isinstance(links, tuple) else (links,),
+                triggers=(triggers,) if isinstance(triggers, Trigger) else tuple(triggers),
+                links=tuple(links) if isinstance(links, (list, tuple)) else (links,),
                 task_resolver=task_resolver,
             )
             self._tasks[task_name] = tmpl
