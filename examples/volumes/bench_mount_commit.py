@@ -83,11 +83,14 @@ async def measure(vol: Volume) -> Dict[str, float]:
     await vol.mount()
     mount_ms = (time.monotonic() - t0) * 1000.0
 
-    index_bytes: float = -1
-    try:
-        index_bytes = float(os.path.getsize("/var/lib/flyte-volume/index.db"))
-    except OSError:
-        pass
+    # Index file lives under /var/lib/flyte-volume; name depends on engine.
+    index_bytes: float = -1.0
+    for candidate in ("/var/lib/flyte-volume/index.db", "/var/lib/flyte-volume/dump.rdb"):
+        try:
+            index_bytes = float(os.path.getsize(candidate))
+            break
+        except OSError:
+            continue
 
     t1 = time.monotonic()
     _ = await vol.commit()
