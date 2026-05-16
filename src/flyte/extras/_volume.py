@@ -146,6 +146,10 @@ class Volume(BaseModel):
         timeout: float = 120.0,
         writeback: bool = True,
         upload_delay: Optional[str] = None,
+        max_uploads: int = 50,
+        attr_cache: float = 1.0,
+        entry_cache: float = 0.0,
+        dir_entry_cache: float = 0.0,
     ) -> None:
         """Format (if fresh) and mount the volume at ``mount_path`` in this
         process.
@@ -166,6 +170,19 @@ class Volume(BaseModel):
         window are never uploaded at all. Default (``None``) is no extra
         delay; the background uploader starts as soon as a chunk is written.
         Has no effect without ``writeback=True``.
+
+        ``max_uploads`` caps concurrent S3 PUTs (default 50; underlying
+        client default is 20). Bumping helps write-burst phases when the
+        chunks are small enough that 20 streams can't saturate the link.
+
+        ``attr_cache`` / ``entry_cache`` / ``dir_entry_cache`` are kernel-side
+        TTLs in seconds for file attributes, name-to-inode lookups, and
+        directory listings respectively. Defaults match the underlying
+        client (1 / 0 / 0). For volumes used as build / codegen / package
+        caches — i.e. nothing outside this task mutates the tree during the
+        mount — set all three to ``60.0`` to collapse stat / getattr / lookup
+        storms by an order of magnitude. Don't raise these if multiple
+        writers might race on the volume.
         """
         engine = self._engine()
         meta = Path(meta_dir)
@@ -201,7 +218,20 @@ class Volume(BaseModel):
                 [_CLIENT_BINARY, "format", "--storage", self.storage, "--bucket", client_bucket, meta_url, self.name],
             )
 
-        mount_cmd = [_CLIENT_BINARY, "mount", "--cache-dir", cache_dir]
+        mount_cmd = [
+            _CLIENT_BINARY,
+            "mount",
+            "--cache-dir",
+            cache_dir,
+            "--max-uploads",
+            str(max_uploads),
+            "--attr-cache",
+            str(attr_cache),
+            "--entry-cache",
+            str(entry_cache),
+            "--dir-entry-cache",
+            str(dir_entry_cache),
+        ]
         if writeback:
             mount_cmd.append("--writeback")
             if upload_delay:
@@ -209,10 +239,15 @@ class Volume(BaseModel):
         mount_cmd += [meta_url, mount_path]
 
         _logger.info(
-            "[Volume.mount] mounting at %s (writeback=%s upload_delay=%s)",
+            "[Volume.mount] mounting at %s (writeback=%s upload_delay=%s "
+            "max_uploads=%d attr_cache=%s entry_cache=%s dir_entry_cache=%s)",
             mount_path,
             writeback,
             upload_delay,
+            max_uploads,
+            attr_cache,
+            entry_cache,
+            dir_entry_cache,
         )
         proc = subprocess.Popen(  # noqa: ASYNC220 - long-lived daemon held in a class-level dict
             mount_cmd,
@@ -396,9 +431,7 @@ class Volume(BaseModel):
             will appear in subsequent snapshots — there is no semantic
             "branching" the way :meth:`fork` implies.
         """
-        new_index = await self._snapshot_and_upload_index(
-            meta_dir=meta_dir, tmp_prefix="vol-checkpoint-"
-        )
+        new_index = await self._snapshot_and_upload_index(meta_dir=meta_dir, tmp_prefix="vol-checkpoint-")
         return Volume(
             name=self.name,
             bucket=self.bucket,
@@ -435,24 +468,16 @@ class Volume(BaseModel):
         """
         src_engine = self._engine()
         if new_engine == src_engine:
-            raise ValueError(
-                f"Source and destination engines are both {new_engine!r}; nothing to migrate."
-            )
+            raise ValueError(f"Source and destination engines are both {new_engine!r}; nothing to migrate.")
         if new_engine not in ("sqlite", "redis"):
-            raise ValueError(
-                f"Unsupported metadata_engine={new_engine!r}; expected 'sqlite' or 'redis'."
-            )
+            raise ValueError(f"Unsupported metadata_engine={new_engine!r}; expected 'sqlite' or 'redis'.")
         if self.index is None:
-            raise RuntimeError(
-                "Cannot migrate metadata: this Volume has no index. Was it ever committed?"
-            )
+            raise RuntimeError("Cannot migrate metadata: this Volume has no index. Was it ever committed?")
 
         src_meta = Path(meta_dir) / "src"
         src_meta.mkdir(parents=True, exist_ok=True)
         src_index = src_meta / _index_filename(src_engine)
-        _logger.info(
-            "[Volume.migrate_metadata_engine] downloading source index %s", self.index.path
-        )
+        _logger.info("[Volume.migrate_metadata_engine] downloading source index %s", self.index.path)
         await self.index.download(str(src_index))
 
         # `new_meta_dir` defaults to a sibling subdir under the same emptyDir-backed
@@ -471,12 +496,8 @@ class Volume(BaseModel):
                 src_redis = await _start_redis(str(src_meta))
 
             src_meta_url = _meta_url(str(src_meta), src_engine)
-            _logger.info(
-                "[Volume.migrate_metadata_engine] dump %s -> %s", src_meta_url, dump_path
-            )
-            await asyncio.to_thread(
-                _run_check, [_CLIENT_BINARY, "dump", src_meta_url, dump_path]
-            )
+            _logger.info("[Volume.migrate_metadata_engine] dump %s -> %s", src_meta_url, dump_path)
+            await asyncio.to_thread(_run_check, [_CLIENT_BINARY, "dump", src_meta_url, dump_path])
 
             # Stop src redis before starting dst redis — both want :6379.
             if src_redis is not None:
@@ -487,12 +508,8 @@ class Volume(BaseModel):
                 new_redis = await _start_redis(str(new_meta))
 
             new_meta_url = _meta_url(str(new_meta), new_engine)
-            _logger.info(
-                "[Volume.migrate_metadata_engine] load %s <- %s", new_meta_url, dump_path
-            )
-            await asyncio.to_thread(
-                _run_check, [_CLIENT_BINARY, "load", new_meta_url, dump_path]
-            )
+            _logger.info("[Volume.migrate_metadata_engine] load %s <- %s", new_meta_url, dump_path)
+            await asyncio.to_thread(_run_check, [_CLIENT_BINARY, "load", new_meta_url, dump_path])
 
             new_index_path = new_meta / _index_filename(new_engine)
             if new_engine == "redis":
@@ -505,17 +522,13 @@ class Volume(BaseModel):
                 await asyncio.to_thread(_wal_checkpoint, str(new_index_path))
 
             if not new_index_path.exists():
-                raise RuntimeError(
-                    f"juicefs load did not produce {new_index_path} — migration aborted."
-                )
+                raise RuntimeError(f"juicefs load did not produce {new_index_path} — migration aborted.")
 
             def _snapshot() -> str:
                 import shutil
 
                 suffix = new_index_path.suffix or ".idx"
-                tmp = tempfile.NamedTemporaryFile(
-                    prefix="vol-migrate-", suffix=suffix, delete=False
-                )
+                tmp = tempfile.NamedTemporaryFile(prefix="vol-migrate-", suffix=suffix, delete=False)
                 tmp.close()
                 shutil.copyfile(str(new_index_path), tmp.name)
                 return tmp.name
