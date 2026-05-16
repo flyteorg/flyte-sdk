@@ -286,19 +286,13 @@ class Volume(BaseModel):
             metadata_engine=self.metadata_engine,
         )
 
-    async def fork(
-        self,
-        name: str,
-        *,
-        meta_dir: str = _DEFAULT_META_DIR,
-    ) -> "Volume":
-        """Snapshot the current live index and return a new ``Volume`` that
-        points at the snapshot.
+    async def _snapshot_and_upload_index(self, *, meta_dir: str, tmp_prefix: str) -> File:
+        """Flush and snapshot the live metadata index, upload the snapshot,
+        and return a :class:`File` pointing at the upload.
 
-        Both the original and the fork reference the same bucket. Chunk keys
-        are derived from inode IDs, which diverge from the fork point, so
-        concurrent writes do not collide. Reads after the fork are namespace-
-        isolated: writes from one side are invisible to the other.
+        Does not unmount and does not drain the writeback queue — chunks
+        already written but not yet uploaded may still be local-only when
+        the snapshot is published. Callers must be prepared for that.
 
         For SQLite-backed Volumes the snapshot is produced via SQLite's
         online backup API. For Redis-backed Volumes a synchronous ``SAVE``
@@ -307,7 +301,7 @@ class Volume(BaseModel):
         engine = self._engine()
         src = Path(meta_dir) / _index_filename(engine)
         if engine == "sqlite" and not src.exists():
-            raise RuntimeError(f"Cannot fork: no live index at {src}. Call mount() first.")
+            raise RuntimeError(f"Cannot snapshot: no live index at {src}. Call mount() first.")
 
         await asyncio.to_thread(os.sync)
 
@@ -317,7 +311,7 @@ class Volume(BaseModel):
             def _snapshot() -> str:
                 import shutil
 
-                tmp = tempfile.NamedTemporaryFile(prefix="vol-fork-", suffix=".rdb", delete=False)
+                tmp = tempfile.NamedTemporaryFile(prefix=tmp_prefix, suffix=".rdb", delete=False)
                 tmp.close()
                 shutil.copyfile(str(src), tmp.name)
                 return tmp.name
@@ -325,7 +319,7 @@ class Volume(BaseModel):
             await asyncio.to_thread(_wal_checkpoint, str(src))
 
             def _snapshot() -> str:
-                tmp = tempfile.NamedTemporaryFile(prefix="vol-fork-", suffix=".db", delete=False)
+                tmp = tempfile.NamedTemporaryFile(prefix=tmp_prefix, suffix=".db", delete=False)
                 tmp.close()
                 with sqlite3.connect(str(src)) as live, sqlite3.connect(tmp.name) as dst:
                     live.backup(dst)
@@ -345,15 +339,68 @@ class Volume(BaseModel):
 
         try:
             md5, remote_uri = await upload_file.aio(Path(snapshot_path))
-            new_index: File = File(path=remote_uri, hash=md5)
+            return File(path=remote_uri, hash=md5)
         finally:
             try:
                 os.unlink(snapshot_path)
             except OSError:
                 pass
 
+    async def fork(
+        self,
+        name: str,
+        *,
+        meta_dir: str = _DEFAULT_META_DIR,
+    ) -> "Volume":
+        """Snapshot the current live index and return a new ``Volume`` that
+        points at the snapshot.
+
+        Both the original and the fork reference the same bucket. Chunk keys
+        are derived from inode IDs, which diverge from the fork point, so
+        concurrent writes do not collide. Reads after the fork are namespace-
+        isolated: writes from one side are invisible to the other.
+        """
+        new_index = await self._snapshot_and_upload_index(meta_dir=meta_dir, tmp_prefix="vol-fork-")
         return Volume(
             name=name,
+            bucket=self.bucket,
+            storage=self.storage,
+            index=new_index,
+            parent=self.index,
+            metadata_engine=self.metadata_engine,
+        )
+
+    async def commit_inplace(
+        self,
+        *,
+        meta_dir: str = _DEFAULT_META_DIR,
+    ) -> "Volume":
+        """Snapshot and publish the live index without unmounting the volume.
+
+        Like :meth:`commit`, but keeps the FUSE mount running and does NOT
+        drain the writeback queue. Intended for periodic checkpoints of a
+        long-running task so a hard pod kill loses at most the time since
+        the last call.
+
+        Returns a new ``Volume`` with the same ``name`` / ``bucket`` /
+        ``storage`` / ``metadata_engine`` as ``self``, a fresh ``index``
+        pointing at the uploaded snapshot, and ``parent`` linking to the
+        previous index.
+
+        Caveats:
+          * The writeback queue is not flushed. Chunks written shortly
+            before this call may still be local-only when the snapshot
+            uploads; if the pod dies before they finish, the next mount
+            of this snapshot will see file-not-found for those chunks.
+          * Future writes after this call land in the same FUSE mount and
+            will appear in subsequent snapshots — there is no semantic
+            "branching" the way :meth:`fork` implies.
+        """
+        new_index = await self._snapshot_and_upload_index(
+            meta_dir=meta_dir, tmp_prefix="vol-checkpoint-"
+        )
+        return Volume(
+            name=self.name,
             bucket=self.bucket,
             storage=self.storage,
             index=new_index,
@@ -400,7 +447,7 @@ class Volume(BaseModel):
                 "Cannot migrate metadata: this Volume has no index. Was it ever committed?"
             )
 
-        src_meta = Path(meta_dir)
+        src_meta = Path(meta_dir) / "src"
         src_meta.mkdir(parents=True, exist_ok=True)
         src_index = src_meta / _index_filename(src_engine)
         _logger.info(
@@ -408,7 +455,10 @@ class Volume(BaseModel):
         )
         await self.index.download(str(src_index))
 
-        new_meta = Path(new_meta_dir or f"{meta_dir}-new")
+        # `new_meta_dir` defaults to a sibling subdir under the same emptyDir-backed
+        # parent as `meta_dir`. Keeping both under the same writable mount avoids
+        # read-only rootfs surprises (e.g. /var/lib is RO in some base images).
+        new_meta = Path(new_meta_dir or str(Path(meta_dir) / "new"))
         new_meta.mkdir(parents=True, exist_ok=True)
 
         with tempfile.NamedTemporaryFile(prefix="vol-migrate-", suffix=".json", delete=False) as f:
