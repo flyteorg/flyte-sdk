@@ -151,6 +151,14 @@ def _build_pyqwest_client(tls_ca_cert: bytes | None = None) -> pyqwest.Client:
         read_timeout=None,
         pool_idle_timeout=90.0,
         tcp_keepalive_interval=30.0,  # was grpc.keepalive_time_ms = 30000
+        # Use the OS resolver (getaddrinfo) instead of pyqwest's bundled
+        # trust-dns. getaddrinfo honors macOS's AI_ADDRCONFIG, which
+        # suppresses AAAA records on hosts with no usable IPv6 default
+        # route. Without this, AAAA-only resolution on flaky/tethered
+        # networks (where IPv6 is advertised but not actually routed) hangs
+        # all RPCs with "No route to host (os error 65)". curl works on the
+        # same network because it uses getaddrinfo by default.
+        use_system_dns=True,
     )
     return pyqwest.Client(transport=transport)
 
