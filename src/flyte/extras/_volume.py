@@ -147,9 +147,9 @@ class Volume(BaseModel):
         writeback: bool = True,
         upload_delay: Optional[str] = None,
         max_uploads: int = 50,
-        attr_cache: float = 1.0,
-        entry_cache: float = 0.0,
-        dir_entry_cache: float = 0.0,
+        attr_cache: float = 60.0,
+        entry_cache: float = 60.0,
+        dir_entry_cache: float = 60.0,
     ) -> None:
         """Format (if fresh) and mount the volume at ``mount_path`` in this
         process.
@@ -177,12 +177,13 @@ class Volume(BaseModel):
 
         ``attr_cache`` / ``entry_cache`` / ``dir_entry_cache`` are kernel-side
         TTLs in seconds for file attributes, name-to-inode lookups, and
-        directory listings respectively. Defaults match the underlying
-        client (1 / 0 / 0). For volumes used as build / codegen / package
-        caches — i.e. nothing outside this task mutates the tree during the
-        mount — set all three to ``60.0`` to collapse stat / getattr / lookup
-        storms by an order of magnitude. Don't raise these if multiple
-        writers might race on the volume.
+        directory listings respectively. Defaults are ``60.0`` for all three,
+        which collapses stat / getattr / lookup storms by an order of
+        magnitude on directory-heavy workloads (Go toolchain, package
+        managers, codegen). This is safe because a Volume is single-writer
+        for the duration of its mount — no external mutator is supported by
+        this mechanism. Concurrent-writer scenarios will be opt-in via a
+        separate API when added.
         """
         engine = self._engine()
         meta = Path(meta_dir)
