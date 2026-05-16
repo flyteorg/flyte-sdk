@@ -40,7 +40,11 @@ def test_basic_init_with_model_hf_path():
     assert app.model_id == "test-model"
     assert app.port.port == 8080
     assert app.type == "vLLM"
+    assert app.stream_model is True
     assert app.image == DEFAULT_VLLM_IMAGE
+    # Hugging Face path uses vLLM's default loading (no Flyte blob streaming without model_path).
+    assert "--load-format" not in app.args
+    assert app.env_vars["FLYTE_MODEL_LOADER_STREAM_SAFETENSORS"] == "false"
     # When using model_hf_path, no parameters should be created
     assert app.parameters == []
     # The model mount path should be set to the HF path
