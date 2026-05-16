@@ -361,6 +361,6 @@ async def volume_benchmark_driver(
 
 if __name__ == "__main__":
     flyte.init_from_config()
-    run = flyte.run(main)
+    run = flyte.run(volume_benchmark_driver)
     print(run.url)
     run.wait()
