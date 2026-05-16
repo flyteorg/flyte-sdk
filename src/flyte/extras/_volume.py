@@ -487,11 +487,14 @@ class Volume(BaseModel):
         new_meta = Path(new_meta_dir or str(Path(meta_dir) / "new"))
         new_meta.mkdir(parents=True, exist_ok=True)
 
+        from flyte.remote import upload_file
+
         with tempfile.NamedTemporaryFile(prefix="vol-migrate-", suffix=".json", delete=False) as f:
             dump_path = f.name
 
         src_redis: Optional[subprocess.Popen] = None
         new_redis: Optional[subprocess.Popen] = None
+        cleanup_paths: list[str] = [dump_path]
         try:
             if src_engine == "redis":
                 src_redis = await _start_redis(str(src_meta))
@@ -535,35 +538,26 @@ class Volume(BaseModel):
                 return tmp.name
 
             snapshot_path = await asyncio.to_thread(_snapshot)
+            cleanup_paths.append(snapshot_path)
+            md5, remote_uri = await upload_file.aio(Path(snapshot_path))
+            return Volume(
+                name=self.name,
+                bucket=self.bucket,
+                storage=self.storage,
+                index=File(path=remote_uri, hash=md5),
+                parent=self.index,
+                metadata_engine=new_engine,
+            )
         finally:
             if src_redis is not None:
                 _stop_redis(src_redis, timeout=5.0)
             if new_redis is not None:
                 _stop_redis(new_redis, timeout=5.0)
-            try:
-                os.unlink(dump_path)
-            except OSError:
-                pass
-
-        from flyte.remote import upload_file
-
-        try:
-            md5, remote_uri = await upload_file.aio(Path(snapshot_path))
-            new_index_file: File = File(path=remote_uri, hash=md5)
-        finally:
-            try:
-                os.unlink(snapshot_path)
-            except OSError:
-                pass
-
-        return Volume(
-            name=self.name,
-            bucket=self.bucket,
-            storage=self.storage,
-            index=new_index_file,
-            parent=self.index,
-            metadata_engine=new_engine,
-        )
+            for path in cleanup_paths:
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
 
 
 def _client_bucket_uri(bucket: str, storage: str) -> str:
