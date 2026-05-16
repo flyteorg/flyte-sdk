@@ -60,30 +60,57 @@ def init() -> None:
         logger.debug("Failed to initialize Sentry", exc_info=True)
 
 
+def _iter_cause_chain(exc: BaseException):
+    """Walk __cause__ / __context__ chain so wrapping doesn't hide the real type.
+
+    Bounded depth - exception chains in the wild stay shallow (3-5 deep), but a
+    bug elsewhere could create a cycle and we don't want this to spin.
+    """
+    seen: set[int] = set()
+    cur: BaseException | None = exc
+    depth = 0
+    while cur is not None and id(cur) not in seen and depth < 16:
+        yield cur
+        seen.add(id(cur))
+        nxt = cur.__cause__ or cur.__context__
+        cur = nxt
+        depth += 1
+
+
 def _is_user_error(exc: BaseException) -> bool:
     """Errors raised intentionally as user-facing messages — not crash reports."""
     try:
         import click
 
-        if isinstance(exc, (click.Abort, click.exceptions.Exit, click.ClickException)):
-            return True
+        click_user_exc: tuple[type, ...] = (click.Abort, click.exceptions.Exit, click.ClickException)
     except ImportError:
-        pass
+        click_user_exc = ()
 
-    # Errors raised by the deploy / image-build pipeline that always carry an
-    # actionable, user-facing message (bad trigger config, image build failure
-    # from the remote builder, etc.). InitializationError means the user forgot
-    # to call flyte.init() / flyte.init_from_config() — also a user-facing
-    # message, not a crash. Treat them all like ClickException so we don't
-    # flood Sentry with what is fundamentally user input feedback.
     try:
         from flyte.errors import DeploymentError, ImageBuildError, InitializationError
 
-        if isinstance(exc, (DeploymentError, ImageBuildError, InitializationError)):
-            return True
+        flyte_user_exc: tuple[type, ...] = (DeploymentError, ImageBuildError, InitializationError)
     except ImportError:
-        pass
+        flyte_user_exc = ()
 
+    # Auth failures (expired refresh token, expired device code, IDP rejection)
+    # are wrapped in RuntimeError("SelectCluster failed...") -> RuntimeSystemError
+    # in _upload_single_file, so isinstance() on the outer exc misses them.
+    # Walk __cause__ / __context__ to catch the original.
+    try:
+        from flyte.remote._client.auth.errors import AccessTokenNotFoundError, AuthenticationError
+
+        auth_user_exc: tuple[type, ...] = (AccessTokenNotFoundError, AuthenticationError)
+    except ImportError:
+        auth_user_exc = ()
+
+    user_excs = click_user_exc + flyte_user_exc + auth_user_exc
+    if not user_excs:
+        return False
+
+    for cause in _iter_cause_chain(exc):
+        if isinstance(cause, user_excs):
+            return True
     return False
 
 
