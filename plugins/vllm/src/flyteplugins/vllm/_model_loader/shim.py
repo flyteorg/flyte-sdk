@@ -38,7 +38,6 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
-@register_model_loader("flyte-vllm-streaming")
 class FlyteModelLoader(DefaultModelLoader):
     """Custom model loader for streaming model weights from object storage."""
 
@@ -115,6 +114,10 @@ class FlyteModelLoader(DefaultModelLoader):
             return super().load_model(vllm_config, model_config)
 
 
+if REMOTE_MODEL_PATH and STREAM_SAFETENSORS:
+    register_model_loader("flyte-vllm-streaming")(FlyteModelLoader)
+
+
 async def _get_model_files():
     import flyte.storage as storage
 
@@ -137,7 +140,12 @@ def main():
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 
-    # Prefetch the model
-    asyncio.run(_get_model_files())
+    logger.info("REMOTE_MODEL_PATH: %s", REMOTE_MODEL_PATH)
+    logger.info("LOCAL_MODEL_PATH: %s", LOCAL_MODEL_PATH)
+    logger.info("STREAM_SAFETENSORS: %s", STREAM_SAFETENSORS)
+
+    if REMOTE_MODEL_PATH:
+        logger.info("Prefetching model files from object storage...")
+        asyncio.run(_get_model_files())
 
     vllm.entrypoints.cli.main.main()
