@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import shutil
 import typing
@@ -24,6 +25,7 @@ from typing import (
 
 import aiofiles
 from flyteidl2.core import literals_pb2, types_pb2
+from fsspec.asyn import AsyncFileSystem
 from fsspec.utils import get_protocol
 from mashumaro.types import SerializableType
 from pydantic import BaseModel, Field, PrivateAttr, model_validator
@@ -713,6 +715,128 @@ class File(BaseModel, Generic[T], SerializableType):
         # Otherwise download from remote using sync functionality
         fs.get(self.path, local_path)
         return str(local_path)
+
+    async def copy_to(self, dst_path: str) -> File[T]:
+        """
+        Asynchronously copy this file to ``dst_path`` and return a new ``File``.
+
+        Uses the underlying filesystem's native single-file copy primitive
+        when source and destination share a protocol (S3 ``CopyObject``,
+        GCS rewrite, local ``shutil.copyfile``). Falls back to a stream
+        copy (download → upload via a temp file) when the protocols differ
+        or the backend doesn't implement ``cp_file``.
+
+        Bytes are preserved, so the returned File inherits ``name``,
+        ``format``, ``hash``, and ``hash_method`` from ``self``. The
+        per-instance ``lazy_uploader`` is not carried over — the new
+        file is fully materialized at ``dst_path``.
+
+        Example:
+
+        ```python
+        @env.task
+        async def duplicate(f: File) -> File:
+            return await f.copy_to("s3://my-bucket/dup.bin")
+        ```
+
+        Args:
+            dst_path: Destination URI. Must be a complete path including
+                scheme (e.g. ``s3://bucket/key`` or ``/abs/local/path``).
+
+        Returns:
+            A new ``File`` pointing at ``dst_path``.
+        """
+        src_proto = get_protocol(self.path)
+        dst_proto = get_protocol(dst_path)
+        src_is_local = "file" in src_proto
+        dst_is_local = "file" in dst_proto
+
+        if src_is_local and dst_is_local:
+            Path(dst_path).parent.mkdir(parents=True, exist_ok=True)
+            await asyncio.to_thread(shutil.copyfile, str(self.path), str(dst_path))
+        elif src_proto == dst_proto and not src_is_local:
+            fs = storage.get_underlying_filesystem(path=self.path)
+            try:
+                if isinstance(fs, AsyncFileSystem):
+                    await fs._cp_file(self.path, dst_path)  # pylint: disable=W0212
+                else:
+                    await asyncio.to_thread(fs.cp_file, self.path, dst_path)
+            except NotImplementedError:
+                logger.debug(
+                    "Backend %s doesn't implement native cp_file; falling back to stream copy.",
+                    src_proto,
+                )
+                await self._stream_copy(dst_path)
+        else:
+            await self._stream_copy(dst_path)
+
+        return File(
+            path=dst_path,
+            name=self.name,
+            format=self.format,
+            hash=self.hash,
+            hash_method=self.hash_method,
+        )
+
+    async def _stream_copy(self, dst_path: str) -> None:
+        """Download to a local temp, upload to dst_path. Cleans up the temp."""
+        tmp_dir = storage.get_random_local_directory()
+        tmp_path = str(Path(tmp_dir) / Path(self.path).name)
+        try:
+            await self.download(tmp_path)
+            await File.from_local(tmp_path, remote_destination=dst_path)
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+    def copy_to_sync(self, dst_path: str) -> File[T]:
+        """
+        Synchronously copy this file to ``dst_path`` and return a new ``File``.
+
+        See :meth:`copy_to` for behaviour and arguments.
+        """
+        src_proto = get_protocol(self.path)
+        dst_proto = get_protocol(dst_path)
+        src_is_local = "file" in src_proto
+        dst_is_local = "file" in dst_proto
+
+        if src_is_local and dst_is_local:
+            Path(dst_path).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(str(self.path), str(dst_path))
+        elif src_proto == dst_proto and not src_is_local:
+            fs = storage.get_underlying_filesystem(path=self.path)
+            try:
+                fs.cp_file(self.path, dst_path)
+            except NotImplementedError:
+                logger.debug(
+                    "Backend %s doesn't implement native cp_file; falling back to stream copy.",
+                    src_proto,
+                )
+                self._stream_copy_sync(dst_path)
+        else:
+            self._stream_copy_sync(dst_path)
+
+        return File(
+            path=dst_path,
+            name=self.name,
+            format=self.format,
+            hash=self.hash,
+            hash_method=self.hash_method,
+        )
+
+    def _stream_copy_sync(self, dst_path: str) -> None:
+        tmp_dir = storage.get_random_local_directory()
+        tmp_path = str(Path(tmp_dir) / Path(self.path).name)
+        try:
+            self.download_sync(tmp_path)
+            File.from_local_sync(tmp_path, remote_destination=dst_path)
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
 
     @classmethod
     @requires_initialization
