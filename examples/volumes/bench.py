@@ -160,7 +160,7 @@ async def run_cell(workload: str, engine: str, writeback: bool) -> Dict[str, flo
     result = await fn(vol, **params)
 
     t0 = time.monotonic()
-    await vol.commit()
+    final = await vol.commit()
     commit_ms = (time.monotonic() - t0) * 1000.0
 
     # Capture the index footprint *after* commit. Redis only writes its
@@ -173,13 +173,19 @@ async def run_cell(workload: str, engine: str, writeback: bool) -> Dict[str, flo
             index_bytes = float(os.path.getsize(p))
             break
 
+    # Volume-level stats populated by commit() (best-effort).
+    used_bytes = float(final.used_bytes) if final.used_bytes is not None else 0.0
+    inode_count = float(final.inode_count) if final.inode_count is not None else 0.0
+
     logger.info(
-        "cell done: workload=%s engine=%s writeback=%s mount=%.0fms commit=%.0fms",
+        "cell done: workload=%s engine=%s writeback=%s mount=%.0fms commit=%.0fms used=%.0f inodes=%.0f",
         workload,
         engine,
         writeback,
         mount_ms,
         commit_ms,
+        used_bytes,
+        inode_count,
     )
 
     return {
@@ -187,6 +193,8 @@ async def run_cell(workload: str, engine: str, writeback: bool) -> Dict[str, flo
         "mount_ms": mount_ms,
         "commit_ms": commit_ms,
         "index_bytes": index_bytes,
+        "used_bytes": used_bytes,
+        "inode_count": inode_count,
     }
 
 
@@ -248,7 +256,17 @@ def _render_workload(name: str, rows: List[Dict[str, object]]) -> str:
     if not rows:
         return f"<h2>{name}</h2><p><em>no results</em></p>"
 
-    base_cols = ["engine", "writeback", "items", "workload_ms", "mount_ms", "commit_ms", "index_bytes"]
+    base_cols = [
+        "engine",
+        "writeback",
+        "items",
+        "workload_ms",
+        "mount_ms",
+        "commit_ms",
+        "index_bytes",
+        "used_bytes",
+        "inode_count",
+    ]
     extra_cols = [c for c in ("throughput_mibs", "fork_mean", "fork_p50", "fork_p99") if c in rows[0]]
     cols = base_cols + extra_cols
 
@@ -285,30 +303,31 @@ def _render_workload(name: str, rows: List[Dict[str, object]]) -> str:
 
 
 def _render_overview(rows: List[Dict[str, object]], workloads: List[str]) -> str:
-    summary_rows = ""
-    for w in workloads:
-        wrows = [r for r in rows if r["workload"] == w]
-        for r in wrows:
-            summary_rows += (
-                "<tr>"
-                f"<td>{w}</td>"
-                f"<td>{r['engine']}</td>"
-                f"<td>{'on' if r['writeback'] else 'off'}</td>"
-                f"<td align=right>{float(r['workload_ms']):,.0f}</td>"
-                f"<td align=right>{float(r['mount_ms']):,.0f}</td>"
-                f"<td align=right>{float(r['commit_ms']):,.0f}</td>"
-                f"<td align=right>{int(r['index_bytes']):,}</td>"
-                "</tr>"
-            )
+    body = "".join(
+        "<tr>"
+        f"<td>{r['workload']}</td>"
+        f"<td>{r['engine']}</td>"
+        f"<td>{'on' if r['writeback'] else 'off'}</td>"
+        f"<td align=right>{float(r['workload_ms']):,.0f}</td>"
+        f"<td align=right>{float(r['mount_ms']):,.0f}</td>"
+        f"<td align=right>{float(r['commit_ms']):,.0f}</td>"
+        f"<td align=right>{int(r['index_bytes']):,}</td>"
+        f"<td align=right>{int(float(r.get('used_bytes', 0))):,}</td>"
+        f"<td align=right>{int(float(r.get('inode_count', 0))):,}</td>"
+        "</tr>"
+        for w in workloads
+        for r in (x for x in rows if x["workload"] == w)
+    )
+    head = (
+        "<tr><th>workload</th><th>engine</th><th>writeback</th>"
+        "<th>workload_ms</th><th>mount_ms</th><th>commit_ms</th>"
+        "<th>index_bytes</th><th>used_bytes</th><th>inodes</th></tr>"
+    )
     return (
         "<h1>Volume benchmark sweep</h1>"
         "<p>Each row is one sub-action with a fresh <code>Volume</code>. "
         "Sub-actions fan out concurrently via <code>asyncio.gather</code>.</p>"
-        "<table border=1 cellpadding=6 cellspacing=0>"
-        "<tr><th>workload</th><th>engine</th><th>writeback</th>"
-        "<th>workload_ms</th><th>mount_ms</th><th>commit_ms</th><th>index_bytes</th></tr>"
-        f"{summary_rows}"
-        "</table>"
+        f"<table border=1 cellpadding=6 cellspacing=0>{head}{body}</table>"
     )
 
 
