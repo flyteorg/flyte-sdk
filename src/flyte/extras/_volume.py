@@ -333,27 +333,42 @@ class Volume(BaseModel):
             inode_count=inode_count,
         )
 
-    async def _snapshot_and_upload_index(self, *, meta_dir: str, tmp_prefix: str) -> File:
-        """Flush and snapshot the live metadata index, upload the snapshot,
-        and return a :class:`File` pointing at the upload.
+    async def _snapshot_and_upload_index(
+        self,
+        *,
+        meta_dir: str,
+        tmp_prefix: str,
+        flush_live: bool = True,
+    ) -> File:
+        """Snapshot the metadata index on disk at ``meta_dir`` and upload it.
 
-        Does not unmount and does not drain the writeback queue — chunks
-        already written but not yet uploaded may still be local-only when
-        the snapshot is published. Callers must be prepared for that.
+        When ``flush_live=True`` (default), assumes a running daemon and
+        flushes in-memory state before snapshotting: ``SAVE`` for Redis,
+        WAL checkpoint for SQLite. Does not unmount and does not drain
+        the writeback queue — chunks already written but not yet uploaded
+        may still be local-only when the snapshot is published.
 
-        For SQLite-backed Volumes the snapshot is produced via SQLite's
-        online backup API. For Redis-backed Volumes a synchronous ``SAVE``
-        flushes the live state to ``dump.rdb`` which is then copied.
+        When ``flush_live=False``, treats the on-disk index as authoritative
+        (no daemon expected to be running). Used by :meth:`fork` when the
+        Volume isn't mounted.
+
+        For SQLite the snapshot is produced via SQLite's online backup API
+        (which works equally well on a cold file). For Redis the snapshot is
+        a plain ``shutil.copyfile`` of ``dump.rdb``.
         """
         engine = self._engine()
         src = Path(meta_dir) / _index_filename(engine)
-        if engine == "sqlite" and not src.exists():
-            raise RuntimeError(f"Cannot snapshot: no live index at {src}. Call mount() first.")
+        if not src.exists():
+            raise RuntimeError(f"Cannot snapshot: no index at {src}.")
 
-        await asyncio.to_thread(os.sync)
+        if flush_live:
+            await asyncio.to_thread(os.sync)
+            if engine == "redis":
+                await asyncio.to_thread(_redis_save)
+            else:
+                await asyncio.to_thread(_wal_checkpoint, str(src))
 
         if engine == "redis":
-            await asyncio.to_thread(_redis_save)
 
             def _snapshot() -> str:
                 import shutil
@@ -363,7 +378,6 @@ class Volume(BaseModel):
                 shutil.copyfile(str(src), tmp.name)
                 return tmp.name
         else:
-            await asyncio.to_thread(_wal_checkpoint, str(src))
 
             def _snapshot() -> str:
                 tmp = tempfile.NamedTemporaryFile(prefix=tmp_prefix, suffix=".db", delete=False)
@@ -399,27 +413,78 @@ class Volume(BaseModel):
         *,
         meta_dir: str = _DEFAULT_META_DIR,
     ) -> "Volume":
-        """Snapshot the current live index and return a new ``Volume`` that
-        points at the snapshot.
+        """Snapshot the current metadata index and return a new ``Volume``
+        that points at the snapshot.
 
         Both the original and the fork reference the same bucket. Chunk keys
         are derived from inode IDs, which diverge from the fork point, so
         concurrent writes do not collide. Reads after the fork are namespace-
         isolated: writes from one side are invisible to the other.
+
+        Works whether or not ``self`` is currently mounted:
+
+        * **Live** (mounted): flushes in-memory state (``SAVE`` for Redis,
+          WAL checkpoint for SQLite) and snapshots the live on-disk index.
+        * **Cold** (not mounted): downloads ``self.index`` to ``meta_dir``,
+          snapshots it directly, then removes the downloaded copy. No
+          daemon is started — for Redis this in particular skips the
+          ``dump.rdb``-load step, which is the dominant cost on large
+          volumes. Stats are inherited from ``self`` since no writes can
+          have occurred between download and snapshot.
         """
-        new_index = await self._snapshot_and_upload_index(meta_dir=meta_dir, tmp_prefix="vol-fork-")
-        # Engine is still mounted/alive after snapshot; safe to query.
-        used_bytes, inode_count = await _query_volume_stats(meta_dir, self._engine())
-        return Volume(
-            name=name,
-            bucket=self.bucket,
-            storage=self.storage,
-            index=new_index,
-            parent=self.index,
-            metadata_engine=self.metadata_engine,
-            used_bytes=used_bytes,
-            inode_count=inode_count,
-        )
+        engine = self._engine()
+        meta_path = Path(meta_dir)
+        src_path = meta_path / _index_filename(engine)
+
+        # "Live" iff a daemon for this engine is registered for meta_dir.
+        # For Redis the marker is unambiguous (_live_redis). For SQLite the
+        # juicefs daemon is keyed by mount_path elsewhere, so use the presence
+        # of the index file plus the absence of a redis entry to infer it; in
+        # practice, fork() is called either right after mount() (live) or on
+        # an unmounted Volume (cold, file absent).
+        if engine == "redis":
+            live = meta_dir in type(self)._live_redis
+        else:
+            live = src_path.exists()
+
+        downloaded = False
+        try:
+            if not live:
+                if self.index is None:
+                    raise RuntimeError("Cannot fork: Volume is not mounted and has no index to fork from.")
+                meta_path.mkdir(parents=True, exist_ok=True)
+                _logger.info("[Volume.fork] cold fork: downloading index %s -> %s", self.index.path, src_path)
+                await self.index.download(str(src_path))
+                downloaded = True
+
+            new_index = await self._snapshot_and_upload_index(
+                meta_dir=meta_dir,
+                tmp_prefix="vol-fork-",
+                flush_live=live,
+            )
+
+            if live:
+                used_bytes, inode_count = await _query_volume_stats(meta_dir, engine)
+            else:
+                # No daemon, no writes since we downloaded — stats unchanged.
+                used_bytes, inode_count = self.used_bytes, self.inode_count
+
+            return Volume(
+                name=name,
+                bucket=self.bucket,
+                storage=self.storage,
+                index=new_index,
+                parent=self.index,
+                metadata_engine=self.metadata_engine,
+                used_bytes=used_bytes,
+                inode_count=inode_count,
+            )
+        finally:
+            if downloaded:
+                try:
+                    src_path.unlink()
+                except OSError:
+                    pass
 
     async def commit_inplace(
         self,
