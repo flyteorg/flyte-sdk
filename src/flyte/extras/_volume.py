@@ -89,6 +89,12 @@ class Volume(BaseModel):
     # backward compatibility with Volumes serialized before this field existed.
     # ``Volume.empty()`` sets this to ``"redis"`` on new volumes.
     metadata_engine: Optional[str] = None
+    # Snapshot of metadata stats captured at commit() / fork() time. Best-effort
+    # — left as None if the underlying status query failed. Sourced from
+    # ``juicefs status`` (``Statistic.UsedSpace`` / ``Statistic.UsedInodes``);
+    # inode_count counts files + dirs + symlinks combined.
+    used_bytes: Optional[int] = None
+    inode_count: Optional[int] = None
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -303,14 +309,17 @@ class Volume(BaseModel):
                 await asyncio.to_thread(proc.wait, 5)
 
         if engine == "redis":
-            # Flush Redis state to dump.rdb, then shut it down. SHUTDOWN
-            # NOSAVE prevents a second redundant save on exit.
+            # Flush Redis state to dump.rdb, then query stats while the daemon
+            # is still alive, then shut it down. SHUTDOWN NOSAVE prevents a
+            # second redundant save on exit.
             await asyncio.to_thread(_redis_save)
+            used_bytes, inode_count = await _query_volume_stats(meta_dir, engine)
             redis_proc = type(self)._live_redis.pop(meta_dir, None)
             await asyncio.to_thread(_stop_redis, redis_proc, timeout)
         else:
             # Force WAL pages back into the main .db before uploading.
             await asyncio.to_thread(_wal_checkpoint, str(index_path))
+            used_bytes, inode_count = await _query_volume_stats(meta_dir, engine)
 
         new_index: File = await File.from_local(str(index_path))
         return Volume(
@@ -320,6 +329,8 @@ class Volume(BaseModel):
             index=new_index,
             parent=self.index,
             metadata_engine=self.metadata_engine,
+            used_bytes=used_bytes,
+            inode_count=inode_count,
         )
 
     async def _snapshot_and_upload_index(self, *, meta_dir: str, tmp_prefix: str) -> File:
@@ -397,6 +408,8 @@ class Volume(BaseModel):
         isolated: writes from one side are invisible to the other.
         """
         new_index = await self._snapshot_and_upload_index(meta_dir=meta_dir, tmp_prefix="vol-fork-")
+        # Engine is still mounted/alive after snapshot; safe to query.
+        used_bytes, inode_count = await _query_volume_stats(meta_dir, self._engine())
         return Volume(
             name=name,
             bucket=self.bucket,
@@ -404,6 +417,8 @@ class Volume(BaseModel):
             index=new_index,
             parent=self.index,
             metadata_engine=self.metadata_engine,
+            used_bytes=used_bytes,
+            inode_count=inode_count,
         )
 
     async def commit_inplace(
@@ -606,6 +621,46 @@ def _default_bucket() -> str:
         )
     base = raw[:idx]
     return f"{base}/{project}/{domain}/volumes"
+
+
+async def _query_volume_stats(meta_dir: str, engine: str) -> tuple[Optional[int], Optional[int]]:
+    """Best-effort: return ``(used_bytes, inode_count)`` for the volume backed
+    by ``meta_dir`` / ``engine``. Shells out to ``juicefs status`` and parses
+    the JSON. Returns ``(None, None)`` on any failure so commit/fork are never
+    blocked by stats collection.
+
+    Must be called while the metadata engine is reachable — for Redis, before
+    the in-process redis-server is shut down; for SQLite, any time after the
+    index file is on disk.
+    """
+    import json
+
+    meta_url = _meta_url(meta_dir, engine)
+    try:
+        r = await asyncio.to_thread(
+            subprocess.run,
+            [_CLIENT_BINARY, "status", meta_url],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if r.returncode != 0:
+            _logger.warning("[Volume.stats] juicefs status rc=%d: %s", r.returncode, r.stderr[:200])
+            return None, None
+        data = json.loads(r.stdout)
+        stat = data.get("Statistic") or {}
+        used_bytes: Optional[int] = None
+        inode_count: Optional[int] = None
+        raw_used = stat.get("UsedSpace")
+        if isinstance(raw_used, (int, float)):
+            used_bytes = int(raw_used)
+        raw_inodes = stat.get("UsedInodes")
+        if isinstance(raw_inodes, (int, float)):
+            inode_count = int(raw_inodes)
+        return used_bytes, inode_count
+    except Exception as e:
+        _logger.warning("[Volume.stats] failed to query stats: %s", e)
+        return None, None
 
 
 def _run_check(cmd: list) -> None:
