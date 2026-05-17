@@ -40,7 +40,7 @@ import sqlite3
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import ClassVar, Dict, Optional
+from typing import ClassVar, Dict, Optional, Set
 
 from pydantic import BaseModel, ConfigDict
 
@@ -102,6 +102,10 @@ class Volume(BaseModel):
     _live_procs: ClassVar[Dict[str, subprocess.Popen]] = {}
     # Track in-process redis-server daemons, keyed by meta_dir.
     _live_redis: ClassVar[Dict[str, subprocess.Popen]] = {}
+    # meta_dirs that currently have a live engine + daemon. Used by fork()
+    # to decide whether to use the live flush-and-upload path or the cold
+    # File.copy_to path. Populated by mount(), cleared by commit().
+    _live_meta: ClassVar[Set[str]] = set()
 
     def _engine(self) -> str:
         return self.metadata_engine or "sqlite"
@@ -275,6 +279,7 @@ class Volume(BaseModel):
                 raise TimeoutError(f"mount at {mount_path} did not become a FUSE mountpoint within {timeout}s")
             await asyncio.sleep(0.5)
 
+        type(self)._live_meta.add(meta_dir)
         _logger.info("[Volume.mount] %s is now a FUSE mount", mount_path)
 
     async def commit(
@@ -321,6 +326,7 @@ class Volume(BaseModel):
             await asyncio.to_thread(_wal_checkpoint, str(index_path))
             used_bytes, inode_count = await _query_volume_stats(meta_dir, engine)
 
+        type(self)._live_meta.discard(meta_dir)
         new_index: File = await File.from_local(str(index_path))
         return Volume(
             name=self.name,
@@ -441,19 +447,11 @@ class Volume(BaseModel):
           forking large volumes cheap.
         """
         engine = self._engine()
-        meta_path = Path(meta_dir)
-        src_path = meta_path / _index_filename(engine)
-
-        # "Live" iff a daemon for this engine is registered for meta_dir.
-        # For Redis the marker is unambiguous (_live_redis). For SQLite the
-        # juicefs daemon is keyed by mount_path elsewhere, so use the presence
-        # of the index file plus the absence of a redis entry to infer it; in
-        # practice, fork() is called either right after mount() (live) or on
-        # an unmounted Volume (cold, file absent).
-        if engine == "redis":
-            live = meta_dir in type(self)._live_redis
-        else:
-            live = src_path.exists()
+        # "Live" iff mount() registered this meta_dir and commit() hasn't
+        # cleared it. This is independent of file-on-disk state — for SQLite
+        # the index.db lingers after commit(), so a file-existence heuristic
+        # would falsely mark a committed-then-not-remounted volume as live.
+        live = meta_dir in type(self)._live_meta
 
         if live:
             new_index = await self._snapshot_and_upload_index(
