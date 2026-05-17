@@ -358,15 +358,23 @@ class Volume(BaseModel):
         """
         engine = self._engine()
         src = Path(meta_dir) / _index_filename(engine)
-        if not src.exists():
-            raise RuntimeError(f"Cannot snapshot: no index at {src}.")
 
         if flush_live:
+            # For Redis the dump.rdb file is only materialized by SAVE
+            # (server is started with --save ""), so we can't check
+            # existence before the flush. WAL checkpoint on SQLite is a
+            # no-op against a missing file but the existence check below
+            # will catch that case explicitly.
             await asyncio.to_thread(os.sync)
             if engine == "redis":
                 await asyncio.to_thread(_redis_save)
             else:
+                if not src.exists():
+                    raise RuntimeError(f"Cannot snapshot: no live index at {src}. Call mount() first.")
                 await asyncio.to_thread(_wal_checkpoint, str(src))
+
+        if not src.exists():
+            raise RuntimeError(f"Cannot snapshot: no index at {src}.")
 
         if engine == "redis":
 
