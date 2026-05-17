@@ -432,13 +432,13 @@ class Volume(BaseModel):
         Works whether or not ``self`` is currently mounted:
 
         * **Live** (mounted): flushes in-memory state (``SAVE`` for Redis,
-          WAL checkpoint for SQLite) and snapshots the live on-disk index.
-        * **Cold** (not mounted): downloads ``self.index`` to ``meta_dir``,
-          snapshots it directly, then removes the downloaded copy. No
-          daemon is started — for Redis this in particular skips the
-          ``dump.rdb``-load step, which is the dominant cost on large
-          volumes. Stats are inherited from ``self`` since no writes can
-          have occurred between download and snapshot.
+          WAL checkpoint for SQLite) and snapshots the live on-disk index,
+          uploading the snapshot.
+        * **Cold** (not mounted): server-side copies ``self.index`` to a
+          fresh remote URI via :meth:`flyte.io.File.copy_to`. No daemon is
+          started, no bytes traverse the pod. Stats are inherited from
+          ``self`` since no writes can have occurred. This is what makes
+          forking large volumes cheap.
         """
         engine = self._engine()
         meta_path = Path(meta_dir)
@@ -455,44 +455,33 @@ class Volume(BaseModel):
         else:
             live = src_path.exists()
 
-        downloaded = False
-        try:
-            if not live:
-                if self.index is None:
-                    raise RuntimeError("Cannot fork: Volume is not mounted and has no index to fork from.")
-                meta_path.mkdir(parents=True, exist_ok=True)
-                _logger.info("[Volume.fork] cold fork: downloading index %s -> %s", self.index.path, src_path)
-                await self.index.download(str(src_path))
-                downloaded = True
-
+        if live:
             new_index = await self._snapshot_and_upload_index(
                 meta_dir=meta_dir,
                 tmp_prefix="vol-fork-",
-                flush_live=live,
+                flush_live=True,
             )
+            used_bytes, inode_count = await _query_volume_stats(meta_dir, engine)
+        else:
+            if self.index is None:
+                raise RuntimeError("Cannot fork: Volume is not mounted and has no index to fork from.")
+            ctx = internal_ctx()
+            dst_path = ctx.raw_data.get_random_remote_path(file_name=_index_filename(engine))
+            _logger.info("[Volume.fork] cold fork: copying %s -> %s", self.index.path, dst_path)
+            new_index = await self.index.copy_to(dst_path)
+            # No daemon, no writes since self.index was published — stats unchanged.
+            used_bytes, inode_count = self.used_bytes, self.inode_count
 
-            if live:
-                used_bytes, inode_count = await _query_volume_stats(meta_dir, engine)
-            else:
-                # No daemon, no writes since we downloaded — stats unchanged.
-                used_bytes, inode_count = self.used_bytes, self.inode_count
-
-            return Volume(
-                name=name,
-                bucket=self.bucket,
-                storage=self.storage,
-                index=new_index,
-                parent=self.index,
-                metadata_engine=self.metadata_engine,
-                used_bytes=used_bytes,
-                inode_count=inode_count,
-            )
-        finally:
-            if downloaded:
-                try:
-                    src_path.unlink()
-                except OSError:
-                    pass
+        return Volume(
+            name=name,
+            bucket=self.bucket,
+            storage=self.storage,
+            index=new_index,
+            parent=self.index,
+            metadata_engine=self.metadata_engine,
+            used_bytes=used_bytes,
+            inode_count=inode_count,
+        )
 
     async def commit_inplace(
         self,
