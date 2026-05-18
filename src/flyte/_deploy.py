@@ -488,10 +488,24 @@ async def apply(deployment_plan: DeploymentPlan, copy_style: CopyFiles, dryrun: 
         if deployment_plan.version:
             version = deployment_plan.version
         else:
+            import pickle as _pickle
+
+            import click
+
             h = hashlib.md5()
-            h.update(cloudpickle.dumps(deployment_plan.envs))
-            h.update(code_bundle.computed_version.encode("utf-8"))
-            h.update(cloudpickle.dumps(image_cache))
+            try:
+                h.update(cloudpickle.dumps(deployment_plan.envs))
+                h.update(code_bundle.computed_version.encode("utf-8"))
+                h.update(cloudpickle.dumps(image_cache))
+            except (_pickle.PicklingError, TypeError) as e:
+                raise click.ClickException(
+                    "Failed to compute deployment version: your task or environment captures an "
+                    f"unpicklable object ({type(e).__name__}: {e}). This is usually caused by closing "
+                    "over `sys.stdin` / `sys.stdout` / `sys.stderr`, an open file handle, a thread, "
+                    "or a lock from module-level code. Move the captured value inside the task "
+                    "function, or pass an explicit `version=...` to `flyte.deploy(...)` to skip "
+                    "version derivation."
+                ) from e
             version = h.hexdigest()
 
     sc = SerializationContext(

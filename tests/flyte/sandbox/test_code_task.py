@@ -496,8 +496,14 @@ pipeline(x)
         assert snapshot.function_name == "double"
         assert snapshot.args == (5,)
 
-        # Resume with the result of the external function
-        result = snapshot.resume(return_value=10)  # double(5) = 10
+        # Resume with the result of the external function (shape depends on
+        # pydantic-monty version; see flyte.sandbox._bridge._resume_monty_snapshot).
+        import inspect
+
+        if "result" in inspect.signature(snapshot.resume).parameters:
+            result = snapshot.resume({"return_value": 10})  # double(5) = 10
+        else:
+            result = snapshot.resume(return_value=10)
         assert isinstance(result, MontyComplete)
         assert result.output == 11  # 10 + 1
 

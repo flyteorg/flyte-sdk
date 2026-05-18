@@ -12,6 +12,7 @@ from flyte.remote._common import TimeFilter
 
 from . import _common as common
 from . import _params
+from ._option import MutuallyExclusiveOption
 
 
 @click.group(name="get")
@@ -324,10 +325,19 @@ def logs(
 
 @get.command(cls=common.CommandBase)
 @click.argument("name", type=str, required=False)
+@click.option(
+    "--cluster-pool",
+    type=str,
+    default=None,
+    help="Scope the secret to a cluster pool. Mutually exclusive with --project and --domain.",
+    cls=MutuallyExclusiveOption,
+    mutually_exclusive=["project", "domain"],
+)
 @click.pass_obj
 def secret(
     cfg: common.CLIConfig,
     name: str | None = None,
+    cluster_pool: str | None = None,
     project: str | None = None,
     domain: str | None = None,
 ):
@@ -338,13 +348,17 @@ def secret(
         project = ""
     if domain is None:
         domain = ""
+
+    if cluster_pool and (project != "" or domain != ""):
+        raise click.ClickException("Project and domain must not be set when --cluster-pool is specified.")
+
     cfg.init(project=project, domain=domain)
 
     console = common.get_console()
     if name:
-        console.print(common.format("Secret", [remote.Secret.get(name)], "json"))
+        console.print(common.format("Secret", [remote.Secret.get(name, cluster_pool=cluster_pool)], "json"))
     else:
-        console.print(common.format("Secrets", remote.Secret.listall(), cfg.output_format))
+        console.print(common.format("Secrets", remote.Secret.listall(cluster_pool=cluster_pool), cfg.output_format))
 
 
 @get.command(cls=common.CommandBase)

@@ -118,7 +118,7 @@ async def _upload_with_retry(
                         )
         except RuntimeSystemError:
             raise
-        except (httpx.TimeoutException, httpx.ConnectError, OSError) as e:
+        except (httpx.TimeoutException, httpx.NetworkError, OSError) as e:
             last_error = e
             if retry_attempt >= max_retries:
                 raise RuntimeSystemError(

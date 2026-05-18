@@ -19,6 +19,9 @@ hydra = "flyteplugins.hydra._cli:hydra_group"
 requires = ["setuptools", "setuptools_scm"]
 build-backend = "setuptools.build_meta"
 
+[tool.uv.sources]
+flyte = { path = "../../", editable = true }
+
 [dependency-groups]
 dev = [
     "pytest",

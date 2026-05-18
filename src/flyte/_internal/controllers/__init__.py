@@ -47,7 +47,7 @@ class TaskCallSequencer:
 if TYPE_CHECKING:
     import concurrent.futures
 
-ControllerType = Literal["local", "remote"]
+ControllerType = Literal["local", "remote", "rust"]
 
 R = TypeVar("R")
 
@@ -149,10 +149,31 @@ def create_controller(
             from ._local_controller import LocalController
 
             controller = LocalController()
-        case "remote" | "hybrid":
+        case "remote":
             from flyte._internal.controllers.remote import create_remote_controller
 
             controller = create_remote_controller(**kwargs)
+            # from flyte._internal.controllers.remote._r_controller import RemoteController
+
+            # controller = RemoteController(endpoint="http://host.docker.internal:8090", workers=10,
+            # max_system_retries=5)
+            # controller = RemoteController(workers=10, max_system_retries=5)
+        case "hybrid":
+            from flyte._internal.controllers.remote._r_controller import RemoteController
+
+            controller = RemoteController(endpoint="http://host.docker.internal:8090", workers=10, max_system_retries=5)
+            # controller = RemoteController(workers=10, max_system_retries=5)
+        case "rust":
+            # Rust controller - works for both local (endpoint-based) and remote (API key from env)
+            from flyte._internal.controllers.remote._r_controller import RemoteController
+
+            # Extract endpoint if provided, otherwise Rust controller will use API key from env var
+            endpoint = kwargs.get("endpoint")
+            # Rust requires scheme prefix (http:// or https://)
+            if endpoint and not endpoint.startswith(("http://", "https://")):
+                # Default to http:// for local endpoints
+                endpoint = f"http://{endpoint}"
+            controller = RemoteController(endpoint=endpoint, workers=10, max_system_retries=5)
         case _:
             raise ValueError(f"{ct} is not a valid controller type.")
 

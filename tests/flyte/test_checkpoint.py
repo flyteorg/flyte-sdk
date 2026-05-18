@@ -17,9 +17,7 @@ from flyte._checkpoint import (
     CHECKPOINT_CACHE_KEY,
     Checkpoint,
     latest_checkpoint,
-    repair_union_prev_checkpoint_uri,
 )
-from flyte._context import Context, ContextData
 from flyte.models import ActionID, CheckpointPaths, RawDataPath, TaskContext
 from flyte.report import Report
 from flyte.storage._parallel_reader import DownloadQueueEmpty
@@ -41,81 +39,6 @@ def _write_dir_checkpoint_tar(
 
 def _read_state_step(workspace: pathlib.Path) -> int:
     return json.loads((workspace / "state.json").read_text(encoding="utf-8"))["step"]
-
-
-# --- repair_union_prev_checkpoint_uri ---
-
-
-def test_repair_union_prev_checkpoint_uri_decrements_attempt() -> None:
-    run_name = "r969nmh2r5m6mqqnnb4h"
-    prev = f"s3://bucket/ns/prefix/{run_name}/a0/2/ge/{run_name}-a0-0/_flytecheckpoints"
-    want = f"s3://bucket/ns/prefix/{run_name}/a0/1/ge/{run_name}-a0-0/_flytecheckpoints"
-    assert repair_union_prev_checkpoint_uri(prev, run_name=run_name, action_name="a0") == want
-
-
-def test_repair_union_prev_checkpoint_uri_no_op_when_attempt_is_one() -> None:
-    run_name = "run99"
-    prev = f"s3://b/x/{run_name}/a0/1/y/z"
-    assert repair_union_prev_checkpoint_uri(prev, run_name=run_name, action_name="a0") == prev
-
-
-def test_repair_union_prev_checkpoint_uri_no_op_when_pattern_missing() -> None:
-    prev = "s3://bucket/other/layout/prev"
-    assert repair_union_prev_checkpoint_uri(prev, run_name="rn", action_name="a0") == prev
-
-
-def test_repair_union_prev_checkpoint_uri_respects_flyte_attempt_0_based(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """With FLYTE_ATTEMPT_NUMBER>=1, only rewrite when n matches buggy current directory (0-based: n==flyte+1)."""
-    monkeypatch.setenv("FLYTE_ATTEMPT_NUMBER", "2")
-    run_name = "rn"
-    prev = f"s3://b/{run_name}/a0/3/x/_flytecheckpoints"
-    want = f"s3://b/{run_name}/a0/2/x/_flytecheckpoints"
-    assert repair_union_prev_checkpoint_uri(prev, run_name=run_name, action_name="a0") == want
-
-
-def test_repair_union_prev_checkpoint_uri_respects_flyte_attempt_1_based(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """1-based FLYTE_ATTEMPT_NUMBER matches path segment n directly (n==flyte)."""
-    monkeypatch.setenv("FLYTE_ATTEMPT_NUMBER", "2")
-    run_name = "rn"
-    prev = f"s3://b/{run_name}/a0/2/x/_flytecheckpoints"
-    want = f"s3://b/{run_name}/a0/1/x/_flytecheckpoints"
-    assert repair_union_prev_checkpoint_uri(prev, run_name=run_name, action_name="a0") == want
-
-
-def test_repair_union_prev_checkpoint_uri_no_op_when_n_mismatch_env(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("FLYTE_ATTEMPT_NUMBER", "2")
-    run_name = "rn"
-    prev = f"s3://b/{run_name}/a0/4/x/_flytecheckpoints"
-    assert repair_union_prev_checkpoint_uri(prev, run_name=run_name, action_name="a0") == prev
-
-
-# --- Checkpoint construction / prev URI ---
-
-
-def test_checkpoint_repairs_prev_via_task_context() -> None:
-    run_name = "r969nmh2r5m6mqqnnb4h"
-    wrong_prev = f"s3://bucket/ns/prefix/{run_name}/a0/3/5d/{run_name}-a0-1/_flytecheckpoints"
-    want_prev = f"s3://bucket/ns/prefix/{run_name}/a0/2/5d/{run_name}-a0-1/_flytecheckpoints"
-    with tempfile.TemporaryDirectory() as td:
-        base = pathlib.Path(td)
-        tctx = TaskContext(
-            action=ActionID(name="a0", run_name=run_name),
-            version="v1",
-            raw_data_path=RawDataPath(path=str(base)),
-            output_path=str(base / "o"),
-            run_base_dir=str(base),
-            report=Report(name="t"),
-            checkpoint_paths=None,
-        )
-        with Context(ContextData(task_context=tctx)):
-            cp = Checkpoint("s3://bucket/out", wrong_prev)
-    assert cp.remote_source == want_prev
 
 
 def test_checkpoint_prev_exists() -> None:

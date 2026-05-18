@@ -399,6 +399,22 @@ def test_uv_project_optional_uvlock():
         assert hash1 != hash2
 
 
+def test_copy_config_coerces_string_src_to_path(tmp_path):
+    """CopyConfig accepts a str src and coerces it to Path so update_hash/validate work."""
+    import hashlib
+
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.txt").write_text("hello")
+
+    cc = CopyConfig(path_type=1, src=str(src), dst="/app")
+    assert isinstance(cc.src, Path)
+    assert cc.src == src
+
+    h = hashlib.md5()
+    cc.update_hash(h)
+
+
 def test_copy_config_update_hash_respects_dockerignore(tmp_path):
     """CopyConfig.update_hash must exclude files matched by .dockerignore."""
     import hashlib

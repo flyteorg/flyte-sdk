@@ -15,7 +15,7 @@ from rich.console import Console
 from rich.table import Table
 
 import flyte
-from flyte import logger
+from flyte._logging import logger
 from flyte.connectors._grpc import grpc
 
 

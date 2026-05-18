@@ -36,29 +36,45 @@ def _ensure_docker_available() -> None:
         )
 
 
+def _ensure_kubectl_available() -> None:
+    if shutil.which("kubectl") is None:
+        raise click.ClickException(
+            "kubectl is not installed or not on PATH. Install kubectl "
+            "(https://kubernetes.io/docs/tasks/tools/) and try again."
+        )
+
+
+def _run_docker(cmd: list[str], failure_message: str) -> subprocess.CompletedProcess:
+    """Run a docker command and translate failure into a user-facing ClickException."""
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        details = (result.stderr or result.stdout or "").strip()
+        raise click.ClickException(f"{failure_message}\n{details}" if details else failure_message)
+    return result
+
+
 def _ensure_volume(volume_name: str) -> None:
-    result = subprocess.run(
+    result = _run_docker(
         ["docker", "volume", "ls", "--filter", f"name=^{volume_name}$", "--format", "{{.Name}}"],
-        capture_output=True,
-        text=True,
-        check=True,
+        f"Failed to list docker volumes while checking for '{volume_name}'.",
     )
     if volume_name not in result.stdout:
-        subprocess.run(["docker", "volume", "create", volume_name], check=True)
+        _run_docker(
+            ["docker", "volume", "create", volume_name],
+            f"Failed to create docker volume '{volume_name}'.",
+        )
 
 
 def _container_is_running(container_name: str) -> bool:
-    result = subprocess.run(
+    result = _run_docker(
         ["docker", "ps", "--filter", f"name=^{container_name}$", "--format", "{{.Names}}"],
-        capture_output=True,
-        text=True,
-        check=True,
+        f"Failed to query docker for container '{container_name}'.",
     )
     return container_name in result.stdout
 
 
 def _container_is_paused(container_name: str) -> bool:
-    result = subprocess.run(
+    result = _run_docker(
         [
             "docker",
             "ps",
@@ -69,9 +85,7 @@ def _container_is_paused(container_name: str) -> bool:
             "--format",
             "{{.Names}}",
         ],
-        capture_output=True,
-        text=True,
-        check=True,
+        f"Failed to query docker for paused container '{container_name}'.",
     )
     return container_name in result.stdout
 
@@ -187,6 +201,8 @@ def _flatten_kubeconfig(default_kubeconfig: Path, kubeconfig_path: Path) -> subp
 def _merge_kubeconfig(kubeconfig_path: Path, container_name: str) -> None:
     import tempfile
 
+    _ensure_kubectl_available()
+
     default_kubeconfig = Path.home() / ".kube" / "config"
     default_kubeconfig.parent.mkdir(parents=True, exist_ok=True)
 
@@ -254,12 +270,17 @@ def launch_devbox(image_name: str, is_dev_mode: bool, gpu: bool = False, log_for
         console.print("[yellow]Flyte devbox cluster is already running.[/yellow]")
         if not click.confirm("Do you want to delete the existing devbox cluster and start a new one?"):
             return
-        subprocess.run(["docker", "stop", _CONTAINER_NAME], check=True, capture_output=True)
+    subprocess.run(["docker", "rm", "-f", _CONTAINER_NAME], check=False, capture_output=True)
 
     _KUBE_DIR.mkdir(parents=True, exist_ok=True)
     # This step makes sure that we always used the latest k3s kubeconfig file
-    if _KUBECONFIG_PATH.exists():
-        _KUBECONFIG_PATH.unlink()
+    try:
+        _KUBECONFIG_PATH.unlink(missing_ok=True)
+    except PermissionError as e:
+        raise click.ClickException(
+            f"Permission denied removing stale kubeconfig at {_KUBECONFIG_PATH}. "
+            f"Delete it manually (e.g. `sudo rm {_KUBECONFIG_PATH}`) and retry.\n{e}"
+        )
 
     steps = _STEPS_DEV if is_dev_mode else _STEPS
 

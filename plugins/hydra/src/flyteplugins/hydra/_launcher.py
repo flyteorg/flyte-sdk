@@ -29,7 +29,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Sequence
 
-from flyte._logging import logger as log
+from flyte import system_logger as log
 from omegaconf import DictConfig, open_dict
 
 from hydra.core.utils import JobReturn, JobStatus, configure_log, run_job, setup_globals

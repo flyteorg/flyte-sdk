@@ -1,0 +1,905 @@
+//! Core controller implementation - Pure Rust, no PyO3 dependencies
+//! This module can be used by both Python bindings and standalone Rust binaries
+
+use std::{sync::Arc, time::Duration};
+
+use flyteidl2::{
+    flyteidl::{
+        actions::{
+            self as actions_pb, action as actions_action,
+            actions_service_client::ActionsServiceClient, AbortRequest, AbortResponse,
+            EnqueueRequest, EnqueueResponse, WatchForUpdatesRequest, WatchForUpdatesResponse,
+        },
+        common::{ActionIdentifier, RunIdentifier},
+        task::TaskIdentifier,
+        workflow::{
+            enqueue_action_request, queue_service_client::QueueServiceClient,
+            state_service_client::StateServiceClient, EnqueueActionRequest, EnqueueActionResponse,
+            TaskAction, WatchRequest, WatchResponse,
+        },
+    },
+    google,
+};
+use google::protobuf::StringValue;
+use pyo3_async_runtimes::tokio::get_runtime;
+use tokio::{
+    sync::{mpsc, oneshot},
+    time::sleep,
+};
+use tonic::transport::{Channel, ClientTlsConfig, Endpoint};
+use tower::ServiceBuilder;
+use tracing::{debug, error, info, warn};
+
+use crate::{
+    action::Action,
+    auth::{AuthConfig, AuthLayer, ClientCredentialsAuthenticator},
+    error::{ControllerError, InformerError},
+    informer::{Informer, InformerCache},
+};
+
+// Helper to create TLS-configured channel
+// todo: support no verify https://github.com/flyteorg/flyte-sdk/pull/299/files
+pub async fn create_tls_channel(url: &'static str) -> Result<Channel, ControllerError> {
+    let endpoint = Endpoint::from_static(url)
+        .tls_config(ClientTlsConfig::new().with_native_roots())
+        .map_err(|e| ControllerError::SystemError(format!("TLS config error: {}", e)))?
+        .keep_alive_while_idle(true);
+
+    let channel = endpoint.connect().await.map_err(ControllerError::from)?;
+
+    Ok(channel)
+}
+
+enum ChannelType {
+    Plain(tonic::transport::Channel),
+    Authenticated(crate::auth::AuthService<tonic::transport::Channel>),
+}
+
+#[derive(Clone, Debug)]
+pub enum StateClient {
+    Plain(StateServiceClient<tonic::transport::Channel>),
+    Authenticated(StateServiceClient<crate::auth::AuthService<tonic::transport::Channel>>),
+}
+
+impl StateClient {
+    pub async fn watch(
+        &mut self,
+        request: impl tonic::IntoRequest<WatchRequest>,
+    ) -> Result<tonic::Response<tonic::codec::Streaming<WatchResponse>>, tonic::Status> {
+        match self {
+            StateClient::Plain(client) => client.watch(request).await,
+            StateClient::Authenticated(client) => client.watch(request).await,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum QueueClient {
+    Plain(QueueServiceClient<tonic::transport::Channel>),
+    Authenticated(QueueServiceClient<crate::auth::AuthService<tonic::transport::Channel>>),
+}
+
+impl QueueClient {
+    pub async fn enqueue_action(
+        &mut self,
+        request: impl tonic::IntoRequest<EnqueueActionRequest>,
+    ) -> Result<tonic::Response<EnqueueActionResponse>, tonic::Status> {
+        match self {
+            QueueClient::Plain(client) => client.enqueue_action(request).await,
+            QueueClient::Authenticated(client) => client.enqueue_action(request).await,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum ActionsClient {
+    Plain(ActionsServiceClient<tonic::transport::Channel>),
+    Authenticated(ActionsServiceClient<crate::auth::AuthService<tonic::transport::Channel>>),
+}
+
+impl ActionsClient {
+    pub async fn enqueue(
+        &mut self,
+        request: impl tonic::IntoRequest<EnqueueRequest>,
+    ) -> Result<tonic::Response<EnqueueResponse>, tonic::Status> {
+        match self {
+            ActionsClient::Plain(client) => client.enqueue(request).await,
+            ActionsClient::Authenticated(client) => client.enqueue(request).await,
+        }
+    }
+
+    pub async fn abort(
+        &mut self,
+        request: impl tonic::IntoRequest<AbortRequest>,
+    ) -> Result<tonic::Response<AbortResponse>, tonic::Status> {
+        match self {
+            ActionsClient::Plain(client) => client.abort(request).await,
+            ActionsClient::Authenticated(client) => client.abort(request).await,
+        }
+    }
+
+    pub async fn watch_for_updates(
+        &mut self,
+        request: impl tonic::IntoRequest<WatchForUpdatesRequest>,
+    ) -> Result<tonic::Response<tonic::codec::Streaming<WatchForUpdatesResponse>>, tonic::Status>
+    {
+        match self {
+            ActionsClient::Plain(client) => client.watch_for_updates(request).await,
+            ActionsClient::Authenticated(client) => client.watch_for_updates(request).await,
+        }
+    }
+}
+
+/// Check if the unified ActionsService should be used instead of QueueService + StateService.
+/// Mirrors `flyte._internal.controllers.remote._service_protocol.use_actions_service`.
+pub fn use_actions_service() -> bool {
+    std::env::var("_U_USE_ACTIONS")
+        .map(|v| v == "1")
+        .unwrap_or(false)
+}
+
+/// Build the metadata headers for ActionsService RPC calls.
+pub fn actions_metadata(
+    run: Option<&RunIdentifier>,
+    parent_action_name: &str,
+) -> tonic::metadata::MetadataMap {
+    let mut metadata = tonic::metadata::MetadataMap::new();
+    if let Some(run) = run {
+        if let Ok(v) = run.project.parse() {
+            metadata.insert("x-actions-project", v);
+        }
+        if let Ok(v) = run.domain.parse() {
+            metadata.insert("x-actions-domain", v);
+        }
+        if let Ok(v) = run.name.parse() {
+            metadata.insert("x-actions-run", v);
+        }
+    }
+    if let Ok(v) = parent_action_name.parse() {
+        metadata.insert("x-actions-parent-action", v);
+    }
+    metadata
+}
+
+pub struct CoreBaseController {
+    informer_cache: InformerCache,
+    queue_client: QueueClient,
+    /// Unified ActionsService client. `Some` when `_U_USE_ACTIONS=1`; otherwise `None` and the
+    /// controller uses `queue_client` (with informer's StateService) for the legacy split path.
+    actions_client: Option<ActionsClient>,
+    shared_queue: mpsc::Sender<Action>,
+    shared_queue_rx: Arc<tokio::sync::Mutex<mpsc::Receiver<Action>>>,
+    failure_rx: Arc<std::sync::Mutex<Option<mpsc::Receiver<InformerError>>>>,
+    bg_worker_handle: Arc<std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    workers: usize,
+}
+
+impl CoreBaseController {
+    pub fn new_with_auth(workers: usize) -> Result<Arc<Self>, ControllerError> {
+        info!("Creating CoreBaseController from _UNION_EAGER_API_KEY env var (with auth) with {} workers", workers);
+        // Read from env var and use auth
+        let api_key = std::env::var("_UNION_EAGER_API_KEY").map_err(|_| {
+            ControllerError::SystemError(
+                "_UNION_EAGER_API_KEY env var must be provided".to_string(),
+            )
+        })?;
+        let auth_config = AuthConfig::new_from_api_key(&api_key)?;
+        let endpoint_url = auth_config.endpoint.clone();
+
+        let endpoint_static: &'static str =
+            Box::leak(Box::new(endpoint_url.clone().into_boxed_str()));
+        // shared queue
+        let (shared_tx, shared_queue_rx) = mpsc::channel::<Action>(64);
+
+        let rt = get_runtime();
+        let channel = rt.block_on(async {
+            // todo: escape hatch for localhost
+            // Create TLS-configured channel
+            let channel = create_tls_channel(endpoint_static).await?;
+            let authenticator = Arc::new(ClientCredentialsAuthenticator::new(auth_config.clone()));
+            let auth_channel = ServiceBuilder::new()
+                .layer(AuthLayer::new(authenticator, channel.clone()))
+                .service(channel);
+
+            Ok::<_, ControllerError>(ChannelType::Authenticated(auth_channel))
+        })?;
+
+        let (failure_tx, failure_rx) = mpsc::channel::<InformerError>(10);
+
+        let state_client = match &channel {
+            ChannelType::Plain(ch) => StateClient::Plain(StateServiceClient::new(ch.clone())),
+            ChannelType::Authenticated(ch) => {
+                StateClient::Authenticated(StateServiceClient::new(ch.clone()))
+            }
+        };
+
+        let queue_client = match &channel {
+            ChannelType::Plain(ch) => QueueClient::Plain(QueueServiceClient::new(ch.clone())),
+            ChannelType::Authenticated(ch) => {
+                QueueClient::Authenticated(QueueServiceClient::new(ch.clone()))
+            }
+        };
+
+        let actions_client = if use_actions_service() {
+            info!("_U_USE_ACTIONS=1 set, initializing ActionsService client");
+            Some(match &channel {
+                ChannelType::Plain(ch) => {
+                    ActionsClient::Plain(ActionsServiceClient::new(ch.clone()))
+                }
+                ChannelType::Authenticated(ch) => {
+                    ActionsClient::Authenticated(ActionsServiceClient::new(ch.clone()))
+                }
+            })
+        } else {
+            None
+        };
+
+        let informer_cache = InformerCache::new(
+            state_client.clone(),
+            actions_client.clone(),
+            shared_tx.clone(),
+            failure_tx,
+        );
+
+        let real_base_controller = CoreBaseController {
+            informer_cache,
+            queue_client,
+            actions_client,
+            shared_queue: shared_tx,
+            shared_queue_rx: Arc::new(tokio::sync::Mutex::new(shared_queue_rx)),
+            failure_rx: Arc::new(std::sync::Mutex::new(Some(failure_rx))),
+            bg_worker_handle: Arc::new(std::sync::Mutex::new(None)),
+            workers,
+        };
+
+        let real_base_controller = Arc::new(real_base_controller);
+        // Start the background worker pool
+        let controller_clone = real_base_controller.clone();
+        let handle = rt.spawn(async move {
+            controller_clone.bg_worker_pool().await;
+        });
+
+        // Store the handle
+        *real_base_controller.bg_worker_handle.lock().unwrap() = Some(handle);
+
+        Ok(real_base_controller)
+    }
+
+    pub fn new_without_auth(
+        endpoint: String,
+        workers: usize,
+    ) -> Result<Arc<Self>, ControllerError> {
+        let endpoint_static: &'static str = Box::leak(Box::new(endpoint.clone().into_boxed_str()));
+        // shared queue
+        let (shared_tx, shared_queue_rx) = mpsc::channel::<Action>(64);
+
+        let rt = get_runtime();
+        let channel = rt.block_on(async {
+            let chan = if endpoint.starts_with("http://") {
+                let endpoint = Endpoint::from_static(endpoint_static).keep_alive_while_idle(true);
+                endpoint.connect().await.map_err(ControllerError::from)?
+            } else if endpoint.starts_with("https://") {
+                // Create TLS-configured channel
+                let channel = create_tls_channel(endpoint_static).await?;
+                channel
+            } else {
+                return Err(ControllerError::SystemError(format!(
+                    "Malformed endpoint {}",
+                    endpoint
+                )));
+            };
+            Ok::<_, ControllerError>(ChannelType::Plain(chan))
+        })?;
+
+        let (failure_tx, failure_rx) = mpsc::channel::<InformerError>(10);
+
+        let state_client = match &channel {
+            ChannelType::Plain(ch) => StateClient::Plain(StateServiceClient::new(ch.clone())),
+            ChannelType::Authenticated(ch) => {
+                StateClient::Authenticated(StateServiceClient::new(ch.clone()))
+            }
+        };
+
+        let queue_client = match &channel {
+            ChannelType::Plain(ch) => QueueClient::Plain(QueueServiceClient::new(ch.clone())),
+            ChannelType::Authenticated(ch) => {
+                QueueClient::Authenticated(QueueServiceClient::new(ch.clone()))
+            }
+        };
+
+        let actions_client = if use_actions_service() {
+            info!("_U_USE_ACTIONS=1 set, initializing ActionsService client");
+            Some(match &channel {
+                ChannelType::Plain(ch) => {
+                    ActionsClient::Plain(ActionsServiceClient::new(ch.clone()))
+                }
+                ChannelType::Authenticated(ch) => {
+                    ActionsClient::Authenticated(ActionsServiceClient::new(ch.clone()))
+                }
+            })
+        } else {
+            None
+        };
+
+        let informer_cache = InformerCache::new(
+            state_client.clone(),
+            actions_client.clone(),
+            shared_tx.clone(),
+            failure_tx,
+        );
+
+        let real_base_controller = CoreBaseController {
+            informer_cache,
+            queue_client,
+            actions_client,
+            shared_queue: shared_tx,
+            shared_queue_rx: Arc::new(tokio::sync::Mutex::new(shared_queue_rx)),
+            failure_rx: Arc::new(std::sync::Mutex::new(Some(failure_rx))),
+            bg_worker_handle: Arc::new(std::sync::Mutex::new(None)),
+            workers,
+        };
+
+        let real_base_controller = Arc::new(real_base_controller);
+        // Start the background worker pool
+        let controller_clone = real_base_controller.clone();
+        let handle = rt.spawn(async move {
+            controller_clone.bg_worker_pool().await;
+        });
+
+        // Store the handle
+        *real_base_controller.bg_worker_handle.lock().unwrap() = Some(handle);
+
+        Ok(real_base_controller)
+    }
+
+    async fn bg_worker_pool(self: Arc<Self>) {
+        debug!(
+            "Starting controller worker pool with {} workers on thread {:?}",
+            self.workers,
+            std::thread::current().name()
+        );
+
+        let mut handles = Vec::new();
+        for i in 0..self.workers {
+            let controller = Arc::clone(&self);
+            let worker_id = format!("worker-{}", i);
+            let handle = tokio::spawn(async move {
+                controller.bg_worker(worker_id).await;
+            });
+            handles.push(handle);
+        }
+
+        // Wait for all workers to complete
+        for handle in handles {
+            if let Err(e) = handle.await {
+                error!("Worker task failed: {:?}", e);
+            }
+        }
+    }
+
+    async fn bg_worker(&self, worker_id: String) {
+        info!(
+            "Worker {} started on thread {:?}",
+            worker_id,
+            std::thread::current().name()
+        );
+        loop {
+            // Receive actions from shared queue
+            let mut rx = self.shared_queue_rx.lock().await;
+            match rx.recv().await {
+                Some(mut action) => {
+                    let run_name = action
+                        .action_id
+                        .run
+                        .as_ref()
+                        .map_or(String::from("<missing>"), |i| i.name.clone());
+                    debug!(
+                        "[{}] Controller worker processing action {}::{}",
+                        worker_id, run_name, action.action_id.name
+                    );
+
+                    // Drop the mutex guard before processing
+                    drop(rx);
+
+                    match self
+                        .process_action_with_retry(&mut action, &worker_id)
+                        .await
+                    {
+                        Ok(_) => {}
+                        Err(e) => {
+                            // Unified error handling for all failures and exceed max retries
+                            error!(
+                                "[{}] Error in controller loop for {}::{}: {:?}",
+                                worker_id, run_name, action.action_id.name, e
+                            );
+                            action.client_err = Some(e.to_string());
+
+                            let opt_informer = self
+                                .informer_cache
+                                .get(&action.get_run_identifier(), &action.parent_action_name)
+                                .await;
+                            if let Some(informer) = opt_informer {
+                                if let Err(set_err) = informer.set_action_client_err(&action).await
+                                {
+                                    error!(
+                                        "Error setting error for failed action {}: {}",
+                                        action.get_full_name(),
+                                        set_err
+                                    );
+                                }
+                                if let Err(fire_err) =
+                                    informer.fire_completion_event(&action.action_id.name).await
+                                {
+                                    error!(
+                                        "Error firing completion event for failed action {}: {}",
+                                        action.get_full_name(),
+                                        fire_err
+                                    );
+                                }
+                            } else {
+                                error!("Informer missing for action: {:?}", action.action_id);
+                            }
+                        }
+                    }
+                }
+                None => {
+                    warn!("Shared queue channel closed, stopping bg_worker");
+                    break;
+                }
+            }
+        }
+    }
+
+    async fn process_action_with_retry(
+        &self,
+        action: &mut Action,
+        worker_id: &str,
+    ) -> Result<(), ControllerError> {
+        const MIN_BACKOFF_ON_ERR: Duration = Duration::from_millis(500);
+        const MAX_BACKOFF_ON_ERR: Duration = Duration::from_secs(10);
+        const MAX_RETRIES: u32 = 5;
+
+        let run_name = action
+            .action_id
+            .run
+            .as_ref()
+            .map_or(String::from("<missing>"), |i| i.name.clone());
+
+        match self.handle_action(action).await {
+            Ok(_) => Ok(()),
+            // Process action with retry logic for SlowDownError
+            Err(ControllerError::SlowDownError(msg)) => {
+                action.retries += 1;
+
+                if action.retries > MAX_RETRIES {
+                    // Max retries exceeded, return error to be handled by caller
+                    Err(ControllerError::RuntimeError(format!(
+                        "[{}] Controller failed {}::{}, system retries {} crossed threshold {}: SlowDownError: {}",
+                        worker_id, run_name, action.action_id.name, action.retries, MAX_RETRIES, msg
+                    )))
+                } else {
+                    // Calculate exponential backoff: min(MIN * 2^(retries-1), MAX)
+                    let backoff_millis =
+                        MIN_BACKOFF_ON_ERR.as_millis() as u64 * 2u64.pow(action.retries - 1);
+                    let backoff = Duration::from_millis(backoff_millis).min(MAX_BACKOFF_ON_ERR);
+
+                    warn!(
+                        "[{}] Backing off for {:?} [retry {}/{}] on action {}::{} due to error: {}",
+                        worker_id,
+                        backoff,
+                        action.retries,
+                        MAX_RETRIES,
+                        run_name,
+                        action.action_id.name,
+                        msg
+                    );
+                    sleep(backoff).await;
+
+                    warn!(
+                        "[{}] Retrying action {}::{} after backoff",
+                        worker_id, run_name, action.action_id.name
+                    );
+
+                    // Re-queue the action for retry
+                    self.shared_queue.send(action.clone()).await.map_err(|e| {
+                        ControllerError::RuntimeError(format!(
+                            "[{}] Failed to re-queue action for retry: {}",
+                            worker_id, e
+                        ))
+                    })?;
+
+                    Ok(())
+                }
+            }
+            Err(e) => {
+                // All other errors are propagated up immediately
+                Err(e)
+            }
+        }
+    }
+
+    async fn handle_action(&self, action: &mut Action) -> Result<(), ControllerError> {
+        if !action.started {
+            // Action not started, launch it
+            warn!("Action is not started, launching action {:?}", action);
+            self.bg_launch(action).await?;
+        } else if action.is_action_terminal() {
+            // Action is terminal, fire completion event
+            if let Some(arc_informer) = self
+                .informer_cache
+                .get(&action.get_run_identifier(), &action.parent_action_name)
+                .await
+            {
+                debug!(
+                    "handle action firing completion event for {:?}",
+                    &action.action_id.name
+                );
+                arc_informer
+                    .fire_completion_event(&action.action_id.name)
+                    .await?;
+            } else {
+                error!(
+                    "Unable to find informer to fire completion event for action: {}",
+                    action.get_full_name(),
+                );
+                return Err(ControllerError::BadContext(format!(
+                    "Informer missing for action: {} while handling.",
+                    action.get_full_name()
+                )));
+            }
+        } else {
+            // Action still in progress
+            debug!("Resource {} still in progress...", action.action_id.name);
+        }
+        Ok(())
+    }
+
+    async fn bg_launch(&self, action: &Action) -> Result<(), ControllerError> {
+        match self.launch_task(action).await {
+            Ok(_) => {
+                debug!("Successfully launched action: {}", action.action_id.name);
+                Ok(())
+            }
+            Err(e) => {
+                error!(
+                    "Failed to launch action: {}, error: {}",
+                    action.action_id.name, e
+                );
+                // Propagate the error as-is
+                Err(e)
+            }
+        }
+    }
+
+    pub async fn cancel_action(&self, action: &mut Action) -> Result<(), ControllerError> {
+        if action.is_action_terminal() {
+            info!(
+                "Action {} is already terminal, no need to cancel.",
+                action.action_id.name
+            );
+            return Ok(());
+        }
+
+        // debug
+        warn!("Cancelling action!!!: {}", action.action_id.name);
+        action.mark_cancelled();
+
+        if let Some(informer) = self
+            .informer_cache
+            .get(&action.get_run_identifier(), &action.parent_action_name)
+            .await
+        {
+            informer
+                .fire_completion_event(&action.action_id.name)
+                .await?;
+        } else {
+            debug!(
+                "Informer missing when trying to cancel action: {}",
+                action.action_id.name
+            );
+        }
+        Ok(())
+    }
+
+    pub async fn get_action(
+        &self,
+        action_id: ActionIdentifier,
+        parent_action_name: &str,
+    ) -> Result<Option<Action>, ControllerError> {
+        let run = action_id
+            .run
+            .as_ref()
+            .ok_or(ControllerError::RuntimeError(format!(
+                "Action {:?} doesn't have a run, can't get action",
+                action_id
+            )))?;
+        let informer = self
+            .informer_cache
+            .get_or_create_informer(run, parent_action_name)
+            .await;
+        let action_name = action_id.name.clone();
+        match informer.get_action(&action_name).await {
+            Some(action) => Ok(Some(action)),
+            None => {
+                debug!("Action not found getting from action_id: {:?}", action_id);
+                Ok(None)
+            }
+        }
+    }
+
+    /// Build the TaskAction common to both QueueService and ActionsService enqueue paths,
+    /// and return the per-path scalar fields (input_uri, run_output_base, group).
+    fn build_task_action(
+        &self,
+        action: &Action,
+    ) -> Result<(TaskAction, String, String, String), ControllerError> {
+        // todo-pr: handle trace action
+        let task_identifier = action
+            .task
+            .as_ref()
+            .and_then(|task| task.task_template.as_ref())
+            .and_then(|task_template| task_template.id.as_ref())
+            .map(|core_task_id| TaskIdentifier {
+                version: core_task_id.version.clone(),
+                org: core_task_id.org.clone(),
+                project: core_task_id.project.clone(),
+                domain: core_task_id.domain.clone(),
+                name: core_task_id.name.clone(),
+            })
+            .ok_or(ControllerError::RuntimeError(format!(
+                "TaskIdentifier missing from Action {:?}",
+                action
+            )))?;
+
+        let input_uri = action
+            .inputs_uri
+            .clone()
+            .ok_or(ControllerError::RuntimeError(format!(
+                "Inputs URI missing from Action {:?}",
+                action
+            )))?;
+        let run_output_base =
+            action
+                .run_output_base
+                .clone()
+                .ok_or(ControllerError::RuntimeError(format!(
+                    "Run output base missing from Action {:?}",
+                    action
+                )))?;
+        let group = action.group.clone().unwrap_or_default();
+        let task_action = TaskAction {
+            id: Some(task_identifier),
+            spec: action.task.clone(),
+            cache_key: action
+                .cache_key
+                .as_ref()
+                .map(|ck| StringValue { value: ck.clone() }),
+            cluster: action.queue.clone().unwrap_or("".to_string()),
+        };
+
+        Ok((task_action, input_uri, run_output_base, group))
+    }
+
+    fn create_enqueue_action_request(
+        &self,
+        action: &Action,
+    ) -> Result<EnqueueActionRequest, ControllerError> {
+        let (task_action, input_uri, run_output_base, group) = self.build_task_action(action)?;
+        Ok(EnqueueActionRequest {
+            action_id: Some(action.action_id.clone()),
+            parent_action_name: Some(action.parent_action_name.clone()),
+            spec: Some(enqueue_action_request::Spec::Task(task_action)),
+            run_spec: None,
+            input_uri,
+            run_output_base,
+            group,
+            subject: String::default(), // Subject is not used in the current implementation
+        })
+    }
+
+    /// Build an ActionsService EnqueueRequest.
+    fn create_actions_enqueue_request(
+        &self,
+        action: &Action,
+    ) -> Result<EnqueueRequest, ControllerError> {
+        let (task_action, input_uri, run_output_base, group) = self.build_task_action(action)?;
+        let pb_action = actions_pb::Action {
+            action_id: Some(action.action_id.clone()),
+            parent_action_name: Some(action.parent_action_name.clone()),
+            input_uri,
+            run_output_base,
+            group,
+            subject: String::default(),
+            spec: Some(actions_action::Spec::Task(task_action)),
+        };
+        Ok(EnqueueRequest {
+            action: Some(pb_action),
+            run_spec: None,
+        })
+    }
+
+    /// Map a tonic Status from an enqueue RPC into a ControllerError, applying the same
+    /// retry/non-retry policy regardless of which underlying service was called.
+    fn map_enqueue_error(action_name: &str, e: tonic::Status) -> Result<(), ControllerError> {
+        if e.code() == tonic::Code::AlreadyExists {
+            info!(
+                "Action {} already exists, continuing to monitor.",
+                action_name
+            );
+            Ok(())
+        } else if e.code() == tonic::Code::FailedPrecondition
+            || e.code() == tonic::Code::InvalidArgument
+            || e.code() == tonic::Code::NotFound
+        {
+            Err(ControllerError::RuntimeError(format!(
+                "Precondition failed: {}",
+                e
+            )))
+        } else {
+            error!(
+                "Failed to launch action: {}, backing off... details: {}",
+                action_name, e
+            );
+            Err(ControllerError::SlowDownError(format!(
+                "Failed to launch action: {}",
+                e
+            )))
+        }
+    }
+
+    async fn launch_task(&self, action: &Action) -> Result<(), ControllerError> {
+        if !action.started && action.task.is_some() {
+            if let Some(actions_client) = self.actions_client.as_ref() {
+                // ActionsService path
+                let enqueue_request = self.create_actions_enqueue_request(action)?;
+                let mut req = tonic::Request::new(enqueue_request);
+                *req.metadata_mut() =
+                    actions_metadata(action.action_id.run.as_ref(), &action.parent_action_name);
+                let mut client = actions_client.clone();
+                match client.enqueue(req).await {
+                    Ok(_) => {
+                        debug!(
+                            "Successfully enqueued action via ActionsService: {:?}",
+                            action.action_id
+                        );
+                        Ok(())
+                    }
+                    Err(e) => Self::map_enqueue_error(&action.action_id.name, e),
+                }
+            } else {
+                // Legacy QueueService path
+                let enqueue_request = self.create_enqueue_action_request(action)?;
+                let mut client = self.queue_client.clone();
+                // todo: tonic doesn't seem to have wait_for_ready, or maybe the .ready is already doing this.
+                match client.enqueue_action(enqueue_request).await {
+                    Ok(_) => {
+                        debug!(
+                            "Successfully enqueued action via QueueService: {:?}",
+                            action.action_id
+                        );
+                        Ok(())
+                    }
+                    Err(e) => Self::map_enqueue_error(&action.action_id.name, e),
+                }
+            }
+        } else {
+            debug!(
+                "Action {} is already started or has no task, skipping launch.",
+                action.action_id.name
+            );
+            Ok(())
+        }
+    }
+
+    pub async fn submit_action(&self, action: Action) -> Result<Action, ControllerError> {
+        let action_name = action.action_id.name.clone();
+        // The first action that gets submitted determines the run_id that will be used.
+        // This is obviously not going to work,
+
+        let run_id = action
+            .action_id
+            .run
+            .clone()
+            .ok_or(ControllerError::RuntimeError(format!(
+                "Run ID missing from submit action {}",
+                action_name.clone()
+            )))?;
+        info!("Creating informer set to run_id {:?}", run_id);
+        let informer: Arc<Informer> = self
+            .informer_cache
+            .get_or_create_informer(&action.get_run_identifier(), &action.parent_action_name)
+            .await;
+        let (done_tx, done_rx) = oneshot::channel();
+        informer.submit_action(action, done_tx).await?;
+
+        done_rx.await.map_err(|_| {
+            ControllerError::BadContext(String::from("Failed to receive done signal from informer"))
+        })?;
+        debug!(
+            "Action {} complete, looking up final value and returning",
+            action_name
+        );
+
+        // get the action and return it
+        let final_action = informer.get_action(&action_name).await;
+        let final_action = final_action.ok_or(ControllerError::BadContext(String::from(
+            "Action not found after done",
+        )));
+        // Also remove. May be can do with prior step in the future.
+        informer.remove_action(&action_name).await;
+        final_action
+    }
+
+    pub async fn finalize_parent_action(&self, run_id: &RunIdentifier, parent_action_name: &str) {
+        let opt_informer = self.informer_cache.remove(run_id, parent_action_name).await;
+        match opt_informer {
+            Some(informer) => {
+                informer.stop().await;
+            }
+            None => {
+                warn!(
+                    "No informer found when finalizing parent action {}",
+                    parent_action_name
+                );
+            }
+        }
+    }
+
+    pub async fn watch_for_errors(&self) -> Result<(), ControllerError> {
+        // Take ownership of both (can only be called once)
+        let handle = self.bg_worker_handle.lock().unwrap().take();
+        let failure_rx = self.failure_rx.lock().unwrap().take();
+
+        match (handle, failure_rx) {
+            (Some(handle), Some(mut rx)) => {
+                // Race bg_worker completion vs informer errors
+                tokio::select! {
+                    // bg_worker completed or panicked
+                    result = handle => {
+                        match result {
+                            Ok(_) => {
+                                error!("Background worker exited unexpectedly");
+                                Err(ControllerError::RuntimeError(
+                                    "Background worker exited unexpectedly".to_string(),
+                                ))
+                            }
+                            Err(e) if e.is_panic() => {
+                                error!("Background worker panicked: {:?}", e);
+                                Err(ControllerError::RuntimeError(format!(
+                                    "Background worker panicked: {:?}",
+                                    e
+                                )))
+                            }
+                            Err(e) => {
+                                error!("Background worker was cancelled: {:?}", e);
+                                Err(ControllerError::RuntimeError(format!(
+                                    "Background worker cancelled: {:?}",
+                                    e
+                                )))
+                            }
+                        }
+                    }
+
+                    // Informer error received
+                    informer_err = rx.recv() => {
+                        match informer_err {
+                            Some(err) => {
+                                error!("Informer error received: {:?}", err);
+                                Err(ControllerError::Informer(err))
+                            }
+                            None => {
+                                error!("Informer error channel closed unexpectedly");
+                                Err(ControllerError::RuntimeError(
+                                    "Informer error channel closed unexpectedly".to_string(),
+                                ))
+                            }
+                        }
+                    }
+                }
+            }
+            _ => Err(ControllerError::RuntimeError(
+                "watch_for_errors already called or resources not available".to_string(),
+            )),
+        }
+    }
+}

@@ -6,7 +6,7 @@ import os
 import typing
 
 import flyte.storage as storage
-from flyte._logging import logger
+from flyte import system_logger as logger
 from fsspec.asyn import AsyncFileSystem
 
 from ._source import (
