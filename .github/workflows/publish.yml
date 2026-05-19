@@ -234,6 +234,7 @@ jobs:
 
   build-and-push-flyte-docker-images:
     needs: [flyte-pypi, rs-controller-wheels]
+    if: always() && needs.flyte-pypi.result == 'success' && needs.rs-controller-wheels.result == 'success'
     name: Flyte image for Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
     strategy:
