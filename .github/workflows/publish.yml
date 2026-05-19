@@ -233,7 +233,7 @@ jobs:
           uv run python -m twine upload --verbose dist/*
 
   build-and-push-flyte-docker-images:
-    needs: flyte-pypi
+    needs: [flyte-pypi, rs-controller-wheels]
     name: Flyte image for Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
     strategy:
@@ -273,10 +273,17 @@ jobs:
       - name: Build wheel
         run: |
           make dist
+      - name: Download rs-controller wheels
+        uses: actions/download-artifact@v4
+        with:
+          pattern: rs-controller-wheel-*
+          merge-multiple: true
+          path: rs_controller/dist/
       - name: Build and push the flyte image
         env:
           FLYTE_DOCKER_BUILDER_CACHE_FROM: "type=gha"
           FLYTE_DOCKER_BUILDER_CACHE_TO: "type=gha,mode=max"
+          _F_USE_RUST_CONTROLLER: "1"
         run: |
           uv run python maint_tools/build_default_image.py --type flyte
       - name: Build and push the connector image
