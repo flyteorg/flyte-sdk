@@ -51,6 +51,7 @@ from flyte._image import Image
 from flyte._logging import logger as _logger
 from flyte._pod import PodTemplate
 from flyte.io._file import File
+from flyte.io._hashing_io import HashlibAccumulator
 
 _DEFAULT_META_DIR = "/var/lib/flyte-volume"
 _DEFAULT_CACHE_DIR = "/var/cache/flyte-volume"
@@ -103,6 +104,10 @@ class Volume(BaseModel):
     # inode_count counts files + dirs + symlinks combined.
     used_bytes: Optional[int] = None
     inode_count: Optional[int] = None
+    # Size in bytes of the published metadata index (SQLite ``.db`` or
+    # Redis ``dump.rdb``). Populated at commit() / fork() time from the
+    # on-disk snapshot just before upload; ``None`` for un-committed Volumes.
+    index_bytes: Optional[int] = None
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -335,7 +340,13 @@ class Volume(BaseModel):
             used_bytes, inode_count = await _query_volume_stats(meta_dir, engine)
 
         type(self)._live_meta.discard(meta_dir)
-        new_index: File = await File.from_local(str(index_path))
+        ctx = internal_ctx()
+        index_bytes = os.path.getsize(str(index_path))
+        new_index: File = await File.from_local(
+            str(index_path),
+            remote_destination=ctx.raw_data.get_random_remote_path(file_name=_index_filename(engine)),
+            hash_method=HashlibAccumulator.from_hash_name("md5"),
+        )
         return Volume(
             name=self.name,
             bucket=self.bucket,
@@ -345,6 +356,7 @@ class Volume(BaseModel):
             metadata_engine=self.metadata_engine,
             used_bytes=used_bytes,
             inode_count=inode_count,
+            index_bytes=index_bytes,
         )
 
     async def _snapshot_and_upload_index(
@@ -354,7 +366,7 @@ class Volume(BaseModel):
         tmp_prefix: str,
         flush_live: bool = True,
         counter_bump: Optional[int] = None,
-    ) -> File:
+    ) -> "tuple[File, int]":
         """Snapshot the metadata index on disk at ``meta_dir`` and upload it.
 
         When ``flush_live=True`` (default), assumes a running daemon and
@@ -422,20 +434,21 @@ class Volume(BaseModel):
                     counter_bump,
                     applied,
                 )
-        # Upload eagerly via the raw upload API (not File.from_local). Inside
-        # a Flyte task `File.from_local` either (a) attaches a lazy_uploader
-        # that the literal-marshaller then skips because we're in a remote
-        # context, or (b) takes the immediate-upload path but only when
-        # ``ctx.raw_data`` resolves to a remote scheme. Either way, the
-        # resulting File can end up holding a local /tmp path that the
-        # sub-action pod cannot read. ``remote.upload_file`` unconditionally
-        # pushes to object storage and returns the remote URI, which we then
-        # wrap in a File.
-        from flyte.remote import upload_file
-
+        # Upload directly through the underlying fsspec filesystem (no signed
+        # URLs — those are several times slower than native S3/GCS PUT).
+        # ``File.from_local`` with an explicit ``remote_destination`` skips
+        # its lazy-uploader path and goes straight to ``fs.open(..., "wb")``,
+        # so the returned File carries the remote URI and the streaming md5.
         try:
-            md5, remote_uri = await upload_file.aio(Path(snapshot_path))
-            return File(path=remote_uri, hash=md5)
+            index_bytes = os.path.getsize(snapshot_path)
+            ctx = internal_ctx()
+            dst_path = ctx.raw_data.get_random_remote_path(file_name=_index_filename(engine))
+            new_file: File = await File.from_local(
+                snapshot_path,
+                remote_destination=dst_path,
+                hash_method=HashlibAccumulator.from_hash_name("md5"),
+            )
+            return new_file, index_bytes
         finally:
             try:
                 os.unlink(snapshot_path)
@@ -484,7 +497,7 @@ class Volume(BaseModel):
         _logger.info("[Volume.fork] disjoint counter offset=%d (live=%s)", offset, live)
 
         if live:
-            new_index = await self._snapshot_and_upload_index(
+            new_index, index_bytes = await self._snapshot_and_upload_index(
                 meta_dir=meta_dir,
                 tmp_prefix="vol-fork-",
                 flush_live=True,
@@ -503,7 +516,7 @@ class Volume(BaseModel):
                 index_path = cold_meta / _index_filename(engine)
                 _logger.info("[Volume.fork] cold fork: downloading %s", self.index.path)
                 await self.index.download(str(index_path))
-                new_index = await self._snapshot_and_upload_index(
+                new_index, index_bytes = await self._snapshot_and_upload_index(
                     meta_dir=str(cold_meta),
                     tmp_prefix="vol-fork-",
                     flush_live=False,
@@ -525,6 +538,7 @@ class Volume(BaseModel):
             metadata_engine=self.metadata_engine,
             used_bytes=used_bytes,
             inode_count=inode_count,
+            index_bytes=index_bytes,
         )
 
     async def commit_inplace(
@@ -553,7 +567,7 @@ class Volume(BaseModel):
             will appear in subsequent snapshots — there is no semantic
             "branching" the way :meth:`fork` implies.
         """
-        new_index = await self._snapshot_and_upload_index(meta_dir=meta_dir, tmp_prefix="vol-checkpoint-")
+        new_index, index_bytes = await self._snapshot_and_upload_index(meta_dir=meta_dir, tmp_prefix="vol-checkpoint-")
         return Volume(
             name=self.name,
             bucket=self.bucket,
@@ -561,6 +575,7 @@ class Volume(BaseModel):
             index=new_index,
             parent=self.index,
             metadata_engine=self.metadata_engine,
+            index_bytes=index_bytes,
         )
 
     async def migrate_metadata_engine(
@@ -614,8 +629,6 @@ class Volume(BaseModel):
         # read-only rootfs surprises (e.g. /var/lib is RO in some base images).
         new_meta = Path(new_meta_dir or str(Path(meta_dir) / "new"))
         new_meta.mkdir(parents=True, exist_ok=True)
-
-        from flyte.remote import upload_file
 
         with tempfile.NamedTemporaryFile(prefix="vol-migrate-", suffix=".json", delete=False) as f:
             dump_path = f.name
@@ -674,14 +687,21 @@ class Volume(BaseModel):
 
             snapshot_path = await asyncio.to_thread(_snapshot)
             cleanup_paths.append(snapshot_path)
-            md5, remote_uri = await upload_file.aio(Path(snapshot_path))
+            ctx = internal_ctx()
+            index_bytes = os.path.getsize(snapshot_path)
+            new_file: File = await File.from_local(
+                snapshot_path,
+                remote_destination=ctx.raw_data.get_random_remote_path(file_name=_index_filename(new_engine)),
+                hash_method=HashlibAccumulator.from_hash_name("md5"),
+            )
             return Volume(
                 name=self.name,
                 bucket=self.bucket,
                 storage=self.storage,
-                index=File(path=remote_uri, hash=md5),
+                index=new_file,
                 parent=self.index,
                 metadata_engine=new_engine,
+                index_bytes=index_bytes,
             )
         finally:
             if src_redis is not None:
