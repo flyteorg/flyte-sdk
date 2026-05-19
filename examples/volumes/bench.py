@@ -126,11 +126,66 @@ async def _fork_burst(vol: Volume, *, k: int, base_files: int = 100) -> Dict[str
     }
 
 
+# Self-managed workloads handle their own Volume lifecycle (no cell-level
+# mount/commit). Used by cold_fork, which deliberately forks an *unmounted*
+# Volume to exercise Volume.fork()'s cold path.
+async def _cold_fork(
+    *,
+    engine: str,
+    writeback: bool,
+    k: int,
+    base_files: int = 100,
+    base_bytes: int = 1024,
+) -> Dict[str, float]:
+    suffix = uuid.uuid4().hex[:6]
+    parent = Volume.empty(name=f"bench-cold-fork-{engine}-{suffix}", metadata_engine=engine)
+
+    t0 = time.monotonic()
+    await parent.mount(writeback=writeback)
+    mount_ms = (time.monotonic() - t0) * 1000.0
+
+    data = Path("/workspace/data")
+    data.mkdir(parents=True, exist_ok=True)
+    payload = "x" * base_bytes
+    for i in range(base_files):
+        (data / f"base_{i:04d}").write_text(payload)
+
+    t0 = time.monotonic()
+    committed = await parent.commit()
+    commit_ms = (time.monotonic() - t0) * 1000.0
+
+    # Forks are issued on the *committed* (unmounted) Volume → cold path.
+    fork_ms: List[float] = []
+    for i in range(k):
+        t0 = time.monotonic()
+        await committed.fork(name=f"{committed.name}-cold-{i:04d}")
+        fork_ms.append((time.monotonic() - t0) * 1000.0)
+
+    p99 = quantiles(fork_ms, n=100, method="inclusive")[98] if len(fork_ms) >= 2 else fork_ms[0]
+    return {
+        "workload_ms": sum(fork_ms),
+        "items": float(k),
+        "fork_mean": mean(fork_ms),
+        "fork_p50": median(fork_ms),
+        "fork_p99": p99,
+        "mount_ms": mount_ms,
+        "commit_ms": commit_ms,
+        "index_bytes": 0.0,
+        "used_bytes": float(committed.used_bytes) if committed.used_bytes is not None else 0.0,
+        "inode_count": float(committed.inode_count) if committed.inode_count is not None else 0.0,
+    }
+
+
 WORKLOADS: Dict[str, Tuple[WorkloadFn, Dict[str, object]]] = {
     "metadata_burst": (_metadata_burst, {"n": 10_000}),
     "big_files": (_big_files, {"k": 5, "size_mib": 100}),
     "small_files": (_small_files, {"k": 5_000, "size_bytes": 4096}),
     "fork_burst": (_fork_burst, {"k": 25}),
+}
+
+# Workloads that manage their own Volume (skip the cell-level mount/commit).
+SELF_MANAGED: Dict[str, Tuple[Callable[..., Awaitable[Dict[str, float]]], Dict[str, object]]] = {
+    "cold_fork": (_cold_fork, {"k": 25, "base_files": 100, "base_bytes": 1024}),
 }
 
 ENGINES: List[str] = ["redis", "sqlite"]
@@ -144,6 +199,10 @@ WRITEBACK: List[bool] = [True, False]
 
 @env.task
 async def run_cell(workload: str, engine: str, writeback: bool) -> Dict[str, float]:
+    if workload in SELF_MANAGED:
+        fn, params = SELF_MANAGED[workload]
+        return await fn(engine=engine, writeback=writeback, **params)
+
     fn, params = WORKLOADS[workload]
     suffix = uuid.uuid4().hex[:6]
     # Volume names: alphanumerics and dashes only, 3-63 chars.
@@ -342,13 +401,14 @@ async def volume_benchmark_driver(
     engines: Optional[List[str]] = None,
     writeback: Optional[List[bool]] = None,
 ) -> str:
-    selected_workloads = workloads or list(WORKLOADS.keys())
+    all_workloads = {**WORKLOADS, **SELF_MANAGED}
+    selected_workloads = workloads or list(all_workloads.keys())
     selected_engines = engines or ENGINES
     selected_writeback = writeback if writeback is not None else WRITEBACK
 
-    unknown = [w for w in selected_workloads if w not in WORKLOADS]
+    unknown = [w for w in selected_workloads if w not in all_workloads]
     if unknown:
-        raise ValueError(f"unknown workloads: {unknown}; available: {list(WORKLOADS)}")
+        raise ValueError(f"unknown workloads: {unknown}; available: {list(all_workloads)}")
 
     keys: List[Tuple[str, str, bool]] = []
     coros = []
