@@ -7,6 +7,15 @@ from flyte import Image
 from flyte.extend import ImageBuildEngine
 
 
+def _with_cargo(image: Image) -> Image:
+    """Rust toolchain for packages (e.g. snowflake-connector-python) that build from source."""
+    return (
+        image.with_apt_packages("curl", "build-essential", "ca-certificates", "pkg-config", "libssl-dev")
+        .with_commands(["sh -c 'curl https://sh.rustup.rs -sSf | sh -s -- -y'"])
+        .with_env_vars({"PATH": "/root/.cargo/bin:${PATH}"})
+    )
+
+
 async def build_flyte_image(registry: str | None = None, name: str | None = None, builder: str | None = "local"):
     """
     Build the SDK default Debian-based image, optionally overriding
@@ -47,10 +56,13 @@ async def build_flyte_connector_image(
         name = "flyte-connectors"
 
     if "dev" in __version__:
+        default_image = _with_cargo(
+            Image.from_debian_base(registry=registry, name=name).with_env_vars(
+                {"SETUPTOOLS_SCM_PRETEND_VERSION": "9.9.9"}
+            )
+        )
         default_image = (
-            Image.from_debian_base(registry=registry, name=name)
-            .with_env_vars({"SETUPTOOLS_SCM_PRETEND_VERSION": "9.9.9"})
-            .with_uv_project(
+            default_image.with_uv_project(
                 pyproject_file=(Path(__file__).parent.parent / "plugins/bigquery/pyproject.toml"),
                 pre=True,
                 project_install_mode="install_project",
@@ -71,7 +83,7 @@ async def build_flyte_connector_image(
             .with_local_v2()
         )
     else:
-        default_image = Image.from_debian_base(registry=registry, name=name).with_pip_packages(
+        default_image = _with_cargo(Image.from_debian_base(registry=registry, name=name)).with_pip_packages(
             "flyteplugins-bigquery", "flyteplugins-snowflake", "flyteplugins-databricks", pre=True
         )
     suffix = __version__ if __version__.startswith("v") else f"v{__version__}".replace("+", "-")
