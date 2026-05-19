@@ -335,9 +335,23 @@ class Controller:
             )
 
         logger.debug(f"{threading.current_thread().name} Waiting for completion of {action.name}")
-        # Wait for completion
+        # Wait for completion.  For trace actions apply a timeout so a
+        # transient watch failure (e.g. gRPC deserialization returning None)
+        # doesn't block the caller indefinitely.  Task actions may legitimately
+        # run for hours, so they wait without a timeout.
         wait_start = time.monotonic()
-        await informer.wait_for_action_completion(action.name)
+        if action.type == "trace":
+            _trace_timeout = float(os.getenv("_F_TRACE_COMPLETION_TIMEOUT", "60"))
+            try:
+                await asyncio.wait_for(informer.wait_for_action_completion(action.name), timeout=_trace_timeout)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    f"{threading.current_thread().name} Trace completion wait timed out after {_trace_timeout}s "
+                    f"for {action.name}, continuing anyway"
+                )
+                await informer.fire_completion_event(action.name)
+        else:
+            await informer.wait_for_action_completion(action.name)
         if trace_enabled:
             self._trace_log(
                 action.name,
@@ -350,7 +364,8 @@ class Controller:
         # Get final resource state and clean up
         final_resource = await informer.get(action.name)
         if final_resource is None:
-            raise ValueError(f"Action {action.name} not found")
+            logger.warning(f"Action {action.name} not found in cache after completion, returning action stub")
+            return action
         logger.debug(f"{threading.current_thread().name} Removed completion event for action {action.name}")
         await informer.remove(action.name)  # TODO we should not remove maybe, we should keep a record of completed?
         logger.debug(f"{threading.current_thread().name} Removed action {action.name}")
