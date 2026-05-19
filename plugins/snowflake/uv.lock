@@ -595,7 +595,7 @@ dev = [
 requires-dist = [
     { name = "cryptography" },
     { name = "flyte", extras = ["connector"], editable = "../../" },
-    { name = "snowflake-connector-python", extras = ["pandas"] },
+    { name = "snowflake-connector-python", extras = ["pandas"], specifier = "<5" },
 ]
 
 [package.metadata.requires-dev]
