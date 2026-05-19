@@ -36,6 +36,8 @@ from __future__ import annotations
 
 import asyncio
 import os
+import secrets
+import socket
 import sqlite3
 import subprocess
 import tempfile
@@ -56,7 +58,11 @@ _DEFAULT_MOUNT_PATH = "/workspace"
 _SQLITE_INDEX_FILENAME = "index.db"
 _REDIS_INDEX_FILENAME = "dump.rdb"
 _CLIENT_BINARY = "juicefs"  # implementation detail
-_CLIENT_VERSION = "1.1.2"
+# Pinned to a release whose SQLite ``jfs_counter`` and Redis ``next{chunk,inode,session}``
+# keys are known to match what :func:`_disjoint_fork_counters` expects.
+# Verified against 1.1.2 and 1.3.1 — bumping further requires re-validating
+# the counter schema (see tests/flyte/extras/test_volume.py::TestForkIsolationRegression).
+_CLIENT_VERSION = "1.3.1"
 _REDIS_PORT = 6379
 
 
@@ -71,13 +77,15 @@ def _meta_url(meta_dir: str, engine: str) -> str:
 
 
 class Volume(BaseModel):
-    """A persistent volume identified by its SQLite metadata index.
+    """A persistent volume identified by its metadata index.
 
     A ``Volume`` is content-addressable lineage on top of an object-store
-    bucket. The bucket holds the data chunks; the index (a SQLite DB) holds
-    the entire namespace. Cloning the index produces an independent fork that
-    initially sees the same file tree and shares chunk objects but diverges
-    as either side writes.
+    bucket. The bucket holds the data chunks; the index (a SQLite ``.db``
+    or a Redis ``dump.rdb`` snapshot, depending on ``metadata_engine``)
+    holds the entire namespace. Cloning the index produces an independent
+    fork that initially sees the same file tree and shares chunk objects
+    but diverges as either side writes — see :meth:`fork` for the chunk-key
+    disjointness guarantees that make concurrent writes safe.
     """
 
     name: str
@@ -345,6 +353,7 @@ class Volume(BaseModel):
         meta_dir: str,
         tmp_prefix: str,
         flush_live: bool = True,
+        counter_bump: Optional[int] = None,
     ) -> File:
         """Snapshot the metadata index on disk at ``meta_dir`` and upload it.
 
@@ -361,6 +370,10 @@ class Volume(BaseModel):
         For SQLite the snapshot is produced via SQLite's online backup API
         (which works equally well on a cold file). For Redis the snapshot is
         a plain ``shutil.copyfile`` of ``dump.rdb``.
+
+        When ``counter_bump`` is provided, the snapshot's chunk/inode/session
+        allocators are advanced by that offset before upload — used by
+        :meth:`fork` to disjoint the parent's and child's allocator spaces.
         """
         engine = self._engine()
         src = Path(meta_dir) / _index_filename(engine)
@@ -401,6 +414,14 @@ class Volume(BaseModel):
                 return tmp.name
 
         snapshot_path = await asyncio.to_thread(_snapshot)
+        if counter_bump is not None:
+            applied = await asyncio.to_thread(_disjoint_fork_counters, snapshot_path, engine, counter_bump)
+            if applied != counter_bump:
+                _logger.info(
+                    "[Volume.fork] counter offset clamped: desired=%d applied=%d (uint64 headroom)",
+                    counter_bump,
+                    applied,
+                )
         # Upload eagerly via the raw upload API (not File.from_local). Inside
         # a Flyte task `File.from_local` either (a) attaches a lazy_uploader
         # that the literal-marshaller then skips because we're in a remote
@@ -430,21 +451,28 @@ class Volume(BaseModel):
         """Snapshot the current metadata index and return a new ``Volume``
         that points at the snapshot.
 
-        Both the original and the fork reference the same bucket. Chunk keys
-        are derived from inode IDs, which diverge from the fork point, so
-        concurrent writes do not collide. Reads after the fork are namespace-
-        isolated: writes from one side are invisible to the other.
+        Both the original and the fork reference the same bucket. To keep
+        their writes from clobbering each other, the fork's chunk-slice /
+        inode / session counters are advanced by a random 56-bit offset
+        before publication. JuiceFS chunk object keys embed the slice ID
+        (``<bucket>/<vol>/chunks/<sliceid/1000>/<sliceid/1000>/<sliceid>_<index>_<size>``),
+        so disjoint counter spaces yield disjoint object keys; without this,
+        parent and fork would race to allocate the same slice IDs and one
+        side's writes would silently overwrite the other's.
 
         Works whether or not ``self`` is currently mounted:
 
         * **Live** (mounted): flushes in-memory state (``SAVE`` for Redis,
           WAL checkpoint for SQLite) and snapshots the live on-disk index,
-          uploading the snapshot.
-        * **Cold** (not mounted): server-side copies ``self.index`` to a
-          fresh remote URI via :meth:`flyte.io.File.copy_to`. No daemon is
-          started, no bytes traverse the pod. Stats are inherited from
-          ``self`` since no writes can have occurred. This is what makes
-          forking large volumes cheap.
+          bumps counters on the snapshot, and uploads it.
+        * **Cold** (not mounted): downloads ``self.index`` to a tempdir,
+          bumps counters in place, and uploads. Stats are inherited from
+          ``self`` since no writes can have occurred.
+
+        Note: cold-fork still avoids copying the data chunks (which dominate
+        bytes), but it does pull the metadata file through the pod — the
+        previous ``File.copy_to`` server-side path could not mutate counters
+        and was unsafe for the chunk-key reasons above.
         """
         engine = self._engine()
         # "Live" iff mount() registered this meta_dir and commit() hasn't
@@ -452,21 +480,39 @@ class Volume(BaseModel):
         # the index.db lingers after commit(), so a file-existence heuristic
         # would falsely mark a committed-then-not-remounted volume as live.
         live = meta_dir in type(self)._live_meta
+        offset = _random_fork_offset()
+        _logger.info("[Volume.fork] disjoint counter offset=%d (live=%s)", offset, live)
 
         if live:
             new_index = await self._snapshot_and_upload_index(
                 meta_dir=meta_dir,
                 tmp_prefix="vol-fork-",
                 flush_live=True,
+                counter_bump=offset,
             )
             used_bytes, inode_count = await _query_volume_stats(meta_dir, engine)
         else:
             if self.index is None:
                 raise RuntimeError("Cannot fork: Volume is not mounted and has no index to fork from.")
-            ctx = internal_ctx()
-            dst_path = ctx.raw_data.get_random_remote_path(file_name=_index_filename(engine))
-            _logger.info("[Volume.fork] cold fork: copying %s -> %s", self.index.path, dst_path)
-            new_index = await self.index.copy_to(dst_path)
+            # Cold fork: download the index into a private meta_dir, then run
+            # the standard snapshot-and-upload path with flush_live=False so
+            # the cold file is treated as authoritative. The same path also
+            # applies the counter bump.
+            cold_meta = Path(tempfile.mkdtemp(prefix="vol-cold-fork-"))
+            try:
+                index_path = cold_meta / _index_filename(engine)
+                _logger.info("[Volume.fork] cold fork: downloading %s", self.index.path)
+                await self.index.download(str(index_path))
+                new_index = await self._snapshot_and_upload_index(
+                    meta_dir=str(cold_meta),
+                    tmp_prefix="vol-fork-",
+                    flush_live=False,
+                    counter_bump=offset,
+                )
+            finally:
+                import shutil
+
+                shutil.rmtree(cold_meta, ignore_errors=True)
             # No daemon, no writes since self.index was published — stats unchanged.
             used_bytes, inode_count = self.used_bytes, self.inode_count
 
@@ -531,12 +577,19 @@ class Volume(BaseModel):
         current engine. Implemented as ``juicefs dump | juicefs load``: the
         full namespace is exported to JSON, then re-imported into a fresh
         meta engine pointing at the *same* bucket. Chunks are addressed by
-        inode IDs, which are preserved across dump/load, so no chunk traffic
+        slice IDs, which are preserved across dump/load, so no chunk traffic
         is required.
 
         The returned Volume has a fresh ``index`` (snapshot of the loaded
         meta engine), the original Volume's index as ``parent``, the same
         ``bucket`` / ``storage`` / ``name``, and the new ``metadata_engine``.
+
+        Intent is *migration*, not fork: the old engine is meant to be
+        retired. As a defense against accidental concurrent use, the loaded
+        engine's chunk-slice / inode / session counters are advanced by a
+        random offset (same mechanism as :meth:`fork`) so that even if the
+        old engine is still mounted somewhere, its writes can't collide with
+        the migrated engine's writes in shared object-store keys.
 
         Does not require a FUSE mount on either side. Safe to call from any
         task pod that has the ``juicefs`` binary (Redis tooling is only
@@ -602,6 +655,13 @@ class Volume(BaseModel):
 
             if not new_index_path.exists():
                 raise RuntimeError(f"juicefs load did not produce {new_index_path} — migration aborted.")
+
+            # Disjoint the migrated engine's allocator space from the source
+            # engine's. See class:`Volume.fork` for the rationale: even though
+            # migration intends the source to be retired, defense in depth.
+            offset = _random_fork_offset()
+            _logger.info("[Volume.migrate_metadata_engine] disjoint counter offset=%d", offset)
+            await asyncio.to_thread(_disjoint_fork_counters, str(new_index_path), new_engine, offset)
 
             def _snapshot() -> str:
                 import shutil
@@ -847,6 +907,204 @@ def _wal_checkpoint(db_path: str) -> None:
             conn.close()
     except sqlite3.Error:
         pass
+
+
+# Counters JuiceFS uses to allocate IDs. Bumped at fork time so parent and
+# fork allocate from disjoint ranges (chunk-slice IDs end up in distinct
+# object-store keys; inode/session IDs stay distinct just for hygiene).
+# SQLite stores them in ``jfs_counter(name, value)`` with camelCase names;
+# Redis stores them as top-level keys with lowercase names.
+_FORK_COUNTER_NAMES_SQLITE: tuple = ("nextChunk", "nextInode", "nextSession")
+_FORK_COUNTER_NAMES_REDIS: tuple = ("nextchunk", "nextinode", "nextsession")
+
+# JuiceFS counter ceiling. SQLite ``INTEGER`` is signed 64-bit (max 2**63 - 1)
+# and Redis ``INCRBY`` is also signed 64-bit, so the effective ceiling is
+# 2**63 - 1, not 2**64 - 1.
+_COUNTER_MAX = (1 << 63) - 1
+# Minimum offset we'll apply to a counter at fork time. Comfortably exceeds
+# JuiceFS's per-batch allocation (4096 chunk slices) and a generous per-task
+# write rate, so even a forced-small offset still leaves enough room for one
+# more task to allocate without colliding with sibling forks.
+_MIN_FORK_OFFSET = 1 << 32
+
+
+def _random_fork_offset() -> int:
+    """Return a random offset in ``[2³², 2³² + 2⁵⁶)`` — the *desired* fork
+    offset, before any counter-headroom clamping.
+
+    The lower bound (2³²) ensures every fork's allocator space is at least
+    ~4B IDs ahead of the parent — JuiceFS allocates chunk-slice IDs in
+    batches of 4096, so this is comfortably more than any realistic burst.
+    The 56-bit upper bound keeps successive forks well-clear of uint64
+    overflow under typical use; for deep fork chains
+    :func:`_safe_fork_offset` shrinks the actual applied offset based on the
+    counter's remaining headroom.
+    Birthday-collision probability for 10⁶ siblings is on the order of 10⁻⁵.
+    """
+    return (1 << 32) + secrets.randbits(56)
+
+
+def _safe_fork_offset(current_max: int, desired: int) -> int:
+    """Clamp a desired fork offset so that ``current_max + offset`` stays
+    well below :data:`_COUNTER_MAX` (signed int64).
+
+    The clamp targets ``headroom // 2`` so each successive fork still has
+    half the remaining ID space available — protecting future forks rather
+    than starving them. Raises if even the minimum safe offset
+    (:data:`_MIN_FORK_OFFSET`) would not leave room for one further fork,
+    which means the Volume's allocator space is exhausted and the volume
+    must be re-created.
+    """
+    if desired <= 0:
+        raise ValueError(f"desired offset must be positive, got {desired}")
+    headroom = _COUNTER_MAX - current_max
+    if headroom < _MIN_FORK_OFFSET * 2:
+        raise RuntimeError(
+            f"JuiceFS counter is too close to int64 max (current_max={current_max}); "
+            f"this Volume's fork chain has exhausted its ID space — re-create the volume "
+            f"to reset the allocator."
+        )
+    return min(desired, headroom // 2)
+
+
+def _disjoint_counters_sqlite(db_path: str, offset: int) -> int:
+    """Advance JuiceFS allocator counters in a SQLite metadata index by an
+    offset clamped to the uint64 headroom. Returns the actual offset applied.
+
+    Raises if the schema or counters are missing — silently failing here
+    would let collisions through — or if the allocator space is exhausted.
+    """
+    if offset <= 0:
+        raise ValueError(f"offset must be positive, got {offset}")
+    with sqlite3.connect(db_path) as conn:
+        existing = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if "jfs_counter" not in existing:
+            raise RuntimeError(f"{db_path} is not a JuiceFS SQLite index (no jfs_counter table)")
+        cur = conn.cursor()
+        current_max = 0
+        for name in _FORK_COUNTER_NAMES_SQLITE:
+            row = cur.execute("SELECT value FROM jfs_counter WHERE name = ?", (name,)).fetchone()
+            if row is None:
+                raise RuntimeError(f"missing counter {name!r} in {db_path}")
+            if row[0] > current_max:
+                current_max = row[0]
+        applied = _safe_fork_offset(current_max, offset)
+        for name in _FORK_COUNTER_NAMES_SQLITE:
+            cur.execute(
+                "UPDATE jfs_counter SET value = value + ? WHERE name = ?",
+                (applied, name),
+            )
+        conn.commit()
+    return applied
+
+
+def _disjoint_counters_redis(rdb_path: str, offset: int, timeout: float = 30.0) -> int:
+    """Advance JuiceFS allocator counters in a Redis RDB file by an offset
+    clamped to the uint64 headroom. Returns the actual offset applied.
+
+    Spawns an ephemeral ``redis-server`` on an OS-assigned port that loads
+    the RDB, applies ``INCRBY`` to each counter, ``SAVE``s, and shuts down.
+    The file is rewritten in place.
+    """
+    if offset <= 0:
+        raise ValueError(f"offset must be positive, got {offset}")
+    rdb = Path(rdb_path)
+    if not rdb.exists():
+        raise RuntimeError(f"{rdb_path} does not exist")
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+
+    cmd = [
+        "redis-server",
+        "--port",
+        str(port),
+        "--bind",
+        "127.0.0.1",
+        "--save",
+        "",
+        "--appendonly",
+        "no",
+        "--dir",
+        str(rdb.parent),
+        "--dbfilename",
+        rdb.name,
+        "--daemonize",
+        "no",
+    ]
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+    )
+    try:
+        # Wait for PONG.
+        import time
+
+        deadline = time.monotonic() + timeout
+        while True:
+            if proc.poll() is not None:
+                out = proc.stdout.read().decode(errors="replace") if proc.stdout else ""
+                raise RuntimeError(f"ephemeral redis-server exited prematurely (rc={proc.returncode}): {out}")
+            r = subprocess.run(
+                ["redis-cli", "-p", str(port), "ping"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if r.returncode == 0 and "PONG" in r.stdout:
+                break
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"ephemeral redis-server did not become ready within {timeout}s")
+            time.sleep(0.1)
+
+        # Verify the RDB was actually a JuiceFS index — counters must exist.
+        # Also collect current max so we can clamp the offset to remaining headroom.
+        current_max = 0
+        for name in _FORK_COUNTER_NAMES_REDIS:
+            r = subprocess.run(
+                ["redis-cli", "-p", str(port), "GET", name],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if r.returncode != 0 or r.stdout.strip() in ("", "(nil)"):
+                raise RuntimeError(f"missing counter {name!r} in {rdb_path}")
+            try:
+                v = int(r.stdout.strip())
+            except ValueError as e:
+                raise RuntimeError(f"counter {name!r} in {rdb_path} is non-integer: {r.stdout!r}") from e
+            if v > current_max:
+                current_max = v
+        applied = _safe_fork_offset(current_max, offset)
+        for name in _FORK_COUNTER_NAMES_REDIS:
+            _run_check(["redis-cli", "-p", str(port), "INCRBY", name, str(applied)])
+
+        _run_check(["redis-cli", "-p", str(port), "SAVE"])
+    finally:
+        subprocess.run(
+            ["redis-cli", "-p", str(port), "SHUTDOWN", "NOSAVE"],
+            capture_output=True,
+            check=False,
+        )
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(5)
+    return applied
+
+
+def _disjoint_fork_counters(index_path: str, engine: str, offset: int) -> int:
+    """Dispatch ``_disjoint_counters_{sqlite,redis}`` by ``engine``. Returns
+    the offset actually applied (may be smaller than ``offset`` when the
+    counter space is nearly exhausted).
+    """
+    if engine == "redis":
+        return _disjoint_counters_redis(index_path, offset)
+    return _disjoint_counters_sqlite(index_path, offset)
 
 
 def volume_image(
