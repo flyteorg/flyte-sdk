@@ -480,9 +480,7 @@ class Controller:
                         f"Transient transport error launching action {action.name} "
                         f"({type(e).__name__}: {e}); will back off and retry."
                     )
-                    raise flyte.errors.SlowDownError(
-                        f"Transient transport error ({type(e).__name__}): {e}"
-                    ) from e
+                    raise flyte.errors.SlowDownError(f"Transient transport error ({type(e).__name__}): {e}") from e
                 except ConnectError as e:
                     if e.code == Code.ALREADY_EXISTS:
                         logger.info(f"Action {action.name} already exists, continuing to monitor.")
@@ -556,9 +554,7 @@ class Controller:
             except Exception as e:
                 logger.error(f"[{worker_id}] Error in controller loop for {action.name}: {e}")
                 if isinstance(e, flyte.errors.SlowDownError):
-                    reason = (
-                        f"retries {action.retries} / {self._max_retries} exhausted"
-                    )
+                    reason = f"retries {action.retries} / {self._max_retries} exhausted"
                 else:
                     reason = f"non-retryable {type(e).__name__}"
                 err = flyte.errors.RuntimeSystemError(
