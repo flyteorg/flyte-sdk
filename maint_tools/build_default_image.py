@@ -72,7 +72,7 @@ async def build_flyte_connector_image(
         )
     else:
         default_image = Image.from_debian_base(registry=registry, name=name).with_pip_packages(
-            "flyteplugins-bigquery", "flyteplugins-snowflake", "flyteplugins-databricks", pre=True
+            "flyteplugins-bigquery", "flyteplugins-snowflake", "flyteplugins-databricks"
         )
     suffix = __version__ if __version__.startswith("v") else f"v{__version__}".replace("+", "-")
     python_version = _detect_python_version()
