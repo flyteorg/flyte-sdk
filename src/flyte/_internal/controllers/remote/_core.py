@@ -8,6 +8,7 @@ import time
 from asyncio import Event
 from typing import Awaitable, Coroutine, Optional
 
+import httpx
 from aiolimiter import AsyncLimiter
 from connectrpc.code import Code
 from connectrpc.errors import ConnectError
@@ -471,6 +472,17 @@ class Controller:
                         limiter_wait_ms=f"{limiter_wait_ms:.1f}",
                         elapsed_ms=f"{(time.monotonic() - launch_start) * 1000:.1f}",
                     )
+                except httpx.TransportError as e:
+                    # Transport-level failure (e.g. ConnectTimeout reaching the IDP during auth refresh,
+                    # ReadTimeout, DNS failure). These never produced an HTTP response, so they bypass
+                    # the ConnectError classification below. Treat as transient and retry with backoff.
+                    logger.warning(
+                        f"Transient transport error launching action {action.name} "
+                        f"({type(e).__name__}: {e}); will back off and retry."
+                    )
+                    raise flyte.errors.SlowDownError(
+                        f"Transient transport error ({type(e).__name__}): {e}"
+                    ) from e
                 except ConnectError as e:
                     if e.code == Code.ALREADY_EXISTS:
                         logger.info(f"Action {action.name} already exists, continuing to monitor.")
@@ -543,10 +555,15 @@ class Controller:
                     await self._shared_queue.put(action)
             except Exception as e:
                 logger.error(f"[{worker_id}] Error in controller loop for {action.name}: {e}")
+                if isinstance(e, flyte.errors.SlowDownError):
+                    reason = (
+                        f"retries {action.retries} / {self._max_retries} exhausted"
+                    )
+                else:
+                    reason = f"non-retryable {type(e).__name__}"
                 err = flyte.errors.RuntimeSystemError(
                     code=type(e).__name__,
-                    message=f"Controller failed, system retries {action.retries} / {self._max_retries} "
-                    f"crossed threshold, for action {action.name}: {e}",
+                    message=f"Controller failed for action {action.name} ({reason}): {e}",
                     worker=worker_id,
                 )
                 err.__cause__ = e
