@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import os
 from pathlib import Path
 
 import flyte
@@ -21,6 +22,8 @@ async def build_flyte_image(registry: str | None = None, name: str | None = None
     from flyte._version import __version__
 
     default_image = Image.from_debian_base(registry=registry, name=name, install_flyte=False).with_local_v2()
+    if os.getenv("_F_USE_RUST_CONTROLLER", "").lower() in ("1", "true", "yes"):
+        default_image = default_image.with_local_rs_controller()
     suffix = __version__ if __version__.startswith("v") else f"v{__version__}".replace("+", "-")
     python_version = _detect_python_version()
     tag = f"py{python_version[0]}.{python_version[1]}-{suffix}"
