@@ -27,6 +27,30 @@ def test_cache_invalid_behavior():
         Cache(behavior="invalid")
 
 
+@pytest.mark.parametrize(
+    "alias,canonical",
+    [
+        ("enable", "auto"),
+        ("enabled", "auto"),
+        ("on", "auto"),
+        ("True", "auto"),
+        ("YES", "auto"),
+        ("off", "disable"),
+        ("false", "disable"),
+        ("no", "disable"),
+        ("None", "disable"),
+    ],
+)
+def test_cache_behavior_aliases(alias, canonical):
+    cache = Cache(behavior=alias)
+    assert cache.behavior == canonical
+
+
+def test_cache_invalid_behavior_message_lists_aliases():
+    with pytest.raises(ValueError, match="aliases accepted"):
+        Cache(behavior="enbale")
+
+
 def test_cache_version_override():
     cache = Cache(behavior="auto", version_override="v1.0")
     assert cache.get_version() == "v1.0"
