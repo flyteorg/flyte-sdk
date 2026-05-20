@@ -70,12 +70,16 @@ flyte run flyte_intro.py main --data '[1,2,3]'
 
 <summary>ℹ️ Synchronous Python</summary>
 
-Flyte 2 also supports synchronous python, though async is recommended.
+<br>
+
+Flyte 2 also supports synchronous python, although async is recommended for
+more control over concurrency and parallelism.
 
 ```python
 @env.task
 def predict(x: int) -> int:
     return 2 * x + 5
+
 @env.task
 def main(data: list[int]) -> float:
     xs = list(flyte.map(predict, data))
