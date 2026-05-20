@@ -57,6 +57,57 @@ async def test_doesnt_work_yet():
 
 
 @pytest.mark.asyncio
+async def test_build_from_dockerfile_wraps_calledprocesserror_as_image_build_error(tmp_path):
+    """
+    Regression: when `docker buildx build -f Dockerfile` fails (non-zero exit), the raw
+    `subprocess.CalledProcessError` previously bubbled out of `_build_from_dockerfile`
+    and surfaced in Sentry as an unhandled SDK crash (FLYTE-SDK-34). Wrap as
+    `ImageBuildError` so the error is filtered out of Sentry and presented as
+    user-facing image-build feedback.
+    """
+    from flyte.errors import ImageBuildError
+
+    dockerfile = tmp_path / "Dockerfile"
+    dockerfile.write_text("FROM scratch\n")
+
+    img = Image.from_dockerfile(file=dockerfile, registry="localhost:30000", name="bad_dockerfile")
+    builder = DockerImageBuilder()
+
+    def _raise_called_process(*args, **kwargs):
+        raise subprocess.CalledProcessError(returncode=1, cmd=args[0] if args else ["docker"])
+
+    with patch.object(DockerImageBuilder, "_resolve_builder_name", return_value="flytex"):
+        with patch("flyte._internal.imagebuild.docker_builder.subprocess.run", side_effect=_raise_called_process):
+            with pytest.raises(ImageBuildError, match="Failed to build image from"):
+                await builder._build_from_dockerfile(img, push=False, wait=True)
+
+
+@pytest.mark.asyncio
+async def test_build_image_wraps_calledprocesserror_as_image_build_error(monkeypatch, tmp_path):
+    """
+    Regression: when the generated buildx command fails, `_build_image` previously
+    wrapped the error as a plain `RuntimeError` (FLYTE-SDK-2R). `RuntimeError` is
+    not in the Sentry user-error filter set, so the crash leaked into Sentry as an
+    SDK bug. Wrap as `ImageBuildError` so it is filtered.
+    """
+    from flyte.errors import ImageBuildError
+
+    img = Image.from_debian_base(registry="localhost:30000", name="img_build_fails")
+    builder = DockerImageBuilder()
+
+    def _raise_called_process(*args, **kwargs):
+        raise subprocess.CalledProcessError(returncode=1, cmd=args[0] if args else ["docker"])
+
+    # Patch the subprocess.run used inside _build_image's try-block. _ensure_buildx_builder
+    # is also called via _resolve_builder_name, so stub it out so we don't trip its own
+    # subprocess.run patching with a CalledProcessError.
+    with patch.object(DockerImageBuilder, "_resolve_builder_name", return_value="flytex"):
+        with patch("flyte._internal.imagebuild.docker_builder.subprocess.run", side_effect=_raise_called_process):
+            with pytest.raises(ImageBuildError, match="Failed to build image"):
+                await builder._build_image(img, push=False, wait=True)
+
+
+@pytest.mark.asyncio
 async def test_ensure_buildx_builder_raises_image_build_error_when_docker_missing(monkeypatch):
     """
     Regression: when docker is not installed/in PATH, `subprocess.run(["docker", ...])`

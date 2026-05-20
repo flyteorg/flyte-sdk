@@ -645,10 +645,18 @@ class DockerImageBuilder(ImageBuilder):
         logger.debug(f"Build command: {concat_command}")
         click.secho(f"Run command: {concat_command} ", fg="blue")
 
-        if wait:
-            await run_sync_with_loop(subprocess.run, command, cwd=str(cast(Path, image.dockerfile).cwd()), check=True)
-        else:
-            await run_sync_with_loop(subprocess.Popen, command, cwd=str(cast(Path, image.dockerfile).cwd()))
+        try:
+            if wait:
+                await run_sync_with_loop(
+                    subprocess.run, command, cwd=str(cast(Path, image.dockerfile).cwd()), check=True
+                )
+            else:
+                await run_sync_with_loop(subprocess.Popen, command, cwd=str(cast(Path, image.dockerfile).cwd()))
+        except subprocess.CalledProcessError as e:
+            from flyte.errors import ImageBuildError
+
+            logger.error(f"Failed to build image from dockerfile: {e}")
+            raise ImageBuildError(f"Failed to build image from {image.dockerfile}: {e}") from e
 
         return image.uri
 
@@ -803,7 +811,9 @@ class DockerImageBuilder(ImageBuilder):
                 else:
                     await run_sync_with_loop(subprocess.Popen, command)
             except subprocess.CalledProcessError as e:
+                from flyte.errors import ImageBuildError
+
                 logger.error(f"Failed to build image: {e}")
-                raise RuntimeError(f"Failed to build image: {e}")
+                raise ImageBuildError(f"Failed to build image: {e}") from e
 
             return image.uri
