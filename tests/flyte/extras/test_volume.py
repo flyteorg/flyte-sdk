@@ -52,6 +52,7 @@ def _snapshot_sqlite_db(src_db: Path, dst_db: Path) -> None:
     with sqlite3.connect(str(src_db)) as src, sqlite3.connect(str(dst_db)) as dst:
         src.backup(dst)
 
+
 # ---------------------------------------------------------------------------
 # Capability detection
 # ---------------------------------------------------------------------------
@@ -476,8 +477,7 @@ class TestClientBucketUri:
         monkeypatch.setenv("AWS_REGION", "us-west-2")
         monkeypatch.delenv("AWS_DEFAULT_REGION", raising=False)
         assert (
-            _client_bucket_uri("s3://my-bucket/prefix", "s3")
-            == "https://s3.us-west-2.amazonaws.com/my-bucket/prefix"
+            _client_bucket_uri("s3://my-bucket/prefix", "s3") == "https://s3.us-west-2.amazonaws.com/my-bucket/prefix"
         )
 
     def test_s3_uri_falls_back_to_aws_default_region(self, monkeypatch):
