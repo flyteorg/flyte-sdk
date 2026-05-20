@@ -52,7 +52,6 @@ from flyte._image import Image
 from flyte._logging import logger as _logger
 from flyte._pod import PodTemplate
 from flyte.io._file import File
-from flyte.io._hashing_io import HashlibAccumulator
 
 _DEFAULT_META_DIR = "/var/lib/flyte-volume"
 _DEFAULT_CACHE_DIR = "/var/cache/flyte-volume"
@@ -343,10 +342,11 @@ class Volume(BaseModel):
         type(self)._live_meta.discard(meta_dir)
         ctx = internal_ctx()
         index_bytes = os.path.getsize(str(index_path))
+        # No hash_method — see fork()'s upload site for why (streaming-hash
+        # path produces thousands of tiny S3 writes on binary indexes).
         new_index: File = await File.from_local(
             str(index_path),
             remote_destination=ctx.raw_data.get_random_remote_path(file_name=_index_filename(engine)),
-            hash_method=HashlibAccumulator.from_hash_name("md5"),
         )
         return Volume(
             name=self.name,
@@ -451,9 +451,12 @@ class Volume(BaseModel):
                 )
         # Upload directly through the underlying fsspec filesystem (no signed
         # URLs — those are several times slower than native S3/GCS PUT).
-        # ``File.from_local`` with an explicit ``remote_destination`` skips
-        # its lazy-uploader path and goes straight to ``fs.open(..., "wb")``,
-        # so the returned File carries the remote URI and the streaming md5.
+        # We deliberately do NOT pass a hash_method: the streaming-hash path
+        # in File.from_local wraps aiofiles in AsyncHashingReader which
+        # iterates line-by-line on the binary input, producing thousands of
+        # tiny S3 writes (observed ~234 KB/s on 100 MB). Volume indexes are
+        # content-unique per fork (counter bump) so cache-key fidelity is
+        # moot here — drop the hash and let fsspec.put do a proper multipart.
         try:
             index_bytes = os.path.getsize(snapshot_path)
             ctx = internal_ctx()
@@ -462,7 +465,6 @@ class Volume(BaseModel):
             new_file: File = await File.from_local(
                 snapshot_path,
                 remote_destination=dst_path,
-                hash_method=HashlibAccumulator.from_hash_name("md5"),
             )
             _logger.info(
                 "[Volume.fork] uploaded in %.2fs (%.1f MB → %s)",
@@ -717,10 +719,10 @@ class Volume(BaseModel):
             cleanup_paths.append(snapshot_path)
             ctx = internal_ctx()
             index_bytes = os.path.getsize(snapshot_path)
+            # No hash_method — see fork()'s upload site for why.
             new_file: File = await File.from_local(
                 snapshot_path,
                 remote_destination=ctx.raw_data.get_random_remote_path(file_name=_index_filename(new_engine)),
-                hash_method=HashlibAccumulator.from_hash_name("md5"),
             )
             return Volume(
                 name=self.name,
