@@ -41,6 +41,7 @@ import socket
 import sqlite3
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 from typing import ClassVar, Dict, Optional, Set
 
@@ -425,9 +426,23 @@ class Volume(BaseModel):
                     live.backup(dst)
                 return tmp.name
 
+        t_snap = time.monotonic()
         snapshot_path = await asyncio.to_thread(_snapshot)
+        snap_bytes = os.path.getsize(snapshot_path)
+        _logger.info(
+            "[Volume.fork] snapshot prepared in %.2fs (%.1f MB, engine=%s)",
+            time.monotonic() - t_snap,
+            snap_bytes / 1_000_000,
+            engine,
+        )
         if counter_bump is not None:
+            t_bump = time.monotonic()
             applied = await asyncio.to_thread(_disjoint_fork_counters, snapshot_path, engine, counter_bump)
+            _logger.info(
+                "[Volume.fork] counter bump applied in %.2fs (offset=%d)",
+                time.monotonic() - t_bump,
+                applied,
+            )
             if applied != counter_bump:
                 _logger.info(
                     "[Volume.fork] counter offset clamped: desired=%d applied=%d (uint64 headroom)",
@@ -443,10 +458,17 @@ class Volume(BaseModel):
             index_bytes = os.path.getsize(snapshot_path)
             ctx = internal_ctx()
             dst_path = ctx.raw_data.get_random_remote_path(file_name=_index_filename(engine))
+            t_up = time.monotonic()
             new_file: File = await File.from_local(
                 snapshot_path,
                 remote_destination=dst_path,
                 hash_method=HashlibAccumulator.from_hash_name("md5"),
+            )
+            _logger.info(
+                "[Volume.fork] uploaded in %.2fs (%.1f MB → %s)",
+                time.monotonic() - t_up,
+                index_bytes / 1_000_000,
+                dst_path,
             )
             return new_file, index_bytes
         finally:
@@ -515,7 +537,13 @@ class Volume(BaseModel):
             try:
                 index_path = cold_meta / _index_filename(engine)
                 _logger.info("[Volume.fork] cold fork: downloading %s", self.index.path)
+                t_dl = time.monotonic()
                 await self.index.download(str(index_path))
+                _logger.info(
+                    "[Volume.fork] cold fork: downloaded in %.2fs (%.1f MB)",
+                    time.monotonic() - t_dl,
+                    os.path.getsize(index_path) / 1_000_000,
+                )
                 new_index, index_bytes = await self._snapshot_and_upload_index(
                     meta_dir=str(cold_meta),
                     tmp_prefix="vol-fork-",
