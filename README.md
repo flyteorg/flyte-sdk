@@ -25,6 +25,8 @@ pip install flyte
 
 ## Example
 
+Create a file called `flyte_hello_world.py` with the following content:
+
 ```python
 import asyncio
 import flyte
@@ -34,21 +36,14 @@ env = flyte.TaskEnvironment(
     image=flyte.Image.from_debian_base(python_version=(3, 12)),
 )
 
-@env.task
-def calculate(x: int) -> int:
-    return x * 2 + 5
+@env.task(retries=3, cache="auto")  # 👈 add retries and caching
+async def predict(x: int) -> int:
+    return 2 * x + 5
 
 @env.task
-async def main(numbers: list[int]) -> float:
-    results = await asyncio.gather(*[
-        calculate.aio(num) for num in numbers
-    ])
-    return sum(results) / len(results)
-
-if __name__ == "__main__":
-    flyte.init()
-    run = flyte.run(main, numbers=list(range(10)))
-    print(f"Result: {run.result}")
+async def main(data: list[int]) -> float:
+    xs = await asyncio.gather(*(predict(x) for x in data))
+    return sum(xs) / len(xs)
 ```
 
 <table>
@@ -125,11 +120,30 @@ Install the TUI for a rich local development experience:
 pip install flyte[tui]
 ```
 
-[![Watch the local development experience](https://img.youtube.com/vi/lsfy-7DbbRM/maxresdefault.jpg)](https://www.youtube.com/watch?v=lsfy-7DbbRM)
+<img src="static/flyte-tui.gif" alt="Flyte TUI">
 
-Flyte 2 is licensed under the [Apache 2.0 License](LICENSE).
+### Flyte Devbox
+
+Flyte Devbox is a docker- and k3s-based local development environment for Flyte.
+It allows you to run Flyte workflows and services locally.
+
+```bash
+flyte start devbox
+```
+
+<img src="static/flyte-start-devbox.png" alt="Flyte Start Devbox">
+
+<img src="static/flyte-hello-world.gif" alt="Flyte Hello World">
+
+### Rust Controller (experimental)
 
 ## Rust Controller (experimental)
+
+<details>
+
+<summary>Developer Guide</summary>
+
+<br>
 
 The Rust controller is an alternative implementation of the remote controller written in Rust and exposed
 to Python via maturin / pyo3. Distributed as a separate `flyte_controller_base` wheel so the main SDK does
@@ -231,6 +245,8 @@ no-default-features = true
 features = ["extension-module"]
 ```
 
+</details>
+
 ## Learn More
 
 - **[Live Demo](https://flyte2intro.apps.demo.hosted.unionai.cloud/)** — Try Flyte 2 in your browser
@@ -245,4 +261,4 @@ features = ["extension-module"]
 
 ## License
 
-Apache 2.0 — see [LICENSE](LICENSE).
+Flyte 2 is licensed under the [Apache 2.0 License](LICENSE).
