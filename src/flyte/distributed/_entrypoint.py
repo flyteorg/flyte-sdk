@@ -17,6 +17,8 @@ import socket
 import sys
 import time
 
+from flyte._logging import logger
+
 _DNS_TIMEOUT_SEC = 300
 _DNS_RETRY_INTERVAL_SEC = 2
 
@@ -34,7 +36,7 @@ _REQUIRED_ENV_VARS = [
 def _require(var: str) -> str:
     val = os.environ.get(var)
     if not val:
-        print(f"[clustered-entrypoint] ERROR: required env var {var!r} is not set", flush=True)
+        logger.error(f"required env var {var!r} is not set")
         sys.exit(1)
     return val
 
@@ -48,15 +50,14 @@ def _wait_for_dns(hostname: str, timeout: float = _DNS_TIMEOUT_SEC, interval: fl
     while True:
         try:
             socket.getaddrinfo(hostname, None)
-            print(f"[clustered-entrypoint] DNS resolved: {hostname}", flush=True)
+            logger.info(f"DNS resolved: {hostname}")
             return
         except socket.gaierror:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                print(
-                    f"[clustered-entrypoint] ERROR: DNS for {hostname!r} did not resolve within {timeout}s. "
-                    "Check that the JobSet headless service is created and pod-0 is running.",
-                    flush=True,
+                logger.error(
+                    f"DNS for {hostname!r} did not resolve within {timeout}s. "
+                    "Check that the JobSet headless service is created and pod-0 is running."
                 )
                 sys.exit(1)
             time.sleep(min(interval, remaining))
@@ -92,7 +93,7 @@ def main() -> None:
         *sys.argv[1:],
     ]
 
-    print(f"[clustered-entrypoint] exec: {' '.join(torchrun_cmd)}", flush=True)
+    logger.info(f"exec: {' '.join(torchrun_cmd)}")
     os.execvp("torchrun", torchrun_cmd)
 
 
