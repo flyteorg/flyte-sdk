@@ -744,17 +744,21 @@ def require_project_and_domain(func):
     def wrapper(*args, **kwargs):
         cfg = get_init_config()
         if cfg.project is None:
-            raise ValueError(
+            raise InitializationError(
+                "ProjectNotConfigured",
+                "user",
                 "Project must be provided to initialize the client. "
                 "Please set 'project' in the 'task' section of your config file, "
-                "or pass it directly to flyte.init(project='your-project-name')."
+                "or pass it directly to flyte.init(project='your-project-name').",
             )
 
         if cfg.domain is None:
-            raise ValueError(
+            raise InitializationError(
+                "DomainNotConfigured",
+                "user",
                 "Domain must be provided to initialize the client. "
                 "Please set 'domain' in the 'task' section of your config file, "
-                "or pass it directly to flyte.init(domain='your-domain-name')."
+                "or pass it directly to flyte.init(domain='your-domain-name').",
             )
 
         return func(*args, **kwargs)

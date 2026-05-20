@@ -23,6 +23,21 @@ FuncOut = TypeVar("FuncOut")
 
 CacheBehavior = Literal["auto", "override", "disable"]
 
+# Common user-typed aliases mapped to their canonical CacheBehavior. Keeps
+# code like `cache="enable"` or `cache="off"` working instead of crashing
+# with a ValueError that ends up in Sentry as an SDK error.
+_CACHE_BEHAVIOR_ALIASES = {
+    "enable": "auto",
+    "enabled": "auto",
+    "on": "auto",
+    "true": "auto",
+    "yes": "auto",
+    "off": "disable",
+    "false": "disable",
+    "no": "disable",
+    "none": "disable",
+}
+
 
 @dataclass
 class VersionParameters(Generic[P, FuncOut]):
@@ -105,8 +120,16 @@ class Cache:
     policies: Optional[Union[List[CachePolicy], CachePolicy]] = None
 
     def __post_init__(self):
-        if self.behavior not in get_args(CacheBehavior):
-            raise ValueError(f"Invalid cache behavior: {self.behavior}. Must be one of ['auto', 'override', 'disable']")
+        valid = get_args(CacheBehavior)
+        if isinstance(self.behavior, str) and self.behavior not in valid:
+            aliased = _CACHE_BEHAVIOR_ALIASES.get(self.behavior.lower())
+            if aliased is not None:
+                self.behavior = aliased
+        if self.behavior not in valid:
+            raise ValueError(
+                f"Invalid cache behavior: {self.behavior!r}. Must be one of {list(valid)} "
+                f"(aliases accepted: {sorted(_CACHE_BEHAVIOR_ALIASES)})."
+            )
 
         # Still setup _ignore_inputs when cache is disabled to prevent _ignored_inputs attribute not found error
         if isinstance(self.ignored_inputs, str):

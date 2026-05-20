@@ -1411,6 +1411,25 @@ async def test_convert_upload_default_inputs_with_falsy_defaults():
 
 
 @pytest.mark.asyncio
+async def test_convert_upload_default_inputs_rejects_trigger_time():
+    """
+    convert_upload_default_inputs must raise a clear ValueError when flyte.TriggerTime
+    is used as a default value for a regular task input. Previously this produced an
+    opaque TypeTransformerFailedError because TriggerTime is a sentinel, not a datetime.
+    """
+    from datetime import datetime
+
+    import flyte
+
+    interface = NativeInterface.from_types(
+        {"trigger_time": (datetime, flyte.TriggerTime)},
+        {},
+    )
+    with pytest.raises(ValueError, match=r"flyte\.TriggerTime"):
+        await convert.convert_upload_default_inputs(interface)
+
+
+@pytest.mark.asyncio
 async def test_convert_upload_default_inputs_remote_interface():
     """
     convert_upload_default_inputs should handle remote interfaces correctly.

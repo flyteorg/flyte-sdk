@@ -8,16 +8,16 @@ build-builders: build-arm64 build-amd64
 
 # Build the arm64 builder image
 build-arm64:
-	docker buildx build --platform linux/arm64 --build-arg ARCH=aarch64 -f Dockerfile.maturinx -t wheel-builder:arm64 .
+	docker buildx build --platform linux/arm64 --build-arg ARCH=aarch64 --load -f Dockerfile.maturinx -t wheel-builder:arm64 .
 
 # Build the amd64 builder image (emulated on arm64 host)
 build-amd64:
-	docker buildx build --platform linux/amd64 --build-arg ARCH=x86_64 -f Dockerfile.maturinx -t wheel-builder:amd64 .
+	docker buildx build --platform linux/amd64 --build-arg ARCH=x86_64 --load -f Dockerfile.maturinx -t wheel-builder:amd64 .
 
 CARGO_CACHE_DIR := docker_cargo_cache
 DIST_DIRS       := dist
 # Derive version from git tags, convert to PEP 440 format
-VERSION         := $(shell git describe --tags --always --dirty 2>/dev/null | sed -E 's/^v//; s/(-[0-9]+)-g([0-9a-f]+)/.dev\1+g\2/; s/\.dev-/\.dev/; s/-dirty/.dirty/')
+VERSION         := $(shell git describe --tags --always --dirty 2>/dev/null | sed -E 's/^v//; s/(-[0-9]+)-g([0-9a-f]+)/.dev\1+g\2/; s/\.dev-/\.dev/; s/\+(g[0-9a-f]+)-dirty/+\1.dirty/; s/-dirty/+dirty/')
 
 dist-dirs:
 	mkdir -p $(DIST_DIRS) $(CARGO_CACHE_DIR)
