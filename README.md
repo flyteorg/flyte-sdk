@@ -25,7 +25,7 @@ pip install flyte
 
 ## Example
 
-Create a file called `flyte_hello_world.py` with the following content:
+Create a file called `flyte_intro.py` with the following content:
 
 ```python
 import asyncio
@@ -52,19 +52,41 @@ async def main(data: list[int]) -> float:
 <td>
 
 ```bash
-python hello.py
+python flyte_intro.py
 ```
 
 </td>
 <td>
 
 ```bash
-flyte run hello.py main --numbers '[1,2,3]'
+flyte run flyte_intro.py main --data '[1,2,3]'
 ```
 
 </td>
 </tr>
 </table>
+
+<details>
+
+<summary>ℹ️ Synchronous Python</summary>
+
+<br>
+
+Flyte 2 also supports synchronous python, although async is recommended for
+more control over concurrency and parallelism.
+
+```python
+@env.task
+def predict(x: int) -> int:
+    return 2 * x + 5
+
+@env.task
+def main(data: list[int]) -> float:
+    xs = list(flyte.map(predict, data))
+    return sum(xs) / len(xs)
+```
+
+</details>
 
 ## Serve a Model
 
@@ -120,6 +142,12 @@ Install the TUI for a rich local development experience:
 pip install flyte[tui]
 ```
 
+Run `flyte_intro.py` on the TUI:
+
+```bash
+flyte run --tui --local flyte_intro.py main --data '[1,2,3]'
+```
+
 <img src="static/flyte-tui.gif" alt="Flyte TUI">
 
 ### Flyte Devbox
@@ -131,11 +159,26 @@ It allows you to run Flyte workflows and services locally.
 flyte start devbox
 ```
 
+Create the configuration file for the devbox:
+
+```bash
+flyte create config \
+    --endpoint localhost:30080 \
+    --project flytesnacks \
+    --domain development \
+    --builder local \
+    --insecure
+```
+
+Run on the devbox:
+
+```bash
+flyte run flyte_intro.py main --data '[1,2,3]'
+```
+
 <img src="static/flyte-start-devbox.png" alt="Flyte Start Devbox">
 
 <img src="static/flyte-hello-world.gif" alt="Flyte Hello World">
-
-### Rust Controller (experimental)
 
 ## Rust Controller (experimental)
 
