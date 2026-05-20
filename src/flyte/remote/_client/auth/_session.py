@@ -1,4 +1,5 @@
 import asyncio
+import os
 import socket
 import typing
 from dataclasses import dataclass
@@ -17,6 +18,9 @@ from ._authenticators.factory import (
     create_proxy_auth_interceptors,
     get_async_proxy_authenticator,
 )
+
+_USE_PYQWEST_DNS_RESOLVER_ENV = "_FLYTE_USE_PYQWEST_DNS_RESOLVER"
+_TRUE_ENV_VALUES = frozenset({"1", "true", "yes", "on"})
 
 
 @dataclass(frozen=True)
@@ -142,8 +146,13 @@ async def _resolve_tls_ca_cert(
     return None
 
 
+def _use_system_dns() -> bool:
+    return os.environ.get(_USE_PYQWEST_DNS_RESOLVER_ENV, "").lower() not in _TRUE_ENV_VALUES
+
+
 def _build_pyqwest_client(tls_ca_cert: bytes | None = None) -> pyqwest.Client:
     """Build a pyqwest Client with sensible transport defaults."""
+    use_system_dns = _use_system_dns()
     transport = pyqwest.HTTPTransport(
         tls_ca_cert=tls_ca_cert,
         timeout=None,
@@ -151,14 +160,11 @@ def _build_pyqwest_client(tls_ca_cert: bytes | None = None) -> pyqwest.Client:
         read_timeout=None,
         pool_idle_timeout=90.0,
         tcp_keepalive_interval=30.0,  # was grpc.keepalive_time_ms = 30000
-        # Use the OS resolver (getaddrinfo) instead of pyqwest's bundled
-        # trust-dns. getaddrinfo honors macOS's AI_ADDRCONFIG, which
-        # suppresses AAAA records on hosts with no usable IPv6 default
-        # route. Without this, AAAA-only resolution on flaky/tethered
-        # networks (where IPv6 is advertised but not actually routed) hangs
-        # all RPCs with "No route to host (os error 65)". curl works on the
-        # same network because it uses getaddrinfo by default.
-        use_system_dns=True,
+        # Use the OS resolver by default so Flyte matches curl/browser behavior
+        # on VPNs, split-DNS setups, captive portals, and broken IPv6 networks.
+        # Server deployments can set _FLYTE_USE_PYQWEST_DNS_RESOLVER=true to opt
+        # back into pyqwest's bundled resolver for app-owned DNS behavior.
+        use_system_dns=use_system_dns,
     )
     return pyqwest.Client(transport=transport)
 
