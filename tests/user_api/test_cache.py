@@ -48,7 +48,7 @@ def test_cache_behavior_aliases(alias, canonical):
 
 def test_cache_invalid_behavior_message_lists_aliases():
     with pytest.raises(ValueError, match="aliases accepted"):
-        Cache(behavior="enbale")
+        Cache(behavior="notarealvalue")
 
 
 def test_cache_version_override():
