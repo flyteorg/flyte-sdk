@@ -199,3 +199,60 @@ def test_copy_files_to_context_basic():
 
         # --- .git/ should NOT be copied ---
         assert not (dst / ".git").exists(), ".git directory should be ignored"
+
+
+def test_copy_files_to_context_missing_src_raises_image_build_error():
+    """When the user points an image layer at a path that doesn't exist on disk,
+    ``copy_files_to_context`` should surface an actionable ``ImageBuildError`` instead of letting
+    ``shutil.copy``'s raw ``FileNotFoundError`` bubble up to Sentry.
+
+    Reproduces FLYTE-SDK-2X: user's image build crashed with
+    ``FileNotFoundError: [Errno 2] No such file or directory: '/Users/.../flyte-sdk/.venv/lib/python3.13/dist'``
+    from ``shutil.py:copyfile`` inside ``copy_files_to_context``.
+    """
+    import pytest
+
+    from flyte.errors import ImageBuildError
+
+    with tempfile.TemporaryDirectory() as tmp_context:
+        context_path = Path(tmp_context)
+        missing = context_path / "does_not_exist.txt"
+
+        with pytest.raises(ImageBuildError) as excinfo:
+            copy_files_to_context(missing, context_path)
+
+        msg = str(excinfo.value)
+        assert "does not exist" in msg
+        assert str(missing) in msg
+
+
+def test_copy_files_to_context_skips_files_that_vanish_mid_walk():
+    """If a file listed by the directory walker disappears before ``shutil.copy2`` runs (e.g. a
+    transient venv entry or a broken symlink), the build should warn and keep going rather than
+    aborting with ``FileNotFoundError``.
+    """
+    with tempfile.TemporaryDirectory() as src_root, tempfile.TemporaryDirectory() as ctx_root:
+        src = Path(src_root)
+        keep = src / "keep.txt"
+        keep.write_text("kept\n")
+        vanishing = src / "vanishing.txt"
+        vanishing.write_text("temp\n")
+
+        real_copy2 = shutil.copy2
+
+        def fragile_copy2(s, d, *args, **kwargs):
+            # Simulate the file disappearing between enumeration and copy.
+            if Path(s).name == "vanishing.txt":
+                raise FileNotFoundError(2, "No such file or directory", str(s))
+            return real_copy2(s, d, *args, **kwargs)
+
+        import shutil as _shutil_mod
+
+        with patch.object(_shutil_mod, "copy2", side_effect=fragile_copy2):
+            # Should not raise — vanishing file is logged and skipped, kept file is copied.
+            dst = copy_files_to_context(src, Path(ctx_root))
+
+        assert (dst / "keep.txt").exists()
+
+
+import shutil  # noqa: E402  (kept at bottom so the new tests own the import)

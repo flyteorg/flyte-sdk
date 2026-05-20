@@ -88,7 +88,6 @@ Example:
 
 from __future__ import annotations
 
-import inspect
 import logging
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -1489,7 +1488,6 @@ class FlyteWebhookAppEnvironment(FastAPIAppEnvironment):
     task_allowlist: list[str] | None = None
     app_allowlist: list[str] | None = None
     trigger_allowlist: list[str] | None = None
-    _caller_frame: inspect.FrameInfo | None = None
 
     def __post_init__(self):
         if self.endpoints is not None and self.endpoint_groups is not None:
@@ -1497,16 +1495,6 @@ class FlyteWebhookAppEnvironment(FastAPIAppEnvironment):
 
         self.app = _create_webhook_app(self)
         super().__post_init__()
-
-        # Capture the frame where this environment was instantiated
-        # This helps us find the module where the app variable is defined
-        frame = inspect.currentframe()
-        if frame and frame.f_back:
-            # Go up the call stack to find the user's module
-            # Skip the dataclass __init__ frame
-            caller_frame = frame.f_back
-            if caller_frame and caller_frame.f_back:
-                self._caller_frame = inspect.getframeinfo(caller_frame.f_back)
 
     async def _fastapi_app_server(self):
         try:
