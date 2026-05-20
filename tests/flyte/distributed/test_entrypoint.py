@@ -1,6 +1,6 @@
 import socket
 import sys
-from unittest.mock import call, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -62,7 +62,7 @@ def test_master_port_default(monkeypatch):
     with patch("socket.getaddrinfo"), patch("os.execvp") as mock_exec:
         main()
 
-    endpoint_arg = [a for a in mock_exec.call_args[0][1] if a.startswith("--rdzv-endpoint=")][0]
+    endpoint_arg = next(a for a in mock_exec.call_args[0][1] if a.startswith("--rdzv-endpoint="))
     assert endpoint_arg.endswith(":29500")
 
 
@@ -76,7 +76,7 @@ def test_rdzv_id_rotation(monkeypatch):
     with patch("socket.getaddrinfo"), patch("os.execvp") as mock_exec:
         main()
 
-    rdzv_id_arg = [a for a in mock_exec.call_args[0][1] if a.startswith("--rdzv-id=")][0]
+    rdzv_id_arg = next(a for a in mock_exec.call_args[0][1] if a.startswith("--rdzv-id="))
     assert rdzv_id_arg == "--rdzv-id=f-abc123-3"
 
 
@@ -90,7 +90,7 @@ def test_node_rank_from_completion_index(monkeypatch):
     with patch("socket.getaddrinfo"), patch("os.execvp") as mock_exec:
         main()
 
-    node_rank_arg = [a for a in mock_exec.call_args[0][1] if a.startswith("--node-rank=")][0]
+    node_rank_arg = next(a for a in mock_exec.call_args[0][1] if a.startswith("--node-rank="))
     assert node_rank_arg == "--node-rank=3"
 
 
