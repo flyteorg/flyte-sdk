@@ -692,25 +692,30 @@ impl CoreBaseController {
                 self.build_task_action(action)?,
             )),
             ActionType::Trace => {
-                let trace = action.trace.clone().ok_or(ControllerError::RuntimeError(
-                    format!("TraceAction missing from trace Action {:?}", action),
-                ))?;
+                let trace = action
+                    .trace
+                    .clone()
+                    .ok_or(ControllerError::RuntimeError(format!(
+                        "TraceAction missing from trace Action {:?}",
+                        action
+                    )))?;
                 Ok(enqueue_action_request::Spec::Trace(trace))
             }
         }
     }
 
     /// Build the ActionsService spec oneof based on the action's type.
-    fn build_actions_spec(
-        &self,
-        action: &Action,
-    ) -> Result<actions_action::Spec, ControllerError> {
+    fn build_actions_spec(&self, action: &Action) -> Result<actions_action::Spec, ControllerError> {
         match action.action_type {
             ActionType::Task => Ok(actions_action::Spec::Task(self.build_task_action(action)?)),
             ActionType::Trace => {
-                let trace = action.trace.clone().ok_or(ControllerError::RuntimeError(
-                    format!("TraceAction missing from trace Action {:?}", action),
-                ))?;
+                let trace = action
+                    .trace
+                    .clone()
+                    .ok_or(ControllerError::RuntimeError(format!(
+                        "TraceAction missing from trace Action {:?}",
+                        action
+                    )))?;
                 Ok(actions_action::Spec::Trace(trace))
             }
         }
