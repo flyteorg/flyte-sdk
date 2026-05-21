@@ -9,7 +9,9 @@ import flyte.remote
 import flyte.storage
 from flyte import Resources
 
-image = flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages("flyteplugins-dask>=2.0.0b54")
+image = flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages(
+    "flyteplugins-dask>=2.0.0b54", "boto3"
+)
 
 dask_config = Dask(
     scheduler=Scheduler(),
@@ -30,7 +32,7 @@ dask_env = flyte.TaskEnvironment(
 
 @task_env.task()
 async def hello_dask():
-    await asyncio.sleep(5)
+    await asyncio.sleep(50)
     print("Hello from the Dask task!")
 
 

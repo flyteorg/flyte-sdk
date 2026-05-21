@@ -232,6 +232,84 @@ class TestS3Config:
 
         assert "credential_provider" not in result
 
+    def test_get_fsspec_kwargs_with_web_identity_uses_credential_provider(self, monkeypatch):
+        # EKS / IRSA case: AWS_WEB_IDENTITY_TOKEN_FILE is set, no profile/config file,
+        # no static creds. Must route through boto3 so AssumeRoleWithWebIdentity runs;
+        # otherwise obstore falls back to IMDS (node role) and returns 403.
+        s3 = S3(region="us-east-2")
+        monkeypatch.delenv("AWS_PROFILE", raising=False)
+        monkeypatch.delenv("AWS_CONFIG_FILE", raising=False)
+        monkeypatch.setenv("AWS_WEB_IDENTITY_TOKEN_FILE", "/var/run/secrets/eks.amazonaws.com/serviceaccount/token")
+        monkeypatch.setenv("AWS_ROLE_ARN", "arn:aws:iam::123:role/sa-role")
+
+        def _fake_provider(self, region):
+            assert region == "us-east-2"
+            return "provider"
+
+        monkeypatch.setattr(S3, "_build_s3_credential_provider_from_web_identity", _fake_provider)
+        result = s3.get_fsspec_kwargs()
+
+        assert result["credential_provider"] == "provider"
+
+    def test_get_fsspec_kwargs_web_identity_not_used_when_profile_present(self, monkeypatch):
+        # Profile path wins when both AWS_PROFILE+AWS_CONFIG_FILE and the web identity
+        # env vars are set. Mirrors existing precedence; no regression for users who
+        # explicitly opted into profile-based auth.
+        s3 = S3()
+        monkeypatch.setenv("AWS_PROFILE", "dev-profile")
+        monkeypatch.setenv("AWS_CONFIG_FILE", "/tmp/config")
+        monkeypatch.setenv("AWS_WEB_IDENTITY_TOKEN_FILE", "/var/run/secrets/eks.amazonaws.com/serviceaccount/token")
+        monkeypatch.setattr(
+            S3,
+            "_build_s3_credential_provider_from_config_file",
+            lambda self, aws_profile, aws_config_file, region: "profile-provider",
+        )
+        monkeypatch.setattr(
+            S3,
+            "_build_s3_credential_provider_from_web_identity",
+            lambda self, region: (_ for _ in ()).throw(AssertionError("web identity should not be called")),
+        )
+        result = s3.get_fsspec_kwargs()
+
+        assert result["credential_provider"] == "profile-provider"
+
+    def test_get_fsspec_kwargs_web_identity_not_used_when_static_credentials_present(self, monkeypatch):
+        s3 = S3(access_key_id="test-key", secret_access_key="test-secret")
+        monkeypatch.setenv("AWS_WEB_IDENTITY_TOKEN_FILE", "/var/run/secrets/eks.amazonaws.com/serviceaccount/token")
+        monkeypatch.setattr(
+            S3,
+            "_build_s3_credential_provider_from_web_identity",
+            lambda self, region: (_ for _ in ()).throw(AssertionError("provider should not be called")),
+        )
+        result = s3.get_fsspec_kwargs()
+
+        assert "credential_provider" not in result
+
+    def test_get_fsspec_kwargs_anonymous_does_not_use_web_identity_provider(self, monkeypatch):
+        s3 = S3()
+        monkeypatch.setenv("AWS_WEB_IDENTITY_TOKEN_FILE", "/var/run/secrets/eks.amazonaws.com/serviceaccount/token")
+        monkeypatch.setattr(
+            S3,
+            "_build_s3_credential_provider_from_web_identity",
+            lambda self, region: (_ for _ in ()).throw(AssertionError("provider should not be called for anonymous")),
+        )
+        result = s3.get_fsspec_kwargs(anonymous=True)
+
+        assert result["config"]["skip_signature"] is True
+        assert "credential_provider" not in result
+
+    def test_get_fsspec_kwargs_web_identity_provider_failure_falls_back(self, monkeypatch):
+        s3 = S3()
+        monkeypatch.setenv("AWS_WEB_IDENTITY_TOKEN_FILE", "/var/run/secrets/eks.amazonaws.com/serviceaccount/token")
+        monkeypatch.setattr(
+            S3,
+            "_build_s3_credential_provider_from_web_identity",
+            lambda self, region: (_ for _ in ()).throw(ModuleNotFoundError("boto3 missing")),
+        )
+        result = s3.get_fsspec_kwargs()
+
+        assert "credential_provider" not in result
+
 
 class TestGCSConfig:
     def test_get_fsspec_kwargs_default(self):

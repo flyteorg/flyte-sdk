@@ -92,9 +92,16 @@ class S3(Storage):
     credential provider so profile-based auth can be used. This requires that the `boto3` library
     is installed.
 
-    3. If neither of the above applies, obstore uses the default AWS credential chain
-    (for remote runs this commonly resolves via workload identity / IAM attached to
-    the service account and then IMDS fallbacks where applicable).
+    3. If `AWS_WEB_IDENTITY_TOKEN_FILE` is set (EKS / IRSA), Flyte configures a
+    boto3-backed obstore credential provider so botocore's standard chain
+    handles AssumeRoleWithWebIdentity. Requires `boto3`. obstore's own
+    `AmazonS3Builder::from_env()` only reads static keys, so without this the
+    builder falls back to IMDS and picks up the node instance role instead of
+    the pod's service-account role.
+
+    4. If none of the above applies, obstore uses the default AWS credential chain
+    (for remote runs this commonly resolves via IAM attached to the EC2 instance
+    via IMDS).
     """
 
     endpoint: typing.Optional[str] = None
@@ -166,6 +173,12 @@ class S3(Storage):
         )
         return Boto3CredentialProvider(session=boto3_session)
 
+    def _build_s3_credential_provider_from_web_identity(self, region: str | None) -> typing.Any:
+        import boto3.session
+        from obstore.auth.boto3 import Boto3CredentialProvider
+
+        return Boto3CredentialProvider(session=boto3.session.Session(region_name=region))
+
     def get_fsspec_kwargs(self, anonymous: bool = False, **kwargs) -> typing.Dict[str, typing.Any]:
         kwargs = super().get_fsspec_kwargs(anonymous=anonymous, **kwargs)
 
@@ -191,12 +204,14 @@ class S3(Storage):
         if not anonymous and not has_static_credentials:
             aws_profile = os.getenv("AWS_PROFILE", None)
             aws_config_file = os.getenv("AWS_CONFIG_FILE", None)
+            aws_web_identity_token_file = os.getenv("AWS_WEB_IDENTITY_TOKEN_FILE", None)
+            region = self.region or os.getenv("AWS_REGION", None)
             if aws_profile is not None and aws_config_file is not None:
                 try:
                     kwargs["credential_provider"] = self._build_s3_credential_provider_from_config_file(
                         aws_profile=aws_profile,
                         aws_config_file=aws_config_file,
-                        region=self.region or os.getenv("AWS_REGION", None),
+                        region=region,
                     )
                     logger.debug(
                         "Using S3 credentials from AWS config file with profile %s at %s",
@@ -206,6 +221,23 @@ class S3(Storage):
                 except Exception as e:
                     logger.warning(
                         "Unable to initialize S3 profile/config credential provider (%s). "
+                        "Falling back to default AWS credential resolution.",
+                        e,
+                    )
+            elif aws_web_identity_token_file is not None:
+                # obstore's AmazonS3Builder::from_env() only reads static keys and ignores
+                # AWS_WEB_IDENTITY_TOKEN_FILE / AWS_ROLE_ARN, so without an explicit
+                # credential_provider the builder falls back to IMDS and picks up the EC2
+                # node role instead of the pod's IRSA role. Route through boto3 so
+                # botocore's standard chain runs AssumeRoleWithWebIdentity.
+                try:
+                    kwargs["credential_provider"] = self._build_s3_credential_provider_from_web_identity(
+                        region=region,
+                    )
+                    logger.debug("Using S3 credentials from IRSA web identity token via boto3 session")
+                except Exception as e:
+                    logger.warning(
+                        "Unable to initialize S3 web-identity credential provider (%s). "
                         "Falling back to default AWS credential resolution.",
                         e,
                     )
