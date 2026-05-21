@@ -25,6 +25,7 @@ from ._doc import Documentation
 from ._environment import Environment
 from ._image import Image
 from ._link import Link
+from ._logging import logger
 from ._pod import PodTemplate
 from ._resources import Resources
 from ._retry import RetryStrategy
@@ -150,6 +151,12 @@ class TaskEnvironment(Environment):
             raise TypeError(f"Expected reusable to be of type ReusePolicy, got {type(self.reusable)}")
         if self.cache and not isinstance(self.cache, (str, Cache)):
             raise TypeError(f"Expected cache to be of type str or Cache, got {type(self.cache)}")
+
+        # Synthesize a hidden __prewarm__ task so env.prewarm() has something cheap to
+        # submit. The task must share the env's image / ReusePolicy / env_vars / secrets
+        # so its version hash matches the env's real tasks and lands on the same pool.
+        if self.reusable is not None:
+            self._register_prewarm_task()
 
     def clone_with(
         self,
@@ -388,6 +395,187 @@ class TaskEnvironment(Environment):
         Get all tasks defined in the environment.
         """
         return self._tasks
+
+    def _register_prewarm_task(self) -> None:
+        """Attach a hidden no-op task to this env to back env.prewarm().
+
+        Uses a SDK-provided resolver instead of the user-code resolver so the
+        worker can load the task without importing user modules.
+        """
+        from ._internal.resolvers.prewarm import (
+            PrewarmTaskResolver,
+            _prewarm_noop,
+            prewarm_task_full_name,
+            prewarm_task_short_name,
+        )
+
+        task_name = prewarm_task_full_name(self.name)
+        tmpl = AsyncFunctionTaskTemplate[Any, int, Callable[[], Any]](
+            func=_prewarm_noop,
+            name=task_name,
+            image=self.image,
+            resources=self.resources,
+            cache="disable",
+            reusable=self.reusable,
+            env_vars=self.env_vars,
+            secrets=self.secrets,
+            pod_template=self.pod_template,
+            parent_env=weakref.ref(self),
+            parent_env_name=self.name,
+            interface=NativeInterface.from_callable(_prewarm_noop),
+            short_name=prewarm_task_short_name(self.name),
+            interruptible=self.interruptible,
+            queue=self.queue,
+            task_resolver=PrewarmTaskResolver(),
+        )
+        self._tasks[task_name] = tmpl
+
+    def _resolve_prewarm_target(self) -> Optional[TaskTemplate]:
+        """Run the validation gauntlet for prewarm{,_sync}().
+
+        Returns the prewarm `TaskTemplate` if we should fire it, otherwise
+        `None` (after logging the reason). Centralizes the warn-and-return
+        cases shared by the async and sync entry points.
+        """
+        if self.reusable is None:
+            logger.warning(
+                f"prewarm() called on TaskEnvironment '{self.name}' which is not reusable — no-op."
+            )
+            return None
+
+        from ._context import internal_ctx
+
+        ctx = internal_ctx()
+        if not ctx.is_task_context():
+            logger.warning(
+                f"prewarm() called on '{self.name}' outside a task context — no-op. "
+                "Call this from inside a @env.task function."
+            )
+            return None
+
+        try:
+            from ._internal.controllers import get_controller
+            from ._internal.controllers._local_controller import LocalController
+        except Exception:
+            logger.warning(f"prewarm() on '{self.name}': controller machinery unavailable — no-op.")
+            return None
+
+        try:
+            controller = get_controller()
+        except Exception:
+            logger.warning(f"prewarm() on '{self.name}': no controller initialized — no-op.")
+            return None
+
+        if isinstance(controller, LocalController):
+            # In local execution there is no remote replica pool to warm.
+            return None
+
+        from ._internal.resolvers.prewarm import prewarm_task_full_name
+
+        task_name = prewarm_task_full_name(self.name)
+        prewarm_task = self._tasks.get(task_name)
+        if prewarm_task is None:
+            # Defensive: should not happen since __post_init__ registers it for reusable envs.
+            logger.warning(f"prewarm() on '{self.name}': hidden task missing — no-op.")
+            return None
+
+        # Surface the idle_ttl window so the user sees how long the pool stays
+        # warm after this prewarm completes. If their setup work exceeds this,
+        # the pool will scale down before the heavy task arrives.
+        idle_ttl_seconds = int(self.reusable.idle_ttl.total_seconds())
+        logger.info(
+            f"prewarm: warming env '{self.name}' (idle_ttl={idle_ttl_seconds}s — "
+            f"pool will stay alive ~{idle_ttl_seconds}s after each task completes)"
+        )
+        return prewarm_task
+
+    async def prewarm(self) -> None:
+        """Pre-warm this reusable env's worker pool by submitting a hidden no-op.
+
+        The backend's first task submission to an `actor` pool triggers
+        `GetOrCreateEnvironment`, which spawns up to `min_replica_count`
+        workers. Subsequent tasks on the same env land on the warm pool
+        with no cold-start cost.
+
+        **Awaiting waits for completion.** `await env.prewarm()` blocks until
+        the no-op sub-action terminates — i.e., the pool has reached HEALTHY
+        and the no-op has actually executed on a worker. On return, the pool
+        is guaranteed to be ready.
+
+        **For fire-and-forget**, use the standard Python pattern:
+
+        ```python
+        asyncio.create_task(env.prewarm())   # schedule, do not wait
+        await asyncio.sleep(setup_seconds)   # other work runs in parallel
+        await heavy_task(...)                # pool is warm by now
+        ```
+
+        In sync tasks, use :meth:`prewarm_sync` instead.
+
+        **Warm window.** A single prewarm only stays useful for roughly
+        `ReusePolicy.idle_ttl - pod_startup_time`. If your driver does
+        long work before invoking the heavy task, increase `idle_ttl`.
+        Note that the same `idle_ttl` also applies *after* the heavy task
+        completes, so a longer value also delays scale-down.
+
+        **No-op cases:**
+
+        - Called on a non-reusable environment → logs a warning and returns.
+        - Running in local execution mode → silent no-op.
+        - Called outside a task / run context (no controller) → warns and returns.
+
+        Example (fire-and-forget, the common case):
+
+        ```python
+        heavy_env = flyte.TaskEnvironment(
+            name="heavy",
+            reusable=flyte.ReusePolicy(replicas=(2, 4), idle_ttl=600),
+        )
+
+        @heavy_env.task
+        async def big_inference(x: str) -> str: ...
+
+        driver_env = heavy_env.clone_with("driver", reusable=None, depends_on=[heavy_env])
+
+        @driver_env.task
+        async def main():
+            asyncio.create_task(heavy_env.prewarm())   # kick off pool startup
+            await asyncio.sleep(60)                    # other async setup work
+            return await big_inference("...")          # pool already HEALTHY
+        ```
+        """
+        prewarm_task = self._resolve_prewarm_target()
+        if prewarm_task is None:
+            return
+        await prewarm_task.aio()  # type: ignore[misc]
+
+    def prewarm_sync(self) -> None:
+        """Synchronous companion to :meth:`prewarm` for use in sync `@env.task` functions.
+
+        Blocks until the no-op sub-action terminates. On return the pool is
+        guaranteed HEALTHY. Matches the SDK convention used by
+        `File.download_sync`, `Checkpoint.load_sync`, etc.
+
+        For fire-and-forget in sync code, wrap with a thread:
+
+        ```python
+        import threading
+        threading.Thread(target=heavy_env.prewarm_sync, daemon=True).start()
+        do_setup()                # warms in background
+        return heavy_task(...)    # pool may or may not be ready
+        ```
+
+        Same no-op cases as :meth:`prewarm` (non-reusable, local mode,
+        outside task context).
+        """
+        prewarm_task = self._resolve_prewarm_target()
+        if prewarm_task is None:
+            return
+        from ._internal.controllers import get_controller
+
+        controller = get_controller()
+        fut = controller.submit_sync(prewarm_task)
+        fut.result()  # block until terminal
 
     @classmethod
     def from_task(
