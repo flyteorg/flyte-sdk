@@ -3,6 +3,7 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
+import click
 import pytest
 
 from flyte._utils.module_loader import load_python_modules
@@ -119,3 +120,29 @@ def test_load_python_modules_skips_venv_with_relative_paths(temp_project):
     finally:
         os.chdir(old_cwd)
         sys.path.remove(str(temp_project))
+
+
+def test_load_python_modules_file_outside_root_raises_click_exception(tmp_path):
+    """When a single .py file is loaded but lives outside the configured root_dir, surface a
+    click.ClickException with an actionable message instead of letting pathlib's
+    ``ValueError: '...' is not in the subpath of '...'`` bubble up to Sentry as an SDK crash.
+
+    Reproduces FLYTE-SDK-2T: user ran `flyte deploy` on a file under
+    ``examples/basics/multi_status.py`` while the SDK had detected the root as
+    ``flyte-sdk/src``, so ``Path.resolve().relative_to(root)`` blew up.
+    """
+    root_dir = tmp_path / "src"
+    root_dir.mkdir()
+    outside_dir = tmp_path / "examples"
+    outside_dir.mkdir()
+    outside_file = outside_dir / "workflow.py"
+    outside_file.write_text("x = 1\n")
+
+    with pytest.raises(click.ClickException) as excinfo:
+        load_python_modules(outside_file, root_dir=root_dir, recursive=False)
+
+    msg = excinfo.value.message
+    assert "not inside the project root" in msg
+    assert "--root-dir" in msg
+    assert str(outside_file) in msg
+    assert str(root_dir) in msg

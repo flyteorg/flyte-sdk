@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import inspect
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
@@ -43,7 +42,6 @@ class MCPAppEnvironment(flyte.app.AppEnvironment):
     uvicorn_config: uvicorn.Config | None = None
 
     _starlette_app: Starlette | None = field(init=False, default=None)
-    _caller_frame: inspect.FrameInfo | None = field(init=False, default=None)
 
     def __post_init__(self):
         if getattr(self, "image", None) in (None, "auto"):
@@ -58,12 +56,6 @@ class MCPAppEnvironment(flyte.app.AppEnvironment):
 
         if not isinstance(self.mcp_mount_path, str) or not self.mcp_mount_path.startswith("/"):
             raise ValueError("mcp_mount_path must be an absolute path starting with '/'.")
-
-        frame = inspect.currentframe()
-        if frame and frame.f_back:
-            caller_frame = frame.f_back
-            if caller_frame and caller_frame.f_back:
-                self._caller_frame = inspect.getframeinfo(caller_frame.f_back)
 
         self._starlette_app = self._create_starlette_app()
 

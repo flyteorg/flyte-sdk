@@ -5,10 +5,33 @@ from pathlib import Path
 from types import ModuleType
 from typing import List, Tuple
 
+import click
+
 import flyte.errors
 from flyte._code_bundle._ignore import GitIgnore, IgnoreGroup, StandardIgnore
 from flyte._constants import FLYTE_SYS_PATH
 from flyte._logging import logger
+
+
+def _relative_to_root(path: Path, root_dir: Path) -> Path:
+    """Resolve ``path`` relative to ``root_dir`` and translate ``ValueError`` into a clear ClickException.
+
+    ``pathlib.Path.relative_to`` raises ``ValueError`` with an unhelpful "is not in the subpath of"
+    message when a user runs ``flyte deploy`` against a file that lives outside of the configured
+    project root (commonly: a src-layout project where the file is under ``src/`` but the root was
+    inferred as the project itself, or vice versa). Surfacing this as a ``click.ClickException``
+    gives the user an actionable message and short-circuits Sentry's user-error filter.
+    """
+    try:
+        return path.resolve().relative_to(root_dir)
+    except ValueError as e:
+        raise click.ClickException(
+            f"Cannot load '{path}' because it is not inside the project root '{root_dir}'.\n"
+            "This usually happens when running `flyte deploy` from outside your source root, "
+            "or when your project uses a src/ layout but --root-dir was not set.\n"
+            "Try passing --root-dir <your source root> (e.g. --root-dir src) so the file lives "
+            "underneath it."
+        ) from e
 
 
 def load_python_modules(
@@ -28,7 +51,7 @@ def load_python_modules(
     failed_paths = []
 
     if path.is_file() and path.suffix == ".py":
-        rel_path = path.resolve().relative_to(root_dir)
+        rel_path = _relative_to_root(path, root_dir)
         mod = (".".join(rel_path.parts))[:-3]
         imported_module = importlib.import_module(mod)
         loaded_modules.append(imported_module)

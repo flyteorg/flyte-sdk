@@ -287,7 +287,6 @@ class AgentChatAppEnvironment(flyte.app.AppEnvironment):
     passthrough_auth_excluded_paths: frozenset[str] | None = None
     task_entrypoint: Any | None = None
     type: str = "AgentChat"
-    _caller_frame: inspect.FrameInfo | None = None
 
     def __post_init__(self):
         if self.agent is None:
@@ -305,12 +304,6 @@ class AgentChatAppEnvironment(flyte.app.AppEnvironment):
 
         super().__post_init__()
         self._server = self._fastapi_server
-
-        frame = inspect.currentframe()
-        if frame and frame.f_back:
-            caller_frame = frame.f_back
-            if caller_frame and caller_frame.f_back:
-                self._caller_frame = inspect.getframeinfo(caller_frame.f_back)
 
     def build_fastapi_app(self) -> Any:
         """Construct the FastAPI application (routes, HTML shell, optional auth).
