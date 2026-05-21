@@ -24,7 +24,7 @@ use google::protobuf::StringValue;
 use pyo3_async_runtimes::tokio::get_runtime;
 use tokio::{
     sync::{mpsc, oneshot},
-    time::sleep,
+    time::{sleep, timeout},
 };
 use tonic::transport::{Channel, ClientTlsConfig, Endpoint};
 use tower::ServiceBuilder;
@@ -851,12 +851,40 @@ impl CoreBaseController {
             .informer_cache
             .get_or_create_informer(&action.get_run_identifier(), &action.parent_action_name)
             .await;
+        let is_trace = action.action_type == ActionType::Trace;
         let (done_tx, done_rx) = oneshot::channel();
         informer.submit_action(action, done_tx).await?;
 
-        done_rx.await.map_err(|_| {
-            ControllerError::BadContext(String::from("Failed to receive done signal from informer"))
-        })?;
+        if is_trace {
+            // Trace actions are recorded server-side rather than executed, so the server
+            // may not echo an ActionUpdate back. Bound the wait and fire a local completion
+            // on timeout so the caller can never hang indefinitely.
+            let timeout_secs: f64 = std::env::var("_F_TRACE_COMPLETION_TIMEOUT")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(60.0);
+            match timeout(Duration::from_secs_f64(timeout_secs), done_rx).await {
+                Ok(Ok(())) => {}
+                Ok(Err(_)) => {
+                    return Err(ControllerError::BadContext(String::from(
+                        "Failed to receive done signal from informer",
+                    )));
+                }
+                Err(_) => {
+                    warn!(
+                        "Trace completion wait timed out after {}s for {}, firing local completion",
+                        timeout_secs, action_name
+                    );
+                    informer.fire_completion_event(&action_name).await?;
+                }
+            }
+        } else {
+            done_rx.await.map_err(|_| {
+                ControllerError::BadContext(String::from(
+                    "Failed to receive done signal from informer",
+                ))
+            })?;
+        }
         debug!(
             "Action {} complete, looking up final value and returning",
             action_name
