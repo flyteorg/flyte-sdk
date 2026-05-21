@@ -421,12 +421,11 @@ class TaskTemplate(Generic[P, R, F]):
                     " Reusable tasks will use the parent env's env. You can disable reusability and "
                     "override env if needed. (set reusable='off')"
                 )
-            if secrets is not None:
-                raise ValueError(
-                    "Cannot override secrets when reusable is set."
-                    " Reusable tasks will use the parent env's secrets. You can disable reusability and "
-                    "override secrets if needed. (set reusable='off')"
-                )
+            # Allow secret overrides on reusable tasks: the actor framework's
+            # pool key (extract_unique_id_and_image) already mixes in
+            # security_context, so a different secret deterministically maps
+            # to a different actor pool. Callers that want per-secret pools
+            # (e.g. per-user / per-identifier credentials) need this.
 
         resources = resources or self.resources
         env_vars = env_vars or self.env_vars
