@@ -31,7 +31,7 @@ use tower::ServiceBuilder;
 use tracing::{debug, error, info, warn};
 
 use crate::{
-    action::Action,
+    action::{Action, ActionType},
     auth::{AuthConfig, AuthLayer, ClientCredentialsAuthenticator},
     error::{ControllerError, InformerError},
     informer::{Informer, InformerCache},
@@ -627,13 +627,33 @@ impl CoreBaseController {
         }
     }
 
-    /// Build the TaskAction common to both QueueService and ActionsService enqueue paths,
-    /// and return the per-path scalar fields (input_uri, run_output_base, group).
-    fn build_task_action(
+    /// Extract the scalar fieldu (input_uri, run_output_base, group) shared by both
+    /// QueueService and ActionsService enqueue requests, regardless of action type.
+    fn build_action_scalars(
         &self,
         action: &Action,
-    ) -> Result<(TaskAction, String, String, String), ControllerError> {
-        // todo-pr: handle trace action
+    ) -> Result<(String, String, String), ControllerError> {
+        let input_uri = action
+            .inputs_uri
+            .clone()
+            .ok_or(ControllerError::RuntimeError(format!(
+                "Inputs URI missing from Action {:?}",
+                action
+            )))?;
+        let run_output_base =
+            action
+                .run_output_base
+                .clone()
+                .ok_or(ControllerError::RuntimeError(format!(
+                    "Run output base missing from Action {:?}",
+                    action
+                )))?;
+        let group = action.group.clone().unwrap_or_default();
+        Ok((input_uri, run_output_base, group))
+    }
+
+    /// Build the TaskAction for a task-type Action.
+    fn build_task_action(&self, action: &Action) -> Result<TaskAction, ControllerError> {
         let task_identifier = action
             .task
             .as_ref()
@@ -651,23 +671,7 @@ impl CoreBaseController {
                 action
             )))?;
 
-        let input_uri = action
-            .inputs_uri
-            .clone()
-            .ok_or(ControllerError::RuntimeError(format!(
-                "Inputs URI missing from Action {:?}",
-                action
-            )))?;
-        let run_output_base =
-            action
-                .run_output_base
-                .clone()
-                .ok_or(ControllerError::RuntimeError(format!(
-                    "Run output base missing from Action {:?}",
-                    action
-                )))?;
-        let group = action.group.clone().unwrap_or_default();
-        let task_action = TaskAction {
+        Ok(TaskAction {
             id: Some(task_identifier),
             spec: action.task.clone(),
             cache_key: action
@@ -675,20 +679,53 @@ impl CoreBaseController {
                 .as_ref()
                 .map(|ck| StringValue { value: ck.clone() }),
             cluster: action.queue.clone().unwrap_or("".to_string()),
-        };
+        })
+    }
 
-        Ok((task_action, input_uri, run_output_base, group))
+    /// Build the QueueService spec oneof based on the action's type.
+    fn build_queue_spec(
+        &self,
+        action: &Action,
+    ) -> Result<enqueue_action_request::Spec, ControllerError> {
+        match action.action_type {
+            ActionType::Task => Ok(enqueue_action_request::Spec::Task(
+                self.build_task_action(action)?,
+            )),
+            ActionType::Trace => {
+                let trace = action.trace.clone().ok_or(ControllerError::RuntimeError(
+                    format!("TraceAction missing from trace Action {:?}", action),
+                ))?;
+                Ok(enqueue_action_request::Spec::Trace(trace))
+            }
+        }
+    }
+
+    /// Build the ActionsService spec oneof based on the action's type.
+    fn build_actions_spec(
+        &self,
+        action: &Action,
+    ) -> Result<actions_action::Spec, ControllerError> {
+        match action.action_type {
+            ActionType::Task => Ok(actions_action::Spec::Task(self.build_task_action(action)?)),
+            ActionType::Trace => {
+                let trace = action.trace.clone().ok_or(ControllerError::RuntimeError(
+                    format!("TraceAction missing from trace Action {:?}", action),
+                ))?;
+                Ok(actions_action::Spec::Trace(trace))
+            }
+        }
     }
 
     fn create_enqueue_action_request(
         &self,
         action: &Action,
     ) -> Result<EnqueueActionRequest, ControllerError> {
-        let (task_action, input_uri, run_output_base, group) = self.build_task_action(action)?;
+        let (input_uri, run_output_base, group) = self.build_action_scalars(action)?;
+        let spec = self.build_queue_spec(action)?;
         Ok(EnqueueActionRequest {
             action_id: Some(action.action_id.clone()),
             parent_action_name: Some(action.parent_action_name.clone()),
-            spec: Some(enqueue_action_request::Spec::Task(task_action)),
+            spec: Some(spec),
             run_spec: None,
             input_uri,
             run_output_base,
@@ -702,7 +739,8 @@ impl CoreBaseController {
         &self,
         action: &Action,
     ) -> Result<EnqueueRequest, ControllerError> {
-        let (task_action, input_uri, run_output_base, group) = self.build_task_action(action)?;
+        let (input_uri, run_output_base, group) = self.build_action_scalars(action)?;
+        let spec = self.build_actions_spec(action)?;
         let pb_action = actions_pb::Action {
             action_id: Some(action.action_id.clone()),
             parent_action_name: Some(action.parent_action_name.clone()),
@@ -710,7 +748,7 @@ impl CoreBaseController {
             run_output_base,
             group,
             subject: String::default(),
-            spec: Some(actions_action::Spec::Task(task_action)),
+            spec: Some(spec),
         };
         Ok(EnqueueRequest {
             action: Some(pb_action),
@@ -748,7 +786,11 @@ impl CoreBaseController {
     }
 
     async fn launch_task(&self, action: &Action) -> Result<(), ControllerError> {
-        if !action.started && action.task.is_some() {
+        let has_spec = match action.action_type {
+            ActionType::Task => action.task.is_some(),
+            ActionType::Trace => action.trace.is_some(),
+        };
+        if !action.started && has_spec {
             if let Some(actions_client) = self.actions_client.as_ref() {
                 // ActionsService path
                 let enqueue_request = self.create_actions_enqueue_request(action)?;
@@ -784,7 +826,7 @@ impl CoreBaseController {
             }
         } else {
             debug!(
-                "Action {} is already started or has no task, skipping launch.",
+                "Action {} is already started or has no spec, skipping launch.",
                 action.action_id.name
             );
             Ok(())
