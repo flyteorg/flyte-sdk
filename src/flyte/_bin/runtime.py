@@ -138,7 +138,6 @@ def main(
                 "For development, run `make dev-rs-dist` from the repo root."
             ) from e
     controller_type = "rust" if use_rust else "remote"
-    print(f"In runtime: controller kwargs are: {controller_kwargs}")
     controller = create_controller(ct=controller_type, **controller_kwargs)  # type: ignore[arg-type]
 
     ic = ImageCache.from_transport(image_cache) if image_cache else None
