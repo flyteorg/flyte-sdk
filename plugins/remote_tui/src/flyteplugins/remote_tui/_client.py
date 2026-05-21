@@ -5,7 +5,34 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
+
+T = TypeVar("T")
+
+MIN_PAGE_SIZE = 10
+PAGE_SIZE = MIN_PAGE_SIZE  # default when caller does not pass page_size
+
+
+@dataclass(frozen=True)
+class PagedResult(Generic[T]):
+    """One page of list results."""
+
+    items: list[T]
+    page: int
+    page_size: int
+    has_next: bool
+
+
+def _slice_page(all_items: list[T], page: int, page_size: int) -> PagedResult[T]:
+    start = page * page_size
+    end = start + page_size
+    return PagedResult(
+        items=all_items[start:end],
+        page=page,
+        page_size=page_size,
+        has_next=len(all_items) > end,
+    )
+
 
 if TYPE_CHECKING:
     import flyte.remote as remote
@@ -85,6 +112,29 @@ def list_runs(
             in_phase=in_phase,
             sort_by=("created_at", "desc"),
         )
+    )
+
+
+def list_runs_paginated(
+    *,
+    project: str,
+    domain: str,
+    page: int = 0,
+    page_size: int = PAGE_SIZE,
+    task_name: str | None = None,
+    in_phase: tuple[ActionPhase, ...] | None = None,
+) -> PagedResult[remote.Run]:
+    fetch_limit = (page + 1) * page_size + 1
+    return _slice_page(
+        list_runs(
+            limit=fetch_limit,
+            project=project,
+            domain=domain,
+            task_name=task_name,
+            in_phase=in_phase,
+        ),
+        page,
+        page_size,
     )
 
 
@@ -171,6 +221,22 @@ def list_tasks(
     return list(remote.Task.listall(limit=limit, project=project, domain=domain))
 
 
+def list_tasks_paginated(
+    *,
+    project: str,
+    domain: str,
+    page: int = 0,
+    page_size: int = PAGE_SIZE,
+    task_name: str | None = None,
+) -> PagedResult[remote.Task]:
+    fetch_limit = (page + 1) * page_size + 1
+    return _slice_page(
+        list_tasks(limit=fetch_limit, project=project, domain=domain, task_name=task_name),
+        page,
+        page_size,
+    )
+
+
 def list_apps(*, limit: int = 200) -> list[remote.App]:
     """List apps for the active project (from ``activate_project`` / init config)."""
     import flyte.remote as remote
@@ -178,11 +244,32 @@ def list_apps(*, limit: int = 200) -> list[remote.App]:
     return list(remote.App.listall(limit=limit))
 
 
+def list_apps_paginated(*, page: int = 0, page_size: int = PAGE_SIZE) -> PagedResult[remote.App]:
+    fetch_limit = (page + 1) * page_size + 1
+    return _slice_page(list_apps(limit=fetch_limit), page, page_size)
+
+
 def list_triggers(*, limit: int = 200, task_name: str | None = None) -> list[remote.Trigger]:
     """List triggers for the active project (from ``activate_project`` / init config)."""
     import flyte.remote as remote
 
     return list(remote.Trigger.listall(limit=limit, task_name=task_name))
+
+
+def list_triggers_paginated(
+    *,
+    page: int = 0,
+    page_size: int = PAGE_SIZE,
+    search: str | None = None,
+) -> PagedResult[remote.Trigger]:
+    if search:
+        search_l = search.lower()
+        filtered = [
+            tr for tr in list_triggers(limit=500) if search_l in tr.name.lower() or search_l in tr.task_name.lower()
+        ]
+        return _slice_page(filtered, page, page_size)
+    fetch_limit = (page + 1) * page_size + 1
+    return _slice_page(list_triggers(limit=fetch_limit), page, page_size)
 
 
 def abort_run(run_name: str, reason: str = "Aborted from remote TUI.") -> None:
