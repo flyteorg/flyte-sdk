@@ -9,6 +9,7 @@ from textual.binding import Binding, BindingType
 from textual.widgets import Footer, Header
 
 from ._client import ClusterContext, init_cluster
+from ._settings import resolve_config_key
 from ._styles import APP_CSS
 
 
@@ -29,6 +30,7 @@ class RemoteTUIApp(App[None]):
     ) -> None:
         super().__init__()
         self._config = config
+        self.config_key = resolve_config_key(config)
         self.poll_interval = poll_interval
         self.cluster: ClusterContext | None = None
         self.selected_project: str | None = None

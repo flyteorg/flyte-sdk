@@ -13,7 +13,7 @@ from rich.text import Text
 from textual import work
 from textual.app import ComposeResult
 from textual.binding import Binding, BindingType
-from textual.containers import Horizontal, VerticalScroll
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.events import Resize
 from textual.screen import Screen
 from textual.widgets import (
@@ -32,18 +32,22 @@ from textual.widgets import (
 )
 
 from ._client import (
+    MIN_PAGE_SIZE,
+    PagedResult,
     abort_run,
     activate_project,
     fetch_log_tail,
     get_run,
     list_actions_for_run,
     list_apps,
+    list_apps_paginated,
     list_projects,
-    list_runs,
-    list_tasks,
-    list_triggers,
+    list_runs_paginated,
+    list_tasks_paginated,
+    list_triggers_paginated,
 )
 from ._context import as_remote_app, list_scope
+from ._settings import get_recent_projects, record_recent_project
 from ._sync import load_run_into_tracker
 
 
@@ -131,10 +135,13 @@ class ProjectsScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with Horizontal(id="filter-bar"):
-            yield Label("Search:")
-            yield Input(placeholder="Filter projects...", id="project-search")
-        yield EntityTable(id="projects-table", classes="EntityTable")
+        with Vertical(id="projects-content"):
+            yield Static("Recent projects", id="recent-title")
+            yield ListView(id="recent-projects")
+            with Horizontal(id="filter-bar"):
+                yield Label("Search:")
+                yield Input(placeholder="Filter projects...", id="project-search")
+            yield EntityTable(id="projects-table", classes="EntityTable")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -147,6 +154,8 @@ class ProjectsScreen(Screen):
     def _repopulate(self) -> None:
         table = self.query_one("#projects-table", EntityTable)
         search = self.query_one("#project-search", Input).value.strip().lower()
+        recent_title = self.query_one("#recent-title", Static)
+        recent_list = self.query_one("#recent-projects", ListView)
         table.clear(columns=True)
         table.add_column("Name", width=28)
         table.add_column("Labels", width=24)
@@ -154,8 +163,12 @@ class ProjectsScreen(Screen):
         try:
             projects = list_projects()
         except Exception as exc:
+            recent_title.display = False
+            recent_list.display = False
             table.add_row(f"Error: {exc}", "", "")
             return
+        by_id = {proj.pb2.id: proj for proj in projects}
+        self._populate_recent_projects(by_id, search)
         count = 0
         for proj in projects:
             name = proj.pb2.name or proj.pb2.id
@@ -164,6 +177,30 @@ class ProjectsScreen(Screen):
             count += 1
             table.add_row(name, _format_labels(proj), proj.pb2.id, key=proj.pb2.id)
         self.sub_title = f"{count} total"
+
+    def _populate_recent_projects(self, by_id: dict[str, object], search: str) -> None:
+        recent_title = self.query_one("#recent-title", Static)
+        recent_list = self.query_one("#recent-projects", ListView)
+        recent_list.clear()
+        app = as_remote_app(self.app)
+        recent_ids = get_recent_projects(app.config_key)
+        shown: list[str] = []
+        for project_id in recent_ids:
+            proj = by_id.get(project_id)
+            if proj is None:
+                continue
+            name = proj.pb2.name or proj.pb2.id
+            if search and search not in name.lower() and search not in project_id.lower():
+                continue
+            shown.append(project_id)
+            recent_list.append(ListItem(Static(name), id=f"recent-{project_id}"))
+        if shown:
+            recent_title.display = True
+            recent_list.display = True
+            recent_list.border_title = f"{len(shown)} recent"
+        else:
+            recent_title.display = False
+            recent_list.display = False
 
     def action_refresh(self) -> None:
         self._repopulate()
@@ -179,6 +216,7 @@ class ProjectsScreen(Screen):
             domain=cluster.domain,
             org=cluster.org,
         )
+        record_recent_project(app.config_key, project_id)
         app.selected_project = project_id
         app.set_subtitle_for_project(project_id)
         self.app.push_screen(ProjectHubScreen(project_id))
@@ -197,6 +235,11 @@ class ProjectsScreen(Screen):
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         self._open_project(str(event.row_key.value))
 
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        item_id = event.item.id or ""
+        if item_id.startswith("recent-"):
+            self._open_project(item_id.removeprefix("recent-"))
+
     def on_resize(self, event: Resize) -> None:
         self._repopulate()
 
@@ -208,6 +251,8 @@ class ProjectHubScreen(Screen):
         Binding("escape", "back_to_projects", "Projects"),
         Binding("r", "refresh", "Refresh"),
         Binding("enter", "open_detail", "Open"),
+        Binding("[", "prev_page", "Previous page", show=False),
+        Binding("]", "next_page", "Next page", show=False),
         Binding("1", "show_runs", "Runs", show=False),
         Binding("2", "show_triggers", "Triggers", show=False),
         Binding("3", "show_tasks", "Tasks", show=False),
@@ -218,6 +263,9 @@ class ProjectHubScreen(Screen):
         super().__init__()
         self._project = project_name
         self._section = "runs"
+        self._page = 0
+        self._has_next = False
+        self._page_size = MIN_PAGE_SIZE
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -229,8 +277,10 @@ class ProjectHubScreen(Screen):
                 ListItem(Static("Apps"), id=_NAV_APPS),
                 id="project-sidebar",
             )
-            with VerticalScroll(id="hub-content"):
-                yield Static("", id="section-title")
+            with Vertical(id="hub-content"):
+                with Horizontal(id="hub-header"):
+                    yield Static("", id="section-title")
+                    yield Static("", id="page-indicator")
                 with Horizontal(id="filter-bar"):
                     yield Label("Status:", id="status-label")
                     yield StatusSelect(
@@ -257,8 +307,42 @@ class ProjectHubScreen(Screen):
         self._select_section("runs")
         self.query_one("#hub-table", EntityTable).focus()
 
+    def _reset_page(self) -> None:
+        self._page = 0
+
+    def _effective_page_size(self) -> int:
+        """Fit page size to visible table rows (header/footer/chrome excluded)."""
+        overhead = 10  # screen header, footer, hub header, filter bar, table header
+        return max(MIN_PAGE_SIZE, self.size.height - overhead)
+
+    def _update_page_indicator(self, paged: PagedResult | None = None) -> None:
+        indicator = self.query_one("#page-indicator", Static)
+        if paged is None or not paged.items:
+            if self._page == 0 and not self._has_next:
+                indicator.update("")
+                return
+        parts = [f"page {self._page + 1}"]
+        if paged and paged.items:
+            start = self._page * self._page_size + 1
+            end = self._page * self._page_size + len(paged.items)
+            parts.append(f"{start}-{end}")
+        hints: list[str] = []
+        if self._page > 0:
+            hints.append("[")
+        if self._has_next:
+            hints.append("]")
+        if hints:
+            parts.append("".join(hints))
+        indicator.update(" ".join(parts))
+
+    def on_resize(self, event: Resize) -> None:
+        new_size = self._effective_page_size()
+        if new_size != self._page_size:
+            self._repopulate()
+
     def _select_section(self, section: str) -> None:
         self._section = section
+        self._reset_page()
         titles = {
             "runs": "Runs",
             "triggers": "Triggers",
@@ -294,6 +378,7 @@ class ProjectHubScreen(Screen):
         self._repopulate()
 
     def _repopulate(self) -> None:
+        self._page_size = self._effective_page_size()
         scope = list_scope(as_remote_app(self.app))
         table = self.query_one("#hub-table", EntityTable)
         table.clear(columns=True)
@@ -319,17 +404,22 @@ class ProjectHubScreen(Screen):
         table.add_column("Started", width=14)
         table.add_column("Ended", width=14)
         try:
-            runs = list_runs(
-                limit=200,
+            paged = list_runs_paginated(
+                page=self._page,
+                page_size=self._page_size,
                 task_name=task_filter,
                 in_phase=in_phase,
                 **scope,
             )
         except Exception as exc:
+            self._has_next = False
+            self._update_page_indicator()
             table.add_row("", f"Error: {exc!s}", "", "", "", "")
             return
-        self.sub_title = f"{len(runs)} total"
-        for run in runs:
+        self._has_next = paged.has_next
+        self._update_page_indicator(paged)
+        self.sub_title = f"{len(paged.items)} on page"
+        for run in paged.items:
             phase = str(run.phase).lower() if hasattr(run.phase, "value") else str(run.phase)
             icon = Text(_phase_icon(phase), style=_STATUS_COLORS.get(phase, ""))
             task = run.action.task_name or "-"
@@ -354,19 +444,21 @@ class ProjectHubScreen(Screen):
         table.add_column("Task", width=24)
         table.add_column("Active", width=10)
         try:
-            triggers = list_triggers(limit=200)
+            paged = list_triggers_paginated(page=self._page, page_size=self._page_size, search=search)
         except Exception as exc:
+            self._has_next = False
+            self._update_page_indicator()
             table.add_row(f"Error: {exc!s}", "", "")
             return
+        self._has_next = paged.has_next
+        self._update_page_indicator(paged)
         rows = []
-        for tr in triggers:
+        for tr in paged.items:
             tname = tr.task_name
             name = tr.name
-            if search and search.lower() not in name.lower() and search.lower() not in tname.lower():
-                continue
             active = "yes" if tr.is_active else "no"
             rows.append((name, tname, active, f"{tname}/{name}"))
-        self.sub_title = f"{len(rows)} total"
+        self.sub_title = f"{len(rows)} on page"
         for name, tname, active, key in rows:
             table.add_row(name, tname, active, key=key)
 
@@ -376,12 +468,16 @@ class ProjectHubScreen(Screen):
         table.add_column("Short name", width=18)
         table.add_column("Env", width=18)
         try:
-            tasks = list_tasks(limit=200, task_name=name_filter, **scope)
+            paged = list_tasks_paginated(page=self._page, page_size=self._page_size, task_name=name_filter, **scope)
         except Exception as exc:
+            self._has_next = False
+            self._update_page_indicator()
             table.add_row(f"Error: {exc!s}", "", "", "")
             return
-        self.sub_title = f"{len(tasks)} total"
-        for t in tasks:
+        self._has_next = paged.has_next
+        self._update_page_indicator(paged)
+        self.sub_title = f"{len(paged.items)} on page"
+        for t in paged.items:
             meta = t.pb2.metadata
             # Proto3 string fields have no presence; read values directly (empty string if unset).
             short = meta.short_name or "-"
@@ -399,21 +495,40 @@ class ProjectHubScreen(Screen):
         table.add_column("Status", width=18)
         table.add_column("Endpoint", width=36)
         try:
-            apps = list_apps(limit=200)
+            paged = list_apps_paginated(page=self._page, page_size=self._page_size)
         except Exception as exc:
+            self._has_next = False
+            self._update_page_indicator()
             table.add_row(f"Error: {exc!s}", "", "")
             return
-        self.sub_title = f"{len(apps)} total"
-        for app in apps:
+        self._has_next = paged.has_next
+        self._update_page_indicator(paged)
+        self.sub_title = f"{len(paged.items)} on page"
+        for app in paged.items:
             status = _format_app_deployment_status(app.deployment_status).lower()
             table.add_row(app.name, status, app.endpoint or "", key=app.name)
 
     def action_refresh(self) -> None:
         self._repopulate()
 
+    def action_prev_page(self) -> None:
+        if self._page == 0:
+            return
+        self._page -= 1
+        self._repopulate()
+
+    def action_next_page(self) -> None:
+        if not self._has_next:
+            return
+        self._page += 1
+        self._repopulate()
+
     def action_back_to_projects(self) -> None:
         as_remote_app(self.app).selected_project = None
         self.app.pop_screen()
+        screen = self.app.screen
+        if isinstance(screen, ProjectsScreen):
+            screen._repopulate()
 
     def action_show_runs(self) -> None:
         self._highlight_nav(_NAV_RUNS)
@@ -451,10 +566,12 @@ class ProjectHubScreen(Screen):
 
     def on_select_changed(self, event: Select.Changed) -> None:
         if event.select.id == "status-filter":
+            self._reset_page()
             self._repopulate()
 
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id == "section-filter":
+            self._reset_page()
             self._repopulate()
 
     def action_open_detail(self) -> None:
@@ -486,9 +603,6 @@ class ProjectHubScreen(Screen):
             self.app.push_screen(EntityDetailScreen("Task", key))
         elif self._section == "apps":
             self.app.push_screen(EntityDetailScreen("App", key))
-
-    def on_resize(self, event: Resize) -> None:
-        self._repopulate()
 
 
 class EntityDetailScreen(Screen):
