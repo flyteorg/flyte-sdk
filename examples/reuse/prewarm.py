@@ -27,7 +27,6 @@ from kubernetes.client import V1Container, V1PodSpec
 
 import flyte
 
-
 # Seconds the init container will sleep. Stand-in for image pull / model
 # load / any first-pod startup cost. Tune to ≈ the driver's ``setup_seconds``
 # so the benefit of prewarm is clearly visible but not exaggerated.
@@ -111,7 +110,11 @@ async def with_prewarm(setup_seconds: int = 90) -> int:
     while we await other things.
     """
     print("scheduling prewarm() — pool warms in background")
-    asyncio.create_task(heavy_env.prewarm())
+    # Intentionally fire-and-forget. In a real codebase you'd want to retain a
+    # reference (see Python's background-tasks idiom) so the task can't be
+    # GC'd mid-execution; in this short driver the local frame is alive for
+    # the whole duration so it's safe to discard.
+    asyncio.create_task(heavy_env.prewarm())  # noqa: RUF006
 
     print(f"simulating {setup_seconds}s of pre-heavy work")
     await asyncio.sleep(setup_seconds)

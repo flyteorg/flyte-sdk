@@ -52,9 +52,7 @@ class PrewarmTaskResolver(Resolver):
     def load_task(self, loader_args: List[str]) -> TaskTemplate:
         # loader_args is ["env_name", <env_name>]
         if len(loader_args) < 2 or loader_args[0] != "env_name":
-            raise ValueError(
-                f"PrewarmTaskResolver expected ['env_name', <name>], got {loader_args}"
-            )
+            raise ValueError(f"PrewarmTaskResolver expected ['env_name', <name>], got {loader_args}")
         env_name = loader_args[1]
         return AsyncFunctionTaskTemplate(
             func=_prewarm_noop,

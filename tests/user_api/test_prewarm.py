@@ -4,6 +4,7 @@ Design context: SE-760. The prewarm task is auto-synthesized on every reusable
 env; env.prewarm() submits it fire-and-forget so the backend's
 `GetOrCreateEnvironment` spins up the actor pool ahead of the first heavy task.
 """
+
 from __future__ import annotations
 
 import logging
@@ -58,17 +59,18 @@ def test_prewarm_task_shares_actor_version_with_real_task():
     # root_dir must be an ancestor of the test file (DefaultTaskResolver requirement).
     repo_root = Path(__file__).resolve().parents[2]
     sctx = SerializationContext(
-        project="p", domain="d", org="o",
-        root_dir=repo_root, code_bundle=None, version="v1",
+        project="p",
+        domain="d",
+        org="o",
+        root_dir=repo_root,
+        code_bundle=None,
+        version="v1",
     )
     heavy_wire = translate_task_to_wire(env.tasks["shared_pool_env.heavy"], sctx)
-    prewarm_wire = translate_task_to_wire(
-        env.tasks[prewarm_task_full_name("shared_pool_env")], sctx
+    prewarm_wire = translate_task_to_wire(env.tasks[prewarm_task_full_name("shared_pool_env")], sctx)
+    assert heavy_wire.task_template.custom["version"] == prewarm_wire.task_template.custom["version"], (
+        "prewarm version diverged — prewarm would target a different pool"
     )
-    assert (
-        heavy_wire.task_template.custom["version"]
-        == prewarm_wire.task_template.custom["version"]
-    ), "prewarm version diverged — prewarm would target a different pool"
     assert prewarm_wire.task_template.custom["type"] == "actor"
     assert prewarm_wire.task_template.custom["name"] == "shared_pool_env"
 

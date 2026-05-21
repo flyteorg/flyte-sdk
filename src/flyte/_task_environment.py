@@ -438,9 +438,7 @@ class TaskEnvironment(Environment):
         cases shared by the async and sync entry points.
         """
         if self.reusable is None:
-            logger.warning(
-                f"prewarm() called on TaskEnvironment '{self.name}' which is not reusable — no-op."
-            )
+            logger.warning(f"prewarm() called on TaskEnvironment '{self.name}' which is not reusable — no-op.")
             return None
 
         from ._context import internal_ctx
@@ -482,7 +480,9 @@ class TaskEnvironment(Environment):
         # Surface the idle_ttl window so the user sees how long the pool stays
         # warm after this prewarm completes. If their setup work exceeds this,
         # the pool will scale down before the heavy task arrives.
-        idle_ttl_seconds = int(self.reusable.idle_ttl.total_seconds())
+        # ReusePolicy.__post_init__ normalizes idle_ttl to a timedelta, but the
+        # declared type is `int | timedelta` — narrow it for the type checker.
+        idle_ttl_seconds = int(self.reusable.idle_ttl.total_seconds())  # type: ignore[union-attr]
         logger.info(
             f"prewarm: warming env '{self.name}' (idle_ttl={idle_ttl_seconds}s — "
             f"pool will stay alive ~{idle_ttl_seconds}s after each task completes)"
