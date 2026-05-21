@@ -33,16 +33,18 @@ The **Remote TUI** (`flyteplugins-remote-tui`) is a Textual-based terminal UI th
 
 | Web UI area | Remote TUI screen | Primary API |
 |-------------|-------------------|-------------|
-| Runs list | **Runs** | `Run.listall`, filters by phase/task |
+| Projects list | **Projects** (top level) | `Project.listall` |
+| Project workspace | **Project hub** (sidebar) | `activate_project` re-inits client |
+| Runs list | **Runs** (in project) | `Run.listall(project=…)` |
 | Run detail / graph | **Run detail** | `Action.listall`, tree from `metadata.parent` / `group` |
-| Run inputs/outputs | Details tab | `Run.inputs` / `Run.outputs` or `ActionDetails` |
+| Run inputs/outputs | Details tab | `ActionDetails.inputs` / `outputs` |
 | Run/action logs | Logs tab | `Action.get_logs` / `Run.get_logs` |
 | Tasks registry | **Tasks** | `Task.listall` |
 | Task detail | **Task detail** | `Task.get` → `fetch()` |
 | Apps | **Apps** | `App.listall` |
 | App detail | **App detail** | `App` status, endpoint, URL |
 | Triggers | **Triggers** | `Trigger.listall` |
-| Project/domain context | Header subtitle | `flyte.init` config / CLI `--project` `--domain` |
+| Domain context | Header subtitle | Config file (`--config` / default `~/.flyte/config.yaml`) |
 
 ## Architecture
 
@@ -56,8 +58,8 @@ flyte start remote-tui
             └── TriggersScreen
 
 RemoteSyncService
-    ├── initialize_config (CLI)
-    ├── list_runs / list_actions / …
+    ├── init_cluster / activate_project (config file)
+    ├── list_projects → ProjectHubScreen
     └── RemoteRunLoader → ActionTracker (core TUI model)
 ```
 
@@ -83,8 +85,8 @@ pip install flyteplugins-remote-tui
 # Launch (uses ~/.flyte/config.yaml)
 flyte start remote-tui
 
-# Override project/domain
-flyte start remote-tui --project my-project --domain development
+# Use a specific config file
+flyte start remote-tui --config /path/to/config.yaml
 
 # Poll interval for live run view (seconds)
 flyte start remote-tui --poll-interval 3
@@ -104,7 +106,8 @@ Entry point: `flyte.plugins.cli.commands` → `start.remote-tui = flyteplugins.r
 | `[` / `]` | Run detail | Previous / next attempt |
 | `j` / `k` | Tables, tree, selects | Down / up |
 | `a` | Run detail (terminal) | Abort run |
-| `1`–`4` | Global | Switch sidebar section |
+| `escape` | Project hub | Back to Projects |
+| `1`–`4` | Project hub | Runs / Triggers / Tasks / Apps |
 
 ## Dependencies
 
