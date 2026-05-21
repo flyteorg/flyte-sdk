@@ -1,0 +1,54 @@
+[project]
+name = "flyteplugins-remote-tui"
+dynamic = ["version"]
+description = "Textual TUI for browsing remote Flyte v2 clusters"
+readme = "README.md"
+authors = [{ name = "Flyte Contributors" }]
+requires-python = ">=3.10"
+dependencies = [
+    "flyte",
+    "textual>=0.80",
+]
+
+[project.entry-points."flyte.plugins.cli.commands"]
+"start.remote-tui" = "flyteplugins.remote_tui._cli:remote_tui_cmd"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.5",
+    "pytest-asyncio>=0.26.0",
+]
+
+[build-system]
+requires = ["setuptools", "setuptools_scm"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["flyteplugins*"]
+
+[tool.setuptools_scm]
+root = "../../"
+
+[tool.uv.sources]
+flyte = { path = "../../", editable = true }
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+markers = [
+    "integration: requires a configured remote Flyte cluster",
+]
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "PLC", "PLE", "PLW", "RUF"]
+ignore = ["PLC0415"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["PLC0415"]
