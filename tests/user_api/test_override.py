@@ -76,10 +76,15 @@ def test_oomer_override_with_reuse_incorrect():
             env_vars={},
         )
 
-    with pytest.raises(ValueError):
-        oomer_with_reuse.override(
-            secrets="my_secret",
-        )
+
+def test_override_secrets_with_reuse():
+    """
+    Secret overrides ARE allowed on reusable tasks: the actor framework's pool
+    key mixes in security_context, so a different secret deterministically maps
+    to a different actor pool.
+    """
+    new_task = oomer_with_reuse.override(secrets="my_secret")
+    assert new_task != oomer_with_reuse
 
 
 def test_override_with_reuse():
