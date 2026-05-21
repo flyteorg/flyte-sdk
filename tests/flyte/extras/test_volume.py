@@ -23,6 +23,7 @@ import pytest
 
 import flyte.extras._volume as volume_mod
 import flyte.extras._volume_juicefs as juicefs_mod
+import flyte.extras._volume_zerofs as zerofs_mod
 from flyte.extras._volume import (
     Volume,
     _client_bucket_uri,
@@ -42,6 +43,7 @@ from flyte.extras._volume_juicefs import (
     _safe_fork_offset,
     _wal_checkpoint,
 )
+from flyte.extras._volume_zerofs import ZeroFSZFSVolumeBackend, _ZeroFSZFSManifest
 from flyte.io._file import File
 
 
@@ -523,6 +525,143 @@ class TestVolumeBackend:
         assert cmd[cmd.index("--upload-delay") + 1] == "5s"
         assert cmd[cmd.index("--max-uploads") + 1] == "7"
         assert "redis://127.0.0.1:12345/0" in cmd
+
+    def test_zerofs_backend_defaults_to_zfs_engine(self):
+        vol = Volume.empty("vol-x", bucket="s3://b", volume_backend="zerofs")
+
+        assert vol.volume_backend == "zerofs"
+        assert vol.metadata_engine == "zfs"
+        assert vol._engine() == "zfs"
+        assert vol._backend().name == "zerofs"
+
+    def test_zerofs_manifest_round_trips(self):
+        manifest = _ZeroFSZFSManifest(
+            storage_url="s3://bucket/prefix/vol",
+            pool="flytevolabc",
+            dataset="flytevolabc/work",
+            snapshot="commit-123",
+            device_name="vol",
+            device_size_gb=64,
+            checkpoint="chk-123",
+        )
+
+        assert _ZeroFSZFSManifest.from_json(manifest.to_json()) == manifest
+
+    def test_zerofs_config_uses_available_password_env(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("FLYTE_ZEROVOL_PASSWORD", raising=False)
+        monkeypatch.setenv("ZEROFS_PASSWORD", "secret")
+        monkeypatch.setenv("AWS_REGION", "us-west-2")
+        backend = ZeroFSZFSVolumeBackend()
+        config = tmp_path / "zerofs.toml"
+
+        backend._write_config(
+            config_path=str(config),
+            storage_url="s3://bucket/prefix",
+            cache_dir=str(tmp_path / "cache"),
+            ninep_socket=str(tmp_path / "9p.sock"),
+            nbd_socket=str(tmp_path / "nbd.sock"),
+            rpc_socket=str(tmp_path / "rpc.sock"),
+        )
+
+        text = config.read_text()
+        assert 'encryption_password = "${ZEROFS_PASSWORD}"' in text
+        assert "[servers.nbd]" in text
+        assert 'default_region = "us-west-2"' in text
+
+    def test_zerofs_pod_template_does_not_require_preexisting_device_nodes(self):
+        template = volume_mod.volume_pod_template(include_zerofs=True)
+
+        volumes = {volume.name: volume for volume in template.pod_spec.volumes}
+        mounts = {mount.name: mount for mount in template.pod_spec.containers[0].volume_mounts}
+
+        assert "zfs-device" not in volumes
+        assert "nbd-device" not in volumes
+        assert "zfs-device" not in mounts
+        assert "nbd-device" not in mounts
+        assert volumes["host-modules"].host_path.path == "/lib/modules"
+        assert volumes["host-modules"].host_path.type == "DirectoryOrCreate"
+
+    @pytest.mark.asyncio
+    async def test_zerofs_live_fork_uses_zfs_snapshot_and_clone(self, monkeypatch):
+        calls = []
+        backend = ZeroFSZFSVolumeBackend()
+        state = zerofs_mod._ZeroFSZFSState(
+            proc=None,
+            config_path="/tmp/zerofs.toml",
+            storage_url="s3://bucket/vol",
+            pool="flytevolabc",
+            dataset="flytevolabc/work-parent",
+            device_name="vol",
+            device_size_gb=64,
+            nbd_device="/dev/nbd0",
+            vdev_path="/dev/nbd0",
+            control_mount="/tmp/control",
+            mount_path="/workspace",
+        )
+        backend._live["/meta"] = state
+
+        def fake_run_check(cmd):
+            calls.append(tuple(cmd))
+
+        async def fake_upload(_volume, manifest):
+            calls.append(("upload", manifest.dataset, manifest.snapshot, manifest.checkpoint))
+            return File(path="s3://bucket/manifest.json"), 123
+
+        monkeypatch.setattr(zerofs_mod, "_run_check", fake_run_check)
+        monkeypatch.setattr(backend, "_snapshot_name", lambda prefix: f"{prefix}-snap")
+        monkeypatch.setattr(backend, "_work_dataset", lambda pool, name: f"{pool}/{name}")
+        monkeypatch.setattr(backend, "_create_checkpoint", lambda state, prefix: f"{prefix}-checkpoint")
+        monkeypatch.setattr(backend, "_dataset_used_bytes", lambda dataset: 456)
+        monkeypatch.setattr(backend, "_upload_manifest", fake_upload)
+        monkeypatch.setitem(volume_mod._VOLUME_BACKENDS, "zerofs", backend)
+
+        vol = Volume(
+            name="parent",
+            bucket="s3://bucket",
+            metadata_engine="zfs",
+            volume_backend="zerofs",
+            index=File(path="s3://bucket/old-manifest.json"),
+        )
+
+        child = await vol.fork("child", meta_dir="/meta")
+
+        assert ("zfs", "snapshot", "flytevolabc/work-parent@fork-parent-snap") in calls
+        assert ("zfs", "clone", "-p", "flytevolabc/work-parent@fork-parent-snap", "flytevolabc/child") in calls
+        assert ("zfs", "snapshot", "flytevolabc/child@fork-child-snap") in calls
+        assert ("upload", "flytevolabc/child", "fork-child-snap", "fork-checkpoint") in calls
+        assert child.volume_backend == "zerofs"
+        assert child.metadata_engine == "zfs"
+        assert child.used_bytes == 456
+
+    def test_zerofs_kernel_devices_falls_back_without_nbd(self, monkeypatch):
+        calls = []
+
+        monkeypatch.setattr(zerofs_mod, "_modprobe", lambda *args: calls.append(("modprobe", *args)))
+        monkeypatch.setattr(zerofs_mod.shutil, "which", lambda name: None)
+        monkeypatch.setattr(zerofs_mod, "_device_major", lambda section, name: None)
+        monkeypatch.setattr(zerofs_mod, "_ensure_zfs_device_node", lambda: calls.append(("zfs-device",)))
+
+        assert zerofs_mod._ensure_kernel_devices() is False
+        assert ("modprobe", "nbd", "max_part=0", "nbds_max=64") in calls
+        assert ("modprobe", "zfs") in calls
+        assert ("zfs-device",) in calls
+
+    def test_zerofs_kernel_devices_starts_zfs_fuse_when_available(self, monkeypatch):
+        calls = []
+
+        monkeypatch.setattr(zerofs_mod, "_modprobe", lambda *args: calls.append(("modprobe", *args)))
+        monkeypatch.setattr(
+            zerofs_mod.shutil,
+            "which",
+            lambda name: "/usr/sbin/zfs-fuse" if name == "zfs-fuse" else None,
+        )
+        monkeypatch.setattr(zerofs_mod, "_device_major", lambda section, name: None)
+        monkeypatch.setattr(zerofs_mod, "_start_zfs_fuse", lambda: calls.append(("zfs-fuse",)))
+
+        assert zerofs_mod._ensure_kernel_devices() is False
+        assert ("modprobe", "nbd", "max_part=0", "nbds_max=64") in calls
+        assert ("zfs-fuse",) in calls
+        assert ("modprobe", "zfs") not in calls
 
 
 class TestClientBucketUri:

@@ -51,13 +51,18 @@ from flyte._logging import logger as _logger
 from flyte._pod import PodTemplate
 from flyte.extras._volume_backend import _MetadataEngineState, _MountConfig, _VolumeBackend
 from flyte.extras._volume_juicefs import _CLIENT_BINARY, _CLIENT_VERSION, JuiceFSVolumeBackend
+from flyte.extras._volume_zerofs import _CLIENT_BINARY as _ZEROFS_CLIENT_BINARY
+from flyte.extras._volume_zerofs import ZeroFSZFSVolumeBackend
 from flyte.io._file import File
 
 _DEFAULT_META_DIR = "/var/lib/flyte-volume"
 _DEFAULT_CACHE_DIR = "/var/cache/flyte-volume"
 _DEFAULT_MOUNT_PATH = "/workspace"
 
-_VOLUME_BACKENDS: dict[str, _VolumeBackend] = {"juicefs": JuiceFSVolumeBackend()}
+_VOLUME_BACKENDS: dict[str, _VolumeBackend] = {
+    "juicefs": JuiceFSVolumeBackend(),
+    "zerofs": ZeroFSZFSVolumeBackend(),
+}
 
 
 class Volume(BaseModel):
@@ -81,6 +86,9 @@ class Volume(BaseModel):
     # backward compatibility with Volumes serialized before this field existed.
     # ``Volume.empty()`` sets this to ``"redis"`` on new volumes.
     metadata_engine: Optional[str] = None
+    # Runtime backend. ``None``/missing resolves to ``"juicefs"`` for
+    # backward compatibility with Volumes serialized before this field existed.
+    volume_backend: Optional[str] = None
     # Snapshot of metadata stats captured at commit() / fork() time. Best-effort
     # — left as None if the underlying status query failed. Sourced from
     # ``juicefs status`` (``Statistic.UsedSpace`` / ``Statistic.UsedInodes``);
@@ -107,10 +115,21 @@ class Volume(BaseModel):
     _live_meta: ClassVar[Set[str]] = set()
 
     def _engine(self) -> str:
+        if self._backend_name() == "zerofs":
+            return self.metadata_engine or "zfs"
         return self.metadata_engine or "sqlite"
 
+    def _backend_name(self) -> str:
+        return self.volume_backend or "juicefs"
+
     def _backend(self) -> _VolumeBackend:
-        return _VOLUME_BACKENDS["juicefs"]
+        backend_name = self._backend_name()
+        try:
+            return _VOLUME_BACKENDS[backend_name]
+        except KeyError as e:
+            raise ValueError(
+                f"Unsupported volume_backend={backend_name!r}; expected one of {list(_VOLUME_BACKENDS)}"
+            ) from e
 
     @classmethod
     def empty(
@@ -119,7 +138,8 @@ class Volume(BaseModel):
         bucket: Optional[str] = None,
         *,
         storage: str = "s3",
-        metadata_engine: str = "redis",
+        metadata_engine: Optional[str] = None,
+        volume_backend: str = "juicefs",
     ) -> "Volume":
         """Declare a brand-new volume. The first ``mount()`` call will
         bootstrap the namespace (the underlying client refuses to format
@@ -140,6 +160,8 @@ class Volume(BaseModel):
         """
         if bucket is None:
             bucket = _default_bucket()
+        if metadata_engine is None:
+            metadata_engine = "zfs" if volume_backend == "zerofs" else "redis"
         return cls(
             name=name,
             bucket=bucket,
@@ -147,6 +169,7 @@ class Volume(BaseModel):
             index=None,
             parent=None,
             metadata_engine=metadata_engine,
+            volume_backend=volume_backend,
         )
 
     async def mount(
@@ -200,6 +223,23 @@ class Volume(BaseModel):
         """
         engine = self._engine()
         backend = self._backend()
+        if getattr(backend, "native_lifecycle", False):
+            await backend.mount_volume(
+                self,
+                mount_path=mount_path,
+                meta_dir=meta_dir,
+                cache_dir=cache_dir,
+                timeout=timeout,
+                writeback=writeback,
+                upload_delay=upload_delay,
+                max_uploads=max_uploads,
+                attr_cache=attr_cache,
+                entry_cache=entry_cache,
+                dir_entry_cache=dir_entry_cache,
+                read_only=read_only,
+            )
+            return
+
         meta = Path(meta_dir)
         meta.mkdir(parents=True, exist_ok=True)
         Path(cache_dir).mkdir(parents=True, exist_ok=True)
@@ -319,6 +359,9 @@ class Volume(BaseModel):
         """
         engine = self._engine()
         backend = self._backend()
+        if getattr(backend, "native_lifecycle", False):
+            return await backend.commit_volume(self, mount_path=mount_path, meta_dir=meta_dir, timeout=timeout)
+
         # Flush page cache so any unfsync'd writes hit the filesystem first.
         await asyncio.to_thread(backend.sync_filesystem, mount_path)
 
@@ -369,6 +412,7 @@ class Volume(BaseModel):
             index=new_index,
             parent=self.index,
             metadata_engine=self.metadata_engine,
+            volume_backend=self.volume_backend,
             used_bytes=used_bytes,
             inode_count=inode_count,
             index_bytes=index_bytes,
@@ -514,6 +558,15 @@ class Volume(BaseModel):
         """
         engine = self._engine()
         backend = self._backend()
+        if getattr(backend, "native_lifecycle", False):
+            return await backend.fork_volume(
+                self,
+                name=name,
+                mount_path=mount_path,
+                meta_dir=meta_dir,
+                timeout=timeout,
+            )
+
         # "Live" iff mount() registered this meta_dir and commit() hasn't
         # cleared it. This is independent of file-on-disk state — for SQLite
         # the index.db lingers after commit(), so a file-existence heuristic
@@ -575,6 +628,7 @@ class Volume(BaseModel):
             index=new_index,
             parent=self.index,
             metadata_engine=self.metadata_engine,
+            volume_backend=self.volume_backend,
             used_bytes=used_bytes,
             inode_count=inode_count,
             index_bytes=index_bytes,
@@ -629,6 +683,10 @@ class Volume(BaseModel):
             will appear in subsequent snapshots — there is no semantic
             "branching" the way :meth:`fork` implies.
         """
+        backend = self._backend()
+        if getattr(backend, "native_lifecycle", False):
+            return await backend.commit_inplace_volume(self, meta_dir=meta_dir)
+
         new_index, index_bytes = await self._snapshot_and_upload_index(meta_dir=meta_dir, tmp_prefix="vol-checkpoint-")
         return Volume(
             name=self.name,
@@ -637,6 +695,7 @@ class Volume(BaseModel):
             index=new_index,
             parent=self.index,
             metadata_engine=self.metadata_engine,
+            volume_backend=self.volume_backend,
             index_bytes=index_bytes,
         )
 
@@ -673,6 +732,9 @@ class Volume(BaseModel):
         needed if one of the engines is ``"redis"``).
         """
         backend = self._backend()
+        if self._backend_name() != "juicefs":
+            raise RuntimeError("migrate_metadata_engine() is currently only supported for JuiceFS-backed Volumes.")
+
         src_engine = self._engine()
         if new_engine == src_engine:
             raise ValueError(f"Source and destination engines are both {new_engine!r}; nothing to migrate.")
@@ -759,6 +821,7 @@ class Volume(BaseModel):
                 index=new_file,
                 parent=self.index,
                 metadata_engine=new_engine,
+                volume_backend=self.volume_backend,
                 index_bytes=index_bytes,
             )
         finally:
@@ -841,6 +904,7 @@ def volume_image(
     *,
     version: str = _CLIENT_VERSION,
     architecture: str = "amd64",
+    include_zerofs: bool = False,
 ) -> Image:
     """Layer the volume client and the ``fuse`` userspace tools onto ``base``
     (a :class:`flyte.Image`). Returns a new :class:`flyte.Image`.
@@ -867,9 +931,43 @@ def volume_image(
         f"ln -sf /proc/mounts /etc/mtab; "
         f"{_CLIENT_BINARY} version"
     )
-    return base.with_apt_packages("ca-certificates", "curl", "fuse", "redis-server", "redis-tools").with_commands(
+    image = base.with_apt_packages("ca-certificates", "curl", "fuse", "redis-server", "redis-tools").with_commands(
         [install_cmd]
     )
+    if include_zerofs:
+        enable_zfs_apt_source = (
+            "set -e; "
+            "if [ -f /etc/apt/sources.list.d/debian.sources ]; then "
+            "sed -i -E 's/^Components: main$/Components: main contrib non-free-firmware/' "
+            "/etc/apt/sources.list.d/debian.sources; "
+            "fi; "
+            "if [ -f /etc/apt/sources.list ]; then "
+            "sed -i -E 's/^(deb .* main)$/\\1 contrib non-free-firmware/' /etc/apt/sources.list; "
+            "fi"
+        )
+        zerofs_cmd = (
+            "set -e; "
+            "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | "
+            "sh -s -- -y --profile minimal; "
+            ". /root/.cargo/env; "
+            "cargo install zerofs --locked; "
+            f"install -m 0755 /root/.cargo/bin/{_ZEROFS_CLIENT_BINARY} /usr/local/bin/{_ZEROFS_CLIENT_BINARY}; "
+            f"{_ZEROFS_CLIENT_BINARY} --version"
+        )
+        image = (
+            image.with_commands([enable_zfs_apt_source])
+            .with_apt_packages(
+                "build-essential",
+                "kmod",
+                "libssl-dev",
+                "mount",
+                "nbd-client",
+                "pkg-config",
+                "zfs-fuse",
+            )
+            .with_commands([zerofs_cmd])
+        )
+    return image
 
 
 def volume_pod_template(
@@ -879,6 +977,7 @@ def volume_pod_template(
     cache_dir: str = _DEFAULT_CACHE_DIR,
     cache_size_gb: int = 50,
     primary_container_name: str = "primary",
+    include_zerofs: bool = False,
 ) -> PodTemplate:
     """Build a :class:`flyte.PodTemplate` that lets the primary container
     mount a :class:`Volume` in-process.
@@ -888,6 +987,8 @@ def volume_pod_template(
     * adds ``emptyDir`` volumes for the metadata directory, the chunk cache
       (sized via ``cache_size_gb``), and the mount point;
     * adds a ``hostPath`` volume for ``/dev/fuse``;
+    * optionally adds host ``/lib/modules`` for the experimental ZeroFS/ZFS
+      backend, which loads kernel modules and creates device nodes at runtime;
     * makes the primary container privileged with ``CAP_SYS_ADMIN`` so it
       can perform the FUSE mount itself.
 
@@ -909,34 +1010,59 @@ def volume_pod_template(
         V1VolumeMount,
     )
 
+    volume_mounts = [
+        V1VolumeMount(name="vol-meta", mount_path=meta_dir),
+        V1VolumeMount(name="vol-cache", mount_path=cache_dir),
+        V1VolumeMount(name="vol-workspace", mount_path=mount_path),
+        V1VolumeMount(name="fuse-device", mount_path="/dev/fuse"),
+    ]
+    volumes = [
+        V1Volume(name="vol-meta", empty_dir=V1EmptyDirVolumeSource()),
+        V1Volume(
+            name="vol-cache",
+            empty_dir=V1EmptyDirVolumeSource(size_limit=f"{cache_size_gb}Gi"),
+        ),
+        V1Volume(name="vol-workspace", empty_dir=V1EmptyDirVolumeSource()),
+        V1Volume(
+            name="fuse-device",
+            host_path=V1HostPathVolumeSource(path="/dev/fuse", type="CharDevice"),
+        ),
+    ]
+    if include_zerofs:
+        volume_mounts.extend(
+            [
+                V1VolumeMount(name="host-modules", mount_path="/lib/modules", read_only=True),
+            ]
+        )
+        volumes.extend(
+            [
+                V1Volume(
+                    name="host-modules",
+                    host_path=V1HostPathVolumeSource(path="/lib/modules", type="DirectoryOrCreate"),
+                ),
+            ]
+        )
+
+    # ZeroFS/ZFS needs effective CAP_SYS_ADMIN — the kernel won't grant
+    # capabilities to a non-root process unless they're in the file
+    # capabilities of the binary (zfs-fuse isn't suid). JuiceFS sidesteps
+    # this with the suid-root fusermount helper, so it works as the
+    # default container user. Run as root only when ZeroFS is in play.
+    security_context = V1SecurityContext(
+        privileged=True,
+        capabilities=V1Capabilities(add=["SYS_ADMIN"]),
+        run_as_user=0 if include_zerofs else None,
+        run_as_group=0 if include_zerofs else None,
+    )
     primary = V1Container(
         name=primary_container_name,
-        security_context=V1SecurityContext(
-            privileged=True,
-            capabilities=V1Capabilities(add=["SYS_ADMIN"]),
-        ),
-        volume_mounts=[
-            V1VolumeMount(name="vol-meta", mount_path=meta_dir),
-            V1VolumeMount(name="vol-cache", mount_path=cache_dir),
-            V1VolumeMount(name="vol-workspace", mount_path=mount_path),
-            V1VolumeMount(name="fuse-device", mount_path="/dev/fuse"),
-        ],
+        security_context=security_context,
+        volume_mounts=volume_mounts,
     )
 
     pod_spec = V1PodSpec(
         containers=[primary],
-        volumes=[
-            V1Volume(name="vol-meta", empty_dir=V1EmptyDirVolumeSource()),
-            V1Volume(
-                name="vol-cache",
-                empty_dir=V1EmptyDirVolumeSource(size_limit=f"{cache_size_gb}Gi"),
-            ),
-            V1Volume(name="vol-workspace", empty_dir=V1EmptyDirVolumeSource()),
-            V1Volume(
-                name="fuse-device",
-                host_path=V1HostPathVolumeSource(path="/dev/fuse", type="CharDevice"),
-            ),
-        ],
+        volumes=volumes,
     )
 
     return PodTemplate(pod_spec=pod_spec, primary_container_name=primary_container_name)

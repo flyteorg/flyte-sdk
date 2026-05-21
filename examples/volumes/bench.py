@@ -52,11 +52,15 @@ _base = (
     .with_apt_packages("git")
     .with_pip_packages(IDL2, "kubernetes")
 )
-image = volume_image(_base).with_local_v2()
+image = (
+    volume_image(_base, include_zerofs=True)
+    .with_env_vars({"FLYTE_ZEROVOL_PASSWORD": "flyte-volume-bench"})
+    .with_local_v2()
+)
 
 env = flyte.TaskEnvironment(
     name="vol-bench",
-    pod_template=volume_pod_template(),
+    pod_template=volume_pod_template(include_zerofs=True),
     image=image,
     resources=flyte.Resources(cpu="2", memory="4Gi"),
 )
@@ -72,8 +76,8 @@ env = flyte.TaskEnvironment(
 WorkloadFn = Callable[..., Awaitable[Dict[str, float]]]
 
 
-async def _metadata_burst(_vol: Volume, *, n: int) -> Dict[str, float]:
-    data = Path("/workspace/data")
+async def _metadata_burst(_vol: Volume, *, root: Path, n: int, **_ignored: object) -> Dict[str, float]:
+    data = root / "data"
     data.mkdir(parents=True, exist_ok=True)
     t0 = time.monotonic()
     for i in range(n):
@@ -81,11 +85,11 @@ async def _metadata_burst(_vol: Volume, *, n: int) -> Dict[str, float]:
     return {"workload_ms": (time.monotonic() - t0) * 1000.0, "items": float(n)}
 
 
-async def _big_files(_vol: Volume, *, k: int, size_mib: int) -> Dict[str, float]:
+async def _big_files(_vol: Volume, *, root: Path, k: int, size_mib: int, **_ignored: object) -> Dict[str, float]:
     payload = b"\0" * (size_mib * 1024 * 1024)
     t0 = time.monotonic()
     for i in range(k):
-        Path(f"/workspace/blob_{i:03d}.bin").write_bytes(payload)
+        (root / f"blob_{i:03d}.bin").write_bytes(payload)
     elapsed_ms = (time.monotonic() - t0) * 1000.0
     return {
         "workload_ms": elapsed_ms,
@@ -94,9 +98,9 @@ async def _big_files(_vol: Volume, *, k: int, size_mib: int) -> Dict[str, float]
     }
 
 
-async def _small_files(_vol: Volume, *, k: int, size_bytes: int) -> Dict[str, float]:
+async def _small_files(_vol: Volume, *, root: Path, k: int, size_bytes: int, **_ignored: object) -> Dict[str, float]:
     payload = b"x" * size_bytes
-    data = Path("/workspace/small")
+    data = root / "small"
     data.mkdir(parents=True, exist_ok=True)
     t0 = time.monotonic()
     for i in range(k):
@@ -104,8 +108,17 @@ async def _small_files(_vol: Volume, *, k: int, size_bytes: int) -> Dict[str, fl
     return {"workload_ms": (time.monotonic() - t0) * 1000.0, "items": float(k)}
 
 
-async def _fork_burst(vol: Volume, *, k: int, base_files: int = 100) -> Dict[str, float]:
-    data = Path("/workspace/data")
+async def _fork_burst(
+    vol: Volume,
+    *,
+    root: Path,
+    mount_path: str,
+    meta_dir: str,
+    k: int,
+    base_files: int = 100,
+    **_ignored: object,
+) -> Dict[str, float]:
+    data = root / "data"
     data.mkdir(parents=True, exist_ok=True)
     for i in range(base_files):
         (data / f"base_{i:04d}").write_text("x")
@@ -113,7 +126,7 @@ async def _fork_burst(vol: Volume, *, k: int, base_files: int = 100) -> Dict[str
     fork_ms: List[float] = []
     for i in range(k):
         t0 = time.monotonic()
-        await vol.fork(name=f"{vol.name}-fork-{i:04d}")
+        await vol.fork(name=f"{vol.name}-fork-{i:04d}", mount_path=mount_path, meta_dir=meta_dir)
         fork_ms.append((time.monotonic() - t0) * 1000.0)
 
     p99 = quantiles(fork_ms, n=100, method="inclusive")[98] if len(fork_ms) >= 2 else fork_ms[0]
@@ -133,25 +146,37 @@ async def _cold_fork(
     *,
     engine: str,
     writeback: bool,
+    bucket: Optional[str],
+    storage: str,
+    mount_path: str,
+    meta_dir: str,
+    cache_dir: str,
     k: int,
     base_files: int = 100,
     base_bytes: int = 1024,
 ) -> Dict[str, float]:
     suffix = uuid.uuid4().hex[:6]
-    parent = Volume.empty(name=f"bench-cold-fork-{engine}-{suffix}", metadata_engine=engine)
+    volume_backend, metadata_engine = _volume_backend_for_engine(engine)
+    parent = Volume.empty(
+        name=f"bench-cold-fork-{engine.replace('_', '-')}-{suffix}",
+        bucket=bucket,
+        storage=storage,
+        metadata_engine=metadata_engine,
+        volume_backend=volume_backend,
+    )
 
     t0 = time.monotonic()
-    await parent.mount(writeback=writeback)
+    await parent.mount(writeback=writeback, mount_path=mount_path, meta_dir=meta_dir, cache_dir=cache_dir)
     mount_ms = (time.monotonic() - t0) * 1000.0
 
-    data = Path("/workspace/data")
+    data = Path(mount_path) / "data"
     data.mkdir(parents=True, exist_ok=True)
     payload = "x" * base_bytes
     for i in range(base_files):
         (data / f"base_{i:04d}").write_text(payload)
 
     t0 = time.monotonic()
-    committed = await parent.commit()
+    committed = await parent.commit(mount_path=mount_path, meta_dir=meta_dir)
     commit_ms = (time.monotonic() - t0) * 1000.0
 
     # Forks are issued on the *committed* (unmounted) Volume → cold path.
@@ -188,8 +213,16 @@ SELF_MANAGED: Dict[str, Tuple[Callable[..., Awaitable[Dict[str, float]]], Dict[s
     "cold_fork": (_cold_fork, {"k": 25, "base_files": 100, "base_bytes": 1024}),
 }
 
-ENGINES: List[str] = ["redis", "sqlite"]
+# ``redis`` and ``sqlite`` are JuiceFS metadata engines. ``zerofs-zfs`` selects
+# the experimental ZeroFS object-store backend with a ZFS filesystem on top.
+ENGINES: List[str] = ["redis", "sqlite", "zerofs-zfs"]
 WRITEBACK: List[bool] = [True, False]
+
+
+def _volume_backend_for_engine(engine: str) -> Tuple[str, str]:
+    if engine == "zerofs-zfs":
+        return "zerofs", "zfs"
+    return "juicefs", engine
 
 
 # ---------------------------------------------------------------------------
@@ -198,28 +231,50 @@ WRITEBACK: List[bool] = [True, False]
 
 
 @env.task
-async def run_cell(workload: str, engine: str, writeback: bool) -> Dict[str, float]:
+async def run_cell(
+    workload: str,
+    engine: str,
+    writeback: bool,
+    bucket: Optional[str] = None,
+    storage: str = "s3",
+    mount_path: str = "/workspace",
+    meta_dir: str = "/var/lib/flyte-volume",
+    cache_dir: str = "/var/cache/flyte-volume",
+) -> Dict[str, float]:
     if workload in SELF_MANAGED:
         fn, params = SELF_MANAGED[workload]
-        return await fn(engine=engine, writeback=writeback, **params)
+        return await fn(
+            engine=engine,
+            writeback=writeback,
+            bucket=bucket,
+            storage=storage,
+            mount_path=mount_path,
+            meta_dir=meta_dir,
+            cache_dir=cache_dir,
+            **params,
+        )
 
     fn, params = WORKLOADS[workload]
     suffix = uuid.uuid4().hex[:6]
     # Volume names: alphanumerics and dashes only, 3-63 chars.
     safe_workload = workload.replace("_", "-")
+    volume_backend, metadata_engine = _volume_backend_for_engine(engine)
     vol = Volume.empty(
         name=f"bench-{safe_workload}-{engine}-{int(writeback)}-{suffix}",
-        metadata_engine=engine,
+        bucket=bucket,
+        storage=storage,
+        metadata_engine=metadata_engine,
+        volume_backend=volume_backend,
     )
 
     t0 = time.monotonic()
-    await vol.mount(writeback=writeback)
+    await vol.mount(writeback=writeback, mount_path=mount_path, meta_dir=meta_dir, cache_dir=cache_dir)
     mount_ms = (time.monotonic() - t0) * 1000.0
 
-    result = await fn(vol, **params)
+    result = await fn(vol, root=Path(mount_path), mount_path=mount_path, meta_dir=meta_dir, **params)
 
     t0 = time.monotonic()
-    final = await vol.commit()
+    final = await vol.commit(mount_path=mount_path, meta_dir=meta_dir)
     commit_ms = (time.monotonic() - t0) * 1000.0
 
     # Capture the index footprint *after* commit. Redis only writes its
@@ -227,7 +282,7 @@ async def run_cell(workload: str, engine: str, writeback: bool) -> Dict[str, flo
     # is mutated continuously but commit() WAL-checkpoints it. Either way,
     # post-commit is the size of the file that actually gets uploaded.
     index_bytes = 0.0
-    for p in ("/var/lib/flyte-volume/index.db", "/var/lib/flyte-volume/dump.rdb"):
+    for p in (Path(meta_dir) / "index.db", Path(meta_dir) / "dump.rdb", Path(meta_dir) / "zerofs-zfs-manifest.json"):
         if os.path.exists(p):
             index_bytes = float(os.path.getsize(p))
             break
@@ -292,9 +347,9 @@ def _bar_svg(title: str, labels: List[str], values: List[float], unit: str) -> s
         x = mL + i * slot + (slot - bar_w) / 2
         bh = (v / vmax) * ph if vmax > 0 else 0.0
         y = mT + ph - bh
-        color = "#1f6feb" if lab.startswith("redis") else "#fb8500"
+        color = "#1f6feb" if lab.startswith("redis") else "#2a9d8f" if lab.startswith("zerofs") else "#fb8500"
         if lab.endswith("cold"):
-            color = "#94c7ff" if color == "#1f6feb" else "#ffd6a3"
+            color = "#94c7ff" if color == "#1f6feb" else "#9be3d8" if color == "#2a9d8f" else "#ffd6a3"
         parts.append(f'<rect x="{x:.1f}" y="{y:.1f}" width="{bar_w:.1f}" height="{bh:.1f}" fill="{color}"/>')
         parts.append(
             f'<text x="{x + bar_w / 2:.1f}" y="{y - 4:.1f}" text-anchor="middle" font-size="10">{v:,.0f}</text>'
@@ -309,7 +364,8 @@ def _bar_svg(title: str, labels: List[str], values: List[float], unit: str) -> s
 
 def _render_workload(name: str, rows: List[Dict[str, object]]) -> str:
     def sort_key(r: Dict[str, object]) -> Tuple[int, int]:
-        return (0 if r["engine"] == "redis" else 1, 0 if r["writeback"] else 1)
+        engine_order = {"redis": 0, "sqlite": 1, "zerofs-zfs": 2}
+        return (engine_order.get(str(r["engine"]), 99), 0 if r["writeback"] else 1)
 
     rows = sorted(rows, key=sort_key)
     if not rows:
@@ -395,16 +451,46 @@ def _render_overview(rows: List[Dict[str, object]], workloads: List[str]) -> str
 # ---------------------------------------------------------------------------
 
 
+def _zerofs_kernel_supported() -> Tuple[bool, str]:
+    """ZeroFS needs the 9p filesystem registered in the kernel for its
+    control socket. Returns (ok, reason)."""
+    try:
+        filesystems = Path("/proc/filesystems").read_text()
+    except OSError as e:
+        return False, f"could not read /proc/filesystems: {e}"
+    if "9p" in filesystems:
+        return True, ""
+    try:
+        import subprocess as _sp
+
+        uname = _sp.run(["uname", "-r"], capture_output=True, text=True, check=False).stdout.strip() or "?"
+    except OSError:
+        uname = "?"
+    return False, f"kernel {uname!r} has no 9p support; skipping ZeroFS cells"
+
+
 @env.task(report=True)
 async def volume_benchmark_driver(
     workloads: Optional[List[str]] = None,
     engines: Optional[List[str]] = None,
     writeback: Optional[List[bool]] = None,
+    max_concurrency: int = 2,
+    bucket: Optional[str] = None,
+    storage: str = "s3",
+    mount_path: str = "/workspace",
+    meta_dir: str = "/var/lib/flyte-volume",
+    cache_dir: str = "/var/cache/flyte-volume",
 ) -> str:
     all_workloads = {**WORKLOADS, **SELF_MANAGED}
     selected_workloads = workloads or list(all_workloads.keys())
     selected_engines = engines or ENGINES
     selected_writeback = writeback if writeback is not None else WRITEBACK
+
+    if "zerofs-zfs" in selected_engines:
+        ok, reason = _zerofs_kernel_supported()
+        if not ok:
+            logger.warning("Dropping zerofs-zfs from sweep: %s", reason)
+            selected_engines = [e for e in selected_engines if e != "zerofs-zfs"]
 
     unknown = [w for w in selected_workloads if w not in all_workloads]
     if unknown:
@@ -417,10 +503,35 @@ async def volume_benchmark_driver(
             for wb in selected_writeback:
                 keys.append((wname, engine, wb))
                 short = f"{wname.replace('_', '-')}-{engine}-{'wb' if wb else 'cold'}"
-                coros.append(run_cell.override(short_name=short)(workload=wname, engine=engine, writeback=wb))
+                coros.append(
+                    run_cell.override(short_name=short)(
+                        workload=wname,
+                        engine=engine,
+                        writeback=wb,
+                        bucket=bucket,
+                        storage=storage,
+                        mount_path=mount_path,
+                        meta_dir=meta_dir,
+                        cache_dir=cache_dir,
+                    )
+                )
 
-    logger.info("dispatching %d cells across %d workloads", len(coros), len(selected_workloads))
-    raw = await asyncio.gather(*coros)
+    if max_concurrency < 1:
+        raise ValueError("max_concurrency must be >= 1")
+
+    logger.info(
+        "dispatching %d cells across %d workloads with max_concurrency=%d",
+        len(coros),
+        len(selected_workloads),
+        max_concurrency,
+    )
+    semaphore = asyncio.Semaphore(max_concurrency)
+
+    async def _run_limited(coro: Awaitable[Dict[str, float]]) -> Dict[str, float]:
+        async with semaphore:
+            return await coro
+
+    raw = await asyncio.gather(*(_run_limited(coro) for coro in coros))
 
     rows: List[Dict[str, object]] = []
     for (wname, engine, wb), result in zip(keys, raw):
