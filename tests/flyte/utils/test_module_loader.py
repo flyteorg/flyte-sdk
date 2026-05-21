@@ -6,6 +6,7 @@ from unittest.mock import patch
 import click
 import pytest
 
+import flyte.errors
 from flyte._utils.module_loader import load_python_modules
 
 
@@ -146,3 +147,91 @@ def test_load_python_modules_file_outside_root_raises_click_exception(tmp_path):
     assert "--root-dir" in msg
     assert str(outside_file) in msg
     assert str(root_dir) in msg
+
+
+def test_load_python_modules_single_file_wraps_module_not_found(tmp_path):
+    """When a single .py file imports something not installed, surface a
+    ModuleLoadError (a RuntimeUserError that the Sentry filter skips) instead
+    of letting bare ModuleNotFoundError reach Sentry.
+
+    Reproduces FLYTE-SDK-3T/3K/3R/3Q/3P/3M/3N/3J/3H/3E.
+    """
+    root = tmp_path / "project"
+    root.mkdir()
+    f = root / "workflow.py"
+    f.write_text("x = 1\n")
+
+    def boom(_mod):
+        raise ModuleNotFoundError("No module named 'fold_to_ascii'")
+
+    with patch("importlib.import_module", side_effect=boom):
+        with pytest.raises(flyte.errors.ModuleLoadError) as excinfo:
+            load_python_modules(f, root_dir=root, recursive=False)
+
+    msg = str(excinfo.value)
+    assert "workflow.py" in msg
+    assert "ModuleNotFoundError" in msg
+    assert "fold_to_ascii" in msg
+
+
+def test_load_python_modules_dir_collects_import_errors_in_failed_paths(tmp_path):
+    """When loading a directory of .py files, ImportError/ModuleNotFoundError on
+    one file should be recorded in failed_paths so the deploy command can
+    surface a clean error -- not propagate as an unhandled crash to Sentry."""
+    root = tmp_path / "project"
+    root.mkdir()
+    ok = root / "ok.py"
+    ok.write_text("x = 1\n")
+    bad = root / "bad.py"
+    bad.write_text("import nonexistent_pkg\n")
+
+    def fake_import(mod_name):
+        if mod_name == "bad":
+            raise ModuleNotFoundError("No module named 'nonexistent_pkg'")
+
+        class FakeMod:
+            __name__ = mod_name
+
+        return FakeMod()
+
+    with patch("importlib.import_module", side_effect=fake_import):
+        modules, failed = load_python_modules(root, root_dir=root, recursive=False)
+
+    assert len(modules) == 1
+    assert len(failed) == 1
+    failed_path, failed_msg = failed[0]
+    assert failed_path == bad
+    assert "ModuleNotFoundError" in failed_msg
+    assert "nonexistent_pkg" in failed_msg
+
+
+@pytest.mark.parametrize(
+    "exc_type,exc_kwargs",
+    [
+        (SyntaxError, {"msg": "bad syntax"}),
+        (NameError, {"name": "x"}),
+        (AttributeError, {}),
+        (TypeError, {}),
+        (ValueError, {}),
+    ],
+)
+def test_load_python_modules_single_file_wraps_user_code_errors(tmp_path, exc_type, exc_kwargs):
+    """SyntaxError / NameError / etc. from user module top-level execution are
+    also user-code bugs and should be surfaced via ModuleLoadError, not raw."""
+    root = tmp_path / "project"
+    root.mkdir()
+    f = root / "workflow.py"
+    f.write_text("x = 1\n")
+
+    def boom(_mod):
+        if exc_type is SyntaxError:
+            raise SyntaxError("bad syntax")
+        if exc_type is NameError:
+            raise NameError("name 'gcp_adr' is not defined")
+        raise exc_type("boom")
+
+    with patch("importlib.import_module", side_effect=boom):
+        with pytest.raises(flyte.errors.ModuleLoadError) as excinfo:
+            load_python_modules(f, root_dir=root, recursive=False)
+
+    assert exc_type.__name__ in str(excinfo.value)

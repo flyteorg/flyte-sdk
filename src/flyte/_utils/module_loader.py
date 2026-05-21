@@ -53,8 +53,13 @@ def load_python_modules(
     if path.is_file() and path.suffix == ".py":
         rel_path = _relative_to_root(path, root_dir)
         mod = (".".join(rel_path.parts))[:-3]
-        imported_module = importlib.import_module(mod)
-        loaded_modules.append(imported_module)
+        try:
+            imported_module = importlib.import_module(mod)
+            loaded_modules.append(imported_module)
+        except flyte.errors.ModuleLoadError as e:
+            failed_paths.append((path, str(e)))
+        except (ImportError, SyntaxError, NameError, AttributeError, TypeError, ValueError) as e:
+            raise flyte.errors.ModuleLoadError(f"Failed to load {path}: {type(e).__name__}: {e}") from e
 
     elif path.is_dir():
         # Directory case - find all Python files
@@ -104,6 +109,11 @@ def load_python_modules(
                         loaded_modules.append(imported_module)
                     except flyte.errors.ModuleLoadError as e:
                         failed_paths.append((file_path, str(e)))
+                    except (ImportError, SyntaxError, NameError, AttributeError, TypeError, ValueError) as e:
+                        # User code failed at import time. Record as a load failure
+                        # (consistent with ModuleLoadError above) so deploy can either
+                        # warn or abort via --ignore-load-errors instead of crashing.
+                        failed_paths.append((file_path, f"{type(e).__name__}: {e}"))
 
                 progress.update(task, current_file="[green]Done[/green]")
 

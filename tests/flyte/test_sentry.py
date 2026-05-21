@@ -157,3 +157,46 @@ def test_iter_cause_chain_is_cycle_safe():
     b.__cause__ = a  # cycle
     walked = list(_sentry._iter_cause_chain(a))
     assert walked == [a, b]
+
+
+def test_capture_exception_skips_module_load_error():
+    """ModuleLoadError inherits from RuntimeUserError and should be filtered.
+
+    Reproduces FLYTE-SDK-3T/3K/3R/3Q/3P/3M/3N/3J/3H/3E: bare ModuleNotFoundError
+    raised from user workflow imports is now wrapped as ModuleLoadError before
+    reaching the Sentry boundary.
+    """
+    from flyte.errors import ModuleLoadError
+
+    err = ModuleLoadError("Failed to load workflow.py: ModuleNotFoundError: No module named 'requests'")
+    with mock.patch.object(_sentry, "init") as init_mock:
+        _sentry.capture_exception(err)
+    init_mock.assert_not_called()
+
+
+def test_capture_exception_skips_runtime_user_error_subclass():
+    """Any RuntimeUserError subclass is a user-side error, not an SDK crash."""
+    from flyte.errors import OOMError
+
+    err = OOMError("OOM", "user", "out of memory")
+    with mock.patch.object(_sentry, "init") as init_mock:
+        _sentry.capture_exception(err)
+    init_mock.assert_not_called()
+
+
+def test_capture_exception_skips_wrapped_module_load_error_via_cause_chain():
+    """ModuleLoadError wrapped inside another exception (e.g. when re-raised
+    deeper in the deploy path) is still filtered via __cause__ walking."""
+    from flyte.errors import ModuleLoadError
+
+    try:
+        try:
+            raise ModuleLoadError("Failed to load workflow.py: ModuleNotFoundError: No module named 'boto3'")
+        except ModuleLoadError as e:
+            raise RuntimeError("deploy failed") from e
+    except RuntimeError as outer:
+        err = outer
+
+    with mock.patch.object(_sentry, "init") as init_mock:
+        _sentry.capture_exception(err)
+    init_mock.assert_not_called()
