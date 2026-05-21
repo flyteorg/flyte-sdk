@@ -640,23 +640,85 @@ class PydanticTransformer(TypeTransformer[BaseModel]):
         raise ValueError(f"PydanticTransformer cannot reverse {literal_type}")
 
 
-def _create_pydantic_model_from_schema(schema: dict) -> Type:
-    """Create a dynamic Pydantic BaseModel from a JSON schema dict.
+def _get_pydantic_element_type(
+    element_property: typing.Union[typing.Dict[str, typing.Any], bool],
+    schema: typing.Optional[typing.Dict[str, typing.Any]] = None,
+) -> Type:
+    """Resolve a JSON-schema fragment to a Python type for dynamic Pydantic models.
 
-    Reuses `_get_element_type` so that all JSON-schema constructs handled by the
-    dataclass path (arrays, dicts, nested objects, `$ref`, `anyOf`, enums, …)
-    are also covered here.
+    Like :func:`_get_element_type`, but nested objects and ``$ref`` targets become
+    dynamic Pydantic models instead of mashumaro dataclasses so ``model_validate``
+    and msgpack field ordering stay consistent with :class:`PydanticTransformer`.
     """
+    if not isinstance(element_property, dict):
+        return _get_element_type(element_property, schema)
+
+    if (matched_type := _match_registered_type_from_schema(element_property)) is not None:
+        return matched_type
+
+    if element_property.get("$ref") and schema is not None:
+        ref_name = element_property["$ref"].split("/")[-1]
+        defs = schema.get("$defs", schema.get("definitions", {}))
+        if ref_name in defs:
+            ref_schema = defs[ref_name].copy()
+            if ref_schema.get("enum"):
+                return str
+            if (matched_type := _match_registered_type_from_schema(ref_schema)) is not None:
+                return matched_type
+            if "$defs" not in ref_schema and defs:
+                ref_schema["$defs"] = defs
+            return _create_pydantic_model_from_schema(ref_schema)
+        return str
+
+    if element_property.get("anyOf"):
+        variants = element_property["anyOf"]
+        non_null = [v for v in variants if v.get("type") != "null"]
+        has_null = len(non_null) < len(variants)
+        if non_null:
+            inner_type = _get_pydantic_element_type(non_null[0], schema)
+            return typing.Optional[inner_type] if has_null else inner_type  # type: ignore
+        return type(None)
+
+    element_type = element_property.get("type")
+    if element_type == "object":
+        if element_property.get("additionalProperties"):
+            return _get_element_type(element_property, schema)
+        if element_property.get("anyOf"):
+            return _get_element_type(element_property, schema)
+        if element_property.get("title"):
+            matched_type = _match_registered_type_from_schema(element_property)
+            if matched_type is not None:
+                return matched_type
+            return _create_pydantic_model_from_schema(element_property)
+
+    return _get_element_type(element_property, schema)
+
+
+def _create_pydantic_model_from_schema(schema: dict) -> Type:
+    """Create a dynamic Pydantic BaseModel from a JSON schema dict."""
     from pydantic import ConfigDict, create_model
 
     title = schema.get(TITLE, "DynamicModel")
     properties = schema.get("properties", {})
+    property_order = schema.get("required", list(properties.keys()))
 
     fields: dict[str, typing.Any] = {}
-    for name, prop in properties.items():
-        python_type = _get_element_type(prop, schema)
-        default: typing.Any = prop.get("default", ...)
-        fields[name] = (python_type, default)
+    required_set = set(schema.get("required") or ())
+    schema_declares_required = "required" in schema
+    for name in property_order:
+        if name not in properties:
+            continue
+        prop = properties[name]
+        field_type = _get_pydantic_element_type(prop, schema)
+        if "default" in prop:
+            fields[name] = (field_type, prop["default"])
+        elif schema_declares_required and name not in required_set:
+            if prop.get("anyOf"):
+                fields[name] = (typing.Optional[field_type], None)
+            else:
+                fields[name] = (field_type, ...)
+        else:
+            fields[name] = (field_type, ...)
 
     return create_model(title, __config__=ConfigDict(extra="allow"), **fields)
 

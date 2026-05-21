@@ -1,4 +1,3 @@
-import dataclasses
 from enum import Enum
 
 import pytest
@@ -37,7 +36,7 @@ async def test_pydantic_model_with_enum_ref():
 
     # Guess python type from the schema (simulates pyflyte run behaviour)
     guessed = TypeEngine.guess_python_type(lit)
-    assert dataclasses.is_dataclass(guessed)
+    assert issubclass(guessed, BaseModel)
 
     # The enum field should be reconstructed as str (enum $ref resolved)
     v = guessed(name="test-job", status="pending")
