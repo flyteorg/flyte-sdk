@@ -37,12 +37,9 @@ from __future__ import annotations
 import asyncio
 import os
 import secrets
-import socket
-import sqlite3
 import subprocess
 import tempfile
 import time
-from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar, Dict, Optional, Set
 
@@ -52,49 +49,15 @@ from flyte._context import internal_ctx
 from flyte._image import Image
 from flyte._logging import logger as _logger
 from flyte._pod import PodTemplate
+from flyte.extras._volume_backend import _MetadataEngineState, _MountConfig, _VolumeBackend
+from flyte.extras._volume_juicefs import _CLIENT_BINARY, _CLIENT_VERSION, JuiceFSVolumeBackend
 from flyte.io._file import File
 
 _DEFAULT_META_DIR = "/var/lib/flyte-volume"
 _DEFAULT_CACHE_DIR = "/var/cache/flyte-volume"
 _DEFAULT_MOUNT_PATH = "/workspace"
-_SQLITE_INDEX_FILENAME = "index.db"
-_REDIS_INDEX_FILENAME = "dump.rdb"
-_CLIENT_BINARY = "juicefs"  # implementation detail
-# Pinned to a release whose SQLite ``jfs_counter`` and Redis ``next{chunk,inode,session}``
-# keys are known to match what :func:`_disjoint_fork_counters` expects.
-# Verified against 1.1.2 and 1.3.1 — bumping further requires re-validating
-# the counter schema (see tests/flyte/extras/test_volume.py::TestForkIsolationRegression).
-_CLIENT_VERSION = "1.3.1"
-_REDIS_PORT = 6379
 
-
-@dataclass(frozen=True)
-class _MountConfig:
-    meta_dir: str
-    redis_port: Optional[int]
-    cache_dir: str
-    writeback: bool
-    upload_delay: Optional[str]
-    max_uploads: int
-    attr_cache: float
-    entry_cache: float
-    dir_entry_cache: float
-
-
-@dataclass(frozen=True)
-class _RedisState:
-    proc: subprocess.Popen
-    port: int
-
-
-def _index_filename(engine: str) -> str:
-    return _REDIS_INDEX_FILENAME if engine == "redis" else _SQLITE_INDEX_FILENAME
-
-
-def _meta_url(meta_dir: str, engine: str, *, redis_port: Optional[int] = None) -> str:
-    if engine == "redis":
-        return f"redis://127.0.0.1:{redis_port or _REDIS_PORT}/0"
-    return f"sqlite3://{Path(meta_dir) / _SQLITE_INDEX_FILENAME}"
+_VOLUME_BACKENDS: dict[str, _VolumeBackend] = {"juicefs": JuiceFSVolumeBackend()}
 
 
 class Volume(BaseModel):
@@ -137,7 +100,7 @@ class Volume(BaseModel):
     # after a flush-only unmount without changing caller-selected tuning.
     _live_mounts: ClassVar[Dict[str, _MountConfig]] = {}
     # Track in-process redis-server daemons, keyed by meta_dir.
-    _live_redis: ClassVar[Dict[str, _RedisState]] = {}
+    _live_redis: ClassVar[Dict[str, _MetadataEngineState]] = {}
     # meta_dirs that currently have a live engine + daemon. Used by fork()
     # to decide whether to use the live flush-and-upload path or the cold
     # File.copy_to path. Populated by mount(), cleared by commit().
@@ -145,6 +108,9 @@ class Volume(BaseModel):
 
     def _engine(self) -> str:
         return self.metadata_engine or "sqlite"
+
+    def _backend(self) -> _VolumeBackend:
+        return _VOLUME_BACKENDS["juicefs"]
 
     @classmethod
     def empty(
@@ -196,6 +162,7 @@ class Volume(BaseModel):
         attr_cache: float = 60.0,
         entry_cache: float = 60.0,
         dir_entry_cache: float = 60.0,
+        read_only: bool = False,
     ) -> None:
         """Format (if fresh) and mount the volume at ``mount_path`` in this
         process.
@@ -232,12 +199,13 @@ class Volume(BaseModel):
         separate API when added.
         """
         engine = self._engine()
+        backend = self._backend()
         meta = Path(meta_dir)
         meta.mkdir(parents=True, exist_ok=True)
         Path(cache_dir).mkdir(parents=True, exist_ok=True)
         Path(mount_path).mkdir(parents=True, exist_ok=True)
 
-        index_path = meta / _index_filename(engine)
+        index_path = meta / backend.index_filename(engine)
         if self.index is not None:
             _logger.info("[Volume.mount] downloading index %s", self.index.path)
             await self.index.download(str(index_path))
@@ -246,16 +214,15 @@ class Volume(BaseModel):
             # happen in practice; tasks get fresh pods).
             index_path.unlink()
 
-        redis_state: Optional[_RedisState] = None
+        redis_state: Optional[_MetadataEngineState] = None
         try:
             redis_port: Optional[int] = None
-            if engine == "redis":
-                # redis-server picks up dump.rdb from the working dir at startup.
-                redis_state = await _start_redis(meta_dir)
+            redis_state = await backend.start_metadata_engine(meta_dir, engine)
+            if redis_state is not None:
                 redis_port = redis_state.port
                 type(self)._live_redis[meta_dir] = redis_state
 
-            meta_url = _meta_url(meta_dir, engine, redis_port=redis_port)
+            meta_url = backend.meta_url(meta_dir, engine, redis_port=redis_port)
             client_bucket = _client_bucket_uri(self.bucket, self.storage)
             if self.index is None:
                 _logger.info(
@@ -265,17 +232,11 @@ class Volume(BaseModel):
                     self.storage,
                 )
                 await asyncio.to_thread(
-                    _run_check,
-                    [
-                        _CLIENT_BINARY,
-                        "format",
-                        "--storage",
-                        self.storage,
-                        "--bucket",
-                        client_bucket,
-                        meta_url,
-                        self.name,
-                    ],
+                    backend.format,
+                    storage=self.storage,
+                    bucket=client_bucket,
+                    meta_url=meta_url,
+                    name=self.name,
                 )
 
             mount_config = _MountConfig(
@@ -288,6 +249,7 @@ class Volume(BaseModel):
                 attr_cache=attr_cache,
                 entry_cache=entry_cache,
                 dir_entry_cache=dir_entry_cache,
+                read_only=read_only,
             )
             _logger.info(
                 "[Volume.mount] mounting at %s (writeback=%s upload_delay=%s "
@@ -309,31 +271,14 @@ class Volume(BaseModel):
             type(self)._live_mounts.pop(mount_path, None)
             if engine == "redis":
                 state = type(self)._live_redis.pop(meta_dir, None) or redis_state
-                await asyncio.to_thread(_stop_redis, state, timeout)
+                await asyncio.to_thread(backend.stop_metadata_engine, state, timeout)
             raise
 
     async def _start_mount(self, *, mount_path: str, config: _MountConfig, timeout: float) -> None:
         """Start the volume client against an already-prepared metadata engine."""
         engine = self._engine()
-        mount_cmd = [
-            _CLIENT_BINARY,
-            "mount",
-            "--cache-dir",
-            config.cache_dir,
-            "--max-uploads",
-            str(config.max_uploads),
-            "--attr-cache",
-            str(config.attr_cache),
-            "--entry-cache",
-            str(config.entry_cache),
-            "--dir-entry-cache",
-            str(config.dir_entry_cache),
-        ]
-        if config.writeback:
-            mount_cmd.append("--writeback")
-            if config.upload_delay:
-                mount_cmd += ["--upload-delay", config.upload_delay]
-        mount_cmd += [_meta_url(config.meta_dir, engine, redis_port=config.redis_port), mount_path]
+        backend = self._backend()
+        mount_cmd = backend.mount_cmd(config=config, engine=engine, mount_path=mount_path)
 
         proc = subprocess.Popen(  # noqa: ASYNC220 - long-lived daemon held in a class-level dict
             mount_cmd,
@@ -351,7 +296,7 @@ class Volume(BaseModel):
                 type(self)._live_mounts.pop(mount_path, None)
                 out = proc.stdout.read().decode(errors="replace") if proc.stdout else ""
                 raise RuntimeError(f"volume client exited prematurely (rc={proc.returncode}): {out}")
-            if _is_fuse_mount(mount_path):
+            if backend.is_mounted(mount_path):
                 return
             if asyncio.get_event_loop().time() >= deadline:
                 type(self)._live_procs.pop(mount_path, None)
@@ -373,15 +318,16 @@ class Volume(BaseModel):
         index.
         """
         engine = self._engine()
+        backend = self._backend()
         # Flush page cache so any unfsync'd writes hit the filesystem first.
-        await asyncio.to_thread(_sync_filesystem, mount_path)
+        await asyncio.to_thread(backend.sync_filesystem, mount_path)
 
         meta = Path(meta_dir)
-        index_path = meta / _index_filename(engine)
+        index_path = meta / backend.index_filename(engine)
 
         # Tell the client to flush and exit cleanly.
         _logger.info("[Volume.commit] unmounting %s", mount_path)
-        await asyncio.to_thread(_run_check, [_CLIENT_BINARY, "umount", mount_path])
+        await asyncio.to_thread(backend.unmount, mount_path)
 
         proc = type(self)._live_procs.pop(mount_path, None)
         type(self)._live_mounts.pop(mount_path, None)
@@ -398,14 +344,14 @@ class Volume(BaseModel):
             # is still alive, then shut it down. SHUTDOWN NOSAVE prevents a
             # second redundant save on exit.
             redis_state = type(self)._live_redis.pop(meta_dir, None)
-            redis_port = redis_state.port if redis_state is not None else _REDIS_PORT
-            await asyncio.to_thread(_redis_save, redis_port)
-            used_bytes, inode_count = await _query_volume_stats(meta_dir, engine, redis_port=redis_port)
-            await asyncio.to_thread(_stop_redis, redis_state, timeout)
+            redis_port = redis_state.port if redis_state is not None else None
+            await asyncio.to_thread(backend.save_metadata, engine, redis_port=redis_port)
+            used_bytes, inode_count = await backend.query_stats(meta_dir, engine, redis_port=redis_port)
+            await asyncio.to_thread(backend.stop_metadata_engine, redis_state, timeout)
         else:
             # Force WAL pages back into the main .db before uploading.
-            await asyncio.to_thread(_wal_checkpoint, str(index_path))
-            used_bytes, inode_count = await _query_volume_stats(meta_dir, engine)
+            await asyncio.to_thread(backend.checkpoint_metadata, str(index_path))
+            used_bytes, inode_count = await backend.query_stats(meta_dir, engine)
 
         type(self)._live_meta.discard(meta_dir)
         ctx = internal_ctx()
@@ -414,7 +360,7 @@ class Volume(BaseModel):
         # path produces thousands of tiny S3 writes on binary indexes).
         new_index: File = await File.from_local(
             str(index_path),
-            remote_destination=ctx.raw_data.get_random_remote_path(file_name=_index_filename(engine)),
+            remote_destination=ctx.raw_data.get_random_remote_path(file_name=backend.index_filename(engine)),
         )
         return Volume(
             name=self.name,
@@ -457,7 +403,8 @@ class Volume(BaseModel):
         :meth:`fork` to disjoint the parent's and child's allocator spaces.
         """
         engine = self._engine()
-        src = Path(meta_dir) / _index_filename(engine)
+        backend = self._backend()
+        src = Path(meta_dir) / backend.index_filename(engine)
 
         if flush_live:
             # For Redis the dump.rdb file is only materialized by SAVE
@@ -465,39 +412,21 @@ class Volume(BaseModel):
             # existence before the flush. WAL checkpoint on SQLite is a
             # no-op against a missing file but the existence check below
             # will catch that case explicitly.
-            await asyncio.to_thread(_sync_filesystem, meta_dir)
+            await asyncio.to_thread(backend.sync_filesystem, meta_dir)
             if engine == "redis":
                 redis_state = type(self)._live_redis.get(meta_dir)
-                redis_port = redis_state.port if redis_state is not None else _REDIS_PORT
-                await asyncio.to_thread(_redis_save, redis_port)
+                redis_port = redis_state.port if redis_state is not None else None
+                await asyncio.to_thread(backend.save_metadata, engine, redis_port=redis_port)
             else:
                 if not src.exists():
                     raise RuntimeError(f"Cannot snapshot: no live index at {src}. Call mount() first.")
-                await asyncio.to_thread(_wal_checkpoint, str(src))
+                await asyncio.to_thread(backend.checkpoint_metadata, str(src))
 
         if not src.exists():
             raise RuntimeError(f"Cannot snapshot: no index at {src}.")
 
-        if engine == "redis":
-
-            def _snapshot() -> str:
-                import shutil
-
-                tmp = tempfile.NamedTemporaryFile(prefix=tmp_prefix, suffix=".rdb", delete=False)
-                tmp.close()
-                shutil.copyfile(str(src), tmp.name)
-                return tmp.name
-        else:
-
-            def _snapshot() -> str:
-                tmp = tempfile.NamedTemporaryFile(prefix=tmp_prefix, suffix=".db", delete=False)
-                tmp.close()
-                with sqlite3.connect(str(src)) as live, sqlite3.connect(tmp.name) as dst:
-                    live.backup(dst)
-                return tmp.name
-
         t_snap = time.monotonic()
-        snapshot_path = await asyncio.to_thread(_snapshot)
+        snapshot_path = await asyncio.to_thread(backend.snapshot_index, src, engine, tmp_prefix)
         snap_bytes = os.path.getsize(snapshot_path)
         _logger.info(
             "[Volume.fork] snapshot prepared in %.2fs (%.1f MB, engine=%s)",
@@ -507,7 +436,7 @@ class Volume(BaseModel):
         )
         if counter_bump is not None:
             t_bump = time.monotonic()
-            applied = await asyncio.to_thread(_disjoint_fork_counters, snapshot_path, engine, counter_bump)
+            applied = await asyncio.to_thread(backend.disjoint_fork_counters, snapshot_path, engine, counter_bump)
             _logger.info(
                 "[Volume.fork] counter bump applied in %.2fs (offset=%d)",
                 time.monotonic() - t_bump,
@@ -530,7 +459,7 @@ class Volume(BaseModel):
         try:
             index_bytes = os.path.getsize(snapshot_path)
             ctx = internal_ctx()
-            dst_path = ctx.raw_data.get_random_remote_path(file_name=_index_filename(engine))
+            dst_path = ctx.raw_data.get_random_remote_path(file_name=backend.index_filename(engine))
             t_up = time.monotonic()
             new_file: File = await File.from_local(
                 snapshot_path,
@@ -584,6 +513,7 @@ class Volume(BaseModel):
         and was unsafe for the chunk-key reasons above.
         """
         engine = self._engine()
+        backend = self._backend()
         # "Live" iff mount() registered this meta_dir and commit() hasn't
         # cleared it. This is independent of file-on-disk state — for SQLite
         # the index.db lingers after commit(), so a file-existence heuristic
@@ -603,7 +533,7 @@ class Volume(BaseModel):
                 )
                 redis_state = type(self)._live_redis.get(meta_dir)
                 redis_port = redis_state.port if redis_state is not None else None
-                used_bytes, inode_count = await _query_volume_stats(meta_dir, engine, redis_port=redis_port)
+                used_bytes, inode_count = await backend.query_stats(meta_dir, engine, redis_port=redis_port)
             finally:
                 await self._start_mount(mount_path=mount_path, config=mount_config, timeout=timeout)
                 type(self)._live_meta.add(meta_dir)
@@ -616,7 +546,7 @@ class Volume(BaseModel):
             # applies the counter bump.
             cold_meta = Path(tempfile.mkdtemp(prefix="vol-cold-fork-"))
             try:
-                index_path = cold_meta / _index_filename(engine)
+                index_path = cold_meta / backend.index_filename(engine)
                 _logger.info("[Volume.fork] cold fork: downloading %s", self.index.path)
                 t_dl = time.monotonic()
                 await self.index.download(str(index_path))
@@ -652,12 +582,13 @@ class Volume(BaseModel):
 
     async def _flush_live_mount(self, *, mount_path: str, meta_dir: str, timeout: float) -> _MountConfig:
         """Drain writeback chunks by unmounting with --flush."""
+        backend = self._backend()
         config = type(self)._live_mounts.get(mount_path)
         if config is None or config.meta_dir != meta_dir:
             raise RuntimeError(f"Cannot flush live Volume: {mount_path} is not registered for meta_dir={meta_dir}.")
 
         _logger.info("[Volume.fork] flushing live mount %s before snapshot", mount_path)
-        await asyncio.to_thread(_run_check, [_CLIENT_BINARY, "umount", "--flush", mount_path])
+        await asyncio.to_thread(backend.unmount, mount_path, flush=True)
 
         proc = type(self)._live_procs.pop(mount_path, None)
         type(self)._live_mounts.pop(mount_path, None)
@@ -741,6 +672,7 @@ class Volume(BaseModel):
         task pod that has the ``juicefs`` binary (Redis tooling is only
         needed if one of the engines is ``"redis"``).
         """
+        backend = self._backend()
         src_engine = self._engine()
         if new_engine == src_engine:
             raise ValueError(f"Source and destination engines are both {new_engine!r}; nothing to migrate.")
@@ -751,7 +683,7 @@ class Volume(BaseModel):
 
         src_meta = Path(meta_dir) / "src"
         src_meta.mkdir(parents=True, exist_ok=True)
-        src_index = src_meta / _index_filename(src_engine)
+        src_index = src_meta / backend.index_filename(src_engine)
         _logger.info("[Volume.migrate_metadata_engine] downloading source index %s", self.index.path)
         await self.index.download(str(src_index))
 
@@ -764,38 +696,42 @@ class Volume(BaseModel):
         with tempfile.NamedTemporaryFile(prefix="vol-migrate-", suffix=".json", delete=False) as f:
             dump_path = f.name
 
-        src_redis: Optional[_RedisState] = None
-        new_redis: Optional[_RedisState] = None
+        src_redis: Optional[_MetadataEngineState] = None
+        new_redis: Optional[_MetadataEngineState] = None
         cleanup_paths: list[str] = [dump_path]
         try:
             if src_engine == "redis":
-                src_redis = await _start_redis(str(src_meta))
+                src_redis = await backend.start_metadata_engine(str(src_meta), src_engine)
 
-            src_meta_url = _meta_url(str(src_meta), src_engine, redis_port=src_redis.port if src_redis else None)
+            src_meta_url = backend.meta_url(str(src_meta), src_engine, redis_port=src_redis.port if src_redis else None)
             _logger.info("[Volume.migrate_metadata_engine] dump %s -> %s", src_meta_url, dump_path)
-            await asyncio.to_thread(_run_check, [_CLIENT_BINARY, "dump", src_meta_url, dump_path])
+            await asyncio.to_thread(backend.dump_metadata, src_meta_url, dump_path)
 
             # Stop src redis before starting dst redis — both want :6379.
             if src_redis is not None:
-                _stop_redis(src_redis, timeout=10.0)
+                backend.stop_metadata_engine(src_redis, timeout=10.0)
                 src_redis = None
 
             if new_engine == "redis":
-                new_redis = await _start_redis(str(new_meta))
+                new_redis = await backend.start_metadata_engine(str(new_meta), new_engine)
 
-            new_meta_url = _meta_url(str(new_meta), new_engine, redis_port=new_redis.port if new_redis else None)
+            new_meta_url = backend.meta_url(str(new_meta), new_engine, redis_port=new_redis.port if new_redis else None)
             _logger.info("[Volume.migrate_metadata_engine] load %s <- %s", new_meta_url, dump_path)
-            await asyncio.to_thread(_run_check, [_CLIENT_BINARY, "load", new_meta_url, dump_path])
+            await asyncio.to_thread(backend.load_metadata, new_meta_url, dump_path)
 
-            new_index_path = new_meta / _index_filename(new_engine)
+            new_index_path = new_meta / backend.index_filename(new_engine)
             if new_engine == "redis":
                 # Flush the loaded namespace to dump.rdb and stop the daemon
                 # so we get a stable file to snapshot.
-                await asyncio.to_thread(_redis_save, new_redis.port if new_redis else _REDIS_PORT)
-                _stop_redis(new_redis, timeout=10.0)
+                await asyncio.to_thread(
+                    backend.save_metadata,
+                    new_engine,
+                    redis_port=new_redis.port if new_redis else None,
+                )
+                backend.stop_metadata_engine(new_redis, timeout=10.0)
                 new_redis = None
             else:
-                await asyncio.to_thread(_wal_checkpoint, str(new_index_path))
+                await asyncio.to_thread(backend.checkpoint_metadata, str(new_index_path))
 
             if not new_index_path.exists():
                 raise RuntimeError(f"juicefs load did not produce {new_index_path} — migration aborted.")
@@ -805,25 +741,16 @@ class Volume(BaseModel):
             # migration intends the source to be retired, defense in depth.
             offset = _random_fork_offset()
             _logger.info("[Volume.migrate_metadata_engine] disjoint counter offset=%d", offset)
-            await asyncio.to_thread(_disjoint_fork_counters, str(new_index_path), new_engine, offset)
+            await asyncio.to_thread(backend.disjoint_fork_counters, str(new_index_path), new_engine, offset)
 
-            def _snapshot() -> str:
-                import shutil
-
-                suffix = new_index_path.suffix or ".idx"
-                tmp = tempfile.NamedTemporaryFile(prefix="vol-migrate-", suffix=suffix, delete=False)
-                tmp.close()
-                shutil.copyfile(str(new_index_path), tmp.name)
-                return tmp.name
-
-            snapshot_path = await asyncio.to_thread(_snapshot)
+            snapshot_path = await asyncio.to_thread(backend.snapshot_index, new_index_path, new_engine, "vol-migrate-")
             cleanup_paths.append(snapshot_path)
             ctx = internal_ctx()
             index_bytes = os.path.getsize(snapshot_path)
             # No hash_method — see fork()'s upload site for why.
             new_file: File = await File.from_local(
                 snapshot_path,
-                remote_destination=ctx.raw_data.get_random_remote_path(file_name=_index_filename(new_engine)),
+                remote_destination=ctx.raw_data.get_random_remote_path(file_name=backend.index_filename(new_engine)),
             )
             return Volume(
                 name=self.name,
@@ -836,9 +763,9 @@ class Volume(BaseModel):
             )
         finally:
             if src_redis is not None:
-                _stop_redis(src_redis, timeout=5.0)
+                backend.stop_metadata_engine(src_redis, timeout=5.0)
             if new_redis is not None:
-                _stop_redis(new_redis, timeout=5.0)
+                backend.stop_metadata_engine(new_redis, timeout=5.0)
             for path in cleanup_paths:
                 try:
                     os.unlink(path)
@@ -894,223 +821,6 @@ def _default_bucket() -> str:
     return f"{base}/{project}/{domain}/volumes"
 
 
-async def _query_volume_stats(
-    meta_dir: str, engine: str, *, redis_port: Optional[int] = None
-) -> tuple[Optional[int], Optional[int]]:
-    """Best-effort: return ``(used_bytes, inode_count)`` for the volume backed
-    by ``meta_dir`` / ``engine``. Shells out to ``juicefs status`` and parses
-    the JSON. Returns ``(None, None)`` on any failure so commit/fork are never
-    blocked by stats collection.
-
-    Must be called while the metadata engine is reachable — for Redis, before
-    the in-process redis-server is shut down; for SQLite, any time after the
-    index file is on disk.
-    """
-    import json
-
-    meta_url = _meta_url(meta_dir, engine, redis_port=redis_port)
-    try:
-        r = await asyncio.to_thread(
-            subprocess.run,
-            [_CLIENT_BINARY, "status", meta_url],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if r.returncode != 0:
-            _logger.warning("[Volume.stats] juicefs status rc=%d: %s", r.returncode, r.stderr[:200])
-            return None, None
-        data = json.loads(r.stdout)
-        stat = data.get("Statistic") or {}
-        used_bytes: Optional[int] = None
-        inode_count: Optional[int] = None
-        raw_used = stat.get("UsedSpace")
-        if isinstance(raw_used, (int, float)):
-            used_bytes = int(raw_used)
-        raw_inodes = stat.get("UsedInodes")
-        if isinstance(raw_inodes, (int, float)):
-            inode_count = int(raw_inodes)
-        return used_bytes, inode_count
-    except Exception as e:
-        _logger.warning("[Volume.stats] failed to query stats: %s", e)
-        return None, None
-
-
-def _run_check(cmd: list) -> None:
-    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"command failed (rc={result.returncode}): {' '.join(cmd)}\n"
-            f"stdout: {result.stdout}\nstderr: {result.stderr}"
-        )
-
-
-def _is_fuse_mount(path: str) -> bool:
-    """True if *path* is a FUSE mount (not just any mountpoint).
-
-    The emptyDir Kubernetes injects at the mount path is itself a bind-mount,
-    so a plain "is this a mountpoint?" check would return True before the
-    volume client has had a chance to overlay its FUSE filesystem.
-    """
-    try:
-        with open("/proc/self/mountinfo") as f:
-            for line in f:
-                # Format: id parent maj:min root mountpoint opts ... - fstype source super_opts
-                parts = line.split()
-                if len(parts) < 5 or parts[4] != path:
-                    continue
-                try:
-                    sep = parts.index("-")
-                except ValueError:
-                    continue
-                if len(parts) > sep + 1 and parts[sep + 1].startswith("fuse"):
-                    return True
-    except OSError:
-        pass
-    return False
-
-
-def _sync_filesystem(path: str) -> None:
-    """Flush the filesystem containing path, falling back to process-wide sync.
-
-    Linux exposes syncfs(2), which scopes the flush to one mounted filesystem.
-    Python does not expose it on every platform, so retain os.sync() as the
-    compatibility fallback.
-    """
-    syncfs = getattr(os, "syncfs", None)
-    if syncfs is not None:
-        fd: Optional[int] = None
-        try:
-            fd = os.open(path, os.O_RDONLY)
-            syncfs(fd)
-            return
-        except OSError:
-            pass
-        finally:
-            if fd is not None:
-                os.close(fd)
-
-    os.sync()
-
-
-def _free_tcp_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return int(s.getsockname()[1])
-
-
-async def _start_redis(meta_dir: str, timeout: float = 30.0, port: Optional[int] = None) -> _RedisState:
-    """Spawn an in-process ``redis-server`` rooted at ``meta_dir``.
-
-    Redis is configured with auto-save disabled (``--save ""``) and AOF off;
-    persistence is driven explicitly by ``commit()`` / ``fork()`` via
-    ``redis-cli SAVE``. If ``dump.rdb`` already exists in ``meta_dir``,
-    redis-server loads it during startup.
-    """
-    port = port or _free_tcp_port()
-    cmd = [
-        "redis-server",
-        "--port",
-        str(port),
-        "--bind",
-        "127.0.0.1",
-        "--save",
-        "",
-        "--appendonly",
-        "no",
-        "--dir",
-        meta_dir,
-        "--dbfilename",
-        _REDIS_INDEX_FILENAME,
-        "--daemonize",
-        "no",
-    ]
-    _logger.info("[Volume.mount] starting redis-server in %s", meta_dir)
-    proc = subprocess.Popen(  # noqa: ASYNC220 - long-lived daemon held in a class-level dict
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        start_new_session=True,
-    )
-
-    deadline = asyncio.get_event_loop().time() + timeout
-    while True:
-        if proc.poll() is not None:
-            out = proc.stdout.read().decode(errors="replace") if proc.stdout else ""
-            raise RuntimeError(f"redis-server exited prematurely (rc={proc.returncode}): {out}")
-        r = await asyncio.to_thread(
-            subprocess.run,
-            ["redis-cli", "-p", str(port), "ping"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if r.returncode == 0 and "PONG" in r.stdout:
-            _logger.info("[Volume.mount] redis-server ready on port %d", port)
-            return _RedisState(proc=proc, port=port)
-        if asyncio.get_event_loop().time() >= deadline:
-            raise TimeoutError(f"redis-server did not become ready within {timeout}s")
-        await asyncio.sleep(0.2)
-
-
-def _redis_save(port: int = _REDIS_PORT) -> None:
-    """Trigger a synchronous RDB save."""
-    _run_check(["redis-cli", "-p", str(port), "SAVE"])
-
-
-def _stop_redis(state: Optional[_RedisState], timeout: float) -> None:
-    """Shut down a redis-server cleanly. Caller must have already saved if
-    they want the in-memory state persisted.
-    """
-    if state is None:
-        return
-    # SHUTDOWN NOSAVE — we drove persistence ourselves via SAVE.
-    subprocess.run(
-        ["redis-cli", "-p", str(state.port), "SHUTDOWN", "NOSAVE"],
-        capture_output=True,
-        check=False,
-    )
-    try:
-        state.proc.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        _logger.warning("[Volume.commit] redis-server didn't exit in %ss; killing", timeout)
-        state.proc.kill()
-        state.proc.wait(5)
-
-
-def _wal_checkpoint(db_path: str) -> None:
-    """Force a TRUNCATE-mode WAL checkpoint so the on-disk .db contains all
-    committed transactions. No-op if the DB isn't in WAL mode.
-    """
-    try:
-        conn = sqlite3.connect(db_path, isolation_level=None)
-        try:
-            conn.execute("PRAGMA wal_checkpoint(TRUNCATE);").fetchall()
-        finally:
-            conn.close()
-    except sqlite3.Error:
-        pass
-
-
-# Counters JuiceFS uses to allocate IDs. Bumped at fork time so parent and
-# fork allocate from disjoint ranges (chunk-slice IDs end up in distinct
-# object-store keys; inode/session IDs stay distinct just for hygiene).
-# SQLite stores them in ``jfs_counter(name, value)`` with camelCase names;
-# Redis stores them as top-level keys with lowercase names.
-_FORK_COUNTER_NAMES_SQLITE: tuple = ("nextChunk", "nextInode", "nextSession")
-_FORK_COUNTER_NAMES_REDIS: tuple = ("nextchunk", "nextinode", "nextsession")
-
-# JuiceFS counter ceiling. SQLite ``INTEGER`` is signed 64-bit (max 2**63 - 1)
-# and Redis ``INCRBY`` is also signed 64-bit, so the effective ceiling is
-# 2**63 - 1, not 2**64 - 1.
-_COUNTER_MAX = (1 << 63) - 1
-# Minimum offset we'll apply to a counter at fork time. Comfortably exceeds
-# JuiceFS's per-batch allocation (4096 chunk slices) and a generous per-task
-# write rate, so even a forced-small offset still leaves enough room for one
-# more task to allocate without colliding with sibling forks.
-_MIN_FORK_OFFSET = 1 << 32
-
-
 def _random_fork_offset() -> int:
     """Return a random offset in ``[2³², 2³² + 2⁵⁶)`` — the *desired* fork
     offset, before any counter-headroom clamping.
@@ -1119,175 +829,11 @@ def _random_fork_offset() -> int:
     ~4B IDs ahead of the parent — JuiceFS allocates chunk-slice IDs in
     batches of 4096, so this is comfortably more than any realistic burst.
     The 56-bit upper bound keeps successive forks well-clear of uint64
-    overflow under typical use; for deep fork chains
-    :func:`_safe_fork_offset` shrinks the actual applied offset based on the
-    counter's remaining headroom.
+    overflow under typical use; for deep fork chains the backend shrinks the
+    actual applied offset based on the counter's remaining headroom.
     Birthday-collision probability for 10⁶ siblings is on the order of 10⁻⁵.
     """
     return (1 << 32) + secrets.randbits(56)
-
-
-def _safe_fork_offset(current_max: int, desired: int) -> int:
-    """Clamp a desired fork offset so that ``current_max + offset`` stays
-    well below :data:`_COUNTER_MAX` (signed int64).
-
-    The clamp targets ``headroom // 2`` so each successive fork still has
-    half the remaining ID space available — protecting future forks rather
-    than starving them. Raises if even the minimum safe offset
-    (:data:`_MIN_FORK_OFFSET`) would not leave room for one further fork,
-    which means the Volume's allocator space is exhausted and the volume
-    must be re-created.
-    """
-    if desired <= 0:
-        raise ValueError(f"desired offset must be positive, got {desired}")
-    headroom = _COUNTER_MAX - current_max
-    if headroom < _MIN_FORK_OFFSET * 2:
-        raise RuntimeError(
-            f"JuiceFS counter is too close to int64 max (current_max={current_max}); "
-            f"this Volume's fork chain has exhausted its ID space — re-create the volume "
-            f"to reset the allocator."
-        )
-    return min(desired, headroom // 2)
-
-
-def _disjoint_counters_sqlite(db_path: str, offset: int) -> int:
-    """Advance JuiceFS allocator counters in a SQLite metadata index by an
-    offset clamped to the uint64 headroom. Returns the actual offset applied.
-
-    Raises if the schema or counters are missing — silently failing here
-    would let collisions through — or if the allocator space is exhausted.
-    """
-    if offset <= 0:
-        raise ValueError(f"offset must be positive, got {offset}")
-    with sqlite3.connect(db_path) as conn:
-        existing = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        if "jfs_counter" not in existing:
-            raise RuntimeError(f"{db_path} is not a JuiceFS SQLite index (no jfs_counter table)")
-        cur = conn.cursor()
-        current_max = 0
-        for name in _FORK_COUNTER_NAMES_SQLITE:
-            row = cur.execute("SELECT value FROM jfs_counter WHERE name = ?", (name,)).fetchone()
-            if row is None:
-                raise RuntimeError(f"missing counter {name!r} in {db_path}")
-            if row[0] > current_max:
-                current_max = row[0]
-        applied = _safe_fork_offset(current_max, offset)
-        for name in _FORK_COUNTER_NAMES_SQLITE:
-            cur.execute(
-                "UPDATE jfs_counter SET value = value + ? WHERE name = ?",
-                (applied, name),
-            )
-        conn.commit()
-    return applied
-
-
-def _disjoint_counters_redis(rdb_path: str, offset: int, timeout: float = 30.0) -> int:
-    """Advance JuiceFS allocator counters in a Redis RDB file by an offset
-    clamped to the uint64 headroom. Returns the actual offset applied.
-
-    Spawns an ephemeral ``redis-server`` on an OS-assigned port that loads
-    the RDB, applies ``INCRBY`` to each counter, ``SAVE``s, and shuts down.
-    The file is rewritten in place.
-    """
-    if offset <= 0:
-        raise ValueError(f"offset must be positive, got {offset}")
-    rdb = Path(rdb_path)
-    if not rdb.exists():
-        raise RuntimeError(f"{rdb_path} does not exist")
-
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        port = s.getsockname()[1]
-
-    cmd = [
-        "redis-server",
-        "--port",
-        str(port),
-        "--bind",
-        "127.0.0.1",
-        "--save",
-        "",
-        "--appendonly",
-        "no",
-        "--dir",
-        str(rdb.parent),
-        "--dbfilename",
-        rdb.name,
-        "--daemonize",
-        "no",
-    ]
-    proc = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        start_new_session=True,
-    )
-    try:
-        # Wait for PONG.
-        import time
-
-        deadline = time.monotonic() + timeout
-        while True:
-            if proc.poll() is not None:
-                out = proc.stdout.read().decode(errors="replace") if proc.stdout else ""
-                raise RuntimeError(f"ephemeral redis-server exited prematurely (rc={proc.returncode}): {out}")
-            r = subprocess.run(
-                ["redis-cli", "-p", str(port), "ping"],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            if r.returncode == 0 and "PONG" in r.stdout:
-                break
-            if time.monotonic() >= deadline:
-                raise TimeoutError(f"ephemeral redis-server did not become ready within {timeout}s")
-            time.sleep(0.1)
-
-        # Verify the RDB was actually a JuiceFS index — counters must exist.
-        # Also collect current max so we can clamp the offset to remaining headroom.
-        current_max = 0
-        for name in _FORK_COUNTER_NAMES_REDIS:
-            r = subprocess.run(
-                ["redis-cli", "-p", str(port), "GET", name],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            if r.returncode != 0 or r.stdout.strip() in ("", "(nil)"):
-                raise RuntimeError(f"missing counter {name!r} in {rdb_path}")
-            try:
-                v = int(r.stdout.strip())
-            except ValueError as e:
-                raise RuntimeError(f"counter {name!r} in {rdb_path} is non-integer: {r.stdout!r}") from e
-            if v > current_max:
-                current_max = v
-        applied = _safe_fork_offset(current_max, offset)
-        for name in _FORK_COUNTER_NAMES_REDIS:
-            _run_check(["redis-cli", "-p", str(port), "INCRBY", name, str(applied)])
-
-        _run_check(["redis-cli", "-p", str(port), "SAVE"])
-    finally:
-        subprocess.run(
-            ["redis-cli", "-p", str(port), "SHUTDOWN", "NOSAVE"],
-            capture_output=True,
-            check=False,
-        )
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait(5)
-    return applied
-
-
-def _disjoint_fork_counters(index_path: str, engine: str, offset: int) -> int:
-    """Dispatch ``_disjoint_counters_{sqlite,redis}`` by ``engine``. Returns
-    the offset actually applied (may be smaller than ``offset`` when the
-    counter space is nearly exhausted).
-    """
-    if engine == "redis":
-        return _disjoint_counters_redis(index_path, offset)
-    return _disjoint_counters_sqlite(index_path, offset)
 
 
 def volume_image(
