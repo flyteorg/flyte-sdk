@@ -856,13 +856,29 @@ impl CoreBaseController {
         informer.submit_action(action, done_tx).await?;
 
         if is_trace {
-            // Trace actions are recorded server-side rather than executed, so the server
-            // may not echo an ActionUpdate back. Bound the wait and fire a local completion
-            // on timeout so the caller can never hang indefinitely.
-            let timeout_secs: f64 = std::env::var("_F_TRACE_COMPLETION_TIMEOUT")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(60.0);
+            // Server may not echo an ActionUpdate for trace actions, so bound the wait
+            // and fire a local completion on timeout to avoid hanging the caller.
+            const DEFAULT_SECS: f64 = 60.0;
+            let timeout_secs = match std::env::var("_F_TRACE_COMPLETION_TIMEOUT") {
+                Err(_) => DEFAULT_SECS,
+                Ok(raw) => {
+                    let parsed = raw.parse::<f64>().map_err(|e| {
+                        ControllerError::BadContext(format!(
+                            "Invalid _F_TRACE_COMPLETION_TIMEOUT={:?}: {}",
+                            raw, e
+                        ))
+                    })?;
+                    if parsed.is_finite() && parsed >= 0.0 {
+                        parsed
+                    } else {
+                        debug!(
+                            "_F_TRACE_COMPLETION_TIMEOUT={:?} not a valid duration, defaulting to {}s",
+                            raw, DEFAULT_SECS
+                        );
+                        DEFAULT_SECS
+                    }
+                }
+            };
             match timeout(Duration::from_secs_f64(timeout_secs), done_rx).await {
                 Ok(Ok(())) => {}
                 Ok(Err(_)) => {
