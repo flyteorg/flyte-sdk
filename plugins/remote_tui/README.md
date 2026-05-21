@@ -16,19 +16,25 @@ Requires a configured Flyte endpoint (`flyte create config --endpoint ...`).
 
 ```bash
 flyte start remote-tui
-flyte start remote-tui --project my-project --domain development
+flyte start remote-tui --config /path/to/config.yaml
 ```
 
 See [REMOTE_TUI_PLUGIN.md](./REMOTE_TUI_PLUGIN.md) for the full product spec.
+
+## Navigation (Devbox UI layout)
+
+1. **Projects** — list all projects; `enter` opens a project.
+2. **Project workspace** — sidebar: Runs, Triggers, Tasks, Apps; `enter` opens detail.
+3. **Run detail** — action tree, inputs/outputs, logs.
 
 ## Keyboard
 
 | Key | Action |
 |-----|--------|
-| `1`–`4` | Runs / Tasks / Apps / Triggers |
+| `enter` | Open project / open detail |
+| `escape` | Back (detail → project, project → projects) |
+| `1`–`4` | Runs / Triggers / Tasks / Apps (inside a project) |
 | `r` | Refresh list |
-| `enter` | Open detail |
-| `escape` | Back |
 | `d` / `l` | Details / Logs (run detail) |
-| `a` | Abort run (when terminal confirmation applies) |
+| `a` | Abort run |
 | `q` | Quit |

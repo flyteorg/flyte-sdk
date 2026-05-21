@@ -18,21 +18,35 @@ Footer {{
     background: {_FLYTE_PURPLE};
     color: {_FLYTE_PURPLE_LIGHT};
 }}
-#sidebar {{
-    width: 22;
-    min-width: 18;
+#project-sidebar {{
+    width: 16;
+    min-width: 14;
     border: solid {_FLYTE_PURPLE};
     border-title-color: {_FLYTE_PURPLE_LIGHT};
     background: {_FLYTE_PURPLE_DARK};
     color: {_FLYTE_PURPLE_LIGHT};
     padding: 1 0;
+    height: 1fr;
 }}
-#sidebar ListItem.-highlight {{
+#project-sidebar ListItem.-highlight {{
     background: {_FLYTE_PURPLE};
     color: {_FLYTE_PURPLE_LIGHT};
 }}
-#main-pane {{
+#hub-content {{
     width: 1fr;
+    height: 1fr;
+}}
+#section-title {{
+    padding: 0 1;
+    color: {_FLYTE_PURPLE_LIGHT};
+    text-style: bold;
+    height: 1;
+}}
+#section-filter {{
+    width: 1fr;
+}}
+ProjectHubScreen Horizontal {{
+    height: 1fr;
 }}
 RunDetailScreen Horizontal {{
     height: 1fr;
