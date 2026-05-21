@@ -568,6 +568,32 @@ async def test_zero_floats():
     assert await TypeEngine.to_python_value(l1, float) == 0
 
 
+def test_dataclass_literal_type_has_structure_tag():
+    @dataclass
+    class InputsWithDefaults:
+        message: str = "hello"
+        font: str = "standard"
+
+    transformer = DataclassTransformer()
+    lt = TypeEngine.to_literal_type(InputsWithDefaults)
+    assert lt.HasField("structure")
+    assert lt.structure.tag == transformer.name
+    guessed = transformer.guess_python_type(lt)
+    from mashumaro.codecs.json import JSONDecoder
+
+    decoded = JSONDecoder(guessed).decode('{"message": "hi"}')
+    assert decoded.message == "hi"
+    assert decoded.font == "standard"
+
+
+def test_dataclass_guess_python_type_rejects_pydantic_tagged_literal():
+    """DataclassTransformer must not claim Pydantic-owned STRUCT literals."""
+    transformer = DataclassTransformer()
+    lt = TypeEngine.to_literal_type(_SimplePydanticModel)
+    with pytest.raises(ValueError):
+        transformer.guess_python_type(lt)
+
+
 def test_dataclass_transformer_with_dataclassjsonmixin():
     @dataclass
     class InnerStruct(DataClassJSONMixin):
@@ -2518,13 +2544,15 @@ def test_pydantic_guess_python_type_with_tag():
     pytest.fail("No variant with Pydantic Transformer tag found")
 
 
-def test_pydantic_guess_python_type_without_tag():
-    """PydanticTransformer.guess_python_type should NOT match a bare STRUCT (no tag)."""
+def test_pydantic_guess_python_type_with_structure_tag():
+    """Standalone Pydantic literal types carry the transformer tag for remote type guessing."""
     transformer = PydanticTransformer()
-    # A standalone Pydantic literal type has no structure.tag
     lt = TypeEngine.to_literal_type(_SimplePydanticModel)
-    with pytest.raises(ValueError):
-        transformer.guess_python_type(lt)
+    assert lt.HasField("structure")
+    assert lt.structure.tag == transformer.name
+    guessed = transformer.guess_python_type(lt)
+    assert issubclass(guessed, BaseModel)
+    assert guessed.__name__ == "_SimplePydanticModel"
 
 
 @pytest.mark.asyncio

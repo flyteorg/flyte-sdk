@@ -23,17 +23,22 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
+from dataclasses import dataclass
 from typing import Any
 from unittest.mock import patch
 
+import pydantic
 import pytest
 from click.testing import CliRunner
+from pydantic import Field
 
 import flyte.remote
-from flyte.cli._params import to_click_option
+from flyte.cli._params import JsonParamType, to_click_option
 from flyte.cli._run import RunArguments, RunRemoteTaskCommand, run
 from flyte.models import NativeInterface
 from flyte.types import TypeEngine
+from flyte.types._type_engine import convert_mashumaro_json_schema_to_python_class
 
 # ---------------------------------------------------------------------------
 # Helpers to build a fake remote `TaskDetails`-like object with real defaults
@@ -243,3 +248,66 @@ async def test_convert_from_native_to_inputs_handles_sentinel_in_kwargs(sentinel
     literals = {lit.name: lit.value for lit in result.proto_inputs.literals}
     assert "font" in literals
     assert literals["font"].scalar.primitive.string_value == "standard"
+
+
+class HelloFlyteInputManifest(pydantic.BaseModel):
+    message: str = Field(default="hello, flyte")
+    font: str = Field(default="standard")
+
+
+def test_guessed_pydantic_type_accepts_partial_json():
+    """
+    Remote tasks guess Pydantic inputs as dynamic dataclasses from JSON schema metadata.
+    Field-level defaults must be applied so partial ``--inputs`` JSON validates.
+    """
+    lt = TypeEngine.to_literal_type(HelloFlyteInputManifest)
+    guessed = TypeEngine.guess_python_type(lt)
+    param_type = JsonParamType(guessed, default_value=HelloFlyteInputManifest())
+    result = param_type.convert(json.dumps({"message": "hello, niels"}), None, None)
+    assert result.message == "hello, niels"
+    assert result.font == "standard"
+
+
+def test_json_param_type_merges_partial_with_task_default():
+    """Partial object CLI values merge with the task-arg default before validation."""
+    param_type = JsonParamType(HelloFlyteInputManifest, default_value=HelloFlyteInputManifest())
+    result = param_type.convert(
+        json.dumps({"message": "hello, niels"}),
+        None,
+        None,
+    )
+    assert result.message == "hello, niels"
+    assert result.font == "standard"
+
+
+def test_convert_mashumaro_schema_honors_pydantic_field_defaults():
+    schema = HelloFlyteInputManifest.model_json_schema()
+    cls = convert_mashumaro_json_schema_to_python_class(schema, "HelloFlyteInputManifest")
+    from mashumaro.codecs.json import JSONDecoder
+
+    decoded = JSONDecoder(cls).decode(json.dumps({"message": "hello, niels"}))
+    assert decoded.message == "hello, niels"
+    assert decoded.font == "standard"
+
+
+@dataclass
+class DataclassInput:
+    message: str = "hello"
+    font: str = "standard"
+
+
+def test_guessed_dataclass_type_accepts_partial_json():
+    """Remote dataclass inputs must honor JSON-schema field defaults on partial ``--inputs``."""
+    lt = TypeEngine.to_literal_type(DataclassInput)
+    guessed = TypeEngine.guess_python_type(lt)
+    param_type = JsonParamType(guessed, default_value=DataclassInput())
+    result = param_type.convert(json.dumps({"message": "hi"}), None, None)
+    assert result.message == "hi"
+    assert result.font == "standard"
+
+
+def test_json_param_type_merges_partial_with_dataclass_task_default():
+    param_type = JsonParamType(DataclassInput, default_value=DataclassInput())
+    result = param_type.convert(json.dumps({"message": "hi"}), None, None)
+    assert result.message == "hi"
+    assert result.font == "standard"
