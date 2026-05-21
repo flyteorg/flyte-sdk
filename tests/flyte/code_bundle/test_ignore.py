@@ -695,9 +695,7 @@ def test_flyteignore_anchored_pattern_is_root_only():
 
         ignore = FlyteIgnore(root)
         assert ignore.is_ignored(root / "secrets.json"), "anchored pattern must match root"
-        assert not ignore.is_ignored(root / "src" / "secrets.json"), (
-            "anchored pattern must NOT match nested"
-        )
+        assert not ignore.is_ignored(root / "src" / "secrets.json"), "anchored pattern must NOT match nested"
 
 
 def test_flyteignore_negation_preserved():
