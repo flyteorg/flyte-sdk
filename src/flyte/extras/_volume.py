@@ -42,6 +42,7 @@ import sqlite3
 import subprocess
 import tempfile
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar, Dict, Optional, Set
 
@@ -67,13 +68,32 @@ _CLIENT_VERSION = "1.3.1"
 _REDIS_PORT = 6379
 
 
+@dataclass(frozen=True)
+class _MountConfig:
+    meta_dir: str
+    redis_port: Optional[int]
+    cache_dir: str
+    writeback: bool
+    upload_delay: Optional[str]
+    max_uploads: int
+    attr_cache: float
+    entry_cache: float
+    dir_entry_cache: float
+
+
+@dataclass(frozen=True)
+class _RedisState:
+    proc: subprocess.Popen
+    port: int
+
+
 def _index_filename(engine: str) -> str:
     return _REDIS_INDEX_FILENAME if engine == "redis" else _SQLITE_INDEX_FILENAME
 
 
-def _meta_url(meta_dir: str, engine: str) -> str:
+def _meta_url(meta_dir: str, engine: str, *, redis_port: Optional[int] = None) -> str:
     if engine == "redis":
-        return f"redis://127.0.0.1:{_REDIS_PORT}/0"
+        return f"redis://127.0.0.1:{redis_port or _REDIS_PORT}/0"
     return f"sqlite3://{Path(meta_dir) / _SQLITE_INDEX_FILENAME}"
 
 
@@ -113,8 +133,11 @@ class Volume(BaseModel):
 
     # Track active mounts so commit() can wait on the daemon.
     _live_procs: ClassVar[Dict[str, subprocess.Popen]] = {}
+    # Original mount options, keyed by mount path, so live fork can remount
+    # after a flush-only unmount without changing caller-selected tuning.
+    _live_mounts: ClassVar[Dict[str, _MountConfig]] = {}
     # Track in-process redis-server daemons, keyed by meta_dir.
-    _live_redis: ClassVar[Dict[str, subprocess.Popen]] = {}
+    _live_redis: ClassVar[Dict[str, _RedisState]] = {}
     # meta_dirs that currently have a live engine + daemon. Used by fork()
     # to decide whether to use the live flush-and-upload path or the cold
     # File.copy_to path. Populated by mount(), cleared by commit().
@@ -223,56 +246,95 @@ class Volume(BaseModel):
             # happen in practice; tasks get fresh pods).
             index_path.unlink()
 
-        if engine == "redis":
-            # redis-server picks up dump.rdb from the working dir at startup.
-            redis_proc = await _start_redis(meta_dir)
-            type(self)._live_redis[meta_dir] = redis_proc
+        redis_state: Optional[_RedisState] = None
+        try:
+            redis_port: Optional[int] = None
+            if engine == "redis":
+                # redis-server picks up dump.rdb from the working dir at startup.
+                redis_state = await _start_redis(meta_dir)
+                redis_port = redis_state.port
+                type(self)._live_redis[meta_dir] = redis_state
 
-        meta_url = _meta_url(meta_dir, engine)
-        client_bucket = _client_bucket_uri(self.bucket, self.storage)
-        if self.index is None:
+            meta_url = _meta_url(meta_dir, engine, redis_port=redis_port)
+            client_bucket = _client_bucket_uri(self.bucket, self.storage)
+            if self.index is None:
+                _logger.info(
+                    "[Volume.mount] formatting fresh volume name=%s bucket=%s storage=%s",
+                    self.name,
+                    client_bucket,
+                    self.storage,
+                )
+                await asyncio.to_thread(
+                    _run_check,
+                    [
+                        _CLIENT_BINARY,
+                        "format",
+                        "--storage",
+                        self.storage,
+                        "--bucket",
+                        client_bucket,
+                        meta_url,
+                        self.name,
+                    ],
+                )
+
+            mount_config = _MountConfig(
+                meta_dir=meta_dir,
+                redis_port=redis_port,
+                cache_dir=cache_dir,
+                writeback=writeback,
+                upload_delay=upload_delay,
+                max_uploads=max_uploads,
+                attr_cache=attr_cache,
+                entry_cache=entry_cache,
+                dir_entry_cache=dir_entry_cache,
+            )
             _logger.info(
-                "[Volume.mount] formatting fresh volume name=%s bucket=%s storage=%s",
-                self.name,
-                client_bucket,
-                self.storage,
+                "[Volume.mount] mounting at %s (writeback=%s upload_delay=%s "
+                "max_uploads=%d attr_cache=%s entry_cache=%s dir_entry_cache=%s)",
+                mount_path,
+                writeback,
+                upload_delay,
+                max_uploads,
+                attr_cache,
+                entry_cache,
+                dir_entry_cache,
             )
-            await asyncio.to_thread(
-                _run_check,
-                [_CLIENT_BINARY, "format", "--storage", self.storage, "--bucket", client_bucket, meta_url, self.name],
-            )
+            await self._start_mount(mount_path=mount_path, config=mount_config, timeout=timeout)
+            type(self)._live_meta.add(meta_dir)
+            _logger.info("[Volume.mount] %s is now a FUSE mount", mount_path)
+        except Exception:
+            type(self)._live_meta.discard(meta_dir)
+            type(self)._live_procs.pop(mount_path, None)
+            type(self)._live_mounts.pop(mount_path, None)
+            if engine == "redis":
+                state = type(self)._live_redis.pop(meta_dir, None) or redis_state
+                await asyncio.to_thread(_stop_redis, state, timeout)
+            raise
 
+    async def _start_mount(self, *, mount_path: str, config: _MountConfig, timeout: float) -> None:
+        """Start the volume client against an already-prepared metadata engine."""
+        engine = self._engine()
         mount_cmd = [
             _CLIENT_BINARY,
             "mount",
             "--cache-dir",
-            cache_dir,
+            config.cache_dir,
             "--max-uploads",
-            str(max_uploads),
+            str(config.max_uploads),
             "--attr-cache",
-            str(attr_cache),
+            str(config.attr_cache),
             "--entry-cache",
-            str(entry_cache),
+            str(config.entry_cache),
             "--dir-entry-cache",
-            str(dir_entry_cache),
+            str(config.dir_entry_cache),
         ]
-        if writeback:
+        if config.writeback:
             mount_cmd.append("--writeback")
-            if upload_delay:
-                mount_cmd += ["--upload-delay", upload_delay]
-        mount_cmd += [meta_url, mount_path]
+            if config.upload_delay:
+                mount_cmd += ["--upload-delay", config.upload_delay]
+        mount_cmd += [_meta_url(config.meta_dir, engine, redis_port=config.redis_port), mount_path]
 
-        _logger.info(
-            "[Volume.mount] mounting at %s (writeback=%s upload_delay=%s "
-            "max_uploads=%d attr_cache=%s entry_cache=%s dir_entry_cache=%s)",
-            mount_path,
-            writeback,
-            upload_delay,
-            max_uploads,
-            attr_cache,
-            entry_cache,
-            dir_entry_cache,
-        )
         proc = subprocess.Popen(  # noqa: ASYNC220 - long-lived daemon held in a class-level dict
             mount_cmd,
             stdout=subprocess.PIPE,
@@ -280,20 +342,24 @@ class Volume(BaseModel):
             start_new_session=True,
         )
         type(self)._live_procs[mount_path] = proc
+        type(self)._live_mounts[mount_path] = config
 
         deadline = asyncio.get_event_loop().time() + timeout
         while True:
             if proc.poll() is not None:
+                type(self)._live_procs.pop(mount_path, None)
+                type(self)._live_mounts.pop(mount_path, None)
                 out = proc.stdout.read().decode(errors="replace") if proc.stdout else ""
                 raise RuntimeError(f"volume client exited prematurely (rc={proc.returncode}): {out}")
             if _is_fuse_mount(mount_path):
-                break
+                return
             if asyncio.get_event_loop().time() >= deadline:
+                type(self)._live_procs.pop(mount_path, None)
+                type(self)._live_mounts.pop(mount_path, None)
+                proc.kill()
+                await asyncio.to_thread(proc.wait, 5)
                 raise TimeoutError(f"mount at {mount_path} did not become a FUSE mountpoint within {timeout}s")
             await asyncio.sleep(0.5)
-
-        type(self)._live_meta.add(meta_dir)
-        _logger.info("[Volume.mount] %s is now a FUSE mount", mount_path)
 
     async def commit(
         self,
@@ -308,7 +374,7 @@ class Volume(BaseModel):
         """
         engine = self._engine()
         # Flush page cache so any unfsync'd writes hit the filesystem first.
-        await asyncio.to_thread(os.sync)
+        await asyncio.to_thread(_sync_filesystem, mount_path)
 
         meta = Path(meta_dir)
         index_path = meta / _index_filename(engine)
@@ -318,6 +384,7 @@ class Volume(BaseModel):
         await asyncio.to_thread(_run_check, [_CLIENT_BINARY, "umount", mount_path])
 
         proc = type(self)._live_procs.pop(mount_path, None)
+        type(self)._live_mounts.pop(mount_path, None)
         if proc is not None:
             try:
                 await asyncio.to_thread(proc.wait, timeout)
@@ -330,10 +397,11 @@ class Volume(BaseModel):
             # Flush Redis state to dump.rdb, then query stats while the daemon
             # is still alive, then shut it down. SHUTDOWN NOSAVE prevents a
             # second redundant save on exit.
-            await asyncio.to_thread(_redis_save)
-            used_bytes, inode_count = await _query_volume_stats(meta_dir, engine)
-            redis_proc = type(self)._live_redis.pop(meta_dir, None)
-            await asyncio.to_thread(_stop_redis, redis_proc, timeout)
+            redis_state = type(self)._live_redis.pop(meta_dir, None)
+            redis_port = redis_state.port if redis_state is not None else _REDIS_PORT
+            await asyncio.to_thread(_redis_save, redis_port)
+            used_bytes, inode_count = await _query_volume_stats(meta_dir, engine, redis_port=redis_port)
+            await asyncio.to_thread(_stop_redis, redis_state, timeout)
         else:
             # Force WAL pages back into the main .db before uploading.
             await asyncio.to_thread(_wal_checkpoint, str(index_path))
@@ -397,9 +465,11 @@ class Volume(BaseModel):
             # existence before the flush. WAL checkpoint on SQLite is a
             # no-op against a missing file but the existence check below
             # will catch that case explicitly.
-            await asyncio.to_thread(os.sync)
+            await asyncio.to_thread(_sync_filesystem, meta_dir)
             if engine == "redis":
-                await asyncio.to_thread(_redis_save)
+                redis_state = type(self)._live_redis.get(meta_dir)
+                redis_port = redis_state.port if redis_state is not None else _REDIS_PORT
+                await asyncio.to_thread(_redis_save, redis_port)
             else:
                 if not src.exists():
                     raise RuntimeError(f"Cannot snapshot: no live index at {src}. Call mount() first.")
@@ -483,7 +553,9 @@ class Volume(BaseModel):
         self,
         name: str,
         *,
+        mount_path: str = _DEFAULT_MOUNT_PATH,
         meta_dir: str = _DEFAULT_META_DIR,
+        timeout: float = 60.0,
     ) -> "Volume":
         """Snapshot the current metadata index and return a new ``Volume``
         that points at the snapshot.
@@ -521,13 +593,20 @@ class Volume(BaseModel):
         _logger.info("[Volume.fork] disjoint counter offset=%d (live=%s)", offset, live)
 
         if live:
-            new_index, index_bytes = await self._snapshot_and_upload_index(
-                meta_dir=meta_dir,
-                tmp_prefix="vol-fork-",
-                flush_live=True,
-                counter_bump=offset,
-            )
-            used_bytes, inode_count = await _query_volume_stats(meta_dir, engine)
+            mount_config = await self._flush_live_mount(mount_path=mount_path, meta_dir=meta_dir, timeout=timeout)
+            try:
+                new_index, index_bytes = await self._snapshot_and_upload_index(
+                    meta_dir=meta_dir,
+                    tmp_prefix="vol-fork-",
+                    flush_live=True,
+                    counter_bump=offset,
+                )
+                redis_state = type(self)._live_redis.get(meta_dir)
+                redis_port = redis_state.port if redis_state is not None else None
+                used_bytes, inode_count = await _query_volume_stats(meta_dir, engine, redis_port=redis_port)
+            finally:
+                await self._start_mount(mount_path=mount_path, config=mount_config, timeout=timeout)
+                type(self)._live_meta.add(meta_dir)
         else:
             if self.index is None:
                 raise RuntimeError("Cannot fork: Volume is not mounted and has no index to fork from.")
@@ -570,6 +649,28 @@ class Volume(BaseModel):
             inode_count=inode_count,
             index_bytes=index_bytes,
         )
+
+    async def _flush_live_mount(self, *, mount_path: str, meta_dir: str, timeout: float) -> _MountConfig:
+        """Drain writeback chunks by unmounting with --flush."""
+        config = type(self)._live_mounts.get(mount_path)
+        if config is None or config.meta_dir != meta_dir:
+            raise RuntimeError(f"Cannot flush live Volume: {mount_path} is not registered for meta_dir={meta_dir}.")
+
+        _logger.info("[Volume.fork] flushing live mount %s before snapshot", mount_path)
+        await asyncio.to_thread(_run_check, [_CLIENT_BINARY, "umount", "--flush", mount_path])
+
+        proc = type(self)._live_procs.pop(mount_path, None)
+        type(self)._live_mounts.pop(mount_path, None)
+        type(self)._live_meta.discard(meta_dir)
+        if proc is not None:
+            try:
+                await asyncio.to_thread(proc.wait, timeout)
+            except subprocess.TimeoutExpired:
+                _logger.warning("[Volume.fork] client didn't exit in %ss after flush; killing", timeout)
+                proc.kill()
+                await asyncio.to_thread(proc.wait, 5)
+
+        return config
 
     async def commit_inplace(
         self,
@@ -663,14 +764,14 @@ class Volume(BaseModel):
         with tempfile.NamedTemporaryFile(prefix="vol-migrate-", suffix=".json", delete=False) as f:
             dump_path = f.name
 
-        src_redis: Optional[subprocess.Popen] = None
-        new_redis: Optional[subprocess.Popen] = None
+        src_redis: Optional[_RedisState] = None
+        new_redis: Optional[_RedisState] = None
         cleanup_paths: list[str] = [dump_path]
         try:
             if src_engine == "redis":
                 src_redis = await _start_redis(str(src_meta))
 
-            src_meta_url = _meta_url(str(src_meta), src_engine)
+            src_meta_url = _meta_url(str(src_meta), src_engine, redis_port=src_redis.port if src_redis else None)
             _logger.info("[Volume.migrate_metadata_engine] dump %s -> %s", src_meta_url, dump_path)
             await asyncio.to_thread(_run_check, [_CLIENT_BINARY, "dump", src_meta_url, dump_path])
 
@@ -682,7 +783,7 @@ class Volume(BaseModel):
             if new_engine == "redis":
                 new_redis = await _start_redis(str(new_meta))
 
-            new_meta_url = _meta_url(str(new_meta), new_engine)
+            new_meta_url = _meta_url(str(new_meta), new_engine, redis_port=new_redis.port if new_redis else None)
             _logger.info("[Volume.migrate_metadata_engine] load %s <- %s", new_meta_url, dump_path)
             await asyncio.to_thread(_run_check, [_CLIENT_BINARY, "load", new_meta_url, dump_path])
 
@@ -690,7 +791,7 @@ class Volume(BaseModel):
             if new_engine == "redis":
                 # Flush the loaded namespace to dump.rdb and stop the daemon
                 # so we get a stable file to snapshot.
-                await asyncio.to_thread(_redis_save)
+                await asyncio.to_thread(_redis_save, new_redis.port if new_redis else _REDIS_PORT)
                 _stop_redis(new_redis, timeout=10.0)
                 new_redis = None
             else:
@@ -793,7 +894,9 @@ def _default_bucket() -> str:
     return f"{base}/{project}/{domain}/volumes"
 
 
-async def _query_volume_stats(meta_dir: str, engine: str) -> tuple[Optional[int], Optional[int]]:
+async def _query_volume_stats(
+    meta_dir: str, engine: str, *, redis_port: Optional[int] = None
+) -> tuple[Optional[int], Optional[int]]:
     """Best-effort: return ``(used_bytes, inode_count)`` for the volume backed
     by ``meta_dir`` / ``engine``. Shells out to ``juicefs status`` and parses
     the JSON. Returns ``(None, None)`` on any failure so commit/fork are never
@@ -805,7 +908,7 @@ async def _query_volume_stats(meta_dir: str, engine: str) -> tuple[Optional[int]
     """
     import json
 
-    meta_url = _meta_url(meta_dir, engine)
+    meta_url = _meta_url(meta_dir, engine, redis_port=redis_port)
     try:
         r = await asyncio.to_thread(
             subprocess.run,
@@ -867,7 +970,36 @@ def _is_fuse_mount(path: str) -> bool:
     return False
 
 
-async def _start_redis(meta_dir: str, timeout: float = 30.0) -> subprocess.Popen:
+def _sync_filesystem(path: str) -> None:
+    """Flush the filesystem containing path, falling back to process-wide sync.
+
+    Linux exposes syncfs(2), which scopes the flush to one mounted filesystem.
+    Python does not expose it on every platform, so retain os.sync() as the
+    compatibility fallback.
+    """
+    syncfs = getattr(os, "syncfs", None)
+    if syncfs is not None:
+        fd: Optional[int] = None
+        try:
+            fd = os.open(path, os.O_RDONLY)
+            syncfs(fd)
+            return
+        except OSError:
+            pass
+        finally:
+            if fd is not None:
+                os.close(fd)
+
+    os.sync()
+
+
+def _free_tcp_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return int(s.getsockname()[1])
+
+
+async def _start_redis(meta_dir: str, timeout: float = 30.0, port: Optional[int] = None) -> _RedisState:
     """Spawn an in-process ``redis-server`` rooted at ``meta_dir``.
 
     Redis is configured with auto-save disabled (``--save ""``) and AOF off;
@@ -875,10 +1007,11 @@ async def _start_redis(meta_dir: str, timeout: float = 30.0) -> subprocess.Popen
     ``redis-cli SAVE``. If ``dump.rdb`` already exists in ``meta_dir``,
     redis-server loads it during startup.
     """
+    port = port or _free_tcp_port()
     cmd = [
         "redis-server",
         "--port",
-        str(_REDIS_PORT),
+        str(port),
         "--bind",
         "127.0.0.1",
         "--save",
@@ -907,42 +1040,42 @@ async def _start_redis(meta_dir: str, timeout: float = 30.0) -> subprocess.Popen
             raise RuntimeError(f"redis-server exited prematurely (rc={proc.returncode}): {out}")
         r = await asyncio.to_thread(
             subprocess.run,
-            ["redis-cli", "-p", str(_REDIS_PORT), "ping"],
+            ["redis-cli", "-p", str(port), "ping"],
             capture_output=True,
             text=True,
             check=False,
         )
         if r.returncode == 0 and "PONG" in r.stdout:
-            _logger.info("[Volume.mount] redis-server ready")
-            return proc
+            _logger.info("[Volume.mount] redis-server ready on port %d", port)
+            return _RedisState(proc=proc, port=port)
         if asyncio.get_event_loop().time() >= deadline:
             raise TimeoutError(f"redis-server did not become ready within {timeout}s")
         await asyncio.sleep(0.2)
 
 
-def _redis_save() -> None:
+def _redis_save(port: int = _REDIS_PORT) -> None:
     """Trigger a synchronous RDB save."""
-    _run_check(["redis-cli", "-p", str(_REDIS_PORT), "SAVE"])
+    _run_check(["redis-cli", "-p", str(port), "SAVE"])
 
 
-def _stop_redis(proc: Optional[subprocess.Popen], timeout: float) -> None:
+def _stop_redis(state: Optional[_RedisState], timeout: float) -> None:
     """Shut down a redis-server cleanly. Caller must have already saved if
     they want the in-memory state persisted.
     """
-    if proc is None:
+    if state is None:
         return
     # SHUTDOWN NOSAVE — we drove persistence ourselves via SAVE.
     subprocess.run(
-        ["redis-cli", "-p", str(_REDIS_PORT), "SHUTDOWN", "NOSAVE"],
+        ["redis-cli", "-p", str(state.port), "SHUTDOWN", "NOSAVE"],
         capture_output=True,
         check=False,
     )
     try:
-        proc.wait(timeout=timeout)
+        state.proc.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
         _logger.warning("[Volume.commit] redis-server didn't exit in %ss; killing", timeout)
-        proc.kill()
-        proc.wait(5)
+        state.proc.kill()
+        state.proc.wait(5)
 
 
 def _wal_checkpoint(db_path: str) -> None:

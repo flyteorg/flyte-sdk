@@ -21,6 +21,7 @@ from typing import Optional
 
 import pytest
 
+import flyte.extras._volume as volume_mod
 from flyte.extras._volume import (
     _COUNTER_MAX,
     _MIN_FORK_OFFSET,
@@ -37,6 +38,7 @@ from flyte.extras._volume import (
     _safe_fork_offset,
     _wal_checkpoint,
 )
+from flyte.io._file import File
 
 
 def _snapshot_sqlite_db(src_db: Path, dst_db: Path) -> None:
@@ -471,6 +473,22 @@ class TestSmallHelpers:
         monkeypatch.setattr("builtins.open", boom)
         assert _is_fuse_mount("/anything") is False
 
+    def test_sync_filesystem_prefers_syncfs(self, tmp_path, monkeypatch):
+        calls = []
+
+        def fake_syncfs(fd):
+            calls.append(("syncfs", fd))
+
+        def fake_sync():
+            calls.append(("sync",))
+
+        monkeypatch.setattr(volume_mod.os, "syncfs", fake_syncfs, raising=False)
+        monkeypatch.setattr(volume_mod.os, "sync", fake_sync)
+
+        volume_mod._sync_filesystem(str(tmp_path))
+
+        assert [call[0] for call in calls] == ["syncfs"]
+
 
 class TestClientBucketUri:
     def test_s3_uri_translates_to_https(self, monkeypatch):
@@ -640,6 +658,159 @@ class TestVolumeModel:
         as_json = v.model_dump_json()
         v2 = Volume.model_validate_json(as_json)
         assert v2 == v
+
+
+class TestVolumeFork:
+    @pytest.mark.asyncio
+    async def test_live_writeback_fork_flushes_mount_before_snapshot(self, monkeypatch):
+        calls = []
+
+        class _Proc:
+            def wait(self, timeout=None):
+                calls.append(("wait", timeout))
+                return 0
+
+        async def fake_snapshot(self, *, meta_dir, tmp_prefix, flush_live=True, counter_bump=None):
+            calls.append(("snapshot", meta_dir, flush_live, counter_bump))
+            return File(path="s3://bucket/new-index.db"), 12
+
+        async def fake_stats(meta_dir, engine, **kwargs):
+            return 1, 2
+
+        def fake_run_check(cmd):
+            calls.append(tuple(cmd))
+
+        async def fake_start_mount(self, *, mount_path, config, timeout):
+            calls.append(("mount", mount_path, config.meta_dir, timeout))
+
+        meta_dir = "/tmp/flyte-volume-meta"
+        mount_path = "/workspace"
+        monkeypatch.setattr(Volume, "_live_meta", {meta_dir})
+        monkeypatch.setattr(Volume, "_live_procs", {mount_path: _Proc()})
+        monkeypatch.setattr(
+            Volume,
+            "_live_mounts",
+            {
+                mount_path: volume_mod._MountConfig(
+                    meta_dir=meta_dir,
+                    redis_port=None,
+                    cache_dir="/tmp/flyte-volume-cache",
+                    writeback=True,
+                    upload_delay=None,
+                    max_uploads=50,
+                    attr_cache=60.0,
+                    entry_cache=60.0,
+                    dir_entry_cache=60.0,
+                )
+            },
+        )
+        monkeypatch.setattr(volume_mod, "_random_fork_offset", lambda: 42)
+        monkeypatch.setattr(volume_mod, "_run_check", fake_run_check)
+        monkeypatch.setattr(volume_mod, "_query_volume_stats", fake_stats)
+        monkeypatch.setattr(Volume, "_snapshot_and_upload_index", fake_snapshot)
+        monkeypatch.setattr(Volume, "_start_mount", fake_start_mount)
+
+        vol = Volume(
+            name="parent",
+            bucket="s3://bucket/volumes",
+            index=File(path="s3://bucket/old-index.db"),
+            metadata_engine="sqlite",
+        )
+
+        await vol.fork("child", meta_dir=meta_dir, mount_path=mount_path)
+
+        assert ("juicefs", "umount", "--flush", mount_path) in calls
+        assert calls.index(("juicefs", "umount", "--flush", mount_path)) < calls.index(("snapshot", meta_dir, True, 42))
+        assert calls.index(("snapshot", meta_dir, True, 42)) < calls.index(("mount", mount_path, meta_dir, 60.0))
+
+
+class TestVolumeMount:
+    @pytest.mark.asyncio
+    async def test_redis_mount_uses_started_redis_port(self, tmp_path, monkeypatch):
+        calls = []
+        redis_port = 43123
+
+        class _Proc:
+            stdout = None
+
+            def poll(self):
+                return None
+
+        class _RedisState:
+            port = redis_port
+            proc = _Proc()
+
+        async def fake_start_redis(meta_dir):
+            calls.append(("redis", meta_dir))
+            return _RedisState()
+
+        def fake_run_check(cmd):
+            calls.append(tuple(cmd))
+
+        def fake_popen(cmd, **kwargs):
+            calls.append(tuple(cmd))
+            return _Proc()
+
+        monkeypatch.setattr(Volume, "_live_meta", set())
+        monkeypatch.setattr(Volume, "_live_procs", {})
+        monkeypatch.setattr(Volume, "_live_mounts", {})
+        monkeypatch.setattr(Volume, "_live_redis", {})
+        monkeypatch.setattr(volume_mod, "_start_redis", fake_start_redis)
+        monkeypatch.setattr(volume_mod, "_run_check", fake_run_check)
+        monkeypatch.setattr(volume_mod, "_is_fuse_mount", lambda path: True)
+        monkeypatch.setattr(volume_mod.subprocess, "Popen", fake_popen)
+
+        meta_dir = str(tmp_path / "meta")
+        mount_path = str(tmp_path / "mnt")
+        cache_dir = str(tmp_path / "cache")
+        vol = Volume.empty("redis-vol", bucket="s3://bucket/volumes", metadata_engine="redis")
+
+        await vol.mount(meta_dir=meta_dir, mount_path=mount_path, cache_dir=cache_dir)
+
+        expected_meta_url = f"redis://127.0.0.1:{redis_port}/0"
+        assert any(call[0:2] == ("juicefs", "format") and expected_meta_url in call for call in calls)
+        assert any(call[0:2] == ("juicefs", "mount") and expected_meta_url in call for call in calls)
+
+    @pytest.mark.asyncio
+    async def test_mount_failure_stops_started_redis(self, tmp_path, monkeypatch):
+        calls = []
+
+        class _Proc:
+            stdout = None
+
+            def poll(self):
+                return None
+
+        redis_state = volume_mod._RedisState(proc=_Proc(), port=43124)
+
+        async def fake_start_redis(meta_dir):
+            calls.append(("redis", meta_dir))
+            return redis_state
+
+        def fake_run_check(cmd):
+            calls.append(tuple(cmd))
+            if cmd[0:2] == ["juicefs", "format"]:
+                raise RuntimeError("format failed")
+
+        def fake_stop_redis(state, timeout):
+            calls.append(("stop-redis", state, timeout))
+
+        monkeypatch.setattr(Volume, "_live_meta", set())
+        monkeypatch.setattr(Volume, "_live_procs", {})
+        monkeypatch.setattr(Volume, "_live_mounts", {})
+        monkeypatch.setattr(Volume, "_live_redis", {})
+        monkeypatch.setattr(volume_mod, "_start_redis", fake_start_redis)
+        monkeypatch.setattr(volume_mod, "_run_check", fake_run_check)
+        monkeypatch.setattr(volume_mod, "_stop_redis", fake_stop_redis)
+
+        meta_dir = str(tmp_path / "meta")
+        vol = Volume.empty("redis-vol", bucket="s3://bucket/volumes", metadata_engine="redis")
+
+        with pytest.raises(RuntimeError, match="format failed"):
+            await vol.mount(meta_dir=meta_dir, mount_path=str(tmp_path / "mnt"), cache_dir=str(tmp_path / "cache"))
+
+        assert ("stop-redis", redis_state, 120.0) in calls
+        assert Volume._live_redis == {}
 
 
 # ---------------------------------------------------------------------------
