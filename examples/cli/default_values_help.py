@@ -6,7 +6,7 @@ model whose fields have defaults, with the whole model as the task-arg default.
 
 Deploy and run (adjust project/domain/config to your cluster):
 
-    flyte deploy deploy_task_test.py env
+    flyte deploy examples/cli/default_values_help.py env
 
     flyte run deployed-task deploy_task_test.hello_flyte_task --help
     # expect: --inputs ... [default: {"font": "standard", "message": "hello, flyte"}]
@@ -19,7 +19,7 @@ Deploy and run (adjust project/domain/config to your cluster):
 
 Local (no deploy):
 
-    flyte run deploy_task_test.py hello_flyte_task --inputs '{"message":"hello, niels"}'
+    flyte run examples/cli/deploy_task_test.py hello_flyte_task --inputs '{"message":"hello, niels"}'
 """
 
 from __future__ import annotations

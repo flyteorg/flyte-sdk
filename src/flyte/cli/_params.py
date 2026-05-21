@@ -483,7 +483,8 @@ class JsonParamType(click.ParamType):
             from mashumaro.codecs.json import JSONDecoder
 
             decoder = JSONDecoder(self._python_type)
-            return decoder.decode(value)
+            payload = json.dumps(parsed_value) if isinstance(parsed_value, (dict, list)) else value
+            return decoder.decode(payload)
 
         return parsed_value
 
