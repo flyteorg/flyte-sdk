@@ -31,7 +31,7 @@ from ._dynamic_batcher import (
     TokenEstimator,
 )
 from ._sleep import Sleep, SleepTask
-from ._volume import Volume, volume_image, volume_pod_template
+from ._volume import Volume, volume_image, volume_image_local, volume_pod_template, volume_pod_template_local
 
 __all__ = [
     "BatchStats",
@@ -46,5 +46,7 @@ __all__ = [
     "Volume",
     "shell",
     "volume_image",
+    "volume_image_local",
     "volume_pod_template",
+    "volume_pod_template_local",
 ]

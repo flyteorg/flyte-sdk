@@ -51,6 +51,7 @@ from flyte._logging import logger as _logger
 from flyte._pod import PodTemplate
 from flyte.extras._volume_backend import _MetadataEngineState, _MountConfig, _VolumeBackend
 from flyte.extras._volume_juicefs import _CLIENT_BINARY, _CLIENT_VERSION, JuiceFSVolumeBackend
+from flyte.extras._volume_local import local_commit, local_commit_inplace, local_fork, local_mount
 from flyte.io._file import File
 
 _DEFAULT_META_DIR = "/var/lib/flyte-volume"
@@ -81,6 +82,11 @@ class Volume(BaseModel):
     # backward compatibility with Volumes serialized before this field existed.
     # ``Volume.empty()`` sets this to ``"redis"`` on new volumes.
     metadata_engine: Optional[str] = None
+    # Runtime backend. ``None``/missing resolves to ``"juicefs"`` for
+    # backward compatibility with Volumes serialized before this field existed.
+    # ``"local"`` selects the tar-archive backend (no FUSE, no daemon, no
+    # privileged container required); ``"juicefs"`` uses the JuiceFS client.
+    volume_backend: Optional[str] = None
     # Snapshot of metadata stats captured at commit() / fork() time. Best-effort
     # — left as None if the underlying status query failed. Sourced from
     # ``juicefs status`` (``Statistic.UsedSpace`` / ``Statistic.UsedInodes``);
@@ -119,7 +125,8 @@ class Volume(BaseModel):
         bucket: Optional[str] = None,
         *,
         storage: str = "s3",
-        metadata_engine: str = "redis",
+        metadata_engine: Optional[str] = None,
+        volume_backend: str = "juicefs",
     ) -> "Volume":
         """Declare a brand-new volume. The first ``mount()`` call will
         bootstrap the namespace (the underlying client refuses to format
@@ -130,16 +137,29 @@ class Volume(BaseModel):
         following Flyte's own layout for offloaded data. Must be called
         from inside a task in that case.
 
-        ``metadata_engine`` controls the in-pod metadata backend. ``"redis"``
-        (default) runs an in-process ``redis-server`` and persists the
-        namespace as an RDB snapshot — faster than SQLite for metadata-heavy
-        workloads and more compact on disk. ``"sqlite"`` keeps everything
-        on local disk with no extra daemon. The choice is baked into the
-        Volume and travels with it through lineage; subsequent mounts of
-        the same Volume must use the same engine.
+        ``volume_backend`` selects the runtime backend:
+
+        * ``"juicefs"`` (default) — JuiceFS-backed FUSE filesystem. Chunked
+          object-store storage, copy-on-write forks, supports large volumes.
+          Requires a privileged container with FUSE access.
+        * ``"local"`` — a single tar.gz archive in object storage. No FUSE,
+          no daemon, works in a regular non-privileged container. ``commit()``
+          tars the whole tree; ``fork()`` is a server-side copy of the
+          archive. Best for ≤ a few GB of data.
+
+        ``metadata_engine`` controls the JuiceFS metadata backend (ignored for
+        ``volume_backend="local"``). ``"redis"`` (default for JuiceFS) runs an
+        in-process ``redis-server`` and persists the namespace as an RDB
+        snapshot — faster than SQLite for metadata-heavy workloads and more
+        compact on disk. ``"sqlite"`` keeps everything on local disk with no
+        extra daemon. The choice is baked into the Volume and travels with
+        it through lineage; subsequent mounts of the same Volume must use
+        the same engine.
         """
         if bucket is None:
             bucket = _default_bucket()
+        if metadata_engine is None and volume_backend == "juicefs":
+            metadata_engine = "redis"
         return cls(
             name=name,
             bucket=bucket,
@@ -147,6 +167,7 @@ class Volume(BaseModel):
             index=None,
             parent=None,
             metadata_engine=metadata_engine,
+            volume_backend=volume_backend,
         )
 
     async def mount(
@@ -198,6 +219,10 @@ class Volume(BaseModel):
         this mechanism. Concurrent-writer scenarios will be opt-in via a
         separate API when added.
         """
+        if self.volume_backend == "local":
+            await local_mount(self, mount_path=mount_path)
+            return
+
         engine = self._engine()
         backend = self._backend()
         meta = Path(meta_dir)
@@ -317,6 +342,9 @@ class Volume(BaseModel):
         and return a new ``Volume`` whose ``parent`` points at the previous
         index.
         """
+        if self.volume_backend == "local":
+            return await local_commit(self, mount_path=mount_path)
+
         engine = self._engine()
         backend = self._backend()
         # Flush page cache so any unfsync'd writes hit the filesystem first.
@@ -511,7 +539,14 @@ class Volume(BaseModel):
         bytes), but it does pull the metadata file through the pod — the
         previous ``File.copy_to`` server-side path could not mutate counters
         and was unsafe for the chunk-key reasons above.
+
+        For the ``local`` backend, fork is a server-side copy of the
+        committed archive — no counter bumps are needed because every
+        archive is independent.
         """
+        if self.volume_backend == "local":
+            return await local_fork(self, name)
+
         engine = self._engine()
         backend = self._backend()
         # "Live" iff mount() registered this meta_dir and commit() hasn't
@@ -606,6 +641,7 @@ class Volume(BaseModel):
     async def commit_inplace(
         self,
         *,
+        mount_path: str = _DEFAULT_MOUNT_PATH,
         meta_dir: str = _DEFAULT_META_DIR,
     ) -> "Volume":
         """Snapshot and publish the live index without unmounting the volume.
@@ -628,7 +664,14 @@ class Volume(BaseModel):
           * Future writes after this call land in the same FUSE mount and
             will appear in subsequent snapshots — there is no semantic
             "branching" the way :meth:`fork` implies.
+
+        For the ``local`` backend this is equivalent to :meth:`commit` —
+        there's no live daemon to keep running, so we just re-tar the
+        mount point.
         """
+        if self.volume_backend == "local":
+            return await local_commit_inplace(self, mount_path=mount_path)
+
         new_index, index_bytes = await self._snapshot_and_upload_index(meta_dir=meta_dir, tmp_prefix="vol-checkpoint-")
         return Volume(
             name=self.name,
@@ -942,4 +985,59 @@ def volume_pod_template(
     return PodTemplate(pod_spec=pod_spec, primary_container_name=primary_container_name)
 
 
-__all__ = ["Volume", "volume_image", "volume_pod_template"]
+def volume_image_local(base: Optional[Image] = None) -> Image:
+    """Image flavor for the ``local`` :class:`Volume` backend.
+
+    The local backend only needs the ``tar`` binary, which ships with
+    every Debian base. This helper exists for symmetry with
+    :func:`volume_image` — call it whenever you would call ``volume_image``
+    so callers can swap backends without restructuring image code.
+    """
+    if base is None:
+        base = Image.from_debian_base(install_flyte=False)
+    return base
+
+
+def volume_pod_template_local(
+    *,
+    mount_path: str = _DEFAULT_MOUNT_PATH,
+    primary_container_name: str = "primary",
+) -> PodTemplate:
+    """PodTemplate flavor for the ``local`` :class:`Volume` backend.
+
+    Unlike :func:`volume_pod_template`, this template:
+
+    * adds **only** an ``emptyDir`` for ``mount_path`` (no metadata dir, no
+      chunk cache, no ``/dev/fuse``);
+    * runs as the default container user, **not** privileged, with no
+      added capabilities.
+
+    Everything the local backend needs is a writable directory and the
+    container's normal network access.
+    """
+    from kubernetes.client import (
+        V1Container,
+        V1EmptyDirVolumeSource,
+        V1PodSpec,
+        V1Volume,
+        V1VolumeMount,
+    )
+
+    primary = V1Container(
+        name=primary_container_name,
+        volume_mounts=[V1VolumeMount(name="vol-workspace", mount_path=mount_path)],
+    )
+    pod_spec = V1PodSpec(
+        containers=[primary],
+        volumes=[V1Volume(name="vol-workspace", empty_dir=V1EmptyDirVolumeSource())],
+    )
+    return PodTemplate(pod_spec=pod_spec, primary_container_name=primary_container_name)
+
+
+__all__ = [
+    "Volume",
+    "volume_image",
+    "volume_image_local",
+    "volume_pod_template",
+    "volume_pod_template_local",
+]
