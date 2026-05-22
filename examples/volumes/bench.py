@@ -139,7 +139,7 @@ async def _cold_fork(
     k: int,
     base_files: int = 100,
     base_bytes: int = 1024,
-) -> Dict[str, float]:
+) -> Tuple[Volume, Dict[str, float]]:
     suffix = uuid.uuid4().hex[:6]
     parent = Volume.empty(name=f"bench-cold-fork-{engine}-{suffix}", metadata_store_type=engine)
 
@@ -165,7 +165,7 @@ async def _cold_fork(
         fork_ms.append((time.monotonic() - t0) * 1000.0)
 
     p99 = quantiles(fork_ms, n=100, method="inclusive")[98] if len(fork_ms) >= 2 else fork_ms[0]
-    return {
+    return committed, {
         "workload_ms": sum(fork_ms),
         "items": float(k),
         "fork_mean": mean(fork_ms),
@@ -216,7 +216,13 @@ DATASET_ENGINES: List[str] = ["redis", "sqlite", "badger"]
 
 
 @env.task
-async def run_cell(workload: str, engine: str, writeback: bool) -> Dict[str, float]:
+async def run_cell(workload: str, engine: str, writeback: bool) -> Tuple[Volume, Dict[str, float]]:
+    """Run one matrix cell.
+
+    Returns ``(committed_volume, stats)`` so the Volume's serialized
+    metadata (bucket, index path, parent, used_bytes, etc.) is visible
+    in the Flyte UI alongside the timing numbers.
+    """
     if workload in SELF_MANAGED:
         fn, params = SELF_MANAGED[workload]
         return await fn(engine=engine, writeback=writeback, **params)
@@ -265,7 +271,7 @@ async def run_cell(workload: str, engine: str, writeback: bool) -> Dict[str, flo
         inode_count,
     )
 
-    return {
+    stats = {
         **result,
         "mount_ms": mount_ms,
         "commit_ms": commit_ms,
@@ -273,6 +279,7 @@ async def run_cell(workload: str, engine: str, writeback: bool) -> Dict[str, flo
         "used_bytes": used_bytes,
         "inode_count": inode_count,
     }
+    return final, stats
 
 
 # ---------------------------------------------------------------------------
@@ -281,13 +288,14 @@ async def run_cell(workload: str, engine: str, writeback: bool) -> Dict[str, flo
 
 
 @env.task
-async def run_dataset_cell(workload: str, engine: str, n: int) -> Dict[str, float]:
+async def run_dataset_cell(workload: str, engine: str, n: int) -> Tuple[Volume, Dict[str, float]]:
     """One ``(workload, engine, n)`` point on the dataset sweep.
 
     Holds per-file size constant (set by ``DATASET_SMALL_SIZE_BYTES`` /
     ``DATASET_BIG_SIZE_KIB``) and varies ``n``. Always runs with
     ``writeback=True`` so the curve isn't dominated by per-chunk upload
-    latency.
+    latency. Returns ``(committed_volume, stats)`` so the Volume's
+    metadata is inspectable in the Flyte UI.
     """
     suffix = uuid.uuid4().hex[:6]
     vol = Volume.empty(
@@ -307,10 +315,10 @@ async def run_dataset_cell(workload: str, engine: str, n: int) -> Dict[str, floa
         raise ValueError(f"unsupported dataset workload: {workload}")
 
     t0 = time.monotonic()
-    await vol.commit()
+    final = await vol.commit()
     commit_ms = (time.monotonic() - t0) * 1000.0
 
-    return {**result, "mount_ms": mount_ms, "commit_ms": commit_ms}
+    return final, {**result, "mount_ms": mount_ms, "commit_ms": commit_ms}
 
 
 # ---------------------------------------------------------------------------
@@ -676,12 +684,12 @@ async def volume_benchmark_driver(
     ds_results = raw[len(coros) :]
 
     rows: List[Dict[str, object]] = []
-    for (wname, engine, wb), result in zip(keys, matrix_results):
-        rows.append({"workload": wname, "engine": engine, "writeback": wb, **result})
+    for (wname, engine, wb), (_vol, stats) in zip(keys, matrix_results):
+        rows.append({"workload": wname, "engine": engine, "writeback": wb, **stats})
 
     ds_rows: List[Dict[str, object]] = []
-    for (wname, engine, n), result in zip(ds_keys, ds_results):
-        ds_rows.append({"workload": wname, "engine": engine, "n": n, **result})
+    for (wname, engine, n), (_vol, stats) in zip(ds_keys, ds_results):
+        ds_rows.append({"workload": wname, "engine": engine, "n": n, **stats})
 
     overview_tab = flyte.report.get_tab("Overview")
     overview_tab.log(_render_overview(rows, selected_workloads))
