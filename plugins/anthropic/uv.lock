@@ -419,6 +419,7 @@ provides-extras = ["aiosqlite", "connector", "examples-test", "sandbox", "mcp", 
 [package.metadata.requires-dev]
 dev = [
     { name = "build", specifier = ">=1.2.2.post1" },
+    { name = "debugpy", specifier = ">=1.8.20" },
     { name = "docstring-parser" },
     { name = "fastapi", specifier = ">=0.128.0" },
     { name = "google-cloud-bigquery", specifier = ">=3.31.0" },
