@@ -193,6 +193,21 @@ to Python via maturin / pyo3. Distributed as a separate `flyte_controller_base` 
 not need to switch its build toolchain to rust/maturin. Keep important dependencies (notably `flyteidl2`)
 in lockstep between `pyproject.toml`, `rs_controller/pyproject.toml`, and `rs_controller/Cargo.toml`.
 
+### Installing the Rust controller
+
+
+`flyte_controller_base` is an **optional** dependency — `pip install flyte` does not pull it in
+automatically. The default Flyte task image (as of #1083) bundles the Rust controller, so tasks
+running on the default image work out of the box. You only need the extra when:
+
+- running locally (e.g. `flyte run --local examples/basics/hello_v2.py`), or
+- bringing your own task image.
+
+```bash
+pip install flyte[rust-controller]
+```
+
+
 ### Running with the Rust controller
 
 The Rust controller is gated behind an env var. Set it to `1` (also accepts `true` / `yes`):
@@ -204,11 +219,8 @@ _F_USE_RUST_CONTROLLER=1 python examples/basics/hello_v2.py
 The driver propagates this env var to all sub-task pods, so both the driver and child actions use the
 Rust controller for that run.
 
-> **v1 limitations.** The Rust controller currently supports only the legacy
-> QueueService + StateService path. Do **not** combine `_F_USE_RUST_CONTROLLER=1` with
-> `_U_USE_ACTIONS=1` until ActionsService support lands. Other gaps tracked as follow-ups:
-> abort RPC on cancel, trace-action enqueue, `Code.ABORTED` fast-fail, tunable retries / QPS,
-> graceful `stop()`. See PR #675.
+> The Rust controller is currently under rapid development and contains gaps: abort RPC on cancel,
+> `Code.ABORTED` fast-fail, tunable retries / QPS, graceful `stop()`. See PR #675.
 
 > Dev iteration requires the local image builder. The `flyte_controller_base` wheel is not
 > on PyPI until release, and the remote image builder installs all wheels in a layer at once,

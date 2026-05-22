@@ -571,11 +571,11 @@ class PydanticTransformer(TypeTransformer[BaseModel]):
             }
         )
 
-        # The type engine used to publish a type structure for attribute access. As of v2, this is no longer needed.
         return LiteralType(
             simple=SimpleType.STRUCT,
             metadata=schema,
             annotation=TypeAnnotation(annotations=meta_struct),
+            structure=TypeStructure(tag=self.name),
         )
 
     async def to_literal(
@@ -640,23 +640,85 @@ class PydanticTransformer(TypeTransformer[BaseModel]):
         raise ValueError(f"PydanticTransformer cannot reverse {literal_type}")
 
 
-def _create_pydantic_model_from_schema(schema: dict) -> Type:
-    """Create a dynamic Pydantic BaseModel from a JSON schema dict.
+def _get_pydantic_element_type(
+    element_property: typing.Union[typing.Dict[str, typing.Any], bool],
+    schema: typing.Optional[typing.Dict[str, typing.Any]] = None,
+) -> Type:
+    """Resolve a JSON-schema fragment to a Python type for dynamic Pydantic models.
 
-    Reuses `_get_element_type` so that all JSON-schema constructs handled by the
-    dataclass path (arrays, dicts, nested objects, `$ref`, `anyOf`, enums, …)
-    are also covered here.
+    Like :func:`_get_element_type`, but nested objects and ``$ref`` targets become
+    dynamic Pydantic models instead of mashumaro dataclasses so ``model_validate``
+    and msgpack field ordering stay consistent with :class:`PydanticTransformer`.
     """
+    if not isinstance(element_property, dict):
+        return _get_element_type(element_property, schema)
+
+    if (matched_type := _match_registered_type_from_schema(element_property)) is not None:
+        return matched_type
+
+    if element_property.get("$ref") and schema is not None:
+        ref_name = element_property["$ref"].split("/")[-1]
+        defs = schema.get("$defs", schema.get("definitions", {}))
+        if ref_name in defs:
+            ref_schema = defs[ref_name].copy()
+            if ref_schema.get("enum"):
+                return str
+            if (matched_type := _match_registered_type_from_schema(ref_schema)) is not None:
+                return matched_type
+            if "$defs" not in ref_schema and defs:
+                ref_schema["$defs"] = defs
+            return _create_pydantic_model_from_schema(ref_schema)
+        return str
+
+    if element_property.get("anyOf"):
+        variants = element_property["anyOf"]
+        non_null = [v for v in variants if v.get("type") != "null"]
+        has_null = len(non_null) < len(variants)
+        if non_null:
+            inner_type = _get_pydantic_element_type(non_null[0], schema)
+            return typing.Optional[inner_type] if has_null else inner_type  # type: ignore
+        return type(None)
+
+    element_type = element_property.get("type")
+    if element_type == "object":
+        if element_property.get("additionalProperties"):
+            return _get_element_type(element_property, schema)
+        if element_property.get("anyOf"):
+            return _get_element_type(element_property, schema)
+        if element_property.get("title"):
+            matched_type = _match_registered_type_from_schema(element_property)
+            if matched_type is not None:
+                return matched_type
+            return _create_pydantic_model_from_schema(element_property)
+
+    return _get_element_type(element_property, schema)
+
+
+def _create_pydantic_model_from_schema(schema: dict) -> Type:
+    """Create a dynamic Pydantic BaseModel from a JSON schema dict."""
     from pydantic import ConfigDict, create_model
 
     title = schema.get(TITLE, "DynamicModel")
     properties = schema.get("properties", {})
+    property_order = schema.get("required", list(properties.keys()))
 
     fields: dict[str, typing.Any] = {}
-    for name, prop in properties.items():
-        python_type = _get_element_type(prop, schema)
-        default: typing.Any = prop.get("default", ...)
-        fields[name] = (python_type, default)
+    required_set = set(schema.get("required") or ())
+    schema_declares_required = "required" in schema
+    for name in property_order:
+        if name not in properties:
+            continue
+        prop = properties[name]
+        field_type = _get_pydantic_element_type(prop, schema)
+        if "default" in prop:
+            fields[name] = (field_type, prop["default"])
+        elif schema_declares_required and name not in required_set:
+            if prop.get("anyOf"):
+                fields[name] = (typing.Optional[field_type], None)
+            else:
+                fields[name] = (field_type, ...)
+        else:
+            fields[name] = (field_type, ...)
 
     return create_model(title, __config__=ConfigDict(extra="allow"), **fields)
 
@@ -832,11 +894,11 @@ class DataclassTransformer(TypeTransformer[object]):
             }
         )
 
-        # The type engine used to publish the type `structure` for attribute access. As of v2, this is no longer needed.
         return types_pb2.LiteralType(
             simple=types_pb2.SimpleType.STRUCT,
             metadata=schema,
             annotation=TypeAnnotation(annotations=meta_struct),
+            structure=TypeStructure(tag=self.name),
         )
 
     async def to_literal(self, python_val: T, python_type: Type[T], expected: LiteralType) -> Literal:
@@ -953,6 +1015,10 @@ class DataclassTransformer(TypeTransformer[object]):
 
                 metadata = json_format.MessageToDict(literal_type.metadata)
                 if TITLE in metadata:
+                    # Tagged literals are owned by this transformer; untagged legacy structs are
+                    # still claimed for backward compatibility with tasks deployed before tagging.
+                    if literal_type.HasField("structure") and literal_type.structure.tag != self.name:
+                        raise ValueError(f"Dataclass transformer cannot reverse {literal_type}")
                     schema_name = metadata[TITLE]
                     return convert_mashumaro_json_schema_to_python_class(metadata, schema_name)
         raise ValueError(f"Dataclass transformer cannot reverse {literal_type}")
@@ -1107,6 +1173,51 @@ def _match_registered_type_from_schema(schema: dict) -> typing.Optional[type]:
     return None
 
 
+def _mutable_schema_default_factory(
+    default: list[typing.Any] | dict[typing.Any, typing.Any],
+) -> typing.Callable[[], list[typing.Any] | dict[typing.Any, typing.Any]]:
+    """Return a no-arg factory for dataclass fields with mutable JSON-schema defaults."""
+    snapshot = copy.deepcopy(default)
+
+    def factory() -> list[typing.Any] | dict[typing.Any, typing.Any]:
+        return copy.deepcopy(snapshot)
+
+    return factory
+
+
+def _append_schema_field(
+    attribute_list: typing.List[typing.Tuple[Any, ...]],
+    property_key: str,
+    field_type: typing.Any,
+    property_val: typing.Dict[str, typing.Any],
+    schema: typing.Dict[str, typing.Any],
+) -> None:
+    """Append a dataclass field tuple, honoring JSON-schema ``default`` and ``required``."""
+    required_set = set(schema.get("required") or ())
+    schema_declares_required = "required" in schema
+    if "default" in property_val:
+        default = property_val["default"]
+        if isinstance(default, (list, dict)):
+            default_copy = copy.deepcopy(default)
+            attribute_list.append(
+                (
+                    property_key,
+                    field_type,
+                    dataclasses.field(default_factory=_mutable_schema_default_factory(default_copy)),
+                )
+            )
+        else:
+            attribute_list.append((property_key, field_type, default))
+        return
+    if schema_declares_required and property_key not in required_set:
+        if property_val.get("anyOf"):
+            attribute_list.append((property_key, typing.Optional[field_type], None))
+        else:
+            attribute_list.append((property_key, field_type))
+        return
+    attribute_list.append((property_key, field_type))
+
+
 def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name: typing.Any):
 
     attribute_list: typing.List[typing.Tuple[Any, Any]] = []
@@ -1129,22 +1240,21 @@ def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name:
                 ref_schema = defs[ref_name].copy()
                 # Check if the $ref points to an enum definition (no properties)
                 if ref_schema.get("enum"):
-                    attribute_list.append((property_key, str))
+                    _append_schema_field(attribute_list, property_key, str, property_val, schema)
                     continue
                 # Check if the $ref matches a registered custom type
                 matched_type = _match_registered_type_from_schema(ref_schema)
                 if matched_type is not None:
-                    attribute_list.append((property_key, typing.cast(GenericAlias, matched_type)))
+                    _append_schema_field(
+                        attribute_list, property_key, typing.cast(GenericAlias, matched_type), property_val, schema
+                    )
                     continue
                 # Include $defs so nested models can resolve their own $refs
                 if "$defs" not in ref_schema and defs:
                     ref_schema["$defs"] = defs
                 nested_class: type = convert_mashumaro_json_schema_to_python_class(ref_schema, ref_name)
-                attribute_list.append(
-                    (
-                        property_key,
-                        typing.cast(GenericAlias, nested_class),
-                    )
+                _append_schema_field(
+                    attribute_list, property_key, typing.cast(GenericAlias, nested_class), property_val, schema
                 )
                 # Track this as a nested type that needs dict-to-object conversion
                 nested_types[property_key] = nested_class
@@ -1158,7 +1268,13 @@ def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name:
             property_type = property_val["type"]
         # Handle list
         if property_type == "array":
-            attribute_list.append((property_key, typing.List[_get_element_type(property_val["items"], schema)]))  # type: ignore
+            _append_schema_field(
+                attribute_list,
+                property_key,
+                typing.List[_get_element_type(property_val["items"], schema)],  # type: ignore
+                property_val,
+                schema,
+            )
         # Handle dataclass and dict
         elif property_type == "object":
             if property_val.get("anyOf"):
@@ -1169,43 +1285,43 @@ def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name:
                     sub_schemea
                 )
                 if matched_type is not None:
-                    attribute_list.append((property_key, typing.cast(GenericAlias, matched_type)))
+                    _append_schema_field(
+                        attribute_list, property_key, typing.cast(GenericAlias, matched_type), property_val, schema
+                    )
                     continue
                 nested_class = convert_mashumaro_json_schema_to_python_class(sub_schemea, sub_schemea_name)
-                attribute_list.append(
-                    (
-                        property_key,
-                        typing.cast(GenericAlias, nested_class),
-                    )
+                _append_schema_field(
+                    attribute_list, property_key, typing.cast(GenericAlias, nested_class), property_val, schema
                 )
                 nested_types[property_key] = nested_class
             elif property_val.get("additionalProperties"):
                 # For typing.Dict type
                 elem_type = _get_element_type(property_val["additionalProperties"], schema)
-                attribute_list.append((property_key, typing.Dict[str, elem_type]))  # type: ignore
+                _append_schema_field(attribute_list, property_key, typing.Dict[str, elem_type], property_val, schema)  # type: ignore
             elif property_val.get("title"):
                 # For nested dataclass
                 sub_schemea_name = property_val["title"]
                 matched_type = _match_registered_type_from_schema(property_val)
                 if matched_type is not None:
-                    attribute_list.append((property_key, typing.cast(GenericAlias, matched_type)))
+                    _append_schema_field(
+                        attribute_list, property_key, typing.cast(GenericAlias, matched_type), property_val, schema
+                    )
                     continue
                 nested_class = convert_mashumaro_json_schema_to_python_class(property_val, sub_schemea_name)
-                attribute_list.append(
-                    (
-                        property_key,
-                        typing.cast(GenericAlias, nested_class),
-                    )
+                _append_schema_field(
+                    attribute_list, property_key, typing.cast(GenericAlias, nested_class), property_val, schema
                 )
                 nested_types[property_key] = nested_class
             else:
                 # For untyped dict
-                attribute_list.append((property_key, dict))  # type: ignore
+                _append_schema_field(attribute_list, property_key, dict, property_val, schema)  # type: ignore
         elif property_type == "enum":
-            attribute_list.append([property_key, str])  # type: ignore
+            _append_schema_field(attribute_list, property_key, str, property_val, schema)
         # Handle int, float, bool or str
         else:
-            attribute_list.append([property_key, _get_element_type(property_val, schema)])  # type: ignore
+            _append_schema_field(
+                attribute_list, property_key, _get_element_type(property_val, schema), property_val, schema
+            )
     return attribute_list, nested_types
 
 

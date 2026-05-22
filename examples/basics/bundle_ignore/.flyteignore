@@ -1,0 +1,20 @@
+# .flyteignore — exclude these git-tracked paths from the code bundle.
+#
+# Files listed here are committed to the repo (so they are available
+# locally for development and testing) but will NOT be packaged when
+# Flyte ships code to a remote worker.
+#
+# Syntax is identical to .gitignore:
+#   *        matches any filename
+#   **/      matches any number of directory levels
+#   dir/     matches only directories named "dir"
+#   !pattern negates (re-includes) a previously excluded pattern
+#
+# Large training data — loaded from a remote store at runtime instead.
+training_data/
+
+# Jupyter notebooks used for exploration — not needed inside the container.
+*.ipynb
+
+# Project documentation — not needed at runtime.
+docs/
