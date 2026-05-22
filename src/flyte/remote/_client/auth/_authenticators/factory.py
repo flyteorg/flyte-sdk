@@ -46,7 +46,13 @@ def create_auth_interceptors(endpoint: str, http_client=None, **kwargs) -> list:
 
     def authenticator_factory() -> Authenticator:
         return get_async_authenticator(
-            endpoint=endpoint, cfg_store=RemoteClientConfigStore(endpoint, http_client=http_client), **kwargs
+            endpoint=endpoint,
+            cfg_store=RemoteClientConfigStore(
+                endpoint,
+                http_client=http_client,
+                client_config=kwargs.get("client_config"),
+            ),
+            **kwargs,
         )
 
     return [
@@ -144,7 +150,6 @@ def get_async_authenticator(
     match auth_type:
         case "Pkce":
             from flyte.remote._client.auth._authenticators.pkce import PKCEAuthenticator
-
             return PKCEAuthenticator(endpoint=endpoint, cfg_store=cfg_store, verify=verify, **kwargs)
         case "ClientSecret":
             from flyte.remote._client.auth._authenticators.client_credentials import ClientCredentialsAuthenticator

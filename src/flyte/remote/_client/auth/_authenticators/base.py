@@ -6,7 +6,7 @@ from abc import abstractmethod
 from http import HTTPStatus
 
 import httpx
-
+from flyte._logging import logger
 from flyte.remote._client.auth._client_config import ClientConfig, ClientConfigStore
 from flyte.remote._client.auth._keyring import Credentials, KeyringStore
 
@@ -101,6 +101,9 @@ class Authenticator(object):
             return self._resolved_config
 
         if self._cfg_store is None:
+            if self._client_config is not None:
+                self._resolved_config = self._client_config
+                return self._resolved_config
             raise ValueError("ClientConfigStore is not set. Cannot resolve configuration.")
 
         remote_config = await self._cfg_store.get_client_config()
@@ -138,7 +141,7 @@ class Authenticator(object):
             if self._resolved_config is not None:
                 # We only resolve the config during authentication flow, to avoid unnecessary network calls
                 # and usually the header_key is consistent.
-                header_key = self._resolved_config.header_key
+                header_key = self._resolved_config.header_key or self._default_header_key
             return AuthHeaders(
                 creds_id=creds.id,
                 headers={header_key: f"Bearer {creds.access_token}"},

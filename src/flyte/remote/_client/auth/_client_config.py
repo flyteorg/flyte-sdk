@@ -6,6 +6,9 @@ import pydantic
 from flyteidl2.auth.auth_service_connect import AuthMetadataServiceClient
 from flyteidl2.auth.auth_service_pb2 import GetOAuth2MetadataRequest, GetPublicClientConfigRequest
 
+from flyte._logging import logger
+from flyte.remote._client.auth._interceptors.default_metadata import _generate_request_id
+
 AuthType = typing.Literal["ClientSecret", "Pkce", "ExternalCommand", "DeviceFlow", "Passthrough"]
 
 
@@ -14,13 +17,13 @@ class ClientConfig(pydantic.BaseModel):
     Client Configuration that is needed by the authenticator
     """
 
-    token_endpoint: str
-    authorization_endpoint: str
-    redirect_uri: str
-    client_id: str
+    token_endpoint: typing.Optional[str] = None
+    authorization_endpoint: typing.Optional[str] = None
+    redirect_uri: typing.Optional[str] = None
+    client_id: typing.Optional[str] = None
     device_authorization_endpoint: typing.Optional[str] = None
     scopes: typing.Optional[typing.List[str]] = None
-    header_key: str = "authorization"
+    header_key: typing.Optional[str] = None
     audience: typing.Optional[str] = None
 
     def with_override(self, other: "ClientConfig") -> "ClientConfig":
@@ -37,6 +40,10 @@ class ClientConfig(pydantic.BaseModel):
             header_key=other.header_key or self.header_key,
             audience=other.audience or self.audience,
         )
+
+
+    def has_required_public_client_fields(self) -> bool:
+        return bool(self.client_id and self.redirect_uri and self.header_key and self.scopes)
 
 
 class ClientConfigStore(object):
@@ -61,16 +68,41 @@ class RemoteClientConfigStore(ClientConfigStore):
     This class implements the ClientConfigStore that is served by the Flyte Server, that implements AuthMetadataService
     """
 
-    def __init__(self, endpoint: str, http_client=None):
+    def __init__(self, endpoint: str, http_client=None, client_config: ClientConfig | None = None):
+        self._endpoint = endpoint
         self._client = AuthMetadataServiceClient(address=endpoint, http_client=http_client)
+        self._client_config = client_config
 
     async def get_client_config(self) -> ClientConfig:
         """
         Retrieves the ClientConfig from the AuthMetadataService via ConnectRPC.
         """
-        oauth2_metadata_task = self._client.get_o_auth2_metadata(GetOAuth2MetadataRequest())
-        public_client_config_task = self._client.get_public_client_config(GetPublicClientConfigRequest())
-        oauth2_metadata, public_client_config = await asyncio.gather(oauth2_metadata_task, public_client_config_task)
+
+        oauth2_metadata = await self._client.get_o_auth2_metadata(
+            GetOAuth2MetadataRequest()
+        )
+
+        if self._client_config and self._client_config.has_required_public_client_fields():
+            logger.info(
+                "RemoteClientConfigStore.get_client_config using local public client config for endpoint=%s and skipping GetPublicClientConfig",
+                self._endpoint,
+            )
+            return ClientConfig(
+                token_endpoint=oauth2_metadata.token_endpoint,
+                authorization_endpoint=oauth2_metadata.authorization_endpoint,
+                redirect_uri=self._client_config.redirect_uri,
+                client_id=self._client_config.client_id,
+                scopes=self._client_config.scopes,
+                header_key=self._client_config.header_key,
+                device_authorization_endpoint=oauth2_metadata.device_authorization_endpoint,
+                audience=self._client_config.audience,
+            )
+
+        logger.debug("calling get_public_client_config")
+        public_client_config = await self._client.get_public_client_config(
+            GetPublicClientConfigRequest()
+        )
+
         return ClientConfig(
             token_endpoint=oauth2_metadata.token_endpoint,
             authorization_endpoint=oauth2_metadata.authorization_endpoint,

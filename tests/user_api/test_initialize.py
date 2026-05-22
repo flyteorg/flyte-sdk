@@ -22,6 +22,7 @@ from flyte._initialize import (
     requires_storage,
 )
 from flyte.config import Config
+from flyte.remote._client.auth._client_config import ClientConfig
 from flyte.errors import InitializationError
 
 
@@ -60,6 +61,9 @@ task:
         config.platform.proxy_command = None
         config.platform.client_id = None
         config.platform.client_credentials_secret = None
+        config.platform.authorization_header = None
+        config.platform.redirect_uri = None
+        config.platform.audience = None
         config.image.builder = "local"
         return config
 
@@ -79,6 +83,9 @@ task:
         config.platform.proxy_command = None
         config.platform.client_id = None
         config.platform.client_credentials_secret = None
+        config.platform.authorization_header = None
+        config.platform.redirect_uri = None
+        config.platform.audience = None
         config.image.builder = "remote"
         return config
 
@@ -151,6 +158,9 @@ task:
         mock_config.platform.proxy_command = None
         mock_config.platform.client_id = None
         mock_config.platform.client_credentials_secret = None
+        mock_config.platform.authorization_header = None
+        mock_config.platform.redirect_uri = None
+        mock_config.platform.audience = None
         mock_config.image.builder = "local"
 
         await init_from_config.aio(path_or_config=mock_config, root_dir=test_root_dir)
@@ -182,6 +192,9 @@ task:
         mock_config.platform.proxy_command = None
         mock_config.platform.client_id = None
         mock_config.platform.client_credentials_secret = None
+        mock_config.platform.authorization_header = None
+        mock_config.platform.redirect_uri = None
+        mock_config.platform.audience = None
         mock_config.image.builder = "local"
 
         mock_config_auto.return_value = mock_config
@@ -197,6 +210,47 @@ task:
         mock_init.aio.assert_called_once()
         call_kwargs = mock_init.aio.call_args[1]
         assert call_kwargs["root_dir"] == test_root_dir
+
+    @patch("flyte._initialize.init")
+    @pytest.mark.asyncio
+    async def test_init_from_config_builds_partial_auth_client_config(self, mock_init):
+        mock_init.aio = AsyncMock()
+        test_root_dir = Path("/test/root")
+
+        mock_config = Mock(spec=Config)
+        mock_config.task.org = "test-org"
+        mock_config.task.project = "test-project"
+        mock_config.task.domain = "test-domain"
+        mock_config.platform.endpoint = "test.flyte.example.com"
+        mock_config.platform.insecure = False
+        mock_config.platform.insecure_skip_verify = False
+        mock_config.platform.ca_cert_file_path = None
+        mock_config.platform.auth_mode = "Pkce"
+        mock_config.platform.command = None
+        mock_config.platform.proxy_command = None
+        mock_config.platform.client_id = "client-id"
+        mock_config.platform.client_credentials_secret = None
+        mock_config.platform.scopes = ["scope-a"]
+        mock_config.platform.authorization_header = "flyte-authorization"
+        mock_config.platform.redirect_uri = "http://localhost:53593/callback"
+        mock_config.platform.audience = "my-audience"
+        mock_config.platform.disable_keyring = False
+        mock_config.image.builder = "local"
+
+        await init_from_config.aio(path_or_config=mock_config, root_dir=test_root_dir)
+
+        mock_init.aio.assert_called_once()
+        call_kwargs = mock_init.aio.call_args[1]
+        assert call_kwargs["root_dir"] == test_root_dir
+        auth_client_config = call_kwargs["auth_client_config"]
+        assert isinstance(auth_client_config, ClientConfig)
+        assert auth_client_config.client_id == "client-id"
+        assert auth_client_config.scopes == ["scope-a"]
+        assert auth_client_config.header_key == "flyte-authorization"
+        assert auth_client_config.redirect_uri == "http://localhost:53593/callback"
+        assert auth_client_config.audience == "my-audience"
+        assert auth_client_config.token_endpoint is None
+        assert auth_client_config.authorization_endpoint is None
 
     @patch("flyte._initialize.init")
     @patch("flyte.config.auto")

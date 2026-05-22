@@ -318,6 +318,7 @@ async def init_from_config(
 
     import flyte.config as config
     from flyte.cli._common import parse_images
+    from flyte.remote._client.auth._client_config import ClientConfig
 
     cfg: config.Config
     cfg_path: Optional[Path] = None
@@ -340,9 +341,29 @@ async def init_from_config(
         cfg = path_or_config
 
     logger.info(f"Flyte config initialized as {cfg}", extra={"highlighter": ReprHighlighter()})
-
+    logger.info(f"auth_mode={cfg.platform.auth_mode}")
     # parse image, this will overwrite the image_refs set in the config file
     parse_images(cfg, images)
+
+    client_id = cfg.platform.client_id if isinstance(cfg.platform.client_id, str) and cfg.platform.client_id else None
+    scopes = cfg.platform.scopes if isinstance(cfg.platform.scopes, list) and cfg.platform.scopes else None
+    authorization_header = (
+        cfg.platform.authorization_header
+        if isinstance(cfg.platform.authorization_header, str) and cfg.platform.authorization_header
+        else None
+    )
+    redirect_uri = cfg.platform.redirect_uri if isinstance(cfg.platform.redirect_uri, str) and cfg.platform.redirect_uri else None
+    audience = cfg.platform.audience if isinstance(cfg.platform.audience, str) and cfg.platform.audience else None
+
+    auth_client_config = None
+    if any([client_id, scopes, authorization_header, redirect_uri, audience]):
+        auth_client_config = ClientConfig(
+            client_id=client_id,
+            scopes=scopes,
+            header_key=authorization_header,
+            redirect_uri=redirect_uri,
+            audience=audience,
+        )
 
     await init.aio(
         org=cfg.task.org,
@@ -357,6 +378,7 @@ async def init_from_config(
         proxy_command=cfg.platform.proxy_command,
         client_id=cfg.platform.client_id,
         client_credentials_secret=cfg.platform.client_credentials_secret,
+        auth_client_config=auth_client_config,
         disable_keyring=cfg.platform.disable_keyring,
         root_dir=root_dir,
         log_level=log_level,

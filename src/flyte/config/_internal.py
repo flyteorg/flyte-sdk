@@ -9,6 +9,10 @@ class Platform(object):
     CA_CERT_FILE_PATH = ConfigEntry(YamlConfigEntry("admin.caCertFilePath"))
     HTTP_PROXY_URL = ConfigEntry(YamlConfigEntry("admin.httpProxyURL"))
     DISABLE_KEYRING = ConfigEntry(YamlConfigEntry("admin.disableKeyring", bool))
+    AUTHORIZATION_HEADER = ConfigEntry(YamlConfigEntry("admin.authorizationHeader"))
+    REDIRECT_URI = ConfigEntry(YamlConfigEntry("admin.redirectUri"))
+    REDIRECT_URL = ConfigEntry(YamlConfigEntry("admin.redirectURL"))
+    AUDIENCE = ConfigEntry(YamlConfigEntry("admin.audience"))
 
 
 class Credentials(object):
