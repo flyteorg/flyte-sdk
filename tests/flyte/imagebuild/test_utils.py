@@ -256,3 +256,48 @@ def test_copy_files_to_context_skips_files_that_vanish_mid_walk():
 
 
 import shutil  # noqa: E402  (kept at bottom so the new tests own the import)
+
+
+def test_extract_editables_surfaces_uv_export_failure():
+    """
+    Regression test for FLYTE-SDK-3F: `uv export` failures used to bubble up as
+    raw CalledProcessError with no stderr context. The SDK should wrap them in
+    ImageBuildError so the user sees what uv complained about.
+    """
+    import subprocess
+
+    import pytest
+
+    from flyte._internal.imagebuild.utils import _extract_editables_from_uv_export
+    from flyte.errors import ImageBuildError
+
+    err = subprocess.CalledProcessError(
+        returncode=2,
+        cmd=["uv", "export", "--no-emit-project"],
+        output="",
+        stderr="error: Failed to parse `pyproject.toml`\n  caused by: missing field `name`",
+    )
+    with patch("flyte._internal.imagebuild.utils.subprocess.run", side_effect=err):
+        with pytest.raises(ImageBuildError) as exc_info:
+            _extract_editables_from_uv_export(Path("/tmp/fake-root"))
+
+    msg = str(exc_info.value)
+    assert "uv export" in msg
+    assert "exit code 2" in msg
+    assert "missing field `name`" in msg
+
+
+def test_extract_editables_surfaces_missing_uv_binary():
+    """If uv isn't installed at all, point the user to install it instead of leaking
+    FileNotFoundError."""
+    import pytest
+
+    from flyte._internal.imagebuild.utils import _extract_editables_from_uv_export
+    from flyte.errors import ImageBuildError
+
+    with patch("flyte._internal.imagebuild.utils.subprocess.run", side_effect=FileNotFoundError("uv")):
+        with pytest.raises(ImageBuildError) as exc_info:
+            _extract_editables_from_uv_export(Path("/tmp/fake-root"))
+
+    assert "uv" in str(exc_info.value).lower()
+    assert "not found" in str(exc_info.value).lower()
