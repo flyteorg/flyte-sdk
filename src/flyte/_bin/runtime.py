@@ -43,6 +43,7 @@ def _pass_through():
 @click.option("--prev-checkpoint", "-p", required=False)
 @click.option("--name", envvar=ACTION_NAME, required=False)
 @click.option("--run-name", envvar=RUN_NAME, required=False)
+@click.option("--run-start-time", required=False)
 @click.option("--project", envvar=PROJECT_NAME, required=False)
 @click.option("--domain", envvar=DOMAIN_NAME, required=False)
 @click.option("--org", envvar=ORG_NAME, required=False)
@@ -63,6 +64,7 @@ def main(
     ctx: click.Context,
     run_name: str,
     name: str,
+    run_start_time: str,
     project: str,
     domain: str,
     org: str,
@@ -112,6 +114,26 @@ def main(
         run_name = os.getenv("RUN_NAME", "")
     if name.startswith("{{"):
         name = os.getenv("ACTION_NAME", "")
+
+    from datetime import datetime, timezone
+
+    parsed_run_start_time: datetime | None = None
+    if run_start_time and not run_start_time.startswith("{{"):
+        raw = run_start_time.rstrip()
+        # tolerate trailing "Z" — datetime.fromisoformat only handles it on 3.11+
+        if raw.endswith("Z"):
+            raw = raw[:-1] + "+00:00"
+        try:
+            parsed_run_start_time = datetime.fromisoformat(raw)
+            if parsed_run_start_time.tzinfo is None:
+                parsed_run_start_time = parsed_run_start_time.replace(tzinfo=timezone.utc)
+            else:
+                parsed_run_start_time = parsed_run_start_time.astimezone(timezone.utc)
+        except ValueError:
+            logger.warning(
+                f"Could not parse --run-start-time {run_start_time!r}; falling back to current UTC time."
+            )
+            parsed_run_start_time = None
 
     logger.warning(f"Flyte runtime started for action {name} with run name {run_name}")
 
@@ -170,6 +192,7 @@ def main(
         controller=controller,
         image_cache=ic,
         interactive_mode=interactive_mode or debug,
+        run_start_time=parsed_run_start_time,
     )
     # Create a coroutine to watch for errors
     controller_failure = controller.watch_for_errors()

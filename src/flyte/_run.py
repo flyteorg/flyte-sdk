@@ -7,6 +7,7 @@ import pathlib
 import sys
 import uuid
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union, cast
 
 from flyte._context import Context, contextual_run, internal_ctx
@@ -103,6 +104,7 @@ class _Runner:
         raw_data_path: str | None = None,
         metadata_path: str | None = None,
         run_base_dir: str | None = None,
+        run_start_time: Optional[datetime] = None,
         overwrite_cache: bool = False,
         project: str | None = None,
         domain: str | None = None,
@@ -147,6 +149,7 @@ class _Runner:
         self._raw_data_path = raw_data_path
         self._metadata_path = metadata_path
         self._run_base_dir = run_base_dir
+        self._run_start_time = run_start_time
         self._overwrite_cache = overwrite_cache
         self._project = project
         self._domain = domain
@@ -601,7 +604,7 @@ class _Runner:
 
         async def _run_task() -> Tuple[Any, Optional[Exception]]:
             ctx = internal_ctx()
-            tctx = TaskContext(
+            tctx_kwargs: Dict[str, Any] = dict(
                 action=action,
                 checkpoint_paths=checkpoint_paths,
                 code_bundle=code_bundle,
@@ -613,6 +616,9 @@ class _Runner:
                 report=flyte.report.Report(name=action.name),
                 custom_context=self._custom_context,
             )
+            if self._run_start_time is not None:
+                tctx_kwargs["run_start_time"] = self._run_start_time
+            tctx = TaskContext(**tctx_kwargs)
             async with ctx.replace_task_context(tctx):
                 return await run_task(tctx=tctx, controller=controller, task=obj, inputs=inputs)
 
@@ -696,6 +702,7 @@ class _Runner:
             mode="local",
             custom_context=self._custom_context,
             disable_run_cache=self._disable_run_cache,
+            run_start_time=self._run_start_time or datetime.now(timezone.utc),
         )
 
         if self._tracker is not None:
@@ -840,6 +847,8 @@ def with_runcontext(
     interactive_mode: bool | None = None,
     raw_data_path: str | None = None,
     run_base_dir: str | None = None,
+    # TODO: will move onto RunSpec; for now accept as a run-context override (mainly for local simulation / tests).
+    run_start_time: Optional[datetime] = None,
     overwrite_cache: bool = False,
     project: str | None = None,
     domain: str | None = None,
@@ -900,6 +909,9 @@ def with_runcontext(
          store raw data in specific locations.
     :param run_base_dir: Optional The base directory to use for the run. This is used to store the metadata for the run,
      that is passed between tasks.
+    :param run_start_time: Optional UTC datetime at which the run was triggered. If not provided, defaults to
+     ``datetime.now(timezone.utc)`` at TaskContext construction. Useful for local simulation/tests that need a
+     deterministic timestamp. Accessible inside a task via ``flyte.ctx().run_start_time``.
     :param overwrite_cache: Optional If true, the cache will be overwritten for the run
     :param project: Optional The project to use for the run
     :param domain: Optional The domain to use for the run
@@ -952,6 +964,7 @@ def with_runcontext(
         interactive_mode=interactive_mode,
         raw_data_path=raw_data_path,
         run_base_dir=run_base_dir,
+        run_start_time=run_start_time,
         overwrite_cache=overwrite_cache,
         env_vars=env_vars,
         labels=labels,
