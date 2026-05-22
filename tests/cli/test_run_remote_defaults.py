@@ -1,39 +1,33 @@
 """
-Reproduction tests for the `_has_default` regression on `flyte run deployed-task`.
+CLI tests for deployed-task input defaults and partial ``--inputs`` JSON.
 
-When a deployed task has default input values, the SDK reconstructs the remote
-`NativeInterface` using `NativeInterface.has_default` (the `_has_default` class)
-as a sentinel marker — with the actual literal default value stored in
-`NativeInterface._remote_defaults`.
+Covers:
 
-The CLI's `get_params` used to pass this sentinel *class* straight through to
-`click.Option(default=...)`. Click treats callable defaults as factories, so it
-would instantiate `_has_default()` and convert the resulting instance with
-`STRING.convert`, producing a literal string like
-``"<flyte.models._has_default object at 0x...>"``. That garbage string then
-- showed up in ``--help`` as the rendered default, and
-- was shipped over the wire as the actual input value, causing the deployed
-  pod to fail with confusing errors like ``FontNotFound: <flyte.models._has_default object at 0x...>``.
-
-These tests pin both the CLI rendering and the runtime materialization paths so
-the regression cannot return.
+- ``_has_default`` sentinel handling (remote defaults must not leak into click)
+- Pydantic / dataclass models with field-level defaults on ``--inputs``
+- Shallow merge of partial JSON with the task-arg default before validation
 """
 
 from __future__ import annotations
 
 import asyncio
 import inspect
+import json
+from dataclasses import dataclass
 from typing import Any
 from unittest.mock import patch
 
+import pydantic
 import pytest
 from click.testing import CliRunner
+from pydantic import Field
 
 import flyte.remote
-from flyte.cli._params import to_click_option
+from flyte.cli._params import JsonParamType, to_click_option
 from flyte.cli._run import RunArguments, RunRemoteTaskCommand, run
 from flyte.models import NativeInterface
 from flyte.types import TypeEngine
+from flyte.types._type_engine import convert_mashumaro_json_schema_to_python_class
 
 # ---------------------------------------------------------------------------
 # Helpers to build a fake remote `TaskDetails`-like object with real defaults
@@ -243,3 +237,174 @@ async def test_convert_from_native_to_inputs_handles_sentinel_in_kwargs(sentinel
     literals = {lit.name: lit.value for lit in result.proto_inputs.literals}
     assert "font" in literals
     assert literals["font"].scalar.primitive.string_value == "standard"
+
+
+class HelloFlyteInputManifest(pydantic.BaseModel):
+    message: str = Field(default="hello, flyte")
+    font: str = Field(default="standard")
+
+
+def test_guessed_pydantic_type_accepts_partial_json():
+    """
+    Remote tasks guess Pydantic inputs as dynamic dataclasses from JSON schema metadata.
+    Field-level defaults must be applied so partial ``--inputs`` JSON validates.
+    """
+    lt = TypeEngine.to_literal_type(HelloFlyteInputManifest)
+    guessed = TypeEngine.guess_python_type(lt)
+    param_type = JsonParamType(guessed, default_value=HelloFlyteInputManifest())
+    result = param_type.convert(json.dumps({"message": "hello, niels"}), None, None)
+    assert result.message == "hello, niels"
+    assert result.font == "standard"
+
+
+def test_json_param_type_merges_partial_with_task_default():
+    """Partial object CLI values merge with the task-arg default before validation."""
+    param_type = JsonParamType(HelloFlyteInputManifest, default_value=HelloFlyteInputManifest())
+    result = param_type.convert(
+        json.dumps({"message": "hello, niels"}),
+        None,
+        None,
+    )
+    assert result.message == "hello, niels"
+    assert result.font == "standard"
+
+
+def test_convert_mashumaro_schema_honors_pydantic_field_defaults():
+    schema = HelloFlyteInputManifest.model_json_schema()
+    cls = convert_mashumaro_json_schema_to_python_class(schema, "HelloFlyteInputManifest")
+    from mashumaro.codecs.json import JSONDecoder
+
+    decoded = JSONDecoder(cls).decode(json.dumps({"message": "hello, niels"}))
+    assert decoded.message == "hello, niels"
+    assert decoded.font == "standard"
+
+
+@dataclass
+class DataclassInput:
+    message: str = "hello"
+    font: str = "standard"
+
+
+def test_guessed_dataclass_type_accepts_partial_json():
+    """Remote dataclass inputs must honor JSON-schema field defaults on partial ``--inputs``."""
+    lt = TypeEngine.to_literal_type(DataclassInput)
+    guessed = TypeEngine.guess_python_type(lt)
+    param_type = JsonParamType(guessed, default_value=DataclassInput())
+    result = param_type.convert(json.dumps({"message": "hi"}), None, None)
+    assert result.message == "hi"
+    assert result.font == "standard"
+
+
+def test_json_param_type_merges_partial_with_dataclass_task_default():
+    param_type = JsonParamType(DataclassInput, default_value=DataclassInput())
+    result = param_type.convert(json.dumps({"message": "hi"}), None, None)
+    assert result.message == "hi"
+    assert result.font == "standard"
+
+
+# ---------------------------------------------------------------------------
+# Deployed-task path: Pydantic ``inputs`` model with field defaults (customer repro)
+# ---------------------------------------------------------------------------
+
+
+def test_get_params_resolves_pydantic_model_remote_default():
+    """``--inputs`` default for a remote Pydantic model is materialized as JSON for click."""
+    default_model = HelloFlyteInputManifest()
+    interface = _build_remote_interface(defaults={"inputs": (HelloFlyteInputManifest, default_model)})
+    details = _FakeTaskDetails(interface)
+    cmd = _make_remote_command("deploy_task_test.hello_flyte_task")
+
+    with _patched_task_get(details), patch("flyte.cli._common.initialize_config"):
+        import click as _click
+
+        ctx = _click.Context(cmd)
+        params = cmd.get_params(ctx)
+
+    by_name = {p.name: p for p in params if isinstance(p, _click.Option)}
+    assert "inputs" in by_name
+    opt = by_name["inputs"]
+    assert isinstance(opt.default, str)
+    assert "hello, flyte" in opt.default
+    assert "standard" in opt.default
+    assert "_has_default" not in opt.default
+
+
+def test_help_output_shows_pydantic_inputs_json_default():
+    """``--help`` for a Pydantic ``inputs`` param shows the resolved model default JSON."""
+    interface = _build_remote_interface(
+        defaults={"inputs": (HelloFlyteInputManifest, HelloFlyteInputManifest())},
+    )
+    details = _FakeTaskDetails(interface)
+    runner = CliRunner()
+
+    with _patched_task_get(details), patch("flyte.cli._common.initialize_config"):
+        result = runner.invoke(
+            run,
+            ["deployed-task", "deploy_task_test.hello_flyte_task", "--help"],
+            catch_exceptions=False,
+        )
+
+    assert result.exit_code == 0, result.output
+    assert "_has_default" not in result.output
+    # Rich help may wrap the default JSON across lines; check key parts separately.
+    assert "hello" in result.output
+    assert "flyte" in result.output
+    assert "standard" in result.output
+    assert '"font":"standard"' in result.output or '"font": "standard"' in result.output
+
+
+def test_remote_partial_pydantic_inputs_converts_via_click_param_type():
+    """
+    End-to-end CLI param conversion for deployed tasks: partial ``--inputs`` JSON
+    must validate after merging with the remote task default.
+    """
+    interface = _build_remote_interface(
+        defaults={"inputs": (HelloFlyteInputManifest, HelloFlyteInputManifest())},
+    )
+    details = _FakeTaskDetails(interface)
+    cmd = _make_remote_command()
+
+    with _patched_task_get(details), patch("flyte.cli._common.initialize_config"):
+        import click as _click
+
+        ctx = _click.Context(cmd)
+        params = cmd.get_params(ctx)
+
+    by_name = {p.name: p for p in params if isinstance(p, _click.Option)}
+    inputs_opt = by_name["inputs"]
+    # ``to_click_option`` stores the default as model_dump_json for STRUCT + pydantic
+    assert isinstance(inputs_opt.default, str)
+    result = inputs_opt.type.convert(json.dumps({"message": "hello, niels"}), inputs_opt, ctx)
+    assert result.message == "hello, niels"
+    assert result.font == "standard"
+
+
+def test_json_param_type_merges_partial_with_json_string_task_default():
+    """STRUCT click defaults are JSON strings; merge must still apply field overrides."""
+    default_json = HelloFlyteInputManifest().model_dump_json()
+    param_type = JsonParamType(HelloFlyteInputManifest, default_value=default_json)
+    result = param_type.convert(json.dumps({"message": "override"}), None, None)
+    assert result.message == "override"
+    assert result.font == "standard"
+
+
+def test_json_param_type_default_dict_strips_schema_without_field_defaults():
+    """
+    Stripped schemas (all properties required, no per-field defaults) still work when
+    the task-arg default is merged before validation.
+    """
+    stripped_schema = {
+        "type": "object",
+        "title": "HelloFlyteInputManifest",
+        "properties": {
+            "message": {"type": "string"},
+            "font": {"type": "string"},
+        },
+        "required": ["message", "font"],
+        "additionalProperties": False,
+    }
+    cls = convert_mashumaro_json_schema_to_python_class(stripped_schema, "HelloFlyteInputManifest")
+    param_type = JsonParamType(cls, default_value=HelloFlyteInputManifest())
+    result = param_type.convert(json.dumps({"message": "only message"}), None, None)
+    assert result.message == "only message"
+    assert result.font == "standard"
