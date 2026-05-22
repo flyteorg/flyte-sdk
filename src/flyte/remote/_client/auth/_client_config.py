@@ -1,4 +1,3 @@
-import asyncio
 import typing
 from abc import abstractmethod
 
@@ -7,7 +6,6 @@ from flyteidl2.auth.auth_service_connect import AuthMetadataServiceClient
 from flyteidl2.auth.auth_service_pb2 import GetOAuth2MetadataRequest, GetPublicClientConfigRequest
 
 from flyte._logging import logger
-from flyte.remote._client.auth._interceptors.default_metadata import _generate_request_id
 
 AuthType = typing.Literal["ClientSecret", "Pkce", "ExternalCommand", "DeviceFlow", "Passthrough"]
 
@@ -40,7 +38,6 @@ class ClientConfig(pydantic.BaseModel):
             header_key=other.header_key or self.header_key,
             audience=other.audience or self.audience,
         )
-
 
     def has_required_public_client_fields(self) -> bool:
         return bool(self.client_id and self.redirect_uri and self.header_key and self.scopes)
@@ -78,13 +75,12 @@ class RemoteClientConfigStore(ClientConfigStore):
         Retrieves the ClientConfig from the AuthMetadataService via ConnectRPC.
         """
 
-        oauth2_metadata = await self._client.get_o_auth2_metadata(
-            GetOAuth2MetadataRequest()
-        )
+        oauth2_metadata = await self._client.get_o_auth2_metadata(GetOAuth2MetadataRequest())
 
         if self._client_config and self._client_config.has_required_public_client_fields():
             logger.info(
-                "RemoteClientConfigStore.get_client_config using local public client config for endpoint=%s and skipping GetPublicClientConfig",
+                "RemoteClientConfigStore.get_client_config using local public client config "
+                "for endpoint=%s and skipping GetPublicClientConfig",
                 self._endpoint,
             )
             return ClientConfig(
@@ -99,9 +95,7 @@ class RemoteClientConfigStore(ClientConfigStore):
             )
 
         logger.debug("calling get_public_client_config")
-        public_client_config = await self._client.get_public_client_config(
-            GetPublicClientConfigRequest()
-        )
+        public_client_config = await self._client.get_public_client_config(GetPublicClientConfigRequest())
 
         return ClientConfig(
             token_endpoint=oauth2_metadata.token_endpoint,

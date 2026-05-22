@@ -6,7 +6,7 @@ from abc import abstractmethod
 from http import HTTPStatus
 
 import httpx
-from flyte._logging import logger
+
 from flyte.remote._client.auth._client_config import ClientConfig, ClientConfigStore
 from flyte.remote._client.auth._keyring import Credentials, KeyringStore
 

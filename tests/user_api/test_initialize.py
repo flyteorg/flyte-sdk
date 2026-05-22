@@ -22,8 +22,8 @@ from flyte._initialize import (
     requires_storage,
 )
 from flyte.config import Config
-from flyte.remote._client.auth._client_config import ClientConfig
 from flyte.errors import InitializationError
+from flyte.remote._client.auth._client_config import ClientConfig
 
 
 class TestInitFromConfig:

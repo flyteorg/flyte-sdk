@@ -150,6 +150,7 @@ def get_async_authenticator(
     match auth_type:
         case "Pkce":
             from flyte.remote._client.auth._authenticators.pkce import PKCEAuthenticator
+
             return PKCEAuthenticator(endpoint=endpoint, cfg_store=cfg_store, verify=verify, **kwargs)
         case "ClientSecret":
             from flyte.remote._client.auth._authenticators.client_credentials import ClientCredentialsAuthenticator

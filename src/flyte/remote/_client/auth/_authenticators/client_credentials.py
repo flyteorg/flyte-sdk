@@ -51,6 +51,10 @@ class ClientCredentialsAuthenticator(Authenticator):
         """
         cfg = await self._resolve_config()
 
+        if cfg.token_endpoint is None:
+            raise ValueError("token_endpoint is required for client credentials authentication")
+        token_endpoint = cfg.token_endpoint
+
         # Note that unlike the Pkce flow, the client ID does not come from Admin.
         logger.debug(f"Basic authorization flow with client id {self._client_id} scope {cfg.scopes}")
         authorization_header = token_client.get_basic_authorization_header(
@@ -58,7 +62,7 @@ class ClientCredentialsAuthenticator(Authenticator):
         )
 
         token, refresh_token, expires_in = await token_client.get_token(
-            token_endpoint=cfg.token_endpoint,
+            token_endpoint=token_endpoint,
             authorization_header=authorization_header,
             http_proxy_url=self._http_proxy_url,
             verify=self._verify,

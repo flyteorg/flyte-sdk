@@ -58,13 +58,21 @@ class DeviceCodeAuthenticator(Authenticator):
             raise AuthenticationError(
                 "Device Authentication is not available on the Flyte backend / authentication server"
             )
+        if cfg.token_endpoint is None:
+            raise AuthenticationError("token endpoint is not available for device authentication")
+        if cfg.client_id is None:
+            raise AuthenticationError("client id is not available for device authentication")
+
+        device_authorization_endpoint = cfg.device_authorization_endpoint
+        token_endpoint = cfg.token_endpoint
+        client_id = cfg.client_id
 
         if self._creds and self._creds.refresh_token:
             """We have an refresh token so lets try to refresh it"""
             try:
                 access_token, refresh_token, expires_in = await token_client.get_token(
-                    token_endpoint=cfg.token_endpoint,
-                    client_id=cfg.client_id,
+                    token_endpoint=token_endpoint,
+                    client_id=client_id,
                     audience=cfg.audience,
                     scopes=cfg.scopes,
                     http_proxy_url=self._http_proxy_url,
@@ -85,8 +93,8 @@ class DeviceCodeAuthenticator(Authenticator):
 
         """Fall back to device flow"""
         resp = await token_client.get_device_code(
-            cfg.device_authorization_endpoint,
-            cfg.client_id,
+            device_authorization_endpoint,
+            client_id,
             audience=cfg.audience,
             scopes=cfg.scopes,
             http_session=self._http_session,
@@ -100,8 +108,8 @@ class DeviceCodeAuthenticator(Authenticator):
         try:
             token, refresh_token, expires_in = await token_client.poll_token_endpoint(
                 resp,
-                token_endpoint=cfg.token_endpoint,
-                client_id=cfg.client_id,
+                token_endpoint=token_endpoint,
+                client_id=client_id,
                 audience=cfg.audience,
                 scopes=cfg.scopes,
                 http_proxy_url=self._http_proxy_url,

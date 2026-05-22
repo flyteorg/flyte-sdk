@@ -352,7 +352,9 @@ async def init_from_config(
         if isinstance(cfg.platform.authorization_header, str) and cfg.platform.authorization_header
         else None
     )
-    redirect_uri = cfg.platform.redirect_uri if isinstance(cfg.platform.redirect_uri, str) and cfg.platform.redirect_uri else None
+    redirect_uri = (
+        cfg.platform.redirect_uri if isinstance(cfg.platform.redirect_uri, str) and cfg.platform.redirect_uri else None
+    )
     audience = cfg.platform.audience if isinstance(cfg.platform.audience, str) and cfg.platform.audience else None
 
     auth_client_config = None

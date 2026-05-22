@@ -113,8 +113,12 @@ class PlatformConfig(object):
 
         kwargs = set_if_exists(kwargs, "http_proxy_url", _internal.Platform.HTTP_PROXY_URL.read(config_file))
         kwargs = set_if_exists(kwargs, "disable_keyring", _internal.Platform.DISABLE_KEYRING.read(config_file))
-        kwargs = set_if_exists(kwargs, "authorization_header", _internal.Platform.AUTHORIZATION_HEADER.read(config_file))
-        redirect_uri = _internal.Platform.REDIRECT_URI.read(config_file) or _internal.Platform.REDIRECT_URL.read(config_file)
+        kwargs = set_if_exists(
+            kwargs, "authorization_header", _internal.Platform.AUTHORIZATION_HEADER.read(config_file)
+        )
+        redirect_uri = _internal.Platform.REDIRECT_URI.read(config_file) or _internal.Platform.REDIRECT_URL.read(
+            config_file
+        )
         kwargs = set_if_exists(kwargs, "redirect_uri", redirect_uri)
         kwargs = set_if_exists(kwargs, "audience", _internal.Platform.AUDIENCE.read(config_file))
         return PlatformConfig(**kwargs)
