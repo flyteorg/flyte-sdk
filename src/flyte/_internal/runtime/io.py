@@ -72,19 +72,16 @@ async def upload_outputs(outputs: Outputs, output_path: str, max_bytes: int = -1
     logger.debug(f"Uploaded {output_uri} to {output_path}")
 
 
-async def upload_error(err: execution_pb2.ExecutionError, output_prefix: str, recoverable: bool = True) -> str:
+async def upload_error(err: execution_pb2.ExecutionError, output_prefix: str) -> str:
     """
     :param err: execution_pb2.ExecutionError
     :param output_prefix: The output prefix of the remote uri.
-    :param recoverable: If False, sets ContainerError.kind to NON_RECOVERABLE so the engine skips retries.
     """
     error_document = execution_pb2.ErrorDocument(
         error=execution_pb2.ContainerError(
             code=err.code,
             message=err.message,
-            kind=execution_pb2.ContainerError.RECOVERABLE
-            if recoverable
-            else execution_pb2.ContainerError.NON_RECOVERABLE,
+            kind=err.recoverability,
             origin=err.kind,
         )
     )

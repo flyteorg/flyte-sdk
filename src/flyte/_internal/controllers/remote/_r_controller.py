@@ -491,7 +491,7 @@ class RemoteController(BaseController):
         if info.interface.has_outputs():
             if info.error:
                 err = convert.convert_from_native_to_error(info.error)
-                await io.upload_error(err.err, sub_run_output_path, recoverable=err.recoverable)
+                await io.upload_error(err.err, sub_run_output_path)
             else:
                 outputs = await convert.convert_from_native_to_outputs(info.output, info.interface)
                 outputs_file_path = io.outputs_path(sub_run_output_path)

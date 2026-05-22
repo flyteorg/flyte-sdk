@@ -40,44 +40,15 @@ class Outputs:
 @dataclass
 class Error:
     err: execution_pb2.ExecutionError
-    recoverable: bool = True
 
-
-def _container_error_kind(recoverable: bool) -> execution_pb2.ContainerError.Kind:
-    if recoverable:
-        return execution_pb2.ContainerError.RECOVERABLE
-    return execution_pb2.ContainerError.NON_RECOVERABLE
+    @property
+    def recoverable(self) -> bool:
+        return _is_execution_error_recoverable(self.err)
 
 
 def _is_execution_error_recoverable(err: execution_pb2.ExecutionError) -> bool:
     # Producers are expected to stamp RECOVERABLE explicitly; proto3 zero is NON_RECOVERABLE.
     return err.recoverability != execution_pb2.ContainerError.NON_RECOVERABLE
-
-
-def _runtime_error_to_error(
-    err: flyte.errors.BaseRuntimeError,
-    kind: execution_pb2.ExecutionError.ErrorKind,
-    recoverable: bool = True,
-) -> Error:
-    return Error(
-        err=execution_pb2.ExecutionError(
-            kind=kind,
-            code=err.code,
-            message=str(err),
-            worker=err.worker,
-            recoverability=_container_error_kind(recoverable),
-        ),
-        recoverable=recoverable,
-    )
-
-
-def _non_recoverable_error_from_execution_error(
-    err: execution_pb2.ExecutionError,
-    user_code: str,
-) -> flyte.errors.NonRecoverableError:
-    exc = flyte.errors.NonRecoverableError(err.message, code=user_code)
-    exc.worker = err.worker
-    return exc
 
 
 # ------------------------------- CONVERT Methods ------------------------------- #
@@ -326,21 +297,18 @@ def convert_error_to_native(
     if isinstance(err, Exception):
         return err
 
-    recoverable: bool | None = None
     if isinstance(err, Error):
-        recoverable = err.recoverable
         err = err.err
-
-    if recoverable is None:
-        recoverable = _is_execution_error_recoverable(err)
 
     user_code, _server_code = _clean_error_code(err.code)
     match err.kind:
         case execution_pb2.ExecutionError.UNKNOWN:
             return flyte.errors.RuntimeUnknownError(code=user_code, message=err.message, worker=err.worker)
         case execution_pb2.ExecutionError.USER:
-            if not recoverable:
-                return _non_recoverable_error_from_execution_error(err, user_code)
+            if not _is_execution_error_recoverable(err):
+                exc = flyte.errors.NonRecoverableError(err.message, code=user_code)
+                exc.worker = err.worker
+                return exc
             if "OOM" in err.code.upper():
                 return flyte.errors.OOMError(code=user_code, message=err.message, worker=err.worker)
             elif "Interrupted" in err.code:
@@ -365,13 +333,45 @@ def convert_error_to_native(
 
 def convert_from_native_to_error(err: BaseException) -> Error:
     if isinstance(err, flyte.errors.NonRecoverableError):
-        return _runtime_error_to_error(err, execution_pb2.ExecutionError.USER, recoverable=False)
+        return Error(
+            err=execution_pb2.ExecutionError(
+                kind=execution_pb2.ExecutionError.USER,
+                code=err.code,
+                message=str(err),
+                worker=err.worker,
+                recoverability=execution_pb2.ContainerError.NON_RECOVERABLE,
+            )
+        )
     elif isinstance(err, flyte.errors.RuntimeUnknownError):
-        return _runtime_error_to_error(err, execution_pb2.ExecutionError.UNKNOWN)
+        return Error(
+            err=execution_pb2.ExecutionError(
+                kind=execution_pb2.ExecutionError.UNKNOWN,
+                code=err.code,
+                message=str(err),
+                worker=err.worker,
+                recoverability=execution_pb2.ContainerError.RECOVERABLE,
+            )
+        )
     elif isinstance(err, flyte.errors.RuntimeUserError):
-        return _runtime_error_to_error(err, execution_pb2.ExecutionError.USER)
+        return Error(
+            err=execution_pb2.ExecutionError(
+                kind=execution_pb2.ExecutionError.USER,
+                code=err.code,
+                message=str(err),
+                worker=err.worker,
+                recoverability=execution_pb2.ContainerError.RECOVERABLE,
+            )
+        )
     elif isinstance(err, flyte.errors.RuntimeSystemError):
-        return _runtime_error_to_error(err, execution_pb2.ExecutionError.SYSTEM)
+        return Error(
+            err=execution_pb2.ExecutionError(
+                kind=execution_pb2.ExecutionError.SYSTEM,
+                code=err.code,
+                message=str(err),
+                worker=err.worker,
+                recoverability=execution_pb2.ContainerError.RECOVERABLE,
+            )
+        )
     else:
         return Error(
             err=execution_pb2.ExecutionError(
@@ -380,8 +380,7 @@ def convert_from_native_to_error(err: BaseException) -> Error:
                 message=str(err),
                 worker="UNKNOWN",
                 recoverability=execution_pb2.ContainerError.RECOVERABLE,
-            ),
-            recoverable=True,
+            )
         )
 
 
