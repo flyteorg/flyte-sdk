@@ -148,22 +148,22 @@ async def convert_and_run(
     parent_tctx = ctx.data.task_context
     disable_run_cache = parent_tctx.disable_run_cache if parent_tctx else False
 
-    tctx_kwargs: Dict[str, Any] = dict(
-        action=action,
-        checkpoint_paths=checkpoint_paths,
-        code_bundle=code_bundle,
-        input_path=input_path,
-        output_path=output_path,
-        run_base_dir=run_base_dir,
-        version=version,
-        raw_data_path=raw_data_path,
-        compiled_image_cache=image_cache,
-        report=flyte.report.Report(name=action.name),
-        mode="remote" if not parent_tctx else parent_tctx.mode,
-        interactive_mode=interactive_mode,
-        custom_context=custom_context,
-        disable_run_cache=disable_run_cache,
-    )
+    tctx_kwargs: Dict[str, Any] = {
+        "action": action,
+        "checkpoint_paths": checkpoint_paths,
+        "code_bundle": code_bundle,
+        "input_path": input_path,
+        "output_path": output_path,
+        "run_base_dir": run_base_dir,
+        "version": version,
+        "raw_data_path": raw_data_path,
+        "compiled_image_cache": image_cache,
+        "report": flyte.report.Report(name=action.name),
+        "mode": "remote" if not parent_tctx else parent_tctx.mode,
+        "interactive_mode": interactive_mode,
+        "custom_context": custom_context,
+        "disable_run_cache": disable_run_cache,
+    }
     if run_start_time is not None:
         tctx_kwargs["run_start_time"] = run_start_time
     tctx = TaskContext(**tctx_kwargs)

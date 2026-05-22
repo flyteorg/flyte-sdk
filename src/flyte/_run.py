@@ -604,18 +604,18 @@ class _Runner:
 
         async def _run_task() -> Tuple[Any, Optional[Exception]]:
             ctx = internal_ctx()
-            tctx_kwargs: Dict[str, Any] = dict(
-                action=action,
-                checkpoint_paths=checkpoint_paths,
-                code_bundle=code_bundle,
-                output_path=output_path,
-                version=version or "na",  # does na not work for rust?
-                raw_data_path=raw_data_path_obj,
-                compiled_image_cache=image_cache,
-                run_base_dir=run_base_dir,
-                report=flyte.report.Report(name=action.name),
-                custom_context=self._custom_context,
-            )
+            tctx_kwargs: Dict[str, Any] = {
+                "action": action,
+                "checkpoint_paths": checkpoint_paths,
+                "code_bundle": code_bundle,
+                "output_path": output_path,
+                "version": version or "na",  # does na not work for rust?
+                "raw_data_path": raw_data_path_obj,
+                "compiled_image_cache": image_cache,
+                "run_base_dir": run_base_dir,
+                "report": flyte.report.Report(name=action.name),
+                "custom_context": self._custom_context,
+            }
             if self._run_start_time is not None:
                 tctx_kwargs["run_start_time"] = self._run_start_time
             tctx = TaskContext(**tctx_kwargs)

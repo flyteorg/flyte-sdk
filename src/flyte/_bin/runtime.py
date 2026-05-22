@@ -130,9 +130,7 @@ def main(
             else:
                 parsed_run_start_time = parsed_run_start_time.astimezone(timezone.utc)
         except ValueError:
-            logger.warning(
-                f"Could not parse --run-start-time {run_start_time!r}; falling back to current UTC time."
-            )
+            logger.warning(f"Could not parse --run-start-time {run_start_time!r}; falling back to current UTC time.")
             parsed_run_start_time = None
 
     logger.warning(f"Flyte runtime started for action {name} with run name {run_name}")
