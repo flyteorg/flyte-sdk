@@ -70,7 +70,7 @@ async def max_runtime_with_retries() -> str:
     """
     Per-attempt ``max_runtime`` budget exceeded on every attempt; retries
     exhaust normally. Expect 3 attempts in the UI, each TIMED_OUT after ~15s.
-    Total wall-clock ≈ 3 × (pod startup + 15s).
+    Total wall-clock ~= 3 x (pod startup + 15s).
     """
     print("max_runtime_with_retries: will sleep 60s, budget=15s per attempt")
     await asyncio.sleep(60)

@@ -116,7 +116,7 @@ async def pipeline_serialized(n: int = 3, seed: int = 42) -> list[str]:
     """
     with flyte.group("fanout-serialized"):
         results = await asyncio.gather(*(expensive_child_serialized(seed=seed) for _ in range(n)))
-    distinct = sorted({r for r in results})
+    distinct = sorted(set(results))
     print(f"pipeline_serialized: results={results} distinct_count={len(distinct)}")
     return results
 
@@ -126,7 +126,7 @@ async def pipeline_unserialized(n: int = 3, seed: int = 42) -> list[str]:
     """Same fan-out, serialize=False — contrast case."""
     with flyte.group("fanout-unserialized"):
         results = await asyncio.gather(*(expensive_child_unserialized(seed=seed) for _ in range(n)))
-    distinct = sorted({r for r in results})
+    distinct = sorted(set(results))
     print(f"pipeline_unserialized: results={results} distinct_count={len(distinct)}")
     return results
 

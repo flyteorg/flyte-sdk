@@ -12,7 +12,7 @@ well before the sleep finishes.
 below the heartbeat window can't be safely enforced without risking the
 leasor reaping a lease before the worker has heartbeated even once. With
 default local-server config (``HeartbeatInterval=10s``,
-``MaxMissedHeartbeats=3``) the floor is roughly 40–45s, so a requested
+``MaxMissedHeartbeats=3``) the floor is roughly 40-45s, so a requested
 ``deadline=30s`` will be silently clamped up. You'll still see TIMED_OUT
 land well under a minute — just slightly later than the literal 30s the
 SDK declared.
