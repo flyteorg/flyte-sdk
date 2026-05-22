@@ -81,7 +81,7 @@ Public API
   fetch the tgz/pkl and extract it into the task's working directory.
 """
 
-from ._ignore import GitIgnore, IgnoreGroup, StandardIgnore
+from ._ignore import FlyteIgnore, GitIgnore, IgnoreGroup, StandardIgnore
 from ._utils import CopyFiles
 from .bundle import (
     build_code_bundle,
@@ -92,6 +92,7 @@ from .bundle import (
 
 __all__ = [
     "CopyFiles",
+    "FlyteIgnore",
     "build_code_bundle",
     "build_code_bundle_from_relative_paths",
     "build_pkl_bundle",
@@ -100,4 +101,4 @@ __all__ = [
 ]
 
 
-default_ignores = [GitIgnore, StandardIgnore, IgnoreGroup]
+default_ignores = [GitIgnore, FlyteIgnore, StandardIgnore, IgnoreGroup]

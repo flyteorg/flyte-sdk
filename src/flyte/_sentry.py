@@ -87,9 +87,13 @@ def _is_user_error(exc: BaseException) -> bool:
         click_user_exc = ()
 
     try:
-        from flyte.errors import DeploymentError, ImageBuildError, InitializationError
+        from flyte.errors import InitializationError, RuntimeUserError
 
-        flyte_user_exc: tuple[type, ...] = (DeploymentError, ImageBuildError, InitializationError)
+        # RuntimeUserError is the parent class of ModuleLoadError, DeploymentError,
+        # ImageBuildError, OOMError, TaskTimeoutError, RuntimeDataValidationError,
+        # CodeBundleError, etc. — all "this is your code/config, not an SDK bug"
+        # errors. InitializationError is a sibling BaseRuntimeError, also user-facing.
+        flyte_user_exc: tuple[type, ...] = (RuntimeUserError, InitializationError)
     except ImportError:
         flyte_user_exc = ()
 

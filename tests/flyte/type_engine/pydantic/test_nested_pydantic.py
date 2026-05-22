@@ -156,13 +156,13 @@ async def test_nested_with_mixed_initialization():
     """Test initializing with a mix of dict and object instances"""
     guessed = TypeEngine.guess_python_type(TypeEngine.to_literal_type(Person))
 
-    # Mix dict and actual nested objects
-    address_obj = Address(street="456 Elm St", city="Shelbyville")
+    # Mix dict and actual nested objects (guessed models use dynamic Pydantic types)
+    address_obj = guessed.model_fields["address"].annotation(street="456 Elm St", city="Shelbyville")
     v = guessed(
         name="Jane Doe",
         age=25,
-        address=address_obj,  # Use actual object
-        contact={"email": "jane@example.com", "phone": "555-5678"},  # Use dict
+        address=address_obj,
+        contact={"email": "jane@example.com", "phone": "555-5678"},
     )
 
     # Should be able to serialize it

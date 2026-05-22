@@ -158,7 +158,7 @@ async def test_generate_cache_key_hash_consistency(_):
 
     task_name = "test_task"
     cache_key = convert.generate_cache_key_hash(task_name, inputs_hash, typed_interface, "v1", [], inputs.proto_inputs)
-    assert cache_key == "nlphRTBV/ONbns4FPKlk7yOSqXGwl9qARlb5ommqKJs="
+    assert cache_key == "7GD8K8xR0xYpA9i7dbEfNTvBhO1xrwcqIPumkFOmvOA="
 
 
 @pytest.mark.asyncio

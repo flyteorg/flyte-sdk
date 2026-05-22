@@ -384,9 +384,29 @@ class UnionParamType(click.ParamType):
 class JsonParamType(click.ParamType):
     name = "json object OR json/yaml file path"
 
-    def __init__(self, python_type: typing.Type):
+    def __init__(self, python_type: typing.Type, default_value: typing.Any = None):
         super().__init__()
         self._python_type = python_type
+        self._default_value = default_value
+
+    def _default_dict(self) -> typing.Optional[typing.Dict[str, typing.Any]]:
+        """Best-effort dict view of the click option default for shallow merge on partial JSON."""
+        dv = self._default_value
+        if dv is None:
+            return None
+        if isinstance(dv, dict):
+            return dv
+        if isinstance(dv, str):
+            try:
+                parsed = json.loads(dv)
+            except json.JSONDecodeError:
+                return None
+            return parsed if isinstance(parsed, dict) else None
+        if hasattr(dv, "model_dump"):
+            return dv.model_dump()
+        if dataclasses.is_dataclass(dv) and not isinstance(dv, type):
+            return dataclasses.asdict(dv)
+        return None
 
     def _parse(self, value: typing.Any, param: typing.Optional[click.Parameter]):
         if isinstance(value, (dict, list)):
@@ -414,6 +434,11 @@ class JsonParamType(click.ParamType):
             raise click.BadParameter("None value cannot be converted to a Json type.")
 
         parsed_value = self._parse(value, param)
+
+        if isinstance(parsed_value, dict):
+            base = self._default_dict()
+            if base is not None:
+                parsed_value = {**base, **parsed_value}
 
         # We compare the origin type because the json parsed value for list or dict is always a list or dict without
         # the covariant type information.
@@ -458,7 +483,8 @@ class JsonParamType(click.ParamType):
             from mashumaro.codecs.json import JSONDecoder
 
             decoder = JSONDecoder(self._python_type)
-            return decoder.decode(value)
+            payload = json.dumps(parsed_value) if isinstance(parsed_value, (dict, list)) else value
+            return decoder.decode(payload)
 
         return parsed_value
 
@@ -629,13 +655,15 @@ SIMPLE_TYPE_CONVERTER = {
 }
 
 
-def literal_type_to_click_type(lt: LiteralType, python_type: typing.Type) -> click.ParamType:
+def literal_type_to_click_type(
+    lt: LiteralType, python_type: typing.Type, default_value: typing.Any = None
+) -> click.ParamType:
     """
     Converts a Flyte LiteralType given a python_type to a click.ParamType
     """
     if lt.HasField("simple"):
         if lt.simple == SimpleType.STRUCT:
-            ct = JsonParamType(python_type)
+            ct = JsonParamType(python_type, default_value=default_value)
             ct.name = f"JSON object {python_type.__name__}"
             return ct
         if lt.simple in SIMPLE_TYPE_CONVERTER:
@@ -646,7 +674,7 @@ def literal_type_to_click_type(lt: LiteralType, python_type: typing.Type) -> cli
         return StructuredDatasetParamType()
 
     if lt.HasField("collection_type") or lt.HasField("map_value_type"):
-        ct = JsonParamType(python_type)
+        ct = JsonParamType(python_type, default_value=default_value)
         if lt.HasField("collection_type"):
             ct.name = "json list"
         else:
@@ -690,10 +718,11 @@ class FlyteLiteralConverter(object):
         self,
         literal_type: LiteralType,
         python_type: typing.Type,
+        default_value: typing.Any = None,
     ):
         self._literal_type = literal_type
         self._python_type = python_type
-        self._click_type = literal_type_to_click_type(literal_type, python_type)
+        self._click_type = literal_type_to_click_type(literal_type, python_type, default_value=default_value)
 
     @property
     def click_type(self) -> click.ParamType:
@@ -758,6 +787,7 @@ def to_click_option(
     literal_converter = FlyteLiteralConverter(
         literal_type=literal_var.type,
         python_type=python_type,
+        default_value=default_val,
     )
 
     if literal_converter.is_bool() and not default_val:
