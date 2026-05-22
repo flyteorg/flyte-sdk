@@ -485,7 +485,7 @@ class RemoteController(Controller):
         if info.interface.has_outputs():
             if info.error:
                 err = convert.convert_from_native_to_error(info.error)
-                await io.upload_error(err.err, sub_run_output_path)
+                await io.upload_error(err.err, sub_run_output_path, recoverable=err.recoverable)
             else:
                 _ctx = ctx.new_in_driver_literal_conversion(True) if ctx.is_task_context() else nullcontext()
                 with _ctx:

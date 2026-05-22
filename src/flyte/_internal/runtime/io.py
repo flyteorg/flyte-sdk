@@ -176,6 +176,7 @@ async def load_error(path: str) -> execution_pb2.ExecutionError:
             message=err.error.message,
             kind=err.error.origin,
             error_uri=path,
+            recoverability=err.error.kind,
         )
 
     return execution_pb2.ExecutionError(
@@ -183,4 +184,5 @@ async def load_error(path: str) -> execution_pb2.ExecutionError:
         message=f"Received unloadable error from path {path}",
         kind=execution_pb2.ExecutionError.SYSTEM,
         error_uri=path,
+        recoverability=execution_pb2.ContainerError.RECOVERABLE,
     )

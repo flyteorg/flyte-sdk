@@ -7,6 +7,7 @@ from typing import Optional, Tuple, Union
 
 import pytest
 import pytest_asyncio
+from flyteidl2.core import execution_pb2
 from flyteidl2.core.interface_pb2 import TypedInterface, Variable, VariableEntry, VariableMap
 from flyteidl2.core.literals_pb2 import (
     Literal,
@@ -27,6 +28,7 @@ from flyteidl2.task import common_pb2 as _task_common_pb2
 from flyteidl2.task import common_pb2 as run_definition_pb2
 
 import flyte._internal.runtime.convert as convert
+import flyte.errors
 from flyte._internal.runtime.convert import Inputs, generate_sub_action_id_and_output_path
 from flyte._internal.runtime.types_serde import transform_native_to_typed_interface
 from flyte.models import ActionID, NativeInterface, RawDataPath, TaskContext
@@ -40,6 +42,53 @@ test_cases = [
     ((NativeInterface.from_types({"x": (int, inspect.Parameter.empty)}, {}), (3,)), "et7s2yhynbrhdtsawc2wny9o6"),
     ((NativeInterface.from_types({"x": (int, inspect.Parameter.empty)}, {}), (4,)), "5nf5f0zrm2jkqcijzjls1pgfh"),
 ]
+
+
+def test_convert_from_native_to_error_stamps_recoverability():
+    recoverable = convert.convert_from_native_to_error(flyte.errors.RuntimeUserError("ValueError", "retry me"))
+    assert recoverable.recoverable is True
+    assert recoverable.err.recoverability == execution_pb2.ContainerError.RECOVERABLE
+
+    non_recoverable = convert.convert_from_native_to_error(flyte.errors.NonRecoverableError("do not retry"))
+    assert non_recoverable.recoverable is False
+    assert non_recoverable.err.recoverability == execution_pb2.ContainerError.NON_RECOVERABLE
+
+
+def test_convert_error_to_native_uses_non_recoverable_error_for_non_recoverable_user_errors():
+    err = execution_pb2.ExecutionError(
+        kind=execution_pb2.ExecutionError.USER,
+        code="ValueError",
+        message="bad input",
+        recoverability=execution_pb2.ContainerError.NON_RECOVERABLE,
+    )
+
+    native = convert.convert_error_to_native(err)
+
+    assert isinstance(native, flyte.errors.NonRecoverableError)
+    assert native.code == "ValueError"
+    assert not hasattr(native, "recoverable")
+
+    round_tripped = convert.convert_from_native_to_error(native)
+    assert round_tripped.recoverable is False
+    assert round_tripped.err.recoverability == execution_pb2.ContainerError.NON_RECOVERABLE
+
+
+def test_convert_error_to_native_preserves_recoverable_signal():
+    err = execution_pb2.ExecutionError(
+        kind=execution_pb2.ExecutionError.SYSTEM,
+        code="TransientSystemError",
+        message="retry later",
+        recoverability=execution_pb2.ContainerError.RECOVERABLE,
+    )
+
+    native = convert.convert_error_to_native(err)
+
+    assert isinstance(native, flyte.errors.RuntimeSystemError)
+    assert not hasattr(native, "recoverable")
+
+    round_tripped = convert.convert_from_native_to_error(native)
+    assert round_tripped.recoverable is True
+    assert round_tripped.err.recoverability == execution_pb2.ContainerError.RECOVERABLE
 
 
 @pytest_asyncio.fixture(params=test_cases)
