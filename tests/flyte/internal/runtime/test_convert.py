@@ -29,6 +29,7 @@ from flyteidl2.task import common_pb2 as run_definition_pb2
 
 import flyte._internal.runtime.convert as convert
 import flyte.errors
+from flyte._internal.runtime import io as runtime_io
 from flyte._internal.runtime.convert import Inputs, generate_sub_action_id_and_output_path
 from flyte._internal.runtime.types_serde import transform_native_to_typed_interface
 from flyte.models import ActionID, NativeInterface, RawDataPath, TaskContext
@@ -89,6 +90,82 @@ def test_convert_error_to_native_preserves_recoverable_signal():
     round_tripped = convert.convert_from_native_to_error(native)
     assert round_tripped.recoverable is True
     assert round_tripped.err.recoverability == execution_pb2.ContainerError.RECOVERABLE
+
+
+@pytest.mark.asyncio
+async def test_child_error_upload_download_round_trips_to_parent_native_error(tmp_path):
+    child_exc = flyte.errors.NonRecoverableError("invalid customer id", code="InvalidCustomerID")
+
+    child_err = convert.convert_from_native_to_error(child_exc)
+    error_uri = await runtime_io.upload_error(child_err.err, str(tmp_path))
+    downloaded_err = await runtime_io.load_error(error_uri)
+    parent_exc = convert.convert_error_to_native(downloaded_err)
+
+    assert error_uri == runtime_io.error_path(str(tmp_path))
+    assert downloaded_err.kind == child_err.err.kind
+    assert downloaded_err.code == child_exc.code
+    assert downloaded_err.message == str(child_exc)
+    assert downloaded_err.recoverability == execution_pb2.ContainerError.NON_RECOVERABLE
+    assert isinstance(parent_exc, flyte.errors.NonRecoverableError)
+    assert parent_exc.code == child_exc.code
+    assert str(parent_exc) == str(child_exc)
+
+
+@pytest.mark.asyncio
+async def test_child_runtime_unknown_error_upload_download_round_trips_to_parent_native_error(tmp_path):
+    child_exc = flyte.errors.RuntimeUnknownError("MysteryFailure", "something unexpected happened")
+
+    child_err = convert.convert_from_native_to_error(child_exc)
+    error_uri = await runtime_io.upload_error(child_err.err, str(tmp_path))
+    downloaded_err = await runtime_io.load_error(error_uri)
+    parent_exc = convert.convert_error_to_native(downloaded_err)
+
+    assert error_uri == runtime_io.error_path(str(tmp_path))
+    assert downloaded_err.kind == child_err.err.kind
+    assert downloaded_err.code == child_exc.code
+    assert downloaded_err.message == str(child_exc)
+    assert downloaded_err.recoverability == execution_pb2.ContainerError.RECOVERABLE
+    assert isinstance(parent_exc, flyte.errors.RuntimeUnknownError)
+    assert parent_exc.code == child_exc.code
+    assert str(parent_exc) == str(child_exc)
+
+
+@pytest.mark.asyncio
+async def test_child_runtime_user_error_upload_download_round_trips_to_parent_native_error(tmp_path):
+    child_exc = flyte.errors.OOMError("OOMKilled", "container was killed after using too much memory")
+
+    child_err = convert.convert_from_native_to_error(child_exc)
+    error_uri = await runtime_io.upload_error(child_err.err, str(tmp_path))
+    downloaded_err = await runtime_io.load_error(error_uri)
+    parent_exc = convert.convert_error_to_native(downloaded_err)
+
+    assert error_uri == runtime_io.error_path(str(tmp_path))
+    assert downloaded_err.kind == child_err.err.kind
+    assert downloaded_err.code == child_exc.code
+    assert downloaded_err.message == str(child_exc)
+    assert downloaded_err.recoverability == execution_pb2.ContainerError.RECOVERABLE
+    assert isinstance(parent_exc, flyte.errors.OOMError)
+    assert parent_exc.code == child_exc.code
+    assert str(parent_exc) == str(child_exc)
+
+
+@pytest.mark.asyncio
+async def test_child_runtime_system_error_upload_download_round_trips_to_parent_native_error(tmp_path):
+    child_exc = flyte.errors.RuntimeSystemError("StorageUnavailable", "metadata store is temporarily unavailable")
+
+    child_err = convert.convert_from_native_to_error(child_exc)
+    error_uri = await runtime_io.upload_error(child_err.err, str(tmp_path))
+    downloaded_err = await runtime_io.load_error(error_uri)
+    parent_exc = convert.convert_error_to_native(downloaded_err)
+
+    assert error_uri == runtime_io.error_path(str(tmp_path))
+    assert downloaded_err.kind == child_err.err.kind
+    assert downloaded_err.code == child_exc.code
+    assert downloaded_err.message == str(child_exc)
+    assert downloaded_err.recoverability == execution_pb2.ContainerError.RECOVERABLE
+    assert isinstance(parent_exc, flyte.errors.RuntimeSystemError)
+    assert parent_exc.code == child_exc.code
+    assert str(parent_exc) == str(child_exc)
 
 
 @pytest_asyncio.fixture(params=test_cases)
