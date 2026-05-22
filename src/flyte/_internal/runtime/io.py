@@ -2,7 +2,6 @@
 This module contains the methods for uploading and downloading inputs and outputs.
 It uses the storage module to handle the actual uploading and downloading of files.
 
-TODO: Convert to use streaming apis
 """
 
 from flyteidl2.core import execution_pb2
@@ -127,6 +126,7 @@ async def load_inputs(path: str, max_bytes: int = -1, path_rewrite_config: PathR
                     scalar_blob.uri = scalar_blob.uri.replace(
                         path_rewrite_config.old_prefix, path_rewrite_config.new_prefix, 1
                     )
+            # TODO add check for trigger time speciality here
 
     return Inputs(proto_inputs=lm)
 

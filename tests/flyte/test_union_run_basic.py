@@ -126,8 +126,10 @@ async def test_task1_remote_union_sync(
         "{{.runName}}",
         "--name",
         "{{.actionName}}",
+        "--run-start-time",
+        "{{.runStartTime}}",
         "--image-cache",
-        req.task_spec.task_template.container.args[18],  # Image cache is dynamic
+        req.task_spec.task_template.container.args[20],  # Image cache is dynamic
         "--tgz",
         "test.tgz",
         "--dest",
@@ -135,7 +137,7 @@ async def test_task1_remote_union_sync(
         "--resolver",
         "flyte._internal.resolvers.default.DefaultTaskResolver",
         "mod",
-        req.task_spec.task_template.container.args[26],  # changes based on where you run this test from
+        req.task_spec.task_template.container.args[28],  # changes based on where you run this test from
         "instance",
         "task1",
     ]
