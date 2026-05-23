@@ -7,6 +7,7 @@
 # ]
 #
 # [tool.uv.sources]
+# flyte = { path = "../..", editable = true }
 # flyteplugins-union = { path = "../../../../unionai/flyteplugins-union", editable = true }
 # ///
 """
@@ -49,16 +50,15 @@ import flyte.report
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 logger = logging.getLogger("bench")
 
-IDL2 = "git+https://github.com/flyteorg/flyte.git@v2#subdirectory=gen/python"
-_base = (
-    flyte.Image.from_debian_base(install_flyte=False, name="volume-bench")
-    .with_apt_packages("git")
-    .with_pip_packages(IDL2, "kubernetes")
-)
-image = with_volume_deps(_base, install_flyte=False, install_local=True).with_local_v2()
+# Bake the locally-built flyteplugins-union wheel + volume runtime deps
+# into a custom base. Run `make dist-bundled PLATFORM=linux-amd64` in the
+# flyteplugins-union repo first.
+base = flyte.Image.from_debian_base(install_flyte=False, name="volume-bench").with_local_v2()
+image = with_volume_deps(base, install_local=True)
 
 env = flyte.TaskEnvironment(
     name="vol-bench",
+    # CAP_SYS_ADMIN + /dev/fuse come from this flag; no PodTemplate needed.
     enable_fuse_mount=True,
     image=image,
     resources=flyte.Resources(cpu="2", memory="4Gi"),

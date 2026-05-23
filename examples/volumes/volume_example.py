@@ -7,6 +7,7 @@
 # ]
 #
 # [tool.uv.sources]
+# flyte = { path = "../..", editable = true }
 # flyteplugins-union = { path = "../../../../unionai/flyteplugins-union", editable = true }
 # ///
 """
@@ -53,14 +54,9 @@ logger = logging.getLogger("volume-demo")
 VOL_NAME = os.environ.get("VOL_NAME", "demo-vol")
 
 # Bake the locally-built flyteplugins-union wheel + volume runtime deps
-# into a custom base. Run `make dist` in the flyteplugins-union repo first.
-IDL2 = "git+https://github.com/flyteorg/flyte.git@v2#subdirectory=gen/python"
-base = (
-    flyte.Image.from_debian_base(install_flyte=False, name="volume-demo")
-    # .with_apt_packages("git")
-    # .with_pip_packages(IDL2, "kubernetes")
-)
-image = with_volume_deps(base, install_local=True, install_flyte=False).with_local_v2()
+# into a custom base. Run `make dist-bundled PLATFORM=linux-amd64` in the flyteplugins-union repo first.
+base = flyte.Image.from_debian_base(install_flyte=False, name="volume-demo").with_local_v2()
+image = with_volume_deps(base, install_local=True)
 
 env = flyte.TaskEnvironment(
     name="volume-demo",

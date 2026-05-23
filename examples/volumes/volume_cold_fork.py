@@ -7,6 +7,7 @@
 # ]
 #
 # [tool.uv.sources]
+# flyte = { path = "../..", editable = true }
 # flyteplugins-union = { path = "../../../../unionai/flyteplugins-union", editable = true }
 # ///
 """
@@ -41,16 +42,15 @@ logger = logging.getLogger("volume-cold-fork-demo")
 VOL_NAME = os.environ.get("VOL_NAME", "cold-fork-demo")
 MARKER_CONTENTS = "parent state — should be visible to cold fork\n"
 
-IDL2 = "git+https://github.com/flyteorg/flyte.git@v2#subdirectory=gen/python"
-base = (
-    flyte.Image.from_debian_base(install_flyte=False, name="volume-cold-fork-demo")
-    .with_apt_packages("git")
-    .with_pip_packages(IDL2, "kubernetes")
-)
-image = with_volume_deps(base, install_flyte=False, install_local=True).with_local_v2()
+# Bake the locally-built flyteplugins-union wheel + volume runtime deps
+# into a custom base. Run `make dist-bundled PLATFORM=linux-amd64` in the
+# flyteplugins-union repo first.
+base = flyte.Image.from_debian_base(install_flyte=False, name="volume-cold-fork-demo").with_local_v2()
+image = with_volume_deps(base, install_local=True)
 
 env = flyte.TaskEnvironment(
     name="volume-cold-fork-demo",
+    # CAP_SYS_ADMIN + /dev/fuse come from this flag; no PodTemplate needed.
     enable_fuse_mount=True,
     image=image,
     resources=flyte.Resources(cpu="500m", memory="1Gi"),
