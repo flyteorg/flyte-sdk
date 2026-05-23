@@ -257,16 +257,52 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
             )
             layers.append(apt_layer)
         elif isinstance(layer, PythonWheels):
+            # The ``flyteidl2.imagebuilder.PythonWheels`` proto has only
+            # ``dir`` / ``options`` / ``secret_mounts`` — no
+            # ``package_name`` — so the SDK can't tell the server which
+            # wheel to actually pip-install. Until the proto + server
+            # gain that field, translate every PythonWheels layer into
+            # an equivalent ``CopyConfig`` (stage the wheel dir into the
+            # image) + ``Commands`` (run the two pip installs the
+            # docker_builder emits locally). These messages exist in
+            # flyteidl2 today and are wire-compatible with every
+            # server-side image builder.
             dst_path = copy_files_to_context(layer.wheel_dir, context_path, ["*.tar.gz", "*.tar.bz2", "*.zip"])
-            wheel_layer = image_definition_pb2.Layer(
-                python_wheels=image_definition_pb2.PythonWheels(
-                    dir=str(dst_path.relative_to(context_path)),
-                    package_name=layer.package_name,
-                    options=pip_options,
-                    secret_mounts=secret_mounts,
-                ),
+            in_image_dir = "/" + layer.wheel_dir_name  # e.g. ``/dist``
+            layers.append(
+                image_definition_pb2.Layer(
+                    copy_config=image_definition_pb2.CopyConfig(
+                        src=str(dst_path.relative_to(context_path)),
+                        dst=in_image_dir,
+                    )
+                )
             )
-            layers.append(wheel_layer)
+            pip_install_args = layer.get_pip_install_args()
+            # First install — bake the local wheel without dependencies
+            # (--no-index + --no-deps guarantees we don't reach PyPI).
+            no_deps_cmd = " ".join(
+                [
+                    "pip",
+                    "install",
+                    *pip_install_args,
+                    "--find-links",
+                    in_image_dir,
+                    "--no-deps",
+                    "--no-index",
+                    "--force-reinstall",
+                    layer.package_name,
+                ]
+            )
+            # Second install — let pip resolve the dep tree from PyPI.
+            deps_cmd = " ".join(["pip", "install", *pip_install_args, layer.package_name])
+            layers.append(
+                image_definition_pb2.Layer(
+                    commands=image_definition_pb2.Commands(
+                        cmd=[no_deps_cmd, deps_cmd],
+                        secret_mounts=secret_mounts,
+                    )
+                )
+            )
 
         elif isinstance(layer, Requirements):
             dst_path = copy_files_to_context(layer.file, context_path)
