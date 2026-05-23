@@ -5,13 +5,14 @@ configuration shapes the behavior of bursts of work. Each example targets one
 of the queues declared in the cluster config; the examples assume the
 following queues exist with these limits:
 
-| Queue           | MaxActionConcurrency | MaxDepth | Used by                    |
-| --------------- | -------------------- | -------- | -------------------------- |
-| `serial-1`      | 1                    | —        | `serial_one.py`            |
-| `small-3`       | 3                    | —        | `small_concurrency.py`     |
-| `depth-limited` | —                    | 5        | `depth_backpressure.py`    |
-| `bulk-a`        | 2                    | —        | `multi_queue.py`           |
-| `bulk-b`        | 4                    | —        | `multi_queue.py`           |
+| Queue           | MaxActionConcurrency | MaxRunConcurrency | MaxDepth | Used by                    |
+| --------------- | -------------------- | ----------------- | -------- | -------------------------- |
+| `serial-1`      | 1                    | —                 | —        | `serial_one.py`            |
+| `small-3`       | 3                    | —                 | —        | `small_concurrency.py`     |
+| `depth-limited` | —                    | —                 | 5        | `depth_backpressure.py`    |
+| `bulk-a`        | 2                    | —                 | —        | `multi_queue.py`           |
+| `bulk-b`        | 4                    | —                 | —        | `multi_queue.py`           |
+| `runs-1`        | —                    | 1                 | —        | `serial_runs.py`           |
 
 Targeting a queue from your code is one parameter on the task decorator:
 
@@ -76,14 +77,42 @@ queues are running on the same workers and against the same dispatcher. **At
 no point should more than 2 `[bulk-a]` steps or more than 4 `[bulk-b]` steps
 overlap; cross-queue overlap is unrestricted.**
 
+### `serial_runs.py`
+Targets `runs-1`, which caps concurrent *runs* (root actions / workflow
+executions) at 1 but does not cap individual child actions. The script's
+`__main__` submits `NUM_RUNS` runs (default 3) concurrently via
+`flyte.run.aio` and waits for all of them:
+
+```bash
+python examples/queues/serial_runs.py             # 3 runs, 50 children each
+NUM_RUNS=5 FAN_OUT=100 python examples/queues/serial_runs.py
+```
+
+**All N runs are submitted within a few hundred ms, but only one's `main
+START` lands at a time** — the second run's `main START` happens after
+the first run's `main END`, and so on. Inside one run, all `FAN_OUT`
+children fan out in parallel. This is the right pattern for a job that
+internally parallelizes well but must not overlap with itself (training
+runs writing a shared checkpoint, batch jobs that mutate global state,
+etc.).
+
+You can also submit a single run via the standard `flyte run` CLI:
+`flyte run examples/queues/serial_runs.py main`.
+
 ## Choosing queue parameters in your own code
 
-The two knobs are:
+The three knobs are:
 
 - **`maxActionConcurrency`** — strict cap on how many tasks pinned to this
   queue run at the same time. Use small values (1, 2, …) when you need to
   serialize access to a finite external resource (a single GPU, a non-thread-
   safe library, a rate-limited API).
+
+- **`maxRunConcurrency`** — strict cap on how many *runs* (root actions /
+  workflow executions) pinned to this queue are in flight at once. Children
+  of an active run are uncapped (unless `maxActionConcurrency` is also set).
+  Use this when a workflow internally parallelizes well but must not overlap
+  with itself.
 
 - **`maxDepth`** — total number of in-flight + waiting tasks the queue will
   admit. Defaults to unbounded. Set this when the producer can flood the
