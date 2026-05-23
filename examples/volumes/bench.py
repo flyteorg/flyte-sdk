@@ -41,9 +41,10 @@ from pathlib import Path
 from statistics import mean, median, quantiles
 from typing import Awaitable, Callable, Dict, List, Optional, Tuple
 
+from flyteplugins.union.io.volume import Volume, with_volume_deps
+
 import flyte
 import flyte.report
-from flyteplugins.union.io.volume import Volume, volume_image, volume_pod_template
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 logger = logging.getLogger("bench")
@@ -54,11 +55,11 @@ _base = (
     .with_apt_packages("git")
     .with_pip_packages(IDL2, "kubernetes")
 )
-image = volume_image(_base, install_local=True)
+image = with_volume_deps(_base, install_flyte=False, install_local=True).with_local_v2()
 
 env = flyte.TaskEnvironment(
     name="vol-bench",
-    pod_template=volume_pod_template(),
+    enable_fuse_mount=True,
     image=image,
     resources=flyte.Resources(cpu="2", memory="4Gi"),
 )

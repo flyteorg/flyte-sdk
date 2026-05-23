@@ -60,6 +60,13 @@ class Environment:
         absolute, directories (recursively included), or glob patterns. Files
         listed here are bundled **in addition to** the default ``copy_style``
         discovery (``loaded_modules`` or ``all``), not in place of it.
+    :param enable_fuse_mount: When ``True``, the primary container is granted
+        the privileges needed to perform an in-process FUSE mount: a
+        ``hostPath`` volume mount of ``/dev/fuse`` is added, the container
+        becomes privileged, and the ``SYS_ADMIN`` capability is added.
+        Composes with a user-supplied ``pod_template`` — the FUSE bits are
+        merged onto the caller's spec at serialization time. Defaults to
+        ``False``.
     """
 
     name: str
@@ -72,6 +79,7 @@ class Environment:
     interruptible: bool = False
     image: Union[str, Image, Literal["auto"], None] = "auto"
     include: Tuple[str, ...] = field(default_factory=tuple)
+    enable_fuse_mount: bool = False
 
     # Absolute path of the user file where this environment was instantiated.
     # Populated in __post_init__. Used to anchor relative `include` paths.
@@ -210,4 +218,6 @@ class Environment:
             kwargs["description"] = self.description
         if self.include:
             kwargs["include"] = self.include
+        if self.enable_fuse_mount:
+            kwargs["enable_fuse_mount"] = self.enable_fuse_mount
         return kwargs

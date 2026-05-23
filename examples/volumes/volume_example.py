@@ -12,9 +12,9 @@
 """
 Volume example.
 
-NOTE: ``Volume`` and ``volume_image`` live in ``flyteplugins.union.io.volume``
+NOTE: ``Volume`` and ``with_volume_deps`` live in ``flyteplugins.union.io.volume``
 and have not yet been released to PyPI. The remote container image bakes the
-locally-built ``flyteplugins-union`` wheel via ``volume_image(install_local=True)``.
+locally-built ``flyteplugins-union`` wheel via ``with_volume_deps(install_local=True)``.
 Build the wheel from a checkout of the flyteplugins-union repo first::
 
     make dist
@@ -42,8 +42,9 @@ import os
 import uuid
 from pathlib import Path
 
+from flyteplugins.union.io.volume import Volume, with_volume_deps
+
 import flyte
-from flyteplugins.union.io.volume import Volume, volume_image, volume_pod_template
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
 logger = logging.getLogger("volume-demo")
@@ -51,21 +52,20 @@ logger = logging.getLogger("volume-demo")
 
 VOL_NAME = os.environ.get("VOL_NAME", "demo-vol")
 
-POD = volume_pod_template()
-
-# Bake the locally-built flyteplugins-union wheel + volume client into the
-# image. Run `make dist` in the flyteplugins-union repo first.
+# Bake the locally-built flyteplugins-union wheel + volume runtime deps
+# into a custom base. Run `make dist` in the flyteplugins-union repo first.
 IDL2 = "git+https://github.com/flyteorg/flyte.git@v2#subdirectory=gen/python"
 base = (
     flyte.Image.from_debian_base(install_flyte=False, name="volume-demo")
-    .with_apt_packages("git")
-    .with_pip_packages(IDL2, "kubernetes")
+    # .with_apt_packages("git")
+    # .with_pip_packages(IDL2, "kubernetes")
 )
-image = volume_image(base, install_local=True)
+image = with_volume_deps(base, install_local=True, install_flyte=False).with_local_v2()
 
 env = flyte.TaskEnvironment(
     name="volume-demo",
-    pod_template=POD,
+    # CAP_SYS_ADMIN + /dev/fuse come from this flag; no PodTemplate needed.
+    enable_fuse_mount=True,
     image=image,
     resources=flyte.Resources(cpu="500m", memory="1Gi"),
 )

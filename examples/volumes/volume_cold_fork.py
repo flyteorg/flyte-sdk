@@ -31,8 +31,9 @@ import os
 import uuid
 from pathlib import Path
 
+from flyteplugins.union.io.volume import Volume, with_volume_deps
+
 import flyte
-from flyteplugins.union.io.volume import Volume, volume_image, volume_pod_template
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
 logger = logging.getLogger("volume-cold-fork-demo")
@@ -40,18 +41,17 @@ logger = logging.getLogger("volume-cold-fork-demo")
 VOL_NAME = os.environ.get("VOL_NAME", "cold-fork-demo")
 MARKER_CONTENTS = "parent state — should be visible to cold fork\n"
 
-POD = volume_pod_template()
 IDL2 = "git+https://github.com/flyteorg/flyte.git@v2#subdirectory=gen/python"
 base = (
     flyte.Image.from_debian_base(install_flyte=False, name="volume-cold-fork-demo")
     .with_apt_packages("git")
     .with_pip_packages(IDL2, "kubernetes")
 )
-image = volume_image(base, install_local=True)
+image = with_volume_deps(base, install_flyte=False, install_local=True).with_local_v2()
 
 env = flyte.TaskEnvironment(
     name="volume-cold-fork-demo",
-    pod_template=POD,
+    enable_fuse_mount=True,
     image=image,
     resources=flyte.Resources(cpu="500m", memory="1Gi"),
 )

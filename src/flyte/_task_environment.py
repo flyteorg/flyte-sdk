@@ -361,6 +361,7 @@ class TaskEnvironment(Environment):
                 env_vars=self.env_vars,
                 secrets=self.secrets,
                 pod_template=pod_template or self.pod_template,
+                enable_fuse_mount=self.enable_fuse_mount,
                 parent_env=weakref.ref(self),
                 parent_env_name=self.name,
                 interface=NativeInterface.from_callable(func),

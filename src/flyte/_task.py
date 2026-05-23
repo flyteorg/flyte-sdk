@@ -108,6 +108,7 @@ class TaskTemplate(Generic[P, R, F]):
     secrets: Optional[SecretRequest] = None
     timeout: Optional[TimeoutType] = None
     pod_template: Optional[Union[str, PodTemplate]] = None
+    enable_fuse_mount: bool = False
     report: bool = False
     queue: Optional[str] = None
     debuggable: bool = False

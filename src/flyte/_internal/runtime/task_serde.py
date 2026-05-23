@@ -17,7 +17,7 @@ from google.protobuf import duration_pb2, wrappers_pb2
 import flyte.errors
 from flyte._cache.cache import VersionParameters, cache_from_request
 from flyte._logging import logger
-from flyte._pod import _PRIMARY_CONTAINER_NAME_FIELD, PodTemplate
+from flyte._pod import _PRIMARY_CONTAINER_NAME_FIELD, PodTemplate, pod_template_with_fuse_mount
 from flyte._secret import SecretRequest, secrets_from_request
 from flyte._task import AsyncFunctionTaskTemplate, TaskTemplate
 from flyte.models import CodeBundle, SerializationContext, TaskContext
@@ -189,9 +189,15 @@ def get_proto_task(
     container = None
     sql = task.sql(serialize_context)
 
-    if task.pod_template and not isinstance(task.pod_template, str):
-        pod = _get_k8s_pod(_get_urun_container(serialize_context, task), task.pod_template)
-        extra_config[_PRIMARY_CONTAINER_NAME_FIELD] = task.pod_template.primary_container_name
+    # Resolve the effective pod_template after merging any environment-level
+    # capabilities (e.g. enable_fuse_mount). Falls back to ``task.pod_template``
+    # untouched when no augmentations apply, so the existing string /
+    # named-template path keeps working.
+    effective_pod_template = _resolve_pod_template(task)
+
+    if effective_pod_template is not None and not isinstance(effective_pod_template, str):
+        pod = _get_k8s_pod(_get_urun_container(serialize_context, task), effective_pod_template)
+        extra_config[_PRIMARY_CONTAINER_NAME_FIELD] = effective_pod_template.primary_container_name
     elif sql is None:
         container = _get_urun_container(serialize_context, task)
     log_links = []
@@ -323,6 +329,32 @@ def lookup_image_in_cache(serialize_context: SerializationContext, env_name: str
         '             env_vars={"my-name": os.getenv("my-name")},\n'
         "         )\n",
     )
+
+
+def _resolve_pod_template(task: TaskTemplate) -> Optional[typing.Union[str, PodTemplate]]:
+    """Combine ``task.pod_template`` with any environment-level capability
+    flags into a single :class:`PodTemplate` ready for serialization.
+
+    Currently augments for ``enable_fuse_mount``; string-named pod
+    templates and the untouched-PodTemplate path are returned as-is.
+    Returns ``None`` only when neither augmentation applies and the task
+    has no template of its own — preserving the container-only path.
+    """
+    pt = task.pod_template
+    if isinstance(pt, str):
+        # Named pod templates are resolved server-side; the SDK can't
+        # merge into them. Warn-and-pass if fuse is requested.
+        if task.enable_fuse_mount:
+            logger.warning(
+                "task %s requested enable_fuse_mount=True but uses a named pod_template (%r); "
+                "the FUSE volume/mount/security-context must be set in that template manually.",
+                task.name,
+                pt,
+            )
+        return pt
+    if task.enable_fuse_mount:
+        return pod_template_with_fuse_mount(pt)
+    return pt
 
 
 def _get_urun_container(
