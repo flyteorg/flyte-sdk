@@ -52,7 +52,7 @@ async def submit_one(i: int, sleep_seconds: int) -> str:
     rejections — otherwise the first depth-exceeded would fail the whole run."""
     try:
         return await step(i, sleep_seconds)
-    except Exception as exc:  # noqa: BLE001 — surface backpressure verbatim
+    except Exception as exc:
         msg = str(exc)
         print(f"[depth-limited] step {i} REJECTED: {msg}", flush=True)
         return f"step {i} rejected: {msg}"

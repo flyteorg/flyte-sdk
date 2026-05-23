@@ -73,9 +73,7 @@ async def main(fan_out: int = 50, child_sleep_seconds: int = 2) -> list[str]:
     parallel — the rest queue up and dispatch one at a time."""
     started = datetime.utcnow().isoformat(timespec="seconds")
     print(f"main START at {started} fan_out={fan_out}", flush=True)
-    results = list(
-        flyte.map(partial(child, sleep_seconds=child_sleep_seconds), list(range(fan_out)))
-    )
+    results = list(flyte.map(partial(child, sleep_seconds=child_sleep_seconds), list(range(fan_out))))
     finished = datetime.utcnow().isoformat(timespec="seconds")
     print(f"main END   at {finished} ({len(results)} children)", flush=True)
     return results
