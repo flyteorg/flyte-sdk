@@ -20,15 +20,19 @@ Build the wheel from a checkout of the flyteplugins-union repo first::
 
     make dist
 
-Demonstrates a ``Volume`` flowing through a multi-task workflow:
+Demonstrates the typed Volume lifecycle (PRD §Core Concepts) flowing
+through a multi-task workflow. Tasks exchange immutable ``ROVolume``
+values; to mutate, a task forks one into a writable ``RWVolume``, writes,
+and ``finalize()``s back to an ``ROVolume``:
 
-1. ``init_volume`` formats a fresh namespace, writes a file, commits the
-   index back to blob storage, and returns a ``Volume``.
-2. ``append`` mounts the committed volume, appends to the file, commits,
-   and returns the new ``Volume``.
-3. ``branch`` mounts a volume, calls ``Volume.fork()`` to snapshot the
-   index, and returns the fork — a cheap, namespace-isolated copy that
-   shares chunks in object storage.
+1. ``init_volume`` creates a fresh ``RWVolume`` (``Volume.new``), writes a
+   file, and ``finalize()``s — drains writeback, unmounts, and publishes
+   an immutable ``ROVolume``.
+2. ``append`` ``fork()``s the incoming ``ROVolume`` into an ``RWVolume``,
+   appends to the file, and ``finalize()``s the new immutable version.
+3. ``branch`` ``fork()``s a volume into a named writable copy and
+   ``finalize()``s it — a cheap, namespace-isolated snapshot that shares
+   chunks in object storage.
 4. ``main`` chains them together so the run produces a lineage:
    ``init -> appended -> fork``.
 
@@ -43,7 +47,7 @@ import os
 import uuid
 from pathlib import Path
 
-from flyteplugins.union.io.volume import Volume, with_volume_deps
+from flyteplugins.union.io.volume import ROVolume, Volume, with_volume_deps
 
 import flyte
 
@@ -68,41 +72,51 @@ env = flyte.TaskEnvironment(
 
 
 @env.task(cache="auto")
-async def init_volume(volume_name: str) -> Volume:
+async def init_volume(volume_name: str) -> ROVolume:
     logger.info("init_volume: declaring fresh volume name=%s", volume_name)
-    vol = Volume.empty(name=volume_name)
+    # Pin to sqlite: this lineage forks (see `branch`), and the package
+    # default (badger) doesn't support fork(). sqlite is daemon-less, so it
+    # works with the lean `with_volume_deps` image below. Volume.new()
+    # returns a writable RWVolume.
+    vol = Volume.new(name=volume_name, metadata_store_type="sqlite")
     logger.info("init_volume: bucket resolved to %s", vol.bucket)
     await vol.mount()
     Path("/workspace/hello.txt").write_text("hello from volume\n")
-    committed = await vol.commit()
-    logger.info("init_volume: committed, index path=%s", committed.index.path if committed.index else None)
-    return committed
+    # finalize() drains writeback, unmounts, and publishes an immutable
+    # ROVolume. (Returning the mounted RWVolume directly would do the same
+    # via the type transformer.)
+    sealed = await vol.finalize(message="initial write")
+    logger.info("init_volume: sealed, index path=%s", sealed.index.path if sealed.index else None)
+    return sealed
 
 
 @env.task
-async def append(vol: Volume, line: str) -> Volume:
-    logger.info("append: mounting volume name=%s", vol.name)
-    await vol.mount()
+async def append(vol: ROVolume, line: str) -> ROVolume:
+    logger.info("append: forking immutable volume name=%s into a writable copy", vol.name)
+    # An ROVolume is immutable; fork it into an RWVolume to write.
+    rw = await vol.fork(name=f"{vol.name}-app")
+    await rw.mount()
     with open("/workspace/hello.txt", "a") as f:  # noqa: ASYNC230
         f.write(line + "\n")
-    committed = await vol.commit()
-    logger.info("append: committed, new index path=%s", committed.index.path if committed.index else None)
-    return committed
+    sealed = await rw.finalize(message=f"append: {line!r}")
+    logger.info("append: sealed, new index path=%s", sealed.index.path if sealed.index else None)
+    return sealed
 
 
 @env.task
-async def branch(vol: Volume, name: str) -> Volume:
-    logger.info("branch: mounting source volume name=%s to fork into name=%s", vol.name, name)
-    await vol.mount()
-    forked = await vol.fork(name=name)
-    logger.info("branch: forked, new index path=%s", forked.index.path if forked.index else None)
-    return forked
+async def branch(vol: ROVolume, name: str) -> ROVolume:
+    logger.info("branch: forking source volume name=%s into name=%s", vol.name, name)
+    rw = await vol.fork(name=name)
+    await rw.mount()
+    sealed = await rw.finalize(message="branch point")
+    logger.info("branch: sealed fork, new index path=%s", sealed.index.path if sealed.index else None)
+    return sealed
 
 
 @env.task
-async def read_all(vol: Volume) -> str:
-    logger.info("read_all: mounting volume name=%s", vol.name)
-    await vol.mount()
+async def read_all(vol: ROVolume) -> str:
+    logger.info("read_all: mounting volume name=%s (read-only)", vol.name)
+    await vol.mount()  # ROVolume always mounts read-only
     contents = Path("/workspace/hello.txt").read_text()
     logger.info("read_all: read %d bytes", len(contents))
     return contents

@@ -21,9 +21,11 @@ cold-forked Volumes preserve the parent's namespace.
 
 Workflow:
 
-1. ``populate_parent`` mounts a fresh Volume, writes a marker, commits.
-2. ``cold_fork`` receives the committed Volume, forks it *without
-   mounting*, then mounts the fork and reads the marker back.
+1. ``populate_parent`` creates a fresh ``RWVolume``, writes a marker, and
+   ``finalize()``s it into an immutable ``ROVolume``.
+2. ``cold_fork`` receives the sealed ``ROVolume``, forks it *without
+   mounting* (``ROVolume.fork() -> RWVolume``), then mounts the fork and
+   reads the marker back.
 3. ``main`` chains them and returns the marker contents.
 """
 
@@ -32,7 +34,7 @@ import os
 import uuid
 from pathlib import Path
 
-from flyteplugins.union.io.volume import Volume, with_volume_deps
+from flyteplugins.union.io.volume import ROVolume, Volume, with_volume_deps
 
 import flyte
 
@@ -58,17 +60,21 @@ env = flyte.TaskEnvironment(
 
 
 @env.task
-async def populate_parent(volume_name: str) -> Volume:
-    """Format + populate a parent Volume, then commit."""
+async def populate_parent(volume_name: str) -> ROVolume:
+    """Format + populate a parent volume, then seal it into an ROVolume."""
     logger.info("populate_parent: name=%s", volume_name)
-    parent = Volume.empty(name=volume_name)
+    # Pin to sqlite: this example forks (see `cold_fork_and_read`), and the
+    # package default (badger) doesn't support fork(). sqlite is daemon-less,
+    # so the lean `with_volume_deps` image below suffices. Volume.new()
+    # returns a writable RWVolume.
+    parent = Volume.new(name=volume_name, metadata_store_type="sqlite")
     await parent.mount()
     Path("/workspace/marker.txt").write_text(MARKER_CONTENTS)
-    return await parent.commit()
+    return await parent.finalize(message="parent marker")
 
 
 @env.task
-async def cold_fork_and_read(parent: Volume, fork_name: str) -> str:
+async def cold_fork_and_read(parent: ROVolume, fork_name: str) -> str:
     """Fork *without* mounting the parent — the cold path — then mount the
     fork and read the marker.
     """

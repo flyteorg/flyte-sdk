@@ -42,7 +42,7 @@ from pathlib import Path
 from statistics import mean, median, quantiles
 from typing import Awaitable, Callable, Dict, List, Optional, Tuple
 
-from flyteplugins.union.io.volume import Volume, with_volume_deps
+from flyteplugins.union.io.volume import ROVolume, Volume, with_high_throughput_volume_deps
 
 import flyte
 import flyte.report
@@ -52,9 +52,12 @@ logger = logging.getLogger("bench")
 
 # Bake the locally-built flyteplugins-union wheel + volume runtime deps
 # into a custom base. Run `make dist-bundled PLATFORM=linux-amd64` in the
-# flyteplugins-union repo first.
+# flyteplugins-union repo first. The bench sweeps the "redis" engine
+# explicitly, so it needs the high-throughput image (which provisions
+# redis-server); each cell passes metadata_store_type= explicitly, so the
+# image's UNION_VOLUME_METADATA_STORE=redis default is overridden per-cell.
 base = flyte.Image.from_debian_base(install_flyte=False, name="volume-bench").with_local_v2()
-image = with_volume_deps(base, install_local=True)
+image = with_high_throughput_volume_deps(base, install_local=True)
 
 env = flyte.TaskEnvironment(
     name="vol-bench",
@@ -140,9 +143,9 @@ async def _cold_fork(
     k: int,
     base_files: int = 100,
     base_bytes: int = 1024,
-) -> Tuple[Volume, Dict[str, float]]:
+) -> Tuple[ROVolume, Dict[str, float]]:
     suffix = uuid.uuid4().hex[:6]
-    parent = Volume.empty(name=f"bench-cold-fork-{engine}-{suffix}", metadata_store_type=engine)
+    parent = Volume.new(name=f"bench-cold-fork-{engine}-{suffix}", metadata_store_type=engine)
 
     t0 = time.monotonic()
     await parent.mount(writeback=writeback)
@@ -155,10 +158,10 @@ async def _cold_fork(
         (data / f"base_{i:04d}").write_text(payload)
 
     t0 = time.monotonic()
-    committed = await parent.commit()
+    committed = await parent.finalize()
     commit_ms = (time.monotonic() - t0) * 1000.0
 
-    # Forks are issued on the *committed* (unmounted) Volume → cold path.
+    # Forks are issued on the *sealed* (unmounted) ROVolume → cold path.
     fork_ms: List[float] = []
     for i in range(k):
         t0 = time.monotonic()
@@ -217,10 +220,10 @@ DATASET_ENGINES: List[str] = ["redis", "sqlite", "badger"]
 
 
 @env.task
-async def run_cell(workload: str, engine: str, writeback: bool) -> Tuple[Volume, Dict[str, float]]:
+async def run_cell(workload: str, engine: str, writeback: bool) -> Tuple[ROVolume, Dict[str, float]]:
     """Run one matrix cell.
 
-    Returns ``(committed_volume, stats)`` so the Volume's serialized
+    Returns ``(sealed_volume, stats)`` so the ROVolume's serialized
     metadata (bucket, index path, parent, used_bytes, etc.) is visible
     in the Flyte UI alongside the timing numbers.
     """
@@ -232,7 +235,7 @@ async def run_cell(workload: str, engine: str, writeback: bool) -> Tuple[Volume,
     suffix = uuid.uuid4().hex[:6]
     # Volume names: alphanumerics and dashes only, 3-63 chars.
     safe_workload = workload.replace("_", "-")
-    vol = Volume.empty(
+    vol = Volume.new(
         name=f"bench-{safe_workload}-{engine}-{int(writeback)}-{suffix}",
         metadata_store_type=engine,
     )
@@ -244,7 +247,7 @@ async def run_cell(workload: str, engine: str, writeback: bool) -> Tuple[Volume,
     result = await fn(vol, **params)
 
     t0 = time.monotonic()
-    final = await vol.commit()
+    final = await vol.finalize()
     commit_ms = (time.monotonic() - t0) * 1000.0
 
     # Capture the index footprint *after* commit. Redis only writes its
@@ -289,17 +292,17 @@ async def run_cell(workload: str, engine: str, writeback: bool) -> Tuple[Volume,
 
 
 @env.task
-async def run_dataset_cell(workload: str, engine: str, n: int) -> Tuple[Volume, Dict[str, float]]:
+async def run_dataset_cell(workload: str, engine: str, n: int) -> Tuple[ROVolume, Dict[str, float]]:
     """One ``(workload, engine, n)`` point on the dataset sweep.
 
     Holds per-file size constant (set by ``DATASET_SMALL_SIZE_BYTES`` /
     ``DATASET_BIG_SIZE_KIB``) and varies ``n``. Always runs with
     ``writeback=True`` so the curve isn't dominated by per-chunk upload
-    latency. Returns ``(committed_volume, stats)`` so the Volume's
+    latency. Returns ``(sealed_volume, stats)`` so the ROVolume's
     metadata is inspectable in the Flyte UI.
     """
     suffix = uuid.uuid4().hex[:6]
-    vol = Volume.empty(
+    vol = Volume.new(
         name=f"bench-ds-{workload.replace('_', '-')}-{engine}-{n}-{suffix}",
         metadata_store_type=engine,
     )
@@ -316,7 +319,7 @@ async def run_dataset_cell(workload: str, engine: str, n: int) -> Tuple[Volume, 
         raise ValueError(f"unsupported dataset workload: {workload}")
 
     t0 = time.monotonic()
-    final = await vol.commit()
+    final = await vol.finalize()
     commit_ms = (time.monotonic() - t0) * 1000.0
 
     return final, {**result, "mount_ms": mount_ms, "commit_ms": commit_ms}
