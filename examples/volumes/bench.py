@@ -456,9 +456,7 @@ def _line_svg(
             label = f"{int(v):,}" if v >= 1 else f"{v:.2g}"
             parts.append(f'<text x="{mL - 6}" y="{y + 4:.1f}" text-anchor="end" font-size="10">{label}</text>')
 
-    parts.append(
-        f'<text x="{mL + pw / 2}" y="{h - 12}" text-anchor="middle" font-size="11">{x_label}</text>'
-    )
+    parts.append(f'<text x="{mL + pw / 2}" y="{h - 12}" text-anchor="middle" font-size="11">{x_label}</text>')
     parts.append(
         f'<text x="14" y="{mT + ph / 2}" text-anchor="middle" font-size="11" '
         f'transform="rotate(-90 14 {mT + ph / 2})">{y_label}</text>'
@@ -470,9 +468,7 @@ def _line_svg(
         pts = sorted(p for p in points if p[0] > 0 and p[1] > 0)
         if pts:
             polyline = " ".join(f"{px(x):.1f},{py(y):.1f}" for x, y in pts)
-            parts.append(
-                f'<polyline points="{polyline}" fill="none" stroke="{color}" stroke-width="2"/>'
-            )
+            parts.append(f'<polyline points="{polyline}" fill="none" stroke="{color}" stroke-width="2"/>')
             for x, y in pts:
                 parts.append(f'<circle cx="{px(x):.1f}" cy="{py(y):.1f}" r="3" fill="{color}"/>')
         parts.append(f'<rect x="{mL + pw + 12}" y="{legend_y}" width="14" height="3" fill="{color}"/>')
@@ -595,10 +591,7 @@ def _render_dataset_sweep(
 
     def _table(rows: List[Dict[str, object]]) -> str:
         rows = sorted(rows, key=lambda r: (str(r["engine"]), int(r["n"])))
-        head = (
-            "<tr><th>engine</th><th>n</th>"
-            "<th>workload_ms</th><th>mount_ms</th><th>commit_ms</th></tr>"
-        )
+        head = "<tr><th>engine</th><th>n</th><th>workload_ms</th><th>mount_ms</th><th>commit_ms</th></tr>"
         body = "".join(
             "<tr>"
             f"<td>{r['engine']}</td>"
@@ -710,10 +703,7 @@ async def volume_benchmark_driver(
         sweep_tab.log(_render_dataset_sweep(small_rows, big_rows))
 
     await flyte.report.flush.aio()
-    return (
-        f"{len(rows)} matrix cells + {len(ds_rows)} dataset cells "
-        f"across {len(selected_workloads)} workloads"
-    )
+    return f"{len(rows)} matrix cells + {len(ds_rows)} dataset cells across {len(selected_workloads)} workloads"
 
 
 if __name__ == "__main__":

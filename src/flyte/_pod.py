@@ -90,9 +90,7 @@ def pod_template_with_fuse_mount(
 
     # Ensure the primary container exists; create a minimal one if not.
     containers = list(pod_spec.containers or [])
-    primary: Optional[V1Container] = next(
-        (c for c in containers if c.name == pt.primary_container_name), None
-    )
+    primary: Optional[V1Container] = next((c for c in containers if c.name == pt.primary_container_name), None)
     if primary is None:
         primary = V1Container(name=pt.primary_container_name)
         containers.append(primary)
