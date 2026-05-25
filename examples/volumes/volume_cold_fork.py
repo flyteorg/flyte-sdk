@@ -34,7 +34,8 @@ import os
 import uuid
 from pathlib import Path
 
-from flyteplugins.union.io.volume import ROVolume, Volume, with_volume_deps
+from flyteplugins.union.io.volume import ROVolume, Volume
+from flyteplugins.union.utils.image import with_local_flyteplugins_union
 
 import flyte
 
@@ -44,11 +45,12 @@ logger = logging.getLogger("volume-cold-fork-demo")
 VOL_NAME = os.environ.get("VOL_NAME", "cold-fork-demo")
 MARKER_CONTENTS = "parent state — should be visible to cold fork\n"
 
-# Bake the locally-built flyteplugins-union wheel + volume runtime deps
-# into a custom base. Run `make dist-bundled PLATFORM=linux-amd64` in the
+# A plain image + the flyteplugins-union wheel is all Volumes need.
+# `with_local_flyteplugins_union` bakes the locally-built wheel for dev
+# iteration — run `make dist-bundled PLATFORM=linux-amd64` in the
 # flyteplugins-union repo first.
 base = flyte.Image.from_debian_base(install_flyte=False, name="volume-cold-fork-demo").with_local_v2()
-image = with_volume_deps(base, install_local=True)
+image = with_local_flyteplugins_union(base)
 
 env = flyte.TaskEnvironment(
     name="volume-cold-fork-demo",
@@ -63,11 +65,10 @@ env = flyte.TaskEnvironment(
 async def populate_parent(volume_name: str) -> ROVolume:
     """Format + populate a parent volume, then seal it into an ROVolume."""
     logger.info("populate_parent: name=%s", volume_name)
-    # Pin to sqlite: this example forks (see `cold_fork_and_read`), and the
-    # package default (badger) doesn't support fork(). sqlite is daemon-less,
-    # so the lean `with_volume_deps` image below suffices. Volume.new()
-    # returns a writable RWVolume.
-    parent = Volume.new(name=volume_name, metadata_store_type="sqlite")
+    # Default sqlite store is daemon-less and fork-capable, so the later
+    # cold fork (see `cold_fork_and_read`) works with no extra image deps.
+    # Volume.new() returns a writable RWVolume.
+    parent = Volume.new(name=volume_name)
     await parent.mount()
     Path("/workspace/marker.txt").write_text(MARKER_CONTENTS)
     return await parent.finalize(message="parent marker")

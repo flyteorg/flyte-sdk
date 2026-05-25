@@ -13,12 +13,12 @@
 """
 Volume example.
 
-NOTE: ``Volume`` and ``with_volume_deps`` live in ``flyteplugins.union.io.volume``
-and have not yet been released to PyPI. The remote container image bakes the
-locally-built ``flyteplugins-union`` wheel via ``with_volume_deps(install_local=True)``.
-Build the wheel from a checkout of the flyteplugins-union repo first::
+NOTE: ``Volume`` lives in ``flyteplugins.union.io.volume`` and has not yet been
+released to PyPI. The remote container image bakes the locally-built
+``flyteplugins-union`` wheel via ``with_local_flyteplugins_union``. Build a
+pod-compatible wheel from a checkout of the flyteplugins-union repo first::
 
-    make dist
+    make dist-bundled PLATFORM=linux-amd64
 
 Demonstrates the typed Volume lifecycle (PRD §Core Concepts) flowing
 through a multi-task workflow. Tasks exchange immutable ``ROVolume``
@@ -47,7 +47,8 @@ import os
 import uuid
 from pathlib import Path
 
-from flyteplugins.union.io.volume import ROVolume, Volume, with_volume_deps
+from flyteplugins.union.io.volume import ROVolume, Volume
+from flyteplugins.union.utils.image import with_local_flyteplugins_union
 
 import flyte
 
@@ -57,10 +58,13 @@ logger = logging.getLogger("volume-demo")
 
 VOL_NAME = os.environ.get("VOL_NAME", "demo-vol")
 
-# Bake the locally-built flyteplugins-union wheel + volume runtime deps
-# into a custom base. Run `make dist-bundled PLATFORM=linux-amd64` in the flyteplugins-union repo first.
+# A plain image + the flyteplugins-union wheel is all Volumes need (juicefs is
+# bundled in the wheel; sqlite/badger mount via raw syscalls under
+# enable_fuse_mount). `with_local_flyteplugins_union` bakes the locally-built
+# wheel for dev iteration — run `make dist-bundled PLATFORM=linux-amd64` in the
+# flyteplugins-union repo first.
 base = flyte.Image.from_debian_base(install_flyte=False, name="volume-demo").with_local_v2()
-image = with_volume_deps(base, install_local=True)
+image = with_local_flyteplugins_union(base)
 
 env = flyte.TaskEnvironment(
     name="volume-demo",
@@ -74,11 +78,10 @@ env = flyte.TaskEnvironment(
 @env.task(cache="auto")
 async def init_volume(volume_name: str) -> ROVolume:
     logger.info("init_volume: declaring fresh volume name=%s", volume_name)
-    # Pin to sqlite: this lineage forks (see `branch`), and the package
-    # default (badger) doesn't support fork(). sqlite is daemon-less, so it
-    # works with the lean `with_volume_deps` image below. Volume.new()
-    # returns a writable RWVolume.
-    vol = Volume.new(name=volume_name, metadata_store_type="sqlite")
+    # Volume.new() returns a writable RWVolume backed by the default sqlite
+    # store — daemon-less and fork-capable, so the later `branch`/`append`
+    # forks Just Work with no extra image deps.
+    vol = Volume.new(name=volume_name)
     logger.info("init_volume: bucket resolved to %s", vol.bucket)
     await vol.mount()
     Path("/workspace/hello.txt").write_text("hello from volume\n")

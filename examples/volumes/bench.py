@@ -43,6 +43,7 @@ from statistics import mean, median, quantiles
 from typing import Awaitable, Callable, Dict, List, Optional, Tuple
 
 from flyteplugins.union.io.volume import ROVolume, Volume, with_high_throughput_volume_deps
+from flyteplugins.union.utils.image import with_local_flyteplugins_union
 
 import flyte
 import flyte.report
@@ -50,14 +51,14 @@ import flyte.report
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 logger = logging.getLogger("bench")
 
-# Bake the locally-built flyteplugins-union wheel + volume runtime deps
-# into a custom base. Run `make dist-bundled PLATFORM=linux-amd64` in the
-# flyteplugins-union repo first. The bench sweeps the "redis" engine
-# explicitly, so it needs the high-throughput image (which provisions
-# redis-server); each cell passes metadata_store_type= explicitly, so the
-# image's UNION_VOLUME_METADATA_STORE=redis default is overridden per-cell.
+# The bench sweeps the "redis" engine explicitly, so it needs the
+# high-throughput image (which provisions redis-server); each cell passes
+# metadata_store_type= explicitly, so the image's UNION_VOLUME_METADATA_STORE=redis
+# default is overridden per-cell. `with_local_flyteplugins_union` bakes the
+# locally-built wheel for dev iteration — run `make dist-bundled
+# PLATFORM=linux-amd64` in the flyteplugins-union repo first.
 base = flyte.Image.from_debian_base(install_flyte=False, name="volume-bench").with_local_v2()
-image = with_high_throughput_volume_deps(base, install_local=True)
+image = with_high_throughput_volume_deps(with_local_flyteplugins_union(base))
 
 env = flyte.TaskEnvironment(
     name="vol-bench",
