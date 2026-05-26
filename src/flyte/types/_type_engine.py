@@ -679,6 +679,17 @@ def _get_pydantic_element_type(
             return typing.Optional[inner_type] if has_null else inner_type  # type: ignore
         return type(None)
 
+    # Discriminated unions in Pydantic v2 produce oneOf rather than anyOf
+    if element_property.get("oneOf"):
+        variants = element_property["oneOf"]
+        non_null = [v for v in variants if v.get("type") != "null"]
+        has_null = len(non_null) < len(variants)
+        if non_null:
+            variant_types = tuple(_get_pydantic_element_type(v, schema) for v in non_null)
+            inner_type = variant_types[0] if len(variant_types) == 1 else typing.Union[variant_types]  # type: ignore
+            return typing.Optional[inner_type] if has_null else inner_type  # type: ignore
+        return type(None)
+
     element_type = element_property.get("type")
     if element_type == "object":
         if element_property.get("additionalProperties"):
@@ -713,7 +724,7 @@ def _create_pydantic_model_from_schema(schema: dict) -> Type:
         if "default" in prop:
             fields[name] = (field_type, prop["default"])
         elif schema_declares_required and name not in required_set:
-            if prop.get("anyOf"):
+            if prop.get("anyOf") or prop.get("oneOf"):
                 fields[name] = (typing.Optional[field_type], None)
             else:
                 fields[name] = (field_type, ...)
@@ -1173,6 +1184,20 @@ def _match_registered_type_from_schema(schema: dict) -> typing.Optional[type]:
     return None
 
 
+@dataclasses.dataclass(frozen=True)
+class _DiscriminatedUnion:
+    """Descriptor for a Pydantic v2 discriminated union field.
+
+    Captures the discriminator property name and a mapping of discriminator
+    values to the resolved Python classes so dict-to-object conversion in the
+    generated dataclass's ``__init__`` can pick the right variant.
+    """
+
+    discriminator_property: typing.Optional[str]
+    mapping: typing.Mapping[str, type]
+    variants: typing.Tuple[type, ...]
+
+
 def _mutable_schema_default_factory(
     default: list[typing.Any] | dict[typing.Any, typing.Any],
 ) -> typing.Callable[[], list[typing.Any] | dict[typing.Any, typing.Any]]:
@@ -1210,7 +1235,7 @@ def _append_schema_field(
             attribute_list.append((property_key, field_type, default))
         return
     if schema_declares_required and property_key not in required_set:
-        if property_val.get("anyOf"):
+        if property_val.get("anyOf") or property_val.get("oneOf"):
             attribute_list.append((property_key, typing.Optional[field_type], None))
         else:
             attribute_list.append((property_key, field_type))
@@ -1218,10 +1243,56 @@ def _append_schema_field(
     attribute_list.append((property_key, field_type))
 
 
+def _resolve_oneof_variants(
+    variants: typing.Sequence[typing.Dict[str, typing.Any]],
+    schema: typing.Dict[str, typing.Any],
+) -> typing.Tuple[typing.List[Any], typing.List[type], typing.Dict[str, type]]:
+    """Resolve the ``oneOf`` variants of a JSON schema property to Python types.
+
+    Returns a tuple of:
+      - ``variant_types``: list of resolved Python types (for building Union)
+      - ``variant_classes``: list of dynamically generated classes (for dict->object conversion)
+      - ``ref_name_to_class``: mapping from ``$ref`` name to the generated class
+        (used to wire up the discriminator's ``mapping`` to runtime classes)
+    """
+    variant_types: typing.List[Any] = []
+    variant_classes: typing.List[type] = []
+    ref_name_to_class: typing.Dict[str, type] = {}
+    defs = schema.get("$defs", schema.get("definitions", {}))
+
+    for variant in variants:
+        if not isinstance(variant, dict):
+            variant_types.append(_get_element_type(variant, schema))
+            continue
+        if variant.get("$ref"):
+            ref_name = variant["$ref"].split("/")[-1]
+            if ref_name in defs:
+                ref_schema = defs[ref_name].copy()
+                if ref_schema.get("enum"):
+                    variant_types.append(str)
+                    continue
+                matched = _match_registered_type_from_schema(ref_schema)
+                if matched is not None:
+                    variant_types.append(matched)
+                    continue
+                if "$defs" not in ref_schema and defs:
+                    ref_schema["$defs"] = defs
+                nested_class: type = convert_mashumaro_json_schema_to_python_class(ref_schema, ref_name)
+                variant_types.append(nested_class)
+                variant_classes.append(nested_class)
+                ref_name_to_class[ref_name] = nested_class
+                continue
+        variant_types.append(_get_element_type(variant, schema))
+
+    return variant_types, variant_classes, ref_name_to_class
+
+
 def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name: typing.Any):
 
     attribute_list: typing.List[typing.Tuple[Any, Any]] = []
-    nested_types: typing.Dict[str, type] = {}  # Track nested model types for conversion
+    # Tracks nested model types for dict-to-object conversion. Values are either a single class
+    # (for $ref / anyOf single-variant fields) or a _DiscriminatedUnion (for oneOf fields).
+    nested_types: typing.Dict[str, typing.Any] = {}
 
     # Use 'required' field to preserve property order, as protobuf Struct doesn't preserve dict order
     properties = schema["properties"]
@@ -1260,12 +1331,74 @@ def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name:
                 nested_types[property_key] = nested_class
             continue
 
+        # Handle oneOf -- Pydantic v2 emits this for discriminated unions
+        # (e.g. Annotated[Union[A, B], Field(discriminator="kind")]). The property has no
+        # top-level "type"; instead it has "oneOf" with the variant schemas.
+        if property_val.get("oneOf"):
+            variants = property_val["oneOf"]
+            non_null_variants = [v for v in variants if not (isinstance(v, dict) and v.get("type") == "null")]
+            has_null = len(non_null_variants) < len(variants)
+
+            variant_types, variant_classes, ref_name_to_class = _resolve_oneof_variants(non_null_variants, schema)
+
+            if not variant_types:
+                field_type: Any = type(None)
+            elif len(variant_types) == 1:
+                field_type = variant_types[0]
+            else:
+                field_type = typing.Union[tuple(variant_types)]  # type: ignore
+
+            if has_null:
+                field_type = typing.Optional[field_type]  # type: ignore
+
+            _append_schema_field(
+                attribute_list, property_key, typing.cast(GenericAlias, field_type), property_val, schema
+            )
+
+            if variant_classes:
+                discriminator = property_val.get("discriminator") or {}
+                discriminator_property = discriminator.get("propertyName")
+                mapping_from_schema = discriminator.get("mapping") or {}
+                # Map discriminator values to the runtime classes via the $ref name
+                discriminator_mapping: typing.Dict[str, type] = {}
+                for disc_value, ref_path in mapping_from_schema.items():
+                    ref_name = ref_path.split("/")[-1] if isinstance(ref_path, str) else None
+                    if ref_name is not None and ref_name in ref_name_to_class:
+                        discriminator_mapping[disc_value] = ref_name_to_class[ref_name]
+                nested_types[property_key] = _DiscriminatedUnion(
+                    discriminator_property=discriminator_property,
+                    mapping=discriminator_mapping,
+                    variants=tuple(variant_classes),
+                )
+            continue
+
         if property_val.get("anyOf"):
-            property_type = property_val["anyOf"][0]["type"]
+            # Resolve the first variant's "type" carefully -- anyOf variants may be
+            # $refs (e.g. Optional[Dataclass]) and not have a top-level "type" key.
+            anyof_variants = property_val["anyOf"]
+            non_null_anyof = [v for v in anyof_variants if not (isinstance(v, dict) and v.get("type") == "null")]
+            first_variant = non_null_anyof[0] if non_null_anyof else (anyof_variants[0] if anyof_variants else {})
+            if isinstance(first_variant, dict) and "type" in first_variant:
+                property_type = first_variant["type"]
+            elif isinstance(first_variant, dict) and "$ref" in first_variant:
+                # Treat $ref variant as a nested object (existing object branch handles it)
+                property_type = "object"
+            else:
+                # Fall through to general element resolution
+                _append_schema_field(
+                    attribute_list, property_key, _get_element_type(property_val, schema), property_val, schema
+                )
+                continue
         elif property_val.get("enum"):
             property_type = "enum"
-        else:
+        elif "type" in property_val:
             property_type = property_val["type"]
+        else:
+            # Unknown/exotic schema shape -- fall back to best-effort element type resolution
+            _append_schema_field(
+                attribute_list, property_key, _get_element_type(property_val, schema), property_val, schema
+            )
+            continue
         # Handle list
         if property_type == "array":
             _append_schema_field(
@@ -2349,11 +2482,32 @@ def convert_mashumaro_json_schema_to_python_class(schema: dict, schema_name: typ
 
         def __init__(self, *args, **kwargs):  # type: ignore[misc]
             # Convert dict values to nested types before calling original __init__
-            for field_name, field_type in nested_types.items():
-                if field_name in kwargs:
-                    value = kwargs[field_name]
-                    if isinstance(value, dict):
-                        kwargs[field_name] = field_type(**value)
+            for field_name, descriptor in nested_types.items():
+                if field_name not in kwargs:
+                    continue
+                value = kwargs[field_name]
+                if not isinstance(value, dict):
+                    continue
+                if isinstance(descriptor, _DiscriminatedUnion):
+                    target_cls = None
+                    disc_property = descriptor.discriminator_property
+                    if disc_property is not None:
+                        disc_value = value.get(disc_property)
+                        if disc_value is not None:
+                            target_cls = descriptor.mapping.get(disc_value)
+                    if target_cls is None:
+                        # Best effort: try each variant constructor until one succeeds. This is the
+                        # fallback path when no discriminator is specified or it does not match.
+                        for variant_cls in descriptor.variants:
+                            try:
+                                kwargs[field_name] = variant_cls(**value)
+                                break
+                            except TypeError:
+                                continue
+                    else:
+                        kwargs[field_name] = target_cls(**value)
+                else:
+                    kwargs[field_name] = descriptor(**value)
             original_init(self, *args, **kwargs)
 
         cls.__init__ = __init__  # type: ignore[method-assign, misc]
@@ -2419,6 +2573,18 @@ def _get_element_type(
             inner_type = _get_element_type(non_null[0], schema)
             return typing.Optional[inner_type] if has_null else inner_type  # type: ignore
         # return None if all types are None
+        return type(None)
+
+    # Handle oneOf (Pydantic v2 emits this for discriminated unions,
+    # e.g. Annotated[Union[A, B], Field(discriminator=...)])
+    if element_property.get("oneOf"):
+        variants = element_property["oneOf"]
+        non_null = [v for v in variants if v.get("type") != "null"]
+        has_null = len(non_null) < len(variants)
+        if non_null:
+            variant_types = tuple(_get_element_type(v, schema) for v in non_null)
+            inner_type = variant_types[0] if len(variant_types) == 1 else typing.Union[variant_types]  # type: ignore
+            return typing.Optional[inner_type] if has_null else inner_type  # type: ignore
         return type(None)
 
     element_type = element_property.get("type", "string")
