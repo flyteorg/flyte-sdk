@@ -333,6 +333,9 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
 
         from flyte.app.extras import FastAPIPassthroughAuthMiddleware
 
+        if not self.requires_auth:
+            return []
+
         return [
             Middleware(FastAPIPassthroughAuthMiddleware, excluded_paths={"/health"}),
         ]
@@ -345,7 +348,8 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
         """
         project = os.environ.get("FLYTE_PROJECT") or os.environ.get("FLYTE_INTERNAL_EXECUTION_PROJECT")
         domain = os.environ.get("FLYTE_DOMAIN") or os.environ.get("FLYTE_INTERNAL_EXECUTION_DOMAIN")
-        await flyte.init_passthrough.aio(project=project, domain=domain)
+        if self.requires_auth:
+            await flyte.init_passthrough.aio(project=project, domain=domain)
 
     def _create_mcp_server(self) -> FastMCP:
         try:
