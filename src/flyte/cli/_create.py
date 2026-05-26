@@ -320,7 +320,7 @@ def config(
         admin["endpoint"] = endpoint
     if image_builder == "remote":
         admin["authType"] = common.sanitize_auth_type(auth_type) if auth_type else "Pkce"
-        admin["clientId"] = "dogfood-uctl"
+        admin["clientId"] = f"{org}-uctl"
         admin["insecure"] = insecure
         admin["authorizationHeader"] = "flyte-authorization"
         admin["redirectUri"] = "http://localhost:53593/callback"
@@ -333,6 +333,9 @@ def config(
 
     if not org and endpoint:
         org = org_from_endpoint(endpoint)
+
+    if image_builder == "remote" and not org:
+        raise click.BadParameter("--org must be provided when --image-builder remote is used.")
 
     task: Dict[str, str] = {}
     if org:

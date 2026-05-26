@@ -425,3 +425,49 @@ def test_create_config_local_builder_does_not_write_remote_auth_defaults(runner:
         d = yaml.safe_load(f)
     assert d["admin"] == {"endpoint": "dns:///dogfood.cloud-staging.union.ai"}
     assert d["image"]["builder"] == "local"
+
+
+def test_create_config_remote_builder_uses_org_for_client_id(runner: CliRunner, tmp_path):
+    outpath = str(tmp_path / "config.yaml")
+    result = runner.invoke(
+        main,
+        [
+            "create",
+            "config",
+            "--endpoint",
+            "dns:///dogfood-gcp.cloud-staging.union.ai",
+            "--org",
+            "dogfood-gcp",
+            "--project",
+            "edward-test",
+            "--domain",
+            "staging",
+            "--image-builder",
+            "remote",
+            "-o",
+            outpath,
+            "--force",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    with open(outpath) as f:
+        d = yaml.safe_load(f)
+    assert d["admin"]["clientId"] == "dogfood-gcp-uctl"
+
+
+def test_create_config_remote_builder_requires_org(runner: CliRunner, tmp_path):
+    outpath = str(tmp_path / "config.yaml")
+    result = runner.invoke(
+        main,
+        [
+            "create",
+            "config",
+            "--image-builder",
+            "remote",
+            "-o",
+            outpath,
+            "--force",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "--org must be provided when --image-builder remote is used." in result.output
