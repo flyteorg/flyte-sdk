@@ -12,7 +12,7 @@ def test_platform_config_reads_auth_override_fields(tmp_path: Path) -> None:
   scopes:
     - all
   authorizationHeader: flyte-authorization
-  redirectURL: http://localhost:53593/callback
+  redirectUri: http://localhost:53593/callback
   audience: dogfood-audience
 """
     )
