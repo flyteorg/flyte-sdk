@@ -388,6 +388,7 @@ def test_create_config_remote_builder_writes_remote_auth_defaults(runner: CliRun
     assert d["admin"] == {
         "endpoint": "dns:///dogfood.cloud-staging.union.ai",
         "authType": "Pkce",
+        "clientId": "dogfood-uctl",
         "insecure": False,
         "authorizationHeader": "flyte-authorization",
         "redirectUri": "http://localhost:53593/callback",
