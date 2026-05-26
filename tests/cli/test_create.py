@@ -472,3 +472,30 @@ def test_create_config_remote_builder_requires_org(runner: CliRunner, tmp_path):
     assert result.exit_code != 0
     assert "--org must be provided when --image-builder remote" in result.output
     assert "is used." in result.output
+
+
+def test_create_config_remote_builder_infers_org_before_client_id(runner: CliRunner, tmp_path):
+    outpath = str(tmp_path / "config.yaml")
+    result = runner.invoke(
+        main,
+        [
+            "create",
+            "config",
+            "--endpoint",
+            "dns:///dogfood-gcp.cloud-staging.union.ai",
+            "--project",
+            "edward-test",
+            "--domain",
+            "staging",
+            "--image-builder",
+            "remote",
+            "-o",
+            outpath,
+            "--force",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    with open(outpath) as f:
+        d = yaml.safe_load(f)
+    assert d["task"]["org"] == "dogfood-gcp"
+    assert d["admin"]["clientId"] == "dogfood-gcp-uctl"

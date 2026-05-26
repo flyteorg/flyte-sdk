@@ -318,6 +318,13 @@ def config(
     if endpoint:
         endpoint = sanitize_endpoint(endpoint)
         admin["endpoint"] = endpoint
+
+    if not org and endpoint:
+        org = org_from_endpoint(endpoint)
+
+    if image_builder == "remote" and not org:
+        raise click.BadParameter("--org must be provided when --image-builder remote is used.")
+
     if image_builder == "remote":
         admin["authType"] = common.sanitize_auth_type(auth_type) if auth_type else "Pkce"
         admin["clientId"] = f"{org}-uctl"
@@ -330,12 +337,6 @@ def config(
             admin["insecure"] = insecure
         if auth_type:
             admin["authType"] = common.sanitize_auth_type(auth_type)
-
-    if not org and endpoint:
-        org = org_from_endpoint(endpoint)
-
-    if image_builder == "remote" and not org:
-        raise click.BadParameter("--org must be provided when --image-builder remote is used.")
 
     task: Dict[str, str] = {}
     if org:
