@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import os
 import pathlib
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, get_args
@@ -242,6 +244,64 @@ if __name__ == "__main__":
 
 
 # ------------------------------
+# UV script remote helpers
+# ------------------------------
+
+# Name of the env var the helper tasks expose the per-request passthrough API key under.
+# The script template uses ``os.environ["FLYTE_PASSTHROUGH_API_KEY"]`` to authenticate to
+# the remote Flyte cluster, so the secret we attach to the helper task must mount under
+# this exact name.
+_UV_SCRIPT_API_KEY_ENV_VAR = "FLYTE_PASSTHROUGH_API_KEY"
+
+# Env var the helper-task version falls back to when ``uv_script_task_version`` is unset.
+# Matches the convention used by the union-mcp reference deployment.
+_UV_SCRIPT_TASK_VERSION_ENV_VAR = "APP_TASK_VERSION"
+
+
+def _get_passthrough_api_key() -> str:
+    """Return the ``Authorization`` header value from the current Flyte auth context.
+
+    Relies on ``FastAPIPassthroughAuthMiddleware`` (or another caller of
+    ``flyte.remote.auth_metadata``) having populated the request-scoped auth metadata.
+    """
+    from flyte.remote._auth_metadata import get_auth_metadata
+
+    for key, value in get_auth_metadata():
+        if key.lower() == "authorization":
+            return value
+    raise ValueError(
+        "No Authorization header found in the Flyte auth context. "
+        "Remote UV-script build/run tools require an authenticated request "
+        "(e.g. via FastAPIPassthroughAuthMiddleware)."
+    )
+
+
+async def _get_or_create_api_key_secret(value: str) -> flyte.Secret:
+    """Return a task-level ``flyte.Secret`` that mounts the API key as an env var.
+
+    Hashes the API key value to produce a stable secret name, creates the remote
+    secret on first sight, and returns a ``flyte.Secret`` configured to mount it as
+    ``FLYTE_PASSTHROUGH_API_KEY`` on the helper task.
+    """
+    digest = hashlib.sha256(value.encode()).hexdigest()[:8]
+    name = f"flyte-mcp-key-{digest}"
+    try:
+        await flyte.remote.Secret.get.aio(name=name)
+    except Exception:
+        # Secret doesn't exist yet (or the get failed for another transient reason);
+        # try to create it. If creation also fails the caller will see the real error.
+        await flyte.remote.Secret.create.aio(name=name, value=value)
+    return flyte.Secret(key=name, as_env_var=_UV_SCRIPT_API_KEY_ENV_VAR)
+
+
+def _resolve_uv_script_task_version(override: str | None) -> str | None:
+    """Pick the helper-task version from the explicit override, then env var, then None."""
+    if override is not None:
+        return override
+    return os.environ.get(_UV_SCRIPT_TASK_VERSION_ENV_VAR)
+
+
+# ------------------------------
 # Search helper
 # ------------------------------
 
@@ -355,8 +415,13 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
     require ``sdk_examples_path``, ``docs_examples_path``, and/or
     ``full_docs_path`` when those tools are enabled.
 
-    The UV script remote build/run tools are placeholders when not backed by a
-    remote MCP deployment that implements them.
+    The UV script remote build/run tools (``build_uv_script_image_remote``,
+    ``run_uv_script_remote``) dispatch to pre-deployed helper tasks named by
+    ``uv_script_build_task_name`` and ``uv_script_run_task_name``. The helper-task
+    version is resolved from ``uv_script_task_version``, the ``APP_TASK_VERSION``
+    env var, or finally ``auto_version="latest"``. The incoming request's
+    ``Authorization`` header is stored as a Flyte secret and mounted on the
+    helper task as ``FLYTE_PASSTHROUGH_API_KEY``.
     """
 
     type: str = "FlyteMCPApp"
@@ -376,6 +441,16 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
     sdk_examples_path: str | None = None
     docs_examples_path: str | None = None
     full_docs_path: str | None = None
+
+    # Pre-deployed helper tasks invoked by the remote UV-script tools. They are
+    # expected to accept ``script`` (and optionally ``tail``) inputs, run the script
+    # in a clean environment as a subprocess, and rely on the ``FLYTE_PASSTHROUGH_API_KEY``
+    # env var (populated from a per-request secret) to authenticate back to Flyte.
+    uv_script_build_task_name: str = "flyte_mcp_tasks.build_image"
+    uv_script_run_task_name: str = "flyte_mcp_tasks.run_task"
+    # Explicit version of the helper tasks. When unset, falls back to the
+    # ``APP_TASK_VERSION`` env var, and finally to ``auto_version="latest"``.
+    uv_script_task_version: str | None = None
 
     mcp: FastMCP | None = field(init=False, default=None)  # type: ignore[assignment]
     _enabled_tools: set[str] = field(init=False, default_factory=set)
@@ -609,16 +684,19 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
             return run if isinstance(run, dict) else {"result": str(run)}
 
         @mcp.tool()
-        async def build_uv_script_image_remote(script: str, ctx: MCPContext | None = None) -> dict:
-            raise NotImplementedError(
-                "Remote UV script image builds require a remote MCP backend. "
-                "Use a connected remote MCP server for this tool."
+        async def build_uv_script_image_remote(script: str, tail: int = 100, ctx: MCPContext | None = None) -> dict:
+            return await self._invoke_uv_script_helper_task(
+                task_name=self.uv_script_build_task_name,
+                script=script,
+                tail=tail,
             )
 
         @mcp.tool()
-        async def run_uv_script_remote(script: str, ctx: MCPContext | None = None) -> dict:
-            raise NotImplementedError(
-                "Remote UV script runs require a remote MCP backend. Use a connected remote MCP server for this tool."
+        async def run_uv_script_remote(script: str, tail: int = 100, ctx: MCPContext | None = None) -> dict:
+            return await self._invoke_uv_script_helper_task(
+                task_name=self.uv_script_run_task_name,
+                script=script,
+                tail=tail,
             )
 
         @mcp.tool()
@@ -680,6 +758,62 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
 
         return mcp
 
+    async def _invoke_uv_script_helper_task(
+        self,
+        *,
+        task_name: str,
+        script: str,
+        tail: int,
+    ) -> dict:
+        """Dispatch a UV script to a pre-deployed helper task and return the run summary.
+
+        Mirrors the ``union-mcp`` reference flow: extract the per-request Authorization
+        header, persist it as a Flyte secret, override the helper task to mount that
+        secret as ``FLYTE_PASSTHROUGH_API_KEY``, then run with ``script``/``tail``
+        inputs and wait for completion.
+        """
+        api_key = _get_passthrough_api_key()
+        api_key_secret = await _get_or_create_api_key_secret(api_key)
+
+        version = _resolve_uv_script_task_version(self.uv_script_task_version)
+        task_entity = flyte.remote.Task.get(
+            name=task_name,
+            version=version,
+            auto_version="latest" if version is None else None,
+        )
+        task_entity = await task_entity.override.aio(secrets=[api_key_secret])
+
+        run = await flyte.run.aio(task_entity, script=script, tail=tail)
+        await run.wait.aio()
+
+        outputs: Any = None
+        try:
+            action_outputs = await run.outputs.aio()
+        except Exception:
+            action_outputs = None
+        if action_outputs is not None:
+            # Helper tasks deployed in the reference style return a single dict-like
+            # ``RunResult`` (stdout/stderr/returncode/next_step) as their first output.
+            try:
+                first = action_outputs[0] if len(action_outputs) > 0 else None
+            except Exception:
+                first = None
+            if isinstance(first, dict):
+                outputs = first
+            elif first is not None and hasattr(first, "to_dict"):
+                outputs = first.to_dict()
+            elif hasattr(action_outputs, "named_outputs"):
+                outputs = action_outputs.named_outputs
+            else:
+                outputs = list(action_outputs)
+
+        return {
+            "name": run.name,
+            "url": run.url,
+            "phase": run.phase,
+            "outputs": outputs,
+        }
+
     def __rich_repr__(self) -> rich.repr.Result:
         yield "name", self.name
         yield "title", self.title
@@ -700,3 +834,9 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
             yield "app_allowlist", self.app_allowlist
         if self.trigger_allowlist is not None:
             yield "trigger_allowlist", self.trigger_allowlist
+        if self.uv_script_build_task_name != "flyte_mcp_tasks.build_image":
+            yield "uv_script_build_task_name", self.uv_script_build_task_name
+        if self.uv_script_run_task_name != "flyte_mcp_tasks.run_task":
+            yield "uv_script_run_task_name", self.uv_script_run_task_name
+        if self.uv_script_task_version is not None:
+            yield "uv_script_task_version", self.uv_script_task_version

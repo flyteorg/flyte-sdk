@@ -25,10 +25,12 @@ from flyte.ai.mcp._flyte_mcp_app import (
     TOOL_GROUP_MAPPING,
     UV_SCRIPT_EXAMPLE,
     UV_SCRIPT_FORMAT,
+    _get_passthrough_api_key,
     _is_app_allowed,
     _is_task_allowed,
     _is_trigger_allowed,
     _resolve_tools,
+    _resolve_uv_script_task_version,
     _search_files,
 )
 from flyte.app._types import Domain, Scaling
@@ -572,6 +574,78 @@ class TestSearchToolGroup:
         assert env.sdk_examples_path == "/data/sdk-examples"
         assert env.docs_examples_path == "/data/docs-examples"
         assert env.full_docs_path == "/data/full-docs.txt"
+
+
+class TestUVScriptHelperTaskConfig:
+    """Tests for the configurable UV-script helper task fields."""
+
+    def test_default_uv_script_task_names(self):
+        env = FlyteMCPAppEnvironment(name="test-mcp")
+        assert env.uv_script_build_task_name == "flyte_mcp_tasks.build_image"
+        assert env.uv_script_run_task_name == "flyte_mcp_tasks.run_task"
+        assert env.uv_script_task_version is None
+
+    def test_custom_uv_script_task_names(self):
+        env = FlyteMCPAppEnvironment(
+            name="test-mcp",
+            uv_script_build_task_name="my.build_image",
+            uv_script_run_task_name="my.run_task",
+            uv_script_task_version="abc123",
+        )
+        assert env.uv_script_build_task_name == "my.build_image"
+        assert env.uv_script_run_task_name == "my.run_task"
+        assert env.uv_script_task_version == "abc123"
+
+    def test_resolve_uv_script_task_version_explicit_override(self, monkeypatch):
+        monkeypatch.setenv("APP_TASK_VERSION", "from-env")
+        assert _resolve_uv_script_task_version("explicit") == "explicit"
+
+    def test_resolve_uv_script_task_version_falls_back_to_env(self, monkeypatch):
+        monkeypatch.setenv("APP_TASK_VERSION", "from-env")
+        assert _resolve_uv_script_task_version(None) == "from-env"
+
+    def test_resolve_uv_script_task_version_none(self, monkeypatch):
+        monkeypatch.delenv("APP_TASK_VERSION", raising=False)
+        assert _resolve_uv_script_task_version(None) is None
+
+    def test_rich_repr_includes_uv_script_overrides(self):
+        env = FlyteMCPAppEnvironment(
+            name="test-mcp",
+            uv_script_build_task_name="my.build_image",
+            uv_script_run_task_name="my.run_task",
+            uv_script_task_version="abc123",
+        )
+        repr_dict = dict(env.__rich_repr__())
+        assert repr_dict["uv_script_build_task_name"] == "my.build_image"
+        assert repr_dict["uv_script_run_task_name"] == "my.run_task"
+        assert repr_dict["uv_script_task_version"] == "abc123"
+
+    def test_rich_repr_omits_uv_script_defaults(self):
+        env = FlyteMCPAppEnvironment(name="test-mcp")
+        repr_dict = dict(env.__rich_repr__())
+        assert "uv_script_build_task_name" not in repr_dict
+        assert "uv_script_run_task_name" not in repr_dict
+        assert "uv_script_task_version" not in repr_dict
+
+
+class TestPassthroughApiKey:
+    """Tests for ``_get_passthrough_api_key`` helper."""
+
+    def test_raises_when_no_auth_metadata(self):
+        with pytest.raises(ValueError, match="Authorization"):
+            _get_passthrough_api_key()
+
+    def test_returns_authorization_value(self):
+        from flyte.remote import auth_metadata
+
+        with auth_metadata(("authorization", "Bearer abc123")):
+            assert _get_passthrough_api_key() == "Bearer abc123"
+
+    def test_authorization_lookup_is_case_insensitive(self):
+        from flyte.remote import auth_metadata
+
+        with auth_metadata(("Authorization", "Bearer xyz")):
+            assert _get_passthrough_api_key() == "Bearer xyz"
 
 
 class TestUVScriptTemplates:
