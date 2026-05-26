@@ -71,11 +71,6 @@ def test_oomer_override_with_reuse_incorrect():
             resources=flyte.Resources(cpu=2, memory="500Mi"),
         )
 
-    with pytest.raises(ValueError):
-        oomer_with_reuse.override(
-            env_vars={},
-        )
-
 
 def test_override_secrets_with_reuse():
     """
@@ -85,6 +80,17 @@ def test_override_secrets_with_reuse():
     """
     new_task = oomer_with_reuse.override(secrets="my_secret")
     assert new_task != oomer_with_reuse
+
+
+def test_override_env_vars_with_reuse():
+    """
+    env_vars overrides ARE allowed on reusable tasks: the pool key hashes the
+    serialized container (which includes env), so a different env var maps to a
+    different actor pool.
+    """
+    new_task = oomer_with_reuse.override(env_vars={"FOO": "bar"})
+    assert new_task != oomer_with_reuse
+    assert new_task.env_vars == {"FOO": "bar"}
 
 
 def test_override_with_reuse():

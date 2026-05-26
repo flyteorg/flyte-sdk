@@ -415,17 +415,14 @@ class TaskTemplate(Generic[P, R, F]):
                     " Reusable tasks will use the parent env's resources. You can disable reusability and"
                     " override resources if needed. (set reusable='off')"
                 )
-            if env_vars is not None:
-                raise ValueError(
-                    "Cannot override env when reusable is set."
-                    " Reusable tasks will use the parent env's env. You can disable reusability and "
-                    "override env if needed. (set reusable='off')"
-                )
-            # Allow secret overrides on reusable tasks: the actor framework's
-            # pool key (extract_unique_id_and_image) already mixes in
-            # security_context, so a different secret deterministically maps
-            # to a different actor pool. Callers that want per-secret pools
-            # (e.g. per-user / per-identifier credentials) need this.
+            # Allow env_vars and secret overrides on reusable tasks: the actor
+            # framework's pool key (extract_unique_id_and_image) hashes the
+            # serialized container (which includes env) and the security_context,
+            # so a different env var or secret deterministically maps to a
+            # different actor pool. Callers that want per-value pools (e.g.
+            # per-identifier credentials, or routing by a resolved input) need
+            # this. Resources stay blocked: they don't feed the pool key and the
+            # actor reuses the parent env's pod resources regardless.
 
         resources = resources or self.resources
         env_vars = env_vars or self.env_vars
