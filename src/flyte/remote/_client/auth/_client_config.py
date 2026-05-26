@@ -5,7 +5,6 @@ import pydantic
 from flyteidl2.auth.auth_service_connect import AuthMetadataServiceClient
 from flyteidl2.auth.auth_service_pb2 import GetOAuth2MetadataRequest, GetPublicClientConfigRequest
 
-from flyte._logging import logger
 
 AuthType = typing.Literal["ClientSecret", "Pkce", "ExternalCommand", "DeviceFlow", "Passthrough"]
 
@@ -95,9 +94,6 @@ class RemoteClientConfigStore(ClientConfigStore):
         oauth2_metadata = await self._client.get_o_auth2_metadata(GetOAuth2MetadataRequest())
 
         if self._client_config_overrides and self._client_config_overrides.has_required_public_client_fields():
-            logger.info(
-                "Using local public client config skipping GetPublicClientConfig"
-            )
             redirect_uri = self._client_config_overrides.redirect_uri
             client_id = self._client_config_overrides.client_id
             scopes = self._client_config_overrides.scopes
@@ -117,7 +113,6 @@ class RemoteClientConfigStore(ClientConfigStore):
                 audience=self._client_config_overrides.audience,
             )
 
-        logger.debug("calling get_public_client_config")
         public_client_config = await self._client.get_public_client_config(GetPublicClientConfigRequest())
 
         return ClientConfig(
