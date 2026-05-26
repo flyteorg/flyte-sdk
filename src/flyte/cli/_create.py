@@ -318,10 +318,17 @@ def config(
     if endpoint:
         endpoint = sanitize_endpoint(endpoint)
         admin["endpoint"] = endpoint
-    if insecure:
+    if image_builder == "remote":
+        admin["authType"] = common.sanitize_auth_type(auth_type) if auth_type else "Pkce"
         admin["insecure"] = insecure
-    if auth_type:
-        admin["authType"] = common.sanitize_auth_type(auth_type)
+        admin["authorizationHeader"] = "flyte-authorization"
+        admin["redirectUri"] = "http://localhost:53593/callback"
+        admin["scopes"] = ["all"]
+    else:
+        if insecure:
+            admin["insecure"] = insecure
+        if auth_type:
+            admin["authType"] = common.sanitize_auth_type(auth_type)
 
     if not org and endpoint:
         org = org_from_endpoint(endpoint)

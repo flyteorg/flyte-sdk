@@ -358,3 +358,69 @@ def test_create_config_without_local_persistence(runner: CliRunner, tmp_path):
     with open(outpath) as f:
         d = yaml.safe_load(f)
     assert d.get("local") is None
+
+
+def test_create_config_remote_builder_writes_remote_auth_defaults(runner: CliRunner, tmp_path):
+    outpath = str(tmp_path / "config.yaml")
+    result = runner.invoke(
+        main,
+        [
+            "create",
+            "config",
+            "--endpoint",
+            "dns:///dogfood.cloud-staging.union.ai",
+            "--org",
+            "dogfood",
+            "--project",
+            "edward-test",
+            "--domain",
+            "staging",
+            "--image-builder",
+            "remote",
+            "-o",
+            outpath,
+            "--force",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    with open(outpath) as f:
+        d = yaml.safe_load(f)
+    assert d["admin"] == {
+        "endpoint": "dns:///dogfood.cloud-staging.union.ai",
+        "authType": "Pkce",
+        "insecure": False,
+        "authorizationHeader": "flyte-authorization",
+        "redirectUri": "http://localhost:53593/callback",
+        "scopes": ["all"],
+    }
+    assert d["image"]["builder"] == "remote"
+    assert d["task"] == {"domain": "staging", "org": "dogfood", "project": "edward-test"}
+
+
+def test_create_config_local_builder_does_not_write_remote_auth_defaults(runner: CliRunner, tmp_path):
+    outpath = str(tmp_path / "config.yaml")
+    result = runner.invoke(
+        main,
+        [
+            "create",
+            "config",
+            "--endpoint",
+            "dns:///dogfood.cloud-staging.union.ai",
+            "--org",
+            "dogfood",
+            "--project",
+            "edward-test",
+            "--domain",
+            "staging",
+            "--image-builder",
+            "local",
+            "-o",
+            outpath,
+            "--force",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    with open(outpath) as f:
+        d = yaml.safe_load(f)
+    assert d["admin"] == {"endpoint": "dns:///dogfood.cloud-staging.union.ai"}
+    assert d["image"]["builder"] == "local"
