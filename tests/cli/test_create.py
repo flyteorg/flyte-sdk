@@ -470,4 +470,5 @@ def test_create_config_remote_builder_requires_org(runner: CliRunner, tmp_path):
         ],
     )
     assert result.exit_code != 0
-    assert "--org must be provided when --image-builder remote is used." in result.output
+    assert "--org must be provided when --image-builder remote" in result.output
+    assert "is used." in result.output
