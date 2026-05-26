@@ -130,7 +130,7 @@ def _prepare_search_corpus(
     fetch_full_docs: bool,
     refresh: bool = False,
 ) -> tuple[str | None, str | None, str | None]:
-    """Populate (or re-use) the on-disk search corpus cache under ``cache_dir``.
+    """Populate (or reuse) the on-disk search corpus cache under ``cache_dir``.
 
     Mirrors the layout baked into :data:`flyte.ai.mcp._flyte_mcp_app.DEFAULT_IMAGE`
     so a locally-run MCP server has the same content available as the remote
