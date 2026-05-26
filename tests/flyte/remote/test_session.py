@@ -172,6 +172,36 @@ class TestBuildPyqwestClient:
         client = _build_pyqwest_client(cert_pem)
         assert isinstance(client, pyqwest.Client)
 
+    @patch("flyte.remote._client.auth._session.pyqwest.Client")
+    @patch("flyte.remote._client.auth._session.pyqwest.HTTPTransport")
+    def test_uses_system_dns_by_default(self, mock_transport, mock_client, monkeypatch):
+        monkeypatch.delenv("_FLYTE_USE_PYQWEST_DNS_RESOLVER", raising=False)
+
+        _build_pyqwest_client(None)
+
+        mock_transport.assert_called_once()
+        assert mock_transport.call_args.kwargs["use_system_dns"] is True
+        mock_client.assert_called_once_with(transport=mock_transport.return_value)
+
+    @pytest.mark.parametrize("value", ["1", "true", "TRUE", "yes", "on"])
+    @patch("flyte.remote._client.auth._session.pyqwest.Client")
+    @patch("flyte.remote._client.auth._session.pyqwest.HTTPTransport")
+    def test_can_opt_into_pyqwest_dns_resolver(self, mock_transport, mock_client, monkeypatch, value):
+        monkeypatch.setenv("_FLYTE_USE_PYQWEST_DNS_RESOLVER", value)
+
+        _build_pyqwest_client(None)
+
+        assert mock_transport.call_args.kwargs["use_system_dns"] is False
+
+    @patch("flyte.remote._client.auth._session.pyqwest.Client")
+    @patch("flyte.remote._client.auth._session.pyqwest.HTTPTransport")
+    def test_ignores_falsey_pyqwest_dns_resolver_env(self, mock_transport, mock_client, monkeypatch):
+        monkeypatch.setenv("_FLYTE_USE_PYQWEST_DNS_RESOLVER", "false")
+
+        _build_pyqwest_client(None)
+
+        assert mock_transport.call_args.kwargs["use_system_dns"] is True
+
 
 _SESSION_MOD = "flyte.remote._client.auth._session"
 
