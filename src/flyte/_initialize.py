@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from flyte._internal.imagebuild import ImageBuildEngine
     from flyte.config import Config
     from flyte.remote._client.auth import AuthType, ClientConfig
+    from flyte.remote._client.auth._client_config import LocalClientConfigOverrides
     from flyte.remote._client.controlplane import ClientSet
     from flyte.storage import Storage
 
@@ -61,6 +62,8 @@ async def _initialize_client(
     auth_type: AuthType = "Pkce",
     endpoint: str | None = None,
     client_config: ClientConfig | None = None,
+    local_client_config_overrides: LocalClientConfigOverrides | None = None,
+    audience: str | None = None,
     headless: bool = False,
     insecure: bool = False,
     insecure_skip_verify: bool = False,
@@ -92,6 +95,8 @@ async def _initialize_client(
             client_id=client_id,
             client_credentials_secret=client_credentials_secret,
             client_config=client_config,
+            local_client_config_overrides=local_client_config_overrides,
+            audience=audience,
             rpc_retries=rpc_retries,
             http_proxy_url=http_proxy_url,
             disable_keyring=disable_keyring,
@@ -109,6 +114,8 @@ async def _initialize_client(
             client_id=client_id,
             client_credentials_secret=client_credentials_secret,
             client_config=client_config,
+            local_client_config_overrides=local_client_config_overrides,
+            audience=audience,
             rpc_retries=rpc_retries,
             http_proxy_url=http_proxy_url,
             disable_keyring=disable_keyring,
@@ -159,6 +166,8 @@ async def init(
     client_id: str | None = None,
     client_credentials_secret: str | None = None,
     auth_client_config: ClientConfig | None = None,
+    local_client_config_overrides: LocalClientConfigOverrides | None = None,
+    audience: str | None = None,
     rpc_retries: int = 3,
     http_proxy_url: str | None = None,
     disable_keyring: bool = False,
@@ -248,6 +257,8 @@ async def init(
                 client_id=client_id,
                 client_credentials_secret=client_credentials_secret,
                 client_config=auth_client_config,
+                local_client_config_overrides=local_client_config_overrides,
+                audience=audience,
                 rpc_retries=rpc_retries,
                 http_proxy_url=http_proxy_url,
                 disable_keyring=disable_keyring,
@@ -318,7 +329,7 @@ async def init_from_config(
 
     import flyte.config as config
     from flyte.cli._common import parse_images
-    from flyte.remote._client.auth._client_config import ClientConfig
+    from flyte.remote._client.auth._client_config import LocalClientConfigOverrides
 
     cfg: config.Config
     cfg_path: Optional[Path] = None
@@ -357,9 +368,9 @@ async def init_from_config(
     )
     audience = cfg.platform.audience if isinstance(cfg.platform.audience, str) and cfg.platform.audience else None
 
-    auth_client_config = None
+    local_client_config_overrides = None
     if any([client_id, scopes, authorization_header, redirect_uri, audience]):
-        auth_client_config = ClientConfig(
+        local_client_config_overrides = LocalClientConfigOverrides(
             client_id=client_id,
             scopes=scopes,
             header_key=authorization_header,
@@ -380,7 +391,8 @@ async def init_from_config(
         proxy_command=cfg.platform.proxy_command,
         client_id=cfg.platform.client_id,
         client_credentials_secret=cfg.platform.client_credentials_secret,
-        auth_client_config=auth_client_config,
+        local_client_config_overrides=local_client_config_overrides,
+        audience=audience,
         disable_keyring=cfg.platform.disable_keyring,
         root_dir=root_dir,
         log_level=log_level,

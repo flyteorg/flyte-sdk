@@ -101,9 +101,6 @@ class Authenticator(object):
             return self._resolved_config
 
         if self._cfg_store is None:
-            if self._client_config is not None:
-                self._resolved_config = self._client_config
-                return self._resolved_config
             raise ValueError("ClientConfigStore is not set. Cannot resolve configuration.")
 
         remote_config = await self._cfg_store.get_client_config()

@@ -50,7 +50,7 @@ def create_auth_interceptors(endpoint: str, http_client=None, **kwargs) -> list:
             cfg_store=RemoteClientConfigStore(
                 endpoint,
                 http_client=http_client,
-                client_config=kwargs.get("client_config"),
+                client_config_overrides=kwargs.get("local_client_config_overrides"),
             ),
             **kwargs,
         )

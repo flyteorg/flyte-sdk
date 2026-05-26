@@ -23,7 +23,7 @@ from flyte._initialize import (
 )
 from flyte.config import Config
 from flyte.errors import InitializationError
-from flyte.remote._client.auth._client_config import ClientConfig
+from flyte.remote._client.auth._client_config import LocalClientConfigOverrides
 
 
 class TestInitFromConfig:
@@ -213,7 +213,7 @@ task:
 
     @patch("flyte._initialize.init")
     @pytest.mark.asyncio
-    async def test_init_from_config_builds_partial_auth_client_config(self, mock_init):
+    async def test_init_from_config_builds_local_client_config_overrides(self, mock_init):
         mock_init.aio = AsyncMock()
         test_root_dir = Path("/test/root")
 
@@ -242,15 +242,14 @@ task:
         mock_init.aio.assert_called_once()
         call_kwargs = mock_init.aio.call_args[1]
         assert call_kwargs["root_dir"] == test_root_dir
-        auth_client_config = call_kwargs["auth_client_config"]
-        assert isinstance(auth_client_config, ClientConfig)
-        assert auth_client_config.client_id == "client-id"
-        assert auth_client_config.scopes == ["scope-a"]
-        assert auth_client_config.header_key == "flyte-authorization"
-        assert auth_client_config.redirect_uri == "http://localhost:53593/callback"
-        assert auth_client_config.audience == "my-audience"
-        assert auth_client_config.token_endpoint is None
-        assert auth_client_config.authorization_endpoint is None
+        local_client_config_overrides = call_kwargs["local_client_config_overrides"]
+        assert isinstance(local_client_config_overrides, LocalClientConfigOverrides)
+        assert local_client_config_overrides.client_id == "client-id"
+        assert local_client_config_overrides.scopes == ["scope-a"]
+        assert local_client_config_overrides.header_key == "flyte-authorization"
+        assert local_client_config_overrides.redirect_uri == "http://localhost:53593/callback"
+        assert local_client_config_overrides.audience == "my-audience"
+        assert call_kwargs["audience"] == "my-audience"
 
     @patch("flyte._initialize.init")
     @patch("flyte.config.auto")

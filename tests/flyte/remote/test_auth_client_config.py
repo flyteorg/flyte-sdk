@@ -3,19 +3,22 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from flyte.remote._client.auth._client_config import ClientConfig, RemoteClientConfigStore
+from flyte.remote._client.auth._client_config import LocalClientConfigOverrides, RemoteClientConfigStore
 
 
 @pytest.mark.asyncio
 async def test_remote_client_config_store_skips_public_client_config_when_local_public_fields_are_complete():
-    local_client_config = ClientConfig(
+    local_client_config_overrides = LocalClientConfigOverrides(
         client_id="client-id",
         scopes=["scope-a"],
         header_key="flyte-authorization",
         redirect_uri="http://localhost:53593/callback",
         audience="my-audience",
     )
-    store = RemoteClientConfigStore("https://example.com", client_config=local_client_config)
+    store = RemoteClientConfigStore(
+        "https://example.com",
+        client_config_overrides=local_client_config_overrides,
+    )
     store._client = Mock()
     store._client.get_o_auth2_metadata = AsyncMock(
         return_value=SimpleNamespace(
@@ -41,8 +44,11 @@ async def test_remote_client_config_store_skips_public_client_config_when_local_
 
 @pytest.mark.asyncio
 async def test_remote_client_config_store_fetches_public_client_config_when_local_public_fields_are_incomplete():
-    local_client_config = ClientConfig(client_id="client-id")
-    store = RemoteClientConfigStore("https://example.com", client_config=local_client_config)
+    local_client_config_overrides = LocalClientConfigOverrides(client_id="client-id", audience="my-audience")
+    store = RemoteClientConfigStore(
+        "https://example.com",
+        client_config_overrides=local_client_config_overrides,
+    )
     store._client = Mock()
     store._client.get_o_auth2_metadata = AsyncMock(
         return_value=SimpleNamespace(
