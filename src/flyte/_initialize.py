@@ -352,7 +352,6 @@ async def init_from_config(
         cfg = path_or_config
 
     logger.info(f"Flyte config initialized as {cfg}", extra={"highlighter": ReprHighlighter()})
-    logger.info(f"auth_mode={cfg.platform.auth_mode}")
     # parse image, this will overwrite the image_refs set in the config file
     parse_images(cfg, images)
 
