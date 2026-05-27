@@ -10,6 +10,7 @@ discriminated unions and made tasks with such inputs uninvocable.
 from __future__ import annotations
 
 import typing
+from enum import Enum
 from typing import Annotated, List, Literal, Optional, Union
 
 import pytest
@@ -21,6 +22,8 @@ from flyte.types._type_engine import (
     _DiscriminatedUnion,
     _get_element_type,
     _get_pydantic_element_type,
+    _normalize_discriminator_value,
+    _select_unambiguous_variant,
     convert_mashumaro_json_schema_to_python_class,
     generate_attribute_list_from_dataclass_json_mixin,
 )
@@ -173,3 +176,199 @@ async def test_list_of_discriminated_union_roundtrip():
     lv = await TypeEngine.to_literal(input_val, python_type=ListOfShapes, expected=lit)
     pv = await TypeEngine.to_python_value(lv, ListOfShapes)
     assert pv == input_val
+
+
+# ---------------------------------------------------------------------------
+# Regression tests
+# - Don't silently pick the wrong variant when discriminator dispatch fails.
+# - Enum-typed discriminator fields should still dispatch correctly.
+# ---------------------------------------------------------------------------
+
+
+class _OverlapA(BaseModel):
+    kind: Literal["a"] = "a"
+    shared: int = 0
+
+
+class _OverlapB(BaseModel):
+    kind: Literal["b"] = "b"
+    shared: int = 0
+
+
+_OverlapShape = Annotated[Union[_OverlapA, _OverlapB], Field(discriminator="kind")]
+
+
+class OverlapProperties(BaseModel):
+    shape: _OverlapShape
+
+
+def test_unknown_discriminator_value_raises_clear_error():
+    """An unknown discriminator value must raise ValueError instead of silently dispatching.
+
+    Two variants with overlapping fields previously caused the first-matching variant to
+    silently win when the discriminator lookup missed; we now fail loudly.
+    """
+    schema = OverlapProperties.model_json_schema()
+    cls = convert_mashumaro_json_schema_to_python_class(schema, "OverlapProperties")
+
+    with pytest.raises(ValueError, match="does not match any known variant"):
+        cls(shape={"kind": "c", "shared": 1})
+
+
+def test_missing_discriminator_field_raises_clear_error():
+    """When the discriminator property is missing from the input we surface a clear error."""
+    schema = OverlapProperties.model_json_schema()
+    cls = convert_mashumaro_json_schema_to_python_class(schema, "OverlapProperties")
+
+    with pytest.raises(ValueError, match="missing the discriminator property"):
+        cls(shape={"shared": 1})
+
+
+def test_overlapping_variants_dispatch_correctly_by_discriminator():
+    """Sanity check that overlapping-field variants dispatch via discriminator alone."""
+    schema = OverlapProperties.model_json_schema()
+    cls = convert_mashumaro_json_schema_to_python_class(schema, "OverlapProperties")
+
+    a_inst = cls(shape={"kind": "a", "shared": 1})
+    assert type(a_inst.shape).__name__ == "_OverlapA"
+
+    b_inst = cls(shape={"kind": "b", "shared": 2})
+    assert type(b_inst.shape).__name__ == "_OverlapB"
+
+
+# ---- Enum discriminator field --------------------------------------------------
+
+
+class _ShapeKind(str, Enum):
+    CIRCLE = "circle"
+    RECTANGLE = "rectangle"
+
+
+class _EnumCircle(BaseModel):
+    kind: Literal[_ShapeKind.CIRCLE] = _ShapeKind.CIRCLE
+    radius: float = 0.0
+
+
+class _EnumRectangle(BaseModel):
+    kind: Literal[_ShapeKind.RECTANGLE] = _ShapeKind.RECTANGLE
+    width: float = 0.0
+    height: float = 0.0
+
+
+_EnumShape = Annotated[Union[_EnumCircle, _EnumRectangle], Field(discriminator="kind")]
+
+
+class EnumDiscriminatorProperties(BaseModel):
+    shape: _EnumShape
+
+
+def test_enum_str_discriminator_dispatches_with_string_value():
+    """A ``str, Enum``-typed discriminator dispatches when the dict carries the string."""
+    schema = EnumDiscriminatorProperties.model_json_schema()
+    cls = convert_mashumaro_json_schema_to_python_class(schema, "EnumDiscriminatorProperties")
+
+    inst = cls(shape={"kind": "circle", "radius": 1.5})
+    assert type(inst.shape).__name__ == "_EnumCircle"
+    assert inst.shape.radius == 1.5
+
+
+def test_enum_discriminator_dispatches_with_enum_member_value():
+    """An ``Enum`` member used as the discriminator value should still resolve.
+
+    ``pydantic.BaseModel.model_dump()`` on a model with a non-``str`` enum returns the
+    enum member rather than its underlying value, so dict-to-object construction must
+    unwrap it before performing the mapping lookup.
+    """
+
+    class NonStrShapeKind(Enum):
+        CIRCLE = "circle"
+        RECTANGLE = "rectangle"
+
+    class NonStrCircle(BaseModel):
+        kind: Literal[NonStrShapeKind.CIRCLE] = NonStrShapeKind.CIRCLE
+        radius: float = 0.0
+
+    class NonStrRectangle(BaseModel):
+        kind: Literal[NonStrShapeKind.RECTANGLE] = NonStrShapeKind.RECTANGLE
+        width: float = 0.0
+        height: float = 0.0
+
+    NonStrShape = Annotated[Union[NonStrCircle, NonStrRectangle], Field(discriminator="kind")]
+
+    class NonStrProperties(BaseModel):
+        shape: NonStrShape
+
+    schema = NonStrProperties.model_json_schema()
+    cls = convert_mashumaro_json_schema_to_python_class(schema, "NonStrProperties")
+
+    inst = cls(shape={"kind": NonStrShapeKind.RECTANGLE, "width": 1.0, "height": 2.0})
+    assert type(inst.shape).__name__ == "NonStrRectangle"
+    assert inst.shape.width == 1.0
+
+
+# ---- Mapping backfill when schema omits discriminator.mapping ----------------
+
+
+def test_mapping_is_backfilled_when_schema_omits_explicit_mapping():
+    """If ``discriminator.mapping`` is absent the variants' ``const`` values are used."""
+    schema = Properties.model_json_schema()
+    # Drop the explicit mapping to simulate a JSON Schema generator that only supplies
+    # ``propertyName`` (which is what the OpenAPI/JSON Schema specs technically require).
+    del schema["properties"]["shape"]["discriminator"]["mapping"]
+
+    cls = convert_mashumaro_json_schema_to_python_class(schema, "Properties")
+    _, nested_types = generate_attribute_list_from_dataclass_json_mixin(schema, "Properties")
+    descriptor = nested_types["shape"]
+
+    assert isinstance(descriptor, _DiscriminatedUnion)
+    assert set(descriptor.mapping.keys()) == {"circle", "rectangle"}
+
+    circle_inst = cls(shape={"kind": "circle", "color": "red", "radius": 1.5})
+    assert type(circle_inst.shape).__name__ == "Circle"
+
+
+# ---- Helper unit tests --------------------------------------------------------
+
+
+def test_normalize_discriminator_value_unwraps_enums():
+    class _K(str, Enum):
+        A = "a"
+
+    class _K2(Enum):
+        B = 1
+
+    assert _normalize_discriminator_value(_K.A) == "a"
+    assert _normalize_discriminator_value(_K2.B) == 1
+    assert _normalize_discriminator_value("plain") == "plain"
+    assert _normalize_discriminator_value(7) == 7
+
+
+def test_select_unambiguous_variant_returns_none_on_ambiguity():
+    import dataclasses as _dc
+
+    @_dc.dataclass
+    class _A:
+        x: int = 0
+        y: int = 0
+
+    @_dc.dataclass
+    class _B:
+        x: int = 0
+        y: int = 0
+
+    assert _select_unambiguous_variant([_A, _B], {"x": 1, "y": 2}) is None
+
+
+def test_select_unambiguous_variant_returns_single_match():
+    import dataclasses as _dc
+
+    @_dc.dataclass
+    class _A:
+        x: int = 0
+
+    @_dc.dataclass
+    class _B:
+        y: int = 0
+
+    matched = _select_unambiguous_variant([_A, _B], {"x": 1})
+    assert matched is _A

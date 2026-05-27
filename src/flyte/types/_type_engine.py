@@ -1194,13 +1194,46 @@ class _DiscriminatedUnion:
     """
 
     discriminator_property: typing.Optional[str]
-    mapping: typing.Mapping[str, type]
+    mapping: typing.Mapping[typing.Any, type]
     variants: typing.Tuple[type, ...]
 
 
+def _normalize_discriminator_value(value: typing.Any) -> typing.Any:
+    """Normalize a discriminator value for mapping lookup.
+
+    Pydantic v2 emits the schema-level ``discriminator.mapping`` keys as JSON
+    primitives (strings/ints/bools), but at runtime the corresponding model
+    field value can be an ``Enum`` member (e.g. when the discriminator field
+    is typed as a non-``str`` ``Enum``). Unwrap such values to their underlying
+    primitive so the lookup keys match.
+    """
+    if isinstance(value, enum.Enum):
+        return value.value
+    return value
+
+
+def _select_unambiguous_variant(variants: typing.Sequence[type], value: dict[str, Any]) -> type | None:
+    """Return the single variant whose dataclass fields accept ``value`` keys.
+
+    Used as a safe fallback when a ``oneOf`` schema lacks a usable discriminator.
+    Returns ``None`` if zero or more than one variant matches so the caller can
+    raise a clear ambiguity error instead of silently picking the first match.
+    """
+    value_keys = set(value.keys())
+    matches: list[type] = []
+    for variant_cls in variants:
+        try:
+            variant_fields = {f.name for f in dataclasses.fields(variant_cls)}
+        except TypeError:
+            continue
+        if value_keys.issubset(variant_fields):
+            matches.append(variant_cls)
+    return matches[0] if len(matches) == 1 else None
+
+
 def _mutable_schema_default_factory(
-    default: list[typing.Any] | dict[typing.Any, typing.Any],
-) -> typing.Callable[[], list[typing.Any] | dict[typing.Any, typing.Any]]:
+    default: list[Any] | dict[Any, Any],
+) -> typing.Callable[[], list[Any] | dict[Any, Any]]:
     """Return a no-arg factory for dataclass fields with mutable JSON-schema defaults."""
     snapshot = copy.deepcopy(default)
 
@@ -1211,11 +1244,11 @@ def _mutable_schema_default_factory(
 
 
 def _append_schema_field(
-    attribute_list: typing.List[typing.Tuple[Any, ...]],
+    attribute_list: list[tuple[Any, ...]],
     property_key: str,
-    field_type: typing.Any,
-    property_val: typing.Dict[str, typing.Any],
-    schema: typing.Dict[str, typing.Any],
+    field_type: Any,
+    property_val: dict[str, Any],
+    schema: dict[str, Any],
 ) -> None:
     """Append a dataclass field tuple, honoring JSON-schema ``default`` and ``required``."""
     required_set = set(schema.get("required") or ())
@@ -1360,11 +1393,33 @@ def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name:
                 discriminator_property = discriminator.get("propertyName")
                 mapping_from_schema = discriminator.get("mapping") or {}
                 # Map discriminator values to the runtime classes via the $ref name
-                discriminator_mapping: typing.Dict[str, type] = {}
+                discriminator_mapping: typing.Dict[typing.Any, type] = {}
                 for disc_value, ref_path in mapping_from_schema.items():
                     ref_name = ref_path.split("/")[-1] if isinstance(ref_path, str) else None
                     if ref_name is not None and ref_name in ref_name_to_class:
                         discriminator_mapping[disc_value] = ref_name_to_class[ref_name]
+                # If the schema didn't supply an explicit mapping (it's optional per the
+                # JSON Schema/OpenAPI specs), or it's incomplete, derive entries from the
+                # variants' own schemas by looking at the discriminator field's ``const``
+                # / single-element ``enum`` value. This is also what makes enum-typed
+                # discriminator fields work without any explicit mapping.
+                if discriminator_property is not None:
+                    defs = schema.get("$defs", schema.get("definitions", {}))
+                    mapped_classes = set(discriminator_mapping.values())
+                    for ref_name, variant_cls in ref_name_to_class.items():
+                        if variant_cls in mapped_classes:
+                            continue
+                        variant_schema = defs.get(ref_name, {})
+                        disc_field = (variant_schema.get("properties") or {}).get(discriminator_property)
+                        if not isinstance(disc_field, dict):
+                            continue
+                        const_val: typing.Any = disc_field.get("const")
+                        if const_val is None:
+                            enum_vals = disc_field.get("enum")
+                            if isinstance(enum_vals, list) and len(enum_vals) == 1:
+                                const_val = enum_vals[0]
+                        if const_val is not None:
+                            discriminator_mapping[const_val] = variant_cls
                 nested_types[property_key] = _DiscriminatedUnion(
                     discriminator_property=discriminator_property,
                     mapping=discriminator_mapping,
@@ -2489,23 +2544,41 @@ def convert_mashumaro_json_schema_to_python_class(schema: dict, schema_name: typ
                 if not isinstance(value, dict):
                     continue
                 if isinstance(descriptor, _DiscriminatedUnion):
-                    target_cls = None
                     disc_property = descriptor.discriminator_property
-                    if disc_property is not None:
-                        disc_value = value.get(disc_property)
-                        if disc_value is not None:
-                            target_cls = descriptor.mapping.get(disc_value)
-                    if target_cls is None:
-                        # Best effort: try each variant constructor until one succeeds. This is the
-                        # fallback path when no discriminator is specified or it does not match.
-                        for variant_cls in descriptor.variants:
-                            try:
-                                kwargs[field_name] = variant_cls(**value)
-                                break
-                            except TypeError:
-                                continue
-                    else:
+                    # Preferred path: dispatch using the schema-declared discriminator.
+                    # This is unambiguous even when two variants share fields.
+                    if disc_property is not None and descriptor.mapping:
+                        if disc_property not in value:
+                            raise ValueError(
+                                f"Cannot construct field {field_name!r} from discriminated union: "
+                                f"input is missing the discriminator property {disc_property!r}. "
+                                f"Expected one of {sorted(descriptor.mapping.keys())!r}."
+                            )
+                        raw_disc_value = value[disc_property]
+                        lookup_value = _normalize_discriminator_value(raw_disc_value)
+                        target_cls = descriptor.mapping.get(lookup_value)
+                        if target_cls is None:
+                            raise ValueError(
+                                f"Cannot construct field {field_name!r} from discriminated union: "
+                                f"discriminator value {raw_disc_value!r} for property {disc_property!r} "
+                                f"does not match any known variant. Expected one of "
+                                f"{sorted(descriptor.mapping.keys())!r}."
+                            )
                         kwargs[field_name] = target_cls(**value)
+                    else:
+                        # No usable discriminator: only dispatch when exactly one variant's
+                        # fields accept the input dict, so we never silently pick the wrong
+                        # variant for two models that share fields.
+                        matched_cls = _select_unambiguous_variant(descriptor.variants, value)
+                        if matched_cls is None:
+                            variant_names = [c.__name__ for c in descriptor.variants]
+                            raise ValueError(
+                                f"Cannot construct field {field_name!r} from union: input dict is "
+                                f"ambiguous (or matches no variant) across {variant_names!r} and no "
+                                f"discriminator is available. Provide a discriminator field or pass "
+                                f"the variant instance directly."
+                            )
+                        kwargs[field_name] = matched_cls(**value)
                 else:
                     kwargs[field_name] = descriptor(**value)
             original_init(self, *args, **kwargs)
