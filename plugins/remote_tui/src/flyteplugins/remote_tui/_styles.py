@@ -56,11 +56,8 @@ Footer {{
     text-style: italic;
 }}
 ProjectHubScreen #filter-bar {{
-    height: 1;
+    height: 3;
     padding: 0 1;
-}}
-ProjectHubScreen #filter-bar Label {{
-    padding: 0 1 0 0;
 }}
 #hub-table {{
     height: 1fr;
@@ -119,28 +116,56 @@ _DetailBox {{
     height: auto;
     color: {_FLYTE_PURPLE_LIGHT};
 }}
-#projects-content {{
+ProjectsScreen #projects-content {{
+    height: 1fr;
+    layout: horizontal;
+}}
+ProjectsScreen #recent-sidebar {{
+    width: 24;
+    min-width: 18;
     height: 1fr;
     layout: vertical;
-}}
-#recent-title {{
-    height: 1;
-    padding: 0 1;
-    color: {_FLYTE_PURPLE_LIGHT};
-    text-style: bold;
-}}
-#recent-projects {{
-    height: auto;
-    max-height: 10;
-    margin: 0 1 1 1;
     border: solid {_FLYTE_PURPLE};
     border-title-color: {_FLYTE_PURPLE_LIGHT};
     background: {_FLYTE_PURPLE_DARK};
     color: {_FLYTE_PURPLE_LIGHT};
 }}
-#recent-projects ListItem.-highlight {{
+ProjectsScreen #recent-projects {{
+    height: 1fr;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: {_FLYTE_PURPLE_LIGHT};
+}}
+ProjectsScreen #recent-projects ListItem.-highlight {{
     background: {_FLYTE_PURPLE};
     color: {_FLYTE_PURPLE_LIGHT};
+}}
+ProjectsScreen #sidebar-footer {{
+    height: auto;
+    width: 1fr;
+    layout: vertical;
+    border-top: solid {_FLYTE_PURPLE};
+    background: {_FLYTE_PURPLE_DARK};
+}}
+ProjectsScreen #docs-link {{
+    height: 1;
+    padding: 0 1;
+    color: {_FLYTE_PURPLE_LIGHT};
+    text-style: underline;
+}}
+ProjectsScreen #docs-link:hover {{
+    background: {_FLYTE_PURPLE};
+    color: {_FLYTE_PURPLE_LIGHT};
+}}
+ProjectsScreen #docs-link:focus {{
+    background: {_FLYTE_PURPLE};
+    color: {_FLYTE_PURPLE_LIGHT};
+}}
+ProjectsScreen #projects-main {{
+    width: 1fr;
+    height: 1fr;
+    layout: vertical;
 }}
 ProjectsScreen #projects-table {{
     height: 1fr;
