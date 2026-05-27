@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from flyte.ai.agents import AgentResult
-from flyte.ai.agents.protocol import Agent
+from flyte.ai.agents.protocol import AgentProtocol
 from flyte.ai.chat import AgentChatAppEnvironment, CustomTheme
 from flyte.ai.chat.app import _ChatRequest, _hex_to_rgb, _rgba
 from flyte.app.extras import FastAPIPassthroughAuthMiddleware
@@ -67,13 +67,13 @@ class TestAgentChatAppEnvironment:
         class NotAnAgent:
             pass
 
-        with pytest.raises(TypeError, match="Agent protocol"):
+        with pytest.raises(TypeError, match="AgentProtocol"):
             AgentChatAppEnvironment(name="test-app", image="auto", agent=NotAnAgent())
 
     def test_accepts_protocol_agent(self):
         env = AgentChatAppEnvironment(name="test-app", image="auto", agent=_StubAgent())
         assert env.agent is not None
-        assert isinstance(env.agent, Agent)
+        assert isinstance(env.agent, AgentProtocol)
 
     @pytest.mark.asyncio
     async def test_chat_stream_returns_ndjson_done_line(self):

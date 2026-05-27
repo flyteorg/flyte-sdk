@@ -17,7 +17,7 @@ from pydantic import BaseModel
 import flyte.app
 from flyte.models import SerializationContext
 
-from ..agents.protocol import Agent, AgentResult
+from ..agents.protocol import AgentProtocol, AgentResult
 from ._css import CUSTOM_THEME_CSS_TEMPLATE
 from ._html import build_chat_html
 
@@ -205,12 +205,12 @@ async def _forward_remote_run_watch_to_progress_queue(
 @dataclass(kw_only=True, repr=True)
 class AgentChatAppEnvironment(flyte.app.AppEnvironment):
     """An :class:`~flyte.app.AppEnvironment` that spins up a FastAPI chat
-    interface backed by any object satisfying the :class:`Agent` protocol.
+    interface backed by any object satisfying the :class:`AgentProtocol`.
 
     Parameters
     ----------
     agent:
-        Any object implementing the :class:`Agent` protocol.
+        Any object implementing the :class:`AgentProtocol`.
     title:
         Title displayed in the UI header and browser tab. Defaults to
         the environment *name*.
@@ -292,9 +292,9 @@ class AgentChatAppEnvironment(flyte.app.AppEnvironment):
         if self.agent is None:
             raise ValueError("'agent' is required for AgentChatAppEnvironment")
 
-        if not isinstance(self.agent, Agent):
+        if not isinstance(self.agent, AgentProtocol):
             raise TypeError(
-                f"'agent' must implement the Agent protocol (run and tool_descriptions), got {type(self.agent)}"
+                f"'agent' must implement the AgentProtocol (run and tool_descriptions), got {type(self.agent)}"
             )
 
         if self.task_entrypoint is not None and not self.passthrough_auth:

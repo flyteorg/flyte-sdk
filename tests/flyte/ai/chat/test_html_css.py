@@ -4,7 +4,7 @@ import re
 
 import flyte.ai.agents as agents_pkg
 import flyte.ai.chat as chat_pkg
-from flyte.ai.agents import Agent, AgentResult, CodeModeAgent
+from flyte.ai.agents import AgentProtocol, AgentResult, CodeModeAgent
 from flyte.ai.chat import (
     CHAT_HTML_TEMPLATE,
     DEFAULT_CSS,
@@ -103,12 +103,19 @@ class TestPackageExports:
     def test_agents_public_import_surface(self):
         assert set(agents_pkg.__all__) == {
             "Agent",
+            "AgentEvent",
+            "AgentMemory",
+            "AgentProtocol",
             "AgentResult",
+            "AgentTool",
             "CodeModeAgent",
+            "LLMMessage",
+            "MCPServerSpec",
+            "agent_progress_cb",
         }
         assert CodeModeAgent.__name__ == "CodeModeAgent"
         assert AgentResult.__name__ == "AgentResult"
-        assert hasattr(Agent, "run")
+        assert hasattr(AgentProtocol, "run")
 
     def test_chat_public_import_surface(self):
         assert set(chat_pkg.__all__) == {
