@@ -45,9 +45,7 @@ def flyte_client():
     if os.getenv("GITHUB_ACTIONS", "") == "true":
         flyte.init(
             endpoint=os.getenv("FLYTE_ENDPOINT", "dns:///playground.canary.unionai.cloud"),
-            auth_type="ClientSecret",
-            client_id="flyte-sdk-ci",
-            client_credentials_secret=os.getenv("FLYTE_SDK_CI_TOKEN"),
+            api_key=os.getenv("FLYTE_API_KEY"),
             insecure=False,
             image_builder="remote",
             project=os.getenv("FLYTE_PROJECT", "flyte-sdk"),
