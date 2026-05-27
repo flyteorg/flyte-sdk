@@ -895,3 +895,32 @@ def test_from_ref_name_is_not_cloned():
     """Image.from_ref_name is a pointer to an externally configured image and should not be rebuilt."""
     image = Image.from_ref_name("my-ref")
     assert image._is_cloned is False
+
+
+def test_default_image_dev_mode_pypi_fallback(monkeypatch):
+    """
+    In dev mode with no local dist folder, the default image should install
+    `flyte<{base_version}` from PyPI so it picks up the latest already-released
+    version below the current dev line.
+    """
+    import flyte._image as image_module
+    import flyte._version as version_module
+    from flyte._image import PipPackages
+
+    monkeypatch.setattr(version_module, "__version__", "2.3.7.dev6+gabc12345")
+
+    real_exists = image_module.os.path.exists
+
+    def fake_exists(path):
+        if str(path) == str(image_module.DIST_FOLDER):
+            return False
+        return real_exists(path)
+
+    monkeypatch.setattr(image_module.os.path, "exists", fake_exists)
+
+    image = Image._get_default_image_for(python_version=(3, 12))
+
+    pip_packages = tuple(
+        pkg for layer in image._layers if isinstance(layer, PipPackages) for pkg in (layer.packages or ())
+    )
+    assert "flyte<2.3.7" in pip_packages, f"expected 'flyte<2.3.7' in pip layers, got {pip_packages}"
