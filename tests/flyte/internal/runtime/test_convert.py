@@ -158,7 +158,7 @@ async def test_generate_cache_key_hash_consistency(_):
 
     task_name = "test_task"
     cache_key = convert.generate_cache_key_hash(task_name, inputs_hash, typed_interface, "v1", [], inputs.proto_inputs)
-    assert cache_key == "nlphRTBV/ONbns4FPKlk7yOSqXGwl9qARlb5ommqKJs="
+    assert cache_key == "7GD8K8xR0xYpA9i7dbEfNTvBhO1xrwcqIPumkFOmvOA="
 
 
 @pytest.mark.asyncio
@@ -1408,6 +1408,25 @@ async def test_convert_upload_default_inputs_with_falsy_defaults():
     assert named["b"].parameter.default.scalar.primitive.integer == 0
     assert named["c"].parameter.default.scalar.primitive.boolean is False
     assert named["d"].parameter.default.scalar.primitive.string_value == ""
+
+
+@pytest.mark.asyncio
+async def test_convert_upload_default_inputs_rejects_trigger_time():
+    """
+    convert_upload_default_inputs must raise a clear ValueError when flyte.TriggerTime
+    is used as a default value for a regular task input. Previously this produced an
+    opaque TypeTransformerFailedError because TriggerTime is a sentinel, not a datetime.
+    """
+    from datetime import datetime
+
+    import flyte
+
+    interface = NativeInterface.from_types(
+        {"trigger_time": (datetime, flyte.TriggerTime)},
+        {},
+    )
+    with pytest.raises(ValueError, match=r"flyte\.TriggerTime"):
+        await convert.convert_upload_default_inputs(interface)
 
 
 @pytest.mark.asyncio

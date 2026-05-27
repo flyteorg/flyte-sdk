@@ -5,7 +5,6 @@ TypeEngine.to_literal / to_python_value when nested in containers
 (List, Dict, Optional) within Pydantic BaseModel classes.
 """
 
-import dataclasses
 import typing
 
 import pytest
@@ -285,7 +284,7 @@ def test_list_of_files_guess_type_structure():
     """Verify guess_python_type reconstructs List[File] with correct nested structure."""
     lit = TypeEngine.to_literal_type(ModelWithListOfFiles)
     guessed = TypeEngine.guess_python_type(lit)
-    assert dataclasses.is_dataclass(guessed)
+    assert issubclass(guessed, BaseModel)
 
     hints = typing.get_type_hints(guessed)
     files_type = hints.get("files")
@@ -298,14 +297,14 @@ def test_list_of_files_guess_type_structure():
     assert len(args) == 1
     # The inner type should be File (via schema_match) or a dataclass with File's fields
     inner = args[0]
-    assert inner is File or dataclasses.is_dataclass(inner), f"Expected File or dataclass, got {inner}"
+    assert inner is File or issubclass(inner, BaseModel), f"Expected File or BaseModel, got {inner}"
 
 
 def test_nested_list_of_files_guess_type_structure():
     """Verify guess_python_type reconstructs List[List[File]] — inner should be List, not str."""
     lit = TypeEngine.to_literal_type(ModelWithNestedFiles)
     guessed = TypeEngine.guess_python_type(lit)
-    assert dataclasses.is_dataclass(guessed)
+    assert issubclass(guessed, BaseModel)
 
     hints = typing.get_type_hints(guessed)
     nested_type = hints.get("nested_files")
@@ -321,14 +320,14 @@ def test_nested_list_of_files_guess_type_structure():
 
     # Innermost should be File or a dataclass with File's fields
     innermost = typing.get_args(inner_type)[0]
-    assert innermost is File or dataclasses.is_dataclass(innermost), f"Expected File or dataclass, got {innermost}"
+    assert innermost is File or issubclass(innermost, BaseModel), f"Expected File or BaseModel, got {innermost}"
 
 
 def test_dict_of_dirs_guess_type_structure():
     """Verify guess_python_type reconstructs Dict[str, Dir] with correct value type."""
     lit = TypeEngine.to_literal_type(ModelWithDictOfDirs)
     guessed = TypeEngine.guess_python_type(lit)
-    assert dataclasses.is_dataclass(guessed)
+    assert issubclass(guessed, BaseModel)
 
     hints = typing.get_type_hints(guessed)
     dir_map_type = hints.get("dir_map")
@@ -338,14 +337,14 @@ def test_dict_of_dirs_guess_type_structure():
 
     key_type, val_type = typing.get_args(dir_map_type)
     assert key_type is str, f"Expected str key, got {key_type}"
-    assert val_type is Dir or dataclasses.is_dataclass(val_type), f"Expected Dir or dataclass, got {val_type}"
+    assert val_type is Dir or issubclass(val_type, BaseModel), f"Expected Dir or BaseModel, got {val_type}"
 
 
 def test_list_of_dataframes_guess_type_structure():
     """Verify guess_python_type reconstructs List[DataFrame] with correct inner type."""
     lit = TypeEngine.to_literal_type(ModelWithListOfDataFrames)
     guessed = TypeEngine.guess_python_type(lit)
-    assert dataclasses.is_dataclass(guessed)
+    assert issubclass(guessed, BaseModel)
 
     hints = typing.get_type_hints(guessed)
     dfs_type = hints.get("dfs")
@@ -354,14 +353,14 @@ def test_list_of_dataframes_guess_type_structure():
     assert typing.get_origin(dfs_type) is list, f"Expected List, got {typing.get_origin(dfs_type)}"
 
     inner = typing.get_args(dfs_type)[0]
-    assert inner is DataFrame or dataclasses.is_dataclass(inner), f"Expected DataFrame or dataclass, got {inner}"
+    assert inner is DataFrame or issubclass(inner, BaseModel), f"Expected DataFrame or BaseModel, got {inner}"
 
 
 def test_combined_model_guess_type_structure():
     """Verify guess_python_type reconstructs CombinedModel with all field types correct."""
     lit = TypeEngine.to_literal_type(CombinedModel)
     guessed = TypeEngine.guess_python_type(lit)
-    assert dataclasses.is_dataclass(guessed)
+    assert issubclass(guessed, BaseModel)
 
     hints = typing.get_type_hints(guessed)
 
@@ -369,13 +368,13 @@ def test_combined_model_guess_type_structure():
     files_type = hints["files"]
     assert typing.get_origin(files_type) is list
     files_inner = typing.get_args(files_type)[0]
-    assert files_inner is File or dataclasses.is_dataclass(files_inner)
+    assert files_inner is File or issubclass(files_inner, BaseModel)
 
     # dir_map: Dict[str, Dir]
     dir_map_type = hints["dir_map"]
     assert typing.get_origin(dir_map_type) is dict
     _, dir_val = typing.get_args(dir_map_type)
-    assert dir_val is Dir or dataclasses.is_dataclass(dir_val)
+    assert dir_val is Dir or issubclass(dir_val, BaseModel)
 
     # optional_file: Optional[File] — optional fields with defaults are dropped
     # by guess_python_type, so we just verify it's absent rather than asserting structure
@@ -384,7 +383,7 @@ def test_combined_model_guess_type_structure():
         assert typing.get_origin(opt_type) is typing.Union
         non_none_args = [a for a in typing.get_args(opt_type) if a is not type(None)]
         assert len(non_none_args) == 1
-        assert non_none_args[0] is File or dataclasses.is_dataclass(non_none_args[0])
+        assert non_none_args[0] is File or issubclass(non_none_args[0], BaseModel)
 
 
 # -- Roundtrip via guessed type (simulates pyflyte run) --
@@ -399,7 +398,7 @@ async def test_list_of_files_roundtrip_via_guessed_type():
 
     guessed = TypeEngine.guess_python_type(lit)
     pv = await TypeEngine.to_python_value(lv, guessed)
-    assert dataclasses.is_dataclass(pv)
+    assert isinstance(pv, BaseModel)
     assert len(pv.files) == 2
 
 
@@ -412,7 +411,7 @@ async def test_nested_files_roundtrip_via_guessed_type():
 
     guessed = TypeEngine.guess_python_type(lit)
     pv = await TypeEngine.to_python_value(lv, guessed)
-    assert dataclasses.is_dataclass(pv)
+    assert isinstance(pv, BaseModel)
     assert len(pv.nested_files) == 2
     assert len(pv.nested_files[0]) == 1
     assert len(pv.nested_files[1]) == 2
@@ -427,7 +426,7 @@ async def test_dict_of_dirs_roundtrip_via_guessed_type():
 
     guessed = TypeEngine.guess_python_type(lit)
     pv = await TypeEngine.to_python_value(lv, guessed)
-    assert dataclasses.is_dataclass(pv)
+    assert isinstance(pv, BaseModel)
     assert len(pv.dir_map) == 2
     assert "a" in pv.dir_map
     assert "b" in pv.dir_map
@@ -447,7 +446,7 @@ async def test_combined_model_roundtrip_via_guessed_type():
 
     guessed = TypeEngine.guess_python_type(lit)
     pv = await TypeEngine.to_python_value(lv, guessed)
-    assert dataclasses.is_dataclass(pv)
+    assert isinstance(pv, BaseModel)
     assert len(pv.files) == 1
     assert len(pv.dir_map) == 1
     assert pv.df.uri == "s3://bucket/data.parquet"

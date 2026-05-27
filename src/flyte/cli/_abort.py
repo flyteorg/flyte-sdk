@@ -24,7 +24,7 @@ def run(cfg: common.CLIConfig, run_name: str, reason: str, project: str | None =
     r = remote.Run.get(name=run_name)
     if r:
         console = common.get_console()
-        with console.status(f"Aborting run '{run_name}'...", spinner="dots"):
+        with console.status(f"Aborting run '{run_name}'...", spinner=common.safe_spinner("dots")):
             r.abort(reason=reason)
         console.print(f"Run '{run_name}' has been aborted.")
 
@@ -51,6 +51,8 @@ def action(
     a = remote.Action.get(run_name=run_name, name=action_name)
     if a:
         console = common.get_console()
-        with console.status(f"Aborting action '{action_name}' for run '{run_name}'...", spinner="dots"):
+        with console.status(
+            f"Aborting action '{action_name}' for run '{run_name}'...", spinner=common.safe_spinner("dots")
+        ):
             a.abort(reason=reason)
         console.print(f"Action '{action_name}' for run '{run_name}' has been aborted.")

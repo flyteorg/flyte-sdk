@@ -1,6 +1,7 @@
 import asyncio
 import time
-from typing import List, Tuple
+from datetime import datetime
+from typing import List, Optional, Tuple
 
 from flyte._context import contextual_run
 from flyte._internal.controllers import Controller
@@ -106,6 +107,8 @@ async def run_task(
     code_bundle: CodeBundle | None = None,
     input_path: str | None = None,
     path_rewrite_cfg: str | None = None,
+    # Defaulted so existing Rust-side callers keep working; TaskContext fills in now(UTC) when absent.
+    run_start_time: Optional[datetime] = None,
 ):
     """
     Runs the task with the provided parameters.
@@ -163,6 +166,7 @@ async def run_task(
             code_bundle=code_bundle,
             input_path=input_path,
             image_cache=ImageCache.from_transport(image_cache) if image_cache else None,
+            run_start_time=run_start_time,
         )
     except asyncio.CancelledError as e:
         logger.error(f"[rusty] Task cancellation received: {e!s}")

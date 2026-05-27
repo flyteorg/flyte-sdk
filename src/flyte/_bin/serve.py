@@ -240,8 +240,6 @@ async def _serve(
     materialized_parameters: dict[str, str | flyte.io.File | flyte.io.Dir],
     raw_data_path: str | None = None,
 ):
-    import signal
-
     if raw_data_path:
         from flyte.app._context import set_raw_data_path
 
@@ -251,24 +249,17 @@ async def _serve(
     logger.info("Running app via server function")
     assert app_env._server is not None
 
-    # Use the asyncio event loop's add_signal_handler, and ensure all cleanup happens
-    # within the running event loop, not from a synchronous signal handler.
     loop = asyncio.get_running_loop()
 
-    async def shutdown():
-        logger.info("Received SIGTERM, shutting down server...")
+    async def run_user_shutdown_hooks() -> None:
         if app_env._on_shutdown is not None:
+            logger.info("Running on_shutdown function")
             bound_params = _bind_parameters(app_env._on_shutdown, materialized_parameters)
             if asyncio.iscoroutinefunction(app_env._on_shutdown):
                 await app_env._on_shutdown(**bound_params)
             else:
                 app_env._on_shutdown(**bound_params)
         logger.info("Server shut down")
-        # Use loop.stop() to gracefully stop the loop after shutdown
-        loop.stop()
-
-    logger.info("Adding signal handler for SIGTERM using signal.signal")
-    signal.signal(signal.SIGTERM, lambda signum, frame: asyncio.create_task(shutdown()))
 
     if app_env._on_startup is not None:
         logger.info("Running on_startup function")
@@ -282,6 +273,9 @@ async def _serve(
         logger.info("Running server function")
         bound_params = _bind_parameters(app_env._server, materialized_parameters)
         if asyncio.iscoroutinefunction(app_env._server):
+            # Do not register SIGTERM with signal.signal or call loop.stop(): that races
+            # asyncio.run() teardown (RuntimeError: Event loop stopped before Future completed).
+            # Async servers (e.g. uvicorn) should install asyncio-safe handlers themselves.
             await app_env._server(**bound_params)
         else:
             # Run the function on a separate thread, in case the sync function
@@ -291,7 +285,7 @@ async def _serve(
 
             await loop.run_in_executor(None, run_sync)
     finally:
-        await shutdown()
+        await run_user_shutdown_hooks()
 
 
 @click.command()

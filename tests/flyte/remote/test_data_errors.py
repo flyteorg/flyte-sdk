@@ -51,3 +51,32 @@ async def test_upload_connect_error_translation(code, expected_error, expected_c
 
         if expected_code:
             assert exc_info.value.code == expected_code
+
+
+@pytest.mark.asyncio
+async def test_upload_generic_exception_includes_cause_message(tmp_path):
+    """Non-ConnectError exceptions surface the underlying cause's message to the user.
+
+    Regression test for FLYTE-SDK-2H: the prior wrapper dropped the cause message,
+    leaving users with only "Failed to get signed url for ..." and no hint that the
+    real problem was e.g. missing 'org' config rejected by server validation.
+    """
+    test_file = tmp_path / "test.txt"
+    test_file.write_text("hello")
+
+    cfg = _make_cfg()
+    underlying = RuntimeError(
+        "SelectCluster failed for operation=1: validation error:\n"
+        " - project_id.organization: value length must be at least 1 characters [string.min_len]"
+    )
+    mock_client = _make_mock_client(underlying)
+
+    with (
+        patch("flyte._initialize._get_init_config", return_value=cfg),
+        patch("flyte.remote._data.get_client", return_value=mock_client),
+    ):
+        with pytest.raises(RuntimeSystemError) as exc_info:
+            await _upload_single_file(cfg, test_file, basedir="")
+
+        assert "project_id.organization" in str(exc_info.value)
+        assert exc_info.value.__cause__ is underlying

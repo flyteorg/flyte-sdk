@@ -60,8 +60,68 @@ def init() -> None:
         logger.debug("Failed to initialize Sentry", exc_info=True)
 
 
+def _iter_cause_chain(exc: BaseException):
+    """Walk __cause__ / __context__ chain so wrapping doesn't hide the real type.
+
+    Bounded depth - exception chains in the wild stay shallow (3-5 deep), but a
+    bug elsewhere could create a cycle and we don't want this to spin.
+    """
+    seen: set[int] = set()
+    cur: BaseException | None = exc
+    depth = 0
+    while cur is not None and id(cur) not in seen and depth < 16:
+        yield cur
+        seen.add(id(cur))
+        nxt = cur.__cause__ or cur.__context__
+        cur = nxt
+        depth += 1
+
+
+def _is_user_error(exc: BaseException) -> bool:
+    """Errors raised intentionally as user-facing messages — not crash reports."""
+    try:
+        import click
+
+        click_user_exc: tuple[type, ...] = (click.Abort, click.exceptions.Exit, click.ClickException)
+    except ImportError:
+        click_user_exc = ()
+
+    try:
+        from flyte.errors import InitializationError, RuntimeUserError
+
+        # RuntimeUserError is the parent class of ModuleLoadError, DeploymentError,
+        # ImageBuildError, OOMError, TaskTimeoutError, RuntimeDataValidationError,
+        # CodeBundleError, etc. — all "this is your code/config, not an SDK bug"
+        # errors. InitializationError is a sibling BaseRuntimeError, also user-facing.
+        flyte_user_exc: tuple[type, ...] = (RuntimeUserError, InitializationError)
+    except ImportError:
+        flyte_user_exc = ()
+
+    # Auth failures (expired refresh token, expired device code, IDP rejection)
+    # are wrapped in RuntimeError("SelectCluster failed...") -> RuntimeSystemError
+    # in _upload_single_file, so isinstance() on the outer exc misses them.
+    # Walk __cause__ / __context__ to catch the original.
+    try:
+        from flyte.remote._client.auth.errors import AccessTokenNotFoundError, AuthenticationError
+
+        auth_user_exc: tuple[type, ...] = (AccessTokenNotFoundError, AuthenticationError)
+    except ImportError:
+        auth_user_exc = ()
+
+    user_excs = click_user_exc + flyte_user_exc + auth_user_exc
+    if not user_excs:
+        return False
+
+    for cause in _iter_cause_chain(exc):
+        if isinstance(cause, user_excs):
+            return True
+    return False
+
+
 def capture_exception(exc: BaseException) -> None:
     """Capture an exception and send it to Sentry."""
+    if _is_user_error(exc):
+        return
     try:
         init()
         import sentry_sdk

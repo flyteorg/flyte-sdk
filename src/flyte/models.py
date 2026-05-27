@@ -6,6 +6,7 @@ import os
 import pathlib
 import typing
 from dataclasses import dataclass, field, replace
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Callable, ClassVar, Dict, List, Literal, Optional, Tuple, Type
 
 import rich.repr
@@ -215,6 +216,9 @@ class TaskContext:
       to any actions it spawns. Context will not be used for cache key computation.
     :param in_driver_literal_conversion: Set by the runtime during nested-task literal marshalling; type transformers
       may use it to skip duplicate side effects (e.g. report tabs) outside true task-body I/O.
+    :param run_start_time: UTC datetime at which the parent run was triggered. Populated by the backend via the
+      ``{{.runStartTime}}`` template; defaults to ``datetime.now(timezone.utc)`` when not supplied so local runs
+      always have a value.
     """
 
     action: ActionID
@@ -236,6 +240,7 @@ class TaskContext:
     #: True while converting literals for nested-task / driver orchestration (not task-body I/O).
     #: Type transformers should omit non-essential side effects (e.g. duplicate HTML tabs) when set.
     in_driver_literal_conversion: bool = False
+    run_start_time: Optional[datetime] = field(default_factory=lambda: datetime.now(timezone.utc))
 
     def replace(self, **kwargs) -> TaskContext:
         if "data" in kwargs:

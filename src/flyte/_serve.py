@@ -338,6 +338,7 @@ class _Serve:
         cluster_pool: str | None = None,
         log_level: int | None = None,
         log_format: LogFormat = "console",
+        user_log_level: int | None = None,
         interactive_mode: bool | None = None,
         copy_bundle_to: pathlib.Path | None = None,
         deactivate_timeout: float | None = None,
@@ -399,6 +400,7 @@ class _Serve:
         self._cluster_pool = cluster_pool
         self._log_level = log_level
         self._log_format = log_format
+        self._user_log_level = user_log_level
         self._interactive_mode = interactive_mode if interactive_mode is not None else ipython_check()
         self._copy_bundle_to = copy_bundle_to
 
@@ -612,6 +614,8 @@ class _Serve:
             else:
                 env["LOG_LEVEL"] = str(logger.getEffectiveLevel())
         env["LOG_FORMAT"] = self._log_format
+        if self._user_log_level is not None:
+            env["USER_LOG_LEVEL"] = str(self._user_log_level)
 
         # Update env_vars with logging configuration
         self._env_vars = env
@@ -783,6 +787,7 @@ def with_servecontext(
     cluster_pool: str | None = None,
     log_level: int | None = None,
     log_format: LogFormat = "console",
+    user_log_level: int | None = None,
     interactive_mode: bool | None = None,
     copy_bundle_to: pathlib.Path | None = None,
     # Local-serving parameters
@@ -884,6 +889,7 @@ def with_servecontext(
         cluster_pool=cluster_pool,
         log_level=log_level,
         log_format=log_format,
+        user_log_level=user_log_level,
         interactive_mode=interactive_mode,
         copy_bundle_to=copy_bundle_to,
         deactivate_timeout=deactivate_timeout,

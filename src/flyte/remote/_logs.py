@@ -129,7 +129,10 @@ class Logs:
         while True:
             try:
                 resp = client.dataproxy_service.tail_logs(
-                    dataproxy_service_pb2.TailLogsRequest(action_id=action_id, attempt=attempt)
+                    dataproxy_service_pb2.TailLogsRequest(
+                        action_id=action_id,
+                        attempt=attempt,
+                    )
                 )
                 async for log_set in resp:
                     if log_set.logs:

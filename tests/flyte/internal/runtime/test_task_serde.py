@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pathlib
+from datetime import timedelta
 
 import pytest
 from flyteidl2.core import identifier_pb2, interface_pb2, literals_pb2, tasks_pb2, types_pb2
@@ -19,12 +20,17 @@ from flyte import PodTemplate
 from flyte._internal.runtime.task_serde import (
     _get_k8s_pod,
     _get_urun_container,
+    get_proto_max_runtime,
+    get_proto_retry_strategy,
     get_proto_task,
+    get_proto_timeout_strategy,
     get_security_context,
     lookup_image_in_cache,
     translate_task_to_wire,
 )
+from flyte._retry import Backoff, RetryStrategy
 from flyte._secret import Secret
+from flyte._timeout import Timeout
 from flyte.models import SerializationContext
 
 
@@ -625,3 +631,184 @@ def test_entrypoint_flag_on_task_template():
     proto_task = get_proto_task(entrypoint_task, context)
     assert proto_task is not None
     assert proto_task.metadata.is_entrypoint is True
+
+
+# ---------------- Retry / Backoff serde ----------------
+
+
+def test_get_proto_retry_strategy_none():
+    assert get_proto_retry_strategy(None) is None
+
+
+def test_get_proto_retry_strategy_int_rejected():
+    with pytest.raises(AssertionError):
+        get_proto_retry_strategy(3)
+
+
+def test_get_proto_retry_strategy_count_only():
+    proto = get_proto_retry_strategy(RetryStrategy(count=5))
+    assert proto.retries == 5
+    # backoff field should be unset (default-constructed, empty).
+    assert not proto.HasField("backoff")
+
+
+def test_get_proto_retry_strategy_with_backoff():
+    backoff = Backoff(
+        base=timedelta(seconds=10),
+        factor=2.0,
+        cap=timedelta(minutes=5),
+    )
+    proto = get_proto_retry_strategy(RetryStrategy(count=5, backoff=backoff))
+    assert proto.retries == 5
+    assert proto.HasField("backoff")
+    assert proto.backoff.base.seconds == 10
+    assert proto.backoff.factor == 2.0
+    assert proto.backoff.cap.seconds == 300
+
+
+def test_get_proto_retry_strategy_backoff_constant_no_cap():
+    backoff = Backoff(base=timedelta(seconds=2))  # factor defaults to 1.0, cap unset
+    proto = get_proto_retry_strategy(RetryStrategy(count=2, backoff=backoff))
+    assert proto.backoff.base.seconds == 2
+    assert proto.backoff.factor == 1.0
+    assert not proto.backoff.HasField("cap")
+
+
+# ---------------- Timeout serde ----------------
+
+
+def test_get_proto_max_runtime_none():
+    assert get_proto_max_runtime(None) is None
+
+
+def test_get_proto_max_runtime_int():
+    proto = get_proto_max_runtime(60)
+    assert proto.seconds == 60
+
+
+def test_get_proto_max_runtime_timedelta():
+    proto = get_proto_max_runtime(timedelta(minutes=5))
+    assert proto.seconds == 300
+
+
+def test_get_proto_max_runtime_preserves_days():
+    # Regression: the old impl read .seconds (which drops days) and lost the
+    # day component for any timedelta >= 1 day.
+    proto = get_proto_max_runtime(Timeout(max_runtime=timedelta(days=2)))
+    assert proto.seconds == 2 * 24 * 3600
+
+
+def test_get_proto_timeout_strategy_none_when_only_max_runtime():
+    # Bare timedelta interpreted as max_runtime; no queued/deadline -> no strategy.
+    assert get_proto_timeout_strategy(timedelta(seconds=30)) is None
+    assert get_proto_timeout_strategy(Timeout(max_runtime=timedelta(seconds=30))) is None
+
+
+def test_get_proto_timeout_strategy_queued_only():
+    proto = get_proto_timeout_strategy(Timeout(max_queued_time=timedelta(minutes=15)))
+    assert proto is not None
+    assert proto.HasField("queued_timeout")
+    assert proto.queued_timeout.seconds == 15 * 60
+    assert not proto.HasField("deadline")
+
+
+def test_get_proto_timeout_strategy_deadline_only():
+    proto = get_proto_timeout_strategy(Timeout(deadline=timedelta(hours=2)))
+    assert proto is not None
+    assert not proto.HasField("queued_timeout")
+    assert proto.HasField("deadline")
+    assert proto.deadline.seconds == 2 * 3600
+
+
+def test_get_proto_timeout_strategy_both():
+    proto = get_proto_timeout_strategy(
+        Timeout(
+            max_runtime=timedelta(minutes=10),  # ignored by this helper
+            max_queued_time=timedelta(minutes=15),
+            deadline=timedelta(hours=2),
+        )
+    )
+    assert proto.queued_timeout.seconds == 15 * 60
+    assert proto.deadline.seconds == 2 * 3600
+
+
+def test_get_proto_task_writes_full_timeout_and_retry():
+    # End-to-end: a task with retries+backoff and all three timeout bounds
+    # produces TaskMetadata.timeout, TaskMetadata.timeouts, and
+    # TaskMetadata.retries with backoff populated.
+    env = flyte.TaskEnvironment(
+        name="rt_env",
+        image="python:3.10",
+        resources=flyte.Resources(cpu="1", memory="2Gi"),
+    )
+
+    @env.task(
+        short_name="rt_task",
+        retries=flyte.RetryStrategy(
+            count=5,
+            backoff=flyte.Backoff(
+                base=timedelta(seconds=10),
+                factor=2.0,
+                cap=timedelta(minutes=5),
+            ),
+        ),
+        timeout=flyte.Timeout(
+            max_runtime=timedelta(minutes=30),
+            max_queued_time=timedelta(minutes=15),
+            deadline=timedelta(hours=2),
+        ),
+    )
+    async def t(a: int) -> int:
+        return a
+
+    context = SerializationContext(
+        project="p",
+        domain="d",
+        version="v",
+        org="o",
+        input_path="/tmp/inputs",
+        output_path="/tmp/outputs",
+        image_cache=None,
+        code_bundle=None,
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    proto_task = get_proto_task(t, context)
+    md = proto_task.metadata
+
+    # max_runtime -> TaskMetadata.timeout
+    assert md.timeout.seconds == 30 * 60
+
+    # queued_timeout / deadline -> TaskMetadata.timeouts
+    assert md.HasField("timeouts")
+    assert md.timeouts.queued_timeout.seconds == 15 * 60
+    assert md.timeouts.deadline.seconds == 2 * 3600
+
+    # retries + backoff
+    assert md.retries.retries == 5
+    assert md.retries.backoff.base.seconds == 10
+    assert md.retries.backoff.factor == 2.0
+    assert md.retries.backoff.cap.seconds == 300
+
+
+def test_get_proto_task_no_timeout_strategy_when_only_max_runtime():
+    env = flyte.TaskEnvironment(name="rt_env_only_mr", image="python:3.10")
+
+    @env.task(short_name="t", timeout=60)
+    async def t() -> int:
+        return 1
+
+    context = SerializationContext(
+        project="p",
+        domain="d",
+        version="v",
+        org="o",
+        input_path="/tmp/inputs",
+        output_path="/tmp/outputs",
+        image_cache=None,
+        code_bundle=None,
+        root_dir=pathlib.Path.cwd(),
+    )
+    proto_task = get_proto_task(t, context)
+    assert proto_task.metadata.timeout.seconds == 60
+    assert not proto_task.metadata.HasField("timeouts")

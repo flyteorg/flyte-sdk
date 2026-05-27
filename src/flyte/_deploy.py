@@ -368,16 +368,28 @@ async def _build_image_bg(env_name: str, image: Image) -> Tuple[str, str, Option
     return env_name, result.uri, run_id_data
 
 
-async def _build_images(deployment: DeploymentPlan, image_refs: Dict[str, str] | None = None) -> ImageCache:
+async def _build_images(
+    deployment: DeploymentPlan,
+    image_refs: Dict[str, str] | None = None,
+    copy_style: "CopyFiles" = "loaded_modules",
+) -> ImageCache:
     """
     Build the images for the given deployment plan and update the environment with the built image.
+
+    Resolves any ``CodeBundleLayer`` layers first so callers (apply, build_images, serve,
+    connectors, run) don't each need to duplicate that step.
     """
-    from flyte._image import _DEFAULT_IMAGE_REF_NAME
+    from flyte._image import _DEFAULT_IMAGE_REF_NAME, resolve_code_bundle_layer
 
     from ._internal.imagebuild.image_builder import ImageCache
 
     if image_refs is None:
         image_refs = {}
+
+    cfg = get_init_config()
+    for env_name, env in deployment.envs.items():
+        if isinstance(env.image, Image):
+            env.image = resolve_code_bundle_layer(env.image, copy_style, pathlib.Path(cfg.root_dir))
 
     images = []
     image_identifier_map: Dict[str, str] = {}
@@ -452,14 +464,7 @@ async def apply(deployment_plan: DeploymentPlan, copy_style: CopyFiles, dryrun: 
 
     cfg = get_init_config()
 
-    # Resolve any CodeBundleLayer layers before building images
-    from flyte._image import resolve_code_bundle_layer
-
-    for env_name, env in deployment_plan.envs.items():
-        if isinstance(env.image, Image):
-            env.image = resolve_code_bundle_layer(env.image, copy_style, pathlib.Path(cfg.root_dir))
-
-    image_cache = await _build_images(deployment_plan, cfg.images)
+    image_cache = await _build_images(deployment_plan, cfg.images, copy_style)
 
     # Collect all `Environment.include` files across envs in the plan. They are
     # resolved to absolute paths anchored at each env's declaring file and
@@ -483,10 +488,24 @@ async def apply(deployment_plan: DeploymentPlan, copy_style: CopyFiles, dryrun: 
         if deployment_plan.version:
             version = deployment_plan.version
         else:
+            import pickle as _pickle
+
+            import click
+
             h = hashlib.md5()
-            h.update(cloudpickle.dumps(deployment_plan.envs))
-            h.update(code_bundle.computed_version.encode("utf-8"))
-            h.update(cloudpickle.dumps(image_cache))
+            try:
+                h.update(cloudpickle.dumps(deployment_plan.envs))
+                h.update(code_bundle.computed_version.encode("utf-8"))
+                h.update(cloudpickle.dumps(image_cache))
+            except (_pickle.PicklingError, TypeError) as e:
+                raise click.ClickException(
+                    "Failed to compute deployment version: your task or environment captures an "
+                    f"unpicklable object ({type(e).__name__}: {e}). This is usually caused by closing "
+                    "over `sys.stdin` / `sys.stdout` / `sys.stderr`, an open file handle, a thread, "
+                    "or a lock from module-level code. Move the captured value inside the task "
+                    "function, or pass an explicit `version=...` to `flyte.deploy(...)` to skip "
+                    "version derivation."
+                ) from e
             version = h.hexdigest()
 
     sc = SerializationContext(
@@ -514,23 +533,31 @@ async def apply(deployment_plan: DeploymentPlan, copy_style: CopyFiles, dryrun: 
 
 
 def _find_env_module(env: Environment):
-    """Scan sys.modules to find the module that contains this env as a top-level variable."""
-    for module in list(sys.modules.values()):
+    """Scan sys.modules to find the (sys.modules key, module) that contains this env as a top-level variable.
+
+    Iterates ``sys.modules.items()`` rather than ``.values()`` so callers can show the *import
+    name* (the sys.modules key, e.g. ``examples.basics.multi_status``) in error messages. When the
+    same file is loaded twice under different names, the two module objects may share the same
+    ``__name__`` attribute (because both were created via ``importlib.util.spec_from_file_location``
+    with the file stem), but their sys.modules keys differ — that's what the user actually needs to
+    see to fix their layout. Returns ``(None, None)`` if nothing matches.
+    """
+    for key, module in list(sys.modules.items()):
         if module is None:
             continue
         try:
             # search for at least one value inside this module that is the same object as env and return it
             if any(v is env for v in vars(module).values()):
-                return module
+                return key, module
         except TypeError:
             continue
-    return None
+    return None, None
 
 
 def _check_duplicate_env(existing_env: Environment, env: Environment) -> None:
     """Raise an appropriate error when the same environment name is encountered twice."""
-    existing_module = _find_env_module(existing_env)
-    new_module = _find_env_module(env)
+    existing_key, existing_module = _find_env_module(existing_env)
+    new_key, new_module = _find_env_module(env)
     existing_file = getattr(existing_module, "__file__", None)
     new_file = getattr(new_module, "__file__", None)
 
@@ -540,8 +567,8 @@ def _check_duplicate_env(existing_env: Environment, env: Environment) -> None:
         # `my_module.envs` and `src.my_module.envs`).
         raise ValueError(
             f"Environment '{env.name}' is defined in '{existing_file}' but was imported "
-            f"twice under different module names ('{existing_module.__name__}' and "
-            f"'{new_module.__name__}'). This is usually caused by running `flyte deploy` "
+            f"twice under different module names ('{existing_key}' and "
+            f"'{new_key}'). This is usually caused by running `flyte deploy` "
             f"from the project root of a src/ layout project without --root-dir. "
             f"Try adding --root-dir src (or your source root directory)."
         )
@@ -615,13 +642,16 @@ async def deploy(
 
 
 @syncify
-async def build_images(envs: Environment) -> ImageCache:
+async def build_images(envs: Environment, copy_style: "CopyFiles" = "loaded_modules") -> ImageCache:
     """
-    Build the images for the given environments.
+    Build the images for the given environment.
     :param envs: Environment to build images for.
+    :param copy_style: Copy style that the eventual deploy will use. Must match the deploy's
+        ``--copy-style`` so the image content hashes — and therefore the registry tags — line
+        up, letting deploy reuse the pre-built image.
     :return: ImageCache containing the built images.
     """
     cfg = get_init_config()
     images = cfg.images if cfg else {}
     deployment = plan_deploy(envs)
-    return await _build_images(deployment[0], images)
+    return await _build_images(deployment[0], images, copy_style)

@@ -174,8 +174,8 @@ result = await agent.generate.aio(prompt="...")
 | `schema`      | `str`                             | `None`   | Free-form context about data formats, structures, or schemas. Included verbatim in the LLM prompt.             |
 | `constraints` | `list[str]`                       | `None`   | Natural-language constraints (e.g., `"quantity must be positive"`)                                             |
 | `samples`     | `dict[str, File \| pd.DataFrame]` | `None`   | Sample data. Sampled for LLM context, converted to File inputs for the sandbox. Used as defaults at runtime.   |
-| `inputs`      | `dict[str, type]`                 | `None`   | Non-sample CLI argument types (e.g., `{"threshold": float}`). Sample entries are auto-added as File inputs.    |
-| `outputs`     | `dict[str, type]`                 | `None`   | Output types. Supported: `str, int, float, bool, datetime, timedelta, File`.                                   |
+| `inputs`      | `dict[str, type]`                 | `None`   | Non-sample CLI argument types (e.g., `{"threshold": float}`). Sample entries are auto-added as File inputs. Supported: `str, int, float, bool, File, Dir`. |
+| `outputs`     | `dict[str, type]`                 | `None`   | Output types. Supported: `str, int, float, bool, datetime, timedelta, File, Dir`.                             |
 
 ### `CodeGenEvalResult`
 

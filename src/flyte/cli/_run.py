@@ -15,6 +15,7 @@ from .._code_bundle._utils import CopyFiles
 from .._sentry import capture_exception, count
 from .._task import TaskTemplate
 from ..errors import RuntimeSystemError
+from ..models import NativeInterface
 from ..remote import Run
 from ..syncify import syncify
 from . import _common as common
@@ -65,6 +66,37 @@ def _list_tasks(
 
     common.initialize_config(ctx, project, domain)
     return [task.name for task in flyte.remote.Task.listall(by_task_name=by_task_name, by_task_env=by_task_env)]
+
+
+def _resolve_default_val(interface: NativeInterface, name: str, default_marker: Any, python_type: Any) -> Any:
+    """
+    Resolve the click default for an input on a (possibly remote) task interface.
+
+    Local task interfaces (built via `NativeInterface.from_callable`) carry the real Python default
+    directly in ``default_marker``. Remote/deployed task interfaces are reconstructed by
+    `flyte.types.guess_interface`, which uses `NativeInterface.has_default` as a sentinel marker
+    while stashing the actual literal default in ``interface._remote_defaults``. In the remote case
+    we materialize the literal back into a Python value so click can render it in ``--help`` and use
+    it as the option default — instead of leaking the `_has_default` class itself, which click would
+    silently instantiate and string-format into a corrupted default value.
+    """
+    if default_marker is inspect.Parameter.empty:
+        return None
+    if default_marker is not NativeInterface.has_default:
+        return default_marker
+
+    remote_defaults = interface._remote_defaults or {}
+    literal = remote_defaults.get(name)
+    if literal is None:
+        return None
+    try:
+        from ..types import TypeEngine
+
+        return asyncio.run(TypeEngine.to_python_value(literal, python_type))
+    except Exception:
+        # Fall back to no default rather than poisoning the option; the runtime path
+        # will still fill the missing kwarg from `_remote_defaults`.
+        return None
 
 
 @dataclass
@@ -348,7 +380,7 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
         if config.output_format in ("json", "table-simple"):
             content = f"Completed Local Run\nPath: {result.url}\nOutputs: {result.outputs()}"
         else:
-            content = f"[green]Completed Local Run[/green]\nPath: {result.url}\n➡️ Outputs: {result.outputs()}"
+            content = f"[green]Completed Local Run[/green]\nPath: {result.url}\n➡️  Outputs: {result.outputs()}"
         console.print(common.get_panel("Local Success", content, config.output_format))
 
     async def _render_remote_success(self, console, result, config):
@@ -429,10 +461,9 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
         params: List[click.Parameter] = []
         for entry in interface.inputs.variables:
             name, var = entry.key, entry.value
-            default_val = None
-            if inputs_interface[name][1] is not inspect._empty:
-                default_val = inputs_interface[name][1]
-            params.append(to_click_option(name, var, inputs_interface[name][0], default_val))
+            python_type, default_marker = inputs_interface[name]
+            default_val = _resolve_default_val(task.native_interface, name, default_marker, python_type)
+            params.append(to_click_option(name, var, python_type, default_val))
 
         self.params = params
         return super().get_params(ctx)
@@ -568,7 +599,7 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
         if config.output_format in ("json", "table-simple"):
             content = f"Completed Local Run\nPath: {result.url}\nOutputs: {result.outputs()}"
         else:
-            content = f"[green]Completed Local Run[/green]\nPath: {result.url}\n➡️ Outputs: {result.outputs()}"
+            content = f"[green]Completed Local Run[/green]\nPath: {result.url}\n➡️  Outputs: {result.outputs()}"
         console.print(common.get_panel("Local Success", content, config.output_format))
 
     async def _render_remote_success(self, console, result, config):
@@ -634,10 +665,9 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
         params: List[click.Parameter] = []
         for entry in interface.inputs.variables:
             name, var = entry.key, entry.value
-            default_val = None
-            if inputs_interface[name][1] is not inspect._empty:
-                default_val = inputs_interface[name][1]
-            params.append(to_click_option(name, var, inputs_interface[name][0], default_val))
+            python_type, default_marker = inputs_interface[name]
+            default_val = _resolve_default_val(task_details.interface, name, default_marker, python_type)
+            params.append(to_click_option(name, var, python_type, default_val))
 
         self.params = params
         return super().get_params(ctx)

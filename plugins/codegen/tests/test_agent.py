@@ -1,8 +1,12 @@
 """Tests for AutoCoderAgent construction in flyteplugins.codegen.auto_coder_agent."""
 
+from unittest.mock import AsyncMock, patch
+
 import pytest
+from flyte.io import Dir
 
 from flyteplugins.codegen.auto_coder_agent import AutoCoderAgent
+from flyteplugins.codegen.core.types import CodeGenEvalResult, CodeSolution
 
 
 class TestAutoCoderAgentConstruction:
@@ -78,3 +82,29 @@ class TestAutoCoderAgentConstruction:
         assert agent.cache == "disable"
         assert agent.backend == "claude"
         assert agent.agent_max_turns == 100
+
+    @pytest.mark.asyncio
+    async def test_generate_accepts_dir_inputs_and_outputs(self):
+        agent = AutoCoderAgent(model="test-model", backend="claude")
+        expected = CodeGenEvalResult(
+            solution=CodeSolution(code="print('ok')"),
+            success=True,
+            output="ok",
+            exit_code=0,
+            image="img:latest",
+        )
+
+        with patch(
+            "flyteplugins.codegen.auto_coder_agent.code_gen_eval_agent",
+            AsyncMock(return_value=expected),
+        ) as mock_eval:
+            result = await agent.generate.aio(
+                prompt="Read a directory and emit a processed directory",
+                inputs={"input_dir": Dir},
+                outputs={"output_dir": Dir},
+            )
+
+        assert result is expected
+        assert mock_eval.await_count == 1
+        assert mock_eval.await_args.kwargs["inputs"] == {"input_dir": Dir}
+        assert mock_eval.await_args.kwargs["outputs"] == {"output_dir": Dir}

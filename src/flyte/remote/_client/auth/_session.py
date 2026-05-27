@@ -1,4 +1,5 @@
 import asyncio
+import os
 import socket
 import typing
 from dataclasses import dataclass
@@ -18,6 +19,9 @@ from ._authenticators.factory import (
     get_async_proxy_authenticator,
 )
 
+_USE_PYQWEST_DNS_RESOLVER_ENV = "_FLYTE_USE_PYQWEST_DNS_RESOLVER"
+_TRUE_ENV_VALUES = frozenset({"1", "true", "yes", "on"})
+
 
 @dataclass(frozen=True)
 class SessionConfig:
@@ -26,6 +30,7 @@ class SessionConfig:
     insecure_skip_verify: bool
     interceptors: tuple
     http_client: Any
+    api_key: typing.Optional[str] = None
 
     def connect_kwargs(self) -> dict[str, Any]:
         return {"address": self.endpoint, "interceptors": self.interceptors, "http_client": self.http_client}
@@ -141,8 +146,13 @@ async def _resolve_tls_ca_cert(
     return None
 
 
+def _use_system_dns() -> bool:
+    return os.environ.get(_USE_PYQWEST_DNS_RESOLVER_ENV, "").lower() not in _TRUE_ENV_VALUES
+
+
 def _build_pyqwest_client(tls_ca_cert: bytes | None = None) -> pyqwest.Client:
     """Build a pyqwest Client with sensible transport defaults."""
+    use_system_dns = _use_system_dns()
     transport = pyqwest.HTTPTransport(
         tls_ca_cert=tls_ca_cert,
         timeout=None,
@@ -150,6 +160,11 @@ def _build_pyqwest_client(tls_ca_cert: bytes | None = None) -> pyqwest.Client:
         read_timeout=None,
         pool_idle_timeout=90.0,
         tcp_keepalive_interval=30.0,  # was grpc.keepalive_time_ms = 30000
+        # Use the OS resolver by default so Flyte matches curl/browser behavior
+        # on VPNs, split-DNS setups, captive portals, and broken IPv6 networks.
+        # Server deployments can set _FLYTE_USE_PYQWEST_DNS_RESOLVER=true to opt
+        # back into pyqwest's bundled resolver for app-owned DNS behavior.
+        use_system_dns=use_system_dns,
     )
     return pyqwest.Client(transport=transport)
 
@@ -259,4 +274,5 @@ async def create_session_config(
         insecure_skip_verify=insecure_skip_verify or False,
         interceptors=tuple(interceptors),
         http_client=http_client,
+        api_key=api_key,
     )

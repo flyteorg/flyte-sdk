@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 from click.testing import CliRunner
-from flyteidl2.core import errors_pb2
+from flyteidl2.core import execution_pb2
 
 import flyte.errors
 from flyte._bin.runtime import main
@@ -83,13 +83,13 @@ def test_runtime_task_coroutine_exception():
             # Load the error file as protobuf and check contents
             error_file_path = error_files[0]
             with open(error_file_path, "rb") as f:
-                error_document = errors_pb2.ErrorDocument()
+                error_document = execution_pb2.ErrorDocument()
                 error_document.ParseFromString(f.read())
 
             # Verify error contents match our expected RuntimeSystemError
             assert error_document.error.code == "TASK_FAILED"
             assert error_document.error.message == "Task execution failed"
-            assert error_document.error.kind == errors_pb2.ContainerError.RECOVERABLE
+            assert error_document.error.kind == execution_pb2.ContainerError.RECOVERABLE
 
 
 def test_runtime_controller_failure_exception():
@@ -162,13 +162,13 @@ def test_runtime_controller_failure_exception():
             # Load the error file as protobuf and check contents
             error_file_path = error_files[0]
             with open(error_file_path, "rb") as f:
-                error_document = errors_pb2.ErrorDocument()
+                error_document = execution_pb2.ErrorDocument()
                 error_document.ParseFromString(f.read())
 
             # Verify error contents match our expected RuntimeSystemError
             assert error_document.error.code == "CONTROLLER_FAILED"
             assert error_document.error.message == "Controller failure detected"
-            assert error_document.error.kind == errors_pb2.ContainerError.RECOVERABLE
+            assert error_document.error.kind == execution_pb2.ContainerError.RECOVERABLE
 
 
 def test_non_recoverable_error_sets_kind():
@@ -236,9 +236,9 @@ def test_non_recoverable_error_sets_kind():
 
             error_file_path = error_files[0]
             with open(error_file_path, "rb") as f:
-                error_document = errors_pb2.ErrorDocument()
+                error_document = execution_pb2.ErrorDocument()
                 error_document.ParseFromString(f.read())
 
             assert error_document.error.code == "NonRecoverableError"
             assert error_document.error.message == "Input is invalid and will never succeed."
-            assert error_document.error.kind == errors_pb2.ContainerError.NON_RECOVERABLE
+            assert error_document.error.kind == execution_pb2.ContainerError.NON_RECOVERABLE

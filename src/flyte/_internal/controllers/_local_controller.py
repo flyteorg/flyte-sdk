@@ -6,7 +6,9 @@ import pathlib
 import shutil
 import threading
 from contextlib import nullcontext
-from typing import Any, Callable, Tuple, TypeVar
+from typing import Any, Callable, Protocol, Tuple, TypeVar
+
+from flyteidl2.task import task_definition_pb2
 
 import flyte.errors
 from flyte._cache.cache import VersionParameters, cache_from_request
@@ -26,10 +28,9 @@ from flyte.storage._storage import strip_file_header
 
 R = TypeVar("R")
 
-# Local retry backoff defaults for task errors during local runs. Do not
-# expose these to the user since RetryStrategy only supports a count of retries.
-# This is because currently the backend implements the underlying retry strategy,
-# and does not allow for custom backoff strategies.
+# Fallback backoff used when the task's RetryStrategy has no Backoff set.
+# When `RetryStrategy.backoff` is supplied, the local controller honors it
+# directly so behavior matches the platform's leasor.
 _MIN_BACKOFF_ON_ERR_SEC = 0.5
 _BACKOFF_MULTIPLIER = 2.0
 
@@ -50,6 +51,17 @@ def _stage_prev_checkpoint_for_local_retry(checkpoint_paths: CheckpointPaths | N
     if src.is_file():
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dst)
+
+
+class ControllerProtocol(Protocol):
+    async def submit(self, _task: "TaskTemplate", *args, **kwargs) -> Any: ...
+    def submit_sync(self, _task: "TaskTemplate", *args, **kwargs) -> concurrent.futures.Future: ...
+    async def finalize_parent_action(self, action: "ActionID"): ...
+    async def get_action_outputs(
+        self, _interface: "NativeInterface", _func: Callable, *args, **kwargs
+    ) -> Tuple["TraceInfo", bool]: ...
+    async def record_trace(self, info: "TraceInfo"): ...
+    async def submit_task_ref(self, _task: "task_definition_pb2.TaskDetails", *args, **kwargs) -> Any: ...
 
 
 class _TaskRunner:
@@ -98,7 +110,7 @@ class _TaskRunner:
         return fut
 
 
-class LocalController:
+class LocalController(ControllerProtocol):
     def __init__(self):
         logger.debug("LocalController init")
         self._runner_map: dict[str, _TaskRunner] = {}
@@ -256,7 +268,11 @@ class LocalController:
                     )
                     break
                 if attempt_num < max_attempts:
-                    backoff = _MIN_BACKOFF_ON_ERR_SEC * (_BACKOFF_MULTIPLIER ** (attempt_num - 1))
+                    user_backoff = getattr(_task.retries, "backoff", None)
+                    if user_backoff is not None:
+                        backoff = user_backoff.compute_delay(attempt_num - 1).total_seconds()
+                    else:
+                        backoff = _MIN_BACKOFF_ON_ERR_SEC * (_BACKOFF_MULTIPLIER ** (attempt_num - 1))
                     logger.warning(
                         f"Task '{_task.name}' action '{sub_action_id.name}' failed on attempt "
                         f"{attempt_num}/{max_attempts}; retrying in {backoff:.2f}s..."
@@ -374,18 +390,21 @@ class LocalController:
         if not tctx:
             raise flyte.errors.NotInTaskContextError("BadContext", "Task context not initialized")
 
-        if info.interface.outputs and info.output:
-            # If the result is not an AsyncGenerator, convert it directly
-            _ctx = ctx.new_in_driver_literal_conversion(True) if ctx.is_task_context() else nullcontext()
-            with _ctx:
-                converted_outputs = await convert.convert_from_native_to_outputs(info.output, info.interface, info.name)
-            assert converted_outputs
-            self._recorder.record_complete(action_id=info.action.name, outputs=converted_outputs)
-        elif info.error:
+        if info.error:
             # If there is an error, convert it to a native error
             converted_error = convert.convert_from_native_to_error(info.error)
             assert converted_error
             self._recorder.record_failure(action_id=info.action.name, error=str(info.error))
+        else:
+            converted_outputs = None
+            if info.interface.outputs and info.output:
+                _ctx = ctx.new_in_driver_literal_conversion(True) if ctx.is_task_context() else nullcontext()
+                with _ctx:
+                    converted_outputs = await convert.convert_from_native_to_outputs(
+                        info.output, info.interface, info.name
+                    )
+                assert converted_outputs
+            self._recorder.record_complete(action_id=info.action.name, outputs=converted_outputs)
         assert info.action
         assert info.start_time
         assert info.end_time

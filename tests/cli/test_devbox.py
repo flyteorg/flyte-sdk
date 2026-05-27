@@ -10,10 +10,11 @@ import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import click
 import pytest
 from click.testing import CliRunner
 
-from flyte.cli._devbox import _merge_kubeconfig, _run_container
+from flyte.cli._devbox import _ensure_kubectl_available, _merge_kubeconfig, _run_container
 from flyte.cli._start import devbox
 
 
@@ -134,6 +135,31 @@ class TestMergeKubeconfigRetry:
                 _merge_kubeconfig(kubeconfig, "flyte-devbox")
 
 
+class TestEnsureKubectlAvailable:
+    """`_merge_kubeconfig` must surface a friendly ClickException when kubectl is missing,
+    instead of leaking a raw FileNotFoundError from `subprocess.run`."""
+
+    def test_missing_kubectl_raises_click_exception(self):
+        with patch("flyte.cli._devbox.shutil.which", return_value=None):
+            with pytest.raises(click.ClickException) as excinfo:
+                _ensure_kubectl_available()
+            assert "kubectl" in str(excinfo.value.message)
+
+    def test_present_kubectl_does_not_raise(self):
+        with patch("flyte.cli._devbox.shutil.which", return_value="/usr/local/bin/kubectl"):
+            _ensure_kubectl_available()
+
+    def test_merge_kubeconfig_raises_click_exception_when_kubectl_missing(self, tmp_path):
+        kubeconfig = tmp_path / "kubeconfig"
+        kubeconfig.write_text("")
+        with (
+            patch("flyte.cli._devbox.shutil.which", return_value=None),
+            patch("flyte.cli._devbox.Path.home", return_value=tmp_path),
+        ):
+            with pytest.raises(click.ClickException):
+                _merge_kubeconfig(kubeconfig, "flyte-devbox")
+
+
 class TestDevboxCliGpuFlag:
     """Verify the --gpu Click option is plumbed to launch_devbox."""
 
@@ -181,3 +207,39 @@ class TestDevboxCliDefaultImage:
             result = runner.invoke(devbox, ["--gpu", "--image", "myorg/custom:latest"])
             assert result.exit_code == 0, result.output
             assert mock_launch.call_args.args[0] == "myorg/custom:latest"
+
+
+class TestDockerSubprocessFailures:
+    """Docker CLI failures should surface as click.ClickException, not raw CalledProcessError."""
+
+    def test_ensure_volume_failure_raises_click_exception(self):
+        import click
+
+        from flyte.cli._devbox import _ensure_volume
+
+        with patch("flyte.cli._devbox.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="docker daemon not reachable")
+            with pytest.raises(click.ClickException) as excinfo:
+                _ensure_volume("flyte-devbox")
+            assert "Failed to list docker volumes" in str(excinfo.value.message)
+            assert "docker daemon not reachable" in str(excinfo.value.message)
+
+    def test_container_is_running_failure_raises_click_exception(self):
+        import click
+
+        from flyte.cli._devbox import _container_is_running
+
+        with patch("flyte.cli._devbox.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="boom")
+            with pytest.raises(click.ClickException):
+                _container_is_running("flyte-devbox")
+
+    def test_container_is_paused_failure_raises_click_exception(self):
+        import click
+
+        from flyte.cli._devbox import _container_is_paused
+
+        with patch("flyte.cli._devbox.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="boom")
+            with pytest.raises(click.ClickException):
+                _container_is_paused("flyte-devbox")

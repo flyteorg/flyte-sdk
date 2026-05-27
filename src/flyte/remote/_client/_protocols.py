@@ -6,6 +6,7 @@ from flyteidl2.cluster import payload_pb2 as cluster_payload_pb2
 from flyteidl2.dataproxy import dataproxy_service_pb2
 from flyteidl2.project import project_service_pb2
 from flyteidl2.secret import payload_pb2
+from flyteidl2.settings import settings_service_pb2
 from flyteidl2.task import task_service_pb2
 from flyteidl2.trigger import trigger_service_pb2
 from flyteidl2.workflow import run_logs_service_pb2, run_service_pb2
@@ -177,3 +178,21 @@ class TriggerService(Protocol):
     async def delete_triggers(
         self, request: trigger_service_pb2.DeleteTriggersRequest
     ) -> trigger_service_pb2.DeleteTriggersResponse: ...
+
+
+class SettingsService(Protocol):
+    async def get_settings(
+        self, request: settings_service_pb2.GetSettingsRequest
+    ) -> settings_service_pb2.GetSettingsResponse: ...
+
+    async def get_settings_for_edit(
+        self, request: settings_service_pb2.GetSettingsForEditRequest
+    ) -> settings_service_pb2.GetSettingsForEditResponse: ...
+
+    async def create_settings(
+        self, request: settings_service_pb2.CreateSettingsRequest
+    ) -> settings_service_pb2.CreateSettingsResponse: ...
+
+    async def update_settings(
+        self, request: settings_service_pb2.UpdateSettingsRequest
+    ) -> settings_service_pb2.UpdateSettingsResponse: ...

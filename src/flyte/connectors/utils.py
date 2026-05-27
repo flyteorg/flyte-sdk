@@ -15,7 +15,7 @@ from rich.console import Console
 from rich.table import Table
 
 import flyte
-from flyte import logger
+from flyte._logging import logger
 from flyte.connectors._grpc import grpc
 
 
@@ -151,6 +151,10 @@ def _render_task_template(tt: TaskTemplate, file_prefix: str) -> TaskTemplate:
         tt.container.args[i] = args[i].replace("{{.prevCheckpointPrefix}}", f"{file_prefix}/prev_checkpoint")
         tt.container.args[i] = args[i].replace("{{.runName}}", ctx.action.run_name if ctx else "test-run")
         tt.container.args[i] = args[i].replace("{{.actionName}}", "a1")
+        tt.container.args[i] = args[i].replace(
+            "{{.runStartTime}}",
+            ctx.run_start_time.isoformat() if ctx and ctx.run_start_time else "1970-01-01T00:00:00+00:00",
+        )
 
     # Add additional required args
     tt.container.args[1:1] = ["--run-base-dir", f"{file_prefix}/base_dir"]

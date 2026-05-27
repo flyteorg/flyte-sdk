@@ -255,6 +255,14 @@ class Informer:
                     )
                 async for resp in watcher:
                     retries = 0
+                    if resp is None:
+                        # gRPC deserialization failure: _transform() caught an
+                        # exception and returned None instead of raising.  Skip
+                        # the message so the watch loop stays alive and can
+                        # receive subsequent updates rather than crashing into
+                        # the retry/backoff path.
+                        logger.warning(f"Received None (deserialization failure) from watcher {self.name}, skipping")
+                        continue
                     if resp.control_message is not None and resp.control_message.sentinel:
                         logger.info(f"Received Sentinel, for run {self.name}")
                         await self._set_ready()
