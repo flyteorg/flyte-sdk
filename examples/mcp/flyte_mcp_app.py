@@ -5,8 +5,7 @@ assistants and LLM-based clients to interact with the Flyte control plane
 using the standardized MCP protocol.
 
 The server exposes tools for running tasks, monitoring runs, managing apps
-and triggers, building container images, building and running UV scripts
-remotely, and searching Flyte SDK/docs examples.
+and triggers, and searching Flyte SDK/docs examples.
 
 Requirements:
     pip install 'flyte[mcp]'
@@ -82,7 +81,7 @@ Usage:
 import flyte
 from flyte.ai.mcp import FlyteMCPAppEnvironment
 
-image = flyte.Image.from_debian_base().with_pip_packages("mcp", "starlette", "uvicorn")
+image = flyte.Image.from_debian_base(name="flyte-mcp-server-image").with_pip_packages("mcp", "starlette", "uvicorn")
 
 # Deploy an MCP server with all tools enabled
 mcp_env = FlyteMCPAppEnvironment(
@@ -92,13 +91,12 @@ mcp_env = FlyteMCPAppEnvironment(
     transport="streamable-http",
     instructions=(
         "This MCP server provides tools to interact with the Flyte control plane. "
-        "Use the available tools to run tasks, monitor runs, manage apps, build images, "
-        "build and run UV scripts remotely, and search SDK/docs examples."
+        "Use the available tools to run tasks, monitor runs, manage apps and triggers, "
+        "and search SDK/docs examples."
     ),
 )
 
 if __name__ == "__main__":
     flyte.init_from_config()
     app_handle = flyte.serve(mcp_env)
-    app_handle.activate(wait=True)
-    print(f"App is ready at {app_handle.endpoint}")
+    print(f"{app_handle.url}")

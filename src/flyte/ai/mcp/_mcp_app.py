@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     import uvicorn
     from mcp.server.fastmcp import FastMCP
     from starlette.applications import Starlette
+    from starlette.middleware import Middleware
 
 
 @dataclass(kw_only=True, repr=True)
@@ -78,6 +79,22 @@ class MCPAppEnvironment(flyte.app.AppEnvironment):
         """Alias for :attr:`mcp` (matches historical attribute name)."""
         return self.mcp
 
+    def _starlette_middleware(self) -> list[Middleware]:
+        """Return Starlette middleware to install on the app.
+
+        Subclasses may override to inject middleware (e.g. authentication).
+        Defaults to an empty list.
+        """
+        return []
+
+    async def _starlette_lifespan_startup(self) -> None:
+        """Hook invoked during Starlette lifespan startup, before requests are served.
+
+        Subclasses may override to perform async startup (e.g. ``flyte.init_passthrough``).
+        Defaults to a no-op.
+        """
+        return None
+
     def _create_starlette_app(self) -> Starlette:
         try:
             from starlette.applications import Starlette
@@ -111,10 +128,11 @@ class MCPAppEnvironment(flyte.app.AppEnvironment):
 
         @asynccontextmanager
         async def lifespan(_app: Starlette):
+            await self._starlette_lifespan_startup()
             async with mcp_asgi.router.lifespan_context(mcp_asgi):
                 yield
 
-        return Starlette(routes=routes, lifespan=lifespan)
+        return Starlette(routes=routes, lifespan=lifespan, middleware=self._starlette_middleware())
 
     async def _starlette_app_server(self):
         try:

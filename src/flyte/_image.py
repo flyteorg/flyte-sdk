@@ -660,10 +660,14 @@ class Image:
         image = image.with_apt_packages("build-essential", "ca-certificates")
         if install_flyte and dev_mode and os.path.exists(DIST_FOLDER):
             image = image.with_local_v2()
-            # Also bake the Rust controller wheel, but only when the user opted in via `_F_USE_RUST_CONTROLLER=1`
+            # Bake the Rust controller when opted in via `_F_USE_RUST_CONTROLLER=1`. Use the locally-built wheel if
+            # available; otherwise fall back to the released PyPI version
             use_rust = os.getenv("_F_USE_RUST_CONTROLLER", "").lower() in ("1", "true", "yes")
-            if use_rust and os.path.exists(RS_CONTROLLER_DIST_FOLDER):
-                image = image.with_local_rs_controller()
+            if use_rust:
+                if os.path.exists(RS_CONTROLLER_DIST_FOLDER):
+                    image = image.with_local_rs_controller()
+                else:
+                    image = image.with_pip_packages("flyte_controller_base")
         if not dev_mode:
             object.__setattr__(image, "_tag", preset_tag)
 

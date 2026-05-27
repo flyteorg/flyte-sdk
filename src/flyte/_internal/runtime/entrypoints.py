@@ -1,6 +1,7 @@
 import importlib
 import os
 import traceback
+from datetime import datetime
 from typing import List, Optional, Tuple, Type
 
 import flyte.errors
@@ -33,6 +34,7 @@ async def direct_dispatch(
     checkpoint_paths: CheckpointPaths | None = None,
     code_bundle: CodeBundle | None = None,
     inputs: Inputs | None = None,
+    run_start_time: Optional[datetime] = None,
 ) -> Tuple[Optional[Outputs], Optional[Error]]:
     """
     This method is used today by the local_controller and is positioned to be used by a rust core in the future.
@@ -52,6 +54,7 @@ async def direct_dispatch(
         version=version,
         output_path=output_path,
         run_base_dir=run_base_dir,
+        run_start_time=run_start_time,
     )
 
 
@@ -218,6 +221,7 @@ async def load_and_run_task(
     input_path: str | None = None,
     image_cache: ImageCache | None = None,
     interactive_mode: bool = False,
+    run_start_time: Optional[datetime] = None,
 ):
     """
     This method is invoked from the runtime/CLI and is used to run a task. This creates the context tree,
@@ -255,5 +259,6 @@ async def load_and_run_task(
         input_path=input_path,
         image_cache=image_cache,
         interactive_mode=interactive_mode,
+        run_start_time=run_start_time,
     )
     sw.stop()
