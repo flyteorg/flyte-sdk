@@ -27,7 +27,6 @@ Python process. On a real cluster each attempt is a fresh pod, so this in-proces
 state never carries over — model real flakiness from the environment instead.
 """
 
-import asyncio
 import time
 from datetime import timedelta
 
