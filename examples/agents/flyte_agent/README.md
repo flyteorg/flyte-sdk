@@ -20,6 +20,33 @@ The harness deeply integrates with Flyte 2:
 - **HITL** support pauses the loop and asks a human via
   `flyteplugins-hitl` before sensitive tools execute.
 
+## How it works
+
+`Agent(...)` collapses heterogeneous tool sources into a single registry +
+system prompt; `agent.run(message)` then drives an LLM ↔ tool-call loop
+until the model returns a plain text reply (or `max_turns` is reached):
+
+```mermaid
+flowchart TB
+    inputs["tools (fn / task / MCP),<br/> skills, memory, and instructions"]
+    inputs --> agent[["Agent<br/>(tool registry, skills, system prompt)"]]
+
+    subgraph loop["agent.run(message)"]
+      direction TB
+      llm["call_llm"] --loop max_turns times--> branch{"tool_calls?"}
+      branch -- yes --> exec["execute tools<br/>(optional HITL approval)"]
+      exec --> llm
+      branch -- no --> done["final reply"]
+    end
+
+    user(["user message"]) --> llm
+    agent --> llm
+    done --> result(["AgentResult<br/>+ persisted memory"])
+```
+
+Every step also emits a typed `AgentEvent` via `agent_progress_cb`, which
+the chat UI, webhook handlers, and structured loggers subscribe to.
+
 ## Layout
 
 | File | What it shows |
