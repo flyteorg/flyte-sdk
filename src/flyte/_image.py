@@ -673,7 +673,10 @@ class Image:
                 if os.path.exists(RS_CONTROLLER_DIST_FOLDER):
                     image = image.with_local_rs_controller()
                 else:
-                    image = image.with_pip_packages("flyte_controller_base")
+                    from packaging.version import Version
+
+                    base = Version(__version__).base_version
+                    image = image.with_pip_packages(f"flyte_controller_base<{base}")
         if not dev_mode:
             object.__setattr__(image, "_tag", preset_tag)
 
