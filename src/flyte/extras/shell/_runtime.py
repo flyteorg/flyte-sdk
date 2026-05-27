@@ -44,7 +44,6 @@ class _Shell:
     retries: int = 0
     timeout: int | None = None
     cache: str = "auto"
-    block_network: bool = False
     env_vars: dict[str, str] | None = None
     secrets: list | None = None
     local_logs: bool = True
@@ -250,7 +249,6 @@ class _ShellContainerTask(ContainerTask):
             retries=shell.retries,
             timeout=shell.timeout,
             cache=shell.cache,
-            block_network=shell.block_network,
             env_vars=shell.env_vars,
             secrets=shell.secrets,
             local_logs=shell.local_logs,
@@ -373,7 +371,6 @@ def create(
     retries: int = 0,
     timeout: int | None = None,
     cache: str = "auto",
-    block_network: bool = False,
     env_vars: dict[str, str] | None = None,
     secrets: list | None = None,
     local_logs: bool = True,
@@ -491,7 +488,7 @@ def create(
         shell: Shell binary to use. Defaults to ``/bin/bash``.
         debug: If True, container prints the rendered script to stderr
             before running. Invaluable when authoring a new wrapper.
-        resources, retries, timeout, cache, block_network, env_vars,
+        resources, retries, timeout, cache, env_vars,
             secrets: Standard task knobs forwarded to ContainerTask.
         local_logs: When ``True`` (default), the rendered command and the
             container's captured stdout/stderr are emitted through the
@@ -584,7 +581,6 @@ def create(
         retries=retries,
         timeout=timeout,
         cache=cache,
-        block_network=block_network,
         env_vars=env_vars,
         secrets=secrets,
         local_logs=local_logs,
