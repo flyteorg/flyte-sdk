@@ -124,13 +124,29 @@ def list_runs_paginated(
     task_name: str | None = None,
     in_phase: tuple[ActionPhase, ...] | None = None,
 ) -> PagedResult[remote.Run]:
+    # ``Run.listall(task_name=...)`` filters with EQUAL, so a partial string would
+    # match nothing. The TUI input is a "contains" filter as the user types, so when
+    # one is provided we fetch a larger batch (still phase-filtered server-side) and
+    # match the task name as a case-insensitive substring on the client.
+    if task_name:
+        needle = task_name.lower()
+        runs = list_runs(
+            limit=500,
+            project=project,
+            domain=domain,
+            task_name=None,
+            in_phase=in_phase,
+        )
+        filtered = [r for r in runs if r.action.task_name and needle in r.action.task_name.lower()]
+        return _slice_page(filtered, page, page_size)
+
     fetch_limit = (page + 1) * page_size + 1
     return _slice_page(
         list_runs(
             limit=fetch_limit,
             project=project,
             domain=domain,
-            task_name=task_name,
+            task_name=None,
             in_phase=in_phase,
         ),
         page,
@@ -229,9 +245,17 @@ def list_tasks_paginated(
     page_size: int = PAGE_SIZE,
     task_name: str | None = None,
 ) -> PagedResult[remote.Task]:
+    # ``Task.listall(by_task_name=...)`` filters with EQUAL, so a partial query would
+    # match nothing. Do a case-insensitive substring match on the client instead
+    # (same pattern used for runs and apps).
+    if task_name:
+        needle = task_name.lower()
+        tasks = list_tasks(limit=500, project=project, domain=domain, task_name=None)
+        filtered = [t for t in tasks if needle in (t.name or "").lower()]
+        return _slice_page(filtered, page, page_size)
     fetch_limit = (page + 1) * page_size + 1
     return _slice_page(
-        list_tasks(limit=fetch_limit, project=project, domain=domain, task_name=task_name),
+        list_tasks(limit=fetch_limit, project=project, domain=domain, task_name=None),
         page,
         page_size,
     )
@@ -244,7 +268,19 @@ def list_apps(*, limit: int = 200) -> list[remote.App]:
     return list(remote.App.listall(limit=limit))
 
 
-def list_apps_paginated(*, page: int = 0, page_size: int = PAGE_SIZE) -> PagedResult[remote.App]:
+def list_apps_paginated(
+    *,
+    page: int = 0,
+    page_size: int = PAGE_SIZE,
+    name: str | None = None,
+) -> PagedResult[remote.App]:
+    # ``App.listall`` has no server-side name filter, so do a case-insensitive
+    # substring match on the client (mirroring the runs/triggers patterns).
+    if name:
+        needle = name.lower()
+        apps = list_apps(limit=500)
+        filtered = [a for a in apps if needle in (a.name or "").lower()]
+        return _slice_page(filtered, page, page_size)
     fetch_limit = (page + 1) * page_size + 1
     return _slice_page(list_apps(limit=fetch_limit), page, page_size)
 

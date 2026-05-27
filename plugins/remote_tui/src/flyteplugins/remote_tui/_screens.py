@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime
+import webbrowser
 from typing import ClassVar
 
 from flyte.cli._tui._app import ActionTreeWidget, DetailPanel
@@ -92,6 +93,26 @@ _NAV_TRIGGERS = "nav-triggers"
 _NAV_TASKS = "nav-tasks"
 _NAV_APPS = "nav-apps"
 
+_DOCS_URL = "https://www.union.ai/docs/v2/flyte/user-guide/"
+
+
+class _DocsLink(Static, can_focus=True):
+    """Clickable, focusable docs link rendered at the bottom of the sidebar."""
+
+    BINDINGS: ClassVar[list[BindingType]] = [
+        Binding("enter", "open", "Open Docs", show=False),
+    ]
+
+    def __init__(self, url: str, label: str = "Documentation", **kwargs) -> None:
+        super().__init__(label, **kwargs)
+        self._url = url
+
+    def on_click(self) -> None:
+        self.action_open()
+
+    def action_open(self) -> None:
+        webbrowser.open(self._url)
+
 
 def _run_duration(run) -> str:
     action = run.action
@@ -135,26 +156,30 @@ class ProjectsScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with Vertical(id="projects-content"):
-            yield Static("Recent projects", id="recent-title")
-            yield ListView(id="recent-projects")
-            with Horizontal(id="filter-bar"):
-                yield Label("Search:")
-                yield Input(placeholder="Filter projects...", id="project-search")
-            yield EntityTable(id="projects-table", classes="EntityTable")
+        with Horizontal(id="projects-content"):
+            with Vertical(id="recent-sidebar"):
+                yield ListView(id="recent-projects")
+                with Vertical(id="sidebar-footer"):
+                    yield _DocsLink(_DOCS_URL, id="docs-link")
+            with Vertical(id="projects-main"):
+                with Horizontal(id="filter-bar"):
+                    yield Label("Search:")
+                    yield Input(placeholder="Filter projects...", id="project-search")
+                yield EntityTable(id="projects-table", classes="EntityTable")
         yield Footer()
 
-    def on_mount(self) -> None:
+    async def on_mount(self) -> None:
         self.title = "Projects"
         table = self.query_one("#projects-table", EntityTable)
         table.cursor_type = "row"
         table.focus()
-        self._repopulate()
+        self.query_one("#recent-sidebar", Vertical).border_title = "Recent"
+        await self._repopulate()
 
-    def _repopulate(self) -> None:
+    async def _repopulate(self) -> None:
         table = self.query_one("#projects-table", EntityTable)
         search = self.query_one("#project-search", Input).value.strip().lower()
-        recent_title = self.query_one("#recent-title", Static)
+        sidebar = self.query_one("#recent-sidebar", Vertical)
         recent_list = self.query_one("#recent-projects", ListView)
         table.clear(columns=True)
         table.add_column("Name", width=28)
@@ -163,12 +188,12 @@ class ProjectsScreen(Screen):
         try:
             projects = list_projects()
         except Exception as exc:
-            recent_title.display = False
-            recent_list.display = False
+            await recent_list.clear()
+            sidebar.border_title = "Recent"
             table.add_row(f"Error: {exc}", "", "")
             return
         by_id = {proj.pb2.id: proj for proj in projects}
-        self._populate_recent_projects(by_id, search)
+        await self._populate_recent_projects(by_id, search)
         count = 0
         for proj in projects:
             name = proj.pb2.name or proj.pb2.id
@@ -178,32 +203,32 @@ class ProjectsScreen(Screen):
             table.add_row(name, _format_labels(proj), proj.pb2.id, key=proj.pb2.id)
         self.sub_title = f"{count} total"
 
-    def _populate_recent_projects(self, by_id: dict[str, object], search: str) -> None:
-        recent_title = self.query_one("#recent-title", Static)
+    async def _populate_recent_projects(self, by_id: dict[str, object], search: str) -> None:
+        sidebar = self.query_one("#recent-sidebar", Vertical)
         recent_list = self.query_one("#recent-projects", ListView)
-        recent_list.clear()
+        # ListView.clear() is async (queues a remove); await it so prior ListItem
+        # widgets are fully detached before re-appending items with the same IDs.
+        await recent_list.clear()
         app = as_remote_app(self.app)
         recent_ids = get_recent_projects(app.config_key)
         shown: list[str] = []
+        seen: set[str] = set()
         for project_id in recent_ids:
+            if project_id in seen:
+                continue
             proj = by_id.get(project_id)
             if proj is None:
                 continue
             name = proj.pb2.name or proj.pb2.id
             if search and search not in name.lower() and search not in project_id.lower():
                 continue
+            seen.add(project_id)
             shown.append(project_id)
             recent_list.append(ListItem(Static(name), id=f"recent-{project_id}"))
-        if shown:
-            recent_title.display = True
-            recent_list.display = True
-            recent_list.border_title = f"{len(shown)} recent"
-        else:
-            recent_title.display = False
-            recent_list.display = False
+        sidebar.border_title = f"Recent ({len(shown)})" if shown else "Recent"
 
-    def action_refresh(self) -> None:
-        self._repopulate()
+    async def action_refresh(self) -> None:
+        await self._repopulate()
 
     def _open_project(self, project_id: str) -> None:
         app = as_remote_app(self.app)
@@ -228,9 +253,10 @@ class ProjectsScreen(Screen):
         row_key, _ = table.coordinate_to_cell_key(table.cursor_coordinate)
         self._open_project(str(row_key.value))
 
-    def on_input_changed(self, event: Input.Changed) -> None:
+    async def on_input_submitted(self, event: Input.Submitted) -> None:
+        # Wait for the user to press Enter rather than refiltering on every keystroke.
         if event.input.id == "project-search":
-            self._repopulate()
+            await self._repopulate()
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         self._open_project(str(event.row_key.value))
@@ -240,8 +266,8 @@ class ProjectsScreen(Screen):
         if item_id.startswith("recent-"):
             self._open_project(item_id.removeprefix("recent-"))
 
-    def on_resize(self, event: Resize) -> None:
-        self._repopulate()
+    async def on_resize(self, event: Resize) -> None:
+        await self._repopulate()
 
 
 class ProjectHubScreen(Screen):
@@ -312,7 +338,19 @@ class ProjectHubScreen(Screen):
 
     def _effective_page_size(self) -> int:
         """Fit page size to visible table rows (header/footer/chrome excluded)."""
-        overhead = 10  # screen header, footer, hub header, filter bar, table header
+        # Prefer the table's actual rendered height when available; this naturally
+        # accounts for header, footer, hub header, filter bar, and any padding,
+        # since the table is laid out as ``height: 1fr``.
+        try:
+            table_height = self.query_one("#hub-table", EntityTable).size.height
+        except Exception:
+            table_height = 0
+        if table_height > 1:
+            # DataTable reserves one row for its column header.
+            return max(MIN_PAGE_SIZE, table_height - 1)
+        # Fallback used before the table is mounted/sized on first paint.
+        # Overhead = screen header + footer + hub header + filter bar (3 rows) + table column header.
+        overhead = 7
         return max(MIN_PAGE_SIZE, self.size.height - overhead)
 
     def _update_page_indicator(self, paged: PagedResult | None = None) -> None:
@@ -354,27 +392,42 @@ class ProjectHubScreen(Screen):
         filter_label = self.query_one("#filter-label", Label)
         status_filter = self.query_one("#status-filter", Select)
         section_filter = self.query_one("#section-filter", Input)
+        # Reset any previous query before configuring the filter for this section,
+        # so switching sections doesn't carry stale text into the new filter.
+        section_filter.value = ""
         if section == "runs":
             status_label.display = True
             status_filter.display = True
+            filter_label.display = True
             filter_label.update("Task:")
+            section_filter.display = True
             section_filter.placeholder = "Filter by task name..."
         elif section == "tasks":
             status_label.display = False
             status_filter.display = False
+            filter_label.display = True
             filter_label.update("Name:")
+            section_filter.display = True
             section_filter.placeholder = "Filter by task name..."
+        elif section == "triggers":
+            status_label.display = False
+            status_filter.display = False
+            filter_label.display = True
+            filter_label.update("Search:")
+            section_filter.display = True
+            section_filter.placeholder = "Filter triggers..."
+        elif section == "apps":
+            status_label.display = False
+            status_filter.display = False
+            filter_label.display = True
+            filter_label.update("Name:")
+            section_filter.display = True
+            section_filter.placeholder = "Filter by app name..."
         else:
             status_label.display = False
             status_filter.display = False
             filter_label.display = False
-            section_filter.display = section == "triggers"
-            if section == "triggers":
-                filter_label.display = True
-                filter_label.update("Search:")
-                section_filter.placeholder = "Filter triggers..."
-            else:
-                section_filter.display = False
+            section_filter.display = False
         self._repopulate()
 
     def _repopulate(self) -> None:
@@ -391,7 +444,7 @@ class ProjectHubScreen(Screen):
         elif self._section == "tasks":
             self._populate_tasks(table, scope, filt)
         elif self._section == "apps":
-            self._populate_apps(table)
+            self._populate_apps(table, filt)
 
     def _populate_runs(self, table: EntityTable, scope: dict[str, str], task_filter: str | None) -> None:
         status_sel = self.query_one("#status-filter", Select)
@@ -399,7 +452,7 @@ class ProjectHubScreen(Screen):
         in_phase = _PHASE_FILTER_MAP.get(phase_key)
         table.add_column("", width=3)
         table.add_column("Run", width=22)
-        table.add_column("Trigger", width=18)
+        table.add_column("Task", width=18)
         table.add_column("Duration", width=10)
         table.add_column("Started", width=14)
         table.add_column("Ended", width=14)
@@ -490,12 +543,12 @@ class ProjectHubScreen(Screen):
                 key=t.name,
             )
 
-    def _populate_apps(self, table: EntityTable) -> None:
+    def _populate_apps(self, table: EntityTable, name_filter: str | None) -> None:
         table.add_column("Name", width=24)
         table.add_column("Status", width=18)
         table.add_column("Endpoint", width=36)
         try:
-            paged = list_apps_paginated(page=self._page, page_size=self._page_size)
+            paged = list_apps_paginated(page=self._page, page_size=self._page_size, name=name_filter)
         except Exception as exc:
             self._has_next = False
             self._update_page_indicator()
@@ -528,7 +581,7 @@ class ProjectHubScreen(Screen):
         self.app.pop_screen()
         screen = self.app.screen
         if isinstance(screen, ProjectsScreen):
-            screen._repopulate()
+            screen.run_worker(screen._repopulate(), exclusive=True)
 
     def action_show_runs(self) -> None:
         self._highlight_nav(_NAV_RUNS)
@@ -569,7 +622,9 @@ class ProjectHubScreen(Screen):
             self._reset_page()
             self._repopulate()
 
-    def on_input_changed(self, event: Input.Changed) -> None:
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        # The section filter triggers a (potentially expensive) server fetch, so wait
+        # for the user to press Enter rather than firing on every keystroke.
         if event.input.id == "section-filter":
             self._reset_page()
             self._repopulate()
