@@ -70,7 +70,6 @@ class _Sandbox:
     env_vars: Optional[dict[str, str]] = None
     secrets: Optional[list] = None
     cache: str = "auto"
-    block_network: bool = False
 
     def _task_name(self) -> str:
         if self.name:
@@ -277,7 +276,6 @@ class _Sandbox:
                 resources=resources,
                 retries=self.retries,
                 cache=self.cache,
-                block_network=self.block_network,
                 **extra_kwargs,
             )
         else:
@@ -294,7 +292,6 @@ class _Sandbox:
                 resources=resources,
                 retries=self.retries,
                 cache=self.cache,
-                block_network=self.block_network,
                 **extra_kwargs,
             )
 
@@ -357,15 +354,12 @@ class _Sandbox:
         return await task(**kwargs)
 
     def _default_image_name(self) -> str:
-        config = self.image_config or ImageConfig()
         spec = {
             "packages": sorted(self.packages),
             "system_packages": sorted(self.system_packages),
-            "additional_commands": self.additional_commands,
-            "python_version": list(config.python_version) if config.python_version else None,
         }
         config_hash = hashlib.sha256(json.dumps(spec, sort_keys=True).encode()).hexdigest()[:12]
-        return f"sandbox-{config_hash}"
+        return f"{self.name or 'sandbox'}-{config_hash}"
 
 
 def create(
@@ -389,7 +383,6 @@ def create(
     env_vars: Optional[dict[str, str]] = None,
     secrets: Optional[list] = None,
     cache: str = "auto",
-    block_network: bool = False,
 ) -> _Sandbox:
     """Create a stateless Python code sandbox.
 
@@ -484,9 +477,6 @@ def create(
         env_vars: Environment variables available inside the container.
         secrets: Flyte `flyte.Secret` objects to mount.
         cache: Cache behaviour — `"auto"`, `"override"`, or `"disable"`.
-        block_network: When `True`, blocks all outbound network access — locally
-            via Docker ``network_mode=none``, on-cluster via a NetworkPolicy.
-            Defaults to `False`.
 
     Returns:
         Configured sandbox ready to `.run()`.
@@ -524,5 +514,4 @@ def create(
         env_vars=env_vars,
         secrets=secrets,
         cache=cache,
-        block_network=block_network,
     )
