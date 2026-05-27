@@ -20,12 +20,12 @@ PROJECT_NAME = "FLYTE_INTERNAL_EXECUTION_PROJECT"
 DOMAIN_NAME = "FLYTE_INTERNAL_EXECUTION_DOMAIN"
 ORG_NAME = "_U_ORG_NAME"
 ENDPOINT_OVERRIDE = "_U_EP_OVERRIDE"
-INSECURE_SKIP_VERIFY_OVERRIDE = "_U_INSECURE_SKIP_VERIFY"
 RUN_OUTPUT_BASE_DIR = "_U_RUN_BASE"
 FLYTE_ENABLE_VSCODE_KEY = "_F_E_VS"
 
 _UNION_EAGER_API_KEY_ENV_VAR = "_UNION_EAGER_API_KEY"
 _F_PATH_REWRITE = "_F_PATH_REWRITE"
+_F_USE_RUST_CONTROLLER = "_F_USE_RUST_CONTROLLER"
 
 
 @click.group()
@@ -43,6 +43,7 @@ def _pass_through():
 @click.option("--prev-checkpoint", "-p", required=False)
 @click.option("--name", envvar=ACTION_NAME, required=False)
 @click.option("--run-name", envvar=RUN_NAME, required=False)
+@click.option("--run-start-time", required=False)
 @click.option("--project", envvar=PROJECT_NAME, required=False)
 @click.option("--domain", envvar=DOMAIN_NAME, required=False)
 @click.option("--org", envvar=ORG_NAME, required=False)
@@ -63,6 +64,7 @@ def main(
     ctx: click.Context,
     run_name: str,
     name: str,
+    run_start_time: str,
     project: str,
     domain: str,
     org: str,
@@ -96,7 +98,7 @@ def main(
     from flyte._internal.imagebuild.image_builder import ImageCache
     from flyte._internal.runtime.entrypoints import load_and_run_task
     from flyte._logging import logger
-    from flyte.models import ActionID, Checkpoints, CodeBundle, RawDataPath
+    from flyte.models import ActionID, CheckpointPaths, CodeBundle, RawDataPath
 
     logger.info("Registering faulthandler for SIGUSR1")
     faulthandler.register(signal.SIGUSR1)
@@ -113,6 +115,24 @@ def main(
     if name.startswith("{{"):
         name = os.getenv("ACTION_NAME", "")
 
+    from datetime import datetime, timezone
+
+    parsed_run_start_time: datetime | None = None
+    if run_start_time and not run_start_time.startswith("{{"):
+        raw = run_start_time.rstrip()
+        # tolerate trailing "Z" — datetime.fromisoformat only handles it on 3.11+
+        if raw.endswith("Z"):
+            raw = raw[:-1] + "+00:00"
+        try:
+            parsed_run_start_time = datetime.fromisoformat(raw)
+            if parsed_run_start_time.tzinfo is None:
+                parsed_run_start_time = parsed_run_start_time.replace(tzinfo=timezone.utc)
+            else:
+                parsed_run_start_time = parsed_run_start_time.astimezone(timezone.utc)
+        except ValueError:
+            logger.warning(f"Could not parse --run-start-time {run_start_time!r}; falling back to current UTC time.")
+            parsed_run_start_time = None
+
     logger.warning(f"Flyte runtime started for action {name} with run name {run_name}")
 
     if debug and name == "a0":
@@ -126,7 +146,19 @@ def main(
 
     controller_kwargs = init_in_cluster(org=org, project=project, domain=domain)
     # Controller is created with the same kwargs as init, so that it can be used to run tasks
-    controller = create_controller(ct="remote", **controller_kwargs)
+    # Use Rust controller if env var is set, otherwise default to Python controller
+    use_rust = os.getenv(_F_USE_RUST_CONTROLLER, "").lower() in ("1", "true", "yes")
+    if use_rust:
+        try:
+            import flyte_controller_base  # noqa: F401
+        except ImportError as e:
+            raise RuntimeError(
+                f"{_F_USE_RUST_CONTROLLER}=1 was set but `flyte_controller_base` is not installed. "
+                "Install it with `pip install flyte[rust-controller]`. "
+                "For development, run `make dev-rs-dist` from the repo root."
+            ) from e
+    controller_type = "rust" if use_rust else "remote"
+    controller = create_controller(ct=controller_type, **controller_kwargs)  # type: ignore[arg-type]
 
     ic = ImageCache.from_transport(image_cache) if image_cache else None
 
@@ -149,7 +181,7 @@ def main(
         resolver_args=resolver_args,
         action=ActionID(name=name, run_name=run_name, project=project, domain=domain, org=org),
         raw_data_path=RawDataPath(path=raw_data_path, path_rewrite=path_rewrite),
-        checkpoints=Checkpoints(checkpoint_path, prev_checkpoint),
+        checkpoint_paths=CheckpointPaths(prev_checkpoint_path=prev_checkpoint, checkpoint_path=checkpoint_path),
         code_bundle=bundle,
         input_path=inputs,
         output_path=outputs_path,
@@ -158,6 +190,7 @@ def main(
         controller=controller,
         image_cache=ic,
         interactive_mode=interactive_mode or debug,
+        run_start_time=parsed_run_start_time,
     )
     # Create a coroutine to watch for errors
     controller_failure = controller.watch_for_errors()
@@ -165,7 +198,7 @@ def main(
     # Run both coroutines concurrently and wait for first to finish and cancel the other
     async def _run_and_stop():
         loop = asyncio.get_event_loop()
-        loop.set_exception_handler(flyte.errors.silence_grpc_polling_error)
+        loop.set_exception_handler(flyte.errors.silence_polling_error)
         try:
             await utils.run_coros(controller_failure, task_coroutine)
             await controller.stop()
@@ -184,9 +217,6 @@ def main(
     for h in logger.handlers:
         h.flush()
     sys.stdout.flush()
-    # We os._exit here to ensure that grpc does not block the exiting! grpc currently has a graceful shutdown system
-    # that blocks the process from exiting
-    os._exit(0)
 
 
 if __name__ == "__main__":

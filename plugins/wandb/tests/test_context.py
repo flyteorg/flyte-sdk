@@ -3,6 +3,7 @@
 import json
 from unittest.mock import MagicMock, patch
 
+import flyte
 import pytest
 
 from flyteplugins.wandb import (
@@ -750,3 +751,112 @@ class TestEdgeCases:
         unpacked = {**config}
 
         assert "wandb_sweep_method" in unpacked
+
+
+class TestTriggerCustomContextWithWandb:
+    """Tests for using wandb_config with flyte.Trigger's custom_context."""
+
+    def test_trigger_with_wandb_config_direct(self):
+        """Test passing wandb_config() directly as Trigger custom_context."""
+        config = wandb_config(project="my-project", entity="my-team")
+        trigger = flyte.Trigger(
+            name="wandb_trigger",
+            automation=flyte.Cron("0 0 * * *"),
+            custom_context=config,
+        )
+
+        assert trigger.custom_context is config
+        assert dict(trigger.custom_context.items())["wandb_project"] == "my-project"
+        assert dict(trigger.custom_context.items())["wandb_entity"] == "my-team"
+
+    def test_trigger_with_wandb_config_unpacked(self):
+        """Test passing {**wandb_config()} as Trigger custom_context."""
+        trigger = flyte.Trigger(
+            name="wandb_trigger",
+            automation=flyte.Cron("0 0 * * *"),
+            custom_context={**wandb_config(project="my-project", entity="my-team")},
+        )
+
+        assert isinstance(trigger.custom_context, dict)
+        assert trigger.custom_context["wandb_project"] == "my-project"
+        assert trigger.custom_context["wandb_entity"] == "my-team"
+
+    def test_trigger_with_wandb_config_to_dict(self):
+        """Test passing wandb_config().to_dict() as Trigger custom_context."""
+        trigger = flyte.Trigger(
+            name="wandb_trigger",
+            automation=flyte.Cron("0 0 * * *"),
+            custom_context=wandb_config(project="my-project", entity="my-team").to_dict(),
+        )
+
+        assert isinstance(trigger.custom_context, dict)
+        assert trigger.custom_context["wandb_project"] == "my-project"
+        assert trigger.custom_context["wandb_entity"] == "my-team"
+
+    def test_trigger_with_wandb_and_sweep_config_unpacked(self):
+        """Test passing merged wandb + sweep configs as Trigger custom_context."""
+        trigger = flyte.Trigger(
+            name="wandb_sweep_trigger",
+            automation=flyte.Cron("0 0 * * *"),
+            custom_context={
+                **wandb_config(project="my-project", entity="my-team"),
+                **wandb_sweep_config(method="random", metric={"name": "loss", "goal": "minimize"}),
+            },
+        )
+
+        assert trigger.custom_context["wandb_project"] == "my-project"
+        assert trigger.custom_context["wandb_entity"] == "my-team"
+        assert trigger.custom_context["wandb_sweep_method"] == "random"
+
+    def test_trigger_convenience_method_with_wandb_config(self):
+        """Test using wandb_config with Trigger convenience methods."""
+        trigger = flyte.Trigger.daily(
+            custom_context=wandb_config(project="daily-project", entity="team"),
+        )
+
+        assert dict(trigger.custom_context.items())["wandb_project"] == "daily-project"
+        assert dict(trigger.custom_context.items())["wandb_entity"] == "team"
+
+    @pytest.mark.asyncio
+    async def test_trigger_serde_with_wandb_config_direct(self):
+        """Test that wandb_config() serializes correctly through trigger_serde."""
+        from flyte._internal.runtime.trigger_serde import to_task_trigger
+        from flyteidl2.core import interface_pb2
+
+        config = wandb_config(project="my-project", entity="my-team", mode="online")
+        trigger = flyte.Trigger(
+            name="wandb_serde_trigger",
+            automation=flyte.Cron("0 0 * * *"),
+            custom_context=config,
+        )
+
+        task_inputs = interface_pb2.VariableMap()
+        result = await to_task_trigger(trigger, "test_task", task_inputs, [])
+
+        context_dict = {kv.key: kv.value for kv in result.spec.inputs.context}
+        assert context_dict["wandb_project"] == "my-project"
+        assert context_dict["wandb_entity"] == "my-team"
+        assert context_dict["wandb_mode"] == "online"
+
+    @pytest.mark.asyncio
+    async def test_trigger_serde_with_wandb_config_unpacked(self):
+        """Test that {**wandb_config()} serializes correctly through trigger_serde."""
+        from flyte._internal.runtime.trigger_serde import to_task_trigger
+        from flyteidl2.core import interface_pb2
+
+        trigger = flyte.Trigger(
+            name="wandb_serde_trigger",
+            automation=flyte.Cron("0 0 * * *"),
+            custom_context={
+                **wandb_config(project="my-project", entity="my-team"),
+                **wandb_sweep_config(method="bayes"),
+            },
+        )
+
+        task_inputs = interface_pb2.VariableMap()
+        result = await to_task_trigger(trigger, "test_task", task_inputs, [])
+
+        context_dict = {kv.key: kv.value for kv in result.spec.inputs.context}
+        assert context_dict["wandb_project"] == "my-project"
+        assert context_dict["wandb_entity"] == "my-team"
+        assert context_dict["wandb_sweep_method"] == "bayes"

@@ -18,6 +18,70 @@ APP_NAME_RE = re.compile(r"[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[
 INVALID_APP_PORTS = [8012, 8022, 8112, 9090, 9091]
 INTERNAL_APP_ENDPOINT_PATTERN_ENV_VAR = "INTERNAL_APP_ENDPOINT_PATTERN"
 
+# Root of the flyte SDK source tree (the directory that contains ``flyte/``).
+# Used by ``_find_user_caller_frame`` to skip every frame whose source file
+# lives inside the SDK, so that subclass ``__post_init__`` chains, helper
+# methods, and the synthesized dataclass ``__init__`` never get reported as
+# the user's caller.
+_SDK_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# Filenames that ``inspect.getframeinfo`` may report for synthesized frames
+# (e.g. dataclass-generated ``__init__`` is compiled with ``"<string>"``) that
+# can't possibly belong to user code.
+_SYNTHESIZED_FILENAME_PREFIXES = ("<",)
+
+
+def _is_sdk_frame(filename: str) -> bool:
+    """Return True if ``filename`` lives inside the flyte SDK source tree."""
+    if not filename or filename.startswith(_SYNTHESIZED_FILENAME_PREFIXES):
+        return True
+    try:
+        abs_filename = os.path.abspath(filename)
+    except (OSError, ValueError):
+        return False
+    try:
+        return os.path.commonpath([_SDK_ROOT, abs_filename]) == _SDK_ROOT
+    except ValueError:
+        # commonpath raises on mixed drives / unrelated roots.
+        return False
+
+
+def _find_user_caller_frame() -> inspect.Traceback | None:
+    """Walk up the call stack to the first user-code frame outside the SDK.
+
+    Returns an :class:`inspect.Traceback` pointing at whatever line of user
+    code triggered the construction of an :class:`AppEnvironment`. The walker
+    skips:
+
+    * frames whose source file lives inside the SDK source tree (covers every
+      ``AppEnvironment``/subclass ``__post_init__`` plus helper methods),
+    * synthesized frames whose ``co_filename`` is angle-bracketed
+      (``"<string>"``, ``"<frozen ...>"``, etc. — produced by the dataclass-
+      generated ``__init__``, ``exec``-compiled modules, frozen importers),
+    * user-authored ``__post_init__`` / ``__init__`` frames so that a user
+      subclass calling ``super().__post_init__()`` still resolves to the
+      caller that actually instantiated the env (factory helper, module
+      scope, …).
+
+    Whatever the first remaining frame is — module scope, factory helper, or
+    any other regular function — that's what we report.
+    """
+    f = inspect.currentframe()
+    f = f.f_back if f is not None else None
+    while f is not None:
+        co_filename = f.f_code.co_filename
+        if _is_sdk_frame(co_filename):
+            f = f.f_back
+            continue
+        if f.f_code.co_name in ("__post_init__", "__init__"):
+            # User-defined subclass init frame chaining super().__post_init__().
+            f = f.f_back
+            continue
+        break
+    if f is None:
+        return None
+    return inspect.getframeinfo(f)
+
 
 @rich.repr.auto
 @dataclass(init=True, repr=True)
@@ -52,8 +116,6 @@ class AppEnvironment(Environment):
         Default is `Scaling()` (scale-to-zero, max 1 replica).
     :param domain: `Domain` object for custom domain configuration.
     :param links: List of `Link` objects for connecting to other environments.
-    :param include: List of additional file paths to bundle with the app
-        (e.g., utility modules, config files, data files).
     :param parameters: List of `Parameter` objects for app inputs. Use `RunOutput`
         to connect app parameters to task outputs, or `AppEndpoint` to reference
         other app endpoints.
@@ -80,7 +142,6 @@ class AppEnvironment(Environment):
     links: List[Link] = field(default_factory=list)
 
     # Code
-    include: List[str] = field(default_factory=list)
     parameters: List[Parameter] = field(default_factory=list)
 
     # queue / cluster_pool
@@ -92,6 +153,11 @@ class AppEnvironment(Environment):
     _server: Callable[[], None] | None = field(init=False, default=None)
     _on_startup: Callable[[], None] | None = field(init=False, default=None)
     _on_shutdown: Callable[[], None] | None = field(init=False, default=None)
+    # Frame of the user code that instantiated this environment. Used by
+    # ``flyte._internal.resolvers.app_env.AppEnvResolver`` to locate the module
+    # that holds the module-level ``app_env`` binding the deployed container
+    # needs to import.
+    _caller_frame: inspect.Traceback | None = field(init=False, default=None, repr=False, compare=False)
 
     def _validate_name(self):
         if not APP_NAME_RE.fullmatch(self.name):
@@ -99,51 +165,6 @@ class AppEnvironment(Environment):
                 f"App name '{self.name}' must consist of lower case alphanumeric characters or '-', "
                 "and must start and end with an alphanumeric character."
             )
-
-    def _get_app_filename(self) -> str:
-        """
-        Get the filename of the file that declares this app environment.
-
-        Returns the actual file path instead of <string>, skipping flyte SDK internal files.
-        """
-
-        def is_user_file(filename: str) -> bool:
-            """Check if a file is a user file (not part of flyte SDK)."""
-            if filename in ("<string>", "<stdin>"):
-                return False
-            if not os.path.exists(filename):
-                return False
-            # Skip files that are part of the flyte SDK
-            abs_path = os.path.abspath(filename)
-            # Check if file is in flyte package
-            return ("site-packages/flyte" not in abs_path and "/flyte/" not in abs_path) or "/examples/" in abs_path
-
-        # Try frame inspection first - walk up the stack to find user file
-        frame = inspect.currentframe()
-        while frame is not None:
-            filename = frame.f_code.co_filename
-            if is_user_file(filename):
-                return os.path.abspath(filename)
-            frame = frame.f_back
-
-        # Fallback: Inspect the full stack to find the first user file
-        stack = inspect.stack()
-        for frame_info in stack:
-            filename = frame_info.filename
-            if is_user_file(filename):
-                return os.path.abspath(filename)
-
-        # Last fallback: Try to get from __main__ module
-        import sys
-
-        if hasattr(sys.modules.get("__main__"), "__file__"):
-            main_file = sys.modules["__main__"].__file__
-            if main_file and os.path.exists(main_file):
-                return os.path.abspath(main_file)
-
-        # Last resort: return the current working directory with a placeholder
-        # This shouldn't happen in normal usage
-        return os.path.join(os.getcwd(), "app.py")
 
     def __post_init__(self):
         super().__post_init__()
@@ -165,20 +186,25 @@ class AppEnvironment(Environment):
         if not isinstance(self.timeouts, Timeouts):
             raise TypeError(f"Expected timeouts to be of type Timeouts, got {type(self.timeouts)}")
 
+        if self.parameters and self.command is not None:
+            cmd_head = self.command.split()[0] if isinstance(self.command, str) else self.command[0]
+            if cmd_head != "fserve":
+                raise ValueError(
+                    "Cannot use 'parameters' with a custom 'command' that doesn't start with 'fserve'. "
+                    "Parameters require the fserve runtime to be materialized. "
+                    "Use 'args' instead of 'command', or use @app_env.server to define your app process."
+                )
+
         self._validate_name()
 
-        # get instantiated file to keep track of app root directory
-        self._app_filename = self._get_app_filename()
-
-        # Capture the frame where this environment was instantiated
-        # This helps us find the module where the app variable is defined
-        frame = inspect.currentframe()
-        if frame and frame.f_back:
-            # Go up the call stack to find the user's module
-            # Skip the dataclass __init__ frame
-            caller_frame = frame.f_back
-            if caller_frame and caller_frame.f_back:
-                self._caller_frame = inspect.getframeinfo(caller_frame.f_back)
+        # Capture the frame where this environment was instantiated. The Flyte
+        # ``AppEnvResolver`` uses ``self._caller_frame.filename`` to locate the
+        # module that holds the module-level ``app_env`` binding the container
+        # must import. We walk up past every SDK / dataclass-machinery frame
+        # so that we land on actual user code regardless of whether the env
+        # was created inline at module scope, inside a subclass with a custom
+        # ``__post_init__``, or via a user-provided factory helper.
+        self._caller_frame = _find_user_caller_frame()
 
     def container_args(self, serialize_context: SerializationContext) -> List[str]:
         if self.args is None:
@@ -245,6 +271,7 @@ class AppEnvironment(Environment):
             if version is None and serialize_context.code_bundle is not None:
                 version = serialize_context.code_bundle.computed_version
 
+            print("VERSION:", version)
             cmd: list[str] = [
                 "fserve",
                 "--version",
@@ -273,6 +300,9 @@ class AppEnvironment(Environment):
             if self.parameters:
                 cmd.append("--parameters")
                 cmd.append(self._serialize_parameters(parameter_overrides))
+
+            # Add raw-data-path with template variable for backend to substitute at runtime
+            cmd.extend(["--raw-data-path", "{{.rawOutputDataPrefix}}"])
 
             # Only add resolver args if _caller_frame is set and we can extract the module
             # (i.e., app was created in a module and can be found)
@@ -393,7 +423,7 @@ class AppEnvironment(Environment):
         if links is not None:
             kwargs["links"] = links
         if include is not None:
-            kwargs["include"] = include
+            kwargs["include"] = tuple(include) if not isinstance(include, tuple) else include
         if parameters is not None:
             kwargs["parameters"] = parameters
         if cluster_pool is not None:

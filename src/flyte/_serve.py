@@ -338,6 +338,7 @@ class _Serve:
         cluster_pool: str | None = None,
         log_level: int | None = None,
         log_format: LogFormat = "console",
+        user_log_level: int | None = None,
         interactive_mode: bool | None = None,
         copy_bundle_to: pathlib.Path | None = None,
         deactivate_timeout: float | None = None,
@@ -345,6 +346,7 @@ class _Serve:
         health_check_timeout: float | None = None,
         health_check_interval: float | None = None,
         health_check_path: str | None = None,
+        raw_data_path: str | None = None,
     ):
         """
         Initialize serve context.
@@ -375,6 +377,10 @@ class _Serve:
                 Defaults to `1` second.
             health_check_path: URL path used for the local health-check probe (e.g. `"/healthz"`).
                 Defaults to `"/health"`.
+            raw_data_path: Raw data path for the app. For local serving, used when testing apps
+                that read ctx().raw_data_path. Defaults to ``/tmp/flyte/raw_data`` when mode is
+                local and not specified. For remote serving, the backend provides this via the
+                container command.
         """
         from flyte._initialize import _get_init_config
 
@@ -394,6 +400,7 @@ class _Serve:
         self._cluster_pool = cluster_pool
         self._log_level = log_level
         self._log_format = log_format
+        self._user_log_level = user_log_level
         self._interactive_mode = interactive_mode if interactive_mode is not None else ipython_check()
         self._copy_bundle_to = copy_bundle_to
 
@@ -407,6 +414,9 @@ class _Serve:
             health_check_interval if health_check_interval is not None else _LOCAL_IS_ACTIVE_INTERVAL
         )
         self._health_check_path = health_check_path if health_check_path is not None else _LOCAL_HEALTH_CHECK_PATH
+        self._raw_data_path = (
+            raw_data_path if raw_data_path is not None else ("/tmp/flyte/raw_data" if self._mode == "local" else "")
+        )
 
     # ------------------------------------------------------------------
     # Local serving
@@ -478,6 +488,12 @@ class _Serve:
         local_app = _LocalApp(app_env=app_env, _serve_obj=self, host=host, port=port)
 
         def _run():
+            # Contextvars don't propagate to new threads. Set raw_data_path in this
+            # thread's context so ctx().raw_data_path works in request handlers.
+            from flyte.app._context import set_raw_data_path
+
+            set_raw_data_path(self._raw_data_path or "")
+
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             local_app._thread_loop = loop
@@ -582,7 +598,8 @@ class _Serve:
         from flyte.app import _deploy
         from flyte.app._app_environment import AppEnvironment
 
-        from ._code_bundle import build_code_bundle, build_pkl_bundle
+        from ._code_bundle import build_code_bundle, build_code_bundle_from_relative_paths, build_pkl_bundle
+        from ._code_bundle._includes import collect_env_include_files
         from ._deploy import build_images, plan_deploy
 
         cfg = get_init_config()
@@ -597,6 +614,8 @@ class _Serve:
             else:
                 env["LOG_LEVEL"] = str(logger.getEffectiveLevel())
         env["LOG_FORMAT"] = self._log_format
+        if self._user_log_level is not None:
+            env["USER_LOG_LEVEL"] = str(self._user_log_level)
 
         # Update env_vars with logging configuration
         self._env_vars = env
@@ -610,21 +629,37 @@ class _Serve:
         image_cache = await build_images.aio(app_env)
         assert image_cache
 
+        include_files = collect_env_include_files(app_deployment.envs.values())
+
         # Build code bundle (tgz style)
         if self._interactive_mode:
+            if include_files:
+                raise ValueError(
+                    "Environment.include is not supported in interactive/pkl serves. "
+                    "Serve from a file or remove `include` from the environment."
+                )
             code_bundle = await build_pkl_bundle(
                 app_env,
                 upload_to_controlplane=not self._dry_run,
                 copy_bundle_to=self._copy_bundle_to,
             )
         elif self._copy_style == "none":
-            code_bundle = None
+            if include_files:
+                code_bundle = await build_code_bundle_from_relative_paths(
+                    include_files,
+                    from_dir=pathlib.Path(cfg.root_dir),
+                    dryrun=self._dry_run,
+                    copy_bundle_to=self._copy_bundle_to,
+                )
+            else:
+                code_bundle = None
         else:
             code_bundle = await build_code_bundle(
                 from_dir=cfg.root_dir,
                 dryrun=self._dry_run,
                 copy_style=self._copy_style,
                 copy_bundle_to=self._copy_bundle_to,
+                additional_files=include_files,
             )
 
         # Compute version
@@ -752,6 +787,7 @@ def with_servecontext(
     cluster_pool: str | None = None,
     log_level: int | None = None,
     log_format: LogFormat = "console",
+    user_log_level: int | None = None,
     interactive_mode: bool | None = None,
     copy_bundle_to: pathlib.Path | None = None,
     # Local-serving parameters
@@ -760,6 +796,7 @@ def with_servecontext(
     health_check_timeout: float | None = None,
     health_check_interval: float | None = None,
     health_check_path: str | None = None,
+    raw_data_path: str | None = None,
 ) -> _Serve:
     """
     Create a serve context with custom configuration.
@@ -822,8 +859,11 @@ def with_servecontext(
             request. Defaults to 2 s.
         health_check_interval: Interval in seconds between consecutive health-check polls.
             Defaults to 1 s.
-        health_check_path: URL path used for the local health-check probe (e.g. `"/healthz"`).
-            Defaults to `"/health"`.
+        health_check_path: URL path used for the local health-check probe (e.g. ``"/healthz"``).
+            Defaults to ``"/health"``.
+        raw_data_path: Raw data path for the app. For local serving, sets ctx().raw_data_path
+            so apps can read it. Defaults to ``/tmp/flyte/raw_data`` when mode is local.
+            For remote serving, the backend provides this via the container command.
 
     Returns:
         _Serve: Serve context manager with configured settings
@@ -849,6 +889,7 @@ def with_servecontext(
         cluster_pool=cluster_pool,
         log_level=log_level,
         log_format=log_format,
+        user_log_level=user_log_level,
         interactive_mode=interactive_mode,
         copy_bundle_to=copy_bundle_to,
         deactivate_timeout=deactivate_timeout,
@@ -856,6 +897,7 @@ def with_servecontext(
         health_check_timeout=health_check_timeout,
         health_check_interval=health_check_interval,
         health_check_path=health_check_path,
+        raw_data_path=raw_data_path,
     )
 
 

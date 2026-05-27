@@ -3,7 +3,7 @@
 # dependencies = [
 #     "langgraph==1.0.7",
 #     "langchain-core==0.3.28",
-#     "flyte>=2.0.0b53",
+#     "flyte",
 # ]
 # ///
 

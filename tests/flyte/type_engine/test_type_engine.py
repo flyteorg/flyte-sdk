@@ -10,7 +10,7 @@ from enum import Enum, auto
 from typing import Dict, List
 
 import pytest
-from flyteidl2.core import errors_pb2, literals_pb2, types_pb2
+from flyteidl2.core import execution_pb2, literals_pb2, types_pb2
 from flyteidl2.core.literals_pb2 import (
     Literal,
     LiteralCollection,
@@ -486,25 +486,25 @@ async def test_list_transformer():
 
 @pytest.mark.asyncio
 async def test_protos():
-    pb = errors_pb2.ContainerError(code="code", message="message")
-    lt = TypeEngine.to_literal_type(errors_pb2.ContainerError)
+    pb = execution_pb2.ContainerError(code="code", message="message")
+    lt = TypeEngine.to_literal_type(execution_pb2.ContainerError)
     assert lt.simple == SimpleType.STRUCT
-    assert lt.metadata["pb_type"] == "flyteidl2.core.errors_pb2.ContainerError"
+    assert lt.metadata["pb_type"] == "flyteidl2.core.execution_pb2.ContainerError"
 
-    lit = await TypeEngine.to_literal(pb, errors_pb2.ContainerError, lt)
-    new_python_val = await TypeEngine.to_python_value(lit, errors_pb2.ContainerError)
+    lit = await TypeEngine.to_literal(pb, execution_pb2.ContainerError, lt)
+    new_python_val = await TypeEngine.to_python_value(lit, execution_pb2.ContainerError)
     assert new_python_val == pb
 
     # Test error
     l0 = Literal(scalar=Scalar(primitive=Primitive(integer=4)))
     with pytest.raises(AssertionError):
-        await TypeEngine.to_python_value(l0, errors_pb2.ContainerError)
+        await TypeEngine.to_python_value(l0, execution_pb2.ContainerError)
 
-    default_proto = errors_pb2.ContainerError()
-    lit = await TypeEngine.to_literal(default_proto, errors_pb2.ContainerError, lt)
+    default_proto = execution_pb2.ContainerError()
+    lit = await TypeEngine.to_literal(default_proto, execution_pb2.ContainerError, lt)
     assert lit.HasField("scalar")
     assert lit.scalar.HasField("generic")
-    new_python_val = await TypeEngine.to_python_value(lit, errors_pb2.ContainerError)
+    new_python_val = await TypeEngine.to_python_value(lit, execution_pb2.ContainerError)
     assert new_python_val == default_proto
 
 
@@ -566,6 +566,32 @@ async def test_zero_floats():
 
     assert await TypeEngine.to_python_value(l0, float) == 0
     assert await TypeEngine.to_python_value(l1, float) == 0
+
+
+def test_dataclass_literal_type_has_structure_tag():
+    @dataclass
+    class InputsWithDefaults:
+        message: str = "hello"
+        font: str = "standard"
+
+    transformer = DataclassTransformer()
+    lt = TypeEngine.to_literal_type(InputsWithDefaults)
+    assert lt.HasField("structure")
+    assert lt.structure.tag == transformer.name
+    guessed = transformer.guess_python_type(lt)
+    from mashumaro.codecs.json import JSONDecoder
+
+    decoded = JSONDecoder(guessed).decode('{"message": "hi"}')
+    assert decoded.message == "hi"
+    assert decoded.font == "standard"
+
+
+def test_dataclass_guess_python_type_rejects_pydantic_tagged_literal():
+    """DataclassTransformer must not claim Pydantic-owned STRUCT literals."""
+    transformer = DataclassTransformer()
+    lt = TypeEngine.to_literal_type(_SimplePydanticModel)
+    with pytest.raises(ValueError):
+        transformer.guess_python_type(lt)
 
 
 def test_dataclass_transformer_with_dataclassjsonmixin():
@@ -2518,13 +2544,15 @@ def test_pydantic_guess_python_type_with_tag():
     pytest.fail("No variant with Pydantic Transformer tag found")
 
 
-def test_pydantic_guess_python_type_without_tag():
-    """PydanticTransformer.guess_python_type should NOT match a bare STRUCT (no tag)."""
+def test_pydantic_guess_python_type_with_structure_tag():
+    """Standalone Pydantic literal types carry the transformer tag for remote type guessing."""
     transformer = PydanticTransformer()
-    # A standalone Pydantic literal type has no structure.tag
     lt = TypeEngine.to_literal_type(_SimplePydanticModel)
-    with pytest.raises(ValueError):
-        transformer.guess_python_type(lt)
+    assert lt.HasField("structure")
+    assert lt.structure.tag == transformer.name
+    guessed = transformer.guess_python_type(lt)
+    assert issubclass(guessed, BaseModel)
+    assert guessed.__name__ == "_SimplePydanticModel"
 
 
 @pytest.mark.asyncio

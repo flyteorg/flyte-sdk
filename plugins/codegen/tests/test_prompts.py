@@ -1,6 +1,6 @@
 """Tests for flyteplugins.codegen.generation.prompts."""
 
-from flyte.io import File
+from flyte.io import Dir, File
 
 from flyteplugins.codegen.generation.prompts import (
     FILE_EXTENSIONS,
@@ -113,7 +113,32 @@ class TestBuildEnhancedPrompt:
             inputs={"csv_data": File},
             outputs=None,
         )
-        assert "File arguments are string paths" in result
+        assert "File and Dir arguments are string paths" in result
+
+    def test_with_dir_input(self):
+        result = build_enhanced_prompt(
+            prompt="Process directory",
+            language="python",
+            schema=None,
+            constraints=None,
+            data_context=None,
+            inputs={"input_dir": Dir},
+            outputs=None,
+        )
+        assert "--input_dir (str): path to dir" in result
+        assert "File and Dir arguments are string paths" in result
+
+    def test_with_dir_output(self):
+        result = build_enhanced_prompt(
+            prompt="Write directory output",
+            language="python",
+            schema=None,
+            constraints=None,
+            data_context=None,
+            inputs=None,
+            outputs={"output_dir": Dir},
+        )
+        assert "/var/outputs/output_dir" in result
 
     def test_with_outputs_includes_output_requirements(self):
         result = build_enhanced_prompt(

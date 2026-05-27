@@ -8,10 +8,9 @@ from abc import abstractmethod
 from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar, Dict, List, Literal, Optional, Tuple, TypeVar, Union
+from typing import TYPE_CHECKING, Any, ClassVar, Dict, List, Literal, Optional, Tuple, TypeVar, Union
 
 import rich.repr
-from packaging.version import Version
 
 if TYPE_CHECKING:
     from flyte import Secret, SecretRequest
@@ -27,6 +26,7 @@ PYTHON_3_14 = (3, 14)
 CopyConfigType = Literal[0, 1]
 SOURCE_ROOT = Path(__file__).parent.parent.parent
 DIST_FOLDER = SOURCE_ROOT / "dist"
+RS_CONTROLLER_DIST_FOLDER = SOURCE_ROOT / "rs_controller" / "dist"
 
 T = TypeVar("T")
 
@@ -75,11 +75,12 @@ class Layer:
                         )
 
     @abstractmethod
-    def update_hash(self, hasher: hashlib._Hash):
+    def update_hash(self, hasher: hashlib._Hash, ignore: Optional[Any] = None):
         """
         This method should be implemented by subclasses to provide a hash representation of the layer.
 
         :param hasher: The hash object to update with the layer's data.
+        :param ignore: Optional ignore instance threaded from Image._get_hash_digest().
         """
 
     def validate(self):
@@ -113,7 +114,7 @@ class PipOption:
             pip_install_args.append(self.extra_args)
         return pip_install_args
 
-    def update_hash(self, hasher: hashlib._Hash):
+    def update_hash(self, hasher: hashlib._Hash, ignore: Optional[Any] = None):
         """
         Update the hash with the PipOption
         """
@@ -142,11 +143,11 @@ class PipPackages(PipOption, Layer):
     def __post_init__(self):
         super().__post_init__()
 
-    def update_hash(self, hasher: hashlib._Hash):
+    def update_hash(self, hasher: hashlib._Hash, ignore: Optional[Any] = None):
         """
         Update the hash with the pip packages
         """
-        super().update_hash(hasher)
+        super().update_hash(hasher, ignore=ignore)
         hash_input = ""
         if self.packages:
             for package in self.packages:
@@ -165,8 +166,8 @@ class PythonWheels(PipOption, Layer):
     def __post_init__(self):
         object.__setattr__(self, "wheel_dir_name", self.wheel_dir.name)
 
-    def update_hash(self, hasher: hashlib._Hash):
-        super().update_hash(hasher)
+    def update_hash(self, hasher: hashlib._Hash, ignore: Optional[Any] = None):
+        super().update_hash(hasher, ignore=ignore)
         from ._utils import filehash_update
 
         # Iterate through all the wheel files in the directory and update the hash
@@ -182,10 +183,10 @@ class PythonWheels(PipOption, Layer):
 class Requirements(PipPackages):
     file: Path
 
-    def update_hash(self, hasher: hashlib._Hash):
+    def update_hash(self, hasher: hashlib._Hash, ignore: Optional[Any] = None):
         from ._utils import filehash_update
 
-        super().update_hash(hasher)
+        super().update_hash(hasher, ignore=ignore)
         filehash_update(self.file, hasher)
 
 
@@ -205,16 +206,20 @@ class UVProject(PipOption, Layer):
             raise ValueError(f"UVLock file {self.uvlock.resolve()} does not exist")
         super().validate()
 
-    def update_hash(self, hasher: hashlib._Hash):
+    def update_hash(self, hasher: hashlib._Hash, ignore: Optional[Any] = None):
+        from ._code_bundle._ignore import DockerfileIgnore
         from ._utils import filehash_update, update_hasher_for_source
 
-        super().update_hash(hasher)
+        super().update_hash(hasher, ignore=ignore)
         if self.project_install_mode == "dependencies_only":
             if self.uvlock is not None:
                 filehash_update(self.uvlock, hasher)
             filehash_update(self.pyproject, hasher)
         else:
-            update_hasher_for_source(self.pyproject.parent, hasher)
+            project_dir = self.pyproject.parent
+            if ignore is None:
+                ignore = DockerfileIgnore(project_dir)
+            update_hasher_for_source(project_dir, hasher, ignore=ignore)
 
 
 @rich.repr.auto
@@ -239,7 +244,7 @@ class PoetryProject(Layer):
             raise ValueError(f"poetry.lock file {self.poetry_lock} does not exist")
         super().validate()
 
-    def update_hash(self, hasher: hashlib._Hash):
+    def update_hash(self, hasher: hashlib._Hash, ignore: Optional[Any] = None):
         from ._utils import filehash_update, update_hasher_for_source
 
         hash_input = ""
@@ -254,7 +259,7 @@ class PoetryProject(Layer):
             filehash_update(self.poetry_lock, hasher)
             filehash_update(self.pyproject, hasher)
         else:
-            update_hasher_for_source(self.pyproject.parent, hasher)
+            update_hasher_for_source(self.pyproject.parent, hasher, ignore=ignore)
 
 
 @rich.repr.auto
@@ -275,14 +280,14 @@ class UVScript(PipOption, Layer):
             raise ValueError(f"UV script {self.script} must have a .py extension")
         super().validate()
 
-    def update_hash(self, hasher: hashlib._Hash):
+    def update_hash(self, hasher: hashlib._Hash, ignore: Optional[Any] = None):
         from ._utils import parse_uv_script_file
 
         header = parse_uv_script_file(self.script)
         h_tuple = _ensure_tuple(header)
         if h_tuple:
             hasher.update(h_tuple.__str__().encode("utf-8"))
-        super().update_hash(hasher)
+        super().update_hash(hasher, ignore=ignore)
         if header.pyprojects:
             for pyproject in header.pyprojects:
                 uvlock_path = Path(pyproject) / "uv.lock"
@@ -290,7 +295,7 @@ class UVScript(PipOption, Layer):
                     pyproject=Path(pyproject) / "pyproject.toml",
                     uvlock=uvlock_path if uvlock_path.exists() else None,
                     project_install_mode="install_project",
-                ).update_hash(hasher)
+                ).update_hash(hasher, ignore=ignore)
 
 
 @rich.repr.auto
@@ -302,7 +307,7 @@ class AptPackages(Layer):
     def __post_init__(self):
         super().__post_init__()
 
-    def update_hash(self, hasher: hashlib._Hash):
+    def update_hash(self, hasher: hashlib._Hash, ignore: Optional[Any] = None):
         hash_input = "".join(self.packages)
 
         if self.secret_mounts:
@@ -317,7 +322,7 @@ class Commands(Layer):
     commands: Tuple[str, ...]
     secret_mounts: Optional[Tuple[str | Secret, ...]] = None
 
-    def update_hash(self, hasher: hashlib._Hash):
+    def update_hash(self, hasher: hashlib._Hash, ignore: Optional[Any] = None):
         hash_input = "".join(self.commands)
 
         if self.secret_mounts:
@@ -331,7 +336,7 @@ class Commands(Layer):
 class WorkDir(Layer):
     workdir: str
 
-    def update_hash(self, hasher: hashlib._Hash):
+    def update_hash(self, hasher: hashlib._Hash, ignore: Optional[Any] = None):
         hasher.update(self.workdir.encode("utf-8"))
 
 
@@ -340,8 +345,14 @@ class WorkDir(Layer):
 class DockerIgnore(Layer):
     path: str
 
-    def update_hash(self, hasher: hashlib._Hash):
-        hasher.update(self.path.encode("utf-8"))
+    def update_hash(self, hasher: hashlib._Hash, ignore: Optional[Any] = None):
+        from ._utils import filehash_update
+
+        path = Path(self.path)
+        if path.exists():
+            filehash_update(path, hasher)
+        else:
+            hasher.update(self.path.encode("utf-8"))
 
 
 @rich.repr.auto
@@ -354,6 +365,8 @@ class CopyConfig(Layer):
     def __post_init__(self):
         if self.path_type not in (0, 1):
             raise ValueError(f"Invalid path_type {self.path_type}, must be 0 (file) or 1 (directory)")
+        if not isinstance(self.src, Path):
+            object.__setattr__(self, "src", Path(self.src))
 
     def validate(self):
         if not self.src.exists():
@@ -363,10 +376,13 @@ class CopyConfig(Layer):
         if not self.src.is_file() and self.path_type == 0:
             raise ValueError(f"Source file {self.src.absolute()} is not a file")
 
-    def update_hash(self, hasher: hashlib._Hash):
+    def update_hash(self, hasher: hashlib._Hash, ignore: Optional[Any] = None):
+        from ._code_bundle._ignore import DockerfileIgnore
         from ._utils import update_hasher_for_source
 
-        update_hasher_for_source(self.src, hasher)
+        if ignore is None and self.src.is_dir():
+            ignore = DockerfileIgnore(self.src)
+        update_hasher_for_source(self.src, hasher, ignore=ignore)
         if self.dst:
             hasher.update(self.dst.encode("utf-8"))
 
@@ -385,7 +401,7 @@ class CodeBundleLayer(Layer):
     dst: str = "."
     root_dir: Optional[Path] = None
 
-    def update_hash(self, hasher: hashlib._Hash):
+    def update_hash(self, hasher: hashlib._Hash, ignore: Optional[Any] = None):
         hasher.update(f"code_bundle:{self.copy_style}:{self.dst}".encode("utf-8"))
         if self.root_dir is not None:
             from ._utils import update_hasher_for_source
@@ -395,10 +411,10 @@ class CodeBundleLayer(Layer):
 
                 files = list_imported_modules_as_files(str(self.root_dir), list(sys.modules.values()))
                 files.sort()
-                update_hasher_for_source([Path(f) for f in files], hasher)
+                update_hasher_for_source([Path(f) for f in files], hasher, ignore=ignore)
             else:
                 # "all" — hash the entire root_dir
-                update_hasher_for_source(self.root_dir, hasher)
+                update_hasher_for_source(self.root_dir, hasher, ignore=ignore)
         else:
             raise ValueError("root_dir not set for CodeBundleLayer")
 
@@ -416,7 +432,7 @@ class _DockerLines(Layer):
 
     lines: Tuple[str, ...]
 
-    def update_hash(self, hasher: hashlib._Hash):
+    def update_hash(self, hasher: hashlib._Hash, ignore: Optional[Any] = None):
         hasher.update("".join(self.lines).encode("utf-8"))
 
 
@@ -430,7 +446,7 @@ class Env(Layer):
 
     env_vars: Tuple[Tuple[str, str], ...] = field(default_factory=tuple)
 
-    def update_hash(self, hasher: hashlib._Hash):
+    def update_hash(self, hasher: hashlib._Hash, ignore: Optional[Any] = None):
         txt = [f"{k}={v}" for k, v in self.env_vars]
         hasher.update(" ".join(txt).encode("utf-8"))
 
@@ -442,8 +458,24 @@ class Env(Layer):
 Architecture = Literal["linux/amd64", "linux/arm64"]
 
 _BASE_REGISTRY = "ghcr.io/flyteorg"
+_LOCALHOST_REGISTRY = "localhost:30000"
 _DEFAULT_IMAGE_NAME = "flyte"
 _DEFAULT_IMAGE_REF_NAME = "default"
+
+
+def _get_base_registry() -> str:
+    """
+    Returns the base registry based on the Flyte config endpoint.
+    If the endpoint contains 'localhost', use the localhost registry.
+    """
+    from flyte._initialize import _get_init_config
+
+    init_config = _get_init_config()
+    if init_config and init_config.client:
+        endpoint = init_config.client.endpoint
+        if endpoint and "localhost" in endpoint:
+            return _LOCALHOST_REGISTRY
+    return _BASE_REGISTRY
 
 
 def _detect_python_version() -> Tuple[int, int]:
@@ -505,7 +537,11 @@ class Image:
     platform: Tuple[Architecture, ...] = field(default=("linux/amd64",))
     python_version: Tuple[int, int] = field(default_factory=_detect_python_version)
     extendable: bool = field(default=False)
-    _is_flyte_default: bool = field(default=False)
+    # Whether this image has been modified/cloned by the user (via clone() or a with_* method).
+    # Defaults to False: an image with no modifications is assumed to already exist in the
+    # registry and does not need to be built. clone() flips this to True, which is what
+    # triggers the build/existence check.
+    _is_cloned: bool = field(default=False)
     # Refer to the image_refs (name:image-uri) set in CLI or config
     _ref_name: Optional[str] = field(default=None)
 
@@ -571,24 +607,48 @@ class Image:
                 flyte_version = __version__.replace("+", "-")
             suffix = flyte_version if flyte_version.startswith("v") else f"v{flyte_version}"
             preset_tag = f"py{python_version[0]}.{python_version[1]}-{suffix}"
+            if not dev_mode:
+                # This is the released default image; it already exists in the registry.
+                # Return a bare-URI image (via from_base) so the SDK does not try to build it
+                # unless the user clones/modifies it. Preserve the requested platform so later
+                # clones keep the multi-arch default.
+                return Image._new(
+                    base_image=f"{_BASE_REGISTRY}/{_DEFAULT_IMAGE_NAME}:{preset_tag}",
+                    registry=_get_base_registry(),
+                    name=_DEFAULT_IMAGE_NAME,
+                    python_version=python_version,
+                    platform=("linux/amd64", "linux/arm64") if platform is None else platform,
+                    extendable=True,
+                )
         image = Image._new(
             base_image=f"python:{python_version[0]}.{python_version[1]}-slim-bookworm",
-            registry=_BASE_REGISTRY,
+            registry=_get_base_registry(),
             name=_DEFAULT_IMAGE_NAME,
             python_version=python_version,
             platform=("linux/amd64", "linux/arm64") if platform is None else platform,
             extendable=True,
         )
-        labels_and_user = _DockerLines(
+        labels = _DockerLines(
             (
                 "LABEL org.opencontainers.image.authors='Union.AI <info@union.ai>'",
                 "LABEL org.opencontainers.image.source=https://github.com/flyteorg/flyte",
-                "RUN useradd --create-home --shell /bin/bash flytekit &&"
-                " chown -R flytekit /root && chown -R flytekit /home",
-                "WORKDIR /root",
             )
         )
-        image = image.clone(addl_layer=labels_and_user)
+        # Use Commands + WorkDir (rather than _DockerLines) so both the local docker
+        # builder and the remote builder pick up the flyte user setup, since the
+        # remote builder protobuf IDL only understands Layer types like Commands.
+        create_flyte_user = Commands(
+            commands=(
+                "if ! id -u flyte >/dev/null 2>&1; then"
+                " useradd --create-home --shell /bin/bash flyte; fi &&"
+                " mkdir -p /home/flyte &&"
+                " chown -R flyte:flyte /home/flyte &&"
+                " chown -R flyte:flyte /root",
+            ),
+        )
+        image = image.clone(addl_layer=labels)
+        image = image.clone(addl_layer=create_flyte_user)
+        image = image.clone(addl_layer=WorkDir(workdir="/home/flyte"))
         image = image.with_env_vars(
             {
                 "VIRTUAL_ENV": "/opt/venv",
@@ -598,15 +658,25 @@ class Image:
             }
         )
         image = image.with_apt_packages("build-essential", "ca-certificates")
-        if install_flyte:
-            if dev_mode:
-                if os.path.exists(DIST_FOLDER):
-                    image = image.with_local_v2()
+        if install_flyte and dev_mode:
+            if os.path.exists(DIST_FOLDER):
+                image = image.with_local_v2()
             else:
-                flyte_version = typing.cast(str, flyte_version)
-                image = image.with_pip_packages(f"flyte=={flyte_version}")
-                if not Version(flyte_version).is_devrelease and not Version(flyte_version).is_prerelease:
-                    object.__setattr__(image, "_is_flyte_default", True)
+                from packaging.version import Version
+
+                base = Version(__version__).base_version
+                image = image.with_pip_packages(f"flyte<{base}")
+            # Bake the Rust controller when opted in via `_F_USE_RUST_CONTROLLER=1`. Use the locally-built wheel if
+            # available; otherwise fall back to the released PyPI version
+            use_rust = os.getenv("_F_USE_RUST_CONTROLLER", "").lower() in ("1", "true", "yes")
+            if use_rust:
+                if os.path.exists(RS_CONTROLLER_DIST_FOLDER):
+                    image = image.with_local_rs_controller()
+                else:
+                    from packaging.version import Version
+
+                    base = Version(__version__).base_version
+                    image = image.with_pip_packages(f"flyte_controller_base<{base}")
         if not dev_mode:
             object.__setattr__(image, "_tag", preset_tag)
 
@@ -657,6 +727,18 @@ class Image:
     def from_base(cls, image_uri: str) -> Image:
         """
         Use this method to start with a pre-built base image. This image must already exist in the registry of course.
+
+        Unlike `from_debian_base`, this method does **not** create a runtime user or chown
+        the working directory. The resulting container runs as whatever ``USER`` your base
+        image declares, with whatever ``WORKDIR`` the image (or builder) sets. The Flyte
+        runtime extracts the code bundle into that working directory at task start, so the
+        resolved user must have read, write, and traverse permissions on it. Hardened bases
+        (UBI ``nonroot``, distroless ``nonroot``, chainguard ``nonroot``) commonly need a
+        ``.with_commands(["chmod 0755 /root && chown <uid>:<gid> /root"])`` layer, or the
+        equivalent for whatever path the image uses as ``WorkingDir``.
+
+        See the "Base image USER requirements" section of the Bring Your Own Image guide
+        for the full pattern.
 
         :param image_uri: The full URI of the image, in the format <registry>/<name>:<tag>
         :return:
@@ -755,7 +837,11 @@ class Image:
         extendable: Optional[bool] = None,
     ) -> Image:
         """
-        Use this method to clone the current image and change the registry and name
+        Clone an existing image, optionally with a new name or registry.
+
+        All `with_*` methods already produce a new immutable `Image`; use
+        `clone()` when you need an independent copy with a different name,
+        registry, or other base properties.
 
         :param registry: Registry to use for the image
         :param registry_secret: Secret to use to pull/push the private image.
@@ -800,6 +886,7 @@ class Image:
             platform=self.platform,
             python_version=python_version or self.python_version,
             extendable=extendable if extendable is not None else self.extendable,
+            _is_cloned=True,
             _layers=new_layers,
             _image_registry_secret=Secret(key=registry_secret) if isinstance(registry_secret, str) else registry_secret,
             _ref_name=self._ref_name,
@@ -809,7 +896,11 @@ class Image:
 
     @classmethod
     def from_dockerfile(
-        cls, file: Path, registry: str, name: str, platform: Union[Architecture, Tuple[Architecture, ...], None] = None
+        cls,
+        file: Union[Path, str],
+        registry: str,
+        name: str,
+        platform: Union[Architecture, Tuple[Architecture, ...], None] = None,
     ) -> Image:
         """
         Use this method to create a new image with the specified dockerfile. Note you cannot use additional layers
@@ -828,13 +919,16 @@ class Image:
         :return:
         """
         platform = _ensure_tuple(platform) if platform else None
-        kwargs = {
+        if type(file) is str:
+            file = Path(file)
+        kwargs: dict[str, Any] = {
             "dockerfile": file,
             "registry": registry,
             "name": name,
             "extendable": False,  # Dockerfile-based images cannot have additional layers
+            "_is_cloned": True,
         }
-        if platform:
+        if platform is not None:
             kwargs["platform"] = platform
         img = cls._new(**kwargs)
 
@@ -848,6 +942,29 @@ class Image:
 
         from ._utils import filehash_update
 
+        # Resolve dockerignore once — same logic as get_and_list_dockerignore().
+        # Last DockerIgnore layer wins; fall back to root_dir/.dockerignore from init config.
+        dockerignore_path = None
+        for layer in self._layers:
+            if isinstance(layer, DockerIgnore) and layer.path.strip():
+                dockerignore_path = Path(layer.path)
+
+        if dockerignore_path is None:
+            try:
+                from ._initialize import _get_init_config
+
+                init_config = _get_init_config()
+                if init_config and init_config.root_dir:
+                    dockerignore_path = Path(init_config.root_dir) / ".dockerignore"
+            except Exception:
+                pass
+
+        ignore = None
+        if dockerignore_path and dockerignore_path.exists() and dockerignore_path.is_file():
+            from ._code_bundle._ignore import DockerfileIgnore
+
+            ignore = DockerfileIgnore(dockerignore_path.parent)
+
         hasher = hashlib.md5()
         if self.base_image:
             hasher.update(self.base_image.encode("utf-8"))
@@ -856,7 +973,7 @@ class Image:
             filehash_update(self.dockerfile, hasher)
         if self._layers:
             for layer in self._layers:
-                layer.update_hash(hasher)
+                layer.update_hash(hasher, ignore=ignore)
         return hasher.hexdigest()
 
     @property
@@ -869,18 +986,14 @@ class Image:
         """
         Returns the URI of the image in the format <registry>/<name>:<tag>
         """
-        if self.registry and self.name:
-            tag = self._final_tag
+        if not self._is_cloned:
+            assert self.base_image is not None, "Base image must be set for non-cloned images"
+            return self.base_image
+        tag = self._final_tag
+        assert self.name is not None, "Name must be set for cloned images"
+        if self.registry:
             return f"{self.registry}/{self.name}:{tag}"
-        elif self._ref_name and len(self._layers) == 0:
-            assert self.base_image is not None, f"Base image is not set for image ref name {self._ref_name}"
-            return self.base_image
-        elif self.name:
-            return f"{self.name}:{self._final_tag}"
-        elif self.base_image:
-            return self.base_image
-
-        raise ValueError("Image is not fully defined. Please set registry, name and tag.")
+        return f"{self.name}:{tag}"
 
     def with_workdir(self, workdir: str) -> Image:
         """
@@ -1206,6 +1319,17 @@ class Image:
         with_dist = self.clone(addl_layer=PythonWheels(wheel_dir=DIST_FOLDER, package_name="flyte"))
         return with_dist
 
+    def with_local_rs_controller(self) -> Image:
+        """
+        Bake the locally-built flyte_controller_base wheel from rs_controller/dist into this image.
+
+        Required when running with `_F_USE_RUST_CONTROLLER=1` against an image that does not already
+        ship the Rust controller wheel.
+        """
+        return self.clone(
+            addl_layer=PythonWheels(wheel_dir=RS_CONTROLLER_DIST_FOLDER, package_name="flyte_controller_base")
+        )
+
     def with_local_v2_plugins(self, plugins: str | list[str] | None = None) -> Image:
         """
         Use this method to create a new image with the local v2 builder
@@ -1278,6 +1402,7 @@ def resolve_code_bundle_layer(image: Image, copy_style: str, root_dir: Path) -> 
             platform=image.platform,
             python_version=image.python_version,
             extendable=image.extendable,
+            _is_cloned=image._is_cloned,
             _ref_name=image._ref_name,
             _layers=non_bundle_layers,
             _image_registry_secret=image._image_registry_secret,
@@ -1303,6 +1428,7 @@ def resolve_code_bundle_layer(image: Image, copy_style: str, root_dir: Path) -> 
         platform=image.platform,
         python_version=image.python_version,
         extendable=image.extendable,
+        _is_cloned=image._is_cloned,
         _ref_name=image._ref_name,
         _layers=tuple(resolved_layers),
         _image_registry_secret=image._image_registry_secret,

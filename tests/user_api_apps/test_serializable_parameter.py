@@ -1,3 +1,5 @@
+import pytest
+
 from flyte.app._parameter import (
     AppEndpoint,
     Parameter,
@@ -22,7 +24,7 @@ def test_serializable_from_file_parameter():
     sp = SerializableParameter.from_parameter(p)
     assert sp.name == "model"
     assert sp.type == "file"
-    assert sp.download is False
+    assert sp.download is True
 
 
 def test_serializable_from_file_with_mount():
@@ -54,6 +56,44 @@ def test_serializable_from_app_endpoint():
     assert sp.env_var == "API_URL"
     assert "upstream" in sp.value
     assert sp.download is False
+
+
+def test_explicit_type_overrides_inferred_type():
+    p = Parameter(name="data", value="s3://bucket/data.csv", type="file")
+    sp = SerializableParameter.from_parameter(p)
+    assert sp.type == "file"
+    assert sp.value == "s3://bucket/data.csv"
+
+
+def test_explicit_type_with_mount_sets_download():
+    p = Parameter(name="data", value="s3://bucket/data.csv", type="file", mount="/tmp/data.csv")
+    sp = SerializableParameter.from_parameter(p)
+    assert sp.type == "file"
+    assert sp.download is True
+    assert sp.dest == "/tmp/data.csv"
+
+
+def test_explicit_directory_type_with_mount_sets_download():
+    p = Parameter(name="assets", value="s3://bucket/assets/", type="directory", mount="/tmp/assets/")
+    sp = SerializableParameter.from_parameter(p)
+    assert sp.type == "directory"
+    assert sp.download is True
+    assert sp.dest == "/tmp/assets/"
+
+
+def test_explicit_type_roundtrip():
+    p = Parameter(name="data", value="s3://bucket/data.csv", type="file", mount="/tmp/")
+    collection = SerializableParameterCollection.from_parameters([p])
+    restored = SerializableParameterCollection.from_transport(collection.to_transport)
+    assert restored.parameters[0].type == "file"
+    assert restored.parameters[0].download is True
+    assert restored.parameters[0].dest == "/tmp/"
+
+
+def test_serializable_from_none_value_raises():
+    p = Parameter(name="data", mount="/tmp/data")
+    with pytest.raises(ValueError, match="has no value"):
+        SerializableParameter.from_parameter(p)
 
 
 def test_collection_roundtrip():

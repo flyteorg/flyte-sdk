@@ -12,7 +12,10 @@ import rich_click as click
 from typing_extensions import get_args
 
 from .._code_bundle._utils import CopyFiles
+from .._sentry import capture_exception, count
 from .._task import TaskTemplate
+from ..errors import RuntimeSystemError
+from ..models import NativeInterface
 from ..remote import Run
 from ..syncify import syncify
 from . import _common as common
@@ -63,6 +66,37 @@ def _list_tasks(
 
     common.initialize_config(ctx, project, domain)
     return [task.name for task in flyte.remote.Task.listall(by_task_name=by_task_name, by_task_env=by_task_env)]
+
+
+def _resolve_default_val(interface: NativeInterface, name: str, default_marker: Any, python_type: Any) -> Any:
+    """
+    Resolve the click default for an input on a (possibly remote) task interface.
+
+    Local task interfaces (built via `NativeInterface.from_callable`) carry the real Python default
+    directly in ``default_marker``. Remote/deployed task interfaces are reconstructed by
+    `flyte.types.guess_interface`, which uses `NativeInterface.has_default` as a sentinel marker
+    while stashing the actual literal default in ``interface._remote_defaults``. In the remote case
+    we materialize the literal back into a Python value so click can render it in ``--help`` and use
+    it as the option default — instead of leaking the `_has_default` class itself, which click would
+    silently instantiate and string-format into a corrupted default value.
+    """
+    if default_marker is inspect.Parameter.empty:
+        return None
+    if default_marker is not NativeInterface.has_default:
+        return default_marker
+
+    remote_defaults = interface._remote_defaults or {}
+    literal = remote_defaults.get(name)
+    if literal is None:
+        return None
+    try:
+        from ..types import TypeEngine
+
+        return asyncio.run(TypeEngine.to_python_value(literal, python_type))
+    except Exception:
+        # Fall back to no default rather than poisoning the option; the runtime path
+        # will still fill the missing kwarg from `_remote_defaults`.
+        return None
 
 
 @dataclass
@@ -219,11 +253,37 @@ class RunArguments:
             )
         },
     )
+    env: List[str] = field(
+        default_factory=list,
+        metadata={
+            "click.option": click.Option(
+                ["--env", "-e"],
+                type=str,
+                multiple=True,
+                help="Environment variable to set on the run context. Format: KEY=VALUE. "
+                "Can be specified multiple times, e.g. `-e LOG_LEVEL=debug -e FOO=bar`.",
+            )
+        },
+    )
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> RunArguments:
         modified = {k: v for k, v in d.items() if k in {f.name for f in fields(cls)}}
         return cls(**modified)
+
+    def parsed_env_vars(self) -> Dict[str, str] | None:
+        """Parse ``--env KEY=VALUE`` entries into a dict (returns None if none provided)."""
+        if not self.env:
+            return None
+        parsed: Dict[str, str] = {}
+        for item in self.env:
+            if "=" not in item:
+                raise click.BadParameter(f"Invalid --env value {item!r}: expected KEY=VALUE.")
+            key, value = item.split("=", 1)
+            if not key:
+                raise click.BadParameter(f"Invalid --env value {item!r}: key must not be empty.")
+            parsed[key] = value
+        return parsed
 
     @classmethod
     def options(cls) -> List[click.Option]:
@@ -300,9 +360,13 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
                 log_format=config.log_format,
                 reset_root_logger=config.reset_root_logger,
                 debug=self.run_args.debug,
+                env_vars=self.run_args.parsed_env_vars(),
             )
             result = await execution_context.run.aio(self.obj, **ctx.params)
         except Exception as e:
+            if isinstance(e, RuntimeSystemError):
+                capture_exception(e)
+                count("flyte.run.error", error_kind="system", error_code=e.code)
             console.print(common.get_panel("Exception", f"[red]✕ Execution failed:[/red] {e}", config.output_format))
             exit(1)
 
@@ -316,7 +380,7 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
         if config.output_format in ("json", "table-simple"):
             content = f"Completed Local Run\nPath: {result.url}\nOutputs: {result.outputs()}"
         else:
-            content = f"[green]Completed Local Run[/green]\nPath: {result.url}\n➡️ Outputs: {result.outputs()}"
+            content = f"[green]Completed Local Run[/green]\nPath: {result.url}\n➡️  Outputs: {result.outputs()}"
         console.print(common.get_panel("Local Success", content, config.output_format))
 
     async def _render_remote_success(self, console, result, config):
@@ -359,6 +423,7 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
                 log_format=config.log_format,
                 reset_root_logger=config.reset_root_logger,
                 debug=self.run_args.debug,
+                env_vars=self.run_args.parsed_env_vars(),
                 _tracker=tracker,
             )
             return await execution_context.run.aio(self.obj, **ctx.params)
@@ -396,10 +461,9 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
         params: List[click.Parameter] = []
         for entry in interface.inputs.variables:
             name, var = entry.key, entry.value
-            default_val = None
-            if inputs_interface[name][1] is not inspect._empty:
-                default_val = inputs_interface[name][1]
-            params.append(to_click_option(name, var, inputs_interface[name][0], default_val))
+            python_type, default_marker = inputs_interface[name]
+            default_val = _resolve_default_val(task.native_interface, name, default_marker, python_type)
+            params.append(to_click_option(name, var, python_type, default_val))
 
         self.params = params
         return super().get_params(ctx)
@@ -518,6 +582,7 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
                 project=self.run_args.run_project,
                 domain=self.run_args.run_domain,
                 debug=self.run_args.debug,
+                env_vars=self.run_args.parsed_env_vars(),
             )
             result = await execution_context.run.aio(task, **ctx.params)
         except Exception as e:
@@ -534,7 +599,7 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
         if config.output_format in ("json", "table-simple"):
             content = f"Completed Local Run\nPath: {result.url}\nOutputs: {result.outputs()}"
         else:
-            content = f"[green]Completed Local Run[/green]\nPath: {result.url}\n➡️ Outputs: {result.outputs()}"
+            content = f"[green]Completed Local Run[/green]\nPath: {result.url}\n➡️  Outputs: {result.outputs()}"
         console.print(common.get_panel("Local Success", content, config.output_format))
 
     async def _render_remote_success(self, console, result, config):
@@ -600,10 +665,9 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
         params: List[click.Parameter] = []
         for entry in interface.inputs.variables:
             name, var = entry.key, entry.value
-            default_val = None
-            if inputs_interface[name][1] is not inspect._empty:
-                default_val = inputs_interface[name][1]
-            params.append(to_click_option(name, var, inputs_interface[name][0], default_val))
+            python_type, default_marker = inputs_interface[name]
+            default_val = _resolve_default_val(task_details.interface, name, default_marker, python_type)
+            params.append(to_click_option(name, var, python_type, default_val))
 
         self.params = params
         return super().get_params(ctx)

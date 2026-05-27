@@ -9,7 +9,7 @@ import pytest
 import flyte
 import flyte.sandbox
 from flyte.extras._container import ContainerTask
-from flyte.io import File
+from flyte.io import Dir, File
 from flyte.models import NativeInterface
 from flyte.sandbox._code_sandbox import ImageConfig, _Sandbox, create
 
@@ -112,9 +112,9 @@ class TestCreateValidation:
 
 
 class TestDefaultImageName:
-    def test_includes_name(self):
+    def test_uses_shared_sandbox_prefix(self):
         sb = create(name="my-task", code="pass")
-        assert sb._default_image_name().startswith("my-task-")
+        assert sb._default_image_name().startswith("sandbox-")
 
     def test_falls_back_to_sandbox(self):
         sb = create(code="pass")
@@ -209,6 +209,10 @@ class TestMakeContainerTaskCodeMode:
         # File inputs should appear in arguments list as /var/inputs/<name>
         assert any("/var/inputs/data" in arg for arg in (task._args or []))
 
+    def test_dir_input_uses_path_argument(self):
+        task = self._make(inputs={"data_dir": Dir})
+        assert any("/var/inputs/data_dir" in arg for arg in (task._args or []))
+
     def test_scalar_input_uses_template_syntax(self):
         task = self._make(inputs={"count": int})
         bash_cmd = task._cmd[-1]
@@ -267,6 +271,11 @@ class TestGenerateAutoScript:
         assert "_parser.add_argument('--data', type=str)" in script
         assert "data = _args.data" in script
 
+    def test_dir_input_as_str(self):
+        script = self._script("pass", inputs={"data_dir": Dir})
+        assert "_parser.add_argument('--data_dir', type=str)" in script
+        assert "data_dir = _args.data_dir" in script
+
     def test_int_output_epilogue(self):
         script = self._script("result = 42", outputs={"result": int})
         assert "(_out_ / 'result').write_text(str(result))" in script
@@ -281,6 +290,10 @@ class TestGenerateAutoScript:
     def test_file_output_not_in_epilogue(self):
         script = self._script("pass", outputs={"out_file": File})
         assert "_out_" not in script  # no epilogue for File outputs
+
+    def test_dir_output_not_in_epilogue(self):
+        script = self._script("pass", outputs={"out_dir": Dir})
+        assert "_out_" not in script  # no epilogue for Dir outputs
 
     def test_user_code_is_verbatim(self):
         user_code = "result = x ** 2 + y ** 2"
@@ -341,6 +354,11 @@ class TestAutoIO:
         task = self._make_auto(inputs={"data": File})
         bash_cmd = task._cmd[-1]
         assert "--data" in bash_cmd
+
+    def test_auto_mode_injects_path_for_dir(self):
+        task = self._make_auto(inputs={"data_dir": Dir})
+        bash_cmd = task._cmd[-1]
+        assert "--data_dir" in bash_cmd
 
 
 # ---------------------------------------------------------------------------
@@ -416,7 +434,7 @@ class TestSupportedTypes:
         datetime.datetime,
         datetime.timedelta,
     ]
-    SUPPORTED_IO_TYPES: ClassVar[list[type]] = [File]
+    SUPPORTED_IO_TYPES: ClassVar[list[type]] = [File, Dir]
 
     @pytest.mark.parametrize("t", SUPPORTED_SCALAR_TYPES)
     def test_scalar_input_type_accepted(self, t):

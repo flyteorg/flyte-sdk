@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import os
 from pathlib import Path
 
 import flyte
@@ -17,8 +18,16 @@ async def build_flyte_image(registry: str | None = None, name: str | None = None
         name:     e.g. "my-flyte-image".
         builder:  e.g. "local" or "remote".
     """
-    default_image = Image.from_debian_base(registry=registry, name=name)
-    object.__setattr__(default_image, "_is_flyte_default", False)
+    from flyte._image import _detect_python_version
+    from flyte._version import __version__
+
+    default_image = Image.from_debian_base(registry=registry, name=name, install_flyte=False).with_local_v2()
+    if os.getenv("_F_USE_RUST_CONTROLLER", "").lower() in ("1", "true", "yes"):
+        default_image = default_image.with_local_rs_controller()
+    suffix = __version__ if __version__.startswith("v") else f"v{__version__}".replace("+", "-")
+    python_version = _detect_python_version()
+    tag = f"py{python_version[0]}.{python_version[1]}-{suffix}"
+    object.__setattr__(default_image, "_tag", tag)
     await ImageBuildEngine.build(default_image, builder=builder)
 
 
@@ -66,9 +75,9 @@ async def build_flyte_connector_image(
         )
     else:
         default_image = Image.from_debian_base(registry=registry, name=name).with_pip_packages(
-            "flyteplugins-bigquery", "flyteplugins-snowflake", "flyteplugins-databricks", pre=True
+            "flyteplugins-bigquery", "flyteplugins-snowflake", "flyteplugins-databricks"
         )
-    suffix = __version__.replace("+", "-")
+    suffix = __version__ if __version__.startswith("v") else f"v{__version__}".replace("+", "-")
     python_version = _detect_python_version()
     tag = f"py{python_version[0]}.{python_version[1]}-{suffix}"
     object.__setattr__(default_image, "_tag", tag)

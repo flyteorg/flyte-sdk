@@ -6,8 +6,8 @@ from typing import Any, Dict, Literal, Optional, Union
 
 import flyte
 from cloudpickle import cloudpickle
+from flyte import system_logger as logger
 from flyte._context import internal_ctx
-from flyte._logging import logger
 from flyte._task import P, R
 from flyte.extend import AsyncFunctionTaskTemplate, TaskPluginRegistry
 from flyte.models import SerializationContext, TaskContext

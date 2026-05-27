@@ -18,6 +18,7 @@ from flyte._deploy import (
     _get_documentation_entity,
     _recursive_discover,
     _update_interface_inputs_and_outputs_docstring,
+    build_images,
     plan_deploy,
 )
 from flyte._docstring import Docstring
@@ -278,6 +279,43 @@ def test_recursive_discover_dual_import_raises(dual_import_envs):
         _recursive_discover({"my_env": env1}, env2)
 
 
+def test_check_duplicate_env_dual_import_shows_distinct_sys_modules_keys():
+    """When both module objects share the same ``__name__`` (e.g. both were created via
+    ``importlib.util.spec_from_file_location`` with the file stem), the error message must still
+    show the *sys.modules keys*, which are the distinguishing import paths the user can act on.
+
+    Reproduces FLYTE-SDK-2S: the error message showed
+    ``imported twice under different module names ('multi_status' and 'multi_status')`` —
+    identical names — because the code was reading ``module.__name__`` instead of the
+    sys.modules dict key.
+    """
+    env1 = flyte.TaskEnvironment(name="multi_status_demo", image="python:3.10")
+    env2 = flyte.TaskEnvironment(name="multi_status_demo", image="python:3.10")
+
+    # Both module objects intentionally have ``__name__ == "multi_status"`` (the file stem).
+    # Their sys.modules keys are different — that's what the error should show.
+    mod1 = _make_module("multi_status", "/project/examples/basics/multi_status.py", env1)
+    mod2 = _make_module("multi_status", "/project/examples/basics/multi_status.py", env2)
+
+    modules = {
+        "multi_status": mod1,
+        "examples.basics.multi_status": mod2,
+    }
+
+    with (
+        patch.dict(sys.modules, modules),
+        patch("flyte._deploy.os.path.samefile", return_value=True),
+        pytest.raises(ValueError) as excinfo,
+    ):
+        _check_duplicate_env(env1, env2)
+
+    msg = str(excinfo.value)
+    assert "'multi_status'" in msg
+    assert "'examples.basics.multi_status'" in msg
+    # Guardrail against the regression: the two displayed import names must differ.
+    assert "('multi_status' and 'multi_status')" not in msg
+
+
 # ---------------------------------------------------------------------------
 # _build_image_bg and _build_images tests
 # ---------------------------------------------------------------------------
@@ -325,6 +363,7 @@ async def test_build_images_stores_build_run_urls_in_cache():
     """build_run_ids in ImageCache is populated when remote builder provides a run identifier."""
     from flyte._internal.imagebuild.image_builder import RunIdentifierData
 
+    flyte.init()
     image = flyte.Image.from_base("python:3.10")
     env = flyte.TaskEnvironment(name="my-env", image=image)
     plan = DeploymentPlan(envs={"my-env": env})
@@ -351,6 +390,7 @@ async def test_build_images_stores_build_run_urls_in_cache():
 @pytest.mark.asyncio
 async def test_build_images_no_build_run_urls_for_local_build():
     """build_run_ids in ImageCache is empty when local builder is used."""
+    flyte.init()
     image = flyte.Image.from_base("python:3.10")
     env = flyte.TaskEnvironment(name="my-env", image=image)
     plan = DeploymentPlan(envs={"my-env": env})
@@ -402,3 +442,87 @@ def test_resolve_covers_depends_on_envs():
     assert not any(isinstance(layer, CodeBundleLayer) for layer in env_dep.image._layers), (
         "depends_on env still has CodeBundleLayer after resolution — regression"
     )
+
+
+# ---------------------------------------------------------------------------
+# build_images resolves CodeBundleLayer (regression for flyte build CLI)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_build_images_resolves_code_bundle_layer_default_copy_style():
+    """`flyte build` would previously raise 'root_dir not set for CodeBundleLayer'
+    on any image that used `.with_code_bundle()`, because build_images did not
+    run resolve_code_bundle_layer the way apply() does. With the default
+    copy_style='loaded_modules', the bundle layer must be stripped before build.
+    """
+    flyte.init()
+
+    image = flyte.Image.from_base("python:3.10").clone(registry="r", name="img", extendable=True).with_code_bundle()
+    env = flyte.TaskEnvironment(name="e", image=image)
+
+    with patch("flyte._build.build") as mock_build:
+        mock_build.aio = AsyncMock(return_value=ImageBuild(uri="registry/img:abc", remote_run=None))
+        await build_images.aio(env)
+
+    assert not any(isinstance(layer, CodeBundleLayer) for layer in env.image._layers), (
+        "CodeBundleLayer not stripped at copy_style='loaded_modules'"
+    )
+
+
+@pytest.mark.asyncio
+async def test_build_images_resolves_code_bundle_layer_copy_style_none():
+    """At copy_style='none', CodeBundleLayer is resolved in place (not stripped)
+    so the source gets baked into the image via a COPY instruction.
+    """
+    flyte.init()
+
+    image = flyte.Image.from_base("python:3.10").clone(registry="r", name="img", extendable=True).with_code_bundle()
+    env = flyte.TaskEnvironment(name="e", image=image)
+
+    with patch("flyte._build.build") as mock_build:
+        mock_build.aio = AsyncMock(return_value=ImageBuild(uri="registry/img:abc", remote_run=None))
+        await build_images.aio(env, copy_style="none")
+
+    # Layer should still be present (resolved, with root_dir populated), not stripped.
+    bundle_layers = [layer for layer in env.image._layers if isinstance(layer, CodeBundleLayer)]
+    assert len(bundle_layers) == 1, "CodeBundleLayer should remain (resolved) at copy_style='none'"
+    assert bundle_layers[0].root_dir is not None, "resolved CodeBundleLayer must have root_dir set"
+
+
+@pytest.mark.asyncio
+async def test_apply_unpicklable_env_raises_click_exception():
+    """If the user's envs cannot be serialized, apply() should surface a friendly ClickException."""
+    import pathlib
+
+    import click
+
+    from flyte._deploy import apply
+
+    class _Unserializable:
+        def __reduce__(self):
+            raise TypeError("Cannot serialize objects that map to tty handles")
+
+    plan = DeploymentPlan(envs={"e": _Unserializable()}, version=None)  # type: ignore[dict-item]
+
+    fake_bundle = Mock()
+    fake_bundle.computed_version = "test-bundle-version"
+
+    fake_cfg = Mock()
+    fake_cfg.root_dir = pathlib.Path("/tmp")
+    fake_cfg.images = {}
+    fake_cfg.project = "p"
+    fake_cfg.domain = "d"
+    fake_cfg.org = "o"
+
+    with (
+        patch("flyte._initialize.is_initialized", return_value=True),
+        patch("flyte._deploy.get_init_config", return_value=fake_cfg),
+        patch("flyte._deploy._build_images", new=AsyncMock(return_value={})),
+        patch("flyte._code_bundle._includes.collect_env_include_files", return_value=[]),
+        patch("flyte._code_bundle.build_code_bundle", new=AsyncMock(return_value=fake_bundle)),
+    ):
+        with pytest.raises(click.ClickException) as excinfo:
+            await apply(plan, copy_style="loaded_modules", dryrun=True)
+    assert "unpicklable" in excinfo.value.message
+    assert "version=" in excinfo.value.message

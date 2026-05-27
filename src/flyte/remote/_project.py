@@ -33,7 +33,7 @@ class Project(ToJSONMixin):
         """
         ensure_client()
         service = get_client().project_domain_service  # type: ignore
-        resp = await service.GetProject(
+        resp = await service.get_project(
             project_service_pb2.GetProjectRequest(
                 id=name,
                 # org=org,
@@ -67,7 +67,7 @@ class Project(ToJSONMixin):
         if labels:
             project_pb.labels.CopyFrom(run_pb2.Labels(values=labels))
         service = get_client().project_domain_service  # type: ignore
-        await service.CreateProject(project_service_pb2.CreateProjectRequest(project=project_pb))
+        await service.create_project(project_service_pb2.CreateProjectRequest(project=project_pb))
         return cls(project_pb)
 
     @syncify
@@ -93,7 +93,7 @@ class Project(ToJSONMixin):
         service = get_client().project_domain_service  # type: ignore
 
         # Fetch current project to preserve fields not being updated
-        resp = await service.GetProject(project_service_pb2.GetProjectRequest(id=id))
+        resp = await service.get_project(project_service_pb2.GetProjectRequest(id=id))
         project_pb = resp.project
         # Clear domains — the backend rejects update requests that include them
         del project_pb.domains[:]
@@ -111,7 +111,7 @@ class Project(ToJSONMixin):
             }
             project_pb.state = state_map[state]
 
-        await service.UpdateProject(project_service_pb2.UpdateProjectRequest(project=project_pb))
+        await service.update_project(project_service_pb2.UpdateProjectRequest(project=project_pb))
         return cls(project_pb)
 
     def archive(self) -> Project:
@@ -159,7 +159,7 @@ class Project(ToJSONMixin):
 
         # org = get_common_config().org
         while True:
-            resp = await get_client().project_domain_service.ListProjects(  # type: ignore
+            resp = await get_client().project_domain_service.list_projects(  # type: ignore
                 project_service_pb2.ListProjectsRequest(
                     limit=100,
                     token=token,

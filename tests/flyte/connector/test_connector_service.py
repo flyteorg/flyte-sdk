@@ -192,10 +192,13 @@ async def test_async_connector_service():
         )
         assert res.results[0].metric == "EXECUTION_METRIC_LIMIT_MEMORY_BYTES"
 
-        res = await service.GetTaskLogs(
-            GetTaskLogsRequest(task_category=task_category, resource_meta=metadata_bytes), ctx
-        )
-        assert res.body.results == ["foo", "bar"]
+        log_responses = [
+            msg
+            async for msg in service.GetTaskLogs(
+                GetTaskLogsRequest(task_category=task_category, resource_meta=metadata_bytes), ctx
+            )
+        ]
+        assert log_responses[0].body.results == ["foo", "bar"]
 
     connector_metadata = ConnectorRegistry._get_connector_metadata(connector.name)
     assert connector_metadata.supported_task_categories[0].version == connector.task_type_version

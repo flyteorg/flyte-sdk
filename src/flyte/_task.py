@@ -111,6 +111,7 @@ class TaskTemplate(Generic[P, R, F]):
     report: bool = False
     queue: Optional[str] = None
     debuggable: bool = False
+    entrypoint: bool = False
 
     parent_env: Optional[weakref.ReferenceType[TaskEnvironment]] = None
     parent_env_name: Optional[str] = None
@@ -370,6 +371,7 @@ class TaskTemplate(Generic[P, R, F]):
         pod_template: Optional[Union[str, PodTemplate]] = None,
         queue: Optional[str] = None,
         interruptible: Optional[bool] = None,
+        entrypoint: Optional[bool] = None,
         links: Tuple[Link, ...] = (),
         **kwargs: Any,
     ) -> TaskTemplate:
@@ -390,6 +392,7 @@ class TaskTemplate(Generic[P, R, F]):
         :param pod_template: Optional override for the pod template to use for the task.
         :param queue: Optional override for the queue to use for the task.
         :param interruptible: Optional override for the interruptible policy for the task.
+        :param entrypoint: Optional override for the entrypoint flag for the task.
         :param links: Optional override for the Links associated with the task.
         :param kwargs: Additional keyword arguments for further overrides. Some fields like name, image, docs,
          and interface cannot be overridden.
@@ -430,6 +433,7 @@ class TaskTemplate(Generic[P, R, F]):
         secrets = secrets or self.secrets
 
         interruptible = interruptible if interruptible is not None else self.interruptible
+        entrypoint = entrypoint if entrypoint is not None else self.entrypoint
 
         for k, v in kwargs.items():
             if k == "name":
@@ -454,6 +458,7 @@ class TaskTemplate(Generic[P, R, F]):
             max_inline_io_bytes=max_inline_io_bytes,
             pod_template=pod_template or self.pod_template,
             interruptible=interruptible,
+            entrypoint=entrypoint,
             queue=queue or self.queue,
             links=links or self.links,
             **kwargs,
@@ -522,6 +527,15 @@ class AsyncFunctionTaskTemplate(TaskTemplate[P, R, F]):
         return v
 
     def container_args(self, serialize_context: SerializationContext) -> List[str]:
+        # If we are serializing a sub-action from inside a running task, the run_start_time is already
+        # known and constant for the run; bake it in as a literal so the backend doesn't need to
+        # substitute the template. Otherwise emit the template for the backend to fill in.
+        parent_tctx = internal_ctx().data.task_context
+        if parent_tctx is not None and parent_tctx.run_start_time is not None:
+            run_start_time_arg = parent_tctx.run_start_time.isoformat()
+        else:
+            run_start_time_arg = "{{.runStartTime}}"
+
         args = [
             "a0",
             "--inputs",
@@ -540,6 +554,8 @@ class AsyncFunctionTaskTemplate(TaskTemplate[P, R, F]):
             "{{.runName}}",
             "--name",
             "{{.actionName}}",
+            "--run-start-time",
+            run_start_time_arg,
         ]
         # Add on all the known images
         if serialize_context.image_cache and serialize_context.image_cache.serialized_form:

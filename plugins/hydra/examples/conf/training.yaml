@@ -1,0 +1,14 @@
+defaults:
+  - optimizer: adam
+  - model: resnet
+  # task_env is optional. Add it with +task_env=a100 when needed.
+  - _self_
+
+data:
+  path: s3://my-bucket/imagenet
+  dataset: imagenet
+
+training:
+  epochs: 30
+  batch_size: 64
+  warmup_steps: 0

@@ -12,7 +12,7 @@ import flyte
 import litellm
 import pandas as pd
 from flyte.errors import InvalidPackageError
-from flyte.io import File
+from flyte.io import Dir, File
 from flyte.sandbox import ImageConfig
 from flyte.syncify import syncify
 
@@ -73,6 +73,7 @@ class AutoCoderAgent:
         cache: CacheRequest for sandboxes: "auto", "override", or "disable". Defaults to "auto".
         backend: Execution backend: "litellm" (default) or "claude".
         agent_max_turns: Maximum agent turns when backend="claude". Defaults to 50.
+        block_network: Block all outbound network access in sandboxes. Defaults to False.
 
     Example::
 
@@ -119,6 +120,7 @@ class AutoCoderAgent:
     cache: str = "auto"
     backend: Literal["litellm", "claude"] = "litellm"
     agent_max_turns: int = 50
+    block_network: bool = False
 
     @syncify
     async def generate(
@@ -148,9 +150,9 @@ class AutoCoderAgent:
             inputs: Optional dict declaring non-sample CLI argument types
                 (e.g., `{"threshold": float, "mode": str}`).
                 Sample entries are automatically added as File inputs — don't redeclare them here.
-                Supported types: str, int, float, bool, File.
+                Supported types: str, int, float, bool, File, Dir.
             outputs: Optional dict defining output types (e.g., `{"result": str, "report": File}`).
-                Supported types: str, int, float, bool, datetime, timedelta, File.
+                Supported types: str, int, float, bool, datetime, timedelta, File, Dir.
 
         Returns:
             CodeGenEvalResult with solution and execution details.
@@ -159,7 +161,7 @@ class AutoCoderAgent:
 
         # Input validation
         if inputs:
-            supported_input_types = (str, int, float, bool, File)
+            supported_input_types = (str, int, float, bool, File, Dir)
             for input_key, input_type in inputs.items():
                 if input_type not in supported_input_types:
                     supported_names = [t.__name__ for t in supported_input_types]
@@ -236,6 +238,7 @@ class AutoCoderAgent:
                 datetime.datetime,
                 datetime.timedelta,
                 File,
+                Dir,
             )
             for output_key, output_type in outputs.items():
                 if output_type not in supported_types:
@@ -271,6 +274,7 @@ class AutoCoderAgent:
                 env_vars=self.env_vars,
                 secrets=self.secrets,
                 cache=self.cache,
+                block_network=self.block_network,
                 max_turns=self.agent_max_turns,
             )
 
@@ -386,6 +390,7 @@ class _CodeGenSession:
         self.env_vars = agent.env_vars
         self.secrets = agent.secrets
         self.cache = agent.cache
+        self.block_network = agent.block_network
         self.image_config = agent.image_config
         self.litellm_params = agent.litellm_params
 
@@ -606,6 +611,7 @@ class _CodeGenSession:
             env_vars=self.env_vars,
             secrets=self.secrets,
             cache=self.cache,
+            block_network=self.block_network,
             _attempt=attempt,
         )
 

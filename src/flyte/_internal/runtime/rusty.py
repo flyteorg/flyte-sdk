@@ -1,6 +1,7 @@
 import asyncio
 import time
-from typing import List, Tuple
+from datetime import datetime
+from typing import List, Optional, Tuple
 
 from flyte._context import contextual_run
 from flyte._internal.controllers import Controller
@@ -11,7 +12,7 @@ from flyte._internal.runtime.taskrunner import extract_download_run_upload
 from flyte._logging import logger
 from flyte._task import TaskTemplate
 from flyte._utils import adjust_sys_path
-from flyte.models import ActionID, Checkpoints, CodeBundle, PathRewrite, RawDataPath
+from flyte.models import ActionID, CheckpointPaths, CodeBundle, PathRewrite, RawDataPath
 
 
 async def download_tgz(destination: str, version: str, tgz: str) -> CodeBundle:
@@ -81,7 +82,7 @@ async def create_controller(
     from flyte._initialize import init_in_cluster
 
     loop = asyncio.get_event_loop()
-    loop.set_exception_handler(flyte.errors.silence_grpc_polling_error)
+    loop.set_exception_handler(flyte.errors.silence_polling_error)
 
     # TODO Currently remote tasks are not supported in Rusty.
     controller_kwargs = await init_in_cluster.aio(api_key=api_key, endpoint=endpoint, insecure=insecure)
@@ -106,6 +107,8 @@ async def run_task(
     code_bundle: CodeBundle | None = None,
     input_path: str | None = None,
     path_rewrite_cfg: str | None = None,
+    # Defaulted so existing Rust-side callers keep working; TaskContext fills in now(UTC) when absent.
+    run_start_time: Optional[datetime] = None,
 ):
     """
     Runs the task with the provided parameters.
@@ -159,10 +162,11 @@ async def run_task(
             raw_data_path=RawDataPath(path=raw_data_path, path_rewrite=path_rewrite),
             output_path=output_path,
             run_base_dir=run_base_dir,
-            checkpoints=Checkpoints(prev_checkpoint_path=prev_checkpoint, checkpoint_path=checkpoint_path),
+            checkpoint_paths=CheckpointPaths(prev_checkpoint_path=prev_checkpoint, checkpoint_path=checkpoint_path),
             code_bundle=code_bundle,
             input_path=input_path,
             image_cache=ImageCache.from_transport(image_cache) if image_cache else None,
+            run_start_time=run_start_time,
         )
     except asyncio.CancelledError as e:
         logger.error(f"[rusty] Task cancellation received: {e!s}")

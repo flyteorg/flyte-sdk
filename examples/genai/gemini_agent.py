@@ -1,7 +1,7 @@
 # /// script
 # requires-python = "==3.13"
 # dependencies = [
-#     "flyte==2.0.0b0",
+#     "flyte",
 #     "flyteplugins-gemini",
 # ]
 # ///
@@ -24,7 +24,7 @@ agent_env = flyte.TaskEnvironment(
     "gemini-agent",
     resources=flyte.Resources(cpu=1),
     secrets=[flyte.Secret(key="google_api_key", as_env_var="GOOGLE_API_KEY")],
-    image=flyte.Image.from_uv_script(__file__, name="gemini-agent", pre=True),
+    image=flyte.Image.from_uv_script(__file__, name="gemini-agent"),
 )
 
 

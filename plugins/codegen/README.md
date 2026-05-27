@@ -164,6 +164,7 @@ result = await agent.generate.aio(prompt="...")
 | `cache`               | `str`             | `"auto"`       | CacheRequest for sandboxes: `"auto"`, `"override"`, or `"disable"` |
 | `backend`             | `str`             | `"litellm"`    | Execution backend: `"litellm"` or `"claude"`               |
 | `agent_max_turns`     | `int`             | `50`           | Max turns when `backend="claude"`                          |
+| `block_network`       | `bool`            | `False`        | Block all outbound network access in sandboxes. Set to `True` to block network access. |
 
 **`generate()` parameters (per-call):**
 
@@ -173,8 +174,8 @@ result = await agent.generate.aio(prompt="...")
 | `schema`      | `str`                             | `None`   | Free-form context about data formats, structures, or schemas. Included verbatim in the LLM prompt.             |
 | `constraints` | `list[str]`                       | `None`   | Natural-language constraints (e.g., `"quantity must be positive"`)                                             |
 | `samples`     | `dict[str, File \| pd.DataFrame]` | `None`   | Sample data. Sampled for LLM context, converted to File inputs for the sandbox. Used as defaults at runtime.   |
-| `inputs`      | `dict[str, type]`                 | `None`   | Non-sample CLI argument types (e.g., `{"threshold": float}`). Sample entries are auto-added as File inputs.    |
-| `outputs`     | `dict[str, type]`                 | `None`   | Output types. Supported: `str, int, float, bool, datetime, timedelta, File`.                                   |
+| `inputs`      | `dict[str, type]`                 | `None`   | Non-sample CLI argument types (e.g., `{"threshold": float}`). Sample entries are auto-added as File inputs. Supported: `str, int, float, bool, File, Dir`. |
+| `outputs`     | `dict[str, type]`                 | `None`   | Output types. Supported: `str, int, float, bool, datetime, timedelta, File, Dir`.                             |
 
 ### `CodeGenEvalResult`
 

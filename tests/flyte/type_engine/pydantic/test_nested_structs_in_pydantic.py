@@ -1,4 +1,3 @@
-import dataclasses
 import typing
 from enum import Enum
 
@@ -92,7 +91,7 @@ async def test_list_of_list_of_int_roundtrip():
     assert lv
 
     guessed = TypeEngine.guess_python_type(lit)
-    assert dataclasses.is_dataclass(guessed)
+    assert issubclass(guessed, BaseModel)
     v = guessed(matrix=[[1, 2], [3, 4]])
     assert v.matrix == [[1, 2], [3, 4]]
 
@@ -109,7 +108,7 @@ async def test_list_of_list_of_models_roundtrip():
     assert lv
 
     guessed = TypeEngine.guess_python_type(lit)
-    assert dataclasses.is_dataclass(guessed)
+    assert issubclass(guessed, BaseModel)
 
     pv = await TypeEngine.to_python_value(lv, ListOfListOfModels)
     assert pv == input_val
@@ -143,7 +142,7 @@ async def test_list_of_dict_roundtrip():
     assert lv
 
     guessed = TypeEngine.guess_python_type(lit)
-    assert dataclasses.is_dataclass(guessed)
+    assert issubclass(guessed, BaseModel)
     v = guessed(records=[{"a": 1}, {"b": 2}])
     assert v.records == [{"a": 1}, {"b": 2}]
 
@@ -160,7 +159,7 @@ async def test_list_of_dict_of_models_roundtrip():
     assert lv
 
     guessed = TypeEngine.guess_python_type(lit)
-    assert dataclasses.is_dataclass(guessed)
+    assert issubclass(guessed, BaseModel)
 
     pv = await TypeEngine.to_python_value(lv, ListOfDictOfModels)
     assert pv == input_val
@@ -175,7 +174,7 @@ async def test_dict_of_dict_of_models_roundtrip():
     assert lv
 
     guessed = TypeEngine.guess_python_type(lit)
-    assert dataclasses.is_dataclass(guessed)
+    assert issubclass(guessed, BaseModel)
 
     pv = await TypeEngine.to_python_value(lv, DictOfDictOfModels)
     assert pv == input_val
@@ -212,7 +211,7 @@ async def test_list_of_optional_model_roundtrip():
     """List[Optional[Inner]] should produce a usable guessed type."""
     lit = TypeEngine.to_literal_type(ListOfOptionalModels)
     guessed = TypeEngine.guess_python_type(lit)
-    assert dataclasses.is_dataclass(guessed)
+    assert issubclass(guessed, BaseModel)
 
 
 # -- null type --
@@ -242,7 +241,7 @@ async def test_list_of_enum_models_roundtrip():
     assert lv
 
     guessed = TypeEngine.guess_python_type(lit)
-    assert dataclasses.is_dataclass(guessed)
+    assert issubclass(guessed, BaseModel)
 
     pv = await TypeEngine.to_python_value(lv, ListOfEnumModels)
     assert pv == input_val
@@ -261,7 +260,7 @@ async def test_dict_of_enum_models_roundtrip():
     assert lv
 
     guessed = TypeEngine.guess_python_type(lit)
-    assert dataclasses.is_dataclass(guessed)
+    assert issubclass(guessed, BaseModel)
 
     pv = await TypeEngine.to_python_value(lv, DictOfEnumModels)
     assert pv == input_val
@@ -285,7 +284,7 @@ async def test_complex_model_roundtrip():
     assert lv
 
     guessed = TypeEngine.guess_python_type(lit)
-    assert dataclasses.is_dataclass(guessed)
+    assert issubclass(guessed, BaseModel)
 
     pv = await TypeEngine.to_python_value(lv, ComplexModel)
     assert pv == input_val

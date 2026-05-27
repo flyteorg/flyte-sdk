@@ -8,7 +8,7 @@
 #     "pydantic",
 #     "pandas",
 #     "pyarrow",
-#     "flyte>=2.0.0b42",
+#     "flyte",
 # ]
 # ///
 """
@@ -83,7 +83,7 @@ app = FastAPI(
 )
 
 # Create Flyte FastAPI App Environment
-image = flyte.Image.from_uv_script(__file__, name="recsys-serving", pre=True)
+image = flyte.Image.from_uv_script(__file__, name="recsys-serving")
 
 env = FastAPIAppEnvironment(
     name="recsys-fastapi-app",

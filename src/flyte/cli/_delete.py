@@ -3,6 +3,7 @@ import subprocess
 import rich_click as click
 
 import flyte.cli._common as common
+from flyte.cli._option import MutuallyExclusiveOption
 
 
 @click.group(name="delete")
@@ -14,17 +15,39 @@ def delete():
 
 @delete.command(cls=common.CommandBase)
 @click.argument("name", type=str, required=True)
+@click.option(
+    "--cluster-pool",
+    type=str,
+    default=None,
+    help="Scope the secret to a cluster pool. Mutually exclusive with --project and --domain.",
+    cls=MutuallyExclusiveOption,
+    mutually_exclusive=["project", "domain"],
+)
 @click.pass_obj
-def secret(cfg: common.CLIConfig, name: str, project: str | None = None, domain: str | None = None):
+def secret(
+    cfg: common.CLIConfig,
+    name: str,
+    cluster_pool: str | None = None,
+    project: str | None = None,
+    domain: str | None = None,
+):
     """
     Delete a secret. The name of the secret is required.
     """
     from flyte.remote import Secret
 
-    cfg.init(project, domain)
+    if project is None:
+        project = ""
+    if domain is None:
+        domain = ""
+
+    if cluster_pool and (project != "" or domain != ""):
+        raise click.ClickException("Project and domain must not be set when --cluster-pool is specified.")
+
+    cfg.init(project=project, domain=domain)
     console = common.get_console()
     with console.status(f"Deleting secret {name}..."):
-        Secret.delete(name=name)
+        Secret.delete(name=name, cluster_pool=cluster_pool)
     console.print(f"Successfully deleted secret {name}.")
 
 
@@ -65,13 +88,26 @@ def app(cfg: common.CLIConfig, name: str, project: str | None = None, domain: st
 
 
 @delete.command()
-def demo():
+@click.option(
+    "--volume",
+    is_flag=True,
+    default=False,
+    help="Also delete the Docker volume used for persistent storage.",
+)
+def devbox(volume: bool):
     """
-    Stop and remove the local Flyte demo cluster container.
+    Stop and remove the local Flyte devbox cluster container.
     """
     console = common.get_console()
-    try:
-        subprocess.run(["docker", "stop", "flyte-demo"], check=True)
-        console.print("[green]Demo cluster stopped.[/green]")
-    except subprocess.CalledProcessError:
-        raise click.ClickException("Failed to stop demo cluster. Is the container running?")
+    result = subprocess.run(["docker", "rm", "-f", "flyte-devbox"], capture_output=True, check=False)
+    if result.returncode == 0:
+        console.print("[green]Devbox cluster stopped.[/green]")
+    else:
+        console.print("[yellow]Devbox cluster is not running.[/yellow]")
+
+    if volume:
+        result = subprocess.run(["docker", "volume", "rm", "flyte-devbox"], capture_output=True, check=False)
+        if result.returncode == 0:
+            console.print("[green]Docker volume 'flyte-devbox' deleted.[/green]")
+        else:
+            console.print("[yellow]Docker volume 'flyte-devbox' does not exist.[/yellow]")

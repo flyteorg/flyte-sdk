@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import threading
-import time
 
 from flyte.cli._tui._tracker import ActionNode, ActionStatus, ActionTracker, _safe_json
 
@@ -110,12 +109,13 @@ class TestActionNode:
 class TestTrackerRecordStart:
     def test_basic_root(self):
         t = ActionTracker()
-        t.record_start(action_id="a1", task_name="task1")
+        t.record_start(action_id="a1", task_name="task1", start_time=100)
         node = t.get_action("a1")
         assert node is not None
         assert node.task_name == "task1"
         assert node.parent_id is None
         assert node.status == ActionStatus.RUNNING
+        assert node.start_time == 100
 
     def test_root_appears_in_snapshot(self):
         t = ActionTracker()
@@ -250,12 +250,11 @@ class TestTrackerRecordComplete:
 
     def test_complete_sets_end_time(self):
         t = ActionTracker()
-        t.record_start(action_id="a1", task_name="t")
-        before = time.monotonic()
-        t.record_complete(action_id="a1")
-        after = time.monotonic()
+        t.record_start(action_id="a1", task_name="t", start_time=100)
+        t.record_complete(action_id="a1", end_time=200)
         node = t.get_action("a1")
-        assert before <= node.end_time <= after
+        assert node.start_time == 100
+        assert node.end_time == 200
 
 
 # ---------------------------------------------------------------------------
@@ -284,6 +283,14 @@ class TestTrackerRecordFailure:
         node = t.get_action("a1")
         assert node.inputs == {"x": 1}
         assert node.error == "err"
+
+    def test_complete_sets_end_time(self):
+        t = ActionTracker()
+        t.record_start(action_id="a1", task_name="t", start_time=100)
+        t.record_failure(action_id="a1", error="err", end_time=200)
+        node = t.get_action("a1")
+        assert node.start_time == 100
+        assert node.end_time == 200
 
 
 # ---------------------------------------------------------------------------

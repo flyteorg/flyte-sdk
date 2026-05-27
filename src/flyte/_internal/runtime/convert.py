@@ -77,10 +77,21 @@ async def convert_upload_default_inputs(
     if not interface.inputs:
         return []
 
+    # flyte.TriggerTime is a sentinel that gets bound at trigger fire time, not a
+    # serializable default. Importing lazily avoids a circular import at module load.
+    from flyte._trigger import _trigger_time
+
     vars = []
     literal_coros = []
     for input_name, (input_type, default_value) in interface.inputs.items():
-        if default_value and default_value is not inspect.Parameter.empty:
+        if default_value is not None and default_value is not inspect.Parameter.empty:
+            if isinstance(default_value, _trigger_time):
+                raise ValueError(
+                    f"Input '{input_name}' uses flyte.TriggerTime as its default value. "
+                    "flyte.TriggerTime is only valid as a value in `flyte.Trigger(inputs=...)` — "
+                    "it cannot be used as a regular task default. Remove the default from the "
+                    "task signature and pass it through the Trigger inputs instead."
+                )
             lt = TypeEngine.to_literal_type(input_type)
             literal_coros.append(TypeEngine.to_literal(default_value, input_type, lt))
             vars.append((input_name, lt))
@@ -122,6 +133,19 @@ async def convert_from_native_to_inputs(
     return await _convert_from_native_to_inputs_impl(interface, args, custom_context, kwargs)
 
 
+def _is_has_default_sentinel(value: Any) -> bool:
+    """
+    Return True if `value` is the `_has_default` sentinel (the class itself or an instance).
+
+    The class is intended purely as a *marker* on `NativeInterface.inputs[name][1]` to indicate
+    "this remote task input has a default value stored on the spec". It must never be treated as a
+    real input value. We check both forms because the CLI's click integration used to coerce the
+    class into an instance (click instantiates callable defaults), so either shape can leak through
+    into kwargs.
+    """
+    return value is NativeInterface.has_default or isinstance(value, NativeInterface.has_default)
+
+
 async def _convert_from_native_to_inputs_impl(
     interface: NativeInterface,
     args: Tuple[Any, ...],
@@ -129,6 +153,10 @@ async def _convert_from_native_to_inputs_impl(
     kwargs: Dict[str, Any],
 ) -> Inputs:
     kwargs = interface.convert_to_kwargs(*args, **kwargs)
+
+    # Drop any sentinel values from kwargs so the loop below falls through to the `_remote_defaults`
+    # branch and substitutes the literal default instead of attempting to serialize the sentinel.
+    kwargs = {k: v for k, v in kwargs.items() if not _is_has_default_sentinel(v)}
 
     missing = [key for key in interface.required_inputs() if key not in kwargs]
     if missing:

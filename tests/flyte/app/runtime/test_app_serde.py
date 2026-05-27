@@ -495,19 +495,18 @@ def test_get_proto_container_with_only_inputs_no_args():
 
 def test_get_proto_container_with_custom_command_and_inputs():
     """
-    GOAL: Verify custom command overrides default and inputs are ignored.
+    GOAL: Verify custom command overrides default fserve and args still work.
 
     Tests that:
     - Custom command completely replaces fserve
-    - Inputs are NOT added to custom commands
-    - User is responsible for handling inputs with custom commands
+    - Args are passed through independently
+    - Parameters with a non-fserve custom command raises ValueError
     """
     app_env = AppEnvironment(
         name="test-app",
         image=Image.from_base("python:3.11"),
         command=["python", "app.py"],
         args=["--custom-arg"],
-        parameters=[Parameter(value="config.yaml", name="config")],  # Should be ignored
     )
 
     ctx = SerializationContext(
@@ -528,6 +527,19 @@ def test_get_proto_container_with_custom_command_and_inputs():
 
     # Inputs should NOT be in command (custom commands don't auto-add inputs)
     assert "--parameters" not in container.command
+
+
+def test_get_proto_container_custom_command_with_parameters_raises():
+    """
+    GOAL: Verify that combining parameters with a non-fserve custom command raises.
+    """
+    with pytest.raises(ValueError, match="Cannot use 'parameters' with a custom 'command'"):
+        AppEnvironment(
+            name="test-app",
+            image=Image.from_base("python:3.11"),
+            command=["python", "app.py"],
+            parameters=[Parameter(value="config.yaml", name="config")],
+        )
 
 
 def test_get_proto_container_with_string_image():

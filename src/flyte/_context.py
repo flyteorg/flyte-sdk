@@ -184,6 +184,9 @@ def ctx() -> Optional[TaskContext]:
     """
     Returns flyte.models.TaskContext if within a task context, else None
     Note: Only use this in task code and not module level.
+
+    Use :attr:`flyte.models.TaskContext.checkpoint` for durable task checkpointing
+    (object-store prefixes from the runtime).
     """
     return internal_ctx().data.task_context
 

@@ -33,6 +33,12 @@ from flyte.types import TypeEngine, TypeTransformer, TypeTransformerFailedError
 # Type variable for the directory format
 T = TypeVar("T")
 
+# Sentinel path stamped onto :class:`EmptyDir` instances. Anything created via ``Dir.empty()``
+# or ``EmptyDir()`` carries this path; ``Dir.is_empty`` detects it. We deliberately use a path
+# that cannot collide with any real local or object-store path users might pass (no scheme,
+# leading colons, illegal in filesystems and URIs alike).
+_EMPTY_DIR_SENTINEL = "::flyte-empty-dir::"
+
 
 class Dir(BaseModel, Generic[T], SerializableType):
     """
@@ -232,6 +238,23 @@ class Dir(BaseModel, Generic[T], SerializableType):
         if data.get("name") is None:
             data["name"] = Path(data["path"]).name
         return data
+
+    @property
+    def is_empty(self) -> bool:
+        """True when this is a sentinel ``Dir`` produced by :class:`EmptyDir`/``Dir.empty()`` —
+        i.e. the task didn't actually produce a directory. Use this to branch on whether the
+        upstream task emitted real data without dealing with ``Optional[Dir]`` (which the type
+        engine cannot round-trip correctly through ``SerializableType``)."""
+        return self.path == _EMPTY_DIR_SENTINEL
+
+    @classmethod
+    def empty(cls) -> "Dir":
+        """Return a sentinel ``Dir`` representing 'no directory was produced'.
+
+        Use as the return value when a task may or may not produce an output directory; the
+        caller can check :attr:`Dir.is_empty` to detect the sentinel. Round-trips cleanly
+        through Flyte serialization (unlike ``Optional[Dir]``)."""
+        return EmptyDir()
 
     def _serialize(self) -> Dict[str, Optional[str]]:
         """Internal: Serialize Dir to dictionary. Not intended for direct use."""
@@ -938,6 +961,36 @@ class Dir(BaseModel, Generic[T], SerializableType):
         if file.exists_sync():
             return file
         return None
+
+
+class EmptyDir(Dir):
+    """A sentinel :class:`Dir` representing 'no directory was produced'.
+
+    Use this as a return value when a task may or may not produce an output directory,
+    e.g. ``flyte.run_python_script`` when the user did not request ``output_dir``::
+
+        @env.task
+        async def maybe_produce_dir(...) -> Output:
+            if user_wants_dir:
+                return Output(output_dir=await Dir.from_local(path))
+            return Output(output_dir=EmptyDir())
+
+    On the receiving side, the value comes back as a plain ``Dir`` with
+    :attr:`Dir.is_empty` set to ``True`` (the deserializer doesn't preserve the
+    ``EmptyDir`` subclass identity, but the sentinel path round-trips). Callers should
+    branch on ``dir.is_empty`` rather than ``isinstance(dir, EmptyDir)``.
+
+    This exists because ``Optional[Dir]`` cannot round-trip through Flyte's
+    ``DataclassTransformer`` — mashumaro strips the ``Optional`` and calls
+    ``Dir._deserialize(None)`` which fails. ``EmptyDir`` keeps the field type as
+    plain ``Dir`` so the round-trip works.
+    """
+
+    def __init__(self, **data: Any):
+        # Force the sentinel path; ignore any caller-provided overrides for it.
+        data["path"] = _EMPTY_DIR_SENTINEL
+        data.setdefault("name", "")
+        super().__init__(**data)
 
 
 class DirTransformer(TypeTransformer[Dir]):

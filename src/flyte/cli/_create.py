@@ -102,6 +102,14 @@ def project(cfg: common.CLIConfig, id: str, name: str, description: str, label: 
     help="Password for the registry (only with --registry). If not provided, will prompt.",
     hide_input=True,
 )
+@click.option(
+    "--cluster-pool",
+    type=str,
+    default=None,
+    help="Scope the secret to a cluster pool. Mutually exclusive with --project and --domain.",
+    cls=MutuallyExclusiveOption,
+    mutually_exclusive=["project", "domain"],
+)
 @click.pass_obj
 def secret(
     cfg: common.CLIConfig,
@@ -115,6 +123,7 @@ def secret(
     registry: str | None = None,
     username: str | None = None,
     password: str | None = None,
+    cluster_pool: str | None = None,
     project: str | None = None,
     domain: str | None = None,
 ):
@@ -170,6 +179,10 @@ def secret(
     #   (and domain level) secrets
     project = "" if project is None else project
     domain = "" if domain is None else domain
+
+    if cluster_pool and (project != "" or domain != ""):
+        raise click.ClickException("Project and domain must not be set when --cluster-pool is specified.")
+
     cfg.init(project, domain)
 
     # Handle image pull secret creation
@@ -219,7 +232,7 @@ def secret(
     if isinstance(value, str):
         value = value.encode("utf-8")
 
-    Secret.create(name=name, value=value, type=type)
+    Secret.create(name=name, value=value, type=type, cluster_pool=cluster_pool)
 
 
 @create.command(cls=common.CommandBase)

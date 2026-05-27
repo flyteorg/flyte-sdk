@@ -56,6 +56,7 @@ if TYPE_CHECKING:
 _F_IMG_ID = "_F_IMG_ID"
 FLYTE_DOCKER_BUILDER_CACHE_FROM = "FLYTE_DOCKER_BUILDER_CACHE_FROM"
 FLYTE_DOCKER_BUILDER_CACHE_TO = "FLYTE_DOCKER_BUILDER_CACHE_TO"
+FLYTE_DOCKER_BUILDKIT_BUILDER_NAME = "FLYTE_DOCKER_BUILDKIT_BUILDER_NAME"
 
 UV_LOCK_WITHOUT_PROJECT_INSTALL_TEMPLATE = Template("""\
 RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
@@ -177,7 +178,8 @@ ENV PATH="$$PATH:/usr/local/nvidia/bin:/usr/local/cuda/bin" \
 # This gets added on to the end of the dockerfile
 DOCKER_FILE_BASE_FOOTER = Template("""\
 ENV _F_IMG_ID=$F_IMG_ID
-WORKDIR /root
+USER flyte
+WORKDIR /home/flyte
 SHELL ["/bin/bash", "-c"]
 """)
 
@@ -350,7 +352,7 @@ class UVProjectHandler:
 
 class PoetryProjectHandler:
     @staticmethod
-    async def handel(
+    async def handle(
         layer: PoetryProject, context_path: Path, dockerfile: str, docker_ignore_patterns: list[str] = []
     ) -> str:
         secret_mounts = _get_secret_mounts_layer(layer.secret_mounts)
@@ -400,7 +402,7 @@ class CopyConfigHandler:
         layer: CopyConfig, context_path: Path, dockerfile: str, docker_ignore_patterns: list[str] = []
     ) -> str:
         dst_path = copy_files_to_context(layer.src, context_path, docker_ignore_patterns)
-        dockerfile += f"\nCOPY {dst_path.relative_to(context_path)} {layer.dst}\n"
+        dockerfile += f"\nCOPY --chown=flyte:flyte {dst_path.relative_to(context_path)} {layer.dst}\n"
         return dockerfile
 
 
@@ -409,7 +411,7 @@ class _CodeBundleHandler:
     async def handle(layer: CodeBundleLayer, context_path: Path, dockerfile: str) -> str:
         assert layer.root_dir is not None
         dst_path = copy_code_bundle_to_context(layer.root_dir, layer.copy_style, context_path)
-        dockerfile += f"\nCOPY {dst_path.relative_to(context_path)} {layer.dst}\n"
+        dockerfile += f"\nCOPY --chown=flyte:flyte {dst_path.relative_to(context_path)} {layer.dst}\n"
         return dockerfile
 
 
@@ -535,11 +537,11 @@ async def _process_layer(
 
         case PoetryProject():
             # Handle Poetry project
-            dockerfile = await PoetryProjectHandler.handel(layer, context_path, dockerfile, docker_ignore_patterns)
+            dockerfile = await PoetryProjectHandler.handle(layer, context_path, dockerfile, docker_ignore_patterns)
 
         case PoetryProject():
             # Handle Poetry project
-            dockerfile = await PoetryProjectHandler.handel(layer, context_path, dockerfile, docker_ignore_patterns)
+            dockerfile = await PoetryProjectHandler.handle(layer, context_path, dockerfile, docker_ignore_patterns)
 
         case CopyConfig():
             # Handle local files and folders
@@ -607,19 +609,28 @@ class DockerImageBuilder(ImageBuilder):
         )
         return ImageBuild(uri=uri, remote_run=None)
 
+    @staticmethod
+    async def _resolve_builder_name() -> str:
+        """Return the buildx builder to use, ensuring the default one exists if no override is set."""
+        builder_name = os.getenv(FLYTE_DOCKER_BUILDKIT_BUILDER_NAME)
+        if builder_name:
+            return builder_name
+        await DockerImageBuilder._ensure_buildx_builder()
+        return DockerImageBuilder._builder_name
+
     async def _build_from_dockerfile(self, image: Image, push: bool, wait: bool = True) -> str:
         """
         Build the image from a provided Dockerfile.
         """
         assert image.dockerfile  # for mypy
-        await DockerImageBuilder._ensure_buildx_builder()
+        builder_name = await DockerImageBuilder._resolve_builder_name()
 
         command = [
             "docker",
             "buildx",
             "build",
             "--builder",
-            DockerImageBuilder._builder_name,
+            builder_name,
             "-f",
             str(image.dockerfile),
             "--tag",
@@ -640,23 +651,39 @@ class DockerImageBuilder(ImageBuilder):
         logger.debug(f"Build command: {concat_command}")
         click.secho(f"Run command: {concat_command} ", fg="blue")
 
-        if wait:
-            await run_sync_with_loop(subprocess.run, command, cwd=str(cast(Path, image.dockerfile).cwd()), check=True)
-        else:
-            await run_sync_with_loop(subprocess.Popen, command, cwd=str(cast(Path, image.dockerfile).cwd()))
+        try:
+            if wait:
+                await run_sync_with_loop(
+                    subprocess.run, command, cwd=str(cast(Path, image.dockerfile).cwd()), check=True
+                )
+            else:
+                await run_sync_with_loop(subprocess.Popen, command, cwd=str(cast(Path, image.dockerfile).cwd()))
+        except subprocess.CalledProcessError as e:
+            from flyte.errors import ImageBuildError
+
+            logger.error(f"Failed to build image from dockerfile: {e}")
+            raise ImageBuildError(f"Failed to build image from {image.dockerfile}: {e}") from e
 
         return image.uri
 
     @staticmethod
     async def _ensure_buildx_builder():
         """Ensure there is a docker buildx builder called flyte"""
+        from flyte.errors import ImageBuildError
+
         # Check if buildx is available
         try:
             await run_sync_with_loop(
                 subprocess.run, ["docker", "buildx", "version"], check=True, stdout=subprocess.DEVNULL
             )
+        except FileNotFoundError:
+            raise ImageBuildError(
+                "Docker is not installed or not available in PATH. "
+                "Install Docker (https://docs.docker.com/get-docker/) and ensure it is running, "
+                "or use the remote image builder by setting `image_builder='remote'` on your `flyte.Image`."
+            )
         except subprocess.CalledProcessError:
-            raise RuntimeError("Docker buildx is not available. Make sure BuildKit is installed and enabled.")
+            raise ImageBuildError("Docker buildx is not available. Make sure BuildKit is installed and enabled.")
 
         # List builders
         result = await run_sync_with_loop(
@@ -664,25 +691,44 @@ class DockerImageBuilder(ImageBuilder):
         )
         builders = result.stdout
 
-        # Check if there's any usable builder
-        if DockerImageBuilder._builder_name not in builders:
-            # No default builder found, create one
-            logger.info("No buildx builder found, creating one...")
+        # Check if there's any usable builder with the correct driver options
+        if DockerImageBuilder._builder_name in builders:
+            # Builder exists — verify it has network=host driver option
+            inspect_result = await run_sync_with_loop(
+                subprocess.run,
+                ["docker", "buildx", "inspect", DockerImageBuilder._builder_name],
+                capture_output=True,
+                text=True,
+            )
+            if inspect_result.returncode == 0 and 'network="host"' in inspect_result.stdout:
+                logger.info("Buildx builder already exists with correct config.")
+                return
+
+            # Builder exists but missing network=host, remove and recreate
+            logger.info("Buildx builder exists but missing network=host driver option, recreating...")
             await run_sync_with_loop(
                 subprocess.run,
-                [
-                    "docker",
-                    "buildx",
-                    "create",
-                    "--name",
-                    DockerImageBuilder._builder_name,
-                    "--platform",
-                    "linux/amd64,linux/arm64",
-                ],
-                check=True,
+                ["docker", "buildx", "rm", DockerImageBuilder._builder_name],
+                check=False,
             )
         else:
-            logger.info("Buildx builder already exists.")
+            logger.info("No buildx builder found, creating one...")
+
+        await run_sync_with_loop(
+            subprocess.run,
+            [
+                "docker",
+                "buildx",
+                "create",
+                "--name",
+                DockerImageBuilder._builder_name,
+                "--platform",
+                "linux/amd64,linux/arm64",
+                "--driver-opt",
+                "network=host",
+            ],
+            check=True,
+        )
 
     async def _build_image(self, image: Image, *, push: bool = True, dry_run: bool = False, wait: bool = True) -> str:
         """
@@ -703,7 +749,7 @@ class DockerImageBuilder(ImageBuilder):
         # For testing, set `push=False` to just build the image locally and not push to
         # registry.
 
-        await DockerImageBuilder._ensure_buildx_builder()
+        builder_name = await DockerImageBuilder._resolve_builder_name()
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             logger.warning(f"Temporary directory: {tmp_dir}")
@@ -731,7 +777,7 @@ class DockerImageBuilder(ImageBuilder):
                 "buildx",
                 "build",
                 "--builder",
-                DockerImageBuilder._builder_name,
+                builder_name,
                 "--tag",
                 f"{image.uri}",
                 "--platform",
@@ -771,7 +817,9 @@ class DockerImageBuilder(ImageBuilder):
                 else:
                     await run_sync_with_loop(subprocess.Popen, command)
             except subprocess.CalledProcessError as e:
+                from flyte.errors import ImageBuildError
+
                 logger.error(f"Failed to build image: {e}")
-                raise RuntimeError(f"Failed to build image: {e}")
+                raise ImageBuildError(f"Failed to build image: {e}") from e
 
             return image.uri

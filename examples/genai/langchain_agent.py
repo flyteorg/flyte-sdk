@@ -4,7 +4,7 @@
 #     "langgraph==1.0.7",
 #     "langchain==1.2.7",
 #     "langchain-anthropic==1.3.1",
-#     "flyte>=2.0.0b22",
+#     "flyte",
 # ]
 # ///
 
@@ -19,7 +19,7 @@ agent_env = flyte.TaskEnvironment(
     secrets=[
         flyte.Secret(key="ANTHROPIC_API_KEY", as_env_var="ANTHROPIC_API_KEY"),
     ],
-    image=flyte.Image.from_uv_script(script=__file__, name="langgraph-agent", pre=True),
+    image=flyte.Image.from_uv_script(script=__file__, name="langgraph-agent"),
     resources=flyte.Resources(cpu=1),
 )
 
