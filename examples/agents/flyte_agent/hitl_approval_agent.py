@@ -44,7 +44,7 @@ env = flyte.TaskEnvironment(
         )
     ),
     resources=flyte.Resources(cpu=1, memory="512Mi"),
-    secrets=[flyte.Secret(key="anthropic-api-key", as_env_var="ANTHROPIC_API_KEY")],
+    secrets=[flyte.Secret(key="internal-anthropic-api-key", as_env_var="ANTHROPIC_API_KEY")],
     depends_on=[hitl.env],
 )
 

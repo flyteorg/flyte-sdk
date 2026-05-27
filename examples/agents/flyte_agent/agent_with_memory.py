@@ -22,7 +22,7 @@ env = flyte.TaskEnvironment(
     name="persistent-agent",
     image=flyte.Image.from_debian_base().with_pip_packages("litellm"),
     resources=flyte.Resources(cpu=1, memory="1Gi"),
-    secrets=[flyte.Secret(key="anthropic-api-key", as_env_var="ANTHROPIC_API_KEY")],
+    secrets=[flyte.Secret(key="internal-anthropic-api-key", as_env_var="ANTHROPIC_API_KEY")],
 )
 
 

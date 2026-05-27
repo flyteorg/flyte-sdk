@@ -8,6 +8,7 @@ A minimal end-to-end agent that demonstrates the core surface area:
 
 Run locally::
 
+    uv pip install litellm
     export ANTHROPIC_API_KEY=sk-...
     uv run python examples/agents/flyte_agent/basic_agent.py "What's 17 * 23 plus the temperature in NYC?"
 """

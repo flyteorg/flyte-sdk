@@ -37,7 +37,7 @@ env = flyte.TaskEnvironment(
     name="triage-agent",
     image=(flyte.Image.from_debian_base().with_pip_packages("httpx", "litellm")),
     resources=flyte.Resources(cpu=1, memory="1Gi"),
-    secrets=[flyte.Secret(key="anthropic-api-key", as_env_var="ANTHROPIC_API_KEY")],
+    secrets=[flyte.Secret(key="internal-anthropic-api-key", as_env_var="ANTHROPIC_API_KEY")],
 )
 
 
@@ -45,9 +45,13 @@ env = flyte.TaskEnvironment(
 async def list_open_issues(repo: str, max_count: int = 25) -> list[dict[str, str]]:
     """Fetch open issues for a GitHub repository.
 
+    Uses the Search API so pull requests are excluded server-side; otherwise
+    ``/repos/{repo}/issues`` returns issues *and* PRs mixed together, and busy
+    repos can fill the first page with PRs.
+
     Args:
         repo: ``"owner/repo"`` slug, e.g. ``"flyteorg/flyte"``.
-        max_count: Maximum number of issues to return.
+        max_count: Maximum number of issues to return (capped at 100 by the API).
     """
     import httpx
 
@@ -58,11 +62,16 @@ async def list_open_issues(repo: str, max_count: int = 25) -> list[dict[str, str
 
     async with httpx.AsyncClient(headers=headers, timeout=30.0) as client:
         resp = await client.get(
-            f"https://api.github.com/repos/{repo}/issues",
-            params={"state": "open", "per_page": max_count},
+            "https://api.github.com/search/issues",
+            params={
+                "q": f"repo:{repo} is:issue is:open",
+                "sort": "created",
+                "order": "desc",
+                "per_page": min(max_count, 100),
+            },
         )
         resp.raise_for_status()
-        issues = resp.json()
+        issues = resp.json().get("items", [])
     return [
         {
             "number": str(i["number"]),
@@ -72,7 +81,6 @@ async def list_open_issues(repo: str, max_count: int = 25) -> list[dict[str, str
             "comments": str(i.get("comments", 0)),
         }
         for i in issues
-        if "pull_request" not in i  # exclude PRs from /issues
     ]
 
 
@@ -126,7 +134,7 @@ agent = Agent(
 @env.task(
     triggers=flyte.Trigger(
         "daily-triage",
-        flyte.Cron("0 9 * * *", timezone="America/New_York"),
+        flyte.FixedRate(2),  # run every 2 minutes
         inputs={"trigger_time": flyte.TriggerTime, "repo": "flyteorg/flyte", "channel": "#flyte-triage"},
     ),
     report=True,
