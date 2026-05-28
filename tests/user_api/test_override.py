@@ -74,23 +74,56 @@ def test_oomer_override_with_reuse_incorrect():
 
 def test_override_secrets_with_reuse():
     """
-    Secret overrides ARE allowed on reusable tasks: the actor framework's pool
-    key mixes in security_context, so a different secret deterministically maps
-    to a different actor pool.
+    Secret overrides on reusable tasks create a new virtual TaskEnvironment so
+    each distinct secret combination maps to a uniquely-named actor pool.
     """
     new_task = oomer_with_reuse.override(secrets="my_secret")
     assert new_task != oomer_with_reuse
+    assert new_task._actor_pool_env_name is not None
+    assert new_task._actor_pool_env_name != oomer_with_reuse.parent_env_name
+    assert new_task._actor_pool_env_name.startswith(oomer_with_reuse.parent_env_name)
 
 
 def test_override_env_vars_with_reuse():
     """
-    env_vars overrides ARE allowed on reusable tasks: the pool key hashes the
-    serialized container (which includes env), so a different env var maps to a
-    different actor pool.
+    env_vars overrides on reusable tasks create a new virtual TaskEnvironment so
+    each distinct env_vars combination maps to a uniquely-named actor pool.
     """
     new_task = oomer_with_reuse.override(env_vars={"FOO": "bar"})
     assert new_task != oomer_with_reuse
     assert new_task.env_vars == {"FOO": "bar"}
+    assert new_task._actor_pool_env_name is not None
+    assert new_task._actor_pool_env_name != oomer_with_reuse.parent_env_name
+    assert new_task._actor_pool_env_name.startswith(oomer_with_reuse.parent_env_name)
+
+
+def test_override_env_vars_with_reuse_is_deterministic():
+    """
+    Two overrides with identical env_vars on the same reusable task should produce
+    the same actor pool env name (deterministic hash).
+    """
+    t1 = oomer_with_reuse.override(env_vars={"FOO": "bar"})
+    t2 = oomer_with_reuse.override(env_vars={"FOO": "bar"})
+    assert t1._actor_pool_env_name == t2._actor_pool_env_name
+
+
+def test_override_different_env_vars_with_reuse_get_different_pool_names():
+    """
+    Two overrides with different env_vars should map to different actor pool names.
+    """
+    t1 = oomer_with_reuse.override(env_vars={"FOO": "bar"})
+    t2 = oomer_with_reuse.override(env_vars={"FOO": "baz"})
+    assert t1._actor_pool_env_name != t2._actor_pool_env_name
+
+
+def test_override_chained_preserves_actor_pool_env_name():
+    """
+    When a further override (e.g. cache) is applied on top of an env_vars override,
+    the actor pool env name is preserved.
+    """
+    t1 = oomer_with_reuse.override(env_vars={"FOO": "bar"})
+    t2 = t1.override(cache=flyte.Cache("auto"))
+    assert t2._actor_pool_env_name == t1._actor_pool_env_name
 
 
 def test_override_with_reuse():

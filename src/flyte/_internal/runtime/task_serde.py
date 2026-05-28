@@ -282,8 +282,10 @@ def get_proto_task(
             raise flyte.errors.RuntimeUserError(
                 "BadConfig", f"Expected ReusePolicy, got {type(task.reusable)} for task {task.name}"
             )
-        env_name = None
-        if task.parent_env is not None:
+        # Prefer the override-derived name (set when env_vars/secrets are overridden
+        # on a reusable task) so each distinct combination gets its own actor pool.
+        env_name = task._actor_pool_env_name
+        if env_name is None and task.parent_env is not None:
             env = task.parent_env()
             if env is not None:
                 env_name = env.name

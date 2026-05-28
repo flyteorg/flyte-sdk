@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import weakref
 from dataclasses import dataclass, field, replace
 from inspect import iscoroutinefunction
@@ -115,6 +117,7 @@ class TaskTemplate(Generic[P, R, F]):
 
     parent_env: Optional[weakref.ReferenceType[TaskEnvironment]] = None
     parent_env_name: Optional[str] = None
+    _actor_pool_env_name: Optional[str] = None
     ref: bool = field(default=False, init=False, repr=False, compare=False)
     max_inline_io_bytes: int = MAX_INLINE_IO_BYTES
     triggers: Tuple[Trigger, ...] = field(default_factory=tuple)
@@ -408,6 +411,8 @@ class TaskTemplate(Generic[P, R, F]):
         if reusable == "off":
             reusable = None
 
+        actor_pool_env_name = self._actor_pool_env_name
+
         if reusable is not None:
             if resources is not None:
                 raise ValueError(
@@ -415,14 +420,25 @@ class TaskTemplate(Generic[P, R, F]):
                     " Reusable tasks will use the parent env's resources. You can disable reusability and"
                     " override resources if needed. (set reusable='off')"
                 )
-            # Allow env_vars and secret overrides on reusable tasks: the actor
-            # framework's pool key (extract_unique_id_and_image) hashes the
-            # serialized container (which includes env) and the security_context,
-            # so a different env var or secret deterministically maps to a
-            # different actor pool. Callers that want per-value pools (e.g.
-            # per-identifier credentials, or routing by a resolved input) need
-            # this. Resources stay blocked: they don't feed the pool key and the
-            # actor reuses the parent env's pod resources regardless.
+            if env_vars is not None or secrets is not None:
+                # Create a new virtual TaskEnvironment for this combination of
+                # env_vars/secrets so the actor framework assigns a distinct, named
+                # pool — avoiding silent collisions between pools sharing the same
+                # parent-env name but different container/security content.
+                base_name = self.parent_env_name or (
+                    self.parent_env() and self.parent_env().name  # type: ignore[union-attr]
+                )
+                if not base_name:
+                    raise ValueError(
+                        "Cannot override env_vars or secrets on a reusable task without an accessible "
+                        "parent environment. Create a new TaskEnvironment with the desired settings instead."
+                    )
+                effective_env_vars = env_vars if env_vars is not None else self.env_vars
+                effective_secrets = secrets if secrets is not None else self.secrets
+                h = hashlib.sha256()
+                h.update(json.dumps(effective_env_vars, sort_keys=True).encode() if effective_env_vars else b"")
+                h.update(repr(effective_secrets).encode() if effective_secrets else b"")
+                actor_pool_env_name = f"{base_name}_{h.hexdigest()[:8]}"
 
         resources = resources or self.resources
         env_vars = env_vars or self.env_vars
@@ -457,6 +473,7 @@ class TaskTemplate(Generic[P, R, F]):
             entrypoint=entrypoint,
             queue=queue or self.queue,
             links=links or self.links,
+            _actor_pool_env_name=actor_pool_env_name,
             **kwargs,
         )
 
