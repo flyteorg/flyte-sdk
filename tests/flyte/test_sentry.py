@@ -200,3 +200,87 @@ def test_capture_exception_skips_wrapped_module_load_error_via_cause_chain():
     with mock.patch.object(_sentry, "init") as init_mock:
         _sentry.capture_exception(err)
     init_mock.assert_not_called()
+
+
+def test_capture_exception_skips_connect_error_unauthenticated():
+    """FLYTE-SDK-33: ConnectError(Unauthenticated) from auth interceptor is a user
+    credentials issue (expired token, IDP policy denial), not an SDK crash."""
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
+    err = ConnectError(
+        Code.UNAUTHENTICATED,
+        'transport: per-RPC creds failed due to error: failed to get new token: oauth2: "access_denied"',
+    )
+    with mock.patch.object(_sentry, "init") as init_mock:
+        _sentry.capture_exception(err)
+    init_mock.assert_not_called()
+
+
+def test_capture_exception_skips_connect_error_permission_denied_wrapped_as_system_error():
+    """FLYTE-SDK-40: cross-org call rejected with PermissionDenied is wrapped as
+    RuntimeError("SelectCluster failed...") -> RuntimeSystemError("Failed to get signed url").
+    The outer types are SDK errors, but the cause chain reveals a user config mistake."""
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
+    from flyte.errors import RuntimeSystemError
+
+    try:
+        try:
+            try:
+                raise ConnectError(
+                    Code.PERMISSION_DENIED,
+                    "cross org calls are not allowed for organization [demo] on behalf of [default]",
+                )
+            except ConnectError as ce:
+                raise RuntimeError(f"SelectCluster failed for operation=1: {ce}") from ce
+        except RuntimeError:
+            raise RuntimeSystemError("RuntimeError", "Failed to get signed url for /tmp/x.tar.gz.")
+    except RuntimeSystemError as e:
+        err = e
+
+    with mock.patch.object(_sentry, "init") as init_mock:
+        _sentry.capture_exception(err)
+    init_mock.assert_not_called()
+
+
+def test_capture_exception_skips_connect_error_failed_precondition_wrapped_as_system_error():
+    """FLYTE-SDK-3S: backend returns FailedPrecondition ('no enabled clusters for org X')
+    which surfaces as RuntimeSystemError('Failed to create run: ...'). Org config problem,
+    not an SDK bug."""
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
+    from flyte.errors import RuntimeSystemError
+
+    try:
+        try:
+            raise ConnectError(Code.FAILED_PRECONDITION, "no enabled clusters found for org union-nav")
+        except ConnectError:
+            raise RuntimeSystemError(
+                "RuntimeError", "Failed to create run: no enabled clusters found for org union-nav"
+            )
+    except RuntimeSystemError as e:
+        err = e
+
+    with mock.patch.object(_sentry, "init") as init_mock:
+        _sentry.capture_exception(err)
+    init_mock.assert_not_called()
+
+
+def test_capture_exception_still_reports_connect_error_internal():
+    """ConnectError with Internal/Unavailable/Unknown is NOT user-actionable — those
+    indicate backend bugs or outages and should still be reported to Sentry."""
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
+    err = ConnectError(Code.INTERNAL, "backend panicked")
+    with (
+        mock.patch.object(_sentry, "init"),
+        mock.patch("sentry_sdk.is_initialized", return_value=True),
+        mock.patch("sentry_sdk.capture_exception") as capture_mock,
+        mock.patch("sentry_sdk.flush"),
+    ):
+        _sentry.capture_exception(err)
+    capture_mock.assert_called_once_with(err)

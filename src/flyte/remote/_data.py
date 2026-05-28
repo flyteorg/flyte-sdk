@@ -171,21 +171,39 @@ async def _upload_single_file(
                 add_content_md5_metadata=True,
             )
         )
-    except ConnectError as e:
-        if e.code == Code.NOT_FOUND:
-            raise RuntimeSystemError(
-                "NotFound", f"Failed to get signed url for {fp}, please check your project and domain: {e.message}"
-            )
-        elif e.code == Code.PERMISSION_DENIED:
-            raise RuntimeSystemError(
-                "PermissionDenied", f"Failed to get signed url for {fp}, please check your permissions: {e.message}"
-            )
-        elif e.code == Code.UNAVAILABLE:
-            raise InitializationError("EndpointUnavailable", "user", "Service is unavailable.")
-        else:
-            raise RuntimeSystemError(e.code.value, f"Failed to get signed url for {fp}: {e.message}")
     except Exception as e:
-        raise RuntimeSystemError(type(e).__name__, f"Failed to get signed url for {fp}: {e}") from e
+        target = f"org='{cfg.org or ''}', project='{cfg.project}', domain='{cfg.domain}'"
+        # The ConnectError from create_upload_location can be wrapped by an upstream
+        # RuntimeError (e.g. SelectCluster failures in controlplane._select_and_build),
+        # so walk the cause chain to find the underlying gRPC code.
+        connect_err: ConnectError | None = None
+        cur: BaseException | None = e
+        while cur is not None:
+            if isinstance(cur, ConnectError):
+                connect_err = cur
+                break
+            cur = cur.__cause__ or cur.__context__
+        if connect_err is not None:
+            if connect_err.code == Code.NOT_FOUND:
+                raise RuntimeSystemError(
+                    "NotFound",
+                    f"Upload failed for {fp}: {target} not found. "
+                    f"Check your project/domain/org in config.yaml. Details: {connect_err.message}",
+                ) from e
+            elif connect_err.code == Code.PERMISSION_DENIED:
+                raise RuntimeSystemError(
+                    "PermissionDenied",
+                    f"Upload failed for {fp}: permission denied for {target}. "
+                    f"Check that the project/domain/org in config.yaml exists and that you have access. "
+                    f"Details: {connect_err.message}",
+                ) from e
+            elif connect_err.code == Code.UNAVAILABLE:
+                raise InitializationError("EndpointUnavailable", "user", "Service is unavailable.") from e
+            else:
+                raise RuntimeSystemError(
+                    connect_err.code.value, f"Upload failed for {fp} ({target}): {connect_err.message}"
+                ) from e
+        raise RuntimeSystemError(type(e).__name__, f"Upload failed for {fp} ({target}): {e}") from e
     logger.debug(f"Uploading to [link={resp.signed_url}]signed url[/link] for [link=file://{fp}]{fp}[/link]")
     extra_headers = get_extra_headers_for_protocol(resp.native_url)
     extra_headers.update(resp.headers)
