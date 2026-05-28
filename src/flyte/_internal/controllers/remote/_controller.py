@@ -649,7 +649,9 @@ class RemoteController(Controller):
         invoke_seq = self.generate_task_call_sequence(event, current_action_id)
 
         # Generate a deterministic action name from event name + sequence
-        sub_action_id, _ = convert.generate_sub_action_id_and_output_path(tctx, event.name, event.name, invoke_seq)
+        sub_action_id, sub_action_output_path = convert.generate_sub_action_id_and_output_path(
+            tctx, event.name, event.name, invoke_seq
+        )
 
         action = Action.from_condition(
             parent_action_name=current_action_id.name,
@@ -668,6 +670,7 @@ class RemoteController(Controller):
             description=event.description,
             group_data=tctx.group_data,
             run_output_base=tctx.run_base_dir,
+            inputs_uri=io.inputs_path(sub_action_output_path),
         )
 
         logger.info(

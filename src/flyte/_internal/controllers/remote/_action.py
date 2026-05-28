@@ -260,6 +260,7 @@ class Action:
         prompt: str,
         data_type: builtins.type,
         run_output_base: str,
+        inputs_uri: str,
         group_data: GroupData | None = None,
         description: str = "",
         # TODO: proto does not yet have these fields — will be added separately
@@ -268,7 +269,11 @@ class Action:
         # webhook_url: str | None = None,
         # webhook_payload: dict | None = None,
     ) -> Action:
-        """Create a condition action for an event."""
+        """Create a condition action for an event.
+
+        ``inputs_uri`` is a placeholder path — conditions have no real inputs,
+        but the EnqueueRequest validator requires a non-empty value.
+        """
         simple_type = cls._DATA_TYPE_TO_SIMPLE.get(data_type)
         if simple_type is None:
             raise TypeError(f"Unsupported event data_type {data_type}")
@@ -281,6 +286,7 @@ class Action:
             type="condition",
             friendly_name=event_name,
             group=group_data,
+            inputs_uri=inputs_uri,
             run_output_base=run_output_base,
             condition=run_definition_pb2.ConditionAction(
                 name=event_name,

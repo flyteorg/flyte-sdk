@@ -631,10 +631,12 @@ def test_action_from_condition_creates_condition_type():
         prompt="Approve?",
         data_type=bool,
         run_output_base="/run_base",
+        inputs_uri="/run_base/inputs.pb",
     )
     assert action.type == "condition"
     assert action.condition is not None
     assert action.name == "condition-test"
+    assert action.inputs_uri == "/run_base/inputs.pb"
 
 
 def test_action_from_condition_with_description():
@@ -651,6 +653,7 @@ def test_action_from_condition_with_description():
         data_type=str,
         description="Needs human review",
         run_output_base="/run_base",
+        inputs_uri="/run_base/inputs.pb",
     )
     assert action.type == "condition"
     assert action.condition is not None
@@ -670,6 +673,7 @@ def test_action_from_condition_all_data_types(data_type):
         prompt="Enter value:",
         data_type=data_type,
         run_output_base="/run_base",
+        inputs_uri="/run_base/inputs.pb",
     )
     assert action.type == "condition"
     assert action.condition is not None
