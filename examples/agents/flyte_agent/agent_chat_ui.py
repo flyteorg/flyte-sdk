@@ -26,7 +26,7 @@ from flyte.ai.chat import AgentChatAppEnvironment, CustomTheme
 
 task_env = flyte.TaskEnvironment(
     name="chat-agent-tools",
-    image=(flyte.Image.from_debian_base().with_pip_packages("litellm", "httpx")),
+    image=(flyte.Image.from_debian_base().with_apt_packages("git").with_pip_packages("litellm", "httpx")),
     resources=flyte.Resources(cpu=1, memory="512Mi"),
     secrets=[flyte.Secret(key="internal-anthropic-api-key", as_env_var="ANTHROPIC_API_KEY")],
 )
@@ -94,7 +94,7 @@ async def chat_entrypoint(message: str, history: list[dict[str, Any]]) -> dict[s
 # ---------------------------------------------------------------------------
 
 env = AgentChatAppEnvironment(
-    name="flyte-agent-chat-ui",
+    name="flyte-native-agent-chat-ui",
     agent=agent,
     task_entrypoint=chat_entrypoint,
     title="Internal docs assistant",
@@ -107,10 +107,9 @@ env = AgentChatAppEnvironment(
         {"label": "Auth", "prompt": "How do I get an API key?"},
     ],
     depends_on=[task_env],
-    image=(
-        flyte.Image.from_debian_base(install_flyte=False).with_pip_packages("litellm", "fastapi", "uvicorn", "flyte")
-    ),
+    image=(flyte.Image.from_debian_base().with_pip_packages("litellm", "fastapi", "uvicorn")),
     resources=flyte.Resources(cpu=2, memory="2Gi"),
+    secrets=flyte.Secret("internal-anthropic-api-key", as_env_var="ANTHROPIC_API_KEY"),
 )
 
 
@@ -118,4 +117,4 @@ if __name__ == "__main__":
     flyte.init_from_config(root_dir=pathlib.Path(__file__).parent)
     deployments = flyte.deploy(env)
     print(f"Agent chat UI deployed: {deployments[0].summary_repr()}")
-    print(f"Url: {deployments[0].envs['flyte-agent-chat-ui'].deployed_app.url}")
+    print(f"Url: {deployments[0].envs['flyte-native-agent-chat-ui'].deployed_app.url}")

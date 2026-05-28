@@ -335,3 +335,84 @@ class TestAgentChatAppEnvironment:
         with patch("flyte.run", new=MagicMock(aio=_run)):
             out = await route.endpoint(_ChatRequest(message="zz", history=[]))
         assert out.summary == "inner:zz"
+
+
+class _PhaseEvent:
+    """Minimal stand-in for ActionDetails used by the watch forwarder."""
+
+    def __init__(self, phase: ActionPhase, *, done: bool = False):
+        self.phase = phase
+        self._done = done
+
+    def done(self) -> bool:
+        return self._done
+
+
+class TestForwardRemoteRunWatchToProgressQueue:
+    @pytest.mark.asyncio
+    async def test_pre_running_phases_emit_task_phase_events(self):
+        """``QUEUED``/``INITIALIZING`` must surface to the UI so cold starts
+        don't look like the request silently died."""
+        import asyncio
+
+        from flyte.ai.chat.app import _forward_remote_run_watch_to_progress_queue
+
+        phases = [
+            _PhaseEvent(ActionPhase.QUEUED),
+            _PhaseEvent(ActionPhase.INITIALIZING),
+            _PhaseEvent(ActionPhase.RUNNING),
+            _PhaseEvent(ActionPhase.SUCCEEDED, done=True),
+        ]
+
+        async def _watch():
+            for p in phases:
+                yield p
+
+        run_handle = MagicMock()
+        run_handle.watch = _watch
+        queue: asyncio.Queue[str | None] = asyncio.Queue()
+
+        await _forward_remote_run_watch_to_progress_queue(run_handle, queue)
+
+        emitted: list[dict[str, Any]] = []
+        while not queue.empty():
+            emitted.append(json.loads(queue.get_nowait()))
+
+        assert [(e["phase"], e.get("task_phase")) for e in emitted] == [
+            ("task_phase", "queued"),
+            ("task_phase", "initializing"),
+            ("generating_code", None),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_repeated_same_pre_running_phase_emits_once(self):
+        """Avoid flooding the SSE stream when the server re-yields the same phase."""
+        import asyncio
+
+        from flyte.ai.chat.app import _forward_remote_run_watch_to_progress_queue
+
+        phases = [
+            _PhaseEvent(ActionPhase.QUEUED),
+            _PhaseEvent(ActionPhase.QUEUED),
+            _PhaseEvent(ActionPhase.QUEUED),
+            _PhaseEvent(ActionPhase.RUNNING),
+            _PhaseEvent(ActionPhase.SUCCEEDED, done=True),
+        ]
+
+        async def _watch():
+            for p in phases:
+                yield p
+
+        run_handle = MagicMock()
+        run_handle.watch = _watch
+        queue: asyncio.Queue[str | None] = asyncio.Queue()
+
+        await _forward_remote_run_watch_to_progress_queue(run_handle, queue)
+
+        emitted: list[dict[str, Any]] = []
+        while not queue.empty():
+            emitted.append(json.loads(queue.get_nowait()))
+
+        queued_events = [e for e in emitted if e.get("task_phase") == "queued"]
+        assert len(queued_events) == 1
+        assert any(e["phase"] == "generating_code" for e in emitted)

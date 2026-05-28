@@ -114,6 +114,44 @@ async def test_insecure_no_tls_resolution(mock_get_session, mock_proxy, mock_aut
     assert isinstance(result.http_client, pyqwest.Client)
 
 
+@pytest.mark.asyncio
+@patch("flyte.remote._client.auth._session.create_auth_interceptors", return_value=[])
+@patch("flyte.remote._client.auth._session.create_proxy_auth_interceptors", return_value=[])
+@patch("flyte.remote._client.auth._session.get_async_session")
+@patch("flyte.remote._client.auth._session._resolve_tls_ca_cert", return_value=None)
+async def test_auth_kwargs_are_captured_for_rebuild(mock_tls, mock_get_session, mock_proxy, mock_auth):
+    """``SessionConfig.auth_kwargs`` must snapshot auth-relevant inputs.
+
+    This snapshot is what ``ClusterAwareDataProxy._select_and_build`` /
+    ``ClusterAwareSecretService._select_and_build`` splat back into
+    ``create_session_config`` when building per-cluster sessions. Without it
+    cluster-routed clients silently downgrade to the default ``auth_type="Pkce"``.
+    """
+    mock_get_session.return_value = MagicMock()
+    result = await create_session_config(
+        "example.com:443",
+        insecure=False,
+        ca_cert_file_path="/etc/ssl/ca.pem",
+        rpc_retries=3,
+        auth_type="Passthrough",
+        client_id="demo-uctl",
+    )
+    assert result.auth_kwargs["auth_type"] == "Passthrough"
+    assert result.auth_kwargs["client_id"] == "demo-uctl"
+    assert result.auth_kwargs["ca_cert_file_path"] == "/etc/ssl/ca.pem"
+    assert result.auth_kwargs["rpc_retries"] == 3
+
+
+@pytest.mark.asyncio
+@patch("flyte.remote._client.auth._session.create_auth_interceptors", return_value=[])
+@patch("flyte.remote._client.auth._session.create_proxy_auth_interceptors", return_value=[])
+@patch("flyte.remote._client.auth._session.get_async_session")
+async def test_auth_kwargs_default_to_empty_mapping(mock_get_session, mock_proxy, mock_auth):
+    mock_get_session.return_value = MagicMock()
+    result = await create_session_config("example.com:443", insecure=False)
+    assert dict(result.auth_kwargs) == {}
+
+
 class TestResolveTlsCaCert:
     @pytest.mark.asyncio
     async def test_insecure_returns_none(self):

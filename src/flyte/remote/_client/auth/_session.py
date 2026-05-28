@@ -2,7 +2,7 @@ import asyncio
 import os
 import socket
 import typing
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlparse
 
@@ -31,6 +31,16 @@ class SessionConfig:
     interceptors: tuple
     http_client: Any
     api_key: typing.Optional[str] = None
+    # Snapshot of the auth-related inputs to ``create_session_config`` (e.g.
+    # ``auth_type``, ``command``, ``proxy_command``, ``client_id``,
+    # ``client_credentials_secret``, ``ca_cert_file_path``, ``http_proxy_url``).
+    # Cluster-aware service routers (see ``ClusterAwareDataProxy`` and
+    # ``ClusterAwareSecretService``) splat this back into ``create_session_config``
+    # when rebuilding a ``SessionConfig`` for a per-cluster endpoint; without it
+    # the per-cluster session would fall back to the default ``auth_type="Pkce"``
+    # even when the parent session was configured for ``Passthrough``,
+    # ``ClientSecret``, ``ExternalCommand``, etc.
+    auth_kwargs: typing.Mapping[str, Any] = field(default_factory=dict)
 
     def connect_kwargs(self) -> dict[str, Any]:
         return {"address": self.endpoint, "interceptors": self.interceptors, "http_client": self.http_client}
@@ -211,6 +221,18 @@ async def create_session_config(
         kwargs["client_secret"] = client_secret
         kwargs["client_credentials_secret"] = client_secret
 
+    # Snapshot the auth-relevant inputs after api_key normalization so that the
+    # resulting SessionConfig carries everything ClusterAwareDataProxy and
+    # ClusterAwareSecretService need to rebuild a SessionConfig for a per-cluster
+    # endpoint without losing the configured auth mode.
+    captured_auth_kwargs: typing.Dict[str, Any] = dict(kwargs)
+    if ca_cert_file_path is not None:
+        captured_auth_kwargs["ca_cert_file_path"] = ca_cert_file_path
+    if proxy_command is not None:
+        captured_auth_kwargs["proxy_command"] = proxy_command
+    if rpc_retries is not None:
+        captured_auth_kwargs["rpc_retries"] = rpc_retries
+
     assert endpoint, "Endpoint must be specified by this point"
 
     # Normalize to HTTP(S) URL
@@ -275,4 +297,5 @@ async def create_session_config(
         interceptors=tuple(interceptors),
         http_client=http_client,
         api_key=api_key,
+        auth_kwargs=captured_auth_kwargs,
     )
