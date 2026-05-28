@@ -718,10 +718,8 @@ class RemoteController(Controller):
         if n.has_error() or n.phase == phase_pb2.ACTION_PHASE_FAILED:
             raise flyte.errors.EventFailedError(f"Event '{event.name}' condition action {n.action_id.name} failed.")
 
-        # For condition actions, the output Literal is delivered inline in the
-        # ActionUpdate (no output_uri).  Convert to the expected Python type.
-        # TODO: Uncomment when the ActionUpdate proto adds the `output` field
-        # and the backend populates it for condition actions:
-        # if n.condition_output is not None:
-        #     return Action.literal_to_python(n.condition_output, event.data_type)
+        # Condition actions deliver the signaled Literal inline via ActionUpdate.value
+        # (no output_uri). Convert to the expected Python type.
+        if n.condition_output is not None:
+            return Action.literal_to_python(n.condition_output, event.data_type)
         return None

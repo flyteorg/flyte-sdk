@@ -940,7 +940,7 @@ def test_action_condition_output_defaults_none():
 
 
 def test_action_from_state_sets_condition_output_none():
-    """from_state should set condition_output (currently None until proto support)."""
+    """from_state leaves condition_output unset when ActionUpdate.value is absent."""
     from flyteidl2.workflow.state_service_pb2 import ActionUpdate
 
     update = ActionUpdate(
@@ -950,3 +950,147 @@ def test_action_from_state_sets_condition_output_none():
     )
     action = Action.from_state("parent", update)
     assert action.condition_output is None
+
+
+def test_action_from_state_copies_value_when_set():
+    """from_state should copy ActionUpdate.value into condition_output."""
+    from flyteidl2.core.literals_pb2 import Literal, Primitive, Scalar
+    from flyteidl2.workflow.state_service_pb2 import ActionUpdate
+
+    literal = Literal(scalar=Scalar(primitive=Primitive(boolean=True)))
+    update = ActionUpdate(
+        action_id=identifier_pb2.ActionIdentifier(name="cond-1", run=identifier_pb2.RunIdentifier(name="run")),
+        phase=phase_pb2.ACTION_PHASE_SUCCEEDED,
+        value=literal,
+    )
+    action = Action.from_state("parent", update)
+    assert action.condition_output == literal
+
+
+def test_merge_state_copies_value_for_condition():
+    """merge_state should populate condition_output from ActionUpdate.value on condition actions."""
+    from flyteidl2.core.literals_pb2 import Literal, Primitive, Scalar
+    from flyteidl2.workflow.state_service_pb2 import ActionUpdate
+
+    action = Action(
+        action_id=identifier_pb2.ActionIdentifier(name="cond-1", run=identifier_pb2.RunIdentifier(name="run")),
+        parent_action_name="parent",
+        type="condition",
+    )
+    literal = Literal(scalar=Scalar(primitive=Primitive(string_value="approved")))
+    update = ActionUpdate(
+        action_id=action.action_id,
+        phase=phase_pb2.ACTION_PHASE_SUCCEEDED,
+        value=literal,
+    )
+    action.merge_state(update)
+    assert action.condition_output == literal
+
+
+def test_merge_state_ignores_value_for_non_condition():
+    """merge_state should not populate condition_output on non-condition actions."""
+    from flyteidl2.core.literals_pb2 import Literal, Primitive, Scalar
+    from flyteidl2.workflow.state_service_pb2 import ActionUpdate
+
+    action = Action(
+        action_id=identifier_pb2.ActionIdentifier(name="task-1", run=identifier_pb2.RunIdentifier(name="run")),
+        parent_action_name="parent",
+        type="task",
+    )
+    update = ActionUpdate(
+        action_id=action.action_id,
+        phase=phase_pb2.ACTION_PHASE_SUCCEEDED,
+        value=Literal(scalar=Scalar(primitive=Primitive(boolean=True))),
+    )
+    action.merge_state(update)
+    assert action.condition_output is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "data_type, primitive_kwargs, expected",
+    [
+        (bool, {"boolean": True}, True),
+        (bool, {"boolean": False}, False),
+        (int, {"integer": 42}, 42),
+        (float, {"float_value": 3.5}, 3.5),
+        (str, {"string_value": "hello"}, "hello"),
+    ],
+)
+async def test_wait_for_event_returns_signaled_value(data_type, primitive_kwargs, expected):
+    """wait_for_event should return the Python value carried in ActionUpdate.value."""
+    from flyteidl2.core.literals_pb2 import Literal, Primitive, Scalar
+
+    await flyte.init.aio()
+    event = _make_event(name=f"signal_{data_type.__name__}", data_type=data_type)
+
+    succeeded_action = Action(
+        action_id=identifier_pb2.ActionIdentifier(
+            name=f"condition-{data_type.__name__}",
+            run=identifier_pb2.RunIdentifier(name="test_run"),
+        ),
+        parent_action_name="parent_action",
+        type="condition",
+        phase=phase_pb2.ACTION_PHASE_SUCCEEDED,
+        condition_output=Literal(scalar=Scalar(primitive=Primitive(**primitive_kwargs))),
+    )
+
+    with patch("flyte._initialize.get_init_config") as mock_config:
+        mock_config.return_value.root_dir = pathlib.Path(__file__).parent
+        ctx = internal_ctx()
+        tctx = _make_task_context()
+
+        with ctx.replace_task_context(tctx):
+            controller = _make_controller()
+
+            with (
+                patch.object(controller, "start_action", new_callable=AsyncMock),
+                patch.object(
+                    controller,
+                    "wait_for_action",
+                    new_callable=AsyncMock,
+                    return_value=succeeded_action,
+                ),
+            ):
+                await controller.register_event(event)
+                result = await controller.wait_for_event(event)
+                assert result == expected
+                assert isinstance(result, data_type)
+
+
+@pytest.mark.asyncio
+async def test_wait_for_event_returns_none_when_value_absent():
+    """wait_for_event should return None if the action succeeded without a value."""
+    await flyte.init.aio()
+    event = _make_event(name="no_value", data_type=bool)
+
+    succeeded_action = Action(
+        action_id=identifier_pb2.ActionIdentifier(
+            name="condition-no_value",
+            run=identifier_pb2.RunIdentifier(name="test_run"),
+        ),
+        parent_action_name="parent_action",
+        type="condition",
+        phase=phase_pb2.ACTION_PHASE_SUCCEEDED,
+    )
+
+    with patch("flyte._initialize.get_init_config") as mock_config:
+        mock_config.return_value.root_dir = pathlib.Path(__file__).parent
+        ctx = internal_ctx()
+        tctx = _make_task_context()
+
+        with ctx.replace_task_context(tctx):
+            controller = _make_controller()
+
+            with (
+                patch.object(controller, "start_action", new_callable=AsyncMock),
+                patch.object(
+                    controller,
+                    "wait_for_action",
+                    new_callable=AsyncMock,
+                    return_value=succeeded_action,
+                ),
+            ):
+                await controller.register_event(event)
+                result = await controller.wait_for_event(event)
+                assert result is None

@@ -92,11 +92,10 @@ class Action:
             self.phase = obj.phase
             self.err = obj.error if obj.HasField("error") else None
         self.realized_outputs_uri = obj.output_uri
-        # For condition actions, the backend may include the output Literal directly
-        # in the ActionUpdate instead of an output_uri.
-        # TODO: Uncomment when the ActionUpdate proto adds the `output` field:
-        # if self.type == "condition" and obj.HasField("output"):
-        #     self.condition_output = obj.output
+        # For condition actions, the backend delivers the signaled Literal inline on
+        # ActionUpdate.value instead of via output_uri.
+        if self.type == "condition" and obj.HasField("value"):
+            self.condition_output = obj.value
         self.started = True
 
     def merge_in_action_from_submit(self, action: Action):
@@ -178,10 +177,8 @@ class Action:
         from flyte._logging import logger
 
         logger.debug(f"In Action from_state {obj.action_id} {obj.phase} {obj.output_uri}")
-        # For condition actions, the backend may include the output Literal directly.
-        # TODO: Uncomment when the ActionUpdate proto adds the `output` field:
-        # condition_output = obj.output if obj.HasField("output") else None
-        condition_output = None
+        # Condition actions carry the signaled Literal inline on ActionUpdate.value.
+        condition_output = obj.value if obj.HasField("value") else None
         return cls(
             action_id=obj.action_id,
             parent_action_name=parent_action_name,
