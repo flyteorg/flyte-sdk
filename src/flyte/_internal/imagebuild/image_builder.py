@@ -20,7 +20,7 @@ from flyte._logging import logger
 from flyte._persistence._db import LocalDB
 from flyte._status import status
 
-_IMAGE_CACHE_TTL_DAYS = 30
+_IMAGE_CACHE_TTL_DAYS = 1
 
 if TYPE_CHECKING:
     from flyte._build import ImageBuild
