@@ -10,12 +10,15 @@ import pytest
 
 from flyte import TaskEnvironment
 from flyte.ai.agents import (
+    AccessDenied,
     Agent,
     AgentEvent,
-    AgentMemory,
     AgentTool,
+    ConcurrencyError,
     LLMMessage,
     MCPServerSpec,
+    MemoryStore,
+    MemoryStoreError,
     agent_progress_cb,
 )
 from flyte.ai.agents.agent import (
@@ -489,32 +492,36 @@ class TestApproval:
 
 
 @pytest.mark.asyncio
-class TestAgentMemory:
-    async def test_save_and_load_file(self, tmp_path: pathlib.Path):
-        memory = AgentMemory(
-            messages=[
-                {"role": "user", "content": "hello"},
-                {"role": "assistant", "content": "hi"},
-            ],
-            artifacts={"plan": {"step": 1}, "raw_text": "note"},
-        )
+class TestMemoryStore:
+    async def test_default_root_is_temp_dir(self):
+        memory = MemoryStore()
+        assert memory.root is not None and memory.root.exists()
+        assert memory.messages == []
 
-        # Write the JSON ourselves and then exercise from_json directly so the
-        # test does not need to talk to remote storage.
-        out = json.loads(memory.to_json())
-        assert out["messages"][0]["content"] == "hello"
-        assert out["artifacts"]["plan"]["step"] == 1
-        roundtrip = AgentMemory.from_json(memory.to_json())
-        assert roundtrip.messages == memory.messages
-        assert roundtrip.artifacts == memory.artifacts
+    async def test_explicit_root_auto_loads_messages(self, tmp_path: pathlib.Path):
+        seed = MemoryStore(root=tmp_path)
+        seed.append({"role": "user", "content": "hello"})
+        seed.append({"role": "assistant", "content": "hi"})
+        seed._flush_messages()
 
-    async def test_empty_memory_roundtrip(self):
-        out = AgentMemory.from_json("")
-        assert out.messages == []
-        assert out.artifacts == {}
+        restored = MemoryStore(root=tmp_path)
+        assert [m["content"] for m in restored.messages] == ["hello", "hi"]
+
+    async def test_corrupt_messages_json_logs_and_resets(self, tmp_path: pathlib.Path):
+        (tmp_path / "messages.json").write_text("not json", encoding="utf-8")
+        memory = MemoryStore(root=tmp_path)
+        assert memory.messages == []
+
+    async def test_explicit_messages_take_precedence_over_disk(self, tmp_path: pathlib.Path):
+        seed = MemoryStore(root=tmp_path)
+        seed.append({"role": "user", "content": "old"})
+        seed._flush_messages()
+
+        restored = MemoryStore(root=tmp_path, messages=[{"role": "user", "content": "fresh"}])
+        assert [m["content"] for m in restored.messages] == ["fresh"]
 
     async def test_memory_persists_conversation(self):
-        memory = AgentMemory()
+        memory = MemoryStore()
         llm = _make_llm([LLMMessage(content="ack", tool_calls=[])])
         agent = Agent(name="t", instructions="I", call_llm=llm, memory=memory)
         await agent.run("hi", [])
@@ -524,7 +531,7 @@ class TestAgentMemory:
         assert memory.messages[1]["content"] == "ack"
 
     async def test_memory_prepended_to_next_run(self):
-        memory = AgentMemory(
+        memory = MemoryStore(
             messages=[{"role": "user", "content": "remember this"}, {"role": "assistant", "content": "noted"}]
         )
         llm = _make_llm([LLMMessage(content="ok", tool_calls=[])])
@@ -534,6 +541,160 @@ class TestAgentMemory:
         contents = [m["content"] for m in messages]
         assert "remember this" in contents
         assert "noted" in contents
+
+
+@pytest.mark.asyncio
+class TestMemoryStorePathAddressedIO:
+    async def test_write_and_read_text_roundtrip(self, tmp_path: pathlib.Path):
+        memory = MemoryStore(root=tmp_path)
+        meta = memory.write_text("notes/plan.md", "step 1", actor="tester", reason="unit")
+        assert meta.path == "notes/plan.md"
+        assert meta.bytes == len(b"step 1")
+        assert memory.read_text("notes/plan.md") == "step 1"
+
+    async def test_write_and_read_json_roundtrip(self, tmp_path: pathlib.Path):
+        memory = MemoryStore(root=tmp_path)
+        memory.write_json("data/plan.json", {"a": 1, "b": [1, 2]})
+        assert memory.read_json("data/plan.json") == {"a": 1, "b": [1, 2]}
+
+    async def test_read_text_default_when_missing(self, tmp_path: pathlib.Path):
+        memory = MemoryStore(root=tmp_path)
+        assert memory.read_text("missing.txt", default="fallback") == "fallback"
+        assert memory.read_json("missing.json", default={"x": 0}) == {"x": 0}
+
+    async def test_list_paths_excludes_internals_and_messages(self, tmp_path: pathlib.Path):
+        memory = MemoryStore(root=tmp_path)
+        memory.write_text("user/a.txt", "a")
+        memory.write_text("user/b.txt", "b")
+        memory.append({"role": "user", "content": "hi"})
+        memory._flush_messages()
+
+        paths = memory.list_paths()
+        assert paths == ["user/a.txt", "user/b.txt"]
+        # Prefixed listing scopes correctly.
+        assert memory.list_paths("user") == ["user/a.txt", "user/b.txt"]
+        # No bookkeeping paths leak through.
+        assert all(not p.startswith(("audit/", "meta/", "versions/")) for p in paths)
+        assert "messages.json" not in paths
+
+    async def test_list_paths_returns_empty_for_missing_prefix(self, tmp_path: pathlib.Path):
+        memory = MemoryStore(root=tmp_path)
+        assert memory.list_paths("does/not/exist") == []
+
+    async def test_path_traversal_rejected(self, tmp_path: pathlib.Path):
+        memory = MemoryStore(root=tmp_path)
+        with pytest.raises(MemoryStoreError, match="traversal"):
+            memory.write_text("../escape.txt", "no")
+        with pytest.raises(MemoryStoreError, match="must be relative"):
+            memory.write_text("/abs/path.txt", "no")
+        with pytest.raises(MemoryStoreError, match="Empty path"):
+            memory.write_text("", "no")
+
+    async def test_messages_json_write_blocked(self, tmp_path: pathlib.Path):
+        memory = MemoryStore(root=tmp_path)
+        with pytest.raises(AccessDenied, match=r"messages\.json"):
+            memory.write_text("messages.json", "{}")
+
+    async def test_internal_prefixes_blocked(self, tmp_path: pathlib.Path):
+        memory = MemoryStore(root=tmp_path)
+        for path in ("audit/log.jsonl", "meta/x.json", "versions/x/y.txt"):
+            with pytest.raises(AccessDenied, match="reserved"):
+                memory.write_text(path, "no")
+
+
+@pytest.mark.asyncio
+class TestMemoryStoreReadOnlyPrefixes:
+    async def test_writes_to_read_only_prefix_rejected(self, tmp_path: pathlib.Path):
+        memory = MemoryStore(root=tmp_path, read_only_prefixes=("memory/",))
+        with pytest.raises(AccessDenied, match="read-only"):
+            memory.write_text("memory/docs.txt", "no")
+
+    async def test_writes_outside_read_only_prefix_allowed(self, tmp_path: pathlib.Path):
+        memory = MemoryStore(root=tmp_path, read_only_prefixes=("memory/",))
+        memory.write_text("user/notes.txt", "ok")
+        assert memory.read_text("user/notes.txt") == "ok"
+
+
+@pytest.mark.asyncio
+class TestMemoryStoreConcurrency:
+    async def test_expected_sha_match_succeeds(self, tmp_path: pathlib.Path):
+        memory = MemoryStore(root=tmp_path)
+        memory.write_text("a.txt", "v1")
+        sha = memory.current_sha("a.txt")
+        memory.write_text("a.txt", "v2", expected_sha=sha)
+        assert memory.read_text("a.txt") == "v2"
+
+    async def test_expected_sha_mismatch_raises(self, tmp_path: pathlib.Path):
+        memory = MemoryStore(root=tmp_path)
+        memory.write_text("a.txt", "v1")
+        with pytest.raises(ConcurrencyError) as exc:
+            memory.write_text("a.txt", "v2", expected_sha="deadbeef")
+        assert exc.value.path == "a.txt"
+        assert exc.value.expected_sha == "deadbeef"
+
+    async def test_expected_sha_empty_for_create(self, tmp_path: pathlib.Path):
+        memory = MemoryStore(root=tmp_path)
+        memory.write_text("new.txt", "hello", expected_sha="")
+        assert memory.read_text("new.txt") == "hello"
+
+    async def test_current_sha_empty_when_missing(self, tmp_path: pathlib.Path):
+        memory = MemoryStore(root=tmp_path)
+        assert memory.current_sha("nope.txt") == ""
+
+
+@pytest.mark.asyncio
+class TestMemoryStoreAudit:
+    async def test_audit_records_create_then_update(self, tmp_path: pathlib.Path):
+        memory = MemoryStore(root=tmp_path)
+        memory.write_text("a.txt", "v1", actor="alice", reason="seed")
+        memory.write_text("a.txt", "v2", actor="bob", reason="update")
+        events = memory.audit_tail()
+        assert len(events) == 2
+        assert events[0]["op"] == "create"
+        assert events[0]["actor"] == "alice"
+        assert events[1]["op"] == "update"
+        assert events[1]["old_sha"] == events[0]["new_sha"]
+
+    async def test_audit_disabled_writes_no_log(self, tmp_path: pathlib.Path):
+        memory = MemoryStore(root=tmp_path, audit=False)
+        memory.write_text("a.txt", "v1")
+        assert memory.audit_tail() == []
+        assert not (tmp_path / "audit" / "log.jsonl").exists()
+
+
+@pytest.mark.asyncio
+class TestMemoryStoreVersions:
+    async def test_keep_versions_snapshots_each_write(self, tmp_path: pathlib.Path):
+        memory = MemoryStore(root=tmp_path, keep_versions=True)
+        memory.write_text("a.txt", "v1")
+        memory.write_text("a.txt", "v2")
+        memory.write_text("a.txt", "v3")
+        snapshots = list((tmp_path / "versions" / "a.txt").glob("*.txt"))
+        assert len(snapshots) == 3
+        contents = sorted(s.read_text(encoding="utf-8") for s in snapshots)
+        assert contents == ["v1", "v2", "v3"]
+
+    async def test_no_versions_by_default(self, tmp_path: pathlib.Path):
+        memory = MemoryStore(root=tmp_path)
+        memory.write_text("a.txt", "v1")
+        assert not (tmp_path / "versions").exists()
+
+
+@pytest.mark.asyncio
+class TestMemoryStoreMeta:
+    async def test_meta_sidecar_records_actor_and_sha(self, tmp_path: pathlib.Path):
+        memory = MemoryStore(root=tmp_path)
+        meta = memory.write_text("a.txt", "hello", actor="tool-x", reason="seed")
+        loaded = memory.get_meta("a.txt")
+        assert loaded is not None
+        assert loaded.path == "a.txt"
+        assert loaded.updated_by == "tool-x"
+        assert loaded.reason == "seed"
+        assert loaded.sha256 == meta.sha256
+
+    async def test_get_meta_none_when_missing(self, tmp_path: pathlib.Path):
+        memory = MemoryStore(root=tmp_path)
+        assert memory.get_meta("nope.txt") is None
 
 
 # ----------------------------------------------------------------------------

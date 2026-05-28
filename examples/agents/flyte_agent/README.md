@@ -14,7 +14,9 @@ The harness deeply integrates with Flyte 2:
 - **MCP servers** (Slack, GitHub, Linear, filesystem, …) are first-class:
   pass `MCPServerSpec(url=...)` or `MCPServerSpec(command=[...])` and their
   tools are loaded into the catalog automatically.
-- **Memory** persists across runs via `flyte.io.File` or `flyte.io.Dir`.
+- **Memory** persists across runs via `flyte.io.Dir` (transcript +
+  path-addressed artifacts, with opt-in audit log, read-only prefixes, and
+  optimistic concurrency).
 - **Triggers** wake the agent on a schedule (cron, fixed-rate) or via a
   webhook.
 - **HITL** support pauses the loop and asks a human via
@@ -53,7 +55,7 @@ the chat UI, webhook handlers, and structured loggers subscribe to.
 |------|---------------|
 | `basic_agent.py` | Minimal agent — plain async tools, run locally from the CLI. |
 | `scheduled_triage_agent.py` | Agent that wakes daily via `flyte.Cron`, uses durable Flyte tasks. |
-| `agent_with_memory.py` | Persist `AgentMemory` to `flyte.io.File` between task invocations. |
+| `agent_with_memory.py` | Persist `MemoryStore` (transcript + artifacts) to `flyte.io.Dir` between task invocations. |
 | `hitl_approval_agent.py` | Gate sensitive tools behind human approval (`flyteplugins-hitl`). |
 | `agent_chat_ui.py` | Wrap an `Agent` in the built-in `AgentChatAppEnvironment` UI. |
 | `mcp_powered_agent.py` | Mix local Flyte task tools with remote MCP servers. |

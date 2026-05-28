@@ -102,15 +102,19 @@ class TestBuildChatHtml:
 class TestPackageExports:
     def test_agents_public_import_surface(self):
         assert set(agents_pkg.__all__) == {
+            "AccessDenied",
             "Agent",
             "AgentEvent",
-            "AgentMemory",
             "AgentProtocol",
             "AgentResult",
             "AgentTool",
             "CodeModeAgent",
+            "ConcurrencyError",
             "LLMMessage",
             "MCPServerSpec",
+            "MemoryMeta",
+            "MemoryStore",
+            "MemoryStoreError",
             "agent_progress_cb",
         }
         assert CodeModeAgent.__name__ == "CodeModeAgent"

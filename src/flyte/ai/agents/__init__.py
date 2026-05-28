@@ -3,24 +3,34 @@
 from .agent import (
     Agent,
     AgentEvent,
-    AgentMemory,
     AgentTool,
     LLMMessage,
     MCPServerSpec,
     agent_progress_cb,
 )
 from .codemode import CodeModeAgent
+from .memory import (
+    AccessDenied,
+    ConcurrencyError,
+    MemoryMeta,
+    MemoryStore,
+    MemoryStoreError,
+)
 from .protocol import AgentProtocol, AgentResult
 
 __all__ = [
+    "AccessDenied",
     "Agent",
     "AgentEvent",
-    "AgentMemory",
     "AgentProtocol",
     "AgentResult",
     "AgentTool",
     "CodeModeAgent",
+    "ConcurrencyError",
     "LLMMessage",
     "MCPServerSpec",
+    "MemoryMeta",
+    "MemoryStore",
+    "MemoryStoreError",
     "agent_progress_cb",
 ]
