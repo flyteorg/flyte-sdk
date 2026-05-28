@@ -8,7 +8,7 @@ from typing import Any, Dict, Optional
 import flyte
 import yaml
 from flyte import PodTemplate, Resources
-from flyte.extend import AsyncFunctionTaskTemplate, TaskPluginRegistry, pod_spec_from_resources
+from flyte.extend import AsyncFunctionTaskTemplate, TaskPluginRegistry, pod_spec_from_resources, get_proto_extended_resources
 from flyte.models import SerializationContext
 from flyteidl2.plugins.ray_pb2 import HeadGroupSpec, RayCluster, RayJob, WorkerGroupSpec
 from google.protobuf.json_format import MessageToDict
@@ -100,6 +100,7 @@ class RayFunctionTask(AsyncFunctionTaskTemplate):
             head_group_spec = HeadGroupSpec(
                 ray_start_params=cfg.head_node_config.ray_start_params,
                 k8s_pod=head_pod_template.to_k8s_pod() if head_pod_template else None,
+                extended_resources=get_proto_extended_resources(cfg.head_node_config.requests),
             )
 
         worker_group_spec: typing.List[WorkerGroupSpec] = []
@@ -123,6 +124,7 @@ class RayFunctionTask(AsyncFunctionTaskTemplate):
                     max_replicas=c.max_replicas,
                     ray_start_params=c.ray_start_params,
                     k8s_pod=worker_pod_template.to_k8s_pod() if worker_pod_template else None,
+                    extended_resources=get_proto_extended_resources(c.requests),
                 )
             )
 
