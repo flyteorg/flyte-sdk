@@ -26,15 +26,10 @@ from __future__ import annotations
 
 import os
 import pathlib
-import shutil
 import sys
-import tarfile
-import tempfile
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from typing import Any, Optional
-
-import aiofiles
 
 from flyte._logging import logger
 
@@ -42,6 +37,8 @@ from flyte._logging import logger
 # Eager top-level imports would drag the DataFrame type transformer (pydantic +
 # mashumaro.jsonschema + markdown_it, ~1s cold start) and fsspec/obstore into
 # every ``import flyte`` — even for tasks that never touch checkpoints.
+# ``shutil``/``tarfile``/``tempfile``/``aiofiles`` are imported lazily for the
+# same reason (tarfile in particular drags bz2/lzma/zlib).
 
 CHECKPOINT_CACHE_KEY = "__flyte_sync_checkpoint__"
 
@@ -103,6 +100,8 @@ def _is_recoverable_checkpoint_load_error(exc: BaseException) -> bool:
 
 
 def _clear_directory_contents(directory: pathlib.Path) -> None:
+    import shutil
+
     if not directory.exists():
         return
     for child in directory.iterdir():
@@ -114,6 +113,8 @@ def _clear_directory_contents(directory: pathlib.Path) -> None:
 
 def _tar_directory_to_file(source_dir: pathlib.Path, tar_path: pathlib.Path) -> None:
     """Write a gzip-compressed tar of *immediate* children of `source_dir` to `tar_path`."""
+    import tarfile
+
     with tarfile.open(tar_path, "w:gz") as tar:
         for child in sorted(source_dir.iterdir()):
             tar.add(child, arcname=child.name, recursive=True)
@@ -124,6 +125,9 @@ def _extract_tarball_or_move(archive: pathlib.Path, dest: pathlib.Path) -> bool:
     Tar archive: extract into `dest`. Single file: rename into `dest / payload` (no extra copy on same FS).
     Returns True if the archive was a tarball, False if it was a single file.
     """
+    import shutil
+    import tarfile
+
     if tarfile.is_tarfile(archive):
         with tarfile.open(archive, "r:*") as tar:
             tar.extractall(path=dest)
@@ -134,6 +138,8 @@ def _extract_tarball_or_move(archive: pathlib.Path, dest: pathlib.Path) -> bool:
 
 
 def _new_checkpoint_download_temp_path() -> pathlib.Path:
+    import tempfile
+
     fd, tmp_name = tempfile.mkstemp(prefix="flyte-cpdl-", suffix=".bin")
     os.close(fd)
     return pathlib.Path(tmp_name)
@@ -174,6 +180,8 @@ def _upload_checkpoint_bytes_sync(data: bytes, dest_uri: str) -> None:
 
 
 async def _upload_checkpoint_file(from_local: str, dest_uri: str) -> None:
+    import aiofiles
+
     from flyte.io import File
     from flyte.storage._storage import strip_file_header
 
@@ -190,6 +198,8 @@ async def _upload_checkpoint_file(from_local: str, dest_uri: str) -> None:
 
 
 def _upload_checkpoint_file_sync(from_local: str, dest_uri: str) -> None:
+    import shutil
+
     from flyte.io import File
     from flyte.storage._storage import strip_file_header
 
@@ -249,6 +259,8 @@ class Checkpoint(BaseCheckpoint):
     """
 
     def __init__(self, checkpoint_dest: str, checkpoint_src: str | None = None):
+        import tempfile
+
         self._checkpoint_dest = checkpoint_dest
         self._checkpoint_src: str | None = None
         if checkpoint_src is not None and (src := checkpoint_src.strip().strip('"')) != "":
@@ -392,6 +404,8 @@ class Checkpoint(BaseCheckpoint):
         return self._load_return_path(is_tarball=is_tarball)
 
     async def _save_directory_as_tarball(self, src: pathlib.Path) -> None:
+        import tempfile
+
         fd, tmp_name = tempfile.mkstemp(prefix="flyte-cptar-", suffix=".tar.gz")
         os.close(fd)
         tar_path = pathlib.Path(tmp_name)
@@ -402,6 +416,8 @@ class Checkpoint(BaseCheckpoint):
             tar_path.unlink(missing_ok=True)
 
     def _save_directory_as_tarball_sync(self, src: pathlib.Path) -> None:
+        import tempfile
+
         fd, tmp_name = tempfile.mkstemp(prefix="flyte-cptar-", suffix=".tar.gz")
         os.close(fd)
         tar_path = pathlib.Path(tmp_name)
