@@ -1,7 +1,6 @@
 # /// script
 # requires-python = "==3.12"
 # dependencies = [
-#    "kubernetes",
 #    "flyte",
 #    "flyteplugins-union",
 # ]
@@ -83,11 +82,11 @@ async def init_volume(volume_name: str) -> ROVolume:
     # forks Just Work with no extra image deps.
     vol = Volume.new(name=volume_name)
     logger.info("init_volume: bucket resolved to %s", vol.bucket)
-    await vol.mount()
+    # mount_path is configurable; "/workspace" is the default.
+    await vol.mount(mount_path="/workspace")
     Path("/workspace/hello.txt").write_text("hello from volume\n")
-    # finalize() drains writeback, unmounts, and publishes an immutable
-    # ROVolume. (Returning the mounted RWVolume directly would do the same
-    # via the type transformer.)
+    # finalize() drains writeback, unmounts, and returns an immutable ROVolume.
+    # Use commit() instead to flush without unmounting (keeps the volume live).
     sealed = await vol.finalize(message="initial write")
     logger.info("init_volume: sealed, index path=%s", sealed.index.path if sealed.index else None)
     return sealed
