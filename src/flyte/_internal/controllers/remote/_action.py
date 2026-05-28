@@ -284,8 +284,6 @@ class Action:
             run_output_base=run_output_base,
             condition=run_definition_pb2.ConditionAction(
                 name=event_name,
-                run_id=action_id.run.name,
-                action_id=action_id.name,
                 type=literal_type,
                 prompt=prompt,
                 description=description,

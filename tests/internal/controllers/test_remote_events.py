@@ -76,6 +76,7 @@ def _make_bare_controller():
     controller._shared_queue = asyncio.Queue()
     controller._state_service = AsyncMock()
     controller._actions_service = None
+    controller._trace_submit = False
     return controller
 
 
@@ -112,6 +113,11 @@ async def test_wait_for_action_blocks_until_completion():
     run_id = identifier_pb2.RunIdentifier(name="root_run")
     action_id = identifier_pb2.ActionIdentifier(name="subrun-1", run=run_id)
 
+    action = Action(
+        action_id=action_id,
+        parent_action_name="parent",
+    )
+
     final_action = Action(
         action_id=action_id,
         parent_action_name="parent",
@@ -123,7 +129,7 @@ async def test_wait_for_action_blocks_until_completion():
     informer.get = AsyncMock(return_value=final_action)
     controller._informers.get_or_create = AsyncMock(return_value=informer)
 
-    result = await controller._bg_wait_for_action(action_id, run_id, "parent")
+    result = await controller._bg_wait_for_action(action)
 
     informer.wait_for_action_completion.assert_awaited_once_with("subrun-1")
     informer.get.assert_awaited_once_with("subrun-1")

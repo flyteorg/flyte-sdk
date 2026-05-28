@@ -28,7 +28,7 @@ async def basic_event_task(x: int) -> int:
 
 
 # ---------------------------------------------------------------------------
-# 2. Markdown prompt – renders rich text in the TUI / UI
+# 2. Markdown prompt - renders rich text in the TUI / UI
 # ---------------------------------------------------------------------------
 @env.task
 async def markdown_event_task(x: int) -> int:
@@ -53,7 +53,7 @@ async def markdown_event_task(x: int) -> int:
 
 
 # ---------------------------------------------------------------------------
-# 3. Webhook – notify an external system when the event is created.
+# 3. Webhook - notify an external system when the event is created.
 #    The external system can then POST back to {callback_uri} to signal it.
 # ---------------------------------------------------------------------------
 @env.task
@@ -80,7 +80,7 @@ async def webhook_outbound_task(x: int) -> int:
 
 
 # ---------------------------------------------------------------------------
-# 4. Webhook – signal an event programmatically from a remote client
+# 4. Webhook - signal an event programmatically from a remote client
 #    (e.g. from a webhook handler, a script, or a CI job)
 # ---------------------------------------------------------------------------
 def signal_event_remotely(run_name: str, action_name: str):
@@ -92,12 +92,12 @@ def signal_event_remotely(run_name: str, action_name: str):
     while not (event := remote.Event.get("external_approval", run_name=run_name, action_name=action_name)):
         time.sleep(5)
 
-    # Signal the event – the waiting task resumes immediately
+    # Signal the event - the waiting task resumes immediately
     event.signal(True)
 
 
 # ---------------------------------------------------------------------------
-# Main – run the markdown example locally
+# Main - run the markdown example locally
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     flyte.init()

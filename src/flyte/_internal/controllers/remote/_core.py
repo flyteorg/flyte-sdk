@@ -140,9 +140,7 @@ class Controller:
     @log
     async def wait_for_action(self, action: Action) -> Action:
         """Wait for a previously submitted action to complete. Returns the final action state."""
-        return await self._run_coroutine_in_controller_thread(
-            self._bg_wait_for_action(action.action_id, action.action_id.run, action.parent_action_name)
-        )
+        return await self._run_coroutine_in_controller_thread(self._bg_wait_for_action(action))
 
     async def get_action(self, action_id: identifier_pb2.ActionIdentifier, parent_action_name: str) -> Optional[Action]:
         """Get the action from the informer"""
@@ -319,7 +317,7 @@ class Controller:
         if informer:
             await informer.stop()
 
-    async def _bg_submit_action(self, action: Action) -> Action:
+    async def _bg_submit_action(self, action: Action) -> None:
         """Submit a resource to the informer. Returns immediately after enqueue."""
         logger.debug(f"{threading.current_thread().name} Submitting action {action.name}")
         trace_enabled = self._trace_enabled_for(action.name)
@@ -352,15 +350,19 @@ class Controller:
                 elapsed_ms=f"{(time.monotonic() - queue_submit_start) * 1000:.1f}",
             )
 
-    async def _bg_wait_for_action(
-        self,
-        action_id: identifier_pb2.ActionIdentifier,
-        run_id: identifier_pb2.RunIdentifier,
-        parent_action_name: str,
-    ) -> Action:
+    async def _bg_wait_for_action(self, action: Action) -> Action:
         """Wait for an action to complete and return its final state."""
-        action_name = action_id.name
-        logger.debug(f"{threading.current_thread().name} Waiting for completion of {action_name}")
+        trace_enabled = self._trace_enabled_for(action.name)
+        informer = await self._informers.get_or_create(
+            action.action_id.run,
+            action.parent_action_name,
+            self._shared_queue,
+            self._state_service,
+            fn=self._bg_handle_informer_error,
+            timeout=self._informer_start_wait_timeout,
+            actions_service=self._actions_service,
+        )
+        logger.debug(f"{threading.current_thread().name} Waiting for completion of {action.name}")
         # Wait for completion.  For trace actions apply a timeout so a
         # transient watch failure (e.g. gRPC deserialization returning None)
         # doesn't block the caller indefinitely.  Task actions may legitimately
@@ -369,11 +371,11 @@ class Controller:
         if action.type == "trace":
             _trace_timeout = float(os.getenv("_F_TRACE_COMPLETION_TIMEOUT", "60"))
             try:
-                await asyncio.wait_for(informer.wait_for_action_completion(action_name), timeout=_trace_timeout)
+                await asyncio.wait_for(informer.wait_for_action_completion(action.name), timeout=_trace_timeout)
             except asyncio.TimeoutError:
                 logger.warning(
                     f"{threading.current_thread().name} Trace completion wait timed out after {_trace_timeout}s "
-                    f"for {action_namename}, continuing anyway"
+                    f"for {action.name}, continuing anyway"
                 )
                 await informer.fire_completion_event(action.name)
         else:
@@ -400,7 +402,7 @@ class Controller:
     async def _bg_submit_and_wait_for_action(self, action: Action) -> Action:
         """Submit a resource and await its completion, returning the final state."""
         await self._bg_submit_action(action)
-        return await self._bg_wait_for_action(action.action_id, action.action_id.run, action.parent_action_name)
+        return await self._bg_wait_for_action(action)
 
     async def _bg_cancel_action(self, action: Action):
         """
