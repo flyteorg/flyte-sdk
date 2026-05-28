@@ -26,7 +26,12 @@ from flyte.ai.chat import AgentChatAppEnvironment, CustomTheme
 
 task_env = flyte.TaskEnvironment(
     name="chat-agent-tools",
-    image=(flyte.Image.from_debian_base().with_apt_packages("git").with_pip_packages("litellm", "httpx")),
+    image=(
+        flyte.Image.from_debian_base()
+        .with_apt_packages("git")
+        .with_pip_packages("litellm", "httpx")
+        .with_commands(["uv pip install git+https://www.github.com/flyteorg/flyte-sdk.git@87205fda"])
+    ),
     resources=flyte.Resources(cpu=1, memory="512Mi"),
     secrets=[flyte.Secret(key="internal-anthropic-api-key", as_env_var="ANTHROPIC_API_KEY")],
 )
@@ -36,9 +41,56 @@ task_env = flyte.TaskEnvironment(
 async def search_docs(query: str, max_results: int = 3) -> list[dict[str, str]]:
     """Search internal documentation (stub) and return matching snippets."""
     corpus = [
-        {"title": "Quotas", "body": "Each project gets 1000 task minutes per day."},
-        {"title": "Triggers", "body": "Use flyte.Cron(...) to schedule tasks."},
-        {"title": "Auth", "body": "Run `flyte get api-key` to mint a token."},
+        {
+            "title": "Tasks",
+            "body": (
+                "Define a task by decorating an async function with @env.task on a "
+                "flyte.TaskEnvironment. Tasks run on the cluster with the env's image "
+                "and resources, and you launch them with flyte.run(my_task, ...)."
+            ),
+        },
+        {
+            "title": "Environments",
+            "body": (
+                "flyte.TaskEnvironment groups related tasks under a shared image, resources, "
+                "secrets, and reuse policy. Use depends_on=[...] to chain environments and "
+                "flyte.deploy(env) to ship them to the cluster."
+            ),
+        },
+        {
+            "title": "Triggers",
+            "body": (
+                "Schedule a task by attaching a flyte.Trigger with a flyte.Cron automation, "
+                'e.g. flyte.Trigger(name="hourly", automation=flyte.Cron("0 * * * *")) passed '
+                "to env.task(triggers=[...])."
+            ),
+        },
+        {
+            "title": "Auth",
+            "body": (
+                "Authenticate the Flyte CLI against your cluster with "
+                "`flyte create config --endpoint <your-endpoint>`. The command writes a config "
+                "file and starts the OAuth device flow so subsequent `flyte` commands are "
+                "authorized."
+            ),
+        },
+        {
+            "title": "Secrets",
+            "body": (
+                "Mount cluster-managed secrets into a task by passing "
+                "flyte.Secret(key='my-secret', as_env_var='MY_SECRET') to "
+                "TaskEnvironment(secrets=[...]); the value is available as os.environ['MY_SECRET'] "
+                "at runtime."
+            ),
+        },
+        {
+            "title": "Caching",
+            "body": (
+                "Flyte memoizes task outputs by hashing the task's code and inputs. Override "
+                "the cache scope with env.task(cache='auto'|'disable'|'override') or "
+                "flyte.with_runcontext(overwrite_cache=True).run(...) to force a fresh run."
+            ),
+        },
     ]
     needle = query.lower()
     matches = [doc for doc in corpus if needle in doc["body"].lower() or needle in doc["title"].lower()]
@@ -102,9 +154,9 @@ env = AgentChatAppEnvironment(
     theme=CustomTheme(accent_color="#6F2AEF", accent_hover_color="#8B52F2"),
     passthrough_auth=True,
     prompt_nudges=[
-        {"label": "Quotas", "prompt": "How many task minutes do I get per day?"},
+        {"label": "Basics", "prompt": "Can you show me a hello world example?"},
         {"label": "Triggers", "prompt": "How do I schedule a task?"},
-        {"label": "Auth", "prompt": "How do I get an API key?"},
+        {"label": "Apps", "prompt": "How do I serve a model using a FastAPI app?"},
     ],
     depends_on=[task_env],
     image=(flyte.Image.from_debian_base().with_pip_packages("litellm", "fastapi", "uvicorn")),

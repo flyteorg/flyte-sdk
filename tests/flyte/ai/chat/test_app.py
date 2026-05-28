@@ -296,6 +296,68 @@ class TestAgentChatAppEnvironment:
         assert "no outputs on blob store" in out.error
 
     @pytest.mark.asyncio
+    async def test_task_entrypoint_streams_building_image_and_submitted_events(self):
+        """The streaming chat path must surface the cold-start ``building_image`` and
+        ``submitted`` ``task_phase`` events around ``flyte.run.aio``.
+
+        Regression test for the user-visible cold-start UX: without these events
+        the UI sits on "Preparing runtime environment…" for 30s+ on first
+        invocation (image build + worker pod startup) and looks frozen.
+        """
+        entry = MagicMock()
+        env = AgentChatAppEnvironment(
+            name="test-app",
+            image="auto",
+            agent=_StubAgent(),
+            task_entrypoint=entry,
+            passthrough_auth=True,
+        )
+        app = env.build_fastapi_app()
+        route = next(r for r in app.routes if getattr(r, "path", None) == "/api/chat")
+
+        class _FakeRun:
+            phase = ActionPhase.SUCCEEDED
+
+            async def _wait(*args, **kwargs):
+                return None
+
+            async def _outputs(*args, **kwargs):
+                return ({"summary": "task:hi", "attempts": 1},)
+
+            wait = MagicMock()
+            wait.aio = _wait
+            outputs = MagicMock()
+            outputs.aio = _outputs
+
+        async def _run(task, *args, **kwargs):
+            return _FakeRun()
+
+        # Bypass the passthrough middleware by calling the route endpoint
+        # directly (the other task_entrypoint tests use the same pattern).
+        # The endpoint returns a StreamingResponse whose body we can iterate.
+        with patch("flyte.run", new=MagicMock(aio=_run)):
+            response = await route.endpoint(_ChatRequest(message="hi", history=[], stream=True))
+            chunks: list[bytes] = []
+            async for chunk in response.body_iterator:
+                chunks.append(chunk if isinstance(chunk, bytes) else chunk.encode())
+            body = b"".join(chunks)
+
+        events = [json.loads(ln) for ln in body.decode().split("\n") if ln.strip()]
+        task_phases = [
+            e.get("task_phase") for e in events if e.get("type") == "progress" and e.get("phase") == "task_phase"
+        ]
+        # ``building_image`` is emitted before flyte.run.aio is awaited so the
+        # UI can swap the subtitle while a cold image build runs; ``submitted``
+        # is emitted right after so the user knows the request reached the
+        # cluster.
+        assert "building_image" in task_phases
+        assert "submitted" in task_phases
+        assert task_phases.index("building_image") < task_phases.index("submitted")
+
+        assert events[-1]["type"] == "done"
+        assert events[-1]["summary"] == "task:hi"
+
+    @pytest.mark.asyncio
     async def test_task_entrypoint_nested_coroutine_is_fully_awaited(self):
         # Now that we use flyte.run, nested coroutine handling is validated
         # by treating outputs[0] as a coroutine.
