@@ -1460,6 +1460,7 @@ async def test_convert_upload_default_inputs_remote_interface():
 # current_output_name
 # ---------------------------------------------------------------------------
 
+
 def test_current_output_name_is_none_outside_conversion():
     """Outside of output conversion the slot name should be absent."""
     assert current_output_name() is None
