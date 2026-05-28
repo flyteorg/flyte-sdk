@@ -32,8 +32,10 @@ import weakref
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Sequence, cast
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
+import flyte.storage as storage
+from flyte._context import internal_ctx
 from flyte.io import Dir
 
 logger = logging.getLogger(__name__)
@@ -160,9 +162,94 @@ def _encode_filename(rel: str) -> str:
     return quote(rel, safe="")
 
 
+def _ensure_namespace_segment(value: str, *, name: str) -> str:
+    """Validate a blob-store namespace segment.
+
+    Memory-store keys become durable object-store prefixes, so they must be
+    stable single path segments rather than relative paths. This keeps
+    ``{memory_key}`` from escaping or reshaping the managed
+    ``agents/memory-store/v0`` namespace.
+    """
+    if not value:
+        raise MemoryStoreError(f"{name} must not be empty")
+    if value in (".", "..") or "/" in value or "\\" in value:
+        raise MemoryStoreError(f"{name} must be a single path segment, got {value!r}")
+    return value
+
+
+def _join_remote_path(*parts: str) -> str:
+    """Join path/URI fragments with POSIX separators while preserving schemes."""
+    cleaned = [p.strip("/") for p in parts if p]
+    if not cleaned:
+        return ""
+    first = parts[0].rstrip("/")
+    rest = [p.strip("/") for p in parts[1:] if p]
+    return "/".join([first, *rest])
+
+
+def _memory_storage_root(raw_data_path: str) -> str:
+    """Return the stable storage root used for keyed memory stores.
+
+    Remote raw-data paths can include bucket-internal sharding and run-specific
+    prefixes (for example ``s3://bucket/w6/org/project/domain/...``). Agent
+    memories should be independent of those per-run/per-shard prefixes, so
+    remote URIs are anchored at the provider root (``s3://bucket``). Local paths
+    keep using the supplied raw-data directory as their root.
+    """
+    trimmed = raw_data_path.rstrip("/")
+    parsed = urlparse(trimmed)
+    if parsed.scheme and parsed.netloc:
+        return f"{parsed.scheme}://{parsed.netloc}"
+    parts = trimmed.rsplit("/", 2)
+    if len(parts) == 3 and parts[1] == "rd" and parts[2]:
+        return parts[0]
+    return trimmed
+
+
+def _memory_storage_root_from_context() -> str:
+    """Return the storage root for keyed memory stores from the Flyte context."""
+    return _memory_storage_root(internal_ctx().raw_data.path)
+
+
+def _current_org() -> str:
+    """Return the current Flyte organization from task context or init config."""
+    tctx = internal_ctx().data.task_context
+    if tctx is not None and tctx.action.org:
+        return tctx.action.org
+
+    from flyte._initialize import _get_init_config
+
+    cfg = _get_init_config()
+    if cfg is None or cfg.org is None:
+        raise MemoryStoreError(
+            "Organization has not been initialized. Pass org=... to MemoryStore.create/get_or_create/exists."
+        )
+    return cfg.org
+
+
 def _cleanup_temp_root(path: pathlib.Path) -> None:
     """Best-effort cleanup of an auto-created temporary memory root."""
     shutil.rmtree(path, ignore_errors=True)
+
+
+class _MemoryStoreExists:
+    """Descriptor that preserves ``store.exists(path)`` and adds ``MemoryStore.exists(key=...)``."""
+
+    def __get__(self, obj: "MemoryStore | None", owner: type["MemoryStore"]):
+        if obj is not None:
+            return obj._path_exists
+
+        async def exists_for_key(
+            *,
+            key: str,
+            org: str | None = None,
+            project: str | None = None,
+            domain: str | None = None,
+        ) -> bool:
+            remote_path = owner.remote_path_for_key(key=key, org=org, project=project, domain=domain)
+            return await owner._remote_store_exists(remote_path)
+
+        return exists_for_key
 
 
 # ----------------------------------------------------------------------------
@@ -184,8 +271,12 @@ class MemoryStore:
       :meth:`read_json` / :meth:`list_paths` for arbitrary named blobs that
       should round-trip through Flyte object storage.
 
-    Persistence is :class:`flyte.io.Dir`-only: call :meth:`save_to_dir` at the
-    end of a run and :meth:`load_from_dir` at the start of the next.
+    Persistence is :class:`flyte.io.Dir`-backed. For durable agent memories,
+    prefer ``await MemoryStore.create(key="...")`` or
+    ``await MemoryStore.get_or_create(key="...")``; keyed stores save to a
+    deterministic blob-store namespace under the active Flyte raw-data bucket.
+    Lower-level callers can still call :meth:`save` directly to persist the
+    working root.
 
     The on-disk layout under ``root`` looks like::
 
@@ -226,6 +317,10 @@ class MemoryStore:
         the :class:`MemoryStore` is garbage-collected). When pointing at an
         existing directory that contains ``messages.json``, the transcript
         is auto-loaded.
+    key:
+        Optional deterministic memory key. Usually set by :meth:`create` or
+        :meth:`get_or_create`; keyed stores save back to their computed
+        ``remote_path`` unless explicitly reloaded without a key.
     read_only_prefixes:
         Prefixes that direct writes are not permitted to target.
     audit:
@@ -236,6 +331,8 @@ class MemoryStore:
 
     messages: list[dict[str, Any]] = field(default_factory=list)
     root: pathlib.Path | str | None = None
+    key: str | None = None
+    remote_path: str | None = None
     read_only_prefixes: tuple[str, ...] = ()
     audit: bool = True
     keep_versions: bool = False
@@ -245,6 +342,9 @@ class MemoryStore:
     _root_real: pathlib.Path = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
+        if self.key is not None:
+            self.key = _ensure_namespace_segment(self.key, name="key")
+
         explicit_root = self.root is not None
         if explicit_root:
             resolved = pathlib.Path(cast("pathlib.Path | str", self.root))
@@ -270,6 +370,120 @@ class MemoryStore:
     def _root(self) -> pathlib.Path:
         """Return :attr:`root` narrowed to :class:`pathlib.Path` (always set after ``__post_init__``)."""
         return cast(pathlib.Path, self.root)
+
+    # ------------------------------------------------------------------
+    # Keyed remote stores
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def remote_path_for_key(
+        cls,
+        *,
+        key: str,
+        org: str | None = None,
+        project: str | None = None,
+        domain: str | None = None,
+    ) -> str:
+        """Return the deterministic blob-store path for a keyed memory store.
+
+        The path is rooted at the active raw-data bucket/storage root, excluding
+        bucket-internal sharding and run-specific prefixes::
+
+            {storage_root}/agents/memory-store/v0/{org}/{project}/{domain}/{key}
+        """
+        key = _ensure_namespace_segment(key, name="key")
+        if org is None:
+            org = _current_org()
+        if project is None or domain is None:
+            import flyte
+
+            project = project or flyte.current_project()
+            domain = domain or flyte.current_domain()
+
+        try:
+            storage_root = _memory_storage_root_from_context()
+        except Exception as exc:
+            raise MemoryStoreError(
+                "MemoryStore.create/get_or_create/exists require a raw_data_path in the Flyte context"
+            ) from exc
+
+        return _join_remote_path(storage_root, "agents", "memory-store", "v0", org, project, domain, key)
+
+    @staticmethod
+    async def _remote_store_exists(remote_path: str) -> bool:
+        """Return whether a persisted memory store exists at ``remote_path``.
+
+        Object stores often do not create durable directory marker objects, so
+        checking the prefix itself can return false even after
+        ``Dir.from_local`` uploaded files below it. ``messages.json`` is the
+        MemoryStore sentinel because every save flushes it before upload.
+        """
+        return await storage.exists(remote_path) or await storage.exists(_join_remote_path(remote_path, MESSAGES_PATH))
+
+    @classmethod
+    async def create(
+        cls,
+        *,
+        key: str,
+        org: str | None = None,
+        project: str | None = None,
+        domain: str | None = None,
+        read_only_prefixes: tuple[str, ...] = (),
+        audit: bool = True,
+        keep_versions: bool = False,
+    ) -> "MemoryStore":
+        """Create a new keyed memory store at its deterministic remote path.
+
+        Raises :class:`MemoryStoreError` if the keyed blob-store path already
+        exists. This preserves the explicit "create means new" contract while
+        keeping subsequent saves deterministic via :meth:`save`.
+        """
+        remote_path = cls.remote_path_for_key(key=key, org=org, project=project, domain=domain)
+        if await cls._remote_store_exists(remote_path):
+            raise MemoryStoreError(f"MemoryStore {key!r} already exists at {remote_path}")
+
+        store = cls(
+            key=key,
+            remote_path=remote_path,
+            read_only_prefixes=read_only_prefixes,
+            audit=audit,
+            keep_versions=keep_versions,
+        )
+        await store.save()
+        return store
+
+    @classmethod
+    async def get_or_create(
+        cls,
+        *,
+        key: str,
+        org: str | None = None,
+        project: str | None = None,
+        domain: str | None = None,
+        read_only_prefixes: tuple[str, ...] = (),
+        audit: bool = True,
+        keep_versions: bool = False,
+    ) -> "MemoryStore":
+        """Load a keyed memory store if present, otherwise create it."""
+        remote_path = cls.remote_path_for_key(key=key, org=org, project=project, domain=domain)
+        if await cls._remote_store_exists(remote_path):
+            return await cls._load_from_dir(
+                Dir.from_existing_remote(remote_path),
+                key=key,
+                remote_path=remote_path,
+                read_only_prefixes=read_only_prefixes,
+                audit=audit,
+                keep_versions=keep_versions,
+            )
+        return await cls.create(
+            key=key,
+            org=org,
+            project=project,
+            domain=domain,
+            read_only_prefixes=read_only_prefixes,
+            audit=audit,
+            keep_versions=keep_versions,
+        )
 
     # ------------------------------------------------------------------
     # Transcript helpers
@@ -326,7 +540,9 @@ class MemoryStore:
     # Path-addressed reads
     # ------------------------------------------------------------------
 
-    def exists(self, rel_path: str) -> bool:
+    exists = _MemoryStoreExists()
+
+    def _path_exists(self, rel_path: str) -> bool:
         """Return ``True`` if a memory file exists at ``rel_path``."""
         return self._abs(rel_path).exists()
 
@@ -408,7 +624,7 @@ class MemoryStore:
         meta = self.get_meta_sync(rel_path)
         if meta is not None:
             return meta.sha256
-        if not self.exists(rel_path):
+        if not self._path_exists(rel_path):
             return ""
         # No sidecar (e.g. legacy entry written outside MemoryStore): stream-hash
         # the file so very large blobs do not pull their full bytes into RAM.
@@ -601,7 +817,7 @@ class MemoryStore:
         """Persist the live transcript to ``messages.json`` under the working root."""
         await asyncio.to_thread(self.flush_messages_sync)
 
-    async def save_to_dir(self, remote_destination: str | None = None) -> Dir:
+    async def save(self, remote_destination: str | None = None) -> Dir:
         """Serialize this memory to a remote directory.
 
         Flushes the conversation transcript to ``messages.json`` under the
@@ -609,24 +825,42 @@ class MemoryStore:
         :meth:`flyte.io.Dir.from_local`. Audit log, metadata sidecars, and any
         version snapshots are uploaded alongside the live memory files.
         """
+        if self.remote_path is not None:
+            if remote_destination is not None and remote_destination != self.remote_path:
+                raise MemoryStoreError(
+                    "Keyed MemoryStores are saved to their deterministic key path; "
+                    f"got remote_destination={remote_destination!r}, expected {self.remote_path!r}"
+                )
+            remote_destination = self.remote_path
         await self.flush_messages()
+        if remote_destination is not None and not storage.is_remote(remote_destination):
+            destination = pathlib.Path(remote_destination)
+            if destination.exists() and destination.resolve() != self._root_real:
+                # Local fsspec treats an existing directory destination as a
+                # parent and nests the uploaded root under it. Keyed stores
+                # must remain a stable directory, so replace the local mirror
+                # before copying. Remote object stores overwrite objects at the
+                # target prefix and are left to their backend semantics.
+                shutil.rmtree(destination)
         return await Dir.from_local(str(self._root), remote_destination=remote_destination)
 
     @classmethod
-    async def load_from_dir(
+    async def _load_from_dir(
         cls,
         dir: Dir,
         *,
+        key: str | None = None,
+        remote_path: str | None = None,
         read_only_prefixes: tuple[str, ...] = (),
         audit: bool = True,
         keep_versions: bool = False,
     ) -> "MemoryStore":
-        """Restore memory previously written by :meth:`save_to_dir`.
+        """Restore memory previously written by :meth:`save`.
 
         Downloads ``dir`` into a fresh local working directory and
         re-hydrates the conversation transcript. Subsequent writes are
         appended in the local copy and re-uploaded by the next
-        :meth:`save_to_dir` call. The local working directory is cleaned
+        :meth:`save` call. The local working directory is cleaned
         up automatically when the returned :class:`MemoryStore` is garbage
         collected.
         """
@@ -634,6 +868,8 @@ class MemoryStore:
         await dir.download(local_path=str(local_root))
         store = cls(
             root=local_root,
+            key=key,
+            remote_path=remote_path,
             read_only_prefixes=read_only_prefixes,
             audit=audit,
             keep_versions=keep_versions,

@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from flyte import TaskEnvironment
+from flyte._context import internal_ctx
 from flyte.ai.agents import (
     AccessDenied,
     Agent,
@@ -29,6 +30,7 @@ from flyte.ai.agents.agent import (
     _summarize_signature,
 )
 from flyte.ai.agents.protocol import AgentProtocol, AgentResult
+from flyte.models import PathRewrite, RawDataPath
 
 # ----------------------------------------------------------------------------
 # Tool resolution
@@ -550,6 +552,164 @@ class TestMemoryStore:
         contents = [m["content"] for m in messages]
         assert "remember this" in contents
         assert "noted" in contents
+
+
+@pytest.mark.asyncio
+class TestMemoryStoreKeyedRemote:
+    async def test_remote_path_for_key_uses_raw_data_project_domain_namespace(self, tmp_path: pathlib.Path):
+        ctx = internal_ctx().new_raw_data_path(RawDataPath(path=str(tmp_path / "raw")))
+        with ctx:
+            remote_path = MemoryStore.remote_path_for_key(
+                key="my_memory",
+                org="org",
+                project="proj",
+                domain="dev",
+            )
+
+        assert remote_path == str(
+            tmp_path / "raw" / "agents" / "memory-store" / "v0" / "org" / "proj" / "dev" / "my_memory"
+        )
+
+    async def test_remote_path_for_key_strips_per_run_rd_suffix(self, tmp_path: pathlib.Path):
+        """``flyte.run`` task contexts use ``{run_base_dir}/rd/{random_id}`` as
+        raw-data scratch space. Keyed memories must strip that per-run suffix so
+        two runs with the same key resolve to the same store.
+        """
+        first_ctx = internal_ctx().new_raw_data_path(RawDataPath(path=str(tmp_path / "raw" / "rd" / "abc123")))
+        second_ctx = internal_ctx().new_raw_data_path(RawDataPath(path=str(tmp_path / "raw" / "rd" / "def456")))
+
+        with first_ctx:
+            first = MemoryStore.remote_path_for_key(key="my_memory", org="org", project="proj", domain="dev")
+        with second_ctx:
+            second = MemoryStore.remote_path_for_key(key="my_memory", org="org", project="proj", domain="dev")
+
+        expected = str(tmp_path / "raw" / "agents" / "memory-store" / "v0" / "org" / "proj" / "dev" / "my_memory")
+        assert first == expected
+        assert second == expected
+
+    async def test_remote_path_for_key_uses_remote_bucket_root(
+        self, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Hosted task runs can expose ``_F_PATH_REWRITE`` as an absolute S3 URI,
+        while the runtime raw-data path is backend-relative. The memory store
+        must not embed ``s3://...`` inside that backend-relative key.
+        """
+        monkeypatch.setenv("_F_PATH_REWRITE", "s3://union-oc-production-persistent/->/union-persistent-data/")
+        ctx = internal_ctx().new_raw_data_path(
+            RawDataPath(path="s3://union-oc-production-demo/w6/demo/flytesnacks/development/u1/a0/hash/rd/abc123")
+        )
+        with ctx:
+            remote_path = MemoryStore.remote_path_for_key(
+                key="my_memory", org="demo", project="flytesnacks", domain="development"
+            )
+
+        assert remote_path == (
+            "s3://union-oc-production-demo/agents/memory-store/v0/demo/flytesnacks/development/my_memory"
+        )
+
+    async def test_remote_path_for_key_uses_remote_bucket_root_with_path_rewrite(self):
+        ctx = internal_ctx().new_raw_data_path(
+            RawDataPath(
+                path="s3://union-oc-production-demo/2f/demo/flytesnacks/development/u1/a0/hash/rd/abc123",
+                path_rewrite=PathRewrite(
+                    old_prefix="s3://stable-bucket/persistent/",
+                    new_prefix="/union-persistent-data/",
+                ),
+            )
+        )
+        with ctx:
+            remote_path = MemoryStore.remote_path_for_key(
+                key="my_memory", org="demo", project="flytesnacks", domain="development"
+            )
+
+        assert remote_path == (
+            "s3://union-oc-production-demo/agents/memory-store/v0/demo/flytesnacks/development/my_memory"
+        )
+
+    async def test_create_saves_empty_store_to_deterministic_path(self, tmp_path: pathlib.Path):
+        ctx = internal_ctx().new_raw_data_path(RawDataPath(path=str(tmp_path / "raw")))
+        with ctx:
+            memory = await MemoryStore.create(key="my_memory", org="org", project="proj", domain="dev")
+
+        expected_root = tmp_path / "raw" / "agents" / "memory-store" / "v0" / "org" / "proj" / "dev" / "my_memory"
+        assert memory.key == "my_memory"
+        assert memory.remote_path == str(expected_root)
+        assert (expected_root / "messages.json").exists()
+
+    async def test_create_errors_when_key_path_already_exists(self, tmp_path: pathlib.Path):
+        ctx = internal_ctx().new_raw_data_path(RawDataPath(path=str(tmp_path / "raw")))
+        with ctx:
+            await MemoryStore.create(key="my_memory", org="org", project="proj", domain="dev")
+            with pytest.raises(MemoryStoreError, match="already exists"):
+                await MemoryStore.create(key="my_memory", org="org", project="proj", domain="dev")
+
+    async def test_create_errors_when_only_messages_sentinel_exists(self, tmp_path: pathlib.Path):
+        """S3-style stores may not have directory marker objects for prefixes.
+
+        The persisted ``messages.json`` file is enough to prove the memory store
+        exists and must block ``create`` / satisfy class-level ``exists``.
+        """
+        ctx = internal_ctx().new_raw_data_path(RawDataPath(path=str(tmp_path / "raw")))
+        with ctx:
+            remote_path = pathlib.Path(
+                MemoryStore.remote_path_for_key(key="my_memory", org="org", project="proj", domain="dev")
+            )
+            remote_path.mkdir(parents=True)
+            (remote_path / "messages.json").write_text("[]", encoding="utf-8")
+
+            assert await MemoryStore.exists(key="my_memory", org="org", project="proj", domain="dev")
+            with pytest.raises(MemoryStoreError, match="already exists"):
+                await MemoryStore.create(key="my_memory", org="org", project="proj", domain="dev")
+
+    async def test_get_or_create_loads_existing_store(self, tmp_path: pathlib.Path):
+        ctx = internal_ctx().new_raw_data_path(RawDataPath(path=str(tmp_path / "raw")))
+        with ctx:
+            created = await MemoryStore.create(
+                key="my_memory", org="org", project="proj", domain="dev", keep_versions=True
+            )
+            await created.write_text("facts/name.txt", "Ada", expected_sha="")
+            await created.save()
+
+            loaded = await MemoryStore.get_or_create(
+                key="my_memory", org="org", project="proj", domain="dev", keep_versions=True
+            )
+
+        assert loaded.key == "my_memory"
+        assert loaded.remote_path == created.remote_path
+        assert await loaded.read_text("facts/name.txt") == "Ada"
+        await loaded.write_text(
+            "facts/name.txt", "Ada Lovelace", expected_sha=await loaded.current_sha("facts/name.txt")
+        )
+        await loaded.save()
+        assert len(list((pathlib.Path(loaded.remote_path) / "versions" / "facts%2Fname.txt").glob("*.txt"))) == 2
+
+    async def test_get_or_create_creates_when_missing(self, tmp_path: pathlib.Path):
+        ctx = internal_ctx().new_raw_data_path(RawDataPath(path=str(tmp_path / "raw")))
+        with ctx:
+            memory = await MemoryStore.get_or_create(key="new_memory", org="org", project="proj", domain="dev")
+
+        assert memory.key == "new_memory"
+        assert pathlib.Path(memory.remote_path).exists()
+
+    async def test_class_exists_checks_keyed_store_only(self, tmp_path: pathlib.Path):
+        ctx = internal_ctx().new_raw_data_path(RawDataPath(path=str(tmp_path / "raw")))
+        with ctx:
+            assert not await MemoryStore.exists(key="my_memory", org="org", project="proj", domain="dev")
+            await MemoryStore.create(key="my_memory", org="org", project="proj", domain="dev")
+            assert await MemoryStore.exists(key="my_memory", org="org", project="proj", domain="dev")
+
+    async def test_keyed_save_rejects_non_deterministic_override(self, tmp_path: pathlib.Path):
+        ctx = internal_ctx().new_raw_data_path(RawDataPath(path=str(tmp_path / "raw")))
+        with ctx:
+            memory = await MemoryStore.create(key="my_memory", org="org", project="proj", domain="dev")
+            with pytest.raises(MemoryStoreError, match="deterministic key path"):
+                await memory.save(remote_destination=str(tmp_path / "elsewhere"))
+
+    async def test_key_must_be_single_segment(self, tmp_path: pathlib.Path):
+        ctx = internal_ctx().new_raw_data_path(RawDataPath(path=str(tmp_path / "raw")))
+        with ctx:
+            with pytest.raises(MemoryStoreError, match="single path segment"):
+                await MemoryStore.create(key="../escape", org="org", project="proj", domain="dev")
 
 
 @pytest.mark.asyncio
