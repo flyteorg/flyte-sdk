@@ -318,12 +318,7 @@ class ImageBuildEngine:
 
         # Persist the freshly built image URI so future runs skip the registry check.
         # Skip when the build wasn't actually pushed (dry_run) or hasn't finished yet (wait=False).
-        if (
-            not dry_run
-            and wait
-            and result.uri
-            and image.name is not None
-        ):
+        if not dry_run and wait and result.uri and image.name is not None:
             repository = image.registry + "/" + image.name if image.registry else image.name
             _write_image_cache(repository, image._final_tag, tuple(image.platform), result.uri)
 
