@@ -425,9 +425,11 @@ class TaskTemplate(Generic[P, R, F]):
                 # env_vars/secrets so the actor framework assigns a distinct, named
                 # pool — avoiding silent collisions between pools sharing the same
                 # parent-env name but different container/security content.
-                base_name = self.parent_env_name or (
-                    self.parent_env() and self.parent_env().name  # type: ignore[union-attr]
-                )
+                base_name = self.parent_env_name
+                if not base_name and self.parent_env is not None:
+                    live_env = self.parent_env()
+                    if live_env is not None:
+                        base_name = live_env.name
                 if not base_name:
                     raise ValueError(
                         "Cannot override env_vars or secrets on a reusable task without an accessible "
