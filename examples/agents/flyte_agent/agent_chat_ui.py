@@ -118,3 +118,4 @@ if __name__ == "__main__":
     flyte.init_from_config(root_dir=pathlib.Path(__file__).parent)
     deployments = flyte.deploy(env)
     print(f"Agent chat UI deployed: {deployments[0].summary_repr()}")
+    print(f"Url: {deployments[0].envs['flyte-agent-chat-ui'].deployed_app.url}")

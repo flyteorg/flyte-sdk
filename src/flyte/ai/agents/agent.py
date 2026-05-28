@@ -33,34 +33,39 @@ Design goals
 Heavy inspiration is taken from the `pi <https://github.com/earendil-works/pi>`_
 agent harness — in particular its event model and the separation of the loop
 from message conversion / tool invocation.
+
+Implementation note: the tool/MCP/LLM building blocks live in sibling modules
+(:mod:`._tools`, :mod:`._mcp`, :mod:`._llm`); this module focuses on the
+``Agent`` class and the loop.
 """
 
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import contextvars
-import inspect
 import json
 import logging
 import pathlib
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import (
-    TYPE_CHECKING,
-    Any,
-    AsyncIterator,
-    Awaitable,
-    Callable,
-    Literal,
-    Mapping,
-    Sequence,
-    cast,
-)
+from typing import Any, Awaitable, Callable, Literal, Mapping, Sequence
 
 import flyte
 
+# Internal building blocks. All four ``_``-prefixed tool helpers are used
+# inside ``Agent`` and remain addressable as ``flyte.ai.agents.agent.<name>``
+# for callers (notably this repo's tests) that historically imported them
+# from here.
+from ._llm import LLMCallable, LLMMessage, _default_call_llm
+from ._mcp import MCPServerSpec, _MCPToolLoader
+from ._tools import (
+    AgentTool,
+    _abbreviate,
+    _resolve_tools,
+    _stringify_tool_result,
+    _summarize_signature,
+)
 from .memory import (
     AccessDenied,
     ConcurrencyError,
@@ -69,20 +74,6 @@ from .memory import (
     MemoryStoreError,
 )
 from .protocol import AgentResult
-
-# Re-export memory types so existing imports of
-# ``from flyte.ai.agents.agent import MemoryStore`` (and friends) keep working.
-__all__ = [
-    "AccessDenied",
-    "ConcurrencyError",
-    "MemoryMeta",
-    "MemoryStore",
-    "MemoryStoreError",
-]
-
-if TYPE_CHECKING:
-    from flyte._task import TaskTemplate
-    from flyte.remote._task import LazyEntity
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +101,7 @@ async def _emit(event: "AgentEvent") -> None:
 
 
 # ----------------------------------------------------------------------------
-# Event + tool + memory dataclasses
+# Event dataclass
 # ----------------------------------------------------------------------------
 
 
@@ -141,241 +132,6 @@ class AgentEvent:
     data: dict[str, Any] = field(default_factory=dict)
 
 
-_ToolExecutor = Callable[[dict[str, Any]], Awaitable[Any]]
-
-
-@dataclass
-class AgentTool:
-    """A normalized tool descriptor used by :class:`Agent`.
-
-    Most users do not construct :class:`AgentTool` directly — pass plain
-    callables, ``@flyte.trace`` helpers, or ``@env.task`` templates to
-    :class:`Agent` and they will be wrapped automatically. Build one
-    explicitly when you need to:
-
-    - rename a tool for the LLM,
-    - override the description shown to the model,
-    - require human approval before execution (HITL),
-    - inject a fully custom JSON schema.
-    """
-
-    name: str
-    description: str
-    parameters: dict[str, Any]
-    execute: _ToolExecutor
-    requires_approval: bool = False
-    source: Literal["function", "task", "trace", "remote_task", "mcp", "custom"] = "function"
-
-    def to_openai_format(self) -> dict[str, Any]:
-        """Convert to the OpenAI / litellm tools schema."""
-        return {
-            "type": "function",
-            "function": {
-                "name": self.name,
-                "description": self.description,
-                "parameters": self.parameters,
-            },
-        }
-
-
-# ----------------------------------------------------------------------------
-# MCP server spec
-# ----------------------------------------------------------------------------
-
-
-@dataclass(kw_only=True)
-class MCPServerSpec:
-    """Declarative spec for a remote MCP server that exposes tools.
-
-    The agent connects on startup, lists available tools, and registers each as
-    a callable tool whose ``execute`` proxies the MCP ``tools/call`` request.
-
-    Either ``url`` (for HTTP/SSE/streamable-http transports) or ``command``
-    (for stdio transports) must be set.
-
-    Parameters
-    ----------
-    name:
-        Stable display name for logs and event payloads.
-    url:
-        HTTP(S) URL of the MCP endpoint (e.g. ``https://host/mcp/mcp``).
-    command:
-        Command to launch a stdio MCP server (e.g.
-        ``["uvx", "mcp-server-github"]``).
-    headers:
-        Optional HTTP headers (for ``Authorization`` etc.).
-    env:
-        Optional environment variables for stdio launches.
-    transport:
-        Transport hint. ``"auto"`` (default) infers from ``url`` / ``command``.
-    tool_prefix:
-        Optional prefix prepended to each tool name to avoid collisions.
-    tool_filter:
-        Optional allowlist of tool names to expose. ``None`` means all.
-    """
-
-    name: str
-    url: str | None = None
-    command: list[str] | None = None
-    headers: dict[str, str] | None = None
-    env: dict[str, str] | None = None
-    transport: Literal["auto", "http", "streamable-http", "sse", "stdio"] = "auto"
-    tool_prefix: str = ""
-    tool_filter: list[str] | None = None
-
-    def __post_init__(self) -> None:
-        if not self.url and not self.command:
-            raise ValueError("MCPServerSpec requires either `url` or `command`.")
-
-
-# ----------------------------------------------------------------------------
-# Tool resolution
-# ----------------------------------------------------------------------------
-
-
-def _is_task_template(obj: Any) -> bool:
-    from flyte._task import TaskTemplate
-
-    return isinstance(obj, TaskTemplate)
-
-
-def _is_lazy_entity(obj: Any) -> bool:
-    try:
-        from flyte.remote._task import LazyEntity
-    except Exception:  # pragma: no cover
-        return False
-    return isinstance(obj, LazyEntity)
-
-
-def _callable_short_doc(fn: Callable[..., Any]) -> str:
-    doc = inspect.getdoc(fn) or ""
-    if not doc:
-        return ""
-    return doc.split("\n\n")[0].replace("\n", " ").strip()
-
-
-def _json_schema_for_callable(fn: Callable[..., Any]) -> dict[str, Any]:
-    """Best-effort JSON schema for a plain Python callable.
-
-    Falls back to the Flyte type engine via ``NativeInterface`` for type-rich
-    schemas (Literals, dataclasses, etc.), and degrades to a permissive
-    ``object`` schema when extraction fails.
-    """
-    from flyte.models import NativeInterface
-
-    try:
-        return NativeInterface.from_callable(fn).json_schema
-    except Exception:
-        return {"type": "object", "properties": {}, "additionalProperties": True}
-
-
-def _make_callable_tool(fn: Callable[..., Any], *, name: str | None = None) -> AgentTool:
-    actual_name: str = name or getattr(fn, "__name__", None) or "tool"
-    is_trace = bool(getattr(fn, "__wrapped__", None))
-    is_async = inspect.iscoroutinefunction(fn) or inspect.iscoroutinefunction(getattr(fn, "__wrapped__", fn))
-
-    async def execute(args: dict[str, Any]) -> Any:
-        if is_async:
-            return await fn(**args)
-        return await asyncio.to_thread(fn, **args)
-
-    return AgentTool(
-        name=actual_name,
-        description=_callable_short_doc(getattr(fn, "__wrapped__", fn)) or f"Execute {actual_name}",
-        parameters=_json_schema_for_callable(getattr(fn, "__wrapped__", fn)),
-        execute=execute,
-        source="trace" if is_trace else "function",
-    )
-
-
-def _make_task_tool(task: "TaskTemplate", *, name: str | None = None) -> AgentTool:
-    underlying = cast(Any, task).func
-    actual_name = name or underlying.__name__
-    description = _callable_short_doc(underlying) or f"Execute Flyte task `{actual_name}`"
-
-    parameters: dict[str, Any]
-    try:
-        parameters = task.json_schema  # type: ignore[attr-defined]
-    except Exception:
-        parameters = _json_schema_for_callable(underlying)
-
-    async def execute(args: dict[str, Any]) -> Any:
-        return await task.aio(**args)
-
-    return AgentTool(
-        name=actual_name,
-        description=description,
-        parameters=parameters,
-        execute=execute,
-        source="task",
-    )
-
-
-def _make_lazy_entity_tool(lazy: "LazyEntity", *, name: str | None = None) -> AgentTool:
-    actual_name = name or lazy.name.rsplit("/", maxsplit=1)[-1]
-
-    async def execute(args: dict[str, Any]) -> Any:
-        return await lazy.aio(**args)  # type: ignore[attr-defined]
-
-    return AgentTool(
-        name=actual_name,
-        description=f"Remote Flyte task `{lazy.name}`",
-        parameters={"type": "object", "properties": {}, "additionalProperties": True},
-        execute=execute,
-        source="remote_task",
-    )
-
-
-def _resolve_tools(
-    tools: Sequence[Any] | Mapping[str, Any],
-) -> dict[str, AgentTool]:
-    """Normalize the user-provided ``tools`` argument into ``{name: AgentTool}``.
-
-    Accepts:
-    - already-constructed :class:`AgentTool` instances
-    - plain Python callables (sync or async)
-    - ``@flyte.trace`` helpers
-    - ``@env.task`` :class:`~flyte.TaskTemplate` instances
-    - :class:`~flyte.remote._task.LazyEntity` remote-task references
-    """
-    items: list[tuple[str | None, Any]]
-    if isinstance(tools, Mapping):
-        items = [(k, v) for k, v in tools.items()]
-    else:
-        items = [(None, v) for v in tools]
-
-    resolved: dict[str, AgentTool] = {}
-    for override_name, obj in items:
-        if isinstance(obj, AgentTool):
-            tool = obj
-            if override_name:
-                tool = AgentTool(
-                    name=override_name,
-                    description=tool.description,
-                    parameters=tool.parameters,
-                    execute=tool.execute,
-                    requires_approval=tool.requires_approval,
-                    source=tool.source,
-                )
-        elif _is_task_template(obj):
-            tool = _make_task_tool(obj, name=override_name)
-        elif _is_lazy_entity(obj):
-            tool = _make_lazy_entity_tool(obj, name=override_name)
-        elif callable(obj):
-            tool = _make_callable_tool(obj, name=override_name)
-        else:
-            raise TypeError(
-                f"Cannot turn {type(obj).__name__!r} into an AgentTool. "
-                "Pass an AgentTool, a callable, a @flyte.trace helper, an "
-                "@env.task template, a LazyEntity, or a {name: object} mapping."
-            )
-
-        if tool.name in resolved:
-            raise ValueError(f"Duplicate tool name '{tool.name}'")
-        resolved[tool.name] = tool
-    return resolved
-
-
 # ----------------------------------------------------------------------------
 # Skills
 # ----------------------------------------------------------------------------
@@ -389,75 +145,6 @@ def _load_skills(skills: Sequence[str | pathlib.Path]) -> str:
         else:
             parts.append(skill)
     return "\n\n".join(parts)
-
-
-# ----------------------------------------------------------------------------
-# LLM callback (litellm based by default)
-# ----------------------------------------------------------------------------
-
-
-@dataclass
-class LLMMessage:
-    """Provider-agnostic shape returned by :data:`LLMCallable`.
-
-    ``tool_calls`` follows the OpenAI tool-calling convention; provider-specific
-    callers should normalize to this shape.
-    """
-
-    content: str | None
-    tool_calls: list[dict[str, Any]] = field(default_factory=list)
-    raw: Any = None
-
-
-LLMCallable = Callable[
-    [str, str, list[dict[str, Any]], list[dict[str, Any]] | None],
-    Awaitable[LLMMessage],
-]
-
-
-async def _default_call_llm(
-    model: str,
-    system: str,
-    messages: list[dict[str, Any]],
-    tools: list[dict[str, Any]] | None,
-) -> LLMMessage:
-    """Default LLM callback that uses ``litellm.acompletion`` with tool calling.
-
-    Compatible with any provider that litellm supports (OpenAI, Anthropic,
-    Gemini, Bedrock, local OpenAI-compatible servers, …).
-    """
-    try:
-        from litellm import acompletion
-    except ImportError as exc:  # pragma: no cover - exercised by integration tests only
-        raise ImportError(
-            "litellm is not installed. Install with `pip install litellm` "
-            "or pass `call_llm=...` with a custom callback."
-        ) from exc
-
-    full_messages: list[dict[str, Any]] = [{"role": "system", "content": system}, *messages]
-    kwargs: dict[str, Any] = {"model": model, "messages": full_messages}
-    if tools:
-        kwargs["tools"] = tools
-        kwargs["tool_choice"] = "auto"
-
-    response = await acompletion(**kwargs)
-    choice = response.choices[0]  # type: ignore[index]
-    msg = choice.message
-    tool_calls: list[dict[str, Any]] = []
-    for call in getattr(msg, "tool_calls", None) or []:
-        try:
-            args_str = call.function.arguments
-            args = json.loads(args_str) if isinstance(args_str, str) else (args_str or {})
-        except json.JSONDecodeError:
-            args = {"_raw": call.function.arguments}
-        tool_calls.append(
-            {
-                "id": getattr(call, "id", None) or f"call_{uuid.uuid4().hex[:12]}",
-                "name": call.function.name,
-                "arguments": args,
-            }
-        )
-    return LLMMessage(content=getattr(msg, "content", None) or "", tool_calls=tool_calls, raw=response)
 
 
 # ----------------------------------------------------------------------------
@@ -495,127 +182,6 @@ async def _hitl_approval(tool: AgentTool, args: dict[str, Any]) -> bool:
     )
     decision = await event.wait.aio()
     return bool(decision)
-
-
-# ----------------------------------------------------------------------------
-# MCP tool loader (lazy / optional)
-# ----------------------------------------------------------------------------
-
-
-class _MCPToolLoader:
-    """Discovers tools from an MCP server and surfaces them as :class:`AgentTool`.
-
-    Stays inactive until :meth:`load` is called. We delay all MCP imports here
-    so that ``Agent`` itself has no required dependency on the ``mcp``
-    package.
-    """
-
-    def __init__(self, specs: Sequence[MCPServerSpec]):
-        self.specs = list(specs)
-        self._sessions: list[Any] = []
-
-    async def load(self) -> list[AgentTool]:
-        if not self.specs:
-            return []
-        try:
-            from mcp import ClientSession  # noqa: F401
-        except ImportError as exc:
-            raise ImportError(
-                "MCP servers configured but the `mcp` package is not installed. "
-                "Install with `pip install mcp` or `pip install 'flyte[mcp]'`."
-            ) from exc
-
-        tools: list[AgentTool] = []
-        for spec in self.specs:
-            tools.extend(await self._load_one(spec))
-        return tools
-
-    async def _load_one(self, spec: MCPServerSpec) -> list[AgentTool]:
-        if spec.command:
-            return await self._load_stdio(spec)
-        return await self._load_http(spec)
-
-    async def _load_stdio(self, spec: MCPServerSpec) -> list[AgentTool]:
-        from mcp import ClientSession, StdioServerParameters
-        from mcp.client.stdio import stdio_client
-
-        assert spec.command is not None
-        params = StdioServerParameters(command=spec.command[0], args=spec.command[1:], env=spec.env)
-
-        @contextlib.asynccontextmanager
-        async def _session() -> AsyncIterator[Any]:
-            async with stdio_client(params) as (read, write):
-                async with ClientSession(read, write) as session:
-                    await session.initialize()
-                    yield session
-
-        return await self._materialize(spec, _session)
-
-    async def _load_http(self, spec: MCPServerSpec) -> list[AgentTool]:
-        from mcp import ClientSession
-        from mcp.client.streamable_http import streamablehttp_client
-
-        url = spec.url
-        assert url is not None
-        headers = spec.headers
-
-        @contextlib.asynccontextmanager
-        async def _session() -> AsyncIterator[Any]:
-            async with streamablehttp_client(url, headers=headers) as (read, write, _):
-                async with ClientSession(read, write) as session:
-                    await session.initialize()
-                    yield session
-
-        return await self._materialize(spec, _session)
-
-    async def _materialize(
-        self,
-        spec: MCPServerSpec,
-        session_cm: Callable[[], "contextlib.AbstractAsyncContextManager[Any]"],
-    ) -> list[AgentTool]:
-        async with session_cm() as session:
-            listing = await session.list_tools()
-
-        tools: list[AgentTool] = []
-        for raw_tool in listing.tools:  # type: ignore[attr-defined]
-            short_name = getattr(raw_tool, "name", None)
-            if not short_name:
-                continue
-            if spec.tool_filter is not None and short_name not in spec.tool_filter:
-                continue
-            tool_name = f"{spec.tool_prefix}{short_name}" if spec.tool_prefix else short_name
-
-            description = getattr(raw_tool, "description", "") or f"MCP tool from {spec.name}"
-            input_schema = getattr(raw_tool, "inputSchema", None) or {
-                "type": "object",
-                "properties": {},
-                "additionalProperties": True,
-            }
-
-            async def _execute(args: dict[str, Any], *, _short_name: str = short_name) -> Any:
-                async with session_cm() as inner_session:
-                    result = await inner_session.call_tool(_short_name, arguments=args)
-                content = getattr(result, "content", None)
-                if not content:
-                    return None
-                if isinstance(content, list):
-                    parts: list[Any] = []
-                    for chunk in content:
-                        text = getattr(chunk, "text", None)
-                        parts.append(text if text is not None else chunk)
-                    return "\n".join(str(p) for p in parts) if all(isinstance(p, str) for p in parts) else parts
-                return content
-
-            tools.append(
-                AgentTool(
-                    name=tool_name,
-                    description=description,
-                    parameters=input_schema,
-                    execute=_execute,
-                    source="mcp",
-                )
-            )
-        return tools
 
 
 # ----------------------------------------------------------------------------
@@ -930,37 +496,28 @@ class Agent:
 
 
 # ----------------------------------------------------------------------------
-# Helpers used by the agent loop
+# Public API surface
 # ----------------------------------------------------------------------------
+#
+# Symbols listed here are part of ``flyte.ai.agents.agent``'s public API.
+# The package's ``__init__.py`` re-exports them under ``flyte.ai.agents`` —
+# this list also serves as documentation for back-compat callers that
+# historically imported directly from ``flyte.ai.agents.agent``.
 
-
-def _summarize_signature(tool: AgentTool) -> str:
-    """Compact pseudo-signature derived from the tool's JSON schema."""
-    props = tool.parameters.get("properties", {}) if isinstance(tool.parameters, dict) else {}
-    required = set(tool.parameters.get("required", []) if isinstance(tool.parameters, dict) else [])
-    parts: list[str] = []
-    for pname, schema in props.items():
-        type_hint = schema.get("type", "any") if isinstance(schema, dict) else "any"
-        if pname in required:
-            parts.append(f"{pname}: {type_hint}")
-        else:
-            parts.append(f"{pname}?: {type_hint}")
-    return f"{tool.name}({', '.join(parts)})"
-
-
-def _stringify_tool_result(result: Any) -> str:
-    if result is None:
-        return ""
-    if isinstance(result, str):
-        return result
-    try:
-        return json.dumps(result, default=str)
-    except (TypeError, ValueError):
-        return str(result)
-
-
-def _abbreviate(value: Any, *, max_chars: int = 500) -> str:
-    text = _stringify_tool_result(value)
-    if len(text) <= max_chars:
-        return text
-    return text[:max_chars] + f"... [+{len(text) - max_chars} chars]"
+__all__ = [
+    "AccessDenied",
+    "Agent",
+    "AgentEvent",
+    "AgentProgressCallback",
+    "AgentTool",
+    "ApprovalCallback",
+    "ConcurrencyError",
+    "EventType",
+    "LLMCallable",
+    "LLMMessage",
+    "MCPServerSpec",
+    "MemoryMeta",
+    "MemoryStore",
+    "MemoryStoreError",
+    "agent_progress_cb",
+]

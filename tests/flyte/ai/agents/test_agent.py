@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import pathlib
 from unittest.mock import AsyncMock, patch
@@ -502,10 +503,18 @@ class TestMemoryStore:
         seed = MemoryStore(root=tmp_path)
         seed.append({"role": "user", "content": "hello"})
         seed.append({"role": "assistant", "content": "hi"})
-        seed._flush_messages()
+        seed.flush_messages_sync()
 
         restored = MemoryStore(root=tmp_path)
         assert [m["content"] for m in restored.messages] == ["hello", "hi"]
+
+    async def test_flush_messages_async_persists_transcript(self, tmp_path: pathlib.Path):
+        seed = MemoryStore(root=tmp_path)
+        seed.append({"role": "user", "content": "hello-async"})
+        await seed.flush_messages()
+
+        restored = MemoryStore(root=tmp_path)
+        assert [m["content"] for m in restored.messages] == ["hello-async"]
 
     async def test_corrupt_messages_json_logs_and_resets(self, tmp_path: pathlib.Path):
         (tmp_path / "messages.json").write_text("not json", encoding="utf-8")
@@ -515,7 +524,7 @@ class TestMemoryStore:
     async def test_explicit_messages_take_precedence_over_disk(self, tmp_path: pathlib.Path):
         seed = MemoryStore(root=tmp_path)
         seed.append({"role": "user", "content": "old"})
-        seed._flush_messages()
+        seed.flush_messages_sync()
 
         restored = MemoryStore(root=tmp_path, messages=[{"role": "user", "content": "fresh"}])
         assert [m["content"] for m in restored.messages] == ["fresh"]
@@ -547,27 +556,34 @@ class TestMemoryStore:
 class TestMemoryStorePathAddressedIO:
     async def test_write_and_read_text_roundtrip(self, tmp_path: pathlib.Path):
         memory = MemoryStore(root=tmp_path)
-        meta = memory.write_text("notes/plan.md", "step 1", actor="tester", reason="unit")
+        meta = await memory.write_text("notes/plan.md", "step 1", actor="tester", reason="unit")
         assert meta.path == "notes/plan.md"
         assert meta.bytes == len(b"step 1")
-        assert memory.read_text("notes/plan.md") == "step 1"
+        assert await memory.read_text("notes/plan.md") == "step 1"
 
     async def test_write_and_read_json_roundtrip(self, tmp_path: pathlib.Path):
         memory = MemoryStore(root=tmp_path)
-        memory.write_json("data/plan.json", {"a": 1, "b": [1, 2]})
-        assert memory.read_json("data/plan.json") == {"a": 1, "b": [1, 2]}
+        await memory.write_json("data/plan.json", {"a": 1, "b": [1, 2]})
+        assert await memory.read_json("data/plan.json") == {"a": 1, "b": [1, 2]}
+
+    async def test_sync_io_companions_work(self, tmp_path: pathlib.Path):
+        memory = MemoryStore(root=tmp_path)
+        memory.write_text_sync("notes/plan.md", "sync-step")
+        assert memory.read_text_sync("notes/plan.md") == "sync-step"
+        memory.write_json_sync("data/x.json", {"k": 1})
+        assert memory.read_json_sync("data/x.json") == {"k": 1}
 
     async def test_read_text_default_when_missing(self, tmp_path: pathlib.Path):
         memory = MemoryStore(root=tmp_path)
-        assert memory.read_text("missing.txt", default="fallback") == "fallback"
-        assert memory.read_json("missing.json", default={"x": 0}) == {"x": 0}
+        assert await memory.read_text("missing.txt", default="fallback") == "fallback"
+        assert await memory.read_json("missing.json", default={"x": 0}) == {"x": 0}
 
     async def test_list_paths_excludes_internals_and_messages(self, tmp_path: pathlib.Path):
         memory = MemoryStore(root=tmp_path)
-        memory.write_text("user/a.txt", "a")
-        memory.write_text("user/b.txt", "b")
+        await memory.write_text("user/a.txt", "a")
+        await memory.write_text("user/b.txt", "b")
         memory.append({"role": "user", "content": "hi"})
-        memory._flush_messages()
+        memory.flush_messages_sync()
 
         paths = memory.list_paths()
         assert paths == ["user/a.txt", "user/b.txt"]
@@ -577,6 +593,23 @@ class TestMemoryStorePathAddressedIO:
         assert all(not p.startswith(("audit/", "meta/", "versions/")) for p in paths)
         assert "messages.json" not in paths
 
+    async def test_list_paths_skips_symlinked_files(self, tmp_path: pathlib.Path):
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "secret.txt").write_text("classified", encoding="utf-8")
+
+        root = tmp_path / "root"
+        root.mkdir()
+        memory = MemoryStore(root=root)
+        await memory.write_text("user/a.txt", "a")
+
+        # Plant a symlink that ``list_paths`` must skip rather than expose.
+        (root / "user" / "leak.txt").symlink_to(outside / "secret.txt")
+
+        paths = memory.list_paths()
+        assert "user/a.txt" in paths
+        assert "user/leak.txt" not in paths
+
     async def test_list_paths_returns_empty_for_missing_prefix(self, tmp_path: pathlib.Path):
         memory = MemoryStore(root=tmp_path)
         assert memory.list_paths("does/not/exist") == []
@@ -584,22 +617,42 @@ class TestMemoryStorePathAddressedIO:
     async def test_path_traversal_rejected(self, tmp_path: pathlib.Path):
         memory = MemoryStore(root=tmp_path)
         with pytest.raises(MemoryStoreError, match="traversal"):
-            memory.write_text("../escape.txt", "no")
+            await memory.write_text("../escape.txt", "no")
         with pytest.raises(MemoryStoreError, match="must be relative"):
-            memory.write_text("/abs/path.txt", "no")
+            await memory.write_text("/abs/path.txt", "no")
         with pytest.raises(MemoryStoreError, match="Empty path"):
-            memory.write_text("", "no")
+            await memory.write_text("", "no")
+
+    async def test_symlink_escape_rejected_on_read_and_write(self, tmp_path: pathlib.Path):
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "secret.txt").write_text("classified", encoding="utf-8")
+
+        root = tmp_path / "root"
+        root.mkdir()
+        # The symlink lives *inside* the memory root but points outside —
+        # exactly the threat model for a downloaded ``Dir`` carrying a
+        # malicious sidechannel.
+        (root / "escape.txt").symlink_to(outside / "secret.txt")
+
+        memory = MemoryStore(root=root)
+        with pytest.raises(MemoryStoreError, match="outside the memory root"):
+            await memory.read_text("escape.txt")
+        with pytest.raises(MemoryStoreError, match="outside the memory root"):
+            await memory.write_text("escape.txt", "no")
+        # The pristine secret on disk is untouched.
+        assert (outside / "secret.txt").read_text(encoding="utf-8") == "classified"
 
     async def test_messages_json_write_blocked(self, tmp_path: pathlib.Path):
         memory = MemoryStore(root=tmp_path)
         with pytest.raises(AccessDenied, match=r"messages\.json"):
-            memory.write_text("messages.json", "{}")
+            await memory.write_text("messages.json", "{}")
 
     async def test_internal_prefixes_blocked(self, tmp_path: pathlib.Path):
         memory = MemoryStore(root=tmp_path)
         for path in ("audit/log.jsonl", "meta/x.json", "versions/x/y.txt"):
             with pytest.raises(AccessDenied, match="reserved"):
-                memory.write_text(path, "no")
+                await memory.write_text(path, "no")
 
 
 @pytest.mark.asyncio
@@ -607,48 +660,58 @@ class TestMemoryStoreReadOnlyPrefixes:
     async def test_writes_to_read_only_prefix_rejected(self, tmp_path: pathlib.Path):
         memory = MemoryStore(root=tmp_path, read_only_prefixes=("memory/",))
         with pytest.raises(AccessDenied, match="read-only"):
-            memory.write_text("memory/docs.txt", "no")
+            await memory.write_text("memory/docs.txt", "no")
 
     async def test_writes_outside_read_only_prefix_allowed(self, tmp_path: pathlib.Path):
         memory = MemoryStore(root=tmp_path, read_only_prefixes=("memory/",))
-        memory.write_text("user/notes.txt", "ok")
-        assert memory.read_text("user/notes.txt") == "ok"
+        await memory.write_text("user/notes.txt", "ok")
+        assert await memory.read_text("user/notes.txt") == "ok"
 
 
 @pytest.mark.asyncio
 class TestMemoryStoreConcurrency:
     async def test_expected_sha_match_succeeds(self, tmp_path: pathlib.Path):
         memory = MemoryStore(root=tmp_path)
-        memory.write_text("a.txt", "v1")
-        sha = memory.current_sha("a.txt")
-        memory.write_text("a.txt", "v2", expected_sha=sha)
-        assert memory.read_text("a.txt") == "v2"
+        await memory.write_text("a.txt", "v1")
+        sha = await memory.current_sha("a.txt")
+        await memory.write_text("a.txt", "v2", expected_sha=sha)
+        assert await memory.read_text("a.txt") == "v2"
 
     async def test_expected_sha_mismatch_raises(self, tmp_path: pathlib.Path):
         memory = MemoryStore(root=tmp_path)
-        memory.write_text("a.txt", "v1")
+        await memory.write_text("a.txt", "v1")
         with pytest.raises(ConcurrencyError) as exc:
-            memory.write_text("a.txt", "v2", expected_sha="deadbeef")
+            await memory.write_text("a.txt", "v2", expected_sha="deadbeef")
         assert exc.value.path == "a.txt"
         assert exc.value.expected_sha == "deadbeef"
 
     async def test_expected_sha_empty_for_create(self, tmp_path: pathlib.Path):
         memory = MemoryStore(root=tmp_path)
-        memory.write_text("new.txt", "hello", expected_sha="")
-        assert memory.read_text("new.txt") == "hello"
+        await memory.write_text("new.txt", "hello", expected_sha="")
+        assert await memory.read_text("new.txt") == "hello"
 
     async def test_current_sha_empty_when_missing(self, tmp_path: pathlib.Path):
         memory = MemoryStore(root=tmp_path)
-        assert memory.current_sha("nope.txt") == ""
+        assert await memory.current_sha("nope.txt") == ""
+
+    async def test_current_sha_streams_files_without_sidecar(self, tmp_path: pathlib.Path):
+        # A file written outside MemoryStore (no metadata sidecar) should
+        # still hash correctly through the streaming fallback path.
+        root = tmp_path
+        (root / "user").mkdir()
+        (root / "user" / "raw.txt").write_text("raw-content", encoding="utf-8")
+        memory = MemoryStore(root=root)
+        expected = hashlib.sha256(b"raw-content").hexdigest()
+        assert await memory.current_sha("user/raw.txt") == expected
 
 
 @pytest.mark.asyncio
 class TestMemoryStoreAudit:
     async def test_audit_records_create_then_update(self, tmp_path: pathlib.Path):
         memory = MemoryStore(root=tmp_path)
-        memory.write_text("a.txt", "v1", actor="alice", reason="seed")
-        memory.write_text("a.txt", "v2", actor="bob", reason="update")
-        events = memory.audit_tail()
+        await memory.write_text("a.txt", "v1", actor="alice", reason="seed")
+        await memory.write_text("a.txt", "v2", actor="bob", reason="update")
+        events = await memory.audit_tail()
         assert len(events) == 2
         assert events[0]["op"] == "create"
         assert events[0]["actor"] == "alice"
@@ -657,8 +720,8 @@ class TestMemoryStoreAudit:
 
     async def test_audit_disabled_writes_no_log(self, tmp_path: pathlib.Path):
         memory = MemoryStore(root=tmp_path, audit=False)
-        memory.write_text("a.txt", "v1")
-        assert memory.audit_tail() == []
+        await memory.write_text("a.txt", "v1")
+        assert await memory.audit_tail() == []
         assert not (tmp_path / "audit" / "log.jsonl").exists()
 
 
@@ -666,9 +729,9 @@ class TestMemoryStoreAudit:
 class TestMemoryStoreVersions:
     async def test_keep_versions_snapshots_each_write(self, tmp_path: pathlib.Path):
         memory = MemoryStore(root=tmp_path, keep_versions=True)
-        memory.write_text("a.txt", "v1")
-        memory.write_text("a.txt", "v2")
-        memory.write_text("a.txt", "v3")
+        await memory.write_text("a.txt", "v1")
+        await memory.write_text("a.txt", "v2")
+        await memory.write_text("a.txt", "v3")
         snapshots = list((tmp_path / "versions" / "a.txt").glob("*.txt"))
         assert len(snapshots) == 3
         contents = sorted(s.read_text(encoding="utf-8") for s in snapshots)
@@ -676,7 +739,7 @@ class TestMemoryStoreVersions:
 
     async def test_no_versions_by_default(self, tmp_path: pathlib.Path):
         memory = MemoryStore(root=tmp_path)
-        memory.write_text("a.txt", "v1")
+        await memory.write_text("a.txt", "v1")
         assert not (tmp_path / "versions").exists()
 
 
@@ -684,8 +747,8 @@ class TestMemoryStoreVersions:
 class TestMemoryStoreMeta:
     async def test_meta_sidecar_records_actor_and_sha(self, tmp_path: pathlib.Path):
         memory = MemoryStore(root=tmp_path)
-        meta = memory.write_text("a.txt", "hello", actor="tool-x", reason="seed")
-        loaded = memory.get_meta("a.txt")
+        meta = await memory.write_text("a.txt", "hello", actor="tool-x", reason="seed")
+        loaded = await memory.get_meta("a.txt")
         assert loaded is not None
         assert loaded.path == "a.txt"
         assert loaded.updated_by == "tool-x"
@@ -694,7 +757,28 @@ class TestMemoryStoreMeta:
 
     async def test_get_meta_none_when_missing(self, tmp_path: pathlib.Path):
         memory = MemoryStore(root=tmp_path)
-        assert memory.get_meta("nope.txt") is None
+        assert await memory.get_meta("nope.txt") is None
+
+    async def test_meta_paths_distinct_for_collision_pair(self, tmp_path: pathlib.Path):
+        # ``"a/b"`` and ``"a__b"`` would have collided on the old
+        # ``replace("/", "__")`` encoding; the URL-quoted encoding keeps
+        # their metadata sidecars and version histories distinct.
+        memory = MemoryStore(root=tmp_path, keep_versions=True)
+        await memory.write_text("a/b", "first")
+        await memory.write_text("a__b", "second")
+
+        assert await memory.read_text("a/b") == "first"
+        assert await memory.read_text("a__b") == "second"
+
+        meta_slash = await memory.get_meta("a/b")
+        meta_under = await memory.get_meta("a__b")
+        assert meta_slash is not None and meta_under is not None
+        assert meta_slash.sha256 != meta_under.sha256
+
+        # Version histories live in separate encoded directories.
+        version_dirs = sorted(p.name for p in (tmp_path / "versions").iterdir() if p.is_dir())
+        assert "a%2Fb" in version_dirs
+        assert "a__b" in version_dirs
 
 
 # ----------------------------------------------------------------------------
