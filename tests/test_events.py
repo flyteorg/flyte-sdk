@@ -5,7 +5,6 @@ methods, and PendingEvent.
 
 from __future__ import annotations
 
-import sys
 import threading
 from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -16,19 +15,7 @@ import flyte.errors
 from flyte._event import EventWebhook, _Event, new_event
 from flyte._internal.controllers._local_controller import _substitute_callback_uri
 from flyte.cli._tui._tracker import PendingEvent
-
-# event_service_pb2 doesn't exist yet (proto not compiled), so inject a mock
-# before importing the remote Event module.
-_mock_event_service_pb2 = MagicMock()
-_mock_event_service_pb2.EventPayload = MagicMock
-sys.modules.setdefault("flyteidl2.workflow.event_service_pb2", _mock_event_service_pb2)
-
-# Ensure the module-level name is wired up
-import flyte.remote._event as _remote_event_mod  # noqa: E402
-from flyte.remote._event import Event, _encode_payload  # noqa: E402
-
-_remote_event_mod.event_service_pb2 = _mock_event_service_pb2
-
+from flyte.remote._event import Event, _encode_payload
 
 # ---------------------------------------------------------------------------
 # _Event dataclass
@@ -370,228 +357,157 @@ class TestEncodePayload:
 # ---------------------------------------------------------------------------
 
 
+def _mock_condition_action(name: str, parent: str = "", run_name: str = "run1") -> MagicMock:
+    """Build a mock condition Action whose Event.name resolves to ``name``.
+
+    ``id`` is a real ActionIdentifier so ``signal`` can build a real SignalEventRequest.
+    """
+    from flyteidl2.common import identifier_pb2
+
+    action = MagicMock()
+    action.id = identifier_pb2.ActionIdentifier(
+        run=identifier_pb2.RunIdentifier(name=run_name),
+        name=name,
+    )
+    action.metadata.HasField.return_value = True
+    action.metadata.condition.name = name
+    action.metadata.parent = parent
+    return action
+
+
+def _mock_list_actions_client(*pages) -> MagicMock:
+    """Build a mock client whose run_service.list_actions yields the given pages.
+
+    Each page is a list of actions; tokens chain the pages and the last is empty.
+    """
+    responses = []
+    for i, actions in enumerate(pages):
+        resp = MagicMock()
+        resp.actions = actions
+        resp.token = f"page{i + 1}" if i < len(pages) - 1 else ""
+        responses.append(resp)
+
+    mock_client = MagicMock()
+    mock_client.run_service.list_actions = AsyncMock(side_effect=responses)
+    return mock_client
+
+
+_CFG = {"org": "org", "project": "proj", "domain": "dev"}
+
+
+def _mock_cfg() -> MagicMock:
+    cfg = MagicMock(**_CFG)
+    return cfg
+
+
 class TestRemoteEventGet:
     @pytest.mark.asyncio
     async def test_get_returns_event(self):
-        mock_event_pb = MagicMock()
-        mock_resp = MagicMock()
-        mock_resp.event = mock_event_pb
-
-        mock_client = MagicMock()
-        mock_client.event_service.GetEvent = AsyncMock(return_value=mock_resp)
-
-        mock_cfg = MagicMock()
-        mock_cfg.org = "org"
-        mock_cfg.project = "proj"
-        mock_cfg.domain = "dev"
+        target = _mock_condition_action("my_event", parent="act1")
+        mock_client = _mock_list_actions_client([_mock_condition_action("other"), target])
 
         with (
             patch("flyte.remote._event.ensure_client"),
             patch("flyte.remote._event.get_client", return_value=mock_client),
-            patch("flyte.remote._event.get_init_config", return_value=mock_cfg),
+            patch("flyte.remote._event.get_init_config", return_value=_mock_cfg()),
         ):
             result = await Event.get.aio("my_event", run_name="run1", action_name="act1")
 
         assert result is not None
-        assert result.pb2 is mock_event_pb
+        assert result.pb2 is target
+        assert result.name == "my_event"
 
     @pytest.mark.asyncio
     async def test_get_not_found_returns_none(self):
-        import grpc
-
-        # Create a real-ish AioRpcError (it's a subclass of grpc.RpcError which is Exception)
-        class FakeAioRpcError(grpc.aio.AioRpcError):
-            def __init__(self):
-                pass
-
-            def code(self):
-                return grpc.StatusCode.NOT_FOUND
-
-        mock_client = MagicMock()
-        mock_client.event_service.GetEvent = AsyncMock(side_effect=FakeAioRpcError())
-
-        mock_cfg = MagicMock()
-        mock_cfg.org = "org"
-        mock_cfg.project = "proj"
-        mock_cfg.domain = "dev"
+        mock_client = _mock_list_actions_client([_mock_condition_action("something_else")])
 
         with (
             patch("flyte.remote._event.ensure_client"),
             patch("flyte.remote._event.get_client", return_value=mock_client),
-            patch("flyte.remote._event.get_init_config", return_value=mock_cfg),
+            patch("flyte.remote._event.get_init_config", return_value=_mock_cfg()),
         ):
-            result = await Event.get.aio("missing", run_name="run1", action_name="act1")
+            result = await Event.get.aio("missing", run_name="run1")
 
         assert result is None
 
 
 class TestRemoteEventListall:
     @pytest.mark.asyncio
-    async def test_listall_with_run_and_action(self):
-        ev1 = MagicMock()
-        ev2 = MagicMock()
-        mock_resp = MagicMock()
-        mock_resp.events = [ev1, ev2]
-        mock_resp.token = ""
-
-        mock_client = MagicMock()
-        mock_client.event_service.ListEvents = AsyncMock(return_value=mock_resp)
-
-        mock_cfg = MagicMock()
-        mock_cfg.org = "org"
-        mock_cfg.project = "proj"
-        mock_cfg.domain = "dev"
+    async def test_listall_filters_by_parent_action(self):
+        match = _mock_condition_action("e1", parent="act1")
+        other = _mock_condition_action("e2", parent="act2")
+        mock_client = _mock_list_actions_client([match, other])
 
         with (
             patch("flyte.remote._event.ensure_client"),
             patch("flyte.remote._event.get_client", return_value=mock_client),
-            patch("flyte.remote._event.get_init_config", return_value=mock_cfg),
+            patch("flyte.remote._event.get_init_config", return_value=_mock_cfg()),
         ):
-            events = []
-            async for e in Event.listall.aio(run_name="run1", action_name="act1"):
-                events.append(e)
+            events = [e async for e in Event.listall.aio(run_name="run1", action_name="act1")]
 
-        assert len(events) == 2
-        assert events[0].pb2 is ev1
-        assert events[1].pb2 is ev2
+        assert [e.pb2 for e in events] == [match]
 
     @pytest.mark.asyncio
-    async def test_listall_run_only(self):
-        mock_resp = MagicMock()
-        mock_resp.events = []
-        mock_resp.token = ""
-
-        mock_client = MagicMock()
-        mock_client.event_service.ListEvents = AsyncMock(return_value=mock_resp)
-
-        mock_cfg = MagicMock()
-        mock_cfg.org = "org"
-        mock_cfg.project = "proj"
-        mock_cfg.domain = "dev"
+    async def test_listall_filters_condition_actions_server_side(self):
+        mock_client = _mock_list_actions_client([])
 
         with (
             patch("flyte.remote._event.ensure_client"),
             patch("flyte.remote._event.get_client", return_value=mock_client),
-            patch("flyte.remote._event.get_init_config", return_value=mock_cfg),
+            patch("flyte.remote._event.get_init_config", return_value=_mock_cfg()),
         ):
-            events = []
-            async for e in Event.listall.aio(run_name="run1"):
-                events.append(e)
+            events = [e async for e in Event.listall.aio(run_name="run1")]
 
-        assert len(events) == 0
-        # Verify ListEvents was called (action_id=None is passed in the proto constructor)
-        mock_client.event_service.ListEvents.assert_awaited_once()
+        assert events == []
+        mock_client.run_service.list_actions.assert_awaited_once()
+        # The request must carry a server-side action_type == CONDITION (3) filter.
+        req = mock_client.run_service.list_actions.await_args.args[0]
+        filt = req.request.filters[0]
+        assert filt.field == "action_type"
+        assert list(filt.values) == ["3"]
 
     @pytest.mark.asyncio
     async def test_listall_pagination(self):
-        ev1 = MagicMock()
-        ev2 = MagicMock()
-        resp1 = MagicMock()
-        resp1.events = [ev1]
-        resp1.token = "page2"
-        resp2 = MagicMock()
-        resp2.events = [ev2]
-        resp2.token = ""
-
-        mock_client = MagicMock()
-        mock_client.event_service.ListEvents = AsyncMock(side_effect=[resp1, resp2])
-
-        mock_cfg = MagicMock()
-        mock_cfg.org = "org"
-        mock_cfg.project = "proj"
-        mock_cfg.domain = "dev"
+        ev1 = _mock_condition_action("e1")
+        ev2 = _mock_condition_action("e2")
+        mock_client = _mock_list_actions_client([ev1], [ev2])
 
         with (
             patch("flyte.remote._event.ensure_client"),
             patch("flyte.remote._event.get_client", return_value=mock_client),
-            patch("flyte.remote._event.get_init_config", return_value=mock_cfg),
+            patch("flyte.remote._event.get_init_config", return_value=_mock_cfg()),
         ):
-            events = []
-            async for e in Event.listall.aio(run_name="run1"):
-                events.append(e)
+            events = [e async for e in Event.listall.aio(run_name="run1")]
 
-        assert len(events) == 2
-        assert mock_client.event_service.ListEvents.await_count == 2
+        assert [e.pb2 for e in events] == [ev1, ev2]
+        assert mock_client.run_service.list_actions.await_count == 2
 
 
 class TestRemoteEventSignal:
     @pytest.mark.asyncio
-    async def test_signal_with_bool(self):
+    @pytest.mark.parametrize("payload", [True, "go ahead", 42, 3.14])
+    async def test_signal_sends_signal_event(self, payload):
         mock_client = MagicMock()
-        mock_client.event_service.SignalEvent = AsyncMock()
+        mock_client.run_service.signal_event = AsyncMock()
 
-        mock_pb = MagicMock()
-        mock_pb.event_id = MagicMock()
-
-        event = Event(pb2=mock_pb)
+        event = Event(pb2=_mock_condition_action("e1", parent="act1"))
 
         with (
             patch("flyte.remote._event.ensure_client"),
             patch("flyte.remote._event.get_client", return_value=mock_client),
         ):
-            await event.signal.aio(True)
+            await event.signal.aio(payload)
 
-        mock_client.event_service.SignalEvent.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_signal_with_string(self):
-        mock_client = MagicMock()
-        mock_client.event_service.SignalEvent = AsyncMock()
-
-        mock_pb = MagicMock()
-        mock_pb.event_id = MagicMock()
-
-        event = Event(pb2=mock_pb)
-
-        with (
-            patch("flyte.remote._event.ensure_client"),
-            patch("flyte.remote._event.get_client", return_value=mock_client),
-        ):
-            await event.signal.aio("go ahead")
-
-        mock_client.event_service.SignalEvent.assert_awaited_once()
+        mock_client.run_service.signal_event.assert_awaited_once()
+        req = mock_client.run_service.signal_event.await_args.args[0]
+        assert req.action_id == event.pb2.id
+        assert req.parent_action_name == "act1"
 
     @pytest.mark.asyncio
     async def test_signal_invalid_type_raises(self):
         event = Event(pb2=MagicMock())
         with pytest.raises(TypeError, match="payload must be bool, int, float, or str"):
             await event.signal.aio([1, 2])
-
-    @pytest.mark.asyncio
-    async def test_signal_with_int(self):
-        mock_client = MagicMock()
-        mock_client.event_service.SignalEvent = AsyncMock()
-
-        mock_pb = MagicMock()
-        mock_pb.event_id = MagicMock()
-
-        event = Event(pb2=mock_pb)
-
-        with (
-            patch("flyte.remote._event.ensure_client"),
-            patch("flyte.remote._event.get_client", return_value=mock_client),
-        ):
-            await event.signal.aio(42)
-
-        mock_client.event_service.SignalEvent.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_signal_with_float(self):
-        mock_client = MagicMock()
-        mock_client.event_service.SignalEvent = AsyncMock()
-
-        mock_pb = MagicMock()
-        mock_pb.event_id = MagicMock()
-
-        event = Event(pb2=mock_pb)
-
-        with (
-            patch("flyte.remote._event.ensure_client"),
-            patch("flyte.remote._event.get_client", return_value=mock_client),
-        ):
-            await event.signal.aio(3.14)
-
-        mock_client.event_service.SignalEvent.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------

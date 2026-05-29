@@ -3,13 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Union
 
-import grpc.aio
-from flyteidl2.common import identifier_pb2, list_pb2
-
-try:
-    from flyteidl2.workflow import event_service_pb2
-except ImportError:
-    event_service_pb2 = None  # type: ignore[assignment]
+from flyteidl2.common import identifier_pb2, list_pb2, phase_pb2
+from flyteidl2.workflow import run_definition_pb2, run_service_pb2
 
 from flyte.syncify import syncify
 
@@ -23,47 +18,39 @@ EventPayload = Union[bool, int, float, str]
 @dataclass
 class Event(ToJSONMixin):
     """
-    A remote Event that is registered within an action of a run.
+    A remote Event registered within an action of a run.
 
-    Events are always scoped to a specific action within a run, identified by
-    ``run_name`` and ``action_name``.
+    Events pause a run until an external signal is delivered. On the backend an event is
+    backed by a *condition action*, so an ``Event`` simply wraps the condition
+    :class:`~flyteidl2.workflow.run_definition_pb2.Action` it represents.
+
+    Use :meth:`listall` to discover the events of a run, :meth:`get` to look one up by
+    name, and :meth:`signal` to resolve one with a typed payload.
     """
 
-    pb2: Any
+    pb2: run_definition_pb2.Action
 
-    @syncify
-    @classmethod
-    async def get(
-        cls,
-        name: str,
-        /,
-        run_name: str,
-        action_name: str,
-    ) -> Event | None:
-        """
-        Retrieve an existing Event by name within a specific action of a run.
+    @property
+    def name(self) -> str:
+        """The event name (the condition action's declared name)."""
+        if self.pb2.metadata.HasField("condition"):
+            return self.pb2.metadata.condition.name
+        return self.pb2.id.name
 
-        :param name: The name of the Event.
-        :param run_name: The name of the Run the event belongs to.
-        :param action_name: The name of the Action the event belongs to.
-        :return: An Event instance if found, otherwise None.
-        """
-        ensure_client()
-        cfg = get_init_config()
+    @property
+    def action_name(self) -> str:
+        """The name of the condition action backing this event."""
+        return self.pb2.id.name
 
-        event_id = _make_event_identifier(cfg, name, run_name, action_name)
+    @property
+    def run_name(self) -> str:
+        """The name of the run this event belongs to."""
+        return self.pb2.id.run.name
 
-        try:
-            resp = await get_client().event_service.GetEvent(  # type: ignore[attr-defined]
-                request=event_service_pb2.GetEventRequest(  # type: ignore[union-attr]
-                    event_id=event_id,
-                )
-            )
-            return cls(pb2=resp.event)
-        except grpc.aio.AioRpcError as e:
-            if e.code() == grpc.StatusCode.NOT_FOUND:
-                return None
-            raise
+    @property
+    def phase(self) -> str:
+        """The current phase of the underlying condition action (e.g. ``RUNNING``)."""
+        return phase_pb2.ActionPhase.Name(self.pb2.status.phase)
 
     @syncify
     @classmethod
@@ -75,10 +62,13 @@ class Event(ToJSONMixin):
         limit: int = 100,
     ) -> AsyncIterator[Event]:
         """
-        List all Events for a run, optionally filtered to a specific action.
+        List all Events for a run, optionally filtered to a specific parent action.
+
+        Events are condition actions, so this lists the run's actions filtered (server
+        side) to ``ACTION_TYPE_CONDITION``.
 
         :param run_name: The name of the Run to list events for (required).
-        :param action_name: Optionally narrow to a specific action within the run.
+        :param action_name: Optionally narrow to events whose parent is this action.
         :param limit: The maximum number of events to fetch per page.
         :return: An async iterator of Event instances.
         """
@@ -91,29 +81,57 @@ class Event(ToJSONMixin):
             domain=cfg.domain,
             name=run_name,
         )
-
-        if action_name is not None:
-            action_id = identifier_pb2.ActionIdentifier(run=run_id, name=action_name)
-        else:
-            action_id = None
+        # Filter to condition actions on the backend rather than client-side.
+        condition_filter = list_pb2.Filter(
+            function=list_pb2.Filter.Function.EQUAL,
+            field="action_type",
+            values=[str(int(run_definition_pb2.ACTION_TYPE_CONDITION))],
+        )
 
         token = None
         while True:
-            resp = await get_client().event_service.ListEvents(  # type: ignore[attr-defined]
-                request=event_service_pb2.ListEventsRequest(  # type: ignore[union-attr]
+            resp = await get_client().run_service.list_actions(
+                run_service_pb2.ListActionsRequest(
                     run_id=run_id,
-                    action_id=action_id,
                     request=list_pb2.ListRequest(
                         limit=limit,
                         token=token,
+                        filters=[condition_filter],
                     ),
                 )
             )
-            for ev in resp.events:
-                yield cls(pb2=ev)
+            for action in resp.actions:
+                if action_name is not None and action.metadata.parent != action_name:
+                    continue
+                yield cls(pb2=action)
             if not resp.token:
                 break
             token = resp.token
+
+    @syncify
+    @classmethod
+    async def get(
+        cls,
+        name: str,
+        /,
+        run_name: str,
+        action_name: str | None = None,
+    ) -> Event | None:
+        """
+        Retrieve an existing Event by name within a run.
+
+        There is no dedicated get-event RPC, so this scans the run's condition actions
+        and returns the first whose name matches.
+
+        :param name: The name of the Event.
+        :param run_name: The name of the Run the event belongs to.
+        :param action_name: Optionally narrow to a specific parent action within the run.
+        :return: An Event instance if found, otherwise None.
+        """
+        async for event in cls.listall.aio(run_name=run_name, action_name=action_name):
+            if event.name == name:
+                return event
+        return None
 
     @syncify
     async def signal(self, payload: EventPayload) -> None:
@@ -130,37 +148,24 @@ class Event(ToJSONMixin):
 
         ensure_client()
 
-        await get_client().event_service.SignalEvent(  # type: ignore[attr-defined]
-            request=event_service_pb2.SignalEventRequest(  # type: ignore[union-attr]
-                event_id=self.pb2.event_id,
+        await get_client().run_service.signal_event(
+            run_service_pb2.SignalEventRequest(
+                action_id=self.pb2.id,
+                parent_action_name=self.pb2.metadata.parent,
                 payload=_encode_payload(payload),
             )
         )
 
 
-def _make_event_identifier(cfg, name: str, run_name: str, action_name: str) -> Any:
-    """Build an EventIdentifier from config + names."""
-    run_id = identifier_pb2.RunIdentifier(
-        org=cfg.org,
-        project=cfg.project,
-        domain=cfg.domain,
-        name=run_name,
-    )
-    action_id = identifier_pb2.ActionIdentifier(run=run_id, name=action_name)
-    return event_service_pb2.EventIdentifier(  # type: ignore[union-attr]
-        action_id=action_id,
-        name=name,
-    )
-
-
 def _encode_payload(value: EventPayload) -> Any:
     """Encode a Python value into an EventPayload proto message."""
+    # bool must be checked before int, since bool is a subclass of int.
     if isinstance(value, bool):
-        return event_service_pb2.EventPayload(bool_value=value)  # type: ignore[union-attr]
+        return run_service_pb2.EventPayload(bool_value=value)
     elif isinstance(value, int):
-        return event_service_pb2.EventPayload(int_value=value)  # type: ignore[union-attr]
+        return run_service_pb2.EventPayload(int_value=value)
     elif isinstance(value, float):
-        return event_service_pb2.EventPayload(float_value=value)  # type: ignore[union-attr]
+        return run_service_pb2.EventPayload(float_value=value)
     elif isinstance(value, str):
-        return event_service_pb2.EventPayload(string_value=value)  # type: ignore[union-attr]
+        return run_service_pb2.EventPayload(string_value=value)
     raise TypeError(f"Unsupported payload type: {type(value)}")
