@@ -31,16 +31,6 @@ import flyteplugins.hitl as hitl
 import flyte
 from flyte.ai.agents import Agent, tool
 
-hitl_env = hitl.env.clone_with(
-    image=flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages(
-        "flyteplugins-hitl>=2.3.6",
-        "fastapi",
-        "uvicorn",
-        "python-multipart",
-        "litellm",
-    )
-)
-
 env = flyte.TaskEnvironment(
     name="hitl-agent",
     image=(
