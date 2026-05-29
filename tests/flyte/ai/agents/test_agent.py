@@ -39,6 +39,11 @@ from flyte.ai.agents.agent import (
     _stringify_tool_result,
     _summarize_signature,
 )
+from flyte.ai.agents.memory import (
+    _ensure_namespace_segment,
+    _join_remote_path,
+    _memory_storage_root,
+)
 from flyte.ai.agents.protocol import AgentProtocol, AgentResult
 from flyte.models import PathRewrite, RawDataPath
 
@@ -620,6 +625,50 @@ class TestMemoryStore:
         contents = [m["content"] for m in messages]
         assert "remember this" in contents
         assert "noted" in contents
+
+
+class TestRemotePathHelpers:
+    """Unit coverage for the pure remote-path helpers backing keyed stores."""
+
+    def test_join_remote_path_basic(self):
+        assert _join_remote_path("base", "a", "b") == "base/a/b"
+
+    def test_join_remote_path_preserves_uri_scheme(self):
+        assert _join_remote_path("s3://bucket", "agents", "v0") == "s3://bucket/agents/v0"
+
+    def test_join_remote_path_strips_surrounding_slashes_on_tail(self):
+        assert _join_remote_path("base/", "/a/", "/b/") == "base/a/b"
+
+    def test_join_remote_path_ignores_empty_fragments(self):
+        assert _join_remote_path("base", "", "a", "") == "base/a"
+
+    def test_join_remote_path_empty_input(self):
+        assert _join_remote_path() == ""
+        assert _join_remote_path("", "") == ""
+
+    def test_storage_root_remote_uri_anchored_at_bucket(self):
+        assert _memory_storage_root("s3://bucket/w6/org/project/domain/u1/a0/hash/rd/abc123") == "s3://bucket"
+
+    def test_storage_root_local_path_unchanged_without_scratch(self):
+        assert _memory_storage_root("/tmp/raw") == "/tmp/raw"
+
+    def test_storage_root_local_path_strips_rd_scratch_suffix(self):
+        assert _memory_storage_root("/tmp/raw/rd/abc123") == "/tmp/raw"
+
+    def test_storage_root_trailing_slash_normalized(self):
+        assert _memory_storage_root("/tmp/raw/rd/abc123/") == "/tmp/raw"
+
+    def test_storage_root_keeps_non_scratch_rd_lookalike(self):
+        # ``rd`` only counts as scratch in the ``.../rd/<run_id>`` tail position.
+        assert _memory_storage_root("/tmp/rd/data/keep") == "/tmp/rd/data/keep"
+
+    def test_ensure_namespace_segment_valid(self):
+        assert _ensure_namespace_segment("my_key", name="key") == "my_key"
+
+    @pytest.mark.parametrize("bad", ["", "a/b", "a\\b", "..", "."])
+    def test_ensure_namespace_segment_rejects_unsafe(self, bad: str):
+        with pytest.raises(MemoryStoreError):
+            _ensure_namespace_segment(bad, name="key")
 
 
 @pytest.mark.asyncio

@@ -64,6 +64,18 @@ _INTERNAL_PREFIXES: tuple[str, ...] = tuple(f"{d}/" for d in sorted(_INTERNAL_DI
 #: Chunk size for streaming sha256 of files on disk.
 _HASH_CHUNK_BYTES = 1 << 20  # 1 MiB
 
+#: Namespace fragments + schema version that locate keyed MemoryStores under the
+#: active storage root: ``{storage_root}/agents/memory-store/v0/...``. Bump
+#: :data:`_MEMORY_SCHEMA_VERSION` when the persisted layout changes in a way that
+#: older stores cannot be read by newer code (or vice versa).
+_MEMORY_NAMESPACE: tuple[str, ...] = ("agents", "memory-store")
+_MEMORY_SCHEMA_VERSION = "v0"
+
+#: Per-run scratch segment that ``flyte.run`` appends to raw-data paths as
+#: ``{run_base_dir}/rd/{run_id}``. Stripped from *local* storage roots so that
+#: repeated runs sharing a memory key resolve to the same store.
+_RAW_DATA_SCRATCH_SEGMENT = "rd"
+
 
 # ----------------------------------------------------------------------------
 # Errors
@@ -167,8 +179,8 @@ def _ensure_namespace_segment(value: str, *, name: str) -> str:
 
     Memory-store keys become durable object-store prefixes, so they must be
     stable single path segments rather than relative paths. This keeps
-    ``{memory_key}`` from escaping or reshaping the managed
-    ``agents/memory-store/v0`` namespace.
+    ``{memory_key}`` from escaping or reshaping the managed memory namespace
+    (see :data:`_MEMORY_NAMESPACE`).
     """
     if not value:
         raise MemoryStoreError(f"{name} must not be empty")
@@ -178,31 +190,44 @@ def _ensure_namespace_segment(value: str, *, name: str) -> str:
 
 
 def _join_remote_path(*parts: str) -> str:
-    """Join path/URI fragments with POSIX separators while preserving schemes."""
-    cleaned = [p.strip("/") for p in parts if p]
-    if not cleaned:
+    """Join URI / path fragments with POSIX separators.
+
+    The leading fragment keeps its scheme and root intact (so ``s3://bucket``
+    survives), while every subsequent fragment is stripped of surrounding
+    slashes before joining. Empty fragments are ignored.
+    """
+    segments = [p for p in parts if p]
+    if not segments:
         return ""
-    first = parts[0].rstrip("/")
-    rest = [p.strip("/") for p in parts[1:] if p]
-    return "/".join([first, *rest])
+    head, *rest = segments
+    return "/".join([head.rstrip("/"), *(p.strip("/") for p in rest)])
 
 
 def _memory_storage_root(raw_data_path: str) -> str:
     """Return the stable storage root used for keyed memory stores.
 
-    Remote raw-data paths can include bucket-internal sharding and run-specific
-    prefixes (for example ``s3://bucket/w6/org/project/domain/...``). Agent
-    memories should be independent of those per-run/per-shard prefixes, so
-    remote URIs are anchored at the provider root (``s3://bucket``). Local paths
-    keep using the supplied raw-data directory as their root.
+    Raw-data paths can carry bucket-internal sharding and per-run prefixes
+    (e.g. ``s3://bucket/w6/org/project/domain/.../rd/<run_id>``). Keyed memories
+    must be independent of those so two runs with the same key resolve to one
+    store, so we normalize:
+
+    - **Remote URIs** are anchored at the provider root (``scheme://netloc``),
+      dropping every bucket-internal prefix.
+    - **Local paths** keep the supplied raw-data directory, stripping only a
+      trailing ``/rd/<run_id>`` scratch suffix (see
+      :data:`_RAW_DATA_SCRATCH_SEGMENT`).
     """
     trimmed = raw_data_path.rstrip("/")
+
     parsed = urlparse(trimmed)
     if parsed.scheme and parsed.netloc:
         return f"{parsed.scheme}://{parsed.netloc}"
-    parts = trimmed.rsplit("/", 2)
-    if len(parts) == 3 and parts[1] == "rd" and parts[2]:
-        return parts[0]
+
+    # Local roots only differ from ``trimmed`` when they end in a
+    # ``<parent>/rd/<run_id>`` scratch tail (a parent before ``rd`` is required).
+    parent, scratch, run_id = trimmed.rsplit("/", 2) if trimmed.count("/") >= 2 else (trimmed, "", "")
+    if scratch == _RAW_DATA_SCRATCH_SEGMENT and run_id:
+        return parent
     return trimmed
 
 
@@ -390,6 +415,9 @@ class MemoryStore:
         bucket-internal sharding and run-specific prefixes::
 
             {storage_root}/agents/memory-store/v0/{org}/{project}/{domain}/{key}
+
+        The ``agents/memory-store`` prefix and ``v0`` version come from
+        :data:`_MEMORY_NAMESPACE` / :data:`_MEMORY_SCHEMA_VERSION`.
         """
         key = _ensure_namespace_segment(key, name="key")
         if org is None:
@@ -407,7 +435,7 @@ class MemoryStore:
                 "MemoryStore.create/get_or_create/exists require a raw_data_path in the Flyte context"
             ) from exc
 
-        return _join_remote_path(storage_root, "agents", "memory-store", "v0", org, project, domain, key)
+        return _join_remote_path(storage_root, *_MEMORY_NAMESPACE, _MEMORY_SCHEMA_VERSION, org, project, domain, key)
 
     @staticmethod
     async def _remote_store_exists(remote_path: str) -> bool:
