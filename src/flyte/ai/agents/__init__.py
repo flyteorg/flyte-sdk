@@ -7,6 +7,7 @@ from .agent import (
     LLMMessage,
     MCPServerSpec,
     agent_progress_cb,
+    tool,
 )
 from .codemode import CodeModeAgent
 from .memory import (
@@ -33,4 +34,5 @@ __all__ = [
     "MemoryStore",
     "MemoryStoreError",
     "agent_progress_cb",
+    "tool",
 ]

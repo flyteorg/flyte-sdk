@@ -7,8 +7,7 @@ approval before they execute.
 Pattern
 -------
 
-1. Mark sensitive tools by wrapping them in an :class:`AgentTool` with
-   ``requires_approval=True``.
+1. Mark sensitive tools with ``@tool(requires_approval=True)``.
 2. When the LLM asks the agent to run such a tool, the harness invokes the
    ``approval_callback`` and waits for a boolean decision.
 3. The default callback uses ``flyteplugins.hitl.new_event`` to spin up a
@@ -30,13 +29,13 @@ from typing import Any
 import flyteplugins.hitl as hitl
 
 import flyte
-from flyte.ai.agents import Agent, AgentTool
+from flyte.ai.agents import Agent, tool
 
 env = flyte.TaskEnvironment(
     name="hitl-agent",
     image=(
         flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages(
-            "flyteplugins-hitl>=2.1.3",
+            "flyteplugins-hitl>=2.3.6",
             "fastapi",
             "uvicorn",
             "python-multipart",
@@ -71,13 +70,14 @@ async def lookup_order(order_id: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+@tool(requires_approval=True)
 @env.task
 async def issue_refund(order_id: str, amount_usd: float, reason: str) -> dict[str, Any]:
     """Issue a refund to the customer for *order_id*.
 
-    This is the actual side-effectful call to your payments backend. The HITL
-    approval wrapping (below) ensures the LLM cannot trigger it without a
-    human in the loop.
+    This is the actual side-effectful call to your payments backend. The
+    ``@tool(requires_approval=True)`` wrapping ensures the LLM cannot trigger
+    it without a human in the loop.
     """
     return {
         "order_id": order_id,
@@ -85,21 +85,6 @@ async def issue_refund(order_id: str, amount_usd: float, reason: str) -> dict[st
         "reason": reason,
         "status": "refunded",
     }
-
-
-async def _issue_refund_tool_exec(args: dict[str, Any]) -> Any:
-    """Bridge dict-args → ``issue_refund.aio`` keyword args."""
-    return await issue_refund.aio(**args)
-
-
-_refund_tool = AgentTool(
-    name="issue_refund",
-    description=issue_refund.func.__doc__.strip().splitlines()[0],  # type: ignore[union-attr]
-    parameters=issue_refund.json_schema,
-    execute=_issue_refund_tool_exec,
-    requires_approval=True,
-    source="task",
-)
 
 
 agent = Agent(
@@ -111,7 +96,7 @@ agent = Agent(
         "happened at the end."
     ),
     model="claude-haiku-4-5",
-    tools=[lookup_order, _refund_tool],
+    tools=[lookup_order, issue_refund],
     max_turns=10,
 )
 
@@ -121,3 +106,8 @@ async def concierge(request: str) -> str:
     """Run the concierge agent. Sensitive actions pause for human approval."""
     result = await agent.run(request)
     return result.summary or result.error
+
+
+if __name__ == "__main__":
+    flyte.init_from_config()
+    flyte.run(concierge, request="Refund order #12345 to the customer.")

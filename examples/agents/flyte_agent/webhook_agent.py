@@ -15,7 +15,13 @@ Deploy::
 
     flyte deploy examples/agents/flyte_agent/webhook_agent.py
 
-Once deployed, point your external system at the resulting ``/trigger`` URL.
+Once deployed, point your external system at the resulting ``/trigger`` URL:
+
+```bash
+curl -X POST -H "Content-Type: application/json" \
+    -d '{"repository": "flyteorg/flyte", "pull_request": {"number": 123}, "action": "opened"}' \
+    https://<subdomain>.apps.<endpoint>/trigger
+```
 """
 
 from __future__ import annotations
@@ -32,15 +38,15 @@ from flyte.ai.agents import Agent
 # Agent + tools
 # ---------------------------------------------------------------------------
 
-task_env = flyte.TaskEnvironment(
+tool_env = flyte.TaskEnvironment(
     name="webhook-agent-tools",
-    image=(flyte.Image.from_debian_base().with_pip_packages("litellm", "httpx")),
+    image=(flyte.Image.from_debian_base(flyte_version="2.3.6").with_pip_packages("litellm", "httpx")),
     resources=flyte.Resources(cpu=1, memory="1Gi"),
     secrets=[flyte.Secret(key="internal-anthropic-api-key", as_env_var="ANTHROPIC_API_KEY")],
 )
 
 
-@task_env.task
+@tool_env.task
 async def fetch_pr(repo: str, number: int) -> dict[str, Any]:
     """Fetch metadata for a specific GitHub pull request."""
     import httpx
@@ -55,7 +61,7 @@ async def fetch_pr(repo: str, number: int) -> dict[str, Any]:
         return resp.json()
 
 
-@task_env.task
+@tool_env.task
 async def post_comment(repo: str, number: int, comment: str) -> str:
     """Post a comment on a GitHub issue or PR (stub)."""
     flyte.logger.info("Would post on %s#%d: %s", repo, number, comment)
@@ -75,7 +81,7 @@ agent = Agent(
 )
 
 
-@task_env.task(report=True)
+@tool_env.task(report=True)
 async def review_pr(repo: str, pr_number: int, event: str) -> str:
     """Durable task that runs the agent for a single webhook event."""
     message = f"GitHub webhook fired for {repo}#{pr_number} (event={event}). Fetch the PR and post a review comment."
@@ -104,7 +110,16 @@ async def _lifespan(_app):
 
 def _build_app() -> Any:
     assert FastAPI is not None, "fastapi must be installed to build the webhook app."
+    from flyte.app.extras import FastAPIPassthroughAuthMiddleware
+
     api = FastAPI(title="flyte-agent-webhook", lifespan=_lifespan)
+
+    # ``init_passthrough`` only forwards credentials that are bound to the Flyte
+    # auth-metadata context for the current request. This middleware extracts the
+    # incoming ``Authorization`` header and binds it, so ``flyte.run.aio`` can
+    # authenticate its control-plane calls. Without it, every run submission
+    # fails with "Failed to get signed url".
+    api.add_middleware(FastAPIPassthroughAuthMiddleware, excluded_paths={"/health"})
 
     @api.get("/health")
     async def health() -> dict[str, str]:
@@ -112,10 +127,9 @@ def _build_app() -> Any:
 
     @api.post("/trigger")
     async def trigger(payload: dict) -> dict[str, str]:
-        # Minimal GitHub-style payload extraction. Adapt for your provider.
-        repo = payload.get("repository", {}).get("full_name", "flyteorg/flyte")
+        repo = payload.get("repository")
         pr_number = int(payload.get("pull_request", {}).get("number", 0))
-        event = payload.get("action", "unknown")
+        event = payload.get("action")
 
         run = await flyte.run.aio(review_pr, repo=repo, pr_number=pr_number, event=event)
         return {"run_url": run.url, "name": run.name}
@@ -125,12 +139,10 @@ def _build_app() -> Any:
 
 webhook_env = flyte.app.AppEnvironment(
     name="flyte-agent-webhook",
-    image=(
-        flyte.Image.from_debian_base(install_flyte=False).with_pip_packages("fastapi", "uvicorn", "litellm", "flyte")
-    ),
+    image=(flyte.Image.from_debian_base().with_pip_packages("fastapi", "uvicorn", "litellm")),
     resources=flyte.Resources(cpu=1, memory="512Mi"),
     requires_auth=True,
-    depends_on=[task_env],
+    depends_on=[tool_env],
 )
 
 
@@ -143,6 +155,32 @@ async def serve():
 
 
 if __name__ == "__main__":
+    import os
+
+    import httpx
+
+    import flyte.remote as remote
+
     flyte.init_from_config()
     deployments = flyte.deploy(webhook_env)
     print(f"Webhook agent deployed: {deployments[0].summary_repr()}")
+    print(f"Webhook agent URL: {deployments[0].envs['flyte-agent-webhook'].deployed_app.url}")
+
+    app_handle = remote.App.get(name="flyte-agent-webhook")
+    print(f"Webhook agent endpoint: {app_handle.endpoint}")
+
+    api_key = os.environ.get("FLYTE_API_KEY")
+    if not api_key:
+        raise ValueError("FLYTE_API_KEY not set. Obtain with: flyte get api-key")
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "User-Agent": "flyte-webhook-client/1.0",
+    }
+
+    with httpx.Client(headers=headers) as client:
+        response = client.post(
+            f"{app_handle.endpoint}/trigger",
+            json={"repository": "flyteorg/flyte", "pull_request": {"number": 123}, "action": "opened"},
+        )
+        response.raise_for_status()
+        print(f"Response: {response.json()}")

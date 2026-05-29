@@ -11,8 +11,8 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal, Mapping, Sequence, cast
+from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal, Mapping, Sequence, cast, overload
 
 if TYPE_CHECKING:
     from flyte._task import TaskTemplate
@@ -164,6 +164,31 @@ def _make_lazy_entity_tool(lazy: "LazyEntity", *, name: str | None = None) -> Ag
     )
 
 
+def _to_agent_tool(obj: Any, *, name: str | None = None) -> AgentTool:
+    """Normalize a single tool-like object into an :class:`AgentTool`.
+
+    Accepts already-constructed :class:`AgentTool` instances, plain Python
+    callables (sync or async), ``@flyte.trace`` helpers, ``@env.task``
+    :class:`~flyte.TaskTemplate` instances, and
+    :class:`~flyte.remote._task.LazyEntity` remote-task references.
+    """
+    if isinstance(obj, AgentTool):
+        if name and name != obj.name:
+            return replace(obj, name=name)
+        return obj
+    if _is_task_template(obj):
+        return _make_task_tool(obj, name=name)
+    if _is_lazy_entity(obj):
+        return _make_lazy_entity_tool(obj, name=name)
+    if callable(obj):
+        return _make_callable_tool(obj, name=name)
+    raise TypeError(
+        f"Cannot turn {type(obj).__name__!r} into an AgentTool. "
+        "Pass an AgentTool, a callable, a @flyte.trace helper, an "
+        "@env.task template, a LazyEntity, or a {name: object} mapping."
+    )
+
+
 def _resolve_tools(
     tools: Sequence[Any] | Mapping[str, Any],
 ) -> dict[str, AgentTool]:
@@ -184,34 +209,86 @@ def _resolve_tools(
 
     resolved: dict[str, AgentTool] = {}
     for override_name, obj in items:
-        if isinstance(obj, AgentTool):
-            tool = obj
-            if override_name:
-                tool = AgentTool(
-                    name=override_name,
-                    description=tool.description,
-                    parameters=tool.parameters,
-                    execute=tool.execute,
-                    requires_approval=tool.requires_approval,
-                    source=tool.source,
-                )
-        elif _is_task_template(obj):
-            tool = _make_task_tool(obj, name=override_name)
-        elif _is_lazy_entity(obj):
-            tool = _make_lazy_entity_tool(obj, name=override_name)
-        elif callable(obj):
-            tool = _make_callable_tool(obj, name=override_name)
-        else:
-            raise TypeError(
-                f"Cannot turn {type(obj).__name__!r} into an AgentTool. "
-                "Pass an AgentTool, a callable, a @flyte.trace helper, an "
-                "@env.task template, a LazyEntity, or a {name: object} mapping."
-            )
-
+        tool = _to_agent_tool(obj, name=override_name)
         if tool.name in resolved:
             raise ValueError(f"Duplicate tool name '{tool.name}'")
         resolved[tool.name] = tool
     return resolved
+
+
+@overload
+def tool(obj: Any, /) -> AgentTool: ...
+
+
+@overload
+def tool(
+    *,
+    name: str | None = ...,
+    description: str | None = ...,
+    requires_approval: bool = ...,
+) -> Callable[[Any], AgentTool]: ...
+
+
+def tool(
+    obj: Any = None,
+    /,
+    *,
+    name: str | None = None,
+    description: str | None = None,
+    requires_approval: bool = False,
+) -> AgentTool | Callable[[Any], AgentTool]:
+    """Wrap a task, ``@flyte.trace`` helper, plain callable, or ``LazyEntity`` as an :class:`AgentTool`.
+
+    This removes the boilerplate of building an :class:`AgentTool` by hand
+    (manually pulling the docstring, JSON schema, and writing a dict-args
+    execution bridge) when you only need to tweak how a tool is presented to
+    the model or gate it behind human approval.
+
+    Use it as a direct call::
+
+        refund_tool = tool(issue_refund, requires_approval=True)
+
+    or as a (parametrized) decorator stacked on top of ``@env.task`` /
+    ``@flyte.trace`` / a plain function::
+
+        @tool(requires_approval=True)
+        @env.task
+        async def issue_refund(order_id: str, amount_usd: float) -> dict: ...
+
+        @tool
+        def search(query: str) -> str: ...
+
+    The wrapped task is still registered with its :class:`~flyte.TaskEnvironment`
+    and executes on-cluster via ``task.aio`` when the agent calls it.
+
+    Args:
+        obj: The object to wrap. Omit when using ``tool`` as a parametrized
+            decorator (``@tool(...)``).
+        name: Override the tool name shown to the model. Defaults to the
+            function / task name.
+        description: Override the description shown to the model. Defaults to
+            the first paragraph of the object's docstring.
+        requires_approval: Gate execution behind the agent's HITL approval
+            callback.
+
+    Returns:
+        An :class:`AgentTool` (direct call) or a decorator returning one.
+    """
+
+    def _wrap(target: Any) -> AgentTool:
+        base = _to_agent_tool(target, name=name)
+        return replace(
+            base,
+            description=description if description is not None else base.description,
+            requires_approval=requires_approval,
+        )
+
+    # Bare ``@tool`` usage passes the decorated object positionally; the
+    # parametrized ``@tool(...)`` / keyword usage defers until the target is
+    # supplied.
+    if obj is None:
+        return _wrap
+    return _wrap(obj)
 
 
 # ----------------------------------------------------------------------------

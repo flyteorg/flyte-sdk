@@ -65,6 +65,7 @@ from ._tools import (
     _resolve_tools,
     _stringify_tool_result,
     _summarize_signature,
+    tool,
 )
 from .memory import (
     AccessDenied,
@@ -293,10 +294,10 @@ class Agent:
         created inside a task).
         """
         new = _resolve_tools({name: obj} if name else [obj])
-        for tool in new.values():
-            if tool.name in self._registry:
-                raise ValueError(f"Duplicate tool name '{tool.name}'")
-            self._registry[tool.name] = tool
+        for _tool in new.values():
+            if _tool.name in self._registry:
+                raise ValueError(f"Duplicate tool name '{_tool.name}'")
+            self._registry[_tool.name] = _tool
         self._system_prompt = self._build_system_prompt()
         return next(iter(new.values()))
 
@@ -310,8 +311,8 @@ class Agent:
             skills_block = "\n\nAdditional context / skills:\n" + _load_skills(self.skills)
 
         tool_lines: list[str] = []
-        for tool in self._registry.values():
-            tool_lines.append(f"- {tool.name}: {tool.description}")
+        for _tool in self._registry.values():
+            tool_lines.append(f"- {_tool.name}: {_tool.description}")
         tools_block = "\n".join(tool_lines) if tool_lines else "(no tools registered)"
 
         return (
@@ -333,11 +334,11 @@ class Agent:
             self._mcp_loaded = True
             return
         loaded = await self._mcp_loader.load()
-        for tool in loaded:
-            if tool.name in self._registry:
-                logger.warning("MCP tool name collision: %s. Skipping.", tool.name)
+        for _tool in loaded:
+            if _tool.name in self._registry:
+                logger.warning("MCP tool name collision: %s. Skipping.", _tool.name)
                 continue
-            self._registry[tool.name] = tool
+            self._registry[_tool.name] = _tool
         self._mcp_loaded = True
         self._system_prompt = self._build_system_prompt()
 
@@ -520,4 +521,5 @@ __all__ = [
     "MemoryStore",
     "MemoryStoreError",
     "agent_progress_cb",
+    "tool",
 ]

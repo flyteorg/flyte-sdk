@@ -23,6 +23,7 @@ from flyte.ai.agents import (
     MemoryStoreError,
     agent_progress_cb,
 )
+from flyte.ai.agents import tool as tool_decorator
 from flyte.ai.agents.agent import (
     _abbreviate,
     _resolve_tools,
@@ -121,6 +122,64 @@ class TestResolveTools:
         assert tool.source == "task"
         assert tool.description == "Fetch a metric by name."
         assert "name" in tool.parameters["properties"]
+
+
+class TestToolDecorator:
+    def test_bare_decorator_on_callable(self):
+        @tool_decorator
+        def search(query: str) -> str:
+            """Search the corpus."""
+            return query
+
+        assert isinstance(search, AgentTool)
+        assert search.name == "search"
+        assert search.description == "Search the corpus."
+        assert search.requires_approval is False
+        assert "query" in search.parameters["properties"]
+
+    def test_direct_call_sets_requires_approval(self):
+        def issue_refund(order_id: str) -> str:
+            """Issue a refund."""
+            return order_id
+
+        out = tool_decorator(issue_refund, requires_approval=True)
+        assert isinstance(out, AgentTool)
+        assert out.requires_approval is True
+        assert out.description == "Issue a refund."
+
+    def test_parametrized_decorator_overrides_name_and_description(self):
+        @tool_decorator(name="refund", description="Custom desc", requires_approval=True)
+        def issue_refund(order_id: str) -> str:
+            """Issue a refund."""
+            return order_id
+
+        assert issue_refund.name == "refund"
+        assert issue_refund.description == "Custom desc"
+        assert issue_refund.requires_approval is True
+
+    def test_decorator_on_task_produces_task_tool(self):
+        env = TaskEnvironment(name="tool_dec_env", image="auto")
+
+        @tool_decorator(requires_approval=True)
+        @env.task
+        async def issue_refund(order_id: str, amount: float) -> dict:
+            """Issue a refund to the customer."""
+            return {"order_id": order_id, "amount": amount}
+
+        assert isinstance(issue_refund, AgentTool)
+        assert issue_refund.source == "task"
+        assert issue_refund.requires_approval is True
+        assert issue_refund.description == "Issue a refund to the customer."
+        assert "order_id" in issue_refund.parameters["properties"]
+
+    def test_resolves_in_agent_tools_list(self):
+        @tool_decorator(requires_approval=True)
+        def dangerous(x: int) -> int:
+            """Do something sensitive."""
+            return x
+
+        out = _resolve_tools([dangerous])
+        assert out["dangerous"].requires_approval is True
 
 
 # ----------------------------------------------------------------------------
