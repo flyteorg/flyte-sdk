@@ -138,6 +138,7 @@ class TestPackageExports:
             "MemoryStore",
             "MemoryStoreError",
             "agent_progress_cb",
+            "tool",
         }
         assert CodeModeAgent.__name__ == "CodeModeAgent"
         assert AgentResult.__name__ == "AgentResult"

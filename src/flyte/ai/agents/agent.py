@@ -417,7 +417,7 @@ class Agent:
                         "type": "function",
                         "function": {
                             "name": call["name"],
-                            "arguments": json.dumps(call["arguments"]),
+                            "arguments": json.dumps(call.get("arguments") or {}),
                         },
                     }
                     for call in llm_msg.tool_calls

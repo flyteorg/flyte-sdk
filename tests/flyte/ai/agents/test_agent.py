@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import pathlib
+import sys
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -24,8 +26,15 @@ from flyte.ai.agents import (
     agent_progress_cb,
 )
 from flyte.ai.agents import tool as tool_decorator
+from flyte.ai.agents._tools import (
+    _callable_short_doc,
+    _json_schema_for_callable,
+    _make_callable_tool,
+    _make_lazy_entity_tool,
+)
 from flyte.ai.agents.agent import (
     _abbreviate,
+    _hitl_approval,
     _resolve_tools,
     _stringify_tool_result,
     _summarize_signature,
@@ -1035,3 +1044,346 @@ class TestMCPLazyLoad:
             await agent.run("hi", [])
             await agent.run("hi again", [])
         assert load_mock.await_count == 1
+
+    async def test_mcp_tools_registered_and_listed_after_run(self):
+        llm = _make_llm([LLMMessage(content="done", tool_calls=[])])
+        spec = MCPServerSpec(name="srv", url="https://example.com/mcp")
+        agent = Agent(name="t", instructions="I", call_llm=llm, mcp_servers=[spec])
+
+        async def exec_fn(args):
+            return "ok"
+
+        mcp_tool = AgentTool(
+            name="mcp_search",
+            description="search via mcp",
+            parameters={"type": "object", "properties": {}},
+            execute=exec_fn,
+            source="mcp",
+        )
+        with patch.object(agent._mcp_loader, "load", AsyncMock(return_value=[mcp_tool])):
+            # MCP tools are loaded lazily, so they are absent until the first run.
+            assert "mcp_search" not in {d["name"] for d in agent.tool_descriptions()}
+            await agent.run("hi", [])
+
+        names = {d["name"] for d in agent.tool_descriptions()}
+        assert "mcp_search" in names
+        assert "mcp_search" in agent.system_prompt
+
+    async def test_mcp_tool_name_collision_is_skipped(self):
+        # A local tool already named ``_add`` must win over an MCP tool of the
+        # same name; the MCP one is skipped with a warning rather than clobbering.
+        llm = _make_llm([LLMMessage(content="done", tool_calls=[])])
+        spec = MCPServerSpec(name="srv", url="https://example.com/mcp")
+        agent = Agent(name="t", instructions="I", tools=[_add], call_llm=llm, mcp_servers=[spec])
+        original = agent._registry["_add"]
+
+        async def exec_fn(args):
+            return "from-mcp"
+
+        clashing = AgentTool(
+            name="_add",
+            description="mcp add",
+            parameters={"type": "object", "properties": {}},
+            execute=exec_fn,
+            source="mcp",
+        )
+        with patch.object(agent._mcp_loader, "load", AsyncMock(return_value=[clashing])):
+            await agent.run("hi", [])
+
+        # The local tool is preserved; the MCP impostor did not replace it.
+        assert agent._registry["_add"] is original
+        assert agent._registry["_add"].source == "function"
+
+
+# ----------------------------------------------------------------------------
+# Parallel vs sequential tool execution
+# ----------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestParallelToolExecution:
+    @staticmethod
+    def _two_call_llm() -> AsyncMock:
+        return _make_llm(
+            [
+                LLMMessage(
+                    content=None,
+                    tool_calls=[
+                        {"id": "a", "name": "slow", "arguments": {"x": 1}},
+                        {"id": "b", "name": "fast", "arguments": {"x": 2}},
+                    ],
+                ),
+                LLMMessage(content="done", tool_calls=[]),
+            ]
+        )
+
+    @staticmethod
+    def _interleaving_tools(order: list[str]):
+        async def slow(x: int) -> str:
+            """Slow tool."""
+            order.append("slow_start")
+            await asyncio.sleep(0.02)
+            order.append("slow_end")
+            return "slow"
+
+        async def fast(x: int) -> str:
+            """Fast tool."""
+            order.append("fast_start")
+            order.append("fast_end")
+            return "fast"
+
+        return slow, fast
+
+    async def test_parallel_interleaves_tool_calls(self):
+        order: list[str] = []
+        slow, fast = self._interleaving_tools(order)
+        agent = Agent(
+            name="t",
+            instructions="I",
+            tools={"slow": slow, "fast": fast},
+            call_llm=self._two_call_llm(),
+            parallel_tool_calls=True,
+        )
+        await agent.run("go", [])
+        # Under concurrent execution, ``fast`` runs (and finishes) while ``slow``
+        # is parked on its sleep.
+        assert order == ["slow_start", "fast_start", "fast_end", "slow_end"]
+
+    async def test_sequential_preserves_call_order(self):
+        order: list[str] = []
+        slow, fast = self._interleaving_tools(order)
+        agent = Agent(
+            name="t",
+            instructions="I",
+            tools={"slow": slow, "fast": fast},
+            call_llm=self._two_call_llm(),
+            parallel_tool_calls=False,
+        )
+        await agent.run("go", [])
+        # Strict ordering: ``slow`` fully completes before ``fast`` begins.
+        assert order == ["slow_start", "slow_end", "fast_start", "fast_end"]
+
+    async def test_both_tool_results_threaded_back_to_llm(self):
+        order: list[str] = []
+        slow, fast = self._interleaving_tools(order)
+        llm = self._two_call_llm()
+        agent = Agent(
+            name="t",
+            instructions="I",
+            tools={"slow": slow, "fast": fast},
+            call_llm=llm,
+        )
+        await agent.run("go", [])
+        _, _, second_messages, _ = llm.await_args_list[1].args
+        tool_msgs = {m["name"]: m["content"] for m in second_messages if m["role"] == "tool"}
+        assert tool_msgs == {"slow": "slow", "fast": "fast"}
+
+
+# ----------------------------------------------------------------------------
+# Dispatch edge cases
+# ----------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestDispatchEdgeCases:
+    async def test_non_dict_arguments_wrapped_in_raw(self):
+        captured: dict[str, object] = {}
+
+        async def execute(args):
+            captured.update(args)
+            return "ok"
+
+        weird = AgentTool(
+            name="weird",
+            description="d",
+            parameters={"type": "object", "properties": {}},
+            execute=execute,
+        )
+        llm = _make_llm(
+            [
+                LLMMessage(content=None, tool_calls=[{"id": "c1", "name": "weird", "arguments": "not-a-dict"}]),
+                LLMMessage(content="done", tool_calls=[]),
+            ]
+        )
+        agent = Agent(name="t", instructions="I", tools=[weird], call_llm=llm)
+        await agent.run("go", [])
+        assert captured == {"_raw": "not-a-dict"}
+
+    async def test_missing_arguments_default_to_empty_dict(self):
+        captured: dict[str, object] = {"set": False}
+
+        async def execute(args):
+            captured["set"] = True
+            captured["args"] = args
+            return "ok"
+
+        t = AgentTool(
+            name="noargs",
+            description="d",
+            parameters={"type": "object", "properties": {}},
+            execute=execute,
+        )
+        llm = _make_llm(
+            [
+                LLMMessage(content=None, tool_calls=[{"id": "c1", "name": "noargs"}]),
+                LLMMessage(content="done", tool_calls=[]),
+            ]
+        )
+        agent = Agent(name="t", instructions="I", tools=[t], call_llm=llm)
+        await agent.run("go", [])
+        assert captured["set"] is True
+        assert captured["args"] == {}
+
+
+# ----------------------------------------------------------------------------
+# Memory persistence on failure paths
+# ----------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestMemoryPersistenceOnFailure:
+    async def test_memory_retains_user_message_when_llm_errors(self):
+        memory = MemoryStore()
+        llm = AsyncMock(side_effect=RuntimeError("provider down"))
+        agent = Agent(name="t", instructions="I", call_llm=llm, memory=memory)
+        result = await agent.run("remember me", [])
+        assert "LLM call failed" in result.error
+        # Even though the turn failed, the user message is committed to memory
+        # so a later resume sees the in-flight prompt.
+        assert [m["content"] for m in memory.messages] == ["remember me"]
+
+    async def test_memory_retains_messages_when_max_turns_reached(self):
+        looping = LLMMessage(
+            content=None,
+            tool_calls=[{"id": "loop", "name": "_add", "arguments": {"x": 0, "y": 0}}],
+        )
+        memory = MemoryStore()
+        llm = AsyncMock(return_value=looping)
+        agent = Agent(name="t", instructions="I", tools=[_add], call_llm=llm, memory=memory, max_turns=2)
+        await agent.run("loop forever", [])
+        roles = [m["role"] for m in memory.messages]
+        assert roles[0] == "user"
+        # Assistant + tool messages from the capped turns are persisted too.
+        assert "assistant" in roles
+        assert "tool" in roles
+
+
+# ----------------------------------------------------------------------------
+# Default HITL approval callback
+# ----------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestDefaultHitlApproval:
+    async def test_denies_when_hitl_plugin_missing(self):
+        t = AgentTool(
+            name="sensitive",
+            description="d",
+            parameters={"type": "object", "properties": {}},
+            execute=AsyncMock(),
+            requires_approval=True,
+        )
+        # Force ``import flyteplugins.hitl`` to raise ImportError.
+        with patch.dict(sys.modules, {"flyteplugins.hitl": None}):
+            approved = await _hitl_approval(t, {"k": "v"})
+        assert approved is False
+
+
+# ----------------------------------------------------------------------------
+# _tools internal fallbacks
+# ----------------------------------------------------------------------------
+
+
+class TestToolInternals:
+    def test_callable_short_doc_empty_for_undocumented(self):
+        def no_doc(x: int) -> int:
+            return x
+
+        assert _callable_short_doc(no_doc) == ""
+
+    def test_undocumented_callable_gets_generated_description(self):
+        def mystery(x: int) -> int:
+            return x
+
+        t = _make_callable_tool(mystery)
+        assert t.description == "Execute mystery"
+
+    def test_json_schema_fallback_when_extraction_fails(self):
+        def fn(x: int) -> int:
+            return x
+
+        with patch("flyte.models.NativeInterface.from_callable", side_effect=RuntimeError("boom")):
+            schema = _json_schema_for_callable(fn)
+        assert schema == {"type": "object", "properties": {}, "additionalProperties": True}
+
+
+@pytest.mark.asyncio
+class TestLazyEntityTool:
+    async def test_lazy_entity_tool_proxies_to_aio(self):
+        calls: dict[str, object] = {}
+
+        class _FakeLazyEntity:
+            name = "project/domain/fetch_thing"
+
+            async def aio(self, **kwargs):
+                calls["kwargs"] = kwargs
+                return {"result": 1}
+
+        t = _make_lazy_entity_tool(_FakeLazyEntity())
+        assert t.name == "fetch_thing"
+        assert t.source == "remote_task"
+        out = await t.execute({"a": 2})
+        assert out == {"result": 1}
+        assert calls["kwargs"] == {"a": 2}
+
+    async def test_lazy_entity_tool_rename(self):
+        class _FakeLazyEntity:
+            name = "project/domain/fetch_thing"
+
+            async def aio(self, **kwargs):
+                return None
+
+        t = _make_lazy_entity_tool(_FakeLazyEntity(), name="renamed")
+        assert t.name == "renamed"
+
+    async def test_lazy_entity_routed_through_resolve_tools(self):
+        class _FakeLazyEntity:
+            name = "project/domain/remote_fn"
+
+            async def aio(self, **kwargs):
+                return None
+
+        lazy = _FakeLazyEntity()
+        # ``_is_lazy_entity`` does an ``isinstance`` against the real LazyEntity
+        # type; patch it so the resolver routes our fake down the remote-task path.
+        with patch("flyte.ai.agents._tools._is_lazy_entity", side_effect=lambda obj: obj is lazy):
+            out = _resolve_tools([lazy])
+        assert "remote_fn" in out
+        assert out["remote_fn"].source == "remote_task"
+
+
+@pytest.mark.asyncio
+class TestAsyncToolExecution:
+    async def test_async_tool_awaited_in_loop(self):
+        # Exercises the async branch of ``_make_callable_tool.execute``.
+        llm = _make_llm(
+            [
+                LLMMessage(content=None, tool_calls=[{"id": "c1", "name": "_async_double", "arguments": {"x": 21}}]),
+                LLMMessage(content="42", tool_calls=[]),
+            ]
+        )
+        agent = Agent(name="t", instructions="I", tools=[_async_double], call_llm=llm)
+        await agent.run("double 21", [])
+        _, _, second_messages, _ = llm.await_args_list[1].args
+        tool_msg = next(m for m in second_messages if m["role"] == "tool")
+        assert tool_msg["content"] == "42"
+
+
+class TestStringifyEdgeCases:
+    def test_circular_reference_falls_back_to_str(self):
+        circular: dict[str, object] = {}
+        circular["self"] = circular
+        out = _stringify_tool_result(circular)
+        # json.dumps raises ValueError on circular refs even with default=str,
+        # so we fall back to the plain ``str()`` representation.
+        assert "self" in out
