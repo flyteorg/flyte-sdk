@@ -31,15 +31,9 @@ class SessionConfig:
     interceptors: tuple
     http_client: Any
     api_key: typing.Optional[str] = None
-    # Snapshot of the auth-related inputs to ``create_session_config`` (e.g.
-    # ``auth_type``, ``command``, ``proxy_command``, ``client_id``,
-    # ``client_credentials_secret``, ``ca_cert_file_path``, ``http_proxy_url``).
-    # Cluster-aware service routers (see ``ClusterAwareDataProxy`` and
-    # ``ClusterAwareSecretService``) splat this back into ``create_session_config``
-    # when rebuilding a ``SessionConfig`` for a per-cluster endpoint; without it
-    # the per-cluster session would fall back to the default ``auth_type="Pkce"``
-    # even when the parent session was configured for ``Passthrough``,
-    # ``ClientSecret``, ``ExternalCommand``, etc.
+    # Capture the auth-related inputs to forward to `create_session_config`.
+    # This is used to rebuild a `SessionConfig` for a per-cluster endpoint
+    # without losing the configured auth mode.
     auth_kwargs: typing.Mapping[str, Any] = field(default_factory=dict)
 
     def connect_kwargs(self) -> dict[str, Any]:

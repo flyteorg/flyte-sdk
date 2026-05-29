@@ -304,7 +304,7 @@ class ClusterAwareDataProxy:
 
         # Forward the auth-related kwargs from the parent SessionConfig so the
         # per-cluster session preserves the configured ``auth_type`` (Passthrough,
-        # ClientSecret, ExternalCommand, etc.). Without this splat ``create_session_config``
+        # ClientSecret, ExternalCommand, etc.). Without this ``create_session_config``
         # falls back to the default ``auth_type="Pkce"`` and a Passthrough-only
         # caller (e.g. a FastAPI app using ``init_passthrough``) trips the PKCE
         # browser flow as soon as the first cluster-routed dataproxy call runs.
