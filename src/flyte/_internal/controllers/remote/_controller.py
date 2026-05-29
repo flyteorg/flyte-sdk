@@ -401,7 +401,7 @@ class RemoteController(Controller):
                     org=current_action_id.org,
                 ),
             ),
-            current_action_id.name,
+            (tctx.parent_action or current_action_id).name,
         )
 
         if prev_action is None:
@@ -456,8 +456,9 @@ class RemoteController(Controller):
 
         typed_interface = transform_native_to_typed_interface(info.interface)
 
+        parent_action_id = tctx.parent_action or current_action_id
         trace_action = Action.from_trace(
-            parent_action_name=current_action_id.name,
+            parent_action_name=parent_action_id.name,
             action_id=identifier_pb2.ActionIdentifier(
                 name=info.action.name,
                 run=identifier_pb2.RunIdentifier(
@@ -477,7 +478,7 @@ class RemoteController(Controller):
             typed_interface=typed_interface or None,
         )
 
-        async with self._parent_action_semaphore[unique_action_name(current_action_id)]:
+        async with self._parent_action_semaphore[unique_action_name(parent_action_id)]:
             try:
                 logger.info(
                     f"Submitting Trace action Run:[{trace_action.run_name},"

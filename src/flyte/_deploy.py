@@ -202,6 +202,7 @@ async def _deploy_task(
         )
         tctx = TaskContext(
             action=action,
+            parent_action=action,
             output_path=serialization_context.output_path,
             version=serialization_context.version,
             raw_data_path=RawDataPath(path=""),

@@ -219,6 +219,10 @@ class TaskContext:
     :param run_start_time: UTC datetime at which the parent run was triggered. Populated by the backend via the
       ``{{.runStartTime}}`` template; defaults to ``datetime.now(timezone.utc)`` when not supplied so local runs
       always have a value.
+    :param parent_action: The action ID of the running container. Set once at task-execution start and preserved
+      across ``@trace`` action replacements (which swap ``action`` per trace scope). Used as ``parent_action_name``
+      when submitting trace records, so trace bookkeeping nests under the real running action — not the outer
+      trace's pseudo-action.
     """
 
     action: ActionID
@@ -241,6 +245,7 @@ class TaskContext:
     #: Type transformers should omit non-essential side effects (e.g. duplicate HTML tabs) when set.
     in_driver_literal_conversion: bool = False
     run_start_time: Optional[datetime] = field(default_factory=lambda: datetime.now(timezone.utc))
+    parent_action: ActionID | None = None
 
     def replace(self, **kwargs) -> TaskContext:
         if "data" in kwargs:
