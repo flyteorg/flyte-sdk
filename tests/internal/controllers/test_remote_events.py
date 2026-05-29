@@ -186,7 +186,13 @@ async def test_register_event_bool():
         with ctx.replace_task_context(tctx):
             controller = _make_controller()
 
-            with patch.object(controller, "start_action", new_callable=AsyncMock) as mock_start:
+            with (
+                patch.object(controller, "start_action", new_callable=AsyncMock) as mock_start,
+                patch(
+                    "flyte._internal.controllers.remote._controller.upload_inputs_with_retry",
+                    new_callable=AsyncMock,
+                ),
+            ):
                 await controller.register_event(event)
                 mock_start.assert_called_once()
                 action = mock_start.call_args[0][0]
@@ -207,7 +213,13 @@ async def test_register_event_str():
         with ctx.replace_task_context(tctx):
             controller = _make_controller()
 
-            with patch.object(controller, "start_action", new_callable=AsyncMock) as mock_start:
+            with (
+                patch.object(controller, "start_action", new_callable=AsyncMock) as mock_start,
+                patch(
+                    "flyte._internal.controllers.remote._controller.upload_inputs_with_retry",
+                    new_callable=AsyncMock,
+                ),
+            ):
                 await controller.register_event(event)
                 mock_start.assert_called_once()
                 action = mock_start.call_args[0][0]
@@ -228,7 +240,13 @@ async def test_register_event_int():
         with ctx.replace_task_context(tctx):
             controller = _make_controller()
 
-            with patch.object(controller, "start_action", new_callable=AsyncMock) as mock_start:
+            with (
+                patch.object(controller, "start_action", new_callable=AsyncMock) as mock_start,
+                patch(
+                    "flyte._internal.controllers.remote._controller.upload_inputs_with_retry",
+                    new_callable=AsyncMock,
+                ),
+            ):
                 await controller.register_event(event)
                 mock_start.assert_called_once()
 
@@ -247,7 +265,13 @@ async def test_register_event_float():
         with ctx.replace_task_context(tctx):
             controller = _make_controller()
 
-            with patch.object(controller, "start_action", new_callable=AsyncMock) as mock_start:
+            with (
+                patch.object(controller, "start_action", new_callable=AsyncMock) as mock_start,
+                patch(
+                    "flyte._internal.controllers.remote._controller.upload_inputs_with_retry",
+                    new_callable=AsyncMock,
+                ),
+            ):
                 await controller.register_event(event)
                 mock_start.assert_called_once()
 
@@ -275,7 +299,13 @@ async def test_register_event_with_webhook():
         with ctx.replace_task_context(tctx):
             controller = _make_controller()
 
-            with patch.object(controller, "start_action", new_callable=AsyncMock) as mock_start:
+            with (
+                patch.object(controller, "start_action", new_callable=AsyncMock) as mock_start,
+                patch(
+                    "flyte._internal.controllers.remote._controller.upload_inputs_with_retry",
+                    new_callable=AsyncMock,
+                ),
+            ):
                 await controller.register_event(event)
                 mock_start.assert_called_once()
 
@@ -294,7 +324,13 @@ async def test_register_event_with_timeout():
         with ctx.replace_task_context(tctx):
             controller = _make_controller()
 
-            with patch.object(controller, "start_action", new_callable=AsyncMock) as mock_start:
+            with (
+                patch.object(controller, "start_action", new_callable=AsyncMock) as mock_start,
+                patch(
+                    "flyte._internal.controllers.remote._controller.upload_inputs_with_retry",
+                    new_callable=AsyncMock,
+                ),
+            ):
                 await controller.register_event(event)
                 mock_start.assert_called_once()
 
@@ -313,9 +349,52 @@ async def test_register_event_with_description():
         with ctx.replace_task_context(tctx):
             controller = _make_controller()
 
-            with patch.object(controller, "start_action", new_callable=AsyncMock) as mock_start:
+            with (
+                patch.object(controller, "start_action", new_callable=AsyncMock) as mock_start,
+                patch(
+                    "flyte._internal.controllers.remote._controller.upload_inputs_with_retry",
+                    new_callable=AsyncMock,
+                ),
+            ):
                 await controller.register_event(event)
                 mock_start.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_register_event_uploads_empty_inputs_pb():
+    """register_event should upload an empty Inputs proto so the URI resolves."""
+    from flyteidl2.task.common_pb2 import Inputs as InputsPb
+
+    await flyte.init.aio()
+    event = _make_event(name="needs_blob", data_type=bool)
+
+    with patch("flyte._initialize.get_init_config") as mock_config:
+        mock_config.return_value.root_dir = pathlib.Path(__file__).parent
+        ctx = internal_ctx()
+        tctx = _make_task_context()
+
+        with ctx.replace_task_context(tctx):
+            controller = _make_controller()
+
+            with (
+                patch.object(controller, "start_action", new_callable=AsyncMock) as mock_start,
+                patch(
+                    "flyte._internal.controllers.remote._controller.upload_inputs_with_retry",
+                    new_callable=AsyncMock,
+                ) as mock_upload,
+            ):
+                await controller.register_event(event)
+
+            mock_upload.assert_awaited_once()
+            serialized, uri = mock_upload.call_args.args[0], mock_upload.call_args.args[1]
+            assert isinstance(serialized, bytes)
+            roundtrip = InputsPb()
+            roundtrip.ParseFromString(serialized)
+            assert len(roundtrip.literals) == 0
+
+            action = mock_start.call_args[0][0]
+            assert uri == action.inputs_uri
+            assert uri.endswith("/inputs.pb")
 
 
 # ── RemoteController: wait_for_event ──────────────────────────────────────
@@ -349,6 +428,10 @@ async def test_wait_for_event_bool_succeeded():
             # Simulate that register_event was called first
             with (
                 patch.object(controller, "start_action", new_callable=AsyncMock),
+                patch(
+                    "flyte._internal.controllers.remote._controller.upload_inputs_with_retry",
+                    new_callable=AsyncMock,
+                ),
                 patch.object(
                     controller,
                     "wait_for_action",
@@ -388,6 +471,10 @@ async def test_wait_for_event_str_succeeded():
 
             with (
                 patch.object(controller, "start_action", new_callable=AsyncMock),
+                patch(
+                    "flyte._internal.controllers.remote._controller.upload_inputs_with_retry",
+                    new_callable=AsyncMock,
+                ),
                 patch.object(
                     controller,
                     "wait_for_action",
@@ -426,6 +513,10 @@ async def test_wait_for_event_int_succeeded():
 
             with (
                 patch.object(controller, "start_action", new_callable=AsyncMock),
+                patch(
+                    "flyte._internal.controllers.remote._controller.upload_inputs_with_retry",
+                    new_callable=AsyncMock,
+                ),
                 patch.object(
                     controller,
                     "wait_for_action",
@@ -464,6 +555,10 @@ async def test_wait_for_event_float_succeeded():
 
             with (
                 patch.object(controller, "start_action", new_callable=AsyncMock),
+                patch(
+                    "flyte._internal.controllers.remote._controller.upload_inputs_with_retry",
+                    new_callable=AsyncMock,
+                ),
                 patch.object(
                     controller,
                     "wait_for_action",
@@ -502,6 +597,10 @@ async def test_wait_for_event_failed_phase():
 
             with (
                 patch.object(controller, "start_action", new_callable=AsyncMock),
+                patch(
+                    "flyte._internal.controllers.remote._controller.upload_inputs_with_retry",
+                    new_callable=AsyncMock,
+                ),
                 patch.object(
                     controller,
                     "wait_for_action",
@@ -540,6 +639,10 @@ async def test_wait_for_event_aborted_phase():
 
             with (
                 patch.object(controller, "start_action", new_callable=AsyncMock),
+                patch(
+                    "flyte._internal.controllers.remote._controller.upload_inputs_with_retry",
+                    new_callable=AsyncMock,
+                ),
                 patch.object(
                     controller,
                     "wait_for_action",
@@ -578,6 +681,10 @@ async def test_wait_for_event_timed_out_phase():
 
             with (
                 patch.object(controller, "start_action", new_callable=AsyncMock),
+                patch(
+                    "flyte._internal.controllers.remote._controller.upload_inputs_with_retry",
+                    new_callable=AsyncMock,
+                ),
                 patch.object(
                     controller,
                     "wait_for_action",
@@ -786,6 +893,10 @@ async def test_wait_for_event_failed_raises_event_failed_error():
 
             with (
                 patch.object(controller, "start_action", new_callable=AsyncMock),
+                patch(
+                    "flyte._internal.controllers.remote._controller.upload_inputs_with_retry",
+                    new_callable=AsyncMock,
+                ),
                 patch.object(
                     controller,
                     "wait_for_action",
@@ -825,6 +936,10 @@ async def test_wait_for_event_failed_with_client_err_raises_event_failed():
 
             with (
                 patch.object(controller, "start_action", new_callable=AsyncMock),
+                patch(
+                    "flyte._internal.controllers.remote._controller.upload_inputs_with_retry",
+                    new_callable=AsyncMock,
+                ),
                 patch.object(
                     controller,
                     "wait_for_action",
@@ -865,6 +980,10 @@ async def test_wait_for_event_timed_out_raises_event_timedout():
 
                 with (
                     patch.object(controller, "start_action", new_callable=AsyncMock),
+                    patch(
+                        "flyte._internal.controllers.remote._controller.upload_inputs_with_retry",
+                        new_callable=AsyncMock,
+                    ),
                     patch.object(
                         controller,
                         "wait_for_action",
@@ -1045,6 +1164,10 @@ async def test_wait_for_event_returns_signaled_value(data_type, primitive_kwargs
 
             with (
                 patch.object(controller, "start_action", new_callable=AsyncMock),
+                patch(
+                    "flyte._internal.controllers.remote._controller.upload_inputs_with_retry",
+                    new_callable=AsyncMock,
+                ),
                 patch.object(
                     controller,
                     "wait_for_action",
@@ -1084,6 +1207,10 @@ async def test_wait_for_event_returns_none_when_value_absent():
 
             with (
                 patch.object(controller, "start_action", new_callable=AsyncMock),
+                patch(
+                    "flyte._internal.controllers.remote._controller.upload_inputs_with_retry",
+                    new_callable=AsyncMock,
+                ),
                 patch.object(
                     controller,
                     "wait_for_action",
