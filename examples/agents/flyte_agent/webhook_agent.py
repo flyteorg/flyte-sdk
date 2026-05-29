@@ -40,15 +40,20 @@ from flyte.ai.agents import Agent
 
 tool_env = flyte.TaskEnvironment(
     name="webhook-agent-tools",
-    image=(flyte.Image.from_debian_base(flyte_version="2.3.6").with_pip_packages("litellm", "httpx")),
+    image=(
+        flyte.Image.from_debian_base(flyte_version="2.3.6")
+        .with_apt_packages("git")
+        .with_pip_packages("litellm", "httpx")
+        .with_commands(["uv pip install git+https://github.com/flyteorg/flyte-sdk.git@67ba20c6"])
+    ),
     resources=flyte.Resources(cpu=1, memory="1Gi"),
     secrets=[flyte.Secret(key="internal-anthropic-api-key", as_env_var="ANTHROPIC_API_KEY")],
 )
 
 
 @tool_env.task
-async def fetch_pr(repo: str, number: int) -> dict[str, Any]:
-    """Fetch metadata for a specific GitHub pull request."""
+async def fetch_pr(repo: str, number: int) -> dict[str, str]:
+    """Fetch review-relevant metadata for a specific GitHub pull request."""
     import httpx
 
     headers = {"Accept": "application/vnd.github+json"}
@@ -58,7 +63,25 @@ async def fetch_pr(repo: str, number: int) -> dict[str, Any]:
     async with httpx.AsyncClient(headers=headers, timeout=30.0) as client:
         resp = await client.get(f"https://api.github.com/repos/{repo}/pulls/{number}")
         resp.raise_for_status()
-        return resp.json()
+        pr = resp.json()
+
+    # Project the (large, deeply-nested, null-heavy) GitHub payload down to a
+    # flat dict of strings. Returning the raw ``dict[str, Any]`` fails to
+    # serialize because Flyte pickles each ``Any`` value and the payload is full
+    # of ``None`` fields (assignee, milestone, merged_by, …), which cannot be
+    # pickled.
+    return {
+        "title": str(pr.get("title") or ""),
+        "state": str(pr.get("state") or ""),
+        "author": str((pr.get("user") or {}).get("login") or ""),
+        "base": str((pr.get("base") or {}).get("ref") or ""),
+        "head": str((pr.get("head") or {}).get("ref") or ""),
+        "additions": str(pr.get("additions") or 0),
+        "deletions": str(pr.get("deletions") or 0),
+        "changed_files": str(pr.get("changed_files") or 0),
+        "url": str(pr.get("html_url") or ""),
+        "body": str(pr.get("body") or ""),
+    }
 
 
 @tool_env.task
@@ -177,10 +200,11 @@ if __name__ == "__main__":
         "User-Agent": "flyte-webhook-client/1.0",
     }
 
-    with httpx.Client(headers=headers) as client:
-        response = client.post(
-            f"{app_handle.endpoint}/trigger",
-            json={"repository": "flyteorg/flyte", "pull_request": {"number": 123}, "action": "opened"},
-        )
-        response.raise_for_status()
-        print(f"Response: {response.json()}")
+    with app_handle.ephemeral_ctx_sync():
+        with httpx.Client(headers=headers) as client:
+            response = client.post(
+                f"{app_handle.endpoint}/trigger",
+                json={"repository": "flyteorg/flyte", "pull_request": {"number": 123}, "action": "opened"},
+            )
+            response.raise_for_status()
+            print(f"Response: {response.json()}")
