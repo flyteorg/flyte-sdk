@@ -97,42 +97,6 @@ def signal_event_remotely(run_name: str, action_name: str):
 
 
 # ---------------------------------------------------------------------------
-# 5. Signal a specific waiting action on a remote run (by console URL)
-# ---------------------------------------------------------------------------
-# Target action, taken from the console URL:
-#   https://dogfood.cloud-staging.union.ai/v2/domain/development/project/flytesnacks/
-#       runs/uvnqfmb2nhbtwkkttplt?i=2zvbu2790j80vmmugrco27zi7
-RUN_NAME = "uvnqfmb2nhbtwkkttplt"
-ACTION_ID = "2zvbu2790j80vmmugrco27zi7"  # the `i=` action highlighted in the URL
-# Value delivered to the event. The example tasks declare `data_type=bool`, so
-# True == approve / proceed. Change this (or its type) to match your event.
-PAYLOAD = True
-
-
-def signal_remote_action(run_name: str, action_id: str, payload):
-    """Signal the event backing ``action_id`` within ``run_name``."""
-    import flyte.remote as remote
-
-    # Point at the same project/domain shown in the console URL (endpoint/org/auth
-    # still come from your local config).
-    flyte.init_from_config(project="flytesnacks", domain="development")
-
-    # The `i=` value identifies a specific action node. Find the event that is either
-    # that condition action itself, or whose parent is that action.
-    for event in remote.Event.listall(run_name=run_name):
-        if event.action_name == action_id or event.pb2.metadata.parent == action_id:
-            print(f"Signaling event '{event.name}' (action {event.action_name}) with {payload!r}")
-            event.signal(payload)
-            print("Signal delivered; the waiting task will resume.")
-            return event
-
-    raise RuntimeError(
-        f"No waiting event found for action '{action_id}' in run '{run_name}'. "
-        "Confirm the run is still paused on an event and that the project/domain are correct."
-    )
-
-
-# ---------------------------------------------------------------------------
 # Main - trigger markdown_event_task and signal its "review" event
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
