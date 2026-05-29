@@ -371,6 +371,8 @@ class RemoteController(Controller):
         tctx = ctx.data.task_context
         if tctx is None:
             raise flyte.errors.RuntimeSystemError("BadContext", "Task context not initialized")
+        if tctx.task_action is None:
+            raise flyte.errors.RuntimeSystemError("BadContext", "Task action not initialized")
         current_action_id = tctx.action
 
         func_name = _func.__name__
@@ -401,7 +403,7 @@ class RemoteController(Controller):
                     org=current_action_id.org,
                 ),
             ),
-            current_action_id.name,
+            tctx.task_action.name,
         )
 
         if prev_action is None:
@@ -438,6 +440,8 @@ class RemoteController(Controller):
         tctx = ctx.data.task_context
         if tctx is None:
             raise flyte.errors.RuntimeSystemError("BadContext", "Task context not initialized")
+        if tctx.task_action is None:
+            raise flyte.errors.RuntimeSystemError("BadContext", "Task action not initialized")
 
         current_action_id = tctx.action
         sub_run_output_path = storage.join(tctx.run_base_dir, info.action.name)
@@ -456,8 +460,9 @@ class RemoteController(Controller):
 
         typed_interface = transform_native_to_typed_interface(info.interface)
 
+        task_action = tctx.task_action
         trace_action = Action.from_trace(
-            parent_action_name=current_action_id.name,
+            parent_action_name=task_action.name,
             action_id=identifier_pb2.ActionIdentifier(
                 name=info.action.name,
                 run=identifier_pb2.RunIdentifier(
@@ -477,7 +482,7 @@ class RemoteController(Controller):
             typed_interface=typed_interface or None,
         )
 
-        async with self._parent_action_semaphore[unique_action_name(current_action_id)]:
+        async with self._parent_action_semaphore[unique_action_name(task_action)]:
             try:
                 logger.info(
                     f"Submitting Trace action Run:[{trace_action.run_name},"
