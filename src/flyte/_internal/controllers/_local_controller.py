@@ -187,14 +187,17 @@ class LocalController(ControllerProtocol):
                     native_inputs[param_names[i]] = arg
             native_inputs.update(kwargs)
 
+            # Nest under the real running task (task_action), not the @trace pseudo-action that @trace
+            # may have swapped into `action`; identical for a regular task. Mirrors the remote controller.
+            task_action = tctx.task_action or tctx.action
             # If the parent action isn't tracked yet, this is the top-level call
-            parent_id = tctx.action.name if self._recorder.get_action(tctx.action.name) else None
+            parent_id = task_action.name if self._recorder.get_action(task_action.name) else None
 
             # Render log links for this action, replacing template placeholders
             # with concrete local values (see task_serde.py for remote equivalents).
             if _task.links:
                 rendered_links = []
-                action = tctx.action
+                action = task_action
                 for link in _task.links:
                     uri = link.get_link(
                         run_name=action.run_name or "",
@@ -361,10 +364,13 @@ class LocalController(ControllerProtocol):
                 if i < len(param_names):
                     native_inputs[param_names[i]] = arg
             native_inputs.update(kwargs)
+            # Trace records nest under the real running task (task_action), not the outer @trace
+            # pseudo-action — the local analogue of the remote record_trace fix.
+            task_action = tctx.task_action or tctx.action
             self._recorder.record_start(
                 action_id=action_id.name,
                 task_name=_func.__name__,
-                parent_id=tctx.action.name,
+                parent_id=task_action.name,
                 inputs=native_inputs,
                 output_path=action_output_path,
             )

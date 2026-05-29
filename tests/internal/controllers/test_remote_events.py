@@ -1094,3 +1094,100 @@ async def test_wait_for_event_returns_none_when_value_absent():
                 await controller.register_event(event)
                 result = await controller.wait_for_event(event)
                 assert result is None
+
+
+# ── register_event parent lineage (task_action) ──────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_register_event_parent_is_action_for_regular_task():
+    """For a regular task (no @trace), task_action defaults to action, so the condition action
+    parents under tctx.action.name."""
+    await flyte.init.aio()
+    event = _make_event(name="approve", data_type=bool)
+
+    with patch("flyte._initialize.get_init_config") as mock_config:
+        mock_config.return_value.root_dir = pathlib.Path(__file__).parent
+        ctx = internal_ctx()
+        # _make_task_context's default action name is "parent_action"; task_action omitted → defaults to it.
+        tctx = _make_task_context()
+
+        with ctx.replace_task_context(tctx):
+            controller = _make_controller()
+            with patch.object(controller, "start_action", new_callable=AsyncMock) as mock_start:
+                await controller.register_event(event)
+                action = mock_start.call_args[0][0]
+                assert action.type == "condition"
+                assert action.parent_action_name == "parent_action"
+
+
+@pytest.mark.asyncio
+async def test_register_event_reparents_to_task_action_inside_trace():
+    """When tctx.action has been swapped by @trace, a registered event must parent under
+    tctx.task_action.name (the real running task), not the trace pseudo-action."""
+    await flyte.init.aio()
+    event = _make_event(name="approve", data_type=bool)
+
+    with patch("flyte._initialize.get_init_config") as mock_config:
+        mock_config.return_value.root_dir = pathlib.Path(__file__).parent
+        ctx = internal_ctx()
+        tctx = _make_task_context(
+            action=ActionID(name="outer_trace_action", run_name="test_run", project="proj", domain="dev", org="org"),
+            task_action=ActionID(
+                name="real_container_action", run_name="test_run", project="proj", domain="dev", org="org"
+            ),
+        )
+
+        with ctx.replace_task_context(tctx):
+            controller = _make_controller()
+            with patch.object(controller, "start_action", new_callable=AsyncMock) as mock_start:
+                await controller.register_event(event)
+                action = mock_start.call_args[0][0]
+                assert action.type == "condition"
+                assert action.parent_action_name == "real_container_action"
+
+
+@pytest.mark.asyncio
+async def test_start_then_wait_equivalent_to_submit_and_wait():
+    """The enqueue/wait split must compose: start_action() then wait_for_action() yields the same
+    terminal action as the combined submit_and_wait_for_action()."""
+    run_id = identifier_pb2.RunIdentifier(name="root_run")
+    action_id = identifier_pb2.ActionIdentifier(name="subrun-1", run=run_id)
+    action = Action(
+        action_id=action_id,
+        parent_action_name="parent",
+        task=task_definition_pb2.TaskSpec(),
+        inputs_uri="input_uri",
+        run_output_base="run-base",
+    )
+    final_action = Action(
+        action_id=action_id,
+        parent_action_name="parent",
+        phase=phase_pb2.ACTION_PHASE_SUCCEEDED,
+        realized_outputs_uri="s3://bucket/output",
+    )
+
+    def _make_informer():
+        informer = AsyncMock()
+        informer.get = AsyncMock(return_value=final_action)
+        return informer
+
+    # Path 1: explicit split — start then wait.
+    split_controller = _make_bare_controller()
+    split_informer = _make_informer()
+    split_controller._informers.get_or_create = AsyncMock(return_value=split_informer)
+    await split_controller._bg_submit_action(action)
+    split_result = await split_controller._bg_wait_for_action(action)
+    split_informer.submit.assert_awaited_once_with(action)
+    split_informer.wait_for_action_completion.assert_awaited_once_with("subrun-1")
+
+    # Path 2: combined.
+    combined_controller = _make_bare_controller()
+    combined_informer = _make_informer()
+    combined_controller._informers.get_or_create = AsyncMock(return_value=combined_informer)
+    combined_result = await combined_controller._bg_submit_and_wait_for_action(action)
+    combined_informer.submit.assert_awaited_once_with(action)
+    combined_informer.wait_for_action_completion.assert_awaited_once_with("subrun-1")
+
+    assert split_result.phase == combined_result.phase == phase_pb2.ACTION_PHASE_SUCCEEDED
+    assert split_result.realized_outputs_uri == combined_result.realized_outputs_uri

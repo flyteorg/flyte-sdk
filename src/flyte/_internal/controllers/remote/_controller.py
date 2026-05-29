@@ -153,7 +153,12 @@ class RemoteController(Controller):
         tctx = ctx.data.task_context
         if tctx is None:
             raise flyte.errors.RuntimeSystemError("BadContext", "Task context not initialized")
+        if tctx.task_action is None:
+            raise flyte.errors.RuntimeSystemError("BadContext", "Task action not initialized")
         current_action_id = tctx.action
+        # Sub-actions nest under the real running task (task_action), not the @trace pseudo-action that
+        # @trace may have swapped into `action`. For a regular task these are identical.
+        task_action = tctx.task_action
 
         # In the case of a regular code bundle, we will just pass it down as it is to the downstream tasks
         # It is not allowed to change the code bundle (for regular code bundles) in the middle of a run.
@@ -226,7 +231,7 @@ class RemoteController(Controller):
                     org=current_action_id.org,
                 ),
             ),
-            parent_action_name=current_action_id.name,
+            parent_action_name=task_action.name,
             group_data=tctx.group_data,
             task_spec=task_spec,
             inputs_uri=inputs_uri,
@@ -288,10 +293,16 @@ class RemoteController(Controller):
         tctx = ctx.data.task_context
         if tctx is None:
             raise flyte.errors.RuntimeSystemError("BadContext", "Task context not initialized")
+        if tctx.task_action is None:
+            raise flyte.errors.RuntimeSystemError("BadContext", "Task action not initialized")
         current_action_id = tctx.action
+        # Concurrency is gated per real running task (task_action), consistent with the trace path and
+        # finalize_parent_action. The call sequence stays keyed on `action` to keep sub-action names
+        # unique-per-scope and deterministic for replay.
+        task_action = tctx.task_action
         task_call_seq = self.generate_task_call_sequence(_task, current_action_id)
-        async with self._parent_action_semaphore[unique_action_name(current_action_id)]:
-            sw = Stopwatch(f"controller-submit-{unique_action_name(current_action_id)}")
+        async with self._parent_action_semaphore[unique_action_name(task_action)]:
+            sw = Stopwatch(f"controller-submit-{unique_action_name(task_action)}")
             sw.start()
             result = await self._submit(task_call_seq, _task, *args, **kwargs)
             sw.stop()
@@ -501,7 +512,11 @@ class RemoteController(Controller):
         tctx = ctx.data.task_context
         if tctx is None:
             raise flyte.errors.RuntimeSystemError("BadContext", "Task context not initialized")
+        if tctx.task_action is None:
+            raise flyte.errors.RuntimeSystemError("BadContext", "Task action not initialized")
         current_action_id = tctx.action
+        # Nest under the real running task (task_action); identical to `action` for a regular task.
+        task_action = tctx.task_action
         task_name = _task.name
 
         native_interface = _task.interface
@@ -549,7 +564,7 @@ class RemoteController(Controller):
                     org=current_action_id.org,
                 ),
             ),
-            parent_action_name=current_action_id.name,
+            parent_action_name=task_action.name,
             group_data=tctx.group_data,
             task_spec=_task.pb2.spec,
             inputs_uri=inputs_uri,
@@ -589,9 +604,12 @@ class RemoteController(Controller):
         tctx = ctx.data.task_context
         if tctx is None:
             raise flyte.errors.RuntimeSystemError("BadContext", "Task context not initialized")
+        if tctx.task_action is None:
+            raise flyte.errors.RuntimeSystemError("BadContext", "Task action not initialized")
         current_action_id = tctx.action
+        task_action = tctx.task_action
         task_call_seq = self.generate_task_call_sequence(_task, current_action_id)
-        async with self._parent_action_semaphore[unique_action_name(current_action_id)]:
+        async with self._parent_action_semaphore[unique_action_name(task_action)]:
             return await self._submit_task_ref(task_call_seq, _task, *args, **kwargs)
 
     async def register_event(self, event: Any):
@@ -610,8 +628,13 @@ class RemoteController(Controller):
         tctx = ctx.data.task_context
         if tctx is None:
             raise flyte.errors.RuntimeSystemError("BadContext", "Task context not initialized")
+        if tctx.task_action is None:
+            raise flyte.errors.RuntimeSystemError("BadContext", "Task action not initialized")
 
         current_action_id = tctx.action
+        # Condition actions nest under the real running task (task_action), so events fired inside a
+        # @trace still parent to the task rather than the trace pseudo-action.
+        task_action = tctx.task_action
         invoke_seq = self.generate_task_call_sequence(event, current_action_id)
 
         # Generate a deterministic action name from event name + sequence
@@ -620,7 +643,7 @@ class RemoteController(Controller):
         )
 
         action = Action.from_condition(
-            parent_action_name=current_action_id.name,
+            parent_action_name=task_action.name,
             action_id=identifier_pb2.ActionIdentifier(
                 name=sub_action_id.name,
                 run=identifier_pb2.RunIdentifier(
