@@ -77,6 +77,37 @@ def _iter_cause_chain(exc: BaseException):
         depth += 1
 
 
+_USER_ACTIONABLE_CONNECT_CODES: frozenset[str] = frozenset(
+    {
+        "UNAUTHENTICATED",
+        "PERMISSION_DENIED",
+        "FAILED_PRECONDITION",
+        "INVALID_ARGUMENT",
+        "NOT_FOUND",
+        "ALREADY_EXISTS",
+    }
+)
+
+
+def _is_user_actionable_connect_error(exc: BaseException) -> bool:
+    """ConnectError responses the backend uses to tell the user their request was wrong.
+
+    The CLI's InvokeBaseMixin (flyte/cli/_common.py) already maps these same codes
+    to ClickException — they are user/config problems, not SDK crashes. But code
+    paths outside the CLI (capture_exception in _run.py, capture_errors on deploy)
+    surface RuntimeSystemError wrappers whose cause chain still terminates in a
+    ConnectError, and those leak into Sentry as if they were SDK bugs.
+    """
+    try:
+        from connectrpc.errors import ConnectError
+    except ImportError:
+        return False
+    if not isinstance(exc, ConnectError):
+        return False
+    code = getattr(exc, "code", None)
+    return getattr(code, "name", None) in _USER_ACTIONABLE_CONNECT_CODES
+
+
 def _is_user_error(exc: BaseException) -> bool:
     """Errors raised intentionally as user-facing messages — not crash reports."""
     try:
@@ -109,11 +140,11 @@ def _is_user_error(exc: BaseException) -> bool:
         auth_user_exc = ()
 
     user_excs = click_user_exc + flyte_user_exc + auth_user_exc
-    if not user_excs:
-        return False
 
     for cause in _iter_cause_chain(exc):
-        if isinstance(cause, user_excs):
+        if user_excs and isinstance(cause, user_excs):
+            return True
+        if _is_user_actionable_connect_error(cause):
             return True
     return False
 
