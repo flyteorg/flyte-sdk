@@ -217,6 +217,85 @@ def main(
     for h in logger.handlers:
         h.flush()
     sys.stdout.flush()
+    _quiet_shutdown()
+
+
+def _quiet_shutdown() -> None:
+    """Close fsspec filesystem sessions and silence late shutdown noise.
+
+    gcsfs (and any other fsspec.AsyncFileSystem) registers a weakref/atexit
+    finalizer that calls `asyn.sync(loop, session.close, timeout=0.1)` during
+    interpreter shutdown. The 0.1s window is hard-coded, and when aiohttp's
+    connector close races interpreter teardown the timeout raises and dumps a
+    multi-frame traceback to stderr — purely cosmetic but trips test runners
+    that assert on clean stderr (e.g. TestTaskExecutionLogs flakiness).
+
+    Workaround: close the sessions ourselves *before* atexit gets a turn so
+    the finalizer has nothing to do, and wrap stderr with a filter that drops
+    the known-noise lines if something still leaks through. Both steps are
+    best-effort — failures here must never mask the real task outcome.
+
+    Tracking upstream:
+      - gcsfs:   https://github.com/fsspec/gcsfs/issues/379
+      - aiohttp: https://github.com/aio-libs/aiohttp/issues/1925
+
+    TODO: remove once the storage layer routes all `gs://` traffic through
+    obstore (no gcsfs import → no atexit finalizer → no shutdown noise).
+    See _OBSTORE_SUPPORTED_PROTOCOLS in storage/_storage.py.
+    """
+    try:
+        import fsspec  # already imported by the storage layer; this is cheap
+        from fsspec.asyn import AsyncFileSystem
+    except Exception:
+        return
+
+    # Close any registered async filesystems' sessions eagerly.
+    for proto in ("gs", "s3", "abfs", "abfss"):
+        try:
+            fs = fsspec.filesystem(proto)
+        except Exception:
+            continue
+        if not isinstance(fs, AsyncFileSystem):
+            continue
+        # gcsfs exposes `close_session(loop, session)`; other backends may not.
+        # Try the documented API, then fall back to direct session.close.
+        close = getattr(fs, "close_session", None)
+        try:
+            if close is not None and getattr(fs, "loop", None) and getattr(fs, "session", None):
+                close(fs.loop, fs.session)
+            elif getattr(fs, "session", None) is not None and getattr(fs.session, "closed", True) is False:
+                # Last resort: drop the reference so atexit can't find it.
+                fs.session = None
+        except Exception:
+            continue
+
+    # Belt-and-suspenders: drop the specific shutdown traceback lines if any
+    # remaining finalizer still emits them. Active only after our cleanup runs.
+    _install_shutdown_stderr_filter()
+
+
+def _install_shutdown_stderr_filter() -> None:
+    """Wrap sys.stderr so well-known gcsfs/aiohttp shutdown noise is dropped."""
+    real_stderr = sys.stderr
+
+    class _Filter:
+        _drop_markers = (
+            "gcsfs/core.py",
+            "fsspec/asyn.py",
+            "aiohttp/connector.py",
+            "asyncio.exceptions.CancelledError",
+            "weakref._exitfunc",
+        )
+
+        def write(self, s: str) -> int:
+            if any(m in s for m in self._drop_markers):
+                return len(s)
+            return real_stderr.write(s)
+
+        def __getattr__(self, name: str):
+            return getattr(real_stderr, name)
+
+    sys.stderr = _Filter()  # type: ignore[assignment]
 
 
 if __name__ == "__main__":
