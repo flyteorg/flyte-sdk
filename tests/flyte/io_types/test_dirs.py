@@ -553,3 +553,47 @@ async def test_list_dir_local_fs(tmp_path, tmp_dir_structure, ctx_with_test_raw_
     replica_dir = Dir(path=uploaded_dir.path + "/")
     files = await replica_dir.list_files()
     assert len(files) == 3
+
+
+def test_download_sync_remote_multifile(tmp_path):
+    """Regression: download_sync must fetch every object under a remote prefix.
+
+    download_sync() previously delegated to fsspec's recursive get(), whose
+    directory detection could intermittently classify the prefix as a *file*
+    and issue a GET on the directory key (-> 404 NoSuchKey) even though the
+    child objects exist. It now enumerates concrete keys via find() and
+    downloads each, so every file lands and nested structure is preserved.
+
+    Uses an in-memory fsspec filesystem (a non-"file" protocol, so it takes the
+    remote code path) to keep the test deterministic and infra-free.
+    """
+    import fsspec
+
+    fs = fsspec.filesystem("memory")
+    base = "memory://regression-download-sync"
+    # The memory filesystem is a process-wide singleton; clear any leftover state.
+    try:
+        fs.rm(base, recursive=True)
+    except FileNotFoundError:
+        pass
+
+    contents = {
+        f"{base}/root.txt": b"root",
+        f"{base}/nested1/file1.txt": b"f1",
+        f"{base}/nested1/nested2/file2.txt": b"f2",
+        f"{base}/sibling/sibling_file.txt": b"sib",
+    }
+    for path, data in contents.items():
+        with fs.open(path, "wb") as fh:
+            fh.write(data)
+
+    assert storage.is_remote(base), "test must exercise the remote download path"
+
+    dest = tmp_path / "downloaded"
+    returned = Dir(path=base).download_sync(str(dest))
+
+    assert pathlib.Path(returned) == dest
+    assert (dest / "root.txt").read_bytes() == b"root"
+    assert (dest / "nested1" / "file1.txt").read_bytes() == b"f1"
+    assert (dest / "nested1" / "nested2" / "file2.txt").read_bytes() == b"f2"
+    assert (dest / "sibling" / "sibling_file.txt").read_bytes() == b"sib"
