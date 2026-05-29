@@ -637,6 +637,62 @@ class TestSignalCliCoerce:
         assert _coerce("true", str) == "true"
 
 
+class TestSignalCliDisplayPrompt:
+    def test_text_prompt_prints_raw(self):
+        from flyteidl2.workflow import run_definition_pb2
+
+        from flyte.cli._signal import _display_prompt
+
+        console = MagicMock()
+        _display_prompt(console, "approve?", run_definition_pb2.CONDITION_PROMPT_TYPE_TEXT)
+        console.print.assert_called_once_with("approve?")
+
+    def test_markdown_prompt_wraps_in_markdown(self):
+        from flyteidl2.workflow import run_definition_pb2
+        from rich.markdown import Markdown
+
+        from flyte.cli._signal import _display_prompt
+
+        console = MagicMock()
+        _display_prompt(console, "**bold**", run_definition_pb2.CONDITION_PROMPT_TYPE_MARKDOWN)
+        console.print.assert_called_once()
+        arg = console.print.call_args.args[0]
+        assert isinstance(arg, Markdown)
+
+    def test_empty_prompt_is_no_op(self):
+        from flyte.cli._signal import _display_prompt
+
+        console = MagicMock()
+        _display_prompt(console, "", 0)
+        console.print.assert_not_called()
+
+
+class TestSignalCliPromptForValue:
+    def test_bool_uses_confirm(self):
+        from flyte.cli import _signal
+
+        with patch.object(_signal.click, "confirm", return_value=True) as conf:
+            assert _signal._prompt_for_value(bool) is True
+            conf.assert_called_once_with("Approve?", default=True)
+
+    @pytest.mark.parametrize("py_type", [int, float, str])
+    def test_scalar_uses_prompt(self, py_type):
+        from flyte.cli import _signal
+
+        sentinel = {int: 7, float: 1.5, str: "hi"}[py_type]
+        with patch.object(_signal.click, "prompt", return_value=sentinel) as p:
+            assert _signal._prompt_for_value(py_type) == sentinel
+            p.assert_called_once_with("Value", type=py_type)
+
+    def test_unsupported_raises(self):
+        import rich_click as click
+
+        from flyte.cli._signal import _prompt_for_value
+
+        with pytest.raises(click.ClickException):
+            _prompt_for_value(list)
+
+
 # ---------------------------------------------------------------------------
 # EventWebhook dataclass
 # ---------------------------------------------------------------------------
