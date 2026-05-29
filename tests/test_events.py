@@ -511,6 +511,133 @@ class TestRemoteEventSignal:
 
 
 # ---------------------------------------------------------------------------
+# Event.expected_type (auto-discovered from ActionMetadata.condition.type)
+# ---------------------------------------------------------------------------
+
+
+def _mock_pb2_with_type(simple: int | None, has_condition: bool = True) -> MagicMock:
+    """Build a MagicMock Action proto with metadata.condition.type.simple.
+
+    The ConditionActionMetadata.type field is a recent backend addition; we mock
+    HasField/type access so tests don't depend on flyteidl2 stubs that include it.
+    """
+    pb = MagicMock()
+
+    def _has_field(name):
+        if name == "condition":
+            return has_condition
+        if name == "type":
+            return simple is not None
+        raise ValueError(f"unexpected HasField({name!r}) in test")
+
+    pb.metadata.HasField.side_effect = lambda n: _has_field(n) if n == "condition" else None
+    pb.metadata.condition.HasField.side_effect = lambda n: _has_field(n) if n == "type" else None
+    if simple is not None:
+        pb.metadata.condition.type.simple = simple
+    return pb
+
+
+class TestRemoteEventExpectedType:
+    @pytest.mark.parametrize(
+        "simple_value, py_type",
+        [
+            ("BOOLEAN", bool),
+            ("INTEGER", int),
+            ("FLOAT", float),
+            ("STRING", str),
+        ],
+    )
+    def test_expected_type_for_simple(self, simple_value, py_type):
+        from flyteidl2.core import types_pb2
+
+        pb = _mock_pb2_with_type(getattr(types_pb2, simple_value))
+        assert Event(pb2=pb).expected_type is py_type
+
+    def test_expected_type_no_condition_metadata(self):
+        pb = _mock_pb2_with_type(simple=None, has_condition=False)
+        assert Event(pb2=pb).expected_type is None
+
+    def test_expected_type_condition_without_type_field(self):
+        pb = _mock_pb2_with_type(simple=None, has_condition=True)
+        assert Event(pb2=pb).expected_type is None
+
+    def test_expected_type_proto_stub_missing_type_field(self):
+        """When flyteidl2 stubs don't yet know about ConditionActionMetadata.type,
+        HasField('type') raises ValueError. The property must gracefully return None.
+        """
+        pb = MagicMock()
+        pb.metadata.HasField.return_value = True  # has 'condition'
+        pb.metadata.condition.HasField.side_effect = ValueError("no field 'type'")
+        assert Event(pb2=pb).expected_type is None
+
+    def test_expected_type_unsupported_simple_returns_none(self):
+        from flyteidl2.core import types_pb2
+
+        pb = _mock_pb2_with_type(types_pb2.DATETIME)
+        assert Event(pb2=pb).expected_type is None
+
+
+# ---------------------------------------------------------------------------
+# CLI: flyte signal event ...
+# ---------------------------------------------------------------------------
+
+
+class TestSignalCliCoerce:
+    def test_bool_truthy(self):
+        from flyte.cli._signal import _coerce
+
+        for v in ("true", "True", "1", "YES", "y", "T"):
+            assert _coerce(v, bool) is True
+
+    def test_bool_falsy(self):
+        from flyte.cli._signal import _coerce
+
+        for v in ("false", "False", "0", "NO", "n", "F"):
+            assert _coerce(v, bool) is False
+
+    def test_bool_invalid(self):
+        import rich_click as click
+
+        from flyte.cli._signal import _coerce
+
+        with pytest.raises(click.BadParameter):
+            _coerce("maybe", bool)
+
+    def test_int(self):
+        from flyte.cli._signal import _coerce
+
+        assert _coerce("42", int) == 42
+
+    def test_int_invalid(self):
+        import rich_click as click
+
+        from flyte.cli._signal import _coerce
+
+        with pytest.raises(click.BadParameter):
+            _coerce("notanint", int)
+
+    def test_float(self):
+        from flyte.cli._signal import _coerce
+
+        assert _coerce("3.14", float) == 3.14
+
+    def test_float_invalid(self):
+        import rich_click as click
+
+        from flyte.cli._signal import _coerce
+
+        with pytest.raises(click.BadParameter):
+            _coerce("notafloat", float)
+
+    def test_str_passthrough(self):
+        from flyte.cli._signal import _coerce
+
+        assert _coerce("hello", str) == "hello"
+        # No interpretation of bool-like strings when expected is str.
+        assert _coerce("true", str) == "true"
+
+
+# ---------------------------------------------------------------------------
 # EventWebhook dataclass
 # ---------------------------------------------------------------------------
 

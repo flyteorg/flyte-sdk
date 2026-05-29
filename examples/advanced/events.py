@@ -80,20 +80,24 @@ async def webhook_outbound_task(x: int) -> int:
 
 
 # ---------------------------------------------------------------------------
-# 4. Webhook - signal an event programmatically from a remote client
+# 4. Signal an event programmatically from outside the workflow
 #    (e.g. from a webhook handler, a script, or a CI job)
 # ---------------------------------------------------------------------------
-def signal_event_remotely(run_name: str, action_name: str):
-    """Example of signaling an event from outside the workflow."""
+def signal_event_remotely(run_name: str, event_name: str, payload):
+    """Signal an event by name within a run.
+
+    Equivalent CLI form once you know the condition action id::
+
+        flyte signal event <run-name> <action-name> <value>
+    """
     import flyte.remote as remote
 
     flyte.init()
-    # Poll until the event is available
-    while not (event := remote.Event.get("external_approval", run_name=run_name, action_name=action_name)):
+    # Poll until the named event appears in the run.
+    while not (event := remote.Event.get(event_name, run_name=run_name)):
         time.sleep(5)
 
-    # Signal the event - the waiting task resumes immediately
-    event.signal(True)
+    event.signal(payload)
 
 
 # ---------------------------------------------------------------------------
@@ -108,17 +112,14 @@ if __name__ == "__main__":
     r = flyte.run(markdown_event_task, x=10)
     print("run url:", r.url)
 
-    # 2. Poll until a condition event shows up on the run, then signal it.
-    #    We don't match on a hard-coded name: depending on the backend, the listed
-    #    event's name may be the declared name ("review") or its generated action id.
-    #    So we list every condition event and pick the one that's waiting.
-    EVENT_NAME = "review"  # the name declared in markdown_event_task
+    # 2. Poll until the "review" condition shows up, then signal it with True.
+    EVENT_NAME = "review"
     event = None
     while event is None:
         events = list(remote.Event.listall(run_name=r.name))
         if events:
             print("found events:", [(e.name, e.action_name, e.phase) for e in events])
-            # Prefer an exact name match; otherwise fall back to the only/first event.
+            # Prefer an exact name match; fall back to the only/first event.
             event = next((e for e in events if e.name == EVENT_NAME), events[0])
         else:
             print("waiting for a condition event to be created…")
@@ -126,6 +127,9 @@ if __name__ == "__main__":
 
     print(f"signaling event '{event.name}' (action {event.action_name}, phase {event.phase}) with True")
     event.signal(True)
+
+    # Equivalent CLI invocation (once you know the action id from the UI/logs):
+    #   flyte signal event <r.name> <event.action_name> true
 
     # 3. The task resumes; print its final output.
     print("outputs:", r.outputs())

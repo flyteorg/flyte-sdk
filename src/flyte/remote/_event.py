@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any, AsyncIterator, Union
 
 from flyteidl2.common import identifier_pb2, list_pb2, phase_pb2
+from flyteidl2.core import types_pb2
 from flyteidl2.workflow import run_definition_pb2, run_service_pb2
 
 from flyte.syncify import syncify
@@ -51,6 +52,25 @@ class Event(ToJSONMixin):
     def phase(self) -> str:
         """The current phase of the underlying condition action (e.g. ``RUNNING``)."""
         return phase_pb2.ActionPhase.Name(self.pb2.status.phase)
+
+    @property
+    def expected_type(self) -> type | None:
+        """Python type the condition expects for its payload, derived from
+        ``metadata.condition.type`` populated by the backend. Returns ``None`` if the
+        underlying action is not a condition or the backend has not yet exposed the
+        type (older deployments / older ``flyteidl2`` stubs).
+        """
+        if not self.pb2.metadata.HasField("condition"):
+            return None
+        ct = self.pb2.metadata.condition
+        try:
+            # `type` is a recent ConditionActionMetadata field; older proto stubs
+            # don't know about it and `HasField` would raise ValueError.
+            if not ct.HasField("type"):
+                return None
+        except ValueError:
+            return None
+        return _SIMPLE_TO_PY.get(ct.type.simple)
 
     @syncify
     @classmethod
@@ -169,3 +189,11 @@ def _encode_payload(value: EventPayload) -> Any:
     elif isinstance(value, str):
         return run_service_pb2.EventPayload(string_value=value)
     raise TypeError(f"Unsupported payload type: {type(value)}")
+
+
+_SIMPLE_TO_PY: dict[int, type] = {
+    types_pb2.BOOLEAN: bool,
+    types_pb2.INTEGER: int,
+    types_pb2.FLOAT: float,
+    types_pb2.STRING: str,
+}
