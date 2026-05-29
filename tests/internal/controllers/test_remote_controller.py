@@ -657,9 +657,7 @@ async def test_record_trace_semaphore_keyed_on_parent_action():
 
     with (
         patch("flyte._internal.runtime.io.upload_outputs", new_callable=AsyncMock),
-        patch(
-            "flyte._internal.controllers.remote._controller.RemoteController.submit_action", new_callable=AsyncMock
-        ),
+        patch("flyte._internal.controllers.remote._controller.RemoteController.submit_action", new_callable=AsyncMock),
         patch("flyte._initialize.get_init_config") as mock_get_common_config,
     ):
         mock_get_common_config.return_value.root_dir = pathlib.Path(__file__).parent
