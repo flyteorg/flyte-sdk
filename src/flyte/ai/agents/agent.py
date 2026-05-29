@@ -57,7 +57,7 @@ import flyte
 # inside ``Agent`` and remain addressable as ``flyte.ai.agents.agent.<name>``
 # for callers (notably this repo's tests) that historically imported them
 # from here.
-from ._llm import LLMCallable, LLMMessage, _default_call_llm
+from ._llm import LLMCallable, _default_call_llm
 from ._mcp import MCPServerSpec, _MCPToolLoader
 from ._tools import (
     AgentTool,
@@ -65,14 +65,9 @@ from ._tools import (
     _resolve_tools,
     _stringify_tool_result,
     _summarize_signature,
-    tool,
 )
 from .memory import (
-    AccessDenied,
-    ConcurrencyError,
-    MemoryMeta,
     MemoryStore,
-    MemoryStoreError,
 )
 from .protocol import AgentResult
 
@@ -494,32 +489,3 @@ class Agent:
         if not isinstance(args, dict):
             args = {"_raw": args}
         return await self._execute_one(tool, args)
-
-
-# ----------------------------------------------------------------------------
-# Public API surface
-# ----------------------------------------------------------------------------
-#
-# Symbols listed here are part of ``flyte.ai.agents.agent``'s public API.
-# The package's ``__init__.py`` re-exports them under ``flyte.ai.agents`` —
-# this list also serves as documentation for back-compat callers that
-# historically imported directly from ``flyte.ai.agents.agent``.
-
-__all__ = [
-    "AccessDenied",
-    "Agent",
-    "AgentEvent",
-    "AgentProgressCallback",
-    "AgentTool",
-    "ApprovalCallback",
-    "ConcurrencyError",
-    "EventType",
-    "LLMCallable",
-    "LLMMessage",
-    "MCPServerSpec",
-    "MemoryMeta",
-    "MemoryStore",
-    "MemoryStoreError",
-    "agent_progress_cb",
-    "tool",
-]
