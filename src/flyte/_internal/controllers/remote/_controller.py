@@ -614,7 +614,6 @@ class RemoteController(Controller):
             tctx, event.name, event.name, invoke_seq
         )
 
-        inputs_uri = io.inputs_path(sub_action_output_path)
         action = Action.from_condition(
             parent_action_name=current_action_id.name,
             action_id=identifier_pb2.ActionIdentifier(
@@ -632,14 +631,8 @@ class RemoteController(Controller):
             description=event.description,
             group_data=tctx.group_data,
             run_output_base=tctx.run_base_dir,
-            inputs_uri=inputs_uri,
+            inputs_uri=io.inputs_path(sub_action_output_path),
         )
-
-        # Conditions have no inputs, but mirror the task/trace path by uploading an
-        # empty Inputs blob so the URI always resolves and the backend's GetActionData
-        # read does not 404.
-        serialized_empty_inputs = convert.Inputs.empty().proto_inputs.SerializeToString(deterministic=True)
-        await upload_inputs_with_retry(serialized_empty_inputs, inputs_uri, max_bytes=MAX_INLINE_IO_BYTES)
 
         logger.info(
             f"Registering event '{event.name}' as condition action [{action.name}] "
