@@ -473,9 +473,9 @@ async def test_bg_run_slowdown_error_translated_clean():
 
 
 @pytest.mark.asyncio
-async def test_record_trace_uses_parent_action_id_when_in_trace_scope():
+async def test_record_trace_uses_task_action_when_in_trace_scope():
     """When tctx.action has been swapped by @trace, record_trace must submit with
-    parent_action_name = tctx.parent_action.name (the real container's action),
+    parent_action_name = tctx.task_action.name (the real running task's action),
     not tctx.action.name (the outer trace's pseudo-action)."""
     await flyte.init.aio()
 
@@ -506,10 +506,10 @@ async def test_record_trace_uses_parent_action_id_when_in_trace_scope():
         this_dir_str = str(pathlib.Path(__file__).parent.absolute())
         ctx = internal_ctx()
         # Simulate state inside a nested trace: `action` is the outer trace's pseudo-action,
-        # `parent_action` still points at the real container action.
+        # `task_action` still points at the real running task's action.
         tctx = TaskContext(
             action=ActionID(name="outer_trace_action"),
-            parent_action=ActionID(name="real_container_action"),
+            task_action=ActionID(name="real_container_action"),
             raw_data_path=RawDataPath(path="test"),
             output_path="/tmp",
             version="v1",
@@ -532,9 +532,9 @@ async def test_record_trace_uses_parent_action_id_when_in_trace_scope():
 
 
 @pytest.mark.asyncio
-async def test_record_trace_falls_back_to_action_when_parent_action_unset():
-    """Legacy/test TaskContexts that don't set parent_action must still work:
-    record_trace falls back to tctx.action.name."""
+async def test_record_trace_falls_back_to_action_when_task_action_unset():
+    """TaskContexts that don't set task_action must still work: __post_init__ pins
+    task_action to tctx.action, so record_trace records under tctx.action.name."""
     await flyte.init.aio()
 
     async def make_client() -> ClientSet:
@@ -565,7 +565,7 @@ async def test_record_trace_falls_back_to_action_when_parent_action_unset():
         ctx = internal_ctx()
         tctx = TaskContext(
             action=ActionID(name="legacy_action"),
-            # parent_action omitted → None
+            # task_action omitted → defaults to action via __post_init__
             raw_data_path=RawDataPath(path="test"),
             output_path="/tmp",
             version="v1",
@@ -588,9 +588,9 @@ async def test_record_trace_falls_back_to_action_when_parent_action_unset():
 
 
 @pytest.mark.asyncio
-async def test_get_action_outputs_uses_parent_action_id_when_in_trace_scope():
+async def test_get_action_outputs_uses_task_action_when_in_trace_scope():
     """When tctx.action has been swapped by @trace, get_action_outputs must look up
-    the existing trace record under parent = tctx.parent_action.name, not tctx.action.name."""
+    the existing trace record under parent = tctx.task_action.name, not tctx.action.name."""
     await flyte.init.aio()
 
     async def make_client() -> ClientSet:
@@ -621,7 +621,7 @@ async def test_get_action_outputs_uses_parent_action_id_when_in_trace_scope():
         ctx = internal_ctx()
         tctx = TaskContext(
             action=ActionID(name="outer_trace_action", run_name="r", project="p", domain="d", org="o"),
-            parent_action=ActionID(name="real_container_action", run_name="r", project="p", domain="d", org="o"),
+            task_action=ActionID(name="real_container_action", run_name="r", project="p", domain="d", org="o"),
             raw_data_path=RawDataPath(path="test"),
             output_path="/tmp",
             version="v1",
@@ -646,8 +646,8 @@ async def test_get_action_outputs_uses_parent_action_id_when_in_trace_scope():
 
 
 @pytest.mark.asyncio
-async def test_record_trace_semaphore_keyed_on_parent_action():
-    """The submit semaphore for trace records must be keyed by the parent (container)
+async def test_record_trace_semaphore_keyed_on_task_action():
+    """The submit semaphore for trace records must be keyed by the running task's
     action so concurrent traces inside one container serialize under the right informer,
     not under each (different) trace pseudo-action."""
     await flyte.init.aio()
@@ -675,12 +675,12 @@ async def test_record_trace_semaphore_keyed_on_parent_action():
             output=1,
         )
 
-        parent = ActionID(name="real_container_action", run_name="r", project="p", domain="d", org="o")
+        task_action = ActionID(name="real_container_action", run_name="r", project="p", domain="d", org="o")
         this_dir_str = str(pathlib.Path(__file__).parent.absolute())
         ctx = internal_ctx()
         tctx = TaskContext(
             action=ActionID(name="outer_trace_action", run_name="r", project="p", domain="d", org="o"),
-            parent_action=parent,
+            task_action=task_action,
             raw_data_path=RawDataPath(path="test"),
             output_path="/tmp",
             version="v1",
@@ -695,8 +695,8 @@ async def test_record_trace_semaphore_keyed_on_parent_action():
 
         with ctx.replace_task_context(tctx):
             controller = RemoteController(client_coro=make_client(), workers=2, max_system_retries=2)
-            assert unique_action_name(parent) not in controller._parent_action_semaphore
+            assert unique_action_name(task_action) not in controller._parent_action_semaphore
             await controller.record_trace(trace_info)
-            # The semaphore should have been created under the parent key, not the trace's action key.
-            assert unique_action_name(parent) in controller._parent_action_semaphore
+            # The semaphore should have been created under the task_action key, not the trace's action key.
+            assert unique_action_name(task_action) in controller._parent_action_semaphore
             assert unique_action_name(tctx.action) not in controller._parent_action_semaphore

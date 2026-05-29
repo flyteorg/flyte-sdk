@@ -150,7 +150,6 @@ async def convert_and_run(
 
     tctx_kwargs: Dict[str, Any] = {
         "action": action,
-        "parent_action": action,
         "checkpoint_paths": checkpoint_paths,
         "code_bundle": code_bundle,
         "input_path": input_path,

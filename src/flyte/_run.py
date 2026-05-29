@@ -275,7 +275,6 @@ class _Runner:
             )
             tctx = TaskContext(
                 action=action,
-                parent_action=action,
                 code_bundle=code_bundle,
                 output_path="",
                 version=version or "na",
@@ -583,7 +582,6 @@ class _Runner:
             ctx = internal_ctx()
             tctx_kwargs: Dict[str, Any] = {
                 "action": action,
-                "parent_action": action,
                 "checkpoint_paths": checkpoint_paths,
                 "code_bundle": code_bundle,
                 "output_path": output_path,
@@ -666,7 +664,6 @@ class _Runner:
         rd_base = raw_data_path.path
         tctx = TaskContext(
             action=action,
-            parent_action=action,
             checkpoint_paths=CheckpointPaths(
                 prev_checkpoint_path=storage_join(rd_base, "prev_checkpoint"),
                 checkpoint_path=storage_join(rd_base, "checkpoint"),
