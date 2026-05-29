@@ -10,6 +10,10 @@ async def dive(x: int, max_level: int) -> int:
    return await dive(x+1, max_level) 
 
 
+@env.task
+async def main_outer(max_level: int) -> int:
+   return await main(max_level+1)
+
 
 @env.task
 async def main(max_level: int) -> int:
