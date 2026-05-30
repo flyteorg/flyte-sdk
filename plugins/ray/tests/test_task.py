@@ -1,13 +1,13 @@
 from pathlib import Path
 
+import flyte
 import pytest
+from flyte import Resources
+from flyte.models import SerializationContext
 from flyteidl2.core import tasks_pb2
 from flyteidl2.plugins.ray_pb2 import RayJob
 from google.protobuf.json_format import ParseDict
 
-import flyte
-from flyte import Resources
-from flyte.models import SerializationContext
 from flyteplugins.ray.task import HeadNodeConfig, RayJobConfig, WorkerNodeConfig
 
 
