@@ -537,6 +537,31 @@ def _mock_pb2_with_type(simple: int | None, has_condition: bool = True) -> Magic
     return pb
 
 
+class TestRemoteEventRichRepr:
+    def test_yields_core_fields(self):
+        from flyteidl2.common import identifier_pb2
+        from flyteidl2.workflow import run_definition_pb2
+
+        action = run_definition_pb2.Action(
+            id=identifier_pb2.ActionIdentifier(
+                run=identifier_pb2.RunIdentifier(name="run1"),
+                name="cond-hash",
+            ),
+            metadata=run_definition_pb2.ActionMetadata(
+                action_type=run_definition_pb2.ACTION_TYPE_CONDITION,
+                condition=run_definition_pb2.ConditionActionMetadata(name="approve"),
+                parent="a0",
+            ),
+        )
+        pairs = dict(Event(pb2=action).__rich_repr__())
+        assert pairs["name"] == "approve"
+        assert pairs["action"] == "cond-hash"
+        assert pairs["run"] == "run1"
+        assert pairs["parent"] == "a0"
+        # No `type` yielded when expected_type is unavailable.
+        assert "type" not in pairs
+
+
 class TestRemoteEventExpectedType:
     @pytest.mark.parametrize(
         "simple_value, py_type",

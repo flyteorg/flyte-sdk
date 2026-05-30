@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Union
 
+import rich.repr
 from flyteidl2.common import identifier_pb2, list_pb2, phase_pb2
 from flyteidl2.core import types_pb2
 from flyteidl2.workflow import run_definition_pb2, run_service_pb2
@@ -52,6 +53,15 @@ class Event(ToJSONMixin):
     def phase(self) -> str:
         """The current phase of the underlying condition action (e.g. ``RUNNING``)."""
         return phase_pb2.ActionPhase.Name(self.pb2.status.phase)
+
+    def __rich_repr__(self) -> rich.repr.Result:
+        yield "name", self.name
+        yield "action", self.action_name
+        yield "run", self.run_name
+        yield "phase", self.phase
+        if (et := self.expected_type) is not None:
+            yield "type", et.__name__
+        yield "parent", self.pb2.metadata.parent
 
     @property
     def expected_type(self) -> type | None:
