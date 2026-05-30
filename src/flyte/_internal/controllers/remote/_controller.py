@@ -191,11 +191,6 @@ class RemoteController(Controller):
             tctx, task_spec, inputs_hash, _task_call_seq
         )
         logger.info(f"Sub action {sub_action_id} output path {sub_action_output_path}")
-        logger.warning(
-            f"[hashdebug] _submit task={_task.name} parent={current_action_id.name} "
-            f"input_hash={inputs_hash} task_hash={convert.hash_data(task_spec.SerializeToString(deterministic=True))} "
-            f"seq={_task_call_seq} -> {sub_action_id.name}"
-        )
 
         serialized_inputs = inputs.proto_inputs.SerializeToString(deterministic=True)
         inputs_uri = io.inputs_path(sub_action_output_path)
@@ -395,10 +390,6 @@ class RemoteController(Controller):
         sub_action_id, sub_action_output_path = convert.generate_sub_action_id_and_output_path(
             tctx, func_name, inputs_hash, invoke_seq_num
         )
-        logger.warning(
-            f"[hashdebug] get_action_outputs func={func_name} parent={current_action_id.name} "
-            f"input_hash={inputs_hash} task_hash={func_name} seq={invoke_seq_num} -> {sub_action_id.name}"
-        )
 
         inputs_uri = io.inputs_path(sub_action_output_path)
         await upload_inputs_with_retry(serialized_inputs, inputs_uri, max_bytes=MAX_TRACE_BYTES)
@@ -524,10 +515,6 @@ class RemoteController(Controller):
         inputs_hash = convert.generate_inputs_hash_from_proto(inputs.proto_inputs)
         sub_action_id, sub_action_output_path = convert.generate_sub_action_id_and_output_path(
             tctx, task_name, inputs_hash, invoke_seq_num
-        )
-        logger.warning(
-            f"[hashdebug] _submit_task_ref task={task_name} parent={current_action_id.name} "
-            f"input_hash={inputs_hash} task_hash={task_name} seq={invoke_seq_num} -> {sub_action_id.name}"
         )
 
         serialized_inputs = inputs.proto_inputs.SerializeToString(deterministic=True)
