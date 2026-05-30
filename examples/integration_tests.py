@@ -109,8 +109,7 @@ def _verify_log_links(detail, test_name: str):
         for field_name, value in (("name", log.name), ("uri", log.uri)):
             match = _TEMPLATE_RE.search(value)
             assert match is None, (
-                f"[{test_name}] log link '{log.name}' has an unrendered template "
-                f"in its {field_name}: {value!r}"
+                f"[{test_name}] log link '{log.name}' has an unrendered template in its {field_name}: {value!r}"
             )
 
         assert log.uri.startswith(("http://", "https://", "/")), (
