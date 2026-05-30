@@ -136,6 +136,7 @@ class RemoteController(Controller):
         self._sequencer = TaskCallSequencer()
         self._submit_loop: asyncio.AbstractEventLoop | None = None
         self._submit_thread: threading.Thread | None = None
+        self._submit_init_lock = threading.Lock()
 
     def generate_task_call_sequence(self, task_obj: object, action_id: ActionID) -> int:
         """
@@ -190,6 +191,11 @@ class RemoteController(Controller):
             tctx, task_spec, inputs_hash, _task_call_seq
         )
         logger.info(f"Sub action {sub_action_id} output path {sub_action_output_path}")
+        logger.warning(
+            f"[hashdebug] _submit task={_task.name} parent={current_action_id.name} "
+            f"input_hash={inputs_hash} task_hash={convert.hash_data(task_spec.SerializeToString(deterministic=True))} "
+            f"seq={_task_call_seq} -> {sub_action_id.name}"
+        )
 
         serialized_inputs = inputs.proto_inputs.SerializeToString(deterministic=True)
         inputs_uri = io.inputs_path(sub_action_output_path)
@@ -309,9 +315,9 @@ class RemoteController(Controller):
     def submit_sync(self, _task: TaskTemplate, *args, **kwargs) -> concurrent.futures.Future:
         """
         This function creates a cached thread and loop for the purpose of calling the submit method synchronously,
-        returning a concurrent Future that can be awaited. There's no need for a lock because this function itself is
-        single threaded and non-async. This pattern here is basically the trivial/degenerate case of the thread pool
-        in the LocalController.
+        returning a concurrent Future that can be awaited. There's no need for a lock butbecause this function should be
+        single threaded and is non-async, but we have one anyway just in case. This pattern here is basically
+        the trivial/degenerate case of the thread pool in the LocalController.
         Please see additional comments in protocol.
 
         :param _task:
@@ -320,20 +326,22 @@ class RemoteController(Controller):
         :return:
         """
         if self._submit_thread is None:
-            # Please see LocalController for the general implementation of this pattern.
-            def exc_handler(loop, context):
-                logger.error(f"Remote controller submit sync loop caught exception in {loop}: {context}")
+            with self._submit_init_lock:
+                if self._submit_thread is None:
+                    # Please see LocalController for the general implementation of this pattern.
+                    def exc_handler(loop, context):
+                        logger.error(f"Remote controller submit sync loop caught exception in {loop}: {context}")
 
-            with _selector_policy():
-                self._submit_loop = asyncio.new_event_loop()
-                self._submit_loop.set_exception_handler(exc_handler)
+                    with _selector_policy():
+                        self._submit_loop = asyncio.new_event_loop()
+                        self._submit_loop.set_exception_handler(exc_handler)
 
-            self._submit_thread = threading.Thread(
-                name=f"remote-controller-{os.getpid()}-submitter",
-                daemon=True,
-                target=self._sync_thread_loop_runner,
-            )
-            self._submit_thread.start()
+                    self._submit_thread = threading.Thread(
+                        name=f"remote-controller-{os.getpid()}-submitter",
+                        daemon=True,
+                        target=self._sync_thread_loop_runner,
+                    )
+                    self._submit_thread.start()
 
         coro = self.submit(_task, *args, **kwargs)
         assert self._submit_loop is not None, "Submit loop should always have been initialized by now"
@@ -386,6 +394,10 @@ class RemoteController(Controller):
 
         sub_action_id, sub_action_output_path = convert.generate_sub_action_id_and_output_path(
             tctx, func_name, inputs_hash, invoke_seq_num
+        )
+        logger.warning(
+            f"[hashdebug] get_action_outputs func={func_name} parent={current_action_id.name} "
+            f"input_hash={inputs_hash} task_hash={func_name} seq={invoke_seq_num} -> {sub_action_id.name}"
         )
 
         inputs_uri = io.inputs_path(sub_action_output_path)
@@ -512,6 +524,10 @@ class RemoteController(Controller):
         inputs_hash = convert.generate_inputs_hash_from_proto(inputs.proto_inputs)
         sub_action_id, sub_action_output_path = convert.generate_sub_action_id_and_output_path(
             tctx, task_name, inputs_hash, invoke_seq_num
+        )
+        logger.warning(
+            f"[hashdebug] _submit_task_ref task={task_name} parent={current_action_id.name} "
+            f"input_hash={inputs_hash} task_hash={task_name} seq={invoke_seq_num} -> {sub_action_id.name}"
         )
 
         serialized_inputs = inputs.proto_inputs.SerializeToString(deterministic=True)

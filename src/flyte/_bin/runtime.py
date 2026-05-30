@@ -117,7 +117,14 @@ def main(
 
     from datetime import datetime, timezone
 
-    parsed_run_start_time: datetime | None = None
+    # If {{.runStartTime}} template is unsubstituted (or sends an
+    # unparseable value), fall back to a CONSTANT epoch time rather than datetime.now().
+    # run_start_time is baked into each sub-action's container args (see
+    # TaskTemplate.container_args), which are hashed into the deterministic sub-action ID.
+    # A wall-clock fallback would differ on every retry attempt of the parent and thus mint
+    # a new child action names each attempt instead of reusing the deterministically-hashed one.
+    epoch_run_start_time = datetime(1970, 1, 1, tzinfo=timezone.utc)
+    parsed_run_start_time: datetime = epoch_run_start_time
     if run_start_time and not run_start_time.startswith("{{"):
         raw = run_start_time.rstrip()
         # tolerate trailing "Z" — datetime.fromisoformat only handles it on 3.11+
@@ -130,8 +137,8 @@ def main(
             else:
                 parsed_run_start_time = parsed_run_start_time.astimezone(timezone.utc)
         except ValueError:
-            logger.warning(f"Could not parse --run-start-time {run_start_time!r}; falling back to current UTC time.")
-            parsed_run_start_time = None
+            logger.warning(f"Could not parse --run-start-time {run_start_time!r}; falling back to epoch.")
+            parsed_run_start_time = epoch_run_start_time
 
     logger.warning(f"Flyte runtime started for action {name} with run name {run_name}")
 

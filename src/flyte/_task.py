@@ -536,6 +536,13 @@ class AsyncFunctionTaskTemplate(TaskTemplate[P, R, F]):
         else:
             run_start_time_arg = "{{.runStartTime}}"
 
+        from flyte._logging import logger as _hashdebug_logger
+
+        _hashdebug_logger.warning(
+            f"[hashdebug] container_args task={self.name} run_start_time_arg={run_start_time_arg!r} "
+            f"parent_run_start_time={parent_tctx.run_start_time if parent_tctx else None}"
+        )
+
         args = [
             "a0",
             "--inputs",
