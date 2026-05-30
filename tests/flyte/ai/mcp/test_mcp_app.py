@@ -22,9 +22,8 @@ from flyte.ai.mcp import FlyteMCPAppEnvironment
 from flyte.ai.mcp._flyte_mcp_app import (
     ALL_MCP_TOOL_GROUPS,
     ALL_MCP_TOOLS,
+    DEFAULT_IMAGE,
     TOOL_GROUP_MAPPING,
-    UV_SCRIPT_EXAMPLE,
-    UV_SCRIPT_FORMAT,
     _is_app_allowed,
     _is_task_allowed,
     _is_trigger_allowed,
@@ -50,6 +49,16 @@ class TestFlyteMCPAppEnvironmentInstantiation:
         env = FlyteMCPAppEnvironment(name="test-mcp")
         assert env.image is not None
         assert isinstance(env.image, Image)
+
+    def test_default_image_is_default_image_constant(self):
+        # When ``image`` is omitted (or "auto"), the env must fall back to
+        # ``DEFAULT_IMAGE``, not the parent ``MCPAppEnvironment`` minimal image.
+        env = FlyteMCPAppEnvironment(name="test-mcp")
+        assert env.image is DEFAULT_IMAGE
+
+    def test_auto_image_resolves_to_default_image(self):
+        env = FlyteMCPAppEnvironment(name="test-mcp", image="auto")
+        assert env.image is DEFAULT_IMAGE
 
     def test_custom_title(self):
         env = FlyteMCPAppEnvironment(name="test-mcp", title="My MCP Server")
@@ -451,6 +460,10 @@ class TestToolGroupMappingConsistency:
         for group in ALL_MCP_TOOL_GROUPS:
             assert group in TOOL_GROUP_MAPPING, f"Group {group} not in TOOL_GROUP_MAPPING"
 
+    def test_total_tool_count(self):
+        # Keep this in sync with the MCPTool literal in _flyte_mcp_app.py.
+        assert len(ALL_MCP_TOOLS) == 16
+
 
 class TestHealthEndpoint:
     """Tests for the health check endpoint using TestClient."""
@@ -463,6 +476,54 @@ class TestHealthEndpoint:
         response = client.get("/health")
         assert response.status_code == 200
         assert response.json() == {"status": "healthy"}
+
+
+class TestPassthroughAuthMiddleware:
+    """The Flyte MCP app must install ``FastAPIPassthroughAuthMiddleware`` so
+    per-request ``Authorization`` headers are forwarded into the Flyte auth
+    context. Without this, every MCP tool that calls Flyte (run_task,
+    get_run, etc.) fails with "No Authorization header found in the Flyte
+    auth context"."""
+
+    def test_starlette_middleware_includes_passthrough_auth(self):
+        from flyte.app.extras import FastAPIPassthroughAuthMiddleware
+
+        env = FlyteMCPAppEnvironment(name="test-mcp")
+        middleware = env._starlette_middleware()
+        middleware_classes = [m.cls for m in middleware]
+        assert FastAPIPassthroughAuthMiddleware in middleware_classes
+
+    def test_starlette_middleware_excludes_health_path(self):
+        from flyte.app.extras import FastAPIPassthroughAuthMiddleware
+
+        env = FlyteMCPAppEnvironment(name="test-mcp")
+        middleware = env._starlette_middleware()
+        auth_middleware = next(m for m in middleware if m.cls is FastAPIPassthroughAuthMiddleware)
+        excluded = auth_middleware.kwargs["excluded_paths"]
+        assert "/health" in excluded
+
+    def test_health_endpoint_does_not_require_auth(self):
+        # Health checks must succeed without an Authorization header so that
+        # liveness/readiness probes don't fail when the middleware is active.
+        from starlette.testclient import TestClient
+
+        env = FlyteMCPAppEnvironment(name="test-mcp")
+        client = TestClient(env._starlette_app, raise_server_exceptions=False)
+        response = client.get("/health")
+        assert response.status_code == 200
+
+    def test_mcp_endpoint_rejects_requests_without_auth(self):
+        # The MCP mount must require auth; unauthenticated requests should
+        # receive 401 (the middleware's response) rather than reaching the
+        # tool handlers where we'd get a less helpful Flyte auth error.
+        from starlette.testclient import TestClient
+
+        env = FlyteMCPAppEnvironment(name="test-mcp")
+        client = TestClient(env._starlette_app, raise_server_exceptions=False)
+        # streamable-http session lives under {mount}/mcp
+        response = client.post("/flyte-mcp/mcp", json={})
+        assert response.status_code == 401
+        assert "Bearer" in response.headers.get("www-authenticate", "")
 
 
 class TestFlyteMCPAppEnvironmentAllowlists:
@@ -502,39 +563,6 @@ class TestFlyteMCPAppEnvironmentAllowlists:
         assert env.trigger_allowlist == ["task/trigger1", "trigger2"]
 
 
-class TestScriptToolGroup:
-    """Tests for the script tool group."""
-
-    def test_script_group_registers_tools(self):
-        env = FlyteMCPAppEnvironment(name="test-mcp", tool_groups=["script"])
-        tool_manager = env._mcp_server._tool_manager
-        tool_names = set(tool_manager._tools.keys())
-        assert "build_uv_script_image_remote" in tool_names
-        assert "run_uv_script_remote" in tool_names
-        assert "flyte_uv_script_format" in tool_names
-        assert "flyte_uv_script_example" in tool_names
-        assert "run_task" not in tool_names
-
-    def test_resolve_tools_script_group(self):
-        result = _resolve_tools(["script"], None)
-        expected = {
-            "build_uv_script_image_remote",
-            "run_uv_script_remote",
-            "flyte_uv_script_format",
-            "flyte_uv_script_example",
-        }
-        assert result == expected
-
-    def test_individual_script_tools(self):
-        env = FlyteMCPAppEnvironment(
-            name="test-mcp",
-            tools=["flyte_uv_script_format", "flyte_uv_script_example"],
-        )
-        tool_manager = env._mcp_server._tool_manager
-        tool_names = set(tool_manager._tools.keys())
-        assert tool_names == {"flyte_uv_script_format", "flyte_uv_script_example"}
-
-
 class TestSearchToolGroup:
     """Tests for the search tool group."""
 
@@ -556,11 +584,13 @@ class TestSearchToolGroup:
         }
         assert result == expected
 
-    def test_search_paths_default_to_none(self):
+    def test_search_paths_default_to_default_image_layout(self):
+        # The default search paths line up with the corpora baked into
+        # ``DEFAULT_IMAGE`` (cloned repos + llms.txt under /root).
         env = FlyteMCPAppEnvironment(name="test-mcp")
-        assert env.sdk_examples_path is None
-        assert env.docs_examples_path is None
-        assert env.full_docs_path is None
+        assert env.sdk_examples_path == "/root/flyte-sdk/examples"
+        assert env.docs_examples_path == "/root/unionai-examples/v2"
+        assert env.full_docs_path == "/root/llms.txt"
 
     def test_custom_search_paths(self):
         env = FlyteMCPAppEnvironment(
@@ -572,34 +602,6 @@ class TestSearchToolGroup:
         assert env.sdk_examples_path == "/data/sdk-examples"
         assert env.docs_examples_path == "/data/docs-examples"
         assert env.full_docs_path == "/data/full-docs.txt"
-
-
-class TestUVScriptTemplates:
-    """Tests for the UV script template constants."""
-
-    def test_uv_script_format_contains_key_sections(self):
-        assert "# /// script" in UV_SCRIPT_FORMAT
-        assert "flyte.TaskEnvironment" in UV_SCRIPT_FORMAT
-        assert "flyte.Image.from_uv_script" in UV_SCRIPT_FORMAT
-        assert "@env.task" in UV_SCRIPT_FORMAT
-        assert "--build" in UV_SCRIPT_FORMAT
-        assert "flyte.init_passthrough" in UV_SCRIPT_FORMAT
-
-    def test_uv_script_example_contains_key_sections(self):
-        assert "# /// script" in UV_SCRIPT_EXAMPLE
-        assert "scikit-learn" in UV_SCRIPT_EXAMPLE
-        assert "flyte.TaskEnvironment" in UV_SCRIPT_EXAMPLE
-        assert "@env.task" in UV_SCRIPT_EXAMPLE
-        assert "async def main" in UV_SCRIPT_EXAMPLE
-        assert "--build" in UV_SCRIPT_EXAMPLE
-
-    def test_uv_script_format_is_stripped(self):
-        assert not UV_SCRIPT_FORMAT.startswith("\n")
-        assert not UV_SCRIPT_FORMAT.endswith("\n")
-
-    def test_uv_script_example_is_stripped(self):
-        assert not UV_SCRIPT_EXAMPLE.startswith("\n")
-        assert not UV_SCRIPT_EXAMPLE.endswith("\n")
 
 
 class TestSearchFilesHelper:
@@ -626,30 +628,3 @@ class TestSearchFilesHelper:
     async def test_search_files_nonexistent_path(self):
         result = await _search_files("pattern", "/nonexistent/path/abc123")
         assert "Error" in result or "No matches" in result
-
-
-class TestScriptAndSearchGroupsCombined:
-    """Tests for combining script and search groups with other groups."""
-
-    def test_all_group_includes_new_tools(self):
-        result = _resolve_tools(["all"], None)
-        assert "build_uv_script_image_remote" in result
-        assert "run_uv_script_remote" in result
-        assert "flyte_uv_script_format" in result
-        assert "flyte_uv_script_example" in result
-        assert "search_flyte_sdk_examples" in result
-        assert "search_flyte_docs_examples" in result
-        assert "search_full_docs" in result
-
-    def test_combined_script_and_task_groups(self):
-        env = FlyteMCPAppEnvironment(name="test-mcp", tool_groups=["task", "script"])
-        tool_manager = env._mcp_server._tool_manager
-        tool_names = set(tool_manager._tools.keys())
-        assert "run_task" in tool_names
-        assert "get_task" in tool_names
-        assert "build_uv_script_image_remote" in tool_names
-        assert "flyte_uv_script_format" in tool_names
-        assert "get_run" not in tool_names
-
-    def test_total_tool_count(self):
-        assert len(ALL_MCP_TOOLS) == 21

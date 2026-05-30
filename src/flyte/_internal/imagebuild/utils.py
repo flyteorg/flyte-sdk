@@ -125,9 +125,24 @@ def get_and_list_dockerignore(image: Image) -> List[str]:
 
 def _extract_editables_from_uv_export(project_root: Path) -> list[str]:
     """Extracts editable dependencies from a uv export output."""
-    uv_export = subprocess.run(
-        ["uv", "export", "--no-emit-project"], cwd=project_root, capture_output=True, text=True, check=True
-    )
+    cmd = ["uv", "export", "--no-emit-project"]
+    try:
+        uv_export = subprocess.run(cmd, cwd=project_root, capture_output=True, text=True, check=True)
+    except FileNotFoundError as e:
+        raise ImageBuildError(
+            f"`uv` was not found on PATH while inspecting editable dependencies in {project_root}. "
+            "Install uv (https://docs.astral.sh/uv/) or ensure it is on PATH before running image build."
+        ) from e
+    except subprocess.CalledProcessError as e:
+        stderr = (e.stderr or "").strip()
+        stdout = (e.stdout or "").strip()
+        detail = stderr or stdout or "(no output from uv)"
+        raise ImageBuildError(
+            f"`{' '.join(cmd)}` failed in {project_root} with exit code {e.returncode} "
+            f"while resolving editable dependencies for image build:\n{detail}\n\n"
+            "Fix the uv project (e.g. resolve the failing lock or dependency conflict, "
+            "or run `uv lock` locally) and retry."
+        ) from e
     matches = []
     for line in uv_export.stdout.splitlines():
         if match := re.search(r"-e\s+([^\s]+)", line):

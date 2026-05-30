@@ -1,8 +1,8 @@
-"""A Flyte MCP server with filtered tools, scripting, and search.
+"""A Flyte MCP server with filtered tools and search.
 
 This example shows how to deploy a more restricted MCP server that exposes
-task, run, script, and search tools, with a task allowlist to restrict which
-tasks can be accessed and configurable search paths for documentation.
+task, run, and search tools, with a task allowlist to restrict which tasks
+can be accessed and configurable search paths for documentation.
 
 **Search paths (`FlyteMCPAppEnvironment`)**
 
@@ -67,7 +67,7 @@ Usage:
       "mcp": {
         "flyte-mcp-filtered": {
           "type": "local",
-          "command": ["uvx", "--with", "flyte[mcp]", "flyte-mcp", "--tool-groups", "task,run,script,search"],
+          "command": ["uvx", "--with", "flyte[mcp]", "flyte-mcp", "--tool-groups", "task,run,search"],
           "enabled": true
         }
       }
@@ -100,6 +100,7 @@ image = (
     .with_pip_packages("mcp", "starlette", "uvicorn")
     .with_commands(
         [
+            # customize this to get different versions of the flyte-sdk and unionai-examples
             "git clone --depth 1 https://github.com/flyteorg/flyte-sdk.git /root/flyte-sdk",
             "git clone --depth 1 https://github.com/unionai/unionai-examples.git /root/unionai-examples",
             "curl -fsSL https://www.union.ai/docs/v2/union/llms.txt -o /root/llms.txt",
@@ -112,16 +113,15 @@ mcp_env = FlyteMCPAppEnvironment(
     image=image,
     resources=flyte.Resources(cpu=1, memory="512Mi"),
     transport="streamable-http",
-    tool_groups=["task", "run", "script", "search"],
+    tool_groups=["task", "run", "search"],
     task_allowlist=["my-project/my-task", "another-task"],
     # Search roots (see module docstring): clone/fetch above must populate these paths.
     sdk_examples_path="/root/flyte-sdk/examples",
     docs_examples_path="/root/unionai-examples/v2",
     full_docs_path="/root/llms.txt",
     instructions=(
-        "This MCP server provides tools to run and monitor specific Flyte tasks, "
-        "build and run UV scripts remotely, and search Flyte SDK/docs examples. "
-        "Only allowlisted tasks can be accessed."
+        "This MCP server provides tools to run and monitor specific Flyte tasks "
+        "and search Flyte SDK/docs examples. Only allowlisted tasks can be accessed."
     ),
 )
 

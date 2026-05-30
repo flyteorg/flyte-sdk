@@ -170,6 +170,7 @@ flyte._cache.cache
 flyte._cache.policy_function_body
 flyte._cache.defaults
 flyte._cache
+flyte._checkpoint
 flyte._context
 flyte._custom_context
 _compat_pickle
@@ -187,6 +188,7 @@ flyte._secret
 flyte._environment
 flyte.errors
 flyte._initialize
+flyte._status
 flyte._doc
 flyte._link
 flyte._retry
@@ -201,6 +203,7 @@ flyte._group
 flyte._map
 flyte._constants
 flyte._run
+flyte._run_python_script
 flyte._serve
 flyte._trace
 flyte._version

@@ -14,7 +14,7 @@ image = flyte.Image.from_debian_base(name="torch").with_pip_packages("flyteplugi
 
 torch_env = flyte.TaskEnvironment(
     name="torch_env",
-    resources=flyte.Resources(cpu=(1, 2), memory=("1Gi", "2Gi"), gpu="T4:1"),
+    resources=flyte.Resources(cpu=(1, 2), memory=("1Gi", "2Gi")),
     plugin_config=Elastic(
         nproc_per_node=1,
         # if you want to do local testing set nnodes=1

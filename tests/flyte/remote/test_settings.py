@@ -63,13 +63,6 @@ class TestExtractLeafValue:
     def test_quantity(self):
         assert _extract_leaf_value(_sv_quantity("2"), "quantity") == "2"
 
-    def test_stringlist(self):
-        leaf = settings_definition_pb2.StringListSetting(
-            state=settings_definition_pb2.SETTING_STATE_VALUE,
-            list_value=settings_definition_pb2.StringValues(values=["a", "b"]),
-        )
-        assert _extract_leaf_value(leaf, "stringlist") == ["a", "b"]
-
     def test_stringmap(self):
         leaf = settings_definition_pb2.StringMapSetting(
             state=settings_definition_pb2.SETTING_STATE_VALUE,
@@ -93,7 +86,6 @@ class TestExtractLeafValue:
             (settings_definition_pb2.Int64Setting, "int"),
             (settings_definition_pb2.BoolSetting, "bool"),
             (settings_definition_pb2.QuantitySetting, "quantity"),
-            (settings_definition_pb2.StringListSetting, "stringlist"),
             (settings_definition_pb2.StringMapSetting, "stringmap"),
         ]:
             leaf = cls(state=settings_definition_pb2.SETTING_STATE_UNSET)
@@ -122,19 +114,10 @@ class TestBuildLeaf:
         assert isinstance(leaf, settings_definition_pb2.QuantitySetting)
         assert leaf.quantity_value == "2"
 
-    def test_stringlist(self):
-        leaf = _build_leaf("stringlist", ["a", "b"])
-        assert isinstance(leaf, settings_definition_pb2.StringListSetting)
-        assert list(leaf.list_value.values) == ["a", "b"]
-
     def test_stringmap(self):
         leaf = _build_leaf("stringmap", {"k": "v"})
         assert isinstance(leaf, settings_definition_pb2.StringMapSetting)
         assert dict(leaf.map_value.entries) == {"k": "v"}
-
-    def test_stringlist_requires_sequence(self):
-        with pytest.raises(TypeError):
-            _build_leaf("stringlist", "not-a-list")
 
     def test_stringmap_requires_dict(self):
         with pytest.raises(TypeError):
@@ -158,11 +141,6 @@ class TestBuildLeaf:
     def test_build_unset_quantity(self):
         leaf = _build_leaf("quantity", UNSET)
         assert isinstance(leaf, settings_definition_pb2.QuantitySetting)
-        assert leaf.state == settings_definition_pb2.SETTING_STATE_UNSET
-
-    def test_build_unset_stringlist(self):
-        leaf = _build_leaf("stringlist", UNSET)
-        assert isinstance(leaf, settings_definition_pb2.StringListSetting)
         assert leaf.state == settings_definition_pb2.SETTING_STATE_UNSET
 
     def test_build_unset_stringmap(self):
@@ -304,9 +282,7 @@ class TestToYaml:
         assert "### Inherited settings" in yaml
         assert "### Available settings" in yaml
         assert "run.default_queue: gpu" in yaml
-        assert '# storage.raw_data_path: "s3://bucket/data"' in yaml
         assert "# security.service_account: sa" in yaml
-        assert "## inherited from DOMAIN(prod)" in yaml
         assert "## inherited from ORG" in yaml
         for key in Settings.available_keys():
             if key in {"run.default_queue", "storage.raw_data_path", "security.service_account"}:
@@ -363,6 +339,98 @@ class TestToYaml:
                 assert lines[idx - 1] == f"## {description}", (
                     f"expected description above {dotkey!r}; got {lines[idx - 1]!r}"
                 )
+
+    def test_inherited_map_labels_renders_one_line_per_entry(self):
+        settings = Settings(
+            effective_settings=[
+                EffectiveSetting(
+                    key="labels",
+                    value={"env": "prod", "team": "ml"},
+                    origin=SettingOrigin("DOMAIN", "prod"),
+                ),
+            ],
+            local_settings=[],
+            domain="prod",
+            project="ml",
+        )
+        yaml = settings.to_yaml()
+        assert "#   env: prod" in yaml
+        assert "#   team: ml" in yaml
+        assert "## inherited from DOMAIN(prod)" in yaml
+        assert "{env:" not in yaml and "env: prod," not in yaml
+
+    def test_local_map_labels_renders_as_block_yaml(self):
+        settings = Settings(
+            effective_settings=[],
+            local_settings=[LocalSetting(key="labels", value={"team": "ml"})],
+            domain="prod",
+        )
+        yaml = settings.to_yaml()
+        assert "labels:" in yaml
+        assert "  team: ml" in yaml
+        assert "labels: {" not in yaml
+
+    def test_local_map_labels_parent_entries_commented_with_origin(self):
+        settings = Settings(
+            effective_settings=[],
+            local_settings=[LocalSetting(key="labels", value={"team": "ml"})],
+            domain="prod",
+            project="ml",
+            _map_entry_origins={
+                "labels": {
+                    "env": EffectiveSetting(key="labels", value="prod", origin=SettingOrigin("ORG")),
+                }
+            },
+        )
+        yaml = settings.to_yaml()
+        assert "  # env: prod  ## defined at ORG" in yaml
+
+    def test_local_map_labels_local_key_not_duplicated_as_comment(self):
+        settings = Settings(
+            effective_settings=[],
+            local_settings=[LocalSetting(key="labels", value={"env": "staging"})],
+            domain="prod",
+            project="ml",
+            _map_entry_origins={
+                "labels": {
+                    "env": EffectiveSetting(key="labels", value="prod", origin=SettingOrigin("ORG")),
+                }
+            },
+        )
+        yaml = settings.to_yaml()
+        assert "  env: staging" in yaml
+        assert "  # env:" not in yaml
+
+    def test_local_map_labels_how_maps_work_comment_present(self):
+        settings = Settings(
+            effective_settings=[],
+            local_settings=[LocalSetting(key="labels", value={"team": "ml"})],
+            domain="prod",
+        )
+        yaml = settings.to_yaml()
+        assert "Map entries merge across scopes" in yaml
+
+    def test_labels_with_only_inherited_entries_appears_in_inherited_section(self):
+        settings = Settings(
+            effective_settings=[
+                EffectiveSetting(key="labels", value={"env": "prod"}, origin=SettingOrigin("ORG")),
+            ],
+            local_settings=[LocalSetting(key="labels", value={})],
+            domain="prod",
+            project="ml",
+            _map_entry_origins={
+                "labels": {
+                    "env": EffectiveSetting(key="labels", value="prod", origin=SettingOrigin("ORG")),
+                }
+            },
+        )
+        yaml = settings.to_yaml()
+        lines = yaml.split("\n")
+        inherited_idx = next(i for i, line in enumerate(lines) if "### Inherited settings" in line)
+        available_idx = next(i for i, line in enumerate(lines) if "### Available settings" in line)
+        labels_idx = next(i for i, line in enumerate(lines) if "labels:" in line)
+        assert inherited_idx < labels_idx < available_idx
+        assert "### Local overrides" not in yaml
 
     def test_inherited_map_renders_one_line_per_entry(self):
         settings = Settings(
@@ -595,9 +663,9 @@ security.service_account: my-sa
         overrides = Settings.parse_yaml('run.default_queue: "123"\n')
         assert overrides["run.default_queue"] == "123"
 
-    def test_parse_flow_list(self):
-        overrides = Settings.parse_yaml("labels: ['env:prod', 'team:ml']\n")
-        assert overrides["labels"] == ["env:prod", "team:ml"]
+    def test_parse_flow_map_labels(self):
+        overrides = Settings.parse_yaml("labels: {env: prod, team: ml}\n")
+        assert overrides["labels"] == {"env": "prod", "team": "ml"}
 
     def test_parse_flow_map(self):
         overrides = Settings.parse_yaml("annotations: {oncall: ml-team}\n")
@@ -626,7 +694,7 @@ security.service_account: my-sa
         assert proto.security.service_account.string_value == "ml-sa"
 
     def test_parse_tilde_unset_only_in_values_not_keys(self):
-        overrides = Settings.parse_yaml("security.service_account: ml-sa\n")
+        overrides = Settings.parse_yaml("run.default_queue: gpu\n")
         assert "~unset" not in overrides
 
 
@@ -799,6 +867,66 @@ class TestSettingsGet:
         # Effective still surfaces the DOMAIN-level value.
         assert any(s.key == "run.default_queue" and s.value == "gpu" for s in settings.effective_settings)
 
+    def test_get_populates_map_entry_origins_from_parent_levels_labels(
+        self, mock_client, mock_settings_service, mock_init_config
+    ):
+        org_record = _make_record(org="myorg", version=1, labels={"env": "prod", "team": "ml"})
+        project_record = _make_record(org="myorg", domain="prod", project="ml", version=2, labels={"oncall": "ml-team"})
+        mock_settings_service.get_settings_for_edit.return_value = settings_service_pb2.GetSettingsForEditResponse(
+            requestedKey=settings_definition_pb2.SettingsKey(org="myorg", domain="prod", project="ml"),
+            levels=[org_record, project_record],
+        )
+        with (
+            patch(_PATCH_ENSURE, new_callable=AsyncMock),
+            patch(_PATCH_CLIENT, return_value=mock_client),
+            patch(_PATCH_CONFIG, return_value=mock_init_config),
+        ):
+            settings = Settings.get_settings_for_edit(domain="prod", project="ml")
+
+        origins = settings._map_entry_origins["labels"]
+        assert origins["env"].value == "prod"
+        assert origins["env"].origin.scope_type == "ORG"
+        assert origins["team"].value == "ml"
+        assert origins["team"].origin.scope_type == "ORG"
+        assert "oncall" not in origins
+
+    def test_get_map_entry_origins_excludes_local_scope_labels(
+        self, mock_client, mock_settings_service, mock_init_config
+    ):
+        project_record = _make_record(org="myorg", domain="prod", project="ml", version=1, labels={"env": "prod"})
+        mock_settings_service.get_settings_for_edit.return_value = settings_service_pb2.GetSettingsForEditResponse(
+            requestedKey=settings_definition_pb2.SettingsKey(org="myorg", domain="prod", project="ml"),
+            levels=[project_record],
+        )
+        with (
+            patch(_PATCH_ENSURE, new_callable=AsyncMock),
+            patch(_PATCH_CLIENT, return_value=mock_client),
+            patch(_PATCH_CONFIG, return_value=mock_init_config),
+        ):
+            settings = Settings.get_settings_for_edit(domain="prod", project="ml")
+
+        assert "labels" not in settings._map_entry_origins
+
+    def test_get_unset_at_parent_clears_ancestor_map_entries_labels(
+        self, mock_client, mock_settings_service, mock_init_config
+    ):
+        org_record = _make_record(org="myorg", version=1, labels={"env": "prod"})
+        domain_record = _make_record(org="myorg", domain="prod", version=2, labels=UNSET)
+        project_record = _make_record(org="myorg", domain="prod", project="ml", version=3, labels={"team": "ml"})
+        mock_settings_service.get_settings_for_edit.return_value = settings_service_pb2.GetSettingsForEditResponse(
+            requestedKey=settings_definition_pb2.SettingsKey(org="myorg", domain="prod", project="ml"),
+            levels=[org_record, domain_record, project_record],
+        )
+        with (
+            patch(_PATCH_ENSURE, new_callable=AsyncMock),
+            patch(_PATCH_CLIENT, return_value=mock_client),
+            patch(_PATCH_CONFIG, return_value=mock_init_config),
+        ):
+            settings = Settings.get_settings_for_edit(domain="prod", project="ml")
+
+        origins = settings._map_entry_origins.get("labels", {})
+        assert "env" not in origins, "ORG entry should be cleared by DOMAIN's UNSET"
+
     def test_get_populates_map_entry_origins_from_parent_levels(
         self, mock_client, mock_settings_service, mock_init_config
     ):
@@ -941,6 +1069,27 @@ class TestSettingsGet:
         origins = settings._map_entry_origins.get("annotations", {})
         assert "team" not in origins, "ORG entry 'team' should be blocked by DOMAIN's UNSET"
         assert "env" not in origins, "ORG entry 'env' should be blocked by DOMAIN's UNSET"
+
+    def test_unset_at_parent_scope_clears_ancestor_map_labels(
+        self, mock_client, mock_settings_service, mock_init_config
+    ):
+        """When a parent scope sets a map to UNSET, the effective value must be UNSET, not the ancestor map."""
+        org_record = _make_record(org="myorg", version=1, labels={"env": "prod", "team": "ml"})
+        domain_record = _make_record(org="myorg", domain="prod", version=2, labels=UNSET)
+        project_record = _make_record(org="myorg", domain="prod", project="ml", version=3)
+        mock_settings_service.get_settings_for_edit.return_value = settings_service_pb2.GetSettingsForEditResponse(
+            requestedKey=settings_definition_pb2.SettingsKey(org="myorg", domain="prod", project="ml"),
+            levels=[org_record, domain_record, project_record],
+        )
+        with (
+            patch(_PATCH_ENSURE, new_callable=AsyncMock),
+            patch(_PATCH_CLIENT, return_value=mock_client),
+            patch(_PATCH_CONFIG, return_value=mock_init_config),
+        ):
+            settings = Settings.get_settings_for_edit(domain="prod", project="ml")
+
+        effective = {s.key: s.value for s in settings.effective_settings}
+        assert effective.get("labels") is UNSET, "ORG map should be blocked by DOMAIN's UNSET"
 
     def test_get_surfaces_unset_from_local_scope(self, mock_client, mock_settings_service, mock_init_config):
         """A SETTING_STATE_UNSET leaf in the server response appears as UNSET in local_settings."""
@@ -1139,7 +1288,7 @@ class TestProgrammaticAccess:
         """The schema must come from walking Settings.DESCRIPTOR, not a hand-written list."""
         assert len(_LEAF_SCHEMA) > 0
         for dotkey, kind, field_descriptor in _LEAF_SCHEMA:
-            assert kind in {"string", "int", "bool", "quantity", "stringlist", "stringmap"}
+            assert kind in {"string", "int", "bool", "quantity", "stringmap"}
             # The field descriptor points at a *Setting message in the proto schema.
             assert field_descriptor.message_type is not None
             assert field_descriptor.message_type.name.endswith("Setting")
