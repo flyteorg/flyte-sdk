@@ -118,7 +118,7 @@ def main(
     from datetime import datetime, timezone
 
     # If {{.runStartTime}} template is unsubstituted (or sends an
-    # unparseable value), fall back to a CONSTANT epoch time rather than datetime.now().
+    # unparsable value), fall back to a CONSTANT epoch time rather than datetime.now().
     # run_start_time is baked into each sub-action's container args (see
     # TaskTemplate.container_args), which are hashed into the deterministic sub-action ID.
     # A wall-clock fallback would differ on every retry attempt of the parent and thus mint
