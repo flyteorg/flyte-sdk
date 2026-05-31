@@ -53,14 +53,14 @@ async def test_submit_task():
         ) as mock_upload_inputs,
         patch("flyte._internal.runtime.io.load_outputs", new_callable=AsyncMock) as mock_load_outputs,
         patch(
-            "flyte._internal.controllers.remote._controller.RemoteController.submit_action",
+            "flyte._internal.controllers.remote._controller.RemoteController.submit_and_wait_for_action",
             new_callable=AsyncMock,
-        ) as mock_submit_action,
+        ) as mock_submit_and_wait,
         patch("flyte._initialize.get_init_config") as mock_get_common_config,
     ):
         mock_get_common_config.return_value.root_dir = pathlib.Path(__file__).parent
         # Ensure the mock returns a valid value
-        mock_submit_action.return_value = action
+        mock_submit_and_wait.return_value = action
 
         ctx = internal_ctx()
         this_dir_str = str(pathlib.Path(__file__).parent.absolute())
@@ -83,7 +83,7 @@ async def test_submit_task():
             result = await controller.submit(t1)
 
         mock_upload_inputs.assert_called_once()
-        mock_submit_action.assert_called_once()
+        mock_submit_and_wait.assert_called_once()
         mock_load_outputs.assert_not_called()
         assert result is None
 
@@ -110,15 +110,15 @@ async def test_submit_with_outputs():
         ) as mock_upload_inputs,
         patch("flyte._internal.runtime.io.load_outputs", new_callable=AsyncMock) as mock_load_outputs,
         patch(
-            "flyte._internal.controllers.remote._controller.RemoteController.submit_action",
+            "flyte._internal.controllers.remote._controller.RemoteController.submit_and_wait_for_action",
             new_callable=AsyncMock,
-        ) as mock_submit_action,
+        ) as mock_submit_and_wait,
         patch("flyte._initialize.get_init_config") as mock_get_common_config,
     ):
         mock_get_common_config.return_value.root_dir = pathlib.Path(__file__).parent
 
         # Ensure the mock returns a valid value
-        mock_submit_action.return_value = action
+        mock_submit_and_wait.return_value = action
         mock_load_outputs.return_value = Outputs(
             proto_outputs=common_pb2.Outputs(
                 literals=[
@@ -150,7 +150,7 @@ async def test_submit_with_outputs():
             result = await controller.submit(t2)
 
         mock_upload_inputs.assert_called_once()
-        mock_submit_action.assert_called_once()
+        mock_submit_and_wait.assert_called_once()
         mock_load_outputs.assert_called_with("/tmp/outputs/realized/outputs.pb", max_bytes=10485760)
         assert result == "test"
 
@@ -176,15 +176,15 @@ async def test_submit_task_with_error():
             new_callable=AsyncMock,
         ) as mock_upload_inputs,
         patch(
-            "flyte._internal.controllers.remote._controller.RemoteController.submit_action",
+            "flyte._internal.controllers.remote._controller.RemoteController.submit_and_wait_for_action",
             new_callable=AsyncMock,
-        ) as mock_submit_action,
+        ) as mock_submit_and_wait,
         patch("flyte._initialize.get_init_config") as mock_get_common_config,
     ):
         mock_get_common_config.return_value.root_dir = pathlib.Path(__file__).parent
 
         # Ensure the mock returns a valid value
-        mock_submit_action.return_value = action
+        mock_submit_and_wait.return_value = action
 
         this_dir_str = str(pathlib.Path(__file__).parent.absolute())
         ctx = internal_ctx()
@@ -207,7 +207,7 @@ async def test_submit_task_with_error():
                 await controller.submit(t1)
 
         mock_upload_inputs.assert_called_once()
-        mock_submit_action.assert_called_once()
+        mock_submit_and_wait.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -254,8 +254,9 @@ async def test_record_trace_with_int_zero_output():
     with (
         patch("flyte._internal.runtime.io.upload_outputs", new_callable=AsyncMock) as mock_upload_outputs,
         patch(
-            "flyte._internal.controllers.remote._controller.RemoteController.submit_action", new_callable=AsyncMock
-        ) as mock_submit_action,
+            "flyte._internal.controllers.remote._controller.RemoteController.submit_and_wait_for_action",
+            new_callable=AsyncMock,
+        ) as mock_submit_and_wait,
         patch("flyte._initialize.get_init_config") as mock_get_common_config,
     ):
         mock_get_common_config.return_value.root_dir = pathlib.Path(__file__).parent
@@ -299,7 +300,7 @@ async def test_record_trace_with_int_zero_output():
 
         # Verify that convert_from_native_to_outputs was called with 0
         mock_upload_outputs.assert_called_once()
-        mock_submit_action.assert_called_once()
+        mock_submit_and_wait.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -313,8 +314,9 @@ async def test_record_trace_with_optional_none_output():
     with (
         patch("flyte._internal.runtime.io.upload_outputs", new_callable=AsyncMock) as mock_upload_outputs,
         patch(
-            "flyte._internal.controllers.remote._controller.RemoteController.submit_action", new_callable=AsyncMock
-        ) as mock_submit_action,
+            "flyte._internal.controllers.remote._controller.RemoteController.submit_and_wait_for_action",
+            new_callable=AsyncMock,
+        ) as mock_submit_and_wait,
         patch("flyte._initialize.get_init_config") as mock_get_common_config,
     ):
         mock_get_common_config.return_value.root_dir = pathlib.Path(__file__).parent
@@ -360,7 +362,7 @@ async def test_record_trace_with_optional_none_output():
 
         # Verify that convert_from_native_to_outputs was called with None
         mock_upload_outputs.assert_called_once()
-        mock_submit_action.assert_called_once()
+        mock_submit_and_wait.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -375,8 +377,9 @@ async def test_record_trace_with_error():
         patch("flyte._internal.runtime.convert.convert_from_native_to_error") as mock_convert_error,
         patch("flyte._internal.runtime.io.upload_error", new_callable=AsyncMock) as mock_upload_error,
         patch(
-            "flyte._internal.controllers.remote._controller.RemoteController.submit_action", new_callable=AsyncMock
-        ) as mock_submit_action,
+            "flyte._internal.controllers.remote._controller.RemoteController.submit_and_wait_for_action",
+            new_callable=AsyncMock,
+        ) as mock_submit_and_wait,
         patch("flyte._initialize.get_init_config") as mock_get_common_config,
     ):
         mock_get_common_config.return_value.root_dir = pathlib.Path(__file__).parent
@@ -423,7 +426,7 @@ async def test_record_trace_with_error():
         # Verify that convert_from_native_to_error was called with the error
         mock_convert_error.assert_called_once_with(test_error)
         mock_upload_error.assert_called_once()
-        mock_submit_action.assert_called_once()
+        mock_submit_and_wait.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -485,7 +488,8 @@ async def test_record_trace_uses_task_action_when_in_trace_scope():
     with (
         patch("flyte._internal.runtime.io.upload_outputs", new_callable=AsyncMock),
         patch(
-            "flyte._internal.controllers.remote._controller.RemoteController.submit_action", new_callable=AsyncMock
+            "flyte._internal.controllers.remote._controller.RemoteController.submit_and_wait_for_action",
+            new_callable=AsyncMock,
         ) as mock_submit_action,
         patch("flyte._initialize.get_init_config") as mock_get_common_config,
     ):
@@ -543,7 +547,8 @@ async def test_record_trace_falls_back_to_action_when_task_action_unset():
     with (
         patch("flyte._internal.runtime.io.upload_outputs", new_callable=AsyncMock),
         patch(
-            "flyte._internal.controllers.remote._controller.RemoteController.submit_action", new_callable=AsyncMock
+            "flyte._internal.controllers.remote._controller.RemoteController.submit_and_wait_for_action",
+            new_callable=AsyncMock,
         ) as mock_submit_action,
         patch("flyte._initialize.get_init_config") as mock_get_common_config,
     ):
@@ -657,7 +662,10 @@ async def test_record_trace_semaphore_keyed_on_task_action():
 
     with (
         patch("flyte._internal.runtime.io.upload_outputs", new_callable=AsyncMock),
-        patch("flyte._internal.controllers.remote._controller.RemoteController.submit_action", new_callable=AsyncMock),
+        patch(
+            "flyte._internal.controllers.remote._controller.RemoteController.submit_and_wait_for_action",
+            new_callable=AsyncMock,
+        ),
         patch("flyte._initialize.get_init_config") as mock_get_common_config,
     ):
         mock_get_common_config.return_value.root_dir = pathlib.Path(__file__).parent
@@ -700,3 +708,99 @@ async def test_record_trace_semaphore_keyed_on_task_action():
             # The semaphore should have been created under the task_action key, not the trace's action key.
             assert unique_action_name(task_action) in controller._parent_action_semaphore
             assert unique_action_name(tctx.action) not in controller._parent_action_semaphore
+
+
+@pytest.mark.asyncio
+async def test_submit_task_parent_is_action_for_regular_task():
+    """For a regular task (no @trace), task_action defaults to action, so a submitted sub-task
+    parents under tctx.action.name — i.e. the change is a no-op outside trace scope."""
+    await flyte.init.aio()
+
+    async def make_client() -> ClientSet:
+        return AsyncMock()  # type: ignore
+
+    action = Action(
+        parent_action_name="ignored",
+        action_id=identifier_pb2.ActionIdentifier(name="test_action"),
+        phase=phase_pb2.ACTION_PHASE_SUCCEEDED,
+    )
+
+    with (
+        patch("flyte._internal.controllers.remote._controller.upload_inputs_with_retry", new_callable=AsyncMock),
+        patch(
+            "flyte._internal.controllers.remote._controller.RemoteController.submit_and_wait_for_action",
+            new_callable=AsyncMock,
+            return_value=action,
+        ) as mock_submit_and_wait,
+        patch("flyte._initialize.get_init_config") as mock_get_common_config,
+    ):
+        mock_get_common_config.return_value.root_dir = pathlib.Path(__file__).parent
+        this_dir_str = str(pathlib.Path(__file__).parent.absolute())
+        ctx = internal_ctx()
+        tctx = TaskContext(
+            action=ActionID(name="real_task"),
+            # task_action omitted → defaults to action via __post_init__
+            raw_data_path=RawDataPath(path="test"),
+            output_path="/tmp",
+            version="v1",
+            run_base_dir="/run_base",
+            report=flyte.report.Report(name="test_report"),
+            code_bundle=CodeBundle(computed_version="vcode-bundle", destination=this_dir_str, tgz="dummy.tgz"),
+        )
+        with ctx.replace_task_context(tctx):
+            controller = RemoteController(client_coro=make_client(), workers=2, max_system_retries=2)
+            await controller.submit(t1)
+
+        mock_submit_and_wait.assert_called_once()
+        submitted = mock_submit_and_wait.call_args[0][0]
+        assert submitted.parent_action_name == "real_task"
+
+
+@pytest.mark.asyncio
+async def test_submit_task_reparents_to_task_action_inside_trace():
+    """When tctx.action has been swapped by @trace, a submitted sub-task must parent under
+    tctx.task_action.name (the real running task), and the submit semaphore must be keyed by it."""
+    await flyte.init.aio()
+    from flyte._internal.controllers.remote._controller import unique_action_name
+
+    async def make_client() -> ClientSet:
+        return AsyncMock()  # type: ignore
+
+    action = Action(
+        parent_action_name="ignored",
+        action_id=identifier_pb2.ActionIdentifier(name="test_action"),
+        phase=phase_pb2.ACTION_PHASE_SUCCEEDED,
+    )
+
+    with (
+        patch("flyte._internal.controllers.remote._controller.upload_inputs_with_retry", new_callable=AsyncMock),
+        patch(
+            "flyte._internal.controllers.remote._controller.RemoteController.submit_and_wait_for_action",
+            new_callable=AsyncMock,
+            return_value=action,
+        ) as mock_submit_and_wait,
+        patch("flyte._initialize.get_init_config") as mock_get_common_config,
+    ):
+        mock_get_common_config.return_value.root_dir = pathlib.Path(__file__).parent
+        this_dir_str = str(pathlib.Path(__file__).parent.absolute())
+        ctx = internal_ctx()
+        tctx = TaskContext(
+            action=ActionID(name="outer_trace_action"),
+            task_action=ActionID(name="real_container_action"),
+            raw_data_path=RawDataPath(path="test"),
+            output_path="/tmp",
+            version="v1",
+            run_base_dir="/run_base",
+            report=flyte.report.Report(name="test_report"),
+            code_bundle=CodeBundle(computed_version="vcode-bundle", destination=this_dir_str, tgz="dummy.tgz"),
+        )
+        with ctx.replace_task_context(tctx):
+            controller = RemoteController(client_coro=make_client(), workers=2, max_system_retries=2)
+            await controller.submit(t1)
+
+        mock_submit_and_wait.assert_called_once()
+        submitted = mock_submit_and_wait.call_args[0][0]
+        assert submitted.parent_action_name == "real_container_action"
+        # The submit semaphore is keyed by the real task action, not the trace pseudo-action.
+        assert unique_action_name(tctx.task_action) in controller._parent_action_semaphore
+        assert unique_action_name(tctx.action) not in controller._parent_action_semaphore
