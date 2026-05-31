@@ -42,7 +42,7 @@ from pathlib import Path
 from statistics import mean, median, quantiles
 from typing import Awaitable, Callable, Dict, List, Optional, Tuple
 
-from flyteplugins.union.io.volume import ROVolume, Volume, with_high_throughput_volume_deps
+from flyteplugins.union.io import ROVolume, Volume, with_high_throughput_volume_deps
 from flyteplugins.union.utils.image import with_local_flyteplugins_union
 
 import flyte

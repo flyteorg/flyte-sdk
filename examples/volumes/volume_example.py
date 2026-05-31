@@ -12,7 +12,7 @@
 """
 Volume example.
 
-NOTE: ``Volume`` lives in ``flyteplugins.union.io.volume`` and has not yet been
+NOTE: ``Volume`` lives in ``flyteplugins.union.io`` and has not yet been
 released to PyPI. The remote container image bakes the locally-built
 ``flyteplugins-union`` wheel via ``with_local_flyteplugins_union``. Build a
 pod-compatible wheel from a checkout of the flyteplugins-union repo first::
@@ -46,7 +46,7 @@ import os
 import uuid
 from pathlib import Path
 
-from flyteplugins.union.io.volume import ROVolume, Volume
+from flyteplugins.union.io import ROVolume, Volume
 from flyteplugins.union.utils.image import with_local_flyteplugins_union
 
 import flyte

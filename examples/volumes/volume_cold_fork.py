@@ -33,7 +33,7 @@ import os
 import uuid
 from pathlib import Path
 
-from flyteplugins.union.io.volume import ROVolume, Volume
+from flyteplugins.union.io import ROVolume, Volume
 from flyteplugins.union.utils.image import with_local_flyteplugins_union
 
 import flyte
