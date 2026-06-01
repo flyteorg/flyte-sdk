@@ -87,6 +87,20 @@ def app(cfg: common.CLIConfig, name: str, project: str | None = None, domain: st
     console.log(f"[green]Successfully deleted app {name} [/green]")
 
 
+@delete.command(name="local-cache")
+def local_cache():
+    """
+    Delete the locally cached image lookups stored in ~/.flyte/local-cache.
+    """
+    from flyte._internal.imagebuild.image_builder import clear_image_cache
+
+    console = common.get_console()
+    with console.status("Clearing local image cache..."):
+        removed = clear_image_cache()
+
+    console.print(f"[green]Cleared local image cache ({removed} entr{'y' if removed == 1 else 'ies'} removed).[/green]")
+
+
 @delete.command()
 @click.option(
     "--volume",

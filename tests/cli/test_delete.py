@@ -1,3 +1,4 @@
+import re
 import sys
 from unittest.mock import Mock, patch
 
@@ -5,6 +6,13 @@ import pytest
 from click.testing import CliRunner
 
 from flyte.cli.main import main
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _strip_ansi(text: str) -> str:
+    return _ANSI_RE.sub("", text)
+
 
 # flyte.cli/__init__.py rebinds the `main` attribute to the click group, so
 # patch("flyte.cli.main.CLIConfig") resolves to the group, not the module.
@@ -82,3 +90,18 @@ def test_delete_secret_cluster_pool_rejects_domain(runner: CliRunner):
     assert "Illegal usage" in result.stderr
     assert "cluster_pool" in result.stderr
     assert "domain" in result.stderr
+
+
+@patch("flyte._internal.imagebuild.image_builder.clear_image_cache", return_value=3)
+def test_delete_local_cache(mock_clear, runner: CliRunner):
+    result = runner.invoke(main, ["delete", "local-cache"])
+    assert result.exit_code == 0, result.stderr
+    mock_clear.assert_called_once_with()
+    assert "3 entries removed" in _strip_ansi(result.output)
+
+
+@patch("flyte._internal.imagebuild.image_builder.clear_image_cache", return_value=1)
+def test_delete_local_cache_singular(mock_clear, runner: CliRunner):
+    result = runner.invoke(main, ["delete", "local-cache"])
+    assert result.exit_code == 0, result.stderr
+    assert "1 entry removed" in _strip_ansi(result.output)

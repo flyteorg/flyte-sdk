@@ -151,6 +151,18 @@ def _write_image_cache(repository: str, tag: str, arch: Tuple[str, ...], image_u
         logger.debug(f"Failed to write image cache: {e}")
 
 
+def clear_image_cache() -> int:
+    """Delete all locally cached image lookups from the SQLite cache.
+
+    Returns the number of cache entries removed.
+    """
+    conn = LocalDB.get_sync()
+    with LocalDB._write_lock:
+        cursor = conn.execute("DELETE FROM image_cache")
+        conn.commit()
+        return cursor.rowcount
+
+
 class PersistentCacheImageChecker(ImageChecker):
     """Check if image was previously verified and cached in SQLite (~0ms)."""
 
