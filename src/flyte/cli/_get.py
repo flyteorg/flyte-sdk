@@ -87,6 +87,22 @@ def project(cfg: common.CLIConfig, name: str | None = None, archived: bool = Fal
 @click.option(
     "--updated-before", type=_params.DateTimeType(), default=None, help="Show runs updated before this datetime (UTC)."
 )
+@click.option(
+    "--with-label",
+    "with_label",
+    type=str,
+    multiple=True,
+    default=(),
+    help="Filter runs that have this label key=value. Can be specified multiple times (AND semantics).",
+)
+@click.option(
+    "--with-label-key",
+    "with_label_key",
+    type=str,
+    multiple=True,
+    default=(),
+    help="Filter runs that have this label key present (existence check). Can be specified multiple times.",
+)
 @click.pass_obj
 def run(
     cfg: common.CLIConfig,
@@ -102,6 +118,8 @@ def run(
     created_before: dt.datetime | None = None,
     updated_after: dt.datetime | None = None,
     updated_before: dt.datetime | None = None,
+    with_label: Tuple[str, ...] = (),
+    with_label_key: Tuple[str, ...] = (),
 ):
     """
     Get a list of all runs, or details of a specific run by name.
@@ -115,6 +133,13 @@ def run(
     ```bash
     $ flyte get run --task-name my_task
     $ flyte get run --task-name my_task --task-version v1.0
+    ```
+
+    You can filter runs by their user-defined labels:
+
+    ```bash
+    $ flyte get run --with-label team=ml --with-label env=prod
+    $ flyte get run --with-label-key team
     ```
     """
 
@@ -147,6 +172,17 @@ def run(
             else None
         )
 
+        parsed_with_labels: dict[str, str] | None = None
+        if with_label:
+            parsed_with_labels = {}
+            for item in with_label:
+                if "=" not in item:
+                    raise click.BadParameter(f"Invalid --with-label value {item!r}: expected KEY=VALUE.")
+                k, v = item.split("=", 1)
+                if not k:
+                    raise click.BadParameter(f"Invalid --with-label value {item!r}: key must not be empty.")
+                parsed_with_labels[k] = v
+
         console.print(
             common.format(
                 "Runs",
@@ -158,6 +194,8 @@ def run(
                     task_version=task_version,
                     created_at=created_at,
                     updated_at=updated_at,
+                    with_labels=parsed_with_labels,
+                    with_label_keys=list(with_label_key) or None,
                 ),
                 cfg.output_format,
             )
