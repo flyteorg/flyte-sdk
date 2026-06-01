@@ -271,8 +271,9 @@ def test_capture_exception_skips_connect_error_failed_precondition_wrapped_as_sy
 
 
 def test_capture_exception_still_reports_connect_error_internal():
-    """ConnectError with Internal/Unavailable/Unknown is NOT user-actionable — those
-    indicate backend bugs or outages and should still be reported to Sentry."""
+    """ConnectError(INTERNAL/UNKNOWN) can indicate a real backend or SDK bug
+    and should still be reported. UNAVAILABLE / DEADLINE_EXCEEDED are filtered
+    separately (transient infra)."""
     from connectrpc.code import Code
     from connectrpc.errors import ConnectError
 
@@ -309,3 +310,60 @@ def test_capture_exception_still_reports_other_oserror():
     ):
         _sentry.capture_exception(err)
     capture_mock.assert_called_once_with(err)
+
+
+def test_capture_exception_skips_connect_error_unavailable_wrapped_as_system_error():
+    """FLYTE-SDK-47/48/3W: SelectCluster transient network failures (Connection
+    refused / reset / DNS lookup failed) surface as ConnectError(UNAVAILABLE)
+    wrapped through RuntimeError -> RuntimeSystemError. These are infra
+    problems, not SDK bugs."""
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
+    from flyte.errors import RuntimeSystemError
+
+    try:
+        try:
+            try:
+                raise ConnectError(
+                    Code.UNAVAILABLE,
+                    "Request failed: error sending request for url (...): client error (Connect): "
+                    "tcp connect error: Connection refused",
+                )
+            except ConnectError as ce:
+                raise RuntimeError(f"SelectCluster failed for operation=1: {ce}") from ce
+        except RuntimeError:
+            raise RuntimeSystemError(
+                "RuntimeError", "Failed to get signed url for /tmp/x.tar.gz: SelectCluster failed..."
+            )
+    except RuntimeSystemError as e:
+        err = e
+
+    with mock.patch.object(_sentry, "init") as init_mock:
+        _sentry.capture_exception(err)
+    init_mock.assert_not_called()
+
+
+def test_capture_exception_skips_connect_error_deadline_exceeded_wrapped_as_system_error():
+    """FLYTE-SDK-29: SelectCluster Request timed out surfaces as
+    ConnectError(DEADLINE_EXCEEDED) wrapped through RuntimeError ->
+    RuntimeSystemError. Transient infra, not an SDK bug."""
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
+    from flyte.errors import RuntimeSystemError
+
+    try:
+        try:
+            try:
+                raise ConnectError(Code.DEADLINE_EXCEEDED, "Request timed out")
+            except ConnectError as ce:
+                raise RuntimeError(f"SelectCluster failed for operation=1: {ce}") from ce
+        except RuntimeError:
+            raise RuntimeSystemError("RuntimeError", "Failed to get signed url for /tmp/x.pb: SelectCluster failed...")
+    except RuntimeSystemError as e:
+        err = e
+
+    with mock.patch.object(_sentry, "init") as init_mock:
+        _sentry.capture_exception(err)
+    init_mock.assert_not_called()
