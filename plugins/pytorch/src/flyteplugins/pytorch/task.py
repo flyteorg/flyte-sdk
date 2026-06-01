@@ -436,9 +436,7 @@ class TorchFunctionTask(AsyncFunctionTaskTemplate):
             # so we only log a warning rather than failing the task.
             if result.returncode != 0:
                 logger.warning(
-                    "neuron_parallel_compile exited with code %d (%d graph compilations failed). "
-                    "This is typically normal — failed graphs will be compiled on-demand during training.",
-                    result.returncode,
+                    "neuron_parallel_compile exited (%d graph compilations failed).",
                     result.returncode,
                 )
         finally:
