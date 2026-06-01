@@ -215,7 +215,7 @@ def main(
 
             logger.error(f"Flyte runtime failed for action {name} with run name {run_name}, error: {e}")
             err = convert_from_native_to_error(e)
-            path = await upload_error(err.err, outputs_path, recoverable=err.recoverable)
+            path = await upload_error(err.err, outputs_path)
             logger.error(f"Run {run_name} Action {name} failed with error: {err}. Uploaded error to {path}")
             await controller.stop()
 
