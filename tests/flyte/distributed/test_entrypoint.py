@@ -43,6 +43,7 @@ def test_happy_path(monkeypatch):
             "--rdzv-backend=static",
             "--rdzv-id=f-abc123-1",
             f"--rdzv-endpoint={EXPECTED_MASTER}:29500",
+            "--no-python",
             "--",
             "a0",
             "a0",
