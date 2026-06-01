@@ -8,6 +8,7 @@ __all__ = [
     "ActionInputs",
     "ActionOutputs",
     "App",
+    "Event",
     "Project",
     "Run",
     "RunDetails",
@@ -29,6 +30,7 @@ from ._app import App
 from ._auth_metadata import auth_metadata
 from ._common import TimeFilter
 from ._data import upload_dir, upload_file
+from ._event import Event
 from ._project import Project
 from ._run import Run, RunDetails
 from ._secret import Secret, SecretTypes

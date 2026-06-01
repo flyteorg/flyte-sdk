@@ -138,8 +138,6 @@ def test_from_file_handles_commented_template(tmp_path: Path):
         "security.service_account: ml-sa\n"
         "\n"
         "### Available settings (uncomment and edit to set at this scope)\n"
-        "## Default queue for task runs\n"
-        "# run.default_queue: ''\n"
     )
     result, s, _ = _invoke_from_file(body, tmp_path=tmp_path)
     assert result.exit_code == 0, result.output
