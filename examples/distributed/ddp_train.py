@@ -2,14 +2,14 @@
 End-to-end DDP training on a ClusteredTaskEnvironment.
 
 Trains a tiny linear-regression model with PyTorch DistributedDataParallel across
-``replicas × nproc_per_node`` workers. The workers are bootstrapped by ``torchrun``
+``replicas x nproc_per_node`` workers. The workers are bootstrapped by ``torchrun``
 via the clustered entrypoint (``python -m flyte.distributed._entrypoint``), which the
 Go ``clustered`` plugin wires into a Kubernetes JobSet. Backend is ``gloo`` (CPU) so it
 needs no GPUs — swap to ``nccl`` + ``resources.gpu`` for real GPU training.
 
 This exercises the full path:
     ClusteredTaskEnvironment  ->  task_serde (type=clustered-task, command rewrite)
-      ->  JobSet (N pods)  ->  entrypoint DNS wait + torchrun  ->  N×a0 per pod
+      ->  JobSet (N pods)  ->  entrypoint DNS wait + torchrun  ->  Nxa0 per pod
       ->  torch.distributed rendezvous  ->  DDP training  ->  rank-0 uploads outputs.
 
 Run (registers + runs on the configured cluster):
@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import flyte
 from flyte._image import DIST_FOLDER, PythonWheels
-from flyte.distributed import ClusterFailurePolicy, ClusteredTaskEnvironment, TorchRun
+from flyte.distributed import ClusteredTaskEnvironment, ClusterFailurePolicy, TorchRun
 
 # Image carries the LOCAL flyte build (so the container has flyte.distributed._entrypoint
 # and the clustered runtime fixes), plus torch for the actual DDP workload.
