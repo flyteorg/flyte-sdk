@@ -51,6 +51,10 @@ def create_auth_interceptors(endpoint: str, http_client=None, **kwargs) -> list:
                 endpoint,
                 http_client=http_client,
                 client_config_overrides=kwargs.get("local_client_config_overrides"),
+                org=kwargs.get("org"),
+                domain=kwargs.get("domain"),
+                auth_type=kwargs.get("auth_type"),
+                insecure=kwargs.get("insecure") or False,
             ),
             **kwargs,
         )

@@ -7,6 +7,11 @@ import flyte
 import flyte.cli._common as common
 from flyte.cli._option import DependentOption, MutuallyExclusiveOption
 from flyte.remote import SecretTypes
+from flyte.remote._client.auth._public_client_cache import (
+    fetch_public_client_auth_metadata_sync,
+    get_public_client_auth_metadata_cache_path,
+    write_cached_public_client_auth_metadata,
+)
 
 
 @click.group(name="create")
@@ -308,12 +313,6 @@ def config(
     if not output_path.parent.exists():
         output_path.parent.mkdir(parents=True)
 
-    if output_path.exists() and not force:
-        force = click.confirm(f"Overwrite [{output_path}]?", default=False)
-        if not force:
-            click.echo(f"Will not overwrite the existing config file at {output_path}")
-            return
-
     admin: Dict[str, Any] = {}
     if endpoint:
         endpoint = sanitize_endpoint(endpoint)
@@ -322,15 +321,37 @@ def config(
     if not org and endpoint:
         org = org_from_endpoint(endpoint)
 
-    if not org:
+    if endpoint and not org:
         raise click.BadParameter("--endpoint or --org must be provided")
 
-    admin["authType"] = common.sanitize_auth_type(auth_type) if auth_type else "Pkce"
-    admin["clientId"] = f"{org}-uctl"
-    admin["insecure"] = insecure
-    admin["authorizationHeader"] = "flyte-authorization"
-    admin["redirectUri"] = "http://localhost:53593/callback"
-    admin["scopes"] = ["all"]
+    if endpoint and not domain:
+        raise click.BadParameter("--domain must be provided")
+
+    if endpoint and org and domain:
+        cache_path = get_public_client_auth_metadata_cache_path(org, domain)
+        if cache_path.exists() and not force:
+            overwrite_cache = click.confirm(f"Overwrite cached auth metadata at [{cache_path}]?", default=False)
+            if not overwrite_cache:
+                click.echo(f"Will not overwrite the existing auth metadata cache at {cache_path}")
+                return
+
+        resolved_auth_type = common.sanitize_auth_type(auth_type) if auth_type else "Pkce"
+        try:
+            auth_metadata = fetch_public_client_auth_metadata_sync(
+                endpoint,
+                auth_type=resolved_auth_type,
+                insecure=insecure,
+            )
+        except Exception as e:
+            raise click.ClickException(f"Failed to fetch public client auth metadata: {e}") from e
+
+        write_cached_public_client_auth_metadata(org, domain, auth_metadata)
+
+    if output_path.exists() and not force:
+        force = click.confirm(f"Overwrite [{output_path}]?", default=False)
+        if not force:
+            click.echo(f"Will not overwrite the existing config file at {output_path}")
+            return
 
     task: Dict[str, str] = {}
     if org:
