@@ -379,19 +379,30 @@ def test_run_neuron_parallel_compile_nonzero_exit_warns(monkeypatch):
         return result
 
     warnings = []
+
+    class _FakeLogger:
+        def info(self, msg, *args, **kw):
+            pass
+
+        def warning(self, msg, *args, **kw):
+            try:
+                warnings.append(msg % args if args else msg)
+            except Exception:
+                warnings.append(str(msg))
+
+        def error(self, msg, *args, **kw):
+            pass
+
     monkeypatch.setattr(_subprocess, "run", fake_run)
-    monkeypatch.setattr(
-        task_mod.logger, "warning", lambda msg, *args, **kw: warnings.append(msg % args)
-    )
+    monkeypatch.setattr(task_mod, "logger", _FakeLogger())
     # Should not raise even on non-zero exit
     task._run_neuron_parallel_compile(tctx, fn_bytes, {})
-    assert any("exited with code 3" in w for w in warnings)
+    assert any("3 graph compilations failed" in w for w in warnings)
 
 
 def test_run_neuron_parallel_compile_cleans_ctx_file_on_exception(monkeypatch):
     import os as _os
     import subprocess as _subprocess
-    from unittest.mock import MagicMock
 
     task = _make_neuron_task()
     from types import SimpleNamespace
