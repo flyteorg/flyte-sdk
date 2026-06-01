@@ -282,6 +282,137 @@ def test_pre_does_not_override_existing_nccl_enable_monitoring(monkeypatch):
     assert os.environ["TORCH_NCCL_ENABLE_MONITORING"] == "0"
 
 
+# --- neuron_parallel_compile tests ---
+
+
+def test_elastic_neuron_parallel_compile_default():
+    e = Elastic(nnodes=2, nproc_per_node=1)
+    assert e.neuron_parallel_compile is False
+
+
+def test_elastic_neuron_parallel_compile_enabled():
+    e = Elastic(nnodes=2, nproc_per_node=1, neuron_parallel_compile=True)
+    assert e.neuron_parallel_compile is True
+
+
+def _make_neuron_task(neuron_parallel_compile=True):
+    cfg = Elastic(
+        nnodes=2,
+        nproc_per_node=2,
+        neuron_parallel_compile=neuron_parallel_compile,
+    )
+    return TorchFunctionTask(
+        name="t",
+        interface=None,
+        func=lambda: None,
+        image="pytorch/pytorch:2.8.0-cuda12.9-cudnn9-runtime",
+        resources=flyte.Resources(cpu=1, memory="1Gi"),
+        plugin_config=cfg,
+    )
+
+
+def test_run_neuron_parallel_compile_invokes_subprocess(monkeypatch):
+    import os as _os
+    import pickle
+    import subprocess as _subprocess
+    from unittest.mock import MagicMock
+
+    task = _make_neuron_task()
+    from types import SimpleNamespace
+
+    tctx = SimpleNamespace(action=SimpleNamespace(run_name="r"))
+    fn_bytes = cloudpickle.dumps(lambda **kw: None)
+    kwargs = {"x": 1}
+
+    captured = {}
+
+    def fake_run(cmd, check=False):
+        captured["cmd"] = cmd
+        # The ctx file should exist while subprocess is "running"
+        ctx_file = cmd[cmd.index("--ctx-file") + 1]
+        with open(ctx_file, "rb") as f:
+            captured["payload"] = pickle.load(f)
+        result = MagicMock()
+        result.returncode = 0
+        return result
+
+    monkeypatch.setattr(_subprocess, "run", fake_run)
+    task._run_neuron_parallel_compile(tctx, fn_bytes, kwargs)
+
+    cmd = captured["cmd"]
+    assert cmd[:5] == [
+        "neuron_parallel_compile",
+        "python",
+        "-m",
+        "flyteplugins.pytorch.compile_launcher",
+        "--ctx-file",
+    ]
+    ctx_file = cmd[5]
+    # Temp file should be cleaned up after the call
+    assert not _os.path.exists(ctx_file)
+
+    # Payload should contain (tctx, fn_bytes, kwargs, launch_params)
+    _, payload_fn, payload_kwargs, launch_params = captured["payload"]
+    assert payload_fn == fn_bytes
+    assert payload_kwargs == kwargs
+    assert launch_params["min_nodes"] == 2
+    assert launch_params["max_nodes"] == 2
+    assert launch_params["nproc_per_node"] == 2
+    assert launch_params["rdzv_backend"] == "c10d"
+
+
+def test_run_neuron_parallel_compile_nonzero_exit_warns(monkeypatch):
+    import subprocess as _subprocess
+    from unittest.mock import MagicMock
+
+    from flyteplugins.pytorch import task as task_mod
+
+    task = _make_neuron_task()
+    from types import SimpleNamespace
+
+    tctx = SimpleNamespace(action=SimpleNamespace(run_name="r"))
+    fn_bytes = cloudpickle.dumps(lambda **kw: None)
+
+    def fake_run(cmd, check=False):
+        result = MagicMock()
+        result.returncode = 3
+        return result
+
+    warnings = []
+    monkeypatch.setattr(_subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        task_mod.logger, "warning", lambda msg, *args, **kw: warnings.append(msg % args)
+    )
+    # Should not raise even on non-zero exit
+    task._run_neuron_parallel_compile(tctx, fn_bytes, {})
+    assert any("exited with code 3" in w for w in warnings)
+
+
+def test_run_neuron_parallel_compile_cleans_ctx_file_on_exception(monkeypatch):
+    import os as _os
+    import subprocess as _subprocess
+    from unittest.mock import MagicMock
+
+    task = _make_neuron_task()
+    from types import SimpleNamespace
+
+    tctx = SimpleNamespace(action=SimpleNamespace(run_name="r"))
+    fn_bytes = cloudpickle.dumps(lambda **kw: None)
+
+    captured = {}
+
+    def fake_run(cmd, check=False):
+        captured["ctx_file"] = cmd[cmd.index("--ctx-file") + 1]
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(_subprocess, "run", fake_run)
+    try:
+        task._run_neuron_parallel_compile(tctx, fn_bytes, {})
+    except RuntimeError:
+        pass
+    assert not _os.path.exists(captured["ctx_file"])
+
+
 def test_launcher_entrypoint_overrides_nccl_default(monkeypatch):
     """Verify launcher_entrypoint patches both PyTorch modules when env var is set."""
     from datetime import timedelta
