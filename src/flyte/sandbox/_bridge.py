@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from typing import Any, Callable, Dict, List
 
 from flyte.io import DataFrame, Dir, File
@@ -132,8 +133,6 @@ class ExternalFunctionBridge:
         inputs:
             Mapping of input parameter names to values (provided at run time).
         """
-        import inspect
-
         from pydantic_monty import FunctionSnapshot, MontyComplete
 
         monty = monty_cls(code, inputs=input_names)
@@ -153,7 +152,7 @@ class ExternalFunctionBridge:
                     args = [_from_monty(a) for a in progress.args]
                     kwargs = {k: _from_monty(v) for k, v in progress.kwargs.items()}
                     result = await self._handle_flyte_map(args, kwargs)
-                    progress = progress.resume(_to_monty(result))
+                    progress = progress.resume({"return_value": _to_monty(result)})
                     continue
 
                 fn = ext_fns.get(progress.function_name)
@@ -171,7 +170,6 @@ class ExternalFunctionBridge:
                 while inspect.iscoroutine(result):
                     result = await result
 
-                # Marshal IO types so Monty can hold the return value
-                progress = progress.resume(_to_monty(result))
+                progress = progress.resume({"return_value": _to_monty(result)})
             else:
                 raise RuntimeError(f"Unexpected Monty progress state: {progress!r}")

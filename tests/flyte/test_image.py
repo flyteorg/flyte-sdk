@@ -212,6 +212,39 @@ def test_image_from_uv_script():
     assert img.uri.startswith("localhost/uvtest:")
 
 
+def test_default_image_creates_flyte_user():
+    """The default debian-base image should add a Commands layer that creates the flyte user
+    and a WorkDir layer that sets the working directory to /home/flyte. Both layers are
+    proto-backed so they're picked up by the remote image builder as well."""
+    from flyte._image import Commands, WorkDir
+
+    img = Image.from_debian_base(install_flyte=False)
+    layer_types = [type(layer) for layer in img._layers]
+
+    # Should contain a Commands layer (user creation) and a WorkDir layer
+    assert Commands in layer_types, f"Default image is missing a Commands layer. Got: {layer_types}"
+    assert WorkDir in layer_types, f"Default image is missing a WorkDir layer. Got: {layer_types}"
+
+    # Find the Commands layer for user creation and verify its contents
+    commands_layers = [layer for layer in img._layers if isinstance(layer, Commands)]
+    user_commands = [cmd for layer in commands_layers for cmd in layer.commands if "useradd" in cmd and "flyte" in cmd]
+    assert user_commands, f"Expected a Commands layer that creates the flyte user. Got: {commands_layers}"
+
+    user_create_cmd = user_commands[0]
+    # Idempotent user creation
+    assert "id -u flyte" in user_create_cmd
+    assert "useradd --create-home --shell /bin/bash flyte" in user_create_cmd
+    # Should chown the home directory and /root so the runtime user can write there
+    assert "chown -R flyte:flyte /home/flyte" in user_create_cmd
+    assert "chown -R flyte:flyte /root" in user_create_cmd
+
+    # Verify WorkDir is /home/flyte
+    workdir_layers = [layer for layer in img._layers if isinstance(layer, WorkDir)]
+    assert any(layer.workdir == "/home/flyte" for layer in workdir_layers), (
+        f"Expected WorkDir(/home/flyte). Got: {workdir_layers}"
+    )
+
+
 def test_image_no_direct():
     with pytest.raises(TypeError):
         Image(base_image="python:3.13", name="test-image", registry="localhost:30000")
@@ -364,6 +397,22 @@ def test_uv_project_optional_uvlock():
         hash2 = hasher2.hexdigest()
 
         assert hash1 != hash2
+
+
+def test_copy_config_coerces_string_src_to_path(tmp_path):
+    """CopyConfig accepts a str src and coerces it to Path so update_hash/validate work."""
+    import hashlib
+
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.txt").write_text("hello")
+
+    cc = CopyConfig(path_type=1, src=str(src), dst="/app")
+    assert isinstance(cc.src, Path)
+    assert cc.src == src
+
+    h = hashlib.md5()
+    cc.update_hash(h)
 
 
 def test_copy_config_update_hash_respects_dockerignore(tmp_path):
@@ -846,3 +895,32 @@ def test_from_ref_name_is_not_cloned():
     """Image.from_ref_name is a pointer to an externally configured image and should not be rebuilt."""
     image = Image.from_ref_name("my-ref")
     assert image._is_cloned is False
+
+
+def test_default_image_dev_mode_pypi_fallback(monkeypatch):
+    """
+    In dev mode with no local dist folder, the default image should install
+    `flyte<{base_version}` from PyPI so it picks up the latest already-released
+    version below the current dev line.
+    """
+    import flyte._image as image_module
+    import flyte._version as version_module
+    from flyte._image import PipPackages
+
+    monkeypatch.setattr(version_module, "__version__", "2.3.7.dev6+gabc12345")
+
+    real_exists = image_module.os.path.exists
+
+    def fake_exists(path):
+        if str(path) == str(image_module.DIST_FOLDER):
+            return False
+        return real_exists(path)
+
+    monkeypatch.setattr(image_module.os.path, "exists", fake_exists)
+
+    image = Image._get_default_image_for(python_version=(3, 12))
+
+    pip_packages = tuple(
+        pkg for layer in image._layers if isinstance(layer, PipPackages) for pkg in (layer.packages or ())
+    )
+    assert "flyte<2.3.7" in pip_packages, f"expected 'flyte<2.3.7' in pip layers, got {pip_packages}"

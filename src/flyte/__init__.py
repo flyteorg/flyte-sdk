@@ -13,6 +13,7 @@ from ._context import ctx
 from ._custom_context import custom_context, get_custom_context
 from ._deploy import build_images, deploy
 from ._environment import Environment
+from ._event import EventWebhook, new_event
 from ._excepthook import custom_excepthook
 from ._group import group
 from ._image import Image
@@ -26,11 +27,12 @@ from ._initialize import (
     init_passthrough,
 )
 from ._link import Link
-from ._logging import logger
+from ._logging import logger as system_logger
+from ._logging import user_logger as logger
 from ._map import map
 from ._pod import PodTemplate
 from ._resources import AMD_GPU, GPU, HABANA_GAUDI, TPU, Device, DeviceClass, Neuron, Resources
-from ._retry import RetryStrategy
+from ._retry import Backoff, RetryStrategy
 from ._reusable_environment import ReusePolicy
 from ._run import run, with_runcontext
 from ._run_python_script import run_python_script
@@ -58,6 +60,7 @@ __all__ = [
     "HABANA_GAUDI",
     "TPU",
     "AppHandle",
+    "Backoff",
     "BaseCheckpoint",
     "Cache",
     "CachePolicy",
@@ -67,6 +70,7 @@ __all__ = [
     "Device",
     "DeviceClass",
     "Environment",
+    "EventWebhook",
     "FixedRate",
     "Image",
     "ImageBuild",
@@ -101,9 +105,11 @@ __all__ = [
     "latest_checkpoint",
     "logger",
     "map",
+    "new_event",
     "run",
     "run_python_script",
     "serve",
+    "system_logger",
     "trace",
     "version",
     "with_runcontext",

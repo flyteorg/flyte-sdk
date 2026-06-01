@@ -12,6 +12,7 @@ from flyte.remote._common import TimeFilter
 
 from . import _common as common
 from . import _params
+from ._option import MutuallyExclusiveOption
 
 
 @click.group(name="get")
@@ -255,6 +256,38 @@ def action(
 @get.command(cls=common.CommandBase)
 @click.argument("run_name", type=str, required=True)
 @click.argument("action_name", type=str, required=False)
+@click.pass_obj
+def event(
+    cfg: common.CLIConfig,
+    run_name: str,
+    action_name: str | None = None,
+    project: str | None = None,
+    domain: str | None = None,
+):
+    """
+    List events (paused condition actions) for a run, optionally filtered to a
+    specific parent action.
+
+    Each event corresponds to a condition action registered via
+    ``flyte.new_event(...)`` from a workflow. Use ``flyte signal event`` to
+    resolve one.
+    """
+    cfg.init(project=project, domain=domain)
+
+    console = common.get_console()
+    title = f"Events for {run_name}.{action_name}" if action_name else f"Events for {run_name}"
+    console.print(
+        common.format(
+            title,
+            remote.Event.listall(run_name=run_name, action_name=action_name),
+            cfg.output_format,
+        )
+    )
+
+
+@get.command(cls=common.CommandBase)
+@click.argument("run_name", type=str, required=True)
+@click.argument("action_name", type=str, required=False)
 @click.option("--lines", "-l", type=int, default=30, help="Number of lines to show, only useful for --pretty")
 @click.option("--show-ts", is_flag=True, help="Show timestamps")
 @click.option(
@@ -324,10 +357,19 @@ def logs(
 
 @get.command(cls=common.CommandBase)
 @click.argument("name", type=str, required=False)
+@click.option(
+    "--cluster-pool",
+    type=str,
+    default=None,
+    help="Scope the secret to a cluster pool. Mutually exclusive with --project and --domain.",
+    cls=MutuallyExclusiveOption,
+    mutually_exclusive=["project", "domain"],
+)
 @click.pass_obj
 def secret(
     cfg: common.CLIConfig,
     name: str | None = None,
+    cluster_pool: str | None = None,
     project: str | None = None,
     domain: str | None = None,
 ):
@@ -338,13 +380,17 @@ def secret(
         project = ""
     if domain is None:
         domain = ""
+
+    if cluster_pool and (project != "" or domain != ""):
+        raise click.ClickException("Project and domain must not be set when --cluster-pool is specified.")
+
     cfg.init(project=project, domain=domain)
 
     console = common.get_console()
     if name:
-        console.print(common.format("Secret", [remote.Secret.get(name)], "json"))
+        console.print(common.format("Secret", [remote.Secret.get(name, cluster_pool=cluster_pool)], "json"))
     else:
-        console.print(common.format("Secrets", remote.Secret.listall(), cfg.output_format))
+        console.print(common.format("Secrets", remote.Secret.listall(cluster_pool=cluster_pool), cfg.output_format))
 
 
 @get.command(cls=common.CommandBase)

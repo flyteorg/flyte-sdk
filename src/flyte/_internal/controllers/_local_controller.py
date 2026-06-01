@@ -6,7 +6,9 @@ import pathlib
 import shutil
 import threading
 from contextlib import nullcontext
-from typing import Any, Callable, Tuple, TypeVar
+from typing import Any, Callable, Protocol, Tuple, TypeVar
+
+from flyteidl2.task import task_definition_pb2
 
 import flyte.errors
 from flyte._cache.cache import VersionParameters, cache_from_request
@@ -26,10 +28,9 @@ from flyte.storage._storage import strip_file_header
 
 R = TypeVar("R")
 
-# Local retry backoff defaults for task errors during local runs. Do not
-# expose these to the user since RetryStrategy only supports a count of retries.
-# This is because currently the backend implements the underlying retry strategy,
-# and does not allow for custom backoff strategies.
+# Fallback backoff used when the task's RetryStrategy has no Backoff set.
+# When `RetryStrategy.backoff` is supplied, the local controller honors it
+# directly so behavior matches the platform's leasor.
 _MIN_BACKOFF_ON_ERR_SEC = 0.5
 _BACKOFF_MULTIPLIER = 2.0
 
@@ -50,6 +51,17 @@ def _stage_prev_checkpoint_for_local_retry(checkpoint_paths: CheckpointPaths | N
     if src.is_file():
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dst)
+
+
+class ControllerProtocol(Protocol):
+    async def submit(self, _task: "TaskTemplate", *args, **kwargs) -> Any: ...
+    def submit_sync(self, _task: "TaskTemplate", *args, **kwargs) -> concurrent.futures.Future: ...
+    async def finalize_parent_action(self, action: "ActionID"): ...
+    async def get_action_outputs(
+        self, _interface: "NativeInterface", _func: Callable, *args, **kwargs
+    ) -> Tuple["TraceInfo", bool]: ...
+    async def record_trace(self, info: "TraceInfo"): ...
+    async def submit_task_ref(self, _task: "task_definition_pb2.TaskDetails", *args, **kwargs) -> Any: ...
 
 
 class _TaskRunner:
@@ -98,12 +110,13 @@ class _TaskRunner:
         return fut
 
 
-class LocalController:
+class LocalController(ControllerProtocol):
     def __init__(self):
         logger.debug("LocalController init")
         self._runner_map: dict[str, _TaskRunner] = {}
         self._sequencer = TaskCallSequencer()
         self._recorder = RunRecorder()
+        self._registered_events: dict[str, Any] = {}
 
     def set_recorder(self, recorder: RunRecorder) -> None:
         self._recorder = recorder
@@ -174,14 +187,17 @@ class LocalController:
                     native_inputs[param_names[i]] = arg
             native_inputs.update(kwargs)
 
+            # Nest under the real running task (task_action), not the @trace pseudo-action that @trace
+            # may have swapped into `action`; identical for a regular task. Mirrors the remote controller.
+            task_action = tctx.task_action or tctx.action
             # If the parent action isn't tracked yet, this is the top-level call
-            parent_id = tctx.action.name if self._recorder.get_action(tctx.action.name) else None
+            parent_id = task_action.name if self._recorder.get_action(task_action.name) else None
 
             # Render log links for this action, replacing template placeholders
             # with concrete local values (see task_serde.py for remote equivalents).
             if _task.links:
                 rendered_links = []
-                action = tctx.action
+                action = task_action
                 for link in _task.links:
                     uri = link.get_link(
                         run_name=action.run_name or "",
@@ -255,7 +271,11 @@ class LocalController:
                     )
                     break
                 if attempt_num < max_attempts:
-                    backoff = _MIN_BACKOFF_ON_ERR_SEC * (_BACKOFF_MULTIPLIER ** (attempt_num - 1))
+                    user_backoff = getattr(_task.retries, "backoff", None)
+                    if user_backoff is not None:
+                        backoff = user_backoff.compute_delay(attempt_num - 1).total_seconds()
+                    else:
+                        backoff = _MIN_BACKOFF_ON_ERR_SEC * (_BACKOFF_MULTIPLIER ** (attempt_num - 1))
                     logger.warning(
                         f"Task '{_task.name}' action '{sub_action_id.name}' failed on attempt "
                         f"{attempt_num}/{max_attempts}; retrying in {backoff:.2f}s..."
@@ -344,10 +364,13 @@ class LocalController:
                 if i < len(param_names):
                     native_inputs[param_names[i]] = arg
             native_inputs.update(kwargs)
+            # Trace records nest under the real running task (task_action), not the outer @trace
+            # pseudo-action — the local analogue of the remote record_trace fix.
+            task_action = tctx.task_action or tctx.action
             self._recorder.record_start(
                 action_id=action_id.name,
                 task_name=_func.__name__,
-                parent_id=tctx.action.name,
+                parent_id=task_action.name,
                 inputs=native_inputs,
                 output_path=action_output_path,
             )
@@ -396,3 +419,148 @@ class LocalController:
         raise flyte.errors.RemoteTaskUsageError(
             f"Remote tasks cannot be executed locally, only remotely. Found remote task {_task.name}"
         )
+
+    async def register_event(self, event: Any):
+        """
+        Register an event that can be awaited. Stores the event for later retrieval.
+        If the event has a webhook configured, fires it asynchronously.
+
+        :param event: Event object to register
+        """
+        from flyte._event import _Event
+
+        if not isinstance(event, _Event):
+            raise TypeError(f"Expected _Event, got {type(event)}")
+
+        logger.debug(f"Registering event: {event.name}")
+        self._registered_events[event.name] = event
+
+        if event.webhook is not None:
+            await self._fire_event_webhook(event)
+
+    async def _fire_event_webhook(self, event: Any):
+        """Fire the webhook associated with an event.
+
+        Substitutes ``{callback_uri}`` in all string values of the payload, then
+        POSTs the JSON body to the webhook URL.
+        """
+        import httpx
+
+        webhook = event.webhook
+        callback_uri = f"local://events/{event.name}/signal"
+
+        payload = webhook.payload
+        if payload is not None:
+            payload = _substitute_callback_uri(payload, callback_uri)
+
+        logger.debug(f"Firing webhook for event '{event.name}' to {webhook.url}")
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    webhook.url,
+                    json=payload,
+                    headers={"Content-Type": "application/json"},
+                )
+                logger.debug(f"Webhook response for event '{event.name}': {resp.status_code}")
+        except Exception:
+            logger.exception(f"Failed to fire webhook for event '{event.name}'")
+
+    def _get_current_action_id(self) -> str:
+        ctx = internal_ctx()
+        tctx = ctx.data.task_context
+        if tctx is None:
+            raise flyte.errors.RuntimeSystemError("BadContext", "Task context not initialized")
+        return tctx.action.name
+
+    async def wait_for_event(self, event: Any) -> Any:
+        """
+        Wait for an event to be signaled.
+
+        In TUI mode, records a pending event so the TUI can render an input panel and
+        blocks until the user submits a value. Without TUI, falls back to rich console prompts.
+
+        :param event: Event object to wait for
+        :return: The payload associated with the event when it is signaled
+        """
+        from flyte._event import _Event
+
+        if not isinstance(event, _Event):
+            raise TypeError(f"Expected _Event, got {type(event)}")
+
+        logger.info(f"Waiting for event: {event.name}")
+
+        action_id = self._get_current_action_id()
+        pending = self._recorder.record_event_waiting(
+            action_id=action_id,
+            event_name=event.name,
+            prompt=event.prompt,
+            prompt_type=event.prompt_type,
+            data_type=event.data_type,
+            description=event.description,
+        )
+
+        timeout_seconds = event._timeout_seconds
+
+        if pending is not None:
+            # TUI mode: block until the TUI resolves the event
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(None, pending.wait_for_result, timeout_seconds)
+            if pending.timed_out:
+                raise flyte.errors.EventTimedoutError(
+                    f"Event '{event.name}' was not signaled within {timeout_seconds} seconds."
+                )
+            if result is None:
+                raise RuntimeError(f"Event '{event.name}' was cancelled (TUI quit).")
+            return result
+
+        # Non-TUI mode: fall back to rich console prompts
+        if timeout_seconds is not None:
+            loop = asyncio.get_event_loop()
+            try:
+                return await asyncio.wait_for(
+                    loop.run_in_executor(None, self._prompt_event_console, event),
+                    timeout=timeout_seconds,
+                )
+            except asyncio.TimeoutError:
+                raise flyte.errors.EventTimedoutError(
+                    f"Event '{event.name}' was not signaled within {timeout_seconds} seconds."
+                )
+        return self._prompt_event_console(event)
+
+    @staticmethod
+    def _prompt_event_console(event: Any) -> Any:
+        from rich.console import Console
+        from rich.prompt import Confirm, Prompt
+
+        console = Console()
+        console.print(f"\n[bold cyan]Event:[/bold cyan] {event.name}")
+        if event.description:
+            console.print(f"[dim]{event.description}[/dim]")
+
+        if event.data_type is bool:
+            result = Confirm.ask(event.prompt, console=console)
+        elif event.data_type in (int, float, str):
+            while True:
+                try:
+                    value = Prompt.ask(event.prompt, console=console)
+                    result = event.data_type(value)
+                    break
+                except ValueError:
+                    type_name = event.data_type.__name__
+                    console.print(f"[red]Please enter a valid {type_name}[/red]")
+        else:
+            raise ValueError(f"Unsupported data type {event.data_type}")
+
+        logger.debug(f"Event {event.name} received value: {result}")
+        return result
+
+
+def _substitute_callback_uri(obj: Any, callback_uri: str) -> Any:
+    """Recursively replace ``{callback_uri}`` in all string values."""
+    if isinstance(obj, str):
+        return obj.replace("{callback_uri}", callback_uri)
+    if isinstance(obj, dict):
+        return {k: _substitute_callback_uri(v, callback_uri) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_substitute_callback_uri(item, callback_uri) for item in obj]
+    return obj

@@ -62,9 +62,10 @@ class SGLangAppEnvironment(flyte.app.AppEnvironment):
     :param model_path: Remote path to model (e.g., s3://bucket/path/to/model).
     :param model_hf_path: Hugging Face path to model (e.g., Qwen/Qwen3-0.6B).
     :param model_id: Model id that is exposed by SGLang.
-    :param stream_model: Set to True to stream model from blob store to the GPU directly.
-        If False, the model will be downloaded to the local file system first and then loaded
-        into the GPU.
+    :param stream_model: When ``model_path`` is set, use True to stream weights from object
+        storage to the GPU (Flyte loader integration). Ignored for ``model_hf_path``-only apps,
+        which use SGLang's normal Hugging Face download path. If False with ``model_path``,
+        the model is downloaded to the local filesystem first, then loaded.
     """
 
     port: int | Port = 8080
@@ -123,8 +124,12 @@ class SGLangAppEnvironment(flyte.app.AppEnvironment):
         if self.parameters:
             raise ValueError("parameters cannot be set for SGLangAppEnvironment")
 
-        input_kwargs = {}
-        if self.stream_model:
+        # Flyte blob streaming requires ``model_path`` (remote / RunOutput). HF-only apps use
+        # SGLang's default loading regardless of ``stream_model``.
+        use_flyte_blob_streaming = bool(self.stream_model and self.model_path)
+
+        input_kwargs: dict[str, Any] = {}
+        if use_flyte_blob_streaming:
             self.env_vars["FLYTE_MODEL_LOADER_STREAM_SAFETENSORS"] = "true"
             input_kwargs["env_var"] = "FLYTE_MODEL_LOADER_REMOTE_MODEL_PATH"
             input_kwargs["download"] = False

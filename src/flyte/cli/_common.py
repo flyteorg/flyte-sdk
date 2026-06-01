@@ -107,6 +107,7 @@ class CLIConfig:
     log_level: int | None = logging.ERROR
     log_format: LogFormat = "console"
     reset_root_logger: bool = False
+    user_log_level: int | None = None
     endpoint: str | None = None
     insecure: bool = False
     image_builder: str | None = None
@@ -178,6 +179,7 @@ class CLIConfig:
             updated_config,
             log_level=self.log_level,
             log_format=self.log_format,
+            user_log_level=self.user_log_level,
             root_dir=pathlib.Path(root_dir).resolve() if root_dir else None,
             images=images,
             image_builder=self.image_builder,
@@ -326,7 +328,12 @@ class ObjectsPerFileGroup(GroupBase):
         sys.modules[module_name] = module
 
         sys.path.append(module_path)
-        spec.loader.exec_module(module)
+        try:
+            spec.loader.exec_module(module)
+        except click.ClickException:
+            raise
+        except (ImportError, SyntaxError, NameError, AttributeError, TypeError, ValueError) as e:
+            raise click.ClickException(f"Failed to load {self.filename}: {type(e).__name__}: {e}") from e
 
         self._objs = self._filter_objects(module)
         if not self._objs:
@@ -467,6 +474,26 @@ def get_console() -> Console:
     return Console(color_system="auto", force_terminal=True)
 
 
+def safe_spinner(spinner: str = "dots") -> str:
+    """
+    Pick an ASCII-safe spinner when stdout encoding can't represent the requested
+    spinner's characters (e.g. legacy Windows cp1252 consoles can't encode the
+    braille characters used by Rich's default "dots" spinner, which crashes
+    mid-render with UnicodeEncodeError).
+    """
+    import sys
+
+    encoding = getattr(sys.stdout, "encoding", None) or ""
+    if encoding.lower().replace("-", "") in ("utf8", "utf16", "utf32"):
+        return spinner
+    try:
+        # Probe with a representative non-ASCII char from the "dots" spinner.
+        "⠙".encode(encoding)
+    except (UnicodeEncodeError, LookupError):
+        return "line"
+    return spinner
+
+
 def cli_status(output_format: OutputFormat, message: str, spinner: str = "dots"):
     """
     Return a context manager for status display.
@@ -476,7 +503,7 @@ def cli_status(output_format: OutputFormat, message: str, spinner: str = "dots")
 
     if output_format in ("json", "table-simple", "json-raw"):
         return nullcontext()
-    return get_console().status(message, spinner=spinner)
+    return get_console().status(message, spinner=safe_spinner(spinner))
 
 
 def print_output(renderable: Any, output_format: OutputFormat) -> None:

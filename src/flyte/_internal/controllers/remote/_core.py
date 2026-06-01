@@ -7,6 +7,7 @@ import threading
 from asyncio import Event
 from typing import Awaitable, Coroutine, Optional
 
+import httpx
 from aiolimiter import AsyncLimiter
 from connectrpc.code import Code
 from connectrpc.errors import ConnectError
@@ -65,7 +66,7 @@ class Controller:
         self._shared_queue: asyncio.Queue[Action] = asyncio.Queue(maxsize=10000)
         self._running = False
         self._resource_log_task = None
-        self._workers = workers
+        self._workers = int(os.getenv("_F_CTRL_WORKERS", str(workers)))
         self._max_retries = int(os.getenv("_F_MAX_RETRIES", max_system_retries))
         self._resource_log_interval = resource_log_interval_sec
         self._min_backoff_on_err = min_backoff_on_err_sec
@@ -90,14 +91,29 @@ class Controller:
     @log
     def submit_action_sync(self, action: Action) -> Action:
         """Synchronous version of submit that runs in the controller's event loop"""
-        fut = self._run_coroutine_in_controller_thread(self._bg_submit_action(action))
+        fut = self._run_coroutine_in_controller_thread(self._bg_submit_and_wait_for_action(action))
         return fut.result()
 
     # --------------- Public async methods
     @log
-    async def submit_action(self, action: Action) -> Action:
+    async def submit_and_wait_for_action(self, action: Action) -> Action:
         """Public API to submit a resource and wait for completion"""
-        return await self._run_coroutine_in_controller_thread(self._bg_submit_action(action))
+        return await self._run_coroutine_in_controller_thread(self._bg_submit_and_wait_for_action(action))
+
+    @log
+    async def submit_action(self, action: Action) -> Action:
+        """Public API to submit a resource and wait for completion (alias for submit_and_wait_for_action)"""
+        return await self.submit_and_wait_for_action(action)
+
+    @log
+    async def start_action(self, action: Action) -> None:
+        """Submit a resource without waiting for completion. Returns immediately after enqueue."""
+        await self._run_coroutine_in_controller_thread(self._bg_submit_action(action))
+
+    @log
+    async def wait_for_action(self, action: Action) -> Action:
+        """Wait for a previously submitted action to complete. Returns the final action state."""
+        return await self._run_coroutine_in_controller_thread(self._bg_wait_for_action(action))
 
     async def get_action(self, action_id: identifier_pb2.ActionIdentifier, parent_action_name: str) -> Optional[Action]:
         """Get the action from the informer"""
@@ -274,8 +290,8 @@ class Controller:
         if informer:
             await informer.stop()
 
-    async def _bg_submit_action(self, action: Action) -> Action:
-        """Submit a resource and await its completion, returning the final state"""
+    async def _bg_submit_action(self, action: Action) -> None:
+        """Submit a resource to the informer. Returns immediately after enqueue."""
         logger.debug(f"{threading.current_thread().name} Submitting action {action.name}")
         informer = await self._informers.get_or_create(
             action.action_id.run,
@@ -288,19 +304,50 @@ class Controller:
         )
         await informer.submit(action)
 
+    async def _bg_wait_for_action(self, action: Action) -> Action:
+        """Wait for an action to complete and return its final state."""
+        informer = await self._informers.get_or_create(
+            action.action_id.run,
+            action.parent_action_name,
+            self._shared_queue,
+            self._state_service,
+            fn=self._bg_handle_informer_error,
+            timeout=self._informer_start_wait_timeout,
+            actions_service=self._actions_service,
+        )
         logger.debug(f"{threading.current_thread().name} Waiting for completion of {action.name}")
-        # Wait for completion
-        await informer.wait_for_action_completion(action.name)
+        # Wait for completion.  For trace actions apply a timeout so a
+        # transient watch failure (e.g. gRPC deserialization returning None)
+        # doesn't block the caller indefinitely.  Task actions may legitimately
+        # run for hours, so they wait without a timeout.
+        if action.type == "trace":
+            _trace_timeout = float(os.getenv("_F_TRACE_COMPLETION_TIMEOUT", "60"))
+            try:
+                await asyncio.wait_for(informer.wait_for_action_completion(action.name), timeout=_trace_timeout)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    f"{threading.current_thread().name} Trace completion wait timed out after {_trace_timeout}s "
+                    f"for {action.name}, continuing anyway"
+                )
+                await informer.fire_completion_event(action.name)
+        else:
+            await informer.wait_for_action_completion(action.name)
         logger.info(f"{threading.current_thread().name} Action {action.name} completed")
 
         # Get final resource state and clean up
         final_resource = await informer.get(action.name)
         if final_resource is None:
-            raise ValueError(f"Action {action.name} not found")
+            logger.warning(f"Action {action.name} not found in cache after completion, returning action stub")
+            return action
         logger.debug(f"{threading.current_thread().name} Removed completion event for action {action.name}")
         await informer.remove(action.name)  # TODO we should not remove maybe, we should keep a record of completed?
         logger.debug(f"{threading.current_thread().name} Removed action {action.name}")
         return final_resource
+
+    async def _bg_submit_and_wait_for_action(self, action: Action) -> Action:
+        """Submit a resource and await its completion, returning the final state."""
+        await self._bg_submit_action(action)
+        return await self._bg_wait_for_action(action)
 
     async def _bg_cancel_action(self, action: Action):
         """
@@ -349,6 +396,7 @@ class Controller:
             async with self._rate_limiter:
                 task: run_definition_pb2.TaskAction | None = None
                 trace: run_definition_pb2.TraceAction | None = None
+                condition: run_definition_pb2.ConditionAction | None = None
                 if action.type == "task":
                     if action.task is None:
                         raise flyte.errors.RuntimeSystemError(
@@ -373,6 +421,8 @@ class Controller:
                     )
                 elif action.type == "trace":
                     trace = action.trace
+                elif action.type == "condition":
+                    condition = action.condition
 
                 logger.debug(f"Attempting to launch action: {action.name}, actions? {bool(self._actions_service)}")
                 try:
@@ -384,6 +434,7 @@ class Controller:
                                     parent_action_name=action.parent_action_name,
                                     task=task,
                                     trace=trace,
+                                    condition=condition,
                                     input_uri=action.inputs_uri,
                                     run_output_base=action.run_output_base,
                                     group=action.group.name if action.group else None,
@@ -406,17 +457,33 @@ class Controller:
                             timeout_ms=int(self._enqueue_timeout * 1000),
                         )
                     logger.info(f"Successfully launched action: {action.name}")
+                except httpx.TransportError as e:
+                    # Transport-level failure (e.g. ConnectTimeout reaching the IDP during auth refresh,
+                    # ReadTimeout, DNS failure). These never produced an HTTP response, so they bypass
+                    # the ConnectError classification below. Treat as transient and retry with backoff.
+                    logger.warning(
+                        f"Transient transport error launching action {action.name} "
+                        f"({type(e).__name__}: {e}); will back off and retry."
+                    )
+                    raise flyte.errors.SlowDownError(f"Transient transport error ({type(e).__name__}): {e}") from e
                 except ConnectError as e:
                     if e.code == Code.ALREADY_EXISTS:
                         logger.info(f"Action {action.name} already exists, continuing to monitor.")
                         return
+                    if e.code == Code.ABORTED:
+                        # The run was aborted; engine will auto-abort other in-flight actions.
+                        # Surface as a system error — outer handler in _bg_run wraps and exits.
+                        raise flyte.errors.RuntimeSystemError(e.code.name, f"Run aborted: {e.message}") from e
                     if e.code in [
-                        Code.FAILED_PRECONDITION,
                         Code.INVALID_ARGUMENT,
                         Code.NOT_FOUND,
                     ]:
-                        raise flyte.errors.RuntimeSystemError(e.code.name, f"Precondition failed: {e.message}") from e
-                    # For all other errors, we will retry with backoff
+                        # Not retryable; surface as a per-action system error.
+                        raise flyte.errors.RuntimeSystemError(
+                            e.code.name, f"Action launch failed ({e.code.name}): {e.message}"
+                        ) from e
+                    # FAILED_PRECONDITION indicates the shard is wrong or we've hit a limit — retry with backoff.
+                    # For all other errors, we will also retry with backoff.
                     logger.error(
                         f"Failed to launch action: {action.name}, Code: {e.code}, Details {e.message} backing off..."
                     )
@@ -471,10 +538,13 @@ class Controller:
                     await self._shared_queue.put(action)
             except Exception as e:
                 logger.error(f"[{worker_id}] Error in controller loop for {action.name}: {e}")
+                if isinstance(e, flyte.errors.SlowDownError):
+                    reason = f"retries {action.retries} / {self._max_retries} exhausted"
+                else:
+                    reason = f"non-retryable {type(e).__name__}"
                 err = flyte.errors.RuntimeSystemError(
                     code=type(e).__name__,
-                    message=f"Controller failed, system retries {action.retries} / {self._max_retries} "
-                    f"crossed threshold, for action {action.name}: {e}",
+                    message=f"Controller failed for action {action.name} ({reason}): {e}",
                     worker=worker_id,
                 )
                 err.__cause__ = e

@@ -60,8 +60,99 @@ def init() -> None:
         logger.debug("Failed to initialize Sentry", exc_info=True)
 
 
+def _iter_cause_chain(exc: BaseException):
+    """Walk __cause__ / __context__ chain so wrapping doesn't hide the real type.
+
+    Bounded depth - exception chains in the wild stay shallow (3-5 deep), but a
+    bug elsewhere could create a cycle and we don't want this to spin.
+    """
+    seen: set[int] = set()
+    cur: BaseException | None = exc
+    depth = 0
+    while cur is not None and id(cur) not in seen and depth < 16:
+        yield cur
+        seen.add(id(cur))
+        nxt = cur.__cause__ or cur.__context__
+        cur = nxt
+        depth += 1
+
+
+_USER_ACTIONABLE_CONNECT_CODES: frozenset[str] = frozenset(
+    {
+        "UNAUTHENTICATED",
+        "PERMISSION_DENIED",
+        "FAILED_PRECONDITION",
+        "INVALID_ARGUMENT",
+        "NOT_FOUND",
+        "ALREADY_EXISTS",
+    }
+)
+
+
+def _is_user_actionable_connect_error(exc: BaseException) -> bool:
+    """ConnectError responses the backend uses to tell the user their request was wrong.
+
+    The CLI's InvokeBaseMixin (flyte/cli/_common.py) already maps these same codes
+    to ClickException — they are user/config problems, not SDK crashes. But code
+    paths outside the CLI (capture_exception in _run.py, capture_errors on deploy)
+    surface RuntimeSystemError wrappers whose cause chain still terminates in a
+    ConnectError, and those leak into Sentry as if they were SDK bugs.
+    """
+    try:
+        from connectrpc.errors import ConnectError
+    except ImportError:
+        return False
+    if not isinstance(exc, ConnectError):
+        return False
+    code = getattr(exc, "code", None)
+    return getattr(code, "name", None) in _USER_ACTIONABLE_CONNECT_CODES
+
+
+def _is_user_error(exc: BaseException) -> bool:
+    """Errors raised intentionally as user-facing messages — not crash reports."""
+    try:
+        import click
+
+        click_user_exc: tuple[type, ...] = (click.Abort, click.exceptions.Exit, click.ClickException)
+    except ImportError:
+        click_user_exc = ()
+
+    try:
+        from flyte.errors import InitializationError, RuntimeUserError
+
+        # RuntimeUserError is the parent class of ModuleLoadError, DeploymentError,
+        # ImageBuildError, OOMError, TaskTimeoutError, RuntimeDataValidationError,
+        # CodeBundleError, etc. — all "this is your code/config, not an SDK bug"
+        # errors. InitializationError is a sibling BaseRuntimeError, also user-facing.
+        flyte_user_exc: tuple[type, ...] = (RuntimeUserError, InitializationError)
+    except ImportError:
+        flyte_user_exc = ()
+
+    # Auth failures (expired refresh token, expired device code, IDP rejection)
+    # are wrapped in RuntimeError("SelectCluster failed...") -> RuntimeSystemError
+    # in _upload_single_file, so isinstance() on the outer exc misses them.
+    # Walk __cause__ / __context__ to catch the original.
+    try:
+        from flyte.remote._client.auth.errors import AccessTokenNotFoundError, AuthenticationError
+
+        auth_user_exc: tuple[type, ...] = (AccessTokenNotFoundError, AuthenticationError)
+    except ImportError:
+        auth_user_exc = ()
+
+    user_excs = click_user_exc + flyte_user_exc + auth_user_exc
+
+    for cause in _iter_cause_chain(exc):
+        if user_excs and isinstance(cause, user_excs):
+            return True
+        if _is_user_actionable_connect_error(cause):
+            return True
+    return False
+
+
 def capture_exception(exc: BaseException) -> None:
     """Capture an exception and send it to Sentry."""
+    if _is_user_error(exc):
+        return
     try:
         init()
         import sentry_sdk

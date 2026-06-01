@@ -12,6 +12,7 @@ from flyteidl2.common import identifier_pb2
 from flyteidl2.dataproxy import dataproxy_service_pb2
 from flyteidl2.dataproxy.dataproxy_service_connect import DataProxyServiceClient
 from flyteidl2.project.project_service_connect import ProjectServiceClient
+from flyteidl2.secret import payload_pb2 as secret_payload_pb2
 from flyteidl2.secret.secret_connect import SecretServiceClient
 from flyteidl2.settings.settings_service_connect import SettingsServiceClient
 from flyteidl2.task.task_service_connect import TaskServiceClient
@@ -316,6 +317,118 @@ class ClusterAwareDataProxy:
         return DataProxyServiceClient(**new_cfg.connect_kwargs())
 
 
+class ClusterAwareSecretService:
+    """Secret service client that routes each call to the correct cluster.
+
+    Same pattern as ClusterAwareDataProxy: uses SelectCluster with
+    OPERATION_USE_SECRETS to discover the cluster endpoint, then dispatches
+    to a per-cluster SecretServiceClient. Clients are cached by project.
+    """
+
+    def __init__(
+        self,
+        cluster_service: ClusterService,
+        session_config: SessionConfig,
+        default_client: SecretServiceClient,
+    ):
+        self._cluster_service = cluster_service
+        self._session_config = session_config
+        self._default_client = default_client
+
+    async def create_secret(
+        self, request: secret_payload_pb2.CreateSecretRequest
+    ) -> secret_payload_pb2.CreateSecretResponse:
+        client = await self._resolve(request.id.organization, request.id.project, request.id.domain)
+        return await client.create_secret(request)
+
+    async def update_secret(
+        self, request: secret_payload_pb2.UpdateSecretRequest
+    ) -> secret_payload_pb2.UpdateSecretResponse:
+        client = await self._resolve(request.id.organization, request.id.project, request.id.domain)
+        return await client.update_secret(request)
+
+    async def get_secret(self, request: secret_payload_pb2.GetSecretRequest) -> secret_payload_pb2.GetSecretResponse:
+        client = await self._resolve(request.id.organization, request.id.project, request.id.domain)
+        return await client.get_secret(request)
+
+    async def list_secrets(
+        self, request: secret_payload_pb2.ListSecretsRequest
+    ) -> secret_payload_pb2.ListSecretsResponse:
+        client = await self._resolve(request.organization, request.project, request.domain)
+        return await client.list_secrets(request)
+
+    async def delete_secret(
+        self, request: secret_payload_pb2.DeleteSecretRequest
+    ) -> secret_payload_pb2.DeleteSecretResponse:
+        client = await self._resolve(request.id.organization, request.id.project, request.id.domain)
+        return await client.delete_secret(request)
+
+    async def client_for_cluster_pool(self, org: str, name: str) -> SecretService:
+        """Resolve a per-cluster SecretService client for a cluster pool.
+
+        Used by SDK callers (e.g. flyte.remote.Secret) when an operation is scoped
+        to a cluster pool rather than to a project/domain/org. cluster_pool is
+        SDK-side routing metadata only — it is passed to SelectCluster but is not
+        carried in the secret request proto, since the resolved cluster's secret
+        service does not need it.
+        """
+        return await self._resolve(org, "", "", name)
+
+    @alru_cache
+    async def _resolve(self, org: str, project: str, domain: str, cluster_pool: str | None = None) -> SecretService:
+        """Cached SelectCluster lookup for secrets.
+
+        Routes by ClusterPoolIdentifier when cluster_pool is set;
+        otherwise by ProjectIdentifier when project and domain are set,
+        DomainIdentifier when only domain is set (domain-scoped secrets),
+        or OrgIdentifier for org-wide secrets.
+        """
+        req = cluster_payload_pb2.SelectClusterRequest(
+            operation=cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_USE_SECRETS,
+        )
+        if cluster_pool:
+            req.cluster_pool_id.CopyFrom(identifier_pb2.ClusterPoolIdentifier(organization=org, name=cluster_pool))
+        elif project and domain:
+            req.project_id.CopyFrom(identifier_pb2.ProjectIdentifier(name=project, domain=domain, organization=org))
+        elif domain:
+            req.domain_id.CopyFrom(identifier_pb2.DomainIdentifier(name=domain, organization=org))
+        else:
+            req.org_id.CopyFrom(identifier_pb2.OrgIdentifier(name=org))
+        return await self._select_and_build(req)
+
+    async def _select_and_build(self, req: cluster_payload_pb2.SelectClusterRequest) -> SecretService:
+        """SelectCluster + build the per-cluster Secret client.
+
+        Wrapped by the @alru_cache resolvers above; @alru_cache deduplicates
+        concurrent callers and only caches successful results, so a transient
+        failure won't poison the entry.
+        """
+        from flyte._logging import logger
+
+        try:
+            resp = await self._cluster_service.select_cluster(req)
+        except Exception as e:
+            raise RuntimeError(f"SelectCluster failed for OPERATION_USE_SECRETS: {e}") from e
+
+        endpoint = resp.cluster_endpoint
+        if not endpoint or endpoint == self._session_config.endpoint:
+            return self._default_client
+
+        try:
+            new_cfg = await create_session_config(
+                endpoint,
+                self._session_config.api_key,
+                insecure=self._session_config.insecure,
+                insecure_skip_verify=self._session_config.insecure_skip_verify,
+                auth_endpoint=self._session_config.endpoint,
+            )
+        except Exception as e:
+            raise RuntimeError(f"Failed to create session for cluster endpoint '{endpoint}': {e}") from e
+
+        logger.debug(f"Created SecretService client for cluster endpoint: {endpoint}")
+        return SecretServiceClient(**new_cfg.connect_kwargs())
+
+
 class ClientSet:
     def __init__(self, session_cfg: SessionConfig):
         self._console = Console(session_cfg.endpoint, session_cfg.insecure)
@@ -326,11 +439,15 @@ class ClientSet:
         self._app_service = AppServiceClient(**shared)
         self._run_service = RunServiceClient(**shared)
         self._log_service = RunLogsServiceClient(**shared)
-        self._secrets_service = SecretServiceClient(**shared)
         self._identity_service = IdentityServiceClient(**shared)
         self._trigger_service = TriggerServiceClient(**shared)
         self._cluster_service = ClusterServiceClient(**shared)
         self._settings_service = SettingsServiceClient(**shared)
+        self._secrets_service = ClusterAwareSecretService(
+            cluster_service=self._cluster_service,
+            session_config=session_cfg,
+            default_client=SecretServiceClient(**shared),
+        )
         self._dataproxy = ClusterAwareDataProxy(
             cluster_service=self._cluster_service,
             session_config=session_cfg,

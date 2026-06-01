@@ -16,6 +16,7 @@ Three modes:
 - **Verbatim mode** (``code=``, ``auto_io=False``): run a complete Python script as-is.
   CLI args are forwarded but the script handles all I/O itself.
 - **Command mode** (``command=``): run any shell command (pytest, binary, non-Python code, etc.).
+
 """
 
 import asyncio
@@ -157,36 +158,8 @@ dir_sandbox = flyte.sandbox.create(
     outputs={"processed_dir": Dir, "copied_files": int},
 )
 
-# Example 6 — block_network=True: no outbound network access
-#
-# Network access is blocked by default. The sandbox can only read its inputs
-# and write its outputs — any attempt to reach the network will fail.
 
-isolated_sandbox = flyte.sandbox.create(
-    name="isolated-compute",
-    code="""\
-import urllib.request
-with urllib.request.urlopen("https://example.com") as r:
-    status = str(r.status)
-""",
-    outputs={"status": str},
-    block_network=True,
-)
-
-# Example 7 — block_network=False (default): outbound network access allowed
-
-networked_sandbox = flyte.sandbox.create(
-    name="networked-fetch",
-    code="""\
-import urllib.request
-with urllib.request.urlopen("https://example.com") as r:
-    status = str(r.status)
-""",
-    outputs={"status": str},
-)
-
-
-# Example 8 — as_task() + deploy: build a deployable sandbox task
+# Example 6 — as_task() + deploy: build a deployable sandbox task
 #
 # Use ``as_task()`` to get a ContainerTask with ``_script`` pre-filled as a
 # default.
@@ -278,15 +251,6 @@ async def run_pipeline() -> dict:
     )
     summary_text = (processed_dir_path / "summary.txt").read_text().strip()
 
-    # Network-blocked sandbox: pure computation, no network
-    try:
-        isolated_result = await isolated_sandbox.run.aio()
-    except Exception as e:
-        isolated_result = f"Failed to access network: {e}"
-
-    # Network-allowed sandbox: fetch external URL
-    status = await networked_sandbox.run.aio()
-
     # Deploy a sandbox task
     deployment_summary = await deploy_sandbox_task()
 
@@ -300,8 +264,6 @@ async def run_pipeline() -> dict:
         "dir_copied_files": copied_files,
         "dir_output_files": ",".join(dir_output_files),
         "dir_summary": summary_text,
-        "isolated_result": isolated_result,
-        "networked_status": status,
         "deployment_summary": deployment_summary,
     }
 
@@ -326,13 +288,6 @@ def run_pipeline_sync() -> dict:
         str(path.relative_to(processed_dir_path)) for path in processed_dir_path.rglob("*") if path.is_file()
     )
     summary_text = (processed_dir_path / "summary.txt").read_text().strip()
-
-    try:
-        isolated_result = isolated_sandbox.run()
-    except Exception as e:
-        isolated_result = f"Failed to access network: {e}"
-
-    status = networked_sandbox.run()
     deployment_summary = asyncio.run(deploy_sandbox_task())
 
     return {
@@ -345,8 +300,6 @@ def run_pipeline_sync() -> dict:
         "dir_copied_files": copied_files,
         "dir_output_files": ",".join(dir_output_files),
         "dir_summary": summary_text,
-        "isolated_result": isolated_result,
-        "networked_status": status,
         "deployment_summary": deployment_summary,
     }
 

@@ -1,5 +1,6 @@
 import os
 import pathlib
+import shutil
 from typing import Any, Dict, List, Literal, Optional, Tuple, Type, Union
 
 from flyteidl2.core import tasks_pb2
@@ -52,9 +53,6 @@ class ContainerTask(TaskTemplate):
     :param output_data_dir: The directory where the output data is stored. This is a string or a Path object.
     :param metadata_format: The format of the output file. This can be "JSON", "YAML", or "PROTO".
     :param local_logs: If True, logs will be printed to the console in the local execution.
-    :param block_network: If True, blocks all outbound network access. Locally this
-        sets Docker ``network_mode=none``. On-cluster it applies the pod template
-        ``sandboxed-pod-template``. Defaults to False.
     """
 
     MetadataFormat = Literal["JSON", "YAML", "PROTO"]
@@ -71,22 +69,8 @@ class ContainerTask(TaskTemplate):
         output_data_dir: str | pathlib.Path = "/var/outputs",
         metadata_format: MetadataFormat = "JSON",
         local_logs: bool = True,
-        block_network: bool = False,
         **kwargs,
     ):
-        if block_network:
-            existing = kwargs.get("pod_template")
-            if existing is None:
-                kwargs["pod_template"] = "sandboxed-pod-template"
-            elif isinstance(existing, str):
-                raise ValueError(
-                    "block_network=True cannot be combined with a string pod_template reference. "
-                    "Use a PodTemplate object instead so the 'sandboxed: true' label can be merged in, "
-                    "or ensure the referenced cluster template already includes that label."
-                )
-            else:
-                existing.labels = {**(existing.labels or {}), "sandboxed": "true"}
-
         super().__init__(
             task_type="raw-container",
             name=name,
@@ -108,7 +92,6 @@ class ContainerTask(TaskTemplate):
             raise ValueError("All elements in the command list must be strings.")
         if arguments and any(not isinstance(a, str) for a in arguments):
             raise ValueError("All elements in the arguments list must be strings.")
-        self._block_network = block_network
         self._cmd = command
         self._args = arguments
         self._input_data_dir = input_data_dir
@@ -156,7 +139,12 @@ class ContainerTask(TaskTemplate):
                         "mode": "rw",
                     }
                 else:
-                    command = command.replace(f"{{{{.inputs.{k}}}}}", str(input_val))
+                    # Normalize booleans to lowercase so local template
+                    # substitution matches the string form used by
+                    # container/runtime execution ("true"/"false")
+                    # instead of Python's "True"/"False".
+                    rendered = str(input_val).lower() if isinstance(input_val, bool) else str(input_val)
+                    command = command.replace(f"{{{{.inputs.{k}}}}}", rendered)
         else:
             command = cmd
 
@@ -277,6 +265,17 @@ class ContainerTask(TaskTemplate):
                     remote_path = os.path.join(str(self._input_data_dir), k)
                     volume_bindings[local_path] = {"bind": remote_path, "mode": "rw"}
 
+        # Materialize list[File] inputs into /var/inputs/<name>/<i> so local
+        # docker execution matches the CoPilot layout used remotely.
+        for k, v in kwargs.items():
+            if isinstance(v, list) and all(isinstance(item, File) for item in v):
+                local_dir = storage.get_random_local_directory()
+                for i, item in enumerate(v):
+                    target = pathlib.Path(local_dir) / str(i)
+                    shutil.copy2(item.path, target)
+                remote_path = os.path.join(str(self._input_data_dir), k)
+                volume_bindings[str(local_dir)] = {"bind": remote_path, "mode": "rw"}
+
         volume_bindings[str(output_directory)] = {
             "bind": self._output_data_dir,
             "mode": "rw",
@@ -287,14 +286,14 @@ class ContainerTask(TaskTemplate):
             raise AssertionError(f"Only Image objects are supported, not strings. Got {self._image} instead.")
         uri = self._image.uri
         self._pull_image_if_not_exists(client, uri)
-        print(f"Command: {commands!r}")
 
         run_kwargs: Dict[str, Any] = {
             "volumes": volume_bindings,
             "detach": True,
         }
-        if self._block_network:
-            run_kwargs["network_mode"] = "none"
+
+        if self.local_logs:
+            logger.debug(f"Container command for task {self.name!r}: {commands!r}")
 
         container = client.containers.run(uri, command=commands, **run_kwargs)
 
@@ -305,7 +304,7 @@ class ContainerTask(TaskTemplate):
         if self.local_logs:
             logs = container.logs()
             for line in logs.splitlines():
-                print(f"[Local Container] {line!r}")
+                logger.debug(f"[Local Container {self.name!r}] {line!r}")
 
         output = await self._get_output(output_directory)
 

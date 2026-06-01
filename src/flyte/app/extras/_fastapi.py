@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import inspect
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -20,7 +19,6 @@ class FastAPIAppEnvironment(flyte.app.AppEnvironment):
     app: fastapi.FastAPI
     type: str = "FastAPI"
     uvicorn_config: uvicorn.Config | None = None
-    _caller_frame: inspect.FrameInfo | None = None
 
     def __post_init__(self):
         try:
@@ -62,16 +60,6 @@ class FastAPIAppEnvironment(flyte.app.AppEnvironment):
 
         self.links = [flyte.app.Link(path="/docs", title="FastAPI OpenAPI Docs", is_relative=True), *self.links]
         self._server = self._fastapi_app_server
-
-        # Capture the frame where this environment was instantiated
-        # This helps us find the module where the app variable is defined
-        frame = inspect.currentframe()
-        if frame and frame.f_back:
-            # Go up the call stack to find the user's module
-            # Skip the dataclass __init__ frame
-            caller_frame = frame.f_back
-            if caller_frame and caller_frame.f_back:
-                self._caller_frame = inspect.getframeinfo(caller_frame.f_back)
 
     async def _fastapi_app_server(self):
         try:

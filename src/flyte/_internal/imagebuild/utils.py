@@ -8,6 +8,7 @@ from typing import List, Optional
 from flyte._code_bundle._ignore import STANDARD_IGNORE_PATTERNS
 from flyte._image import DockerIgnore, Image
 from flyte._logging import logger
+from flyte.errors import ImageBuildError
 
 
 def copy_files_to_context(src: Path, context_path: Path, ignore_patterns: list[str] = STANDARD_IGNORE_PATTERNS) -> Path:
@@ -27,6 +28,18 @@ def copy_files_to_context(src: Path, context_path: Path, ignore_patterns: list[s
     :param ignore_patterns: A list of ignore patterns to apply when copying files. This is used to filter out files
         that should not be included in the Docker build context, such as those specified in a .dockerignore file.
     """
+    # Surface a user-actionable error if the user pointed an image layer at a path that doesn't
+    # exist on disk. Without this guard, ``shutil.copy`` raises ``FileNotFoundError`` from deep in
+    # the stack and the raw traceback ends up in Sentry as an unhandled SDK crash (see
+    # FLYTE-SDK-2X).
+    if not src.exists():
+        raise ImageBuildError(
+            f"Cannot copy '{src}' into the image build context: the path does not exist on disk. "
+            "Check that the file/directory you passed to your image layer "
+            "(e.g. with_requirements, with_source_folder, with_pyproject) is correct and "
+            "reachable from where you are running `flyte deploy`."
+        )
+
     if src.is_absolute() or ".." in str(src):
         rel_path = PurePath(*src.parts[1:])
         dst_path = context_path / "_flyte_abs_context" / rel_path
@@ -46,9 +59,18 @@ def copy_files_to_context(src: Path, context_path: Path, ignore_patterns: list[s
             # Create parent directory if needed
             dst_file.parent.mkdir(parents=True, exist_ok=True)
 
-            # Copy file (not directory)
+            # Copy file (not directory). Skip any entries that disappeared between
+            # ``pm.walk`` enumerating them and the copy (e.g. broken symlinks, transient venv
+            # files, or files removed mid-build) — surface a warning rather than aborting the
+            # entire image build.
             if src_file.is_file():
-                shutil.copy2(src_file, dst_file)
+                try:
+                    shutil.copy2(src_file, dst_file)
+                except FileNotFoundError:
+                    logger.warning(
+                        f"Skipping '{src_file}' while building image context: file disappeared "
+                        "between enumeration and copy."
+                    )
 
     else:
         # Single file
@@ -103,9 +125,24 @@ def get_and_list_dockerignore(image: Image) -> List[str]:
 
 def _extract_editables_from_uv_export(project_root: Path) -> list[str]:
     """Extracts editable dependencies from a uv export output."""
-    uv_export = subprocess.run(
-        ["uv", "export", "--no-emit-project"], cwd=project_root, capture_output=True, text=True, check=True
-    )
+    cmd = ["uv", "export", "--no-emit-project"]
+    try:
+        uv_export = subprocess.run(cmd, cwd=project_root, capture_output=True, text=True, check=True)
+    except FileNotFoundError as e:
+        raise ImageBuildError(
+            f"`uv` was not found on PATH while inspecting editable dependencies in {project_root}. "
+            "Install uv (https://docs.astral.sh/uv/) or ensure it is on PATH before running image build."
+        ) from e
+    except subprocess.CalledProcessError as e:
+        stderr = (e.stderr or "").strip()
+        stdout = (e.stdout or "").strip()
+        detail = stderr or stdout or "(no output from uv)"
+        raise ImageBuildError(
+            f"`{' '.join(cmd)}` failed in {project_root} with exit code {e.returncode} "
+            f"while resolving editable dependencies for image build:\n{detail}\n\n"
+            "Fix the uv project (e.g. resolve the failing lock or dependency conflict, "
+            "or run `uv lock` locally) and retry."
+        ) from e
     matches = []
     for line in uv_export.stdout.splitlines():
         if match := re.search(r"-e\s+([^\s]+)", line):

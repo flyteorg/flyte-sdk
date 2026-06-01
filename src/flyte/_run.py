@@ -6,7 +6,7 @@ import os
 import pathlib
 import sys
 import uuid
-from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union, cast
 
 from flyte._context import Context, contextual_run, internal_ctx
@@ -42,25 +42,10 @@ if TYPE_CHECKING:
     from flyte.remote._task import LazyEntity
 
     from ._code_bundle import CopyFiles
-    from ._internal.imagebuild.image_builder import ImageCache
 
 Mode = Literal["local", "remote", "hybrid"]
 CacheLookupScope = Literal["global", "project-domain"]
 
-
-@dataclass(frozen=True)
-class _CacheKey:
-    obj_id: int
-    dry_run: bool
-
-
-@dataclass(frozen=True)
-class _CacheValue:
-    code_bundle: CodeBundle | None
-    image_cache: Optional[ImageCache]
-
-
-_RUN_CACHE: Dict[_CacheKey, _CacheValue] = {}
 
 # ContextVar for run mode - thread-safe and coroutine-safe alternative to a global variable.
 # This allows offloaded types (files, directories, dataframes) to be aware of the run mode
@@ -79,7 +64,7 @@ async def _get_code_bundle_for_run(name: str) -> CodeBundle | None:
     run = await Run.get.aio(name=name)
     if run:
         run_details = await run.details.aio()
-        spec = run_details.action_details.pb2.resolved_task_spec
+        spec = run_details.action_details.pb2.task
         return extract_code_bundle(spec)
     return None
 
@@ -103,6 +88,7 @@ class _Runner:
         raw_data_path: str | None = None,
         metadata_path: str | None = None,
         run_base_dir: str | None = None,
+        run_start_time: Optional[datetime] = None,
         overwrite_cache: bool = False,
         project: str | None = None,
         domain: str | None = None,
@@ -112,6 +98,7 @@ class _Runner:
         interruptible: bool | None = None,
         log_level: int | None = None,
         log_format: LogFormat = "console",
+        user_log_level: int | None = None,
         reset_root_logger: bool = False,
         disable_run_cache: bool = False,
         queue: Optional[str] = None,
@@ -146,6 +133,7 @@ class _Runner:
         self._raw_data_path = raw_data_path
         self._metadata_path = metadata_path
         self._run_base_dir = run_base_dir
+        self._run_start_time = run_start_time
         self._overwrite_cache = overwrite_cache
         self._project = project
         self._domain = domain
@@ -155,6 +143,7 @@ class _Runner:
         self._interruptible = interruptible
         self._log_level = log_level
         self._log_format = log_format
+        self._user_log_level = user_log_level
         self._reset_root_logger = reset_root_logger
         self._disable_run_cache = disable_run_cache
         self._queue = queue
@@ -207,76 +196,68 @@ class _Runner:
             if obj.parent_env is None:
                 raise ValueError("Task is not attached to an environment. Please attach the task to an environment")
 
-            if (
-                not self._disable_run_cache
-                and _RUN_CACHE.get(_CacheKey(obj_id=id(obj), dry_run=self._dry_run)) is not None
-            ):
-                cached_value = _RUN_CACHE[_CacheKey(obj_id=id(obj), dry_run=self._dry_run)]
-                code_bundle = cached_value.code_bundle
-                image_cache = cached_value.image_cache
+            # Resolve any CodeBundleLayer layers before building images.
+            # Must cover the parent env AND all depends_on envs (recursively)
+            # so that _build_images can compute the content hash for every image.
+            parent_env = cast(Environment, obj.parent_env())
+            from flyte._image import Image, resolve_code_bundle_layer
+
+            from ._deploy import plan_deploy
+
+            plan_envs = list(plan_deploy(parent_env)[0].envs.values())
+            for _env in plan_envs:
+                if isinstance(_env.image, Image):
+                    _env.image = resolve_code_bundle_layer(_env.image, self._copy_files, pathlib.Path(cfg.root_dir))
+
+            if not self._dry_run:
+                image_cache = await build_images.aio(parent_env)
             else:
-                # Resolve any CodeBundleLayer layers before building images.
-                # Must cover the parent env AND all depends_on envs (recursively)
-                # so that _build_images can compute the content hash for every image.
-                parent_env = cast(Environment, obj.parent_env())
-                from flyte._image import Image, resolve_code_bundle_layer
+                image_cache = None
 
-                from ._deploy import plan_deploy
+            include_files = collect_env_include_files(plan_envs)
+            skip_cache = self._disable_run_cache
 
-                plan_envs = list(plan_deploy(parent_env)[0].envs.values())
-                for _env in plan_envs:
-                    if isinstance(_env.image, Image):
-                        _env.image = resolve_code_bundle_layer(_env.image, self._copy_files, pathlib.Path(cfg.root_dir))
-
-                if not self._dry_run:
-                    image_cache = await build_images.aio(parent_env)
-                else:
-                    image_cache = None
-
-                include_files = collect_env_include_files(plan_envs)
-
-                if self._interactive_mode:
-                    if include_files:
-                        raise ValueError(
-                            "Environment.include is not supported in interactive/pkl runs. "
-                            "Run from a file or remove `include` from the environment."
-                        )
-                    code_bundle = await build_pkl_bundle(
-                        obj,
-                        upload_to_controlplane=not self._dry_run,
-                        copy_bundle_to=self._copy_bundle_to,
+            if self._interactive_mode:
+                if include_files:
+                    raise ValueError(
+                        "Environment.include is not supported in interactive/pkl runs. "
+                        "Run from a file or remove `include` from the environment."
                     )
-                elif self._copy_files == "custom":
-                    if not self._bundle_relative_paths or not self._bundle_from_dir:
-                        raise ValueError("copy_style='custom' requires _bundle_relative_paths and _bundle_from_dir")
-                    merged_paths = tuple(self._bundle_relative_paths) + include_files
-                    code_bundle = await build_code_bundle_from_relative_paths(
-                        merged_paths,
-                        from_dir=self._bundle_from_dir,
-                        dryrun=self._dry_run,
-                        copy_bundle_to=self._copy_bundle_to,
-                    )
-                elif self._copy_files != "none":
-                    code_bundle = await build_code_bundle(
-                        from_dir=cfg.root_dir,
-                        dryrun=self._dry_run,
-                        copy_bundle_to=self._copy_bundle_to,
-                        copy_style=self._copy_files,
-                        additional_files=include_files,
-                    )
-                elif include_files:
-                    code_bundle = await build_code_bundle_from_relative_paths(
-                        include_files,
-                        from_dir=pathlib.Path(cfg.root_dir),
-                        dryrun=self._dry_run,
-                        copy_bundle_to=self._copy_bundle_to,
-                    )
-                else:
-                    code_bundle = None
-            if not self._disable_run_cache:
-                _RUN_CACHE[_CacheKey(obj_id=id(obj), dry_run=self._dry_run)] = _CacheValue(
-                    code_bundle=code_bundle, image_cache=image_cache
+                code_bundle = await build_pkl_bundle(
+                    obj,
+                    upload_to_controlplane=not self._dry_run,
+                    copy_bundle_to=self._copy_bundle_to,
                 )
+            elif self._copy_files == "custom":
+                if not self._bundle_relative_paths or not self._bundle_from_dir:
+                    raise ValueError("copy_style='custom' requires _bundle_relative_paths and _bundle_from_dir")
+                merged_paths = tuple(self._bundle_relative_paths) + include_files
+                code_bundle = await build_code_bundle_from_relative_paths(
+                    merged_paths,
+                    from_dir=self._bundle_from_dir,
+                    dryrun=self._dry_run,
+                    copy_bundle_to=self._copy_bundle_to,
+                    skip_cache=skip_cache,
+                )
+            elif self._copy_files != "none":
+                code_bundle = await build_code_bundle(
+                    from_dir=cfg.root_dir,
+                    dryrun=self._dry_run,
+                    copy_bundle_to=self._copy_bundle_to,
+                    copy_style=self._copy_files,
+                    additional_files=include_files,
+                    skip_cache=skip_cache,
+                )
+            elif include_files:
+                code_bundle = await build_code_bundle_from_relative_paths(
+                    include_files,
+                    from_dir=pathlib.Path(cfg.root_dir),
+                    dryrun=self._dry_run,
+                    copy_bundle_to=self._copy_bundle_to,
+                    skip_cache=skip_cache,
+                )
+            else:
+                code_bundle = None
 
             version = self._version or (
                 code_bundle.computed_version if code_bundle and code_bundle.computed_version else None
@@ -317,10 +298,16 @@ class _Runner:
             else:
                 env["LOG_LEVEL"] = str(logger.getEffectiveLevel())
         env["LOG_FORMAT"] = self._log_format
+        if self._user_log_level is not None:
+            env["USER_LOG_LEVEL"] = str(self._user_log_level)
         if self._reset_root_logger:
             env["FLYTE_RESET_ROOT_LOGGER"] = "1"
         if self._debug:
             env["_F_E_VS"] = "1"
+
+        use_rust_controller_env_var = os.getenv("_F_USE_RUST_CONTROLLER")
+        if use_rust_controller_env_var:
+            env["_F_USE_RUST_CONTROLLER"] = use_rust_controller_env_var
 
         # These paths will be appended to sys.path at runtime.
         if cfg.sync_local_sys_paths:
@@ -567,7 +554,8 @@ class _Runner:
         run_name = self._name
         random_id = str(uuid.uuid4())[:6]
 
-        controller = create_controller("remote", endpoint="localhost:8090", insecure=True)
+        # controller = create_controller("remote", endpoint="localhost:8090", insecure=True)
+        controller = create_controller("rust", endpoint="localhost:8090", insecure=True)
         action = ActionID(name=action_name, run_name=run_name, project=project, domain=domain, org=org)
 
         inputs = obj.native_interface.convert_to_kwargs(*args, **kwargs)
@@ -592,18 +580,21 @@ class _Runner:
 
         async def _run_task() -> Tuple[Any, Optional[Exception]]:
             ctx = internal_ctx()
-            tctx = TaskContext(
-                action=action,
-                checkpoint_paths=checkpoint_paths,
-                code_bundle=code_bundle,
-                output_path=output_path,
-                version=version or "na",
-                raw_data_path=raw_data_path_obj,
-                compiled_image_cache=image_cache,
-                run_base_dir=run_base_dir,
-                report=flyte.report.Report(name=action.name),
-                custom_context=self._custom_context,
-            )
+            tctx_kwargs: Dict[str, Any] = {
+                "action": action,
+                "checkpoint_paths": checkpoint_paths,
+                "code_bundle": code_bundle,
+                "output_path": output_path,
+                "version": version or "na",  # does na not work for rust?
+                "raw_data_path": raw_data_path_obj,
+                "compiled_image_cache": image_cache,
+                "run_base_dir": run_base_dir,
+                "report": flyte.report.Report(name=action.name),
+                "custom_context": self._custom_context,
+            }
+            if self._run_start_time is not None:
+                tctx_kwargs["run_start_time"] = self._run_start_time
+            tctx = TaskContext(**tctx_kwargs)
             async with ctx.replace_task_context(tctx):
                 return await run_task(tctx=tctx, controller=controller, task=obj, inputs=inputs)
 
@@ -687,6 +678,7 @@ class _Runner:
             mode="local",
             custom_context=self._custom_context,
             disable_run_cache=self._disable_run_cache,
+            run_start_time=self._run_start_time or datetime.now(timezone.utc),
         )
 
         if self._tracker is not None:
@@ -831,6 +823,8 @@ def with_runcontext(
     interactive_mode: bool | None = None,
     raw_data_path: str | None = None,
     run_base_dir: str | None = None,
+    # TODO: will move onto RunSpec; for now accept as a run-context override (mainly for local simulation / tests).
+    run_start_time: Optional[datetime] = None,
     overwrite_cache: bool = False,
     project: str | None = None,
     domain: str | None = None,
@@ -840,6 +834,7 @@ def with_runcontext(
     interruptible: bool | None = None,
     log_level: int | None = None,
     log_format: LogFormat = "console",
+    user_log_level: int | None = None,
     reset_root_logger: bool = False,
     disable_run_cache: bool = False,
     queue: Optional[str] = None,
@@ -890,6 +885,9 @@ def with_runcontext(
          store raw data in specific locations.
     :param run_base_dir: Optional The base directory to use for the run. This is used to store the metadata for the run,
      that is passed between tasks.
+    :param run_start_time: Optional UTC datetime at which the run was triggered. If not provided, defaults to
+     ``datetime.now(timezone.utc)`` at TaskContext construction. Useful for local simulation/tests that need a
+     deterministic timestamp. Accessible inside a task via ``flyte.ctx().run_start_time``.
     :param overwrite_cache: Optional If true, the cache will be overwritten for the run
     :param project: Optional The project to use for the run
     :param domain: Optional The domain to use for the run
@@ -942,6 +940,7 @@ def with_runcontext(
         interactive_mode=interactive_mode,
         raw_data_path=raw_data_path,
         run_base_dir=run_base_dir,
+        run_start_time=run_start_time,
         overwrite_cache=overwrite_cache,
         env_vars=env_vars,
         labels=labels,
@@ -951,6 +950,7 @@ def with_runcontext(
         domain=domain,
         log_level=log_level,
         log_format=log_format,
+        user_log_level=user_log_level,
         reset_root_logger=reset_root_logger,
         disable_run_cache=disable_run_cache,
         queue=queue,

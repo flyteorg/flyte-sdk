@@ -18,6 +18,70 @@ APP_NAME_RE = re.compile(r"[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[
 INVALID_APP_PORTS = [8012, 8022, 8112, 9090, 9091]
 INTERNAL_APP_ENDPOINT_PATTERN_ENV_VAR = "INTERNAL_APP_ENDPOINT_PATTERN"
 
+# Root of the flyte SDK source tree (the directory that contains ``flyte/``).
+# Used by ``_find_user_caller_frame`` to skip every frame whose source file
+# lives inside the SDK, so that subclass ``__post_init__`` chains, helper
+# methods, and the synthesized dataclass ``__init__`` never get reported as
+# the user's caller.
+_SDK_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# Filenames that ``inspect.getframeinfo`` may report for synthesized frames
+# (e.g. dataclass-generated ``__init__`` is compiled with ``"<string>"``) that
+# can't possibly belong to user code.
+_SYNTHESIZED_FILENAME_PREFIXES = ("<",)
+
+
+def _is_sdk_frame(filename: str) -> bool:
+    """Return True if ``filename`` lives inside the flyte SDK source tree."""
+    if not filename or filename.startswith(_SYNTHESIZED_FILENAME_PREFIXES):
+        return True
+    try:
+        abs_filename = os.path.abspath(filename)
+    except (OSError, ValueError):
+        return False
+    try:
+        return os.path.commonpath([_SDK_ROOT, abs_filename]) == _SDK_ROOT
+    except ValueError:
+        # commonpath raises on mixed drives / unrelated roots.
+        return False
+
+
+def _find_user_caller_frame() -> inspect.Traceback | None:
+    """Walk up the call stack to the first user-code frame outside the SDK.
+
+    Returns an :class:`inspect.Traceback` pointing at whatever line of user
+    code triggered the construction of an :class:`AppEnvironment`. The walker
+    skips:
+
+    * frames whose source file lives inside the SDK source tree (covers every
+      ``AppEnvironment``/subclass ``__post_init__`` plus helper methods),
+    * synthesized frames whose ``co_filename`` is angle-bracketed
+      (``"<string>"``, ``"<frozen ...>"``, etc. — produced by the dataclass-
+      generated ``__init__``, ``exec``-compiled modules, frozen importers),
+    * user-authored ``__post_init__`` / ``__init__`` frames so that a user
+      subclass calling ``super().__post_init__()`` still resolves to the
+      caller that actually instantiated the env (factory helper, module
+      scope, …).
+
+    Whatever the first remaining frame is — module scope, factory helper, or
+    any other regular function — that's what we report.
+    """
+    f = inspect.currentframe()
+    f = f.f_back if f is not None else None
+    while f is not None:
+        co_filename = f.f_code.co_filename
+        if _is_sdk_frame(co_filename):
+            f = f.f_back
+            continue
+        if f.f_code.co_name in ("__post_init__", "__init__"):
+            # User-defined subclass init frame chaining super().__post_init__().
+            f = f.f_back
+            continue
+        break
+    if f is None:
+        return None
+    return inspect.getframeinfo(f)
+
 
 @rich.repr.auto
 @dataclass(init=True, repr=True)
@@ -89,6 +153,11 @@ class AppEnvironment(Environment):
     _server: Callable[[], None] | None = field(init=False, default=None)
     _on_startup: Callable[[], None] | None = field(init=False, default=None)
     _on_shutdown: Callable[[], None] | None = field(init=False, default=None)
+    # Frame of the user code that instantiated this environment. Used by
+    # ``flyte._internal.resolvers.app_env.AppEnvResolver`` to locate the module
+    # that holds the module-level ``app_env`` binding the deployed container
+    # needs to import.
+    _caller_frame: inspect.Traceback | None = field(init=False, default=None, repr=False, compare=False)
 
     def _validate_name(self):
         if not APP_NAME_RE.fullmatch(self.name):
@@ -128,15 +197,14 @@ class AppEnvironment(Environment):
 
         self._validate_name()
 
-        # Capture the frame where this environment was instantiated
-        # This helps us find the module where the app variable is defined
-        frame = inspect.currentframe()
-        if frame and frame.f_back:
-            # Go up the call stack to find the user's module
-            # Skip the dataclass __init__ frame
-            caller_frame = frame.f_back
-            if caller_frame and caller_frame.f_back:
-                self._caller_frame = inspect.getframeinfo(caller_frame.f_back)
+        # Capture the frame where this environment was instantiated. The Flyte
+        # ``AppEnvResolver`` uses ``self._caller_frame.filename`` to locate the
+        # module that holds the module-level ``app_env`` binding the container
+        # must import. We walk up past every SDK / dataclass-machinery frame
+        # so that we land on actual user code regardless of whether the env
+        # was created inline at module scope, inside a subclass with a custom
+        # ``__post_init__``, or via a user-provided factory helper.
+        self._caller_frame = _find_user_caller_frame()
 
     def container_args(self, serialize_context: SerializationContext) -> List[str]:
         if self.args is None:

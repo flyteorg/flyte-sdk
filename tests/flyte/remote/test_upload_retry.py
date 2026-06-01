@@ -93,6 +93,24 @@ async def test_upload_retries_on_connect_error(upload_file):
 
 
 @pytest.mark.asyncio
+async def test_upload_retries_on_read_error(upload_file):
+    with patch("flyte.remote._data.httpx.AsyncClient") as mock_cls:
+        client = AsyncMock()
+        client.put.side_effect = httpx.ReadError("connection reset by peer")
+        ctx = AsyncMock()
+        ctx.__aenter__.return_value = client
+        ctx.__aexit__.return_value = False
+        mock_cls.return_value = ctx
+
+        with pytest.raises(RuntimeSystemError, match="connection reset by peer"):
+            await _upload_with_retry(
+                upload_file, "https://signed.url/upload", {}, verify=True, max_retries=1, min_backoff_sec=0.01
+            )
+
+        assert client.put.call_count == 2
+
+
+@pytest.mark.asyncio
 async def test_upload_retries_on_server_error_then_succeeds(upload_file):
     with patch("flyte.remote._data.httpx.AsyncClient") as mock_cls:
         client = AsyncMock()

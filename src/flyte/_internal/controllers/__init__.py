@@ -47,7 +47,7 @@ class TaskCallSequencer:
 if TYPE_CHECKING:
     import concurrent.futures
 
-ControllerType = Literal["local", "remote"]
+ControllerType = Literal["local", "remote", "rust"]
 
 R = TypeVar("R")
 
@@ -114,6 +114,23 @@ class Controller(Protocol):
         """
         ...
 
+    async def register_event(self, event: Any):
+        """
+        Register an event that can be awaited. This is used to register events that can pause execution
+        until an external signal is received.
+        :param event: Event object to register
+        :return:
+        """
+        ...
+
+    async def wait_for_event(self, event: Any) -> Any:
+        """
+        Wait for an event to be signaled. This will block until the event receives data.
+        :param event: Event object to wait for
+        :return: The payload associated with the event when it is signaled
+        """
+        ...
+
     async def stop(self):
         """
         Stops the engine and should be called when the engine is no longer needed.
@@ -149,10 +166,31 @@ def create_controller(
             from ._local_controller import LocalController
 
             controller = LocalController()
-        case "remote" | "hybrid":
+        case "remote":
             from flyte._internal.controllers.remote import create_remote_controller
 
             controller = create_remote_controller(**kwargs)
+            # from flyte._internal.controllers.remote._r_controller import RemoteController
+
+            # controller = RemoteController(endpoint="http://host.docker.internal:8090", workers=10,
+            # max_system_retries=5)
+            # controller = RemoteController(workers=10, max_system_retries=5)
+        case "hybrid":
+            from flyte._internal.controllers.remote._r_controller import RemoteController
+
+            controller = RemoteController(endpoint="http://host.docker.internal:8090", workers=10, max_system_retries=5)
+            # controller = RemoteController(workers=10, max_system_retries=5)
+        case "rust":
+            # Rust controller - works for both local (endpoint-based) and remote (API key from env)
+            from flyte._internal.controllers.remote._r_controller import RemoteController
+
+            # Extract endpoint if provided, otherwise Rust controller will use API key from env var
+            endpoint = kwargs.get("endpoint")
+            # Rust requires scheme prefix (http:// or https://)
+            if endpoint and not endpoint.startswith(("http://", "https://")):
+                # Default to http:// for local endpoints
+                endpoint = f"http://{endpoint}"
+            controller = RemoteController(endpoint=endpoint, workers=10, max_system_retries=5)
         case _:
             raise ValueError(f"{ct} is not a valid controller type.")
 

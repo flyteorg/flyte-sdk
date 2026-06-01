@@ -70,7 +70,6 @@ class _Sandbox:
     env_vars: Optional[dict[str, str]] = None
     secrets: Optional[list] = None
     cache: str = "auto"
-    block_network: bool = False
 
     def _task_name(self) -> str:
         if self.name:
@@ -262,7 +261,7 @@ class _Sandbox:
                 "echo '--- script ---' && cat \"$1\" && "
                 "echo '--- running ---' && "
                 f"{python_cmd}; "
-                "_exit=$?; echo $_exit > /var/outputs/exit_code"
+                "_exit=$?; echo $_exit > /var/outputs/exit_code; exit $_exit"
             )
 
             return ContainerTask(
@@ -277,7 +276,6 @@ class _Sandbox:
                 resources=resources,
                 retries=self.retries,
                 cache=self.cache,
-                block_network=self.block_network,
                 **extra_kwargs,
             )
         else:
@@ -294,7 +292,6 @@ class _Sandbox:
                 resources=resources,
                 retries=self.retries,
                 cache=self.cache,
-                block_network=self.block_network,
                 **extra_kwargs,
             )
 
@@ -389,7 +386,6 @@ def create(
     env_vars: Optional[dict[str, str]] = None,
     secrets: Optional[list] = None,
     cache: str = "auto",
-    block_network: bool = False,
 ) -> _Sandbox:
     """Create a stateless Python code sandbox.
 
@@ -484,9 +480,6 @@ def create(
         env_vars: Environment variables available inside the container.
         secrets: Flyte `flyte.Secret` objects to mount.
         cache: Cache behaviour — `"auto"`, `"override"`, or `"disable"`.
-        block_network: When `True`, blocks all outbound network access — locally
-            via Docker ``network_mode=none``, on-cluster via a NetworkPolicy.
-            Defaults to `False`.
 
     Returns:
         Configured sandbox ready to `.run()`.
@@ -524,5 +517,4 @@ def create(
         env_vars=env_vars,
         secrets=secrets,
         cache=cache,
-        block_network=block_network,
     )
