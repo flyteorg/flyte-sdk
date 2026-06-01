@@ -10,7 +10,7 @@
 # flyteplugins-union = { path = "../../../../unionai/flyteplugins-union", editable = true }
 # ///
 """
-Volume checkpoint + crash-recovery example.
+Volume checkpointing via ``@flyte.trace``.
 
 NOTE: ``Volume`` lives in ``flyteplugins.union.io`` and has not yet been
 released to PyPI. The remote container image bakes the locally-built
@@ -19,31 +19,41 @@ pod-compatible wheel from a checkout of the flyteplugins-union repo first::
 
     make dist-bundled PLATFORM=linux-amd64
 
-Demonstrates the long-running-task pattern: a single task holds a mounted
-``RWVolume`` for the duration of a multi-epoch "training" loop and lets the
-Volume checkpoint itself in the background.
+The Volume type no longer ships built-in periodic checkpointing or crash
+recovery. This example reconstructs both with ``@flyte.trace``: a single
+long-running task mounts a writable volume once and runs one traced
+``run_epoch`` span per epoch. Each span commits the volume — a durable,
+immutable ``ROVolume`` snapshot — and returns it, so the run-details graph shows
+a ``version -> version`` lineage chain, and a crashed attempt resumes from the
+last committed epoch instead of restarting.
 
-Two related-but-distinct mechanisms are at play, both driven by the single
-``checkpoint_interval_seconds`` argument to ``mount()``:
+Three design points worth understanding:
 
-1. **Crash recovery (automatic).** Each background checkpoint drains the
-   writeback queue, uploads a fresh metadata index *without unmounting*, and
-   writes the resulting Volume to the task's Flyte checkpoint path. If the pod
-   is killed mid-task and Flyte retries the action, ``mount()`` finds that
-   snapshot via ``prev_checkpoint_path`` and resumes from it — superseding the
-   originally-declared index. A hard kill therefore loses at most
-   ``checkpoint_interval_seconds`` of writes, even across a full pod reload.
-   This needs no callback and no code beyond setting the interval.
+**Mount once, commit many.** Mounting is expensive (FUSE format + mount), so we
+do it exactly once per attempt. ``run_epoch`` does *not* mount on the happy path
+— it calls :meth:`RWVolume.commit`, which drains writeback and uploads a fresh
+metadata index while **keeping the mount live**, so a checkpoint costs one index
+upload, not a remount.
 
-2. **Lineage visibility (opt-in).** Passing ``on_checkpoint`` runs a callback
-   with each checkpointed Volume. ``report_checkpoint_trace`` is a ready-made
-   one: it records a ``@flyte.trace`` span per checkpoint so every intermediate
-   version shows up in the run-details graph, even if the task never reaches
-   its final ``return``.
+**No Volume crosses the trace boundary — it's captured, not passed.**
+``@flyte.trace`` serializes a function's *inputs* (to hash for the memo key) and
+its *output* (for lineage). Passing a Volume either way is a trap: a live
+``RWVolume`` would be drain+unmounted by the transformer's auto-finalize during
+input hashing, and even an immutable ``ROVolume`` doesn't serialize identically
+across the record/restore boundary (the transformer stamps
+``produced_by.output_name`` onto the recorded output but not onto the live
+value), so threading it would change the input hash on a retry and break
+memoization. So ``run_epoch`` takes **only the ``epoch`` int** — a stable key —
+and operates on the writable ``vol`` captured from the enclosing scope. The
+``version -> version`` lineage still threads through each committed Volume's own
+``parent_produced_by``.
 
-Contrast with the sibling ``volume_example.py``, where each *task* forks /
-finalizes a volume so versions flow through task signatures. Here a *single*
-task checkpoints in place, which is the right shape for an epoch loop (UC2).
+**Crash recovery is the trace memoization.** On a retry, every ``run_epoch`` span
+that already succeeded is replayed from its recorded output without re-running,
+so the first epoch that actually executes is the one past the last checkpoint.
+That epoch forks the last checkpoint into a writable working copy (``fork`` is
+the blessed RO->RW path and shares its chunks copy-on-write), resuming exactly
+where the crash hit. The example forces this path once via ``CRASH_AT_EPOCH``.
 
 Prereqs:
 - A bucket the cluster's service account can read/write.
@@ -56,8 +66,9 @@ import logging
 import os
 import uuid
 from pathlib import Path
+from typing import Optional
 
-from flyteplugins.union.io import ROVolume, Volume, report_checkpoint_trace
+from flyteplugins.union.io import ROVolume, Volume
 from flyteplugins.union.utils.image import with_local_flyteplugins_union
 
 import flyte
@@ -67,14 +78,10 @@ logger = logging.getLogger("volume-checkpoint-demo")
 
 VOL_NAME = os.environ.get("VOL_NAME", "checkpoint-demo")
 EPOCHS = int(os.environ.get("EPOCHS", "6"))
-# How long each "epoch" takes. The background loop checkpoints every
-# CHECKPOINT_INTERVAL seconds, so keep epochs longer than the interval to see
-# multiple checkpoints land per run.
-SECONDS_PER_EPOCH = float(os.environ.get("SECONDS_PER_EPOCH", "20"))
-CHECKPOINT_INTERVAL = float(os.environ.get("CHECKPOINT_INTERVAL", "10"))
-# Crash on this epoch (0-indexed) the *first* time we reach it, to exercise the
-# automatic recovery path. Set to a negative value to disable.
-CRASH_ON_EPOCH = int(os.environ.get("CRASH_ON_EPOCH", "3"))
+SECONDS_PER_EPOCH = float(os.environ.get("SECONDS_PER_EPOCH", "3"))
+# Force a one-time crash after this epoch, on the first attempt only, to exercise
+# the resume-from-checkpoint path. Set to a negative value to disable.
+CRASH_AT_EPOCH = int(os.environ.get("CRASH_AT_EPOCH", "2"))
 
 # A plain image + the flyteplugins-union wheel is all Volumes need (juicefs is
 # bundled in the wheel; sqlite mounts via raw syscalls under enable_fuse_mount).
@@ -93,67 +100,67 @@ env = flyte.TaskEnvironment(
 )
 
 
-def _completed_epochs(state_path: Path) -> int:
-    """Read how many epochs the volume already has on disk.
-
-    After a crash-and-recover, the mount comes back from the last checkpoint,
-    so this reflects the recovered state — the loop picks up where it left off
-    instead of restarting from epoch 0.
-    """
-    if not state_path.exists():
-        return 0
-    return sum(1 for line in state_path.read_text().splitlines() if line.strip())
-
-
-@env.task(retries=3)
+@env.task(retries=2)
 async def train(volume_name: str, epochs: int) -> ROVolume:
-    """Long-running task that checkpoints a mounted volume every interval.
+    """Mount a writable volume once, then checkpoint one ``@flyte.trace`` span
+    per epoch.
 
-    The volume is mounted once and held for the whole loop. The background
-    checkpoint loop (enabled by ``checkpoint_interval_seconds``) keeps the
-    on-object-store index fresh, so a pod kill + Flyte retry resumes from the
-    last checkpoint rather than losing the run.
+    Each epoch commits the volume (a durable ``ROVolume`` snapshot) and returns
+    it, so on a retry the completed epochs are replayed from trace memoization
+    and the loop resumes from the last checkpoint — see the module docstring.
     """
-    attempt = flyte.ctx().attempt_number
-    logger.info("train: volume_name=%s epochs=%d attempt=%d", volume_name, epochs, attempt)
-
-    # Reuse the same volume name across attempts so a retry's mount() can find
-    # the checkpoint the crashed attempt wrote under that name.
+    logger.info("train: volume_name=%s epochs=%d", volume_name, epochs)
+    # `vol` is the writable handle for this attempt — we mount it once and commit
+    # *it* on every epoch (RWVolume.commit keeps the mount live). It starts as a
+    # fresh empty volume; on a resume, run_epoch forks it from the checkpoint.
     vol = Volume.new(name=volume_name)
-    await vol.mount(
-        mount_path="/workspace",
-        # Enables the background checkpoint loop: drain + snapshot every N
-        # seconds, write each snapshot to the Flyte checkpoint path (this is
-        # what makes the volume crash-recoverable), and...
-        checkpoint_interval_seconds=CHECKPOINT_INTERVAL,
-        # ...also surface each checkpoint in the lineage graph as a trace span.
-        # Purely for visibility; recovery above works without it.
-        on_checkpoint=report_checkpoint_trace,
-    )
+    # `current_vol` threads the latest immutable checkpoint through the loop and,
+    # across a retry, via @flyte.trace memoization. `mounted` is process-local so
+    # the live mount is stood up exactly once per attempt.
+    current_vol: Optional[ROVolume] = None
+    mounted = False
 
-    state = Path("/workspace/epochs.log")
-    start = _completed_epochs(state)
-    if start > 0:
-        logger.warning("train: recovered %d completed epochs from checkpoint — resuming", start)
-
-    for epoch in range(start, epochs):
-        # Simulate a hard pod failure exactly once. On the retry, mount() above
-        # restores the checkpoint, _completed_epochs() reports the recovered
-        # count, and the loop resumes — no work before the last checkpoint redone.
-        if epoch == CRASH_ON_EPOCH and attempt == 0:
-            logger.error("train: simulating pod crash at epoch %d (attempt 0)", epoch)
-            raise RuntimeError(f"simulated crash at epoch {epoch}")
-
+    @flyte.trace
+    async def run_epoch(epoch: int) -> ROVolume:
+        nonlocal vol, mounted
+        # The body only executes for NON-cached epochs, so on a retry this runs at
+        # the first epoch past the last checkpoint. Stand the mount up once: if we
+        # fast-forwarded to a checkpoint (held in the closure `current_vol`), fork
+        # it into a writable working copy — fork() is the blessed RO->RW path, and
+        # it shares the checkpoint's chunks copy-on-write so we resume its files.
+        # The name is attempt-scoped so repeated retries don't collide. On a cold
+        # start `current_vol` is None and `vol` is the empty Volume.new above.
+        if not mounted:
+            if current_vol is not None:
+                attempt = int(os.environ.get("FLYTE_ATTEMPT_NUMBER", "0"))
+                vol = await current_vol.fork(name=f"{volume_name}-a{attempt}")
+            await vol.mount(mount_path="/workspace")
+            mounted = True
         logger.info("train: epoch %d/%d working...", epoch, epochs)
         await asyncio.sleep(SECONDS_PER_EPOCH)  # stand-in for real compute
-        # Write the "checkpoint" for this epoch. The background loop uploads it
-        # to object storage and to the Flyte checkpoint path on its own cadence.
-        with open(state, "a") as f:  # noqa: ASYNC230
-            f.write(f"epoch {epoch} done\n")
+        # Write this epoch's "checkpoint" artifact into the live mount.
         Path(f"/workspace/ckpt-{epoch:03d}.bin").write_bytes(b"\x00" * 1024)
+        with open("/workspace/epochs.log", "a") as f:  # noqa: ASYNC230
+            f.write(f"epoch {epoch} done\n")
+        # Commit the live RWVolume `vol`. RWVolume.commit drains writeback +
+        # uploads a fresh index and keeps the mount live, returning the new
+        # immutable version. (Never commit an ROVolume — it inherits the
+        # deprecated Volume.commit(), which drains+UNMOUNTS.)
+        return await vol.commit(message=f"epoch {epoch}")
 
-    # finalize() drains writeback, stops the checkpoint loop, unmounts, and
-    # publishes the terminal immutable ROVolume.
+    for epoch in range(epochs):
+        current_vol = await run_epoch(epoch)
+        # Force one hard failure after a committed epoch (first attempt only) so
+        # the retry exercises the resume-from-checkpoint path. The completed
+        # run_epoch spans above are memoized on retry; the loop fast-forwards
+        # through them and the first live epoch remounts from the last commit.
+        if epoch == CRASH_AT_EPOCH and int(os.environ.get("FLYTE_ATTEMPT_NUMBER", "0")) == 0:
+            logger.error("train: simulating crash after epoch %d (attempt 0)", epoch)
+            raise RuntimeError(f"simulated crash after epoch {epoch}")
+
+    # finalize() drains writeback, unmounts, and publishes the terminal version.
+    # Finalize the live writable handle `vol` — `current_vol` is the last
+    # immutable ROVolume snapshot and has no finalize().
     sealed = await vol.finalize(message=f"trained {epochs} epochs")
     logger.info("train: sealed final index path=%s", sealed.index.path if sealed.index else None)
     return sealed
@@ -161,14 +168,14 @@ async def train(volume_name: str, epochs: int) -> ROVolume:
 
 @env.task
 async def verify(vol: ROVolume, expected_epochs: int) -> str:
-    """Mount the sealed volume read-only and confirm every epoch survived."""
+    """Mount the sealed volume read-only and confirm every epoch landed."""
     logger.info("verify: mounting %s read-only", vol.name)
     await vol.mount()  # ROVolume always mounts read-only
     log = Path("/workspace/epochs.log").read_text()
     done = sum(1 for line in log.splitlines() if line.strip())
     logger.info("verify: %d epochs recorded (expected %d)", done, expected_epochs)
     if done != expected_epochs:
-        raise AssertionError(f"epoch mismatch after recovery: got {done}, want {expected_epochs}")
+        raise AssertionError(f"epoch mismatch: got {done}, want {expected_epochs}")
     return log
 
 
