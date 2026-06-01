@@ -196,14 +196,8 @@ SELF_MANAGED: Dict[str, Tuple[Callable[..., Awaitable[Dict[str, float]]], Dict[s
     "cold_fork": (_cold_fork, {"k": 25, "base_files": 100, "base_bytes": 1024}),
 }
 
-ENGINES: List[str] = ["redis", "sqlite", "badger"]
+ENGINES: List[str] = ["redis", "sqlite"]
 WRITEBACK: List[bool] = [True, False]
-
-# Workloads that exercise Volume.fork(). Badger's fork-counter bump path
-# disagrees with the juicefs dump key casing today (separate fix), so
-# fork workloads run against redis/sqlite only.
-_FORK_WORKLOADS: set = {"fork_burst", "cold_fork"}
-_FORK_ENGINES: List[str] = ["redis", "sqlite"]
 
 # Dataset sweep: hold per-file size constant, vary count, plot one line per
 # engine. Counts capped at 100k (small) / 10k (big) so a full sweep stays
@@ -212,7 +206,7 @@ DATASET_SMALL_COUNTS: List[int] = [10, 100, 1_000, 10_000, 100_000]
 DATASET_BIG_COUNTS: List[int] = [10, 100, 1_000, 10_000]
 DATASET_SMALL_SIZE_BYTES = 256
 DATASET_BIG_SIZE_KIB = 64
-DATASET_ENGINES: List[str] = ["redis", "sqlite", "badger"]
+DATASET_ENGINES: List[str] = ["redis", "sqlite"]
 
 
 # ---------------------------------------------------------------------------
@@ -380,7 +374,7 @@ def _bar_svg(title: str, labels: List[str], values: List[float], unit: str) -> s
     return "".join(parts)
 
 
-_ENGINE_COLORS = {"redis": "#1f6feb", "sqlite": "#fb8500", "badger": "#0a8754"}
+_ENGINE_COLORS = {"redis": "#1f6feb", "sqlite": "#fb8500"}
 
 
 def _line_svg(
@@ -641,10 +635,7 @@ async def volume_benchmark_driver(
     keys: List[Tuple[str, str, bool]] = []
     coros = []
     for wname in selected_workloads:
-        engines_for_workload = (
-            [e for e in selected_engines if e in _FORK_ENGINES] if wname in _FORK_WORKLOADS else selected_engines
-        )
-        for engine in engines_for_workload:
+        for engine in selected_engines:
             for wb in selected_writeback:
                 keys.append((wname, engine, wb))
                 short = f"{wname.replace('_', '-')}-{engine}-{'wb' if wb else 'cold'}"

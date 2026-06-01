@@ -58,7 +58,7 @@ logger = logging.getLogger("volume-demo")
 VOL_NAME = os.environ.get("VOL_NAME", "demo-vol")
 
 # A plain image + the flyteplugins-union wheel is all Volumes need (juicefs is
-# bundled in the wheel; sqlite/badger mount via raw syscalls under
+# bundled in the wheel; the default sqlite store mounts via raw syscalls under
 # enable_fuse_mount). `with_local_flyteplugins_union` bakes the locally-built
 # wheel for dev iteration — run `make dist-bundled PLATFORM=linux-amd64` in the
 # flyteplugins-union repo first.
@@ -77,6 +77,12 @@ env = flyte.TaskEnvironment(
 @env.task(cache="auto")
 async def init_volume(volume_name: str) -> ROVolume:
     logger.info("init_volume: declaring fresh volume name=%s", volume_name)
+    import os
+    logger.info("AZURE creds in pod:")
+    for k in os.environ:
+        if "AZURE" in k.upper():
+            logger.info("%s", k)
+
     # Volume.new() returns a writable RWVolume backed by the default sqlite
     # store — daemon-less and fork-capable, so the later `branch`/`append`
     # forks Just Work with no extra image deps.
