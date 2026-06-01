@@ -91,14 +91,29 @@ class Controller:
     @log
     def submit_action_sync(self, action: Action) -> Action:
         """Synchronous version of submit that runs in the controller's event loop"""
-        fut = self._run_coroutine_in_controller_thread(self._bg_submit_action(action))
+        fut = self._run_coroutine_in_controller_thread(self._bg_submit_and_wait_for_action(action))
         return fut.result()
 
     # --------------- Public async methods
     @log
-    async def submit_action(self, action: Action) -> Action:
+    async def submit_and_wait_for_action(self, action: Action) -> Action:
         """Public API to submit a resource and wait for completion"""
-        return await self._run_coroutine_in_controller_thread(self._bg_submit_action(action))
+        return await self._run_coroutine_in_controller_thread(self._bg_submit_and_wait_for_action(action))
+
+    @log
+    async def submit_action(self, action: Action) -> Action:
+        """Public API to submit a resource and wait for completion (alias for submit_and_wait_for_action)"""
+        return await self.submit_and_wait_for_action(action)
+
+    @log
+    async def start_action(self, action: Action) -> None:
+        """Submit a resource without waiting for completion. Returns immediately after enqueue."""
+        await self._run_coroutine_in_controller_thread(self._bg_submit_action(action))
+
+    @log
+    async def wait_for_action(self, action: Action) -> Action:
+        """Wait for a previously submitted action to complete. Returns the final action state."""
+        return await self._run_coroutine_in_controller_thread(self._bg_wait_for_action(action))
 
     async def get_action(self, action_id: identifier_pb2.ActionIdentifier, parent_action_name: str) -> Optional[Action]:
         """Get the action from the informer"""
@@ -275,8 +290,8 @@ class Controller:
         if informer:
             await informer.stop()
 
-    async def _bg_submit_action(self, action: Action) -> Action:
-        """Submit a resource and await its completion, returning the final state"""
+    async def _bg_submit_action(self, action: Action) -> None:
+        """Submit a resource to the informer. Returns immediately after enqueue."""
         logger.debug(f"{threading.current_thread().name} Submitting action {action.name}")
         informer = await self._informers.get_or_create(
             action.action_id.run,
@@ -289,6 +304,17 @@ class Controller:
         )
         await informer.submit(action)
 
+    async def _bg_wait_for_action(self, action: Action) -> Action:
+        """Wait for an action to complete and return its final state."""
+        informer = await self._informers.get_or_create(
+            action.action_id.run,
+            action.parent_action_name,
+            self._shared_queue,
+            self._state_service,
+            fn=self._bg_handle_informer_error,
+            timeout=self._informer_start_wait_timeout,
+            actions_service=self._actions_service,
+        )
         logger.debug(f"{threading.current_thread().name} Waiting for completion of {action.name}")
         # Wait for completion.  For trace actions apply a timeout so a
         # transient watch failure (e.g. gRPC deserialization returning None)
@@ -317,6 +343,11 @@ class Controller:
         await informer.remove(action.name)  # TODO we should not remove maybe, we should keep a record of completed?
         logger.debug(f"{threading.current_thread().name} Removed action {action.name}")
         return final_resource
+
+    async def _bg_submit_and_wait_for_action(self, action: Action) -> Action:
+        """Submit a resource and await its completion, returning the final state."""
+        await self._bg_submit_action(action)
+        return await self._bg_wait_for_action(action)
 
     async def _bg_cancel_action(self, action: Action):
         """
@@ -365,6 +396,7 @@ class Controller:
             async with self._rate_limiter:
                 task: run_definition_pb2.TaskAction | None = None
                 trace: run_definition_pb2.TraceAction | None = None
+                condition: run_definition_pb2.ConditionAction | None = None
                 if action.type == "task":
                     if action.task is None:
                         raise flyte.errors.RuntimeSystemError(
@@ -389,6 +421,8 @@ class Controller:
                     )
                 elif action.type == "trace":
                     trace = action.trace
+                elif action.type == "condition":
+                    condition = action.condition
 
                 logger.debug(f"Attempting to launch action: {action.name}, actions? {bool(self._actions_service)}")
                 try:
@@ -400,6 +434,7 @@ class Controller:
                                     parent_action_name=action.parent_action_name,
                                     task=task,
                                     trace=trace,
+                                    condition=condition,
                                     input_uri=action.inputs_uri,
                                     run_output_base=action.run_output_base,
                                     group=action.group.name if action.group else None,
