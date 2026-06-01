@@ -1,1 +1,7 @@
-# Public API added in PR 5 (ClusteredTaskEnvironment, TorchRun, ClusterFailurePolicy).
+from flyte.distributed._environment import (
+    ClusteredTaskEnvironment,
+    ClusterFailurePolicy,
+    TorchRun,
+)
+
+__all__ = ["ClusterFailurePolicy", "ClusteredTaskEnvironment", "TorchRun"]

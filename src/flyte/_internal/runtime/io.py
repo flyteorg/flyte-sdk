@@ -4,6 +4,8 @@ It uses the storage module to handle the actual uploading and downloading of fil
 
 """
 
+import os
+
 from flyteidl2.core import execution_pb2
 from flyteidl2.task import common_pb2
 
@@ -59,6 +61,9 @@ async def upload_outputs(outputs: Outputs, output_path: str, max_bytes: int = -1
     :param output_path: The path to upload the output file.
     :param max_bytes: Maximum number of bytes to write to the output file. Default is -1, which means no limit.
     """
+    # In clustered tasks, only rank-0 owns the output; all other ranks skip upload.
+    if os.environ.get("RANK", "0") != "0":
+        return
     if max_bytes != -1 and outputs.proto_outputs.ByteSize() > max_bytes:
         import flyte.errors
 
@@ -77,6 +82,11 @@ async def upload_error(err: execution_pb2.ExecutionError, output_prefix: str, re
     :param output_prefix: The output prefix of the remote uri.
     :param recoverable: If False, sets ContainerError.kind to NON_RECOVERABLE so the engine skips retries.
     """
+    error_uri = error_path(output_prefix)
+    # In clustered tasks, only rank-0 owns the error file; other ranks skip the write
+    # so they don't race to clobber error.pb. (RANK is unset on non-clustered tasks.)
+    if os.environ.get("RANK", "0") != "0":
+        return error_uri
     error_document = execution_pb2.ErrorDocument(
         error=execution_pb2.ContainerError(
             code=err.code,
@@ -87,7 +97,6 @@ async def upload_error(err: execution_pb2.ExecutionError, output_prefix: str, re
             origin=err.kind,
         )
     )
-    error_uri = error_path(output_prefix)
     return await storage.put_stream(data_iterable=error_document.SerializeToString(), to_path=error_uri)
 
 

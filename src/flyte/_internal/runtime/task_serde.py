@@ -172,6 +172,12 @@ def get_proto_timeout_strategy(timeout: TimeoutType | None) -> Optional[literals
     return proto
 
 
+def _is_clustered(env: typing.Any) -> bool:
+    """Return True if env is a ClusteredTaskEnvironment without importing it at module level."""
+    t = type(env)
+    return t.__name__ == "ClusteredTaskEnvironment" and t.__module__ == "flyte.distributed._environment"
+
+
 def get_proto_task(
     task: TaskTemplate, serialize_context: SerializationContext, task_context: Optional[TaskContext] = None
 ) -> tasks_pb2.TaskTemplate:
@@ -189,11 +195,29 @@ def get_proto_task(
     container = None
     sql = task.sql(serialize_context)
 
+    _parent_env = task.parent_env() if task.parent_env else None
+    _clustered = _is_clustered(_parent_env)
+
+    def _rewrite_clustered_command(c: Optional[tasks_pb2.Container]) -> None:
+        # For clustered tasks PID-1 is the entrypoint wrapper; the original a0
+        # invocation already lives in args (from _get_urun_container) and is
+        # passed through to torchrun -> a0.
+        if c is not None:
+            c.command[:] = ["python", "-m", "flyte.distributed._entrypoint"]
+
     if task.pod_template and not isinstance(task.pod_template, str):
-        pod = _get_k8s_pod(_get_urun_container(serialize_context, task), task.pod_template)
+        primary_container = _get_urun_container(serialize_context, task)
+        if _clustered:
+            # Rewrite before building the k8s pod so the pod's primary container
+            # (which copies command/args from primary_container) gets the wrapper too.
+            _rewrite_clustered_command(primary_container)
+        pod = _get_k8s_pod(primary_container, task.pod_template)
         extra_config[_PRIMARY_CONTAINER_NAME_FIELD] = task.pod_template.primary_container_name
     elif sql is None:
         container = _get_urun_container(serialize_context, task)
+        if _clustered:
+            _rewrite_clustered_command(container)
+
     log_links = []
     if task.links and task_context:
         action = task_context.action
@@ -211,6 +235,17 @@ def get_proto_task(
             log_links.append(task_log)
 
     custom = task.custom_config(serialize_context)
+
+    # --- clustered task: rewrite type + custom (command was rewritten above) ---
+    _task_type = task.task_type
+    _task_type_version = task.task_type_version
+    if _clustered:
+        from flyte.distributed._environment import ClusteredTaskEnvironment
+
+        assert isinstance(_parent_env, ClusteredTaskEnvironment)
+        _task_type = "clustered-task"
+        _task_type_version = 1
+        custom = _parent_env.to_custom_dict()
 
     # -------------- CACHE HANDLING ----------------------
     task_cache = cache_from_request(task.cache)
@@ -244,7 +279,7 @@ def get_proto_task(
 
     task_template = tasks_pb2.TaskTemplate(
         id=task_id,
-        type=task.task_type,
+        type=_task_type,
         metadata=tasks_pb2.TaskMetadata(
             discoverable=cache_enabled,
             discovery_version=cache_version,
@@ -269,7 +304,7 @@ def get_proto_task(
         interface=transform_native_to_typed_interface(task.native_interface),
         custom=custom if len(custom) > 0 else None,
         container=container,
-        task_type_version=task.task_type_version,
+        task_type_version=_task_type_version,
         security_context=get_security_context(task.secrets),
         config=extra_config,
         k8s_pod=pod,

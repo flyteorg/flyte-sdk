@@ -81,6 +81,11 @@ def main() -> None:
 
     _wait_for_dns(master_addr)
 
+    # Export derived vars so torchrun child processes (and a0 / TaskContext) inherit them.
+    # torchrun does not propagate NODE_RANK to workers, and MASTER_ADDR is only computed here.
+    os.environ["NODE_RANK"] = node_rank
+    os.environ["MASTER_ADDR"] = master_addr
+
     torchrun_cmd = [
         "torchrun",
         f"--nnodes={nnodes}",
@@ -89,6 +94,10 @@ def main() -> None:
         f"--rdzv-backend={rdzv_backend}",
         f"--rdzv-id={rdzv_id}",
         f"--rdzv-endpoint={master_addr}:{master_port}",
+        # sys.argv[1:] starts with the `a0` console-script executable (flyte._bin.runtime:main),
+        # not a .py file. Without --no-python torchrun would run `python a0` and fail with
+        # "can't open file 'a0'". --no-python makes torchrun exec the command directly.
+        "--no-python",
         "--",
         *sys.argv[1:],
     ]
