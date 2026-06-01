@@ -302,6 +302,13 @@ class ClusterAwareDataProxy:
         if not endpoint or endpoint == self._session_config.endpoint:
             return self._default_client
 
+        # Forward the auth-related kwargs from the parent SessionConfig so the
+        # per-cluster session preserves the configured ``auth_type`` (Passthrough,
+        # ClientSecret, ExternalCommand, etc.). Without this ``create_session_config``
+        # falls back to the default ``auth_type="Pkce"`` and a Passthrough-only
+        # caller (e.g. a FastAPI app using ``init_passthrough``) trips the PKCE
+        # browser flow as soon as the first cluster-routed dataproxy call runs.
+        auth_kwargs = dict(self._session_config.auth_kwargs or {})
         try:
             new_cfg = await create_session_config(
                 endpoint,
@@ -309,6 +316,7 @@ class ClusterAwareDataProxy:
                 insecure=self._session_config.insecure,
                 insecure_skip_verify=self._session_config.insecure_skip_verify,
                 auth_endpoint=self._session_config.endpoint,
+                **auth_kwargs,
             )
         except Exception as e:
             raise RuntimeError(f"Failed to create session for cluster endpoint '{endpoint}': {e}") from e
@@ -414,6 +422,10 @@ class ClusterAwareSecretService:
         if not endpoint or endpoint == self._session_config.endpoint:
             return self._default_client
 
+        # See ``ClusterAwareDataProxy._select_and_build`` for the rationale: we
+        # must propagate the parent session's auth kwargs (notably ``auth_type``)
+        # or per-cluster Secret RPCs silently downgrade to PKCE.
+        auth_kwargs = dict(self._session_config.auth_kwargs or {})
         try:
             new_cfg = await create_session_config(
                 endpoint,
@@ -421,6 +433,7 @@ class ClusterAwareSecretService:
                 insecure=self._session_config.insecure,
                 insecure_skip_verify=self._session_config.insecure_skip_verify,
                 auth_endpoint=self._session_config.endpoint,
+                **auth_kwargs,
             )
         except Exception as e:
             raise RuntimeError(f"Failed to create session for cluster endpoint '{endpoint}': {e}") from e

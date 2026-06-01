@@ -4,7 +4,7 @@ from dataclasses import fields
 
 import pytest
 
-from flyte.ai.agents.protocol import Agent, AgentResult
+from flyte.ai.agents.protocol import AgentProtocol, AgentResult
 
 
 class TestAgentResult:
@@ -57,14 +57,14 @@ class TestAgentProtocol:
     @pytest.mark.asyncio
     async def test_runtime_checkable_positive(self):
         agent = _MinimalAgent()
-        assert isinstance(agent, Agent)
+        assert isinstance(agent, AgentProtocol)
 
     def test_runtime_checkable_negative_missing_method(self):
         class Bad:
             async def run(self, message: str, history: list[dict[str, str]]) -> AgentResult:
                 return AgentResult()
 
-        assert not isinstance(Bad(), Agent)
+        assert not isinstance(Bad(), AgentProtocol)
 
     def test_runtime_checkable_negative_missing_tool_descriptions(self):
-        assert not isinstance(_MissingToolDescriptions(), Agent)
+        assert not isinstance(_MissingToolDescriptions(), AgentProtocol)
