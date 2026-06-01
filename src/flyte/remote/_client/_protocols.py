@@ -69,6 +69,10 @@ class RunService(Protocol):
         self, request: run_service_pb2.AbortActionRequest
     ) -> run_service_pb2.AbortActionResponse: ...
 
+    async def signal_event(
+        self, request: run_service_pb2.SignalEventRequest
+    ) -> run_service_pb2.SignalEventResponse: ...
+
     async def get_run_details(
         self, request: run_service_pb2.GetRunDetailsRequest
     ) -> run_service_pb2.GetRunDetailsResponse: ...
