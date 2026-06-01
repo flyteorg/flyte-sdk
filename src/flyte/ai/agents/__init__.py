@@ -1,10 +1,32 @@
 """flyte.ai.agents — Agent abstractions for Flyte apps."""
 
+from ._llm import LLMMessage
+from ._mcp import MCPServerSpec
+from ._tools import tool
+from .agent import (
+    Agent,
+    AgentEvent,
+    AgentTool,
+    agent_progress_cb,
+)
 from .codemode import CodeModeAgent
-from .protocol import Agent, AgentResult
+from .memory import AccessDenied, ConcurrencyError, MemoryMeta, MemoryStore, MemoryStoreError
+from .protocol import AgentProtocol, AgentResult
 
 __all__ = [
+    "AccessDenied",
     "Agent",
+    "AgentEvent",
+    "AgentProtocol",
     "AgentResult",
+    "AgentTool",
     "CodeModeAgent",
+    "ConcurrencyError",
+    "LLMMessage",
+    "MCPServerSpec",
+    "MemoryMeta",
+    "MemoryStore",
+    "MemoryStoreError",
+    "agent_progress_cb",
+    "tool",
 ]
