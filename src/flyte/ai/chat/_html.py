@@ -255,6 +255,17 @@ const CODE_MODE_PHASE_TO_STEP = {
     formatting: 3,
 };
 
+// Pre-RUNNING Flyte action phases keep us on step 0 ("Preparing runtime
+// environment…") but update the subtitle so users can see why a cold start
+// is taking time instead of assuming the request never left the browser.
+const TASK_PHASE_SUBTITLES = {
+    building_image: 'Building task image (only on first run / cache miss)…',
+    submitted: 'Task submitted, waiting for worker…',
+    queued: 'Queued — waiting for the cluster scheduler…',
+    waiting_for_resources: 'Waiting for compute resources…',
+    initializing: 'Initializing worker (pulling image, starting pod)…',
+};
+
 function createPendingAssistantBubble(includePreparingStep) {
     const msg = document.createElement('div');
     msg.className = 'msg assistant assistant-pending';
@@ -297,12 +308,27 @@ function createPendingAssistantBubble(includePreparingStep) {
 
 function applyCodemodeProgress(trackEl, subEl, evt) {
     if (!evt || !evt.phase) return;
+    // Pre-RUNNING task phases keep step 0 active but refresh the subtitle so
+    // the user sees cold-start progress (queued / initializing / etc.).
+    if (evt.phase === 'task_phase') {
+        const subtitle = TASK_PHASE_SUBTITLES[evt.task_phase];
+        if (subEl && subtitle) subEl.textContent = subtitle;
+        if (trackEl && trackEl.dataset.compact !== '1') {
+            setProgressUI(trackEl, 0);
+        }
+        return;
+    }
     let idx = CODE_MODE_PHASE_TO_STEP[evt.phase];
     if (idx === undefined) return;
     if (trackEl && trackEl.dataset.compact === '1') idx -= 1;
     setProgressUI(trackEl, idx);
-    if (subEl && evt.attempt != null && evt.max_attempts != null) {
-        subEl.textContent = 'Attempt ' + evt.attempt + ' of ' + evt.max_attempts;
+    if (subEl) {
+        if (evt.attempt != null && evt.max_attempts != null) {
+            subEl.textContent = 'Attempt ' + evt.attempt + ' of ' + evt.max_attempts;
+        } else {
+            // Clear stale "Queued…" / "Initializing…" once the worker is RUNNING.
+            subEl.textContent = 'In progress…';
+        }
     }
 }
 

@@ -37,6 +37,7 @@ def _make_wrapper(
     session_config.endpoint = own_endpoint
     session_config.insecure = True
     session_config.insecure_skip_verify = False
+    session_config.auth_kwargs = {}
     default_client = MagicMock()
     default_client.create_secret = AsyncMock(return_value=secret_payload_pb2.CreateSecretResponse())
     default_client.update_secret = AsyncMock(return_value=secret_payload_pb2.UpdateSecretResponse())
@@ -244,3 +245,42 @@ async def test_remote_cluster_endpoint_creates_new_client():
     assert cluster_service.select_cluster.await_count == 1
     assert new_client_inst.get_secret.await_count == 2
     default_client.get_secret.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_remote_cluster_endpoint_propagates_auth_kwargs():
+    """Per-cluster Secret sessions must inherit the parent session's auth configuration.
+
+    Mirrors ``test_cluster_aware_dataproxy.test_remote_cluster_endpoint_propagates_auth_kwargs``
+    — without forwarding ``auth_type`` the cluster-routed Secret client silently
+    falls back to PKCE even when the parent session was Passthrough/ClientSecret.
+    """
+    wrapper, _, _ = _make_wrapper(cluster_endpoint="dns:///other:8090")
+    wrapper._session_config.auth_kwargs = {
+        "auth_type": "Passthrough",
+        "client_id": "demo-uctl",
+    }
+
+    new_session_cfg = MagicMock()
+    new_session_cfg.connect_kwargs.return_value = {}
+    new_client_inst = MagicMock()
+    new_client_inst.get_secret = AsyncMock(return_value=secret_payload_pb2.GetSecretResponse())
+
+    create_session_config_mock = AsyncMock(return_value=new_session_cfg)
+    with (
+        patch(
+            "flyte.remote._client.controlplane.create_session_config",
+            new=create_session_config_mock,
+        ),
+        patch(
+            "flyte.remote._client.controlplane.SecretServiceClient",
+            return_value=new_client_inst,
+        ),
+    ):
+        await wrapper.get_secret(secret_payload_pb2.GetSecretRequest(id=_secret_id()))
+
+    create_session_config_mock.assert_awaited_once()
+    forwarded_kwargs = create_session_config_mock.await_args.kwargs
+    assert forwarded_kwargs["auth_type"] == "Passthrough"
+    assert forwarded_kwargs["client_id"] == "demo-uctl"
+    assert forwarded_kwargs["auth_endpoint"] == "dns:///localhost:8090"

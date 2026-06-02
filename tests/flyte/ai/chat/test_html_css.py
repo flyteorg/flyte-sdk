@@ -4,7 +4,7 @@ import re
 
 import flyte.ai.agents as agents_pkg
 import flyte.ai.chat as chat_pkg
-from flyte.ai.agents import Agent, AgentResult, CodeModeAgent
+from flyte.ai.agents import AgentProtocol, AgentResult, CodeModeAgent
 from flyte.ai.chat import (
     CHAT_HTML_TEMPLATE,
     DEFAULT_CSS,
@@ -98,17 +98,51 @@ class TestBuildChatHtml:
         script_body = m.group(1)
         assert "buffer.split('\\n')" in script_body
 
+    def test_task_phase_subtitles_block_present(self):
+        """The progress UI maps Flyte ``ActionPhase`` values onto step-0 subtitles
+        for cold starts (image build, queued, initializing, …). Without these
+        entries the UI sits silent on "Preparing runtime environment…" while a
+        task pod is being scheduled / pulled.
+        """
+        html = build_chat_html(title="T")
+        assert "TASK_PHASE_SUBTITLES" in html
+        # Each cold-start phase must be in the JS map so applyCodemodeProgress
+        # can refresh the subtitle when the watch stream emits ``task_phase``.
+        for phase in ("building_image", "submitted", "queued", "waiting_for_resources", "initializing"):
+            assert phase in html, f"missing task_phase '{phase}' in chat HTML"
+
+    def test_apply_codemode_progress_handles_task_phase_branch(self):
+        """``applyCodemodeProgress`` must short-circuit on ``task_phase`` events
+        so they update the subtitle (step 0) instead of trying to index into
+        ``CODE_MODE_PHASE_TO_STEP`` (where ``task_phase`` is not a key) and
+        falling through silently.
+        """
+        html = build_chat_html(title="T")
+        assert "evt.phase === 'task_phase'" in html
+
 
 class TestPackageExports:
     def test_agents_public_import_surface(self):
         assert set(agents_pkg.__all__) == {
+            "AccessDenied",
             "Agent",
+            "AgentEvent",
+            "AgentProtocol",
             "AgentResult",
+            "AgentTool",
             "CodeModeAgent",
+            "ConcurrencyError",
+            "LLMMessage",
+            "MCPServerSpec",
+            "MemoryMeta",
+            "MemoryStore",
+            "MemoryStoreError",
+            "agent_progress_cb",
+            "tool",
         }
         assert CodeModeAgent.__name__ == "CodeModeAgent"
         assert AgentResult.__name__ == "AgentResult"
-        assert hasattr(Agent, "run")
+        assert hasattr(AgentProtocol, "run")
 
     def test_chat_public_import_surface(self):
         assert set(chat_pkg.__all__) == {

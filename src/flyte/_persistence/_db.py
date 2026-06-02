@@ -2,6 +2,8 @@ import sqlite3
 import threading
 from pathlib import Path
 
+from flyte._initialize import get_init_config
+
 try:
     import aiosqlite
 
@@ -22,10 +24,10 @@ def _cache_scope() -> str:
     Used to scope image/bundle cache entries so that different environments
     don't collide.
     """
-    config = auto()
-    endpoint = config.platform.endpoint or ""
-    project = config.task.project or ""
-    domain = config.task.domain or ""
+    cfg = get_init_config()
+    endpoint = cfg.client.endpoint if cfg.client else ""
+    project = cfg.project or ""
+    domain = cfg.domain or ""
     return f"{endpoint}:{project}:{domain}"
 
 
