@@ -1,5 +1,6 @@
 import re
 import sys
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
@@ -92,16 +93,11 @@ def test_delete_secret_cluster_pool_rejects_domain(runner: CliRunner):
     assert "domain" in result.stderr
 
 
-@patch("flyte._internal.imagebuild.image_builder.clear_image_cache", return_value=3)
-def test_delete_local_cache(mock_clear, runner: CliRunner):
+@patch("flyte._persistence._db.LocalDB.purge", return_value=Path("/home/u/.flyte/local-cache"))
+def test_delete_local_cache(mock_purge, runner: CliRunner):
     result = runner.invoke(main, ["delete", "local-cache"])
     assert result.exit_code == 0, result.stderr
-    mock_clear.assert_called_once_with()
-    assert "3 entries removed" in _strip_ansi(result.output)
-
-
-@patch("flyte._internal.imagebuild.image_builder.clear_image_cache", return_value=1)
-def test_delete_local_cache_singular(mock_clear, runner: CliRunner):
-    result = runner.invoke(main, ["delete", "local-cache"])
-    assert result.exit_code == 0, result.stderr
-    assert "1 entry removed" in _strip_ansi(result.output)
+    mock_purge.assert_called_once_with()
+    output = _strip_ansi(result.output)
+    assert "Cleared local cache directory" in output
+    assert "/home/u/.flyte/local-cache" in output

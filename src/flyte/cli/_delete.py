@@ -90,15 +90,18 @@ def app(cfg: common.CLIConfig, name: str, project: str | None = None, domain: st
 @delete.command(name="local-cache")
 def local_cache():
     """
-    Delete the locally cached image lookups stored in ~/.flyte/local-cache.
+    Delete the entire local cache directory (~/.flyte/local-cache).
+
+    This removes the local SQLite cache used for image lookups, bundle uploads,
+    run history, and task caching.
     """
-    from flyte._internal.imagebuild.image_builder import clear_image_cache
+    from flyte._persistence._db import LocalDB
 
     console = common.get_console()
-    with console.status("Clearing local image cache..."):
-        removed = clear_image_cache()
+    with console.status("Clearing local cache..."):
+        cache_dir = LocalDB.purge()
 
-    console.print(f"[green]Cleared local image cache ({removed} entr{'y' if removed == 1 else 'ies'} removed).[/green]")
+    console.print(f"[green]Cleared local cache directory: {cache_dir}[/green]")
 
 
 @delete.command()
