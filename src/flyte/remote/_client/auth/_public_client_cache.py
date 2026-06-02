@@ -5,10 +5,11 @@ from typing import Optional
 
 import pydantic
 import yaml
+import rich_click as click
 from flyteidl2.auth.auth_service_connect import AuthMetadataServiceClient
 from flyteidl2.auth.auth_service_pb2 import GetPublicClientConfigRequest
 
-from flyte import logger
+from flyte._logging import logger
 from flyte.syncify import syncify
 
 
@@ -19,6 +20,7 @@ class CachedPublicClientAuthMetadata(pydantic.BaseModel):
     authorization_header: str = pydantic.Field(alias="authorizationHeader")
     redirect_uri: str = pydantic.Field(alias="redirectUri")
     scopes: list[str]
+    audience: str | None = None
 
     model_config = pydantic.ConfigDict(populate_by_name=True)
 
@@ -34,6 +36,7 @@ class CachedPublicClientAuthMetadata(pydantic.BaseModel):
             "header_key": self.authorization_header,
             "redirect_uri": self.redirect_uri,
             "scopes": list(self.scopes),
+            "audience": self.audience,
         }
 
     @classmethod
@@ -51,6 +54,7 @@ class CachedPublicClientAuthMetadata(pydantic.BaseModel):
             authorizationHeader=public_client_config.authorization_metadata_key,
             redirectUri=public_client_config.redirect_uri,
             scopes=list(public_client_config.scopes),
+            audience=public_client_config.audience,
         )
 
 
@@ -59,24 +63,25 @@ def get_public_client_auth_metadata_cache_root(cache_root: Path | None = None) -
 
 
 def get_public_client_auth_metadata_cache_path(org: str, domain: str, cache_root: Path | None = None) -> Path:
-    return get_public_client_auth_metadata_cache_root(cache_root) / f"{org}-{domain}.yaml"
+    resolved_root = get_public_client_auth_metadata_cache_root(cache_root)
+    return resolved_root / f"{org}-{domain}.yaml"
 
 
 def read_cached_public_client_auth_metadata(
     org: str, domain: str, cache_root: Path | None = None
 ) -> Optional[CachedPublicClientAuthMetadata]:
-    path = get_public_client_auth_metadata_cache_path(org, domain, cache_root=cache_root)
-    if not path.exists():
+    file_path = get_public_client_auth_metadata_cache_path(org, domain, cache_root=cache_root)
+    if not file_path.exists():
         return None
 
     try:
-        with path.open() as handle:
+        with file_path.open() as handle:
             payload = yaml.safe_load(handle)
         if not isinstance(payload, dict):
-            raise ValueError(f"Invalid cached auth metadata content in {path}")
+            raise ValueError(f"Invalid cached auth metadata content in {file_path}")
         return CachedPublicClientAuthMetadata.model_validate(payload)
     except (OSError, yaml.YAMLError, pydantic.ValidationError, ValueError) as e:
-        logger.warning(f"Failed to read cached auth metadata from {path}: {e}")
+        logger.warning(f"Failed to read cached auth metadata from {file_path}: {e}")
         return None
 
 
@@ -86,14 +91,15 @@ def write_cached_public_client_auth_metadata(
     metadata: CachedPublicClientAuthMetadata,
     cache_root: Path | None = None,
 ) -> Path | None:
-    path = get_public_client_auth_metadata_cache_path(org, domain, cache_root=cache_root)
+    file_path = get_public_client_auth_metadata_cache_path(org, domain, cache_root=cache_root)
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("w") as handle:
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        with file_path.open("w") as handle:
             yaml.safe_dump(metadata.to_yaml_dict(), handle, sort_keys=False)
-        return path
+        click.echo(f"Auth metadata saved at {file_path}")
+        return file_path
     except OSError as e:
-        logger.warning(f"Failed to write cached auth metadata to {path}: {e}")
+        logger.warning(f"Failed to write cached auth metadata to {file_path}: {e}")
         return None
 
 

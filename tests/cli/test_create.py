@@ -372,6 +372,7 @@ def test_create_config_with_local_persistence(runner: CliRunner, tmp_path, monke
         authorizationHeader="flyte-authorization",
         redirectUri="http://localhost:53593/callback",
         scopes=["all"],
+        audience="dogfood-audience",
     )
 
     with patch("flyte.cli._create.fetch_public_client_auth_metadata_sync", return_value=metadata):
@@ -409,6 +410,7 @@ def test_create_config_without_local_persistence(runner: CliRunner, tmp_path, mo
         authorizationHeader="flyte-authorization",
         redirectUri="http://localhost:53593/callback",
         scopes=["all"],
+        audience="dogfood-audience",
     )
 
     with patch("flyte.cli._create.fetch_public_client_auth_metadata_sync", return_value=metadata):
@@ -445,6 +447,7 @@ def test_create_config_fetches_and_caches_auth_metadata_when_cache_is_missing(
         authorizationHeader="flyte-authorization",
         redirectUri="http://localhost:53593/callback",
         scopes=["all"],
+        audience="dogfood-audience",
     )
 
     with patch("flyte.cli._create.fetch_public_client_auth_metadata_sync", return_value=metadata) as fetch_metadata:
@@ -485,6 +488,7 @@ def test_create_config_fetches_and_caches_auth_metadata_when_cache_is_missing(
         "authorizationHeader": "flyte-authorization",
         "redirectUri": "http://localhost:53593/callback",
         "scopes": ["all"],
+        "audience": "dogfood-audience",
     }
 
 
@@ -536,6 +540,7 @@ def test_create_config_refreshes_cached_auth_metadata_when_user_accepts_overwrit
         authorizationHeader="flyte-authorization",
         redirectUri="http://localhost:53593/callback",
         scopes=["all"],
+        audience="dogfood-audience",
     )
 
     with patch("flyte.cli._create.fetch_public_client_auth_metadata_sync", return_value=metadata) as fetch_metadata:
@@ -576,6 +581,7 @@ def test_create_config_prompts_for_config_file_overwrite_after_cache_resolution(
         authorizationHeader="flyte-authorization",
         redirectUri="http://localhost:53593/callback",
         scopes=["all"],
+        audience="dogfood-audience",
     )
 
     with patch("flyte.cli._create.fetch_public_client_auth_metadata_sync", return_value=metadata):
@@ -629,6 +635,40 @@ def test_create_config_fetch_failure_aborts_before_writing_cache_or_config(
     assert not get_public_client_auth_metadata_cache_path("dogfood", "staging").exists()
 
 
+def test_create_config_dns_fetch_failure_shows_endpoint_guidance(
+    runner: CliRunner, tmp_path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    outpath = Path(tmp_path / "config.yaml")
+
+    with patch(
+        "flyte.cli._create.fetch_public_client_auth_metadata_sync",
+        side_effect=RuntimeError("dns error: failed to resolve host"),
+    ):
+        result = runner.invoke(
+            main,
+            [
+                "create",
+                "config",
+                "--endpoint",
+                "dns:///dogfood.cloud-staging.union.ai",
+                "--org",
+                "dogfood",
+                "--domain",
+                "staging",
+                "-o",
+                str(outpath),
+                "--force",
+            ],
+    )
+
+    assert result.exit_code != 0
+    assert "Please double check the endpoint" in result.output
+    assert "configuration and retry." in result.output
+    assert not outpath.exists()
+    assert not get_public_client_auth_metadata_cache_path("dogfood", "staging").exists()
+
+
 def test_create_config_cache_write_failure_does_not_block_config_write(
     runner: CliRunner, tmp_path, monkeypatch: pytest.MonkeyPatch
 ):
@@ -641,6 +681,7 @@ def test_create_config_cache_write_failure_does_not_block_config_write(
         authorizationHeader="flyte-authorization",
         redirectUri="http://localhost:53593/callback",
         scopes=["all"],
+        audience="dogfood-audience",
     )
 
     with (

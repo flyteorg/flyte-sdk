@@ -25,6 +25,7 @@ async def test_remote_client_config_store_skips_public_client_config_when_org_ca
             authorizationHeader="flyte-authorization",
             redirectUri="http://localhost:53593/callback",
             scopes=["all"],
+            audience="cached-audience",
         ),
         cache_root=tmp_path,
     )
@@ -98,6 +99,7 @@ async def test_remote_client_config_store_fetches_public_client_config_when_org_
     assert cached is not None
     assert cached.client_id == "remote-client-id"
     assert cached.scopes == ["scope-a"]
+    assert cached.audience == "remote-audience"
 
 
 @pytest.mark.asyncio
@@ -148,6 +150,7 @@ async def test_remote_client_config_store_uses_org_specific_cache_files(tmp_path
             authorizationHeader="flyte-authorization",
             redirectUri="http://localhost:53593/callback",
             scopes=["all"],
+            audience="other-audience",
         ),
         cache_root=tmp_path,
     )
@@ -180,3 +183,45 @@ async def test_remote_client_config_store_uses_org_specific_cache_files(tmp_path
 
     store._client.get_public_client_config.assert_awaited_once()
     assert cfg.client_id == "dogfood-client-id"
+
+
+@pytest.mark.asyncio
+async def test_remote_client_config_store_accepts_cached_metadata_without_audience(tmp_path: Path):
+    cache_path = get_public_client_auth_metadata_cache_path("dogfood", "staging", cache_root=tmp_path)
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_text(
+        """authType: Pkce
+clientId: cached-client-id
+insecure: false
+authorizationHeader: flyte-authorization
+redirectUri: http://localhost:53593/callback
+scopes:
+  - all
+"""
+    )
+
+    store = RemoteClientConfigStore(
+        "https://dogfood.cloud-staging.union.ai",
+        org="dogfood",
+        domain="staging",
+        cache_root=tmp_path,
+    )
+    store._client = Mock()
+    store._client.get_o_auth2_metadata = AsyncMock(
+        return_value=SimpleNamespace(
+            token_endpoint="https://example.com/token",
+            authorization_endpoint="https://example.com/authorize",
+            device_authorization_endpoint="https://example.com/device",
+        )
+    )
+    store._client.get_public_client_config = AsyncMock()
+
+    cfg = await store.get_client_config()
+
+    store._client.get_o_auth2_metadata.assert_awaited_once()
+    store._client.get_public_client_config.assert_not_called()
+    assert cfg.client_id == "cached-client-id"
+    assert cfg.redirect_uri == "http://localhost:53593/callback"
+    assert cfg.scopes == ["all"]
+    assert cfg.header_key == "flyte-authorization"
+    assert cfg.audience is None

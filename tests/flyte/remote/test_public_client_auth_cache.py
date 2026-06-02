@@ -25,6 +25,7 @@ def test_public_client_auth_metadata_cache_round_trip(tmp_path: Path):
         authorizationHeader="flyte-authorization",
         redirectUri="http://localhost:53593/callback",
         scopes=["all"],
+        audience="dogfood-audience",
     )
 
     write_cached_public_client_auth_metadata("dogfood", "staging", metadata, cache_root=tmp_path)
@@ -41,6 +42,7 @@ def test_public_client_auth_metadata_cache_write_failure_is_non_blocking(tmp_pat
         authorizationHeader="flyte-authorization",
         redirectUri="http://localhost:53593/callback",
         scopes=["all"],
+        audience="dogfood-audience",
     )
 
     with patch("flyte.remote._client.auth._public_client_cache.Path.open", side_effect=OSError("nope")):

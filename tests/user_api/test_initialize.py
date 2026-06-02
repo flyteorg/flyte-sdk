@@ -651,6 +651,10 @@ class TestInitFunction:
         assert config.project == "test-project"
         assert config.domain == "test-domain"
         assert config.client == mock_client
+        mock_init_client.assert_called_once()
+        call_kwargs = mock_init_client.call_args.kwargs
+        assert call_kwargs["org"] is None
+        assert call_kwargs["domain"] == "test-domain"
 
     @patch("flyte._initialize._initialize_client")
     @patch("flyte._utils.org_from_endpoint")
@@ -668,6 +672,10 @@ class TestInitFunction:
         config = _get_init_config()
         assert config is not None
         assert config.root_dir == Path.cwd()
+        mock_init_client.assert_called_once()
+        call_kwargs = mock_init_client.call_args.kwargs
+        assert call_kwargs["org"] == "test-org"
+        assert call_kwargs["domain"] == "test-domain"
 
     @patch("flyte._initialize._initialize_client")
     @pytest.mark.asyncio

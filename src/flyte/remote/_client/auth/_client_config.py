@@ -9,6 +9,7 @@ from flyteidl2.auth.auth_service_pb2 import GetOAuth2MetadataRequest, GetPublicC
 from flyte._utils.org_discovery import org_from_endpoint
 from flyte.remote._client.auth._public_client_cache import (
     CachedPublicClientAuthMetadata,
+    get_public_client_auth_metadata_cache_root,
     read_cached_public_client_auth_metadata,
     write_cached_public_client_auth_metadata,
 )
@@ -58,7 +59,7 @@ class LocalClientConfigOverrides(pydantic.BaseModel):
     audience: typing.Optional[str] = None
 
     def has_required_public_client_fields(self) -> bool:
-        return bool(self.client_id and self.redirect_uri and self.header_key and self.scopes and self.audience)
+        return bool(self.client_id and self.redirect_uri and self.header_key and self.scopes)
 
     def with_override(self, other: "LocalClientConfigOverrides | None") -> "LocalClientConfigOverrides":
         if other is None:
@@ -112,7 +113,7 @@ class RemoteClientConfigStore(ClientConfigStore):
         self._domain = domain
         self._auth_type = auth_type or "Pkce"
         self._insecure = insecure
-        self._cache_root = cache_root
+        self._cache_root = get_public_client_auth_metadata_cache_root(cache_root)
 
     def _resolve_org(self) -> str | None:
         return self._org or org_from_endpoint(self._endpoint)
@@ -121,6 +122,7 @@ class RemoteClientConfigStore(ClientConfigStore):
         return self._domain
 
     def _cached_overrides(self, org: str, domain: str) -> LocalClientConfigOverrides | None:
+        # attempt to read auth metadata from the local cache file
         cached = read_cached_public_client_auth_metadata(org, domain, cache_root=self._cache_root)
         if cached is None:
             return None
@@ -129,7 +131,7 @@ class RemoteClientConfigStore(ClientConfigStore):
             header_key=cached.authorization_header,
             redirect_uri=cached.redirect_uri,
             scopes=list(cached.scopes),
-            audience=self._client_config_overrides.audience if self._client_config_overrides else None,
+            audience=cached.audience,
         )
         return cached_overrides.with_override(self._client_config_overrides)
 
@@ -154,7 +156,6 @@ class RemoteClientConfigStore(ClientConfigStore):
                 assert client_id is not None
                 assert scopes is not None
                 assert header_key is not None
-                assert audience is not None
                 return ClientConfig(
                     token_endpoint=oauth2_metadata.token_endpoint,
                     authorization_endpoint=oauth2_metadata.authorization_endpoint,
@@ -163,7 +164,7 @@ class RemoteClientConfigStore(ClientConfigStore):
                     scopes=scopes,
                     header_key=header_key,
                     device_authorization_endpoint=oauth2_metadata.device_authorization_endpoint,
-                    audience=audience #cached_overrides.audience,
+                    audience=audience,  # cached_overrides.audience,
                 )
 
         public_client_config = await self._client.get_public_client_config(GetPublicClientConfigRequest())

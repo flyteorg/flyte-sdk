@@ -343,7 +343,10 @@ def config(
                 insecure=insecure,
             )
         except Exception as e:
-            raise click.ClickException(f"Failed to fetch public client auth metadata: {e}") from e
+            error_message = f"Failed to fetch public client auth metadata: {e}"
+            if "dns" in str(e).lower():
+                error_message = f"Please double check the endpoint configuration and retry."
+            raise click.ClickException(error_message) from e
 
         write_cached_public_client_auth_metadata(org, domain, auth_metadata)
 
