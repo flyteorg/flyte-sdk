@@ -1,3 +1,4 @@
+import errno
 from unittest import mock
 
 import click
@@ -276,6 +277,30 @@ def test_capture_exception_still_reports_connect_error_internal():
     from connectrpc.errors import ConnectError
 
     err = ConnectError(Code.INTERNAL, "backend panicked")
+    with (
+        mock.patch.object(_sentry, "init"),
+        mock.patch("sentry_sdk.is_initialized", return_value=True),
+        mock.patch("sentry_sdk.capture_exception") as capture_mock,
+        mock.patch("sentry_sdk.flush"),
+    ):
+        _sentry.capture_exception(err)
+    capture_mock.assert_called_once_with(err)
+
+
+def test_capture_exception_skips_oserror_no_space_left():
+    """FLYTE-SDK-32: OSError(ENOSPC) from shutil._fastcopy_sendfile during
+    `flyte deploy` bundle upload is a user environment problem (disk full),
+    not an SDK bug."""
+    err = OSError(errno.ENOSPC, "No space left on device", "/some/path")
+    with mock.patch.object(_sentry, "init") as init_mock:
+        _sentry.capture_exception(err)
+    init_mock.assert_not_called()
+
+
+def test_capture_exception_still_reports_other_oserror():
+    """OSError with errnos other than ENOSPC may legitimately indicate SDK bugs
+    and should still be reported to Sentry."""
+    err = PermissionError(errno.EACCES, "Permission denied", "/some/path")
     with (
         mock.patch.object(_sentry, "init"),
         mock.patch("sentry_sdk.is_initialized", return_value=True),
