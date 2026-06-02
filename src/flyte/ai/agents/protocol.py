@@ -18,7 +18,7 @@ class AgentResult:
 
 
 @runtime_checkable
-class Agent(Protocol):
+class AgentProtocol(Protocol):
     """Minimal protocol that any agent must satisfy to work with
     :class:`AgentChatAppEnvironment`.
     """
