@@ -33,9 +33,7 @@ def _flyte_record_factory(*args: Any, **kwargs: Any) -> logging.LogRecord:
         record.action_name = None
 
     name = record.name or ""
-    record.is_flyte_internal = name == "flyte" or (
-        name.startswith("flyte.") and not name.startswith("flyte.user")
-    )
+    record.is_flyte_internal = name == "flyte" or (name.startswith("flyte.") and not name.startswith("flyte.user"))
     return record
 
 
