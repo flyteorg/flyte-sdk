@@ -16,6 +16,7 @@ attempts run. The other two are per-attempt and respect `retries`.
 
 | File                            | What it shows                                                        |
 | ------------------------------- | -------------------------------------------------------------------- |
+| `backoff.py`                    | Focused demo of exponential backoff between **user** retries (`base`/`factor`/`cap`). Run locally to watch the inter-attempt gaps grow `1s → 2s → 4s → 5s` (capped). |
 | `retry_and_timeout.py`          | Full lap of all controls in one task: retries with backoff, all three timeout bounds, `NonRecoverableError` short-circuit. Run locally with `flyte.init()` to observe `Backoff` delays. |
 | `non_recoverable_error.py`      | `NonRecoverableError` terminates a task on the first attempt even when `retries=3`. |
 | `max_runtime.py`                | Single `max_runtime` task that sleeps past its budget — TIMED_OUT, no retries. |
@@ -34,6 +35,10 @@ enabled:
 _U_USE_ACTIONS=1 flyte run examples/retries_timeout/<file>.py [<task>]
 ```
 
-`retry_and_timeout.py` is the exception — it's designed for local execution
-(`flyte.init()`) so the local controller can demonstrate `Backoff` between
-retries inside a single Python process.
+`backoff.py` and `retry_and_timeout.py` are the exceptions — they're designed
+for local execution (`flyte.init()`) so the local controller can demonstrate
+`Backoff` between retries inside a single Python process:
+
+```bash
+python examples/retries_timeout/backoff.py
+```
