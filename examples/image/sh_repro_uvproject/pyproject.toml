@@ -1,0 +1,6 @@
+[project]
+name = "sh-repro"
+version = "0.1.0"
+description = "Dummy lightweight project to reproduce the uv-project build path"
+requires-python = ">=3.12"
+dependencies = []
