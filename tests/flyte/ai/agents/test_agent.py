@@ -347,7 +347,7 @@ class TestRunLoop:
     async def test_no_tool_calls_returns_text(self):
         llm = _make_llm([LLMMessage(content="Hello human.", tool_calls=[])])
         agent = Agent(name="t", instructions="I", call_llm=llm)
-        result = await agent.run("hi", [])
+        result = await agent.run.aio("hi", [])
         assert isinstance(result, AgentResult)
         assert result.summary == "Hello human."
         assert result.error == ""
@@ -365,7 +365,7 @@ class TestRunLoop:
             ]
         )
         agent = Agent(name="t", instructions="I", tools=[_add], call_llm=llm)
-        result = await agent.run("add 1 and 2", [])
+        result = await agent.run.aio("add 1 and 2", [])
         assert result.summary == "The answer is 3."
         assert result.attempts == 2
 
@@ -388,7 +388,7 @@ class TestRunLoop:
             ]
         )
         agent = Agent(name="t", instructions="I", tools=[_add], call_llm=llm)
-        result = await agent.run("x", [])
+        result = await agent.run.aio("x", [])
         assert result.summary == "Done."
         _, _, second_messages, _ = llm.await_args_list[1].args
         tool_msg = next(m for m in second_messages if m["role"] == "tool")
@@ -409,7 +409,7 @@ class TestRunLoop:
             ]
         )
         agent = Agent(name="t", instructions="I", tools=[boom], call_llm=llm)
-        result = await agent.run("trigger boom", [])
+        result = await agent.run.aio("trigger boom", [])
         assert result.summary == "Recovered."
         _, _, second_messages, _ = llm.await_args_list[1].args
         tool_msg = next(m for m in second_messages if m["role"] == "tool")
@@ -423,14 +423,14 @@ class TestRunLoop:
         )
         llm = AsyncMock(return_value=looping)
         agent = Agent(name="t", instructions="I", tools=[_add], call_llm=llm, max_turns=3)
-        result = await agent.run("infinite", [])
+        result = await agent.run.aio("infinite", [])
         assert "max_turns" in result.error
         assert result.attempts == 3
 
     async def test_llm_error_returns_error_result(self):
         llm = AsyncMock(side_effect=RuntimeError("provider down"))
         agent = Agent(name="t", instructions="I", call_llm=llm)
-        result = await agent.run("x", [])
+        result = await agent.run.aio("x", [])
         assert "LLM call failed" in result.error
         assert "provider down" in result.error
         assert result.attempts == 1
@@ -454,7 +454,7 @@ class TestRunLoop:
 
         token = agent_progress_cb.set(on_event)
         try:
-            await agent.run("hi", [])
+            await agent.run.aio("hi", [])
         finally:
             agent_progress_cb.reset(token)
 
@@ -471,7 +471,7 @@ class TestRunLoop:
             {"role": "user", "content": "previous question"},
             {"role": "assistant", "content": "previous answer"},
         ]
-        await agent.run("new", history)
+        await agent.run.aio("new", history)
         _, _, messages, _ = llm.await_args_list[0].args
         roles = [m["role"] for m in messages]
         assert roles == ["user", "assistant", "user"]
@@ -518,7 +518,7 @@ class TestApproval:
             call_llm=llm,
             approval_callback=deny,
         )
-        result = await agent.run("do it", [])
+        result = await agent.run.aio("do it", [])
         assert result.summary == "Backed off."
         _, _, second, _ = llm.await_args_list[1].args
         tool_msg = next(m for m in second if m["role"] == "tool")
@@ -558,7 +558,7 @@ class TestApproval:
             call_llm=llm,
             approval_callback=approve,
         )
-        await agent.run("do it", [])
+        await agent.run.aio("do it", [])
         assert executed["ran"] is True
 
 
@@ -608,7 +608,7 @@ class TestMemoryStore:
         memory = MemoryStore()
         llm = _make_llm([LLMMessage(content="ack", tool_calls=[])])
         agent = Agent(name="t", instructions="I", call_llm=llm, memory=memory)
-        await agent.run("hi", [])
+        await agent.run.aio("hi", [])
         roles = [m["role"] for m in memory.messages]
         assert roles == ["user", "assistant"]
         assert memory.messages[0]["content"] == "hi"
@@ -620,7 +620,7 @@ class TestMemoryStore:
         )
         llm = _make_llm([LLMMessage(content="ok", tool_calls=[])])
         agent = Agent(name="t", instructions="I", call_llm=llm, memory=memory)
-        await agent.run("hi", [])
+        await agent.run.aio("hi", [])
         _, _, messages, _ = llm.await_args_list[0].args
         contents = [m["content"] for m in messages]
         assert "remember this" in contents
@@ -1080,7 +1080,7 @@ class TestMCPLazyLoad:
         llm = _make_llm([LLMMessage(content="ok", tool_calls=[])])
         agent = Agent(name="t", instructions="I", call_llm=llm)
         assert agent.mcp_servers == ()
-        result = await agent.run("hi", [])
+        result = await agent.run.aio("hi", [])
         assert result.error == ""
 
     async def test_mcp_load_called_once(self):
@@ -1090,8 +1090,8 @@ class TestMCPLazyLoad:
 
         load_mock = AsyncMock(return_value=[])
         with patch.object(agent._mcp_loader, "load", load_mock):
-            await agent.run("hi", [])
-            await agent.run("hi again", [])
+            await agent.run.aio("hi", [])
+            await agent.run.aio("hi again", [])
         assert load_mock.await_count == 1
 
     async def test_mcp_tools_registered_and_listed_after_run(self):
@@ -1112,7 +1112,7 @@ class TestMCPLazyLoad:
         with patch.object(agent._mcp_loader, "load", AsyncMock(return_value=[mcp_tool])):
             # MCP tools are loaded lazily, so they are absent until the first run.
             assert "mcp_search" not in {d["name"] for d in agent.tool_descriptions()}
-            await agent.run("hi", [])
+            await agent.run.aio("hi", [])
 
         names = {d["name"] for d in agent.tool_descriptions()}
         assert "mcp_search" in names
@@ -1137,7 +1137,7 @@ class TestMCPLazyLoad:
             source="mcp",
         )
         with patch.object(agent._mcp_loader, "load", AsyncMock(return_value=[clashing])):
-            await agent.run("hi", [])
+            await agent.run.aio("hi", [])
 
         # The local tool is preserved; the MCP impostor did not replace it.
         assert agent._registry["_add"] is original
@@ -1193,7 +1193,7 @@ class TestParallelToolExecution:
             call_llm=self._two_call_llm(),
             parallel_tool_calls=True,
         )
-        await agent.run("go", [])
+        await agent.run.aio("go", [])
         # Under concurrent execution, ``fast`` runs (and finishes) while ``slow``
         # is parked on its sleep.
         assert order == ["slow_start", "fast_start", "fast_end", "slow_end"]
@@ -1208,7 +1208,7 @@ class TestParallelToolExecution:
             call_llm=self._two_call_llm(),
             parallel_tool_calls=False,
         )
-        await agent.run("go", [])
+        await agent.run.aio("go", [])
         # Strict ordering: ``slow`` fully completes before ``fast`` begins.
         assert order == ["slow_start", "slow_end", "fast_start", "fast_end"]
 
@@ -1222,7 +1222,7 @@ class TestParallelToolExecution:
             tools={"slow": slow, "fast": fast},
             call_llm=llm,
         )
-        await agent.run("go", [])
+        await agent.run.aio("go", [])
         _, _, second_messages, _ = llm.await_args_list[1].args
         tool_msgs = {m["name"]: m["content"] for m in second_messages if m["role"] == "tool"}
         assert tool_msgs == {"slow": "slow", "fast": "fast"}
@@ -1255,7 +1255,7 @@ class TestDispatchEdgeCases:
             ]
         )
         agent = Agent(name="t", instructions="I", tools=[weird], call_llm=llm)
-        await agent.run("go", [])
+        await agent.run.aio("go", [])
         assert captured == {"_raw": "not-a-dict"}
 
     async def test_missing_arguments_default_to_empty_dict(self):
@@ -1279,7 +1279,7 @@ class TestDispatchEdgeCases:
             ]
         )
         agent = Agent(name="t", instructions="I", tools=[t], call_llm=llm)
-        await agent.run("go", [])
+        await agent.run.aio("go", [])
         assert captured["set"] is True
         assert captured["args"] == {}
 
@@ -1295,7 +1295,7 @@ class TestMemoryPersistenceOnFailure:
         memory = MemoryStore()
         llm = AsyncMock(side_effect=RuntimeError("provider down"))
         agent = Agent(name="t", instructions="I", call_llm=llm, memory=memory)
-        result = await agent.run("remember me", [])
+        result = await agent.run.aio("remember me", [])
         assert "LLM call failed" in result.error
         # Even though the turn failed, the user message is committed to memory
         # so a later resume sees the in-flight prompt.
@@ -1309,7 +1309,7 @@ class TestMemoryPersistenceOnFailure:
         memory = MemoryStore()
         llm = AsyncMock(return_value=looping)
         agent = Agent(name="t", instructions="I", tools=[_add], call_llm=llm, memory=memory, max_turns=2)
-        await agent.run("loop forever", [])
+        await agent.run.aio("loop forever", [])
         roles = [m["role"] for m in memory.messages]
         assert roles[0] == "user"
         # Assistant + tool messages from the capped turns are persisted too.
@@ -1422,7 +1422,7 @@ class TestAsyncToolExecution:
             ]
         )
         agent = Agent(name="t", instructions="I", tools=[_async_double], call_llm=llm)
-        await agent.run("double 21", [])
+        await agent.run.aio("double 21", [])
         _, _, second_messages, _ = llm.await_args_list[1].args
         tool_msg = next(m for m in second_messages if m["role"] == "tool")
         assert tool_msg["content"] == "42"

@@ -105,7 +105,7 @@ async def chat(message: str, memory_key: str = MEMORY_KEY) -> str:
     flyte.logger.info("Restored %d prior messages from memory.", len(memory.messages))
 
     agent.memory = memory
-    result = await agent.run(message)
+    result = await agent.run.aio(message)
 
     # Persist the updated transcript (and any tool-written artifacts) back to the
     # deterministic key path so the next run picks up where this one left off.

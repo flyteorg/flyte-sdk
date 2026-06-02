@@ -12,9 +12,11 @@ from flyte.ai.chat import AgentChatAppEnvironment, CustomTheme
 from flyte.ai.chat.app import _ChatRequest, _hex_to_rgb, _rgba
 from flyte.app.extras import FastAPIPassthroughAuthMiddleware
 from flyte.models import ActionPhase
+from flyte.syncify import syncify
 
 
 class _StubAgent:
+    @syncify
     async def run(self, message: str, history: list[dict[str, str]]) -> AgentResult:
         return AgentResult(summary=f"echo:{message}")
 
