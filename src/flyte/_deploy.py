@@ -379,6 +379,7 @@ async def _build_images(
     Resolves any ``CodeBundleLayer`` layers first so callers (apply, build_images, serve,
     connectors, run) don't each need to duplicate that step.
     """
+    import flyte.errors
     from flyte._image import _DEFAULT_IMAGE_REF_NAME, resolve_code_bundle_layer
 
     from ._internal.imagebuild.image_builder import ImageCache
@@ -402,7 +403,7 @@ async def _build_images(
                     image_uri = image_refs[env.image._ref_name]
                     env.image = env.image.clone(base_image=image_uri)
                 else:
-                    raise ValueError(
+                    raise flyte.errors.DeploymentError(
                         f"Image name '{env.image._ref_name}' not found in config. Available: {list(image_refs.keys())}"
                     )
                 if not env.image._layers:

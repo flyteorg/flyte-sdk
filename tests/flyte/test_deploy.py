@@ -405,6 +405,26 @@ async def test_build_images_no_build_run_urls_for_local_build():
     assert cache.build_run_ids == {}
 
 
+@pytest.mark.asyncio
+async def test_build_images_unknown_ref_name_raises_deployment_error():
+    """An image referenced by a name that is not present in the config is a user
+    configuration mistake, not an SDK bug. _build_images must raise
+    DeploymentError (a RuntimeUserError filtered out of Sentry) instead of a bare
+    ValueError.
+
+    Reproduces FLYTE-SDK-4C.
+    """
+    import flyte.errors
+
+    flyte.init()
+    image = flyte.Image.from_ref_name("usda-firecon")
+    env = flyte.TaskEnvironment(name="my-env", image=image)
+    plan = DeploymentPlan(envs={"my-env": env})
+
+    with pytest.raises(flyte.errors.DeploymentError, match=r"Image name 'usda-firecon' not found in config"):
+        await _build_images(plan, image_refs={"solution_image": "registry/solution:latest"})
+
+
 # ---------------------------------------------------------------------------
 # resolve_code_bundle_layer across depends_on environments
 # ---------------------------------------------------------------------------
