@@ -1,0 +1,1306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Flyte 2 vs Dagster | Head-to-Head</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #0b0f19;
+      --surface: #121826;
+      --surface-2: #1a2234;
+      --border: #2a3548;
+      --text: #e8edf7;
+      --muted: #94a3b8;
+      --flyte: #3b82f6;
+      --flyte-dim: #1e3a5f;
+      --dagster: #f97316;
+      --dagster-dim: #431407;
+      --bridge: #f59e0b;
+      --bridge-dim: #422006;
+      --infra: #10b981;
+      --union: #6366f1;
+      --accent: #38bdf8;
+      --danger: #ef4444;
+      --slide-w: min(1200px, 92vw);
+      --slide-h: min(680px, 86vh);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      height: 100%;
+      font-size: 17px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Inter, system-ui, sans-serif;
+      overflow: hidden;
+    }
+
+    body {
+      background:
+        radial-gradient(ellipse 80% 60% at 20% 0%, rgba(99, 102, 241, 0.12), transparent),
+        radial-gradient(ellipse 60% 50% at 80% 100%, rgba(59, 130, 246, 0.1), transparent),
+        var(--bg);
+    }
+
+    .deck {
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+    }
+
+    .slide {
+      display: none;
+      width: var(--slide-w);
+      min-height: var(--slide-h);
+      background: linear-gradient(145deg, var(--surface) 0%, #0f1524 100%);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 48px 56px 40px;
+      box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+      animation: fadeIn 0.35s ease;
+      overflow-y: auto;
+      max-height: 90vh;
+    }
+
+    .slide.active { display: block; }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .slide.title-slide {
+      display: none;
+      text-align: center;
+      justify-content: center;
+      flex-direction: column;
+      align-items: center;
+      background:
+        radial-gradient(circle at 50% 30%, rgba(99, 102, 241, 0.18), transparent 55%),
+        linear-gradient(145deg, var(--surface) 0%, #0f1524 100%);
+    }
+
+    .slide.title-slide.active { display: flex; }
+
+    .badge {
+      display: inline-block;
+      font-size: 0.72rem;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      padding: 6px 14px;
+      border-radius: 999px;
+      background: rgba(99, 102, 241, 0.15);
+      color: #a5b4fc;
+      border: 1px solid rgba(99, 102, 241, 0.35);
+      margin-bottom: 24px;
+    }
+
+    h1 {
+      font-size: clamp(2rem, 4vw, 3rem);
+      font-weight: 700;
+      line-height: 1.15;
+      letter-spacing: -0.02em;
+      margin-bottom: 16px;
+    }
+
+    h1 span { color: var(--accent); }
+
+    h2 {
+      font-size: clamp(1.5rem, 2.5vw, 2rem);
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin-bottom: 20px;
+      line-height: 1.2;
+    }
+
+    h3 {
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--accent);
+      margin-bottom: 8px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .subtitle {
+      font-size: 1.15rem;
+      color: var(--muted);
+      max-width: 640px;
+      line-height: 1.6;
+      margin-bottom: 32px;
+    }
+
+    .meta {
+      font-size: 0.85rem;
+      color: var(--muted);
+      margin-top: 40px;
+    }
+
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 28px;
+      align-items: start;
+    }
+
+    .three-col {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+    }
+
+    .four-col {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 14px;
+    }
+
+    .card {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 18px 20px;
+    }
+
+    .card.flyte { border-color: rgba(59, 130, 246, 0.4); background: rgba(59, 130, 246, 0.06); }
+    .card.dagster { border-color: rgba(249, 115, 22, 0.4); background: rgba(249, 115, 22, 0.06); }
+    .card.bridge { border-color: rgba(245, 158, 11, 0.4); background: rgba(245, 158, 11, 0.06); }
+    .card.infra { border-color: rgba(16, 185, 129, 0.4); background: rgba(16, 185, 129, 0.06); }
+    .card.purple { border-color: rgba(139, 92, 246, 0.4); background: rgba(139, 92, 246, 0.06); }
+
+    .card h4 {
+      font-size: 0.95rem;
+      font-weight: 600;
+      margin-bottom: 10px;
+    }
+
+    .card.flyte h4 { color: #93c5fd; }
+    .card.dagster h4 { color: #fdba74; }
+    .card.bridge h4 { color: #fcd34d; }
+    .card.infra h4 { color: #6ee7b7; }
+    .card.purple h4 { color: #c4b5fd; }
+
+    .card ul {
+      list-style: none;
+      font-size: 0.88rem;
+      color: var(--muted);
+      line-height: 1.55;
+    }
+
+    .card ul li::before {
+      content: "→ ";
+      color: var(--accent);
+      font-weight: 500;
+    }
+
+    pre {
+      background: #0a0e17;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px 16px;
+      overflow-x: auto;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 0.68rem;
+      line-height: 1.55;
+      margin: 10px 0;
+    }
+
+    code, .inline-code {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 0.85em;
+    }
+
+    .kw { color: #c792ea; }
+    .fn { color: #82aaff; }
+    .str { color: #c3e88d; }
+    .cm { color: #546e7a; font-style: italic; }
+    .dec { color: #ffcb6b; }
+    .var { color: #f78c6c; }
+    .num { color: #f78c6c; }
+
+    .col-header {
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      padding: 6px 12px;
+      border-radius: 6px;
+      margin-bottom: 8px;
+      display: inline-block;
+    }
+
+    .col-header.flyte { background: rgba(59,130,246,0.15); color: #93c5fd; border: 1px solid rgba(59,130,246,0.3); }
+    .col-header.dagster { background: rgba(249,115,22,0.15); color: #fdba74; border: 1px solid rgba(249,115,22,0.3); }
+
+    .highlight-box {
+      background: rgba(56, 189, 248, 0.08);
+      border: 1px solid rgba(56, 189, 248, 0.25);
+      border-radius: 10px;
+      padding: 14px 18px;
+      font-size: 0.88rem;
+      color: #bae6fd;
+      margin: 14px 0;
+    }
+
+    .highlight-box.amber {
+      background: rgba(245, 158, 11, 0.08);
+      border-color: rgba(245, 158, 11, 0.3);
+      color: #fde68a;
+    }
+
+    .pill-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 10px 0;
+    }
+
+    .pill {
+      font-size: 0.78rem;
+      padding: 5px 12px;
+      border-radius: 999px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      color: var(--muted);
+    }
+
+    .pill.blue { border-color: rgba(59,130,246,0.5); color: #93c5fd; }
+    .pill.purple { border-color: rgba(139,92,246,0.5); color: #c4b5fd; }
+    .pill.amber { border-color: rgba(245,158,11,0.5); color: #fcd34d; }
+    .pill.green { border-color: rgba(16,185,129,0.5); color: #6ee7b7; }
+    .pill.orange { border-color: rgba(249,115,22,0.5); color: #fdba74; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.82rem;
+      margin: 12px 0;
+    }
+
+    th, td {
+      text-align: left;
+      padding: 9px 12px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+
+    th {
+      color: var(--accent);
+      font-weight: 600;
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    td { color: #cbd5e1; }
+    tr:last-child td { border-bottom: none; }
+
+    .td-dim { color: var(--muted); }
+    .td-flyte { color: #93c5fd; }
+    .td-dagster { color: #fdba74; }
+
+    .bullet-list {
+      list-style: none;
+      font-size: 0.9rem;
+      line-height: 1.65;
+      color: #cbd5e1;
+    }
+
+    .bullet-list li {
+      padding: 5px 0 5px 22px;
+      position: relative;
+    }
+
+    .bullet-list li::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 13px;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--union);
+    }
+
+    .check-list {
+      list-style: none;
+      font-size: 0.9rem;
+      line-height: 1.65;
+      color: #cbd5e1;
+    }
+
+    .check-list li { padding: 4px 0; }
+    .check-list li::before { content: "✓ "; color: #6ee7b7; font-weight: 700; }
+
+    .x-list {
+      list-style: none;
+      font-size: 0.9rem;
+      line-height: 1.65;
+      color: var(--muted);
+    }
+
+    .x-list li { padding: 4px 0; }
+    .x-list li::before { content: "· "; color: var(--muted); }
+
+    .compare-row {
+      display: grid;
+      grid-template-columns: 22% 39% 39%;
+      gap: 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.8rem;
+      align-items: start;
+    }
+
+    .compare-row:last-child { border-bottom: none; }
+
+    .compare-row > div {
+      padding: 8px 10px;
+      line-height: 1.45;
+    }
+
+    .compare-row .dim-label {
+      font-weight: 600;
+      color: var(--text);
+      font-size: 0.78rem;
+    }
+
+    .compare-row .flyte-val { color: #93c5fd; }
+    .compare-row .dagster-val { color: #fdba74; }
+
+    .compare-header {
+      display: grid;
+      grid-template-columns: 22% 39% 39%;
+      gap: 0;
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      padding: 0 0 8px 0;
+      border-bottom: 2px solid var(--border);
+      margin-bottom: 0;
+    }
+
+    .compare-header .h-flyte { color: #93c5fd; padding: 0 10px; }
+    .compare-header .h-dagster { color: #fdba74; padding: 0 10px; }
+    .compare-header .h-dim { color: var(--muted); padding: 0 10px; }
+
+    .decision-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 16px;
+      margin: 16px 0;
+    }
+
+    .decision-card {
+      border-radius: 12px;
+      padding: 18px 20px;
+      border: 1px solid;
+    }
+
+    .decision-card.flyte { border-color: rgba(59,130,246,0.45); background: rgba(59,130,246,0.07); }
+    .decision-card.dagster { border-color: rgba(249,115,22,0.45); background: rgba(249,115,22,0.07); }
+    .decision-card.hybrid { border-color: rgba(245,158,11,0.45); background: rgba(245,158,11,0.07); }
+
+    .decision-card h4 { font-size: 0.92rem; font-weight: 700; margin-bottom: 10px; }
+    .decision-card.flyte h4 { color: #93c5fd; }
+    .decision-card.dagster h4 { color: #fdba74; }
+    .decision-card.hybrid h4 { color: #fcd34d; }
+
+    .decision-card ul {
+      list-style: none;
+      font-size: 0.84rem;
+      color: #cbd5e1;
+      line-height: 1.5;
+    }
+
+    .decision-card ul li { padding: 3px 0; }
+    .decision-card.flyte ul li::before { content: "✓ "; color: #6ee7b7; font-weight: 700; }
+    .decision-card.dagster ul li::before { content: "✓ "; color: #fdba74; font-weight: 700; }
+    .decision-card.hybrid ul li::before { content: "→ "; color: #fcd34d; font-weight: 700; }
+
+    .nav {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      background: rgba(18, 24, 38, 0.92);
+      backdrop-filter: blur(12px);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 10px 20px;
+      z-index: 100;
+    }
+
+    .nav button {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      cursor: pointer;
+      font-size: 1rem;
+      transition: background 0.15s, border-color 0.15s;
+    }
+
+    .nav button:hover {
+      background: var(--union);
+      border-color: var(--union);
+    }
+
+    .nav .counter {
+      font-size: 0.82rem;
+      color: var(--muted);
+      min-width: 60px;
+      text-align: center;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .progress {
+      position: fixed;
+      top: 0;
+      left: 0;
+      height: 3px;
+      background: linear-gradient(90deg, var(--union), var(--accent));
+      transition: width 0.3s ease;
+      z-index: 100;
+    }
+
+    .hint {
+      position: fixed;
+      top: 16px;
+      right: 20px;
+      font-size: 0.72rem;
+      color: var(--muted);
+      opacity: 0.7;
+    }
+
+    @media (max-width: 900px) {
+      .slide { padding: 32px 28px; }
+      .two-col, .three-col, .four-col, .decision-grid { grid-template-columns: 1fr; }
+      pre { font-size: 0.62rem; }
+    }
+
+    @media print {
+      .nav, .hint, .progress { display: none; }
+      .slide { display: block !important; page-break-after: always; max-height: none; box-shadow: none; }
+      body { overflow: visible; background: white; color: black; }
+    }
+  </style>
+</head>
+<body>
+  <div class="progress" id="progress"></div>
+  <div class="hint">← → or Space to navigate</div>
+  <a href="../" style="
+    position: fixed; top: 16px; left: 20px;
+    font-size: 0.72rem; color: var(--muted); opacity: 0.7;
+    text-decoration: none; font-family: Inter, system-ui, sans-serif;
+    transition: opacity 0.15s;
+  " onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.7'">← hub</a>
+
+  <div class="deck" id="deck">
+
+    <!-- SLIDE 1: Title -->
+    <section class="slide title-slide active" data-title="Title">
+      <div class="badge">FLYRES Stack · Orchestrator Evaluation</div>
+      <h1>Flyte 2 vs Dagster<br /><span>Head-to-Head</span></h1>
+      <p class="subtitle">
+        Which orchestrator covers DE <em>and</em> ML in one system?
+        We compared both on the FLYRES model-factory workload.
+      </p>
+      <div class="pill-row" style="justify-content: center;">
+        <span class="pill blue">Typed task graph</span>
+        <span class="pill orange">Asset catalog</span>
+        <span class="pill green">GPU-native plugins</span>
+        <span class="pill purple">End-to-end lineage</span>
+      </div>
+      <p class="meta">Flyte 2.x / Union · Dagster 1.13+ · June 2026 ·
+        <a href="COMPARISON.md" style="color: var(--accent); text-decoration: none;">COMPARISON.md</a>
+      </p>
+    </section>
+
+    <!-- SLIDE 2: Mental Models -->
+    <section class="slide" data-title="Mental Models">
+      <h2>Different mental models, same problem space</h2>
+      <p style="color: var(--muted); font-size: 0.9rem; margin-bottom: 16px;">
+        Both tools orchestrate data and compute. They differ fundamentally in <em>what</em> they treat as the primary unit.
+      </p>
+      <div class="compare-header">
+        <div class="h-dim">Dimension</div>
+        <div class="h-flyte">Flyte 2</div>
+        <div class="h-dagster">Dagster</div>
+      </div>
+      <div class="compare-row">
+        <div class="dim-label">Primary unit</div>
+        <div class="flyte-val"><strong>Task</strong> in a <code class="inline-code">TaskEnvironment</code>; DAG from function dependencies</div>
+        <div class="dagster-val"><strong>Asset</strong> (data + metadata) or <strong>op</strong> in a <strong>job</strong></div>
+      </div>
+      <div class="compare-row">
+        <div class="dim-label">Orchestration</div>
+        <div class="flyte-val">Durable <strong>runs</strong> and <strong>actions</strong>; replay from last successful task</div>
+        <div class="dagster-val">Asset materializations; job runs via executor</div>
+      </div>
+      <div class="compare-row">
+        <div class="dim-label">Data contracts</div>
+        <div class="flyte-val">Typed I/O (<code class="inline-code">flyte.File</code>, <code class="inline-code">flyte.Dir</code>, dataclasses); platform stages blobs</div>
+        <div class="dagster-val">I/O managers + asset metadata; you wire storage explicitly</div>
+      </div>
+      <div class="compare-row">
+        <div class="dim-label">ML compute</div>
+        <div class="flyte-val">First-class <strong>task plugins</strong> (Ray, PyTorch Elastic) + per-task <code class="inline-code">Resources(gpu=...)</code></div>
+        <div class="dagster-val">External runtimes (Ray, K8s jobs) launched from within assets/ops</div>
+      </div>
+      <div class="compare-row">
+        <div class="dim-label">Automation</div>
+        <div class="flyte-val"><code class="inline-code">Trigger.cron(...)</code>, <code class="inline-code">Trigger.hourly()</code>, <code class="inline-code">Trigger.Manual()</code> on tasks</div>
+        <div class="dagster-val"><code class="inline-code">@dg.schedule</code> + <code class="inline-code">RunRequest</code>; Declarative Automation</div>
+      </div>
+      <div class="compare-row">
+        <div class="dim-label">External events</div>
+        <div class="flyte-val">Webhook app / invoke webhook endpoint</div>
+        <div class="dagster-val"><code class="inline-code">@dg.sensor</code> polling; GraphQL <code class="inline-code">launchRun</code></div>
+      </div>
+      <div class="highlight-box" style="margin-top: 16px;">
+        <strong>Takeaway:</strong> Dagster excels when the team thinks in <strong>tables and assets</strong> (catalog, freshness, partitions).
+        Flyte excels when the team thinks in <strong>pipelines of compute steps</strong> with large artifacts, GPUs, and reproducible reruns.
+      </div>
+    </section>
+
+    <!-- SLIDE 3: FLYRES Requirements Mapping -->
+    <section class="slide" data-title="Requirements">
+      <h2>FLYRES requirements — how each maps</h2>
+      <p style="color: var(--muted); font-size: 0.9rem; margin-bottom: 14px;">
+        Model Factory workload: multimodal curation → distributed training → eval → serve.
+      </p>
+      <div class="compare-header">
+        <div class="h-dim">Requirement</div>
+        <div class="h-flyte">Flyte 2</div>
+        <div class="h-dagster">Dagster</div>
+      </div>
+      <div class="compare-row">
+        <div class="dim-label">Multimodal DE ETL</div>
+        <div class="flyte-val">Tasks + parallel <code class="inline-code">asyncio.gather</code> / fanout; typed outputs</div>
+        <div class="dagster-val">Assets with <code class="inline-code">deps=</code>; parallel ops in jobs</div>
+      </div>
+      <div class="compare-row">
+        <div class="dim-label">Distributed training (FSDP)</div>
+        <div class="flyte-val"><code class="inline-code">flyteplugins.pytorch</code> Elastic + <code class="inline-code">Resources(gpu=...)</code> — first-class</div>
+        <div class="dagster-val">Custom op/asset calling Ray/K8s; no built-in Elastic/FSDP plugin</div>
+      </div>
+      <div class="compare-row">
+        <div class="dim-label">Data gravity (TB checkpoints)</div>
+        <div class="flyte-val"><code class="inline-code">flyte.File</code> / <code class="inline-code">flyte.Dir</code>; HF Volume mount; platform handles blob movement</div>
+        <div class="dagster-val">I/O manager + cloud path strings; HF via <code class="inline-code">huggingface_hub</code> in asset body</div>
+      </div>
+      <div class="compare-row">
+        <div class="dim-label">Experiment tracking</div>
+        <div class="flyte-val">W&amp;B in tasks; run graph ties checkpoint URI to W&amp;B run ID</div>
+        <div class="dagster-val">W&amp;B Resource or side-effect in asset body</div>
+      </div>
+      <div class="compare-row">
+        <div class="dim-label">Full lineage</div>
+        <div class="flyte-val">Run graph + typed artifacts + versioning per task execution</div>
+        <div class="dagster-val">Asset catalog / lineage metadata (Dagster+ for cross-team catalog)</div>
+      </div>
+      <div class="compare-row">
+        <div class="dim-label">Multi-cluster GPU</div>
+        <div class="flyte-val">Per-task <code class="inline-code">Resources</code>; SkyPilot plugin (prospective in SPEC)</div>
+        <div class="dagster-val">Executor + external launcher; not first-class</div>
+      </div>
+      <div class="compare-row">
+        <div class="dim-label">CUDA image iteration</div>
+        <div class="flyte-val">Layered <code class="inline-code">Image</code> objects next to tasks — image <em>is</em> code</div>
+        <div class="dagster-val">Docker / PEX via <code class="inline-code">dagster.yaml</code> executor config — bring-your-own build</div>
+      </div>
+    </section>
+
+    <!-- SLIDE 4: DE + ML in one graph -->
+    <section class="slide" data-title="Unified Graph">
+      <h2>ETL and GPU training in one run graph</h2>
+      <p style="color: var(--muted); font-size: 0.88rem; margin-bottom: 14px;">
+        The FLYRES model factory starts with data. Both tools can run ETL. The difference: in Flyte
+        the <em>same graph</em> that curates data continues into GPU fine-tuning — no scheduler boundary, no subprocess.
+      </p>
+      <div class="two-col">
+        <div>
+          <div class="col-header flyte">Flyte 2</div>
+          <pre><span class="cm"># ETL tasks and GPU task — one graph</span>
+<span class="dec">@env.task</span>(cache=<span class="str">"auto"</span>)
+<span class="kw">async def</span> <span class="fn">extract</span>(partition_date: <span class="fn">str</span>) -> <span class="fn">Dir</span>:
+    <span class="kw">return</span> Dir(path=<span class="str">f"s3://lake/dt={partition_date}"</span>)
+
+<span class="dec">@env.task</span>
+<span class="kw">async def</span> <span class="fn">transform</span>(raw: <span class="fn">Dir</span>) -> <span class="fn">File</span>:
+    <span class="kw">return</span> File(path=<span class="str">"s3://lake/cleaned.parquet"</span>)
+
+<span class="cm"># Continues into GPU fine-tuning — same graph,</span>
+<span class="cm"># same lineage, no second scheduler</span>
+<span class="dec">@train_env.task</span>(
+    plugin_config=<span class="fn">SkyPilot</span>(...),
+    resources=<span class="fn">Resources</span>(gpu=<span class="str">"A10G:4"</span>),
+)
+<span class="kw">async def</span> <span class="fn">finetune</span>(dataset: <span class="fn">Dir</span>) -> <span class="fn">Dir</span>: ...</pre>
+          <div class="pill-row">
+            <span class="pill blue">One orchestrator</span>
+            <span class="pill green">End-to-end lineage</span>
+            <span class="pill purple">Typed artifact passing</span>
+          </div>
+        </div>
+        <div>
+          <div class="col-header dagster">Dagster</div>
+          <pre><span class="cm"># ETL assets — catalog-first, great UI</span>
+<span class="dec">@dg.asset</span>(partitions_def=daily)
+<span class="kw">def</span> <span class="fn">raw_files</span>(context) -> <span class="fn">str</span>:
+    <span class="kw">return</span> <span class="str">f"s3://lake/dt={context.partition_key}"</span>
+
+<span class="dec">@dg.asset</span>(deps=[raw_files])
+<span class="kw">def</span> <span class="fn">cleaned_table</span>(context, raw_files: <span class="fn">str</span>):
+    context.log.info(<span class="str">"loaded partition"</span>)
+
+<span class="cm"># Training: a separate op / Ray job</span>
+<span class="cm"># launched as a subprocess or external call —</span>
+<span class="cm"># orchestration crosses a boundary here</span>
+<span class="dec">@dg.asset</span>(deps=[cleaned_table])
+<span class="kw">def</span> <span class="fn">training_run</span>(context) -> <span class="fn">dict</span>:
+    <span class="kw">import</span> subprocess
+    subprocess.run([<span class="str">"sky"</span>, <span class="str">"launch"</span>, <span class="str">"train.yaml"</span>])
+    <span class="kw">return</span> {<span class="str">"checkpoint"</span>: <span class="str">"s3://models/ckpt"</span>}</pre>
+          <div class="pill-row">
+            <span class="pill amber">Asset catalog</span>
+            <span class="pill orange">Partition UI</span>
+          </div>
+        </div>
+      </div>
+      <div class="highlight-box" style="margin-top: 10px;">
+        <strong>The compounding advantage:</strong> Flyte's data prep and model training share one lineage graph, one cache layer,
+        and one failure-recovery surface. A bad model traces back through the ETL that produced its dataset — in one UI.
+      </div>
+    </section>
+
+    <!-- SLIDE 5: Distributed GPU Training -->
+    <section class="slide" data-title="GPU Training">
+      <h2>Distributed GPU training: first-class vs. external</h2>
+      <p style="color: var(--muted); font-size: 0.88rem; margin-bottom: 14px;">
+        For multi-node PyTorch (FSDP / DDP), Flyte owns the process group lifecycle.
+        Dagster delegates to Ray or a K8s job — two operational surfaces.
+      </p>
+      <div class="two-col">
+        <div>
+          <div class="col-header flyte">Flyte 2 — plugin owns the cluster</div>
+          <pre><span class="kw">from</span> flyteplugins.pytorch.task <span class="kw">import</span> Elastic
+
+torch_cfg = <span class="fn">Elastic</span>(
+    nproc_per_node=<span class="num">2</span>, nnodes=<span class="num">2</span>, max_restarts=<span class="num">3</span>,
+)
+train_env = flyte.<span class="fn">TaskEnvironment</span>(
+    name=<span class="str">"fsdp-train"</span>,
+    plugin_config=torch_cfg,
+    image=<span class="fn">Image</span>.from_debian_base(
+        python_version=(<span class="num">3</span>, <span class="num">12</span>),
+    ).with_pip_packages(<span class="str">"torch==2.4.0"</span>),
+    resources=<span class="fn">Resources</span>(
+        gpu=<span class="str">"A10G:1"</span>, cpu=(<span class="num">4</span>, <span class="num">8</span>),
+        memory=(<span class="str">"8Gi"</span>, <span class="str">"32Gi"</span>),
+    ),
+)
+
+<span class="dec">@train_env.task</span>
+<span class="kw">async def</span> <span class="fn">train</span>(hyperparams: <span class="fn">dict</span>) -> <span class="fn">dict</span>:
+    final_loss = <span class="fn">train_loop</span>(...)
+    <span class="kw">return</span> {<span class="str">"checkpoint"</span>: <span class="str">"s3://..."</span>,
+            <span class="str">"loss"</span>: final_loss}</pre>
+          <ul class="check-list" style="font-size: 0.82rem;">
+            <li>Elastic restarts — orchestrator-managed</li>
+            <li>GPU resources declared alongside task</li>
+            <li>W&amp;B run ID tied to Flyte run ID</li>
+          </ul>
+        </div>
+        <div>
+          <div class="col-header dagster">Dagster — delegates to external runtime</div>
+          <pre><span class="cm"># Training runs inside the asset body.</span>
+<span class="cm"># Dagster does not own the process group.</span>
+<span class="dec">@dg.asset</span>(deps=[<span class="str">"curated_dataset"</span>])
+<span class="kw">def</span> <span class="fn">training_run</span>(
+    context: dg.<span class="fn">AssetExecutionContext</span>,
+    curated_dataset: <span class="fn">dict</span>,
+) -> <span class="fn">dict</span>:
+    <span class="kw">import</span> wandb
+
+    hyperparams = {<span class="str">"epochs"</span>: <span class="num">3</span>, <span class="str">"lr"</span>: <span class="num">1e-3</span>}
+    wandb.<span class="fn">init</span>(project=<span class="str">"dagster-experiments"</span>)
+    final_loss = <span class="fn">train_loop</span>(...)
+    wandb.log({<span class="str">"train_loss"</span>: final_loss})
+    <span class="kw">return</span> {
+        <span class="str">"checkpoint"</span>: <span class="str">"s3://models/ckpt"</span>,
+        <span class="str">"final_loss"</span>: final_loss,
+    }</pre>
+          <ul class="x-list" style="font-size: 0.82rem;">
+            <li>No built-in PyTorch Elastic plugin</li>
+            <li>GPU spec lives in executor config, not code</li>
+            <li>Distributed setup: Ray job or K8s manifest</li>
+          </ul>
+        </div>
+      </div>
+      <div class="highlight-box">
+        <strong>FLYRES takeaway:</strong> For scarce GPUs and multi-node PyTorch, Flyte's plugin model keeps orchestration and training in one system.
+        Dagster remains a strong coordinator if Ray already exists, but you maintain two operational surfaces.
+      </div>
+    </section>
+
+    <!-- SLIDE 6: Data Gravity -->
+    <section class="slide" data-title="Data Gravity">
+      <h2>Data gravity: typed artifacts vs. path strings</h2>
+      <p style="color: var(--muted); font-size: 0.88rem; margin-bottom: 14px;">
+        Model weights and training datasets are measured in terabytes.
+        How each orchestrator handles blob movement between steps has major operational impact.
+      </p>
+      <div class="two-col">
+        <div>
+          <div class="col-header flyte">Flyte 2 — platform stages blobs</div>
+          <pre><span class="kw">from</span> flyte.extras <span class="kw">import</span> Volume, volume_image
+
+env = flyte.<span class="fn">TaskEnvironment</span>(
+    name=<span class="str">"hf-vol"</span>,
+    image=<span class="fn">volume_image</span>(
+        flyte.Image.from_debian_base().
+        with_pip_packages(<span class="str">"transformers"</span>),
+    ),
+)
+
+<span class="dec">@env.task</span>
+<span class="kw">async def</span> <span class="fn">cache_base_model</span>(
+    model_name: <span class="fn">str</span>,
+) -> <span class="fn">Volume</span>:
+    vol = Volume.<span class="fn">empty</span>(name=<span class="str">"hf-weights"</span>)
+    <span class="kw">await</span> vol.<span class="fn">mount</span>()
+    model = AutoModel.<span class="fn">from_pretrained</span>(model_name)
+    model.<span class="fn">save_pretrained</span>(<span class="str">"/workspace"</span>)
+    <span class="kw">return</span> <span class="kw">await</span> vol.<span class="fn">commit</span>()
+<span class="cm"># Volume carries lineage — who produced it,</span>
+<span class="cm"># which task version, which run ID.</span></pre>
+          <div class="pill-row">
+            <span class="pill blue">Typed Volume</span>
+            <span class="pill green">Lineage in run graph</span>
+            <span class="pill purple">Cache = input + code hash</span>
+          </div>
+        </div>
+        <div>
+          <div class="col-header dagster">Dagster — shared path assets</div>
+          <pre>MODEL = <span class="str">"bert-base-uncased"</span>
+SHARED = <span class="str">"/shared/models/bert-base"</span>
+
+<span class="dec">@dg.asset</span>
+<span class="kw">def</span> <span class="fn">cache_base_model_weights</span>(
+    context: dg.<span class="fn">AssetExecutionContext</span>,
+) -> <span class="fn">str</span>:
+    model = AutoModel.<span class="fn">from_pretrained</span>(MODEL)
+    model.<span class="fn">save_pretrained</span>(SHARED)
+    <span class="kw">return</span> SHARED
+
+<span class="dec">@dg.asset</span>(deps=[cache_base_model_weights])
+<span class="kw">def</span> <span class="fn">finetune</span>(
+    context,
+    cache_base_model_weights: <span class="fn">str</span>,
+) -> <span class="fn">dict</span>:
+    model = AutoModel.<span class="fn">from_pretrained</span>(
+        cache_base_model_weights,
+    )
+    <span class="kw">return</span> {<span class="str">"parameters"</span>: <span class="fn">count_params</span>(model)}</pre>
+          <div class="pill-row">
+            <span class="pill amber">Asset catalog</span>
+            <span class="pill orange">Shared FS required</span>
+          </div>
+        </div>
+      </div>
+      <div class="highlight-box">
+        <strong>Key difference:</strong> Flyte's <code class="inline-code">Volume</code> ties metadata index + blob chunks into the run graph (cache, fork, replay).
+        Dagster achieves similar outcomes with shared volumes + path assets, but lineage across TB-scale weight trees is more manual.
+      </div>
+    </section>
+
+    <!-- SLIDE 7: Image as Code -->
+    <section class="slide" data-title="Image as Code">
+      <h2>Image as code vs. image as deployment config</h2>
+      <p style="color: var(--muted); font-size: 0.88rem; margin-bottom: 14px;">
+        CUDA base images take 20–40 minutes to build. Experimental layers (new transformers, peft version)
+        should rebuild in seconds. How images are managed has a direct impact on ML iteration speed.
+      </p>
+      <div class="two-col">
+        <div>
+          <div class="col-header flyte">Flyte 2 — image declared next to task</div>
+          <pre><span class="kw">from</span> flyte <span class="kw">import</span> Image
+
+<span class="cm"># Slow CUDA base — rebuilt infrequently</span>
+base = (
+    Image.<span class="fn">from_debian_base</span>(
+        name=<span class="str">"ml-base"</span>, python_version=(<span class="num">3</span>, <span class="num">12</span>),
+    )
+    .with_pip_packages(<span class="str">"torch==2.4.0"</span>)
+    .with_apt_packages(<span class="str">"cuda-compiler-12-4"</span>)
+)
+
+<span class="cm"># Fast experimental layer — changes often</span>
+experimental = base.with_pip_packages(
+    <span class="str">"transformers==4.42.0"</span>, <span class="str">"peft==0.11.0"</span>,
+)
+
+base_env = flyte.<span class="fn">TaskEnvironment</span>(
+    name=<span class="str">"base"</span>, image=base,
+)
+exp_env = flyte.<span class="fn">TaskEnvironment</span>(
+    name=<span class="str">"experimental"</span>, image=experimental,
+)
+
+<span class="dec">@base_env.task</span>
+<span class="kw">async def</span> <span class="fn">pretrain</span>() -> <span class="fn">str</span>: ...
+
+<span class="dec">@exp_env.task</span>
+<span class="kw">async def</span> <span class="fn">fine_tune</span>(checkpoint: <span class="fn">str</span>) -> <span class="fn">str</span>: ...</pre>
+          <div class="pill-row">
+            <span class="pill blue">Image is versioned with task</span>
+            <span class="pill green">Layered builds in SDK</span>
+          </div>
+        </div>
+        <div>
+          <div class="col-header dagster">Dagster — environment is deployment config</div>
+          <pre><span class="cm"># dagster.yaml (conceptual)</span>
+<span class="cm"># run_launcher:</span>
+<span class="cm">#   module: dagster_k8s</span>
+<span class="cm">#   class: K8sRunLauncher</span>
+<span class="cm">#   config:</span>
+<span class="cm">#     job_image: myregistry/ml-base:cuda12.4</span>
+<span class="cm">#</span>
+<span class="cm"># Bump experimental layer in CI:</span>
+<span class="cm"># job_image: myregistry/ml-exp:transformers-4.42</span></pre>
+          <ul class="x-list" style="font-size: 0.85rem; margin-top: 10px;">
+            <li>Images are not a core Dagster concept</li>
+            <li>Execution environment lives in YAML config, not in code</li>
+            <li>Changing CUDA version requires infra change, not code change</li>
+            <li>Layer-aware build caching: bring your own Dockerfile / CI pipeline</li>
+          </ul>
+          <div class="highlight-box amber" style="margin-top: 12px;">
+            <strong>Flyte's differentiator:</strong> image as code means CI can test "add peft to this environment" in the same PR
+            that changes the fine-tuning task — no separate YAML PR, no container registry detour.
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SLIDE 8: ML Eval & Gating -->
+    <section class="slide" data-title="Eval & Gating">
+      <h2>ML evaluation and metric gates</h2>
+      <p style="color: var(--muted); font-size: 0.88rem; margin-bottom: 14px;">
+        After training, run a benchmark suite, gate promotion on metrics, and register the artifact
+        with full lineage back to training run and training dataset.
+      </p>
+      <div class="two-col">
+        <div>
+          <div class="col-header flyte">Flyte 2 — eval is a task in the same graph</div>
+          <pre>base_env = flyte.<span class="fn">TaskEnvironment</span>(name=<span class="str">"eval"</span>)
+
+<span class="dec">@base_env.task</span>
+<span class="kw">async def</span> <span class="fn">evaluate_model</span>(
+    training_result: <span class="fn">dict</span>,
+) -> <span class="fn">dict</span>:
+    metrics = training_result[<span class="str">"final_metrics"</span>]
+    <span class="kw">return</span> {
+        **training_result,
+        <span class="str">"accuracy"</span>: metrics.get(<span class="str">"accuracy"</span>, <span class="num">0.82</span>),
+        <span class="str">"f1_score"</span>: <span class="num">0.80</span>,
+        <span class="str">"status"</span>: <span class="str">"success"</span>,
+    }
+
+<span class="dec">@base_env.task</span>
+<span class="kw">async def</span> <span class="fn">register_model</span>(
+    evaluation: <span class="fn">dict</span>,
+) -> <span class="fn">dict</span>:
+    acc = evaluation[<span class="str">"accuracy"</span>]
+    <span class="kw">return</span> {
+        **evaluation,
+        <span class="str">"registry"</span>: <span class="str">"text-classifier-v1"</span>,
+        <span class="str">"deployment_ready"</span>: acc > <span class="num">0.7</span>,
+    }</pre>
+          <ul class="check-list" style="font-size: 0.82rem;">
+            <li>Eval run ID traces to training run ID</li>
+            <li>Gate logic in Python — flexible</li>
+            <li>Replay from eval without re-training</li>
+          </ul>
+        </div>
+        <div>
+          <div class="col-header dagster">Dagster — asset_check for metric gates</div>
+          <pre><span class="dec">@dg.asset</span>(deps=[training_run])
+<span class="kw">def</span> <span class="fn">evaluation_metrics</span>(
+    context: dg.<span class="fn">AssetExecutionContext</span>,
+    training_run: <span class="fn">dict</span>,
+) -> <span class="fn">dict</span>:
+    <span class="kw">return</span> {<span class="str">"accuracy"</span>: <span class="num">0.82</span>, <span class="str">"f1_score"</span>: <span class="num">0.80</span>}
+
+<span class="cm"># Asset checks: excellent for data quality gates</span>
+<span class="dec">@dg.asset_check</span>(asset=evaluation_metrics)
+<span class="kw">def</span> <span class="fn">accuracy_threshold</span>(
+    evaluation_metrics: <span class="fn">dict</span>,
+) -> dg.<span class="fn">AssetCheckResult</span>:
+    acc = evaluation_metrics[<span class="str">"accuracy"</span>]
+    <span class="kw">return</span> dg.<span class="fn">AssetCheckResult</span>(
+        passed=acc > <span class="num">0.7</span>,
+        metadata={<span class="str">"accuracy"</span>: acc},
+    )
+
+<span class="dec">@dg.asset</span>(deps=[evaluation_metrics])
+<span class="kw">def</span> <span class="fn">registered_model</span>(context) -> <span class="fn">str</span>:
+    <span class="kw">return</span> <span class="str">"registry://text-classifier-v1"</span></pre>
+          <ul class="check-list" style="font-size: 0.82rem;">
+            <li>Asset checks: clean UI for quality gates</li>
+            <li>Asset health status in Dagster+</li>
+          </ul>
+        </div>
+      </div>
+      <div class="highlight-box" style="margin-top: 10px;">
+        <strong>Dagster's strength:</strong> <code class="inline-code">@dg.asset_check</code> is excellent for data-quality and metric gates in a catalog mental model.
+        <strong>Flyte's strength:</strong> end-to-end run replay — same run ID ties training output URI, eval version, and deploy task.
+      </div>
+    </section>
+
+    <!-- SLIDE 9: Automation Patterns -->
+    <section class="slide" data-title="Automation">
+      <h2>Automation: schedules, events, external triggers</h2>
+      <p style="color: var(--muted); font-size: 0.88rem; margin-bottom: 16px;">
+        Run pipelines on a cron, react to external events (S3 drops, CI callbacks), and support manual backfills.
+      </p>
+      <div class="compare-header">
+        <div class="h-dim">Pattern</div>
+        <div class="h-flyte">Flyte 2</div>
+        <div class="h-dagster">Dagster</div>
+      </div>
+      <div class="compare-row">
+        <div class="dim-label">Cron</div>
+        <div class="flyte-val"><code class="inline-code">triggers=flyte.Trigger.cron("0 6 * * *")</code> on the task decorator</div>
+        <div class="dagster-val"><code class="inline-code">@dg.schedule(cron_schedule=...)</code> yields <code class="inline-code">RunRequest</code></div>
+      </div>
+      <div class="compare-row">
+        <div class="dim-label">Manual / backfill</div>
+        <div class="flyte-val"><code class="inline-code">Trigger.Manual()</code> with explicit inputs</div>
+        <div class="dagster-val">Launchpad UI / backfill partition APIs — mature and ergonomic</div>
+      </div>
+      <div class="compare-row">
+        <div class="dim-label">File / queue event</div>
+        <div class="flyte-val">Flyte app polling object storage; starts a task via <code class="inline-code">flyte.run(...)</code></div>
+        <div class="dagster-val"><code class="inline-code">@dg.sensor</code> polling S3/SQS; yields <code class="inline-code">RunRequest</code> — native primitive</div>
+      </div>
+      <div class="compare-row">
+        <div class="dim-label">HTTP callback</div>
+        <div class="flyte-val">Deploy a <code class="inline-code">FlyteWebhookAppEnvironment</code>; callers POST to start a task</div>
+        <div class="dagster-val">GraphQL <code class="inline-code">launchRun</code> mutation via REST API</div>
+      </div>
+      <div class="compare-row">
+        <div class="dim-label">Declarative automation</div>
+        <div class="flyte-val">—</div>
+        <div class="dagster-val"><code class="inline-code">AutomationCondition</code>: freshness policies, upstream-changed rules</div>
+      </div>
+      <div class="two-col" style="margin-top: 16px; gap: 16px;">
+        <div class="card flyte">
+          <h4>Flyte strengths</h4>
+          <ul>
+            <li>Trigger lives next to task in Python — version-controlled</li>
+            <li>First-class webhook app for incoming HTTP events</li>
+            <li>Durable run replay if trigger-fire fails mid-graph</li>
+          </ul>
+        </div>
+        <div class="card dagster">
+          <h4>Dagster strengths</h4>
+          <ul>
+            <li>Native <code class="inline-code">@dg.sensor</code> — cleaner than polling app</li>
+            <li>Partition backfill UI is mature and ergonomic</li>
+            <li>Declarative Automation for complex freshness rules</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- SLIDE 10: Event-Driven: File Sensor -->
+    <section class="slide" data-title="File Sensor">
+      <h2>Event-driven: file sensor (poll S3 → run task)</h2>
+      <p style="color: var(--muted); font-size: 0.88rem; margin-bottom: 14px;">
+        When new files land in object storage, kick off an ingestion task automatically.
+      </p>
+      <div class="two-col">
+        <div>
+          <div class="col-header flyte">Flyte 2 — polling app + task</div>
+          <pre>task_env = flyte.<span class="fn">TaskEnvironment</span>(name=<span class="str">"ingest"</span>)
+
+<span class="dec">@task_env.task</span>
+<span class="kw">async def</span> <span class="fn">ingest_new_files</span>(
+    prefix: <span class="fn">str</span>, batch_id: <span class="fn">str</span>,
+) -> <span class="fn">str</span>:
+    <span class="kw">return</span> <span class="str">f"ingested:{prefix}:{batch_id}"</span>
+
+app = <span class="fn">FastAPI</span>()
+
+<span class="dec">@app.on_event</span>(<span class="str">"startup"</span>)
+<span class="kw">async def</span> <span class="fn">poll_s3</span>():
+    seen: set[str] = set()
+    <span class="kw">while True</span>:
+        <span class="kw">for</span> key <span class="kw">in</span> <span class="fn">list_new_keys</span>(<span class="str">"s3://bucket/"</span>):
+            <span class="kw">if</span> key <span class="kw">not in</span> seen:
+                seen.<span class="fn">add</span>(key)
+                <span class="kw">await</span> flyte.<span class="fn">run</span>(
+                    ingest_new_files,
+                    prefix=key, batch_id=key,
+                )
+        <span class="kw">await</span> asyncio.<span class="fn">sleep</span>(<span class="num">60</span>)
+
+sensor_app = <span class="fn">FastAPIAppEnvironment</span>(
+    name=<span class="str">"s3-sensor"</span>, app=app,
+)</pre>
+        </div>
+        <div>
+          <div class="col-header dagster">Dagster — native @dg.sensor</div>
+          <pre><span class="dec">@dg.asset</span>
+<span class="kw">def</span> <span class="fn">ingest_new_files</span>(context) -> <span class="fn">str</span>:
+    cfg = context.op_config
+    <span class="kw">return</span> <span class="str">f"ingested:{cfg['prefix']}"</span>
+
+ingest_job = dg.<span class="fn">define_asset_job</span>(
+    <span class="str">"ingest_job"</span>, selection=<span class="str">"ingest_new_files"</span>,
+)
+
+<span class="dec">@dg.sensor</span>(
+    job=ingest_job,
+    minimum_interval_seconds=<span class="num">60</span>,
+)
+<span class="kw">def</span> <span class="fn">s3_file_sensor</span>(context):
+    <span class="kw">for</span> key <span class="kw">in</span> <span class="fn">list_new_keys</span>(<span class="str">"s3://bucket/"</span>):
+        <span class="kw">yield</span> dg.<span class="fn">RunRequest</span>(
+            run_key=key,
+            run_config={<span class="str">"ops"</span>: {<span class="str">"ingest_new_files"</span>: {
+                <span class="str">"config"</span>: {<span class="str">"prefix"</span>: key},
+            }}},
+        )
+
+defs = dg.<span class="fn">Definitions</span>(
+    assets=[ingest_new_files],
+    jobs=[ingest_job],
+    sensors=[s3_file_sensor],
+)</pre>
+        </div>
+      </div>
+      <div class="highlight-box">
+        <strong>Dagster advantage here:</strong> <code class="inline-code">@dg.sensor</code> is a first-class primitive with deduplication via <code class="inline-code">run_key</code>,
+        cursor tracking, and UI visibility. Flyte's polling app works but is more boilerplate to build and operate.
+      </div>
+    </section>
+
+    <!-- SLIDE 11: Lineage & Caching -->
+    <section class="slide" data-title="Lineage & Caching">
+      <h2>Lineage, caching, and the model factory vision</h2>
+      <p style="color: var(--muted); font-size: 0.88rem; margin-bottom: 16px;">
+        The Model Factory pattern — orchestrated prep → train → eval → serve — maps differently to each tool.
+        Lineage and caching fidelity determine how fast teams can iterate.
+      </p>
+      <div class="compare-header">
+        <div class="h-dim">Capability</div>
+        <div class="h-flyte">Flyte 2</div>
+        <div class="h-dagster">Dagster</div>
+      </div>
+      <div class="compare-row">
+        <div class="dim-label">Skip redundant work</div>
+        <div class="flyte-val">Task-level caching keyed on input hash + code hash — platform-native</div>
+        <div class="dagster-val">Op/asset caching via policies; less granular than Flyte's content-addressed cache</div>
+      </div>
+      <div class="compare-row">
+        <div class="dim-label">Artifact typing</div>
+        <div class="flyte-val">Native <code class="inline-code">File</code> / <code class="inline-code">Dir</code> / <code class="inline-code">Volume</code> / structured types — platform moves blobs</div>
+        <div class="dagster-val">Asset keys + metadata; I/O manager wires storage — flexible, more manual</div>
+      </div>
+      <div class="compare-row">
+        <div class="dim-label">Cross-team catalog</div>
+        <div class="flyte-val">Union / Flyte UI run graph; task versions; artifact provenance per run ID</div>
+        <div class="dagster-val">Asset catalog (Dagster+) — mature UI, freshness policies, checks, insights</div>
+      </div>
+      <div class="compare-row">
+        <div class="dim-label">GPU pipeline + DE unified</div>
+        <div class="flyte-val">Single task graph — ETL, training, eval, serve all share run ID and lineage</div>
+        <div class="dagster-val">Single <code class="inline-code">Definitions</code> object; GPU training often still external (Ray/K8s)</div>
+      </div>
+      <div class="compare-row">
+        <div class="dim-label">TB-scale weight trees</div>
+        <div class="flyte-val">Datasets and checkpoints are references in the run graph, not repeated rsync payloads</div>
+        <div class="dagster-val">Achievable with shared volumes + path assets; not the default ergonomics</div>
+      </div>
+      <div class="highlight-box" style="margin-top: 14px;">
+        <strong>The Flyte edge for model factories:</strong> every run carries an immutable lineage receipt —
+        "this checkpoint was produced from <em>this ETL run</em> of <em>this dataset version</em> using <em>this task code version</em>."
+        Reproducing or forking any point in the factory is a one-command operation.
+      </div>
+    </section>
+
+    <!-- SLIDE 12: When to Choose -->
+    <section class="slide" data-title="When to Choose">
+      <h2>When to choose which — for FLYRES-like teams</h2>
+      <p style="color: var(--muted); font-size: 0.88rem; margin-bottom: 18px;">
+        Both are excellent tools. The decision hinges on whether GPU compute orchestration or asset cataloging
+        is the dominant pain point.
+      </p>
+      <div class="decision-grid">
+        <div class="decision-card flyte">
+          <h4>✦ Prefer Flyte 2</h4>
+          <ul>
+            <li>One orchestrator must cover DE ETL <em>and</em> GPU training without a subprocess boundary</li>
+            <li>Lineage and rerun fidelity across checkpoints, eval metrics, and serving are compliance- or incident-driven requirements</li>
+            <li>Large artifacts and semantic caching dominate cost and iteration time</li>
+            <li>Already on or targeting Kubernetes (Union or self-hosted Flyte 2)</li>
+            <li>CUDA image iteration speed matters — want image-as-code next to tasks</li>
+          </ul>
+        </div>
+        <div class="decision-card dagster">
+          <h4>✦ Prefer Dagster</h4>
+          <ul>
+            <li>Organization is already asset-centric for analytics/DE with Dagster+ catalog, checks, and partitions</li>
+            <li>Workloads are primarily SQL / dbt / Spark-style pipelines with occasional ML jobs launched externally</li>
+            <li>Partition backfills and data contracts matter more than multi-node PyTorch orchestration</li>
+            <li>Native sensor primitives and Declarative Automation fit the event model better</li>
+          </ul>
+        </div>
+        <div class="decision-card hybrid">
+          <h4>⇄ Hybrid (common in practice)</h4>
+          <ul>
+            <li>Dagster for warehouse-centric ETL; Flyte for ML factory stages — connected via object storage URIs</li>
+            <li>Matches SPEC's "avoid two orchestrators" tension: workable, but operational overhead remains</li>
+            <li>Evaluate total cost: two infra stacks, two on-call surfaces, two deployment pipelines</li>
+          </ul>
+        </div>
+      </div>
+      <div class="highlight-box" style="margin-top: 12px;">
+        <strong>FLYRES recommendation:</strong> If the primary workload is an AI model factory (curate → train → eval → serve with GPU at every stage),
+        Flyte's unified graph and first-class plugin model justify the learning curve over Dagster's asset-first paradigm.
+      </div>
+    </section>
+
+    <!-- SLIDE 13: Cheat Sheet -->
+    <section class="slide title-slide" data-title="Cheat Sheet">
+      <div class="badge">Side-by-side reference</div>
+      <h1>Quick-reference<br /><span>cheat sheet</span></h1>
+      <div style="width: 100%; max-width: 900px; margin: 20px auto 0; text-align: left;">
+        <div class="compare-header" style="grid-template-columns: 28% 36% 36%;">
+          <div class="h-dim">Task</div>
+          <div class="h-flyte">Flyte 2 entrypoint</div>
+          <div class="h-dagster">Dagster entrypoint</div>
+        </div>
+        <div class="compare-row" style="grid-template-columns: 28% 36% 36%;">
+          <div class="dim-label">Define step</div>
+          <div class="flyte-val"><code class="inline-code">@env.task</code></div>
+          <div class="dagster-val"><code class="inline-code">@dg.asset</code> / <code class="inline-code">@dg.op</code></div>
+        </div>
+        <div class="compare-row" style="grid-template-columns: 28% 36% 36%;">
+          <div class="dim-label">Wire DAG</div>
+          <div class="flyte-val">Function args + <code class="inline-code">depends_on</code></div>
+          <div class="dagster-val"><code class="inline-code">deps=[...]</code> / <code class="inline-code">define_asset_job</code></div>
+        </div>
+        <div class="compare-row" style="grid-template-columns: 28% 36% 36%;">
+          <div class="dim-label">Schedule</div>
+          <div class="flyte-val"><code class="inline-code">triggers=flyte.Trigger.cron(...)</code></div>
+          <div class="dagster-val"><code class="inline-code">@dg.schedule</code></div>
+        </div>
+        <div class="compare-row" style="grid-template-columns: 28% 36% 36%;">
+          <div class="dim-label">External event</div>
+          <div class="flyte-val">Flyte webhook app (POST → task)</div>
+          <div class="dagster-val">GraphQL <code class="inline-code">launchRun</code></div>
+        </div>
+        <div class="compare-row" style="grid-template-columns: 28% 36% 36%;">
+          <div class="dim-label">File sensor</div>
+          <div class="flyte-val">Flyte polling app + <code class="inline-code">flyte.run(...)</code></div>
+          <div class="dagster-val"><code class="inline-code">@dg.sensor</code></div>
+        </div>
+        <div class="compare-row" style="grid-template-columns: 28% 36% 36%;">
+          <div class="dim-label">Persist dataset</div>
+          <div class="flyte-val"><code class="inline-code">flyte.Dir</code> / <code class="inline-code">flyte.File</code> / <code class="inline-code">Volume</code></div>
+          <div class="dagster-val">I/O manager + asset</div>
+        </div>
+        <div class="compare-row" style="grid-template-columns: 28% 36% 36%;">
+          <div class="dim-label">GPU</div>
+          <div class="flyte-val"><code class="inline-code">Resources(gpu="A10G:1")</code></div>
+          <div class="dagster-val">Executor / external cluster</div>
+        </div>
+        <div class="compare-row" style="grid-template-columns: 28% 36% 36%;">
+          <div class="dim-label">Distributed train</div>
+          <div class="flyte-val"><code class="inline-code">Elastic</code>, <code class="inline-code">RayJobConfig</code> plugins</div>
+          <div class="dagster-val">Ray / K8s job from asset</div>
+        </div>
+        <div class="compare-row" style="grid-template-columns: 28% 36% 36%;">
+          <div class="dim-label">Metric gate</div>
+          <div class="flyte-val">Task logic or downstream task</div>
+          <div class="dagster-val"><code class="inline-code">@dg.asset_check</code></div>
+        </div>
+        <div class="compare-row" style="grid-template-columns: 28% 36% 36%;">
+          <div class="dim-label">Docs</div>
+          <div class="flyte-val"><a href="https://www.union.ai/docs/v2/flyte/" style="color:#93c5fd;">union.ai/docs/v2/flyte</a></div>
+          <div class="dagster-val"><a href="https://docs.dagster.io/" style="color:#fdba74;">docs.dagster.io</a></div>
+        </div>
+      </div>
+      <p class="meta"><code class="inline-code">examples/reference_stacks/flyres_stack/COMPARISON.md</code></p>
+    </section>
+
+  </div>
+
+  <nav class="nav" aria-label="Slide navigation">
+    <button id="prev" aria-label="Previous slide">←</button>
+    <span class="counter" id="counter">1 / 13</span>
+    <button id="next" aria-label="Next slide">→</button>
+  </nav>
+
+  <script>
+    const slides = document.querySelectorAll(".slide");
+    const counter = document.getElementById("counter");
+    const progress = document.getElementById("progress");
+    let current = 0;
+
+    function show(index) {
+      current = Math.max(0, Math.min(index, slides.length - 1));
+      slides.forEach((s, i) => s.classList.toggle("active", i === current));
+      counter.textContent = `${current + 1} / ${slides.length}`;
+      progress.style.width = `${((current + 1) / slides.length) * 100}%`;
+      history.replaceState(null, "", `#${current + 1}`);
+    }
+
+    function next() { show(current + 1); }
+    function prev() { show(current - 1); }
+
+    document.getElementById("next").addEventListener("click", next);
+    document.getElementById("prev").addEventListener("click", prev);
+
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowRight" || e.key === " " || e.key === "PageDown") {
+        e.preventDefault(); next();
+      } else if (e.key === "ArrowLeft" || e.key === "PageUp") {
+        e.preventDefault(); prev();
+      } else if (e.key === "Home") {
+        show(0);
+      } else if (e.key === "End") {
+        show(slides.length - 1);
+      }
+    });
+
+    const hash = parseInt(location.hash.replace("#", ""), 10);
+    if (hash >= 1 && hash <= slides.length) show(hash - 1);
+
+    let touchStartX = 0;
+    document.addEventListener("touchstart", (e) => { touchStartX = e.changedTouches[0].screenX; });
+    document.addEventListener("touchend", (e) => {
+      const dx = e.changedTouches[0].screenX - touchStartX;
+      if (Math.abs(dx) > 50) dx < 0 ? next() : prev();
+    });
+  </script>
+</body>
+</html>

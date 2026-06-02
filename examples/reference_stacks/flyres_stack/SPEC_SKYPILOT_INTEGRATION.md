@@ -1,23 +1,27 @@
 # Flyte 2 ↔ SkyPilot Integration Spec
 
 **Status:** Draft for review
-**Owners:** Flyte maintainers + Union GTM
-**Audience:** Flyte maintainer team (engineering & PM) and prospective Union customers evaluating a Flyte + SkyPilot stack
-**Scope:** A first-class `flyteplugins-skypilot` package and the backend/runtime work required to support it
+**Owners:** Flyte maintainers + Union engineering leadership
+**Audience:** Flyte maintainer team (engineering & PM), Union platform engineering, and teams evaluating a Flyte + SkyPilot stack
+**Scope:** Two integration horizons — (1) a first-class `flyteplugins-skypilot` connector package, and (2) a longer-horizon architecture in which SkyPilot bootstraps ephemeral Union data planes on demand anywhere, at zero idle cost
 **Companion docs:** [SPEC.md](./SPEC.md), [COMPARISON.md](./COMPARISON.md)
 
 ---
 
 ## TL;DR
 
-This spec proposes a new `flyteplugins-skypilot` package, a Flyte 2 plugin that lets users target [SkyPilot](https://docs.skypilot.co/) as a compute backend from within a normal Flyte task or app. The integration follows the same SDK conventions already used by `flyteplugins.ray`, `flyteplugins.databricks`, and `flyteplugins.vllm`:
+This spec covers two integration horizons between Flyte 2 / Union and SkyPilot.
+
+**Horizon 1 — connector plugin (phases 1–7):** A new `flyteplugins-skypilot` package lets users target SkyPilot as a compute backend from within a normal Flyte task or app. The integration follows the same SDK conventions as `flyteplugins.ray`, `flyteplugins.databricks`, and `flyteplugins.vllm`:
 
 - A `SkyPilot` dataclass passed as `plugin_config=` to `flyte.TaskEnvironment` for one-shot tasks.
 - A `SkyPilotJob` subclass for managed jobs (spot recovery, multi-region failover).
 - A `SkyPilotConnector` that drives the SkyPilot API server via gRPC/REST and reports state back to Flyte.
 - A `SkyServeAppEnvironment` for long-running services, mirroring `VLLMAppEnvironment` and `SGLangAppEnvironment`.
 
-The plugin lets Flyte serve as the durable, lineage-aware control plane for pipelines that need SkyPilot's multi-cloud / multi-cluster reach, spot recovery, and "SSH-into-a-machine" iteration ergonomics — without forcing users to drop into raw `sky launch` or YAML.
+**Horizon 2 — ephemeral data planes (phases 8–9):** Rather than running individual tasks on SkyPilot infrastructure, SkyPilot bootstraps an entire Union data plane on demand. SkyPilot provisions cloud VMs, stands up k3s, installs FlytePropeller and the Union operator, and registers the cluster with the Union control plane. When work completes, SkyPilot autostops and the cluster deregisters automatically. The Union control plane is always-on; every data plane is ephemeral and costs nothing when idle.
+
+This second horizon directly addresses the vision raised by Union leadership: _"SkyPilot could launch a Union cluster anywhere"_ — and becomes viable because SkyPilot's API server architecture has matured (see §1.4).
 
 ---
 
@@ -68,18 +72,20 @@ No `sky launch`, no YAML, no manual polling, no separate dashboard. The Flyte ru
 
 ### For Flyte maintainers
 
-- **No new core concepts.** The plugin reuses `AsyncConnector`, `TaskPluginRegistry`, and `AppEnvironment` — the same primitives that already back Databricks, Ray, Dask, vLLM, etc. No backend protocol changes are required for the surface-layer phases.
-- **Three surfaces, one package.** Following the convention of `flyteplugins-databricks` (config dataclass + connector + task template), we expose `SkyPilot`, `SkyPilotJob`, `SkyPilotConnector`, and `SkyServeAppEnvironment` from a single `flyteplugins-skypilot` distribution.
-- **Connector deployment.** The connector runs as its own K8s deployment in the Flyte data plane (`flyte-connector-skypilot`) and talks to one or more SkyPilot API servers using a `SKYPILOT_API_SERVER_ENDPOINT` env var and a Flyte secret for the bearer token. Local execution works via `AsyncConnectorExecutorMixin`.
-- **IDL surface.** The surface layer piggybacks on the existing connector custom-config dict. The bridge layer introduces a small `flyteidl2.plugins.skypilot` proto (`SkyPilotJob`, `SkyPilotServe`) so launch specs are typed end-to-end. See §8 for the full phasing.
-- **Risk profile.** Bounded. We do not fork SkyPilot, we do not extend the propeller, and we never block the data plane on SkyPilot availability — the connector is the only failure boundary.
+- **Horizon 1 — no new core concepts.** The connector plugin reuses `AsyncConnector`, `TaskPluginRegistry`, and `AppEnvironment` — the same primitives that back Databricks, Ray, Dask, vLLM, etc. No backend protocol changes required for phases 1–7.
+- **Three surfaces, one package.** Following `flyteplugins-databricks` conventions: `SkyPilot`, `SkyPilotJob`, `SkyPilotConnector`, and `SkyServeAppEnvironment` from a single `flyteplugins-skypilot` distribution.
+- **Connector deployment.** `flyte-connector-skypilot` runs as its own K8s deployment in the Flyte data plane, talking to a Postgres-backed SkyPilot API server via `SKYPILOT_API_SERVER_ENDPOINT`. Local execution works via `AsyncConnectorExecutorMixin`.
+- **IDL surface.** Surface layer piggybacks on the connector custom-config dict. Bridge layer introduces `flyteidl2.plugins.skypilot` proto so launch specs are typed end-to-end. See §8.
+- **Horizon 2 — two new primitives needed.** A runtime cluster registration API for FlyteAdmin (or a Union operator webhook), and a pre-baked VM image that reduces bootstrap latency to 2–5 minutes. See §12 for the full design.
+- **Risk profile.** Bounded in both horizons. We do not fork SkyPilot or extend Propeller. In Horizon 1, the connector is the only failure boundary. In Horizon 2, an ephemeral data plane failure affects only the runs scheduled on it — the control plane and other data planes are unaffected.
 
 ### For Flyte users
 
-- **One pipeline, many clouds.** Use Flyte for what Flyte is good at — durable pipelines, typed data, lineage, retries, caching, triggers — and use SkyPilot for what it is good at — finding cheap or available GPU capacity across your clouds and your Kubernetes clusters. The integration means your team writes one Python task; the platform handles the rest.
-- **No data-plane re-architecture.** SkyPilot tasks launched from Flyte show up in the same Flyte run UI, with the same logs, lineage, and replay story as any other task. You do not lose visibility when work runs off-cluster.
-- **Spot-aware, multi-region, managed.** SkyPilot's spot-recovery and managed-job features are exposed natively: a `Trigger.cron(...)` ETL can drive a `SkyPilotJob(use_spot=True, regions=["us-west-2", "eu-west-1"])` and still appear as a single deterministic action in the Flyte history.
-- **Buy vs. build.** Flyte ships the connector, its deployment chart, the IDL, the SDK, the examples, and the support contract. Users can self-host both Flyte and SkyPilot, or buy Union-hosted Flyte's control plane and bring their own SkyPilot API server.
+- **One pipeline, many clouds.** Use Flyte for durable pipelines, typed data, lineage, retries, caching, and triggers. Use SkyPilot for finding cheap or available GPU capacity across clouds and clusters. Your team writes one Python task; the platform handles the rest.
+- **No data-plane re-architecture (Horizon 1).** SkyPilot tasks show up in the same Flyte run UI with the same logs, lineage, and replay story as any other task. Visibility is not lost when work runs off-cluster.
+- **Zero idle cost (Horizon 2).** Data planes spin up for a run and disappear when idle. There are no standing GPU clusters to maintain or pay for between factory runs. Every run still has a full lineage record in the Union control plane.
+- **Spot-aware, multi-region, managed.** SkyPilot's spot-recovery and managed-job features are exposed natively in both horizons: a `Trigger.cron(...)` pipeline drives a `SkyPilotJob(use_spot=True, regions=[…])` and appears as a single deterministic action in Flyte history.
+- **Deployment options.** Self-host Flyte + SkyPilot API server, or use Union-hosted control plane + bring-your-own SkyPilot API server. In Horizon 2, Union can optionally host the SkyPilot API server as a managed add-on.
 
 ---
 
@@ -152,6 +158,31 @@ flowchart LR
 ```
 
 Flyte owns the *what* (pipeline graph, data, lineage). SkyPilot owns the *where* (which cloud, which region, which accelerator). The plugin is the contract between them.
+
+### 1.4 SkyPilot architecture: recent developments
+
+SkyPilot previously stored all state in local files (`~/.sky/`) on the machine running
+`sky`, which made it impractical to share a single SkyPilot instance across a team or
+to recover from API server failures. That constraint has been fully resolved:
+
+- **Postgres-backed HA API server.** SkyPilot's API server now supports an external
+  PostgreSQL database (`db: postgresql://…` in `~/.sky/config.yaml` or via Helm's
+  `apiService.dbConnectionString`). State is decoupled from the pod, so rolling
+  upgrades and pod rescheduling do not lose cluster or job metadata.
+- **Zero-downtime rolling upgrades.** With Postgres backing and `upgradeStrategy:
+  RollingUpdate`, the API server can be upgraded without dropping in-flight job
+  tracking. The old pod is terminated only after the new one is healthy.
+- **Cluster bootstrap from raw VMs.** `sky local up --ips <ips.txt> --ssh-user …
+  --ssh-key-path …` deploys a lightweight k3s Kubernetes cluster on any list of
+  SSH-accessible machines, installs the NVIDIA GPU Operator if GPUs are present,
+  exposes the Kubernetes API server on port 6443, and configures local `kubectl` — the
+  entire cluster bootstrap in a single command.
+
+These three developments are what make Horizon 2 (ephemeral Union data planes) viable.
+They are documented at:
+- [API server HA](https://docs.skypilot.co/en/latest/reference/api-server/api-server-upgrade.html)
+- [Existing machines / k3s bootstrap](https://docs.skypilot.co/en/latest/reservations/existing-machines.html)
+- [State management](https://docs.skypilot.co/en/pool-docs/reference/architecture/state.html)
 
 ---
 
@@ -816,6 +847,7 @@ flowchart LR
     classDef surface fill:#e6f3ff,stroke:#0066cc,stroke-width:2px,color:#000
     classDef bridge fill:#fff4e6,stroke:#cc7a00,stroke-width:2px,color:#000
     classDef deep fill:#ffe6e6,stroke:#cc0000,stroke-width:2px,color:#000
+    classDef h2 fill:#f0e6ff,stroke:#6600cc,stroke-width:2px,color:#000
 
     P1["**Phase 1**<br/>Subprocess pattern<br/>(docs + reference examples)"]:::surface
     P2["**Phase 2**<br/>SDK plugin, in-process<br/>(flyteplugins-skypilot)"]:::surface
@@ -824,12 +856,15 @@ flowchart LR
     P5["**Phase 5**<br/>SkyServeAppEnvironment<br/>(app/serving plane)"]:::deep
     P6["**Phase 6**<br/>Devbox SkyPilot backend<br/>(CLI + interactive)"]:::deep
     P7["**Phase 7**<br/>Lineage, cost &amp; telemetry<br/>(backend + UI)"]:::deep
+    P8["**Phase 8**<br/>Runtime cluster registration<br/>(FlyteAdmin API / operator webhook)"]:::h2
+    P9["**Phase 9**<br/>Pre-baked data plane image +<br/>ephemeral data plane lifecycle"]:::h2
 
-    P1 --> P2 --> P3 --> P4 --> P5 --> P6 --> P7
+    P1 --> P2 --> P3 --> P4 --> P5 --> P6 --> P7 --> P8 --> P9
 
-    L1[/"SDK layer<br/>(zero data-plane changes)"\]:::surface
-    L2[/"Bridge layer<br/>(new deployment, typed IDL)"\]:::bridge
-    L3[/"Control-plane layer<br/>(touches devbox, UI, backend)"\]:::deep
+    L1[/"Horizon 1 — SDK layer<br/>(zero data-plane changes)"\]:::surface
+    L2[/"Horizon 1 — Bridge layer<br/>(new deployment, typed IDL)"\]:::bridge
+    L3[/"Horizon 1 — Control-plane layer<br/>(devbox, UI, backend)"\]:::deep
+    L4[/"Horizon 2 — Ephemeral data planes<br/>(dynamic registration + bootstrap)"\]:::h2
 
     L1 -.-> P1
     L1 -.-> P2
@@ -838,30 +873,46 @@ flowchart LR
     L3 -.-> P5
     L3 -.-> P6
     L3 -.-> P7
+    L4 -.-> P8
+    L4 -.-> P9
 ```
 
 ### 8.2 What each phase ships, and why it sequences this way
 
+#### Horizon 1 — connector plugin
+
 | Phase | Layer          | Deliverable                                       | What gets de-risked for the next phase                                                                                                       | Effort |
 |-------|----------------|---------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------|--------|
-| 1     | SDK            | Reference examples showing `sky launch` from a normal Flyte task using `flyte.extras.ContainerTask` or a shell-out. No new code in the SDK. | Validates the value proposition with design partners and surfaces real authoring frictions before any plugin code is committed. Lowest possible commitment. | S      |
-| 2     | SDK            | `flyteplugins-skypilot` with `SkyPilot` / `SkyPilotJob` dataclasses and `SkyPilotTask`, running the SkyPilot Python SDK **in-process** from the user's task pod (via `AsyncConnectorExecutorMixin`). | Locks in the dataclass shape, the `sky.Task` round-trip serialization, secrets injection, and the authoring ergonomics — *without* committing to a new deployment topology yet. | M      |
-| 3     | Bridge         | Promote SkyPilot to a true async connector with its own K8s deployment (`flyte-connector-skypilot`), matching the Databricks/BigQuery topology. | Decouples failure boundaries, centralizes credentials, removes the "every task pod ships SkyPilot" cost, and proves the connector can scale under fanout. | M      |
-| 4     | Bridge         | `flyteidl2.plugins.skypilot` proto so launch specs are typed end-to-end; the connector starts consuming the proto instead of an untyped dict. | Gives the backend a stable schema to introspect, which is a prerequisite for any UI surfacing of SkyPilot intent in later phases.            | S      |
-| 5     | Control plane  | `SkyServeAppEnvironment` integrated with the Flyte app/serving lifecycle, including replica/autoscaling translation. | First control-plane-aware surface. Validates that app deployment and the connector can co-exist before we touch devbox or telemetry.        | M      |
-| 6     | Control plane  | `flyte devbox launch --plugin skypilot ...` boots a SkyPilot-managed pod; CLI handles SSH tunnel, code sync, and teardown. | Most invasive CLI/handoff work; intentionally gated on phases 2–5 because it cuts across SDK, connector, and developer tooling.              | L      |
-| 7     | Control plane  | Cost, spot-recovery, and multi-cluster routing telemetry rendered in the Flyte UI and run graph. Optional control-plane affinity (Flyte queue ↔ SkyPilot priority). | Pure deepening: requires every prior phase. Defer until adoption justifies the UI/backend investment.                                        | L      |
+| 1     | SDK            | Reference examples: `sky launch` from a normal Flyte task via `ContainerTask` or shell-out. No new SDK code. | Validates demand with design partners and surfaces authoring frictions before any plugin code is committed. Lowest commitment. | S      |
+| 2     | SDK            | `flyteplugins-skypilot` with `SkyPilot` / `SkyPilotJob` dataclasses and `SkyPilotTask`, running the SkyPilot Python SDK **in-process** from the user's task pod (`AsyncConnectorExecutorMixin`). | Locks in dataclass shape, `sky.Task` round-trip serialization, secrets injection, and authoring ergonomics — without committing to a new deployment topology. | M      |
+| 3     | Bridge         | Promote to a true async connector with its own K8s deployment (`flyte-connector-skypilot`), matching the Databricks/BigQuery topology. Also validates that SkyPilot's Postgres-backed HA API server is stable under team-shared load. | Decouples failure boundaries, centralizes credentials, removes "every task pod ships SkyPilot" cost, proves connector scales under fanout. | M      |
+| 4     | Bridge         | `flyteidl2.plugins.skypilot` proto so launch specs are typed end-to-end. | Gives the backend a stable schema to introspect — prerequisite for UI surfacing of SkyPilot intent and for Horizon 2 cluster registration. | S      |
+| 5     | Control plane  | `SkyServeAppEnvironment` integrated with the Flyte app/serving lifecycle, including replica/autoscaling translation. | First control-plane-aware surface. Validates connector + app can co-exist before touching devbox or telemetry. | M      |
+| 6     | Control plane  | `flyte devbox launch --plugin skypilot ...` boots a SkyPilot-managed pod; CLI handles SSH tunnel, code sync, teardown. | Most invasive CLI work; gated on phases 2–5 and on research-team demand for SkyPilot-style SSH interactivity. | L      |
+| 7     | Control plane  | Cost, spot-recovery, and multi-cluster routing telemetry in the Flyte UI and run graph. Optional Flyte queue ↔ SkyPilot priority affinity. | Pure deepening. Defer until adoption justifies the UI/backend investment. | L      |
 
-Effort uses T-shirt sizing (S ≈ ~2 eng-weeks, M ≈ ~8 eng-weeks, L ≈ ~16 eng-weeks). Each phase has its own GA gate; we explicitly do not pre-commit to phases 5–7 until phases 2–3 ship and design-partner usage justifies the deeper investment.
+#### Horizon 2 — ephemeral data planes
+
+| Phase | Layer                   | Deliverable                                                                                               | What gets de-risked                                                                                                   | Effort |
+|-------|-------------------------|-----------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------|--------|
+| 8     | Control plane / infra   | Runtime cluster registration API in FlyteAdmin (or Union operator webhook): an ephemeral data plane registers itself on boot and deregisters on drain without a control-plane Helm restart. | This is the key missing primitive. Gates all of Horizon 2. | L      |
+| 9     | Infra / platform        | Pre-baked Union data plane VM image (AMI / GCP image): k3s + FlytePropeller + Union operator pre-installed, so bootstrap is a cluster join and Helm upgrade (~2–5 min) rather than a full install. SkyPilot provisions VMs from this image, bootstraps the data plane, and the Union operator phones home to register with the control plane. | Closes the end-to-end Horizon 2 loop: SkyPilot provisions → k3s bootstraps → Union data plane registers → work runs → autostop → deregister. | L      |
+
+Effort uses T-shirt sizing (S ≈ ~2 eng-weeks, M ≈ ~8 eng-weeks, L ≈ ~16 eng-weeks). Horizon 2 phases are gated on Horizon 1 phases 2–4 being stable and on explicit product direction to build dynamic cluster registration.
 
 ### 8.3 Decision points between phases
 
-- **After phase 1.** Did at least two design partners adopt the subprocess pattern in their pipelines? If no, the integration is not pulled in by enough demand to justify continuing.
-- **After phase 2.** Does the in-process SDK feel right ergonomically? Are users hitting the failure modes that a dedicated connector deployment would fix? If yes, proceed to phase 3.
-- **After phase 4.** Is the typed IDL stable, and does the connector deployment hold up under realistic load? Phases 5–7 are gated on a yes here.
-- **Before phase 6.** Is devbox usage on Flyte already growing? Devbox is the most invasive surface and should only be tackled when there is a clear pull from researchers asking for SkyPilot-style interactivity.
+**Horizon 1:**
+- **After phase 1.** Did at least two design partners adopt the subprocess pattern? If no, insufficient demand to justify continuing.
+- **After phase 2.** Does the in-process SDK feel right ergonomically? Are users hitting failure modes that a dedicated connector deployment would fix? If yes, proceed to phase 3.
+- **After phase 4.** Is the typed IDL stable and does the connector hold up under realistic load? Phases 5–7 are gated on a yes here.
+- **Before phase 6.** Is devbox usage growing? Only tackle when there is a clear pull from researchers asking for SkyPilot-style interactivity.
 
-This gating is the explicit answer to "how do we de-risk deeper engineering work": **each phase is shippable, each phase is gated on validation from the prior phase, and the deepest control-plane work is intentionally the last thing we commit to.**
+**Horizon 2:**
+- **Before phase 8.** Is the Horizon 1 connector stable and in production use with at least one design partner running multi-stage factory workloads? Horizon 2 is motivated by the operational cost of always-on data plane clusters — the pain must be demonstrated, not assumed.
+- **After phase 8.** Does the dynamic registration API work reliably under concurrent register/deregister cycles? Phase 9 depends on this being rock-solid, since a registration race during bootstrap would orphan a running data plane.
+
+This gating structure is the explicit answer to "how do we de-risk deeper engineering work": **each phase is independently shippable, each phase is gated on validation from the prior, and Horizon 2 is intentionally the last thing we commit to.**
 
 ---
 
@@ -873,61 +924,63 @@ This gating is the explicit answer to "how do we de-risk deeper engineering work
 - **Connector deployment scaling.** Long-running pollers can hog the connector pod under heavy fanout. Mitigation: switch the SkyPilot connector to event-driven polling (use SkyPilot's webhook/event API once it stabilizes) before we encourage 1000-fanout patterns.
 - **Code-bundle vs `workdir` divergence.** Flyte ships code via the code bundle; SkyPilot ships code via `workdir`. We must pick one as authoritative and document the contract. Default: use the Flyte code bundle, copy it into the SkyPilot setup so `~/sky_workdir` matches what Flyte sees.
 - **Cost attribution.** SkyPilot's API server emits cost telemetry; Flyte's UI does not currently render it. Mitigation: surface it as `Link` outputs in the surface/bridge layers, build dedicated UI in the control-plane layer.
+- **[Horizon 2] Dynamic registration correctness.** A register/deregister race during a rolling bootstrap could orphan a data plane or route work to a cluster mid-teardown. Mitigation: registration must be gated on a readiness probe (Propeller healthy + shared object store accessible) and deregistration must drain in-flight work before removing the cluster config.
+- **[Horizon 2] Shared object store access.** All Flyte data planes must write to the same S3/GCS bucket as the control plane — this is a known constraint from the existing multi-data-plane deployment guide. SkyPilot's credential forwarding naturally gives the ephemeral cluster access; this must be validated in the bootstrap playbook.
 
-### 9.2 Customer-side open questions
+### 9.2 Open questions
 
-1. Does the customer want a **single SkyPilot API server** shared across teams, or **per-team API servers**? This shapes the auth model and pricing.
-2. Are they comfortable with **two control planes** (Flyte + SkyPilot API server) at the operational level, or do they need Union to host SkyPilot for them too?
-3. Where is the **billing accountability** going to live — Union for Flyte, the customer's cloud bill for SkyPilot-provisioned compute, or a Union-managed multi-cloud aggregator? (See §10.)
-4. How aggressive is their spot-vs-on-demand budget? This determines the default of `use_spot` and the recommended `job_recovery` strategy in our examples.
+1. **Single vs. per-team SkyPilot API server**: A single Postgres-backed HA server simplifies operations; per-team servers improve blast-radius isolation. The choice shapes both the auth model and how the connector discovers which API server to call.
+2. **Who operates the SkyPilot API server**: Self-operated, or a Union-hosted managed add-on? The latter is a natural SKU given Union already operates managed devbox infrastructure.
+3. **Horizon 2 registration API design**: Should the runtime cluster registration surface be a new FlyteAdmin gRPC endpoint, a Kubernetes CRD that FlyteAdmin watches, or a webhook on the Union operator? Each has different security and blast-radius trade-offs.
+4. **Bootstrap latency target**: What is the maximum tolerable cold-start time before the model factory would prefer a warm-standby cluster? The answer determines whether a pre-baked image is sufficient or whether a warm-pool strategy is needed.
+5. **SkyPilot vs. Armada for multi-cluster routing**: For organizations operating multiple permanent BYOC data planes, does [Armada](https://armadaproject.io/)'s multi-cluster job scheduling add value on top of FlyteAdmin's existing `labelClusterMap` routing? Evaluate as the cluster fleet grows; not a dependency for either horizon.
+6. **Billing accountability**: Cloud compute for SkyPilot-provisioned capacity lands on the customer's cloud bill. For Union-hosted SkyPilot API server, metering must be based on provisioned GPU-hours (SkyPilot already emits this telemetry), not on Flyte task count.
 
 ---
 
-## 10. GTM and customer-facing positioning (Union)
+## 10. Value proposition and positioning
 
-### 10.1 Where this lands in the deal motion
+### 10.1 Where this fits
 
-This integration unlocks a specific buyer profile that today either (a) buys SkyPilot and builds their own DAG layer, or (b) buys Flyte/Union and writes a SkyPilot subprocess in a Python task. Both are tells: the buyer has multi-cloud GPU economics on their roadmap and is missing the pipeline durability layer.
+This integration addresses organizations that are missing one or both of:
 
-**Ideal-fit prospect signals:**
+- **Orchestration + lineage** on top of existing SkyPilot workflows (Argo/Airflow subprocesses, hand-rolled polling, no typed I/O).
+- **Zero-idle multi-cloud compute** on top of an existing Union/Flyte deployment (fixed K8s cluster pool, no spot bidding across clouds).
 
-- Already runs SkyPilot in dev/research, mentions it during discovery.
-- Has GPU spend ≥ \$2M/yr and explicit spot/multi-region cost pressure.
-- Has more than one Kubernetes cluster or more than one cloud account for GPU.
-- Has a "model factory" pattern: continuous fine-tune → eval → deploy.
-- Currently uses Argo / Airflow / hand-rolled Python to glue SkyPilot together.
+**Common entry points:**
 
-For each of these, the integration converts a "Flyte vs. SkyPilot" comparison into a "Flyte + SkyPilot, sold by Union" expansion.
+- Already runs SkyPilot in dev/research but lacks a durable pipeline layer.
+- Already runs Union/Flyte but needs to reach spot GPU capacity outside the home cluster.
+- Has a "model factory" pattern — continuous fine-tune → eval → deploy — that runs manually today.
+- GPU spend with explicit spot/multi-region cost pressure.
 
 ### 10.2 Value-prop framing
 
-When pitching to a prospect that already runs SkyPilot:
+When the team already runs SkyPilot:
 
-> *"Keep SkyPilot for what it does best — finding cheap, available GPUs across your clouds. Add Flyte 2 (sold and supported by Union) on top to get the durable pipelines, lineage, and triggers that SkyPilot deliberately does not provide. Same Python authoring experience, no rewrite, and your existing SkyPilot YAML still works underneath."*
+> *"Keep SkyPilot for finding cheap, available GPUs across your clouds. Add Flyte 2 on top for the durable pipelines, lineage, and checkpoint-triggered evals that SkyPilot deliberately does not provide. Same Python authoring experience; existing SkyPilot YAML still works underneath."*
 
-When pitching to a prospect that already runs Flyte / Union:
+When the team already runs Flyte / Union:
 
-> *"You already have the pipeline, lineage, and trigger layer. The SkyPilot plugin lets that pipeline reach across regions and clouds for spot capacity without you giving up the audit trail. Tasks that today must run in your home cluster can now bid for capacity wherever it is cheapest, with the same Python code."*
+> *"You already have the pipeline, lineage, and trigger layer. The SkyPilot plugin lets that pipeline reach across regions and clouds for spot capacity without giving up the audit trail — and, with Horizon 2, without maintaining standing GPU clusters between factory runs."*
 
-### 10.3 Pricing implications
+### 10.3 Deployment options
 
-- **Plugin itself is OSS** (Apache 2.0, in the `flyte-sdk` monorepo) — consistent with all `flyteplugins-*` packages today.
-- **Hosted SkyPilot API server** is a candidate Union add-on SKU. Customers who do not want to operate their own API server can pay Union to host it; we already operate one for our managed devbox.
-- **Multi-cloud cost dashboards** (control-plane-layer UI work) are a natural Union-only feature, in the same way Union Queues are today.
-- **Support contract scope** explicitly covers the connector, the IDL, the SDK package, and "best-effort triage" of upstream SkyPilot issues. Upstream fixes go through the SkyPilot OSS project.
+- **Plugin (Horizon 1) is OSS** (Apache 2.0, in the `flyte-sdk` monorepo) — consistent with all `flyteplugins-*` packages.
+- **Hosted SkyPilot API server**: Teams who do not want to operate their own Postgres-backed API server can use a Union-managed add-on. Union already operates SkyPilot infrastructure for managed devbox; this is an extension of that.
+- **Horizon 2 ephemeral data planes**: Self-operated (bring your own cloud credentials + pre-baked image), or Union-managed (Union handles the bootstrap playbook and VM image lifecycle as a platform service).
+- **Multi-cloud cost dashboards** (phase-7 UI work) are a natural Union-only feature.
+- **Support scope**: Connector, IDL, SDK, and best-effort triage of upstream SkyPilot issues. Upstream fixes go through the SkyPilot OSS project.
 
 ### 10.4 Competitive positioning
 
-| Competitor                       | Why our integration wins                                                                                        |
-|----------------------------------|-----------------------------------------------------------------------------------------------------------------|
-| Anyscale (Ray + serve)           | Single-runtime lock-in. Flyte + SkyPilot keeps Ray, Spark, vLLM, and anything else on equal footing.            |
-| Domino / Coiled / standalone Sky | No durable pipeline layer; no lineage. We bring that without forcing the customer off their existing tools.     |
-| Pure Argo + Sky subprocess       | No typed I/O, no caching, no semantic replay. The connector pattern makes those first-class.                    |
-| Pure Flyte today                 | No multi-cloud failover, no spot-recovery, no `sky serve`. The plugin closes those gaps without core rewrites.  |
-
-### 10.5 Reference customer story (template)
-
-> *"\<Customer\> runs distributed pretraining on H100s across three clouds. Before adopting Flyte + SkyPilot, their team ran SkyPilot jobs from a hand-rolled Argo workflow and spent ~20% of researcher time debugging spot preemptions and missing lineage. After moving to the `flyteplugins-skypilot` integration: spot preemption is invisible to authors (handled by `SkyPilotJob`), every training run has a typed lineage record in Flyte, and the team consolidated four orchestrators into one. Total infra spend dropped 31% via aggressive spot adoption, while pipeline reliability improved (SLO from 92% → 99%)."*
+| Alternative                      | Gap                                                                                | How the layered stack answers it                                                  |
+|----------------------------------|------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------|
+| Anyscale (Ray + serve)           | Single-runtime lock-in                                                             | Flyte keeps Ray, Spark, vLLM, SkyPilot on equal footing                          |
+| Dagster + sky subprocess         | Broken lineage at the DE→ML handoff; no typed I/O or semantic replay               | Single Flyte graph from ETL through training, eval, and serve                     |
+| Armada (multi-cluster routing)   | Routes across pre-existing always-on clusters — idle cost remains                  | SkyPilot Horizon 2 creates and destroys clusters; zero idle cost                  |
+| Pure Flyte today                 | No multi-cloud failover, no spot recovery, no sky serve, no zero-idle data planes  | Plugin closes all four gaps without core rewrites                                 |
+| Standalone SkyPilot              | No DAGs, lineage, typed I/O, semantic caching, or pipeline durability              | Flyte wraps SkyPilot compute with the full factory control plane                  |
 
 ---
 
@@ -949,18 +1002,127 @@ When pitching to a prospect that already runs Flyte / Union:
 
 ### 11.2 References
 
+**SkyPilot:**
 - SkyPilot docs: <https://docs.skypilot.co/en/latest/docs/index.html>
 - SkyPilot YAML spec: <https://docs.skypilot.co/en/latest/reference/yaml-spec.html>
 - SkyPilot API server: <https://docs.skypilot.co/en/latest/reference/api-server/api-server.html>
+- SkyPilot API server HA + Postgres: <https://docs.skypilot.co/en/latest/reference/api-server/api-server-upgrade.html>
+- SkyPilot state management: <https://docs.skypilot.co/en/pool-docs/reference/architecture/state.html>
+- SkyPilot on existing machines (k3s bootstrap): <https://docs.skypilot.co/en/latest/reservations/existing-machines.html>
+
+**Flyte / Union:**
 - Flyte 2 user guide: <https://www.union.ai/docs/v2/flyte/user-guide/>
 - Flyte 2 integrations: <https://www.union.ai/docs/v2/flyte/integrations/>
 - Flyte 2 plugin source: <https://github.com/flyteorg/flyte-sdk/tree/main/plugins>
+- Flyte multi-data-plane deployment: <https://github.com/flyteorg/flyte/blob/master/docs/deployment/deployment/multicluster.rst>
+- Union BYOC platform architecture: <https://www.union.ai/docs/v2/union/deployment/byoc/platform-architecture/>
+
+**Other:**
+- Armada multi-cluster job scheduling: <https://armadaproject.io/>
 - Companion specs: [`SPEC.md`](./SPEC.md) (FLYRES stack), [`COMPARISON.md`](./COMPARISON.md) (Flyte vs Dagster)
 
-### 11.3 Out of scope (explicitly deferred)
+### 11.4 Out of scope (explicitly deferred)
 
 - Rewriting SkyPilot's API server in Go to embed it in the Flyte data plane. Not necessary; not aligned with the connector pattern.
 - Cost-based scheduling decisions made by Flyte (vs. SkyPilot). SkyPilot owns the bidder; Flyte owns the trigger.
 - Slurm-as-target. SkyPilot supports it; we will validate but not productize until a design partner requests it.
 - Ray-on-SkyPilot composition (`flyteplugins.ray` + `flyteplugins.skypilot` on the same task). Possible but a phase-4 conversation.
+- Armada as a replacement for Horizon 2. Armada routes across pre-existing clusters; SkyPilot creates and destroys them. They solve different problems and are evaluated independently.
+
+---
+
+## 12. Horizon 2: Ephemeral Union Data Planes
+
+This section is a design sketch for Horizon 2, intended to capture the architectural vision and the two remaining engineering gaps. It does not constitute a committed spec until phase 8 is explicitly greenlit.
+
+### 12.1 Vision
+
+> *"SkyPilot could launch a Union cluster anywhere."*
+> — Ketan Umare, Union CEO
+
+Today, a Union data plane is a Kubernetes cluster that is always running, registered statically with the Union control plane, and paid for whether or not it is executing work. In Horizon 2, SkyPilot provisions the VMs, bootstraps the K8s cluster, installs the data plane, and registers it — all in response to a Flyte run being submitted that requires more capacity than is currently registered. When the run completes and the cluster is idle, SkyPilot autostops it and the Union operator deregisters it. The control plane sees a normal data plane for the duration of the run and no data plane when idle.
+
+### 12.2 Architecture
+
+```
+Union Control Plane (always-on, hosted)
+      │
+      │  ← runtime registration (phase 8)
+      │
+      ▼
+SkyPilot API Server (Postgres-backed HA)
+      │
+      │  sky launch --image union-data-plane-ami
+      │
+      ▼
+Cloud VMs (spot, multi-region)
+      │
+      │  sky local up --ips <provisioned VMs>
+      │
+      ▼
+k3s cluster
+      │
+      │  helm install flyte-core (propeller + union operator)
+      │
+      ▼
+Union Data Plane (ephemeral)
+      │
+      │  union-operator phones home → registers with control plane
+      │
+      ▼
+Work executes with full Flyte lineage (shared object store)
+      │
+      │  SkyPilot autostop → union-operator drains + deregisters
+      │
+      ▼
+Cluster destroyed. Control plane has the lineage; the cluster is gone.
+```
+
+### 12.3 What already works
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| SkyPilot Postgres-backed HA API server | ✅ Available | Resolves original state-persistence concern |
+| `sky local up --ips …` k3s bootstrap | ✅ Available | Deploys k3s + GPU Operator from any SSH-accessible VMs |
+| Flyte multi-data-plane `clusterConfigs` routing | ✅ Available | FlyteAdmin can route to multiple registered data planes |
+| Union BYOC operator (data plane lifecycle) | ✅ Available | Manages data plane from within the cluster |
+| SkyPilot credential forwarding | ✅ Available | Temporarily forwards cloud creds to provisioned nodes; gives ephemeral cluster access to shared object store |
+
+### 12.4 What needs to be built
+
+**Gap 1 — Runtime cluster registration (phase 8, effort L):**
+
+FlyteAdmin currently requires static `clusterConfigs` in Helm values; adding or removing a data plane requires a pod restart. The Union operator needs a way to register a new cluster at runtime — either:
+
+- A new gRPC/REST endpoint on FlyteAdmin that accepts a signed cluster credential bundle.
+- A Kubernetes CRD (`FlyteclusterRegistration`) in the control plane namespace that FlyteAdmin watches and reconciles into its routing table.
+- A webhook on the Union operator that calls FlyteAdmin on pod startup and pod drain.
+
+The registration must be gated on a readiness signal (Propeller healthy + shared object store accessible + GPU Operator ready) to prevent routing work to a mid-bootstrap cluster.
+
+**Gap 2 — Pre-baked data plane VM image (phase 9, effort L):**
+
+Cold install of k3s + Helm + FlytePropeller + Union operator + NVIDIA GPU Operator on a blank VM takes 15–30 minutes. That latency is acceptable for long-running training runs but not for short evaluation jobs. A pre-baked AMI (or GCP image) with all dependencies pre-installed reduces bootstrap to a cluster join + Helm upgrade (2–5 minutes). This image must be:
+
+- Maintained as a versioned artifact alongside each Union release.
+- Built for each major cloud (AWS AMI, GCP image, Azure image) and each GPU hardware generation.
+- Tested daily against SkyPilot's `sky local up` bootstrap path.
+
+### 12.5 Data flow in Horizon 2
+
+The shared object store is the anchor for lineage consistency across both horizons:
+
+- Inputs are materialized to the shared S3/GCS bucket before the ephemeral data plane boots.
+- The ephemeral data plane reads inputs from and writes outputs to the same bucket using credentials forwarded by SkyPilot.
+- FlyteAdmin's lineage graph references URIs in the shared bucket — identical to how it works with a permanent data plane.
+- After the cluster is destroyed, the full run history is queryable from the Union control plane UI as if it had run on a permanent cluster.
+
+### 12.6 Relation to Armada
+
+[Armada](https://armadaproject.io/) routes job queues across multiple pre-existing, always-on Kubernetes clusters, making multi-cluster scheduling transparent to submitters. It solves a different problem:
+
+- **Armada**: _I have N always-on clusters; route each job to whichever has available capacity._
+- **SkyPilot Horizon 2**: _I have zero standing clusters; provision one on the cheapest available spot capacity for this run, then destroy it._
+
+These are complementary patterns. An organization with a mix of reserved BYOC data planes (Armada) and burst workloads (SkyPilot Horizon 2) could use both. Neither is a prerequisite for the other, and both integrate with the same Union control plane.
 

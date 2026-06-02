@@ -89,11 +89,22 @@ The stack must, at minimum, provide:
 The reference stack chosen to satisfy these requirements is:
 
 - **Ray**: Distributed compute runtime for training and large-scale parallel workloads.
-- **Flyte**: Macro orchestrator for both AI research workflows and data engineering
-  pipelines; owns lineage, versioning, and tracking across the full lifecycle.
-- **SkyPilot**: Multi-cluster Kubernetes management and serving (where Flyte does not
-  directly provide that capability). The spec should make explicit where SkyPilot and
-  Flyte overlap, where they are complementary, and where one can replace the other.
+- **Flyte / Union**: Macro orchestrator for both AI research workflows and data engineering
+  pipelines; owns lineage, versioning, and tracking across the full lifecycle. Union's
+  managed offering separates the control plane (hosted by Union) from the data plane
+  (running in the customer's cloud account).
+- **SkyPilot**: Multi-cloud compute broker and cluster bootstrapper. In the near-term
+  (Horizon 1), SkyPilot runs individual tasks on behalf of Flyte via a connector plugin,
+  providing spot recovery and multi-region failover. In the longer term (Horizon 2),
+  SkyPilot bootstraps entire ephemeral Union data planes on demand — provisioning VMs,
+  standing up k3s, installing FlytePropeller, and registering the cluster with the Union
+  control plane — so that compute scales to zero when idle and is sourced from wherever
+  capacity is cheapest at the time a run is triggered. See `SPEC_SKYPILOT_INTEGRATION.md`
+  for the full phasing.
+- **Armada** (optional, later): Routes work across pre-existing, always-on Kubernetes
+  clusters when reserved capacity matters more than zero-idle cost. Complementary to
+  SkyPilot: Armada for reserved BYOC clusters, SkyPilot for elastic burst. Evaluated
+  separately; not a blocking dependency for Horizon 1 or 2.
 - **Hugging Face**: Model storage and shared-storage mounts (hf-mounts) for large
   artifacts.
 - **Weights & Biases**: Experiment tracking, with the option to replace it over time
@@ -195,75 +206,125 @@ Choose Dagster if:
 - Data lineage tracking may need custom metadata plugins
 - GPU scheduling requires custom executor configuration
 
-## Flyte ↔ SkyPilot Integration (Prospective)
+## Flyte ↔ SkyPilot Integration
 
-This section describes a prospective integration pattern for organizations that already
-run SkyPilot, or that want SkyPilot's interactive / multi-cluster scheduling story while
-adopting Flyte as the pipeline layer. It is presented as a possibility rather than a
-prescription — adoption can be incremental, and either side of the integration can be
-collapsed into Flyte over time as Flyte's own capabilities (e.g. multi-cluster
-scheduling, devbox-style interactive execution) mature.
+The integration is structured across two horizons. Both are forward-looking; neither
+requires forking SkyPilot or changing Flyte's core. See `SPEC_SKYPILOT_INTEGRATION.md`
+for the full phase-by-phase engineering spec.
+
+### Architecture note: SkyPilot's matured API server
+
+SkyPilot previously stored all state in local files on the machine running `sky`,
+making it awkward to operationalize in shared-team settings. That constraint has since
+been resolved: SkyPilot's [API server](https://docs.skypilot.co/en/latest/reference/api-server/api-server.html)
+is now a separately deployed service that supports an external PostgreSQL database for
+state persistence, rolling upgrades (zero-downtime), and Helm-based HA deployment.
+This architectural split is what makes both integration horizons below viable.
 
 ### Tool boundaries
 
 Flyte and SkyPilot operate at genuinely different abstraction layers and are
-complementary rather than competing in this configuration:
+complementary rather than competing:
 
-- **SkyPilot is a compute control plane.** It manages dev pods, jobs, and services
-  across multiple Kubernetes clusters through a single pane of glass — handling GPU
-  scheduling, SSH access, and code syncing. A SkyPilot task declares resource
-  requirements, data to sync, setup commands, and run commands, and can then be
-  launched on any available infra (Kubernetes, Slurm, cloud).
-- **Flyte is a workflow orchestration and durable execution platform.** It owns the
-  DAG, versioning, data lineage, caching, retries, and the audit trail of what ran,
-  with what inputs, and what came out.
+- **SkyPilot is a compute control plane.** It provisions VMs or Kubernetes pods on
+  20+ clouds plus Kubernetes/Slurm, handles spot/preemptible recovery, autostop, and
+  idle teardown, and exposes a centralized API server for team-shared access. SkyPilot
+  can also bootstrap lightweight Kubernetes clusters (`sky local up --ips …` deploys
+  k3s on any list of SSH-accessible machines).
+- **Flyte / Union is a workflow orchestration and durable execution platform.** It owns
+  the DAG, typed I/O, data lineage, semantic caching, retries, and the full audit trail
+  of what ran, with what inputs, and what came out. Union's control/data plane split
+  means a new execution environment is just a Kubernetes cluster registered with
+  FlyteAdmin — it does not require touching the control plane.
 
-### Integration Best Practices
+### Horizon 1: connector plugin (near-term)
 
-When integrating Flyte with SkyPilot:
+SkyPilot runs individual Flyte tasks on multi-cloud infrastructure via a first-class
+`flyteplugins-skypilot` connector. Flyte remains the orchestrator; SkyPilot is a
+compute backend that individual tasks can target.
 
-1. **Use Flyte for orchestration, SkyPilot for compute**: Let Flyte manage workflow logic,
-   retries, and lineage while delegating GPU scheduling to SkyPilot.
+**Best practices in this model:**
 
-2. **Handle async jobs properly**: Use `detach_run=True` in SkyPilot launches and implement
-   polling with proper timeouts in Flyte tasks to avoid hanging workflows.
+1. **Flyte for orchestration, SkyPilot for compute**: Flyte manages workflow logic,
+   retries, and lineage; SkyPilot handles GPU scheduling, spot recovery, and
+   multi-region failover.
+2. **Shared object store as the data contract**: SkyPilot tasks write outputs to the
+   same S3/GCS bucket Flyte uses. `flyte.File` / `flyte.Dir` references are the typed
+   handoff between stages — no rsync, no opaque paths.
+3. **Flyte for data prep, SkyPilot for GPU stages**: Preprocessing and ETL run in the
+   home cluster pool; GPU-intensive training and evaluation target SkyPilot with spot
+   recovery and managed job failover.
+4. **Connector as the single failure boundary**: Only `flyte-connector-skypilot` sits
+   between Flyte Propeller and the SkyPilot API server. Propeller never blocks on
+   SkyPilot availability directly.
 
-3. **Collect artifacts through shared storage**: Have SkyPilot jobs write outputs to S3/GCS
-   (not local disk), then have Flyte read those paths. This ensures data is accessible across
-   the entire workflow.
+**What Flyte adds on top of raw SkyPilot:**
 
-4. **Pass minimal configuration, not code**: Avoid syncing large codebases via SkyPilot's
-   `file_mounts`. Instead, build container images with your training code and reference them
-   in SkyPilot tasks.
-
-5. **LogSkyPilot job IDs to Flyte lineage**: Include the SkyPilot job ID as a task output so
-   you can trace back from Flyte runs to the actual compute jobs.
-
-6. **Use Flyte for data prep, SkyPilot for training**: Preprocessing is typically CPU-bound
-   and fits well in Flyte; GPU-intensive training benefits from SkyPilot's cluster management.
-
-### What Flyte adds on top of SkyPilot
-
-Gaps around "what changed between model weights and serving runtime across releases"
-are lineage and auditability concerns, not scheduling concerns. SkyPilot does not
-address them; Flyte does:
-
-- **Semantic caching.** Flyte knows whether a preprocessing step has already run on
-  this exact dataset version and can skip it. SkyPilot does not cache at that semantic
+- **Semantic caching**: Flyte knows whether a preprocessing step has already run on
+  this exact dataset version and skips it. SkyPilot does not cache at that semantic
   level.
-- **Data lineage.** Every artifact (dataset version, checkpoint, eval score) is typed
-  and tracked through the workflow graph. When a model behaves differently in prod, it
-  is possible to trace back to exactly which data and which training run produced it.
-- **Durable execution.** If a node fails mid-pipeline, Flyte resumes from the last
+- **Data lineage**: Every artifact (dataset version, checkpoint, eval score) is typed
+  and tracked through the run graph. When a model behaves differently in prod, the
+  lineage traces back to the exact data and training run that produced it.
+- **Durable execution**: If a node fails mid-pipeline, Flyte resumes from the last
   successful task. SkyPilot handles job-level retries but not pipeline-level
   resumption.
-- **Versioned reproducibility.** Flyte versions task code alongside the execution, so
-  any historical pipeline can be re-run exactly.
+- **Versioned reproducibility**: Flyte versions task code alongside executions, so any
+  historical pipeline can be re-run exactly.
 
-This combination matches a "model factory" pattern: SkyPilot's API server enables
-asynchronous execution for hyperparameter sweeps and experiment batches in parallel,
-while Flyte wraps that with provenance, retries, and pipeline-level observability for
-production workflows.
+### Horizon 2: ephemeral Union data planes (longer-term)
+
+Rather than running individual tasks on SkyPilot infrastructure, SkyPilot bootstraps
+an entire Union data plane on demand — provisions cloud VMs, stands up k3s, installs
+FlytePropeller and the Union operator, and registers the cluster with the Union control
+plane. When the workload finishes, SkyPilot autostops and the cluster deregisters. The
+Union control plane never restarts; the data plane is entirely ephemeral.
+
+This closes the original gap Ketan identified: _"SkyPilot could launch a Union cluster
+anywhere"_ — any cloud, any region, using spot capacity, with zero idle cost between
+factory runs.
+
+**What already exists to support this:**
+
+- `sky local up --ips <hosts>` deploys k3s on any list of SSH-accessible VMs, installs
+  the GPU Operator, and configures kubeconfig — the entire cluster bootstrap in one
+  command.
+- Flyte's `clusterConfigs` + `labelClusterMap` in FlyteAdmin already routes work to
+  multiple registered data planes.
+- SkyPilot's credential-forwarding mechanism (it temporarily forwards cloud credentials
+  to provisioned nodes) naturally gives the ephemeral cluster access to the shared
+  object store without Flyte ever seeing the raw credentials.
+- The Union BYOC operator model already manages the data plane lifecycle from within the
+  cluster.
+
+**Two gaps to close:**
+
+1. **Dynamic cluster registration**: FlyteAdmin currently requires static
+   `clusterConfigs` in Helm, with a pod restart to add or remove a cluster. A runtime
+   registration API (or a Union operator webhook that phones home on boot and
+   deregisters on drain) is needed so ephemeral clusters can self-register.
+2. **Bootstrap latency**: k3s + FlytePropeller + Union operator install time should be
+   compressed to 2–5 minutes by using a pre-baked VM image (AMI / GCP image) with all
+   dependencies present, so bootstrap is a cluster join and Helm upgrade rather than a
+   full install from scratch.
+
+### SkyPilot vs. Armada
+
+[Armada](https://armadaproject.io/) takes a different approach to the multi-cluster
+problem: it routes work across pre-existing, always-on Kubernetes clusters, making
+multi-cluster scheduling transparent to job submitters. The two tools are complementary
+rather than competing:
+
+- **Armada**: best for reserved or on-prem BYOC clusters that are always running and
+  need intelligent cross-cluster bin-packing.
+- **SkyPilot**: best for elastic burst capacity that should cost nothing when idle —
+  provisions clusters on demand and tears them down when work is done.
+
+For the FLYRES stack, SkyPilot is the more immediately useful choice because the
+dominant pain point is GPU scarcity and cost, not scheduling across a large fleet of
+always-on clusters. Armada is worth tracking for the case where the organization
+operates multiple permanent BYOC data planes and wants Union-level visibility across
+all of them.
 
 ### Data gravity
 
@@ -272,37 +333,49 @@ stack. Long rsync times, hour-long Docker builds for CUDA packages, and large
 checkpoints are all data gravity problems. Flyte's native typed data primitives
 (`flyte.File`, `flyte.Dir`) automatically manage blob storage transfers between tasks:
 datasets live in object storage and are mounted where needed rather than rsynced to
-every node. This is qualitatively different from a generic macro orchestrator kicking
-off a SkyPilot job as a subprocess and treating its inputs and outputs as opaque.
+every node. This applies equally in both horizons — the shared object store is the
+authoritative data layer whether tasks run via connector or via an ephemeral data plane.
 
 ### Honest tension
 
 The principal capability SkyPilot gives researchers that a container-centric
 orchestrator does not is the **SSH-into-a-machine, iterate without rebuilding Docker**
-workflow. This is often the deciding factor for research teams when first choosing
-between SkyPilot and a pipeline-centric tool. Flyte's devbox-style interactive
-execution narrows this gap by letting tasks run interactively on remote infra, but it
-remains container-centric. For researchers who live in Jupyter and SSH workflows,
-SkyPilot will feel more natural.
+workflow. Flyte's devbox-style interactive execution narrows this gap, but it remains
+container-centric. For researchers who live in SSH workflows, SkyPilot will feel more
+natural.
 
-The honest framing of this integration is therefore not "use Flyte instead of
-SkyPilot" but **"use SkyPilot for interactive dev and training execution, and use
-Flyte as the production pipeline layer that provides the lineage and auditability the
-research workflow does not."**
+The honest framing of this integration is not "use Flyte instead of SkyPilot" but
+**"use SkyPilot for interactive dev and training execution, and use Flyte as the
+production pipeline layer that provides the lineage and auditability the research
+workflow does not."** In Horizon 2, this extends to: "SkyPilot provisions the
+execution environment; Flyte owns everything that happened inside it."
 
 ## Open Questions
 
-- Under what conditions should Flyte subsume more of SkyPilot's responsibilities
-  (multi-cluster scheduling, serving) versus continue delegating to SkyPilot? What is
-  the migration path in either direction?
-- How close can Flyte's devbox-style interactive execution get to the SSH-and-iterate
-  experience that researchers expect from SkyPilot, and where will the remaining gap
-  matter most?
-- How is tracking and lineage made consistent across training, artifacts, and serving
-  runtime so that "what changed between releases" is always answerable, including for
-  runs that were dispatched via SkyPilot?
-- How are CUDA-heavy training images built and cached to minimize iteration time,
-  whether the build is driven by Flyte, SkyPilot, or a shared image registry?
+- **Dynamic cluster registration (Horizon 2 gate)**: What is the right API surface for
+  FlyteAdmin to accept a new data plane at runtime without a Helm restart? Should this
+  live in the Union operator, in a new FlyteAdmin endpoint, or in a CRD the control
+  plane watches? This is the primary engineering question before Horizon 2 is viable.
+- **Bootstrap latency target**: What is the maximum tolerable cold-start time for an
+  ephemeral data plane before spot GPU workloads would simply prefer a warm standby
+  cluster? The answer determines whether a pre-baked image is sufficient or whether
+  Union needs a warm-pool strategy.
+- **Armada as a complement**: For organizations running multiple permanent BYOC data
+  planes, does Armada's multi-cluster scheduling add enough value on top of FlyteAdmin's
+  existing `labelClusterMap` routing to justify the operational complexity? Track this
+  as the cluster fleet grows.
+- **Flyte devbox vs. SkyPilot SSH**: How close can Flyte's devbox-style interactive
+  execution get to the SSH-and-iterate experience researchers expect from SkyPilot, and
+  where will the remaining gap matter most? Does the Horizon 2 model (SkyPilot
+  bootstraps the cluster; researcher SSHs into a pod on it) close this gap entirely?
+- **Lineage consistency across horizons**: How is lineage made consistent for runs
+  dispatched via connector (Horizon 1) versus runs executed on an ephemeral data plane
+  (Horizon 2)? The shared object store is the anchor, but the metadata surfaced in the
+  Flyte UI should be indistinguishable between the two models.
+- **CUDA image builds**: How are CUDA-heavy training images built and cached to minimize
+  iteration time, whether the build is driven by Flyte, SkyPilot, or a shared image
+  registry? Does the pre-baked VM image for Horizon 2 ship with a local image cache, or
+  does it pull from a registry on first boot?
 
 ## Flyte vs. Dagster in Context
 
@@ -324,15 +397,18 @@ choosing between Flyte and Dagster should also consider:
 
 ### Hybrid Approaches
 
-Many organizations use a hybrid approach:
+Some organizations use a hybrid approach:
 
-1. **Dagster for data engineering** - Orchestrate ETL pipelines that prepare datasets
-2. **Flyte for ML workflows** - Handle distributed training, model serving, and tracking
-3. **Shared storage layer** - Datasets flow between systems via object storage
+1. **Dagster for warehouse-centric ETL** — SQL/dbt/Spark pipelines with partition
+   backfills and asset catalog freshness.
+2. **Flyte for ML workflows** — Distributed training, model serving, and tracking.
+3. **Shared storage layer** — Datasets flow between systems via object storage URIs.
 
-This pattern leverages each tool's strengths: Dagster for familiar data engineering
-patterns and Flyte for ML-specific capabilities like GPU scheduling and distributed
-training plugins.
+This is workable, but it introduces two operational runbooks and breaks lineage at the
+ETL→ML handoff. The preferred architecture for this stack is a single Flyte graph
+that covers both data engineering and the full model factory — ETL tasks run in the
+home cluster pool while GPU stages target SkyPilot. See `COMPARISON.md` for the
+detailed Flyte vs. Dagster analysis.
 
 ### Future Directions
 
