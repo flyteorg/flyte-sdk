@@ -5,15 +5,11 @@ Supports multiple notification channels (Email, Slack, Teams, Webhook)
 with customizable messages and template variables.
 
 Template Variables:
-  - {task.name}: Task name
-  - {run.name}: Run ID/name
-  - {run.phase}: Current run phase
-  - {run.error}: Error message (if failed)
-  - {run.duration}: Run duration
-  - {run.timestamp}: ISO 8601 timestamp
-  - {run.url}: URL to run details page
-  - {project}: Flyte project name
-  - {domain}: Flyte domain name
+    - {{.Run.Project}}: Run project name
+    - {{.Run.Domain}}: Run domain name
+    - {{.Run.Name}}: Run ID/name
+    - {{.Phase}}: Terminal run phase
+    - {{.Error}}: Error message (if failed)
 """
 
 from dataclasses import dataclass
@@ -131,7 +127,7 @@ class Email(Notification):
             on_phase=ActionPhase.FAILED,
             recipients=["oncall@example.com"],
             subject="Alert: Task {task.name} failed",
-            body="Error: {run.error}\nDetails: {run.url}"
+            body="Error: {{.Error}}"
         )
         ```
 
@@ -152,12 +148,10 @@ class Email(Notification):
     bcc: Tuple[str, ...] = ()
     subject: str = "Task {task.name} {run.phase}"
     body: str = (
-        "Task: {task.name}\n"
-        "Run: {run.name}\n"
-        "Project/Domain: {project}/{domain}\n"
-        "Phase: {run.phase}\n"
-        "Duration: {run.duration}\n"
-        "Details: {run.url}\n"
+        "Run: {{.Run.Name}}\n"
+        "Project/Domain: {{.Run.Project}}/{{.Run.Domain}}\n"
+        "Phase: {{.Phase}}\n"
+        "Error: {{.Error}}\n"
     )
     html_body: Optional[str] = None
 
@@ -184,7 +178,7 @@ class Slack(Notification):
         Slack(
             on_phase=ActionPhase.FAILED,
             webhook_url="https://hooks.slack.com/services/YOUR/WEBHOOK/URL",
-            message="🚨 Task {task.name} failed: {run.error}\n{run.url}",
+            message="🚨 Run {{.Run.Name}} failed: {{.Error}}
         )
         ```
 
@@ -214,7 +208,7 @@ class Slack(Notification):
             object.__setattr__(
                 self,
                 "message",
-                ("Task `{task.name}` {run.phase}\nRun: {run.name} | {project}/{domain}\n<{run.url}|View Details>"),
+                ("Run: {{.Run.Name}} finished with phase {{.Phase}}\n | {{.Run.Project}}/{{.Run.Domain}}\n"),
             )
 
 
@@ -228,7 +222,7 @@ class Teams(Notification):
             on_phase=ActionPhase.SUCCEEDED,
             webhook_url="https://outlook.office.com/webhook/YOUR_WEBHOOK_URL",
             title="✅ Task Complete",
-            message="Task {task.name} completed in {run.duration}\n[View Details]({run.url})"
+            message="Run {{.Run.Name}} completed"
         )
         ```
 
@@ -258,11 +252,10 @@ class Teams(Notification):
                 self,
                 "message",
                 (
-                    "Run: {run.name}\n"
-                    "Project/Domain: {project}/{domain}\n"
-                    "Phase: {run.phase}\n"
-                    "Duration: {run.duration}\n"
-                    "[View Details]({run.url})"
+                    "Run: {{.Run.Name}}\n"
+                    "Project/Domain: {{.Run.Project}}/{{.Run.Domain}}\n"
+                    "Phase: {{.Phase}}\n"
+                    "Error: {{.Error}}\n"
                 ),
             )
 
@@ -279,13 +272,11 @@ class Webhook(Notification):
             method="POST",
             headers={"Content-Type": "application/json", "X-API-Key": "secret"},
             body={
-                "event": "task_failed",
-                "task": "{task.name}",
-                "run": "{run.name}",
-                "project": "{project}",
-                "domain": "{domain}",
-                "error": "{run.error}",
-                "url": "{run.url}",
+                "phase": "{{.Phase}}",
+                "run": "{{.Run.Name}}",
+                "project": "{{.Run.Project}}",
+                "domain": "{{.Run.Domain}}",
+                "error": "{{.Error}}",
             }
         )
         ```
@@ -315,12 +306,9 @@ class Webhook(Notification):
                 self,
                 "body",
                 {
-                    "task": "{task.name}",
-                    "run": "{run.name}",
-                    "project": "{project}",
-                    "domain": "{domain}",
-                    "phase": "{run.phase}",
-                    "url": "{run.url}",
-                    "timestamp": "{run.timestamp}",
+                    "Run: {{.Run.Name}}\n",
+                    "Project/Domain: {{.Run.Project}}/{{.Run.Domain}}\n",
+                    "Phase: {{.Phase}}\n",
+                    "Error: {{.Error}}\n",
                 },
             )
