@@ -16,19 +16,36 @@ See [`SPEC.md`](./SPEC.md) for the full requirements (the demo is §11).
 
 ## What it does
 
-```
-                  ┌─ analyze_target(stack_overflow_strcpy.c) ─┐
-targets/*.c  ─────┼─ analyze_target(sprintf_overflow.c)       ─┤
- (fan out)        ├─ analyze_target(safe_strncpy.c)            ─┼──▶ aggregated report
-                  ├─ analyze_target(...)                       │
-                  └─ analyze_target(safe_bounds_checked_...)  ─┘
+```mermaid
+flowchart TB
+  cli(["uv run autosec"]) --> main["run_autosec_agent"]
+  main --> load["Load targets/*.c"]
+  load --> fan["Parallel fan-out<br/>asyncio.gather — one Flyte action per file"]
 
-each analyze_target:
-  scan_static ──▶ hypothesize ──▶ build_poc ──▶ validate_in_daytona
- (CPU, OOM-prone)  (LLM, @trace)   (LLM, @trace)  (CPU driver → Daytona VM)
+  fan --> a1["analyze_target"]
+  fan --> a2["analyze_target"]
+  fan --> an["analyze_target ···"]
+
+  subgraph perTarget["Per-target pipeline"]
+    direction TB
+    s1["① scan_static<br/>grep dangerous APIs · CPU · OOM → .override(resources)"]
+    s2["② hypothesize<br/>LLM via call_llm · @flyte.trace checkpoint"]
+    gate{vulnerable?}
+    s3["③ build_poc<br/>overflow payload sizing"]
+    s4["④ validate_in_daytona<br/>compile + run inside Daytona VM"]
+    row["Per-target finding"]
+
+    s1 --> s2 --> gate
+    gate -->|secure| skip["Skip PoC & sandbox"]
+    skip --> row
+    gate -->|yes| s3 --> s4 --> row
+  end
+
+  a1 & a2 & an --> s1
+  row --> report["Aggregated HTML report<br/>flyte.report + JSON summary"]
 ```
 
-`main` fans out over every file in `targets/` with `asyncio.gather`, so each
+`run_autosec_agent` fans out over every file in `targets/` with `asyncio.gather`, so each
 target is researched as its own Flyte action **in parallel**; within a target
 the stages run sequentially. Targets the model judges **secure** short-circuit
 after `hypothesize` (no PoC, no Daytona VM). The LLM sub-steps are `@flyte.trace`

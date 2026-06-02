@@ -43,6 +43,7 @@ import re
 from typing import Any
 
 import flyte
+import flyte.errors
 import flyte.report
 
 HERE = pathlib.Path(__file__).parent
@@ -128,10 +129,10 @@ async def scan_static(source: str, scope: str = "whole") -> str:
     try:
         # Beat C: simulate an OOM on the first whole-program attempt only.
         if scope == "whole" and _force("AUTOSEC_FORCE_OOM") and _attempt() == 0:
-            raise MemoryError("whole-program graph exceeded memory limit")
+            raise flyte.errors.OOMError("whole-program graph exceeded memory limit")
         findings = _grep_dangerous_calls(source)
         return findings or "(no dangerous-call sites found)"
-    except MemoryError as exc:
+    except flyte.errors.OOMError as exc:
         # Infra-level recovery: re-dispatch the SAME task with a bigger box and a
         # narrower (file-scoped) analysis. Flyte lets user code change the infra
         # profile of a retry via .override(resources=...). scope="file" avoids
@@ -503,7 +504,7 @@ async def random_error() -> str:
     return "Passed!"
 
 
-@env.task(report=True)
+@env.task(report=True, cache="auto")
 async def run_autosec_agent() -> dict:
     targets = _load_targets()
     if not targets:
