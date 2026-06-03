@@ -131,6 +131,28 @@ async def test_upload_retries_on_server_error_then_succeeds(upload_file):
 
 
 @pytest.mark.asyncio
+async def test_upload_error_message_includes_type_when_empty(upload_file):
+    # httpx.ReadError() with no message used to surface as
+    # "Failed to upload ... after N retries: " (trailing colon, no cause).
+    # The error message must include the exception type so the failure stays actionable.
+    with patch("flyte.remote._data.httpx.AsyncClient") as mock_cls:
+        client = AsyncMock()
+        client.put.side_effect = httpx.ReadError("")
+        ctx = AsyncMock()
+        ctx.__aenter__.return_value = client
+        ctx.__aexit__.return_value = False
+        mock_cls.return_value = ctx
+
+        with pytest.raises(RuntimeSystemError, match="ReadError") as exc_info:
+            await _upload_with_retry(
+                upload_file, "https://signed.url/upload", {}, verify=True, max_retries=1, min_backoff_sec=0.01
+            )
+
+        # Must not end with a bare ": " (the empty-cause regression).
+        assert not str(exc_info.value).rstrip().endswith("retries:")
+
+
+@pytest.mark.asyncio
 async def test_upload_no_retry_on_client_error(upload_file):
     with patch("flyte.remote._data.httpx.AsyncClient") as mock_cls:
         client = AsyncMock()
