@@ -124,6 +124,51 @@ def _is_user_actionable_connect_error(exc: BaseException) -> bool:
     return getattr(code, "name", None) in _USER_ACTIONABLE_CONNECT_CODES
 
 
+# ConnectError(INTERNAL) is intentionally NOT in _USER_ACTIONABLE_CONNECT_CODES — that
+# code can indicate a real backend or SDK bug worth reporting. But INTERNAL is also the
+# bucket connectrpc uses for upstream HTTP 5xx (nginx 502/503/504, 500 from the rust
+# backend) and for ConnectionRefused inside the upstream service's outbound calls. Those
+# upstream failures aren't SDK bugs — they're transient infra problems that show up as
+# `desc = ...` strings in the ConnectError message. We catch them by message rather than
+# code so the INTERNAL-means-real-bug guarantee still holds for the bare INTERNAL case.
+_INTERNAL_UPSTREAM_INFRA_PHRASES: tuple[str, ...] = (
+    "502 Bad Gateway",
+    "503 Service Unavailable",
+    "504 Gateway Timeout",
+    "Internal Server Error",  # nginx upstream 500 surfaced as INTERNAL
+    "connection refused",  # upstream service couldn't reach its dependency
+)
+
+
+def _is_upstream_infra_internal_error(exc: BaseException) -> bool:
+    """ConnectError(INTERNAL) wrapping an upstream HTTP 5xx or connection failure.
+
+    When the rust backend's nginx returns 502/503/504, or the backend's outbound
+    call to its object store fails with "connection refused", the connectrpc
+    transport surfaces it as `ConnectError(INTERNAL, desc=<raw upstream body>)`.
+    From the SDK's perspective this is transient infra against a system we don't
+    own — not an SDK bug — so it shouldn't be crash-reported.
+
+    Narrow by design: only INTERNAL whose message body matches a known
+    upstream-infra signature is filtered. Bare INTERNAL ("backend panicked",
+    serialization mismatches, anything without a 5xx HTML body) still reaches
+    Sentry, preserving the guarantee that INTERNAL surfaces real backend bugs.
+
+    Closes FLYTE-SDK-4H, FLYTE-SDK-4J, FLYTE-SDK-4K, FLYTE-SDK-43.
+    """
+    try:
+        from connectrpc.errors import ConnectError
+    except ImportError:
+        return False
+    if not isinstance(exc, ConnectError):
+        return False
+    code = getattr(exc, "code", None)
+    if getattr(code, "name", None) != "INTERNAL":
+        return False
+    msg = getattr(exc, "message", None) or str(exc) or ""
+    return any(phrase in msg for phrase in _INTERNAL_UPSTREAM_INFRA_PHRASES)
+
+
 _USER_ENVIRONMENT_OSERROR_ERRNOS: frozenset[int] = frozenset({errno.ENOSPC})
 
 
@@ -177,6 +222,8 @@ def _is_user_error(exc: BaseException) -> bool:
         if user_excs and isinstance(cause, user_excs):
             return True
         if _is_user_actionable_connect_error(cause):
+            return True
+        if _is_upstream_infra_internal_error(cause):
             return True
         if _is_user_environment_oserror(cause):
             return True

@@ -367,3 +367,82 @@ def test_capture_exception_skips_connect_error_deadline_exceeded_wrapped_as_syst
     with mock.patch.object(_sentry, "init") as init_mock:
         _sentry.capture_exception(err)
     init_mock.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "upstream_body",
+    [
+        "request failed with status code 502. Body: <html>\r\n<head><title>502 Bad Gateway</title></head>",
+        "request failed with status code 503. Body: <html>\r\n<head><title>503 Service Unavailable</title></head>",
+        "request failed with status code 504. Body: <html>\r\n<head><title>504 Gateway Timeout</title></head>",
+        "Internal Server Error",
+    ],
+)
+def test_capture_exception_skips_connect_error_internal_upstream_5xx(upstream_body):
+    """FLYTE-SDK-4H/4K/43: ConnectError(INTERNAL) carrying an upstream nginx
+    5xx body (502/503/504, or Internal Server Error) is an upstream-infra
+    failure against a system the SDK doesn't own, not an SDK bug."""
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
+    from flyte.errors import RuntimeSystemError
+
+    try:
+        try:
+            raise ConnectError(Code.INTERNAL, upstream_body)
+        except ConnectError as ce:
+            raise RuntimeSystemError("UploadFailed", f"Failed to create run: {ce}") from ce
+    except RuntimeSystemError as e:
+        err = e
+
+    with mock.patch.object(_sentry, "init") as init_mock:
+        _sentry.capture_exception(err)
+    init_mock.assert_not_called()
+
+
+def test_capture_exception_skips_connect_error_internal_connection_refused():
+    """FLYTE-SDK-4J: rust backend's outbound PutObject to its object store
+    surfaces ``connection refused`` wrapped as ConnectError(INTERNAL). The
+    backend's own dependency being down isn't an SDK bug."""
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
+    from flyte.errors import RuntimeSystemError
+
+    upstream = (
+        "failed to write inputs: Failed to write data [13b] to path "
+        "[uploads/.../inputs.pb].: PutObject, putting object: RequestError: "
+        'send request failed\ncaused by: Put "http://rustfs-svc.flyte:9000/...": '
+        "dial tcp 10.43.94.220:9000: connect: connection refused"
+    )
+    try:
+        try:
+            raise ConnectError(Code.INTERNAL, upstream)
+        except ConnectError as ce:
+            raise RuntimeSystemError("CreateRunFailed", f"Failed to create run: {ce}") from ce
+    except RuntimeSystemError as e:
+        err = e
+
+    with mock.patch.object(_sentry, "init") as init_mock:
+        _sentry.capture_exception(err)
+    init_mock.assert_not_called()
+
+
+def test_capture_exception_still_reports_connect_error_internal_without_upstream_signature():
+    """Bare ConnectError(INTERNAL) — backend panics, serialization mismatches,
+    anything without a recognized upstream-5xx / connection-refused body —
+    still reaches Sentry. Regression guard so the narrow message-based filter
+    doesn't swallow real INTERNAL bugs (paired with
+    test_capture_exception_still_reports_connect_error_internal)."""
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
+    err = ConnectError(Code.INTERNAL, "backend panicked: serialization mismatch")
+    with (
+        mock.patch.object(_sentry, "init"),
+        mock.patch("sentry_sdk.is_initialized", return_value=True),
+        mock.patch("sentry_sdk.capture_exception") as capture_mock,
+        mock.patch("sentry_sdk.flush"),
+    ):
+        _sentry.capture_exception(err)
+    capture_mock.assert_called_once_with(err)
