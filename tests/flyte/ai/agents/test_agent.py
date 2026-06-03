@@ -40,9 +40,11 @@ from flyte.ai.agents.agent import (
     _summarize_signature,
 )
 from flyte.ai.agents.memory import (
+    MESSAGES_PATH,
     _ensure_namespace_segment,
     _join_remote_path,
     _memory_storage_root,
+    _normalize_raw_data_path,
 )
 from flyte.ai.agents.protocol import AgentProtocol, AgentResult
 from flyte.models import PathRewrite, RawDataPath
@@ -646,6 +648,19 @@ class TestRemotePathHelpers:
         assert _join_remote_path() == ""
         assert _join_remote_path("", "") == ""
 
+    def test_normalize_raw_data_path_applies_path_rewrite(self):
+        rewrite = PathRewrite(
+            old_prefix="s3://stable-bucket/persistent/",
+            new_prefix="/union-persistent-data/",
+        )
+        assert (
+            _normalize_raw_data_path(
+                "/union-persistent-data/w6/demo/flytesnacks/development/u1/a0/hash/rd/abc123",
+                rewrite,
+            )
+            == "s3://stable-bucket/persistent/w6/demo/flytesnacks/development/u1/a0/hash/rd/abc123"
+        )
+
     def test_storage_root_remote_uri_anchored_at_bucket(self):
         assert _memory_storage_root("s3://bucket/w6/org/project/domain/u1/a0/hash/rd/abc123") == "s3://bucket"
 
@@ -743,6 +758,36 @@ class TestMemoryStoreKeyedRemote:
             "s3://union-oc-production-demo/agents/memory-store/v0/demo/flytesnacks/development/my_memory"
         )
 
+    async def test_remote_path_for_key_mount_prefix_matches_s3_prefix(self, tmp_path: pathlib.Path):
+        """Mounted raw-data prefixes must resolve to the same keyed path as the logical S3 URI."""
+        rewrite = PathRewrite(
+            old_prefix="s3://union-oc-production-demo/",
+            new_prefix="/union-persistent-data/",
+        )
+        s3_ctx = internal_ctx().new_raw_data_path(
+            RawDataPath(
+                path="s3://union-oc-production-demo/w6/demo/flytesnacks/development/u1/a0/hash/rd/abc123",
+                path_rewrite=rewrite,
+            )
+        )
+        mount_ctx = internal_ctx().new_raw_data_path(
+            RawDataPath(
+                path="/union-persistent-data/w6/demo/flytesnacks/development/u1/a0/hash/rd/def456",
+                path_rewrite=rewrite,
+            )
+        )
+        expected = "s3://union-oc-production-demo/agents/memory-store/v0/demo/flytesnacks/development/my_memory"
+        with s3_ctx:
+            from_s3 = MemoryStore.remote_path_for_key(
+                key="my_memory", org="demo", project="flytesnacks", domain="development"
+            )
+        with mount_ctx:
+            from_mount = MemoryStore.remote_path_for_key(
+                key="my_memory", org="demo", project="flytesnacks", domain="development"
+            )
+        assert from_s3 == expected
+        assert from_mount == expected
+
     async def test_create_saves_empty_store_to_deterministic_path(self, tmp_path: pathlib.Path):
         ctx = internal_ctx().new_raw_data_path(RawDataPath(path=str(tmp_path / "raw")))
         with ctx:
@@ -777,6 +822,24 @@ class TestMemoryStoreKeyedRemote:
             assert await MemoryStore.exists(key="my_memory", org="org", project="proj", domain="dev")
             with pytest.raises(MemoryStoreError, match="already exists"):
                 await MemoryStore.create(key="my_memory", org="org", project="proj", domain="dev")
+
+    async def test_keyed_save_preserves_messages_at_prefix_root(self, tmp_path: pathlib.Path):
+        """Regression: fsspec nests ``put(dir, existing_prefix)`` unless both paths end in ``/``."""
+        ctx = internal_ctx().new_raw_data_path(RawDataPath(path=str(tmp_path / "raw")))
+        with ctx:
+            memory = await MemoryStore.create(key="my_memory", org="org", project="proj", domain="dev")
+            memory.append({"role": "user", "content": "hi"})
+            await memory.save()
+
+            memory.append({"role": "assistant", "content": "hey"})
+            await memory.save()
+
+            loaded = await MemoryStore.get_or_create(key="my_memory", org="org", project="proj", domain="dev")
+
+        assert [m["content"] for m in loaded.messages] == ["hi", "hey"]
+        remote_root = tmp_path / "raw" / "agents" / "memory-store" / "v0" / "org" / "proj" / "dev" / "my_memory"
+        assert (remote_root / MESSAGES_PATH).exists()
+        assert not any(remote_root.glob("flyte_agent_mem_*"))
 
     async def test_get_or_create_loads_existing_store(self, tmp_path: pathlib.Path):
         ctx = internal_ctx().new_raw_data_path(RawDataPath(path=str(tmp_path / "raw")))

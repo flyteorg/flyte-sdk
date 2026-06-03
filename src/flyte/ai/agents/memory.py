@@ -37,6 +37,7 @@ from urllib.parse import quote, urlparse
 import flyte.storage as storage
 from flyte._context import internal_ctx
 from flyte.io import Dir
+from flyte.models import PathRewrite
 
 logger = logging.getLogger(__name__)
 
@@ -203,7 +204,25 @@ def _join_remote_path(*parts: str) -> str:
     return "/".join([head.rstrip("/"), *(p.strip("/") for p in rest)])
 
 
-def _memory_storage_root(raw_data_path: str) -> str:
+def _normalize_raw_data_path(raw_data_path: str, path_rewrite: PathRewrite | None = None) -> str:
+    """Return a canonical raw-data path before storage-root normalization.
+
+    Hosted runtimes may mount object storage at ``path_rewrite.new_prefix`` while
+    the context still carries the logical ``old_prefix`` URI. Rewriting here keeps
+    keyed memory paths anchored to the same bucket across mount- and URI-based
+    raw-data prefixes.
+    """
+    trimmed = raw_data_path.rstrip("/")
+    if path_rewrite is None:
+        return trimmed
+    new_prefix = path_rewrite.new_prefix.rstrip("/")
+    old_prefix = path_rewrite.old_prefix.rstrip("/")
+    if trimmed == new_prefix or trimmed.startswith(f"{new_prefix}/"):
+        return old_prefix + trimmed[len(new_prefix) :]
+    return trimmed
+
+
+def _memory_storage_root(raw_data_path: str, *, path_rewrite: PathRewrite | None = None) -> str:
     """Return the stable storage root used for keyed memory stores.
 
     Raw-data paths can carry bucket-internal sharding and per-run prefixes
@@ -217,7 +236,7 @@ def _memory_storage_root(raw_data_path: str) -> str:
       trailing ``/rd/<run_id>`` scratch suffix (see
       :data:`_RAW_DATA_SCRATCH_SEGMENT`).
     """
-    trimmed = raw_data_path.rstrip("/")
+    trimmed = _normalize_raw_data_path(raw_data_path, path_rewrite)
 
     parsed = urlparse(trimmed)
     if parsed.scheme and parsed.netloc:
@@ -233,7 +252,8 @@ def _memory_storage_root(raw_data_path: str) -> str:
 
 def _memory_storage_root_from_context() -> str:
     """Return the storage root for keyed memory stores from the Flyte context."""
-    return _memory_storage_root(internal_ctx().raw_data.path)
+    raw = internal_ctx().raw_data
+    return _memory_storage_root(raw.path, path_rewrite=raw.path_rewrite)
 
 
 def _current_org() -> str:
@@ -420,6 +440,11 @@ class MemoryStore:
         :data:`_MEMORY_NAMESPACE` / :data:`_MEMORY_SCHEMA_VERSION`.
         """
         key = _ensure_namespace_segment(key, name="key")
+        tctx = internal_ctx().data.task_context
+        if tctx is not None:
+            org = org or tctx.action.org
+            project = project or tctx.action.project
+            domain = domain or tctx.action.domain
         if org is None:
             org = _current_org()
         if project is None or domain is None:
@@ -435,7 +460,11 @@ class MemoryStore:
                 "MemoryStore.create/get_or_create/exists require a raw_data_path in the Flyte context"
             ) from exc
 
-        return _join_remote_path(storage_root, *_MEMORY_NAMESPACE, _MEMORY_SCHEMA_VERSION, org, project, domain, key)
+        remote_path = _join_remote_path(
+            storage_root, *_MEMORY_NAMESPACE, _MEMORY_SCHEMA_VERSION, org, project, domain, key
+        )
+        logger.debug("MemoryStore %r remote path: %s", key, remote_path)
+        return remote_path
 
     @staticmethod
     async def _remote_store_exists(remote_path: str) -> bool:
@@ -861,16 +890,29 @@ class MemoryStore:
                 )
             remote_destination = self.remote_path
         await self.flush_messages()
-        if remote_destination is not None and not storage.is_remote(remote_destination):
+        if remote_destination is None:
+            return await Dir.from_local(str(self._root), remote_destination=None)
+
+        if not storage.is_remote(remote_destination):
             destination = pathlib.Path(remote_destination)
             if destination.exists() and destination.resolve() != self._root_real:
                 # Local fsspec treats an existing directory destination as a
                 # parent and nests the uploaded root under it. Keyed stores
                 # must remain a stable directory, so replace the local mirror
-                # before copying. Remote object stores overwrite objects at the
-                # target prefix and are left to their backend semantics.
+                # before copying.
                 shutil.rmtree(destination)
-        return await Dir.from_local(str(self._root), remote_destination=remote_destination)
+            return await Dir.from_local(str(self._root), remote_destination=remote_destination)
+
+        # Remote filesystems also nest ``put(local_dir, existing_prefix)`` under
+        # ``prefix/<basename(local_dir>/``. Trailing slashes upload the *contents*
+        # of the working root directly into the keyed prefix so ``messages.json``
+        # stays at a stable path across runs.
+        from_path = os.fspath(self._root)
+        if not from_path.endswith(os.sep):
+            from_path += os.sep
+        to_path = remote_destination.rstrip("/") + "/"
+        await storage.put(from_path, to_path, recursive=True)
+        return Dir.from_existing_remote(remote_destination)
 
     @classmethod
     async def _load_from_dir(
@@ -894,6 +936,13 @@ class MemoryStore:
         """
         local_root = pathlib.Path(tempfile.mkdtemp(prefix="flyte_agent_mem_"))
         await dir.download(local_path=str(local_root))
+        messages_file = local_root / MESSAGES_PATH
+        if not messages_file.exists():
+            # Back-compat: older saves nested the working root under the keyed prefix.
+            for candidate in local_root.rglob(MESSAGES_PATH):
+                if candidate.is_file() and not candidate.is_symlink():
+                    shutil.copy2(candidate, messages_file)
+                    break
         store = cls(
             root=local_root,
             key=key,
