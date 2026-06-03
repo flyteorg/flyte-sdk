@@ -213,6 +213,7 @@ def test_load_python_modules_dir_collects_import_errors_in_failed_paths(tmp_path
         (AttributeError, {}),
         (TypeError, {}),
         (ValueError, {}),
+        (KeyError, {}),
     ],
 )
 def test_load_python_modules_single_file_wraps_user_code_errors(tmp_path, exc_type, exc_kwargs):
@@ -235,3 +236,33 @@ def test_load_python_modules_single_file_wraps_user_code_errors(tmp_path, exc_ty
             load_python_modules(f, root_dir=root, recursive=False)
 
     assert exc_type.__name__ in str(excinfo.value)
+
+
+def test_load_python_modules_single_file_wraps_missing_env_var_keyerror(tmp_path):
+    """When a user module does ``os.environ["GCP_ADR"]`` at top level and the env
+    var is missing, the resulting ``KeyError`` is a user config issue, not an
+    SDK crash. It must surface as ``ModuleLoadError`` so the Sentry filter
+    skips it (consistent with NameError/TypeError already wrapped).
+
+    Reproduces FLYTE-SDK-3D.
+    """
+    root = tmp_path / "project"
+    root.mkdir()
+    f = root / "workflow.py"
+    f.write_text('import os\nGCP_ADR = os.environ["NEVER_SET_GCP_ADR_XYZ"]\n')
+
+    # Make sure the env var truly is missing.
+    os.environ.pop("NEVER_SET_GCP_ADR_XYZ", None)
+
+    sys.path.insert(0, str(root))
+    try:
+        with pytest.raises(flyte.errors.ModuleLoadError) as excinfo:
+            load_python_modules(f, root_dir=root, recursive=False)
+    finally:
+        sys.path.remove(str(root))
+        sys.modules.pop("workflow", None)
+
+    msg = str(excinfo.value)
+    assert "workflow.py" in msg
+    assert "KeyError" in msg
+    assert "NEVER_SET_GCP_ADR_XYZ" in msg
