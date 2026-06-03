@@ -108,7 +108,7 @@ agent = Agent(
 async def review_pr(repo: str, pr_number: int, event: str) -> str:
     """Durable task that runs the agent for a single webhook event."""
     message = f"GitHub webhook fired for {repo}#{pr_number} (event={event}). Fetch the PR and post a review comment."
-    result = await agent.run(message)
+    result = await agent.run.aio(message)
     return result.summary or result.error
 
 
