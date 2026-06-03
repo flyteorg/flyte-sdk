@@ -15,10 +15,13 @@ Architecture::
 
     Browser (FastAPI Chat UI)
       └── AgentChatAppEnvironment
-            └── CodeModeAgent.run(message, history)
+            └── CodeModeAgent.run.aio(message, history)  # async HTTP handler
                   ├── LLM call (generate code using tool functions)
                   ├── Monty sandbox execution
                   └── retry on failure
+
+    ``CodeModeAgent.run`` is synchronous by default; the chat UI and async
+    Flyte tasks use ``run.aio``.
 
 Install dependencies::
 
