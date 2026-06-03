@@ -163,8 +163,26 @@ def _emit_flag_setter(
     if kind in ("file", "dir"):
         path = input_data_dir / name
         if is_optional:
+            qpath = shlex.quote(str(path))
+            # An optional File/Dir that was NOT passed can still surface at the
+            # mount path as an empty placeholder on the backend (the input is
+            # declared, so the path gets materialized). A bare `[ -e ]` would then
+            # wrongly emit the flag pointing at an empty file/dir. Gate on actual
+            # content instead: a non-empty file, or a directory with entries.
+            if kind == "file":
+                # The backend materializes a tiny "null" sentinel FILE at the
+                # mount path for an unset optional File input (the input is
+                # declared, so the path is always written — as the serialized
+                # value, here JSON null). So `-e`/`-s`/`-f` are all true even
+                # when nothing was passed. Emit the flag only for a regular,
+                # non-empty file whose content isn't that sentinel.
+                present = f'[ -f {qpath} ] && [ -s {qpath} ] && [ "$(head -c 4 {qpath})" != "null" ]'
+            else:
+                # A None Dir is the same "null" sentinel file (not a directory),
+                # so `-d` already excludes it; also require the dir be non-empty.
+                present = f'[ -d {qpath} ] && [ -n "$(ls -A {qpath} 2>/dev/null)" ]'
             return (
-                f"if [ -e {shlex.quote(str(path))} ]; then "
+                f"if {present}; then "
                 f"{flag_var}={shlex.quote(flag + sep + str(path))}; "
                 f'else {flag_var}=""; fi'
             )

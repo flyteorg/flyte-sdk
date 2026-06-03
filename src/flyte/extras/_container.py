@@ -229,7 +229,14 @@ class ContainerTask(TaskTemplate):
         if self._outputs:
             for k, output_type in self._outputs.items():
                 output_path = output_directory / k
-                if os.path.isfile(output_path):
+                # File/Dir outputs are reconstructed from the path itself
+                # (see _convert_output_val_to_correct_type); their contents are
+                # never decoded here. Reading them as text would corrupt — or
+                # outright fail on — binary payloads (gzip, BAM, images), so
+                # only slurp the file for scalar output types.
+                if isinstance(output_type, type) and issubclass(output_type, (File, Dir)):
+                    output_val = None
+                elif os.path.isfile(output_path):
                     with output_path.open("r") as f:
                         output_val = f.read()
                 else:
