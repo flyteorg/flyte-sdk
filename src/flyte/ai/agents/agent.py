@@ -52,6 +52,7 @@ from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Literal, Mapping, Sequence
 
 import flyte
+from flyte.syncify import syncify
 
 # Internal building blocks. All four ``_``-prefixed tool helpers are used
 # inside ``Agent`` and remain addressable as ``flyte.ai.agents.agent.<name>``
@@ -359,6 +360,7 @@ class Agent:
         await _emit(AgentEvent("tool_end", {"tool": tool.name, "result": _abbreviate(result)}))
         return (_stringify_tool_result(result), False)
 
+    @syncify
     async def run(
         self,
         message: str,
@@ -366,9 +368,11 @@ class Agent:
     ) -> AgentResult:
         """Drive the LLM ↔ tool loop until the assistant returns a final reply.
 
-        Implements the :class:`~flyte.ai.agents.protocol.Agent` protocol so
+        Implements the :class:`~flyte.ai.agents.protocol.AgentProtocol` so
         instances can be plugged directly into
         :class:`~flyte.ai.chat.AgentChatAppEnvironment`.
+
+        Call synchronously via ``run(...)``; in async contexts use ``run.aio(...)``.
         """
         await self._ensure_mcp_loaded()
         await _emit(AgentEvent("agent_start", {"name": self.name, "model": self.model}))

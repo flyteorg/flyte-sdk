@@ -5,6 +5,7 @@ from dataclasses import fields
 import pytest
 
 from flyte.ai.agents.protocol import AgentProtocol, AgentResult
+from flyte.syncify import syncify
 
 
 class TestAgentResult:
@@ -41,6 +42,7 @@ class TestAgentResult:
 
 
 class _MinimalAgent:
+    @syncify
     async def run(self, message: str, history: list[dict[str, str]]) -> AgentResult:
         return AgentResult(summary=message)
 

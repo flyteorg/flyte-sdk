@@ -5,7 +5,8 @@ but uses the SDK `flyte.ai.agents.CodeModeAgent` and keeps everything in one fil
 
 The agent generates Monty-safe Python code and executes it in a sandbox. Tool
 calls dispatch as durable Flyte tasks because the tools are defined as
-``@task_env.task``.
+``@task_env.task``. The task entrypoint below uses ``await agent.run.aio(...)``
+because ``agent.run`` is synchronous by default.
 
 Run::
 
@@ -122,7 +123,7 @@ agent = CodeModeAgent(
 @task_env.task(report=True)
 async def analyze(request: str) -> str:
     """Run a durable CodeModeAgent analysis inside a Flyte task."""
-    result = await agent.run(request, history=[])
+    result = await agent.run.aio(request, history=[])
     return result.summary or result.error or ""
 
 

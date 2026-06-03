@@ -19,6 +19,7 @@ from typing import Any, Awaitable, Callable, Sequence, cast
 
 import flyte
 import flyte.sandbox
+from flyte.syncify import syncify
 
 from .protocol import AgentResult
 
@@ -319,8 +320,12 @@ class CodeModeAgent:
     # Main entry point
     # ------------------------------------------------------------------
 
+    @syncify
     async def run(self, message: str, history: list[dict[str, str]]) -> AgentResult:
-        """Generate code, execute in sandbox, retry on failure."""
+        """Generate code, execute in sandbox, retry on failure.
+
+        Call synchronously via ``run(...)``; in async contexts use ``run.aio(...)``.
+        """
         messages: list[dict[str, str]] = [*history, {"role": "user", "content": message}]
         max_attempts = 1 + self._max_retries
 

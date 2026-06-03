@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextvars
 import hashlib
 import inspect
 from dataclasses import dataclass
 from types import NoneType
-from typing import Any, Dict, List, Tuple, Union, get_args
+from typing import Any, Dict, List, Optional, Tuple, Union, get_args
 
 from flyteidl2.core import execution_pb2, interface_pb2, literals_pb2
 from flyteidl2.task import common_pb2, task_definition_pb2
@@ -16,6 +17,23 @@ import flyte.storage as storage
 from flyte._context import ctx
 from flyte.models import ActionID, NativeInterface, TaskContext
 from flyte.types import TypeEngine, TypeTransformerFailedError
+
+# Name of the output slot currently being serialized (e.g. "o0"), scoped to
+# a single ``TypeEngine.to_literal`` call by ``convert_from_native_to_outputs``.
+# Lets a TypeTransformer attribute a value to the output it's being returned
+# as — without threading the name through ``to_literal``'s signature (which
+# every transformer would have to adopt). ``None`` outside output conversion
+# (e.g. on the input path), so readers must treat absence as "unknown".
+_output_name_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
+    "flyte_current_output_name", default=None
+)
+
+
+def current_output_name() -> Optional[str]:
+    """The output slot name being converted right now (e.g. ``"o0"``), or
+    ``None`` when not inside output conversion. See :data:`_output_name_var`.
+    """
+    return _output_name_var.get()
 
 
 @dataclass(frozen=True)
@@ -256,11 +274,16 @@ async def convert_from_native_to_outputs(o: Any, interface: NativeInterface, tas
         )
     named = []
     for (output_name, python_type), v in zip(interface.outputs.items(), o):
+        # Expose the output slot name to transformers for the duration of this
+        # single conversion (see ``current_output_name``), then always clear it.
+        tok = _output_name_var.set(output_name)
         try:
             lit = await TypeEngine.to_literal(v, python_type, TypeEngine.to_literal_type(python_type))
             named.append(common_pb2.NamedLiteral(name=output_name, value=lit))
         except TypeTransformerFailedError as e:
             raise flyte.errors.RuntimeDataValidationError(output_name, e, task_name)
+        finally:
+            _output_name_var.reset(tok)
 
     return Outputs(proto_outputs=common_pb2.Outputs(literals=named))
 

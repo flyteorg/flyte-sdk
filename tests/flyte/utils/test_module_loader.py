@@ -214,6 +214,7 @@ def test_load_python_modules_dir_collects_import_errors_in_failed_paths(tmp_path
         (TypeError, {}),
         (ValueError, {}),
         (KeyError, {}),
+        (RuntimeError, {}),
     ],
 )
 def test_load_python_modules_single_file_wraps_user_code_errors(tmp_path, exc_type, exc_kwargs):
@@ -266,3 +267,33 @@ def test_load_python_modules_single_file_wraps_missing_env_var_keyerror(tmp_path
     assert "workflow.py" in msg
     assert "KeyError" in msg
     assert "NEVER_SET_GCP_ADR_XYZ" in msg
+
+
+def test_load_python_modules_single_file_wraps_runtime_error(tmp_path):
+    """A user/plugin module that raises ``RuntimeError`` at import time (e.g.
+    ``union.sandbox`` raising "default environments are unavailable — install
+    union-sandbox[deploy]" when an optional dependency is missing) is a user
+    environment problem, not an SDK crash. It must surface as ``ModuleLoadError``
+    so the Sentry filter skips it.
+
+    Reproduces FLYTE-SDK-46.
+    """
+    root = tmp_path / "project"
+    root.mkdir()
+    f = root / "workflow.py"
+    f.write_text(
+        "raise RuntimeError('union.sandbox default environments are unavailable — install `union-sandbox[deploy]`')\n"
+    )
+
+    sys.path.insert(0, str(root))
+    try:
+        with pytest.raises(flyte.errors.ModuleLoadError) as excinfo:
+            load_python_modules(f, root_dir=root, recursive=False)
+    finally:
+        sys.path.remove(str(root))
+        sys.modules.pop("workflow", None)
+
+    msg = str(excinfo.value)
+    assert "workflow.py" in msg
+    assert "RuntimeError" in msg
+    assert "union.sandbox" in msg
