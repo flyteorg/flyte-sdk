@@ -113,12 +113,14 @@ def test_with_pip_packages():
 
 
 def test_with_source(tmp_path):
+    from flyte.errors import ImageBuildError
+
     file = tmp_path / "my_code.py"
     img = Image.from_debian_base(registry="localhost", name="test-image", flyte_version="0.2.0b14").with_source_file(
         file
     )
     assert img._layers[-1].src == file
-    with pytest.raises(ValueError):
+    with pytest.raises(ImageBuildError):
         img.validate()
     file.touch()
     img.validate()
