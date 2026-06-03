@@ -10,12 +10,13 @@ the same enforcement.
 Design influences include the Claude-style "many small files addressed by
 path, with audit + version history" pattern.
 
-Public I/O methods (``read_text``, ``write_text``, ``read_json``,
-``write_json``, ``flush_messages``, ``current_sha``, ``get_meta``,
-``audit_tail``, ``list_paths``) are async-by-default; each ships a
-``*_sync`` companion for synchronous call sites. The async versions wrap the
-sync logic in :func:`asyncio.to_thread` so the event loop is not blocked by
-local-disk operations.
+The path-addressed I/O methods (``read_text``, ``read_json``, ``get_meta``,
+``current_sha``, ``write_text``, ``write_json``) — like the keyed-store methods
+``create`` / ``get_or_create`` / ``save`` — are :func:`~flyte.syncify.syncify`-wrapped:
+call them synchronously (``memory.read_text(...)``) or await the ``.aio(...)``
+companion in async code. The remaining helpers (``flush_messages``, ``audit_tail``)
+stay async-by-default with explicit ``*_sync`` companions, and ``list_paths`` is
+synchronous.
 """
 
 from __future__ import annotations
@@ -38,6 +39,7 @@ import flyte.storage as storage
 from flyte._context import internal_ctx
 from flyte.io import Dir
 from flyte.models import PathRewrite
+from flyte.syncify import syncify
 
 logger = logging.getLogger(__name__)
 
@@ -317,11 +319,12 @@ class MemoryStore:
       should round-trip through Flyte object storage.
 
     Persistence is :class:`flyte.io.Dir`-backed. For durable agent memories,
-    prefer ``await MemoryStore.create(key="...")`` or
-    ``await MemoryStore.get_or_create(key="...")``; keyed stores save to a
+    prefer :meth:`create` or :meth:`get_or_create`; keyed stores save to a
     deterministic blob-store namespace under the active Flyte raw-data bucket.
     Lower-level callers can still call :meth:`save` directly to persist the
-    working root.
+    working root. :meth:`create`, :meth:`get_or_create`, and :meth:`save` are
+    sync-by-default (``MemoryStore.create(...)``) with an ``.aio(...)`` companion
+    for async call sites, mirroring the rest of the Flyte SDK.
 
     The on-disk layout under ``root`` looks like::
 
@@ -440,11 +443,6 @@ class MemoryStore:
         :data:`_MEMORY_NAMESPACE` / :data:`_MEMORY_SCHEMA_VERSION`.
         """
         key = _ensure_namespace_segment(key, name="key")
-        tctx = internal_ctx().data.task_context
-        if tctx is not None:
-            org = org or tctx.action.org
-            project = project or tctx.action.project
-            domain = domain or tctx.action.domain
         if org is None:
             org = _current_org()
         if project is None or domain is None:
@@ -477,6 +475,7 @@ class MemoryStore:
         """
         return await storage.exists(remote_path) or await storage.exists(_join_remote_path(remote_path, MESSAGES_PATH))
 
+    @syncify
     @classmethod
     async def create(
         cls,
@@ -490,6 +489,9 @@ class MemoryStore:
         keep_versions: bool = False,
     ) -> "MemoryStore":
         """Create a new keyed memory store at its deterministic remote path.
+
+        Call synchronously via ``MemoryStore.create(...)``; in async contexts use
+        ``MemoryStore.create.aio(...)``.
 
         Raises :class:`MemoryStoreError` if the keyed blob-store path already
         exists. This preserves the explicit "create means new" contract while
@@ -506,9 +508,11 @@ class MemoryStore:
             audit=audit,
             keep_versions=keep_versions,
         )
-        await store.save()
+        # ``save`` is itself syncified; from this coroutine we drive its async form.
+        await store.save.aio()
         return store
 
+    @syncify
     @classmethod
     async def get_or_create(
         cls,
@@ -521,7 +525,11 @@ class MemoryStore:
         audit: bool = True,
         keep_versions: bool = False,
     ) -> "MemoryStore":
-        """Load a keyed memory store if present, otherwise create it."""
+        """Load a keyed memory store if present, otherwise create it.
+
+        Call synchronously via ``MemoryStore.get_or_create(...)``; in async contexts
+        use ``MemoryStore.get_or_create.aio(...)``.
+        """
         remote_path = cls.remote_path_for_key(key=key, org=org, project=project, domain=domain)
         if await cls._remote_store_exists(remote_path):
             return await cls._load_from_dir(
@@ -532,7 +540,7 @@ class MemoryStore:
                 audit=audit,
                 keep_versions=keep_versions,
             )
-        return await cls.create(
+        return await cls.create.aio(
             key=key,
             org=org,
             project=project,
@@ -603,27 +611,27 @@ class MemoryStore:
         """Return ``True`` if a memory file exists at ``rel_path``."""
         return self._abs(rel_path).exists()
 
-    def read_text_sync(self, rel_path: str, default: str = "") -> str:
-        """Synchronous variant of :meth:`read_text`."""
+    @syncify
+    async def read_text(self, rel_path: str, default: str = "") -> str:
+        """Return the UTF-8 contents of ``rel_path`` (or ``default`` if missing).
+
+        Sync-by-default (``memory.read_text(...)``) with an ``.aio(...)`` companion.
+        """
         try:
             return self._abs(rel_path).read_text(encoding="utf-8")
         except FileNotFoundError:
             return default
 
-    async def read_text(self, rel_path: str, default: str = "") -> str:
-        """Return the UTF-8 contents of ``rel_path`` (or ``default`` if missing)."""
-        return await asyncio.to_thread(self.read_text_sync, rel_path, default)
+    @syncify
+    async def read_json(self, rel_path: str, default: Any = None) -> Any:
+        """Return the JSON-decoded contents of ``rel_path`` (or ``default`` if empty/missing).
 
-    def read_json_sync(self, rel_path: str, default: Any = None) -> Any:
-        """Synchronous variant of :meth:`read_json`."""
-        text = self.read_text_sync(rel_path, default="")
+        Sync-by-default (``memory.read_json(...)``) with an ``.aio(...)`` companion.
+        """
+        text = await self.read_text.aio(rel_path, default="")
         if not text.strip():
             return default
         return json.loads(text)
-
-    async def read_json(self, rel_path: str, default: Any = None) -> Any:
-        """Return the JSON-decoded contents of ``rel_path`` (or ``default`` if empty/missing)."""
-        return await asyncio.to_thread(self.read_json_sync, rel_path, default)
 
     def list_paths(self, prefix: str = "") -> list[str]:
         """List memory file paths under ``prefix`` (POSIX-relative, sorted).
@@ -661,8 +669,12 @@ class MemoryStore:
     # Metadata + sha helpers
     # ------------------------------------------------------------------
 
-    def get_meta_sync(self, rel_path: str) -> MemoryMeta | None:
-        """Synchronous variant of :meth:`get_meta`."""
+    @syncify
+    async def get_meta(self, rel_path: str) -> MemoryMeta | None:
+        """Return the :class:`MemoryMeta` sidecar for ``rel_path`` if present.
+
+        Sync-by-default (``memory.get_meta(...)``) with an ``.aio(...)`` companion.
+        """
         mp = self._meta_path(rel_path)
         if not mp.exists():
             return None
@@ -672,13 +684,13 @@ class MemoryStore:
         except Exception as exc:
             raise MemoryStoreError(f"Failed to read meta for {rel_path!r}: {exc}") from exc
 
-    async def get_meta(self, rel_path: str) -> MemoryMeta | None:
-        """Return the :class:`MemoryMeta` sidecar for ``rel_path`` if present."""
-        return await asyncio.to_thread(self.get_meta_sync, rel_path)
+    @syncify
+    async def current_sha(self, rel_path: str) -> str:
+        """Return the sha256 of ``rel_path`` (empty string if it does not exist).
 
-    def current_sha_sync(self, rel_path: str) -> str:
-        """Synchronous variant of :meth:`current_sha`."""
-        meta = self.get_meta_sync(rel_path)
+        Sync-by-default (``memory.current_sha(...)``) with an ``.aio(...)`` companion.
+        """
+        meta = await self.get_meta.aio(rel_path)
         if meta is not None:
             return meta.sha256
         if not self._path_exists(rel_path):
@@ -687,15 +699,12 @@ class MemoryStore:
         # the file so very large blobs do not pull their full bytes into RAM.
         return _sha256_file(self._abs(rel_path))
 
-    async def current_sha(self, rel_path: str) -> str:
-        """Return the sha256 of ``rel_path`` (empty string if it does not exist)."""
-        return await asyncio.to_thread(self.current_sha_sync, rel_path)
-
     # ------------------------------------------------------------------
     # Path-addressed writes (audited + optionally versioned)
     # ------------------------------------------------------------------
 
-    def write_text_sync(
+    @syncify
+    async def write_text(
         self,
         rel_path: str,
         content: str,
@@ -704,12 +713,30 @@ class MemoryStore:
         reason: str = "",
         expected_sha: str | None = None,
     ) -> MemoryMeta:
-        """Synchronous variant of :meth:`write_text`."""
+        """Write ``content`` to ``rel_path`` with optional concurrency + audit + versioning.
+
+        Sync-by-default (``memory.write_text(...)``) with an ``.aio(...)`` companion.
+
+        Args:
+            rel_path: Destination path, relative to the memory root. Must not
+                escape the root and must not target a reserved or read-only
+                prefix.
+            content: UTF-8 string to write.
+            actor: Free-form identifier of the writer (typically the tool or
+                agent name). Recorded in the audit log + metadata sidecar.
+            reason: Optional human-readable explanation.
+            expected_sha: When provided, the write succeeds only if the
+                current sha256 of ``rel_path`` matches. Mismatches raise
+                :class:`ConcurrencyError`.
+
+        Returns:
+            The :class:`MemoryMeta` describing the new content.
+        """
         rel = _ensure_relative_posix(rel_path)
         self._assert_can_write(rel)
 
         p = self._abs(rel)
-        old_sha = self.current_sha_sync(rel)
+        old_sha = await self.current_sha.aio(rel)
         if expected_sha is not None and expected_sha != old_sha:
             raise ConcurrencyError(rel, expected_sha=expected_sha, actual_sha=old_sha)
 
@@ -743,7 +770,7 @@ class MemoryStore:
         meta_p.write_text(json.dumps(asdict(meta), indent=2), encoding="utf-8")
 
         if self.audit:
-            self._append_audit_sync(
+            self._append_audit(
                 {
                     "ts": meta.updated_at,
                     "op": "create" if not old_sha else "update",
@@ -757,54 +784,7 @@ class MemoryStore:
             )
         return meta
 
-    async def write_text(
-        self,
-        rel_path: str,
-        content: str,
-        *,
-        actor: str = "agent",
-        reason: str = "",
-        expected_sha: str | None = None,
-    ) -> MemoryMeta:
-        """Write ``content`` to ``rel_path`` with optional concurrency + audit + versioning.
-
-        Args:
-            rel_path: Destination path, relative to the memory root. Must not
-                escape the root and must not target a reserved or read-only
-                prefix.
-            content: UTF-8 string to write.
-            actor: Free-form identifier of the writer (typically the tool or
-                agent name). Recorded in the audit log + metadata sidecar.
-            reason: Optional human-readable explanation.
-            expected_sha: When provided, the write succeeds only if the
-                current sha256 of ``rel_path`` matches. Mismatches raise
-                :class:`ConcurrencyError`.
-
-        Returns:
-            The :class:`MemoryMeta` describing the new content.
-        """
-        return await asyncio.to_thread(
-            self.write_text_sync,
-            rel_path,
-            content,
-            actor=actor,
-            reason=reason,
-            expected_sha=expected_sha,
-        )
-
-    def write_json_sync(
-        self,
-        rel_path: str,
-        obj: Any,
-        *,
-        actor: str = "agent",
-        reason: str = "",
-        expected_sha: str | None = None,
-    ) -> MemoryMeta:
-        """Synchronous variant of :meth:`write_json`."""
-        content = json.dumps(obj, indent=2, sort_keys=True, default=str)
-        return self.write_text_sync(rel_path, content, actor=actor, reason=reason, expected_sha=expected_sha)
-
+    @syncify
     async def write_json(
         self,
         rel_path: str,
@@ -814,21 +794,18 @@ class MemoryStore:
         reason: str = "",
         expected_sha: str | None = None,
     ) -> MemoryMeta:
-        """JSON-encode ``obj`` and write it via :meth:`write_text`."""
-        return await asyncio.to_thread(
-            self.write_json_sync,
-            rel_path,
-            obj,
-            actor=actor,
-            reason=reason,
-            expected_sha=expected_sha,
-        )
+        """JSON-encode ``obj`` and write it via :meth:`write_text`.
+
+        Sync-by-default (``memory.write_json(...)``) with an ``.aio(...)`` companion.
+        """
+        content = json.dumps(obj, indent=2, sort_keys=True, default=str)
+        return await self.write_text.aio(rel_path, content, actor=actor, reason=reason, expected_sha=expected_sha)
 
     # ------------------------------------------------------------------
     # Audit
     # ------------------------------------------------------------------
 
-    def _append_audit_sync(self, event: dict[str, Any]) -> None:
+    def _append_audit(self, event: dict[str, Any]) -> None:
         ap = self._audit_path()
         ap.parent.mkdir(parents=True, exist_ok=True)
         with ap.open("a", encoding="utf-8") as f:
@@ -874,13 +851,16 @@ class MemoryStore:
         """Persist the live transcript to ``messages.json`` under the working root."""
         await asyncio.to_thread(self.flush_messages_sync)
 
+    @syncify
     async def save(self, remote_destination: str | None = None) -> Dir:
         """Serialize this memory to a remote directory.
 
-        Flushes the conversation transcript to ``messages.json`` under the
-        working root, then uploads the entire root via
-        :meth:`flyte.io.Dir.from_local`. Audit log, metadata sidecars, and any
-        version snapshots are uploaded alongside the live memory files.
+        Call synchronously via ``memory.save(...)``; in async contexts use
+        ``memory.save.aio(...)``.
+
+        Flushes the conversation transcript to ``messages.json`` under the working
+        root, then uploads the whole root (live files plus audit log, metadata
+        sidecars, and any version snapshots) to ``remote_destination``.
         """
         if self.remote_path is not None:
             if remote_destination is not None and remote_destination != self.remote_path:
@@ -893,23 +873,11 @@ class MemoryStore:
         if remote_destination is None:
             return await Dir.from_local(str(self._root), remote_destination=None)
 
-        if not storage.is_remote(remote_destination):
-            destination = pathlib.Path(remote_destination)
-            if destination.exists() and destination.resolve() != self._root_real:
-                # Local fsspec treats an existing directory destination as a
-                # parent and nests the uploaded root under it. Keyed stores
-                # must remain a stable directory, so replace the local mirror
-                # before copying.
-                shutil.rmtree(destination)
-            return await Dir.from_local(str(self._root), remote_destination=remote_destination)
-
-        # Remote filesystems also nest ``put(local_dir, existing_prefix)`` under
-        # ``prefix/<basename(local_dir>/``. Trailing slashes upload the *contents*
-        # of the working root directly into the keyed prefix so ``messages.json``
-        # stays at a stable path across runs.
-        from_path = os.fspath(self._root)
-        if not from_path.endswith(os.sep):
-            from_path += os.sep
+        # fsspec nests ``put(local_dir, dest)`` under ``dest/<basename>/`` whenever ``dest``
+        # already exists (local and remote alike). Trailing slashes on both sides copy the
+        # working root's *contents* into the destination instead, keeping ``messages.json`` at
+        # a stable path the next run can reload. Existing files are overwritten in place.
+        from_path = os.path.join(str(self._root), "")
         to_path = remote_destination.rstrip("/") + "/"
         await storage.put(from_path, to_path, recursive=True)
         return Dir.from_existing_remote(remote_destination)
@@ -936,13 +904,6 @@ class MemoryStore:
         """
         local_root = pathlib.Path(tempfile.mkdtemp(prefix="flyte_agent_mem_"))
         await dir.download(local_path=str(local_root))
-        messages_file = local_root / MESSAGES_PATH
-        if not messages_file.exists():
-            # Back-compat: older saves nested the working root under the keyed prefix.
-            for candidate in local_root.rglob(MESSAGES_PATH):
-                if candidate.is_file() and not candidate.is_symlink():
-                    shutil.copy2(candidate, messages_file)
-                    break
         store = cls(
             root=local_root,
             key=key,

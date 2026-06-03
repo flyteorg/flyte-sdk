@@ -36,26 +36,26 @@ async def add_note(note: str) -> str:
 
     Returns a short acknowledgement string.
     """
-    memory = await MemoryStore.get_or_create(key=MEMORY_KEY)
-    notes = await memory.read_json(NOTES_PATH, default=[])
-    sha = await memory.current_sha(NOTES_PATH)
+    memory = await MemoryStore.get_or_create.aio(key=MEMORY_KEY)
+    notes = await memory.read_json.aio(NOTES_PATH, default=[])
+    sha = await memory.current_sha.aio(NOTES_PATH)
     notes.append(note)
     try:
-        await memory.write_json(NOTES_PATH, notes, expected_sha=sha, reason="agent note")
+        await memory.write_json.aio(NOTES_PATH, notes, expected_sha=sha, reason="agent note")
     except ConcurrencyError:
         # Another tool/task updated the notes between our read and write.
         # Surface a retryable result to the agent rather than silently dropping
         # memory.
         return "Memory changed while saving the note; please retry add_note."
-    await memory.save()
+    await memory.save.aio()
     return f"Noted: {note}"
 
 
 @env.task
 async def list_history(count: int = 5) -> str:
     """Return recent persisted notes and conversation messages."""
-    memory = await MemoryStore.get_or_create(key=MEMORY_KEY)
-    notes = await memory.read_json(NOTES_PATH, default=[])
+    memory = await MemoryStore.get_or_create.aio(key=MEMORY_KEY)
+    notes = await memory.read_json.aio(NOTES_PATH, default=[])
     recent_notes = notes[-count:]
     recent_messages = memory.messages[-count:]
 
@@ -101,7 +101,7 @@ async def chat(message: str, memory_key: str = MEMORY_KEY) -> str:
         The agent's reply. Memory is saved back to the keyed store before the
         task returns.
     """
-    memory = await MemoryStore.get_or_create(key=memory_key)
+    memory = await MemoryStore.get_or_create.aio(key=memory_key)
     flyte.logger.info("Restored %d prior messages from memory.", len(memory.messages))
 
     agent.memory = memory
@@ -109,7 +109,7 @@ async def chat(message: str, memory_key: str = MEMORY_KEY) -> str:
 
     # Persist the updated transcript (and any tool-written artifacts) back to the
     # deterministic key path so the next run picks up where this one left off.
-    await memory.save()
+    await memory.save.aio()
     return result.summary or result.error
 
 
