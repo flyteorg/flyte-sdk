@@ -1,23 +1,14 @@
-"""Slack + Email notification example.
+"""Slack notification example.
 
-Sends a rich Slack notification and an email when a task succeeds or fails.
+Sends a rich Slack notification (using Block Kit) when a run reaches a terminal
+phase. A simpler text-only Slack notification is also shown for failures.
 
 Usage:
     export SLACK_WEBHOOK_URL="https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
-    export NOTIFICATION_EMAIL="oncall@example.com"
     python examples/notification/slack_webhook.py
 
-To receive emails locally, start a debug SMTP server before running:
-
-    # Python < 3.12
-    sudo python -m smtpd -n -c DebuggingServer localhost:25
-
-    # Python >= 3.12 (smtpd was removed; use aiosmtpd)
-    pip install aiosmtpd
-    sudo python -m aiosmtpd -n -l localhost:25
-
-Both print received emails to stdout. Port 25 requires root (sudo);
-alternatively use port 1025, but update the SMTP port in _sender.py.
+Template variables available in messages:
+    {{.Run.Name}}, {{.Run.Project}}, {{.Run.Domain}}, {{.Phase}}, {{.Error}}
 """
 
 import os
@@ -26,10 +17,13 @@ import flyte
 from flyte import notify
 from flyte.models import ActionPhase
 
-env = flyte.TaskEnvironment(name="notify_example")
+env = flyte.TaskEnvironment(
+    name="notify_slack",
+    resources=flyte.Resources(memory="250Mi"),
+)
 
-SLACK_WEBHOOK_URL = os.environ["SLACK_WEBHOOK_URL"]
-NOTIFICATION_EMAIL = os.environ["NOTIFICATION_EMAIL"]
+# Fall back to a placeholder so the module imports even without the env var set.
+SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL", "https://hooks.slack.com/services/REPLACE/ME")
 
 
 @env.task
@@ -37,13 +31,14 @@ def compute(x: int, y: int) -> int:
     return x + y
 
 
+# Rich Block Kit notification on success.
 slack_success = notify.Slack(
     on_phase=ActionPhase.SUCCEEDED,
     webhook_url=SLACK_WEBHOOK_URL,
     blocks=[
         {
             "type": "header",
-            "text": {"type": "plain_text", "text": "Task Succeeded"},
+            "text": {"type": "plain_text", "text": "✅ Task Succeeded"},
         },
         {
             "type": "section",
@@ -62,40 +57,21 @@ slack_success = notify.Slack(
     ],
 )
 
+# Simple text notification on failure or timeout.
 slack_failure = notify.Slack(
-    on_phase=ActionPhase.FAILED,
+    on_phase=(ActionPhase.FAILED, ActionPhase.TIMED_OUT),
     webhook_url=SLACK_WEBHOOK_URL,
-    blocks=[
-        {
-            "type": "header",
-            "text": {"type": "plain_text", "text": "Task Failed"},
-        },
-        {
-            "type": "section",
-            "fields": [
-                {"type": "mrkdwn", "text": "*Error:*\n{{.Error}}"},
-            ],
-        },
-    ],
+    message="🚨 Run {{.Run.Name}} failed with phase {{.Phase}}: {{.Error}}",
 )
 
-email_success = notify.Email(
-    on_phase=ActionPhase.SUCCEEDED,
-    recipients=[NOTIFICATION_EMAIL],
-    subject="Run {{.Run.Name}} succeeded",
-    body=("Run: {{.Run.Name}}\nPhase: {{.Phase}}\n"),
-)
-
-email_failure = notify.Email(
-    on_phase=ActionPhase.FAILED,
-    recipients=[NOTIFICATION_EMAIL],
-    subject="ALERT: Run {{.Run.Name}} failed",
-    body=("Run: {{.Run.Name}}\nError: {{.Error}}\n"),
-)
 
 if __name__ == "__main__":
-    result = flyte.with_runcontext(
-        mode="local",
-        notifications=(slack_success, slack_failure, email_success, email_failure),
+    flyte.init_from_config()
+    run = flyte.with_runcontext(
+        env_vars={"SLACK_WEBHOOK_URL": SLACK_WEBHOOK_URL},
+        notifications=(slack_success, slack_failure),
     ).run(compute, x=3, y=7)
-    print(f"Result: {result}")
+
+    print(run.name)
+    print(run.url)
+    run.wait()

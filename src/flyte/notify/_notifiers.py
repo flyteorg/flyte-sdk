@@ -146,12 +146,9 @@ class Email(Notification):
     recipients: Tuple[str, ...]
     cc: Tuple[str, ...] = ()
     bcc: Tuple[str, ...] = ()
-    subject: str = "Task {task.name} {run.phase}"
+    subject: str = "Run {{.Run.Name}} {{.Phase}}"
     body: str = (
-        "Run: {{.Run.Name}}\n"
-        "Project/Domain: {{.Run.Project}}/{{.Run.Domain}}\n"
-        "Phase: {{.Phase}}\n"
-        "Error: {{.Error}}\n"
+        "Run: {{.Run.Name}}\nProject/Domain: {{.Run.Project}}/{{.Run.Domain}}\nPhase: {{.Phase}}\nError: {{.Error}}\n"
     )
     html_body: Optional[str] = None
 
@@ -178,7 +175,7 @@ class Slack(Notification):
         Slack(
             on_phase=ActionPhase.FAILED,
             webhook_url="https://hooks.slack.com/services/YOUR/WEBHOOK/URL",
-            message="🚨 Run {{.Run.Name}} failed: {{.Error}}
+            message="🚨 Run {{.Run.Name}} failed: {{.Error}}",
         )
         ```
 
@@ -237,7 +234,7 @@ class Teams(Notification):
     """
 
     webhook_url: str
-    title: str = "Task {task.name} {run.phase}"
+    title: str = "Run {{.Run.Name}} {{.Phase}}"
     message: Optional[str] = None
     card: Optional[Dict[str, Any]] = None
 
@@ -306,9 +303,10 @@ class Webhook(Notification):
                 self,
                 "body",
                 {
-                    "Run: {{.Run.Name}}\n",
-                    "Project/Domain: {{.Run.Project}}/{{.Run.Domain}}\n",
-                    "Phase: {{.Phase}}\n",
-                    "Error: {{.Error}}\n",
+                    "run": "{{.Run.Name}}",
+                    "project": "{{.Run.Project}}",
+                    "domain": "{{.Run.Domain}}",
+                    "phase": "{{.Phase}}",
+                    "error": "{{.Error}}",
                 },
             )
