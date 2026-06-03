@@ -18,6 +18,7 @@ from ._plugins import discover_and_register_plugins
 from ._prefetch import prefetch
 from ._run import run
 from ._serve import serve
+from ._signal import signal
 from ._start import start
 from ._stop import stop
 from ._update import update
@@ -30,7 +31,7 @@ help_config = click.RichHelpConfiguration(
         "flyte": [
             {
                 "name": "Run and stop tasks",
-                "commands": ["run", "abort"],
+                "commands": ["run", "abort", "signal"],
             },
             {
                 "name": "Serve Apps",
@@ -275,6 +276,7 @@ main.add_command(deploy)
 main.add_command(get)  # type: ignore
 main.add_command(create)  # type: ignore
 main.add_command(abort)  # type: ignore
+main.add_command(signal)  # type: ignore
 main.add_command(gen)  # type: ignore
 main.add_command(delete)  # type: ignore
 main.add_command(build)

@@ -7,6 +7,7 @@ on:
   pull_request:
     paths:
       - 'examples/integration_tests.py'
+      - '.github/workflows/integration_tests.yml'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
@@ -36,6 +37,7 @@ jobs:
           key: uv-${{ runner.os }}-${{ matrix.python-version }}
       - name: Install flyte & Build wheel
         run: |
+          export SETUPTOOLS_SCM_PRETEND_VERSION="9.9.9.dev"
           make dist
       - name: Install plugins and example dependencies
         working-directory: plugins

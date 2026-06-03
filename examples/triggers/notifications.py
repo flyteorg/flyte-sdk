@@ -20,8 +20,8 @@ trig1 = flyte.Trigger(
             {
                 "type": "section",
                 "fields": [
-                    {"type": "mrkdwn", "text": "*Workflow:*\n{run.name}"},
-                    {"type": "mrkdwn", "text": "*Error:*\n{run.error}"},
+                    {"type": "mrkdwn", "text": "*Workflow:*\n{{.Run.Name}}"},
+                    {"type": "mrkdwn", "text": "*Error:*\n{{.Error}}"},
                 ],
             },
             {
@@ -30,7 +30,7 @@ trig1 = flyte.Trigger(
                     {
                         "type": "button",
                         "text": {"type": "plain_text", "text": "View Logs"},
-                        "url": "https://logs.example.com/{run.name}",
+                        "url": "https://logs.example.com/{{.Run.Name}}",
                     }
                 ],
             },
@@ -46,20 +46,20 @@ trig2 = flyte.Trigger(
         flyte.notify.Slack(
             on_phase=(ActionPhase.FAILED, ActionPhase.TIMED_OUT),
             webhook_url="https://webhook.site/",
-            message="Hello world! from {task.name}",
+            message="Hello world! from {{.Run.Name}}",
         ),
         flyte.notify.Webhook(
             on_phase=ActionPhase.FAILED,
             headers={"Content-Type": "application/json"},
             url="https://webhook.site/",
             body={
-                "xyz": "{run.name}",
+                "xyz": "{{.Run.Name}}",
             },
         ),
         flyte.notify.Email(
             on_phase=ActionPhase.SUCCEEDED,
-            subject="Hello world! from {task.name}",
-            body="Hello world! from {task.name}",
+            subject="Hello world! from {{.Run.Name}}",
+            body="Hello world! from {{.Run.Name}}",
             recipients=("<EMAIL>",),
         ),
     ),

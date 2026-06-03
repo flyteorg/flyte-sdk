@@ -89,8 +89,8 @@ class TestEmailTemplate:
         email = tmpl.email
         assert len(email.to) == 1
         assert email.to[0].address == "a@b.com"
-        assert email.inline.subject == "Task {task.name} {run.phase}"
-        assert "{task.name}" in email.inline.text_template
+        assert email.inline.subject == "Run {{.Run.Name}} {{.Phase}}"
+        assert "{{.Run.Name}}" in email.inline.text_template
 
     def test_multiple_recipients(self):
         tmpl = _to_delivery_config_template(Email(on_phase=ActionPhase.FAILED, recipients=("a@b.com", "c@d.com")))
@@ -129,7 +129,8 @@ class TestEmailTemplate:
 
     def test_no_html_body(self):
         tmpl = _to_delivery_config_template(Email(on_phase=ActionPhase.FAILED, recipients=("a@b.com",)))
-        assert tmpl.email.inline.html_template == ""
+        # Remote rejects an empty html_template, so a non-empty placeholder is used as the default.
+        assert tmpl.email.inline.html_template == "No HTML body"
 
     def test_custom_subject_and_body(self):
         tmpl = _to_delivery_config_template(
@@ -165,7 +166,7 @@ class TestSlackTemplate:
         tmpl = _to_delivery_config_template(Slack(on_phase=ActionPhase.FAILED, webhook_url="https://test"))
         body = json.loads(tmpl.webhook.body_template)
         assert "text" in body
-        assert "{task.name}" in body["text"]
+        assert "{{.Run.Name}}" in body["text"]
 
 
 class TestTeamsTemplate:
@@ -190,7 +191,7 @@ class TestTeamsTemplate:
     def test_teams_default_message(self):
         tmpl = _to_delivery_config_template(Teams(on_phase=ActionPhase.FAILED, webhook_url="https://teams.test"))
         body = json.loads(tmpl.webhook.body_template)
-        assert "{run.name}" in body["text"]
+        assert "{{.Run.Name}}" in body["text"]
 
 
 class TestWebhookTemplate:
