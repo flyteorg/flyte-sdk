@@ -113,12 +113,14 @@ def test_with_pip_packages():
 
 
 def test_with_source(tmp_path):
+    from flyte.errors import ImageBuildError
+
     file = tmp_path / "my_code.py"
     img = Image.from_debian_base(registry="localhost", name="test-image", flyte_version="0.2.0b14").with_source_file(
         file
     )
     assert img._layers[-1].src == file
-    with pytest.raises(ValueError):
+    with pytest.raises(ImageBuildError):
         img.validate()
     file.touch()
     img.validate()
@@ -397,6 +399,32 @@ def test_uv_project_optional_uvlock():
         hash2 = hasher2.hexdigest()
 
         assert hash1 != hash2
+
+
+def test_copy_config_validate_missing_src_raises_image_build_error(tmp_path):
+    """A CopyConfig pointing at a non-existent source is a user mistake in the
+    image spec, not an SDK bug. validate() must raise ImageBuildError (a
+    RuntimeUserError filtered out of Sentry) rather than a bare ValueError.
+
+    Reproduces FLYTE-SDK-4D.
+    """
+    from flyte.errors import ImageBuildError
+
+    missing = tmp_path / "does-not-exist"
+    cc = CopyConfig(path_type=1, src=missing, dst="/app")
+    with pytest.raises(ImageBuildError, match=r"Source folder .* does not exist"):
+        cc.validate()
+
+
+def test_copy_config_validate_wrong_type_raises_image_build_error(tmp_path):
+    """A file passed where a directory (path_type=1) is expected is a user error."""
+    from flyte.errors import ImageBuildError
+
+    f = tmp_path / "a.txt"
+    f.write_text("hello")
+    cc = CopyConfig(path_type=1, src=f, dst="/app")
+    with pytest.raises(ImageBuildError, match=r"Source folder .* is not a directory"):
+        cc.validate()
 
 
 def test_copy_config_coerces_string_src_to_path(tmp_path):

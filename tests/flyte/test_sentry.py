@@ -1,3 +1,4 @@
+import errno
 from unittest import mock
 
 import click
@@ -270,8 +271,9 @@ def test_capture_exception_skips_connect_error_failed_precondition_wrapped_as_sy
 
 
 def test_capture_exception_still_reports_connect_error_internal():
-    """ConnectError with Internal/Unavailable/Unknown is NOT user-actionable — those
-    indicate backend bugs or outages and should still be reported to Sentry."""
+    """ConnectError(INTERNAL/UNKNOWN) can indicate a real backend or SDK bug
+    and should still be reported. UNAVAILABLE / DEADLINE_EXCEEDED are filtered
+    separately (transient infra)."""
     from connectrpc.code import Code
     from connectrpc.errors import ConnectError
 
@@ -284,3 +286,84 @@ def test_capture_exception_still_reports_connect_error_internal():
     ):
         _sentry.capture_exception(err)
     capture_mock.assert_called_once_with(err)
+
+
+def test_capture_exception_skips_oserror_no_space_left():
+    """FLYTE-SDK-32: OSError(ENOSPC) from shutil._fastcopy_sendfile during
+    `flyte deploy` bundle upload is a user environment problem (disk full),
+    not an SDK bug."""
+    err = OSError(errno.ENOSPC, "No space left on device", "/some/path")
+    with mock.patch.object(_sentry, "init") as init_mock:
+        _sentry.capture_exception(err)
+    init_mock.assert_not_called()
+
+
+def test_capture_exception_still_reports_other_oserror():
+    """OSError with errnos other than ENOSPC may legitimately indicate SDK bugs
+    and should still be reported to Sentry."""
+    err = PermissionError(errno.EACCES, "Permission denied", "/some/path")
+    with (
+        mock.patch.object(_sentry, "init"),
+        mock.patch("sentry_sdk.is_initialized", return_value=True),
+        mock.patch("sentry_sdk.capture_exception") as capture_mock,
+        mock.patch("sentry_sdk.flush"),
+    ):
+        _sentry.capture_exception(err)
+    capture_mock.assert_called_once_with(err)
+
+
+def test_capture_exception_skips_connect_error_unavailable_wrapped_as_system_error():
+    """FLYTE-SDK-47/48/3W: SelectCluster transient network failures (Connection
+    refused / reset / DNS lookup failed) surface as ConnectError(UNAVAILABLE)
+    wrapped through RuntimeError -> RuntimeSystemError. These are infra
+    problems, not SDK bugs."""
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
+    from flyte.errors import RuntimeSystemError
+
+    try:
+        try:
+            try:
+                raise ConnectError(
+                    Code.UNAVAILABLE,
+                    "Request failed: error sending request for url (...): client error (Connect): "
+                    "tcp connect error: Connection refused",
+                )
+            except ConnectError as ce:
+                raise RuntimeError(f"SelectCluster failed for operation=1: {ce}") from ce
+        except RuntimeError:
+            raise RuntimeSystemError(
+                "RuntimeError", "Failed to get signed url for /tmp/x.tar.gz: SelectCluster failed..."
+            )
+    except RuntimeSystemError as e:
+        err = e
+
+    with mock.patch.object(_sentry, "init") as init_mock:
+        _sentry.capture_exception(err)
+    init_mock.assert_not_called()
+
+
+def test_capture_exception_skips_connect_error_deadline_exceeded_wrapped_as_system_error():
+    """FLYTE-SDK-29: SelectCluster Request timed out surfaces as
+    ConnectError(DEADLINE_EXCEEDED) wrapped through RuntimeError ->
+    RuntimeSystemError. Transient infra, not an SDK bug."""
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
+    from flyte.errors import RuntimeSystemError
+
+    try:
+        try:
+            try:
+                raise ConnectError(Code.DEADLINE_EXCEEDED, "Request timed out")
+            except ConnectError as ce:
+                raise RuntimeError(f"SelectCluster failed for operation=1: {ce}") from ce
+        except RuntimeError:
+            raise RuntimeSystemError("RuntimeError", "Failed to get signed url for /tmp/x.pb: SelectCluster failed...")
+    except RuntimeSystemError as e:
+        err = e
+
+    with mock.patch.object(_sentry, "init") as init_mock:
+        _sentry.capture_exception(err)
+    init_mock.assert_not_called()

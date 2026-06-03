@@ -17,7 +17,7 @@ from pydantic import BaseModel
 import flyte.app
 from flyte.models import SerializationContext
 
-from ..agents.protocol import Agent, AgentResult
+from ..agents.protocol import AgentProtocol, AgentResult
 from ._css import CUSTOM_THEME_CSS_TEMPLATE
 from ._html import build_chat_html
 
@@ -168,6 +168,11 @@ async def _forward_remote_run_watch_to_progress_queue(
     ``CodeModeAgent`` runs inside the worker; ``codemode_progress_cb`` never fires in the
     FastAPI process. We approximate codemode phases from :meth:`~flyte.remote.Run.watch`:
 
+    Pre-``RUNNING`` phases (``QUEUED``, ``WAITING_FOR_RESOURCES``, ``INITIALIZING``) emit a
+    ``task_phase`` progress event so the UI can update the step-0 subtitle (cold-start of
+    a freshly-deployed worker image can take 30s+; without these events the UI looks frozen
+    on "Preparing runtime environment…" and users assume the task never submitted).
+
     - First ``RUNNING`` → ``generating_code`` (task process is executing; matches starting codegen).
     - Next ``RUNNING`` update → ``executing`` (best-effort: often past first LLM round).
     """
@@ -175,13 +180,34 @@ async def _forward_remote_run_watch_to_progress_queue(
 
     emitted_gen = False
     emitted_exec = False
+    last_pre_running_phase: ActionPhase | None = None
+    pre_running_phases = {
+        ActionPhase.QUEUED,
+        ActionPhase.WAITING_FOR_RESOURCES,
+        ActionPhase.INITIALIZING,
+    }
     try:
         watch_fn = getattr(run_handle, "watch", None)
         if watch_fn is None:
             return
         async for ad in watch_fn():
             ph = ad.phase
-            if ph == ActionPhase.RUNNING:
+            if ph in pre_running_phases:
+                # Only emit once per distinct pre-running phase to keep the
+                # stream quiet but informative.
+                if ph != last_pre_running_phase and not emitted_gen:
+                    await queue.put(
+                        json.dumps(
+                            {
+                                "type": "progress",
+                                "phase": "task_phase",
+                                "task_phase": ph.value,
+                            }
+                        )
+                        + "\n"
+                    )
+                    last_pre_running_phase = ph
+            elif ph == ActionPhase.RUNNING:
                 if not emitted_gen:
                     await queue.put(json.dumps({"type": "progress", "phase": "generating_code", "attempt": 1}) + "\n")
                     emitted_gen = True
@@ -205,12 +231,12 @@ async def _forward_remote_run_watch_to_progress_queue(
 @dataclass(kw_only=True, repr=True)
 class AgentChatAppEnvironment(flyte.app.AppEnvironment):
     """An :class:`~flyte.app.AppEnvironment` that spins up a FastAPI chat
-    interface backed by any object satisfying the :class:`Agent` protocol.
+    interface backed by any object satisfying the :class:`AgentProtocol`.
 
     Parameters
     ----------
     agent:
-        Any object implementing the :class:`Agent` protocol.
+        Any object implementing the :class:`AgentProtocol`.
     title:
         Title displayed in the UI header and browser tab. Defaults to
         the environment *name*.
@@ -256,11 +282,11 @@ class AgentChatAppEnvironment(flyte.app.AppEnvironment):
     task_entrypoint:
         Optional Flyte task used as the chat handler entrypoint.
 
-        When set, ``/api/chat`` calls the task (via ``task_entrypoint.aio``)
-        instead of calling ``agent.run`` directly. This is useful for agents
-        whose tool calls must run under a parent task context (e.g. a
-        ``CodeModeAgent`` using durable ``@env.task`` tools). When streaming
-        chat (``stream: true``), progress lines use :meth:`~flyte.remote.Run.watch`
+        When set, ``/api/chat`` calls the task (via ``flyte.run.aio``) instead
+        of calling ``agent.run`` directly. This is useful for agents whose tool
+        calls must run under a parent task context (e.g. a ``CodeModeAgent``
+        using durable ``@env.task`` tools). When streaming chat
+        (``stream: true``), progress lines use :meth:`~flyte.remote.Run.watch`
         on the returned run (first ``RUNNING`` → ``generating_code``, next →
         ``executing``). Fine-grained codemode phases still require
         ``agent.run`` in the web process, or future worker-side signaling.
@@ -292,9 +318,9 @@ class AgentChatAppEnvironment(flyte.app.AppEnvironment):
         if self.agent is None:
             raise ValueError("'agent' is required for AgentChatAppEnvironment")
 
-        if not isinstance(self.agent, Agent):
+        if not isinstance(self.agent, AgentProtocol):
             raise TypeError(
-                f"'agent' must implement the Agent protocol (run and tool_descriptions), got {type(self.agent)}"
+                f"'agent' must implement the AgentProtocol (run and tool_descriptions), got {type(self.agent)}"
             )
 
         if self.task_entrypoint is not None and not self.passthrough_auth:
@@ -355,7 +381,7 @@ class AgentChatAppEnvironment(flyte.app.AppEnvironment):
             progress_queue: asyncio.Queue[str | None] | None = None,
         ) -> AgentResult:
             if task_entrypoint is None:
-                result_obj: Any = await agent.run(chat_req.message, chat_req.history)
+                result_obj: Any = await agent.run.aio(chat_req.message, chat_req.history)
             else:
                 import flyte
                 from flyte.models import ActionPhase
@@ -369,10 +395,41 @@ class AgentChatAppEnvironment(flyte.app.AppEnvironment):
                         n_params = 1
 
                 try:
+                    # ``flyte.run.aio`` on a local ``TaskTemplate`` builds (or
+                    # cache-hits) the image before it submits the run. On a
+                    # cold cache that step can dominate wall-clock time, so
+                    # surface it explicitly; on a warm cache the UI flips to
+                    # "submitted" almost immediately.
+                    if progress_queue is not None:
+                        await progress_queue.put(
+                            json.dumps(
+                                {
+                                    "type": "progress",
+                                    "phase": "task_phase",
+                                    "task_phase": "building_image",
+                                }
+                            )
+                            + "\n"
+                        )
                     if n_params >= 2:
                         run_handle = await flyte.run.aio(task_entrypoint, chat_req.message, chat_req.history)
                     else:
                         run_handle = await flyte.run.aio(task_entrypoint, chat_req.message)
+                    # Immediately let the UI know the request left "Preparing
+                    # runtime environment…" and is now on the cluster side.
+                    # Without this the UI sits silent until the worker pod
+                    # reaches RUNNING, which can be 30s+ on a cold start.
+                    if progress_queue is not None:
+                        await progress_queue.put(
+                            json.dumps(
+                                {
+                                    "type": "progress",
+                                    "phase": "task_phase",
+                                    "task_phase": "submitted",
+                                }
+                            )
+                            + "\n"
+                        )
 
                     if hasattr(run_handle, "wait") and hasattr(run_handle, "outputs"):
                         forwarder: asyncio.Task[None] | None = None
