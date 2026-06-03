@@ -239,8 +239,6 @@ class TestDockerSubprocessFailures:
     """Docker CLI failures should surface as click.ClickException, not raw CalledProcessError."""
 
     def test_ensure_volume_failure_raises_click_exception(self):
-        import click
-
         from flyte.cli._devbox import _ensure_volume
 
         with patch("flyte.cli._devbox.subprocess.run") as mock_run:
@@ -251,8 +249,6 @@ class TestDockerSubprocessFailures:
             assert "docker daemon not reachable" in str(excinfo.value.message)
 
     def test_container_is_running_failure_raises_click_exception(self):
-        import click
-
         from flyte.cli._devbox import _container_is_running
 
         with patch("flyte.cli._devbox.subprocess.run") as mock_run:
@@ -261,8 +257,6 @@ class TestDockerSubprocessFailures:
                 _container_is_running("flyte-devbox")
 
     def test_container_is_paused_failure_raises_click_exception(self):
-        import click
-
         from flyte.cli._devbox import _container_is_paused
 
         with patch("flyte.cli._devbox.subprocess.run") as mock_run:
