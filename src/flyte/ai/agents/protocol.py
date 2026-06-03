@@ -23,8 +23,11 @@ class AgentProtocol(Protocol):
     :class:`AgentChatAppEnvironment`.
     """
 
-    async def run(self, message: str, history: list[dict[str, str]]) -> AgentResult:
-        """Process *message* (with prior *history*) and return an :class:`AgentResult`."""
+    def run(self, message: str, history: list[dict[str, str]]) -> AgentResult:
+        """Process *message* (with prior *history*) and return an :class:`AgentResult`.
+
+        Synchronous entry point. In async contexts, use ``run.aio(...)``.
+        """
         ...
 
     def tool_descriptions(self) -> list[dict[str, str]]:

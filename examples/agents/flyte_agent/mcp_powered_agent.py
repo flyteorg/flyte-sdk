@@ -208,7 +208,7 @@ async def shepherd(prompt: str, slack_mcp_url: str, github_mcp_url: str) -> str:
         mcp_servers=mcp_servers,
         max_turns=18,
     )
-    result = await agent.run(prompt)
+    result = await agent.run.aio(prompt)
     return result.summary or result.error
 
 

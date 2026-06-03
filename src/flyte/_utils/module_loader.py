@@ -58,7 +58,16 @@ def load_python_modules(
             loaded_modules.append(imported_module)
         except flyte.errors.ModuleLoadError as e:
             failed_paths.append((path, str(e)))
-        except (ImportError, SyntaxError, NameError, AttributeError, TypeError, ValueError, KeyError) as e:
+        except (
+            ImportError,
+            SyntaxError,
+            NameError,
+            AttributeError,
+            TypeError,
+            ValueError,
+            KeyError,
+            RuntimeError,
+        ) as e:
             raise flyte.errors.ModuleLoadError(f"Failed to load {path}: {type(e).__name__}: {e}") from e
 
     elif path.is_dir():
@@ -109,7 +118,16 @@ def load_python_modules(
                         loaded_modules.append(imported_module)
                     except flyte.errors.ModuleLoadError as e:
                         failed_paths.append((file_path, str(e)))
-                    except (ImportError, SyntaxError, NameError, AttributeError, TypeError, ValueError, KeyError) as e:
+                    except (
+                        ImportError,
+                        SyntaxError,
+                        NameError,
+                        AttributeError,
+                        TypeError,
+                        ValueError,
+                        KeyError,
+                        RuntimeError,
+                    ) as e:
                         # User code failed at import time. Record as a load failure
                         # (consistent with ModuleLoadError above) so deploy can either
                         # warn or abort via --ignore-load-errors instead of crashing.

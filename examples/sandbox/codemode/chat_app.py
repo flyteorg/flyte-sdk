@@ -102,7 +102,7 @@ async def get_tools() -> list[dict]:
 @app.post("/api/chat")
 async def chat(req: ChatRequest) -> ChatResponse:
     """Core endpoint: generate code, run in sandbox, return results."""
-    result = await agent.run(req.message, req.history)
+    result = await agent.run.aio(req.message, req.history)
     return ChatResponse(
         code=result.code,
         charts=result.charts,

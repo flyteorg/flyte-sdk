@@ -143,7 +143,7 @@ async def triage_repo(trigger_time: datetime, repo: str, channel: str) -> str:
     """Daily scheduled wakeup that runs the triage agent end-to-end."""
     message = f"It is {trigger_time.isoformat()}. Triage the open issues in {repo} and post a digest to {channel}."
     with flyte.group("triage-loop"):
-        result = await agent.run(message)
+        result = await agent.run.aio(message)
     if result.error:
         return f"[triage failed] {result.error}"
     return result.summary
