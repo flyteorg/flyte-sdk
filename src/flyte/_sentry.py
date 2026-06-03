@@ -5,6 +5,7 @@ Initializes Sentry with a hardcoded DSN to report errors from CLI commands
 (e.g., `flyte start demo`). Users can opt out by setting FLYTE_DISABLE_SENTRY=true.
 """
 
+import errno
 import logging
 import os
 
@@ -108,6 +109,22 @@ def _is_user_actionable_connect_error(exc: BaseException) -> bool:
     return getattr(code, "name", None) in _USER_ACTIONABLE_CONNECT_CODES
 
 
+_USER_ENVIRONMENT_OSERROR_ERRNOS: frozenset[int] = frozenset({errno.ENOSPC})
+
+
+def _is_user_environment_oserror(exc: BaseException) -> bool:
+    """OSError variants caused by the user's local environment, not SDK bugs.
+
+    ENOSPC ("No space left on device") surfaces from shutil._fastcopy_sendfile
+    during `flyte deploy` bundle uploads when the user's machine is out of disk
+    (FLYTE-SDK-32). Disk-full is a user environment problem, not something the
+    SDK can fix, so it shouldn't be reported as a crash.
+    """
+    if not isinstance(exc, OSError):
+        return False
+    return exc.errno in _USER_ENVIRONMENT_OSERROR_ERRNOS
+
+
 def _is_user_error(exc: BaseException) -> bool:
     """Errors raised intentionally as user-facing messages — not crash reports."""
     try:
@@ -145,6 +162,8 @@ def _is_user_error(exc: BaseException) -> bool:
         if user_excs and isinstance(cause, user_excs):
             return True
         if _is_user_actionable_connect_error(cause):
+            return True
+        if _is_user_environment_oserror(cause):
             return True
     return False
 
