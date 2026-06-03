@@ -381,7 +381,7 @@ class AgentChatAppEnvironment(flyte.app.AppEnvironment):
             progress_queue: asyncio.Queue[str | None] | None = None,
         ) -> AgentResult:
             if task_entrypoint is None:
-                result_obj: Any = await agent.run(chat_req.message, chat_req.history)
+                result_obj: Any = await agent.run.aio(chat_req.message, chat_req.history)
             else:
                 import flyte
                 from flyte.models import ActionPhase
