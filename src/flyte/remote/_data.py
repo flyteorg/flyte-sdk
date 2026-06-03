@@ -153,11 +153,13 @@ async def _upload_with_retry(
         except RuntimeSystemError:
             raise
         except (httpx.TimeoutException, httpx.NetworkError, OSError) as e:
-            last_error = e
+            # Some httpx/httpcore errors (e.g. ReadError) carry an empty str(e),
+            # so include the exception type to keep the message actionable.
+            last_error = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
             if retry_attempt >= max_retries:
                 raise RuntimeSystemError(
                     "UploadFailed",
-                    f"Failed to upload {fp} after {max_retries} retries: {e}",
+                    f"Failed to upload {fp} after {max_retries} retries: {last_error}",
                 ) from e
 
         # Backoff and retry

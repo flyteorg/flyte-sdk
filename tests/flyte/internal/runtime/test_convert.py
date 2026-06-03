@@ -27,7 +27,7 @@ from flyteidl2.task import common_pb2 as _task_common_pb2
 from flyteidl2.task import common_pb2 as run_definition_pb2
 
 import flyte._internal.runtime.convert as convert
-from flyte._internal.runtime.convert import Inputs, generate_sub_action_id_and_output_path
+from flyte._internal.runtime.convert import Inputs, current_output_name, generate_sub_action_id_and_output_path
 from flyte._internal.runtime.types_serde import transform_native_to_typed_interface
 from flyte.models import ActionID, NativeInterface, RawDataPath, TaskContext
 from flyte.report import Report
@@ -1454,3 +1454,71 @@ async def test_convert_upload_default_inputs_remote_interface():
             value=await TypeEngine.to_literal("hello", str, TypeEngine.to_literal_type(str)),
         ),
     ]
+
+
+# ---------------------------------------------------------------------------
+# current_output_name
+# ---------------------------------------------------------------------------
+
+
+def test_current_output_name_is_none_outside_conversion():
+    """Outside of output conversion the slot name should be absent."""
+    assert current_output_name() is None
+
+
+def test_current_output_name_reflects_contextvar():
+    """current_output_name() is a thin wrapper over the ContextVar."""
+    from flyte._internal.runtime.convert import _output_name_var
+
+    assert current_output_name() is None
+    tok = _output_name_var.set("o0")
+    try:
+        assert current_output_name() == "o0"
+    finally:
+        _output_name_var.reset(tok)
+    assert current_output_name() is None
+
+
+@pytest.mark.asyncio
+async def test_current_output_name_set_during_output_conversion():
+    """current_output_name() returns each output slot name while its value is
+    being converted, and is None again both before and after."""
+    observed: list[str | None] = []
+    original_to_literal = convert.TypeEngine.to_literal
+
+    async def _capturing_to_literal(value, python_type, expected_literal_type):
+        observed.append(current_output_name())
+        return await original_to_literal(value, python_type, expected_literal_type)
+
+    # int is natively supported — no pickle fallback.
+    interface = NativeInterface.from_types({}, {"slot_a": int, "slot_b": int})
+
+    assert current_output_name() is None
+    convert.TypeEngine.to_literal = _capturing_to_literal
+    try:
+        await convert.convert_from_native_to_outputs((1, 2), interface, "test_task")
+    finally:
+        convert.TypeEngine.to_literal = original_to_literal
+
+    assert observed == ["slot_a", "slot_b"]
+    assert current_output_name() is None
+
+
+@pytest.mark.asyncio
+async def test_current_output_name_cleared_on_transformer_error():
+    """Even when a transformer raises, the slot name is cleared."""
+    original_to_literal = convert.TypeEngine.to_literal
+
+    async def _failing_to_literal(value, python_type, expected_literal_type):
+        raise convert.TypeTransformerFailedError("boom")
+
+    interface = NativeInterface.from_types({}, {"out": int})
+
+    convert.TypeEngine.to_literal = _failing_to_literal
+    try:
+        with pytest.raises(Exception):
+            await convert.convert_from_native_to_outputs((42,), interface, "test_task")
+    finally:
+        convert.TypeEngine.to_literal = original_to_literal
+
+    assert current_output_name() is None
