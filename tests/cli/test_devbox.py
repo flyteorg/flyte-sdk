@@ -14,7 +14,12 @@ import click
 import pytest
 from click.testing import CliRunner
 
-from flyte.cli._devbox import _ensure_kubectl_available, _merge_kubeconfig, _run_container
+from flyte.cli._devbox import (
+    _ensure_kubectl_available,
+    _merge_kubeconfig,
+    _run_container,
+    _switch_k8s_context,
+)
 from flyte.cli._start import devbox
 
 
@@ -136,28 +141,49 @@ class TestMergeKubeconfigRetry:
 
 
 class TestEnsureKubectlAvailable:
-    """`_merge_kubeconfig` must surface a friendly ClickException when kubectl is missing,
-    instead of leaking a raw FileNotFoundError from `subprocess.run`."""
+    """`_ensure_kubectl_available` reports kubectl presence as a bool instead of raising,
+    and callers skip kubectl-dependent steps (with a warning) when it is missing."""
 
-    def test_missing_kubectl_raises_click_exception(self):
+    def test_missing_kubectl_returns_false(self):
         with patch("flyte.cli._devbox.shutil.which", return_value=None):
-            with pytest.raises(click.ClickException) as excinfo:
-                _ensure_kubectl_available()
-            assert "kubectl" in str(excinfo.value.message)
+            assert _ensure_kubectl_available() is False
 
-    def test_present_kubectl_does_not_raise(self):
+    def test_present_kubectl_returns_true(self):
         with patch("flyte.cli._devbox.shutil.which", return_value="/usr/local/bin/kubectl"):
-            _ensure_kubectl_available()
+            assert _ensure_kubectl_available() is True
 
-    def test_merge_kubeconfig_raises_click_exception_when_kubectl_missing(self, tmp_path):
+    def test_merge_kubeconfig_skips_and_warns_when_kubectl_missing(self, tmp_path):
         kubeconfig = tmp_path / "kubeconfig"
         kubeconfig.write_text("")
         with (
-            patch("flyte.cli._devbox.shutil.which", return_value=None),
+            patch("flyte.cli._devbox._ensure_kubectl_available", return_value=False),
+            patch("flyte.cli._devbox._flatten_kubeconfig") as mock_flatten,
+            patch("flyte.cli._devbox.click.echo") as mock_echo,
             patch("flyte.cli._devbox.Path.home", return_value=tmp_path),
         ):
-            with pytest.raises(click.ClickException):
-                _merge_kubeconfig(kubeconfig, "flyte-devbox")
+            # Should not raise, and should not attempt to flatten/merge.
+            _merge_kubeconfig(kubeconfig, "flyte-devbox")
+
+            mock_flatten.assert_not_called()
+            mock_echo.assert_called_once()
+            message = mock_echo.call_args.args[0]
+            assert "kubectl" in message
+            assert mock_echo.call_args.kwargs.get("err") is True
+
+    def test_switch_k8s_context_skips_and_warns_when_kubectl_missing(self):
+        with (
+            patch("flyte.cli._devbox._ensure_kubectl_available", return_value=False),
+            patch("flyte.cli._devbox.subprocess.run") as mock_run,
+            patch("flyte.cli._devbox.click.echo") as mock_echo,
+        ):
+            # Should not raise, and should never shell out to kubectl.
+            _switch_k8s_context()
+
+            mock_run.assert_not_called()
+            mock_echo.assert_called_once()
+            message = mock_echo.call_args.args[0]
+            assert "kubectl" in message
+            assert mock_echo.call_args.kwargs.get("err") is True
 
 
 class TestDevboxCliGpuFlag:
