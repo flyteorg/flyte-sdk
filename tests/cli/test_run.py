@@ -173,8 +173,8 @@ def test_build_images_image_name_not_found_error(runner):
     deployment_plan = DeploymentPlan(envs={env_name: task_env})
 
     cfg = _get_init_config()
-    # Check if _build_images raises ValueError for missing image name
-    with pytest.raises(ValueError) as exc_info:
+    # Check if _build_images raises DeploymentError for missing image name
+    with pytest.raises(flyte.errors.DeploymentError) as exc_info:
         asyncio.run(_build_images(deployment_plan, cfg.images))
 
     error_msg = str(exc_info.value)
