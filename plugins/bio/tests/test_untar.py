@@ -3,22 +3,17 @@
 Extracts ``kraken2.tar.gz`` and asserts each emitted file's MD5 matches
 the expected values.
 
-``test_untar`` is a single ``@env.task``: it fetches its fixture, calls
-``untar``, and asserts the extracted files' MD5s. ``main`` runs it once
-and waits.
+This module runs a single ``@env.task``: it fetches its fixture, calls
+``untar``, and asserts the extracted files' MD5s.
 
 Run it::
 
-    uv run --project plugins/bio python plugins/bio/tests/test_untar.py            # local
-    uv run --project plugins/bio python plugins/bio/tests/test_untar.py remote     # devbox / prod
+    uv run --project plugins/bio pytest plugins/bio/tests/test_untar.py
 """
 
-from __future__ import annotations
-
-import asyncio
-
 import flyte
-from _utils import FileT, assert_md5_files, cli_mode, fixture_file, init_for_mode
+import pytest
+from _utils import FileT, assert_md5_files, fixture_file, init_local_flyte, run_local_task
 
 from flyteplugins.bio.untar import env as untar_env
 from flyteplugins.bio.untar import untar
@@ -27,7 +22,7 @@ env = flyte.TaskEnvironment(name="untar_tests", depends_on=[untar_env])
 
 
 @env.task
-async def test_untar() -> None:
+async def untar_case() -> None:
     archive = await fixture_file("genomics/sarscov2/genome/db/kraken2.tar.gz")
     files: list[FileT] = await untar(archive=archive)
     await assert_md5_files(
@@ -41,13 +36,11 @@ async def test_untar() -> None:
     )
 
 
-async def main() -> None:
-    mode = cli_mode()
-    await init_for_mode(mode)
-    runner = flyte.with_runcontext(mode=mode)
-    run = await runner.run.aio(test_untar)
-    await run.wait.aio()
+@pytest.fixture(scope="module", autouse=True)
+def _init_flyte() -> None:
+    init_local_flyte()
 
 
-if __name__ == "__main__":
-    asyncio.run(main())
+@pytest.mark.asyncio
+async def test_untar() -> None:
+    await run_local_task(untar_case)

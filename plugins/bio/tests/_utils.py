@@ -9,54 +9,27 @@ from __future__ import annotations
 import gzip
 import hashlib
 import pathlib
-import sys
 import urllib.request
-from typing import Any, Literal, cast
+from typing import Any, cast
 
 import flyte
 from _constants import CACHE_DIR, FIXTURE_BASE_URL
 from flyte.io import File
 
-Mode = Literal["local", "remote"]
-
-
-def cli_mode(argv: list[str] | None = None) -> Mode:
-    """Pick ``"local"`` or ``"remote"`` from the test script's argv.
-
-    Default is ``"local"`` (in-process execution). Pass ``remote`` as the
-    first script argument to submit each run through a real Flyte
-    cluster.
-
-    This is **not** redundant with the config: ``flyte.init_from_config``
-    walks a precedence list and will silently pick up any
-    ``~/.union/config.yaml`` or ``~/.flyte/config.yaml`` that exists.
-    When such a config has an endpoint, ``with_runcontext()`` (no
-    explicit mode) auto-flips to remote — which is surprising for a test
-    you expect to run locally. Forcing ``mode="local"`` here makes the
-    default predictable; pass ``remote`` to opt in.
-    """
-    argv = argv if argv is not None else sys.argv
-    if len(argv) > 1 and argv[1] == "remote":
-        return "remote"
-    return "local"
-
-
-async def init_for_mode(mode: Mode) -> None:
-    """Initialize Flyte for the selected test mode.
-
-    Local runs do not need a remote client and should avoid picking up a
-    workstation config by accident. Remote runs still use the user's
-    configured endpoint and auth from ``flyte.init_from_config``.
-    """
-    if mode == "local":
-        await flyte.init.aio()
-    else:
-        await flyte.init_from_config.aio()
-
-
 # Convenience alias — File is generic; tests rarely care about the
 # subtype, and writing ``File[Any]`` at each call site is noisy.
 FileT = File[Any]
+
+
+def init_local_flyte() -> None:
+    """Initialize Flyte for local pytest runs."""
+    flyte.init()
+
+
+async def run_local_task(task: Any, **kwargs: Any) -> None:
+    """Run a Flyte task locally and wait for completion."""
+    run = await flyte.with_runcontext(mode="local").run.aio(task, **kwargs)
+    await run.wait.aio()
 
 
 def fixture_path(relative_path: str) -> pathlib.Path:

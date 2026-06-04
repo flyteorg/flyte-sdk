@@ -50,26 +50,19 @@ to your `TaskEnvironment`'s `depends_on` and `await` it.
 ## Running the tests
 
 The end-to-end tests in `plugins/bio/tests/` exercise each wrapper against
-fixed fixtures and expected MD5s. They run **in-process by default**
-and submit to your configured cluster/devbox when you
-pass `remote` as the first argument.
+fixed fixtures and expected MD5s. They run locally under `pytest`.
 
 ```bash
-# one tool, locally (in-process)
-uv run --project plugins/bio python plugins/bio/tests/test_bedtools.py
+# one tool
+uv run --project plugins/bio pytest plugins/bio/tests/test_bedtools.py
 
-# one tool, on your cluster / devbox
-uv run --project plugins/bio python plugins/bio/tests/test_bedtools.py remote
-
-# the whole suite as a single run (one run tree across every tool)
-uv run --project plugins/bio python plugins/bio/tests/test_all.py
-uv run --project plugins/bio python plugins/bio/tests/test_all.py remote
+# the whole suite
+uv run --project plugins/bio pytest plugins/bio/tests
 ```
 
 Each `test_<tool>` is a `@env.task` that fetches its fixtures, calls the
-wrapper, and asserts the output MD5 inline; `test_all.py` imports every tool's
-`test_<tool>` and fans them out as children of one run. Fixtures are pulled on
-first run and cached under `tests/_fixtures/`.
+wrapper, and asserts the output MD5 inline. Fixtures are pulled on first
+run and cached under `tests/_fixtures/`.
 
 ## Debugging a wrapped command
 
