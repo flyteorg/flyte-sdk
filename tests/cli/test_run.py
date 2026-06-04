@@ -15,6 +15,7 @@ from flyte._deploy import DeploymentPlan, _build_images
 from flyte._initialize import _get_init_config
 from flyte._task_environment import TaskEnvironment
 from flyte.cli._run import run
+from flyte.errors import InvalidImageNameError
 
 TEST_CODE_PATH = pathlib.Path(__file__).parent
 RUN_TESTDATA = TEST_CODE_PATH / "run_testdata"
@@ -173,8 +174,9 @@ def test_build_images_image_name_not_found_error(runner):
     deployment_plan = DeploymentPlan(envs={env_name: task_env})
 
     cfg = _get_init_config()
-    # Check if _build_images raises ValueError for missing image name
-    with pytest.raises(ValueError) as exc_info:
+    # A reference to an undeclared image name is a user-config mistake, surfaced as
+    # InvalidImageNameError (a RuntimeUserError) so it's filtered from Sentry.
+    with pytest.raises(InvalidImageNameError) as exc_info:
         asyncio.run(_build_images(deployment_plan, cfg.images))
 
     error_msg = str(exc_info.value)

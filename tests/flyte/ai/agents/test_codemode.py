@@ -183,7 +183,7 @@ class TestCodeModeAgentRun:
 
             token = codemode_progress_cb.set(on_progress)
             try:
-                out = await agent.run("hi", [{"role": "user", "content": "prev"}])
+                out = await agent.run.aio("hi", [{"role": "user", "content": "prev"}])
             finally:
                 codemode_progress_cb.reset(token)
             assert isinstance(out, AgentResult)
@@ -208,7 +208,7 @@ class TestCodeModeAgentRun:
             gen.return_value = "1"
             orch.return_value = 42
             agent = CodeModeAgent([_add], call_llm=AsyncMock(), max_retries=0)
-            out = await agent.run("q", [])
+            out = await agent.run.aio("q", [])
             assert out.summary == "42"
             assert out.charts == []
 
@@ -216,7 +216,7 @@ class TestCodeModeAgentRun:
         with patch.object(codemode, "generate_code", new_callable=AsyncMock) as gen:
             gen.side_effect = RuntimeError("llm down")
             agent = CodeModeAgent([_add], call_llm=AsyncMock(), max_retries=0)
-            out = await agent.run("q", [])
+            out = await agent.run.aio("q", [])
             assert "Code generation failed" in out.error
             assert "llm down" in out.error
 
@@ -235,7 +235,7 @@ class TestCodeModeAgentRun:
 
             token = codemode_progress_cb.set(on_progress)
             try:
-                out = await agent.run("q", [])
+                out = await agent.run.aio("q", [])
             finally:
                 codemode_progress_cb.reset(token)
             assert out.summary == "fixed"
@@ -255,7 +255,7 @@ class TestCodeModeAgentRun:
             gen.side_effect = ["bad", Exception("retry llm")]
             orch.side_effect = ValueError("fail")
             agent = CodeModeAgent([_add], call_llm=AsyncMock(), max_retries=2)
-            out = await agent.run("q", [])
+            out = await agent.run.aio("q", [])
             assert "Retry LLM call failed" in out.error
             assert out.code == "bad"
 
@@ -267,7 +267,7 @@ class TestCodeModeAgentRun:
             gen.return_value = "always"
             orch.side_effect = ValueError("nope")
             agent = CodeModeAgent([_add], call_llm=AsyncMock(), max_retries=1)
-            out = await agent.run("q", [])
+            out = await agent.run.aio("q", [])
             assert "Sandbox execution failed" in out.error
             assert "attempt" in out.error.lower()
 
@@ -293,7 +293,7 @@ class TestCodeModeAgentRun:
             assert "fetch_metric(name:" in agent.system_prompt
             assert "Durable fetch." in agent.system_prompt
 
-            await agent.run("x", [])
+            await agent.run.aio("x", [])
             _, kwargs = orch.await_args
             assert list(kwargs["tasks"]) == [fetch_metric, _add]
 
@@ -320,7 +320,7 @@ class TestCodeModeAgentRun:
             assert [d["name"] for d in descs] == ["fetch_metric"]
             assert descs[0]["signature"].startswith("fetch_metric(name:")
 
-            await agent.run("x", [])
+            await agent.run.aio("x", [])
             _, kwargs = orch.await_args
             assert list(kwargs["tasks"]) == [fetch_metric_remote]
 

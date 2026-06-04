@@ -369,12 +369,18 @@ class CopyConfig(Layer):
             object.__setattr__(self, "src", Path(self.src))
 
     def validate(self):
+        # A missing / wrong-typed source path is a user mistake in the image spec
+        # (e.g. a stale `add_source(...)` path), not an SDK bug. Surface it as an
+        # ImageBuildError (a RuntimeUserError) so it is reported with a clear
+        # message and filtered out of Sentry. Reproduces FLYTE-SDK-4D.
+        from flyte.errors import ImageBuildError
+
         if not self.src.exists():
-            raise ValueError(f"Source folder {self.src.absolute()} does not exist")
+            raise ImageBuildError(f"Source folder {self.src.absolute()} does not exist")
         if not self.src.is_dir() and self.path_type == 1:
-            raise ValueError(f"Source folder {self.src.absolute()} is not a directory")
+            raise ImageBuildError(f"Source folder {self.src.absolute()} is not a directory")
         if not self.src.is_file() and self.path_type == 0:
-            raise ValueError(f"Source file {self.src.absolute()} is not a file")
+            raise ImageBuildError(f"Source file {self.src.absolute()} is not a file")
 
     def update_hash(self, hasher: hashlib._Hash, ignore: Optional[Any] = None):
         from ._code_bundle._ignore import DockerfileIgnore

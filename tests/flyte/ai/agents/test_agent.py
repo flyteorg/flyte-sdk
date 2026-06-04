@@ -40,9 +40,11 @@ from flyte.ai.agents.agent import (
     _summarize_signature,
 )
 from flyte.ai.agents.memory import (
+    MESSAGES_PATH,
     _ensure_namespace_segment,
     _join_remote_path,
     _memory_storage_root,
+    _normalize_raw_data_path,
 )
 from flyte.ai.agents.protocol import AgentProtocol, AgentResult
 from flyte.models import PathRewrite, RawDataPath
@@ -347,7 +349,7 @@ class TestRunLoop:
     async def test_no_tool_calls_returns_text(self):
         llm = _make_llm([LLMMessage(content="Hello human.", tool_calls=[])])
         agent = Agent(name="t", instructions="I", call_llm=llm)
-        result = await agent.run("hi", [])
+        result = await agent.run.aio("hi", [])
         assert isinstance(result, AgentResult)
         assert result.summary == "Hello human."
         assert result.error == ""
@@ -365,7 +367,7 @@ class TestRunLoop:
             ]
         )
         agent = Agent(name="t", instructions="I", tools=[_add], call_llm=llm)
-        result = await agent.run("add 1 and 2", [])
+        result = await agent.run.aio("add 1 and 2", [])
         assert result.summary == "The answer is 3."
         assert result.attempts == 2
 
@@ -388,7 +390,7 @@ class TestRunLoop:
             ]
         )
         agent = Agent(name="t", instructions="I", tools=[_add], call_llm=llm)
-        result = await agent.run("x", [])
+        result = await agent.run.aio("x", [])
         assert result.summary == "Done."
         _, _, second_messages, _ = llm.await_args_list[1].args
         tool_msg = next(m for m in second_messages if m["role"] == "tool")
@@ -409,7 +411,7 @@ class TestRunLoop:
             ]
         )
         agent = Agent(name="t", instructions="I", tools=[boom], call_llm=llm)
-        result = await agent.run("trigger boom", [])
+        result = await agent.run.aio("trigger boom", [])
         assert result.summary == "Recovered."
         _, _, second_messages, _ = llm.await_args_list[1].args
         tool_msg = next(m for m in second_messages if m["role"] == "tool")
@@ -423,14 +425,14 @@ class TestRunLoop:
         )
         llm = AsyncMock(return_value=looping)
         agent = Agent(name="t", instructions="I", tools=[_add], call_llm=llm, max_turns=3)
-        result = await agent.run("infinite", [])
+        result = await agent.run.aio("infinite", [])
         assert "max_turns" in result.error
         assert result.attempts == 3
 
     async def test_llm_error_returns_error_result(self):
         llm = AsyncMock(side_effect=RuntimeError("provider down"))
         agent = Agent(name="t", instructions="I", call_llm=llm)
-        result = await agent.run("x", [])
+        result = await agent.run.aio("x", [])
         assert "LLM call failed" in result.error
         assert "provider down" in result.error
         assert result.attempts == 1
@@ -454,7 +456,7 @@ class TestRunLoop:
 
         token = agent_progress_cb.set(on_event)
         try:
-            await agent.run("hi", [])
+            await agent.run.aio("hi", [])
         finally:
             agent_progress_cb.reset(token)
 
@@ -471,7 +473,7 @@ class TestRunLoop:
             {"role": "user", "content": "previous question"},
             {"role": "assistant", "content": "previous answer"},
         ]
-        await agent.run("new", history)
+        await agent.run.aio("new", history)
         _, _, messages, _ = llm.await_args_list[0].args
         roles = [m["role"] for m in messages]
         assert roles == ["user", "assistant", "user"]
@@ -518,7 +520,7 @@ class TestApproval:
             call_llm=llm,
             approval_callback=deny,
         )
-        result = await agent.run("do it", [])
+        result = await agent.run.aio("do it", [])
         assert result.summary == "Backed off."
         _, _, second, _ = llm.await_args_list[1].args
         tool_msg = next(m for m in second if m["role"] == "tool")
@@ -558,7 +560,7 @@ class TestApproval:
             call_llm=llm,
             approval_callback=approve,
         )
-        await agent.run("do it", [])
+        await agent.run.aio("do it", [])
         assert executed["ran"] is True
 
 
@@ -608,7 +610,7 @@ class TestMemoryStore:
         memory = MemoryStore()
         llm = _make_llm([LLMMessage(content="ack", tool_calls=[])])
         agent = Agent(name="t", instructions="I", call_llm=llm, memory=memory)
-        await agent.run("hi", [])
+        await agent.run.aio("hi", [])
         roles = [m["role"] for m in memory.messages]
         assert roles == ["user", "assistant"]
         assert memory.messages[0]["content"] == "hi"
@@ -620,7 +622,7 @@ class TestMemoryStore:
         )
         llm = _make_llm([LLMMessage(content="ok", tool_calls=[])])
         agent = Agent(name="t", instructions="I", call_llm=llm, memory=memory)
-        await agent.run("hi", [])
+        await agent.run.aio("hi", [])
         _, _, messages, _ = llm.await_args_list[0].args
         contents = [m["content"] for m in messages]
         assert "remember this" in contents
@@ -645,6 +647,19 @@ class TestRemotePathHelpers:
     def test_join_remote_path_empty_input(self):
         assert _join_remote_path() == ""
         assert _join_remote_path("", "") == ""
+
+    def test_normalize_raw_data_path_applies_path_rewrite(self):
+        rewrite = PathRewrite(
+            old_prefix="s3://stable-bucket/persistent/",
+            new_prefix="/union-persistent-data/",
+        )
+        assert (
+            _normalize_raw_data_path(
+                "/union-persistent-data/w6/demo/flytesnacks/development/u1/a0/hash/rd/abc123",
+                rewrite,
+            )
+            == "s3://stable-bucket/persistent/w6/demo/flytesnacks/development/u1/a0/hash/rd/abc123"
+        )
 
     def test_storage_root_remote_uri_anchored_at_bucket(self):
         assert _memory_storage_root("s3://bucket/w6/org/project/domain/u1/a0/hash/rd/abc123") == "s3://bucket"
@@ -743,10 +758,40 @@ class TestMemoryStoreKeyedRemote:
             "s3://union-oc-production-demo/agents/memory-store/v0/demo/flytesnacks/development/my_memory"
         )
 
+    async def test_remote_path_for_key_mount_prefix_matches_s3_prefix(self, tmp_path: pathlib.Path):
+        """Mounted raw-data prefixes must resolve to the same keyed path as the logical S3 URI."""
+        rewrite = PathRewrite(
+            old_prefix="s3://union-oc-production-demo/",
+            new_prefix="/union-persistent-data/",
+        )
+        s3_ctx = internal_ctx().new_raw_data_path(
+            RawDataPath(
+                path="s3://union-oc-production-demo/w6/demo/flytesnacks/development/u1/a0/hash/rd/abc123",
+                path_rewrite=rewrite,
+            )
+        )
+        mount_ctx = internal_ctx().new_raw_data_path(
+            RawDataPath(
+                path="/union-persistent-data/w6/demo/flytesnacks/development/u1/a0/hash/rd/def456",
+                path_rewrite=rewrite,
+            )
+        )
+        expected = "s3://union-oc-production-demo/agents/memory-store/v0/demo/flytesnacks/development/my_memory"
+        with s3_ctx:
+            from_s3 = MemoryStore.remote_path_for_key(
+                key="my_memory", org="demo", project="flytesnacks", domain="development"
+            )
+        with mount_ctx:
+            from_mount = MemoryStore.remote_path_for_key(
+                key="my_memory", org="demo", project="flytesnacks", domain="development"
+            )
+        assert from_s3 == expected
+        assert from_mount == expected
+
     async def test_create_saves_empty_store_to_deterministic_path(self, tmp_path: pathlib.Path):
         ctx = internal_ctx().new_raw_data_path(RawDataPath(path=str(tmp_path / "raw")))
         with ctx:
-            memory = await MemoryStore.create(key="my_memory", org="org", project="proj", domain="dev")
+            memory = await MemoryStore.create.aio(key="my_memory", org="org", project="proj", domain="dev")
 
         expected_root = tmp_path / "raw" / "agents" / "memory-store" / "v0" / "org" / "proj" / "dev" / "my_memory"
         assert memory.key == "my_memory"
@@ -756,9 +801,9 @@ class TestMemoryStoreKeyedRemote:
     async def test_create_errors_when_key_path_already_exists(self, tmp_path: pathlib.Path):
         ctx = internal_ctx().new_raw_data_path(RawDataPath(path=str(tmp_path / "raw")))
         with ctx:
-            await MemoryStore.create(key="my_memory", org="org", project="proj", domain="dev")
+            await MemoryStore.create.aio(key="my_memory", org="org", project="proj", domain="dev")
             with pytest.raises(MemoryStoreError, match="already exists"):
-                await MemoryStore.create(key="my_memory", org="org", project="proj", domain="dev")
+                await MemoryStore.create.aio(key="my_memory", org="org", project="proj", domain="dev")
 
     async def test_create_errors_when_only_messages_sentinel_exists(self, tmp_path: pathlib.Path):
         """S3-style stores may not have directory marker objects for prefixes.
@@ -776,34 +821,52 @@ class TestMemoryStoreKeyedRemote:
 
             assert await MemoryStore.exists(key="my_memory", org="org", project="proj", domain="dev")
             with pytest.raises(MemoryStoreError, match="already exists"):
-                await MemoryStore.create(key="my_memory", org="org", project="proj", domain="dev")
+                await MemoryStore.create.aio(key="my_memory", org="org", project="proj", domain="dev")
+
+    async def test_keyed_save_preserves_messages_at_prefix_root(self, tmp_path: pathlib.Path):
+        """Regression: fsspec nests ``put(dir, existing_prefix)`` unless both paths end in ``/``."""
+        ctx = internal_ctx().new_raw_data_path(RawDataPath(path=str(tmp_path / "raw")))
+        with ctx:
+            memory = await MemoryStore.create.aio(key="my_memory", org="org", project="proj", domain="dev")
+            memory.append({"role": "user", "content": "hi"})
+            await memory.save.aio()
+
+            memory.append({"role": "assistant", "content": "hey"})
+            await memory.save.aio()
+
+            loaded = await MemoryStore.get_or_create.aio(key="my_memory", org="org", project="proj", domain="dev")
+
+        assert [m["content"] for m in loaded.messages] == ["hi", "hey"]
+        remote_root = tmp_path / "raw" / "agents" / "memory-store" / "v0" / "org" / "proj" / "dev" / "my_memory"
+        assert (remote_root / MESSAGES_PATH).exists()
+        assert not any(remote_root.glob("flyte_agent_mem_*"))
 
     async def test_get_or_create_loads_existing_store(self, tmp_path: pathlib.Path):
         ctx = internal_ctx().new_raw_data_path(RawDataPath(path=str(tmp_path / "raw")))
         with ctx:
-            created = await MemoryStore.create(
+            created = await MemoryStore.create.aio(
                 key="my_memory", org="org", project="proj", domain="dev", keep_versions=True
             )
-            await created.write_text("facts/name.txt", "Ada", expected_sha="")
-            await created.save()
+            await created.write_text.aio("facts/name.txt", "Ada", expected_sha="")
+            await created.save.aio()
 
-            loaded = await MemoryStore.get_or_create(
+            loaded = await MemoryStore.get_or_create.aio(
                 key="my_memory", org="org", project="proj", domain="dev", keep_versions=True
             )
 
         assert loaded.key == "my_memory"
         assert loaded.remote_path == created.remote_path
-        assert await loaded.read_text("facts/name.txt") == "Ada"
-        await loaded.write_text(
-            "facts/name.txt", "Ada Lovelace", expected_sha=await loaded.current_sha("facts/name.txt")
+        assert await loaded.read_text.aio("facts/name.txt") == "Ada"
+        await loaded.write_text.aio(
+            "facts/name.txt", "Ada Lovelace", expected_sha=await loaded.current_sha.aio("facts/name.txt")
         )
-        await loaded.save()
+        await loaded.save.aio()
         assert len(list((pathlib.Path(loaded.remote_path) / "versions" / "facts%2Fname.txt").glob("*.txt"))) == 2
 
     async def test_get_or_create_creates_when_missing(self, tmp_path: pathlib.Path):
         ctx = internal_ctx().new_raw_data_path(RawDataPath(path=str(tmp_path / "raw")))
         with ctx:
-            memory = await MemoryStore.get_or_create(key="new_memory", org="org", project="proj", domain="dev")
+            memory = await MemoryStore.get_or_create.aio(key="new_memory", org="org", project="proj", domain="dev")
 
         assert memory.key == "new_memory"
         assert pathlib.Path(memory.remote_path).exists()
@@ -812,53 +875,74 @@ class TestMemoryStoreKeyedRemote:
         ctx = internal_ctx().new_raw_data_path(RawDataPath(path=str(tmp_path / "raw")))
         with ctx:
             assert not await MemoryStore.exists(key="my_memory", org="org", project="proj", domain="dev")
-            await MemoryStore.create(key="my_memory", org="org", project="proj", domain="dev")
+            await MemoryStore.create.aio(key="my_memory", org="org", project="proj", domain="dev")
             assert await MemoryStore.exists(key="my_memory", org="org", project="proj", domain="dev")
 
     async def test_keyed_save_rejects_non_deterministic_override(self, tmp_path: pathlib.Path):
         ctx = internal_ctx().new_raw_data_path(RawDataPath(path=str(tmp_path / "raw")))
         with ctx:
-            memory = await MemoryStore.create(key="my_memory", org="org", project="proj", domain="dev")
+            memory = await MemoryStore.create.aio(key="my_memory", org="org", project="proj", domain="dev")
             with pytest.raises(MemoryStoreError, match="deterministic key path"):
-                await memory.save(remote_destination=str(tmp_path / "elsewhere"))
+                await memory.save.aio(remote_destination=str(tmp_path / "elsewhere"))
 
     async def test_key_must_be_single_segment(self, tmp_path: pathlib.Path):
         ctx = internal_ctx().new_raw_data_path(RawDataPath(path=str(tmp_path / "raw")))
         with ctx:
             with pytest.raises(MemoryStoreError, match="single path segment"):
-                await MemoryStore.create(key="../escape", org="org", project="proj", domain="dev")
+                await MemoryStore.create.aio(key="../escape", org="org", project="proj", domain="dev")
+
+
+class TestMemoryStoreSyncApi:
+    """``create`` / ``get_or_create`` / ``save`` are sync-by-default via ``syncify``.
+
+    These are plain (non-async) tests so they exercise the synchronous entrypoints
+    that ``.aio()`` mirrors; the syncify background loop inherits the raw-data context
+    set here through ``call_soon_threadsafe``'s context copy.
+    """
+
+    def test_create_save_and_get_or_create_sync(self, tmp_path: pathlib.Path):
+        ctx = internal_ctx().new_raw_data_path(RawDataPath(path=str(tmp_path / "raw")))
+        with ctx:
+            memory = MemoryStore.create(key="sync_key", org="org", project="proj", domain="dev")
+            memory.append({"role": "user", "content": "hi"})
+            memory.save()
+
+            loaded = MemoryStore.get_or_create(key="sync_key", org="org", project="proj", domain="dev")
+
+        assert loaded.remote_path == memory.remote_path
+        assert [m["content"] for m in loaded.messages] == ["hi"]
+
+    def test_path_addressed_io_sync(self, tmp_path: pathlib.Path):
+        memory = MemoryStore(root=tmp_path)
+        memory.write_text("notes/plan.md", "sync-step")
+        assert memory.read_text("notes/plan.md") == "sync-step"
+        memory.write_json("data/x.json", {"k": 1})
+        assert memory.read_json("data/x.json") == {"k": 1}
 
 
 @pytest.mark.asyncio
 class TestMemoryStorePathAddressedIO:
     async def test_write_and_read_text_roundtrip(self, tmp_path: pathlib.Path):
         memory = MemoryStore(root=tmp_path)
-        meta = await memory.write_text("notes/plan.md", "step 1", actor="tester", reason="unit")
+        meta = await memory.write_text.aio("notes/plan.md", "step 1", actor="tester", reason="unit")
         assert meta.path == "notes/plan.md"
         assert meta.bytes == len(b"step 1")
-        assert await memory.read_text("notes/plan.md") == "step 1"
+        assert await memory.read_text.aio("notes/plan.md") == "step 1"
 
     async def test_write_and_read_json_roundtrip(self, tmp_path: pathlib.Path):
         memory = MemoryStore(root=tmp_path)
-        await memory.write_json("data/plan.json", {"a": 1, "b": [1, 2]})
-        assert await memory.read_json("data/plan.json") == {"a": 1, "b": [1, 2]}
-
-    async def test_sync_io_companions_work(self, tmp_path: pathlib.Path):
-        memory = MemoryStore(root=tmp_path)
-        memory.write_text_sync("notes/plan.md", "sync-step")
-        assert memory.read_text_sync("notes/plan.md") == "sync-step"
-        memory.write_json_sync("data/x.json", {"k": 1})
-        assert memory.read_json_sync("data/x.json") == {"k": 1}
+        await memory.write_json.aio("data/plan.json", {"a": 1, "b": [1, 2]})
+        assert await memory.read_json.aio("data/plan.json") == {"a": 1, "b": [1, 2]}
 
     async def test_read_text_default_when_missing(self, tmp_path: pathlib.Path):
         memory = MemoryStore(root=tmp_path)
-        assert await memory.read_text("missing.txt", default="fallback") == "fallback"
-        assert await memory.read_json("missing.json", default={"x": 0}) == {"x": 0}
+        assert await memory.read_text.aio("missing.txt", default="fallback") == "fallback"
+        assert await memory.read_json.aio("missing.json", default={"x": 0}) == {"x": 0}
 
     async def test_list_paths_excludes_internals_and_messages(self, tmp_path: pathlib.Path):
         memory = MemoryStore(root=tmp_path)
-        await memory.write_text("user/a.txt", "a")
-        await memory.write_text("user/b.txt", "b")
+        await memory.write_text.aio("user/a.txt", "a")
+        await memory.write_text.aio("user/b.txt", "b")
         memory.append({"role": "user", "content": "hi"})
         memory.flush_messages_sync()
 
@@ -878,7 +962,7 @@ class TestMemoryStorePathAddressedIO:
         root = tmp_path / "root"
         root.mkdir()
         memory = MemoryStore(root=root)
-        await memory.write_text("user/a.txt", "a")
+        await memory.write_text.aio("user/a.txt", "a")
 
         # Plant a symlink that ``list_paths`` must skip rather than expose.
         (root / "user" / "leak.txt").symlink_to(outside / "secret.txt")
@@ -894,11 +978,11 @@ class TestMemoryStorePathAddressedIO:
     async def test_path_traversal_rejected(self, tmp_path: pathlib.Path):
         memory = MemoryStore(root=tmp_path)
         with pytest.raises(MemoryStoreError, match="traversal"):
-            await memory.write_text("../escape.txt", "no")
+            await memory.write_text.aio("../escape.txt", "no")
         with pytest.raises(MemoryStoreError, match="must be relative"):
-            await memory.write_text("/abs/path.txt", "no")
+            await memory.write_text.aio("/abs/path.txt", "no")
         with pytest.raises(MemoryStoreError, match="Empty path"):
-            await memory.write_text("", "no")
+            await memory.write_text.aio("", "no")
 
     async def test_symlink_escape_rejected_on_read_and_write(self, tmp_path: pathlib.Path):
         outside = tmp_path / "outside"
@@ -914,22 +998,22 @@ class TestMemoryStorePathAddressedIO:
 
         memory = MemoryStore(root=root)
         with pytest.raises(MemoryStoreError, match="outside the memory root"):
-            await memory.read_text("escape.txt")
+            await memory.read_text.aio("escape.txt")
         with pytest.raises(MemoryStoreError, match="outside the memory root"):
-            await memory.write_text("escape.txt", "no")
+            await memory.write_text.aio("escape.txt", "no")
         # The pristine secret on disk is untouched.
         assert (outside / "secret.txt").read_text(encoding="utf-8") == "classified"
 
     async def test_messages_json_write_blocked(self, tmp_path: pathlib.Path):
         memory = MemoryStore(root=tmp_path)
         with pytest.raises(AccessDenied, match=r"messages\.json"):
-            await memory.write_text("messages.json", "{}")
+            await memory.write_text.aio("messages.json", "{}")
 
     async def test_internal_prefixes_blocked(self, tmp_path: pathlib.Path):
         memory = MemoryStore(root=tmp_path)
         for path in ("audit/log.jsonl", "meta/x.json", "versions/x/y.txt"):
             with pytest.raises(AccessDenied, match="reserved"):
-                await memory.write_text(path, "no")
+                await memory.write_text.aio(path, "no")
 
 
 @pytest.mark.asyncio
@@ -937,39 +1021,39 @@ class TestMemoryStoreReadOnlyPrefixes:
     async def test_writes_to_read_only_prefix_rejected(self, tmp_path: pathlib.Path):
         memory = MemoryStore(root=tmp_path, read_only_prefixes=("memory/",))
         with pytest.raises(AccessDenied, match="read-only"):
-            await memory.write_text("memory/docs.txt", "no")
+            await memory.write_text.aio("memory/docs.txt", "no")
 
     async def test_writes_outside_read_only_prefix_allowed(self, tmp_path: pathlib.Path):
         memory = MemoryStore(root=tmp_path, read_only_prefixes=("memory/",))
-        await memory.write_text("user/notes.txt", "ok")
-        assert await memory.read_text("user/notes.txt") == "ok"
+        await memory.write_text.aio("user/notes.txt", "ok")
+        assert await memory.read_text.aio("user/notes.txt") == "ok"
 
 
 @pytest.mark.asyncio
 class TestMemoryStoreConcurrency:
     async def test_expected_sha_match_succeeds(self, tmp_path: pathlib.Path):
         memory = MemoryStore(root=tmp_path)
-        await memory.write_text("a.txt", "v1")
-        sha = await memory.current_sha("a.txt")
-        await memory.write_text("a.txt", "v2", expected_sha=sha)
-        assert await memory.read_text("a.txt") == "v2"
+        await memory.write_text.aio("a.txt", "v1")
+        sha = await memory.current_sha.aio("a.txt")
+        await memory.write_text.aio("a.txt", "v2", expected_sha=sha)
+        assert await memory.read_text.aio("a.txt") == "v2"
 
     async def test_expected_sha_mismatch_raises(self, tmp_path: pathlib.Path):
         memory = MemoryStore(root=tmp_path)
-        await memory.write_text("a.txt", "v1")
+        await memory.write_text.aio("a.txt", "v1")
         with pytest.raises(ConcurrencyError) as exc:
-            await memory.write_text("a.txt", "v2", expected_sha="deadbeef")
+            await memory.write_text.aio("a.txt", "v2", expected_sha="deadbeef")
         assert exc.value.path == "a.txt"
         assert exc.value.expected_sha == "deadbeef"
 
     async def test_expected_sha_empty_for_create(self, tmp_path: pathlib.Path):
         memory = MemoryStore(root=tmp_path)
-        await memory.write_text("new.txt", "hello", expected_sha="")
-        assert await memory.read_text("new.txt") == "hello"
+        await memory.write_text.aio("new.txt", "hello", expected_sha="")
+        assert await memory.read_text.aio("new.txt") == "hello"
 
     async def test_current_sha_empty_when_missing(self, tmp_path: pathlib.Path):
         memory = MemoryStore(root=tmp_path)
-        assert await memory.current_sha("nope.txt") == ""
+        assert await memory.current_sha.aio("nope.txt") == ""
 
     async def test_current_sha_streams_files_without_sidecar(self, tmp_path: pathlib.Path):
         # A file written outside MemoryStore (no metadata sidecar) should
@@ -979,15 +1063,15 @@ class TestMemoryStoreConcurrency:
         (root / "user" / "raw.txt").write_text("raw-content", encoding="utf-8")
         memory = MemoryStore(root=root)
         expected = hashlib.sha256(b"raw-content").hexdigest()
-        assert await memory.current_sha("user/raw.txt") == expected
+        assert await memory.current_sha.aio("user/raw.txt") == expected
 
 
 @pytest.mark.asyncio
 class TestMemoryStoreAudit:
     async def test_audit_records_create_then_update(self, tmp_path: pathlib.Path):
         memory = MemoryStore(root=tmp_path)
-        await memory.write_text("a.txt", "v1", actor="alice", reason="seed")
-        await memory.write_text("a.txt", "v2", actor="bob", reason="update")
+        await memory.write_text.aio("a.txt", "v1", actor="alice", reason="seed")
+        await memory.write_text.aio("a.txt", "v2", actor="bob", reason="update")
         events = await memory.audit_tail()
         assert len(events) == 2
         assert events[0]["op"] == "create"
@@ -997,7 +1081,7 @@ class TestMemoryStoreAudit:
 
     async def test_audit_disabled_writes_no_log(self, tmp_path: pathlib.Path):
         memory = MemoryStore(root=tmp_path, audit=False)
-        await memory.write_text("a.txt", "v1")
+        await memory.write_text.aio("a.txt", "v1")
         assert await memory.audit_tail() == []
         assert not (tmp_path / "audit" / "log.jsonl").exists()
 
@@ -1006,9 +1090,9 @@ class TestMemoryStoreAudit:
 class TestMemoryStoreVersions:
     async def test_keep_versions_snapshots_each_write(self, tmp_path: pathlib.Path):
         memory = MemoryStore(root=tmp_path, keep_versions=True)
-        await memory.write_text("a.txt", "v1")
-        await memory.write_text("a.txt", "v2")
-        await memory.write_text("a.txt", "v3")
+        await memory.write_text.aio("a.txt", "v1")
+        await memory.write_text.aio("a.txt", "v2")
+        await memory.write_text.aio("a.txt", "v3")
         snapshots = list((tmp_path / "versions" / "a.txt").glob("*.txt"))
         assert len(snapshots) == 3
         contents = sorted(s.read_text(encoding="utf-8") for s in snapshots)
@@ -1016,7 +1100,7 @@ class TestMemoryStoreVersions:
 
     async def test_no_versions_by_default(self, tmp_path: pathlib.Path):
         memory = MemoryStore(root=tmp_path)
-        await memory.write_text("a.txt", "v1")
+        await memory.write_text.aio("a.txt", "v1")
         assert not (tmp_path / "versions").exists()
 
 
@@ -1024,8 +1108,8 @@ class TestMemoryStoreVersions:
 class TestMemoryStoreMeta:
     async def test_meta_sidecar_records_actor_and_sha(self, tmp_path: pathlib.Path):
         memory = MemoryStore(root=tmp_path)
-        meta = await memory.write_text("a.txt", "hello", actor="tool-x", reason="seed")
-        loaded = await memory.get_meta("a.txt")
+        meta = await memory.write_text.aio("a.txt", "hello", actor="tool-x", reason="seed")
+        loaded = await memory.get_meta.aio("a.txt")
         assert loaded is not None
         assert loaded.path == "a.txt"
         assert loaded.updated_by == "tool-x"
@@ -1034,21 +1118,21 @@ class TestMemoryStoreMeta:
 
     async def test_get_meta_none_when_missing(self, tmp_path: pathlib.Path):
         memory = MemoryStore(root=tmp_path)
-        assert await memory.get_meta("nope.txt") is None
+        assert await memory.get_meta.aio("nope.txt") is None
 
     async def test_meta_paths_distinct_for_collision_pair(self, tmp_path: pathlib.Path):
         # ``"a/b"`` and ``"a__b"`` would have collided on the old
         # ``replace("/", "__")`` encoding; the URL-quoted encoding keeps
         # their metadata sidecars and version histories distinct.
         memory = MemoryStore(root=tmp_path, keep_versions=True)
-        await memory.write_text("a/b", "first")
-        await memory.write_text("a__b", "second")
+        await memory.write_text.aio("a/b", "first")
+        await memory.write_text.aio("a__b", "second")
 
-        assert await memory.read_text("a/b") == "first"
-        assert await memory.read_text("a__b") == "second"
+        assert await memory.read_text.aio("a/b") == "first"
+        assert await memory.read_text.aio("a__b") == "second"
 
-        meta_slash = await memory.get_meta("a/b")
-        meta_under = await memory.get_meta("a__b")
+        meta_slash = await memory.get_meta.aio("a/b")
+        meta_under = await memory.get_meta.aio("a__b")
         assert meta_slash is not None and meta_under is not None
         assert meta_slash.sha256 != meta_under.sha256
 
@@ -1080,7 +1164,7 @@ class TestMCPLazyLoad:
         llm = _make_llm([LLMMessage(content="ok", tool_calls=[])])
         agent = Agent(name="t", instructions="I", call_llm=llm)
         assert agent.mcp_servers == ()
-        result = await agent.run("hi", [])
+        result = await agent.run.aio("hi", [])
         assert result.error == ""
 
     async def test_mcp_load_called_once(self):
@@ -1090,8 +1174,8 @@ class TestMCPLazyLoad:
 
         load_mock = AsyncMock(return_value=[])
         with patch.object(agent._mcp_loader, "load", load_mock):
-            await agent.run("hi", [])
-            await agent.run("hi again", [])
+            await agent.run.aio("hi", [])
+            await agent.run.aio("hi again", [])
         assert load_mock.await_count == 1
 
     async def test_mcp_tools_registered_and_listed_after_run(self):
@@ -1112,7 +1196,7 @@ class TestMCPLazyLoad:
         with patch.object(agent._mcp_loader, "load", AsyncMock(return_value=[mcp_tool])):
             # MCP tools are loaded lazily, so they are absent until the first run.
             assert "mcp_search" not in {d["name"] for d in agent.tool_descriptions()}
-            await agent.run("hi", [])
+            await agent.run.aio("hi", [])
 
         names = {d["name"] for d in agent.tool_descriptions()}
         assert "mcp_search" in names
@@ -1137,7 +1221,7 @@ class TestMCPLazyLoad:
             source="mcp",
         )
         with patch.object(agent._mcp_loader, "load", AsyncMock(return_value=[clashing])):
-            await agent.run("hi", [])
+            await agent.run.aio("hi", [])
 
         # The local tool is preserved; the MCP impostor did not replace it.
         assert agent._registry["_add"] is original
@@ -1193,7 +1277,7 @@ class TestParallelToolExecution:
             call_llm=self._two_call_llm(),
             parallel_tool_calls=True,
         )
-        await agent.run("go", [])
+        await agent.run.aio("go", [])
         # Under concurrent execution, ``fast`` runs (and finishes) while ``slow``
         # is parked on its sleep.
         assert order == ["slow_start", "fast_start", "fast_end", "slow_end"]
@@ -1208,7 +1292,7 @@ class TestParallelToolExecution:
             call_llm=self._two_call_llm(),
             parallel_tool_calls=False,
         )
-        await agent.run("go", [])
+        await agent.run.aio("go", [])
         # Strict ordering: ``slow`` fully completes before ``fast`` begins.
         assert order == ["slow_start", "slow_end", "fast_start", "fast_end"]
 
@@ -1222,7 +1306,7 @@ class TestParallelToolExecution:
             tools={"slow": slow, "fast": fast},
             call_llm=llm,
         )
-        await agent.run("go", [])
+        await agent.run.aio("go", [])
         _, _, second_messages, _ = llm.await_args_list[1].args
         tool_msgs = {m["name"]: m["content"] for m in second_messages if m["role"] == "tool"}
         assert tool_msgs == {"slow": "slow", "fast": "fast"}
@@ -1255,7 +1339,7 @@ class TestDispatchEdgeCases:
             ]
         )
         agent = Agent(name="t", instructions="I", tools=[weird], call_llm=llm)
-        await agent.run("go", [])
+        await agent.run.aio("go", [])
         assert captured == {"_raw": "not-a-dict"}
 
     async def test_missing_arguments_default_to_empty_dict(self):
@@ -1279,7 +1363,7 @@ class TestDispatchEdgeCases:
             ]
         )
         agent = Agent(name="t", instructions="I", tools=[t], call_llm=llm)
-        await agent.run("go", [])
+        await agent.run.aio("go", [])
         assert captured["set"] is True
         assert captured["args"] == {}
 
@@ -1295,7 +1379,7 @@ class TestMemoryPersistenceOnFailure:
         memory = MemoryStore()
         llm = AsyncMock(side_effect=RuntimeError("provider down"))
         agent = Agent(name="t", instructions="I", call_llm=llm, memory=memory)
-        result = await agent.run("remember me", [])
+        result = await agent.run.aio("remember me", [])
         assert "LLM call failed" in result.error
         # Even though the turn failed, the user message is committed to memory
         # so a later resume sees the in-flight prompt.
@@ -1309,7 +1393,7 @@ class TestMemoryPersistenceOnFailure:
         memory = MemoryStore()
         llm = AsyncMock(return_value=looping)
         agent = Agent(name="t", instructions="I", tools=[_add], call_llm=llm, memory=memory, max_turns=2)
-        await agent.run("loop forever", [])
+        await agent.run.aio("loop forever", [])
         roles = [m["role"] for m in memory.messages]
         assert roles[0] == "user"
         # Assistant + tool messages from the capped turns are persisted too.
@@ -1422,7 +1506,7 @@ class TestAsyncToolExecution:
             ]
         )
         agent = Agent(name="t", instructions="I", tools=[_async_double], call_llm=llm)
-        await agent.run("double 21", [])
+        await agent.run.aio("double 21", [])
         _, _, second_messages, _ = llm.await_args_list[1].args
         tool_msg = next(m for m in second_messages if m["role"] == "tool")
         assert tool_msg["content"] == "42"

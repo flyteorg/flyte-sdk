@@ -104,7 +104,7 @@ agent = Agent(
 @env.task(report=True)
 async def concierge(request: str) -> str:
     """Run the concierge agent. Sensitive actions pause for human approval."""
-    result = await agent.run(request)
+    result = await agent.run.aio(request)
     return result.summary or result.error
 
 
