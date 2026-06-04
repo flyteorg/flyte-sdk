@@ -27,8 +27,7 @@ from pathlib import Path
 import flyte
 from flyte.extras import shell
 from flyte.extras.shell import Glob
-from flyte.io import Dir
-from flyte.io import File
+from flyte.io import Dir, File
 
 summarize_dir = shell.create(
     name="summarize_dir",

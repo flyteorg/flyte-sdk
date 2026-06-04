@@ -172,11 +172,7 @@ def _emit_flag_setter(
             else:
                 # A missing optional Dir shows up as a sentinel file, not a dir.
                 present = f'[ -d {qpath} ] && [ -n "$(ls -A {qpath} 2>/dev/null)" ]'
-            return (
-                f"if {present}; then "
-                f"{flag_var}={shlex.quote(flag + sep + str(path))}; "
-                f'else {flag_var}=""; fi'
-            )
+            return f'if {present}; then {flag_var}={shlex.quote(flag + sep + str(path))}; else {flag_var}=""; fi'
         return f"{flag_var}={shlex.quote(flag + sep + str(path))}"
     if kind == "list_file":
         dirpath = input_data_dir / name
