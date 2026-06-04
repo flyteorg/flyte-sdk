@@ -1,7 +1,18 @@
+import logging
+
 import mock
 import pytest
 
 from flyte._logging import log
+
+
+def test_record_factory_with_none_name():
+    # Reproduces the structlog stdlib bridge bug: logging.makeLogRecord calls the
+    # global factory with name=None, which caused AttributeError on record.name.startswith(...)
+    factory = logging.getLogRecordFactory()
+    record = factory(None, None, "", 0, "", (), None, None)
+    # Should not raise; is_flyte_internal must be False for a None-named record
+    assert record.is_flyte_internal is False
 
 
 @pytest.mark.asyncio
