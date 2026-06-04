@@ -47,7 +47,6 @@ import uuid
 from pathlib import Path
 
 from flyteplugins.union.io import ROVolume, Volume
-from flyteplugins.union.utils.image import with_local_flyteplugins_union
 
 import flyte
 
@@ -63,7 +62,8 @@ VOL_NAME = os.environ.get("VOL_NAME", "demo-vol")
 # wheel for dev iteration — run `make dist-bundled PLATFORM=linux-amd64` in the
 # flyteplugins-union repo first.
 base = flyte.Image.from_debian_base(install_flyte=False, name="volume-demo").with_local_v2()
-image = with_local_flyteplugins_union(base)
+# image = with_local_flyteplugins_union(base)
+image = base.with_pip_packages("flyteplugins-union>=0.4.0")
 
 env = flyte.TaskEnvironment(
     name="volume-demo",
@@ -78,6 +78,7 @@ env = flyte.TaskEnvironment(
 async def init_volume(volume_name: str) -> ROVolume:
     logger.info("init_volume: declaring fresh volume name=%s", volume_name)
     import os
+
     logger.info("AZURE creds in pod:")
     for k in os.environ:
         if "AZURE" in k.upper():

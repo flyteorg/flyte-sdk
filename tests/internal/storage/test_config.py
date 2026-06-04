@@ -271,9 +271,7 @@ class TestS3Config:
         monkeypatch.setattr(
             S3,
             "_build_s3_credential_provider_from_config_file",
-            lambda self, aws_profile, aws_config_file, region: (_ for _ in ()).throw(
-                ValueError("profile not found")
-            ),
+            lambda self, aws_profile, aws_config_file, region: (_ for _ in ()).throw(ValueError("profile not found")),
         )
         warnings: list[str] = []
         monkeypatch.setattr(
