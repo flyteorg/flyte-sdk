@@ -321,8 +321,8 @@ def config(
     if not org and endpoint:
         org = org_from_endpoint(endpoint)
 
-    if endpoint and not org:
-        raise click.BadParameter("--endpoint or --org must be provided")
+    # if endpoint and not org:
+    #     raise click.BadParameter("--endpoint or --org must be provided")
 
     if endpoint and not domain:
         raise click.BadParameter("--domain must be provided")
