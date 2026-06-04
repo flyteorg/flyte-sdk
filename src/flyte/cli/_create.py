@@ -317,6 +317,12 @@ def config(
     if endpoint:
         endpoint = sanitize_endpoint(endpoint)
         admin["endpoint"] = endpoint
+    # Only set insecure if user specifies it, otherwise leave as False
+    if insecure:
+        admin["insecure"] = insecure
+    
+    if auth_type:
+        admin["authType"] = common.sanitize_auth_type(auth_type)
 
     if not org and endpoint:
         org = org_from_endpoint(endpoint)
@@ -324,8 +330,8 @@ def config(
     # if endpoint and not org:
     #     raise click.BadParameter("--endpoint or --org must be provided")
 
-    if endpoint and not domain:
-        raise click.BadParameter("--domain must be provided")
+    # if endpoint and not domain:
+    #     raise click.BadParameter("--domain must be provided")
 
     if endpoint and org and domain:
         cache_path = get_public_client_auth_metadata_cache_path(org, domain)
