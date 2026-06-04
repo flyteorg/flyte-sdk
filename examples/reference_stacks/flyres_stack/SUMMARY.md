@@ -118,10 +118,10 @@ Each example can be run independently:
 
 ```bash
 # With default settings
-uv run --prerelease=allow examples/reference_stacks/flyres_stack/01_image_build_strategy.py
+uv run --prerelease=allow examples/reference_stacks/flyres_stack/src/01_image_build_strategy.py
 
 # With custom configuration
-HF_MOUNT_PATH=/custom/path WANDB_API_KEY=abc uv run --prerelease=allow examples/reference_stacks/flyres_stack/04_experiment_tracking.py
+HF_MOUNT_PATH=/custom/path WANDB_API_KEY=abc uv run --prerelease=allow examples/reference_stacks/flyres_stack/src/04_experiment_tracking.py
 ```
 
 ## Prerequisites

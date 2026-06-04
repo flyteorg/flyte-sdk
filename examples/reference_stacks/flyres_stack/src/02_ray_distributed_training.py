@@ -94,7 +94,7 @@ async def prepare_dataset() -> str:
         "text": [f"sample text {i}" for i in range(1000)],
         "label": [i % 2 for i in range(1000)],
     }
-    dataset = Dataset.from_dict(data)
+    Dataset.from_dict(data)
 
     # Save to HF mount (simulated - would save to actual path in production)
     output_path = os.path.join(HF_MODEL_PATH, "prepared_dataset")
@@ -246,4 +246,4 @@ if __name__ == "__main__":
     # asyncio.run(main())
 
     print("This example requires Flyte backend with Ray plugin enabled.")
-    print("Run with: uv run --prerelease=allow 02_ray_distributed_training.py")
+    print("Run with: uv run --prerelease=allow src/02_ray_distributed_training.py")

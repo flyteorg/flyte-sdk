@@ -662,18 +662,18 @@
           <div class="col-header dagster">Dagster</div>
           <pre><span class="cm"># ETL assets — catalog-first, great UI</span>
 <span class="dec">@dg.asset</span>(partitions_def=daily)
-<span class="kw">def</span> <span class="fn">raw_files</span>(context) -> <span class="fn">str</span>:
+<span class="kw">def</span> <span class="fn">extract</span>(context) -> <span class="fn">str</span>:
     <span class="kw">return</span> <span class="str">f"s3://lake/dt={context.partition_key}"</span>
 
-<span class="dec">@dg.asset</span>(deps=[raw_files])
-<span class="kw">def</span> <span class="fn">cleaned_table</span>(context, raw_files: <span class="fn">str</span>):
-    context.log.info(<span class="str">"loaded partition"</span>)
+<span class="dec">@dg.asset</span>
+<span class="kw">def</span> <span class="fn">transform</span>(context, extract: <span class="fn">str</span>) -> <span class="fn">str</span>:
+    <span class="kw">return</span> <span class="str">"s3://lake/cleaned.parquet"</span>
 
 <span class="cm"># Training: a separate op / Ray job</span>
 <span class="cm"># launched as a subprocess or external call —</span>
 <span class="cm"># orchestration crosses a boundary here</span>
-<span class="dec">@dg.asset</span>(deps=[cleaned_table])
-<span class="kw">def</span> <span class="fn">training_run</span>(context) -> <span class="fn">dict</span>:
+<span class="dec">@dg.asset</span>
+<span class="kw">def</span> <span class="fn">finetune</span>(context, transform: <span class="fn">str</span>) -> <span class="fn">dict</span>:
     <span class="kw">import</span> subprocess
     subprocess.run([<span class="str">"sky"</span>, <span class="str">"launch"</span>, <span class="str">"train.yaml"</span>])
     <span class="kw">return</span> {<span class="str">"checkpoint"</span>: <span class="str">"s3://models/ckpt"</span>}</pre>
@@ -720,7 +720,7 @@ train_env = flyte.<span class="fn">TaskEnvironment</span>(
 <span class="kw">async def</span> <span class="fn">train</span>(hyperparams: <span class="fn">dict</span>) -> <span class="fn">dict</span>:
     final_loss = <span class="fn">train_loop</span>(...)
     <span class="kw">return</span> {<span class="str">"checkpoint"</span>: <span class="str">"s3://..."</span>,
-            <span class="str">"loss"</span>: final_loss}</pre>
+            <span class="str">"final_loss"</span>: final_loss}</pre>
           <ul class="check-list" style="font-size: 0.82rem;">
             <li>Elastic restarts — orchestrator-managed</li>
             <li>GPU resources declared alongside task</li>
@@ -731,10 +731,10 @@ train_env = flyte.<span class="fn">TaskEnvironment</span>(
           <div class="col-header dagster">Dagster — delegates to external runtime</div>
           <pre><span class="cm"># Training runs inside the asset body.</span>
 <span class="cm"># Dagster does not own the process group.</span>
-<span class="dec">@dg.asset</span>(deps=[<span class="str">"curated_dataset"</span>])
+<span class="dec">@dg.asset</span>(deps=[<span class="str">"curate_dataset"</span>])
 <span class="kw">def</span> <span class="fn">training_run</span>(
     context: dg.<span class="fn">AssetExecutionContext</span>,
-    curated_dataset: <span class="fn">dict</span>,
+    curate_dataset: <span class="fn">dict</span>,
 ) -> <span class="fn">dict</span>:
     <span class="kw">import</span> wandb
 
@@ -771,6 +771,8 @@ train_env = flyte.<span class="fn">TaskEnvironment</span>(
           <div class="col-header flyte">Flyte 2 — platform stages blobs</div>
           <pre><span class="kw">from</span> flyte.extras <span class="kw">import</span> Volume, volume_image
 
+MODEL = <span class="str">"bert-base-uncased"</span>
+
 env = flyte.<span class="fn">TaskEnvironment</span>(
     name=<span class="str">"hf-vol"</span>,
     image=<span class="fn">volume_image</span>(
@@ -780,12 +782,10 @@ env = flyte.<span class="fn">TaskEnvironment</span>(
 )
 
 <span class="dec">@env.task</span>
-<span class="kw">async def</span> <span class="fn">cache_base_model</span>(
-    model_name: <span class="fn">str</span>,
-) -> <span class="fn">Volume</span>:
+<span class="kw">async def</span> <span class="fn">cache_base_model</span>() -> <span class="fn">Volume</span>:
     vol = Volume.<span class="fn">empty</span>(name=<span class="str">"hf-weights"</span>)
     <span class="kw">await</span> vol.<span class="fn">mount</span>()
-    model = AutoModel.<span class="fn">from_pretrained</span>(model_name)
+    model = AutoModel.<span class="fn">from_pretrained</span>(MODEL)
     model.<span class="fn">save_pretrained</span>(<span class="str">"/workspace"</span>)
     <span class="kw">return</span> <span class="kw">await</span> vol.<span class="fn">commit</span>()
 <span class="cm"># Volume carries lineage — who produced it,</span>
@@ -802,20 +802,20 @@ env = flyte.<span class="fn">TaskEnvironment</span>(
 SHARED = <span class="str">"/shared/models/bert-base"</span>
 
 <span class="dec">@dg.asset</span>
-<span class="kw">def</span> <span class="fn">cache_base_model_weights</span>(
+<span class="kw">def</span> <span class="fn">cache_base_model</span>(
     context: dg.<span class="fn">AssetExecutionContext</span>,
 ) -> <span class="fn">str</span>:
     model = AutoModel.<span class="fn">from_pretrained</span>(MODEL)
     model.<span class="fn">save_pretrained</span>(SHARED)
     <span class="kw">return</span> SHARED
 
-<span class="dec">@dg.asset</span>(deps=[cache_base_model_weights])
-<span class="kw">def</span> <span class="fn">finetune</span>(
+<span class="dec">@dg.asset</span>
+<span class="kw">def</span> <span class="fn">load_model</span>(
     context,
-    cache_base_model_weights: <span class="fn">str</span>,
+    cache_base_model: <span class="fn">str</span>,
 ) -> <span class="fn">dict</span>:
     model = AutoModel.<span class="fn">from_pretrained</span>(
-        cache_base_model_weights,
+        cache_base_model,
     )
     <span class="kw">return</span> {<span class="str">"parameters"</span>: <span class="fn">count_params</span>(model)}</pre>
           <div class="pill-row">
@@ -919,7 +919,7 @@ exp_env = flyte.<span class="fn">TaskEnvironment</span>(
         **training_result,
         <span class="str">"accuracy"</span>: metrics.get(<span class="str">"accuracy"</span>, <span class="num">0.82</span>),
         <span class="str">"f1_score"</span>: <span class="num">0.80</span>,
-        <span class="str">"status"</span>: <span class="str">"success"</span>,
+        <span class="str">"evaluation_status"</span>: <span class="str">"success"</span>,
     }
 
 <span class="dec">@base_env.task</span>

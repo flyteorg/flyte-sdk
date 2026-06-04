@@ -670,7 +670,7 @@ The shape is identical to the existing Databricks lifecycle; only the verbs (`sk
 
 ## 6. Worked end-to-end example
 
-Below is a full pipeline using the proposed API. It mirrors the structure of `examples/reference_stacks/flyres_stack/08_end_to_end_ml_pipeline.py` so a maintainer can do a side-by-side review against current conventions.
+Below is a full pipeline using the proposed API. It mirrors the structure of `examples/reference_stacks/flyres_stack/src/08_end_to_end_ml_pipeline.py` so a maintainer can do a side-by-side review against current conventions.
 
 ```python
 import flyte

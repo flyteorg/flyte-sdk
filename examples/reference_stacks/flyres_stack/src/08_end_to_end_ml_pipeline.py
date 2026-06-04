@@ -147,7 +147,7 @@ async def train_model(
 
     # Run distributed workers
     futures = [train_worker.remote(i) for i in range(3)]
-    results = ray.get(futures)
+    ray.get(futures)
 
     return {
         "training_status": "complete",

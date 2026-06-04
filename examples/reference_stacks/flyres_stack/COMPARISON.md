@@ -2,7 +2,7 @@
 
 This report compares **[Flyte 2](https://www.union.ai/docs/v2/union/user-guide/)** (Union’s orchestration layer for AI/ML on Kubernetes) and **[Dagster](https://docs.dagster.io/)** (a data orchestrator with strong asset-centric lineage). It is written for teams evaluating a **single orchestrator** for both data engineering and ML lifecycles—the scenario described in [SPEC.md](./SPEC.md) (FLYRES: Flyte + Ray + optional SkyPilot, Hugging Face, W&B).
 
-**Scope:** Representative, concise workflow examples—not production deployments. Flyte snippets mirror patterns in this directory (`11_data_engineering.py`, `03_pytorch_fsdp_training.py`, `08_end_to_end_ml_pipeline.py`, etc.). Dagster snippets follow current [asset](https://docs.dagster.io/concepts/assets)-first patterns from the [Dagster docs](https://docs.dagster.io/).
+**Scope:** Representative, concise workflow examples—not production deployments. Flyte snippets mirror patterns in the [`src/`](./src/) directory (`11_data_engineering.py`, `03_pytorch_fsdp_training.py`, `08_end_to_end_ml_pipeline.py`, etc.). Dagster snippets follow current [asset](https://docs.dagster.io/concepts/assets)-first patterns from the [Dagster docs](https://docs.dagster.io/).
 
 **Last updated:** Flyte 2.x / Union user guide; Dagster 1.13+.
 
@@ -28,14 +28,14 @@ This report compares **[Flyte 2](https://www.union.ai/docs/v2/union/user-guide/)
 | SPEC requirement | Flyte 2 | Dagster |
 |------------------|---------|---------|
 | Multimodal DE ETL | Tasks + parallel `asyncio.gather` / fanout; typed outputs | Assets with `deps=`; parallel ops in jobs |
-| Distributed training (FSDP / “Megatron-like”) | [`flyteplugins.pytorch`](./03_pytorch_fsdp_training.py), [Ray plugin](./02_ray_distributed_training.py) | Custom op/asset calling Ray/K8s; no built-in Elastic/FSDP plugin |
+| Distributed training (FSDP / “Megatron-like”) | [`flyteplugins.pytorch`](./src/03_pytorch_fsdp_training.py), [Ray plugin](./src/02_ray_distributed_training.py) | Custom op/asset calling Ray/K8s; no built-in Elastic/FSDP plugin |
 | Data gravity (TB checkpoints, datasets) | [`flyte.File` / `flyte.Dir`](https://www.union.ai/docs/v2/union/user-guide/build-tasks/files-and-directories/); HF mount env | I/O manager + cloud paths; HF via `huggingface_hub` in asset body |
-| Experiment tracking | W&B in tasks ([`04_experiment_tracking.py`](./04_experiment_tracking.py)) | W&B `Resource` or side-effect in asset |
+| Experiment tracking | W&B in tasks ([`04_experiment_tracking.py`](./src/04_experiment_tracking.py)) | W&B `Resource` or side-effect in asset |
 | Lineage (weights ↔ training ↔ serving) | Run graph + typed artifacts + versioning | [Asset catalog](https://docs.dagster.io/guides/observe/asset-catalog) / lineage metadata |
 | Scheduling | [Triggers](https://www.union.ai/docs/v2/union/user-guide/configure-tasks/triggers/) | [Schedules](https://docs.dagster.io/guides/automate/schedules) |
 | Event-driven runs | [Invoke webhook](https://www.union.ai/docs/v2/union/user-guide/task-deployment/invoke-webhook/) | [Sensors](https://docs.dagster.io/guides/automate/sensors) / webhooks (labs) |
 | Multi-cluster GPU (SkyPilot-style) | Per-task `Resources`; optional SkyPilot subprocess (prospective in SPEC) | Executor + external launcher; not first-class |
-| CUDA image iteration | Layered [`Image`](./01_image_build_strategy.py) / [container images](https://www.union.ai/docs/v2/union/user-guide/configure-tasks/container-images/) | Docker / PEX; build story is bring-your-own |
+| CUDA image iteration | Layered [`Image`](./src/01_image_build_strategy.py) / [container images](https://www.union.ai/docs/v2/union/user-guide/configure-tasks/container-images/) | Docker / PEX; build story is bring-your-own |
 
 ---
 
@@ -56,7 +56,7 @@ This report compares **[Flyte 2](https://www.union.ai/docs/v2/union/user-guide/)
 
 <td>
 
-Tasks compose by passing structured outputs; parallel modality steps are separate tasks (see [`11_data_engineering.py`](./11_data_engineering.py)).
+Tasks compose by passing structured outputs; parallel modality steps are separate tasks (see [`11_data_engineering.py`](./src/11_data_engineering.py)).
 
 ```python
 import asyncio
@@ -94,7 +94,7 @@ async def preprocess_video(raw_data: dict) -> dict:
     }
 
 @env.task
-async def filter_and_curate(
+async def curate_dataset(
     audio_data: dict,
     video_data: dict,
 ) -> dict:
@@ -105,13 +105,13 @@ async def filter_and_curate(
     }
 
 @env.task
-async def main():
+async def main() -> dict:
     raw = await ingest_raw_data()
     audio, video = await asyncio.gather(
         preprocess_audio(raw),
         preprocess_video(raw),
     )
-    return await filter_and_curate(audio, video)
+    return await curate_dataset(audio, video)
 
 if __name__ == "__main__":
     flyte.init_from_config()
@@ -133,52 +133,45 @@ import dagster as dg
 # Image/resources in dagster.yaml
 
 @dg.asset
-def raw_ingestion(
-    context: dg.AssetExecutionContext,
-) -> dict:
-    context.log.info("Ingesting raw multimodal data")
-    return {"records_ingested": 1_000_000}
-
-@dg.asset(deps=[raw_ingestion])
-def audio_preprocessed(
-    context: dg.AssetExecutionContext,
-    raw_ingestion: dict,
-) -> dict:
+def ingest_raw_data() -> dict:
     return {
-        **raw_ingestion,
+        "records_ingested": 1_000_000,
+        "data_types": ["audio", "video", "text_metadata"],
+    }
+
+@dg.asset
+def preprocess_audio(ingest_raw_data: dict) -> dict:
+    return {
+        **ingest_raw_data,
         "modality": "audio",
         "processed_records": 950_000,
     }
 
-@dg.asset(deps=[raw_ingestion])
-def video_preprocessed(
-    context: dg.AssetExecutionContext,
-    raw_ingestion: dict,
-) -> dict:
+@dg.asset
+def preprocess_video(ingest_raw_data: dict) -> dict:
     return {
-        **raw_ingestion,
+        **ingest_raw_data,
         "modality": "video",
         "processed_records": 980_000,
     }
 
-@dg.asset(deps=[audio_preprocessed, video_preprocessed])
-def curated_dataset(
-    context: dg.AssetExecutionContext,
-    audio_preprocessed: dict,
-    video_preprocessed: dict,
+@dg.asset
+def curate_dataset(
+    preprocess_audio: dict,
+    preprocess_video: dict,
 ) -> dict:
     return {
         "curated_records": 850_000,
-        "audio": audio_preprocessed,
-        "video": video_preprocessed,
+        "audio": preprocess_audio,
+        "video": preprocess_video,
     }
 
 defs = dg.Definitions(
     assets=[
-        raw_ingestion,
-        audio_preprocessed,
-        video_preprocessed,
-        curated_dataset,
+        ingest_raw_data,
+        preprocess_audio,
+        preprocess_video,
+        curate_dataset,
     ],
 )
 ```
@@ -265,20 +258,24 @@ daily = DailyPartitionsDefinition(
 )
 
 @dg.asset(partitions_def=daily)
-def raw_files(
+def extract(
     context: dg.AssetExecutionContext,
 ) -> str:
-    key = context.partition_key
-    return f"s3://lake/raw/dt={key}"
+    return f"s3://lake/raw/dt={context.partition_key}"
 
-@dg.asset(partitions_def=daily, deps=[raw_files])
-def cleaned_table(
+@dg.asset(partitions_def=daily)
+def transform(
     context: dg.AssetExecutionContext,
-    raw_files: str,
-) -> None:
-    context.log.info(
-        f"Loaded partition {context.partition_key}",
-    )
+    extract: str,
+) -> str:
+    return "s3://lake/staging/cleaned.parquet"
+
+@dg.asset(partitions_def=daily)
+def load_to_warehouse(
+    context: dg.AssetExecutionContext,
+    transform: str,
+) -> str:
+    return f"loaded:{context.partition_key}"
 
 job = dg.define_asset_job("daily_etl", selection="*")
 
@@ -293,7 +290,7 @@ def daily_etl_schedule(
     )
 
 defs = dg.Definitions(
-    assets=[raw_files, cleaned_table],
+    assets=[extract, transform, load_to_warehouse],
     schedules=[daily_etl_schedule],
 )
 ```
@@ -326,7 +323,7 @@ defs = dg.Definitions(
 
 <td>
 
-PyTorch Elastic plugin + per-task resources ([`03_pytorch_fsdp_training.py`](./03_pytorch_fsdp_training.py)); Ray alternative in [`02_ray_distributed_training.py`](./02_ray_distributed_training.py).
+PyTorch Elastic plugin + per-task resources ([`03_pytorch_fsdp_training.py`](./src/03_pytorch_fsdp_training.py)); Ray alternative in [`02_ray_distributed_training.py`](./src/02_ray_distributed_training.py).
 
 ```python
 import flyte
@@ -435,10 +432,10 @@ def train_loop(epochs: int, lr: float) -> float:
         last_loss = loss.item()
     return last_loss
 
-@dg.asset(deps=["curated_dataset"])
+@dg.asset(deps=["curate_dataset"])
 def training_run(
     context: dg.AssetExecutionContext,
-    curated_dataset: dict,
+    curate_dataset: dict,
 ) -> dict:
     import wandb
 
@@ -456,6 +453,7 @@ def training_run(
     return {
         "checkpoint": "s3://models/run-456/ckpt",
         "final_loss": final_loss,
+        "run_id": wandb.run.id,
     }
 
 defs = dg.Definitions(assets=[training_run])
@@ -487,16 +485,17 @@ defs = dg.Definitions(assets=[training_run])
 
 <td>
 
-Upcoming first-class [`Volume`](https://github.com/flyteorg/flyte-sdk/pull/1065) (remote-backed FS with lineage via index `File`); see also [`05_hf_mounts_data_loading.py`](./05_hf_mounts_data_loading.py).
+Upcoming first-class [`Volume`](https://github.com/flyteorg/flyte-sdk/pull/1065) (remote-backed FS with lineage via index `File`); see also [`05_hf_mounts_data_loading.py`](./src/05_hf_mounts_data_loading.py).
 
 ```python
 import flyte
-from pathlib import Path
 from flyte.extras import (
     Volume,
     volume_image,
     volume_pod_template,
 )
+
+MODEL = "bert-base-uncased"
 
 env = flyte.TaskEnvironment(
     name="hf_vol",
@@ -511,21 +510,17 @@ env = flyte.TaskEnvironment(
 )
 
 @env.task
-async def cache_base_model(
-    model_name: str,
-) -> Volume:
+async def cache_base_model() -> Volume:
     vol = Volume.empty(name="hf-weights")
     await vol.mount()
     from transformers import AutoModel
 
-    path = Path("/workspace") / model_name
-    path.mkdir(parents=True, exist_ok=True)
-    model = AutoModel.from_pretrained(model_name)
-    model.save_pretrained(path)
+    model = AutoModel.from_pretrained(MODEL)
+    model.save_pretrained("/workspace")
     return await vol.commit()
 
 @env.task
-async def load_from_volume(vol: Volume) -> dict:
+async def load_model(vol: Volume) -> dict:
     await vol.mount()
     from transformers import AutoModel
 
@@ -548,7 +543,7 @@ MODEL = "bert-base-uncased"
 SHARED = "/shared/models/bert-base-uncased"
 
 @dg.asset
-def cache_base_model_weights(
+def cache_base_model(
     context: dg.AssetExecutionContext,
 ) -> str:
     from transformers import AutoModel
@@ -558,19 +553,17 @@ def cache_base_model_weights(
     context.log.info(f"Cached weights at {SHARED}")
     return SHARED
 
-@dg.asset(deps=[cache_base_model_weights])
-def load_from_shared_weights(
+@dg.asset
+def load_model(
     context: dg.AssetExecutionContext,
-    cache_base_model_weights: str,
+    cache_base_model: str,
 ) -> dict:
     from transformers import AutoModel
 
-    model = AutoModel.from_pretrained(
-        cache_base_model_weights,
-    )
+    model = AutoModel.from_pretrained(cache_base_model)
     n = sum(p.numel() for p in model.parameters())
     context.log.info(f"parameters={n}")
-    return {"path": cache_base_model_weights, "parameters": n}
+    return {"parameters": n}
 ```
 
 **Docs:** [I/O managers](https://docs.dagster.io/concepts/io-management/io-managers).
@@ -599,7 +592,7 @@ def load_from_shared_weights(
 
 <td>
 
-[`01_image_build_strategy.py`](./01_image_build_strategy.py).
+[`01_image_build_strategy.py`](./src/01_image_build_strategy.py).
 
 ```python
 import flyte
@@ -628,7 +621,7 @@ exp_env = flyte.TaskEnvironment(
 )
 
 @base_env.task
-async def train_base() -> str: ...
+async def pretrain() -> str: ...
 
 @exp_env.task
 async def fine_tune(checkpoint: str) -> str: ...
@@ -680,7 +673,7 @@ Images are not a core Dagster concept; execution environment is configured on th
 
 <td>
 
-From [`08_end_to_end_ml_pipeline.py`](./08_end_to_end_ml_pipeline.py)—eval and registry are tasks in the same graph as training.
+From [`08_end_to_end_ml_pipeline.py`](./src/08_end_to_end_ml_pipeline.py)—eval and registry are tasks in the same graph as training.
 
 ```python
 import flyte
@@ -694,10 +687,8 @@ async def evaluate_model(
     metrics = training_result["final_metrics"]
     return {
         **training_result,
-        "metrics_summary": {
-            "accuracy": metrics.get("accuracy", 0.82),
-            "f1_score": 0.80,
-        },
+        "accuracy": metrics.get("accuracy", 0.82),
+        "f1_score": 0.80,
         "evaluation_status": "success",
     }
 
@@ -705,7 +696,7 @@ async def evaluate_model(
 async def register_model(
     evaluation: dict,
 ) -> dict:
-    acc = evaluation["metrics_summary"]["accuracy"]
+    acc = evaluation["accuracy"]
     return {
         **evaluation,
         "model_registry": {
@@ -780,7 +771,7 @@ defs = dg.Definitions(
 
 | Pattern | Flyte 2 | Dagster |
 |---------|---------|---------|
-| Cron | `flyte.Trigger.cron(...)` on task ([`06_workflow_triggers.py`](./06_workflow_triggers.py)) | `@dg.schedule` + `RunRequest` |
+| Cron | `flyte.Trigger.cron(...)` on task ([`06_workflow_triggers.py`](./src/06_workflow_triggers.py)) | `@dg.schedule` + `RunRequest` |
 | Manual / backfill | `flyte.Trigger.Manual()` with inputs | Launchpad / backfill partition APIs |
 | File / queue event | Flyte app polling object storage (§6.3) | `@dg.sensor` polling S3/SQS (§6.3) |
 | HTTP callback | [Flyte webhook app](https://www.union.ai/docs/v2/union/user-guide/native-app-integrations/flyte-webhook/) (§6.2) | [REST / GraphQL API](https://docs.dagster.io/api/rest-api) `launchRun` (§6.2) |
@@ -965,7 +956,7 @@ trigger_via_webhook(
 
 <td>
 
-A long-running **Flyte app** polls a prefix and starts a task when new files land ([`07_webhook_invocation.py`](./07_webhook_invocation.py) for task logic).
+A long-running **Flyte app** polls a prefix and starts a task when new files land ([`07_webhook_invocation.py`](./src/07_webhook_invocation.py) for task logic).
 
 ```python
 import asyncio

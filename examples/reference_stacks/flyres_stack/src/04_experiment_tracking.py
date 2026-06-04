@@ -292,4 +292,4 @@ if __name__ == "__main__":
     print(f"2. Project name (default: {WANDB_PROJECT})")
     print("3. Optional: entity secret - flyte secret create wandb entity=my_entity")
     print()
-    print("Run with: uv run --prerelease=allow 04_experiment_tracking.py")
+    print("Run with: uv run --prerelease=allow src/04_experiment_tracking.py")

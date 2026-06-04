@@ -30,7 +30,7 @@ For a head-to-head comparison of Flyte 2 vs Dagster (with side-by-side workflow 
 
 **Run With**:
 ```bash
-uv run --prerelease=allow 01_image_build_strategy.py
+uv run --prerelease=allow src/01_image_build_strategy.py
 ```
 
 ---
@@ -49,7 +49,7 @@ uv run --prerelease=allow 01_image_build_strategy.py
 
 **Run With**:
 ```bash
-uv run --prerelease=allow 02_ray_distributed_training.py
+uv run --prerelease=allow src/02_ray_distributed_training.py
 ```
 
 ### 03_pytorch_fsdp_training.py
@@ -64,7 +64,7 @@ uv run --prerelease=allow 02_ray_distributed_training.py
 
 **Run With**:
 ```bash
-uv run --prerelease=allow 03_pytorch_fsdp_training.py
+uv run --prerelease=allow src/03_pytorch_fsdp_training.py
 ```
 
 ---
@@ -89,7 +89,7 @@ flyte secret create hf token=your_token --group data-loading
 
 **Run With**:
 ```bash
-uv run --prerelease=allow 05_hf_mounts_data_loading.py
+uv run --prerelease=allow src/05_hf_mounts_data_loading.py
 ```
 
 ### 11_data_engineering.py
@@ -104,7 +104,7 @@ uv run --prerelease=allow 05_hf_mounts_data_loading.py
 
 **Run With**:
 ```bash
-uv run --prerelease=allow 11_data_engineering.py
+uv run --prerelease=allow src/11_data_engineering.py
 ```
 
 ---
@@ -129,7 +129,7 @@ flyte secret create wandb api-key=your_wandb_api_key --group experiment-tracking
 **Run With**:
 ```bash
 export WANDB_API_KEY=your_api_key  # or configure as secret
-uv run --prerelease=allow 04_experiment_tracking.py
+uv run --prerelease=allow src/04_experiment_tracking.py
 ```
 
 ### 09_model_registry_integration.py
@@ -144,7 +144,7 @@ uv run --prerelease=allow 04_experiment_tracking.py
 
 **Run With**:
 ```bash
-uv run --prerelease=allow 09_model_registry_integration.py
+uv run --prerelease=allow src/09_model_registry_integration.py
 ```
 
 ---
@@ -163,7 +163,7 @@ uv run --prerelease=allow 09_model_registry_integration.py
 
 **Run With**:
 ```bash
-uv run --prerelease=allow 06_workflow_triggers.py
+uv run --prerelease=allow src/06_workflow_triggers.py
 ```
 
 ### 07_webhook_invocation.py
@@ -178,7 +178,7 @@ uv run --prerelease=allow 06_workflow_triggers.py
 
 **Run With**:
 ```bash
-uv run --prerelease=allow 07_webhook_invocation.py
+uv run --prerelease=allow src/07_webhook_invocation.py
 ```
 
 ---
@@ -197,7 +197,7 @@ uv run --prerelease=allow 07_webhook_invocation.py
 
 **Run With**:
 ```bash
-uv run --prerelease=allow 08_end_to_end_ml_pipeline.py
+uv run --prerelease=allow src/08_end_to_end_ml_pipeline.py
 ```
 
 ---
@@ -216,7 +216,7 @@ uv run --prerelease=allow 08_end_to_end_ml_pipeline.py
 
 **Run With**:
 ```bash
-uv run --prerelease=allow 10_serve_models.py
+uv run --prerelease=allow src/10_serve_models.py
 ```
 
 ---
@@ -265,9 +265,9 @@ See each example for its specific secrets configuration.
 ### Running Examples
 
 ```bash
-# Run a specific example
-uv run --prerelease=allow <example>.py
+# Run a specific example (scripts live in src/)
+uv run --prerelease=allow src/<example>.py
 
 # With environment variables
-HF_MOUNT_PATH=/models WANDB_API_KEY=key uv run --prerelease=allow 02_ray_distributed_training.py
+HF_MOUNT_PATH=/models WANDB_API_KEY=key uv run --prerelease=allow src/02_ray_distributed_training.py
 ```

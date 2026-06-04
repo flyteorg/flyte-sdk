@@ -105,7 +105,7 @@ async def build_model_checkpoint() -> str:
     import torch
 
     # Create a simple model
-    model = torch.nn.Linear(10, 5)
+    torch.nn.Linear(10, 5)
     return "base_model_checkpoint.pth"
 
 

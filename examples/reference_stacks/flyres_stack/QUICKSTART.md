@@ -32,8 +32,8 @@ cd examples/reference_stacks/flyres_stack
 # Create a virtual environment with UV
 uv sync --python 3.12
 
-# Or run directly with uv run
-uv run --prerelease=allow <example>.py
+# Or run directly with uv run (scripts live in src/)
+uv run --prerelease=allow src/<example>.py
 ```
 
 ## Configuration
@@ -51,7 +51,7 @@ export WANDB_PROJECT=flyte-examples
 
 ### 1. Image Build Strategy (Standalone)
 ```bash
-uv run --prerelease=allow 01_image_build_strategy.py
+uv run --prerelease=allow src/01_image_build_strategy.py
 ```
 
 This demonstrates multi-stage image building without requiring Flyte backend.
@@ -59,21 +59,21 @@ This demonstrates multi-stage image building without requiring Flyte backend.
 ### 2. Distributed Training (Requires Flyte Backend)
 ```bash
 # Requires Ray plugin enabled in Flyte config
-uv run --prerelease=allow 02_ray_distributed_training.py
+uv run --prerelease=allow src/02_ray_distributed_training.py
 
 # With PyTorch Elastic
-uv run --prerelease=allow 03_pytorch_fsdp_training.py
+uv run --prerelease=allow src/03_pytorch_fsdp_training.py
 ```
 
 ### 3. Experiment Tracking (Requires W&B)
 ```bash
 export WANDB_API_KEY=your_api_key
-uv run --prerelease=allow 04_experiment_tracking.py
+uv run --prerelease=allow src/04_experiment_tracking.py
 ```
 
 ### 4. End-to-End ML Pipeline
 ```bash
-uv run --prerelease=allow 08_end_to_end_ml_pipeline.py
+uv run --prerelease=allow src/08_end_to_end_ml_pipeline.py
 ```
 
 This runs the complete workflow: data ingestion → training → serving.

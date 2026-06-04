@@ -7,17 +7,17 @@ showing how Flyte can fulfill use cases typically associated with Dagster and ot
 
 | Example | Description |
 |---------|-------------|
-| `01_image_build_strategy.py` | Shows multi-stage image building: base CUDA image + quick-turn experimental layer |
-| `02_ray_distributed_training.py` | Distributed training using Flyte-Ray plugin with Hugging Face model mounts |
-| `03_pytorch_fsdp_training.py` | FSDP distributed training using PyTorch plugin (Megatron alternative) |
-| `04_experiment_tracking.py` | W&B experiment tracking integrated into workflow |
-| `05_hf_mounts_data_loading.py` | Using Hugging Face model mounts for efficient data loading |
-| `06_workflow_triggers.py` | Cron-based triggers as an alternative to Dagster's schedule triggers |
-| `07_webhook_invocation.py` | Flyte webhook app for external workflow invocation (SkyPilot alternative) |
-| `08_end_to_end_ml_pipeline.py` | Complete ML lifecycle: data prep → training → eval → serving |
-| `09_model_registry_integration.py` | Model versioning and lineage tracking |
-| `10_serve_models.py` | Online and batch model serving |
-| `11_data_engineering.py` | ETL pipeline for multimodal ML datasets (Dagster alternative) |
+| `src/01_image_build_strategy.py` | Shows multi-stage image building: base CUDA image + quick-turn experimental layer |
+| `src/02_ray_distributed_training.py` | Distributed training using Flyte-Ray plugin with Hugging Face model mounts |
+| `src/03_pytorch_fsdp_training.py` | FSDP distributed training using PyTorch plugin (Megatron alternative) |
+| `src/04_experiment_tracking.py` | W&B experiment tracking integrated into workflow |
+| `src/05_hf_mounts_data_loading.py` | Using Hugging Face model mounts for efficient data loading |
+| `src/06_workflow_triggers.py` | Cron-based triggers as an alternative to Dagster's schedule triggers |
+| `src/07_webhook_invocation.py` | Flyte webhook app for external workflow invocation (SkyPilot alternative) |
+| `src/08_end_to_end_ml_pipeline.py` | Complete ML lifecycle: data prep → training → eval → serving |
+| `src/09_model_registry_integration.py` | Model versioning and lineage tracking |
+| `src/10_serve_models.py` | Online and batch model serving |
+| `src/11_data_engineering.py` | ETL pipeline for multimodal ML datasets (Dagster alternative) |
 
 ## Tool Comparisons
 
@@ -55,7 +55,7 @@ Or configure them via the Flyte UI/CLI using the secret group names shown in eac
 Each example can be run with UV:
 
 ```bash
-uv run --prerelease=allow examples/reference_stacks/flyres_stack/<example>.py
+uv run --prerelease=allow examples/reference_stacks/flyres_stack/src/<example>.py
 ```
 
 ## Comparison to Dagster/SkyPilot

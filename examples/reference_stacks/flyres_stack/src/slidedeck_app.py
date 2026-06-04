@@ -9,10 +9,10 @@ Routes
 /health                     → readiness probe (JSON)
 
 Deploy to the control plane:
-    flyte serve examples/reference_stacks/flyres_stack/slidedeck_app.py app_env
+    flyte serve examples/reference_stacks/flyres_stack/src/slidedeck_app.py app_env
 
 Serve locally (no control plane needed):
-    flyte serve --local examples/reference_stacks/flyres_stack/slidedeck_app.py app_env
+    flyte serve --local examples/reference_stacks/flyres_stack/src/slidedeck_app.py app_env
 """
 
 # /// script
@@ -29,8 +29,10 @@ import flyte
 import flyte.app
 
 _DIR = Path(__file__).parent
-_SKYPILOT_HTML = _DIR / "SKYPILOT_INTEGRATION_SLIDES.html"
-_DAGSTER_HTML = _DIR / "FLYTE_VS_DAGSTER_SLIDES.html"
+# Slide-deck HTML assets live one level up, in the stack root next to the docs.
+_ASSET_DIR = _DIR.parent
+_SKYPILOT_HTML = _ASSET_DIR / "SKYPILOT_INTEGRATION_SLIDES.html"
+_DAGSTER_HTML = _ASSET_DIR / "FLYTE_VS_DAGSTER_SLIDES.html"
 
 _PORT = 8080
 
@@ -177,8 +179,8 @@ app_env = flyte.app.AppEnvironment(
     resources=flyte.Resources(cpu="0.5", memory="256Mi"),
     requires_auth=False,
     include=(
-        "SKYPILOT_INTEGRATION_SLIDES.html",
-        "FLYTE_VS_DAGSTER_SLIDES.html",
+        "../SKYPILOT_INTEGRATION_SLIDES.html",
+        "../FLYTE_VS_DAGSTER_SLIDES.html",
     ),
 )
 
@@ -227,6 +229,8 @@ def serve() -> None:
 
 
 if __name__ == "__main__":
-    flyte.init_from_config(root_dir=_DIR)
+    # Anchor the code bundle at the stack root so the included HTML assets
+    # (one level up from this file) stay within the bundle root.
+    flyte.init_from_config(root_dir=_ASSET_DIR)
     app_handle = flyte.serve(app_env)
     print(f"Slide hub is ready at: {app_handle.url}")
