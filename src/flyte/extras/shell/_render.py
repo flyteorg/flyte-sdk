@@ -164,22 +164,13 @@ def _emit_flag_setter(
         path = input_data_dir / name
         if is_optional:
             qpath = shlex.quote(str(path))
-            # An optional File/Dir that was NOT passed can still surface at the
-            # mount path as an empty placeholder on the backend (the input is
-            # declared, so the path gets materialized). A bare `[ -e ]` would then
-            # wrongly emit the flag pointing at an empty file/dir. Gate on actual
-            # content instead: a non-empty file, or a directory with entries.
+            # Remote staging can materialize unset optional inputs at this path,
+            # so a bare `[ -e ]` can wrongly emit the flag.
             if kind == "file":
-                # The backend materializes a tiny "null" sentinel FILE at the
-                # mount path for an unset optional File input (the input is
-                # declared, so the path is always written — as the serialized
-                # value, here JSON null). So `-e`/`-s`/`-f` are all true even
-                # when nothing was passed. Emit the flag only for a regular,
-                # non-empty file whose content isn't that sentinel.
+                # Treat the backend's "null" sentinel file as absent.
                 present = f'[ -f {qpath} ] && [ -s {qpath} ] && [ "$(head -c 4 {qpath})" != "null" ]'
             else:
-                # A None Dir is the same "null" sentinel file (not a directory),
-                # so `-d` already excludes it; also require the dir be non-empty.
+                # A missing optional Dir shows up as a sentinel file, not a dir.
                 present = f'[ -d {qpath} ] && [ -n "$(ls -A {qpath} 2>/dev/null)" ]'
             return (
                 f"if {present}; then "

@@ -229,11 +229,9 @@ class ContainerTask(TaskTemplate):
         if self._outputs:
             for k, output_type in self._outputs.items():
                 output_path = output_directory / k
-                # File/Dir outputs are reconstructed from the path itself
-                # (see _convert_output_val_to_correct_type); their contents are
-                # never decoded here. Reading them as text would corrupt — or
-                # outright fail on — binary payloads (gzip, BAM, images), so
-                # only slurp the file for scalar output types.
+
+                # File/Dir outputs are rebuilt from the path, so only scalar
+                # outputs should be read back as text here.
                 if isinstance(output_type, type) and issubclass(output_type, (File, Dir)):
                     output_val = None
                 elif os.path.isfile(output_path):
@@ -241,6 +239,7 @@ class ContainerTask(TaskTemplate):
                         output_val = f.read()
                 else:
                     output_val = None
+
                 parsed = await self._convert_output_val_to_correct_type(output_path, output_val, output_type)
                 output_items.append(parsed)
         # return a tuple so that each element is treated as a separate output.

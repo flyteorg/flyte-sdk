@@ -1,13 +1,12 @@
 """flyteplugins.bio — curated bioinformatics CLI wrappers for Flyte.
 
-This package is still experimental and is not ready for general use or
-publication yet. Expect API and packaging changes while the plugin surface
-is still being shaped.
-
 See submodules:
 
 - :mod:`flyteplugins.bio.bedtools` — bedtools genome arithmetic
   (intersect, sort, merge).
+- :mod:`flyteplugins.bio.cat` — concatenate FASTQ files.
+- :mod:`flyteplugins.bio.gunzip` — decompress gzipped files.
+- :mod:`flyteplugins.bio.untar` — extract tar archives.
 
 Each submodule exposes callable shell tasks and a module-level ``env``
 (``TaskEnvironment``) to plug into a pipeline's ``depends_on``.
@@ -31,10 +30,13 @@ from __future__ import annotations
 import flyte
 
 from .bedtools import env as bedtools_env
+from .cat import env as cat_env
+from .gunzip import env as gunzip_env
+from .untar import env as untar_env
 
 env = flyte.TaskEnvironment(
     name="bio",
-    depends_on=[bedtools_env],
+    depends_on=[bedtools_env, cat_env, gunzip_env, untar_env],
 )
 
-__all__ = ["bedtools_env", "env"]
+__all__ = ["bedtools_env", "cat_env", "env", "gunzip_env", "untar_env"]

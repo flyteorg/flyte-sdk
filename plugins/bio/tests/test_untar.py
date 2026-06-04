@@ -1,8 +1,7 @@
 """End-to-end check for the untar wrapper.
 
-Mirrors nf-core's ``untar`` "test_untar" snapshot: extracts
-``kraken2.tar.gz`` and asserts each emitted file's MD5 matches the
-upstream snapshot values.
+Extracts ``kraken2.tar.gz`` and asserts each emitted file's MD5 matches
+the expected values.
 
 ``test_untar`` is a single ``@env.task``: it fetches its fixture, calls
 ``untar``, and asserts the extracted files' MD5s. ``main`` runs it once
@@ -17,11 +16,9 @@ Run it::
 from __future__ import annotations
 
 import asyncio
-from typing import cast
 
 import flyte
-from _utils import FileT, assert_md5_files, cli_mode, nf_core_file
-from flyte.remote import Run
+from _utils import FileT, assert_md5_files, cli_mode, fixture_file, init_for_mode
 
 from flyteplugins.bio.untar import env as untar_env
 from flyteplugins.bio.untar import untar
@@ -31,9 +28,8 @@ env = flyte.TaskEnvironment(name="untar_tests", depends_on=[untar_env])
 
 @env.task
 async def test_untar() -> None:
-    # nf-core: untar "test_untar"
-    archive = await nf_core_file("genomics/sarscov2/genome/db/kraken2.tar.gz")
-    files = cast("list[FileT]", await untar(archive=archive))
+    archive = await fixture_file("genomics/sarscov2/genome/db/kraken2.tar.gz")
+    files: list[FileT] = await untar(archive=archive)
     await assert_md5_files(
         "untar kraken2.tar.gz",
         files,
@@ -46,9 +42,10 @@ async def test_untar() -> None:
 
 
 async def main() -> None:
-    await flyte.init_from_config.aio()
-    runner = flyte.with_runcontext(mode=cli_mode())
-    run = cast(Run, await runner.run.aio(test_untar))
+    mode = cli_mode()
+    await init_for_mode(mode)
+    runner = flyte.with_runcontext(mode=mode)
+    run = await runner.run.aio(test_untar)
     await run.wait.aio()
 
 

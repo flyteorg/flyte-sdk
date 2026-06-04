@@ -1,8 +1,8 @@
 """End-to-end check for the cat_fastq wrapper.
 
-Mirrors nf-core's ``cat/fastq`` "test_cat_fastq_single_end" snapshot:
-concatenates ``test_1.fastq.gz`` + ``test_2.fastq.gz`` byte-for-byte
-into a single merged ``.fastq.gz`` and asserts the MD5 matches upstream.
+Concatenates ``test_1.fastq.gz`` + ``test_2.fastq.gz`` byte-for-byte
+into a single merged ``.fastq.gz`` and asserts the MD5 matches the
+expected value.
 
 ``test_cat`` is a single ``@env.task``: it fetches its fixtures, calls
 ``cat_fastq``, and asserts the output MD5. ``main`` runs it once and
@@ -18,11 +18,9 @@ Run it::
 from __future__ import annotations
 
 import asyncio
-from typing import cast
 
 import flyte
-from _utils import FileT, assert_md5, cli_mode, nf_core_file
-from flyte.remote import Run
+from _utils import FileT, assert_md5, cli_mode, fixture_file, init_for_mode
 
 from flyteplugins.bio.cat import cat_fastq
 from flyteplugins.bio.cat import env as cat_env
@@ -32,17 +30,17 @@ env = flyte.TaskEnvironment(name="cat_tests", depends_on=[cat_env])
 
 @env.task
 async def test_cat() -> None:
-    # nf-core: cat/fastq "test_cat_fastq_single_end"
-    r1 = await nf_core_file("genomics/sarscov2/illumina/fastq/test_1.fastq.gz")
-    r2 = await nf_core_file("genomics/sarscov2/illumina/fastq/test_2.fastq.gz")
-    out = cast(FileT, await cat_fastq(reads=[r1, r2]))
+    r1 = await fixture_file("genomics/sarscov2/illumina/fastq/test_1.fastq.gz")
+    r2 = await fixture_file("genomics/sarscov2/illumina/fastq/test_2.fastq.gz")
+    out: FileT = await cat_fastq(reads=[r1, r2])
     await assert_md5("cat_fastq single-end", out, "ee314a9bd568d06617171b0c85f508da")
 
 
 async def main() -> None:
-    await flyte.init_from_config.aio()
-    runner = flyte.with_runcontext(mode=cli_mode())
-    run = cast(Run, await runner.run.aio(test_cat))
+    mode = cli_mode()
+    await init_for_mode(mode)
+    runner = flyte.with_runcontext(mode=mode)
+    run = await runner.run.aio(test_cat)
     await run.wait.aio()
 
 

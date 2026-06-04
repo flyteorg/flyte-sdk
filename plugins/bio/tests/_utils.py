@@ -1,8 +1,7 @@
 """Shared helpers for the bio plugin's end-to-end tests.
 
-Each bio task wraps a tool that already has a corresponding nf-core
-module, and we lean on the same test data those modules use:
-nf-core/test-datasets (branch ``modules``).
+The tests use a shared public fixture set and compare outputs against
+checked-in expected MD5 values.
 """
 
 from __future__ import annotations
@@ -14,7 +13,8 @@ import sys
 import urllib.request
 from typing import Any, Literal, cast
 
-from _constants import CACHE_DIR, NF_CORE_RAW_BASE
+import flyte
+from _constants import CACHE_DIR, FIXTURE_BASE_URL
 from flyte.io import File
 
 Mode = Literal["local", "remote"]
@@ -41,39 +41,51 @@ def cli_mode(argv: list[str] | None = None) -> Mode:
     return "local"
 
 
+async def init_for_mode(mode: Mode) -> None:
+    """Initialize Flyte for the selected test mode.
+
+    Local runs do not need a remote client and should avoid picking up a
+    workstation config by accident. Remote runs still use the user's
+    configured endpoint and auth from ``flyte.init_from_config``.
+    """
+    if mode == "local":
+        await flyte.init.aio()
+    else:
+        await flyte.init_from_config.aio()
+
+
 # Convenience alias — File is generic; tests rarely care about the
 # subtype, and writing ``File[Any]`` at each call site is noisy.
 FileT = File[Any]
 
 
-def nf_core_fixture(relative_path: str) -> pathlib.Path:
-    """Return a local path to an nf-core/test-datasets fixture, fetching on miss.
+def fixture_path(relative_path: str) -> pathlib.Path:
+    """Return a local path to a test fixture, fetching on miss.
 
-    ``relative_path`` is taken relative to the ``data/`` root of the
-    ``modules`` branch — e.g. ``"genomics/sarscov2/genome/bed/test.bed"``.
+    ``relative_path`` is taken relative to the shared fixture root, for
+    example ``"genomics/sarscov2/genome/bed/test.bed"``.
     """
     dest = CACHE_DIR / relative_path
     if dest.exists():
         return dest
+
     dest.parent.mkdir(parents=True, exist_ok=True)
-    urllib.request.urlretrieve(f"{NF_CORE_RAW_BASE}/{relative_path}", dest)
+    urllib.request.urlretrieve(f"{FIXTURE_BASE_URL}/{relative_path}", dest)
     return dest
 
 
-async def nf_core_file(relative_path: str) -> FileT:
-    """Fetch an nf-core fixture and wrap it as a :class:`flyte.io.File`."""
-    return cast(FileT, await File.from_local(str(nf_core_fixture(relative_path))))
+async def fixture_file(relative_path: str) -> FileT:
+    """Fetch a fixture and wrap it as a :class:`flyte.io.File`."""
+    return cast(FileT, await File.from_local(str(fixture_path(relative_path))))
 
 
 def md5(path: pathlib.Path) -> str:
     """MD5 of a file's content, with gzip auto-decompression.
 
-    nf-test computes snapshot MD5s against the *decompressed* content of
-    ``.gz`` / ``.bgz`` outputs, not the raw bytes. We match that so
-    snapshot values from nf-core's ``main.nf.test.snap`` can be pasted
-    in unchanged — gzip framing (mtime, OS byte, compression level)
-    isn't reproducible across containers and would otherwise force a
-    re-snapshot every time the upstream image is bumped.
+    The expected checksums are computed against the *decompressed*
+    content of ``.gz`` / ``.bgz`` outputs, not the raw bytes. That keeps
+    the assertions stable even when gzip framing differs across
+    environments.
     """
     data = path.read_bytes()
     if data[:2] == b"\x1f\x8b":
@@ -84,13 +96,13 @@ def md5(path: pathlib.Path) -> str:
 async def assert_md5(label: str, out: FileT, expected: str) -> None:
     """Download ``out`` and assert its MD5 matches ``expected``.
 
-    Failure message includes the full output body so divergences from
-    upstream snapshots are easy to diff by eye.
+    Failure message includes the full output body so divergences are easy
+    to diff by eye.
     """
     local = pathlib.Path(await out.download())
     actual = md5(local)
     assert actual == expected, (
-        f"{label}: output diverges from nf-core snapshot\n"
+        f"{label}: output did not match expected checksum\n"
         f"  expected: {expected}\n"
         f"  actual:   {actual}\n"
         f"  body: {local.read_bytes().decode(errors='replace')!r}"  # noqa: ASYNC240 — small local file, failure path only
@@ -118,7 +130,7 @@ async def assert_md5_files(
     extra = set(actual) - set(expected)
     mismatched = {k: (actual[k], expected[k]) for k in set(expected) & set(actual) if actual[k] != expected[k]}
     assert not (missing or extra or mismatched), (
-        f"{label}: outputs diverge from nf-core snapshot\n"
+        f"{label}: outputs did not match expected checksums\n"
         f"  expected files: {sorted(expected)}\n"
         f"  actual files:   {sorted(actual)}\n"
         f"  missing: {sorted(missing)}\n"
@@ -126,5 +138,3 @@ async def assert_md5_files(
         f"  mismatched md5: {mismatched}"
     )
     print(f"ok: {label} ({len(files)} files)")
-
-

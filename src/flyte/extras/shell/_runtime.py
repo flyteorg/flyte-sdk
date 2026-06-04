@@ -101,10 +101,8 @@ class _Shell:
         ]
         mkdir_preamble = "; ".join(mkdirs) + ";" if mkdirs else ""
 
-        # When debug is on, emit diagnostics to the container's REAL stderr —
-        # i.e. OUTSIDE the `( ... ) 2> {stderr_target}` capture — so they show up
-        # in `kubectl logs` / the console on remote runs, not just in the
-        # captured _stderr file that only surfaces locally on error.
+        # Emit debug diagnostics to real stderr, outside the captured stderr
+        # redirect, so they are visible in local and remote task logs.
         debug_pre = ""
         debug_post = ""
         if self.debug:

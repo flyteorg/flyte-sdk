@@ -15,11 +15,9 @@ Run it::
 from __future__ import annotations
 
 import asyncio
-from typing import cast
 
 import flyte
-from _utils import cli_mode
-from flyte.remote import Run
+from _utils import cli_mode, init_for_mode
 from test_bedtools import env as bedtools_tests_env
 from test_bedtools import test_bedtools
 from test_cat import env as cat_tests_env
@@ -47,9 +45,11 @@ async def test_all() -> None:
 
 
 async def main() -> None:
-    await flyte.init_from_config.aio()
-    runner = flyte.with_runcontext(mode=cli_mode())
-    run = cast(Run, await runner.run.aio(test_all))
+    mode = cli_mode()
+    await init_for_mode(mode)
+    runner = flyte.with_runcontext(mode=mode)
+    run = await runner.run.aio(test_all)
+    print(f"Run URL: {run.url}")
     await run.wait.aio()
 
 
