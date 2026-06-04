@@ -107,6 +107,6 @@ async def main() -> str:
 
 
 if __name__ == "__main__":
-    flyte.init()
+    flyte.init_from_config()
     run = flyte.run(main)
     print(run.url)
