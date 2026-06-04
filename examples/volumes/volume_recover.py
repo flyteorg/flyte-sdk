@@ -2,22 +2,18 @@
 # requires-python = "==3.12"
 # dependencies = [
 #    "flyte",
-#    "flyteplugins-union",
+#    "flyteplugins-union>=0.4.0",
 # ]
 #
 # [tool.uv.sources]
 # flyte = { path = "../..", editable = true }
-# flyteplugins-union = { path = "../../../../unionai/flyteplugins-union", editable = true }
 # ///
 """
 Volume checkpointing via ``@flyte.trace``.
 
-NOTE: ``Volume`` lives in ``flyteplugins.union.io`` and has not yet been
-released to PyPI. The remote container image bakes the locally-built
-``flyteplugins-union`` wheel via ``with_local_flyteplugins_union``. Build a
-pod-compatible wheel from a checkout of the flyteplugins-union repo first::
-
-    make dist-bundled PLATFORM=linux-amd64
+``Volume`` lives in ``flyteplugins.union.io``, released to PyPI as
+``flyteplugins-union`` (>=0.4.0). The platform wheels bundle the juicefs
+binary, so the remote container image only needs a plain pip install.
 
 The Volume type no longer ships built-in periodic checkpointing or crash
 recovery. This example reconstructs both with ``@flyte.trace``: a single
@@ -69,7 +65,6 @@ from pathlib import Path
 from typing import Optional
 
 from flyteplugins.union.io import ROVolume, Volume
-from flyteplugins.union.utils.image import with_local_flyteplugins_union
 
 import flyte
 
@@ -83,13 +78,14 @@ SECONDS_PER_EPOCH = float(os.environ.get("SECONDS_PER_EPOCH", "3"))
 # the resume-from-checkpoint path. Set to a negative value to disable.
 CRASH_AT_EPOCH = int(os.environ.get("CRASH_AT_EPOCH", "2"))
 
-# A plain image + the flyteplugins-union wheel is all Volumes need (juicefs is
-# bundled in the wheel; sqlite mounts via raw syscalls under enable_fuse_mount).
-# `with_local_flyteplugins_union` bakes the locally-built wheel for dev
-# iteration — run `make dist-bundled PLATFORM=linux-amd64` in the
-# flyteplugins-union repo first.
-base = flyte.Image.from_debian_base(install_flyte=False, name="volume-checkpoint-demo").with_local_v2()
-image = with_local_flyteplugins_union(base)
+# A plain image + the released flyteplugins-union package is all Volumes need
+# (juicefs is bundled in the PyPI platform wheels; sqlite mounts via raw
+# syscalls under enable_fuse_mount).
+image = (
+    flyte.Image.from_debian_base(install_flyte=False, name="volume-checkpoint-demo")
+    .with_pip_packages("flyteplugins-union>=0.4.0")
+    .with_local_v2()  # last, so the local dev SDK wins over the pip layer's flyte dep
+)
 
 env = flyte.TaskEnvironment(
     name="volume-checkpoint-demo",

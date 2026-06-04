@@ -195,10 +195,12 @@ ignore_missing_imports = true
 exclude-newer = "5 days"
 
 # Opt flyteorg packages out of the global recency cutoff so freshly published
-# flyteidl2/flyte_controller_base releases can be picked up immediately.
+# flyteidl2/flyte_controller_base/flyteplugins-union releases can be picked up
+# immediately.
 [tool.uv.exclude-newer-package]
 flyteidl2 = "0 days"
 flyte_controller_base = "0 days"
+flyteplugins_union = "0 days"
 
 [tool.uv.sources]
 flyte_controller_base = { path = "rs_controller" }

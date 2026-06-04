@@ -2,12 +2,11 @@
 # requires-python = "==3.12"
 # dependencies = [
 #    "flyte",
-#    "flyteplugins-union",
+#    "flyteplugins-union>=0.4.0",
 # ]
 #
 # [tool.uv.sources]
 # flyte = { path = "../..", editable = true }
-# flyteplugins-union = { path = "../../../../unionai/flyteplugins-union", editable = true }
 # ///
 """
 Cold-fork correctness example.
@@ -34,7 +33,6 @@ import uuid
 from pathlib import Path
 
 from flyteplugins.union.io import ROVolume, Volume
-from flyteplugins.union.utils.image import with_local_flyteplugins_union
 
 import flyte
 
@@ -44,12 +42,13 @@ logger = logging.getLogger("volume-cold-fork-demo")
 VOL_NAME = os.environ.get("VOL_NAME", "cold-fork-demo")
 MARKER_CONTENTS = "parent state — should be visible to cold fork\n"
 
-# A plain image + the flyteplugins-union wheel is all Volumes need.
-# `with_local_flyteplugins_union` bakes the locally-built wheel for dev
-# iteration — run `make dist-bundled PLATFORM=linux-amd64` in the
-# flyteplugins-union repo first.
-base = flyte.Image.from_debian_base(install_flyte=False, name="volume-cold-fork-demo").with_local_v2()
-image = with_local_flyteplugins_union(base)
+# A plain image + the released flyteplugins-union package is all Volumes need
+# (juicefs is bundled in the PyPI platform wheels).
+image = (
+    flyte.Image.from_debian_base(install_flyte=False, name="volume-cold-fork-demo")
+    .with_pip_packages("flyteplugins-union>=0.4.0")
+    .with_local_v2()  # last, so the local dev SDK wins over the pip layer's flyte dep
+)
 
 env = flyte.TaskEnvironment(
     name="volume-cold-fork-demo",

@@ -3,12 +3,11 @@
 # dependencies = [
 #    "kubernetes",
 #    "flyte",
-#    "flyteplugins-union",
+#    "flyteplugins-union>=0.4.0",
 # ]
 #
 # [tool.uv.sources]
 # flyte = { path = "../..", editable = true }
-# flyteplugins-union = { path = "../../../../unionai/flyteplugins-union", editable = true }
 # ///
 """
 Volume benchmark driver.
@@ -43,7 +42,6 @@ from statistics import mean, median, quantiles
 from typing import Awaitable, Callable, Dict, List, Optional, Tuple
 
 from flyteplugins.union.io import ROVolume, Volume, with_high_throughput_volume_deps
-from flyteplugins.union.utils.image import with_local_flyteplugins_union
 
 import flyte
 import flyte.report
@@ -54,11 +52,14 @@ logger = logging.getLogger("bench")
 # The bench sweeps the "redis" engine explicitly, so it needs the
 # high-throughput image (which provisions redis-server); each cell passes
 # metadata_store_type= explicitly, so the image's UNION_VOLUME_METADATA_STORE=redis
-# default is overridden per-cell. `with_local_flyteplugins_union` bakes the
-# locally-built wheel for dev iteration — run `make dist-bundled
-# PLATFORM=linux-amd64` in the flyteplugins-union repo first.
-base = flyte.Image.from_debian_base(install_flyte=False, name="volume-bench").with_local_v2()
-image = with_high_throughput_volume_deps(with_local_flyteplugins_union(base))
+# default is overridden per-cell. The released flyteplugins-union package comes
+# from PyPI (juicefs is bundled in its platform wheels).
+base = (
+    flyte.Image.from_debian_base(install_flyte=False, name="volume-bench")
+    .with_pip_packages("flyteplugins-union>=0.4.0")
+    .with_local_v2()  # last, so the local dev SDK wins over the pip layer's flyte dep
+)
+image = with_high_throughput_volume_deps(base)
 
 env = flyte.TaskEnvironment(
     name="vol-bench",

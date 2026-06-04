@@ -2,22 +2,18 @@
 # requires-python = "==3.12"
 # dependencies = [
 #    "flyte",
-#    "flyteplugins-union",
+#    "flyteplugins-union>=0.4.0",
 # ]
 #
 # [tool.uv.sources]
 # flyte = { path = "../..", editable = true }
-# flyteplugins-union = { path = "../../../../unionai/flyteplugins-union", editable = true }
 # ///
 """
 Volume example.
 
-NOTE: ``Volume`` lives in ``flyteplugins.union.io`` and has not yet been
-released to PyPI. The remote container image bakes the locally-built
-``flyteplugins-union`` wheel via ``with_local_flyteplugins_union``. Build a
-pod-compatible wheel from a checkout of the flyteplugins-union repo first::
-
-    make dist-bundled PLATFORM=linux-amd64
+``Volume`` lives in ``flyteplugins.union.io``, released to PyPI as
+``flyteplugins-union`` (>=0.4.0). The platform wheels bundle the juicefs
+binary, so the remote container image only needs a plain pip install.
 
 Demonstrates the typed Volume lifecycle (PRD §Core Concepts) flowing
 through a multi-task workflow. Tasks exchange immutable ``ROVolume``
@@ -56,14 +52,14 @@ logger = logging.getLogger("volume-demo")
 
 VOL_NAME = os.environ.get("VOL_NAME", "demo-vol")
 
-# A plain image + the flyteplugins-union wheel is all Volumes need (juicefs is
-# bundled in the wheel; the default sqlite store mounts via raw syscalls under
-# enable_fuse_mount). `with_local_flyteplugins_union` bakes the locally-built
-# wheel for dev iteration — run `make dist-bundled PLATFORM=linux-amd64` in the
-# flyteplugins-union repo first.
-base = flyte.Image.from_debian_base(install_flyte=False, name="volume-demo").with_local_v2()
-# image = with_local_flyteplugins_union(base)
-image = base.with_pip_packages("flyteplugins-union>=0.4.0")
+# A plain image + the released flyteplugins-union package is all Volumes need
+# (juicefs is bundled in the PyPI platform wheels; the default sqlite store
+# mounts via raw syscalls under enable_fuse_mount).
+image = (
+    flyte.Image.from_debian_base(install_flyte=False, name="volume-demo")
+    .with_pip_packages("flyteplugins-union>=0.4.0")
+    .with_local_v2()  # last, so the local dev SDK wins over the pip layer's flyte dep
+)
 
 env = flyte.TaskEnvironment(
     name="volume-demo",
@@ -77,13 +73,6 @@ env = flyte.TaskEnvironment(
 @env.task(cache="auto")
 async def init_volume(volume_name: str) -> ROVolume:
     logger.info("init_volume: declaring fresh volume name=%s", volume_name)
-    import os
-
-    logger.info("AZURE creds in pod:")
-    for k in os.environ:
-        if "AZURE" in k.upper():
-            logger.info("%s", k)
-
     # Volume.new() returns a writable RWVolume backed by the default sqlite
     # store — daemon-less and fork-capable, so the later `branch`/`append`
     # forks Just Work with no extra image deps.
