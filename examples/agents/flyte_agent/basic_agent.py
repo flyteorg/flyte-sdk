@@ -4,7 +4,9 @@ A minimal end-to-end agent that demonstrates the core surface area:
 
 - declare a few tools (plain async functions),
 - spin up a :class:`flyte.ai.agents.Agent`,
-- call ``agent.run(message)`` and print the response.
+- call ``agent.run(message)`` synchronously and print the response.
+
+Inside ``async def`` (Flyte tasks, web handlers, etc.) use ``await agent.run.aio(...)``.
 
 Run locally::
 
@@ -15,7 +17,6 @@ Run locally::
 
 from __future__ import annotations
 
-import asyncio
 import sys
 
 from flyte.ai.agents import Agent
@@ -57,8 +58,8 @@ agent = Agent(
 )
 
 
-async def main(message: str) -> None:
-    result = await agent.run(message)
+def main(message: str) -> None:
+    result = agent.run(message)
     if result.error:
         print(f"[error] {result.error}")
         sys.exit(1)
@@ -67,4 +68,4 @@ async def main(message: str) -> None:
 
 if __name__ == "__main__":
     prompt = " ".join(sys.argv[1:]) or "What's 17 * 23 plus the temperature in NYC?"
-    asyncio.run(main(prompt))
+    main(prompt)

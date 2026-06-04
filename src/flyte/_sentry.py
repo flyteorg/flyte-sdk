@@ -5,6 +5,7 @@ Initializes Sentry with a hardcoded DSN to report errors from CLI commands
 (e.g., `flyte start demo`). Users can opt out by setting FLYTE_DISABLE_SENTRY=true.
 """
 
+import errno
 import logging
 import os
 
@@ -79,24 +80,39 @@ def _iter_cause_chain(exc: BaseException):
 
 _USER_ACTIONABLE_CONNECT_CODES: frozenset[str] = frozenset(
     {
+        # User/config problems — backend rejects the request as invalid.
         "UNAUTHENTICATED",
         "PERMISSION_DENIED",
         "FAILED_PRECONDITION",
         "INVALID_ARGUMENT",
         "NOT_FOUND",
         "ALREADY_EXISTS",
+        # Transient infra / availability problems — DNS lookup failed, TCP
+        # connect refused, connection reset, request timed out. The SDK
+        # cannot recover from these, so they shouldn't be crash-reported.
+        "UNAVAILABLE",
+        "DEADLINE_EXCEEDED",
     }
 )
 
 
 def _is_user_actionable_connect_error(exc: BaseException) -> bool:
-    """ConnectError responses the backend uses to tell the user their request was wrong.
+    """ConnectError responses the SDK cannot recover from.
 
-    The CLI's InvokeBaseMixin (flyte/cli/_common.py) already maps these same codes
-    to ClickException — they are user/config problems, not SDK crashes. But code
-    paths outside the CLI (capture_exception in _run.py, capture_errors on deploy)
-    surface RuntimeSystemError wrappers whose cause chain still terminates in a
-    ConnectError, and those leak into Sentry as if they were SDK bugs.
+    Two flavors live in the same filter set:
+
+    * User/config problems (UNAUTHENTICATED, PERMISSION_DENIED, INVALID_ARGUMENT, …)
+      — the backend rejects the request as invalid; the CLI's InvokeBaseMixin
+      (flyte/cli/_common.py) already maps these to ClickException.
+    * Transient infrastructure problems (UNAVAILABLE, DEADLINE_EXCEEDED) — DNS
+      lookup failures, TCP connect refused, connection reset, request timed out
+      against the cluster service. These are not SDK bugs; INTERNAL is
+      intentionally NOT filtered because it can indicate a real bug.
+
+    Code paths outside the CLI (capture_exception in _run.py, capture_errors on
+    deploy) surface RuntimeSystemError wrappers whose cause chain still
+    terminates in a ConnectError, and those leak into Sentry as if they were
+    SDK bugs. The cause-chain walk in _is_user_error catches them here.
     """
     try:
         from connectrpc.errors import ConnectError
@@ -106,6 +122,22 @@ def _is_user_actionable_connect_error(exc: BaseException) -> bool:
         return False
     code = getattr(exc, "code", None)
     return getattr(code, "name", None) in _USER_ACTIONABLE_CONNECT_CODES
+
+
+_USER_ENVIRONMENT_OSERROR_ERRNOS: frozenset[int] = frozenset({errno.ENOSPC})
+
+
+def _is_user_environment_oserror(exc: BaseException) -> bool:
+    """OSError variants caused by the user's local environment, not SDK bugs.
+
+    ENOSPC ("No space left on device") surfaces from shutil._fastcopy_sendfile
+    during `flyte deploy` bundle uploads when the user's machine is out of disk
+    (FLYTE-SDK-32). Disk-full is a user environment problem, not something the
+    SDK can fix, so it shouldn't be reported as a crash.
+    """
+    if not isinstance(exc, OSError):
+        return False
+    return exc.errno in _USER_ENVIRONMENT_OSERROR_ERRNOS
 
 
 def _is_user_error(exc: BaseException) -> bool:
@@ -145,6 +177,8 @@ def _is_user_error(exc: BaseException) -> bool:
         if user_excs and isinstance(cause, user_excs):
             return True
         if _is_user_actionable_connect_error(cause):
+            return True
+        if _is_user_environment_oserror(cause):
             return True
     return False
 

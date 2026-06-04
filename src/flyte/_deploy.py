@@ -380,6 +380,7 @@ async def _build_images(
     connectors, run) don't each need to duplicate that step.
     """
     from flyte._image import _DEFAULT_IMAGE_REF_NAME, resolve_code_bundle_layer
+    from flyte.errors import InvalidImageNameError
 
     from ._internal.imagebuild.image_builder import ImageCache
 
@@ -402,8 +403,13 @@ async def _build_images(
                     image_uri = image_refs[env.image._ref_name]
                     env.image = env.image.clone(base_image=image_uri)
                 else:
-                    raise ValueError(
-                        f"Image name '{env.image._ref_name}' not found in config. Available: {list(image_refs.keys())}"
+                    # The user referenced an image name that isn't declared in their
+                    # config — a user-config mistake, not an SDK crash. Raise a typed
+                    # RuntimeUserError so the Sentry filter (flyte/_sentry.py) skips it
+                    # and the user gets a clear, actionable message (FLYTE-SDK-4C).
+                    raise InvalidImageNameError(
+                        "InvalidImageName",
+                        f"Image name '{env.image._ref_name}' not found in config. Available: {list(image_refs.keys())}",
                     )
                 if not env.image._layers:
                     # No additional layers, use the base_image directly without building
