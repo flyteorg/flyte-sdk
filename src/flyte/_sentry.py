@@ -140,6 +140,52 @@ def _is_user_environment_oserror(exc: BaseException) -> bool:
     return exc.errno in _USER_ENVIRONMENT_OSERROR_ERRNOS
 
 
+def _is_transient_network_error(exc: BaseException) -> bool:
+    """Transient network / connectivity failures, not SDK bugs.
+
+    The `flyte deploy`/`flyte run` upload path (flyte.remote._data) reaches the
+    cluster service (SelectCluster) and then PUTs the bundle to a signed object
+    store URL. Both legs ride the user's network, so flaky links, VPN drops,
+    refused/reset connections and request timeouts surface here as
+    RuntimeSystemError wrappers whose cause chain terminates in a timeout or a
+    transport-level connection error. None of those are something the SDK can
+    fix, so they shouldn't be reported as crashes. Covers, among others:
+
+    - FLYTE-SDK-29: SelectCluster ``TimeoutError`` ("Request timed out")
+    - FLYTE-SDK-47: builtin ``ConnectionError`` ("Connection refused")
+    - FLYTE-SDK-3W: ``httpx.WriteError`` ("Connection reset by peer")
+    - FLYTE-SDK-36: ``httpx.ReadError`` during the signed-URL upload
+    - FLYTE-SDK-4M: ``httpx.RemoteProtocolError`` ("Server disconnected without
+      sending a response") — the object store dropped the PUT mid-flight
+
+    Transient ConnectError status codes (DEADLINE_EXCEEDED / UNAVAILABLE) are
+    handled by ``_is_user_actionable_connect_error`` and intentionally not
+    duplicated here. INTERNAL / UNKNOWN stay reported — they can signal a real
+    backend bug worth tracking.
+    """
+    # Builtin timeouts (asyncio.TimeoutError and socket.timeout are both aliases
+    # of TimeoutError on 3.11+) and connection errors (ConnectionRefused/Reset/
+    # Aborted/BrokenPipe) are all OSError subclasses raised by the network stack,
+    # never by SDK logic.
+    if isinstance(exc, (TimeoutError, ConnectionError)):
+        return True
+
+    # httpx transport failures from the signed-URL PUT. TimeoutException and
+    # NetworkError are the two transport-error families (ConnectTimeout,
+    # ReadTimeout, ReadError, WriteError, ConnectError, PoolTimeout, ...).
+    # RemoteProtocolError (a ProtocolError, not a NetworkError) is the server
+    # hanging up mid-response. None are OSError subclasses, so check explicitly.
+    try:
+        import httpx
+
+        if isinstance(exc, (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError)):
+            return True
+    except ImportError:
+        pass
+
+    return False
+
+
 def _is_user_error(exc: BaseException) -> bool:
     """Errors raised intentionally as user-facing messages — not crash reports."""
     try:
@@ -179,6 +225,8 @@ def _is_user_error(exc: BaseException) -> bool:
         if _is_user_actionable_connect_error(cause):
             return True
         if _is_user_environment_oserror(cause):
+            return True
+        if _is_transient_network_error(cause):
             return True
     return False
 
