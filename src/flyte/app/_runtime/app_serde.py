@@ -87,6 +87,7 @@ def _serialized_pod_spec(
     app_env: AppEnvironment,
     pod_template: flyte.PodTemplate,
     serialization_context: SerializationContext,
+    parameter_overrides: List[Parameter] | None = None,
 ) -> dict:
     """
     Convert pod spec into a dict for serialization.
@@ -95,6 +96,10 @@ def _serialized_pod_spec(
         app_env: The app environment
         pod_template: Pod template specification
         serialization_context: Serialization context
+        parameter_overrides: Materialized parameters to bake into the
+            container command (mirrors ``get_proto_container``); without
+            them the raw declared parameters (e.g. unmaterialized
+            ``RunOutput`` specs) would be serialized instead.
 
     Returns:
         Dictionary representation of the pod spec
@@ -143,7 +148,7 @@ def _serialized_pod_spec(
 
         if container.name == pod_template.primary_container_name:
             container.args = app_env.container_args(serialization_context)
-            container.command = app_env.container_cmd(serialization_context)
+            container.command = app_env.container_cmd(serialization_context, parameter_overrides)
 
             limits, requests = {}, {}
             resources = get_proto_resources(app_env.resources)
@@ -174,6 +179,7 @@ def _get_k8s_pod(
     app_env: AppEnvironment,
     pod_template: flyte.PodTemplate,
     serialization_context: SerializationContext,
+    parameter_overrides: List[Parameter] | None = None,
 ) -> tasks_pb2.K8sPod:
     """
     Convert pod_template into a K8sPod IDL.
@@ -182,6 +188,8 @@ def _get_k8s_pod(
         app_env: The app environment
         pod_template: Pod template specification
         serialization_context: Serialization context
+        parameter_overrides: Materialized parameters for the container
+            command — see ``_serialized_pod_spec``.
 
     Returns:
         K8sPod protobuf message
@@ -191,7 +199,7 @@ def _get_k8s_pod(
     from google.protobuf.json_format import Parse
     from google.protobuf.struct_pb2 import Struct
 
-    pod_spec_dict = _serialized_pod_spec(app_env, pod_template, serialization_context)
+    pod_spec_dict = _serialized_pod_spec(app_env, pod_template, serialization_context, parameter_overrides)
     pod_spec_idl = Parse(json.dumps(pod_spec_dict), Struct())
 
     metadata = tasks_pb2.K8sObjectMetadata(
@@ -331,12 +339,18 @@ async def translate_app_env_to_idl(
     container = None
     pod = None
     # Resolve enable_fuse_mount by augmenting the user's pod_template (or
-    # building one from scratch) so the App pod gets /dev/fuse + SYS_ADMIN.
+    # building one from scratch). App pods require the primary container to be
+    # named "app" (enforced by _get_k8s_pod), unlike task pods which default
+    # to "primary". privileged_only because App pods go through Knative, whose
+    # admission webhook rejects hostPath volumes and gates capabilities.add —
+    # privileged alone already grants /dev/fuse and all capabilities.
     effective_pod_template = app_env.pod_template
     if app_env.enable_fuse_mount and not isinstance(effective_pod_template, str):
         from flyte._pod import pod_template_with_fuse_mount
 
-        effective_pod_template = pod_template_with_fuse_mount(effective_pod_template)
+        effective_pod_template = pod_template_with_fuse_mount(
+            effective_pod_template, primary_container_name="app", privileged_only=True
+        )
     if effective_pod_template:
         if isinstance(effective_pod_template, str):
             raise NotImplementedError("PodTemplate as str is not supported yet")
@@ -344,6 +358,7 @@ async def translate_app_env_to_idl(
             app_env,
             effective_pod_template,
             serialization_context,
+            parameter_overrides=parameters,
         )
     elif app_env.image:
         container = get_proto_container(
