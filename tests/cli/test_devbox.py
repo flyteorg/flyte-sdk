@@ -14,7 +14,7 @@ import pytest
 from click.testing import CliRunner
 
 from flyte.cli._devbox import (
-    _ensure_kubectl_available,
+    _is_kubectl_installed,
     _merge_kubeconfig,
     _run_container,
     _switch_k8s_context,
@@ -139,50 +139,50 @@ class TestMergeKubeconfigRetry:
                 _merge_kubeconfig(kubeconfig, "flyte-devbox")
 
 
-class TestEnsureKubectlAvailable:
-    """`_ensure_kubectl_available` reports kubectl presence as a bool instead of raising,
+class TestIsKubectlInstalled:
+    """`_is_kubectl_installed` reports kubectl presence as a bool instead of raising,
     and callers skip kubectl-dependent steps (with a warning) when it is missing."""
 
     def test_missing_kubectl_returns_false(self):
         with patch("flyte.cli._devbox.shutil.which", return_value=None):
-            assert _ensure_kubectl_available() is False
+            assert _is_kubectl_installed() is False
 
     def test_present_kubectl_returns_true(self):
         with patch("flyte.cli._devbox.shutil.which", return_value="/usr/local/bin/kubectl"):
-            assert _ensure_kubectl_available() is True
+            assert _is_kubectl_installed() is True
 
     def test_merge_kubeconfig_skips_and_warns_when_kubectl_missing(self, tmp_path):
         kubeconfig = tmp_path / "kubeconfig"
         kubeconfig.write_text("")
         with (
-            patch("flyte.cli._devbox._ensure_kubectl_available", return_value=False),
+            patch("flyte.cli._devbox._is_kubectl_installed", return_value=False),
             patch("flyte.cli._devbox._flatten_kubeconfig") as mock_flatten,
-            patch("flyte.cli._devbox.click.echo") as mock_echo,
+            patch("flyte.cli._devbox.console.print") as mock_print,
             patch("flyte.cli._devbox.Path.home", return_value=tmp_path),
         ):
             # Should not raise, and should not attempt to flatten/merge.
             _merge_kubeconfig(kubeconfig, "flyte-devbox")
 
             mock_flatten.assert_not_called()
-            mock_echo.assert_called_once()
-            message = mock_echo.call_args.args[0]
+            mock_print.assert_called_once()
+            message = mock_print.call_args.args[0]
             assert "kubectl" in message
-            assert mock_echo.call_args.kwargs.get("err") is True
+            assert "[red]" in message
 
     def test_switch_k8s_context_skips_and_warns_when_kubectl_missing(self):
         with (
-            patch("flyte.cli._devbox._ensure_kubectl_available", return_value=False),
+            patch("flyte.cli._devbox._is_kubectl_installed", return_value=False),
             patch("flyte.cli._devbox.subprocess.run") as mock_run,
-            patch("flyte.cli._devbox.click.echo") as mock_echo,
+            patch("flyte.cli._devbox.console.print") as mock_print,
         ):
             # Should not raise, and should never shell out to kubectl.
             _switch_k8s_context()
 
             mock_run.assert_not_called()
-            mock_echo.assert_called_once()
-            message = mock_echo.call_args.args[0]
+            mock_print.assert_called_once()
+            message = mock_print.call_args.args[0]
             assert "kubectl" in message
-            assert mock_echo.call_args.kwargs.get("err") is True
+            assert "[red]" in message
 
 
 class TestDevboxCliGpuFlag:
