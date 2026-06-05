@@ -706,9 +706,16 @@ class DockerImageBuilder(ImageBuilder):
             raise ImageBuildError("Docker buildx is not available. Make sure BuildKit is installed and enabled.")
 
         # List builders
-        result = await run_sync_with_loop(
-            subprocess.run, ["docker", "buildx", "ls"], capture_output=True, text=True, check=True
-        )
+        try:
+            result = await run_sync_with_loop(
+                subprocess.run, ["docker", "buildx", "ls"], capture_output=True, text=True, check=True
+            )
+        except subprocess.CalledProcessError as e:
+            raise ImageBuildError(
+                f"Failed to list docker buildx builders: {(e.stderr or '').strip() or e}. "
+                "Ensure the Docker daemon is running, or use the remote image builder by setting "
+                "`image_builder='remote'` on your `flyte.Image`."
+            ) from e
         builders = result.stdout
 
         # Check if there's any usable builder with the correct driver options
@@ -734,21 +741,39 @@ class DockerImageBuilder(ImageBuilder):
         else:
             logger.info("No buildx builder found, creating one...")
 
-        await run_sync_with_loop(
-            subprocess.run,
-            [
-                "docker",
-                "buildx",
-                "create",
-                "--name",
-                DockerImageBuilder._builder_name,
-                "--platform",
-                "linux/amd64,linux/arm64",
-                "--driver-opt",
-                "network=host",
-            ],
-            check=True,
-        )
+        # Create the builder. Wrap subprocess failures in ImageBuildError so a broken or
+        # locked Docker environment surfaces as an actionable user error instead of leaking
+        # as a raw CalledProcessError crash report (FLYTE-SDK-4R).
+        try:
+            await run_sync_with_loop(
+                subprocess.run,
+                [
+                    "docker",
+                    "buildx",
+                    "create",
+                    "--name",
+                    DockerImageBuilder._builder_name,
+                    "--platform",
+                    "linux/amd64,linux/arm64",
+                    "--driver-opt",
+                    "network=host",
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        except subprocess.CalledProcessError as e:
+            stderr = (e.stderr or "").strip()
+            # A concurrent build may have created the builder between our `ls` check and now;
+            # if it already exists we can just reuse it instead of failing.
+            if "already exists" in stderr.lower():
+                logger.info(f"Buildx builder {DockerImageBuilder._builder_name!r} already exists, reusing it.")
+                return
+            raise ImageBuildError(
+                f"Failed to create docker buildx builder {DockerImageBuilder._builder_name!r}: {stderr or e}. "
+                f"Try removing it with `docker buildx rm {DockerImageBuilder._builder_name}`, or use the remote "
+                "image builder by setting `image_builder='remote'` on your `flyte.Image`."
+            ) from e
 
     async def _build_image(self, image: Image, *, push: bool = True, dry_run: bool = False, wait: bool = True) -> str:
         """
