@@ -584,6 +584,17 @@ class PydanticTransformer(TypeTransformer[BaseModel]):
         python_type: Type[BaseModel],
         expected: LiteralType,
     ) -> Literal:
+        # Auto-coerce a plain dict into the target BaseModel so callers (e.g. flyte.run as an
+        # API-service entrypoint) can pass JSON-like inputs without constructing the model. Missing
+        # fields are filled from the model's defaults; only missing required fields error. This
+        # mirrors the CLI param-parsing path (cli/_params.py) and keeps the Union/Optional path
+        # working since UnionTransformer delegates here and catches TypeTransformerFailedError.
+        if isinstance(python_val, dict):
+            try:
+                python_val = python_type.model_validate(python_val, strict=False, context={"deserialize": True})
+            except Exception as e:
+                raise TypeTransformerFailedError(f"Failed to coerce dict into {python_type}: {e}") from e
+
         # Pre-process the model to invoke any lazy uploaders on nested Flyte IO types.
         # This ensures uploads happen in the syncify context where gRPC clients work correctly,
         # and prevents deadlocks when @model_serializer tries to run async code via loop_manager.
@@ -711,7 +722,16 @@ def _create_pydantic_model_from_schema(schema: dict) -> Type:
 
     title = schema.get(TITLE, "DynamicModel")
     properties = schema.get("properties", {})
-    property_order = schema.get("required", list(properties.keys()))
+    # Reconstruct every field, not just the required ones. ``required`` is an ordered list that
+    # preserves field-definition order (the ``properties`` map can lose ordering after the schema
+    # round-trips through a protobuf Struct), so we keep it first for byte/cache-key consistency,
+    # then append the remaining fields. Those remaining fields are exactly the ones with defaults;
+    # previously they were dropped entirely, which broke the decoupled flyte.run case (client
+    # without the original class) — defaulted fields would vanish and couldn't be filled from
+    # their defaults.
+    required_order = [name for name in (schema.get("required") or ()) if name in properties]
+    remaining = [name for name in properties if name not in set(required_order)]
+    property_order = required_order + remaining
 
     fields: dict[str, typing.Any] = {}
     required_set = set(schema.get("required") or ())
@@ -814,12 +834,20 @@ class DataclassTransformer(TypeTransformer[object]):
             # Find the Optional keys in expected_fields_dict
             optional_keys = {k for k, t in expected_fields_dict.items() if UnionTransformer.is_optional_type(t)}
 
+            # Fields with a default (or default_factory) may also be omitted from the dict and filled
+            # in during decoding, so they should not count as "missing".
+            defaulted_keys = {
+                f.name
+                for f in dataclasses.fields(expected_type)
+                if f.default is not dataclasses.MISSING or f.default_factory is not dataclasses.MISSING
+            }
+
             # Remove the Optional keys from the keys of original_dict
             original_key = set(original_dict.keys()) - optional_keys
             expected_key = set(expected_fields_dict.keys()) - optional_keys
 
-            # Check if original_key is missing any keys from expected_key
-            missing_keys = expected_key - original_key
+            # Check if original_key is missing any keys from expected_key (defaulted fields excepted)
+            missing_keys = (expected_key - original_key) - defaulted_keys
             if missing_keys:
                 raise TypeTransformerFailedError(
                     f"The original fields are missing the following keys from the dataclass fields: "
@@ -836,14 +864,23 @@ class DataclassTransformer(TypeTransformer[object]):
 
             for k, v in original_dict.items():
                 if k in expected_fields_dict:
+                    expected_type = expected_fields_dict[k]
+                    if UnionTransformer.is_optional_type(expected_type):
+                        expected_type = UnionTransformer.get_sub_type_in_optional(expected_type)
                     if isinstance(v, dict):
-                        self.assert_type(expected_fields_dict[k], v)
+                        # Only recurse for nested dataclasses. A plain dict-typed field
+                        # (e.g. Dict[str, str]) is a subscripted generic that can't be passed to
+                        # issubclass()/dataclasses.fields(); its contents are validated at decode time.
+                        if dataclasses.is_dataclass(expected_type):
+                            self.assert_type(expected_type, v)
                     else:
-                        expected_type = expected_fields_dict[k]
                         original_type = type(v)
-                        if UnionTransformer.is_optional_type(expected_type):
-                            expected_type = UnionTransformer.get_sub_type_in_optional(expected_type)
-                        if original_type != expected_type:
+                        # Only enforce when the field annotation resolved to a concrete type.
+                        # With `from __future__ import annotations`, dataclasses.fields(...).type
+                        # is the *string* annotation (e.g. "str"); likewise subscripted generics
+                        # (List[int]) are not plain types. In those cases skip the early check and
+                        # let the decode step in to_literal do the real validation.
+                        if isinstance(expected_type, type) and original_type is not expected_type:
                             raise TypeTransformerFailedError(
                                 f"Type of Val '{original_type}' is not an instance of {expected_type}"
                             )
@@ -914,8 +951,20 @@ class DataclassTransformer(TypeTransformer[object]):
 
     async def to_literal(self, python_val: T, python_type: Type[T], expected: LiteralType) -> Literal:
         if isinstance(python_val, dict):
-            msgpack_bytes = msgpack.dumps(python_val)
-            return Literal(scalar=Scalar(binary=Binary(value=msgpack_bytes, tag=MESSAGEPACK)))
+            # Auto-coerce a plain dict into the target dataclass so callers (e.g. flyte.run) can pass
+            # JSON-like inputs without constructing the dataclass. Decoding (rather than a raw
+            # msgpack dump of the dict) applies field validation and fills omitted fields from their
+            # defaults; only missing required fields error. This mirrors the CLI param-parsing path.
+            decode_type = get_underlying_type(python_type)
+            try:
+                decoder = self._json_decoder[decode_type]
+            except KeyError:
+                decoder = JSONDecoder(decode_type)
+                self._json_decoder[decode_type] = decoder
+            try:
+                python_val = decoder.decode(json.dumps(python_val))
+            except Exception as e:
+                raise TypeTransformerFailedError(f"Failed to coerce dict into {python_type}: {e}") from e
 
         if not dataclasses.is_dataclass(python_val):
             raise TypeTransformerFailedError(
@@ -1327,9 +1376,14 @@ def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name:
     # (for $ref / anyOf single-variant fields) or a _DiscriminatedUnion (for oneOf fields).
     nested_types: typing.Dict[str, typing.Any] = {}
 
-    # Use 'required' field to preserve property order, as protobuf Struct doesn't preserve dict order
+    # Use 'required' field to preserve property order, as protobuf Struct doesn't preserve dict order.
+    # ``required`` lists only the no-default fields though, so we keep it first (for ordering) and
+    # then append the remaining (defaulted) fields, which were previously dropped entirely. Dropping
+    # them broke the decoupled flyte.run case (client without the original class): defaulted fields
+    # would vanish and couldn't be filled in from their defaults.
     properties = schema["properties"]
-    property_order = schema.get("required", list(properties.keys()))
+    required_order = [name for name in (schema.get("required") or ()) if name in properties]
+    property_order = required_order + [name for name in properties if name not in set(required_order)]
 
     for property_key in property_order:
         property_val = properties[property_key]
@@ -1466,9 +1520,26 @@ def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name:
         # Handle dataclass and dict
         elif property_type == "object":
             if property_val.get("anyOf"):
-                # For optional with dataclass
-                sub_schemea = property_val["anyOf"][0]
-                sub_schemea_name = sub_schemea["title"]
+                # For optional with dataclass / dict. Use the non-null variant (e.g. X | None -> X).
+                non_null_variants = [
+                    v
+                    for v in property_val["anyOf"]
+                    if not (isinstance(v, dict) and v.get("type") == "null")
+                ]
+                sub_schemea = non_null_variants[0] if non_null_variants else property_val["anyOf"][0]
+                # A dict-shaped variant (e.g. dict[str, str] | None) has additionalProperties and no
+                # "title"; handle it as a typing.Dict, not a nested dataclass. Reading ["title"]
+                # blindly here is what caused the original KeyError on dict[str, str] | None.
+                if isinstance(sub_schemea, dict) and sub_schemea.get("additionalProperties"):
+                    elem_type = _get_element_type(sub_schemea["additionalProperties"], schema)
+                    _append_schema_field(
+                        attribute_list,
+                        property_key,
+                        typing.Dict[str, elem_type],  # type: ignore
+                        property_val,
+                        schema,
+                    )
+                    continue
                 matched_type = _match_registered_type_from_schema(property_val) or _match_registered_type_from_schema(
                     sub_schemea
                 )
@@ -1477,6 +1548,7 @@ def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name:
                         attribute_list, property_key, typing.cast(GenericAlias, matched_type), property_val, schema
                     )
                     continue
+                sub_schemea_name = sub_schemea.get("title", property_key)
                 nested_class = convert_mashumaro_json_schema_to_python_class(sub_schemea, sub_schemea_name)
                 _append_schema_field(
                     attribute_list, property_key, typing.cast(GenericAlias, nested_class), property_val, schema
