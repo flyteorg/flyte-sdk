@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import json
 from typing import Any, Awaitable, Callable, ClassVar
 
@@ -356,10 +357,10 @@ class DetailPanel(VerticalScroll):
     def _clear_event_box(self, event_box: _DetailBox) -> None:
         """Remove any mounted event panel (interactive or read-only)."""
         if self._current_event_key is not None:
-            for child in event_box.query(EventInputPanel):
-                child.remove()
-            for child in event_box.query(EventResultPanel):
-                child.remove()
+            for input_panel in event_box.query(EventInputPanel):
+                input_panel.remove()
+            for result_panel in event_box.query(EventResultPanel):
+                result_panel.remove()
             self._current_event_key = None
 
     def _hide_event_box(self, event_box: _DetailBox) -> None:
@@ -519,13 +520,13 @@ class DetailPanel(VerticalScroll):
 
         # -- Event box (interactive while paused) --
         if node.status == ActionStatus.PAUSED:
-            pe = self._tracker.get_pending_event(aid)
-            if pe is not None:
+            pending = self._tracker.get_pending_event(aid)
+            if pending is not None:
                 self._show_event_panel(
                     event_box,
                     f"{aid}|pending",
-                    lambda: EventInputPanel(pe),
-                    f"Event: {pe.event_name}",
+                    functools.partial(EventInputPanel, pending),
+                    f"Event: {pending.event_name}",
                 )
             else:
                 self._hide_event_box(event_box)
