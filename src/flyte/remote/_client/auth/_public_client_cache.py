@@ -4,12 +4,13 @@ from pathlib import Path
 from typing import Optional
 
 import pydantic
-import yaml
 import rich_click as click
+import yaml
 from flyteidl2.auth.auth_service_connect import AuthMetadataServiceClient
 from flyteidl2.auth.auth_service_pb2 import GetPublicClientConfigRequest
 
 from flyte._logging import logger
+from flyte._utils import sanitize_endpoint
 from flyte.syncify import syncify
 
 
@@ -62,15 +63,20 @@ def get_public_client_auth_metadata_cache_root(cache_root: Path | None = None) -
     return cache_root or Path.home() / ".flyte" / ".cache"
 
 
-def get_public_client_auth_metadata_cache_path(org: str, domain: str, cache_root: Path | None = None) -> Path:
+def extract_public_client_auth_metadata_cache_key(endpoint: str) -> str:
+    sanitized = sanitize_endpoint(endpoint) or endpoint
+    return sanitized.removeprefix("dns:///").removeprefix("dns://").lstrip("/")
+
+
+def get_public_client_auth_metadata_cache_path(endpoint: str, cache_root: Path | None = None) -> Path:
     resolved_root = get_public_client_auth_metadata_cache_root(cache_root)
-    return resolved_root / f"{org}-{domain}.yaml"
+    return resolved_root / f"{extract_public_client_auth_metadata_cache_key(endpoint)}.yaml"
 
 
 def read_cached_public_client_auth_metadata(
-    org: str, domain: str, cache_root: Path | None = None
+    endpoint: str, cache_root: Path | None = None
 ) -> Optional[CachedPublicClientAuthMetadata]:
-    file_path = get_public_client_auth_metadata_cache_path(org, domain, cache_root=cache_root)
+    file_path = get_public_client_auth_metadata_cache_path(endpoint, cache_root=cache_root)
     if not file_path.exists():
         return None
 
@@ -86,12 +92,11 @@ def read_cached_public_client_auth_metadata(
 
 
 def write_cached_public_client_auth_metadata(
-    org: str,
-    domain: str,
+    endpoint: str,
     metadata: CachedPublicClientAuthMetadata,
     cache_root: Path | None = None,
 ) -> Path | None:
-    file_path = get_public_client_auth_metadata_cache_path(org, domain, cache_root=cache_root)
+    file_path = get_public_client_auth_metadata_cache_path(endpoint, cache_root=cache_root)
     try:
         file_path.parent.mkdir(parents=True, exist_ok=True)
         with file_path.open("w") as handle:

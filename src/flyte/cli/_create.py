@@ -8,6 +8,7 @@ import flyte.cli._common as common
 from flyte.cli._option import DependentOption, MutuallyExclusiveOption
 from flyte.remote import SecretTypes
 from flyte.remote._client.auth._public_client_cache import (
+    extract_public_client_auth_metadata_cache_key,
     fetch_public_client_auth_metadata_sync,
     get_public_client_auth_metadata_cache_path,
     write_cached_public_client_auth_metadata,
@@ -317,24 +318,23 @@ def config(
     if endpoint:
         endpoint = sanitize_endpoint(endpoint)
         admin["endpoint"] = endpoint
+        cache_key = extract_public_client_auth_metadata_cache_key(endpoint)
+    else:
+        cache_key = None
     # Only set insecure if user specifies it, otherwise leave as False
     if insecure:
         admin["insecure"] = insecure
-    
+
     if auth_type:
         admin["authType"] = common.sanitize_auth_type(auth_type)
 
     if not org and endpoint:
         org = org_from_endpoint(endpoint)
 
-    # if endpoint and not org:
-    #     raise click.BadParameter("--endpoint or --org must be provided")
-
-    # if endpoint and not domain:
-    #     raise click.BadParameter("--domain must be provided")
-
-    if endpoint and org and domain:
-        cache_path = get_public_client_auth_metadata_cache_path(org, domain)
+    # skip localhost/devbox as there is no auth
+    if endpoint and "localhost" not in endpoint:
+        assert cache_key is not None
+        cache_path = get_public_client_auth_metadata_cache_path(cache_key)
         if cache_path.exists() and not force:
             overwrite_cache = click.confirm(f"Overwrite cached auth metadata at [{cache_path}]?", default=False)
             if not overwrite_cache:
@@ -351,10 +351,10 @@ def config(
         except Exception as e:
             error_message = f"Failed to fetch public client auth metadata: {e}"
             if "dns" in str(e).lower():
-                error_message = f"Please double check the endpoint configuration and retry."
+                error_message = "Please double check the endpoint configuration and retry."
             raise click.ClickException(error_message) from e
 
-        write_cached_public_client_auth_metadata(org, domain, auth_metadata)
+        write_cached_public_client_auth_metadata(cache_key, auth_metadata)
 
     if output_path.exists() and not force:
         force = click.confirm(f"Overwrite [{output_path}]?", default=False)

@@ -14,10 +14,9 @@ from flyte.remote._client.auth._public_client_cache import (
 
 
 @pytest.mark.asyncio
-async def test_remote_client_config_store_skips_public_client_config_when_org_cache_exists(tmp_path: Path):
+async def test_remote_client_config_store_skips_public_client_config_when_endpoint_cache_exists(tmp_path: Path):
     write_cached_public_client_auth_metadata(
-        "dogfood",
-        "staging",
+        "dogfood.cloud-staging.union.ai",
         CachedPublicClientAuthMetadata(
             authType="Pkce",
             clientId="cached-client-id",
@@ -32,8 +31,6 @@ async def test_remote_client_config_store_skips_public_client_config_when_org_ca
 
     store = RemoteClientConfigStore(
         "https://dogfood.cloud-staging.union.ai",
-        org="dogfood",
-        domain="staging",
         cache_root=tmp_path,
         client_config_overrides=LocalClientConfigOverrides(audience="my-audience"),
     )
@@ -59,11 +56,9 @@ async def test_remote_client_config_store_skips_public_client_config_when_org_ca
 
 
 @pytest.mark.asyncio
-async def test_remote_client_config_store_fetches_public_client_config_when_org_cache_is_missing(tmp_path: Path):
+async def test_remote_client_config_store_fetches_public_client_config_when_endpoint_cache_is_missing(tmp_path: Path):
     store = RemoteClientConfigStore(
         "https://dogfood.cloud-staging.union.ai",
-        org="dogfood",
-        domain="staging",
         auth_type="Pkce",
         cache_root=tmp_path,
     )
@@ -95,7 +90,7 @@ async def test_remote_client_config_store_fetches_public_client_config_when_org_
     assert cfg.header_key == "flyte-authorization"
     assert cfg.audience == "remote-audience"
 
-    cached = read_cached_public_client_auth_metadata("dogfood", "staging", cache_root=tmp_path)
+    cached = read_cached_public_client_auth_metadata("dogfood.cloud-staging.union.ai", cache_root=tmp_path)
     assert cached is not None
     assert cached.client_id == "remote-client-id"
     assert cached.scopes == ["scope-a"]
@@ -103,14 +98,15 @@ async def test_remote_client_config_store_fetches_public_client_config_when_org_
 
 
 @pytest.mark.asyncio
-async def test_remote_client_config_store_treats_malformed_org_cache_as_miss(tmp_path: Path):
-    cache_path = get_public_client_auth_metadata_cache_path("dogfood", "staging", cache_root=tmp_path)
+async def test_remote_client_config_store_treats_malformed_endpoint_cache_as_miss(tmp_path: Path):
+    cache_path = get_public_client_auth_metadata_cache_path(
+        "dogfood.cloud-staging.union.ai", cache_root=tmp_path
+    )
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     cache_path.write_text("not: [valid")
 
     store = RemoteClientConfigStore(
         "https://dogfood.cloud-staging.union.ai",
-        org="dogfood",
         auth_type="Pkce",
         cache_root=tmp_path,
     )
@@ -139,10 +135,9 @@ async def test_remote_client_config_store_treats_malformed_org_cache_as_miss(tmp
 
 
 @pytest.mark.asyncio
-async def test_remote_client_config_store_uses_org_specific_cache_files(tmp_path: Path):
+async def test_remote_client_config_store_uses_endpoint_specific_cache_files(tmp_path: Path):
     write_cached_public_client_auth_metadata(
-        "other-org",
-        "staging",
+        "other-org.cloud-staging.union.ai",
         CachedPublicClientAuthMetadata(
             authType="Pkce",
             clientId="other-client-id",
@@ -157,7 +152,6 @@ async def test_remote_client_config_store_uses_org_specific_cache_files(tmp_path
 
     store = RemoteClientConfigStore(
         "https://dogfood.cloud-staging.union.ai",
-        org="dogfood",
         auth_type="Pkce",
         cache_root=tmp_path,
     )
@@ -187,7 +181,9 @@ async def test_remote_client_config_store_uses_org_specific_cache_files(tmp_path
 
 @pytest.mark.asyncio
 async def test_remote_client_config_store_accepts_cached_metadata_without_audience(tmp_path: Path):
-    cache_path = get_public_client_auth_metadata_cache_path("dogfood", "staging", cache_root=tmp_path)
+    cache_path = get_public_client_auth_metadata_cache_path(
+        "dogfood.cloud-staging.union.ai", cache_root=tmp_path
+    )
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     cache_path.write_text(
         """authType: Pkce
@@ -202,8 +198,6 @@ scopes:
 
     store = RemoteClientConfigStore(
         "https://dogfood.cloud-staging.union.ai",
-        org="dogfood",
-        domain="staging",
         cache_root=tmp_path,
     )
     store._client = Mock()

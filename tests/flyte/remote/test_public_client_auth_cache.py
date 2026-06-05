@@ -13,8 +13,8 @@ from flyte.remote._client.auth._public_client_cache import (
 
 
 def test_public_client_auth_metadata_cache_path_uses_per_org_domain_yaml_files(tmp_path: Path):
-    path = get_public_client_auth_metadata_cache_path("dogfood", "staging", cache_root=tmp_path)
-    assert path == tmp_path / "dogfood-staging.yaml"
+    path = get_public_client_auth_metadata_cache_path("dogfood.cloud-staging.union.ai", cache_root=tmp_path)
+    assert path == tmp_path / "dogfood.cloud-staging.union.ai.yaml"
 
 
 def test_public_client_auth_metadata_cache_round_trip(tmp_path: Path):
@@ -28,8 +28,8 @@ def test_public_client_auth_metadata_cache_round_trip(tmp_path: Path):
         audience="dogfood-audience",
     )
 
-    write_cached_public_client_auth_metadata("dogfood", "staging", metadata, cache_root=tmp_path)
-    cached = read_cached_public_client_auth_metadata("dogfood", "staging", cache_root=tmp_path)
+    write_cached_public_client_auth_metadata("dogfood.cloud-staging.union.ai", metadata, cache_root=tmp_path)
+    cached = read_cached_public_client_auth_metadata("dogfood.cloud-staging.union.ai", cache_root=tmp_path)
 
     assert cached == metadata
 
@@ -46,7 +46,12 @@ def test_public_client_auth_metadata_cache_write_failure_is_non_blocking(tmp_pat
     )
 
     with patch("flyte.remote._client.auth._public_client_cache.Path.open", side_effect=OSError("nope")):
-        assert write_cached_public_client_auth_metadata("dogfood", "staging", metadata, cache_root=tmp_path) is None
+        assert (
+            write_cached_public_client_auth_metadata(
+                "dogfood.cloud-staging.union.ai", metadata, cache_root=tmp_path
+            )
+            is None
+        )
 
 
 @pytest.mark.asyncio
@@ -64,4 +69,4 @@ async def test_fetch_public_client_auth_metadata_surfaces_remote_errors():
         patch("flyte.remote._client.auth._session._build_pyqwest_client", return_value=object()),
     ):
         with pytest.raises(RuntimeError, match="boom"):
-            await fetch_public_client_auth_metadata("dns:///dogfood.cloud-staging.union.ai")
+            await fetch_public_client_auth_metadata("dogfood.cloud-staging.union.ai")

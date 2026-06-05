@@ -6,11 +6,11 @@ import pydantic
 from flyteidl2.auth.auth_service_connect import AuthMetadataServiceClient
 from flyteidl2.auth.auth_service_pb2 import GetOAuth2MetadataRequest, GetPublicClientConfigRequest
 
-from flyte._utils.org_discovery import org_from_endpoint
 from flyte.remote._client.auth._public_client_cache import (
     CachedPublicClientAuthMetadata,
     get_public_client_auth_metadata_cache_root,
     read_cached_public_client_auth_metadata,
+    extract_public_client_auth_metadata_cache_key,
     write_cached_public_client_auth_metadata,
 )
 
@@ -100,8 +100,6 @@ class RemoteClientConfigStore(ClientConfigStore):
         endpoint: str,
         http_client=None,
         client_config_overrides: LocalClientConfigOverrides | None = None,
-        org: str | None = None,
-        domain: str | None = None,
         auth_type: AuthType | None = None,
         insecure: bool = False,
         cache_root: Path | None = None,
@@ -109,21 +107,14 @@ class RemoteClientConfigStore(ClientConfigStore):
         self._endpoint = endpoint
         self._client = AuthMetadataServiceClient(address=endpoint, http_client=http_client)
         self._client_config_overrides = client_config_overrides
-        self._org = org
-        self._domain = domain
         self._auth_type = auth_type or "Pkce"
         self._insecure = insecure
         self._cache_root = get_public_client_auth_metadata_cache_root(cache_root)
+        self._cache_endpoint = extract_public_client_auth_metadata_cache_key(endpoint)
 
-    def _resolve_org(self) -> str | None:
-        return self._org or org_from_endpoint(self._endpoint)
-
-    def _resolve_domain(self) -> str | None:
-        return self._domain
-
-    def _cached_overrides(self, org: str, domain: str) -> LocalClientConfigOverrides | None:
+    def _cached_overrides(self) -> LocalClientConfigOverrides | None:
         # attempt to read auth metadata from the local cache file
-        cached = read_cached_public_client_auth_metadata(org, domain, cache_root=self._cache_root)
+        cached = read_cached_public_client_auth_metadata(self._cache_endpoint, cache_root=self._cache_root)
         if cached is None:
             return None
         cached_overrides = LocalClientConfigOverrides(
@@ -142,44 +133,39 @@ class RemoteClientConfigStore(ClientConfigStore):
 
         oauth2_metadata = await self._client.get_o_auth2_metadata(GetOAuth2MetadataRequest())
 
-        org = self._resolve_org()
-        domain = self._resolve_domain()
-        if org and domain:
-            cached_overrides = self._cached_overrides(org, domain)
-            if cached_overrides and cached_overrides.has_required_public_client_fields():
-                redirect_uri = cached_overrides.redirect_uri
-                client_id = cached_overrides.client_id
-                scopes = cached_overrides.scopes
-                header_key = cached_overrides.header_key
-                audience = cached_overrides.audience
-                assert redirect_uri is not None
-                assert client_id is not None
-                assert scopes is not None
-                assert header_key is not None
-                return ClientConfig(
-                    token_endpoint=oauth2_metadata.token_endpoint,
-                    authorization_endpoint=oauth2_metadata.authorization_endpoint,
-                    redirect_uri=redirect_uri,
-                    client_id=client_id,
-                    scopes=scopes,
-                    header_key=header_key,
-                    device_authorization_endpoint=oauth2_metadata.device_authorization_endpoint,
-                    audience=audience,  # cached_overrides.audience,
-                )
+        cached_overrides = self._cached_overrides()
+        if cached_overrides and cached_overrides.has_required_public_client_fields():
+            redirect_uri = cached_overrides.redirect_uri
+            client_id = cached_overrides.client_id
+            scopes = cached_overrides.scopes
+            header_key = cached_overrides.header_key
+            audience = cached_overrides.audience
+            assert redirect_uri is not None
+            assert client_id is not None
+            assert scopes is not None
+            assert header_key is not None
+            return ClientConfig(
+                token_endpoint=oauth2_metadata.token_endpoint,
+                authorization_endpoint=oauth2_metadata.authorization_endpoint,
+                redirect_uri=redirect_uri,
+                client_id=client_id,
+                scopes=scopes,
+                header_key=header_key,
+                device_authorization_endpoint=oauth2_metadata.device_authorization_endpoint,
+                audience=audience,
+            )
 
         public_client_config = await self._client.get_public_client_config(GetPublicClientConfigRequest())
 
-        if org and domain:
-            write_cached_public_client_auth_metadata(
-                org,
-                domain,
-                CachedPublicClientAuthMetadata.from_public_client_config(
-                    public_client_config,
-                    auth_type=self._auth_type,
-                    insecure=self._insecure,
-                ),
-                cache_root=self._cache_root,
-            )
+        write_cached_public_client_auth_metadata(
+            self._cache_endpoint,
+            CachedPublicClientAuthMetadata.from_public_client_config(
+                public_client_config,
+                auth_type=self._auth_type,
+                insecure=self._insecure,
+            ),
+            cache_root=self._cache_root,
+        )
 
         return ClientConfig(
             token_endpoint=oauth2_metadata.token_endpoint,
