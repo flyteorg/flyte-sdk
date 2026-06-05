@@ -330,12 +330,19 @@ async def translate_app_env_to_idl(
     parameters = await _materialize_parameters_with_delayed_values(parameter_overrides or app_env.parameters)
     container = None
     pod = None
-    if app_env.pod_template:
-        if isinstance(app_env.pod_template, str):
+    # Resolve enable_fuse_mount by augmenting the user's pod_template (or
+    # building one from scratch) so the App pod gets /dev/fuse + SYS_ADMIN.
+    effective_pod_template = app_env.pod_template
+    if app_env.enable_fuse_mount and not isinstance(effective_pod_template, str):
+        from flyte._pod import pod_template_with_fuse_mount
+
+        effective_pod_template = pod_template_with_fuse_mount(effective_pod_template)
+    if effective_pod_template:
+        if isinstance(effective_pod_template, str):
             raise NotImplementedError("PodTemplate as str is not supported yet")
         pod = _get_k8s_pod(
             app_env,
-            app_env.pod_template,
+            effective_pod_template,
             serialization_context,
         )
     elif app_env.image:

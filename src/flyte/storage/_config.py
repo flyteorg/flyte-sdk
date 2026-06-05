@@ -204,11 +204,25 @@ class S3(Storage):
                         aws_config_file,
                     )
                 except Exception as e:
-                    logger.warning(
-                        "Unable to initialize S3 profile/config credential provider (%s). "
-                        "Falling back to default AWS credential resolution.",
-                        e,
-                    )
+                    if isinstance(e, ImportError):
+                        logger.warning(
+                            "AWS_PROFILE=%s and AWS_CONFIG_FILE=%s are set, but boto3 is not installed. "
+                            "flyte.storage uses obstore, which cannot resolve named / SSO / role-assumption "
+                            "AWS profiles on its own -- it needs boto3 to mint those credentials. Install it "
+                            "with `pip install boto3`. Falling back to the default AWS credential chain "
+                            "(env vars / IMDS), which will NOT use profile %r and will likely fail for "
+                            "profile-based auth.",
+                            aws_profile,
+                            aws_config_file,
+                            aws_profile,
+                        )
+                    else:
+                        logger.warning(
+                            "Unable to initialize the boto3-backed S3 credential provider for AWS_PROFILE=%r "
+                            "(%s). Falling back to the default AWS credential resolution chain.",
+                            aws_profile,
+                            e,
+                        )
 
         if config:
             kwargs["config"] = config

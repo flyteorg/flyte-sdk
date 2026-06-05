@@ -1,3 +1,4 @@
+import copy
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Dict, Optional
 
@@ -8,6 +9,11 @@ if TYPE_CHECKING:
 
 _PRIMARY_CONTAINER_NAME_FIELD = "primary_container_name"
 _PRIMARY_CONTAINER_DEFAULT_NAME = "primary"
+
+# Name used for the hostPath volume and its volumeMount when
+# ``enable_fuse_mount=True`` is set on an Environment.
+_FUSE_DEVICE_VOLUME_NAME = "fuse-device"
+_FUSE_DEVICE_PATH = "/dev/fuse"
 
 
 @dataclass(init=True, repr=True, eq=True, frozen=False)
@@ -31,3 +37,91 @@ class PodTemplate(object):
             pod_spec=ApiClient().sanitize_for_serialization(self.pod_spec),
             primary_container_name=self.primary_container_name,
         )
+
+
+def pod_template_with_fuse_mount(
+    pod_template: Optional[PodTemplate] = None,
+    *,
+    primary_container_name: str = _PRIMARY_CONTAINER_DEFAULT_NAME,
+) -> PodTemplate:
+    """Return a :class:`PodTemplate` augmented with everything a container
+    needs to perform an in-process FUSE mount.
+
+    Specifically, this:
+
+    * Adds a ``hostPath`` volume named ``fuse-device`` pointing at
+      ``/dev/fuse`` on the node.
+    * Mounts that volume into the primary container at ``/dev/fuse``.
+    * Sets the primary container's ``securityContext`` to ``privileged=True``
+      with ``CAP_SYS_ADMIN`` so the ``mount`` syscall is permitted.
+
+    If ``pod_template`` is provided, the returned template is a deep copy
+    with the FUSE bits *added* — existing volumes, mounts, security
+    context fields, sidecars, labels, and annotations are preserved.
+    Re-applying to an already-FUSE-enabled template is idempotent.
+
+    Used by the SDK at serialization time when a ``TaskEnvironment`` or
+    ``AppEnvironment`` has ``enable_fuse_mount=True``. Callers normally
+    set the flag instead of touching this helper directly; it's exposed
+    for advanced cases (custom serializers, manual K8sPod construction).
+    """
+    from kubernetes.client import (
+        V1Capabilities,
+        V1Container,
+        V1HostPathVolumeSource,
+        V1PodSpec,
+        V1SecurityContext,
+        V1Volume,
+        V1VolumeMount,
+    )
+
+    if pod_template is None:
+        pt = PodTemplate(
+            pod_spec=V1PodSpec(containers=[V1Container(name=primary_container_name)]),
+            primary_container_name=primary_container_name,
+        )
+    else:
+        pt = copy.deepcopy(pod_template)
+        if pt.pod_spec is None:
+            pt.pod_spec = V1PodSpec(containers=[V1Container(name=pt.primary_container_name)])
+
+    pod_spec = pt.pod_spec
+    assert pod_spec is not None  # set above
+
+    # Ensure the primary container exists; create a minimal one if not.
+    containers = list(pod_spec.containers or [])
+    primary: Optional[V1Container] = next((c for c in containers if c.name == pt.primary_container_name), None)
+    if primary is None:
+        primary = V1Container(name=pt.primary_container_name)
+        containers.append(primary)
+        pod_spec.containers = containers
+
+    # Volume + volumeMount for /dev/fuse — idempotent: skip if already present.
+    volumes = list(pod_spec.volumes or [])
+    if not any(getattr(v, "name", None) == _FUSE_DEVICE_VOLUME_NAME for v in volumes):
+        volumes.append(
+            V1Volume(
+                name=_FUSE_DEVICE_VOLUME_NAME,
+                host_path=V1HostPathVolumeSource(path=_FUSE_DEVICE_PATH, type="CharDevice"),
+            )
+        )
+        pod_spec.volumes = volumes
+
+    mounts = list(primary.volume_mounts or [])
+    if not any(getattr(m, "name", None) == _FUSE_DEVICE_VOLUME_NAME for m in mounts):
+        mounts.append(V1VolumeMount(name=_FUSE_DEVICE_VOLUME_NAME, mount_path=_FUSE_DEVICE_PATH))
+        primary.volume_mounts = mounts
+
+    # SecurityContext: privileged + CAP_SYS_ADMIN. Preserve any other
+    # security-context fields the caller set.
+    sc = primary.security_context or V1SecurityContext()
+    sc.privileged = True
+    caps = sc.capabilities or V1Capabilities()
+    existing_add = list(caps.add or [])
+    if "SYS_ADMIN" not in existing_add:
+        existing_add.append("SYS_ADMIN")
+    caps.add = existing_add
+    sc.capabilities = caps
+    primary.security_context = sc
+
+    return pt

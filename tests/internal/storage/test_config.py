@@ -232,6 +232,62 @@ class TestS3Config:
 
         assert "credential_provider" not in result
 
+    def test_get_fsspec_kwargs_missing_boto3_warns_to_install(self, monkeypatch):
+        import flyte.storage._config as config_mod
+
+        s3 = S3()
+        monkeypatch.setenv("AWS_PROFILE", "dev-profile")
+        monkeypatch.setenv("AWS_CONFIG_FILE", "/tmp/config")
+        monkeypatch.setattr(
+            S3,
+            "_build_s3_credential_provider_from_config_file",
+            lambda self, aws_profile, aws_config_file, region: (_ for _ in ()).throw(
+                ModuleNotFoundError("No module named 'boto3'")
+            ),
+        )
+        warnings: list[str] = []
+        monkeypatch.setattr(
+            config_mod.logger,
+            "warning",
+            lambda msg, *args: warnings.append(msg % args),
+        )
+
+        result = s3.get_fsspec_kwargs()
+
+        # Fallback behavior is preserved: profile auth is dropped, no raise.
+        assert "credential_provider" not in result
+        # The ImportError branch tells the user exactly what to install and why.
+        assert len(warnings) == 1
+        assert "boto3" in warnings[0]
+        assert "pip install boto3" in warnings[0]
+        assert "dev-profile" in warnings[0]
+
+    def test_get_fsspec_kwargs_non_import_failure_warns_generically(self, monkeypatch):
+        import flyte.storage._config as config_mod
+
+        s3 = S3()
+        monkeypatch.setenv("AWS_PROFILE", "dev-profile")
+        monkeypatch.setenv("AWS_CONFIG_FILE", "/tmp/config")
+        monkeypatch.setattr(
+            S3,
+            "_build_s3_credential_provider_from_config_file",
+            lambda self, aws_profile, aws_config_file, region: (_ for _ in ()).throw(ValueError("profile not found")),
+        )
+        warnings: list[str] = []
+        monkeypatch.setattr(
+            config_mod.logger,
+            "warning",
+            lambda msg, *args: warnings.append(msg % args),
+        )
+
+        result = s3.get_fsspec_kwargs()
+
+        assert "credential_provider" not in result
+        assert len(warnings) == 1
+        # Non-ImportError failures must not advise installing boto3.
+        assert "pip install boto3" not in warnings[0]
+        assert "dev-profile" in warnings[0]
+
 
 class TestGCSConfig:
     def test_get_fsspec_kwargs_default(self):
