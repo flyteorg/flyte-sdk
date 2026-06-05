@@ -96,6 +96,7 @@ class ActionTracker:
         self._children: dict[str, list[str]] = {}
         self._version: int = 0
         self._pending_events: dict[str, PendingEvent] = {}
+        self._resolved_events: dict[str, tuple[PendingEvent, Any]] = {}
 
     @property
     def version(self) -> int:
@@ -248,6 +249,9 @@ class ActionTracker:
             node = self._nodes.get(action_id)
             if node is None:
                 return
+            # Drop any pending event (e.g. on timeout/cancel) so the TUI stops
+            # rendering its input panel.
+            self._pending_events.pop(action_id, None)
             node.status = ActionStatus.FAILED
             if isinstance(error, Error):
                 node.error = error.err
@@ -312,7 +316,13 @@ class ActionTracker:
         with self._lock:
             pe = self._pending_events.pop(action_id, None)
             node = self._nodes.get(action_id)
+            if pe is not None:
+                # Keep resolved events around so the TUI can keep rendering the
+                # prompt and the submitted response after the event is signaled.
+                self._resolved_events[action_id] = (pe, value)
             if node is not None:
+                # Transient; the controller records completion (with the value as
+                # the action's output) right after it unblocks.
                 node.status = ActionStatus.RUNNING
             self._version += 1
         if pe is not None:
@@ -321,6 +331,10 @@ class ActionTracker:
     def get_pending_event(self, action_id: str) -> PendingEvent | None:
         with self._lock:
             return self._pending_events.get(action_id)
+
+    def get_resolved_event(self, action_id: str) -> tuple[PendingEvent, Any] | None:
+        with self._lock:
+            return self._resolved_events.get(action_id)
 
     def get_all_pending_events(self) -> list[PendingEvent]:
         with self._lock:

@@ -131,6 +131,14 @@ class ActionTreeWidget(Tree[str]):
             if action is not None:
                 tree_node.set_label(_label(action, children))
 
+    def focus_action(self, action_id: str) -> bool:
+        """Move the cursor to *action_id*'s tree node. Returns True on success."""
+        tree_node = self._node_map.get(action_id)
+        if tree_node is None:
+            return False
+        self.move_cursor(tree_node)
+        return True
+
     def _sync_node(
         self,
         action_id: str,
@@ -271,6 +279,44 @@ class EventInputPanel(Vertical):
         self.post_message(self.Submitted(self._pending.action_id, value))
 
 
+class EventResultPanel(Vertical):
+    """Read-only panel showing a resolved event's prompt and the submitted response."""
+
+    DEFAULT_CSS = """
+    EventResultPanel {
+        height: auto;
+        padding: 1;
+    }
+    EventResultPanel .event-prompt {
+        margin-bottom: 1;
+    }
+    EventResultPanel .event-description {
+        color: $text-muted;
+        margin-bottom: 1;
+    }
+    EventResultPanel .event-response {
+        color: $success;
+    }
+    """
+
+    def __init__(self, pending: PendingEvent, value: Any, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._pending = pending
+        self._value = value
+
+    def compose(self) -> ComposeResult:
+        pe = self._pending
+        if pe.description:
+            yield Static(pe.description, classes="event-description")
+
+        if pe.prompt_type == "markdown":
+            yield Markdown(pe.prompt, classes="event-prompt")
+        else:
+            yield Static(pe.prompt, classes="event-prompt")
+
+        yield Static(f"response: {self._value!r}", classes="event-response")
+
+
 class DetailPanel(VerticalScroll):
     """Right panel: separate boxes for task details, inputs, outputs.
 
@@ -283,7 +329,9 @@ class DetailPanel(VerticalScroll):
     def __init__(self, tracker: ActionTracker, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._tracker = tracker
-        self._current_event_action_id: str | None = None
+        # Identifies the panel currently mounted in the event box:
+        # "<action_id>|pending" or "<action_id>|resolved".
+        self._current_event_key: str | None = None
         self._selected_attempts_by_action: dict[str, int] = {}
 
     def compose(self) -> ComposeResult:
@@ -305,13 +353,28 @@ class DetailPanel(VerticalScroll):
     def refresh_detail(self) -> None:
         self._render_detail()
 
-    def _hide_event_box(self, event_box: _DetailBox) -> None:
-        """Remove any mounted EventInputPanel and hide the event box."""
-        event_box.display = False
-        if self._current_event_action_id is not None:
+    def _clear_event_box(self, event_box: _DetailBox) -> None:
+        """Remove any mounted event panel (interactive or read-only)."""
+        if self._current_event_key is not None:
             for child in event_box.query(EventInputPanel):
                 child.remove()
-            self._current_event_action_id = None
+            for child in event_box.query(EventResultPanel):
+                child.remove()
+            self._current_event_key = None
+
+    def _hide_event_box(self, event_box: _DetailBox) -> None:
+        """Remove any mounted event panel and hide the event box."""
+        event_box.display = False
+        self._clear_event_box(event_box)
+
+    def _show_event_panel(self, event_box: _DetailBox, key: str, panel_factory: Callable[[], Any], title: str) -> None:
+        """Mount *panel_factory()* into the event box unless *key* is already shown."""
+        if self._current_event_key != key:
+            self._clear_event_box(event_box)
+            event_box.border_title = title
+            event_box.mount(panel_factory())
+            self._current_event_key = key
+        event_box.display = True
 
     def _attempt_numbers_for_action(self, action_id: str) -> list[int]:
         node = self._tracker.get_action(action_id)
@@ -454,19 +517,16 @@ class DetailPanel(VerticalScroll):
         details.append(f"cache:      {cache_str}")
         task_box.update("\n".join(details))
 
-        # -- Event box (only when paused) --
+        # -- Event box (interactive while paused) --
         if node.status == ActionStatus.PAUSED:
             pe = self._tracker.get_pending_event(aid)
-            if pe is not None and self._current_event_action_id != aid:
-                # Remove any old event panel and mount a new one
-                self._hide_event_box(event_box)
-                event_box.border_title = f"Event: {pe.event_name}"
-                event_box.display = True
-                event_box.mount(EventInputPanel(pe))
-                self._current_event_action_id = aid
-            elif pe is not None:
-                # Already showing the right panel, just make sure it's visible
-                event_box.display = True
+            if pe is not None:
+                self._show_event_panel(
+                    event_box,
+                    f"{aid}|pending",
+                    lambda: EventInputPanel(pe),
+                    f"Event: {pe.event_name}",
+                )
             else:
                 self._hide_event_box(event_box)
             # Hide other detail boxes when paused
@@ -477,8 +537,18 @@ class DetailPanel(VerticalScroll):
             outputs_box.display = False
             return
 
-        # Not paused — hide event box
-        self._hide_event_box(event_box)
+        # -- Event box (read-only after the event was resolved) --
+        resolved = self._tracker.get_resolved_event(aid)
+        if resolved is not None:
+            pe, value = resolved
+            self._show_event_panel(
+                event_box,
+                f"{aid}|resolved",
+                lambda: EventResultPanel(pe, value),
+                f"Event: {pe.event_name} (signaled)",
+            )
+        else:
+            self._hide_event_box(event_box)
 
         # -- Report box (only when available) --
         if node.has_report and node.output_path:
@@ -640,6 +710,7 @@ class FlyteTUIApp(App[None]):
         self._tracker = tracker
         self._execute_fn = execute_fn
         self._last_version: int = -1
+        self._seen_pending_event_ids: set[str] = set()
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -682,6 +753,12 @@ class FlyteTUIApp(App[None]):
             tree = self.query_one("#action-tree", ActionTreeWidget)
             tree.refresh_from_tracker()
             detail = self.query_one("#detail-panel", DetailPanel)
+            # Jump to a newly pending event's sub-action so its input panel is shown.
+            for pe in self._tracker.get_all_pending_events():
+                if pe.action_id not in self._seen_pending_event_ids:
+                    self._seen_pending_event_ids.add(pe.action_id)
+                    if tree.focus_action(pe.action_id):
+                        detail.action_id = pe.action_id
             detail.refresh_detail()
 
     def on_tree_node_selected(self, event: Tree.NodeSelected[str]) -> None:

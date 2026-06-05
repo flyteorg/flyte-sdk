@@ -470,11 +470,17 @@ class LocalController(ControllerProtocol):
         tctx = ctx.data.task_context
         if tctx is None:
             raise flyte.errors.RuntimeSystemError("BadContext", "Task context not initialized")
-        return tctx.action.name
+        # Nest under the real running task (task_action), not a @trace pseudo-action.
+        action = tctx.task_action or tctx.action
+        return action.name
 
     async def wait_for_event(self, event: Any) -> Any:
         """
         Wait for an event to be signaled.
+
+        Each event is recorded as a *sub-action* of the waiting task: the prompt is its
+        input and the signaled value becomes its output, so resolved events stay visible
+        in the TUI tree (and the persisted run) after they are signaled.
 
         In TUI mode, records a pending event so the TUI can render an input panel and
         blocks until the user submits a value. Without TUI, falls back to rich console prompts.
@@ -489,9 +495,22 @@ class LocalController(ControllerProtocol):
 
         logger.info(f"Waiting for event: {event.name}")
 
-        action_id = self._get_current_action_id()
+        parent_action_id = self._get_current_action_id()
+        event_seq = self._sequencer.next_seq(event, parent_action_id)
+        event_action_id = f"{parent_action_id}-evt-{event.name}-{event_seq}"
+
+        # Record the event as a sub-action of the waiting task. Only set the parent
+        # when it is tracked (mirrors `submit`), so a top-level event becomes a root.
+        parent_id = parent_action_id if self._recorder.get_action(parent_action_id) is not None else None
+        self._recorder.record_start(
+            action_id=event_action_id,
+            task_name=event.name,
+            parent_id=parent_id,
+            inputs={"prompt": event.prompt},
+        )
+
         pending = self._recorder.record_event_waiting(
-            action_id=action_id,
+            action_id=event_action_id,
             event_name=event.name,
             prompt=event.prompt,
             prompt_type=event.prompt_type,
@@ -506,26 +525,33 @@ class LocalController(ControllerProtocol):
             loop = asyncio.get_event_loop()
             result = await loop.run_in_executor(None, pending.wait_for_result, timeout_seconds)
             if pending.timed_out:
-                raise flyte.errors.EventTimedoutError(
-                    f"Event '{event.name}' was not signaled within {timeout_seconds} seconds."
-                )
+                msg = f"Event '{event.name}' was not signaled within {timeout_seconds} seconds."
+                self._recorder.record_failure(action_id=event_action_id, error=msg)
+                raise flyte.errors.EventTimedoutError(msg)
             if result is None:
+                self._recorder.record_failure(
+                    action_id=event_action_id, error=f"Event '{event.name}' was cancelled (TUI quit)."
+                )
                 raise RuntimeError(f"Event '{event.name}' was cancelled (TUI quit).")
+            self._recorder.record_complete(action_id=event_action_id, outputs=result)
             return result
 
         # Non-TUI mode: fall back to rich console prompts
         if timeout_seconds is not None:
             loop = asyncio.get_event_loop()
             try:
-                return await asyncio.wait_for(
+                result = await asyncio.wait_for(
                     loop.run_in_executor(None, self._prompt_event_console, event),
                     timeout=timeout_seconds,
                 )
             except asyncio.TimeoutError:
-                raise flyte.errors.EventTimedoutError(
-                    f"Event '{event.name}' was not signaled within {timeout_seconds} seconds."
-                )
-        return self._prompt_event_console(event)
+                msg = f"Event '{event.name}' was not signaled within {timeout_seconds} seconds."
+                self._recorder.record_failure(action_id=event_action_id, error=msg)
+                raise flyte.errors.EventTimedoutError(msg)
+        else:
+            result = self._prompt_event_console(event)
+        self._recorder.record_complete(action_id=event_action_id, outputs=result)
+        return result
 
     @staticmethod
     def _prompt_event_console(event: Any) -> Any:
