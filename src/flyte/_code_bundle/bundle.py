@@ -22,7 +22,7 @@ from flyte._utils import AsyncLRUCache
 from flyte.errors import CodeBundleError
 from flyte.models import CodeBundle
 
-from ._ignore import GitIgnore, Ignore, StandardIgnore
+from ._ignore import FlyteIgnore, GitIgnore, Ignore, StandardIgnore
 from ._packaging import create_bundle, list_files_to_bundle, list_relative_files_to_bundle, print_ls_tree
 from ._utils import CopyFiles, hash_file
 
@@ -212,7 +212,10 @@ async def build_code_bundle(
     from flyte.remote import upload_file
 
     if not ignore:
-        ignore = (StandardIgnore, GitIgnore)
+        # FlyteIgnore applies .flyteignore patterns to *all* files (including git-tracked ones),
+        # so large tracked assets (e.g. git-lfs files) can be excluded from the bundle. GitIgnore
+        # alone only excludes git-untracked/ignored files, so it never catches tracked files.
+        ignore = (StandardIgnore, GitIgnore, FlyteIgnore)
 
     logger.debug(f"Finding files to bundle, ignoring as configured by: {ignore}")
     files, digest = list_files_to_bundle(
