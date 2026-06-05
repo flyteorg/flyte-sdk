@@ -884,6 +884,78 @@ async def test_ensure_buildx_builder_recreates_when_network_host_missing():
 
 
 @pytest.mark.asyncio
+async def test_ensure_buildx_builder_wraps_create_failure_as_image_build_error():
+    """When `docker buildx create` fails, the raw CalledProcessError should not bubble out.
+
+    Previously this leaked into Sentry as a RuntimeSystem/CalledProcessError crash report
+    (FLYTE-SDK-4R). It should be wrapped in an actionable ImageBuildError, which is filtered.
+    """
+    from flyte.errors import ImageBuildError
+
+    def mock_run(cmd, **kwargs):
+        result = subprocess.CompletedProcess(cmd, 0)
+        if cmd == ["docker", "buildx", "ls"]:
+            result.stdout = "default"
+            result.stderr = ""
+            return result
+        if "create" in cmd:
+            raise subprocess.CalledProcessError(returncode=1, cmd=cmd, stderr="ERROR: failed to find driver")
+        return result
+
+    with patch(
+        "flyte._internal.imagebuild.docker_builder.run_sync_with_loop", side_effect=lambda fn, *a, **kw: fn(*a, **kw)
+    ):
+        with patch("subprocess.run", side_effect=mock_run):
+            with pytest.raises(ImageBuildError, match="Failed to create docker buildx builder"):
+                await DockerImageBuilder._ensure_buildx_builder()
+
+
+@pytest.mark.asyncio
+async def test_ensure_buildx_builder_reuses_existing_on_already_exists():
+    """If `docker buildx create` fails because the builder already exists (e.g. a concurrent
+    build created it), it should be reused rather than raising."""
+
+    def mock_run(cmd, **kwargs):
+        result = subprocess.CompletedProcess(cmd, 0)
+        if cmd == ["docker", "buildx", "ls"]:
+            result.stdout = "default"
+            result.stderr = ""
+            return result
+        if "create" in cmd:
+            raise subprocess.CalledProcessError(
+                returncode=1,
+                cmd=cmd,
+                stderr=f'ERROR: existing instance for "{DockerImageBuilder._builder_name}" already exists',
+            )
+        return result
+
+    with patch(
+        "flyte._internal.imagebuild.docker_builder.run_sync_with_loop", side_effect=lambda fn, *a, **kw: fn(*a, **kw)
+    ):
+        with patch("subprocess.run", side_effect=mock_run):
+            # Should not raise.
+            await DockerImageBuilder._ensure_buildx_builder()
+
+
+@pytest.mark.asyncio
+async def test_ensure_buildx_builder_wraps_ls_failure_as_image_build_error():
+    """When `docker buildx ls` fails, surface an actionable ImageBuildError instead of a crash."""
+    from flyte.errors import ImageBuildError
+
+    def mock_run(cmd, **kwargs):
+        if cmd == ["docker", "buildx", "ls"]:
+            raise subprocess.CalledProcessError(returncode=1, cmd=cmd, stderr="Cannot connect to the Docker daemon")
+        return subprocess.CompletedProcess(cmd, 0)
+
+    with patch(
+        "flyte._internal.imagebuild.docker_builder.run_sync_with_loop", side_effect=lambda fn, *a, **kw: fn(*a, **kw)
+    ):
+        with patch("subprocess.run", side_effect=mock_run):
+            with pytest.raises(ImageBuildError, match="Failed to list docker buildx builders"):
+                await DockerImageBuilder._ensure_buildx_builder()
+
+
+@pytest.mark.asyncio
 async def test_build_image_uses_custom_builder_from_env(monkeypatch):
     """When FLYTE_DOCKER_BUILDKIT_BUILDER_NAME is set, _build_image should use it and skip _ensure_buildx_builder."""
     from flyte._internal.imagebuild import docker_builder as db
