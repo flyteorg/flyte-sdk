@@ -1522,9 +1522,7 @@ def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name:
             if property_val.get("anyOf"):
                 # For optional with dataclass / dict. Use the non-null variant (e.g. X | None -> X).
                 non_null_variants = [
-                    v
-                    for v in property_val["anyOf"]
-                    if not (isinstance(v, dict) and v.get("type") == "null")
+                    v for v in property_val["anyOf"] if not (isinstance(v, dict) and v.get("type") == "null")
                 ]
                 sub_schemea = non_null_variants[0] if non_null_variants else property_val["anyOf"][0]
                 # A dict-shaped variant (e.g. dict[str, str] | None) has additionalProperties and no
