@@ -884,6 +884,58 @@ async def test_ensure_buildx_builder_recreates_when_network_host_missing():
 
 
 @pytest.mark.asyncio
+async def test_ensure_buildx_builder_wraps_ls_called_process_error():
+    """
+    Regression for FLYTE-SDK-4R: a CalledProcessError from `docker buildx ls`
+    must be wrapped as ImageBuildError (a RuntimeUserError filtered by
+    flyte/_sentry.py:_is_user_error) so that local docker hiccups stop leaking
+    into Sentry as if they were SDK bugs.
+    """
+    from flyte.errors import ImageBuildError
+
+    def mock_run(cmd, **kwargs):
+        if cmd == ["docker", "buildx", "version"]:
+            return subprocess.CompletedProcess(cmd, 0)
+        if cmd == ["docker", "buildx", "ls"]:
+            raise subprocess.CalledProcessError(returncode=1, cmd=cmd, stderr="error: cannot connect to daemon")
+        return subprocess.CompletedProcess(cmd, 0)
+
+    with patch(
+        "flyte._internal.imagebuild.docker_builder.run_sync_with_loop", side_effect=lambda fn, *a, **kw: fn(*a, **kw)
+    ):
+        with patch("subprocess.run", side_effect=mock_run):
+            with pytest.raises(ImageBuildError, match="Failed to list docker buildx builders"):
+                await DockerImageBuilder._ensure_buildx_builder()
+
+
+@pytest.mark.asyncio
+async def test_ensure_buildx_builder_wraps_create_called_process_error():
+    """
+    Regression for FLYTE-SDK-4R: a CalledProcessError from `docker buildx
+    create --name flytex ...` (e.g. stale builder, daemon error) must be
+    wrapped as ImageBuildError so the user gets an actionable message and the
+    crash stops leaking into Sentry as an SDK bug.
+    """
+    from flyte.errors import ImageBuildError
+
+    def mock_run(cmd, **kwargs):
+        if cmd == ["docker", "buildx", "version"]:
+            return subprocess.CompletedProcess(cmd, 0)
+        if cmd == ["docker", "buildx", "ls"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="default", stderr="")
+        if len(cmd) >= 3 and cmd[:3] == ["docker", "buildx", "create"]:
+            raise subprocess.CalledProcessError(returncode=1, cmd=cmd, stderr='ERROR: existing instance for "flytex"')
+        return subprocess.CompletedProcess(cmd, 0)
+
+    with patch(
+        "flyte._internal.imagebuild.docker_builder.run_sync_with_loop", side_effect=lambda fn, *a, **kw: fn(*a, **kw)
+    ):
+        with patch("subprocess.run", side_effect=mock_run):
+            with pytest.raises(ImageBuildError, match="Failed to create the 'flytex' docker buildx builder"):
+                await DockerImageBuilder._ensure_buildx_builder()
+
+
+@pytest.mark.asyncio
 async def test_build_image_uses_custom_builder_from_env(monkeypatch):
     """When FLYTE_DOCKER_BUILDKIT_BUILDER_NAME is set, _build_image should use it and skip _ensure_buildx_builder."""
     from flyte._internal.imagebuild import docker_builder as db
