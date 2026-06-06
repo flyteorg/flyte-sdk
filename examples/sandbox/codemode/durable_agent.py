@@ -161,7 +161,7 @@ async def analyze(request: str) -> str:
     2. Executes the code in a Monty sandbox with durable task tools
     3. Renders an interactive HTML report with Chart.js visualizations
     """
-    result = await agent.run(request, [])
+    result = await agent.run.aio(request, [])
 
     # Build HTML report
     charts_html = "\n".join(result.charts)

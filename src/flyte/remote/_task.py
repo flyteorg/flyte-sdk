@@ -17,8 +17,13 @@ import flyte.errors
 from flyte._cache.cache import CacheBehavior
 from flyte._context import internal_ctx
 from flyte._initialize import ensure_client, get_client, get_init_config
-from flyte._internal.runtime.resources_serde import get_proto_resources
-from flyte._internal.runtime.task_serde import get_proto_retry_strategy, get_proto_timeout, get_security_context
+from flyte._internal.runtime.resources_serde import get_proto_extended_resources, get_proto_resources
+from flyte._internal.runtime.task_serde import (
+    get_proto_max_runtime,
+    get_proto_retry_strategy,
+    get_proto_timeout_strategy,
+    get_security_context,
+)
 from flyte._logging import logger
 from flyte.models import NativeInterface
 from flyte.syncify import syncify
@@ -367,12 +372,35 @@ class TaskDetails(ToJSONMixin):
             if resources:
                 template.container.resources.CopyFrom(get_proto_resources(resources))
 
+        if resources:
+            # Resource overrides must also carry the extended resources — the
+            # GPU/accelerator (device type -> nodeSelector/toleration) and
+            # shared memory — not just the container CPU/memory/GPU-count
+            # entries. Without this an override that requests a GPU (e.g.
+            # Resources(gpu="L40s:1")) drops the accelerator entirely, so the
+            # pod never schedules on a GPU node. Mirrors the build path
+            # (task_serde.get_proto_extended_resources). `resources` is a full
+            # replacement, so clear the field when the override has no extended
+            # resources rather than leaving a stale accelerator behind.
+            ext = get_proto_extended_resources(resources)
+            if ext is not None:
+                template.extended_resources.CopyFrom(ext)
+            else:
+                template.ClearField("extended_resources")
+
         md = template.metadata
         if retries:
             md.retries.CopyFrom(get_proto_retry_strategy(retries))
 
         if timeout:
-            md.timeout.CopyFrom(get_proto_timeout(timeout))
+            mr = get_proto_max_runtime(timeout)
+            if mr is not None:
+                md.timeout.CopyFrom(mr)
+            ts = get_proto_timeout_strategy(timeout)
+            if ts is not None:
+                md.timeouts.CopyFrom(ts)
+            else:
+                md.ClearField("timeouts")
 
         if cache:
             if cache.behavior == "disable":

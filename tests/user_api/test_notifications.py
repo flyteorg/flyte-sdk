@@ -18,8 +18,8 @@ class TestEmail:
 
         assert email.on_phase == (ActionPhase.FAILED,)
         assert email.recipients == ("oncall@example.com",)
-        assert "Task {task.name} {run.phase}" in email.subject
-        assert "{run.url}" in email.body
+        assert "Run {{.Run.Name}} {{.Phase}}" in email.subject
+        assert "{{.Run.Name}}" in email.body
 
     def test_email_custom_subject_and_body(self):
         """Test Email notification with custom subject and body"""
@@ -155,8 +155,8 @@ class TestSlack:
         )
 
         assert slack.message is not None
-        assert "{task.name}" in slack.message
-        assert "{run.url}" in slack.message
+        assert "{{.Run.Name}}" in slack.message
+        assert "{{.Phase}}" in slack.message
 
     def test_slack_multiple_phases(self):
         """Test Slack notification with multiple trigger phases"""
@@ -180,7 +180,7 @@ class TestTeams:
 
         assert teams.on_phase == (ActionPhase.SUCCEEDED,)
         assert teams.webhook_url == "https://outlook.office.com/webhook/YOUR_WEBHOOK_URL"
-        assert teams.title == "Task {task.name} {run.phase}"
+        assert teams.title == "Run {{.Run.Name}} {{.Phase}}"
         assert teams.message is not None  # Default message should be set
         assert teams.card is None
 
@@ -231,8 +231,8 @@ class TestTeams:
         )
 
         assert teams.message is not None
-        assert "{run.name}" in teams.message
-        assert "{run.url}" in teams.message
+        assert "{{.Run.Name}}" in teams.message
+        assert "{{.Phase}}" in teams.message
 
     def test_teams_multiple_phases(self):
         """Test Teams notification with multiple trigger phases"""
@@ -310,9 +310,9 @@ class TestWebhook:
         )
 
         assert webhook.body is not None
-        assert "{task.name}" in webhook.body.values()
-        assert "{run.name}" in webhook.body.values()
-        assert "{project}" in webhook.body.values()
+        assert "{{.Run.Name}}" in webhook.body.values()
+        assert "{{.Run.Project}}" in webhook.body.values()
+        assert "{{.Phase}}" in webhook.body.values()
 
     def test_webhook_no_url_error(self):
         """Test Webhook notification raises error without url"""

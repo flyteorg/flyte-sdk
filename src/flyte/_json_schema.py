@@ -82,6 +82,10 @@ def _struct_to_json_schema(lt: types_pb2.LiteralType) -> Dict[str, Any]:
             schema.pop("additionalProperties", None)
             if title is not None:
                 schema["dataclass"] = title
+            if "required" not in schema:
+                properties = schema.get("properties", {})
+                if properties:
+                    schema["required"] = [name for name, prop in properties.items() if "default" not in prop]
             return schema
 
     return {"type": "object"}

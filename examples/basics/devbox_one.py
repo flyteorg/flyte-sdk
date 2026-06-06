@@ -13,18 +13,20 @@ env = flyte.TaskEnvironment(
 @env.task
 async def say_hello(data: str, lt: List[int]) -> str:
     print(f"Hello, world! - {flyte.ctx().action}")
+    print(flyte.ctx().run_start_time)
     return f"Hello {data} {lt}"
 
 
 @env.task
 async def square(i: int = 3) -> int:
     print(flyte.ctx().action)
+    print(flyte.ctx().run_start_time)
     return i * i
 
 
 @env.task(entrypoint=True)
 async def say_hello_nested(data: str = "default string", n: int = 3) -> str:
-    print(f"Hello, nested! - {flyte.ctx().action}")
+    print(f"Hello, nested! - {flyte.ctx().action}, {flyte.ctx().run_start_time}")
     coros = []
     for i in range(n):
         coros.append(square(i=i))

@@ -7,6 +7,7 @@ on:
   pull_request:
     paths:
       - 'examples/integration_tests.py'
+      - '.github/workflows/integration_tests.yml'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
@@ -36,16 +37,16 @@ jobs:
           key: uv-${{ runner.os }}-${{ matrix.python-version }}
       - name: Install flyte & Build wheel
         run: |
-          export SETUPTOOLS_SCM_PRETEND_VERSION="9.9.9"
+          export SETUPTOOLS_SCM_PRETEND_VERSION="9.9.9.dev"
           make dist
       - name: Install plugins and example dependencies
         working-directory: plugins
         run: |
-          uv pip install --pre ./ray ./pytorch ./dask ./spark ./vllm ./sglang
-          uv pip install --pre "../[examples-test]"  # Install flyte with example test dependencies
+          uv pip install ./ray ./pytorch ./dask ./spark ./vllm ./sglang
+          uv pip install "../[examples-test]"  # Install flyte with example test dependencies
           uv pip list
       - name: Run integration tests
         env:
-          FLYTE_SDK_CI_TOKEN: "${{ secrets.FLYTE_SDK_CI_TOKEN }}"
+          FLYTE_API_KEY: "${{ secrets.FLYTE_API_KEY }}"
         run: |
           uv run python -m pytest -n 10 -v examples/integration_tests.py

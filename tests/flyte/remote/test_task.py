@@ -195,3 +195,37 @@ class TestLazyEntityIntegration:
         fetched_task = await integration_lazy_entity.fetch.aio()
         assert fetched_task is task_details
         assert fetched_task.name == "integration_task"
+
+
+class TestTaskDetailsOverrideResources:
+    """`TaskDetails.override(resources=...)` must carry both the container
+    resources AND the extended resources (GPU accelerator / shared memory)."""
+
+    def _container_task_details(self) -> TaskDetails:
+        from flyteidl2.task import task_definition_pb2
+
+        pb2 = task_definition_pb2.TaskDetails()
+        pb2.spec.task_template.container.image = "example:latest"
+        return TaskDetails(pb2)
+
+    def test_gpu_override_carries_accelerator(self):
+        td = self._container_task_details()
+        out = td.override(resources=flyte.Resources(cpu="4", memory="16Gi", gpu="L40s:1"))
+
+        tmpl = out.pb2.spec.task_template
+        # The accelerator (device -> nodeSelector/toleration) must be present,
+        # otherwise the pod never schedules on a GPU node.
+        assert tmpl.HasField("extended_resources")
+        assert tmpl.extended_resources.gpu_accelerator.device == "nvidia-l40s"
+        # The container still gets the cpu/memory/gpu-count entries.
+        from flyteidl2.core import tasks_pb2
+
+        names = {e.name for e in tmpl.container.resources.requests}
+        assert tasks_pb2.Resources.ResourceName.GPU in names
+
+    def test_cpu_only_override_clears_stale_accelerator(self):
+        td = self._container_task_details()
+        gpu = td.override(resources=flyte.Resources(cpu="4", memory="16Gi", gpu="L40s:1"))
+        # Re-overriding with no GPU must drop the accelerator (full replacement).
+        cpu_only = gpu.override(resources=flyte.Resources(cpu="2", memory="2Gi"))
+        assert not cpu_only.pb2.spec.task_template.HasField("extended_resources")

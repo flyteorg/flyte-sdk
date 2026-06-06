@@ -20,6 +20,7 @@ Test Execution Tiers:
 
 import logging
 import os
+import re
 from datetime import datetime, timedelta
 
 import pytest
@@ -45,9 +46,7 @@ def flyte_client():
     if os.getenv("GITHUB_ACTIONS", "") == "true":
         flyte.init(
             endpoint=os.getenv("FLYTE_ENDPOINT", "dns:///playground.canary.unionai.cloud"),
-            auth_type="ClientSecret",
-            client_id="flyte-sdk-ci",
-            client_credentials_secret=os.getenv("FLYTE_SDK_CI_TOKEN"),
+            api_key=os.getenv("FLYTE_API_KEY"),
             insecure=False,
             image_builder="remote",
             project=os.getenv("FLYTE_PROJECT", "flyte-sdk"),
@@ -69,6 +68,53 @@ def flyte_client():
 # =============================================================================
 # HELPER FUNCTIONS
 # =============================================================================
+
+# Matches Go-style template placeholders like {{ .nodeID }} that should have
+# been rendered server-side before the log link is returned to the client.
+_TEMPLATE_RE = re.compile(r"{{.*?}}")
+
+
+def _verify_log_links(detail, test_name: str):
+    """
+    Verify that the task log links returned for a completed action are valid.
+
+    Checks the most recent attempt of the action and asserts that every log
+    entry:
+      - has a non-empty name and uri
+      - contains no unrendered template placeholders (e.g. ``{{ .nodeID }}``)
+        in either the name or the uri
+      - has a uri that looks like a real link (absolute URL or path)
+
+    Args:
+        detail: The ActionDetails for the completed action.
+        test_name: Name of the test for logging/assertion messages.
+    """
+    attempts = detail.pb2.attempts
+    if not attempts:
+        return
+
+    # Some tasks (e.g. quick local-style tasks) may not surface any log links;
+    # only validate the format of the links that are present.
+    log_info = attempts[-1].log_info
+    if not log_info:
+        print("  No log links to verify")
+        return
+
+    for log in log_info:
+        print(f"  Log link: {log.name}: {log.uri}")
+
+        assert log.name, f"[{test_name}] log link is missing a name: {log}"
+        assert log.uri, f"[{test_name}] log link '{log.name}' is missing a uri"
+
+        for field_name, value in (("name", log.name), ("uri", log.uri)):
+            match = _TEMPLATE_RE.search(value)
+            assert match is None, (
+                f"[{test_name}] log link '{log.name}' has an unrendered template in its {field_name}: {value!r}"
+            )
+
+        assert log.uri.startswith(("http://", "https://", "/")), (
+            f"[{test_name}] log link '{log.name}' has an unexpected uri format: {log.uri!r}"
+        )
 
 
 async def _run_and_wait(task_fn, test_name: str, **kwargs):
@@ -93,8 +139,9 @@ async def _run_and_wait(task_fn, test_name: str, **kwargs):
     detail = await run.action.details()
     if detail.error_info:
         raise RuntimeError(f"Run failed with error: {detail.error_info.message}")
-    else:
-        print("  Completed successfully\n")
+
+    _verify_log_links(detail, test_name)
+    print("  Completed successfully\n")
 
 
 async def _deploy_and_verify(env_or_app, test_name: str):

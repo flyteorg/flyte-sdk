@@ -297,7 +297,7 @@ impl Action {
             realized_outputs_uri: Some(outputs_uri),
             phase: ActionPhase::Succeeded.into(),
             err: None,
-            started: true,
+            started: false,
             retries: 0,
             client_err: None,
             cache_key: None,

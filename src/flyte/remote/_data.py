@@ -57,6 +57,25 @@ def hash_file(file_path: typing.Union[os.PathLike, str]) -> Tuple[bytes, str, in
     return h.digest(), h.hexdigest(), size
 
 
+def _parse_retry_after(value: typing.Optional[str], cap_sec: float) -> typing.Optional[float]:
+    """
+    Parse a Retry-After header value in integer-seconds form.
+
+    Returns the parsed (and capped) sleep duration in seconds, or None if the
+    value is missing or in HTTP-date form (which we don't honor — callers
+    should fall back to exponential backoff).
+    """
+    if value is None:
+        return None
+    try:
+        seconds = float(int(value.strip()))
+    except (ValueError, AttributeError):
+        return None
+    if seconds < 0:
+        return None
+    return min(seconds, cap_sec)
+
+
 async def _upload_with_retry(
     fp: Path,
     signed_url: str,
@@ -64,13 +83,19 @@ async def _upload_with_retry(
     verify: bool,
     max_retries: int = 3,
     min_backoff_sec: float = 0.5,
-    max_backoff_sec: float = 10.0,
+    max_backoff_sec: float = 30.0,
+    retry_after_cap_sec: float = 60.0,
 ):
     """
     Upload file to signed URL with exponential backoff retry.
 
     Retries on transient network errors and 5xx/429/408 HTTP errors.
     Does not retry on 4xx client errors (except 408/429).
+
+    When the response is 429 or 503 and carries a ``Retry-After`` header in
+    integer-seconds form, the next backoff honors that value (clamped to
+    ``retry_after_cap_sec``). HTTP-date form is not parsed; in that case we
+    fall back to exponential backoff.
 
     Args:
         fp: Path to file to upload
@@ -79,7 +104,9 @@ async def _upload_with_retry(
         verify: Whether to verify SSL certificates
         max_retries: Maximum retry attempts (default: 3)
         min_backoff_sec: Initial backoff delay (default: 0.5)
-        max_backoff_sec: Maximum backoff delay (default: 10.0)
+        max_backoff_sec: Maximum exponential backoff delay (default: 30.0)
+        retry_after_cap_sec: Upper bound for any honored Retry-After value
+            (default: 60.0)
 
     Raises:
         RuntimeSystemError: If upload fails after all retries
@@ -88,8 +115,10 @@ async def _upload_with_retry(
 
     retry_attempt = 0
     last_error: str | Exception | None = None
+    next_backoff_override: typing.Optional[float] = None
 
     while retry_attempt <= max_retries:
+        next_backoff_override = None
         try:
             async with aiofiles.open(str(fp), "rb") as file:
                 async with httpx.AsyncClient(verify=verify, timeout=_UPLOAD_TIMEOUT) as aclient:
@@ -110,6 +139,11 @@ async def _upload_with_retry(
                                 "UploadFailed",
                                 f"Failed to upload {fp} after {max_retries} retries: {last_error}",
                             )
+                        # Honor Retry-After for rate-limit / overload signals.
+                        if put_resp.status_code in (429, 503):
+                            next_backoff_override = _parse_retry_after(
+                                put_resp.headers.get("Retry-After"), retry_after_cap_sec
+                            )
                     else:
                         # Non-retryable HTTP error
                         raise RuntimeSystemError(
@@ -119,17 +153,22 @@ async def _upload_with_retry(
         except RuntimeSystemError:
             raise
         except (httpx.TimeoutException, httpx.NetworkError, OSError) as e:
-            last_error = e
+            # Some httpx/httpcore errors (e.g. ReadError) carry an empty str(e),
+            # so include the exception type to keep the message actionable.
+            last_error = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
             if retry_attempt >= max_retries:
                 raise RuntimeSystemError(
                     "UploadFailed",
-                    f"Failed to upload {fp} after {max_retries} retries: {e}",
+                    f"Failed to upload {fp} after {max_retries} retries: {last_error}",
                 ) from e
 
         # Backoff and retry
         retry_attempt += 1
         if retry_attempt <= max_retries:
-            backoff_delay = min(min_backoff_sec * (2 ** (retry_attempt - 1)), max_backoff_sec)
+            if next_backoff_override is not None:
+                backoff_delay = next_backoff_override
+            else:
+                backoff_delay = min(min_backoff_sec * (2 ** (retry_attempt - 1)), max_backoff_sec)
             logger.warning(
                 f"Upload failed for {fp.name}, backing off for {backoff_delay:.2f}s "
                 f"[retry {retry_attempt}/{max_retries}]: {last_error}"
@@ -171,21 +210,39 @@ async def _upload_single_file(
                 add_content_md5_metadata=True,
             )
         )
-    except ConnectError as e:
-        if e.code == Code.NOT_FOUND:
-            raise RuntimeSystemError(
-                "NotFound", f"Failed to get signed url for {fp}, please check your project and domain: {e.message}"
-            )
-        elif e.code == Code.PERMISSION_DENIED:
-            raise RuntimeSystemError(
-                "PermissionDenied", f"Failed to get signed url for {fp}, please check your permissions: {e.message}"
-            )
-        elif e.code == Code.UNAVAILABLE:
-            raise InitializationError("EndpointUnavailable", "user", "Service is unavailable.")
-        else:
-            raise RuntimeSystemError(e.code.value, f"Failed to get signed url for {fp}: {e.message}")
     except Exception as e:
-        raise RuntimeSystemError(type(e).__name__, f"Failed to get signed url for {fp}.") from e
+        target = f"org='{cfg.org or ''}', project='{cfg.project}', domain='{cfg.domain}'"
+        # The ConnectError from create_upload_location can be wrapped by an upstream
+        # RuntimeError (e.g. SelectCluster failures in controlplane._select_and_build),
+        # so walk the cause chain to find the underlying gRPC code.
+        connect_err: ConnectError | None = None
+        cur: BaseException | None = e
+        while cur is not None:
+            if isinstance(cur, ConnectError):
+                connect_err = cur
+                break
+            cur = cur.__cause__ or cur.__context__
+        if connect_err is not None:
+            if connect_err.code == Code.NOT_FOUND:
+                raise RuntimeSystemError(
+                    "NotFound",
+                    f"Upload failed for {fp}: {target} not found. "
+                    f"Check your project/domain/org in config.yaml. Details: {connect_err.message}",
+                ) from e
+            elif connect_err.code == Code.PERMISSION_DENIED:
+                raise RuntimeSystemError(
+                    "PermissionDenied",
+                    f"Upload failed for {fp}: permission denied for {target}. "
+                    f"Check that the project/domain/org in config.yaml exists and that you have access. "
+                    f"Details: {connect_err.message}",
+                ) from e
+            elif connect_err.code == Code.UNAVAILABLE:
+                raise InitializationError("EndpointUnavailable", "user", "Service is unavailable.") from e
+            else:
+                raise RuntimeSystemError(
+                    connect_err.code.value, f"Upload failed for {fp} ({target}): {connect_err.message}"
+                ) from e
+        raise RuntimeSystemError(type(e).__name__, f"Upload failed for {fp} ({target}): {e}") from e
     logger.debug(f"Uploading to [link={resp.signed_url}]signed url[/link] for [link=file://{fp}]{fp}[/link]")
     extra_headers = get_extra_headers_for_protocol(resp.native_url)
     extra_headers.update(resp.headers)

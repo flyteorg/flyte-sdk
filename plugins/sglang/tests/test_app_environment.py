@@ -40,7 +40,10 @@ def test_basic_init_with_model_hf_path():
     assert app.model_id == "test-model"
     assert app.port.port == 8080
     assert app.type == "SGLang"
+    assert app.stream_model is True
     assert app.image == DEFAULT_SGLANG_IMAGE
+    # Hugging Face path: no Flyte blob streaming without model_path (matches sglang-fserve guards).
+    assert app.env_vars["FLYTE_MODEL_LOADER_STREAM_SAFETENSORS"] == "false"
     # When using model_hf_path, no parameters should be created
     assert app.parameters == []
     # The model mount path should be set to the HF path
@@ -181,6 +184,9 @@ def test_model_hf_path_no_inputs():
 
     # No parameters should be created for HF path
     assert app.parameters == []
+
+    # Streaming env off when there is no remote model_path
+    assert app.env_vars["FLYTE_MODEL_LOADER_STREAM_SAFETENSORS"] == "false"
 
     # Mount path should be set to the HF path
     assert app.env_vars["FLYTE_MODEL_LOADER_LOCAL_MODEL_PATH"] == "meta-llama/Llama-2-7b"

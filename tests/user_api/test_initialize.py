@@ -17,6 +17,7 @@ from flyte._initialize import (
     init_in_cluster,
     is_initialized,
     replace_client,
+    require_project_and_domain,
     requires_initialization,
     requires_storage,
 )
@@ -526,6 +527,42 @@ class TestDecorators:
             test_func()
 
         assert "test_func" in str(exc_info.value)
+
+    def test_require_project_and_domain_raises_initialization_error_when_project_missing(self):
+        """Missing project must raise InitializationError, not ValueError.
+
+        InitializationError is filtered from Sentry as a user-facing error; a raw
+        ValueError leaks into Sentry as an unhandled SDK crash (FLYTE-SDK-35).
+        """
+        test_config = _InitConfig(root_dir=Path("/test"), project=None, domain="dev")
+        init_module._init_config = test_config
+
+        @require_project_and_domain
+        def test_func():
+            return "success"
+
+        with pytest.raises(InitializationError) as exc_info:
+            test_func()
+
+        assert "Project must be provided" in str(exc_info.value)
+        assert exc_info.value.code == "ProjectNotConfigured"
+        assert exc_info.value.kind == "user"
+
+    def test_require_project_and_domain_raises_initialization_error_when_domain_missing(self):
+        """Missing domain must raise InitializationError, not ValueError."""
+        test_config = _InitConfig(root_dir=Path("/test"), project="my-project", domain=None)
+        init_module._init_config = test_config
+
+        @require_project_and_domain
+        def test_func():
+            return "success"
+
+        with pytest.raises(InitializationError) as exc_info:
+            test_func()
+
+        assert "Domain must be provided" in str(exc_info.value)
+        assert exc_info.value.code == "DomainNotConfigured"
+        assert exc_info.value.kind == "user"
 
 
 class TestInitFunction:

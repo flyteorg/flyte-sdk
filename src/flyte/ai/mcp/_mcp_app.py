@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import inspect
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
@@ -17,6 +16,7 @@ if TYPE_CHECKING:
     import uvicorn
     from mcp.server.fastmcp import FastMCP
     from starlette.applications import Starlette
+    from starlette.middleware import Middleware
 
 
 @dataclass(kw_only=True, repr=True)
@@ -43,7 +43,6 @@ class MCPAppEnvironment(flyte.app.AppEnvironment):
     uvicorn_config: uvicorn.Config | None = None
 
     _starlette_app: Starlette | None = field(init=False, default=None)
-    _caller_frame: inspect.FrameInfo | None = field(init=False, default=None)
 
     def __post_init__(self):
         if getattr(self, "image", None) in (None, "auto"):
@@ -58,12 +57,6 @@ class MCPAppEnvironment(flyte.app.AppEnvironment):
 
         if not isinstance(self.mcp_mount_path, str) or not self.mcp_mount_path.startswith("/"):
             raise ValueError("mcp_mount_path must be an absolute path starting with '/'.")
-
-        frame = inspect.currentframe()
-        if frame and frame.f_back:
-            caller_frame = frame.f_back
-            if caller_frame and caller_frame.f_back:
-                self._caller_frame = inspect.getframeinfo(caller_frame.f_back)
 
         self._starlette_app = self._create_starlette_app()
 
@@ -85,6 +78,22 @@ class MCPAppEnvironment(flyte.app.AppEnvironment):
     def _mcp_server(self) -> FastMCP:
         """Alias for :attr:`mcp` (matches historical attribute name)."""
         return self.mcp
+
+    def _starlette_middleware(self) -> list[Middleware]:
+        """Return Starlette middleware to install on the app.
+
+        Subclasses may override to inject middleware (e.g. authentication).
+        Defaults to an empty list.
+        """
+        return []
+
+    async def _starlette_lifespan_startup(self) -> None:
+        """Hook invoked during Starlette lifespan startup, before requests are served.
+
+        Subclasses may override to perform async startup (e.g. ``flyte.init_passthrough``).
+        Defaults to a no-op.
+        """
+        return None
 
     def _create_starlette_app(self) -> Starlette:
         try:
@@ -119,10 +128,11 @@ class MCPAppEnvironment(flyte.app.AppEnvironment):
 
         @asynccontextmanager
         async def lifespan(_app: Starlette):
+            await self._starlette_lifespan_startup()
             async with mcp_asgi.router.lifespan_context(mcp_asgi):
                 yield
 
-        return Starlette(routes=routes, lifespan=lifespan)
+        return Starlette(routes=routes, lifespan=lifespan, middleware=self._starlette_middleware())
 
     async def _starlette_app_server(self):
         try:

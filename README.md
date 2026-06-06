@@ -25,6 +25,8 @@ pip install flyte
 
 ## Example
 
+Create a file called `flyte_intro.py` with the following content:
+
 ```python
 import asyncio
 import flyte
@@ -34,21 +36,14 @@ env = flyte.TaskEnvironment(
     image=flyte.Image.from_debian_base(python_version=(3, 12)),
 )
 
-@env.task
-def calculate(x: int) -> int:
-    return x * 2 + 5
+@env.task(retries=3, cache="auto")  # 👈 add retries and caching
+async def predict(x: int) -> int:
+    return 2 * x + 5
 
 @env.task
-async def main(numbers: list[int]) -> float:
-    results = await asyncio.gather(*[
-        calculate.aio(num) for num in numbers
-    ])
-    return sum(results) / len(results)
-
-if __name__ == "__main__":
-    flyte.init()
-    run = flyte.run(main, numbers=list(range(10)))
-    print(f"Result: {run.result}")
+async def main(data: list[int]) -> float:
+    xs = await asyncio.gather(*(predict(x) for x in data))
+    return sum(xs) / len(xs)
 ```
 
 <table>
@@ -57,19 +52,41 @@ if __name__ == "__main__":
 <td>
 
 ```bash
-python hello.py
+python flyte_intro.py
 ```
 
 </td>
 <td>
 
 ```bash
-flyte run hello.py main --numbers '[1,2,3]'
+flyte run flyte_intro.py main --data '[1,2,3]'
 ```
 
 </td>
 </tr>
 </table>
+
+<details>
+
+<summary>ℹ️ Synchronous Python</summary>
+
+<br>
+
+Flyte 2 also supports synchronous python, although async is recommended for
+more control over concurrency and parallelism.
+
+```python
+@env.task
+def predict(x: int) -> int:
+    return 2 * x + 5
+
+@env.task
+def main(data: list[int]) -> float:
+    xs = list(flyte.map(predict, data))
+    return sum(xs) / len(xs)
+```
+
+</details>
 
 ## Serve a Model
 
@@ -125,16 +142,71 @@ Install the TUI for a rich local development experience:
 pip install flyte[tui]
 ```
 
-[![Watch the local development experience](https://img.youtube.com/vi/lsfy-7DbbRM/maxresdefault.jpg)](https://www.youtube.com/watch?v=lsfy-7DbbRM)
+Run `flyte_intro.py` on the TUI:
 
-Flyte 2 is licensed under the [Apache 2.0 License](LICENSE).
+```bash
+flyte run --tui --local flyte_intro.py main --data '[1,2,3]'
+```
+
+<img src="static/flyte-tui.gif" alt="Flyte TUI">
+
+### Flyte Devbox
+
+Flyte Devbox is a docker- and k3s-based local development environment for Flyte.
+It allows you to run Flyte workflows and services locally.
+
+```bash
+flyte start devbox
+```
+
+Create the configuration file for the devbox:
+
+```bash
+flyte create config \
+    --endpoint localhost:30080 \
+    --project flytesnacks \
+    --domain development \
+    --builder local \
+    --insecure
+```
+
+Run on the devbox:
+
+```bash
+flyte run flyte_intro.py main --data '[1,2,3]'
+```
+
+<img src="static/flyte-start-devbox.png" alt="Flyte Start Devbox">
+
+<img src="static/flyte-hello-world.gif" alt="Flyte Hello World">
 
 ## Rust Controller (experimental)
+
+<details>
+
+<summary>Developer Guide</summary>
+
+<br>
 
 The Rust controller is an alternative implementation of the remote controller written in Rust and exposed
 to Python via maturin / pyo3. Distributed as a separate `flyte_controller_base` wheel so the main SDK does
 not need to switch its build toolchain to rust/maturin. Keep important dependencies (notably `flyteidl2`)
 in lockstep between `pyproject.toml`, `rs_controller/pyproject.toml`, and `rs_controller/Cargo.toml`.
+
+### Installing the Rust controller
+
+
+`flyte_controller_base` is an **optional** dependency — `pip install flyte` does not pull it in
+automatically. The default Flyte task image (as of #1083) bundles the Rust controller, so tasks
+running on the default image work out of the box. You only need the extra when:
+
+- running locally (e.g. `flyte run --local examples/basics/hello_v2.py`), or
+- bringing your own task image.
+
+```bash
+pip install flyte[rust-controller]
+```
+
 
 ### Running with the Rust controller
 
@@ -147,11 +219,8 @@ _F_USE_RUST_CONTROLLER=1 python examples/basics/hello_v2.py
 The driver propagates this env var to all sub-task pods, so both the driver and child actions use the
 Rust controller for that run.
 
-> **v1 limitations.** The Rust controller currently supports only the legacy
-> QueueService + StateService path. Do **not** combine `_F_USE_RUST_CONTROLLER=1` with
-> `_U_USE_ACTIONS=1` until ActionsService support lands. Other gaps tracked as follow-ups:
-> abort RPC on cancel, trace-action enqueue, `Code.ABORTED` fast-fail, tunable retries / QPS,
-> graceful `stop()`. See PR #675.
+> The Rust controller is currently under rapid development and contains gaps: abort RPC on cancel,
+> `Code.ABORTED` fast-fail, tunable retries / QPS, graceful `stop()`. See PR #675.
 
 > Dev iteration requires the local image builder. The `flyte_controller_base` wheel is not
 > on PyPI until release, and the remote image builder installs all wheels in a layer at once,
@@ -231,6 +300,8 @@ no-default-features = true
 features = ["extension-module"]
 ```
 
+</details>
+
 ## Learn More
 
 - **[Live Demo](https://flyte2intro.apps.demo.hosted.unionai.cloud/)** — Try Flyte 2 in your browser
@@ -245,4 +316,4 @@ features = ["extension-module"]
 
 ## License
 
-Apache 2.0 — see [LICENSE](LICENSE).
+Flyte 2 is licensed under the [Apache 2.0 License](LICENSE).

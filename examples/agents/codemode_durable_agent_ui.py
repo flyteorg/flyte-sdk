@@ -5,7 +5,10 @@ but kept in a single file: tools, agent, and UI environment.
 
 Key idea: define tools as ``@task_env.task`` so Monty sandbox calls dispatch as
 durable Flyte tasks. `CodeModeAgent` introspects ``TaskTemplate.func`` for
-prompt signatures + docstrings, so the prompt remains readable.
+prompt signatures + docstrings, so the prompt remains readable. The task
+entrypoint uses ``await agent.run.aio(...)`` because ``agent.run`` is
+synchronous by default; the chat UI calls ``run.aio`` automatically when
+routing requests through the parent task.
 
 `AgentChatAppEnvironment(..., passthrough_auth=True)` forwards gateway
 credentials so nested Flyte calls (durable tools) can execute.
@@ -32,7 +35,6 @@ task_env = flyte.TaskEnvironment(
         flyte.Image.from_debian_base()
         .with_apt_packages("git")
         .with_pip_packages("httpx", "pydantic-monty", "litellm", "unionai-reuse")
-        .with_commands(["uv pip install git+https://www.github.com/flyteorg/flyte-sdk.git@4426c19e"])
     ),
     resources=flyte.Resources(cpu=2, memory="1Gi"),
     # reusable=flyte.ReusePolicy(replicas=1, concurrency=10),
@@ -237,7 +239,7 @@ agent = CodeModeAgent(
 @task_env.task(report=True)
 async def codemode_agent_task_entrypoint(message: str, history: list[dict[str, str]]) -> dict[str, object]:
     """Entrypoint for the durable CodeModeAgent analysis inside a Flyte task."""
-    result = await agent.run(message, history=history)
+    result = await agent.run.aio(message, history=history)
     return {
         "code": result.code,
         "charts": result.charts,

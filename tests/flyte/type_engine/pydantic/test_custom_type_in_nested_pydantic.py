@@ -5,7 +5,6 @@ schema_match) is nested inside a Pydantic BaseModel, guess_python_type correctly
 reconstructs the custom type instead of building a generic dataclass.
 """
 
-import dataclasses
 import typing
 
 import pytest
@@ -118,7 +117,7 @@ def test_coord_in_model_guess_type():
     """guess_python_type should reconstruct coord as Coordinate, not a generic dataclass."""
     lit = TypeEngine.to_literal_type(ModelWithCoord)
     guessed = TypeEngine.guess_python_type(lit)
-    assert dataclasses.is_dataclass(guessed)
+    assert issubclass(guessed, BaseModel)
 
     hints = typing.get_type_hints(guessed)
     assert "coord" in hints
@@ -129,7 +128,7 @@ def test_list_of_coords_guess_type():
     """guess_python_type should reconstruct List[Coordinate] with Coordinate as inner type."""
     lit = TypeEngine.to_literal_type(ModelWithListOfCoords)
     guessed = TypeEngine.guess_python_type(lit)
-    assert dataclasses.is_dataclass(guessed)
+    assert issubclass(guessed, BaseModel)
 
     hints = typing.get_type_hints(guessed)
     coords_type = hints["coords"]
@@ -142,7 +141,7 @@ def test_dict_of_coords_guess_type():
     """guess_python_type should reconstruct Dict[str, Coordinate] with Coordinate as value type."""
     lit = TypeEngine.to_literal_type(ModelWithDictOfCoords)
     guessed = TypeEngine.guess_python_type(lit)
-    assert dataclasses.is_dataclass(guessed)
+    assert issubclass(guessed, BaseModel)
 
     hints = typing.get_type_hints(guessed)
     map_type = hints["coord_map"]
@@ -156,7 +155,7 @@ def test_nested_list_of_coords_guess_type():
     """guess_python_type should reconstruct List[List[Coordinate]]."""
     lit = TypeEngine.to_literal_type(ModelWithNestedListOfCoords)
     guessed = TypeEngine.guess_python_type(lit)
-    assert dataclasses.is_dataclass(guessed)
+    assert issubclass(guessed, BaseModel)
 
     hints = typing.get_type_hints(guessed)
     nested_type = hints["nested"]
@@ -173,7 +172,7 @@ def test_mixed_model_guess_type():
     """guess_python_type should reconstruct a model mixing custom type, File, and Dir."""
     lit = TypeEngine.to_literal_type(ModelWithMixed)
     guessed = TypeEngine.guess_python_type(lit)
-    assert dataclasses.is_dataclass(guessed)
+    assert issubclass(guessed, BaseModel)
 
     hints = typing.get_type_hints(guessed)
 

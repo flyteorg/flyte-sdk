@@ -1,7 +1,8 @@
 import asyncio
+import os
 import socket
 import typing
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlparse
 
@@ -18,6 +19,9 @@ from ._authenticators.factory import (
     get_async_proxy_authenticator,
 )
 
+_USE_PYQWEST_DNS_RESOLVER_ENV = "_FLYTE_USE_PYQWEST_DNS_RESOLVER"
+_TRUE_ENV_VALUES = frozenset({"1", "true", "yes", "on"})
+
 
 @dataclass(frozen=True)
 class SessionConfig:
@@ -27,6 +31,10 @@ class SessionConfig:
     interceptors: tuple
     http_client: Any
     api_key: typing.Optional[str] = None
+    # Capture the auth-related inputs to forward to `create_session_config`.
+    # This is used to rebuild a `SessionConfig` for a per-cluster endpoint
+    # without losing the configured auth mode.
+    auth_kwargs: typing.Mapping[str, Any] = field(default_factory=dict)
 
     def connect_kwargs(self) -> dict[str, Any]:
         return {"address": self.endpoint, "interceptors": self.interceptors, "http_client": self.http_client}
@@ -142,8 +150,13 @@ async def _resolve_tls_ca_cert(
     return None
 
 
+def _use_system_dns() -> bool:
+    return os.environ.get(_USE_PYQWEST_DNS_RESOLVER_ENV, "").lower() not in _TRUE_ENV_VALUES
+
+
 def _build_pyqwest_client(tls_ca_cert: bytes | None = None) -> pyqwest.Client:
     """Build a pyqwest Client with sensible transport defaults."""
+    use_system_dns = _use_system_dns()
     transport = pyqwest.HTTPTransport(
         tls_ca_cert=tls_ca_cert,
         timeout=None,
@@ -151,6 +164,11 @@ def _build_pyqwest_client(tls_ca_cert: bytes | None = None) -> pyqwest.Client:
         read_timeout=None,
         pool_idle_timeout=90.0,
         tcp_keepalive_interval=30.0,  # was grpc.keepalive_time_ms = 30000
+        # Use the OS resolver by default so Flyte matches curl/browser behavior
+        # on VPNs, split-DNS setups, captive portals, and broken IPv6 networks.
+        # Server deployments can set _FLYTE_USE_PYQWEST_DNS_RESOLVER=true to opt
+        # back into pyqwest's bundled resolver for app-owned DNS behavior.
+        use_system_dns=use_system_dns,
     )
     return pyqwest.Client(transport=transport)
 
@@ -196,6 +214,18 @@ async def create_session_config(
         kwargs["client_id"] = client_id
         kwargs["client_secret"] = client_secret
         kwargs["client_credentials_secret"] = client_secret
+
+    # Snapshot the auth-relevant inputs after api_key normalization so that the
+    # resulting SessionConfig carries everything ClusterAwareDataProxy and
+    # ClusterAwareSecretService need to rebuild a SessionConfig for a per-cluster
+    # endpoint without losing the configured auth mode.
+    captured_auth_kwargs: typing.Dict[str, Any] = dict(kwargs)
+    if ca_cert_file_path is not None:
+        captured_auth_kwargs["ca_cert_file_path"] = ca_cert_file_path
+    if proxy_command is not None:
+        captured_auth_kwargs["proxy_command"] = proxy_command
+    if rpc_retries is not None:
+        captured_auth_kwargs["rpc_retries"] = rpc_retries
 
     assert endpoint, "Endpoint must be specified by this point"
 
@@ -261,4 +291,5 @@ async def create_session_config(
         interceptors=tuple(interceptors),
         http_client=http_client,
         api_key=api_key,
+        auth_kwargs=captured_auth_kwargs,
     )

@@ -2,7 +2,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from flyte._code_bundle._ignore import GitIgnore, IgnoreGroup, StandardIgnore
+from flyte._code_bundle._ignore import FlyteIgnore, GitIgnore, IgnoreGroup, StandardIgnore
 
 
 def test_ignore_group_list_ignored():
@@ -495,3 +495,248 @@ def test_find_ignore_files_skips_standard_ignored_dirs():
         assert str(root_path / ".venv" / ".gitignore") not in found_strs
         assert str(root_path / "__pycache__" / ".gitignore") not in found_strs
         assert str(root_path / "src" / ".mypy_cache" / ".gitignore") not in found_strs
+
+
+# ---------------------------------------------------------------------------
+# FlyteIgnore tests
+# ---------------------------------------------------------------------------
+
+
+def _git_commit_all(repo: Path) -> None:
+    """Stage and commit all files in the repo."""
+    subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=repo, capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, capture_output=True, check=True)
+    subprocess.run(["git", "add", "-A"], cwd=repo, capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-m", "initial"], cwd=repo, capture_output=True, check=True)
+
+
+def test_flyteignore_excludes_tracked_file():
+    """Tracked (committed) files listed in .flyteignore must be excluded by FlyteIgnore."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir).resolve()
+        subprocess.run(["git", "init"], cwd=root, capture_output=True, check=True)
+
+        (root / "main.py").write_text("print('hello')")
+        (root / "large_data.csv").write_text("a,b,c\n1,2,3")
+        (root / ".flyteignore").write_text("large_data.csv\n")
+
+        _git_commit_all(root)
+
+        ignore = FlyteIgnore(root)
+        assert ignore.is_ignored(root / "large_data.csv"), "tracked large_data.csv must be excluded"
+        assert not ignore.is_ignored(root / "main.py"), "main.py must not be excluded"
+
+
+def test_flyteignore_excludes_tracked_directory():
+    """A directory pattern in .flyteignore must exclude all files inside it, even if tracked."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir).resolve()
+        subprocess.run(["git", "init"], cwd=root, capture_output=True, check=True)
+
+        (root / "data").mkdir()
+        (root / "data" / "file1.csv").write_text("col\n1")
+        (root / "data" / "file2.csv").write_text("col\n2")
+        (root / "src").mkdir()
+        (root / "src" / "app.py").write_text("pass")
+        (root / ".flyteignore").write_text("data/\n")
+
+        _git_commit_all(root)
+
+        ignore = FlyteIgnore(root)
+        assert ignore.is_ignored(root / "data" / "file1.csv"), "data/file1.csv must be excluded"
+        assert ignore.is_ignored(root / "data" / "file2.csv"), "data/file2.csv must be excluded"
+        assert not ignore.is_ignored(root / "src" / "app.py"), "src/app.py must not be excluded"
+
+
+def test_flyteignore_wildcard_pattern():
+    """Wildcard patterns in .flyteignore must exclude all matching tracked files."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir).resolve()
+        subprocess.run(["git", "init"], cwd=root, capture_output=True, check=True)
+
+        (root / "report.csv").write_text("x\n1")
+        (root / "export.csv").write_text("y\n2")
+        (root / "main.py").write_text("pass")
+        (root / ".flyteignore").write_text("*.csv\n")
+
+        _git_commit_all(root)
+
+        ignore = FlyteIgnore(root)
+        assert ignore.is_ignored(root / "report.csv"), "report.csv must be excluded by *.csv"
+        assert ignore.is_ignored(root / "export.csv"), "export.csv must be excluded by *.csv"
+        assert not ignore.is_ignored(root / "main.py"), "main.py must not be excluded"
+
+
+def test_flyteignore_subdirectory_scope():
+    """Patterns in src/.flyteignore apply only under src/, not at the repo root."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir).resolve()
+        subprocess.run(["git", "init"], cwd=root, capture_output=True, check=True)
+
+        (root / "src").mkdir()
+        (root / "src" / "secrets.json").write_text("{}")
+        (root / "secrets.json").write_text("{}")  # root-level must NOT be excluded
+        (root / "src" / ".flyteignore").write_text("secrets.json\n")
+
+        _git_commit_all(root)
+
+        ignore = FlyteIgnore(root)
+        assert ignore.is_ignored(root / "src" / "secrets.json"), "src/secrets.json must be excluded"
+        assert not ignore.is_ignored(root / "secrets.json"), "root secrets.json must NOT be excluded"
+
+
+def test_flyteignore_works_without_git():
+    """FlyteIgnore must work even when there is no git repository."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir).resolve()
+        # Intentionally no git init
+
+        (root / "exclude_me.txt").write_text("sensitive")
+        (root / "keep_me.py").write_text("pass")
+        (root / ".flyteignore").write_text("exclude_me.txt\n")
+
+        ignore = FlyteIgnore(root)
+        assert ignore.is_ignored(root / "exclude_me.txt"), "exclude_me.txt must be excluded without git"
+        assert not ignore.is_ignored(root / "keep_me.py"), "keep_me.py must not be excluded"
+
+
+def test_flyteignore_no_file_is_noop():
+    """When no .flyteignore file exists, FlyteIgnore must exclude nothing."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir).resolve()
+        (root / "main.py").write_text("pass")
+        (root / "data.csv").write_text("a,b\n1,2")
+
+        ignore = FlyteIgnore(root)
+        assert not ignore.is_ignored(root / "main.py"), "main.py must not be excluded"
+        assert not ignore.is_ignored(root / "data.csv"), "data.csv must not be excluded"
+
+
+def test_flyteignore_bare_pattern_matches_at_any_depth():
+    """Gitignore semantics: a bare pattern (no internal slash) matches at any depth."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir).resolve()
+        subprocess.run(["git", "init"], cwd=root, capture_output=True, check=True)
+
+        # Three depths of the same filename, all tracked
+        (root / "secrets.json").write_text("{}")
+        (root / "subdir").mkdir()
+        (root / "subdir" / "secrets.json").write_text("{}")
+        (root / "a" / "b" / "c").mkdir(parents=True)
+        (root / "a" / "b" / "c" / "secrets.json").write_text("{}")
+        (root / "main.py").write_text("pass")
+
+        (root / ".flyteignore").write_text("secrets.json\n")
+        _git_commit_all(root)
+
+        ignore = FlyteIgnore(root)
+        assert ignore.is_ignored(root / "secrets.json")
+        assert ignore.is_ignored(root / "subdir" / "secrets.json")
+        assert ignore.is_ignored(root / "a" / "b" / "c" / "secrets.json")
+        assert not ignore.is_ignored(root / "main.py")
+
+
+def test_flyteignore_bare_directory_matches_at_any_depth():
+    """Gitignore: bare 'data/' matches a directory named data anywhere."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir).resolve()
+        subprocess.run(["git", "init"], cwd=root, capture_output=True, check=True)
+
+        (root / "data").mkdir()
+        (root / "data" / "x.csv").write_text("x")
+        (root / "src" / "data").mkdir(parents=True)
+        (root / "src" / "data" / "y.csv").write_text("y")
+        (root / "src" / "keep.py").write_text("pass")
+        (root / "a" / "b" / "data").mkdir(parents=True)
+        (root / "a" / "b" / "data" / "z.csv").write_text("z")
+
+        (root / ".flyteignore").write_text("data/\n")
+        _git_commit_all(root)
+
+        ignore = FlyteIgnore(root)
+        assert ignore.is_ignored(root / "data" / "x.csv")
+        assert ignore.is_ignored(root / "src" / "data" / "y.csv")
+        assert ignore.is_ignored(root / "a" / "b" / "data" / "z.csv")
+        assert not ignore.is_ignored(root / "src" / "keep.py")
+
+
+def test_flyteignore_bare_wildcard_matches_at_any_depth():
+    """Gitignore: bare '*.csv' matches CSVs at any depth."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir).resolve()
+        subprocess.run(["git", "init"], cwd=root, capture_output=True, check=True)
+
+        (root / "top.csv").write_text("x")
+        (root / "src").mkdir()
+        (root / "src" / "deep.csv").write_text("y")
+        (root / "src" / "keep.py").write_text("pass")
+
+        (root / ".flyteignore").write_text("*.csv\n")
+        _git_commit_all(root)
+
+        ignore = FlyteIgnore(root)
+        assert ignore.is_ignored(root / "top.csv")
+        assert ignore.is_ignored(root / "src" / "deep.csv")
+        assert not ignore.is_ignored(root / "src" / "keep.py")
+
+
+def test_flyteignore_anchored_pattern_is_root_only():
+    """Gitignore: leading '/' anchors a pattern to the .flyteignore's directory."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir).resolve()
+        subprocess.run(["git", "init"], cwd=root, capture_output=True, check=True)
+
+        (root / "secrets.json").write_text("{}")
+        (root / "src").mkdir()
+        (root / "src" / "secrets.json").write_text("{}")
+
+        (root / ".flyteignore").write_text("/secrets.json\n")
+        _git_commit_all(root)
+
+        ignore = FlyteIgnore(root)
+        assert ignore.is_ignored(root / "secrets.json"), "anchored pattern must match root"
+        assert not ignore.is_ignored(root / "src" / "secrets.json"), "anchored pattern must NOT match nested"
+
+
+def test_flyteignore_negation_preserved():
+    """Negation patterns must continue to work after normalization."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir).resolve()
+        subprocess.run(["git", "init"], cwd=root, capture_output=True, check=True)
+
+        (root / "debug.log").write_text("x")
+        (root / "important.log").write_text("y")
+        (root / "sub").mkdir()
+        (root / "sub" / "debug.log").write_text("x")
+        (root / "sub" / "important.log").write_text("y")
+
+        (root / ".flyteignore").write_text("*.log\n!important.log\n")
+        _git_commit_all(root)
+
+        ignore = FlyteIgnore(root)
+        assert ignore.is_ignored(root / "debug.log")
+        assert ignore.is_ignored(root / "sub" / "debug.log")
+        assert not ignore.is_ignored(root / "important.log")
+        assert not ignore.is_ignored(root / "sub" / "important.log")
+
+
+def test_flyteignore_in_default_ignores_excludes_tracked_file():
+    """Integration: list_files_to_bundle must omit tracked files listed in .flyteignore."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir).resolve()
+        subprocess.run(["git", "init"], cwd=root, capture_output=True, check=True)
+
+        (root / "app.py").write_text("pass")
+        (root / "dataset.csv").write_text("x\n1\n2\n3")
+        (root / ".flyteignore").write_text("dataset.csv\n")
+
+        _git_commit_all(root)
+
+        from flyte._code_bundle._ignore import FlyteIgnore, GitIgnore, StandardIgnore
+        from flyte._code_bundle._packaging import list_files_to_bundle
+
+        files, _ = list_files_to_bundle(root, False, GitIgnore, FlyteIgnore, StandardIgnore, copy_style="all")
+
+        file_names = {Path(f).name for f in files}
+        assert "app.py" in file_names, "app.py must be in the bundle"
+        assert "dataset.csv" not in file_names, "tracked dataset.csv must be excluded from bundle"

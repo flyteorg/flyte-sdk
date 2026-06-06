@@ -380,6 +380,7 @@ async def _build_images(
     connectors, run) don't each need to duplicate that step.
     """
     from flyte._image import _DEFAULT_IMAGE_REF_NAME, resolve_code_bundle_layer
+    from flyte.errors import InvalidImageNameError
 
     from ._internal.imagebuild.image_builder import ImageCache
 
@@ -402,8 +403,13 @@ async def _build_images(
                     image_uri = image_refs[env.image._ref_name]
                     env.image = env.image.clone(base_image=image_uri)
                 else:
-                    raise ValueError(
-                        f"Image name '{env.image._ref_name}' not found in config. Available: {list(image_refs.keys())}"
+                    # The user referenced an image name that isn't declared in their
+                    # config — a user-config mistake, not an SDK crash. Raise a typed
+                    # RuntimeUserError so the Sentry filter (flyte/_sentry.py) skips it
+                    # and the user gets a clear, actionable message (FLYTE-SDK-4C).
+                    raise InvalidImageNameError(
+                        "InvalidImageName",
+                        f"Image name '{env.image._ref_name}' not found in config. Available: {list(image_refs.keys())}",
                     )
                 if not env.image._layers:
                     # No additional layers, use the base_image directly without building
@@ -533,23 +539,31 @@ async def apply(deployment_plan: DeploymentPlan, copy_style: CopyFiles, dryrun: 
 
 
 def _find_env_module(env: Environment):
-    """Scan sys.modules to find the module that contains this env as a top-level variable."""
-    for module in list(sys.modules.values()):
+    """Scan sys.modules to find the (sys.modules key, module) that contains this env as a top-level variable.
+
+    Iterates ``sys.modules.items()`` rather than ``.values()`` so callers can show the *import
+    name* (the sys.modules key, e.g. ``examples.basics.multi_status``) in error messages. When the
+    same file is loaded twice under different names, the two module objects may share the same
+    ``__name__`` attribute (because both were created via ``importlib.util.spec_from_file_location``
+    with the file stem), but their sys.modules keys differ — that's what the user actually needs to
+    see to fix their layout. Returns ``(None, None)`` if nothing matches.
+    """
+    for key, module in list(sys.modules.items()):
         if module is None:
             continue
         try:
             # search for at least one value inside this module that is the same object as env and return it
             if any(v is env for v in vars(module).values()):
-                return module
+                return key, module
         except TypeError:
             continue
-    return None
+    return None, None
 
 
 def _check_duplicate_env(existing_env: Environment, env: Environment) -> None:
     """Raise an appropriate error when the same environment name is encountered twice."""
-    existing_module = _find_env_module(existing_env)
-    new_module = _find_env_module(env)
+    existing_key, existing_module = _find_env_module(existing_env)
+    new_key, new_module = _find_env_module(env)
     existing_file = getattr(existing_module, "__file__", None)
     new_file = getattr(new_module, "__file__", None)
 
@@ -559,8 +573,8 @@ def _check_duplicate_env(existing_env: Environment, env: Environment) -> None:
         # `my_module.envs` and `src.my_module.envs`).
         raise ValueError(
             f"Environment '{env.name}' is defined in '{existing_file}' but was imported "
-            f"twice under different module names ('{existing_module.__name__}' and "
-            f"'{new_module.__name__}'). This is usually caused by running `flyte deploy` "
+            f"twice under different module names ('{existing_key}' and "
+            f"'{new_key}'). This is usually caused by running `flyte deploy` "
             f"from the project root of a src/ layout project without --root-dir. "
             f"Try adding --root-dir src (or your source root directory)."
         )
@@ -634,16 +648,29 @@ async def deploy(
 
 
 @syncify
-async def build_images(envs: Environment, copy_style: "CopyFiles" = "loaded_modules") -> ImageCache:
+async def build_images(*envs: Environment, copy_style: "CopyFiles" = "loaded_modules") -> ImageCache:
     """
-    Build the images for the given environment.
-    :param envs: Environment to build images for.
+    Build the images for the given environment(s).
+    :param envs: One or more environments to build images for. When multiple environments are
+        passed they are planned together in a single pass (mirroring ``deploy``), and the
+        resulting image caches are merged into one.
     :param copy_style: Copy style that the eventual deploy will use. Must match the deploy's
         ``--copy-style`` so the image content hashes — and therefore the registry tags — line
         up, letting deploy reuse the pre-built image.
     :return: ImageCache containing the built images.
     """
+    from ._internal.imagebuild.image_builder import ImageCache
+
     cfg = get_init_config()
     images = cfg.images if cfg else {}
-    deployment = plan_deploy(envs)
-    return await _build_images(deployment[0], images, copy_style)
+    deployment_plans = plan_deploy(*envs)
+    caches = [await _build_images(plan, images, copy_style) for plan in deployment_plans]
+    if len(caches) == 1:
+        return caches[0]
+
+    merged_lookup: Dict[str, str] = {}
+    merged_build_run_ids: Dict[str, Any] = {}
+    for cache in caches:
+        merged_lookup.update(cache.image_lookup)
+        merged_build_run_ids.update(cache.build_run_ids)
+    return ImageCache(image_lookup=merged_lookup, build_run_ids=merged_build_run_ids)

@@ -261,6 +261,7 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
             wheel_layer = image_definition_pb2.Layer(
                 python_wheels=image_definition_pb2.PythonWheels(
                     dir=str(dst_path.relative_to(context_path)),
+                    package_name=layer.package_name,
                     options=pip_options,
                     secret_mounts=secret_mounts,
                 ),
