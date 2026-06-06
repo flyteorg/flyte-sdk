@@ -36,12 +36,9 @@ def _ensure_docker_available() -> None:
         )
 
 
-def _ensure_kubectl_available() -> None:
-    if shutil.which("kubectl") is None:
-        raise click.ClickException(
-            "kubectl is not installed or not on PATH. Install kubectl "
-            "(https://kubernetes.io/docs/tasks/tools/) and try again."
-        )
+def _is_kubectl_installed() -> bool:
+    """Return True if kubectl is installed and on PATH, False otherwise."""
+    return shutil.which("kubectl") is not None
 
 
 def _run_docker(cmd: list[str], failure_message: str) -> subprocess.CompletedProcess:
@@ -170,6 +167,11 @@ def _wait_for_kubeconfig(kubeconfig_path: Path, timeout: int = 60) -> None:
 
 
 def _switch_k8s_context(context: str = "flyte-devbox", namespace: str = "flyte") -> None:
+    if not _is_kubectl_installed():
+        console.print(
+            f"[red]Warning: kubectl is not installed or not on PATH. Skipping switch to k8s context '{context}'.[/red]"
+        )
+        return
     try:
         subprocess.run(["kubectl", "config", "use-context", context], check=True, capture_output=True, text=True)
         subprocess.run(
@@ -201,7 +203,12 @@ def _flatten_kubeconfig(default_kubeconfig: Path, kubeconfig_path: Path) -> subp
 def _merge_kubeconfig(kubeconfig_path: Path, container_name: str) -> None:
     import tempfile
 
-    _ensure_kubectl_available()
+    if not _is_kubectl_installed():
+        console.print(
+            "[red]Warning: kubectl is not installed or not on PATH. Skipping kubeconfig merge. "
+            "Install kubectl (https://kubernetes.io/docs/tasks/tools/) to interact with the devbox cluster.[/red]"
+        )
+        return
 
     default_kubeconfig = Path.home() / ".kube" / "config"
     default_kubeconfig.parent.mkdir(parents=True, exist_ok=True)
