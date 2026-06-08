@@ -1,8 +1,8 @@
 """flyte.ai.agents — Agent abstractions for Flyte apps."""
 
-from ._llm import LLMMessage
+from ._llm import LLMCallable, LLMMessage
 from ._mcp import MCPServerSpec
-from ._tools import tool
+from ._tools import ToolCallHandler, ToolFn, tool
 from .agent import (
     Agent,
     AgentEvent,
@@ -22,11 +22,14 @@ __all__ = [
     "AgentTool",
     "CodeModeAgent",
     "ConcurrencyError",
+    "LLMCallable",
     "LLMMessage",
     "MCPServerSpec",
     "MemoryMeta",
     "MemoryStore",
     "MemoryStoreError",
+    "ToolCallHandler",
+    "ToolFn",
     "agent_progress_cb",
     "tool",
 ]
