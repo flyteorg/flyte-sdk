@@ -30,9 +30,11 @@ def test_happy_path(monkeypatch):
         monkeypatch.setenv(k, v)
     monkeypatch.setattr(sys, "argv", ["_entrypoint.py", "a0", "a0", "--inputs", "s3://bucket/in"])
 
-    with patch("socket.getaddrinfo"), patch("shutil.which", return_value="/usr/bin/torchrun"), patch(
-        "os.execvp"
-    ) as mock_exec:
+    with (
+        patch("socket.getaddrinfo"),
+        patch("shutil.which", return_value="/usr/bin/torchrun"),
+        patch("os.execvp") as mock_exec,
+    ):
         main()
 
     mock_exec.assert_called_once_with(
@@ -62,9 +64,11 @@ def test_master_port_default(monkeypatch):
     monkeypatch.delenv("MASTER_PORT", raising=False)
     monkeypatch.setattr(sys, "argv", ["_entrypoint.py", "a0", "a0"])
 
-    with patch("socket.getaddrinfo"), patch("shutil.which", return_value="/usr/bin/torchrun"), patch(
-        "os.execvp"
-    ) as mock_exec:
+    with (
+        patch("socket.getaddrinfo"),
+        patch("shutil.which", return_value="/usr/bin/torchrun"),
+        patch("os.execvp") as mock_exec,
+    ):
         main()
 
     endpoint_arg = next(a for a in mock_exec.call_args[0][1] if a.startswith("--rdzv-endpoint="))
@@ -78,9 +82,11 @@ def test_rdzv_id_rotation(monkeypatch):
     monkeypatch.setenv("JOBSET_RESTART_ATTEMPT", "3")
     monkeypatch.setattr(sys, "argv", ["_entrypoint.py", "a0", "a0"])
 
-    with patch("socket.getaddrinfo"), patch("shutil.which", return_value="/usr/bin/torchrun"), patch(
-        "os.execvp"
-    ) as mock_exec:
+    with (
+        patch("socket.getaddrinfo"),
+        patch("shutil.which", return_value="/usr/bin/torchrun"),
+        patch("os.execvp") as mock_exec,
+    ):
         main()
 
     rdzv_id_arg = next(a for a in mock_exec.call_args[0][1] if a.startswith("--rdzv-id="))
@@ -94,9 +100,11 @@ def test_node_rank_from_completion_index(monkeypatch):
     monkeypatch.setenv("JOB_COMPLETION_INDEX", "3")
     monkeypatch.setattr(sys, "argv", ["_entrypoint.py", "a0", "a0"])
 
-    with patch("socket.getaddrinfo"), patch("shutil.which", return_value="/usr/bin/torchrun"), patch(
-        "os.execvp"
-    ) as mock_exec:
+    with (
+        patch("socket.getaddrinfo"),
+        patch("shutil.which", return_value="/usr/bin/torchrun"),
+        patch("os.execvp") as mock_exec,
+    ):
         main()
 
     node_rank_arg = next(a for a in mock_exec.call_args[0][1] if a.startswith("--node-rank="))
