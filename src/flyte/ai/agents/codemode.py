@@ -21,6 +21,7 @@ import flyte
 import flyte.sandbox
 from flyte.syncify import syncify
 
+from .memory import MemoryStore
 from .protocol import AgentResult
 
 # Per-request progress hook for UIs (e.g. Agent Chat NDJSON stream). Set by the
@@ -321,12 +322,21 @@ class CodeModeAgent:
     # ------------------------------------------------------------------
 
     @syncify
-    async def run(self, message: str, history: list[dict[str, str]]) -> AgentResult:
+    async def run(
+        self,
+        message: str,
+        memory: list[dict[str, Any]] | MemoryStore | None = None,
+    ) -> AgentResult:
         """Generate code, execute in sandbox, retry on failure.
+
+        ``memory`` may be a ``list[dict]`` of prior messages (e.g. a chat
+        ``history``) or a :class:`MemoryStore` whose transcript is used as prior
+        context. Only the prior messages are read here.
 
         Call synchronously via ``run(...)``; in async contexts use ``run.aio(...)``.
         """
-        messages: list[dict[str, str]] = [*history, {"role": "user", "content": message}]
+        prior: list[dict[str, Any]] = list(memory.messages) if isinstance(memory, MemoryStore) else (memory or [])
+        messages: list[dict[str, Any]] = [*prior, {"role": "user", "content": message}]
         max_attempts = 1 + self._max_retries
 
         try:

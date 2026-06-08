@@ -572,45 +572,51 @@ class TestApproval:
 @pytest.mark.asyncio
 class TestMemoryStore:
     async def test_default_root_is_temp_dir(self):
-        memory = MemoryStore()
+        memory = MemoryStore(key="test")
         assert memory.root is not None and memory.root.exists()
         assert memory.messages == []
 
+    async def test_key_is_required(self):
+        with pytest.raises(TypeError):
+            MemoryStore()  # type: ignore[call-arg]
+
     async def test_explicit_root_auto_loads_messages(self, tmp_path: pathlib.Path):
-        seed = MemoryStore(root=tmp_path)
+        seed = MemoryStore(key="test", root=tmp_path)
         seed.append({"role": "user", "content": "hello"})
         seed.append({"role": "assistant", "content": "hi"})
         seed.flush_messages_sync()
 
-        restored = MemoryStore(root=tmp_path)
+        restored = MemoryStore(key="test", root=tmp_path)
         assert [m["content"] for m in restored.messages] == ["hello", "hi"]
 
     async def test_flush_messages_async_persists_transcript(self, tmp_path: pathlib.Path):
-        seed = MemoryStore(root=tmp_path)
+        seed = MemoryStore(key="test", root=tmp_path)
         seed.append({"role": "user", "content": "hello-async"})
         await seed.flush_messages()
 
-        restored = MemoryStore(root=tmp_path)
+        restored = MemoryStore(key="test", root=tmp_path)
         assert [m["content"] for m in restored.messages] == ["hello-async"]
 
     async def test_corrupt_messages_json_logs_and_resets(self, tmp_path: pathlib.Path):
         (tmp_path / "messages.json").write_text("not json", encoding="utf-8")
-        memory = MemoryStore(root=tmp_path)
+        memory = MemoryStore(key="test", root=tmp_path)
         assert memory.messages == []
 
     async def test_explicit_messages_take_precedence_over_disk(self, tmp_path: pathlib.Path):
-        seed = MemoryStore(root=tmp_path)
+        seed = MemoryStore(key="test", root=tmp_path)
         seed.append({"role": "user", "content": "old"})
         seed.flush_messages_sync()
 
-        restored = MemoryStore(root=tmp_path, messages=[{"role": "user", "content": "fresh"}])
+        restored = MemoryStore(key="test", root=tmp_path, messages=[{"role": "user", "content": "fresh"}])
         assert [m["content"] for m in restored.messages] == ["fresh"]
 
     async def test_memory_persists_conversation(self):
-        memory = MemoryStore()
+        memory = MemoryStore(key="test")
         llm = _make_llm([LLMMessage(content="ack", tool_calls=[])])
-        agent = Agent(name="t", instructions="I", call_llm=llm, memory=memory)
-        await agent.run.aio("hi", [])
+        agent = Agent(name="t", instructions="I", call_llm=llm)
+        result = await agent.run.aio("hi", memory=memory)
+        # The store is mutated in place and returned on the result.
+        assert result.memory is memory
         roles = [m["role"] for m in memory.messages]
         assert roles == ["user", "assistant"]
         assert memory.messages[0]["content"] == "hi"
@@ -618,15 +624,60 @@ class TestMemoryStore:
 
     async def test_memory_prepended_to_next_run(self):
         memory = MemoryStore(
-            messages=[{"role": "user", "content": "remember this"}, {"role": "assistant", "content": "noted"}]
+            key="test",
+            messages=[{"role": "user", "content": "remember this"}, {"role": "assistant", "content": "noted"}],
         )
         llm = _make_llm([LLMMessage(content="ok", tool_calls=[])])
-        agent = Agent(name="t", instructions="I", call_llm=llm, memory=memory)
-        await agent.run.aio("hi", [])
+        agent = Agent(name="t", instructions="I", call_llm=llm)
+        await agent.run.aio("hi", memory=memory)
         _, _, messages, _ = llm.await_args_list[0].args
         contents = [m["content"] for m in messages]
         assert "remember this" in contents
         assert "noted" in contents
+
+    async def test_result_memory_none_for_list_history(self):
+        llm = _make_llm([LLMMessage(content="ack", tool_calls=[])])
+        agent = Agent(name="t", instructions="I", call_llm=llm)
+        result = await agent.run.aio("hi", [{"role": "user", "content": "prior"}])
+        # A plain list history is not wrapped into a MemoryStore.
+        assert result.memory is None
+
+    async def test_run_does_not_save_memory(self):
+        """Saving is explicit: ``run`` mutates and returns the store but never saves it."""
+        memory = MemoryStore(key="k", remote_path="s3://bucket/agents/memory-store/v0/o/p/d/k")
+        llm = _make_llm([LLMMessage(content="ack", tool_calls=[])])
+        agent = Agent(name="t", instructions="I", call_llm=llm)
+        with patch.object(type(memory), "save") as mock_save:
+            mock_save.aio = AsyncMock(return_value=None)
+            result = await agent.run.aio("hi", memory=memory)
+            mock_save.aio.assert_not_awaited()
+        # The transcript is still updated in place for the caller to persist.
+        assert result.memory is memory
+        assert [m["content"] for m in memory.messages] == ["hi", "ack"]
+
+    async def test_memory_store_roundtrips_through_type_engine(self):
+        """MemoryStore can be passed as a Flyte task input/output (serializable dataclass)."""
+        from flyte.types import TypeEngine
+
+        memory = MemoryStore(
+            messages=[{"role": "user", "content": "hi"}, {"role": "assistant", "content": "ack"}],
+            key="k",
+            remote_path="s3://bucket/agents/memory-store/v0/o/p/d/k",
+            read_only_prefixes=("memory/",),
+            keep_versions=True,
+        )
+        lit_type = TypeEngine.to_literal_type(MemoryStore)
+        lv = await TypeEngine.to_literal(memory, MemoryStore, lit_type)
+        back = await TypeEngine.to_python_value(lv, MemoryStore)
+
+        assert isinstance(back, MemoryStore)
+        assert back.messages == memory.messages
+        assert back.key == "k"
+        assert back.remote_path == memory.remote_path
+        assert back.read_only_prefixes == ("memory/",)
+        assert back.keep_versions is True
+        # A rebuilt keyed store defers downloading its artifacts until first use.
+        assert back._needs_remote_hydration is True
 
 
 class TestRemotePathHelpers:
@@ -878,13 +929,6 @@ class TestMemoryStoreKeyedRemote:
             await MemoryStore.create.aio(key="my_memory", org="org", project="proj", domain="dev")
             assert await MemoryStore.exists(key="my_memory", org="org", project="proj", domain="dev")
 
-    async def test_keyed_save_rejects_non_deterministic_override(self, tmp_path: pathlib.Path):
-        ctx = internal_ctx().new_raw_data_path(RawDataPath(path=str(tmp_path / "raw")))
-        with ctx:
-            memory = await MemoryStore.create.aio(key="my_memory", org="org", project="proj", domain="dev")
-            with pytest.raises(MemoryStoreError, match="deterministic key path"):
-                await memory.save.aio(remote_destination=str(tmp_path / "elsewhere"))
-
     async def test_key_must_be_single_segment(self, tmp_path: pathlib.Path):
         ctx = internal_ctx().new_raw_data_path(RawDataPath(path=str(tmp_path / "raw")))
         with ctx:
@@ -913,7 +957,7 @@ class TestMemoryStoreSyncApi:
         assert [m["content"] for m in loaded.messages] == ["hi"]
 
     def test_path_addressed_io_sync(self, tmp_path: pathlib.Path):
-        memory = MemoryStore(root=tmp_path)
+        memory = MemoryStore(key="test", root=tmp_path)
         memory.write_text("notes/plan.md", "sync-step")
         assert memory.read_text("notes/plan.md") == "sync-step"
         memory.write_json("data/x.json", {"k": 1})
@@ -923,24 +967,24 @@ class TestMemoryStoreSyncApi:
 @pytest.mark.asyncio
 class TestMemoryStorePathAddressedIO:
     async def test_write_and_read_text_roundtrip(self, tmp_path: pathlib.Path):
-        memory = MemoryStore(root=tmp_path)
+        memory = MemoryStore(key="test", root=tmp_path)
         meta = await memory.write_text.aio("notes/plan.md", "step 1", actor="tester", reason="unit")
         assert meta.path == "notes/plan.md"
         assert meta.bytes == len(b"step 1")
         assert await memory.read_text.aio("notes/plan.md") == "step 1"
 
     async def test_write_and_read_json_roundtrip(self, tmp_path: pathlib.Path):
-        memory = MemoryStore(root=tmp_path)
+        memory = MemoryStore(key="test", root=tmp_path)
         await memory.write_json.aio("data/plan.json", {"a": 1, "b": [1, 2]})
         assert await memory.read_json.aio("data/plan.json") == {"a": 1, "b": [1, 2]}
 
     async def test_read_text_default_when_missing(self, tmp_path: pathlib.Path):
-        memory = MemoryStore(root=tmp_path)
+        memory = MemoryStore(key="test", root=tmp_path)
         assert await memory.read_text.aio("missing.txt", default="fallback") == "fallback"
         assert await memory.read_json.aio("missing.json", default={"x": 0}) == {"x": 0}
 
     async def test_list_paths_excludes_internals_and_messages(self, tmp_path: pathlib.Path):
-        memory = MemoryStore(root=tmp_path)
+        memory = MemoryStore(key="test", root=tmp_path)
         await memory.write_text.aio("user/a.txt", "a")
         await memory.write_text.aio("user/b.txt", "b")
         memory.append({"role": "user", "content": "hi"})
@@ -961,7 +1005,7 @@ class TestMemoryStorePathAddressedIO:
 
         root = tmp_path / "root"
         root.mkdir()
-        memory = MemoryStore(root=root)
+        memory = MemoryStore(key="test", root=root)
         await memory.write_text.aio("user/a.txt", "a")
 
         # Plant a symlink that ``list_paths`` must skip rather than expose.
@@ -972,11 +1016,11 @@ class TestMemoryStorePathAddressedIO:
         assert "user/leak.txt" not in paths
 
     async def test_list_paths_returns_empty_for_missing_prefix(self, tmp_path: pathlib.Path):
-        memory = MemoryStore(root=tmp_path)
+        memory = MemoryStore(key="test", root=tmp_path)
         assert memory.list_paths("does/not/exist") == []
 
     async def test_path_traversal_rejected(self, tmp_path: pathlib.Path):
-        memory = MemoryStore(root=tmp_path)
+        memory = MemoryStore(key="test", root=tmp_path)
         with pytest.raises(MemoryStoreError, match="traversal"):
             await memory.write_text.aio("../escape.txt", "no")
         with pytest.raises(MemoryStoreError, match="must be relative"):
@@ -996,7 +1040,7 @@ class TestMemoryStorePathAddressedIO:
         # malicious sidechannel.
         (root / "escape.txt").symlink_to(outside / "secret.txt")
 
-        memory = MemoryStore(root=root)
+        memory = MemoryStore(key="test", root=root)
         with pytest.raises(MemoryStoreError, match="outside the memory root"):
             await memory.read_text.aio("escape.txt")
         with pytest.raises(MemoryStoreError, match="outside the memory root"):
@@ -1005,12 +1049,12 @@ class TestMemoryStorePathAddressedIO:
         assert (outside / "secret.txt").read_text(encoding="utf-8") == "classified"
 
     async def test_messages_json_write_blocked(self, tmp_path: pathlib.Path):
-        memory = MemoryStore(root=tmp_path)
+        memory = MemoryStore(key="test", root=tmp_path)
         with pytest.raises(AccessDenied, match=r"messages\.json"):
             await memory.write_text.aio("messages.json", "{}")
 
     async def test_internal_prefixes_blocked(self, tmp_path: pathlib.Path):
-        memory = MemoryStore(root=tmp_path)
+        memory = MemoryStore(key="test", root=tmp_path)
         for path in ("audit/log.jsonl", "meta/x.json", "versions/x/y.txt"):
             with pytest.raises(AccessDenied, match="reserved"):
                 await memory.write_text.aio(path, "no")
@@ -1019,12 +1063,12 @@ class TestMemoryStorePathAddressedIO:
 @pytest.mark.asyncio
 class TestMemoryStoreReadOnlyPrefixes:
     async def test_writes_to_read_only_prefix_rejected(self, tmp_path: pathlib.Path):
-        memory = MemoryStore(root=tmp_path, read_only_prefixes=("memory/",))
+        memory = MemoryStore(key="test", root=tmp_path, read_only_prefixes=("memory/",))
         with pytest.raises(AccessDenied, match="read-only"):
             await memory.write_text.aio("memory/docs.txt", "no")
 
     async def test_writes_outside_read_only_prefix_allowed(self, tmp_path: pathlib.Path):
-        memory = MemoryStore(root=tmp_path, read_only_prefixes=("memory/",))
+        memory = MemoryStore(key="test", root=tmp_path, read_only_prefixes=("memory/",))
         await memory.write_text.aio("user/notes.txt", "ok")
         assert await memory.read_text.aio("user/notes.txt") == "ok"
 
@@ -1032,14 +1076,14 @@ class TestMemoryStoreReadOnlyPrefixes:
 @pytest.mark.asyncio
 class TestMemoryStoreConcurrency:
     async def test_expected_sha_match_succeeds(self, tmp_path: pathlib.Path):
-        memory = MemoryStore(root=tmp_path)
+        memory = MemoryStore(key="test", root=tmp_path)
         await memory.write_text.aio("a.txt", "v1")
         sha = await memory.current_sha.aio("a.txt")
         await memory.write_text.aio("a.txt", "v2", expected_sha=sha)
         assert await memory.read_text.aio("a.txt") == "v2"
 
     async def test_expected_sha_mismatch_raises(self, tmp_path: pathlib.Path):
-        memory = MemoryStore(root=tmp_path)
+        memory = MemoryStore(key="test", root=tmp_path)
         await memory.write_text.aio("a.txt", "v1")
         with pytest.raises(ConcurrencyError) as exc:
             await memory.write_text.aio("a.txt", "v2", expected_sha="deadbeef")
@@ -1047,12 +1091,12 @@ class TestMemoryStoreConcurrency:
         assert exc.value.expected_sha == "deadbeef"
 
     async def test_expected_sha_empty_for_create(self, tmp_path: pathlib.Path):
-        memory = MemoryStore(root=tmp_path)
+        memory = MemoryStore(key="test", root=tmp_path)
         await memory.write_text.aio("new.txt", "hello", expected_sha="")
         assert await memory.read_text.aio("new.txt") == "hello"
 
     async def test_current_sha_empty_when_missing(self, tmp_path: pathlib.Path):
-        memory = MemoryStore(root=tmp_path)
+        memory = MemoryStore(key="test", root=tmp_path)
         assert await memory.current_sha.aio("nope.txt") == ""
 
     async def test_current_sha_streams_files_without_sidecar(self, tmp_path: pathlib.Path):
@@ -1061,7 +1105,7 @@ class TestMemoryStoreConcurrency:
         root = tmp_path
         (root / "user").mkdir()
         (root / "user" / "raw.txt").write_text("raw-content", encoding="utf-8")
-        memory = MemoryStore(root=root)
+        memory = MemoryStore(key="test", root=root)
         expected = hashlib.sha256(b"raw-content").hexdigest()
         assert await memory.current_sha.aio("user/raw.txt") == expected
 
@@ -1069,7 +1113,7 @@ class TestMemoryStoreConcurrency:
 @pytest.mark.asyncio
 class TestMemoryStoreAudit:
     async def test_audit_records_create_then_update(self, tmp_path: pathlib.Path):
-        memory = MemoryStore(root=tmp_path)
+        memory = MemoryStore(key="test", root=tmp_path)
         await memory.write_text.aio("a.txt", "v1", actor="alice", reason="seed")
         await memory.write_text.aio("a.txt", "v2", actor="bob", reason="update")
         events = await memory.audit_tail()
@@ -1080,7 +1124,7 @@ class TestMemoryStoreAudit:
         assert events[1]["old_sha"] == events[0]["new_sha"]
 
     async def test_audit_disabled_writes_no_log(self, tmp_path: pathlib.Path):
-        memory = MemoryStore(root=tmp_path, audit=False)
+        memory = MemoryStore(key="test", root=tmp_path, audit=False)
         await memory.write_text.aio("a.txt", "v1")
         assert await memory.audit_tail() == []
         assert not (tmp_path / "audit" / "log.jsonl").exists()
@@ -1089,7 +1133,7 @@ class TestMemoryStoreAudit:
 @pytest.mark.asyncio
 class TestMemoryStoreVersions:
     async def test_keep_versions_snapshots_each_write(self, tmp_path: pathlib.Path):
-        memory = MemoryStore(root=tmp_path, keep_versions=True)
+        memory = MemoryStore(key="test", root=tmp_path, keep_versions=True)
         await memory.write_text.aio("a.txt", "v1")
         await memory.write_text.aio("a.txt", "v2")
         await memory.write_text.aio("a.txt", "v3")
@@ -1099,7 +1143,7 @@ class TestMemoryStoreVersions:
         assert contents == ["v1", "v2", "v3"]
 
     async def test_no_versions_by_default(self, tmp_path: pathlib.Path):
-        memory = MemoryStore(root=tmp_path)
+        memory = MemoryStore(key="test", root=tmp_path)
         await memory.write_text.aio("a.txt", "v1")
         assert not (tmp_path / "versions").exists()
 
@@ -1107,7 +1151,7 @@ class TestMemoryStoreVersions:
 @pytest.mark.asyncio
 class TestMemoryStoreMeta:
     async def test_meta_sidecar_records_actor_and_sha(self, tmp_path: pathlib.Path):
-        memory = MemoryStore(root=tmp_path)
+        memory = MemoryStore(key="test", root=tmp_path)
         meta = await memory.write_text.aio("a.txt", "hello", actor="tool-x", reason="seed")
         loaded = await memory.get_meta.aio("a.txt")
         assert loaded is not None
@@ -1117,14 +1161,14 @@ class TestMemoryStoreMeta:
         assert loaded.sha256 == meta.sha256
 
     async def test_get_meta_none_when_missing(self, tmp_path: pathlib.Path):
-        memory = MemoryStore(root=tmp_path)
+        memory = MemoryStore(key="test", root=tmp_path)
         assert await memory.get_meta.aio("nope.txt") is None
 
     async def test_meta_paths_distinct_for_collision_pair(self, tmp_path: pathlib.Path):
         # ``"a/b"`` and ``"a__b"`` would have collided on the old
         # ``replace("/", "__")`` encoding; the URL-quoted encoding keeps
         # their metadata sidecars and version histories distinct.
-        memory = MemoryStore(root=tmp_path, keep_versions=True)
+        memory = MemoryStore(key="test", root=tmp_path, keep_versions=True)
         await memory.write_text.aio("a/b", "first")
         await memory.write_text.aio("a__b", "second")
 
@@ -1376,24 +1420,25 @@ class TestDispatchEdgeCases:
 @pytest.mark.asyncio
 class TestMemoryPersistenceOnFailure:
     async def test_memory_retains_user_message_when_llm_errors(self):
-        memory = MemoryStore()
+        memory = MemoryStore(key="test")
         llm = AsyncMock(side_effect=RuntimeError("provider down"))
-        agent = Agent(name="t", instructions="I", call_llm=llm, memory=memory)
-        result = await agent.run.aio("remember me", [])
+        agent = Agent(name="t", instructions="I", call_llm=llm)
+        result = await agent.run.aio("remember me", memory=memory)
         assert "LLM call failed" in result.error
         # Even though the turn failed, the user message is committed to memory
         # so a later resume sees the in-flight prompt.
         assert [m["content"] for m in memory.messages] == ["remember me"]
+        assert result.memory is memory
 
     async def test_memory_retains_messages_when_max_turns_reached(self):
         looping = LLMMessage(
             content=None,
             tool_calls=[{"id": "loop", "name": "_add", "arguments": {"x": 0, "y": 0}}],
         )
-        memory = MemoryStore()
+        memory = MemoryStore(key="test")
         llm = AsyncMock(return_value=looping)
-        agent = Agent(name="t", instructions="I", tools=[_add], call_llm=llm, memory=memory, max_turns=2)
-        await agent.run.aio("loop forever", [])
+        agent = Agent(name="t", instructions="I", tools=[_add], call_llm=llm, max_turns=2)
+        await agent.run.aio("loop forever", memory=memory)
         roles = [m["role"] for m in memory.messages]
         assert roles[0] == "user"
         # Assistant + tool messages from the capped turns are persisted too.
