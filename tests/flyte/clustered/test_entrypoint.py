@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 import pytest
 
-from flyte.distributed._entrypoint import _master_addr, _wait_for_dns, main
+from flyte.clustered._entrypoint import _master_addr, _wait_for_dns, main
 
 BASE_ENV = {
     "JOBSET_NAME": "f-abc123",
@@ -30,7 +30,9 @@ def test_happy_path(monkeypatch):
         monkeypatch.setenv(k, v)
     monkeypatch.setattr(sys, "argv", ["_entrypoint.py", "a0", "a0", "--inputs", "s3://bucket/in"])
 
-    with patch("socket.getaddrinfo"), patch("os.execvp") as mock_exec:
+    with patch("socket.getaddrinfo"), patch("shutil.which", return_value="/usr/bin/torchrun"), patch(
+        "os.execvp"
+    ) as mock_exec:
         main()
 
     mock_exec.assert_called_once_with(
@@ -60,7 +62,9 @@ def test_master_port_default(monkeypatch):
     monkeypatch.delenv("MASTER_PORT", raising=False)
     monkeypatch.setattr(sys, "argv", ["_entrypoint.py", "a0", "a0"])
 
-    with patch("socket.getaddrinfo"), patch("os.execvp") as mock_exec:
+    with patch("socket.getaddrinfo"), patch("shutil.which", return_value="/usr/bin/torchrun"), patch(
+        "os.execvp"
+    ) as mock_exec:
         main()
 
     endpoint_arg = next(a for a in mock_exec.call_args[0][1] if a.startswith("--rdzv-endpoint="))
@@ -74,7 +78,9 @@ def test_rdzv_id_rotation(monkeypatch):
     monkeypatch.setenv("JOBSET_RESTART_ATTEMPT", "3")
     monkeypatch.setattr(sys, "argv", ["_entrypoint.py", "a0", "a0"])
 
-    with patch("socket.getaddrinfo"), patch("os.execvp") as mock_exec:
+    with patch("socket.getaddrinfo"), patch("shutil.which", return_value="/usr/bin/torchrun"), patch(
+        "os.execvp"
+    ) as mock_exec:
         main()
 
     rdzv_id_arg = next(a for a in mock_exec.call_args[0][1] if a.startswith("--rdzv-id="))
@@ -88,7 +94,9 @@ def test_node_rank_from_completion_index(monkeypatch):
     monkeypatch.setenv("JOB_COMPLETION_INDEX", "3")
     monkeypatch.setattr(sys, "argv", ["_entrypoint.py", "a0", "a0"])
 
-    with patch("socket.getaddrinfo"), patch("os.execvp") as mock_exec:
+    with patch("socket.getaddrinfo"), patch("shutil.which", return_value="/usr/bin/torchrun"), patch(
+        "os.execvp"
+    ) as mock_exec:
         main()
 
     node_rank_arg = next(a for a in mock_exec.call_args[0][1] if a.startswith("--node-rank="))
@@ -103,6 +111,19 @@ def test_missing_required_env_var(monkeypatch):
 
     with pytest.raises(SystemExit) as exc_info:
         main()
+
+    assert exc_info.value.code == 1
+
+
+def test_missing_torchrun_exits(monkeypatch):
+    """torchrun not installed — exits with code 1 and a helpful message."""
+    for k, v in BASE_ENV.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.setattr(sys, "argv", ["_entrypoint.py", "a0", "a0"])
+
+    with patch("socket.getaddrinfo"), patch("shutil.which", return_value=None):
+        with pytest.raises(SystemExit) as exc_info:
+            main()
 
     assert exc_info.value.code == 1
 

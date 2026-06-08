@@ -3,7 +3,7 @@ End-to-end DDP training on a ClusteredTaskEnvironment.
 
 Trains a tiny linear-regression model with PyTorch DistributedDataParallel across
 ``replicas x nproc_per_node`` workers. The workers are bootstrapped by ``torchrun``
-via the clustered entrypoint (``python -m flyte.distributed._entrypoint``), which the
+via the clustered entrypoint (``python -m flyte.clustered._entrypoint``), which the
 Go ``clustered`` plugin wires into a Kubernetes JobSet. Backend is ``gloo`` (CPU) so it
 needs no GPUs — swap to ``nccl`` + ``resources.gpu`` for real GPU training.
 
@@ -13,19 +13,19 @@ This exercises the full path:
       ->  torch.distributed rendezvous  ->  DDP training  ->  rank-0 uploads outputs.
 
 Run (registers + runs on the configured cluster):
-    uv run python examples/distributed/ddp_train.py
+    uv run python examples/clustered/ddp_train.py
 """
 
 from __future__ import annotations
 
 import flyte
 from flyte._image import DIST_FOLDER, PythonWheels
-from flyte.distributed import ClusteredTaskEnvironment, ClusterFailurePolicy, TorchRun
+from flyte.clustered import ClusteredTaskEnvironment, ClusterFailurePolicy, TorchRun
 
-# Image carries the LOCAL flyte build (so the container has flyte.distributed._entrypoint
+# Image carries the LOCAL flyte build (so the container has flyte.clustered._entrypoint
 # and the clustered runtime fixes), plus torch for the actual DDP workload.
 image = (
-    flyte.Image.from_debian_base(name="ddp_train5")
+    flyte.Image.from_debian_base(name="ddp_train6")
     .clone(addl_layer=PythonWheels(wheel_dir=DIST_FOLDER, package_name="flyte"))
     .with_pip_packages("torch", "numpy")
 )

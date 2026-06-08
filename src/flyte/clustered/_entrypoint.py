@@ -1,7 +1,7 @@
 """
 Entrypoint for clustered (JobSet-based) distributed training pods.
 
-Runs as PID 1 via: python -m flyte.distributed._entrypoint <a0 args...>
+Runs as PID 1 via: python -m flyte.clustered._entrypoint <a0 args...>
 
 Responsibilities:
   1. Validate required env vars
@@ -13,6 +13,7 @@ Responsibilities:
 """
 
 import os
+import shutil
 import socket
 import sys
 import time
@@ -75,6 +76,10 @@ def main() -> None:
     nproc_per_node = os.environ["NPROC_PER_NODE"]
     rdzv_backend = os.environ["RDZV_BACKEND"]
     master_port = os.environ.get("MASTER_PORT", "29500")
+
+    if shutil.which("torchrun") is None:
+        logger.error("please install torchrun")
+        sys.exit(1)
 
     master_addr = _master_addr(jobset_name, namespace)
     rdzv_id = f"{jobset_name}-{restart_attempt}"

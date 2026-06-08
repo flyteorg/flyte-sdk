@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import warnings
-
 import pytest
 
 import flyte
-from flyte.distributed._environment import (
+from flyte.clustered._environment import (
     ClusteredTaskEnvironment,
     ClusterFailurePolicy,
     TorchRun,
@@ -136,11 +134,9 @@ def test_unsupported_runtime_raises():
         _make_env(runtime="invalid")  # type: ignore[arg-type]
 
 
-def test_non_tcp_interconnect_warns():
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        _make_env(interconnect="efa")
-    assert any("Phase 3" in str(w.message) for w in caught)
+def test_non_tcp_interconnect_raises():
+    with pytest.raises(ValueError, match="interconnect must be one of"):
+        _make_env(interconnect="efa")  # type: ignore[arg-type]
 
 
 def test_task_decorator_works():

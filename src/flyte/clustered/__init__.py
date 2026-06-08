@@ -1,4 +1,4 @@
-from flyte.distributed._environment import (
+from flyte.clustered._environment import (
     ClusteredTaskEnvironment,
     ClusterFailurePolicy,
     TorchRun,

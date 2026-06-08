@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import flyte
 from flyte._internal.runtime.task_serde import get_proto_task
-from flyte.distributed._environment import (
+from flyte.clustered._environment import (
     ClusteredTaskEnvironment,
     ClusterFailurePolicy,
     TorchRun,
@@ -77,7 +77,7 @@ def test_task_type_version_is_1():
 
 def test_container_command_is_entrypoint():
     proto = _run_serde()
-    assert list(proto.container.command) == ["python", "-m", "flyte.distributed._entrypoint"]
+    assert list(proto.container.command) == ["python", "-m", "flyte.clustered._entrypoint"]
 
 
 def test_container_args_contains_a0():
@@ -119,7 +119,7 @@ def test_pod_template_clustered_gets_entrypoint():
     assert proto.type == "clustered-task"
     assert not proto.HasField("container")  # pod_template path -> k8s_pod, not container
     primary = next(c for c in proto.k8s_pod.pod_spec["containers"] if c["name"] == "primary")
-    assert primary["command"] == ["python", "-m", "flyte.distributed._entrypoint"]
+    assert primary["command"] == ["python", "-m", "flyte.clustered._entrypoint"]
     assert "a0" in primary["args"]
 
 
@@ -205,6 +205,6 @@ def test_full_serde_with_real_proto():
 
     assert proto.type == "clustered-task"
     assert proto.task_type_version == 1
-    assert list(proto.container.command) == ["python", "-m", "flyte.distributed._entrypoint"]
+    assert list(proto.container.command) == ["python", "-m", "flyte.clustered._entrypoint"]
     assert "a0" in proto.container.args
     assert proto.custom.fields["replicas"].number_value == 4

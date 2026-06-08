@@ -175,7 +175,7 @@ def get_proto_timeout_strategy(timeout: TimeoutType | None) -> Optional[literals
 def _is_clustered(env: typing.Any) -> bool:
     """Return True if env is a ClusteredTaskEnvironment without importing it at module level."""
     t = type(env)
-    return t.__name__ == "ClusteredTaskEnvironment" and t.__module__ == "flyte.distributed._environment"
+    return t.__name__ == "ClusteredTaskEnvironment" and t.__module__ == "flyte.clustered._environment"
 
 
 def get_proto_task(
@@ -203,7 +203,7 @@ def get_proto_task(
         # invocation already lives in args (from _get_urun_container) and is
         # passed through to torchrun -> a0.
         if c is not None:
-            c.command[:] = ["python", "-m", "flyte.distributed._entrypoint"]
+            c.command[:] = ["python", "-m", "flyte.clustered._entrypoint"]
 
     if task.pod_template and not isinstance(task.pod_template, str):
         primary_container = _get_urun_container(serialize_context, task)
@@ -240,7 +240,7 @@ def get_proto_task(
     _task_type = task.task_type
     _task_type_version = task.task_type_version
     if _clustered:
-        from flyte.distributed._environment import ClusteredTaskEnvironment
+        from flyte.clustered._environment import ClusteredTaskEnvironment
 
         assert isinstance(_parent_env, ClusteredTaskEnvironment)
         _task_type = "clustered-task"

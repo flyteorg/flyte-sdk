@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import warnings
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Dict, Literal, Optional, Union
 
@@ -42,7 +41,7 @@ class ClusterFailurePolicy:
     restart_on_host_maintenance: bool = False
 
 
-_INTERCONNECT_VALUES = ("tcp", "efa", "infiniband", "roce")
+_INTERCONNECT_VALUES = ("tcp",)
 
 
 @dataclass(kw_only=True)
@@ -56,7 +55,7 @@ class ClusteredTaskEnvironment(TaskEnvironment):
     :param nproc_per_node: Number of processes per pod, passed to ``torchrun --nproc-per-node``.
         Must be >= 1 and, when resources.gpu is set, <= resources.gpu. Required.
     :param runtime: Launcher configuration. Phase 1 supports only TorchRun().
-    :param interconnect: Network fabric. Non-TCP options require RDMA-capable images (Phase 3).
+    :param interconnect: Network fabric. Currently only "tcp" is supported.
     :param failure_policy: JobSet-level restart and eviction policy.
     :param ttl_seconds_after_finished: Seconds to retain the JobSet after completion.
     """
@@ -64,7 +63,7 @@ class ClusteredTaskEnvironment(TaskEnvironment):
     replicas: int
     nproc_per_node: int
     runtime: Runtime = field(default_factory=TorchRun)
-    interconnect: Literal["tcp", "efa", "infiniband", "roce"] = "tcp"
+    interconnect: Literal["tcp"] = "tcp"
     failure_policy: ClusterFailurePolicy = field(default_factory=ClusterFailurePolicy)
     ttl_seconds_after_finished: Optional[int] = None
 
@@ -84,17 +83,12 @@ class ClusteredTaskEnvironment(TaskEnvironment):
             raise TypeError(f"unsupported runtime type: {type(self.runtime).__name__}")
         if self.interconnect not in _INTERCONNECT_VALUES:
             raise ValueError(f"interconnect must be one of {_INTERCONNECT_VALUES}")
-        if self.interconnect != "tcp":
-            warnings.warn(
-                f"interconnect={self.interconnect!r} requires RDMA-capable images (Phase 3)",
-                stacklevel=2,
-            )
 
     def to_custom_dict(self) -> Dict:
         """Serialize this environment to the dict shape expected by ClusteredTaskSpec proto.
 
         Imported lazily so the heavy clustered_pb2 module is only loaded at serialization
-        time rather than on every ``flyte.distributed`` import.
+        time rather than on every ``flyte.clustered`` import.
         """
         from flyteidl2.plugins.clustered_pb2 import (
             ClusteredTaskSpec,
@@ -113,9 +107,6 @@ class ClusteredTaskEnvironment(TaskEnvironment):
         _rdzv_map = {"static": RdzvBackend.STATIC, "c10d": RdzvBackend.C10D}
         _interconnect_map = {
             "tcp": Interconnect.TCP,
-            "efa": Interconnect.EFA,
-            "infiniband": Interconnect.INFINIBAND,
-            "roce": Interconnect.ROCE,
         }
 
         torch_runtime = TorchRuntime(
