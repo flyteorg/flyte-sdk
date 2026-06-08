@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List
+from typing import TYPE_CHECKING, Dict, List, cast
 
 from flyte.extend import AsyncFunctionTaskTemplate, TaskPluginRegistry
 from flyte.models import SerializationContext
+
+if TYPE_CHECKING:
+    from flyte.clustered._environment import ClusteredTaskEnvironment
 
 
 @dataclass(frozen=True)
@@ -32,7 +35,9 @@ class ClusteredTaskTemplate(AsyncFunctionTaskTemplate):
     def custom_config(self, sctx: SerializationContext) -> Dict:
         # parent_env is a weakref set by TaskEnvironment.task(); it is alive during serialization.
         env = self.parent_env() if self.parent_env else None
-        return env.to_custom_dict() if env is not None else {}
+        if env is None:
+            return {}
+        return cast("ClusteredTaskEnvironment", env).to_custom_dict()
 
     def container_command(self, sctx: SerializationContext) -> List[str]:
         # PID-1 is the entrypoint wrapper; the original a0 invocation lives in container_args and
