@@ -148,3 +148,61 @@ def test_task_decorator_works():
 
     assert my_task is not None
     assert my_task.parent_env_name == "clustered_env"
+
+
+def test_reusable_not_supported_raises():
+    with pytest.raises(ValueError, match="does not support reusable"):
+        _make_env(reusable=flyte.ReusePolicy(replicas=1, idle_ttl=60))
+
+
+# ---------------------------------------------------------------------------
+# Plugin wiring — env routes tasks to ClusteredTaskTemplate via plugin_config
+# ---------------------------------------------------------------------------
+
+
+def test_env_sets_clustered_plugin_config():
+    from flyte.clustered._task import _ClusteredPlugin
+
+    env = _make_env()
+    assert isinstance(env.plugin_config, _ClusteredPlugin)
+
+
+def test_task_decorator_returns_clustered_template():
+    from flyte.clustered._task import ClusteredTaskTemplate
+
+    env = _make_env()
+
+    @env.task
+    async def my_task(x: int) -> int:
+        return x
+
+    # The plugin registry must select ClusteredTaskTemplate, not the base AsyncFunctionTaskTemplate.
+    assert isinstance(my_task, ClusteredTaskTemplate)
+    assert my_task.task_type == "clustered-task"
+    assert my_task.task_type_version == 1
+    # container_command supplies the entrypoint wrapper (sctx is unused by this override).
+    assert my_task.container_command(None) == ["python", "-m", "flyte.clustered._entrypoint"]
+
+
+def test_clustered_template_custom_config_reads_env():
+    """custom_config resolves the parent env via weakref and returns its to_custom_dict()."""
+    env = _make_env()
+
+    @env.task
+    async def my_task(x: int) -> int:
+        return x
+
+    custom = my_task.custom_config(None)
+    assert custom == env.to_custom_dict()
+    assert custom["replicas"] == env.replicas
+
+
+def test_base_task_template_container_command_default_empty():
+    """A plain (non-clustered) task keeps the empty default command from the base TaskTemplate."""
+    plain_env = flyte.TaskEnvironment(name="plain", image="python:3.11")
+
+    @plain_env.task
+    async def plain(x: int) -> int:
+        return x
+
+    assert plain.container_command(None) == []
