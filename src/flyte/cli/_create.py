@@ -332,7 +332,7 @@ def config(
         org = org_from_endpoint(endpoint)
 
     # skip localhost/devbox as there is no auth
-    if endpoint and "localhost" not in endpoint:
+    if endpoint and not insecure:
         assert cache_key is not None
         cache_path = get_public_client_auth_metadata_cache_path(cache_key)
         if cache_path.exists() and not force:
