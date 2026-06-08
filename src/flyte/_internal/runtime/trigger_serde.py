@@ -1,12 +1,22 @@
 import asyncio
-from typing import Union
+from typing import Optional, Union
 
+from flyteidl2.common import identifier_pb2
+from flyteidl2.common import run_pb2 as common_run_pb2
 from flyteidl2.core import interface_pb2, literals_pb2
 from flyteidl2.task import common_pb2, run_pb2, task_definition_pb2
 from google.protobuf import timestamp_pb2, wrappers_pb2
 
 import flyte.types
 from flyte import Cron, FixedRate, Trigger, TriggerTime
+
+# Reserved key under which the trigger's kickoff-time input arg name is stashed in the offloaded
+# Inputs.context. Triggers now offload their inputs at registration (UploadInputs), so the backend
+# no longer injects a kickoff-time literal at fire time and instead stamps run_start_time on the run.
+# The runtime reads this key out of the offloaded inputs at execution and writes run_start_time into
+# the named input, preserving the `inputs={"start_time": flyte.TriggerTime}` API. Context is not part
+# of the cache-key hash, so carrying it here does not perturb input hashing. See ENG-26-531/532.
+KICKOFF_TIME_INPUT_ARG_CONTEXT_KEY = "_u_kickoff_time_input_arg"
 
 
 def _to_schedule(m: Union[Cron, FixedRate], kickoff_arg_name: str | None = None) -> common_pb2.Schedule:
@@ -156,14 +166,21 @@ async def to_task_trigger(
 
     literals = await process_default_inputs(default_inputs, task_name, task_inputs, task_default_inputs)
 
-    context_kvs = None
+    context_kvs = []
     if t.custom_context:
-        context_kvs = [literals_pb2.KeyValuePair(key=k, value=v) for k, v in t.custom_context.items()]
+        context_kvs.extend(literals_pb2.KeyValuePair(key=k, value=v) for k, v in t.custom_context.items())
 
-    automation = _to_schedule(
-        t.automation,
-        kickoff_arg_name=kickoff_arg_name,
-    )
+    # Also convey the kickoff-time input arg name through the (offloaded) inputs context, so the
+    # runtime can fill that input from run_start_time at execution (the offloaded blob never carries
+    # the per-fire value). Context is not part of the cache-key hash, so this does not perturb hashing.
+    if kickoff_arg_name is not None:
+        context_kvs.append(
+            literals_pb2.KeyValuePair(key=KICKOFF_TIME_INPUT_ARG_CONTEXT_KEY, value=kickoff_arg_name)
+        )
+
+    # Keep the kickoff arg on the schedule too: the backend uses it for the scheduled-trigger
+    # contract (and folds run_start_time into the cache key on fire).
+    automation = _to_schedule(t.automation, kickoff_arg_name=kickoff_arg_name)
 
     return task_definition_pb2.TaskTrigger(
         name=t.name,
@@ -178,3 +195,48 @@ async def to_task_trigger(
             schedule=automation,
         ),
     )
+
+
+async def offload_trigger_inputs(
+    inputs: common_pb2.Inputs,
+    *,
+    org: str,
+    project: str,
+    domain: str,
+    task_version: str,
+    task_name: Optional[str] = None,
+    task_spec: Optional[task_definition_pb2.TaskSpec] = None,
+) -> common_run_pb2.OffloadedInputData:
+    """Offload trigger inputs out-of-band via DataProxy UploadInputs and return the URI + hash.
+
+    The ``task`` reference is only used by the server to resolve the task template's
+    ``cache_ignore_input_vars`` so the input hash matches a later launch; it stores nothing
+    trigger-specific. ``project_id`` supplies the storage location (org/project/domain prefix);
+    no trigger id is involved, since offloaded inputs are content-addressed by hash and referenced
+    by URI from the trigger spec.
+
+    Pass ``task_spec`` when the task is not yet registered (deploy path: the task is being created in
+    the same request, so a ``task_id`` lookup would 404). Pass ``task_name`` to reference an
+    already-registered task by id (``remote.Trigger.create`` path).
+    """
+    from flyteidl2.dataproxy import dataproxy_service_pb2
+
+    from flyte._initialize import get_client
+
+    req = dataproxy_service_pb2.UploadInputsRequest(
+        inputs=inputs,
+        project_id=identifier_pb2.ProjectIdentifier(organization=org, name=project, domain=domain),
+    )
+    if task_spec is not None:
+        req.task_spec.CopyFrom(task_spec)
+    elif task_name is not None:
+        req.task_id.CopyFrom(
+            task_definition_pb2.TaskIdentifier(
+                org=org, project=project, domain=domain, name=task_name, version=task_version
+            )
+        )
+    else:
+        raise ValueError("offload_trigger_inputs requires either task_spec or task_name")
+
+    resp = await get_client().dataproxy_service.upload_inputs(req)
+    return resp.offloaded_input_data

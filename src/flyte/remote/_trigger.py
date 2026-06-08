@@ -141,40 +141,53 @@ class Trigger(ToJSONMixin):
                 else Task.get(name=task_name, auto_version="latest")
             )
             task: TaskDetails = await lazy.fetch.aio()
-
-            task_trigger = await trigger_serde.to_task_trigger(
-                t=trigger,
-                task_name=task_name,
-                task_inputs=task.pb2.spec.task_template.interface.inputs,
-                task_default_inputs=list(task.pb2.spec.default_inputs),
-            )
-
-            resp = await get_client().trigger_service.deploy_trigger(
-                request=trigger_service_pb2.DeployTriggerRequest(
-                    name=identifier_pb2.TriggerName(
-                        name=trigger.name,
-                        task_name=task_name,
-                        org=cfg.org,
-                        project=cfg.project,
-                        domain=cfg.domain,
-                    ),
-                    spec=trigger_definition_pb2.TriggerSpec(
-                        active=task_trigger.spec.active,
-                        inputs=task_trigger.spec.inputs,
-                        run_spec=task_trigger.spec.run_spec,
-                        task_version=task.version,
-                    ),
-                    automation_spec=task_trigger.automation_spec,
-                )
-            )
-
-            details = TriggerDetails(pb2=resp.trigger)
-
-            return cls(pb2=details.trigger, details=details)
         except ConnectError as e:
             if e.code == Code.NOT_FOUND:
                 raise ValueError(f"Task {task_name}:{task_version or 'latest'} not found") from e
             raise
+
+        task_trigger = await trigger_serde.to_task_trigger(
+            t=trigger,
+            task_name=task_name,
+            task_inputs=task.pb2.spec.task_template.interface.inputs,
+            task_default_inputs=list(task.pb2.spec.default_inputs),
+        )
+
+        # Offload the trigger inputs out-of-band via DataProxy and store only the resulting URI + hash
+        # on the trigger spec. At fire time the backend passes this straight through as the run's
+        # OffloadedInputData and stamps run_start_time, instead of inlining a kickoff literal.
+        # The task was just fetched above and is already registered, so we reference it by task_id.
+        offloaded_input_data = await trigger_serde.offload_trigger_inputs(
+            task_trigger.spec.inputs,
+            org=cfg.org,
+            project=cfg.project,
+            domain=cfg.domain,
+            task_name=task_name,
+            task_version=task.version,
+        )
+
+        resp = await get_client().trigger_service.deploy_trigger(
+            request=trigger_service_pb2.DeployTriggerRequest(
+                name=identifier_pb2.TriggerName(
+                    name=trigger.name,
+                    task_name=task_name,
+                    org=cfg.org,
+                    project=cfg.project,
+                    domain=cfg.domain,
+                ),
+                spec=trigger_definition_pb2.TriggerSpec(
+                    active=task_trigger.spec.active,
+                    offloaded_input_data=offloaded_input_data,
+                    run_spec=task_trigger.spec.run_spec,
+                    task_version=task.version,
+                ),
+                automation_spec=task_trigger.automation_spec,
+            )
+        )
+
+        details = TriggerDetails(pb2=resp.trigger)
+
+        return cls(pb2=details.trigger, details=details)
 
     @syncify
     @classmethod

@@ -24,7 +24,8 @@ dependencies = [
     "async-lru>=2.0.5",
     "mashumaro",
     "aiolimiter>=1.2.1",
-    "flyteidl2==2.0.20",
+    # LOCAL DEV: pinned to local gen/python via [tool.uv.sources] below. Restore "flyteidl2==2.0.20" before merge.
+    "flyteidl2",
     "packaging",
     "sentry-sdk>=2.0",
     "pyOpenSSL>=24.0.0",
@@ -193,6 +194,9 @@ ignore_missing_imports = true
 
 [tool.uv]
 exclude-newer = "5 days"
+# LOCAL DEV: relax the flyteidl2==2.0.20 pin (incl. the one from flyte_controller_base) so the
+# locally-generated stubs (2.0.21.dev) resolve. Remove before merge.
+override-dependencies = ["flyteidl2"]
 
 # Opt flyteorg packages out of the global recency cutoff so freshly published
 # flyteidl2/flyte_controller_base releases can be picked up immediately.
@@ -202,6 +206,9 @@ flyte_controller_base = "0 days"
 
 [tool.uv.sources]
 flyte_controller_base = { path = "rs_controller" }
+# LOCAL DEV: point flyteidl2 at locally-generated protobuf stubs from the flyte2 backend
+# (offloaded trigger inputs / run_start_time work). Remove before merge.
+flyteidl2 = { path = "/Users/katrina/src/union-scratch-2/cloud/flyte2/gen/python", editable = true }
 
 [tool.ty.rules]
 unused-ignore-comment = "warn"
