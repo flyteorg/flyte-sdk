@@ -27,7 +27,7 @@ UI to see the visualization.
 Run::
 
     pip install 'flyte' litellm pydantic-monty
-    python examples/agents/code_mode_agent.py
+    python examples/agents/flyte_agent/code_mode_agent.py
 """
 
 from __future__ import annotations

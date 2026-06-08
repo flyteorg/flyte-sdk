@@ -9,7 +9,6 @@ from .agent import (
     AgentTool,
     agent_progress_cb,
 )
-from .codemode import CodeModeAgent
 from .memory import AccessDenied, ConcurrencyError, MemoryMeta, MemoryStore, MemoryStoreError
 from .protocol import AgentProtocol, AgentResult
 
@@ -20,7 +19,6 @@ __all__ = [
     "AgentProtocol",
     "AgentResult",
     "AgentTool",
-    "CodeModeAgent",
     "ConcurrencyError",
     "LLMCallable",
     "LLMMessage",

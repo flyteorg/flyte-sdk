@@ -58,7 +58,7 @@ from flyte.syncify import syncify
 # inside ``Agent`` and remain addressable as ``flyte.ai.agents.agent.<name>``
 # for callers (notably this repo's tests) that historically imported them
 # from here.
-from ._llm import LLMCallable, _default_call_llm
+from ._llm import LLMCallable, LLMMessage, _default_call_llm
 from ._mcp import MCPServerSpec, _MCPToolLoader
 from ._tools import (
     AgentTool,
@@ -131,6 +131,41 @@ class AgentEvent:
 
 
 # ----------------------------------------------------------------------------
+# Loop driver plumbing
+#
+# The tool loop and the code-mode loop share the same scaffolding (MCP load,
+# start/end events, timing, message setup, the call-LLM-per-turn cadence, the
+# max-turns guard, and memory finalization). They differ only in what happens
+# *after* the LLM responds each turn. That per-turn behavior is supplied as a
+# ``step`` callback returning a :class:`_TurnResult`; :meth:`Agent._run_loop`
+# owns everything else and returns a :class:`_RunOutcome`.
+# ----------------------------------------------------------------------------
+
+
+@dataclass
+class _TurnResult:
+    """What a per-turn step decided: stop with a final answer, or keep looping."""
+
+    done: bool
+    final_text: str = ""
+
+
+@dataclass
+class _RunOutcome:
+    """Terminal state of the agent loop, used to build an :class:`AgentResult`."""
+
+    attempts: int
+    last_text: str
+    error_msg: str
+    memory: MemoryStore | None
+
+
+# One turn of work after the LLM responds: append messages, emit events, run
+# tools / sandbox, and report whether the loop should stop.
+_TurnStep = Callable[[LLMMessage, "list[dict[str, Any]]", int], Awaitable[_TurnResult]]
+
+
+# ----------------------------------------------------------------------------
 # Skills
 # ----------------------------------------------------------------------------
 
@@ -200,7 +235,7 @@ class Agent:
         automatically.
     model:
         Model identifier passed to ``call_llm``. Defaults to
-        ``"claude-haiku-4-5"`` to match :class:`CodeModeAgent`.
+        ``"claude-haiku-4-5"``.
     tools:
         Sequence (or ``{name: tool}`` mapping) of tools the agent may call.
         Each entry can be a plain callable, a ``@flyte.trace`` helper, an
@@ -421,51 +456,9 @@ class Agent:
         if self.code_mode:
             return await self._run_code_mode(message, memory)
 
-        await self._ensure_mcp_loaded()
-        await _emit(AgentEvent("agent_start", {"name": self.name, "model": self.model}))
-        t0 = time.monotonic()
-
-        store: MemoryStore | None = memory if isinstance(memory, MemoryStore) else None
-        prior: list[dict[str, Any]] = []
-        if store is not None:
-            prior.extend(store.messages)
-        elif isinstance(memory, list):
-            prior.extend(memory)
-        messages: list[dict[str, Any]] = [*prior, {"role": "user", "content": message}]
-
         tools_schema = self._llm_tools()
-        attempts = 0
-        last_text = ""
-        error_msg = ""
 
-        def _finalize_memory() -> MemoryStore | None:
-            """Append the in-flight transcript back to the store and return it.
-
-            Persistence is left to the caller: ``run`` mutates the passed
-            :class:`MemoryStore` in place and returns it, but does not save it.
-            """
-            if store is None:
-                return None
-            store.extend(messages[len(prior) :])
-            return store
-
-        for turn in range(self.max_turns):
-            attempts = turn + 1
-            await _emit(AgentEvent("turn_start", {"turn": attempts, "max_turns": self.max_turns}))
-            try:
-                with flyte.group(f"{self.name}-turn-{attempts}"):
-                    llm_msg = await self.call_llm(
-                        self.model,
-                        self._system_prompt,
-                        list[dict[str, Any]](messages),
-                        tools_schema,
-                    )
-            except Exception as exc:
-                error_msg = f"LLM call failed on turn {attempts}: {exc}"
-                await _emit(AgentEvent("agent_end", {"error": error_msg, "turns": attempts}))
-                result_memory = _finalize_memory()
-                return AgentResult(error=error_msg, attempts=attempts, summary=last_text, memory=result_memory)
-
+        async def step(llm_msg: LLMMessage, messages: list[dict[str, Any]], attempts: int) -> _TurnResult:
             assistant_msg: dict[str, Any] = {"role": "assistant", "content": llm_msg.content or ""}
             if llm_msg.tool_calls:
                 assistant_msg["tool_calls"] = [
@@ -483,14 +476,9 @@ class Agent:
             await _emit(AgentEvent("message", {"role": "assistant", "content": llm_msg.content or ""}))
 
             if not llm_msg.tool_calls:
-                last_text = llm_msg.content or ""
-                await _emit(
-                    AgentEvent(
-                        "turn_end",
-                        {"turn": attempts, "had_tool_calls": False, "text_len": len(last_text)},
-                    )
-                )
-                break
+                text = llm_msg.content or ""
+                await _emit(AgentEvent("turn_end", {"turn": attempts, "had_tool_calls": False, "text_len": len(text)}))
+                return _TurnResult(done=True, final_text=text)
 
             tool_results = await self._execute_calls(llm_msg.tool_calls)
             for call, (result_text, _is_error) in zip(llm_msg.tool_calls, tool_results):
@@ -502,30 +490,21 @@ class Agent:
                         "content": result_text,
                     }
                 )
-
             await _emit(
                 AgentEvent(
                     "turn_end",
-                    {
-                        "turn": attempts,
-                        "had_tool_calls": True,
-                        "tool_count": len(llm_msg.tool_calls),
-                    },
+                    {"turn": attempts, "had_tool_calls": True, "tool_count": len(llm_msg.tool_calls)},
                 )
             )
-        else:
-            error_msg = f"Reached max_turns={self.max_turns} without producing a final answer."
+            return _TurnResult(done=False)
 
-        result_memory = _finalize_memory()
-
-        elapsed = int((time.monotonic() - t0) * 1000)
-        await _emit(
-            AgentEvent(
-                "agent_end",
-                {"turns": attempts, "elapsed_ms": elapsed, "error": error_msg, "summary_len": len(last_text)},
-            )
+        outcome = await self._run_loop(message, memory, tools_schema=tools_schema, step=step)
+        return AgentResult(
+            summary=outcome.last_text,
+            error=outcome.error_msg,
+            attempts=outcome.attempts,
+            memory=outcome.memory,
         )
-        return AgentResult(summary=last_text, error=error_msg, attempts=attempts, memory=result_memory)
 
     async def _run_code_mode(
         self,
@@ -545,46 +524,11 @@ class Agent:
 
         from ._code import build_sandbox_tools, extract_python_code
 
-        await self._ensure_mcp_loaded()
-        await _emit(AgentEvent("agent_start", {"name": self.name, "model": self.model, "mode": "code"}))
-        t0 = time.monotonic()
-
-        store: MemoryStore | None = memory if isinstance(memory, MemoryStore) else None
-        prior: list[dict[str, Any]] = []
-        if store is not None:
-            prior.extend(store.messages)
-        elif isinstance(memory, list):
-            prior.extend(memory)
-        messages: list[dict[str, Any]] = [*prior, {"role": "user", "content": message}]
-
         sandbox_tools = build_sandbox_tools(self._registry)
-        attempts = 0
-        last_text = ""
         last_code = ""
-        error_msg = ""
 
-        def _finalize_memory() -> MemoryStore | None:
-            if store is None:
-                return None
-            store.extend(messages[len(prior) :])
-            return store
-
-        for turn in range(self.max_turns):
-            attempts = turn + 1
-            await _emit(AgentEvent("turn_start", {"turn": attempts, "max_turns": self.max_turns}))
-            try:
-                with flyte.group(f"{self.name}-turn-{attempts}"):
-                    llm_msg = await self.call_llm(
-                        self.model,
-                        self._system_prompt,
-                        list[dict[str, Any]](messages),
-                        None,
-                    )
-            except Exception as exc:
-                error_msg = f"LLM call failed on turn {attempts}: {exc}"
-                await _emit(AgentEvent("agent_end", {"error": error_msg, "turns": attempts}))
-                return AgentResult(error=error_msg, attempts=attempts, summary=last_text, memory=_finalize_memory())
-
+        async def step(llm_msg: LLMMessage, messages: list[dict[str, Any]], attempts: int) -> _TurnResult:
+            nonlocal last_code
             text = llm_msg.content or ""
             messages.append({"role": "assistant", "content": text})
             await _emit(AgentEvent("message", {"role": "assistant", "content": text}))
@@ -592,9 +536,8 @@ class Agent:
             code = extract_python_code(text)
             if not code:
                 # No code block: the assistant has produced its final answer.
-                last_text = text
                 await _emit(AgentEvent("turn_end", {"turn": attempts, "had_code": False, "text_len": len(text)}))
-                break
+                return _TurnResult(done=True, final_text=text)
 
             last_code = code
             await _emit(AgentEvent("tool_start", {"tool": "<sandbox>", "code": code}))
@@ -617,7 +560,7 @@ class Agent:
                     }
                 )
                 await _emit(AgentEvent("turn_end", {"turn": attempts, "had_code": True, "error": True}))
-                continue
+                return _TurnResult(done=False)
 
             observation = _stringify_tool_result(result)
             await _emit(AgentEvent("tool_end", {"tool": "<sandbox>", "result": _abbreviate(result)}))
@@ -628,10 +571,99 @@ class Agent:
                 }
             )
             await _emit(AgentEvent("turn_end", {"turn": attempts, "had_code": True}))
+            return _TurnResult(done=False)
+
+        outcome = await self._run_loop(message, memory, tools_schema=None, step=step, mode="code")
+        return AgentResult(
+            code=last_code,
+            summary=outcome.last_text,
+            error=outcome.error_msg,
+            attempts=outcome.attempts,
+            memory=outcome.memory,
+        )
+
+    def _init_messages(
+        self,
+        memory: list[dict[str, Any]] | MemoryStore | None,
+        message: str,
+    ) -> tuple[MemoryStore | None, int, list[dict[str, Any]]]:
+        """Seed the message list from prior context and the new user message.
+
+        Returns the backing :class:`MemoryStore` (if any), the number of prior
+        messages (so the in-flight tail can be sliced off later), and the
+        message list to drive the loop with.
+        """
+        store: MemoryStore | None = memory if isinstance(memory, MemoryStore) else None
+        prior: list[dict[str, Any]] = []
+        if store is not None:
+            prior.extend(store.messages)
+        elif isinstance(memory, list):
+            prior.extend(memory)
+        messages: list[dict[str, Any]] = [*prior, {"role": "user", "content": message}]
+        return store, len(prior), messages
+
+    async def _run_loop(
+        self,
+        message: str,
+        memory: list[dict[str, Any]] | MemoryStore | None,
+        *,
+        tools_schema: list[dict[str, Any]] | None,
+        step: _TurnStep,
+        mode: str | None = None,
+    ) -> _RunOutcome:
+        """Shared driver for both the tool loop and the code-mode loop.
+
+        Owns the scaffolding common to both: MCP loading, ``agent_start`` /
+        ``agent_end`` events, timing, message setup, the call-LLM-per-turn
+        cadence (with error handling), the ``max_turns`` guard, and memory
+        finalization. The mode-specific per-turn behavior is delegated to
+        *step*, which appends messages, emits its own events, runs tools or the
+        sandbox, and signals via :class:`_TurnResult` whether to stop.
+
+        ``memory`` is mutated in place (the in-flight transcript is appended back
+        to a passed :class:`MemoryStore`) but never saved; persistence is the
+        caller's responsibility.
+        """
+        await self._ensure_mcp_loaded()
+        start_data: dict[str, Any] = {"name": self.name, "model": self.model}
+        if mode is not None:
+            start_data["mode"] = mode
+        await _emit(AgentEvent("agent_start", start_data))
+        t0 = time.monotonic()
+
+        store, prior_len, messages = self._init_messages(memory, message)
+
+        attempts = 0
+        last_text = ""
+        error_msg = ""
+
+        for turn in range(self.max_turns):
+            attempts = turn + 1
+            await _emit(AgentEvent("turn_start", {"turn": attempts, "max_turns": self.max_turns}))
+            try:
+                with flyte.group(f"{self.name}-turn-{attempts}"):
+                    llm_msg = await self.call_llm(
+                        self.model,
+                        self._system_prompt,
+                        list[dict[str, Any]](messages),
+                        tools_schema,
+                    )
+            except Exception as exc:
+                error_msg = f"LLM call failed on turn {attempts}: {exc}"
+                break
+
+            outcome = await step(llm_msg, messages, attempts)
+            if outcome.done:
+                last_text = outcome.final_text
+                break
         else:
             error_msg = f"Reached max_turns={self.max_turns} without producing a final answer."
 
-        result_memory = _finalize_memory()
+        if store is not None:
+            # Append only the in-flight tail back to the store (mutated in place,
+            # returned to the caller, but not persisted here).
+            store.extend(messages[prior_len:])
+
         elapsed = int((time.monotonic() - t0) * 1000)
         await _emit(
             AgentEvent(
@@ -639,13 +671,7 @@ class Agent:
                 {"turns": attempts, "elapsed_ms": elapsed, "error": error_msg, "summary_len": len(last_text)},
             )
         )
-        return AgentResult(
-            code=last_code,
-            summary=last_text,
-            error=error_msg,
-            attempts=attempts,
-            memory=result_memory,
-        )
+        return _RunOutcome(attempts=attempts, last_text=last_text, error_msg=error_msg, memory=store)
 
     async def _execute_calls(
         self,

@@ -27,6 +27,16 @@ from ._html import build_chat_html
 
 _HEX_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}){1,2}$")
 
+# Translate the agent loop's :class:`~flyte.ai.agents.AgentEvent` types onto the
+# three UI progress steps the chat JS understands ("Creating plan" / "Executing
+# plan" / "Formatting answer"). Event types not listed here are not surfaced as
+# progress steps. See ``CODE_MODE_PHASE_TO_STEP`` in ``_html.py``.
+_AGENT_EVENT_TO_UI_PHASE: dict[str, str] = {
+    "turn_start": "generating_code",
+    "tool_start": "executing",
+    "agent_end": "formatting",
+}
+
 # When passthrough auth is enabled, the chat shell and read-only metadata routes must
 # stay reachable without browser credentials so /api/tools and /api/nudges work from
 # the static page; /api/chat remains protected.
@@ -165,8 +175,8 @@ async def _forward_remote_run_watch_to_progress_queue(
 ) -> None:
     """Push NDJSON progress lines while a Flyte run executes (``task_entrypoint`` chat).
 
-    ``CodeModeAgent`` runs inside the worker; ``codemode_progress_cb`` never fires in the
-    FastAPI process. We approximate codemode phases from :meth:`~flyte.remote.Run.watch`:
+    The agent runs inside the worker, so ``agent_progress_cb`` never fires in the
+    FastAPI process. We approximate progress phases from :meth:`~flyte.remote.Run.watch`:
 
     Pre-``RUNNING`` phases (``QUEUED``, ``WAITING_FOR_RESOURCES``, ``INITIALIZING``) emit a
     ``task_phase`` progress event so the UI can update the step-0 subtitle (cold-start of
@@ -270,8 +280,8 @@ class AgentChatAppEnvironment(flyte.app.AppEnvironment):
         When ``True``, the FastAPI app initializes ``flyte.init_passthrough`` at
         startup and adds ``FastAPIPassthroughAuthMiddleware`` so incoming
         ``Authorization`` / cookie headers are forwarded to Flyte remote calls.
-        Enable this when using ``CodeModeAgent`` with ``@env.task`` tools —
-        nested task execution needs caller credentials (same pattern as
+        Enable this when using an agent with ``@env.task`` tools — nested task
+        execution needs caller credentials (same pattern as
         ``FlyteWebhookAppEnvironment``).
     passthrough_auth_excluded_paths:
         Paths skipped by passthrough middleware. When omitted, defaults include
@@ -284,11 +294,11 @@ class AgentChatAppEnvironment(flyte.app.AppEnvironment):
 
         When set, ``/api/chat`` calls the task (via ``flyte.run.aio``) instead
         of calling ``agent.run`` directly. This is useful for agents whose tool
-        calls must run under a parent task context (e.g. a ``CodeModeAgent``
-        using durable ``@env.task`` tools). When streaming chat
+        calls must run under a parent task context (e.g. an ``Agent`` in
+        ``code_mode`` using durable ``@env.task`` tools). When streaming chat
         (``stream: true``), progress lines use :meth:`~flyte.remote.Run.watch`
         on the returned run (first ``RUNNING`` → ``generating_code``, next →
-        ``executing``). Fine-grained codemode phases still require
+        ``executing``). Fine-grained per-turn phases still require
         ``agent.run`` in the web process, or future worker-side signaling.
 
         The entrypoint may accept either:
@@ -501,22 +511,30 @@ class AgentChatAppEnvironment(flyte.app.AppEnvironment):
                     attempts=result.attempts,
                 )
 
-            from ..agents.codemode import codemode_progress_cb
+            from ..agents.agent import AgentEvent, agent_progress_cb
 
             queue: asyncio.Queue[str | None] = asyncio.Queue()
 
-            async def on_progress(phase: str, data: dict[str, Any]) -> None:
-                payload = {"type": "progress", "phase": phase, **data}
+            # Map :class:`AgentEvent` types onto the UI's three progress steps
+            # (plan → execute → format) so the existing chat JS works unchanged.
+            async def on_event(event: AgentEvent) -> None:
+                phase = _AGENT_EVENT_TO_UI_PHASE.get(event.type)
+                if phase is None:
+                    return
+                payload: dict[str, Any] = {"type": "progress", "phase": phase}
+                if event.type == "turn_start":
+                    payload["attempt"] = event.data.get("turn")
+                    payload["max_attempts"] = event.data.get("max_turns")
                 await queue.put(json.dumps(payload) + "\n")
 
             async def stream_worker() -> None:
-                token = codemode_progress_cb.set(on_progress)
+                token = agent_progress_cb.set(on_event)
                 try:
                     result = await run_chat_and_normalize(req, progress_queue=queue)
                 except Exception as e:
                     result = AgentResult(summary="", error=str(e))
                 finally:
-                    codemode_progress_cb.reset(token)
+                    agent_progress_cb.reset(token)
                 elapsed_ms = int((time.monotonic() - t0) * 1000)
                 done_payload = {
                     "type": "done",

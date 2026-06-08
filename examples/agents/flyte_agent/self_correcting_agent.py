@@ -35,7 +35,7 @@ pipeline heal itself when the first estimate is too low.
 Run::
 
     pip install 'flyte' litellm numpy scikit-learn
-    python examples/agents/self_correcting_agent.py
+    python examples/agents/flyte_agent/self_correcting_agent.py
 """
 
 from __future__ import annotations

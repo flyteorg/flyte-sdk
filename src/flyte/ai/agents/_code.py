@@ -27,8 +27,8 @@ _CODE_FENCE_RE = re.compile(r"```(?:python|py)?\s*\n?(.*?)```", re.DOTALL)
 def extract_python_code(text: str | None) -> str | None:
     """Return the first fenced Python block in *text*, or ``None`` if absent.
 
-    Unlike the single-shot :class:`CodeModeAgent`, the multi-turn loop uses the
-    *presence* of a code block to decide whether to keep iterating: a turn with a
+    The multi-turn code-mode loop uses the *presence* of a code block to decide
+    whether to keep iterating: a turn with a
     code block is executed, while a turn without one is treated as the final
     answer. So this returns ``None`` (rather than the whole text) when no fence is
     found.
