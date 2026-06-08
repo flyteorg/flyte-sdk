@@ -32,6 +32,10 @@ BATCH_SIZE = int(os.getenv("FLYTE_IO_BATCH_SIZE", str(32)))
 # part size imposes a hard file-size ceiling (obstore's 5 MiB default => ~48.8 GiB). We instead
 # auto-scale the part size with the file size so uploads never run out of part numbers, while small
 # files keep small parts. Nothing here is user-tunable -- it just works.
+#
+# The floor and concurrency mirror obstore's own put/put_async defaults (chunk_size=5242880,
+# max_concurrency=12), defined here:
+# https://github.com/developmentseed/obstore/blob/c6279ce19f73eef89321179d55930d0dd7ba6a62/obstore/python/obstore/store.py#L500-L501
 _UPLOAD_CHUNK_FLOOR = 5 * 2**20  # 5 MiB -- obstore's own default; floor for small/multipart files
 _UPLOAD_MAX_CONCURRENCY = 12  # obstore's own default
 _MAX_SAFE_PARTS = 9000  # margin below the cloud 10,000-part hard limit
