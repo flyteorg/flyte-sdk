@@ -193,6 +193,79 @@ def test_user_logger_no_flyte_prefix_after_rich_init():
         initialize_logger(enable_rich=False)
 
 
+def test_default_console_format_includes_level():
+    """The console base format must carry the log level so severity is visible."""
+    from flyte._logging import DEFAULT_CONSOLE_FORMAT
+
+    assert "%(levelname)s" in DEFAULT_CONSOLE_FORMAT
+
+
+def test_context_formatter_renders_level():
+    """A console-formatted record must include its level name."""
+    from flyte._logging import ContextFormatter
+
+    formatter = ContextFormatter()
+    record = logging.LogRecord(
+        name="myapp",
+        level=logging.WARNING,
+        pathname="test.py",
+        lineno=1,
+        msg="boom",
+        args=None,
+        exc_info=None,
+    )
+    output = formatter.format(record)
+    assert output == "WARNING boom"
+
+
+def test_context_formatter_level_after_context_and_internal_markers():
+    """Level renders after the [run][action] and [flyte] markers, before the message."""
+    from flyte._logging import ContextFormatter
+
+    formatter = ContextFormatter(internal_prefix=True)
+    record = logging.LogRecord(
+        name="flyte",
+        level=logging.DEBUG,
+        pathname="test.py",
+        lineno=1,
+        msg="hello",
+        args=None,
+        exc_info=None,
+    )
+    record.run_name = "r1"
+    record.action_name = "a0"
+    record.is_flyte_internal = True
+    output = formatter.format(record)
+    assert output == "[r1][a0] [flyte] DEBUG hello"
+
+
+def test_initialized_console_handlers_emit_level():
+    """After initialize_logger, both flyte and user console handlers carry the level."""
+    import io
+
+    from flyte._logging import initialize_logger
+
+    initialize_logger(log_level=logging.DEBUG, user_log_level=logging.DEBUG, enable_rich=False)
+    try:
+        from flyte._logging import logger as internal_logger
+
+        for lgr, msg, expected in (
+            (internal_logger, "internal-line", "WARNING internal-line"),
+            (flyte.logger, "user-line", "WARNING user-line"),
+        ):
+            buf = io.StringIO()
+            handler = logging.StreamHandler(buf)
+            handler.setFormatter(lgr.handlers[0].formatter)
+            lgr.addHandler(handler)
+            try:
+                lgr.warning(msg)
+            finally:
+                lgr.removeHandler(handler)
+            assert expected in buf.getvalue()
+    finally:
+        initialize_logger()
+
+
 def test_json_formatter_with_context():
     formatter = JSONFormatter()
     record = logging.LogRecord(
