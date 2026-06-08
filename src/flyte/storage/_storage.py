@@ -28,6 +28,27 @@ if typing.TYPE_CHECKING:
 _OBSTORE_SUPPORTED_PROTOCOLS = ["s3", "gs", "abfs", "abfss"]
 BATCH_SIZE = int(os.getenv("FLYTE_IO_BATCH_SIZE", str(32)))
 
+# Multipart upload sizing. GCS and S3 both hard-cap a multipart upload at 10,000 parts, so a fixed
+# part size imposes a hard file-size ceiling (obstore's 5 MiB default => ~48.8 GiB). We instead
+# auto-scale the part size with the file size so uploads never run out of part numbers, while small
+# files keep small parts. Nothing here is user-tunable -- it just works.
+_UPLOAD_CHUNK_FLOOR = 5 * 2**20  # 5 MiB -- obstore's own default; floor for small/multipart files
+_UPLOAD_MAX_CONCURRENCY = 12  # obstore's own default
+_MAX_SAFE_PARTS = 9000  # margin below the cloud 10,000-part hard limit
+
+
+def _compute_upload_chunk_size(file_size: int | None) -> int:
+    """
+    Pick a multipart part size that keeps the part count under the cloud 10,000-part limit.
+
+    Returns the 5 MiB floor for small/unknown files, and scales up just enough (ceil division) for
+    large files so ``file_size / chunk_size <= _MAX_SAFE_PARTS``.
+    """
+    if not file_size:
+        return _UPLOAD_CHUNK_FLOOR
+    needed = -(-file_size // _MAX_SAFE_PARTS)  # integer ceil division
+    return max(_UPLOAD_CHUNK_FLOOR, needed)
+
 
 def _is_obstore_supported_protocol(protocol: str) -> bool:
     """
@@ -263,6 +284,56 @@ async def _get_from_filesystem(
     return str(to_path)
 
 
+async def _put_single_obstore(store: ObjectStore, local_path: str | pathlib.Path, remote_key: str) -> None:
+    """Upload a single local file to ``remote_key`` with an auto-sized multipart part size."""
+    chunk_size = _compute_upload_chunk_size(os.path.getsize(local_path))
+    # Passing a pathlib.Path streams the file from disk rather than reading it all into memory.
+    await store.put_async(
+        remote_key,
+        pathlib.Path(local_path),
+        chunk_size=chunk_size,
+        max_concurrency=_UPLOAD_MAX_CONCURRENCY,
+    )
+
+
+async def _put_obstore_bypass(from_path: str, to_path: str, recursive: bool = False) -> str:
+    """
+    Upload via the obstore native API so we can control multipart part sizing.
+
+    fsspec's obstore backend (``_put_file``) calls ``store.put_async`` without a ``chunk_size``,
+    leaving it pinned to obstore's 5 MiB default and thus a ~48.8 GiB hard ceiling (10,000 parts).
+    This bypass computes the part size from each file's size so uploads of any size succeed. Mirrors
+    the download-side ``_get_obstore_bypass`` / ``ObstoreParallelReader`` pattern.
+    """
+    import asyncio
+
+    fs = get_underlying_filesystem(path=to_path)
+    bucket, prefix = fs._split_path(to_path)  # pylint: disable=W0212
+    store: ObjectStore = fs._construct_store(bucket)
+
+    if not recursive:
+        logger.debug(f"Uploading single file {from_path} to {to_path}")
+        await _put_single_obstore(store, from_path, prefix)
+        return to_path
+
+    # Recursive: walk the local tree and upload each file, preserving its path relative to from_path.
+    source_root = pathlib.Path(from_path)
+    files = [p for p in source_root.rglob("*") if p.is_file()]
+    logger.debug(f"Uploading {len(files)} files recursively from {from_path} to {to_path}")
+
+    prefix_path = pathlib.PurePosixPath(prefix)
+    semaphore = asyncio.Semaphore(BATCH_SIZE)
+
+    async def _upload(local_file: pathlib.Path) -> None:
+        relative = local_file.relative_to(source_root).as_posix()
+        remote_key = str(prefix_path / relative)
+        async with semaphore:
+            await _put_single_obstore(store, local_file, remote_key)
+
+    await asyncio.gather(*(_upload(f) for f in files))
+    return to_path
+
+
 async def put(
     from_path: str,
     to_path: Optional[str] = None,
@@ -282,6 +353,16 @@ async def put(
 
     file_system = get_underlying_filesystem(path=to_path)
     from_path = strip_file_header(from_path)
+
+    # Check if we should use obstore bypass (to control multipart part sizing -- see
+    # _put_obstore_bypass). Guarded identically to the download bypass in get().
+    if (
+        _is_obstore_supported_protocol(file_system.protocol)
+        and hasattr(file_system, "_split_path")
+        and hasattr(file_system, "_construct_store")
+    ):
+        return await _put_obstore_bypass(from_path, to_path, recursive)
+
     if isinstance(file_system, AsyncFileSystem):
         dst = await file_system._put(from_path, to_path, recursive=recursive, batch_size=batch_size, **kwargs)  # pylint: disable=W0212
     else:
