@@ -114,6 +114,7 @@ class CLIConfig:
     org: str | None = None
     auth_type: str | None = None
     output_format: OutputFormat = "table"
+    no_progress: bool = False
     run_args: RunArguments | None = (
         None  # run_args is set when running tasks via CLI to provide context to parameter converters
     )
@@ -494,15 +495,51 @@ def safe_spinner(spinner: str = "dots") -> str:
     return spinner
 
 
-def cli_status(output_format: OutputFormat, message: str, spinner: str = "dots"):
+class _StaticStatus:
+    """
+    A no-op replacement for Rich's animated ``Status`` context manager.
+
+    Prints the (initial) message once instead of rendering an animated spinner,
+    so CI / non-interactive logs aren't polluted with hundreds of spinner frames.
+    Implements the small subset of the ``Status`` API that callers use (``update``).
+    """
+
+    def __init__(self, message: str):
+        self._message = message
+
+    def __enter__(self) -> "_StaticStatus":
+        if self._message:
+            get_console().print(self._message)
+        return self
+
+    def __exit__(self, *exc_info) -> None:
+        return None
+
+    def update(self, message: str | None = None, **_kwargs) -> None:
+        if message:
+            self._message = message
+            get_console().print(message)
+
+
+def cli_status(
+    output_format: OutputFormat,
+    message: str,
+    spinner: str = "dots",
+    no_progress: bool = False,
+):
     """
     Return a context manager for status display.
+
     Returns nullcontext for json/table-simple formats, otherwise a console status spinner.
+    When ``no_progress`` is set, or stdout is not attached to a TTY (the common CI case),
+    the animated spinner is disabled and a static message is printed instead.
     """
     from contextlib import nullcontext
 
     if output_format in ("json", "table-simple", "json-raw"):
         return nullcontext()
+    if no_progress or not sys.stdout.isatty():
+        return _StaticStatus(message)
     return get_console().status(message, spinner=safe_spinner(spinner))
 
 

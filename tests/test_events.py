@@ -215,6 +215,7 @@ class TestLocalControllerEvents:
     @pytest.fixture
     def controller(self):
         """Create a LocalController with mocked dependencies."""
+        from flyte._internal.controllers import TaskCallSequencer
         from flyte._internal.controllers._local_controller import LocalController
 
         mock_recorder = MagicMock()
@@ -222,6 +223,7 @@ class TestLocalControllerEvents:
         controller = LocalController.__new__(LocalController)
         controller._registered_events = {}
         controller._recorder = mock_recorder
+        controller._sequencer = TaskCallSequencer()
         return controller
 
     @pytest.mark.asyncio
@@ -256,6 +258,7 @@ class TestLocalControllerEvents:
         mock_ctx = MagicMock()
         mock_tctx = MagicMock()
         mock_tctx.action.name = "act-1"
+        mock_tctx.task_action = None
         mock_ctx.data.task_context = mock_tctx
 
         # Signal the event from another thread
@@ -287,6 +290,7 @@ class TestLocalControllerEvents:
         mock_ctx = MagicMock()
         mock_tctx = MagicMock()
         mock_tctx.action.name = "act-1"
+        mock_tctx.task_action = None
         mock_ctx.data.task_context = mock_tctx
 
         e = _Event(name="ev", timeout=0.05)
@@ -303,6 +307,7 @@ class TestLocalControllerEvents:
         mock_ctx = MagicMock()
         mock_tctx = MagicMock()
         mock_tctx.action.name = "act-1"
+        mock_tctx.task_action = None
         mock_ctx.data.task_context = mock_tctx
 
         stop = threading.Event()
