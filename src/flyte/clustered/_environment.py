@@ -69,6 +69,8 @@ class ClusteredTaskEnvironment(TaskEnvironment):
 
     def __post_init__(self) -> None:
         super().__post_init__()
+        if self.reusable is not None:
+            raise ValueError("ClusteredTaskEnvironment does not support reusable environments")
         if self.replicas < 1:
             raise ValueError("replicas must be >= 1")
         if self.nproc_per_node < 1:
@@ -83,6 +85,11 @@ class ClusteredTaskEnvironment(TaskEnvironment):
             raise TypeError(f"unsupported runtime type: {type(self.runtime).__name__}")
         if self.interconnect not in _INTERCONNECT_VALUES:
             raise ValueError(f"interconnect must be one of {_INTERCONNECT_VALUES}")
+        # Route tasks built by this env to ClusteredTaskTemplate via the plugin registry.
+        # Imported lazily to keep `import flyte.clustered` light (flyte.extend pulls in heavy deps).
+        from flyte.clustered._task import _ClusteredPlugin
+
+        self.plugin_config = _ClusteredPlugin()
 
     def to_custom_dict(self) -> Dict:
         """Serialize this environment to the dict shape expected by ClusteredTaskSpec proto.

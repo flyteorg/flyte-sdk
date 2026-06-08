@@ -3,5 +3,6 @@ from flyte.clustered._environment import (
     ClusterFailurePolicy,
     TorchRun,
 )
+from flyte.clustered._task import ClusteredTaskTemplate  # also registers the task plugin
 
-__all__ = ["ClusterFailurePolicy", "ClusteredTaskEnvironment", "TorchRun"]
+__all__ = ["ClusterFailurePolicy", "ClusteredTaskEnvironment", "ClusteredTaskTemplate", "TorchRun"]

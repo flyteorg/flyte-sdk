@@ -219,6 +219,14 @@ class TaskTemplate(Generic[P, R, F]):
         """
         return []
 
+    def container_command(self, sctx: SerializationContext) -> List[str]:
+        """
+        Returns the container PID-1 command for the task. Defaults to empty (the image entrypoint
+        runs ``container_args`` directly). Plugins (e.g. clustered) override this to wrap the task
+        in a launcher process.
+        """
+        return []
+
     def sql(self, sctx: SerializationContext) -> Optional[str]:
         """
         Returns the SQL for the task. This is a set of key-value pairs that can be used to
