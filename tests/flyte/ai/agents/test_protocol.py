@@ -38,7 +38,10 @@ class TestAgentResult:
 
     def test_dataclass_fields(self):
         names = {f.name for f in fields(AgentResult)}
-        assert names == {"code", "charts", "summary", "error", "attempts"}
+        assert names == {"code", "charts", "summary", "error", "attempts", "memory"}
+
+    def test_memory_defaults_to_none(self):
+        assert AgentResult().memory is None
 
 
 class _MinimalAgent:

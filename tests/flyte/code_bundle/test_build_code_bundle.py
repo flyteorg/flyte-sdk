@@ -230,6 +230,41 @@ async def test_build_code_bundle_multi_file_copy_loaded_modules(importer):
 
 
 # ---------------------------------------------------------------------------
+# Default ignores: .flyteignore excludes tracked files
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_build_code_bundle_default_ignores_respect_flyteignore():
+    """
+    Regression for the git-lfs case: a large asset that is *tracked* by git (so
+    ``GitIgnore`` never excludes it) must still be kept out of the bundle when
+    listed in ``.flyteignore``. This exercises the default ignore set used by
+    ``flyte run``/``flyte deploy`` (no explicit ``ignore`` argument), which must
+    include ``FlyteIgnore`` for tracked-file exclusion to work.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_dir = Path(tmp)
+        layout = tmp_dir / "proj"
+        (layout / "tests" / "images").mkdir(parents=True)
+        (layout / "main.py").write_text("print('hello')\n")
+        (layout / "tests" / "images" / "big.bin").write_text("x" * 1024)
+        (layout / ".flyteignore").write_text("tests/images/\n")
+
+        bundle = await build_code_bundle(
+            from_dir=layout,
+            dryrun=True,
+            copy_style="all",
+            copy_bundle_to=_bundle_out(tmp_dir),
+        )
+
+        members = _tar_files(Path(bundle.tgz))
+        assert "main.py" in members
+        # The tracked-but-.flyteignore'd asset must be excluded.
+        assert "tests/images/big.bin" not in members
+
+
+# ---------------------------------------------------------------------------
 # copy_style="none"
 # ---------------------------------------------------------------------------
 

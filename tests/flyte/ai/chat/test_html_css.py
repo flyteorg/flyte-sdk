@@ -4,7 +4,7 @@ import re
 
 import flyte.ai.agents as agents_pkg
 import flyte.ai.chat as chat_pkg
-from flyte.ai.agents import AgentProtocol, AgentResult, CodeModeAgent
+from flyte.ai.agents import AgentProtocol, AgentResult
 from flyte.ai.chat import (
     CHAT_HTML_TEMPLATE,
     DEFAULT_CSS,
@@ -130,17 +130,18 @@ class TestPackageExports:
             "AgentProtocol",
             "AgentResult",
             "AgentTool",
-            "CodeModeAgent",
             "ConcurrencyError",
+            "LLMCallable",
             "LLMMessage",
             "MCPServerSpec",
             "MemoryMeta",
             "MemoryStore",
             "MemoryStoreError",
+            "ToolCallHandler",
+            "ToolFn",
             "agent_progress_cb",
             "tool",
         }
-        assert CodeModeAgent.__name__ == "CodeModeAgent"
         assert AgentResult.__name__ == "AgentResult"
         assert hasattr(AgentProtocol, "run")
 

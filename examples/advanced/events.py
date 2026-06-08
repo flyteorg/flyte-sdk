@@ -22,8 +22,14 @@ async def basic_event_task(x: int) -> int:
         prompt="Is it ok to continue?",
         data_type=bool,
     )
+    ev2 = await flyte.new_event.aio(
+        "review",
+        prompt="Is it really ok to continue, again?",
+        data_type=bool,
+    )
     if await event.wait.aio():
-        return x + 1
+        if await ev2.wait.aio():
+            return x + 1
     return -1
 
 

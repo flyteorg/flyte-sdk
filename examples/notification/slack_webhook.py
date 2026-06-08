@@ -35,7 +35,7 @@ def compute(x: int, y: int) -> int:
 slack_success = notify.Slack(
     on_phase=ActionPhase.SUCCEEDED,
     webhook_url=SLACK_WEBHOOK_URL,
-    blocks=[
+    blocks=(
         {
             "type": "header",
             "text": {"type": "plain_text", "text": "✅ Task Succeeded"},
@@ -54,7 +54,7 @@ slack_success = notify.Slack(
                 {"type": "mrkdwn", "text": "{{.Run.Project}}/{{.Run.Domain}}"},
             ],
         },
-    ],
+    ),
 )
 
 # Simple text notification on failure or timeout.
@@ -71,7 +71,4 @@ if __name__ == "__main__":
         env_vars={"SLACK_WEBHOOK_URL": SLACK_WEBHOOK_URL},
         notifications=(slack_success, slack_failure),
     ).run(compute, x=3, y=7)
-
-    print(run.name)
     print(run.url)
-    run.wait()
