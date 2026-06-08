@@ -1,7 +1,8 @@
-"""Durable CodeModeAgent in a pure task context (no UI).
+"""Durable code-mode agent in a pure task context (no UI).
 
 This mirrors the execution style of `examples/sandbox/codemode/durable_agent.py`,
-but uses the SDK `flyte.ai.agents.CodeModeAgent` and keeps everything in one file.
+but uses the SDK `flyte.ai.agents.Agent` with ``code_mode=True`` and keeps
+everything in one file.
 
 The agent generates Monty-safe Python code and executes it in a sandbox. Tool
 calls dispatch as durable Flyte tasks because the tools are defined as
@@ -19,7 +20,7 @@ from __future__ import annotations
 from typing import Any
 
 import flyte
-from flyte.ai.agents import CodeModeAgent
+from flyte.ai.agents import Agent
 
 task_env = flyte.TaskEnvironment(
     name="codemode-durable-task-agent",
@@ -109,20 +110,22 @@ You are a data analyst copilot.
 
 - Use the available functions to fetch and aggregate data.
 - Remember Monty sandbox restrictions: no imports, no dict mutation, no augmented assignment.
-- Return a dict with key `summary` (markdown string). Keep it concise.
+- When finished, reply with a concise markdown summary of the findings.
 """
 
-agent = CodeModeAgent(
-    tools=[fetch_data, group_and_aggregate],
+agent = Agent(
+    name="durable-analytics-agent",
+    instructions=SYSTEM_PROMPT_PREFIX,
     model="claude-haiku-4-5",
-    max_retries=2,
-    system_prompt_prefix=SYSTEM_PROMPT_PREFIX,
+    tools=[fetch_data, group_and_aggregate],
+    code_mode=True,
+    max_turns=10,
 )
 
 
 @task_env.task(report=True)
 async def analyze(request: str) -> str:
-    """Run a durable CodeModeAgent analysis inside a Flyte task."""
+    """Run a durable code-mode agent analysis inside a Flyte task."""
     result = await agent.run.aio(request, memory=[])
     return result.summary or result.error or ""
 
