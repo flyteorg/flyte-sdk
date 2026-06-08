@@ -184,7 +184,6 @@ jobs:
           - "plugins/hydra"
           - "plugins/omegaconf"
           - "plugins/huggingface"
-          - "plugins/bio"
         include:
           - workdir: "plugins/sglang"
             image-type: sglang
