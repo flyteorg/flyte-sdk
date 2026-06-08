@@ -123,7 +123,7 @@ agent = CodeModeAgent(
 @task_env.task(report=True)
 async def analyze(request: str) -> str:
     """Run a durable CodeModeAgent analysis inside a Flyte task."""
-    result = await agent.run.aio(request, history=[])
+    result = await agent.run.aio(request, memory=[])
     return result.summary or result.error or ""
 
 

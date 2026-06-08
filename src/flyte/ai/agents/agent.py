@@ -217,12 +217,6 @@ class Agent:
     call_llm:
         Optional async callback ``(model, system, messages, tools) -> LLMMessage``.
         Defaults to :func:`_default_call_llm` (uses litellm).
-    memory:
-        Optional :class:`MemoryStore` initialized from a previous session.
-        When provided, the existing transcript is prepended to every
-        conversation and the in-flight transcript is appended to it on each
-        call. Tools may also use the same instance for path-addressed
-        artifact reads / writes (with audit + optional concurrency).
     approval_callback:
         Optional async callback ``(tool, args) -> bool`` invoked when a tool
         with ``requires_approval=True`` is about to run. Defaults to a HITL
@@ -241,7 +235,6 @@ class Agent:
     skills: Sequence[str | pathlib.Path] = field(default_factory=tuple)
     max_turns: int = 25
     call_llm: LLMCallable = field(default=_default_call_llm)
-    memory: MemoryStore | None = None
     approval_callback: ApprovalCallback = field(default=_hitl_approval)
     parallel_tool_calls: bool = True
 
@@ -364,7 +357,7 @@ class Agent:
     async def run(
         self,
         message: str,
-        history: list[dict[str, Any]] | None = None,
+        memory: list[dict[str, Any]] | MemoryStore | None = None,
     ) -> AgentResult:
         """Drive the LLM ↔ tool loop until the assistant returns a final reply.
 
@@ -372,23 +365,47 @@ class Agent:
         instances can be plugged directly into
         :class:`~flyte.ai.chat.AgentChatAppEnvironment`.
 
+        The agent is decoupled from any persistent state: memory is passed in
+        per call rather than attached to the agent. ``memory`` may be:
+
+        - ``None``: a stateless, single-shot conversation.
+        - a ``list[dict]``: prior messages to prepend (e.g. a chat ``history``).
+          The returned :class:`AgentResult` carries no memory in this case.
+        - a :class:`MemoryStore`: its transcript is prepended, the in-flight
+          transcript is appended back to it, and it is returned on
+          :attr:`AgentResult.memory`. Persistence is the caller's
+          responsibility: call ``memory.save()`` (or ``.save.aio()``) after
+          ``run`` to write the updated transcript back to its keyed remote path.
+
         Call synchronously via ``run(...)``; in async contexts use ``run.aio(...)``.
         """
         await self._ensure_mcp_loaded()
         await _emit(AgentEvent("agent_start", {"name": self.name, "model": self.model}))
         t0 = time.monotonic()
 
+        store: MemoryStore | None = memory if isinstance(memory, MemoryStore) else None
         prior: list[dict[str, Any]] = []
-        if self.memory is not None:
-            prior.extend(self.memory.messages)
-        if history:
-            prior.extend(history)
+        if store is not None:
+            prior.extend(store.messages)
+        elif isinstance(memory, list):
+            prior.extend(memory)
         messages: list[dict[str, Any]] = [*prior, {"role": "user", "content": message}]
 
         tools_schema = self._llm_tools()
         attempts = 0
         last_text = ""
         error_msg = ""
+
+        def _finalize_memory() -> MemoryStore | None:
+            """Append the in-flight transcript back to the store and return it.
+
+            Persistence is left to the caller: ``run`` mutates the passed
+            :class:`MemoryStore` in place and returns it, but does not save it.
+            """
+            if store is None:
+                return None
+            store.extend(messages[len(prior) :])
+            return store
 
         for turn in range(self.max_turns):
             attempts = turn + 1
@@ -404,9 +421,8 @@ class Agent:
             except Exception as exc:
                 error_msg = f"LLM call failed on turn {attempts}: {exc}"
                 await _emit(AgentEvent("agent_end", {"error": error_msg, "turns": attempts}))
-                if self.memory is not None:
-                    self.memory.extend(messages[len(prior) :])
-                return AgentResult(error=error_msg, attempts=attempts, summary=last_text)
+                result_memory = _finalize_memory()
+                return AgentResult(error=error_msg, attempts=attempts, summary=last_text, memory=result_memory)
 
             assistant_msg: dict[str, Any] = {"role": "assistant", "content": llm_msg.content or ""}
             if llm_msg.tool_calls:
@@ -458,8 +474,7 @@ class Agent:
         else:
             error_msg = f"Reached max_turns={self.max_turns} without producing a final answer."
 
-        if self.memory is not None:
-            self.memory.extend(messages[len(prior) :])
+        result_memory = _finalize_memory()
 
         elapsed = int((time.monotonic() - t0) * 1000)
         await _emit(
@@ -468,7 +483,7 @@ class Agent:
                 {"turns": attempts, "elapsed_ms": elapsed, "error": error_msg, "summary_len": len(last_text)},
             )
         )
-        return AgentResult(summary=last_text, error=error_msg, attempts=attempts)
+        return AgentResult(summary=last_text, error=error_msg, attempts=attempts, memory=result_memory)
 
     async def _execute_calls(
         self,

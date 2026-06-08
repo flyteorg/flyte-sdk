@@ -381,6 +381,8 @@ class AgentChatAppEnvironment(flyte.app.AppEnvironment):
             progress_queue: asyncio.Queue[str | None] | None = None,
         ) -> AgentResult:
             if task_entrypoint is None:
+                # ``history`` is a ``list[dict]`` of prior messages; ``Agent.run`` accepts
+                # that directly as its ``memory`` argument (alongside a ``MemoryStore``).
                 result_obj: Any = await agent.run.aio(chat_req.message, chat_req.history)
             else:
                 import flyte

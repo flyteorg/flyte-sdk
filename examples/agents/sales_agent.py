@@ -15,7 +15,7 @@ Architecture::
 
     Browser (FastAPI Chat UI)
       └── AgentChatAppEnvironment
-            └── CodeModeAgent.run.aio(message, history)  # async HTTP handler
+            └── CodeModeAgent.run.aio(message, memory)  # async HTTP handler
                   ├── LLM call (generate code using tool functions)
                   ├── Monty sandbox execution
                   └── retry on failure

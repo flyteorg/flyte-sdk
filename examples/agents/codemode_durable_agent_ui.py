@@ -237,9 +237,9 @@ agent = CodeModeAgent(
 
 
 @task_env.task(report=True)
-async def codemode_agent_task_entrypoint(message: str, history: list[dict[str, str]]) -> dict[str, object]:
+async def codemode_agent_task_entrypoint(message: str, memory: list[dict[str, str]]) -> dict[str, object]:
     """Entrypoint for the durable CodeModeAgent analysis inside a Flyte task."""
-    result = await agent.run.aio(message, history=history)
+    result = await agent.run.aio(message, memory=memory)
     return {
         "code": result.code,
         "charts": result.charts,
