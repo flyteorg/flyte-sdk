@@ -93,6 +93,7 @@ class _Runner:
         project: str | None = None,
         domain: str | None = None,
         env_vars: Dict[str, str] | None = None,
+        run_labels: Dict[str, str] | None = None,
         labels: Dict[str, str] | None = None,
         annotations: Dict[str, str] | None = None,
         interruptible: bool | None = None,
@@ -138,6 +139,7 @@ class _Runner:
         self._project = project
         self._domain = domain
         self._env_vars = env_vars
+        self._run_labels = run_labels
         self._labels = labels
         self._annotations = annotations
         self._interruptible = interruptible
@@ -414,6 +416,7 @@ class _Runner:
                         project_id=project_id,
                         task_spec=task_spec,
                         offloaded_input_data=upload_resp.offloaded_input_data,
+                        labels=self._run_labels,
                         run_spec=run_pb2.RunSpec(
                             overwrite_cache=self._overwrite_cache,
                             interruptible=wrappers_pb2.BoolValue(value=self._interruptible)
@@ -829,6 +832,7 @@ def with_runcontext(
     project: str | None = None,
     domain: str | None = None,
     env_vars: Dict[str, str] | None = None,
+    run_labels: Dict[str, str] | None = None,
     labels: Dict[str, str] | None = None,
     annotations: Dict[str, str] | None = None,
     interruptible: bool | None = None,
@@ -892,6 +896,8 @@ def with_runcontext(
     :param project: Optional The project to use for the run
     :param domain: Optional The domain to use for the run
     :param env_vars: Optional Environment variables to set for the run
+    :param run_labels: Optional user-defined labels to attach to the run for filtering and organizing.
+        These are distinct from ``labels`` (k8s resource labels on pods/jobs).
     :param labels: Optional Labels to set for the run
     :param annotations: Optional Annotations to set for the run
     :param interruptible: Optional If true, the run can be scheduled on interruptible instances and false implies
@@ -943,6 +949,7 @@ def with_runcontext(
         run_start_time=run_start_time,
         overwrite_cache=overwrite_cache,
         env_vars=env_vars,
+        run_labels=run_labels,
         labels=labels,
         annotations=annotations,
         interruptible=interruptible,
