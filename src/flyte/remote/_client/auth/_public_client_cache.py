@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -12,6 +13,9 @@ from flyteidl2.auth.auth_service_pb2 import GetPublicClientConfigRequest
 from flyte._logging import logger
 from flyte._utils import sanitize_endpoint
 from flyte.syncify import syncify
+
+_AUTH_METADATA_CACHE_DISABLED_ENV = "FLYTE_AUTH_METADATA_CACHE_DISABLED"
+_TRUE_ENV_VALUES = frozenset({"1", "true", "yes", "on"})
 
 
 class CachedPublicClientAuthMetadata(pydantic.BaseModel):
@@ -63,6 +67,10 @@ def get_public_client_auth_metadata_cache_root(cache_root: Path | None = None) -
     return cache_root or Path.home() / ".flyte" / ".cache"
 
 
+def is_public_client_auth_metadata_cache_disabled() -> bool:
+    return os.environ.get(_AUTH_METADATA_CACHE_DISABLED_ENV, "").lower() in _TRUE_ENV_VALUES
+
+
 def extract_public_client_auth_metadata_cache_key(endpoint: str) -> str:
     sanitized = sanitize_endpoint(endpoint) or endpoint
     return sanitized.removeprefix("dns:///").removeprefix("dns://").lstrip("/")
@@ -76,6 +84,9 @@ def get_public_client_auth_metadata_cache_path(endpoint: str, cache_root: Path |
 def read_cached_public_client_auth_metadata(
     endpoint: str, cache_root: Path | None = None
 ) -> Optional[CachedPublicClientAuthMetadata]:
+    if is_public_client_auth_metadata_cache_disabled():
+        return None
+
     file_path = get_public_client_auth_metadata_cache_path(endpoint, cache_root=cache_root)
     if not file_path.exists():
         return None
@@ -96,6 +107,9 @@ def write_cached_public_client_auth_metadata(
     metadata: CachedPublicClientAuthMetadata,
     cache_root: Path | None = None,
 ) -> Path | None:
+    if is_public_client_auth_metadata_cache_disabled():
+        return None
+
     file_path = get_public_client_auth_metadata_cache_path(endpoint, cache_root=cache_root)
     try:
         file_path.parent.mkdir(parents=True, exist_ok=True)

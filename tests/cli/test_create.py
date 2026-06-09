@@ -479,6 +479,79 @@ def test_create_config_skips_auth_metadata_fetch_for_localhost_endpoint(
     assert d["admin"] == {"endpoint": "dns:///localhost:30080", "insecure": True}
 
 
+def test_create_config_skips_auth_metadata_cache_when_disabled(
+    runner: CliRunner, tmp_path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("FLYTE_AUTH_METADATA_CACHE_DISABLED", "true")
+    outpath = str(tmp_path / "config.yaml")
+    cache_path = get_public_client_auth_metadata_cache_path("dogfood.cloud-staging.union.ai")
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_text("existing: true")
+
+    with patch("flyte.cli._create.fetch_public_client_auth_metadata_sync") as fetch_metadata:
+        result = runner.invoke(
+            main,
+            [
+                "create",
+                "config",
+                "--endpoint",
+                "dns:///dogfood.cloud-staging.union.ai",
+                "--project",
+                "edward-test",
+                "--domain",
+                "staging",
+                "-o",
+                outpath,
+                "--force",
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    fetch_metadata.assert_not_called()
+    with open(outpath) as f:
+        d = yaml.safe_load(f)
+    assert d["admin"] == {"endpoint": "dns:///dogfood.cloud-staging.union.ai"}
+    assert cache_path.read_text() == "existing: true"
+
+
+def test_create_config_skips_auth_metadata_fetch_for_external_command(
+    runner: CliRunner, tmp_path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    outpath = str(tmp_path / "config.yaml")
+
+    with patch("flyte.cli._create.fetch_public_client_auth_metadata_sync") as fetch_metadata:
+        result = runner.invoke(
+            main,
+            [
+                "create",
+                "config",
+                "--endpoint",
+                "dns:///dogfood.cloud-staging.union.ai",
+                "--project",
+                "edward-test",
+                "--domain",
+                "staging",
+                "--auth-type",
+                "external-command",
+                "-o",
+                outpath,
+                "--force",
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    fetch_metadata.assert_not_called()
+    assert not get_public_client_auth_metadata_cache_path("dogfood.cloud-staging.union.ai").exists()
+    with open(outpath) as f:
+        d = yaml.safe_load(f)
+    assert d["admin"] == {
+        "endpoint": "dns:///dogfood.cloud-staging.union.ai",
+        "authType": "ExternalCommand",
+    }
+
+
 def test_create_config_fetches_and_caches_auth_metadata_when_cache_is_missing(
     runner: CliRunner, tmp_path, monkeypatch: pytest.MonkeyPatch
 ):

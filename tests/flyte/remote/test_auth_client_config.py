@@ -99,9 +99,7 @@ async def test_remote_client_config_store_fetches_public_client_config_when_endp
 
 @pytest.mark.asyncio
 async def test_remote_client_config_store_treats_malformed_endpoint_cache_as_miss(tmp_path: Path):
-    cache_path = get_public_client_auth_metadata_cache_path(
-        "dogfood.cloud-staging.union.ai", cache_root=tmp_path
-    )
+    cache_path = get_public_client_auth_metadata_cache_path("dogfood.cloud-staging.union.ai", cache_root=tmp_path)
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     cache_path.write_text("not: [valid")
 
@@ -181,9 +179,7 @@ async def test_remote_client_config_store_uses_endpoint_specific_cache_files(tmp
 
 @pytest.mark.asyncio
 async def test_remote_client_config_store_accepts_cached_metadata_without_audience(tmp_path: Path):
-    cache_path = get_public_client_auth_metadata_cache_path(
-        "dogfood.cloud-staging.union.ai", cache_root=tmp_path
-    )
+    cache_path = get_public_client_auth_metadata_cache_path("dogfood.cloud-staging.union.ai", cache_root=tmp_path)
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     cache_path.write_text(
         """authType: Pkce
@@ -219,3 +215,58 @@ scopes:
     assert cfg.scopes == ["all"]
     assert cfg.header_key == "flyte-authorization"
     assert cfg.audience is None
+
+
+@pytest.mark.asyncio
+async def test_remote_client_config_store_ignores_cache_and_skips_write_when_cache_disabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    write_cached_public_client_auth_metadata(
+        "dogfood.cloud-staging.union.ai",
+        CachedPublicClientAuthMetadata(
+            authType="Pkce",
+            clientId="cached-client-id",
+            insecure=False,
+            authorizationHeader="flyte-authorization",
+            redirectUri="http://localhost:53593/callback",
+            scopes=["all"],
+            audience="cached-audience",
+        ),
+        cache_root=tmp_path,
+    )
+    monkeypatch.setenv("FLYTE_AUTH_METADATA_CACHE_DISABLED", "true")
+
+    store = RemoteClientConfigStore(
+        "https://dogfood.cloud-staging.union.ai",
+        auth_type="Pkce",
+        cache_root=tmp_path,
+    )
+    store._client = Mock()
+    store._client.get_o_auth2_metadata = AsyncMock(
+        return_value=SimpleNamespace(
+            token_endpoint="https://example.com/token",
+            authorization_endpoint="https://example.com/authorize",
+            device_authorization_endpoint="https://example.com/device",
+        )
+    )
+    store._client.get_public_client_config = AsyncMock(
+        return_value=SimpleNamespace(
+            redirect_uri="http://localhost:53593/callback",
+            client_id="remote-client-id",
+            scopes=["scope-a"],
+            authorization_metadata_key="flyte-authorization",
+            audience="remote-audience",
+        )
+    )
+
+    cfg = await store.get_client_config()
+
+    store._client.get_o_auth2_metadata.assert_awaited_once()
+    store._client.get_public_client_config.assert_awaited_once()
+    assert cfg.client_id == "remote-client-id"
+    assert cfg.redirect_uri == "http://localhost:53593/callback"
+    assert cfg.scopes == ["scope-a"]
+    assert cfg.header_key == "flyte-authorization"
+    assert cfg.audience == "remote-audience"
+    assert read_cached_public_client_auth_metadata("dogfood.cloud-staging.union.ai", cache_root=tmp_path) is None
+    assert get_public_client_auth_metadata_cache_path("dogfood.cloud-staging.union.ai", cache_root=tmp_path).exists()
