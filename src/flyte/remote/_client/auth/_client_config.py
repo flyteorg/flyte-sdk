@@ -8,9 +8,9 @@ from flyteidl2.auth.auth_service_pb2 import GetOAuth2MetadataRequest, GetPublicC
 
 from flyte.remote._client.auth._public_client_cache import (
     CachedPublicClientAuthMetadata,
-    extract_public_client_auth_metadata_cache_key,
     get_public_client_auth_metadata_cache_root,
     read_cached_public_client_auth_metadata,
+    extract_public_client_auth_metadata_cache_key,
     write_cached_public_client_auth_metadata,
 )
 

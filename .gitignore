@@ -197,4 +197,3 @@ tests/flyte/internal/bin/flyte-parameters.json
 .run/
 .flyteignore
 
-flyte-sdk.code-workspace

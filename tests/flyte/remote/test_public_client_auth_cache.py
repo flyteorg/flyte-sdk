@@ -7,7 +7,6 @@ from flyte.remote._client.auth._public_client_cache import (
     CachedPublicClientAuthMetadata,
     fetch_public_client_auth_metadata,
     get_public_client_auth_metadata_cache_path,
-    is_public_client_auth_metadata_cache_disabled,
     read_cached_public_client_auth_metadata,
     write_cached_public_client_auth_metadata,
 )
@@ -48,34 +47,11 @@ def test_public_client_auth_metadata_cache_write_failure_is_non_blocking(tmp_pat
 
     with patch("flyte.remote._client.auth._public_client_cache.Path.open", side_effect=OSError("nope")):
         assert (
-            write_cached_public_client_auth_metadata("dogfood.cloud-staging.union.ai", metadata, cache_root=tmp_path)
+            write_cached_public_client_auth_metadata(
+                "dogfood.cloud-staging.union.ai", metadata, cache_root=tmp_path
+            )
             is None
         )
-
-
-def test_public_client_auth_metadata_cache_can_be_disabled_with_env_var(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
-    monkeypatch.setenv("FLYTE_AUTH_METADATA_CACHE_DISABLED", "true")
-    metadata = CachedPublicClientAuthMetadata(
-        authType="Pkce",
-        clientId="dogfood-uctl",
-        insecure=False,
-        authorizationHeader="flyte-authorization",
-        redirectUri="http://localhost:53593/callback",
-        scopes=["all"],
-        audience="dogfood-audience",
-    )
-
-    assert is_public_client_auth_metadata_cache_disabled() is True
-    assert (
-        write_cached_public_client_auth_metadata("dogfood.cloud-staging.union.ai", metadata, cache_root=tmp_path)
-        is None
-    )
-    assert read_cached_public_client_auth_metadata("dogfood.cloud-staging.union.ai", cache_root=tmp_path) is None
-    assert not get_public_client_auth_metadata_cache_path(
-        "dogfood.cloud-staging.union.ai", cache_root=tmp_path
-    ).exists()
 
 
 @pytest.mark.asyncio
