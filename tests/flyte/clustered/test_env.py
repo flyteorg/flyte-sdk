@@ -180,8 +180,6 @@ def test_task_decorator_returns_clustered_template():
     assert isinstance(my_task, ClusteredTaskTemplate)
     assert my_task.task_type == "clustered-task"
     assert my_task.task_type_version == 1
-    # container_command supplies the entrypoint wrapper (sctx is unused by this override).
-    assert my_task.container_command(None) == ["python", "-m", "flyte.clustered._entrypoint"]
 
 
 def test_clustered_template_custom_config_reads_env():
@@ -195,14 +193,3 @@ def test_clustered_template_custom_config_reads_env():
     custom = my_task.custom_config(None)
     assert custom == env.to_custom_dict()
     assert custom["replicas"] == env.replicas
-
-
-def test_base_task_template_container_command_default_empty():
-    """A plain (non-clustered) task keeps the empty default command from the base TaskTemplate."""
-    plain_env = flyte.TaskEnvironment(name="plain", image="python:3.11")
-
-    @plain_env.task
-    async def plain(x: int) -> int:
-        return x
-
-    assert plain.container_command(None) == []

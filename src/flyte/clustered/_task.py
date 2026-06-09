@@ -23,9 +23,10 @@ class _ClusteredPlugin:
 class ClusteredTaskTemplate(AsyncFunctionTaskTemplate):
     """Task template for ``ClusteredTaskEnvironment``.
 
-    Supplies the clustered ``type``/``task_type_version``, the ``custom`` proto payload, and the
-    entrypoint-wrapper ``command`` so that the generic serializer (``get_proto_task``) needs no
-    clustered-specific branches.
+    Supplies the clustered ``type``/``task_type_version`` and ``custom`` proto payload, and routes
+    the container to the dedicated ``clustered`` runtime entrypoint (which sets up the torchrun
+    rendezvous) instead of ``a0`` — all via generic hooks, so the serializer (``get_proto_task``)
+    needs no clustered-specific branches.
     """
 
     plugin_config: _ClusteredPlugin
@@ -39,10 +40,11 @@ class ClusteredTaskTemplate(AsyncFunctionTaskTemplate):
             return {}
         return cast("ClusteredTaskEnvironment", env).to_custom_dict()
 
-    def container_command(self, sctx: SerializationContext) -> List[str]:
-        # PID-1 is the entrypoint wrapper; the original a0 invocation lives in container_args and
-        # is passed through to torchrun -> a0.
-        return ["python", "-m", "flyte.clustered._entrypoint"]
+    def container_args(self, sctx: SerializationContext) -> List[str]:
+        # Route to the `clustered` runtime entrypoint (sibling of `a0`) instead of `a0`. The
+        # entrypoint derives the torchrun rendezvous and re-execs itself under torchrun.
+        args = super().container_args(sctx)
+        return ["clustered", *args[1:]] if args and args[0] == "a0" else args
 
 
 TaskPluginRegistry.register(_ClusteredPlugin, ClusteredTaskTemplate)

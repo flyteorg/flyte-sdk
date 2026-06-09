@@ -27,41 +27,81 @@ _UNION_EAGER_API_KEY_ENV_VAR = "_UNION_EAGER_API_KEY"
 _F_PATH_REWRITE = "_F_PATH_REWRITE"
 _F_USE_RUST_CONTROLLER = "_F_USE_RUST_CONTROLLER"
 
+# --- clustered (JobSet) launcher constants ---
+_DNS_TIMEOUT_SEC = 300
+_DNS_RETRY_INTERVAL_SEC = 2
+_CLUSTERED_REQUIRED_ENV_VARS = (
+    "JOBSET_NAME",
+    "POD_NAMESPACE",
+    "JOB_COMPLETION_INDEX",
+    "JOBSET_RESTART_ATTEMPT",
+    "NNODES",
+    "NPROC_PER_NODE",
+    "RDZV_BACKEND",
+)
+
 
 @click.group()
 def _pass_through():
     pass
 
 
+def _action_options(f):
+    """Apply the shared set of action options to a runtime command (`a0`, `clustered`)."""
+    # NOTE: click renders options in reverse application order; functional behavior is unaffected.
+    f = click.option("--inputs", "-i", required=True)(f)
+    f = click.option("--outputs-path", "-o", required=True)(f)
+    f = click.option("--version", "-v", required=True)(f)
+    f = click.option("--run-base-dir", envvar=RUN_OUTPUT_BASE_DIR, required=True)(f)
+    f = click.option("--raw-data-path", "-r", required=False)(f)
+    f = click.option("--checkpoint-path", "-c", required=False)(f)
+    f = click.option("--prev-checkpoint", "-p", required=False)(f)
+    f = click.option("--name", envvar=ACTION_NAME, required=False)(f)
+    f = click.option("--run-name", envvar=RUN_NAME, required=False)(f)
+    f = click.option("--run-start-time", required=False)(f)
+    f = click.option("--project", envvar=PROJECT_NAME, required=False)(f)
+    f = click.option("--domain", envvar=DOMAIN_NAME, required=False)(f)
+    f = click.option("--org", envvar=ORG_NAME, required=False)(f)
+    f = click.option("--debug", envvar=FLYTE_ENABLE_VSCODE_KEY, type=click.BOOL, required=False)(f)
+    f = click.option("--interactive-mode", type=click.BOOL, required=False)(f)
+    f = click.option("--image-cache", required=False)(f)
+    f = click.option("--tgz", required=False)(f)
+    f = click.option("--pkl", required=False)(f)
+    f = click.option("--dest", required=False)(f)
+    f = click.option("--resolver", required=False)(f)
+    f = click.argument("resolver-args", type=click.UNPROCESSED, nargs=-1)(f)
+    return f
+
+
 @_pass_through.command("a0")
-@click.option("--inputs", "-i", required=True)
-@click.option("--outputs-path", "-o", required=True)
-@click.option("--version", "-v", required=True)
-@click.option("--run-base-dir", envvar=RUN_OUTPUT_BASE_DIR, required=True)
-@click.option("--raw-data-path", "-r", required=False)
-@click.option("--checkpoint-path", "-c", required=False)
-@click.option("--prev-checkpoint", "-p", required=False)
-@click.option("--name", envvar=ACTION_NAME, required=False)
-@click.option("--run-name", envvar=RUN_NAME, required=False)
-@click.option("--run-start-time", required=False)
-@click.option("--project", envvar=PROJECT_NAME, required=False)
-@click.option("--domain", envvar=DOMAIN_NAME, required=False)
-@click.option("--org", envvar=ORG_NAME, required=False)
-@click.option("--debug", envvar=FLYTE_ENABLE_VSCODE_KEY, type=click.BOOL, required=False)
-@click.option("--interactive-mode", type=click.BOOL, required=False)
-@click.option("--image-cache", required=False)
-@click.option("--tgz", required=False)
-@click.option("--pkl", required=False)
-@click.option("--dest", required=False)
-@click.option("--resolver", required=False)
-@click.argument(
-    "resolver-args",
-    type=click.UNPROCESSED,
-    nargs=-1,
-)
+@_action_options
 @click.pass_context
-def main(
+def main(ctx: click.Context, **params):
+    _run_action(ctx, controller_enabled=True, **params)
+
+
+@_pass_through.command("clustered")
+@_action_options
+@click.pass_context
+def clustered_main(ctx: click.Context, **params):
+    """Entrypoint for clustered (JobSet-based) distributed training pods.
+
+    Two phases in one command:
+      * Launcher (PID 1, no torchrun env): derive the torchrun rendezvous from JobSet env vars and
+        exec `torchrun ... -- clustered <same args>`.
+      * Worker (re-entered by torchrun, TORCHELASTIC_RUN_ID set): run the task. A clustered task
+        never enqueues subtasks, so it runs with no controller; outputs/errors upload via storage.
+    """
+    if "TORCHELASTIC_RUN_ID" in os.environ:
+        _run_action(ctx, controller_enabled=False, **params)
+        return
+    _exec_torchrun_launcher(worker_argv=["clustered", *sys.argv[1:]])
+
+
+def _run_action(
     ctx: click.Context,
+    *,
+    controller_enabled: bool,
     run_name: str,
     name: str,
     run_start_time: str,
@@ -152,20 +192,24 @@ def main(
         bundle = CodeBundle(tgz=tgz, pkl=pkl, destination=dest, computed_version=version)
 
     controller_kwargs = init_in_cluster(org=org, project=project, domain=domain)
-    # Controller is created with the same kwargs as init, so that it can be used to run tasks
-    # Use Rust controller if env var is set, otherwise default to Python controller
-    use_rust = os.getenv(_F_USE_RUST_CONTROLLER, "").lower() in ("1", "true", "yes")
-    if use_rust:
-        try:
-            import flyte_controller_base  # noqa: F401
-        except ImportError as e:
-            raise RuntimeError(
-                f"{_F_USE_RUST_CONTROLLER}=1 was set but `flyte_controller_base` is not installed. "
-                "Install it with `pip install flyte[rust-controller]`. "
-                "For development, run `make dev-rs-dist` from the repo root."
-            ) from e
-    controller_type = "rust" if use_rust else "remote"
-    controller = create_controller(ct=controller_type, **controller_kwargs)  # type: ignore[arg-type]
+    # The controller is only needed to enqueue subtasks. Clustered/jobset tasks never launch
+    # subtasks, so the worker runs with no controller (outputs/errors still upload via storage).
+    controller = None
+    if controller_enabled:
+        # Controller is created with the same kwargs as init, so that it can be used to run tasks
+        # Use Rust controller if env var is set, otherwise default to Python controller
+        use_rust = os.getenv(_F_USE_RUST_CONTROLLER, "").lower() in ("1", "true", "yes")
+        if use_rust:
+            try:
+                import flyte_controller_base  # noqa: F401
+            except ImportError as e:
+                raise RuntimeError(
+                    f"{_F_USE_RUST_CONTROLLER}=1 was set but `flyte_controller_base` is not installed. "
+                    "Install it with `pip install flyte[rust-controller]`. "
+                    "For development, run `make dev-rs-dist` from the repo root."
+                ) from e
+        controller_type = "rust" if use_rust else "remote"
+        controller = create_controller(ct=controller_type, **controller_kwargs)  # type: ignore[arg-type]
 
     ic = ImageCache.from_transport(image_cache) if image_cache else None
 
@@ -199,16 +243,17 @@ def main(
         interactive_mode=interactive_mode or debug,
         run_start_time=parsed_run_start_time,
     )
-    # Create a coroutine to watch for errors
-    controller_failure = controller.watch_for_errors()
 
-    # Run both coroutines concurrently and wait for first to finish and cancel the other
+    # Run the task; when a controller exists, also watch it for errors concurrently.
     async def _run_and_stop():
         loop = asyncio.get_event_loop()
         loop.set_exception_handler(flyte.errors.silence_polling_error)
         try:
-            await utils.run_coros(controller_failure, task_coroutine)
-            await controller.stop()
+            if controller is not None:
+                await utils.run_coros(controller.watch_for_errors(), task_coroutine)
+                await controller.stop()
+            else:
+                await task_coroutine
         except (flyte.errors.RuntimeSystemError, flyte.errors.RuntimeUserError) as e:
             from flyte._internal.runtime.convert import convert_from_native_to_error
             from flyte._internal.runtime.io import upload_error
@@ -217,13 +262,104 @@ def main(
             err = convert_from_native_to_error(e)
             path = await upload_error(err.err, outputs_path, recoverable=err.recoverable)
             logger.error(f"Run {run_name} Action {name} failed with error: {err}. Uploaded error to {path}")
-            await controller.stop()
+            if controller is not None:
+                await controller.stop()
 
     asyncio.run(_run_and_stop())
     logger.warning(f"Flyte runtime completed for action {name} with run name {run_name}")
     for h in logger.handlers:
         h.flush()
     sys.stdout.flush()
+
+
+# ---------------------------------------------------------------------------
+# Clustered (JobSet) torchrun launcher
+# ---------------------------------------------------------------------------
+
+
+def _master_addr(jobset_name: str, namespace: str) -> str:
+    return f"{jobset_name}-workers-0-0.{jobset_name}.{namespace}.svc.cluster.local"
+
+
+def _wait_for_dns(hostname: str, timeout: float = _DNS_TIMEOUT_SEC, interval: float = _DNS_RETRY_INTERVAL_SEC) -> None:
+    import socket
+    import time
+
+    from flyte._logging import logger
+
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            socket.getaddrinfo(hostname, None)
+            logger.info(f"DNS resolved: {hostname}")
+            return
+        except socket.gaierror:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                logger.error(
+                    f"DNS for {hostname!r} did not resolve within {timeout}s. "
+                    "Check that the JobSet headless service is created and pod-0 is running."
+                )
+                sys.exit(1)
+            time.sleep(min(interval, remaining))
+
+
+def _exec_torchrun_launcher(worker_argv: List[str]) -> None:
+    """Derive the torchrun rendezvous from JobSet env vars and exec torchrun with `worker_argv`.
+
+    Replaces the standalone `flyte.clustered._entrypoint` module. Runs as the container PID 1;
+    `os.execvp` replaces this process with torchrun, which re-spawns `worker_argv` per process.
+    """
+    import shutil
+
+    from flyte._logging import logger
+
+    for var in _CLUSTERED_REQUIRED_ENV_VARS:
+        if not os.environ.get(var):
+            logger.error(f"required env var {var!r} is not set")
+            sys.exit(1)
+
+    jobset_name = os.environ["JOBSET_NAME"]
+    namespace = os.environ["POD_NAMESPACE"]
+    node_rank = os.environ["JOB_COMPLETION_INDEX"]
+    restart_attempt = os.environ["JOBSET_RESTART_ATTEMPT"]
+    nnodes = os.environ["NNODES"]
+    nproc_per_node = os.environ["NPROC_PER_NODE"]
+    rdzv_backend = os.environ["RDZV_BACKEND"]
+    master_port = os.environ.get("MASTER_PORT", "29500")
+
+    if shutil.which("torchrun") is None:
+        logger.error("please install torchrun")
+        sys.exit(1)
+
+    master_addr = _master_addr(jobset_name, namespace)
+    rdzv_id = f"{jobset_name}-{restart_attempt}"
+
+    _wait_for_dns(master_addr)
+
+    # Export derived vars so torchrun child processes (and the task / TaskContext) inherit them.
+    # torchrun does not propagate NODE_RANK to workers, and MASTER_ADDR is only computed here.
+    os.environ["NODE_RANK"] = node_rank
+    os.environ["MASTER_ADDR"] = master_addr
+
+    torchrun_cmd = [
+        "torchrun",
+        f"--nnodes={nnodes}",
+        f"--nproc-per-node={nproc_per_node}",
+        f"--node-rank={node_rank}",
+        f"--rdzv-backend={rdzv_backend}",
+        f"--rdzv-id={rdzv_id}",
+        f"--rdzv-endpoint={master_addr}:{master_port}",
+        # worker_argv[0] is the `clustered` console-script executable (flyte._bin.runtime:clustered_main),
+        # not a .py file. Without --no-python torchrun would run `python clustered` and fail. --no-python
+        # makes torchrun exec the command directly.
+        "--no-python",
+        "--",
+        *worker_argv,
+    ]
+
+    logger.info(f"exec: {' '.join(torchrun_cmd)}")
+    os.execvp("torchrun", torchrun_cmd)
 
 
 if __name__ == "__main__":

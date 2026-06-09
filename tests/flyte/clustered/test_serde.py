@@ -75,14 +75,18 @@ def test_task_type_version_is_1():
     assert proto.task_type_version == 1
 
 
-def test_container_command_is_entrypoint():
+def test_container_command_is_empty():
+    # The clustered task uses the image entrypoint (command stays empty); torchrun orchestration
+    # lives in the `clustered` runtime entrypoint selected via container args.
     proto = _run_serde()
-    assert list(proto.container.command) == ["python", "-m", "flyte.clustered._entrypoint"]
+    assert list(proto.container.command) == []
 
 
-def test_container_args_contains_a0():
+def test_container_entrypoint_is_clustered():
     proto = _run_serde()
-    assert "a0" in proto.container.args
+    # args[0] is the runtime subcommand — `clustered` instead of `a0`.
+    assert proto.container.args[0] == "clustered"
+    assert "a0" not in proto.container.args
 
 
 def test_custom_is_populated():
@@ -94,9 +98,8 @@ def test_custom_is_populated():
 
 
 def test_pod_template_clustered_gets_entrypoint():
-    """A clustered task with a pod_template must still get the entrypoint wrapper
-    spliced into the k8s_pod's primary container (regression: command rewrite used to
-    be skipped on the pod_template path, leaving command=[])."""
+    """A clustered task with a pod_template routes the k8s_pod's primary container to the
+    `clustered` runtime entrypoint via args (command stays empty / image entrypoint)."""
     from kubernetes.client import V1Container, V1PodSpec
 
     from flyte import PodTemplate
@@ -119,8 +122,10 @@ def test_pod_template_clustered_gets_entrypoint():
     assert proto.type == "clustered-task"
     assert not proto.HasField("container")  # pod_template path -> k8s_pod, not container
     primary = next(c for c in proto.k8s_pod.pod_spec["containers"] if c["name"] == "primary")
-    assert primary["command"] == ["python", "-m", "flyte.clustered._entrypoint"]
-    assert "a0" in primary["args"]
+    command = primary["command"] if "command" in primary else []  # empty repeated field may be omitted
+    assert list(command) == []
+    assert primary["args"][0] == "clustered"
+    assert "a0" not in primary["args"]
 
 
 def test_non_clustered_task_unaffected():
@@ -205,6 +210,7 @@ def test_full_serde_with_real_proto():
 
     assert proto.type == "clustered-task"
     assert proto.task_type_version == 1
-    assert list(proto.container.command) == ["python", "-m", "flyte.clustered._entrypoint"]
-    assert "a0" in proto.container.args
+    assert list(proto.container.command) == []
+    assert proto.container.args[0] == "clustered"
+    assert "a0" not in proto.container.args
     assert proto.custom.fields["replicas"].number_value == 4
