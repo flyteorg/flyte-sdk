@@ -154,10 +154,12 @@ async def run_task(
         else:
             logger.info(f"[rusty] Using path rewrite: {path_rewrite}")
 
-    # Parse the per-task run start time (mirrors _bin/runtime.py): tolerate the unsubstituted
-    # "{{.runStartTime}}" placeholder and a trailing "Z", normalize to UTC, fall back to epoch.
-    epoch_run_start_time = datetime(1970, 1, 1, tzinfo=timezone.utc)
-    parsed_run_start_time: datetime = epoch_run_start_time
+    # Parse the per-task run start time delivered by the actor worker: tolerate the unsubstituted
+    # "{{.runStartTime}}" placeholder and a trailing "Z", normalize to UTC. When absent or
+    # unparseable, leave it None so TaskContext applies its documented default
+    # (datetime.now(timezone.utc)), matching the single-shot CLI path (entrypoints.py) — rather
+    # than forcing an epoch timestamp the user would never expect.
+    parsed_run_start_time: Optional[datetime] = None
     if run_start_time and not run_start_time.startswith("{{"):
         raw = run_start_time.rstrip()
         if raw.endswith("Z"):
@@ -169,7 +171,8 @@ async def run_task(
             else:
                 parsed_run_start_time = parsed_run_start_time.astimezone(timezone.utc)
         except ValueError:
-            logger.warning(f"[rusty] Could not parse run_start_time {run_start_time!r}; falling back to epoch.")
+            logger.warning(f"[rusty] Could not parse run_start_time {run_start_time!r}; leaving unset.")
+            parsed_run_start_time = None
 
     try:
         await contextual_run(
