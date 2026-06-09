@@ -1,6 +1,6 @@
 import asyncio
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional, Tuple
 
 from flyte._context import contextual_run
@@ -107,8 +107,10 @@ async def run_task(
     code_bundle: CodeBundle | None = None,
     input_path: str | None = None,
     path_rewrite_cfg: str | None = None,
-    # Defaulted so existing Rust-side callers keep working; TaskContext fills in now(UTC) when absent.
-    run_start_time: Optional[datetime] = None,
+    # The actor worker passes this as an RFC3339 string (or the unsubstituted "{{.runStartTime}}"
+    # placeholder); older workers omit it (None). Parsed below the same way as the single-shot CLI
+    # path (_bin/runtime.py) before being handed to convert_and_run.
+    run_start_time: Optional[str] = None,
 ):
     """
     Runs the task with the provided parameters.
@@ -152,6 +154,23 @@ async def run_task(
         else:
             logger.info(f"[rusty] Using path rewrite: {path_rewrite}")
 
+    # Parse the per-task run start time (mirrors _bin/runtime.py): tolerate the unsubstituted
+    # "{{.runStartTime}}" placeholder and a trailing "Z", normalize to UTC, fall back to epoch.
+    epoch_run_start_time = datetime(1970, 1, 1, tzinfo=timezone.utc)
+    parsed_run_start_time: datetime = epoch_run_start_time
+    if run_start_time and not run_start_time.startswith("{{"):
+        raw = run_start_time.rstrip()
+        if raw.endswith("Z"):
+            raw = raw[:-1] + "+00:00"
+        try:
+            parsed_run_start_time = datetime.fromisoformat(raw)
+            if parsed_run_start_time.tzinfo is None:
+                parsed_run_start_time = parsed_run_start_time.replace(tzinfo=timezone.utc)
+            else:
+                parsed_run_start_time = parsed_run_start_time.astimezone(timezone.utc)
+        except ValueError:
+            logger.warning(f"[rusty] Could not parse run_start_time {run_start_time!r}; falling back to epoch.")
+
     try:
         await contextual_run(
             extract_download_run_upload,
@@ -166,7 +185,7 @@ async def run_task(
             code_bundle=code_bundle,
             input_path=input_path,
             image_cache=ImageCache.from_transport(image_cache) if image_cache else None,
-            run_start_time=run_start_time,
+            run_start_time=parsed_run_start_time,
         )
     except asyncio.CancelledError as e:
         logger.error(f"[rusty] Task cancellation received: {e!s}")

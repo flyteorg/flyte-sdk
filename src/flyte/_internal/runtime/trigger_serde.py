@@ -15,7 +15,7 @@ from flyte import Cron, FixedRate, Trigger, TriggerTime
 # no longer injects a kickoff-time literal at fire time and instead stamps run_start_time on the run.
 # The runtime reads this key out of the offloaded inputs at execution and writes run_start_time into
 # the named input, preserving the `inputs={"start_time": flyte.TriggerTime}` API. Context is not part
-# of the cache-key hash, so carrying it here does not perturb input hashing. See ENG-26-531/532.
+# of the cache-key hash, so carrying it here does not perturb input hashing.
 KICKOFF_TIME_INPUT_ARG_CONTEXT_KEY = "_u_kickoff_time_input_arg"
 
 

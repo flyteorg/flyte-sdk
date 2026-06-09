@@ -31,7 +31,7 @@ CONFIG = ".flyte/config-local.yaml"
 TASK_NAME = "cached_example_task.cached_task"
 # TASK_NAME = "example_task.custom_task"   # needs: flyte deploy examples/triggers/basic.py env
 
-TRIGGER_NAME = "standalone_minutely"  # distinct from the embedded trigger names
+TRIGGER_NAME = "standalone_minutely_"  # distinct from the embedded trigger names
 
 flyte.init_from_config(CONFIG)
 
@@ -44,4 +44,3 @@ Trigger.create(
 )
 
 print(f"Created standalone trigger '{TRIGGER_NAME}' on task '{TASK_NAME}'.")
-print("It fires every minute. Watch the console (localhost:30080) for its runs.")
