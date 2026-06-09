@@ -24,6 +24,16 @@ _REPORT_FILE_NAME = "report.html"
 _PKL_EXT = ".pkl.gz"
 
 
+def _is_nonzero_rank_clustered_worker() -> bool:
+    """True only for a non-rank-0 process of a clustered/jobset task.
+
+    torchrun sets both ``TORCHELASTIC_RUN_ID`` and ``RANK`` on every worker, so we gate on the
+    torchrun marker rather than ``RANK`` alone — otherwise a regular Python task that happens to
+    have ``RANK`` set in its environment would silently skip uploading its outputs/errors.
+    """
+    return bool(os.environ.get("TORCHELASTIC_RUN_ID")) and os.environ.get("RANK", "0") != "0"
+
+
 def pkl_path(base_path: str, pkl_name: str) -> str:
     return storage.join(base_path, f"{pkl_name}{_PKL_EXT}")
 
@@ -62,7 +72,7 @@ async def upload_outputs(outputs: Outputs, output_path: str, max_bytes: int = -1
     :param max_bytes: Maximum number of bytes to write to the output file. Default is -1, which means no limit.
     """
     # In clustered tasks, only rank-0 owns the output; all other ranks skip upload.
-    if os.environ.get("RANK", "0") != "0":
+    if _is_nonzero_rank_clustered_worker():
         return
     if max_bytes != -1 and outputs.proto_outputs.ByteSize() > max_bytes:
         import flyte.errors
@@ -84,8 +94,8 @@ async def upload_error(err: execution_pb2.ExecutionError, output_prefix: str, re
     """
     error_uri = error_path(output_prefix)
     # In clustered tasks, only rank-0 owns the error file; other ranks skip the write
-    # so they don't race to clobber error.pb. (RANK is unset on non-clustered tasks.)
-    if os.environ.get("RANK", "0") != "0":
+    # so they don't race to clobber error.pb.
+    if _is_nonzero_rank_clustered_worker():
         return error_uri
     error_document = execution_pb2.ErrorDocument(
         error=execution_pb2.ContainerError(

@@ -1,6 +1,6 @@
 """Tests for the `clustered` runtime entrypoint (torchrun launcher + worker-phase dispatch).
 
-The launcher logic lives in `flyte._bin.runtime` (it replaced the standalone
+The launcher logic lives in `flyte._bin.clustered` (it replaced the standalone
 `flyte.clustered._entrypoint` module).
 """
 
@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
-from flyte._bin.runtime import _exec_torchrun_launcher, _master_addr, _wait_for_dns
+from flyte._bin.clustered import _exec_torchrun_launcher, _master_addr, _wait_for_dns
 
 BASE_ENV = {
     "JOBSET_NAME": "f-abc123",
@@ -150,7 +150,7 @@ def test_worker_phase_runs_without_controller(monkeypatch):
     """Under torchrun (TORCHELASTIC_RUN_ID set), `clustered` runs the task with no controller."""
     from click.testing import CliRunner
 
-    from flyte._bin import runtime
+    from flyte._bin import clustered
 
     monkeypatch.setenv("TORCHELASTIC_RUN_ID", "run-xyz")
     captured = {}
@@ -158,10 +158,10 @@ def test_worker_phase_runs_without_controller(monkeypatch):
     def fake_run_action(ctx, *, controller_enabled, **params):
         captured["controller_enabled"] = controller_enabled
 
-    monkeypatch.setattr(runtime, "_run_action", fake_run_action)
+    monkeypatch.setattr(clustered, "_run_action", fake_run_action)
 
     result = CliRunner().invoke(
-        runtime.clustered_main,
+        clustered.clustered_main,
         ["--inputs", "i", "--outputs-path", "o", "--version", "v", "--run-base-dir", "b"],
     )
 
@@ -173,7 +173,7 @@ def test_launcher_phase_execs_torchrun(monkeypatch):
     """Without torchrun env, `clustered` is the launcher: it execs torchrun with `clustered` argv."""
     from click.testing import CliRunner
 
-    from flyte._bin import runtime
+    from flyte._bin import clustered
 
     monkeypatch.delenv("TORCHELASTIC_RUN_ID", raising=False)
     captured = {}
@@ -181,10 +181,10 @@ def test_launcher_phase_execs_torchrun(monkeypatch):
     def fake_launcher(worker_argv):
         captured["worker_argv"] = worker_argv
 
-    monkeypatch.setattr(runtime, "_exec_torchrun_launcher", fake_launcher)
+    monkeypatch.setattr(clustered, "_exec_torchrun_launcher", fake_launcher)
 
     result = CliRunner().invoke(
-        runtime.clustered_main,
+        clustered.clustered_main,
         ["--inputs", "i", "--outputs-path", "o", "--version", "v", "--run-base-dir", "b"],
     )
 

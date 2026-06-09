@@ -25,7 +25,7 @@ from flyte.clustered import ClusteredTaskEnvironment, ClusterFailurePolicy, Torc
 # Image carries the LOCAL flyte build (so the container has the `clustered` runtime
 # entrypoint and the clustered runtime fixes), plus torch for the actual DDP workload.
 image = (
-    flyte.Image.from_debian_base(name="ddp_train7")
+    flyte.Image.from_debian_base(name="ddp_train8")
     .clone(addl_layer=PythonWheels(wheel_dir=DIST_FOLDER, package_name="flyte"))
     .with_pip_packages("torch", "numpy")
 )
