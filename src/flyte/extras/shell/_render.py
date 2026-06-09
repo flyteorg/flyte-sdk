@@ -163,11 +163,16 @@ def _emit_flag_setter(
     if kind in ("file", "dir"):
         path = input_data_dir / name
         if is_optional:
-            return (
-                f"if [ -e {shlex.quote(str(path))} ]; then "
-                f"{flag_var}={shlex.quote(flag + sep + str(path))}; "
-                f'else {flag_var}=""; fi'
-            )
+            qpath = shlex.quote(str(path))
+            # Remote staging can materialize unset optional inputs at this path,
+            # so a bare `[ -e ]` can wrongly emit the flag.
+            if kind == "file":
+                # Treat the backend's "null" sentinel file as absent.
+                present = f'[ -f {qpath} ] && [ -s {qpath} ] && [ "$(head -c 4 {qpath})" != "null" ]'
+            else:
+                # A missing optional Dir shows up as a sentinel file, not a dir.
+                present = f'[ -d {qpath} ] && [ -n "$(ls -A {qpath} 2>/dev/null)" ]'
+            return f'if {present}; then {flag_var}={shlex.quote(flag + sep + str(path))}; else {flag_var}=""; fi'
         return f"{flag_var}={shlex.quote(flag + sep + str(path))}"
     if kind == "list_file":
         dirpath = input_data_dir / name

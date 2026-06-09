@@ -1,4 +1,4 @@
-"""Dir input + Dir output — directory-shaped data.
+"""Dir input + Glob output — directory-shaped fan-out.
 
 Many bio tools take a *directory* of files (think ``fastqc reads/``,
 ``multiqc results/``) and produce a *directory* of reports rather than one
@@ -6,13 +6,14 @@ file per output slot. Both halves are first-class:
 
 - ``Dir`` as an input type — the whole directory is mounted at
   ``/var/inputs/<name>``; bash globs (``${name}/*``) iterate over its contents.
-- ``Dir`` as an output type — the script creates a directory under
-  ``/var/outputs`` and the wrapper returns it as a ``Dir`` handle.
+- ``Glob`` as an output type — the script writes files under
+  ``/var/outputs/<name>/`` and the Python wrapper returns ``list[File]``.
 
 Here we wrap a "per-file line counter": for each ``.txt`` in the input
 directory, write a ``<basename>.summary`` file to the output directory
-containing the line count. The pipeline gets back a single ``Dir`` referencing
-all those summary files.
+containing the line count. The serialized shell task still exposes that
+output as a ``Dir`` remotely, but the surrounding Python task gets back a
+``list[File]`` after the wrapper unpacks the globbed files.
 
 Run locally::
 
@@ -25,7 +26,8 @@ from pathlib import Path
 
 import flyte
 from flyte.extras import shell
-from flyte.io import Dir
+from flyte.extras.shell import Glob
+from flyte.io import Dir, File
 
 summarize_dir = shell.create(
     name="summarize_dir",
@@ -34,9 +36,9 @@ summarize_dir = shell.create(
         "src": Dir,  # mounted at /var/inputs/src
     },
     outputs={
-        # /var/outputs/summaries is the canonical path the wrapper
-        # pre-creates and CoPilot reads back as a ``Dir``.
-        "summaries": Dir,
+        # The shell task writes files under /var/outputs/summaries/, then
+        # the Python wrapper returns the matched files as list[File].
+        "summaries": Glob("**/*"),
     },
     script=r"""
         for f in {inputs.src}/*; do
@@ -52,8 +54,8 @@ env = flyte.TaskEnvironment(name="shell_dirs", depends_on=[summarize_dir.env])
 
 
 @env.task
-async def summarize_files(src: Dir) -> Dir:
-    """Count lines in each file of ``src``, return a Dir of per-file summaries."""
+async def summarize_files(src: Dir) -> list[File]:
+    """Count lines in each file of ``src``, return one summary file per input."""
     return await summarize_dir(src=src)
 
 
