@@ -105,9 +105,6 @@ _YAML_UNSET_TOKEN = "~unset"
 _MAP_MERGE_COMMENT = (
     "## Map entries merge across scopes — parent entries are shown below and applied unless overridden here."
 )
-_LIST_ADDITIVE_COMMENT = (
-    "## List values add across scopes — parent items are shown below and included unless overridden here."
-)
 
 # Scope level mapping from proto enum to human-readable strings
 _SCOPE_NAMES = {
@@ -121,12 +118,11 @@ _SCOPE_NAMES = {
 # ``(dotkey, leaf_kind, field_descriptor)``.
 #
 # Leaf kinds map to the proto *Setting types:
-#     "string"     → StringSetting
-#     "int"        → Int64Setting
-#     "bool"       → BoolSetting
-#     "quantity"   → QuantitySetting (string-encoded k8s quantity)
-#     "stringlist" → StringListSetting
-#     "stringmap"  → StringMapSetting
+#     "string"   → StringSetting
+#     "int"      → Int64Setting
+#     "bool"     → BoolSetting
+#     "quantity" → QuantitySetting (string-encoded k8s quantity)
+#     "stringmap"→ StringMapSetting
 
 
 @dataclass(frozen=True)
@@ -140,12 +136,6 @@ class _LeafIO:
     proto_class: type
     extract: Callable[[Any], Any]
     build_kwargs: Callable[[Any], dict[str, Any]]
-
-
-def _build_list_kwargs(v: Any) -> dict[str, Any]:
-    if not isinstance(v, (list, tuple)):
-        raise TypeError(f"expected list for stringlist leaf, got {type(v).__name__}")
-    return {"list_value": settings_definition_pb2.StringValues(values=[str(x) for x in v])}
 
 
 def _build_map_kwargs(v: Any) -> dict[str, Any]:
@@ -175,11 +165,6 @@ _LEAF_IO: dict[str, _LeafIO] = {
         lambda leaf: leaf.quantity_value,
         lambda v: {"quantity_value": str(v)},
     ),
-    "stringlist": _LeafIO(
-        settings_definition_pb2.StringListSetting,
-        lambda leaf: list(leaf.list_value.values),
-        _build_list_kwargs,
-    ),
     "stringmap": _LeafIO(
         settings_definition_pb2.StringMapSetting,
         lambda leaf: dict(leaf.map_value.entries),
@@ -199,7 +184,6 @@ _PLACEHOLDER_BY_KIND: dict[str, str] = {
     "int": "0",
     "bool": "false",
     "quantity": "''",
-    "stringlist": "[]",
     "stringmap": "{}",
 }
 
@@ -368,7 +352,6 @@ class Settings(ToJSONMixin):
     _version: int = field(default=0, repr=False)
     _parent_effective: dict[str, EffectiveSetting] = field(default_factory=dict, repr=False)
     _map_entry_origins: dict[str, dict[str, EffectiveSetting]] = field(default_factory=dict, repr=False)
-    _list_item_origins: dict[str, list[EffectiveSetting]] = field(default_factory=dict, repr=False)
 
     @staticmethod
     def available_keys() -> list[str]:
@@ -415,44 +398,33 @@ class Settings(ToJSONMixin):
         return str(value)
 
     def _render_merge_collection(self, l_setting: LocalSetting) -> list[str]:
-        """Render a stringmap or stringlist local override as YAML lines, with
-        parent-scope items shown as ``#``-commented lines tagged with their
-        origin scope.
+        """Render a stringmap local override as YAML lines, with parent-scope
+        entries shown as ``#``-commented lines tagged with their origin scope.
 
-        When the local container has entries::
+        When the local map has entries::
 
-            ## merge/additive comment
+            ## merge comment
             {key}:
               {local entries...}
               # {parent entry}  ## defined at {origin}
 
-        When the local container is empty, the key line itself is commented so
+        When the local map is empty, the key line itself is commented so
         saving an unedited file does not replace inherited values with ``null``::
 
-            ## merge/additive comment
+            ## merge comment
             # {key}:
             #   {parent entry}  ## defined at {origin}
         """
         key = l_setting.key
-        if _LEAF_TYPES.get(key) == "stringmap":
-            merge_comment = _MAP_MERGE_COMMENT
-            local_dict = l_setting.value if isinstance(l_setting.value, dict) else {}
-            local_items = [(k, f"{k}: {self._format_value(v)}") for k, v in local_dict.items()]
-            parent_items = [
-                (k, f"{k}: {self._format_value(eff.value)}", eff.origin)
-                for k, eff in self._map_entry_origins.get(key, {}).items()
-            ]
-        else:  # stringlist
-            merge_comment = _LIST_ADDITIVE_COMMENT
-            local_list = l_setting.value if isinstance(l_setting.value, list) else []
-            local_items = [(v, f"- {self._format_value(v)}") for v in local_list]
-            parent_items = [
-                (eff.value, f"- {self._format_value(eff.value)}", eff.origin)
-                for eff in self._list_item_origins.get(key, [])
-            ]
+        local_dict = l_setting.value if isinstance(l_setting.value, dict) else {}
+        local_items = [(k, f"{k}: {self._format_value(v)}") for k, v in local_dict.items()]
+        parent_items = [
+            (k, f"{k}: {self._format_value(eff.value)}", eff.origin)
+            for k, eff in self._map_entry_origins.get(key, {}).items()
+        ]
 
         local_dedup_keys = {dk for dk, _ in local_items}
-        lines = [merge_comment]
+        lines = [_MAP_MERGE_COMMENT]
         if local_items:
             lines.append(f"{key}:")
             lines.extend(f"  {repr_str}" for _, repr_str in local_items)
@@ -477,15 +449,12 @@ class Settings(ToJSONMixin):
         local_keys = {s.key for s in self.local_settings}
         effective_keys = {s.key for s in self.effective_settings}
 
-        # A stringmap or stringlist local setting with no local entries has nothing to override
+        # A stringmap local setting with no local entries has nothing to override
         # — treat it as inherited for display so it appears in the Inherited section, not Local overrides.
         empty_local_map_keys = {
             s.key
             for s in self.local_settings
-            if (
-                (_LEAF_TYPES.get(s.key) == "stringmap" and not (isinstance(s.value, dict) and s.value))
-                or (_LEAF_TYPES.get(s.key) == "stringlist" and not (isinstance(s.value, list) and s.value))
-            )
+            if _LEAF_TYPES.get(s.key) == "stringmap" and not (isinstance(s.value, dict) and s.value)
         }
         display_local_settings = [s for s in self.local_settings if s.key not in empty_local_map_keys]
         display_local_keys = local_keys - empty_local_map_keys
@@ -502,7 +471,7 @@ class Settings(ToJSONMixin):
                 d = _describe(l_setting.key)
                 if d:
                     lines.append(d)
-                if _LEAF_TYPES.get(l_setting.key) in ("stringmap", "stringlist"):
+                if _LEAF_TYPES.get(l_setting.key) == "stringmap":
                     lines.extend(self._render_merge_collection(l_setting))
                 else:
                     lines.append(f"{l_setting.key}: {self._format_value(l_setting.value)}")
@@ -524,10 +493,6 @@ class Settings(ToJSONMixin):
                     lines.append(f"# {setting.key}:  ## inherited from {setting.origin}")
                     for entry_key, entry_val in setting.value.items():
                         lines.append(f"#   {entry_key}: {self._format_value(entry_val)}")
-                elif _LEAF_TYPES.get(setting.key) == "stringlist" and isinstance(setting.value, list):
-                    lines.append(f"# {setting.key}:  ## inherited from {setting.origin}")
-                    for item in setting.value:
-                        lines.append(f"#   - {self._format_value(item)}")
                 else:
                     lines.append(
                         f"# {setting.key}: {self._format_value(setting.value)}  ## inherited from {setting.origin}"
@@ -596,7 +561,7 @@ class Settings(ToJSONMixin):
 
         Uses ``yaml.safe_load``, so all YAML syntax is supported — including
         flow collections (``[a, b]``, ``{k: v}``) and block collections — for
-        the list and map leaves (``labels``, ``annotations``,
+        the map leaves (``labels``, ``annotations``,
         ``environment_variables``). Commented lines are ignored (template
         entries stay as comments until the user uncomments them).
         """
@@ -657,7 +622,6 @@ class Settings(ToJSONMixin):
         effective: dict[str, EffectiveSetting] = {}
         parent_effective: dict[str, EffectiveSetting] = {}
         map_entry_origins: dict[str, dict[str, EffectiveSetting]] = {}
-        list_item_origins: dict[str, list[EffectiveSetting]] = {}
         for record in resp.levels:
             is_local = (record.key.domain or "") == want_domain and (record.key.project or "") == want_project
             origin = _scope_origin_from_key(record.key)
@@ -671,14 +635,6 @@ class Settings(ToJSONMixin):
                             entry_map = map_entry_origins.setdefault(dotkey, {})
                             for entry_key, entry_val in val.items():
                                 entry_map[entry_key] = EffectiveSetting(key=dotkey, value=entry_val, origin=origin)
-                    elif _LEAF_TYPES.get(dotkey) == "stringlist":
-                        if val is UNSET:
-                            list_item_origins.pop(dotkey, None)
-                        elif isinstance(val, list):
-                            item_map = {es.value: es for es in list_item_origins.get(dotkey, [])}
-                            for item in val:
-                                item_map[item] = EffectiveSetting(key=dotkey, value=item, origin=origin)
-                            list_item_origins[dotkey] = list(item_map.values())
                 effective[dotkey] = EffectiveSetting(key=dotkey, value=val, origin=origin)
 
         # Local settings come from the level whose key equals the requested scope
@@ -703,7 +659,6 @@ class Settings(ToJSONMixin):
             _version=version,
             _parent_effective=parent_effective,
             _map_entry_origins=map_entry_origins,
-            _list_item_origins=list_item_origins,
         )
 
     @syncify

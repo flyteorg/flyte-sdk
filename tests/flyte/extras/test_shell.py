@@ -313,18 +313,25 @@ class TestRenderCommand:
         assert "if [ -e " not in out
 
     def test_optional_file_flag_guarded(self):
-        # Optional File flag must be guarded — if the caller didn't supply
-        # the file, /var/inputs/<name> won't exist and the tool would fail
-        # trying to open it.
+        # Optional File flag must be guarded — if the caller didn't supply the
+        # file, the tool must not receive the flag. The backend materializes a
+        # 4-byte "null" sentinel FILE at /var/inputs/<name> for a declared-but-
+        # unset optional File, so `-e`/`-s`/`-f` are all true. Gate on a regular,
+        # non-empty file whose first bytes aren't that sentinel.
         out = _render("tool {flags.sites}", {"sites": File | None})
-        assert "if [ -e /var/inputs/sites ]" in out
+        assert "[ -f /var/inputs/sites ]" in out
+        assert "[ -s /var/inputs/sites ]" in out
+        assert '[ "$(head -c 4 /var/inputs/sites)" != "null" ]' in out
         assert "_FLAG_sites=-sites /var/inputs/sites" in out or "_FLAG_sites='-sites /var/inputs/sites'" in out
         assert '_FLAG_sites=""' in out  # else branch
 
     def test_optional_dir_flag_guarded(self):
-        # Same conditional emission for optional Dir flags.
+        # Same conditional emission for optional Dir flags, gated on the
+        # directory existing AND containing entries (an empty placeholder dir
+        # must not trigger the flag).
         out = _render("tool {flags.cache}", {"cache": Dir | None})
-        assert "if [ -e /var/inputs/cache ]" in out
+        assert "[ -d /var/inputs/cache ]" in out
+        assert "ls -A /var/inputs/cache" in out
         assert '_FLAG_cache=""' in out
 
     def test_required_dir_flag_unconditional(self):
@@ -659,7 +666,7 @@ class TestCreate:
         assert "_FLAG_names" in body
         assert "/var/outputs/_returncode" in body
 
-    def test_debug_mode_emits_script_dump(self):
+    def test_debug_mode_emits_inputs_and_rendered_command(self):
         task = shell.create(
             name="dbg",
             image="alpine:3.18",
@@ -669,11 +676,15 @@ class TestCreate:
             debug=True,
         )
         body = task._build_command()[2]
-        assert "rendered script" in body
-        assert "cat <<'_EOF_' >&2" in body
-        assert '( echo "${_VAL_x}" > /var/outputs/o' not in body
+        # Lists staged inputs and dumps the rendered command.
+        assert "ls -la /var/inputs >&2" in body
+        assert "rendered command" in body
+        assert "cat <<'_FLYTE_SHELL_DEBUG_' >&2" in body
 
-    def test_debug_mode_dump_flows_through_declared_stderr(self):
+    def test_debug_output_goes_to_real_stderr_not_capture(self):
+        # Debug diagnostics must land on the container's real stderr (visible in
+        # remote logs), i.e. OUTSIDE the `( ... ) 2> <stderr>` capture, and the
+        # captured streams are echoed back after the run.
         task = shell.create(
             name="dbg_err",
             image="alpine:3.18",
@@ -684,8 +695,11 @@ class TestCreate:
         )
         body = task._build_command()[2]
         assert "> /var/outputs/out 2> /var/outputs/err" in body
-        assert 'echo "--- shell task: rendered script ---" >&2' in body
-        assert "cat <<'_EOF_' >&2" in body
+        # The rendered-command dump precedes the captured subshell (real stderr).
+        assert body.index("rendered command") < body.index("( ")
+        # Post-run, the captured stdout/stderr are mirrored to the log.
+        assert "captured stderr" in body
+        assert "cat /var/outputs/err >&2" in body
 
 
 class TestImageAcceptance:

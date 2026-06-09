@@ -32,9 +32,8 @@ def _flyte_record_factory(*args: Any, **kwargs: Any) -> logging.LogRecord:
         record.run_name = None
         record.action_name = None
 
-    record.is_flyte_internal = record.name == "flyte" or (
-        record.name.startswith("flyte.") and not record.name.startswith("flyte.user")
-    )
+    name = record.name or ""
+    record.is_flyte_internal = name == "flyte" or (name.startswith("flyte.") and not name.startswith("flyte.user"))
     return record
 
 
@@ -51,6 +50,11 @@ _LOG_LEVEL_MAP = {
 }
 DEFAULT_LOG_LEVEL = logging.WARNING
 DEFAULT_USER_LOG_LEVEL = logging.INFO
+
+# Base console layout. The [run][action] and [flyte] markers are prepended by
+# ContextFormatter; the level name is included here so console output carries the
+# severity (WARNING/DEBUG/...) just like the JSON handler and the rich handler do.
+DEFAULT_CONSOLE_FORMAT = "%(levelname)s %(message)s"
 
 
 def make_hyperlink(label: str, url: str):
@@ -244,7 +248,7 @@ def initialize_logger(
     if flyte_handler is None:
         flyte_handler = logging.StreamHandler()
         flyte_handler.setLevel(log_level)
-        flyte_handler.setFormatter(ContextFormatter(fmt="%(message)s", internal_prefix=True))
+        flyte_handler.setFormatter(ContextFormatter(fmt=DEFAULT_CONSOLE_FORMAT, internal_prefix=True))
 
     flyte_logger.addHandler(flyte_handler)
     flyte_logger.setLevel(log_level)
@@ -268,11 +272,11 @@ def initialize_logger(
         user_handler = rich_handler if rich_handler is not None else logging.StreamHandler()
         user_handler.setLevel(user_log_level)
         if not rich_handler:
-            user_handler.setFormatter(ContextFormatter(fmt="%(message)s"))
+            user_handler.setFormatter(ContextFormatter(fmt=DEFAULT_CONSOLE_FORMAT))
     else:
         user_handler = logging.StreamHandler()
         user_handler.setLevel(user_log_level)
-        user_handler.setFormatter(ContextFormatter(fmt="%(message)s"))
+        user_handler.setFormatter(ContextFormatter(fmt=DEFAULT_CONSOLE_FORMAT))
 
     user_flyte_logger.addHandler(user_handler)
     user_flyte_logger.setLevel(user_log_level)
@@ -316,7 +320,7 @@ class ContextFormatter(logging.Formatter):
 
     def __init__(
         self,
-        fmt: str = "%(message)s",
+        fmt: str = DEFAULT_CONSOLE_FORMAT,
         *,
         internal_prefix: bool = False,
         inner: logging.Formatter | None = None,
@@ -358,7 +362,7 @@ def _setup_root_logger(use_json: bool, use_rich: bool, log_level: int):
     # get_rich_handler can return None in some environments
     if not root_handler:
         root_handler = logging.StreamHandler()
-        root_handler.setFormatter(ContextFormatter(fmt="%(message)s"))
+        root_handler.setFormatter(ContextFormatter(fmt=DEFAULT_CONSOLE_FORMAT))
 
     root_handler.setLevel(log_level)
     root.addHandler(root_handler)
@@ -376,7 +380,7 @@ def _create_user_logger() -> logging.Logger:
 
     handler = logging.StreamHandler()
     handler.setLevel(user_log_level)
-    handler.setFormatter(ContextFormatter(fmt="%(message)s"))
+    handler.setFormatter(ContextFormatter(fmt=DEFAULT_CONSOLE_FORMAT))
 
     user_flyte_logger.propagate = False
     user_flyte_logger.addHandler(handler)
@@ -393,7 +397,7 @@ def _create_flyte_logger() -> logging.Logger:
 
     handler = logging.StreamHandler()
     handler.setLevel(get_env_log_level())
-    handler.setFormatter(ContextFormatter(fmt="%(message)s", internal_prefix=True))
+    handler.setFormatter(ContextFormatter(fmt=DEFAULT_CONSOLE_FORMAT, internal_prefix=True))
 
     # Prevent propagation to root to avoid double logging
     flyte_logger.propagate = False

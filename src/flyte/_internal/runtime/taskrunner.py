@@ -240,4 +240,4 @@ async def extract_download_run_upload(
         logger.info(f"Task {task.name} completed successfully, no outputs")
         return
     await upload_outputs(outputs, output_path) if output_path else None
-    logger.info(f"Task {task.name} completed successfully, uploaded outputs to {output_path} in {time.time() - t}s")
+    logger.info(f"Task {task.name} completed successfully, uploaded outputs to {output_path} in {time.time() - t:.2f}s")

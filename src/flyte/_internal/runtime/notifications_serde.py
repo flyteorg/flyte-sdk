@@ -77,7 +77,7 @@ def _to_delivery_config_template(n: Notification) -> definition_pb2.DeliveryConf
                 inline=definition_pb2.InlineEmailTemplate(
                     subject=n.subject,
                     text_template=n.body,
-                    html_template=n.html_body or "",
+                    html_template=n.html_body or "No HTML body",
                 ),
             ),
         )

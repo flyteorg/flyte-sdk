@@ -53,9 +53,6 @@ class ContainerTask(TaskTemplate):
     :param output_data_dir: The directory where the output data is stored. This is a string or a Path object.
     :param metadata_format: The format of the output file. This can be "JSON", "YAML", or "PROTO".
     :param local_logs: If True, logs will be printed to the console in the local execution.
-    :param block_network: If True, blocks all outbound network access. Locally this
-        sets Docker ``network_mode=none``. On-cluster it applies the pod template
-        ``sandboxed-pod-template``. Defaults to False.
     """
 
     MetadataFormat = Literal["JSON", "YAML", "PROTO"]
@@ -72,22 +69,8 @@ class ContainerTask(TaskTemplate):
         output_data_dir: str | pathlib.Path = "/var/outputs",
         metadata_format: MetadataFormat = "JSON",
         local_logs: bool = True,
-        block_network: bool = False,
         **kwargs,
     ):
-        if block_network:
-            existing = kwargs.get("pod_template")
-            if existing is None:
-                kwargs["pod_template"] = "sandboxed-pod-template"
-            elif isinstance(existing, str):
-                raise ValueError(
-                    "block_network=True cannot be combined with a string pod_template reference. "
-                    "Use a PodTemplate object instead so the 'sandboxed: true' label can be merged in, "
-                    "or ensure the referenced cluster template already includes that label."
-                )
-            else:
-                existing.labels = {**(existing.labels or {}), "sandboxed": "true"}
-
         super().__init__(
             task_type="raw-container",
             name=name,
@@ -109,7 +92,6 @@ class ContainerTask(TaskTemplate):
             raise ValueError("All elements in the command list must be strings.")
         if arguments and any(not isinstance(a, str) for a in arguments):
             raise ValueError("All elements in the arguments list must be strings.")
-        self._block_network = block_network
         self._cmd = command
         self._args = arguments
         self._input_data_dir = input_data_dir
@@ -247,11 +229,17 @@ class ContainerTask(TaskTemplate):
         if self._outputs:
             for k, output_type in self._outputs.items():
                 output_path = output_directory / k
-                if os.path.isfile(output_path):
+
+                # File/Dir outputs are rebuilt from the path, so only scalar
+                # outputs should be read back as text here.
+                if isinstance(output_type, type) and issubclass(output_type, (File, Dir)):
+                    output_val = None
+                elif os.path.isfile(output_path):
                     with output_path.open("r") as f:
                         output_val = f.read()
                 else:
                     output_val = None
+
                 parsed = await self._convert_output_val_to_correct_type(output_path, output_val, output_type)
                 output_items.append(parsed)
         # return a tuple so that each element is treated as a separate output.
@@ -309,8 +297,6 @@ class ContainerTask(TaskTemplate):
             "volumes": volume_bindings,
             "detach": True,
         }
-        if self._block_network:
-            run_kwargs["network_mode"] = "none"
 
         if self.local_logs:
             logger.debug(f"Container command for task {self.name!r}: {commands!r}")

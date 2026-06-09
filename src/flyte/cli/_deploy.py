@@ -141,7 +141,7 @@ class DeployEnvCommand(click.RichCommand):
             sync_local_sys_paths=not self.deploy_args.no_sync_local_sys_paths,
             images=tuple(self.deploy_args.image) or None,
         )
-        with common.cli_status(obj.output_format, "Deploying..."):
+        with common.cli_status(obj.output_format, "Deploying...", no_progress=obj.no_progress):
             deployment = flyte.deploy(
                 self.env,
                 dryrun=self.deploy_args.dry_run,
@@ -213,7 +213,7 @@ class DeployEnvRecursiveCommand(click.Command):
                 f"Failed to load {len(failed_paths)} files. Use --ignore-load-errors to ignore these errors."
             )
 
-        with common.cli_status(obj.output_format, "Deploying..."):
+        with common.cli_status(obj.output_format, "Deploying...", no_progress=obj.no_progress):
             deployments = flyte.deploy(
                 *all_envs,
                 dryrun=self.deploy_args.dry_run,

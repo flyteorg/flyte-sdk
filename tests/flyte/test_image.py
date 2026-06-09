@@ -113,12 +113,14 @@ def test_with_pip_packages():
 
 
 def test_with_source(tmp_path):
+    from flyte.errors import ImageBuildError
+
     file = tmp_path / "my_code.py"
     img = Image.from_debian_base(registry="localhost", name="test-image", flyte_version="0.2.0b14").with_source_file(
         file
     )
     assert img._layers[-1].src == file
-    with pytest.raises(ValueError):
+    with pytest.raises(ImageBuildError):
         img.validate()
     file.touch()
     img.validate()
@@ -397,6 +399,32 @@ def test_uv_project_optional_uvlock():
         hash2 = hasher2.hexdigest()
 
         assert hash1 != hash2
+
+
+def test_copy_config_validate_missing_src_raises_image_build_error(tmp_path):
+    """A CopyConfig pointing at a non-existent source is a user mistake in the
+    image spec, not an SDK bug. validate() must raise ImageBuildError (a
+    RuntimeUserError filtered out of Sentry) rather than a bare ValueError.
+
+    Reproduces FLYTE-SDK-4D.
+    """
+    from flyte.errors import ImageBuildError
+
+    missing = tmp_path / "does-not-exist"
+    cc = CopyConfig(path_type=1, src=missing, dst="/app")
+    with pytest.raises(ImageBuildError, match=r"Source folder .* does not exist"):
+        cc.validate()
+
+
+def test_copy_config_validate_wrong_type_raises_image_build_error(tmp_path):
+    """A file passed where a directory (path_type=1) is expected is a user error."""
+    from flyte.errors import ImageBuildError
+
+    f = tmp_path / "a.txt"
+    f.write_text("hello")
+    cc = CopyConfig(path_type=1, src=f, dst="/app")
+    with pytest.raises(ImageBuildError, match=r"Source folder .* is not a directory"):
+        cc.validate()
 
 
 def test_copy_config_coerces_string_src_to_path(tmp_path):
@@ -895,3 +923,32 @@ def test_from_ref_name_is_not_cloned():
     """Image.from_ref_name is a pointer to an externally configured image and should not be rebuilt."""
     image = Image.from_ref_name("my-ref")
     assert image._is_cloned is False
+
+
+def test_default_image_dev_mode_pypi_fallback(monkeypatch):
+    """
+    In dev mode with no local dist folder, the default image should install
+    `flyte<{base_version}` from PyPI so it picks up the latest already-released
+    version below the current dev line.
+    """
+    import flyte._image as image_module
+    import flyte._version as version_module
+    from flyte._image import PipPackages
+
+    monkeypatch.setattr(version_module, "__version__", "2.3.7.dev6+gabc12345")
+
+    real_exists = image_module.os.path.exists
+
+    def fake_exists(path):
+        if str(path) == str(image_module.DIST_FOLDER):
+            return False
+        return real_exists(path)
+
+    monkeypatch.setattr(image_module.os.path, "exists", fake_exists)
+
+    image = Image._get_default_image_for(python_version=(3, 12))
+
+    pip_packages = tuple(
+        pkg for layer in image._layers if isinstance(layer, PipPackages) for pkg in (layer.packages or ())
+    )
+    assert "flyte<2.3.7" in pip_packages, f"expected 'flyte<2.3.7' in pip layers, got {pip_packages}"

@@ -369,12 +369,18 @@ class CopyConfig(Layer):
             object.__setattr__(self, "src", Path(self.src))
 
     def validate(self):
+        # A missing / wrong-typed source path is a user mistake in the image spec
+        # (e.g. a stale `add_source(...)` path), not an SDK bug. Surface it as an
+        # ImageBuildError (a RuntimeUserError) so it is reported with a clear
+        # message and filtered out of Sentry. Reproduces FLYTE-SDK-4D.
+        from flyte.errors import ImageBuildError
+
         if not self.src.exists():
-            raise ValueError(f"Source folder {self.src.absolute()} does not exist")
+            raise ImageBuildError(f"Source folder {self.src.absolute()} does not exist")
         if not self.src.is_dir() and self.path_type == 1:
-            raise ValueError(f"Source folder {self.src.absolute()} is not a directory")
+            raise ImageBuildError(f"Source folder {self.src.absolute()} is not a directory")
         if not self.src.is_file() and self.path_type == 0:
-            raise ValueError(f"Source file {self.src.absolute()} is not a file")
+            raise ImageBuildError(f"Source file {self.src.absolute()} is not a file")
 
     def update_hash(self, hasher: hashlib._Hash, ignore: Optional[Any] = None):
         from ._code_bundle._ignore import DockerfileIgnore
@@ -658,8 +664,14 @@ class Image:
             }
         )
         image = image.with_apt_packages("build-essential", "ca-certificates")
-        if install_flyte and dev_mode and os.path.exists(DIST_FOLDER):
-            image = image.with_local_v2()
+        if install_flyte and dev_mode:
+            if os.path.exists(DIST_FOLDER):
+                image = image.with_local_v2()
+            else:
+                from packaging.version import Version
+
+                base = Version(__version__).base_version
+                image = image.with_pip_packages(f"flyte<{base}")
             # Bake the Rust controller when opted in via `_F_USE_RUST_CONTROLLER=1`. Use the locally-built wheel if
             # available; otherwise fall back to the released PyPI version
             use_rust = os.getenv("_F_USE_RUST_CONTROLLER", "").lower() in ("1", "true", "yes")
@@ -667,7 +679,10 @@ class Image:
                 if os.path.exists(RS_CONTROLLER_DIST_FOLDER):
                     image = image.with_local_rs_controller()
                 else:
-                    image = image.with_pip_packages("flyte_controller_base")
+                    from packaging.version import Version
+
+                    base = Version(__version__).base_version
+                    image = image.with_pip_packages(f"flyte_controller_base<{base}")
         if not dev_mode:
             object.__setattr__(image, "_tag", preset_tag)
 

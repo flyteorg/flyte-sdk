@@ -4,7 +4,6 @@ import asyncio
 import os
 import sys
 import threading
-import time
 from asyncio import Event
 from typing import Awaitable, Coroutine, Optional
 
@@ -79,10 +78,6 @@ class Controller:
         self._informer_start_wait_timeout = thread_wait_timeout_sec
         max_qps = int(os.getenv("_F_MAX_QPS", "100"))
         self._rate_limiter = AsyncLimiter(max_qps, 1.0)
-        self._trace_submit = os.getenv("_F_TRACE_SUBMIT", "").lower() in {"1", "true", "yes", "on"}
-        self._trace_submit_limit = int(os.getenv("_F_TRACE_SUBMIT_LIMIT", "10"))
-        self._trace_actions: set[str] = set()
-        self._trace_lock = threading.Lock()
 
         # Thread management
         self._thread = None
@@ -92,40 +87,33 @@ class Controller:
         self._thread_com_lock = threading.Lock()
         self._start()
 
-    def _should_trace_sequence(self, seq: int) -> bool:
-        return self._trace_submit and seq <= self._trace_submit_limit
-
-    def _mark_action_for_trace(self, action_name: str):
-        if not self._trace_submit:
-            return
-        with self._trace_lock:
-            if len(self._trace_actions) < self._trace_submit_limit:
-                self._trace_actions.add(action_name)
-
-    def _trace_enabled_for(self, action_name: str) -> bool:
-        if not self._trace_submit:
-            return False
-        with self._trace_lock:
-            return action_name in self._trace_actions
-
-    def _trace_log(self, action_name: str, phase: str, **fields):
-        if not self._trace_enabled_for(action_name):
-            return
-        payload = " ".join(f"{key}={value}" for key, value in fields.items())
-        print(f"submit_trace action={action_name} phase={phase} {payload}".rstrip(), flush=True)
-
     # ---------------- Public sync methods, we can add more sync methods if needed
     @log
     def submit_action_sync(self, action: Action) -> Action:
         """Synchronous version of submit that runs in the controller's event loop"""
-        fut = self._run_coroutine_in_controller_thread(self._bg_submit_action(action))
+        fut = self._run_coroutine_in_controller_thread(self._bg_submit_and_wait_for_action(action))
         return fut.result()
 
     # --------------- Public async methods
     @log
-    async def submit_action(self, action: Action) -> Action:
+    async def submit_and_wait_for_action(self, action: Action) -> Action:
         """Public API to submit a resource and wait for completion"""
-        return await self._run_coroutine_in_controller_thread(self._bg_submit_action(action))
+        return await self._run_coroutine_in_controller_thread(self._bg_submit_and_wait_for_action(action))
+
+    @log
+    async def submit_action(self, action: Action) -> Action:
+        """Public API to submit a resource and wait for completion (alias for submit_and_wait_for_action)"""
+        return await self.submit_and_wait_for_action(action)
+
+    @log
+    async def start_action(self, action: Action) -> None:
+        """Submit a resource without waiting for completion. Returns immediately after enqueue."""
+        await self._run_coroutine_in_controller_thread(self._bg_submit_action(action))
+
+    @log
+    async def wait_for_action(self, action: Action) -> Action:
+        """Wait for a previously submitted action to complete. Returns the final action state."""
+        return await self._run_coroutine_in_controller_thread(self._bg_wait_for_action(action))
 
     async def get_action(self, action_id: identifier_pb2.ActionIdentifier, parent_action_name: str) -> Optional[Action]:
         """Get the action from the informer"""
@@ -302,11 +290,9 @@ class Controller:
         if informer:
             await informer.stop()
 
-    async def _bg_submit_action(self, action: Action) -> Action:
-        """Submit a resource and await its completion, returning the final state"""
+    async def _bg_submit_action(self, action: Action) -> None:
+        """Submit a resource to the informer. Returns immediately after enqueue."""
         logger.debug(f"{threading.current_thread().name} Submitting action {action.name}")
-        trace_enabled = self._trace_enabled_for(action.name)
-        informer_start = time.monotonic()
         informer = await self._informers.get_or_create(
             action.action_id.run,
             action.parent_action_name,
@@ -316,31 +302,24 @@ class Controller:
             timeout=self._informer_start_wait_timeout,
             actions_service=self._actions_service,
         )
-        if trace_enabled:
-            watch_api = "actions.watch_for_updates" if self._actions_service else "state.watch"
-            self._trace_log(
-                action.name,
-                "informer_ready",
-                kind="controlplane_api",
-                api=watch_api,
-                elapsed_ms=f"{(time.monotonic() - informer_start) * 1000:.1f}",
-            )
-        queue_submit_start = time.monotonic()
         await informer.submit(action)
-        if trace_enabled:
-            self._trace_log(
-                action.name,
-                "queue_submit",
-                kind="sdk_only",
-                elapsed_ms=f"{(time.monotonic() - queue_submit_start) * 1000:.1f}",
-            )
 
+    async def _bg_wait_for_action(self, action: Action) -> Action:
+        """Wait for an action to complete and return its final state."""
+        informer = await self._informers.get_or_create(
+            action.action_id.run,
+            action.parent_action_name,
+            self._shared_queue,
+            self._state_service,
+            fn=self._bg_handle_informer_error,
+            timeout=self._informer_start_wait_timeout,
+            actions_service=self._actions_service,
+        )
         logger.debug(f"{threading.current_thread().name} Waiting for completion of {action.name}")
         # Wait for completion.  For trace actions apply a timeout so a
         # transient watch failure (e.g. gRPC deserialization returning None)
         # doesn't block the caller indefinitely.  Task actions may legitimately
         # run for hours, so they wait without a timeout.
-        wait_start = time.monotonic()
         if action.type == "trace":
             _trace_timeout = float(os.getenv("_F_TRACE_COMPLETION_TIMEOUT", "60"))
             try:
@@ -353,13 +332,6 @@ class Controller:
                 await informer.fire_completion_event(action.name)
         else:
             await informer.wait_for_action_completion(action.name)
-        if trace_enabled:
-            self._trace_log(
-                action.name,
-                "wait_for_completion",
-                kind="lifecycle_wait",
-                elapsed_ms=f"{(time.monotonic() - wait_start) * 1000:.1f}",
-            )
         logger.info(f"{threading.current_thread().name} Action {action.name} completed")
 
         # Get final resource state and clean up
@@ -371,6 +343,11 @@ class Controller:
         await informer.remove(action.name)  # TODO we should not remove maybe, we should keep a record of completed?
         logger.debug(f"{threading.current_thread().name} Removed action {action.name}")
         return final_resource
+
+    async def _bg_submit_and_wait_for_action(self, action: Action) -> Action:
+        """Submit a resource and await its completion, returning the final state."""
+        await self._bg_submit_action(action)
+        return await self._bg_wait_for_action(action)
 
     async def _bg_cancel_action(self, action: Action):
         """
@@ -416,11 +393,10 @@ class Controller:
         Attempt to launch an action.
         """
         if not action.is_started():
-            limiter_wait_start = time.monotonic()
             async with self._rate_limiter:
-                limiter_wait_ms = (time.monotonic() - limiter_wait_start) * 1000
                 task: run_definition_pb2.TaskAction | None = None
                 trace: run_definition_pb2.TraceAction | None = None
+                condition: run_definition_pb2.ConditionAction | None = None
                 if action.type == "task":
                     if action.task is None:
                         raise flyte.errors.RuntimeSystemError(
@@ -445,9 +421,10 @@ class Controller:
                     )
                 elif action.type == "trace":
                     trace = action.trace
+                elif action.type == "condition":
+                    condition = action.condition
 
                 logger.debug(f"Attempting to launch action: {action.name}, actions? {bool(self._actions_service)}")
-                launch_start = time.monotonic()
                 try:
                     if self._actions_service:
                         await self._actions_service.enqueue(
@@ -457,6 +434,7 @@ class Controller:
                                     parent_action_name=action.parent_action_name,
                                     task=task,
                                     trace=trace,
+                                    condition=condition,
                                     input_uri=action.inputs_uri,
                                     run_output_base=action.run_output_base,
                                     group=action.group.name if action.group else None,
@@ -479,14 +457,6 @@ class Controller:
                             timeout_ms=int(self._enqueue_timeout * 1000),
                         )
                     logger.info(f"Successfully launched action: {action.name}")
-                    self._trace_log(
-                        action.name,
-                        "enqueue_action",
-                        kind="controlplane_api",
-                        api="actions.enqueue" if self._actions_service else "queue.enqueue_action",
-                        limiter_wait_ms=f"{limiter_wait_ms:.1f}",
-                        elapsed_ms=f"{(time.monotonic() - launch_start) * 1000:.1f}",
-                    )
                 except httpx.TransportError as e:
                     # Transport-level failure (e.g. ConnectTimeout reaching the IDP during auth refresh,
                     # ReadTimeout, DNS failure). These never produced an HTTP response, so they bypass

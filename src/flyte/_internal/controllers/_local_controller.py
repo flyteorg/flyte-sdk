@@ -116,6 +116,7 @@ class LocalController(ControllerProtocol):
         self._runner_map: dict[str, _TaskRunner] = {}
         self._sequencer = TaskCallSequencer()
         self._recorder = RunRecorder()
+        self._registered_events: dict[str, Any] = {}
 
     def set_recorder(self, recorder: RunRecorder) -> None:
         self._recorder = recorder
@@ -186,14 +187,17 @@ class LocalController(ControllerProtocol):
                     native_inputs[param_names[i]] = arg
             native_inputs.update(kwargs)
 
+            # Nest under the real running task (task_action), not the @trace pseudo-action that @trace
+            # may have swapped into `action`; identical for a regular task. Mirrors the remote controller.
+            task_action = tctx.task_action or tctx.action
             # If the parent action isn't tracked yet, this is the top-level call
-            parent_id = tctx.action.name if self._recorder.get_action(tctx.action.name) else None
+            parent_id = task_action.name if self._recorder.get_action(task_action.name) else None
 
             # Render log links for this action, replacing template placeholders
             # with concrete local values (see task_serde.py for remote equivalents).
             if _task.links:
                 rendered_links = []
-                action = tctx.action
+                action = task_action
                 for link in _task.links:
                     uri = link.get_link(
                         run_name=action.run_name or "",
@@ -360,10 +364,13 @@ class LocalController(ControllerProtocol):
                 if i < len(param_names):
                     native_inputs[param_names[i]] = arg
             native_inputs.update(kwargs)
+            # Trace records nest under the real running task (task_action), not the outer @trace
+            # pseudo-action — the local analogue of the remote record_trace fix.
+            task_action = tctx.task_action or tctx.action
             self._recorder.record_start(
                 action_id=action_id.name,
                 task_name=_func.__name__,
-                parent_id=tctx.action.name,
+                parent_id=task_action.name,
                 inputs=native_inputs,
                 output_path=action_output_path,
             )
@@ -412,3 +419,174 @@ class LocalController(ControllerProtocol):
         raise flyte.errors.RemoteTaskUsageError(
             f"Remote tasks cannot be executed locally, only remotely. Found remote task {_task.name}"
         )
+
+    async def register_event(self, event: Any):
+        """
+        Register an event that can be awaited. Stores the event for later retrieval.
+        If the event has a webhook configured, fires it asynchronously.
+
+        :param event: Event object to register
+        """
+        from flyte._event import _Event
+
+        if not isinstance(event, _Event):
+            raise TypeError(f"Expected _Event, got {type(event)}")
+
+        logger.debug(f"Registering event: {event.name}")
+        self._registered_events[event.name] = event
+
+        if event.webhook is not None:
+            await self._fire_event_webhook(event)
+
+    async def _fire_event_webhook(self, event: Any):
+        """Fire the webhook associated with an event.
+
+        Substitutes ``{callback_uri}`` in all string values of the payload, then
+        POSTs the JSON body to the webhook URL.
+        """
+        import httpx
+
+        webhook = event.webhook
+        callback_uri = f"local://events/{event.name}/signal"
+
+        payload = webhook.payload
+        if payload is not None:
+            payload = _substitute_callback_uri(payload, callback_uri)
+
+        logger.debug(f"Firing webhook for event '{event.name}' to {webhook.url}")
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    webhook.url,
+                    json=payload,
+                    headers={"Content-Type": "application/json"},
+                )
+                logger.debug(f"Webhook response for event '{event.name}': {resp.status_code}")
+        except Exception:
+            logger.exception(f"Failed to fire webhook for event '{event.name}'")
+
+    def _get_current_action_id(self) -> str:
+        ctx = internal_ctx()
+        tctx = ctx.data.task_context
+        if tctx is None:
+            raise flyte.errors.RuntimeSystemError("BadContext", "Task context not initialized")
+        # Nest under the real running task (task_action), not a @trace pseudo-action.
+        action = tctx.task_action or tctx.action
+        return action.name
+
+    async def wait_for_event(self, event: Any) -> Any:
+        """
+        Wait for an event to be signaled.
+
+        Each event is recorded as a *sub-action* of the waiting task: the prompt is its
+        input and the signaled value becomes its output, so resolved events stay visible
+        in the TUI tree (and the persisted run) after they are signaled.
+
+        In TUI mode, records a pending event so the TUI can render an input panel and
+        blocks until the user submits a value. Without TUI, falls back to rich console prompts.
+
+        :param event: Event object to wait for
+        :return: The payload associated with the event when it is signaled
+        """
+        from flyte._event import _Event
+
+        if not isinstance(event, _Event):
+            raise TypeError(f"Expected _Event, got {type(event)}")
+
+        logger.info(f"Waiting for event: {event.name}")
+
+        parent_action_id = self._get_current_action_id()
+        event_seq = self._sequencer.next_seq(event, parent_action_id)
+        event_action_id = f"{parent_action_id}-evt-{event.name}-{event_seq}"
+
+        # Record the event as a sub-action of the waiting task. Only set the parent
+        # when it is tracked (mirrors `submit`), so a top-level event becomes a root.
+        parent_id = parent_action_id if self._recorder.get_action(parent_action_id) is not None else None
+        self._recorder.record_start(
+            action_id=event_action_id,
+            task_name=event.name,
+            parent_id=parent_id,
+            inputs={"prompt": event.prompt},
+        )
+
+        pending = self._recorder.record_event_waiting(
+            action_id=event_action_id,
+            event_name=event.name,
+            prompt=event.prompt,
+            prompt_type=event.prompt_type,
+            data_type=event.data_type,
+            description=event.description,
+        )
+
+        timeout_seconds = event._timeout_seconds
+
+        if pending is not None:
+            # TUI mode: block until the TUI resolves the event
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(None, pending.wait_for_result, timeout_seconds)
+            if pending.timed_out:
+                msg = f"Event '{event.name}' was not signaled within {timeout_seconds} seconds."
+                self._recorder.record_failure(action_id=event_action_id, error=msg)
+                raise flyte.errors.EventTimedoutError(msg)
+            if result is None:
+                self._recorder.record_failure(
+                    action_id=event_action_id, error=f"Event '{event.name}' was cancelled (TUI quit)."
+                )
+                raise RuntimeError(f"Event '{event.name}' was cancelled (TUI quit).")
+            self._recorder.record_complete(action_id=event_action_id, outputs=result)
+            return result
+
+        # Non-TUI mode: fall back to rich console prompts
+        if timeout_seconds is not None:
+            loop = asyncio.get_event_loop()
+            try:
+                result = await asyncio.wait_for(
+                    loop.run_in_executor(None, self._prompt_event_console, event),
+                    timeout=timeout_seconds,
+                )
+            except asyncio.TimeoutError:
+                msg = f"Event '{event.name}' was not signaled within {timeout_seconds} seconds."
+                self._recorder.record_failure(action_id=event_action_id, error=msg)
+                raise flyte.errors.EventTimedoutError(msg)
+        else:
+            result = self._prompt_event_console(event)
+        self._recorder.record_complete(action_id=event_action_id, outputs=result)
+        return result
+
+    @staticmethod
+    def _prompt_event_console(event: Any) -> Any:
+        from rich.console import Console
+        from rich.prompt import Confirm, Prompt
+
+        console = Console()
+        console.print(f"\n[bold cyan]Event:[/bold cyan] {event.name}")
+        if event.description:
+            console.print(f"[dim]{event.description}[/dim]")
+
+        if event.data_type is bool:
+            result = Confirm.ask(event.prompt, console=console)
+        elif event.data_type in (int, float, str):
+            while True:
+                try:
+                    value = Prompt.ask(event.prompt, console=console)
+                    result = event.data_type(value)
+                    break
+                except ValueError:
+                    type_name = event.data_type.__name__
+                    console.print(f"[red]Please enter a valid {type_name}[/red]")
+        else:
+            raise ValueError(f"Unsupported data type {event.data_type}")
+
+        logger.debug(f"Event {event.name} received value: {result}")
+        return result
+
+
+def _substitute_callback_uri(obj: Any, callback_uri: str) -> Any:
+    """Recursively replace ``{callback_uri}`` in all string values."""
+    if isinstance(obj, str):
+        return obj.replace("{callback_uri}", callback_uri)
+    if isinstance(obj, dict):
+        return {k: _substitute_callback_uri(v, callback_uri) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_substitute_callback_uri(item, callback_uri) for item in obj]
+    return obj

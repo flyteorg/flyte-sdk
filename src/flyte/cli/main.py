@@ -18,6 +18,7 @@ from ._plugins import discover_and_register_plugins
 from ._prefetch import prefetch
 from ._run import run
 from ._serve import serve
+from ._signal import signal
 from ._start import start
 from ._stop import stop
 from ._update import update
@@ -30,7 +31,7 @@ help_config = click.RichHelpConfiguration(
         "flyte": [
             {
                 "name": "Run and stop tasks",
-                "commands": ["run", "abort"],
+                "commands": ["run", "abort", "signal"],
             },
             {
                 "name": "Serve Apps",
@@ -183,6 +184,15 @@ def _verbosity_to_loglevel(verbosity: int) -> int | None:
     default=False,
     show_default=True,
 )
+@click.option(
+    "--no-progress",
+    is_flag=True,
+    required=False,
+    help="Disable the animated progress spinner — useful in CI / non-interactive logs.",
+    type=bool,
+    default=False,
+    show_default=True,
+)
 @click.rich_config(help_config=help_config)
 @click.pass_context
 def main(
@@ -198,6 +208,7 @@ def main(
     auth_type: str | None = None,
     output_format: common.OutputFormat = "table",
     user_log_level: str = "info",
+    no_progress: bool = False,
 ):
     """
     The Flyte CLI is the command line interface for working with the Flyte SDK and backend.
@@ -263,6 +274,7 @@ def main(
         ctx=ctx,
         auth_type=auth_type,
         output_format=output_format,
+        no_progress=no_progress,
     )
 
     from flyte._status import set_output_mode
@@ -275,6 +287,7 @@ main.add_command(deploy)
 main.add_command(get)  # type: ignore
 main.add_command(create)  # type: ignore
 main.add_command(abort)  # type: ignore
+main.add_command(signal)  # type: ignore
 main.add_command(gen)  # type: ignore
 main.add_command(delete)  # type: ignore
 main.add_command(build)
