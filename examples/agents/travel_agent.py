@@ -16,7 +16,7 @@ import pathlib
 from typing import Callable, Literal, TypedDict
 
 import flyte
-from flyte.ai.agents import CodeModeAgent
+from flyte.ai.agents import Agent
 from flyte.ai.chat import AgentChatAppEnvironment, CustomTheme
 
 
@@ -227,11 +227,13 @@ sustainability and accessibility when relevant. End with \
 format_response(title, body, links).
 """
 
-agent = CodeModeAgent(
-    tools=ALL_TOOLS,
+agent = Agent(
+    name="travel-agent",
+    instructions=SYSTEM_PROMPT_PREFIX,
     model="claude-haiku-4-5",
-    max_retries=2,
-    system_prompt_prefix=SYSTEM_PROMPT_PREFIX,
+    tools=ALL_TOOLS,
+    code_mode=True,
+    max_turns=10,
 )
 
 env = AgentChatAppEnvironment(
