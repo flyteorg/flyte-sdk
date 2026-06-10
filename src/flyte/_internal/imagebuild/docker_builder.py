@@ -481,6 +481,13 @@ class PoetryProjectHandler:
 class DockerIgnoreHandler:
     @staticmethod
     async def handle(layer: DockerIgnore, context_path: Path, _: str):
+        if not Path(layer.path).is_file():
+            from flyte.errors import ImageBuildError
+
+            raise ImageBuildError(
+                f"The .dockerignore file specified via with_dockerignore() was not found at '{layer.path}'. "
+                f"Ensure the path points to an existing file."
+            )
         shutil.copy(layer.path, context_path)
 
 
