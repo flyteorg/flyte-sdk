@@ -101,15 +101,30 @@ class _Shell:
         ]
         mkdir_preamble = "; ".join(mkdirs) + ";" if mkdirs else ""
 
-        debug_preamble = ""
+        # Emit debug diagnostics to real stderr, outside the captured stderr
+        # redirect, so they are visible in local and remote task logs.
+        debug_pre = ""
+        debug_post = ""
         if self.debug:
-            debug_preamble = f"echo \"--- shell task: rendered script ---\" >&2; cat <<'_EOF_' >&2\n{body}\n_EOF_\n"
+            qin = shlex.quote(str(self.input_data_dir))
+            debug_pre = (
+                f'echo "--- shell task {self.name!r}: staged inputs ({self.input_data_dir}) ---" >&2; '
+                f"ls -la {qin} >&2 || true; "
+                f'echo "--- shell task {self.name!r}: rendered command ---" >&2; '
+                f"cat <<'_FLYTE_SHELL_DEBUG_' >&2\n{body}\n_FLYTE_SHELL_DEBUG_\n"
+            )
+            debug_post = (
+                f'echo "--- shell task {self.name!r}: captured stdout ---" >&2; cat {stdout_target} >&2 || true; '
+                f'echo "--- shell task {self.name!r}: captured stderr ---" >&2; cat {stderr_target} >&2 || true; '
+            )
 
         wrapped = (
             f"{mkdir_preamble} "
+            f"{debug_pre}"
             "set -o pipefail; "
-            f"( {debug_preamble}{body} ) > {stdout_target} 2> {stderr_target}; "
+            f"( {body} ) > {stdout_target} 2> {stderr_target}; "
             "_rc=$?; "
+            f"{debug_post}"
             f"echo $_rc > {self.output_data_dir / '_returncode'}; "
             "exit $_rc"
         )
