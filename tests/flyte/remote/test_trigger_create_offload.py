@@ -118,9 +118,7 @@ async def test_offload_trigger_inputs_uses_task_spec_for_deploy_path():
     inputs = common_pb2.Inputs()
 
     with patch("flyte._initialize.get_client", return_value=client):
-        out = await offload_trigger_inputs(
-            inputs, org="o", project="p", domain="d", task_version="v1", task_spec=spec
-        )
+        out = await offload_trigger_inputs(inputs, org="o", project="p", domain="d", task_version="v1", task_spec=spec)
 
     assert out == offloaded
     req = client.dataproxy_service.upload_inputs.await_args[0][0]

@@ -166,7 +166,7 @@ async def to_task_trigger(
 
     literals = await process_default_inputs(default_inputs, task_name, task_inputs, task_default_inputs)
 
-    context_kvs = []
+    context_kvs: list[literals_pb2.KeyValuePair] = []
     if t.custom_context:
         context_kvs.extend(literals_pb2.KeyValuePair(key=k, value=v) for k, v in t.custom_context.items())
 
@@ -174,9 +174,7 @@ async def to_task_trigger(
     # runtime can fill that input from run_start_time at execution (the offloaded blob never carries
     # the per-fire value). Context is not part of the cache-key hash, so this does not perturb hashing.
     if kickoff_arg_name is not None:
-        context_kvs.append(
-            literals_pb2.KeyValuePair(key=KICKOFF_TIME_INPUT_ARG_CONTEXT_KEY, value=kickoff_arg_name)
-        )
+        context_kvs.append(literals_pb2.KeyValuePair(key=KICKOFF_TIME_INPUT_ARG_CONTEXT_KEY, value=kickoff_arg_name))
 
     # Keep the kickoff arg on the schedule too: the backend uses it for the scheduled-trigger
     # contract (and folds run_start_time into the cache key on fire).
@@ -200,9 +198,9 @@ async def to_task_trigger(
 async def offload_trigger_inputs(
     inputs: common_pb2.Inputs,
     *,
-    org: str,
-    project: str,
-    domain: str,
+    org: Optional[str],
+    project: Optional[str],
+    domain: Optional[str],
     task_version: str,
     task_name: Optional[str] = None,
     task_spec: Optional[task_definition_pb2.TaskSpec] = None,
