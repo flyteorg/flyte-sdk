@@ -104,7 +104,7 @@ async def main(n: int = 2) -> list[str]:
 
 
 if __name__ == "__main__":
-    flyte.init_from_config(log_format="json")
-    run = flyte.with_runcontext(log_format="json").run(main, n=2)
+    flyte.init_from_config()
+    run = flyte.run(main, n=2)
     print(run.url)
     run.wait()
