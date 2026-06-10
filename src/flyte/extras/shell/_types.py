@@ -9,7 +9,13 @@ from flyte.io import Dir, File
 
 @dataclass(frozen=True)
 class Glob:
-    """A multi-file output bundle. Lives in ``/var/outputs/<output_name>/``."""
+    """A multi-file output bundle. Lives in ``/var/outputs/<output_name>/``.
+
+    ``pattern`` is matched with :meth:`pathlib.Path.glob`, so the globstar
+    ``**`` convention recurses into subdirectories — e.g. ``Glob("**/*.bed")``
+    or ``Glob("./**/*")`` collect files nested at any depth, while a plain
+    ``Glob("*")`` (the default) stays single-level.
+    """
 
     pattern: str = "*"
 

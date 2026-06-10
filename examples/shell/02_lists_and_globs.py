@@ -40,6 +40,12 @@ split_task = shell.create(
     outputs={
         # split produces files named chunk_aa, chunk_ab, chunk_ac, …
         # We don't know the count up front, so we use Glob.
+        #
+        # Glob patterns are matched with pathlib.Path.glob, so the globstar
+        # `**` convention recurses into subdirectories. If the script wrote
+        # chunks into nested output dirs, `Glob("**/chunk_*")` (or
+        # `Glob("./**/*")` for everything) would collect them at any depth;
+        # the plain `chunk_*` below stays single-level.
         "chunks": Glob("chunk_*"),
     },
     script=r"""

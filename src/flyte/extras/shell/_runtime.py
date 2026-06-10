@@ -444,6 +444,8 @@ def create(
               script writes files into it; the serialized task exposes
               that output as ``Dir`` on the wire, and the Python shell
               wrapper unpacks it back to ``list[File]`` post-execution.
+              Patterns containing the globstar ``**`` (e.g. ``Glob("**/*.bed")``)
+              recurse, collecting files from nested subdirectories.
             - :class:`Stdout` (``type=File`` by default) — the wrapper
               redirects the script's stdout straight to
               ``/var/outputs/<name>``. ``type`` can also be a primitive,

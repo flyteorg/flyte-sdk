@@ -1529,6 +1529,72 @@ class TestUnpackOutputs:
         result = asyncio.run(task._unpack_outputs(d))
         assert result == []
 
+    def _nested_bundle(self, tmp_path):
+        """Bundle with files at three depths, plus a non-.bed file."""
+        bundle = tmp_path / "nested_bundle"
+        (bundle / "a" / "b").mkdir(parents=True)
+        (bundle / "root.bed").write_text("root\n")
+        (bundle / "a" / "mid.bed").write_text("mid\n")
+        (bundle / "a" / "b" / "deep.bed").write_text("deep\n")
+        (bundle / "a" / "b" / "note.txt").write_text("note\n")
+        return asyncio.run(Dir.from_local(str(bundle)))
+
+    def test_glob_globstar_recurses_subdirs(self, tmp_path, flyte_initialized):
+        # `**` traverses into subdirectories; only the .bed files match.
+        d = self._nested_bundle(tmp_path)
+        task = shell.create(
+            name="t",
+            image="debian:12-slim",
+            outputs={"bed": Glob("**/*.bed")},
+            script="true",
+        )
+        result = asyncio.run(task._unpack_outputs(d))
+        assert isinstance(result, list)
+        assert all(isinstance(f, File) for f in result)
+        names = sorted(f.path.rsplit("/", 1)[-1] for f in result)
+        assert names == ["deep.bed", "mid.bed", "root.bed"]
+        assert "note.txt" not in names
+
+    def test_glob_leading_dot_slash_globstar(self, tmp_path, flyte_initialized):
+        # The `./**/*` form traverses every depth and matches all files.
+        d = self._nested_bundle(tmp_path)
+        task = shell.create(
+            name="t",
+            image="debian:12-slim",
+            outputs={"all": Glob("./**/*")},
+            script="true",
+        )
+        result = asyncio.run(task._unpack_outputs(d))
+        names = sorted(f.path.rsplit("/", 1)[-1] for f in result)
+        assert names == ["deep.bed", "mid.bed", "note.txt", "root.bed"]
+
+    def test_glob_non_recursive_default_stays_shallow(self, tmp_path, flyte_initialized):
+        # A plain `*` stays single-level even when subdirs exist.
+        d = self._nested_bundle(tmp_path)
+        task = shell.create(
+            name="t",
+            image="debian:12-slim",
+            outputs={"bed": Glob("*.bed")},
+            script="true",
+        )
+        result = asyncio.run(task._unpack_outputs(d))
+        assert len(result) == 1
+        assert result[0].path.endswith("root.bed")
+
+    def test_glob_globstar_excludes_directories(self, tmp_path, flyte_initialized):
+        # `**/*` would also list the `a` and `a/b` dirs; the is_file filter
+        # drops them so only the four regular files come back.
+        d = self._nested_bundle(tmp_path)
+        task = shell.create(
+            name="t",
+            image="debian:12-slim",
+            outputs={"all": Glob("**/*")},
+            script="true",
+        )
+        result = asyncio.run(task._unpack_outputs(d))
+        assert all(isinstance(f, File) for f in result)
+        assert len(result) == 4
+
     def test_non_glob_passes_through(self, tmp_path, flyte_initialized):
         # OutFile output: wire type is File; no unpacking needed.
         f_path = tmp_path / "x.txt"
