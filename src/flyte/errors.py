@@ -121,13 +121,13 @@ class TaskTimeoutError(RuntimeUserError):
         super().__init__("TaskTimeoutError", message, "user")
 
 
-class EventTimedoutError(RuntimeUserError):
+class ConditionTimedoutError(RuntimeUserError):
     """
-    This error is raised when an event is not signaled within its specified timeout.
+    This error is raised when a condition is not signaled within its specified timeout.
     """
 
     def __init__(self, message: str):
-        super().__init__("EventTimedoutError", message, "user")
+        super().__init__("ConditionTimedoutError", message, "user")
 
 
 class RetriesExhaustedError(RuntimeUserError):
@@ -348,31 +348,31 @@ class NonRecoverableError(RuntimeUserError):
         super().__init__(code, message)
 
 
-class EventAlreadyExistsError(RuntimeUserError):
+class ConditionAlreadyExistsError(RuntimeUserError):
     """
-    This error is raised when the user tries to create an event that already exists within the action.
+    This error is raised when the user tries to create a condition that already exists within the action.
     """
 
     def __init__(self, message: str):
-        super().__init__("EventAlreadyExistsError", message, "user")
+        super().__init__("ConditionAlreadyExistsError", message, "user")
 
 
-class EventFailedError(RuntimeUserError):
+class ConditionFailedError(RuntimeUserError):
     """
-    This error is raised when a condition event fails during execution.
+    This error is raised when a condition fails during execution.
 
     This can happen when the backend encounters an error while processing the condition,
-    or when the event is explicitly marked as failed by the system.
+    or when the condition is explicitly marked as failed by the system.
     """
 
     def __init__(self, message: str):
-        super().__init__("EventFailedError", message, "user")
+        super().__init__("ConditionFailedError", message, "user")
 
 
-class EventNotFoundError(RuntimeUserError):
+class ConditionNotFoundError(RuntimeUserError):
     """
-    This error is raised when the user tries to access an event that does not exist.
+    This error is raised when the user tries to access a condition that does not exist.
     """
 
     def __init__(self, message: str):
-        super().__init__("EventNotFoundError", message, "user")
+        super().__init__("ConditionNotFoundError", message, "user")

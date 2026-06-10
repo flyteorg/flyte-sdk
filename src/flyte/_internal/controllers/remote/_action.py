@@ -253,7 +253,7 @@ class Action:
         cls,
         parent_action_name: str,
         action_id: identifier_pb2.ActionIdentifier,
-        event_name: str,
+        condition_name: str,
         prompt: str,
         data_type: builtins.type,
         run_output_base: str,
@@ -266,14 +266,14 @@ class Action:
         # webhook_url: str | None = None,
         # webhook_payload: dict | None = None,
     ) -> Action:
-        """Create a condition action for an event.
+        """Create a condition action.
 
         ``inputs_uri`` is a placeholder path — conditions have no real inputs,
         but the EnqueueRequest validator requires a non-empty value.
         """
         simple_type = cls._DATA_TYPE_TO_SIMPLE.get(data_type)
         if simple_type is None:
-            raise TypeError(f"Unsupported event data_type {data_type}")
+            raise TypeError(f"Unsupported condition data_type {data_type}")
 
         literal_type = types_pb2.LiteralType(simple=simple_type)
 
@@ -281,12 +281,12 @@ class Action:
             action_id=action_id,
             parent_action_name=parent_action_name,
             type="condition",
-            friendly_name=event_name,
+            friendly_name=condition_name,
             group=group_data,
             inputs_uri=inputs_uri,
             run_output_base=run_output_base,
             condition=run_definition_pb2.ConditionAction(
-                name=event_name,
+                name=condition_name,
                 type=literal_type,
                 prompt=prompt,
                 description=description,

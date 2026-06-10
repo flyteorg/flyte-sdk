@@ -116,7 +116,7 @@ class LocalController(ControllerProtocol):
         self._runner_map: dict[str, _TaskRunner] = {}
         self._sequencer = TaskCallSequencer()
         self._recorder = RunRecorder()
-        self._registered_events: dict[str, Any] = {}
+        self._registered_conditions: dict[str, Any] = {}
 
     def set_recorder(self, recorder: RunRecorder) -> None:
         self._recorder = recorder
@@ -420,40 +420,40 @@ class LocalController(ControllerProtocol):
             f"Remote tasks cannot be executed locally, only remotely. Found remote task {_task.name}"
         )
 
-    async def register_event(self, event: Any):
+    async def register_condition(self, condition: Any):
         """
-        Register an event that can be awaited. Stores the event for later retrieval.
-        If the event has a webhook configured, fires it asynchronously.
+        Register a condition that can be awaited. Stores the condition for later retrieval.
+        If the condition has a webhook configured, fires it asynchronously.
 
-        :param event: Event object to register
+        :param condition: Condition object to register
         """
-        from flyte._event import _Event
+        from flyte._condition import _Condition
 
-        if not isinstance(event, _Event):
-            raise TypeError(f"Expected _Event, got {type(event)}")
+        if not isinstance(condition, _Condition):
+            raise TypeError(f"Expected _Condition, got {type(condition)}")
 
-        logger.debug(f"Registering event: {event.name}")
-        self._registered_events[event.name] = event
+        logger.debug(f"Registering condition: {condition.name}")
+        self._registered_conditions[condition.name] = condition
 
-        if event.webhook is not None:
-            await self._fire_event_webhook(event)
+        if condition.webhook is not None:
+            await self._fire_condition_webhook(condition)
 
-    async def _fire_event_webhook(self, event: Any):
-        """Fire the webhook associated with an event.
+    async def _fire_condition_webhook(self, condition: Any):
+        """Fire the webhook associated with a condition.
 
         Substitutes ``{callback_uri}`` in all string values of the payload, then
         POSTs the JSON body to the webhook URL.
         """
         import httpx
 
-        webhook = event.webhook
-        callback_uri = f"local://events/{event.name}/signal"
+        webhook = condition.webhook
+        callback_uri = f"local://conditions/{condition.name}/signal"
 
         payload = webhook.payload
         if payload is not None:
             payload = _substitute_callback_uri(payload, callback_uri)
 
-        logger.debug(f"Firing webhook for event '{event.name}' to {webhook.url}")
+        logger.debug(f"Firing webhook for condition '{condition.name}' to {webhook.url}")
         try:
             async with httpx.AsyncClient() as client:
                 resp = await client.post(
@@ -461,9 +461,9 @@ class LocalController(ControllerProtocol):
                     json=payload,
                     headers={"Content-Type": "application/json"},
                 )
-                logger.debug(f"Webhook response for event '{event.name}': {resp.status_code}")
+                logger.debug(f"Webhook response for condition '{condition.name}': {resp.status_code}")
         except Exception:
-            logger.exception(f"Failed to fire webhook for event '{event.name}'")
+            logger.exception(f"Failed to fire webhook for condition '{condition.name}'")
 
     def _get_current_action_id(self) -> str:
         ctx = internal_ctx()
@@ -474,66 +474,66 @@ class LocalController(ControllerProtocol):
         action = tctx.task_action or tctx.action
         return action.name
 
-    async def wait_for_event(self, event: Any) -> Any:
+    async def wait_for_condition(self, condition: Any) -> Any:
         """
-        Wait for an event to be signaled.
+        Wait for a condition to be signaled.
 
-        Each event is recorded as a *sub-action* of the waiting task: the prompt is its
-        input and the signaled value becomes its output, so resolved events stay visible
+        Each condition is recorded as a *sub-action* of the waiting task: the prompt is its
+        input and the signaled value becomes its output, so resolved conditions stay visible
         in the TUI tree (and the persisted run) after they are signaled.
 
-        In TUI mode, records a pending event so the TUI can render an input panel and
+        In TUI mode, records a pending condition so the TUI can render an input panel and
         blocks until the user submits a value. Without TUI, falls back to rich console prompts.
 
-        :param event: Event object to wait for
-        :return: The payload associated with the event when it is signaled
+        :param condition: Condition object to wait for
+        :return: The payload associated with the condition when it is signaled
         """
-        from flyte._event import _Event
+        from flyte._condition import _Condition
 
-        if not isinstance(event, _Event):
-            raise TypeError(f"Expected _Event, got {type(event)}")
+        if not isinstance(condition, _Condition):
+            raise TypeError(f"Expected _Condition, got {type(condition)}")
 
-        logger.info(f"Waiting for event: {event.name}")
+        logger.info(f"Waiting for condition: {condition.name}")
 
         parent_action_id = self._get_current_action_id()
-        event_seq = self._sequencer.next_seq(event, parent_action_id)
-        event_action_id = f"{parent_action_id}-evt-{event.name}-{event_seq}"
+        condition_seq = self._sequencer.next_seq(condition, parent_action_id)
+        condition_action_id = f"{parent_action_id}-cond-{condition.name}-{condition_seq}"
 
-        # Record the event as a sub-action of the waiting task. Only set the parent
-        # when it is tracked (mirrors `submit`), so a top-level event becomes a root.
+        # Record the condition as a sub-action of the waiting task. Only set the parent
+        # when it is tracked (mirrors `submit`), so a top-level condition becomes a root.
         parent_id = parent_action_id if self._recorder.get_action(parent_action_id) is not None else None
         self._recorder.record_start(
-            action_id=event_action_id,
-            task_name=event.name,
+            action_id=condition_action_id,
+            task_name=condition.name,
             parent_id=parent_id,
-            inputs={"prompt": event.prompt},
+            inputs={"prompt": condition.prompt},
         )
 
-        pending = self._recorder.record_event_waiting(
-            action_id=event_action_id,
-            event_name=event.name,
-            prompt=event.prompt,
-            prompt_type=event.prompt_type,
-            data_type=event.data_type,
-            description=event.description,
+        pending = self._recorder.record_condition_waiting(
+            action_id=condition_action_id,
+            condition_name=condition.name,
+            prompt=condition.prompt,
+            prompt_type=condition.prompt_type,
+            data_type=condition.data_type,
+            description=condition.description,
         )
 
-        timeout_seconds = event._timeout_seconds
+        timeout_seconds = condition._timeout_seconds
 
         if pending is not None:
-            # TUI mode: block until the TUI resolves the event
+            # TUI mode: block until the TUI resolves the condition
             loop = asyncio.get_event_loop()
             result = await loop.run_in_executor(None, pending.wait_for_result, timeout_seconds)
             if pending.timed_out:
-                msg = f"Event '{event.name}' was not signaled within {timeout_seconds} seconds."
-                self._recorder.record_failure(action_id=event_action_id, error=msg)
-                raise flyte.errors.EventTimedoutError(msg)
+                msg = f"Condition '{condition.name}' was not signaled within {timeout_seconds} seconds."
+                self._recorder.record_failure(action_id=condition_action_id, error=msg)
+                raise flyte.errors.ConditionTimedoutError(msg)
             if result is None:
                 self._recorder.record_failure(
-                    action_id=event_action_id, error=f"Event '{event.name}' was cancelled (TUI quit)."
+                    action_id=condition_action_id, error=f"Condition '{condition.name}' was cancelled (TUI quit)."
                 )
-                raise RuntimeError(f"Event '{event.name}' was cancelled (TUI quit).")
-            self._recorder.record_complete(action_id=event_action_id, outputs=result)
+                raise RuntimeError(f"Condition '{condition.name}' was cancelled (TUI quit).")
+            self._recorder.record_complete(action_id=condition_action_id, outputs=result)
             return result
 
         # Non-TUI mode: fall back to rich console prompts
@@ -541,43 +541,43 @@ class LocalController(ControllerProtocol):
             loop = asyncio.get_event_loop()
             try:
                 result = await asyncio.wait_for(
-                    loop.run_in_executor(None, self._prompt_event_console, event),
+                    loop.run_in_executor(None, self._prompt_condition_console, condition),
                     timeout=timeout_seconds,
                 )
             except asyncio.TimeoutError:
-                msg = f"Event '{event.name}' was not signaled within {timeout_seconds} seconds."
-                self._recorder.record_failure(action_id=event_action_id, error=msg)
-                raise flyte.errors.EventTimedoutError(msg)
+                msg = f"Condition '{condition.name}' was not signaled within {timeout_seconds} seconds."
+                self._recorder.record_failure(action_id=condition_action_id, error=msg)
+                raise flyte.errors.ConditionTimedoutError(msg)
         else:
-            result = self._prompt_event_console(event)
-        self._recorder.record_complete(action_id=event_action_id, outputs=result)
+            result = self._prompt_condition_console(condition)
+        self._recorder.record_complete(action_id=condition_action_id, outputs=result)
         return result
 
     @staticmethod
-    def _prompt_event_console(event: Any) -> Any:
+    def _prompt_condition_console(condition: Any) -> Any:
         from rich.console import Console
         from rich.prompt import Confirm, Prompt
 
         console = Console()
-        console.print(f"\n[bold cyan]Event:[/bold cyan] {event.name}")
-        if event.description:
-            console.print(f"[dim]{event.description}[/dim]")
+        console.print(f"\n[bold cyan]Condition:[/bold cyan] {condition.name}")
+        if condition.description:
+            console.print(f"[dim]{condition.description}[/dim]")
 
-        if event.data_type is bool:
-            result = Confirm.ask(event.prompt, console=console)
-        elif event.data_type in (int, float, str):
+        if condition.data_type is bool:
+            result = Confirm.ask(condition.prompt, console=console)
+        elif condition.data_type in (int, float, str):
             while True:
                 try:
-                    value = Prompt.ask(event.prompt, console=console)
-                    result = event.data_type(value)
+                    value = Prompt.ask(condition.prompt, console=console)
+                    result = condition.data_type(value)
                     break
                 except ValueError:
-                    type_name = event.data_type.__name__
+                    type_name = condition.data_type.__name__
                     console.print(f"[red]Please enter a valid {type_name}[/red]")
         else:
-            raise ValueError(f"Unsupported data type {event.data_type}")
+            raise ValueError(f"Unsupported data type {condition.data_type}")
 
-        logger.debug(f"Event {event.name} received value: {result}")
+        logger.debug(f"Condition {condition.name} received value: {result}")
         return result
 
 

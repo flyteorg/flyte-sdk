@@ -9,23 +9,23 @@ from flyte.syncify import syncify
 
 PromptType = Literal["text", "markdown"]
 
-EventType = typing.TypeVar("EventType", bool, int, float, str)
+ConditionType = typing.TypeVar("ConditionType", bool, int, float, str)
 
 
 @dataclass
-class EventWebhook:
-    """Webhook configuration for an event notification.
+class ConditionWebhook:
+    """Webhook configuration for a condition notification.
 
-    When specified, the backend will POST to the given URL when the event is created.
+    When specified, the backend will POST to the given URL when the condition is created.
     The ``payload`` dict may contain the template variable ``{callback_uri}`` in any
     string value — the backend replaces it with the actual URI that can be used to
-    signal the event.
+    signal the condition.
 
     Example::
 
-        EventWebhook(
+        ConditionWebhook(
             url="https://example.com/hook",
-            payload={"callback": "{callback_uri}", "event": "approval_needed"},
+            payload={"callback": "{callback_uri}", "condition": "approval_needed"},
         )
     """
 
@@ -35,21 +35,22 @@ class EventWebhook:
 
 @rich.repr.auto
 @dataclass
-class _Event(Generic[EventType]):
+class _Condition(Generic[ConditionType]):
     """
-    An event that can be awaited in a Run. Events can be used to pause Run until an external signal is received.
+    A condition that can be awaited in a Run. Conditions can be used to pause a Run until an external
+    signal is received.
 
     Examples:
 
     ```python
     import flyte
 
-    env = flyte.TaskEnvironment(name="events")
+    env = flyte.TaskEnvironment(name="conditions")
 
     @env.task
     async def my_task() -> Optional[int]:
-        event = await flyte.new_event(name="my_event", prompt="Is it ok to continue?", data_type=bool)
-        result = await event.wait()
+        condition = await flyte.new_condition(name="my_condition", prompt="Is it ok to continue?", data_type=bool)
+        result = await condition.wait()
         if result:
             return 42
         else:
@@ -60,10 +61,10 @@ class _Event(Generic[EventType]):
     name: str
     prompt: str = "Approve?"
     prompt_type: PromptType = "text"
-    data_type: Type[EventType] = bool  # type: ignore[assignment]
+    data_type: Type[ConditionType] = bool  # type: ignore[assignment]
     description: str = ""
     timeout: Union[timedelta, int, float, None] = None
-    webhook: Optional[EventWebhook] = None
+    webhook: Optional[ConditionWebhook] = None
 
     def __post_init__(self):
         valid_types = (bool, int, float, str)
@@ -80,9 +81,9 @@ class _Event(Generic[EventType]):
             self._timeout_seconds = None
 
     @syncify
-    async def wait(self) -> EventType:
+    async def wait(self) -> ConditionType:
         """
-        Await the event to be signaled.
+        Await the condition to be signaled.
 
         Blocks until the condition is resolved by the backend. The return value is
         converted to the ``data_type`` specified at creation time:
@@ -92,14 +93,14 @@ class _Event(Generic[EventType]):
         - ``float`` → Python ``float``
         - ``str`` → Python ``str``
 
-        **Protocol:** When running remotely, the event is backed by a *condition action*.
+        **Protocol:** When running remotely, the condition is backed by a *condition action*.
         The backend delivers the result as a ``Literal`` (protobuf scalar/primitive)
         directly in the ``ActionUpdate`` — no ``output_uri`` is used for conditions.
 
-        :return: The typed payload associated with the event when it is signaled.
-        :raises flyte.errors.EventTimedoutError: If the event is not signaled within the
+        :return: The typed payload associated with the condition when it is signaled.
+        :raises flyte.errors.ConditionTimedoutError: If the condition is not signaled within the
             specified ``timeout``.
-        :raises flyte.errors.EventFailedError: If the condition fails during execution.
+        :raises flyte.errors.ConditionFailedError: If the condition fails during execution.
         """
         from flyte._context import internal_ctx
 
@@ -111,52 +112,52 @@ class _Event(Generic[EventType]):
             from ._internal.controllers import get_controller
 
             controller = get_controller()
-            result = await controller.wait_for_event(self)
+            result = await controller.wait_for_condition(self)
             return result
         else:
-            raise RuntimeError("Events can only be awaited within a task context.")
+            raise RuntimeError("Conditions can only be awaited within a task context.")
 
 
 @syncify
-async def new_event(
+async def new_condition(
     name: str,
     /,
     prompt: str = "Approve?",
     prompt_type: PromptType = "text",
-    data_type: Type[EventType] = bool,  # type: ignore[assignment]
+    data_type: Type[ConditionType] = bool,  # type: ignore[assignment]
     description: str = "",
     timeout: Union[timedelta, int, float, None] = None,
-    webhook: Optional[EventWebhook] = None,
-) -> _Event:
+    webhook: Optional[ConditionWebhook] = None,
+) -> _Condition:
     """
-    Create an event that can be awaited in a workflow. Events can be used to pause workflow execution until
-    an external signal is received.
+    Create a condition that can be awaited in a workflow. Conditions can be used to pause workflow execution
+    until an external signal is received.
 
     **Condition protocol (remote execution):**
 
-    When running inside a task, ``new_event`` registers a *condition action* with the
-    backend. Calling ``event.wait()`` blocks until the condition is resolved. The backend
+    When running inside a task, ``new_condition`` registers a *condition action* with the
+    backend. Calling ``condition.wait()`` blocks until the condition is resolved. The backend
     delivers the result as an inline ``Literal`` (protobuf scalar/primitive) in the
     ``ActionUpdate`` stream — no ``output_uri`` is involved for conditions.
 
     - On success, ``wait()`` returns the value converted to ``data_type``
       (``True``/``False`` for bool, Python ``int``/``float``/``str`` for the others).
-    - If the condition times out, ``wait()`` raises ``flyte.errors.EventTimedoutError``.
-    - If the condition fails, ``wait()`` raises ``flyte.errors.EventFailedError``.
+    - If the condition times out, ``wait()`` raises ``flyte.errors.ConditionTimedoutError``.
+    - If the condition fails, ``wait()`` raises ``flyte.errors.ConditionFailedError``.
 
-    :param name: Name of the event
-    :param prompt: Prompt message for the event
-    :param data_type: Data type of the event payload — one of ``bool``, ``int``, ``float``, ``str``
+    :param name: Name of the condition
+    :param prompt: Prompt message for the condition
+    :param data_type: Data type of the condition payload — one of ``bool``, ``int``, ``float``, ``str``
     :param prompt_type: Type of prompt rendering - "text" or "markdown"
-    :param description: Description of the event
-    :param timeout: Optional timeout as a timedelta or number of seconds. If the event is not signaled
-        within this duration, ``wait()`` will raise ``flyte.errors.EventTimedoutError``.
+    :param description: Description of the condition
+    :param timeout: Optional timeout as a timedelta or number of seconds. If the condition is not signaled
+        within this duration, ``wait()`` will raise ``flyte.errors.ConditionTimedoutError``.
     :param webhook: Optional webhook configuration. When provided, the backend will POST to the
         given URL with the specified payload. The payload may use ``{callback_uri}`` as a template
-        variable — the backend replaces it with the URI that can be used to signal the event.
-    :return: An instance of _Event representing the created event
+        variable — the backend replaces it with the URI that can be used to signal the condition.
+    :return: An instance of _Condition representing the created condition
     """
-    event = _Event(
+    condition = _Condition(
         name=name,
         prompt=prompt,
         prompt_type=prompt_type,
@@ -175,7 +176,7 @@ async def new_event(
         from ._internal.controllers import get_controller
 
         controller = get_controller()
-        await controller.register_event(event)
+        await controller.register_condition(condition)
     else:
         pass
-    return event
+    return condition
