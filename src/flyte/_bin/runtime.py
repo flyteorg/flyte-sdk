@@ -177,9 +177,10 @@ def main(
             path_rewrite = potential_path_rewrite
             logger.info(f"Path rewrite configured for {path_rewrite.new_prefix}")
         else:
-            logger.error(
-                f"Path rewrite failed for path {potential_path_rewrite.new_prefix}, "
-                f"not found, reverting to original path {potential_path_rewrite.old_prefix}"
+            # Mount absent = accelerated datasets not enabled on this cluster. Expected; use original path.
+            logger.debug(
+                f"Path rewrite target {potential_path_rewrite.new_prefix} not mounted, "
+                f"using original path {potential_path_rewrite.old_prefix}"
             )
 
     # Create a coroutine to load the task and run it
