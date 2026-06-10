@@ -9,7 +9,6 @@ import flyte
 
 env = flyte.TaskEnvironment(
     name="example_task",
-    env_vars={"_U_USE_ACTIONS": "1"},
 )
 
 
