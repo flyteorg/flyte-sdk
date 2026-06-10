@@ -64,7 +64,10 @@ def _action_options(f):
 @_action_options
 @click.pass_context
 def main(ctx: click.Context, **params):
-    _run_action(ctx, controller_enabled=True, **params)
+    # torchrun workers (clustered tasks) re-exec this `a0` entrypoint; they never enqueue subtasks,
+    # so they run with no controller. TORCHELASTIC_RUN_ID is set by torchrun on every worker.
+    controller_enabled = "TORCHELASTIC_RUN_ID" not in os.environ
+    _run_action(ctx, controller_enabled=controller_enabled, **params)
 
 
 def _run_action(

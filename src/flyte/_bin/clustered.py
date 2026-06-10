@@ -14,7 +14,7 @@ from typing import List
 
 import click
 
-from flyte._bin.runtime import _action_options, _run_action
+from flyte._bin.runtime import _action_options
 
 # --- clustered (JobSet) launcher constants ---
 _DNS_TIMEOUT_SEC = 300
@@ -32,20 +32,18 @@ _CLUSTERED_REQUIRED_ENV_VARS = (
 
 @click.command("clustered")
 @_action_options
-@click.pass_context
-def clustered_main(ctx: click.Context, **params):
-    """Entrypoint for clustered (JobSet-based) distributed training pods.
+def main(**params):
+    """Launcher for clustered (JobSet-based) distributed training pods.
 
-    Two phases in one command:
-      * Launcher (PID 1, no torchrun env): derive the torchrun rendezvous from JobSet env vars and
-        exec `torchrun ... -- clustered <same args>`.
-      * Worker (re-entered by torchrun, TORCHELASTIC_RUN_ID set): run the task. A clustered task
-        never enqueues subtasks, so it runs with no controller; outputs/errors upload via storage.
+    Runs as the container PID 1. Derives the torchrun rendezvous from JobSet env vars and execs
+    ``torchrun ... -- a0 <same args>``, so each worker is the standard ``a0`` runtime entrypoint.
+    The ``a0`` worker detects torchrun (``TORCHELASTIC_RUN_ID``) and runs with no controller — a
+    clustered task never enqueues subtasks; outputs/errors upload via storage.
+
+    The options are declared (via ``_action_options``) only to fail fast on missing required args;
+    they are forwarded verbatim to ``a0`` through ``sys.argv`` rather than read from ``params``.
     """
-    if "TORCHELASTIC_RUN_ID" in os.environ:
-        _run_action(ctx, controller_enabled=False, **params)
-        return
-    _exec_torchrun_launcher(worker_argv=["clustered", *sys.argv[1:]])
+    _exec_torchrun_launcher(worker_argv=["a0", *sys.argv[1:]])
 
 
 def _master_addr(jobset_name: str, namespace: str) -> str:
@@ -121,9 +119,9 @@ def _exec_torchrun_launcher(worker_argv: List[str]) -> None:
         f"--rdzv-backend={rdzv_backend}",
         f"--rdzv-id={rdzv_id}",
         f"--rdzv-endpoint={master_addr}:{master_port}",
-        # worker_argv[0] is the `clustered` console-script executable (flyte._bin.clustered:clustered_main),
-        # not a .py file. Without --no-python torchrun would run `python clustered` and fail. --no-python
-        # makes torchrun exec the command directly.
+        # worker_argv[0] is the `a0` console-script executable (flyte._bin.runtime:main), not a .py
+        # file. Without --no-python torchrun would run `python a0` and fail. --no-python makes
+        # torchrun exec the command directly.
         "--no-python",
         "--",
         *worker_argv,
@@ -134,4 +132,4 @@ def _exec_torchrun_launcher(worker_argv: List[str]) -> None:
 
 
 if __name__ == "__main__":
-    clustered_main()
+    main()

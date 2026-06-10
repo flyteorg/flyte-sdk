@@ -1,7 +1,8 @@
-"""Tests for the `clustered` runtime entrypoint (torchrun launcher + worker-phase dispatch).
+"""Tests for the `clustered` torchrun launcher.
 
-The launcher logic lives in `flyte._bin.clustered` (it replaced the standalone
-`flyte.clustered._entrypoint` module).
+The launcher (`flyte._bin.clustered`) runs as the pod PID 1, derives the torchrun rendezvous from
+JobSet env vars, and execs `torchrun ... -- a0 <args>` — each worker is the standard `a0` runtime
+entrypoint. The launcher does not run the task itself.
 """
 
 import socket
@@ -24,7 +25,7 @@ BASE_ENV = {
 
 EXPECTED_MASTER = "f-abc123-workers-0-0.f-abc123.my-project-development.svc.cluster.local"
 
-WORKER_ARGV = ["clustered", "--inputs", "s3://bucket/in"]
+WORKER_ARGV = ["a0", "--inputs", "s3://bucket/in"]
 
 
 def test_master_addr_format():
@@ -55,7 +56,7 @@ def test_happy_path(monkeypatch):
             f"--rdzv-endpoint={EXPECTED_MASTER}:29500",
             "--no-python",
             "--",
-            "clustered",
+            "a0",
             "--inputs",
             "s3://bucket/in",
         ],
@@ -146,36 +147,12 @@ def test_dns_timeout_exits():
     assert exc_info.value.code == 1
 
 
-def test_worker_phase_runs_without_controller(monkeypatch):
-    """Under torchrun (TORCHELASTIC_RUN_ID set), `clustered` runs the task with no controller."""
+def test_launcher_execs_torchrun_with_a0_worker(monkeypatch):
+    """`clustered` is a pure launcher: it execs torchrun with `a0` as the worker command."""
     from click.testing import CliRunner
 
     from flyte._bin import clustered
 
-    monkeypatch.setenv("TORCHELASTIC_RUN_ID", "run-xyz")
-    captured = {}
-
-    def fake_run_action(ctx, *, controller_enabled, **params):
-        captured["controller_enabled"] = controller_enabled
-
-    monkeypatch.setattr(clustered, "_run_action", fake_run_action)
-
-    result = CliRunner().invoke(
-        clustered.clustered_main,
-        ["--inputs", "i", "--outputs-path", "o", "--version", "v", "--run-base-dir", "b"],
-    )
-
-    assert result.exit_code == 0, result.output
-    assert captured["controller_enabled"] is False
-
-
-def test_launcher_phase_execs_torchrun(monkeypatch):
-    """Without torchrun env, `clustered` is the launcher: it execs torchrun with `clustered` argv."""
-    from click.testing import CliRunner
-
-    from flyte._bin import clustered
-
-    monkeypatch.delenv("TORCHELASTIC_RUN_ID", raising=False)
     captured = {}
 
     def fake_launcher(worker_argv):
@@ -184,9 +161,9 @@ def test_launcher_phase_execs_torchrun(monkeypatch):
     monkeypatch.setattr(clustered, "_exec_torchrun_launcher", fake_launcher)
 
     result = CliRunner().invoke(
-        clustered.clustered_main,
+        clustered.main,
         ["--inputs", "i", "--outputs-path", "o", "--version", "v", "--run-base-dir", "b"],
     )
 
     assert result.exit_code == 0, result.output
-    assert captured["worker_argv"][0] == "clustered"
+    assert captured["worker_argv"][0] == "a0"
