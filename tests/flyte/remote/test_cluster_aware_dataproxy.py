@@ -220,12 +220,6 @@ async def test_clientsecret_session_does_not_downgrade_to_pkce_at_cluster_endpoi
     with ``create_session_config`` mocked). Here the REAL ``create_session_config``
     runs for both the control-plane session and the rebuilt per-cluster session,
     so the test fails if either half regresses.
-
-    This reproduces the exact failure seen on 2.3.x: a ClientSecret control-plane
-    session (e.g. ``flytectl-union.yaml`` with ``authType: ClientSecret``) whose
-    code-bundle upload routed to a different cluster silently fell back to the
-    default ``auth_type="Pkce"`` and triggered a browser login. The complete fix
-    forwarding ``auth_type`` landed in v2.3.9.
     """
     from flyte.remote._client.auth import _session as session_mod
     from flyte.remote._client.auth._session import create_session_config
