@@ -263,9 +263,7 @@ async def test_clientsecret_session_does_not_downgrade_to_pkce_at_cluster_endpoi
 
         cluster_service = MagicMock()
         cluster_service.select_cluster = AsyncMock(
-            return_value=cluster_payload_pb2.SelectClusterResponse(
-                cluster_endpoint="dns:///cluster-a.example.com:443"
-            )
+            return_value=cluster_payload_pb2.SelectClusterResponse(cluster_endpoint="dns:///cluster-a.example.com:443")
         )
         wrapper = ClusterAwareDataProxy(
             cluster_service=cluster_service,
