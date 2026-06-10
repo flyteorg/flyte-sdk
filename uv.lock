@@ -21,15 +21,12 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-05-30T08:34:52.897461Z"
+exclude-newer = "2026-06-05T08:46:08.582188Z"
 exclude-newer-span = "P5D"
 
 [options.exclude-newer-package]
-flyteidl2 = { timestamp = "2026-06-04T08:34:52.898085Z", span = "PT0S" }
-flyte-controller-base = { timestamp = "2026-06-04T08:34:52.898253Z", span = "PT0S" }
-
-[manifest]
-overrides = [{ name = "flyteidl2", editable = "../../union-scratch-2/cloud/flyte2/gen/python" }]
+flyteidl2 = { timestamp = "2026-06-10T08:46:08.582645Z", span = "PT0S" }
+flyte-controller-base = { timestamp = "2026-06-10T08:46:08.582812Z", span = "PT0S" }
 
 [[package]]
 name = "aiofiles"
@@ -1191,7 +1188,7 @@ requires-dist = [
     { name = "docstring-parser", specifier = ">=0.16" },
     { name = "fastapi", marker = "extra == 'examples-test'" },
     { name = "flyte-controller-base", marker = "extra == 'rust-controller'", directory = "rs_controller" },
-    { name = "flyteidl2", editable = "../../union-scratch-2/cloud/flyte2/gen/python" },
+    { name = "flyteidl2", specifier = "==2.0.21" },
     { name = "fsspec", specifier = ">=2025.3.0" },
     { name = "grpcio", marker = "extra == 'connector'", specifier = ">=1.71.0" },
     { name = "grpcio-health-checking", marker = "extra == 'connector'" },
@@ -1265,24 +1262,20 @@ dependencies = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "flyteidl2", specifier = "==2.0.20" }]
+requires-dist = [{ name = "flyteidl2", specifier = "==2.0.21" }]
 
 [[package]]
 name = "flyteidl2"
-source = { editable = "../../union-scratch-2/cloud/flyte2/gen/python" }
+version = "2.0.21"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "googleapis-common-protos" },
     { name = "protobuf" },
     { name = "protoc-gen-openapiv2" },
     { name = "protovalidate" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "googleapis-common-protos" },
-    { name = "protobuf", specifier = ">=4.21.1" },
-    { name = "protoc-gen-openapiv2" },
-    { name = "protovalidate", specifier = ">=1.0.0" },
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9a/51/3e6c90720a5b99d2e400ff16317cc6130e8ad98690b4a962739e4c31c211/flyteidl2-2.0.21-py3-none-any.whl", hash = "sha256:6dec3a45d2a7d12322ba38505e5cf04f9b5551cc0e139e54ac955477d201e737", size = 348024, upload-time = "2026-06-10T08:24:12.406Z" },
 ]
 
 [[package]]
