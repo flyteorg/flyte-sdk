@@ -10,13 +10,13 @@ dependencies = [
 [project.optional-dependencies]
 # OCR-specific dependencies - all models and features
 ocr = [
-    "torch>=2.0.0",
+    "torch>=2.12.0",
     "transformers>=5.0.0rc3",
     "accelerate>=0.28.0",
     "Pillow>=10.0.0",
     "datasets>=2.18.0",
     "pandas>=2.0.0",
-    "pyarrow>=14.0.0",
+    "pyarrow>=23.0.1",
     "async-lru>=2.0.0",
     "sentencepiece>=0.1.99",
     "protobuf>=3.20.0",
