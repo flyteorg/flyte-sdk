@@ -114,20 +114,20 @@ class Controller(Protocol):
         """
         ...
 
-    async def register_event(self, event: Any):
+    async def register_condition(self, condition: Any):
         """
-        Register an event that can be awaited. This is used to register events that can pause execution
+        Register a condition that can be awaited. This is used to register conditions that can pause execution
         until an external signal is received.
-        :param event: Event object to register
+        :param condition: Condition object to register
         :return:
         """
         ...
 
-    async def wait_for_event(self, event: Any) -> Any:
+    async def wait_for_condition(self, condition: Any) -> Any:
         """
-        Wait for an event to be signaled. This will block until the event receives data.
-        :param event: Event object to wait for
-        :return: The payload associated with the event when it is signaled
+        Wait for a condition to be signaled. This will block until the condition receives data.
+        :param condition: Condition object to wait for
+        :return: The payload associated with the condition when it is signaled
         """
         ...
 

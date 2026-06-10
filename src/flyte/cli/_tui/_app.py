@@ -15,7 +15,7 @@ from textual.widgets import Button, Footer, Header, Input, Markdown, RichLog, St
 from textual.widgets.tree import TreeNode
 from textual.worker import Worker, WorkerState
 
-from ._tracker import ActionNode, ActionStatus, ActionTracker, PendingEvent
+from ._tracker import ActionNode, ActionStatus, ActionTracker, PendingCondition
 
 _STATUS_ICON = {
     ActionStatus.RUNNING: ("●", "dodger_blue1"),
@@ -178,94 +178,94 @@ class _DetailBox(Static):
         super().__init__(*args, **kwargs)
 
 
-class EventInputPanel(Vertical):
-    """Interactive panel shown when a task is paused waiting for an event."""
+class ConditionInputPanel(Vertical):
+    """Interactive panel shown when a task is paused waiting for a condition."""
 
     DEFAULT_CSS = """
-    EventInputPanel {
+    ConditionInputPanel {
         height: auto;
         padding: 1;
     }
-    EventInputPanel .event-prompt {
+    ConditionInputPanel .condition-prompt {
         margin-bottom: 1;
     }
-    EventInputPanel .event-description {
+    ConditionInputPanel .condition-description {
         color: $text-muted;
         margin-bottom: 1;
     }
-    EventInputPanel .event-buttons {
+    ConditionInputPanel .condition-buttons {
         height: auto;
         layout: horizontal;
     }
-    EventInputPanel .event-buttons Button {
+    ConditionInputPanel .condition-buttons Button {
         margin-right: 1;
     }
-    EventInputPanel .event-input-row {
+    ConditionInputPanel .condition-input-row {
         height: auto;
         layout: horizontal;
     }
-    EventInputPanel .event-input-row Input {
+    ConditionInputPanel .condition-input-row Input {
         width: 1fr;
         margin-right: 1;
     }
-    EventInputPanel .event-validation-error {
+    ConditionInputPanel .condition-validation-error {
         color: red;
         height: auto;
     }
     """
 
     class Submitted(Message):
-        """Posted when the user submits a value for a pending event."""
+        """Posted when the user submits a value for a pending condition."""
 
         def __init__(self, action_id: str, value: Any) -> None:
             super().__init__()
             self.action_id = action_id
             self.value = value
 
-    def __init__(self, pending: PendingEvent, **kwargs: Any) -> None:
+    def __init__(self, pending: PendingCondition, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._pending = pending
 
     def compose(self) -> ComposeResult:
-        pe = self._pending
-        if pe.description:
-            yield Static(pe.description, classes="event-description")
+        pc = self._pending
+        if pc.description:
+            yield Static(pc.description, classes="condition-description")
 
-        if pe.prompt_type == "markdown":
-            yield Markdown(pe.prompt, classes="event-prompt")
+        if pc.prompt_type == "markdown":
+            yield Markdown(pc.prompt, classes="condition-prompt")
         else:
-            yield Static(pe.prompt, classes="event-prompt")
+            yield Static(pc.prompt, classes="condition-prompt")
 
-        if pe.data_type is bool:
-            with Horizontal(classes="event-buttons"):
-                yield Button("Yes", id="event-yes", variant="success")
-                yield Button("No", id="event-no", variant="error")
+        if pc.data_type is bool:
+            with Horizontal(classes="condition-buttons"):
+                yield Button("Yes", id="condition-yes", variant="success")
+                yield Button("No", id="condition-no", variant="error")
         else:
-            type_name = pe.data_type.__name__
-            with Horizontal(classes="event-input-row"):
-                yield Input(placeholder=f"Enter a {type_name} value...", id="event-input")
-                yield Button("Submit", id="event-submit", variant="primary")
-            yield Static("", id="event-validation-error", classes="event-validation-error")
+            type_name = pc.data_type.__name__
+            with Horizontal(classes="condition-input-row"):
+                yield Input(placeholder=f"Enter a {type_name} value...", id="condition-input")
+                yield Button("Submit", id="condition-submit", variant="primary")
+            yield Static("", id="condition-validation-error", classes="condition-validation-error")
 
-    @on(Button.Pressed, "#event-yes")
+    @on(Button.Pressed, "#condition-yes")
     def _on_yes(self) -> None:
         self.post_message(self.Submitted(self._pending.action_id, True))
 
-    @on(Button.Pressed, "#event-no")
+    @on(Button.Pressed, "#condition-no")
     def _on_no(self) -> None:
         self.post_message(self.Submitted(self._pending.action_id, False))
 
-    @on(Button.Pressed, "#event-submit")
+    @on(Button.Pressed, "#condition-submit")
     def _on_submit(self) -> None:
         self._try_submit()
 
-    @on(Input.Submitted, "#event-input")
+    @on(Input.Submitted, "#condition-input")
     def _on_input_submitted(self) -> None:
         self._try_submit()
 
     def _try_submit(self) -> None:
-        inp = self.query_one("#event-input", Input)
-        err_label = self.query_one("#event-validation-error", Static)
+        inp = self.query_one("#condition-input", Input)
+        err_label = self.query_one("#condition-validation-error", Static)
         raw = inp.value.strip()
         if not raw:
             err_label.update("Value cannot be empty.")
@@ -280,42 +280,42 @@ class EventInputPanel(Vertical):
         self.post_message(self.Submitted(self._pending.action_id, value))
 
 
-class EventResultPanel(Vertical):
-    """Read-only panel showing a resolved event's prompt and the submitted response."""
+class ConditionResultPanel(Vertical):
+    """Read-only panel showing a resolved condition's prompt and the submitted response."""
 
     DEFAULT_CSS = """
-    EventResultPanel {
+    ConditionResultPanel {
         height: auto;
         padding: 1;
     }
-    EventResultPanel .event-prompt {
+    ConditionResultPanel .condition-prompt {
         margin-bottom: 1;
     }
-    EventResultPanel .event-description {
+    ConditionResultPanel .condition-description {
         color: $text-muted;
         margin-bottom: 1;
     }
-    EventResultPanel .event-response {
+    ConditionResultPanel .condition-response {
         color: $success;
     }
     """
 
-    def __init__(self, pending: PendingEvent, value: Any, **kwargs: Any) -> None:
+    def __init__(self, pending: PendingCondition, value: Any, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._pending = pending
         self._value = value
 
     def compose(self) -> ComposeResult:
-        pe = self._pending
-        if pe.description:
-            yield Static(pe.description, classes="event-description")
+        pc = self._pending
+        if pc.description:
+            yield Static(pc.description, classes="condition-description")
 
-        if pe.prompt_type == "markdown":
-            yield Markdown(pe.prompt, classes="event-prompt")
+        if pc.prompt_type == "markdown":
+            yield Markdown(pc.prompt, classes="condition-prompt")
         else:
-            yield Static(pe.prompt, classes="event-prompt")
+            yield Static(pc.prompt, classes="condition-prompt")
 
-        yield Static(f"response: {self._value!r}", classes="event-response")
+        yield Static(f"response: {self._value!r}", classes="condition-response")
 
 
 class DetailPanel(VerticalScroll):
@@ -330,15 +330,15 @@ class DetailPanel(VerticalScroll):
     def __init__(self, tracker: ActionTracker, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._tracker = tracker
-        # Identifies the panel currently mounted in the event box:
+        # Identifies the panel currently mounted in the condition box:
         # "<action_id>|pending" or "<action_id>|resolved".
-        self._current_event_key: str | None = None
+        self._current_condition_key: str | None = None
         self._selected_attempts_by_action: dict[str, int] = {}
 
     def compose(self) -> ComposeResult:
         yield _DetailBox(id="box-attempt-controls")
         yield _DetailBox(id="box-task-details")
-        yield _DetailBox(id="box-event")
+        yield _DetailBox(id="box-condition")
         yield _DetailBox(id="box-report")
         yield _DetailBox(id="box-log-links")
         yield _DetailBox(id="box-inputs")
@@ -354,28 +354,30 @@ class DetailPanel(VerticalScroll):
     def refresh_detail(self) -> None:
         self._render_detail()
 
-    def _clear_event_box(self, event_box: _DetailBox) -> None:
-        """Remove any mounted event panel (interactive or read-only)."""
-        if self._current_event_key is not None:
-            for input_panel in event_box.query(EventInputPanel):
+    def _clear_condition_box(self, condition_box: _DetailBox) -> None:
+        """Remove any mounted condition panel (interactive or read-only)."""
+        if self._current_condition_key is not None:
+            for input_panel in condition_box.query(ConditionInputPanel):
                 input_panel.remove()
-            for result_panel in event_box.query(EventResultPanel):
+            for result_panel in condition_box.query(ConditionResultPanel):
                 result_panel.remove()
-            self._current_event_key = None
+            self._current_condition_key = None
 
-    def _hide_event_box(self, event_box: _DetailBox) -> None:
-        """Remove any mounted event panel and hide the event box."""
-        event_box.display = False
-        self._clear_event_box(event_box)
+    def _hide_condition_box(self, condition_box: _DetailBox) -> None:
+        """Remove any mounted condition panel and hide the condition box."""
+        condition_box.display = False
+        self._clear_condition_box(condition_box)
 
-    def _show_event_panel(self, event_box: _DetailBox, key: str, panel_factory: Callable[[], Any], title: str) -> None:
-        """Mount *panel_factory()* into the event box unless *key* is already shown."""
-        if self._current_event_key != key:
-            self._clear_event_box(event_box)
-            event_box.border_title = title
-            event_box.mount(panel_factory())
-            self._current_event_key = key
-        event_box.display = True
+    def _show_condition_panel(
+        self, condition_box: _DetailBox, key: str, panel_factory: Callable[[], Any], title: str
+    ) -> None:
+        """Mount *panel_factory()* into the condition box unless *key* is already shown."""
+        if self._current_condition_key != key:
+            self._clear_condition_box(condition_box)
+            condition_box.border_title = title
+            condition_box.mount(panel_factory())
+            self._current_condition_key = key
+        condition_box.display = True
 
     def _attempt_numbers_for_action(self, action_id: str) -> list[int]:
         node = self._tracker.get_action(action_id)
@@ -411,7 +413,7 @@ class DetailPanel(VerticalScroll):
         try:
             attempt_box = self.query_one("#box-attempt-controls", _DetailBox)
             task_box = self.query_one("#box-task-details", _DetailBox)
-            event_box = self.query_one("#box-event", _DetailBox)
+            condition_box = self.query_one("#box-condition", _DetailBox)
             report_box = self.query_one("#box-report", _DetailBox)
             log_links_box = self.query_one("#box-log-links", _DetailBox)
             inputs_box = self.query_one("#box-inputs", _DetailBox)
@@ -425,7 +427,7 @@ class DetailPanel(VerticalScroll):
             attempt_box.display = False
             task_box.update("Select an action to view details.")
             task_box.border_title = "Task Details"
-            self._hide_event_box(event_box)
+            self._hide_condition_box(condition_box)
             report_box.display = False
             log_links_box.display = False
             inputs_box.update("")
@@ -439,7 +441,7 @@ class DetailPanel(VerticalScroll):
         if node is None:
             attempt_box.display = False
             task_box.update(f"Action {aid} not found.")
-            self._hide_event_box(event_box)
+            self._hide_condition_box(condition_box)
             report_box.display = False
             log_links_box.display = False
             inputs_box.update("")
@@ -486,7 +488,7 @@ class DetailPanel(VerticalScroll):
             if elapsed:
                 details.append(f"duration:   {elapsed}")
             task_box.update("\n".join(details))
-            self._hide_event_box(event_box)
+            self._hide_condition_box(condition_box)
             report_box.display = False
             log_links_box.display = False
             inputs_box.display = False
@@ -518,18 +520,18 @@ class DetailPanel(VerticalScroll):
         details.append(f"cache:      {cache_str}")
         task_box.update("\n".join(details))
 
-        # -- Event box (interactive while paused) --
+        # -- Condition box (interactive while paused) --
         if node.status == ActionStatus.PAUSED:
-            pending = self._tracker.get_pending_event(aid)
+            pending = self._tracker.get_pending_condition(aid)
             if pending is not None:
-                self._show_event_panel(
-                    event_box,
+                self._show_condition_panel(
+                    condition_box,
                     f"{aid}|pending",
-                    functools.partial(EventInputPanel, pending),
-                    f"Event: {pending.event_name}",
+                    functools.partial(ConditionInputPanel, pending),
+                    f"Condition: {pending.condition_name}",
                 )
             else:
-                self._hide_event_box(event_box)
+                self._hide_condition_box(condition_box)
             # Hide other detail boxes when paused
             report_box.display = False
             log_links_box.display = False
@@ -538,18 +540,18 @@ class DetailPanel(VerticalScroll):
             outputs_box.display = False
             return
 
-        # -- Event box (read-only after the event was resolved) --
-        resolved = self._tracker.get_resolved_event(aid)
+        # -- Condition box (read-only after the condition was resolved) --
+        resolved = self._tracker.get_resolved_condition(aid)
         if resolved is not None:
-            pe, value = resolved
-            self._show_event_panel(
-                event_box,
+            pc, value = resolved
+            self._show_condition_panel(
+                condition_box,
                 f"{aid}|resolved",
-                lambda: EventResultPanel(pe, value),
-                f"Event: {pe.event_name} (signaled)",
+                lambda: ConditionResultPanel(pc, value),
+                f"Condition: {pc.condition_name} (signaled)",
             )
         else:
-            self._hide_event_box(event_box)
+            self._hide_condition_box(condition_box)
 
         # -- Report box (only when available) --
         if node.has_report and node.output_path:
@@ -677,17 +679,17 @@ class FlyteTUIApp(App[None]):
         height: auto;
         color: {_FLYTE_PURPLE_LIGHT};
     }}
-    EventInputPanel {{
+    ConditionInputPanel {{
         color: {_FLYTE_PURPLE_LIGHT};
     }}
-    EventInputPanel Button {{
+    ConditionInputPanel Button {{
         margin-right: 1;
     }}
-    EventInputPanel Input {{
+    ConditionInputPanel Input {{
         width: 1fr;
         margin-right: 1;
     }}
-    EventInputPanel .event-validation-error {{
+    ConditionInputPanel .condition-validation-error {{
         color: red;
     }}
     """
@@ -711,7 +713,7 @@ class FlyteTUIApp(App[None]):
         self._tracker = tracker
         self._execute_fn = execute_fn
         self._last_version: int = -1
-        self._seen_pending_event_ids: set[str] = set()
+        self._seen_pending_condition_ids: set[str] = set()
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -754,21 +756,21 @@ class FlyteTUIApp(App[None]):
             tree = self.query_one("#action-tree", ActionTreeWidget)
             tree.refresh_from_tracker()
             detail = self.query_one("#detail-panel", DetailPanel)
-            # Jump to a newly pending event's sub-action so its input panel is shown.
-            for pe in self._tracker.get_all_pending_events():
-                if pe.action_id not in self._seen_pending_event_ids:
-                    self._seen_pending_event_ids.add(pe.action_id)
-                    if tree.focus_action(pe.action_id):
-                        detail.action_id = pe.action_id
+            # Jump to a newly pending condition's sub-action so its input panel is shown.
+            for pc in self._tracker.get_all_pending_conditions():
+                if pc.action_id not in self._seen_pending_condition_ids:
+                    self._seen_pending_condition_ids.add(pc.action_id)
+                    if tree.focus_action(pc.action_id):
+                        detail.action_id = pc.action_id
             detail.refresh_detail()
 
     def on_tree_node_selected(self, event: Tree.NodeSelected[str]) -> None:
         detail = self.query_one("#detail-panel", DetailPanel)
         detail.action_id = event.node.data
 
-    @on(EventInputPanel.Submitted)
-    def _on_event_submitted(self, event: EventInputPanel.Submitted) -> None:
-        self._tracker.resolve_event(event.action_id, event.value)
+    @on(ConditionInputPanel.Submitted)
+    def _on_condition_submitted(self, event: ConditionInputPanel.Submitted) -> None:
+        self._tracker.resolve_condition(event.action_id, event.value)
 
     def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
         if event.state == WorkerState.SUCCESS:
@@ -777,9 +779,9 @@ class FlyteTUIApp(App[None]):
             self.sub_title = "failed"
 
     async def action_quit(self) -> None:
-        # Cancel all pending events so blocked threads don't hang
-        for pe in self._tracker.get_all_pending_events():
-            pe.set_result(None)
+        # Cancel all pending conditions so blocked threads don't hang
+        for pc in self._tracker.get_all_pending_conditions():
+            pc.set_result(None)
         self.exit()
         # The execution worker may be blocked on synchronous calls (via
         # syncify) that Textual's worker cancellation cannot interrupt.

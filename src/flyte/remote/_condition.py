@@ -13,20 +13,20 @@ from flyte.syncify import syncify
 from .._initialize import ensure_client, get_client, get_init_config
 from ._common import ToJSONMixin
 
-# The valid payload types for event signals, matching _event.EventType.
-EventPayload = Union[bool, int, float, str]
+# The valid payload types for condition signals, matching _condition.ConditionType.
+ConditionPayload = Union[bool, int, float, str]
 
 
 @dataclass
-class Event(ToJSONMixin):
+class Condition(ToJSONMixin):
     """
-    A remote Event registered within an action of a run.
+    A remote Condition registered within an action of a run.
 
-    Events pause a run until an external signal is delivered. On the backend an event is
-    backed by a *condition action*, so an ``Event`` simply wraps the condition
+    Conditions pause a run until an external signal is delivered. On the backend a condition is
+    backed by a *condition action*, so a ``Condition`` simply wraps the condition
     :class:`~flyteidl2.workflow.run_definition_pb2.Action` it represents.
 
-    Use :meth:`listall` to discover the events of a run, :meth:`get` to look one up by
+    Use :meth:`listall` to discover the conditions of a run, :meth:`get` to look one up by
     name, and :meth:`signal` to resolve one with a typed payload.
     """
 
@@ -34,19 +34,19 @@ class Event(ToJSONMixin):
 
     @property
     def name(self) -> str:
-        """The event name (the condition action's declared name)."""
+        """The condition name (the condition action's declared name)."""
         if self.pb2.metadata.HasField("condition"):
             return self.pb2.metadata.condition.name
         return self.pb2.id.name
 
     @property
     def action_name(self) -> str:
-        """The name of the condition action backing this event."""
+        """The name of the condition action backing this condition."""
         return self.pb2.id.name
 
     @property
     def run_name(self) -> str:
-        """The name of the run this event belongs to."""
+        """The name of the run this condition belongs to."""
         return self.pb2.id.run.name
 
     @property
@@ -90,17 +90,17 @@ class Event(ToJSONMixin):
         run_name: str,
         action_name: str | None = None,
         limit: int = 100,
-    ) -> AsyncIterator[Event]:
+    ) -> AsyncIterator[Condition]:
         """
-        List all Events for a run, optionally filtered to a specific parent action.
+        List all Conditions for a run, optionally filtered to a specific parent action.
 
-        Events are condition actions, so this lists the run's actions filtered (server
+        Conditions are condition actions, so this lists the run's actions filtered (server
         side) to ``ACTION_TYPE_CONDITION``.
 
-        :param run_name: The name of the Run to list events for (required).
-        :param action_name: Optionally narrow to events whose parent is this action.
-        :param limit: The maximum number of events to fetch per page.
-        :return: An async iterator of Event instances.
+        :param run_name: The name of the Run to list conditions for (required).
+        :param action_name: Optionally narrow to conditions whose parent is this action.
+        :param limit: The maximum number of conditions to fetch per page.
+        :return: An async iterator of Condition instances.
         """
         ensure_client()
         cfg = get_init_config()
@@ -146,31 +146,31 @@ class Event(ToJSONMixin):
         /,
         run_name: str,
         action_name: str | None = None,
-    ) -> Event | None:
+    ) -> Condition | None:
         """
-        Retrieve an existing Event by name within a run.
+        Retrieve an existing Condition by name within a run.
 
-        There is no dedicated get-event RPC, so this scans the run's condition actions
+        There is no dedicated get-condition RPC, so this scans the run's condition actions
         and returns the first whose name matches.
 
-        :param name: The name of the Event.
-        :param run_name: The name of the Run the event belongs to.
+        :param name: The name of the Condition.
+        :param run_name: The name of the Run the condition belongs to.
         :param action_name: Optionally narrow to a specific parent action within the run.
-        :return: An Event instance if found, otherwise None.
+        :return: A Condition instance if found, otherwise None.
         """
-        async for event in cls.listall.aio(run_name=run_name, action_name=action_name):
-            if event.name == name:
-                return event
+        async for condition in cls.listall.aio(run_name=run_name, action_name=action_name):
+            if condition.name == name:
+                return condition
         return None
 
     @syncify
-    async def signal(self, payload: EventPayload) -> None:
+    async def signal(self, payload: ConditionPayload) -> None:
         """
-        Signal the event with the provided payload.
+        Signal the condition with the provided payload.
 
         The payload must be one of: ``bool``, ``int``, ``float``, or ``str``.
 
-        :param payload: The value to signal the event with.
+        :param payload: The value to signal the condition with.
         :raises TypeError: If the payload is not a supported type.
         """
         if not isinstance(payload, (bool, int, float, str)):
@@ -187,7 +187,7 @@ class Event(ToJSONMixin):
         )
 
 
-def _encode_payload(value: EventPayload) -> Any:
+def _encode_payload(value: ConditionPayload) -> Any:
     """Encode a Python value into an EventPayload proto message."""
     # bool must be checked before int, since bool is a subclass of int.
     if isinstance(value, bool):

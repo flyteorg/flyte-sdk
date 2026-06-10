@@ -1,8 +1,8 @@
-"""Tests for remote controller event registration and waiting.
+"""Tests for remote controller condition registration and waiting.
 
 These tests cover:
-- register_event: validates event, creates condition action, submits to backend (fire-and-forget)
-- wait_for_event: waits for condition action completion, returns typed payload
+- register_condition: validates condition, creates condition action, submits to backend (fire-and-forget)
+- wait_for_condition: waits for condition action completion, returns typed payload
 - Various data types (bool, int, float, str)
 - Error/failure/abort/timeout terminal phases
 - Integration with core controller start_action / wait_for_action split
@@ -22,8 +22,8 @@ from flyteidl2.task import task_definition_pb2
 import flyte
 import flyte.errors
 import flyte.report
+from flyte._condition import ConditionWebhook, _Condition
 from flyte._context import internal_ctx
-from flyte._event import EventWebhook, _Event
 from flyte._internal.controllers.remote._action import Action
 from flyte._internal.controllers.remote._controller import RemoteController
 from flyte._internal.controllers.remote._core import Controller
@@ -51,8 +51,8 @@ def _make_task_context(**overrides) -> TaskContext:
     return TaskContext(**defaults)
 
 
-def _make_event(name="approval", data_type=bool, **kwargs) -> _Event:
-    return _Event(name=name, data_type=data_type, **kwargs)
+def _make_condition(name="approval", data_type=bool, **kwargs) -> _Condition:
+    return _Condition(name=name, data_type=data_type, **kwargs)
 
 
 async def _make_client() -> ClientSet:
@@ -169,14 +169,14 @@ async def test_submit_and_wait_combines_both():
     assert result.phase == phase_pb2.ACTION_PHASE_SUCCEEDED
 
 
-# ── RemoteController: register_event ──────────────────────────────────────
+# ── RemoteController: register_condition ──────────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_register_event_bool():
-    """register_event with bool data_type should submit a condition action and return immediately."""
+async def test_register_condition_bool():
+    """register_condition with bool data_type should submit a condition action and return immediately."""
     await flyte.init.aio()
-    event = _make_event(name="approve", data_type=bool, prompt="Approve deployment?")
+    condition = _make_condition(name="approve", data_type=bool, prompt="Approve deployment?")
 
     with patch("flyte._initialize.get_init_config") as mock_config:
         mock_config.return_value.root_dir = pathlib.Path(__file__).parent
@@ -187,17 +187,17 @@ async def test_register_event_bool():
             controller = _make_controller()
 
             with patch.object(controller, "start_action", new_callable=AsyncMock) as mock_start:
-                await controller.register_event(event)
+                await controller.register_condition(condition)
                 mock_start.assert_called_once()
                 action = mock_start.call_args[0][0]
                 assert action.type == "condition"
 
 
 @pytest.mark.asyncio
-async def test_register_event_str():
-    """register_event with str data_type."""
+async def test_register_condition_str():
+    """register_condition with str data_type."""
     await flyte.init.aio()
-    event = _make_event(name="user_input", data_type=str, prompt="Enter value:")
+    condition = _make_condition(name="user_input", data_type=str, prompt="Enter value:")
 
     with patch("flyte._initialize.get_init_config") as mock_config:
         mock_config.return_value.root_dir = pathlib.Path(__file__).parent
@@ -208,17 +208,17 @@ async def test_register_event_str():
             controller = _make_controller()
 
             with patch.object(controller, "start_action", new_callable=AsyncMock) as mock_start:
-                await controller.register_event(event)
+                await controller.register_condition(condition)
                 mock_start.assert_called_once()
                 action = mock_start.call_args[0][0]
                 assert action.type == "condition"
 
 
 @pytest.mark.asyncio
-async def test_register_event_int():
-    """register_event with int data_type."""
+async def test_register_condition_int():
+    """register_condition with int data_type."""
     await flyte.init.aio()
-    event = _make_event(name="count", data_type=int, prompt="How many?")
+    condition = _make_condition(name="count", data_type=int, prompt="How many?")
 
     with patch("flyte._initialize.get_init_config") as mock_config:
         mock_config.return_value.root_dir = pathlib.Path(__file__).parent
@@ -229,15 +229,15 @@ async def test_register_event_int():
             controller = _make_controller()
 
             with patch.object(controller, "start_action", new_callable=AsyncMock) as mock_start:
-                await controller.register_event(event)
+                await controller.register_condition(condition)
                 mock_start.assert_called_once()
 
 
 @pytest.mark.asyncio
-async def test_register_event_float():
-    """register_event with float data_type."""
+async def test_register_condition_float():
+    """register_condition with float data_type."""
     await flyte.init.aio()
-    event = _make_event(name="threshold", data_type=float, prompt="Set threshold:")
+    condition = _make_condition(name="threshold", data_type=float, prompt="Set threshold:")
 
     with patch("flyte._initialize.get_init_config") as mock_config:
         mock_config.return_value.root_dir = pathlib.Path(__file__).parent
@@ -248,24 +248,24 @@ async def test_register_event_float():
             controller = _make_controller()
 
             with patch.object(controller, "start_action", new_callable=AsyncMock) as mock_start:
-                await controller.register_event(event)
+                await controller.register_condition(condition)
                 mock_start.assert_called_once()
 
 
 @pytest.mark.asyncio
-async def test_register_event_rejects_non_event():
-    """register_event should raise TypeError for non-_Event objects."""
+async def test_register_condition_rejects_non_condition():
+    """register_condition should raise TypeError for non-_Condition objects."""
     controller = _make_controller()
-    with pytest.raises(TypeError, match="Expected _Event"):
-        await controller.register_event("not_an_event")
+    with pytest.raises(TypeError, match="Expected _Condition"):
+        await controller.register_condition("not_a_condition")
 
 
 @pytest.mark.asyncio
-async def test_register_event_with_webhook():
-    """register_event should work with webhook-configured events."""
+async def test_register_condition_with_webhook():
+    """register_condition should work with webhook-configured conditions."""
     await flyte.init.aio()
-    webhook = EventWebhook(url="https://example.com/hook", payload={"cb": "{callback_uri}"})
-    event = _make_event(name="webhook_event", webhook=webhook)
+    webhook = ConditionWebhook(url="https://example.com/hook", payload={"cb": "{callback_uri}"})
+    condition = _make_condition(name="webhook_condition", webhook=webhook)
 
     with patch("flyte._initialize.get_init_config") as mock_config:
         mock_config.return_value.root_dir = pathlib.Path(__file__).parent
@@ -276,15 +276,15 @@ async def test_register_event_with_webhook():
             controller = _make_controller()
 
             with patch.object(controller, "start_action", new_callable=AsyncMock) as mock_start:
-                await controller.register_event(event)
+                await controller.register_condition(condition)
                 mock_start.assert_called_once()
 
 
 @pytest.mark.asyncio
-async def test_register_event_with_timeout():
-    """register_event should work with timeout-configured events."""
+async def test_register_condition_with_timeout():
+    """register_condition should work with timeout-configured conditions."""
     await flyte.init.aio()
-    event = _make_event(name="timed_event", timeout=timedelta(seconds=30))
+    condition = _make_condition(name="timed_condition", timeout=timedelta(seconds=30))
 
     with patch("flyte._initialize.get_init_config") as mock_config:
         mock_config.return_value.root_dir = pathlib.Path(__file__).parent
@@ -295,15 +295,15 @@ async def test_register_event_with_timeout():
             controller = _make_controller()
 
             with patch.object(controller, "start_action", new_callable=AsyncMock) as mock_start:
-                await controller.register_event(event)
+                await controller.register_condition(condition)
                 mock_start.assert_called_once()
 
 
 @pytest.mark.asyncio
-async def test_register_event_with_description():
-    """register_event should pass description through to the condition action."""
+async def test_register_condition_with_description():
+    """register_condition should pass description through to the condition action."""
     await flyte.init.aio()
-    event = _make_event(name="described_event", description="This needs human review")
+    condition = _make_condition(name="described_condition", description="This needs human review")
 
     with patch("flyte._initialize.get_init_config") as mock_config:
         mock_config.return_value.root_dir = pathlib.Path(__file__).parent
@@ -314,18 +314,18 @@ async def test_register_event_with_description():
             controller = _make_controller()
 
             with patch.object(controller, "start_action", new_callable=AsyncMock) as mock_start:
-                await controller.register_event(event)
+                await controller.register_condition(condition)
                 mock_start.assert_called_once()
 
 
-# ── RemoteController: wait_for_event ──────────────────────────────────────
+# ── RemoteController: wait_for_condition ──────────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_wait_for_event_bool_succeeded():
-    """wait_for_event should return bool payload on successful completion."""
+async def test_wait_for_condition_bool_succeeded():
+    """wait_for_condition should return bool payload on successful completion."""
     await flyte.init.aio()
-    event = _make_event(name="approve", data_type=bool)
+    condition = _make_condition(name="approve", data_type=bool)
 
     succeeded_action = Action(
         action_id=identifier_pb2.ActionIdentifier(
@@ -346,7 +346,7 @@ async def test_wait_for_event_bool_succeeded():
         with ctx.replace_task_context(tctx):
             controller = _make_controller()
 
-            # Simulate that register_event was called first
+            # Simulate that register_condition was called first
             with (
                 patch.object(controller, "start_action", new_callable=AsyncMock),
                 patch.object(
@@ -356,16 +356,16 @@ async def test_wait_for_event_bool_succeeded():
                     return_value=succeeded_action,
                 ) as mock_wait,
             ):
-                await controller.register_event(event)
-                await controller.wait_for_event(event)
+                await controller.register_condition(condition)
+                await controller.wait_for_condition(condition)
                 mock_wait.assert_called_once()
 
 
 @pytest.mark.asyncio
-async def test_wait_for_event_str_succeeded():
-    """wait_for_event should return str payload on successful completion."""
+async def test_wait_for_condition_str_succeeded():
+    """wait_for_condition should return str payload on successful completion."""
     await flyte.init.aio()
-    event = _make_event(name="user_input", data_type=str)
+    condition = _make_condition(name="user_input", data_type=str)
 
     succeeded_action = Action(
         action_id=identifier_pb2.ActionIdentifier(
@@ -395,15 +395,15 @@ async def test_wait_for_event_str_succeeded():
                     return_value=succeeded_action,
                 ),
             ):
-                await controller.register_event(event)
-                await controller.wait_for_event(event)
+                await controller.register_condition(condition)
+                await controller.wait_for_condition(condition)
 
 
 @pytest.mark.asyncio
-async def test_wait_for_event_int_succeeded():
-    """wait_for_event should return int payload on successful completion."""
+async def test_wait_for_condition_int_succeeded():
+    """wait_for_condition should return int payload on successful completion."""
     await flyte.init.aio()
-    event = _make_event(name="count", data_type=int)
+    condition = _make_condition(name="count", data_type=int)
 
     succeeded_action = Action(
         action_id=identifier_pb2.ActionIdentifier(
@@ -433,15 +433,15 @@ async def test_wait_for_event_int_succeeded():
                     return_value=succeeded_action,
                 ),
             ):
-                await controller.register_event(event)
-                await controller.wait_for_event(event)
+                await controller.register_condition(condition)
+                await controller.wait_for_condition(condition)
 
 
 @pytest.mark.asyncio
-async def test_wait_for_event_float_succeeded():
-    """wait_for_event should return float payload on successful completion."""
+async def test_wait_for_condition_float_succeeded():
+    """wait_for_condition should return float payload on successful completion."""
     await flyte.init.aio()
-    event = _make_event(name="threshold", data_type=float)
+    condition = _make_condition(name="threshold", data_type=float)
 
     succeeded_action = Action(
         action_id=identifier_pb2.ActionIdentifier(
@@ -471,19 +471,19 @@ async def test_wait_for_event_float_succeeded():
                     return_value=succeeded_action,
                 ),
             ):
-                await controller.register_event(event)
-                await controller.wait_for_event(event)
+                await controller.register_condition(condition)
+                await controller.wait_for_condition(condition)
 
 
 @pytest.mark.asyncio
-async def test_wait_for_event_failed_phase():
-    """wait_for_event should raise EventFailedError when the condition action fails."""
+async def test_wait_for_condition_failed_phase():
+    """wait_for_condition should raise ConditionFailedError when the condition action fails."""
     await flyte.init.aio()
-    event = _make_event(name="fail_event", data_type=bool)
+    condition = _make_condition(name="fail_condition", data_type=bool)
 
     failed_action = Action(
         action_id=identifier_pb2.ActionIdentifier(
-            name="condition-fail_event",
+            name="condition-fail_condition",
             run=identifier_pb2.RunIdentifier(name="test_run"),
         ),
         parent_action_name="parent_action",
@@ -509,20 +509,20 @@ async def test_wait_for_event_failed_phase():
                     return_value=failed_action,
                 ),
             ):
-                await controller.register_event(event)
-                with pytest.raises(flyte.errors.EventFailedError):
-                    await controller.wait_for_event(event)
+                await controller.register_condition(condition)
+                with pytest.raises(flyte.errors.ConditionFailedError):
+                    await controller.wait_for_condition(condition)
 
 
 @pytest.mark.asyncio
-async def test_wait_for_event_aborted_phase():
-    """wait_for_event should raise ActionAbortedError when the condition action is aborted."""
+async def test_wait_for_condition_aborted_phase():
+    """wait_for_condition should raise ActionAbortedError when the condition action is aborted."""
     await flyte.init.aio()
-    event = _make_event(name="abort_event", data_type=bool)
+    condition = _make_condition(name="abort_condition", data_type=bool)
 
     aborted_action = Action(
         action_id=identifier_pb2.ActionIdentifier(
-            name="condition-abort_event",
+            name="condition-abort_condition",
             run=identifier_pb2.RunIdentifier(name="test_run"),
         ),
         parent_action_name="parent_action",
@@ -547,20 +547,20 @@ async def test_wait_for_event_aborted_phase():
                     return_value=aborted_action,
                 ),
             ):
-                await controller.register_event(event)
+                await controller.register_condition(condition)
                 with pytest.raises(flyte.errors.ActionAbortedError):
-                    await controller.wait_for_event(event)
+                    await controller.wait_for_condition(condition)
 
 
 @pytest.mark.asyncio
-async def test_wait_for_event_timed_out_phase():
-    """wait_for_event should raise EventTimedoutError when the condition action times out."""
+async def test_wait_for_condition_timed_out_phase():
+    """wait_for_condition should raise ConditionTimedoutError when the condition action times out."""
     await flyte.init.aio()
-    event = _make_event(name="timeout_event", data_type=bool, timeout=10)
+    condition = _make_condition(name="timeout_condition", data_type=bool, timeout=10)
 
     timed_out_action = Action(
         action_id=identifier_pb2.ActionIdentifier(
-            name="condition-timeout_event",
+            name="condition-timeout_condition",
             run=identifier_pb2.RunIdentifier(name="test_run"),
         ),
         parent_action_name="parent_action",
@@ -585,24 +585,24 @@ async def test_wait_for_event_timed_out_phase():
                     return_value=timed_out_action,
                 ),
             ):
-                await controller.register_event(event)
-                with pytest.raises(flyte.errors.EventTimedoutError):
-                    await controller.wait_for_event(event)
+                await controller.register_condition(condition)
+                with pytest.raises(flyte.errors.ConditionTimedoutError):
+                    await controller.wait_for_condition(condition)
 
 
 @pytest.mark.asyncio
-async def test_wait_for_event_rejects_non_event():
-    """wait_for_event should raise TypeError for non-_Event objects."""
+async def test_wait_for_condition_rejects_non_condition():
+    """wait_for_condition should raise TypeError for non-_Condition objects."""
     controller = _make_controller()
-    with pytest.raises(TypeError, match="Expected _Event"):
-        await controller.wait_for_event("not_an_event")
+    with pytest.raises(TypeError, match="Expected _Condition"):
+        await controller.wait_for_condition("not_a_condition")
 
 
 @pytest.mark.asyncio
-async def test_wait_for_event_without_register_raises():
-    """wait_for_event should raise if event was not previously registered."""
+async def test_wait_for_condition_without_register_raises():
+    """wait_for_condition should raise if condition was not previously registered."""
     await flyte.init.aio()
-    event = _make_event(name="unregistered")
+    condition = _make_condition(name="unregistered")
 
     with patch("flyte._initialize.get_init_config") as mock_config:
         mock_config.return_value.root_dir = pathlib.Path(__file__).parent
@@ -612,7 +612,7 @@ async def test_wait_for_event_without_register_raises():
         with ctx.replace_task_context(tctx):
             controller = _make_controller()
             with pytest.raises((RuntimeError, KeyError)):
-                await controller.wait_for_event(event)
+                await controller.wait_for_condition(condition)
 
 
 # ── Action.from_condition ──────────────────────────────────────────────────
@@ -627,7 +627,7 @@ def test_action_from_condition_creates_condition_type():
     action = Action.from_condition(
         parent_action_name="parent",
         action_id=action_id,
-        event_name="test_event",
+        condition_name="test_condition",
         prompt="Approve?",
         data_type=bool,
         run_output_base="/run_base",
@@ -648,7 +648,7 @@ def test_action_from_condition_with_description():
     action = Action.from_condition(
         parent_action_name="parent",
         action_id=action_id,
-        event_name="desc_event",
+        condition_name="desc_condition",
         prompt="Review?",
         data_type=str,
         description="Needs human review",
@@ -669,7 +669,7 @@ def test_action_from_condition_all_data_types(data_type):
     action = Action.from_condition(
         parent_action_name="parent",
         action_id=action_id,
-        event_name=f"event_{data_type.__name__}",
+        condition_name=f"condition_{data_type.__name__}",
         prompt="Enter value:",
         data_type=data_type,
         run_output_base="/run_base",
@@ -761,10 +761,10 @@ async def test_record_trace_uses_submit_and_wait():
 
 
 @pytest.mark.asyncio
-async def test_wait_for_event_failed_raises_event_failed_error():
-    """wait_for_event should raise EventFailedError (not generic Exception) on FAILED phase."""
+async def test_wait_for_condition_failed_raises_condition_failed_error():
+    """wait_for_condition should raise ConditionFailedError (not generic Exception) on FAILED phase."""
     await flyte.init.aio()
-    event = _make_event(name="fail_cond", data_type=str)
+    condition = _make_condition(name="fail_cond", data_type=str)
 
     failed_action = Action(
         action_id=identifier_pb2.ActionIdentifier(
@@ -793,16 +793,16 @@ async def test_wait_for_event_failed_raises_event_failed_error():
                     return_value=failed_action,
                 ),
             ):
-                await controller.register_event(event)
-                with pytest.raises(flyte.errors.EventFailedError, match="fail_cond"):
-                    await controller.wait_for_event(event)
+                await controller.register_condition(condition)
+                with pytest.raises(flyte.errors.ConditionFailedError, match="fail_cond"):
+                    await controller.wait_for_condition(condition)
 
 
 @pytest.mark.asyncio
-async def test_wait_for_event_failed_with_client_err_raises_event_failed():
-    """wait_for_event should raise EventFailedError even when client_err is set."""
+async def test_wait_for_condition_failed_with_client_err_raises_condition_failed():
+    """wait_for_condition should raise ConditionFailedError even when client_err is set."""
     await flyte.init.aio()
-    event = _make_event(name="fail_client", data_type=int)
+    condition = _make_condition(name="fail_client", data_type=int)
 
     failed_action = Action(
         action_id=identifier_pb2.ActionIdentifier(
@@ -832,18 +832,18 @@ async def test_wait_for_event_failed_with_client_err_raises_event_failed():
                     return_value=failed_action,
                 ),
             ):
-                await controller.register_event(event)
-                with pytest.raises(flyte.errors.EventFailedError):
-                    await controller.wait_for_event(event)
+                await controller.register_condition(condition)
+                with pytest.raises(flyte.errors.ConditionFailedError):
+                    await controller.wait_for_condition(condition)
 
 
 @pytest.mark.asyncio
-async def test_wait_for_event_timed_out_raises_event_timedout():
-    """wait_for_event should raise EventTimedoutError on TIMED_OUT phase for all data types."""
+async def test_wait_for_condition_timed_out_raises_condition_timedout():
+    """wait_for_condition should raise ConditionTimedoutError on TIMED_OUT phase for all data types."""
     await flyte.init.aio()
 
     for dt in (bool, int, float, str):
-        event = _make_event(name=f"timeout_{dt.__name__}", data_type=dt, timeout=5)
+        condition = _make_condition(name=f"timeout_{dt.__name__}", data_type=dt, timeout=5)
 
         timed_out_action = Action(
             action_id=identifier_pb2.ActionIdentifier(
@@ -872,9 +872,9 @@ async def test_wait_for_event_timed_out_raises_event_timedout():
                         return_value=timed_out_action,
                     ),
                 ):
-                    await controller.register_event(event)
-                    with pytest.raises(flyte.errors.EventTimedoutError):
-                        await controller.wait_for_event(event)
+                    await controller.register_condition(condition)
+                    with pytest.raises(flyte.errors.ConditionTimedoutError):
+                        await controller.wait_for_condition(condition)
 
 
 # ── Action.literal_to_python ─────────────────────────────────────────────────
@@ -1017,12 +1017,12 @@ def test_merge_state_ignores_value_for_non_condition():
         (str, {"string_value": "hello"}, "hello"),
     ],
 )
-async def test_wait_for_event_returns_signaled_value(data_type, primitive_kwargs, expected):
-    """wait_for_event should return the Python value carried in ActionUpdate.value."""
+async def test_wait_for_condition_returns_signaled_value(data_type, primitive_kwargs, expected):
+    """wait_for_condition should return the Python value carried in ActionUpdate.value."""
     from flyteidl2.core.literals_pb2 import Literal, Primitive, Scalar
 
     await flyte.init.aio()
-    event = _make_event(name=f"signal_{data_type.__name__}", data_type=data_type)
+    condition = _make_condition(name=f"signal_{data_type.__name__}", data_type=data_type)
 
     succeeded_action = Action(
         action_id=identifier_pb2.ActionIdentifier(
@@ -1052,17 +1052,17 @@ async def test_wait_for_event_returns_signaled_value(data_type, primitive_kwargs
                     return_value=succeeded_action,
                 ),
             ):
-                await controller.register_event(event)
-                result = await controller.wait_for_event(event)
+                await controller.register_condition(condition)
+                result = await controller.wait_for_condition(condition)
                 assert result == expected
                 assert isinstance(result, data_type)
 
 
 @pytest.mark.asyncio
-async def test_wait_for_event_returns_none_when_value_absent():
-    """wait_for_event should return None if the action succeeded without a value."""
+async def test_wait_for_condition_returns_none_when_value_absent():
+    """wait_for_condition should return None if the action succeeded without a value."""
     await flyte.init.aio()
-    event = _make_event(name="no_value", data_type=bool)
+    condition = _make_condition(name="no_value", data_type=bool)
 
     succeeded_action = Action(
         action_id=identifier_pb2.ActionIdentifier(
@@ -1091,20 +1091,20 @@ async def test_wait_for_event_returns_none_when_value_absent():
                     return_value=succeeded_action,
                 ),
             ):
-                await controller.register_event(event)
-                result = await controller.wait_for_event(event)
+                await controller.register_condition(condition)
+                result = await controller.wait_for_condition(condition)
                 assert result is None
 
 
-# ── register_event parent lineage (task_action) ──────────────────────────────
+# ── register_condition parent lineage (task_action) ──────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_register_event_parent_is_action_for_regular_task():
+async def test_register_condition_parent_is_action_for_regular_task():
     """For a regular task (no @trace), task_action defaults to action, so the condition action
     parents under tctx.action.name."""
     await flyte.init.aio()
-    event = _make_event(name="approve", data_type=bool)
+    condition = _make_condition(name="approve", data_type=bool)
 
     with patch("flyte._initialize.get_init_config") as mock_config:
         mock_config.return_value.root_dir = pathlib.Path(__file__).parent
@@ -1115,18 +1115,18 @@ async def test_register_event_parent_is_action_for_regular_task():
         with ctx.replace_task_context(tctx):
             controller = _make_controller()
             with patch.object(controller, "start_action", new_callable=AsyncMock) as mock_start:
-                await controller.register_event(event)
+                await controller.register_condition(condition)
                 action = mock_start.call_args[0][0]
                 assert action.type == "condition"
                 assert action.parent_action_name == "parent_action"
 
 
 @pytest.mark.asyncio
-async def test_register_event_reparents_to_task_action_inside_trace():
-    """When tctx.action has been swapped by @trace, a registered event must parent under
+async def test_register_condition_reparents_to_task_action_inside_trace():
+    """When tctx.action has been swapped by @trace, a registered condition must parent under
     tctx.task_action.name (the real running task), not the trace pseudo-action."""
     await flyte.init.aio()
-    event = _make_event(name="approve", data_type=bool)
+    condition = _make_condition(name="approve", data_type=bool)
 
     with patch("flyte._initialize.get_init_config") as mock_config:
         mock_config.return_value.root_dir = pathlib.Path(__file__).parent
@@ -1141,7 +1141,7 @@ async def test_register_event_reparents_to_task_action_inside_trace():
         with ctx.replace_task_context(tctx):
             controller = _make_controller()
             with patch.object(controller, "start_action", new_callable=AsyncMock) as mock_start:
-                await controller.register_event(event)
+                await controller.register_condition(condition)
                 action = mock_start.call_args[0][0]
                 assert action.type == "condition"
                 assert action.parent_action_name == "real_container_action"
