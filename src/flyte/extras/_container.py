@@ -229,11 +229,17 @@ class ContainerTask(TaskTemplate):
         if self._outputs:
             for k, output_type in self._outputs.items():
                 output_path = output_directory / k
-                if os.path.isfile(output_path):
+
+                # File/Dir outputs are rebuilt from the path, so only scalar
+                # outputs should be read back as text here.
+                if isinstance(output_type, type) and issubclass(output_type, (File, Dir)):
+                    output_val = None
+                elif os.path.isfile(output_path):
                     with output_path.open("r") as f:
                         output_val = f.read()
                 else:
                     output_val = None
+
                 parsed = await self._convert_output_val_to_correct_type(output_path, output_val, output_type)
                 output_items.append(parsed)
         # return a tuple so that each element is treated as a separate output.

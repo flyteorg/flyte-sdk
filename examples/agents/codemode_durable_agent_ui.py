@@ -1,17 +1,24 @@
-"""Durable analytics CodeModeAgent (single file + UI).
+"""Durable analytics code-mode agent (single file + UI).
 
 This is the chat-UI analogue of `examples/sandbox/codemode/durable_agent.py`,
 but kept in a single file: tools, agent, and UI environment.
 
 Key idea: define tools as ``@task_env.task`` so Monty sandbox calls dispatch as
-durable Flyte tasks. `CodeModeAgent` introspects ``TaskTemplate.func`` for
-prompt signatures + docstrings, so the prompt remains readable. The task
+durable Flyte tasks. ``Agent`` in ``code_mode`` introspects ``TaskTemplate.func``
+for prompt signatures + docstrings, so the prompt remains readable. The task
 entrypoint uses ``await agent.run.aio(...)`` because ``agent.run`` is
 synchronous by default; the chat UI calls ``run.aio`` automatically when
 routing requests through the parent task.
 
 `AgentChatAppEnvironment(..., passthrough_auth=True)` forwards gateway
 credentials so nested Flyte calls (durable tools) can execute.
+
+Structured results (summary + charts) are extracted *at the example level*: the
+core ``Agent`` in code mode returns the model's final reply as plain text, so we
+ask the model to make that reply a single JSON object and parse it in the task
+entrypoint (see ``_extract_structured_result``). Charts are passed back as small
+specs and rendered to Chart.js HTML here, avoiding round-tripping large markup
+through the LLM.
 
 Run locally::
 
@@ -22,10 +29,11 @@ from __future__ import annotations
 
 import json as _json
 import pathlib
+import re
 from typing import Any
 
 import flyte
-from flyte.ai.agents import CodeModeAgent
+from flyte.ai.agents import Agent
 from flyte.ai.chat import AgentChatAppEnvironment, CustomTheme
 
 task_env = flyte.TaskEnvironment(
@@ -91,8 +99,14 @@ async def fetch_data(dataset: str) -> list:
 
 
 @task_env.task
-async def create_chart(chart_type: str, title: str, labels: list, values: list) -> str:
-    """Generate a self-contained Chart.js HTML snippet (returned to the chat UI)."""
+async def create_chart(chart_type: str, title: str, labels: list, values: list) -> dict:
+    """Build a compact Chart.js spec for a chart.
+
+    Returns a small JSON-friendly dict (NOT raw HTML) so the agent can include it
+    verbatim in its final structured result without copying large markup through
+    the LLM. The chat entrypoint renders each spec to a self-contained Chart.js
+    snippet via ``_render_chart_html``.
+    """
     canvas_id = "chart-" + title.lower().replace(" ", "-").replace("/", "-")
 
     if values and isinstance(values[0], dict):
@@ -135,11 +149,7 @@ async def create_chart(chart_type: str, title: str, labels: list, values: list) 
         },
     }
 
-    return (
-        f'<div style="position:relative;height:350px;margin:20px 0;">'
-        f'<canvas id="{canvas_id}"></canvas></div>'
-        f"<script>new Chart(document.getElementById('{canvas_id}'),{_json.dumps(config)});</script>"
-    )
+    return {"id": canvas_id, "config": config}
 
 
 @task_env.task
@@ -220,30 +230,92 @@ async def sort_data(data: list, column: str, descending: bool = False) -> list:
     return sorted(rows, key=lambda r: r[column], reverse=descending)
 
 
+# ---------------------------------------------------------------------------
+# Example-level structured-result extraction
+#
+# Code mode returns the model's final reply as plain text (``AgentResult.summary``).
+# Rather than teach the core Agent about charts, this example asks the model to
+# make its final reply a single JSON object and parses it here.
+# ---------------------------------------------------------------------------
+
+
+def _render_chart_html(spec: dict[str, Any]) -> str:
+    """Render a compact chart spec (from ``create_chart``) to a Chart.js snippet."""
+    canvas_id = str(spec.get("id", "chart"))
+    config = spec.get("config", {})
+    return (
+        f'<div style="position:relative;height:350px;margin:20px 0;">'
+        f'<canvas id="{canvas_id}"></canvas></div>'
+        f"<script>new Chart(document.getElementById('{canvas_id}'),{_json.dumps(config)});</script>"
+    )
+
+
+def _extract_structured_result(text: str) -> tuple[str, list[str]]:
+    """Parse the agent's final reply into ``(summary_markdown, chart_html_snippets)``.
+
+    Expects a JSON object with ``summary`` and ``charts`` keys. ``charts`` entries
+    may be compact specs from ``create_chart`` (rendered here) or pre-rendered HTML
+    strings. Falls back to treating the whole reply as the summary with no charts.
+    """
+    if not text:
+        return "", []
+    candidate = text.strip()
+    fence = re.search(r"```(?:json)?\s*\n?(.*?)```", candidate, re.DOTALL)
+    if fence:
+        candidate = fence.group(1).strip()
+    else:
+        # Ignore any prose around the object by grabbing the outermost braces.
+        start, end = candidate.find("{"), candidate.rfind("}")
+        if start != -1 and end > start:
+            candidate = candidate[start : end + 1]
+    try:
+        data = _json.loads(candidate)
+    except (ValueError, TypeError):
+        return text.strip(), []
+    if not isinstance(data, dict):
+        return text.strip(), []
+    summary = str(data.get("summary") or text.strip())
+    charts: list[str] = []
+    raw = data.get("charts", [])
+    if isinstance(raw, list):
+        for entry in raw:
+            if isinstance(entry, dict):
+                charts.append(_render_chart_html(entry))
+            elif isinstance(entry, str):
+                charts.append(entry)
+    return summary, charts
+
+
 SYSTEM_PROMPT_PREFIX = """\
 You are a data analyst copilot.
 
 - Use the available functions to fetch, filter, aggregate, and chart data.
+- Build charts with create_chart(...); it returns a small chart spec — keep each one.
 - Remember Monty sandbox restrictions: no imports, no dict mutation, no augmented assignment.
-- Return a dict with keys: summary (markdown string) and charts (list of HTML snippets from create_chart).
+- When finished, reply with a SINGLE raw JSON object (do NOT wrap it in a code fence) with keys:
+  - "summary": a markdown string describing the findings.
+  - "charts": a list of the chart spec objects returned by create_chart (use [] if none).
 """
 
-agent = CodeModeAgent(
-    tools=[fetch_data, create_chart, calculate_statistics, filter_data, group_and_aggregate, sort_data],
+agent = Agent(
+    name="durable-analytics-agent",
+    instructions=SYSTEM_PROMPT_PREFIX,
     model="claude-haiku-4-5",
-    max_retries=5,
-    system_prompt_prefix=SYSTEM_PROMPT_PREFIX,
+    tools=[fetch_data, create_chart, calculate_statistics, filter_data, group_and_aggregate, sort_data],
+    code_mode=True,
+    max_turns=15,
 )
 
 
 @task_env.task(report=True)
-async def codemode_agent_task_entrypoint(message: str, history: list[dict[str, str]]) -> dict[str, object]:
-    """Entrypoint for the durable CodeModeAgent analysis inside a Flyte task."""
-    result = await agent.run.aio(message, history=history)
+async def codemode_agent_task_entrypoint(message: str, memory: list[dict[str, str]]) -> dict[str, object]:
+    """Entrypoint for the durable code-mode agent analysis inside a Flyte task."""
+    result = await agent.run.aio(message, memory=memory)
+    summary, charts = _extract_structured_result(result.summary)
     return {
         "code": result.code,
-        "charts": result.charts,
-        "summary": result.summary,
+        "charts": charts,
+        "summary": summary,
         "error": result.error,
         "attempts": result.attempts,
     }
@@ -253,7 +325,7 @@ env = AgentChatAppEnvironment(
     name="codemode-durable-analytics-ui",
     agent=agent,
     task_entrypoint=codemode_agent_task_entrypoint,
-    title="Durable analytics CodeModeAgent",
+    title="Durable analytics agent",
     subtitle="LLM-generated Monty code calling durable Flyte task tools.",
     theme=CustomTheme(accent_color="#e69812", accent_hover_color="#f2bd52", button_text_color="#0a0a0f"),
     passthrough_auth=True,
@@ -281,4 +353,4 @@ env = AgentChatAppEnvironment(
 if __name__ == "__main__":
     flyte.init_from_config(root_dir=pathlib.Path(__file__).parent)
     deployments = flyte.deploy(env)
-    print(f"Durable CodeModeAgent UI: {deployments[0].summary_repr()}")
+    print(f"Durable analytics agent UI: {deployments[0].summary_repr()}")
