@@ -342,6 +342,54 @@ class TestToTaskTrigger:
         assert result.spec.run_spec.cluster == "gpu-queue"
 
     @pytest.mark.asyncio
+    async def test_trigger_with_max_action_concurrency(self):
+        """Test trigger with max_action_concurrency"""
+        trigger = Trigger(
+            name="concurrency_trigger",
+            automation=Cron("0 0 * * *"),
+            max_action_concurrency=10,
+        )
+
+        task_inputs = interface_pb2.VariableMap()
+        task_default_inputs = []
+
+        result = await to_task_trigger(trigger, "test_task", task_inputs, task_default_inputs)
+
+        assert result.spec.run_spec.max_action_concurrency == 10
+
+    @pytest.mark.asyncio
+    async def test_trigger_max_action_concurrency_default_unset(self):
+        """When max_action_concurrency is not provided, RunSpec carries the proto default (0 = unset)"""
+        trigger = Trigger(
+            name="no_concurrency_trigger",
+            automation=Cron("0 0 * * *"),
+        )
+
+        task_inputs = interface_pb2.VariableMap()
+        task_default_inputs = []
+
+        result = await to_task_trigger(trigger, "test_task", task_inputs, task_default_inputs)
+
+        assert result.spec.run_spec.max_action_concurrency == 0
+
+    def test_trigger_rejects_negative_max_action_concurrency(self):
+        with pytest.raises(ValueError, match="max_action_concurrency"):
+            Trigger(
+                name="bad_trigger",
+                automation=Cron("0 0 * * *"),
+                max_action_concurrency=-1,
+            )
+
+    def test_trigger_rejects_max_action_concurrency_of_one(self):
+        """A value of 1 would deadlock: the parent action holds the only concurrency slot."""
+        with pytest.raises(ValueError, match="deadlock"):
+            Trigger(
+                name="bad_trigger",
+                automation=Cron("0 0 * * *"),
+                max_action_concurrency=1,
+            )
+
+    @pytest.mark.asyncio
     async def test_trigger_with_trigger_time(self):
         """Test trigger with TriggerTime input"""
         trigger = Trigger(

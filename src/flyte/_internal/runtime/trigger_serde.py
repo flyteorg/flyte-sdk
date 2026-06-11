@@ -139,6 +139,7 @@ async def to_task_trigger(
         envs=env,
         interruptible=wrappers_pb2.BoolValue(value=t.interruptible) if t.interruptible is not None else None,
         cluster=t.queue,
+        max_action_concurrency=t.max_action_concurrency or 0,
         labels=labels,
         annotations=annotations,
         notification_rule_name=notification_rule_name,
