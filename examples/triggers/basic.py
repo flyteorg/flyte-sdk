@@ -11,10 +11,10 @@ env = flyte.TaskEnvironment(
     name="example_task",
 )
 
-#
-# @env.task(triggers=flyte.Trigger.hourly())  # Every hour
-# def example_task(trigger_time: datetime, x: int = 1) -> str:
-#     return f"Task executed at {trigger_time.isoformat()} with x={x}"
+
+@env.task(triggers=flyte.Trigger.hourly())  # Every hour
+def example_task(trigger_time: datetime, x: int = 1) -> str:
+    return f"Task executed at {trigger_time.isoformat()} with x={x}"
 
 
 custom_trigger = flyte.Trigger(

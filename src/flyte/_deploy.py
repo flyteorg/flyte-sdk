@@ -257,7 +257,9 @@ async def _deploy_task(
                 task_version=task_id.version,
                 task_spec=spec,
             )
-            task_trigger.spec.offloaded_input_data.CopyFrom(offloaded_input_data)
+            if offloaded_input_data is not None:
+                task_trigger.spec.offloaded_input_data.CopyFrom(offloaded_input_data)
+            # else: zero trust off — keep the inline inputs to_task_trigger already set (pre-offload flow).
             deployable_triggers.append(task_trigger)
 
         try:

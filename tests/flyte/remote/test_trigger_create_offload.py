@@ -45,7 +45,7 @@ async def test_create_offloads_inputs_and_stores_uri():
 
     offloaded = run_pb2.OffloadedInputData(uri="s3://bucket/offloaded-inputs/abc/inputs.pb", inputs_hash="abc")
     client = MagicMock()
-    client.dataproxy_service.upload_inputs = AsyncMock(
+    client.dataproxy_service.upload_trigger = AsyncMock(
         return_value=dataproxy_service_pb2.UploadInputsResponse(offloaded_input_data=offloaded)
     )
     client.trigger_service.deploy_trigger = AsyncMock(
@@ -77,9 +77,9 @@ async def test_create_offloads_inputs_and_stores_uri():
     ):
         await Trigger.create.aio(trigger, task_name="my_task")
 
-    # 1) upload_inputs was called before deploy, targeting the task (not the not-yet-existent trigger).
-    client.dataproxy_service.upload_inputs.assert_awaited_once()
-    upload_req = client.dataproxy_service.upload_inputs.await_args[0][0]
+    # 1) upload_trigger was called before deploy, targeting the task (not the not-yet-existent trigger).
+    client.dataproxy_service.upload_trigger.assert_awaited_once()
+    upload_req = client.dataproxy_service.upload_trigger.await_args[0][0]
     assert upload_req.WhichOneof("task") == "task_id"
     assert upload_req.task_id.name == "my_task"
     assert upload_req.task_id.version == "v1"
@@ -110,7 +110,7 @@ async def test_offload_trigger_inputs_uses_task_spec_for_deploy_path():
 
     offloaded = run_pb2.OffloadedInputData(uri="s3://bucket/x/inputs.pb", inputs_hash="h")
     client = MagicMock()
-    client.dataproxy_service.upload_inputs = AsyncMock(
+    client.dataproxy_service.upload_trigger = AsyncMock(
         return_value=dataproxy_service_pb2.UploadInputsResponse(offloaded_input_data=offloaded)
     )
 
@@ -121,7 +121,7 @@ async def test_offload_trigger_inputs_uses_task_spec_for_deploy_path():
         out = await offload_trigger_inputs(inputs, org="o", project="p", domain="d", task_version="v1", task_spec=spec)
 
     assert out == offloaded
-    req = client.dataproxy_service.upload_inputs.await_args[0][0]
+    req = client.dataproxy_service.upload_trigger.await_args[0][0]
     assert req.WhichOneof("task") == "task_spec"
     assert req.WhichOneof("id") == "project_id"
     assert req.project_id.name == "p"
@@ -131,7 +131,7 @@ async def test_offload_trigger_inputs_uses_task_spec_for_deploy_path():
 async def test_offload_trigger_inputs_uses_task_id_when_named():
     offloaded = run_pb2.OffloadedInputData(uri="s3://bucket/x/inputs.pb", inputs_hash="h")
     client = MagicMock()
-    client.dataproxy_service.upload_inputs = AsyncMock(
+    client.dataproxy_service.upload_trigger = AsyncMock(
         return_value=dataproxy_service_pb2.UploadInputsResponse(offloaded_input_data=offloaded)
     )
 
@@ -140,7 +140,7 @@ async def test_offload_trigger_inputs_uses_task_id_when_named():
             common_pb2.Inputs(), org="o", project="p", domain="d", task_version="v1", task_name="my_task"
         )
 
-    req = client.dataproxy_service.upload_inputs.await_args[0][0]
+    req = client.dataproxy_service.upload_trigger.await_args[0][0]
     assert req.WhichOneof("task") == "task_id"
     assert req.task_id.name == "my_task"
     assert req.task_id.version == "v1"
@@ -150,3 +150,81 @@ async def test_offload_trigger_inputs_uses_task_id_when_named():
 async def test_offload_trigger_inputs_requires_task_reference():
     with pytest.raises(ValueError, match="task_spec or task_name"):
         await offload_trigger_inputs(common_pb2.Inputs(), org="o", project="p", domain="d", task_version="v1")
+
+
+@pytest.mark.asyncio
+async def test_offload_trigger_inputs_returns_none_on_unimplemented():
+    """Zero trust off: SelectCluster returns UNIMPLEMENTED for OPERATION_UPLOAD_TRIGGER -> None."""
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
+    client = MagicMock()
+    client.dataproxy_service.upload_trigger = AsyncMock(side_effect=ConnectError(Code.UNIMPLEMENTED, "no zero trust"))
+
+    with patch("flyte._initialize.get_client", return_value=client):
+        out = await offload_trigger_inputs(
+            common_pb2.Inputs(), org="o", project="p", domain="d", task_version="v1", task_name="my_task"
+        )
+
+    assert out is None
+
+
+@pytest.mark.asyncio
+async def test_offload_trigger_inputs_reraises_other_connect_errors():
+    """Non-UNIMPLEMENTED errors are not swallowed."""
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
+    client = MagicMock()
+    client.dataproxy_service.upload_trigger = AsyncMock(side_effect=ConnectError(Code.INTERNAL, "boom"))
+
+    with patch("flyte._initialize.get_client", return_value=client):
+        with pytest.raises(ConnectError):
+            await offload_trigger_inputs(
+                common_pb2.Inputs(), org="o", project="p", domain="d", task_version="v1", task_name="my_task"
+            )
+
+
+@pytest.mark.asyncio
+async def test_create_falls_back_to_inline_inputs_when_unimplemented():
+    """When offload is unavailable, Trigger.create registers inline inputs instead of an offloaded URI."""
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
+    cfg = MagicMock(org="o", project="p", domain="d")
+    client = MagicMock()
+    client.dataproxy_service.upload_trigger = AsyncMock(side_effect=ConnectError(Code.UNIMPLEMENTED, "no zero trust"))
+    client.trigger_service.deploy_trigger = AsyncMock(
+        return_value=trigger_service_pb2.DeployTriggerResponse(
+            trigger=trigger_definition_pb2.TriggerDetails(
+                id=identifier_pb2.TriggerIdentifier(
+                    name=identifier_pb2.TriggerName(name="t", task_name="my_task", org="o", project="p", domain="d")
+                )
+            )
+        )
+    )
+
+    lazy = MagicMock()
+    lazy.fetch.aio = AsyncMock(return_value=_task_details(version="v1"))
+
+    trigger = flyte.Trigger(
+        name="t",
+        automation=flyte.Cron("0 0 * * *"),
+        inputs={"start_time": flyte.TriggerTime, "x": 7},
+    )
+
+    with (
+        patch("flyte.remote._trigger.ensure_client"),
+        patch("flyte.remote._trigger.get_init_config", return_value=cfg),
+        patch("flyte.remote._trigger.get_client", return_value=client),
+        patch("flyte._initialize.get_client", return_value=client),
+        patch("flyte.remote._trigger.Task.get", return_value=lazy),
+    ):
+        await Trigger.create.aio(trigger, task_name="my_task")
+
+    deploy_req = client.trigger_service.deploy_trigger.await_args.kwargs["request"]
+    spec = deploy_req.spec
+    # Inline inputs, not an offloaded URI.
+    assert spec.WhichOneof("input_wrapper") == "inputs"
+    lit_names = {lit.name for lit in spec.inputs.literals}
+    assert "x" in lit_names

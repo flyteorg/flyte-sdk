@@ -166,6 +166,17 @@ class Trigger(ToJSONMixin):
             task_version=task.version,
         )
 
+        spec = trigger_definition_pb2.TriggerSpec(
+            active=task_trigger.spec.active,
+            run_spec=task_trigger.spec.run_spec,
+            task_version=task.version,
+        )
+        if offloaded_input_data is not None:
+            spec.offloaded_input_data.CopyFrom(offloaded_input_data)
+        else:
+            # Zero trust not enabled on the backend: register with inline inputs (pre-offload flow).
+            spec.inputs.CopyFrom(task_trigger.spec.inputs)
+
         resp = await get_client().trigger_service.deploy_trigger(
             request=trigger_service_pb2.DeployTriggerRequest(
                 name=identifier_pb2.TriggerName(
@@ -175,12 +186,7 @@ class Trigger(ToJSONMixin):
                     project=cfg.project,
                     domain=cfg.domain,
                 ),
-                spec=trigger_definition_pb2.TriggerSpec(
-                    active=task_trigger.spec.active,
-                    offloaded_input_data=offloaded_input_data,
-                    run_spec=task_trigger.spec.run_spec,
-                    task_version=task.version,
-                ),
+                spec=spec,
                 automation_spec=task_trigger.automation_spec,
             )
         )
