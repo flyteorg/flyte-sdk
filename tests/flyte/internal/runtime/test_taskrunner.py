@@ -1,11 +1,23 @@
+"""Tests for taskrunner behavior.
+
+Covers two independent pieces:
+- `_inject_kickoff_time_from_run_start`: writing the run start time into the kickoff-bound input.
+- `run_task`: the `controller` argument is optional. Clustered/jobset tasks run with no controller
+  (they never enqueue subtasks); the only controller touchpoint on the leaf path is
+  `finalize_parent_action`, which must be skipped when there is none.
+"""
+
+import asyncio
 from datetime import datetime, timezone
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 from flyteidl2.core import literals_pb2
 from flyteidl2.task import common_pb2
 from google.protobuf import timestamp_pb2
 
 from flyte._internal.runtime.convert import Inputs
-from flyte._internal.runtime.taskrunner import _inject_kickoff_time_from_run_start
+from flyte._internal.runtime.taskrunner import _inject_kickoff_time_from_run_start, run_task
 from flyte._internal.runtime.trigger_serde import KICKOFF_TIME_INPUT_ARG_CONTEXT_KEY
 
 RUN_START = datetime(2026, 6, 4, 12, 0, tzinfo=timezone.utc)
@@ -89,3 +101,23 @@ def test_inject_kickoff_time_normalizes_non_utc_to_utc():
     out = _inject_kickoff_time_from_run_start(inputs, plus_two)
     got = out.proto_inputs.literals[0].value.scalar.primitive.datetime.ToDatetime(tzinfo=timezone.utc)
     assert got == RUN_START
+
+
+class _FakeTask:
+    async def execute(self, **kwargs):
+        return {"out": 1}
+
+
+def test_run_task_without_controller_skips_finalize():
+    tctx = SimpleNamespace(action="act-1")
+    out, err = asyncio.run(run_task(tctx=tctx, controller=None, task=_FakeTask(), inputs={}))
+    assert err is None
+    assert out == {"out": 1}
+
+
+def test_run_task_with_controller_finalizes():
+    tctx = SimpleNamespace(action="act-1")
+    controller = AsyncMock()
+    _out, err = asyncio.run(run_task(tctx=tctx, controller=controller, task=_FakeTask(), inputs={}))
+    assert err is None
+    controller.finalize_parent_action.assert_awaited_once_with("act-1")

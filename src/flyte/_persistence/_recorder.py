@@ -36,24 +36,25 @@ class RunRecorder:
         return None
 
     # ------------------------------------------------------------------
-    # Event waiting (called by LocalController for TUI interaction)
+    # Condition waiting (called by LocalController for TUI interaction)
     # ------------------------------------------------------------------
 
-    def record_event_waiting(
+    def record_condition_waiting(
         self,
         *,
         action_id: str,
-        event_name: str,
+        condition_name: str,
         prompt: str,
         prompt_type: str,
         data_type: type,
         description: str = "",
     ) -> Any:
-        """Record that an action is waiting for an event. Returns PendingEvent if tracker is present, else None."""
+        """Record that an action is waiting for a condition. Returns PendingCondition if tracker is present,
+        else None."""
         if self._tracker is not None:
-            return self._tracker.record_event_waiting(
+            return self._tracker.record_condition_waiting(
                 action_id=action_id,
-                event_name=event_name,
+                condition_name=condition_name,
                 prompt=prompt,
                 prompt_type=prompt_type,
                 data_type=data_type,

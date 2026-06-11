@@ -213,7 +213,7 @@ async def load_and_run_task(
     output_path: str,
     run_base_dir: str,
     version: str,
-    controller: Controller,
+    controller: Optional[Controller],
     resolver: str,
     resolver_args: List[str],
     checkpoint_paths: CheckpointPaths | None = None,

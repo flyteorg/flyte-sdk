@@ -314,6 +314,55 @@ class TaskContext:
         """
         return int(os.environ.get("FLYTE_ATTEMPT_NUMBER", "0"))
 
+    # ------------------------------------------------------------------
+    # Distributed / clustered fields — all None on non-clustered tasks.
+    # Set by torchrun in the child-process environment before a0 runs.
+    # ------------------------------------------------------------------
+
+    @property
+    def rank(self) -> Optional[int]:
+        v = os.environ.get("RANK")
+        return int(v) if v is not None else None
+
+    @property
+    def local_rank(self) -> Optional[int]:
+        v = os.environ.get("LOCAL_RANK")
+        return int(v) if v is not None else None
+
+    @property
+    def world_size(self) -> Optional[int]:
+        v = os.environ.get("WORLD_SIZE")
+        return int(v) if v is not None else None
+
+    @property
+    def local_world_size(self) -> Optional[int]:
+        v = os.environ.get("LOCAL_WORLD_SIZE")
+        return int(v) if v is not None else None
+
+    @property
+    def node_rank(self) -> Optional[int]:
+        v = os.environ.get("NODE_RANK")
+        return int(v) if v is not None else None
+
+    @property
+    def nnodes(self) -> Optional[int]:
+        v = os.environ.get("NNODES")
+        return int(v) if v is not None else None
+
+    @property
+    def master_addr(self) -> Optional[str]:
+        return os.environ.get("MASTER_ADDR")
+
+    @property
+    def master_port(self) -> Optional[int]:
+        v = os.environ.get("MASTER_PORT")
+        return int(v) if v is not None else None
+
+    @property
+    def restart_attempt(self) -> Optional[int]:
+        v = os.environ.get("JOBSET_RESTART_ATTEMPT")
+        return int(v) if v is not None else None
+
 
 @rich.repr.auto
 @dataclass(frozen=True, kw_only=True)

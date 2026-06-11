@@ -87,7 +87,7 @@ def replace_task_cli(args: List[str], inputs: Inputs, tmp_path: pathlib.Path, ac
 
 @log
 async def run_task(
-    tctx: TaskContext, controller: Controller, task: TaskTemplate, inputs: Dict[str, Any]
+    tctx: TaskContext, controller: Optional[Controller], task: TaskTemplate, inputs: Dict[str, Any]
 ) -> Tuple[Any, Optional[Exception]]:
     try:
         logger.info(f"Parent task executing {tctx.action}")
@@ -108,8 +108,10 @@ async def run_task(
         return {}, CustomError.from_exception(e)
     finally:
         logger.info(f"Parent task finalized {tctx.action}")
-        # reconstruct run id here
-        await controller.finalize_parent_action(tctx.action)
+        # reconstruct run id here. Clustered/jobset tasks run with no controller (they never
+        # enqueue subtasks), so there is nothing to finalize.
+        if controller is not None:
+            await controller.finalize_parent_action(tctx.action)
 
 
 def _inject_kickoff_time_from_run_start(inputs: Inputs, run_start_time: datetime) -> Inputs:
@@ -161,7 +163,7 @@ async def convert_and_run(
     *,
     task: TaskTemplate,
     action: ActionID,
-    controller: Controller,
+    controller: Optional[Controller],
     raw_data_path: RawDataPath,
     version: str,
     output_path: str,
@@ -248,7 +250,7 @@ async def extract_download_run_upload(
     task: TaskTemplate,
     *,
     action: ActionID,
-    controller: Controller,
+    controller: Optional[Controller],
     raw_data_path: RawDataPath,
     output_path: str,
     run_base_dir: str,
