@@ -164,12 +164,21 @@ def create_bundle(
                 # entry shouldn't abort the entire bundle.
                 logger.warning(f"Skipping {ws_file}: resolves outside source root {abs_source}")
                 continue
-            tar.add(
-                os.path.join(source, ws_file),
-                recursive=False,
-                arcname=rel_path,
-                filter=tar_strip_file_attributes,
-            )
+            try:
+                tar.add(
+                    os.path.join(source, ws_file),
+                    recursive=False,
+                    arcname=rel_path,
+                    filter=tar_strip_file_attributes,
+                )
+            except FileNotFoundError:
+                # The file list (``ls``) is computed by walking the source tree, but a
+                # file can vanish between listing and ``tar.add`` stat-ing it — most
+                # commonly transient artifacts like lock files (e.g.
+                # ".codegraph/codegraph.lock", FLYTE-SDK-52). A disappearing file is an
+                # environment race, not an SDK bug, and shouldn't abort the whole bundle.
+                logger.warning(f"Skipping {ws_file}: vanished before it could be added to the code bundle")
+                continue
 
     size_mbs = tar_path.stat().st_size / 1024 / 1024
     _compress_tarball(tar_path, archive_fname)
