@@ -4,6 +4,8 @@ It uses the storage module to handle the actual uploading and downloading of fil
 
 """
 
+import os
+
 from flyteidl2.core import execution_pb2
 from flyteidl2.task import common_pb2
 
@@ -20,6 +22,16 @@ _CHECKPOINT_FILE_NAME = "_flytecheckpoints"
 _ERROR_FILE_NAME = "error.pb"
 _REPORT_FILE_NAME = "report.html"
 _PKL_EXT = ".pkl.gz"
+
+
+def _is_nonzero_rank_clustered_worker() -> bool:
+    """True only for a non-rank-0 process of a clustered/jobset task.
+
+    torchrun sets both ``TORCHELASTIC_RUN_ID`` and ``RANK`` on every worker, so we gate on the
+    torchrun marker rather than ``RANK`` alone — otherwise a regular Python task that happens to
+    have ``RANK`` set in its environment would silently skip uploading its outputs/errors.
+    """
+    return bool(os.environ.get("TORCHELASTIC_RUN_ID")) and os.environ.get("RANK", "0") != "0"
 
 
 def pkl_path(base_path: str, pkl_name: str) -> str:
@@ -59,6 +71,9 @@ async def upload_outputs(outputs: Outputs, output_path: str, max_bytes: int = -1
     :param output_path: The path to upload the output file.
     :param max_bytes: Maximum number of bytes to write to the output file. Default is -1, which means no limit.
     """
+    # In clustered tasks, only rank-0 owns the output; all other ranks skip upload.
+    if _is_nonzero_rank_clustered_worker():
+        return
     if max_bytes != -1 and outputs.proto_outputs.ByteSize() > max_bytes:
         import flyte.errors
 
@@ -77,6 +92,11 @@ async def upload_error(err: execution_pb2.ExecutionError, output_prefix: str, re
     :param output_prefix: The output prefix of the remote uri.
     :param recoverable: If False, sets ContainerError.kind to NON_RECOVERABLE so the engine skips retries.
     """
+    error_uri = error_path(output_prefix)
+    # In clustered tasks, only rank-0 owns the error file; other ranks skip the write
+    # so they don't race to clobber error.pb.
+    if _is_nonzero_rank_clustered_worker():
+        return error_uri
     error_document = execution_pb2.ErrorDocument(
         error=execution_pb2.ContainerError(
             code=err.code,
@@ -87,7 +107,6 @@ async def upload_error(err: execution_pb2.ExecutionError, output_prefix: str, re
             origin=err.kind,
         )
     )
-    error_uri = error_path(output_prefix)
     return await storage.put_stream(data_iterable=error_document.SerializeToString(), to_path=error_uri)
 
 
