@@ -369,6 +369,33 @@ def test_capture_exception_skips_connect_error_deadline_exceeded_wrapped_as_syst
     init_mock.assert_not_called()
 
 
+def test_capture_exception_skips_connect_error_unimplemented_wrapped_as_system_error():
+    """FLYTE-SDK-4F: a raw HTTP 404 from the control-plane ingress surfaces as
+    ConnectError(UNIMPLEMENTED, "Not Found") (connect maps 404 → UNIMPLEMENTED,
+    not NOT_FOUND) wrapped through RuntimeError("SelectCluster failed...") ->
+    RuntimeSystemError("Upload failed..."). The endpoint is wrong or the backend
+    doesn't serve that RPC — not an SDK bug, so it shouldn't be crash-reported."""
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
+    from flyte.errors import RuntimeSystemError
+
+    try:
+        try:
+            try:
+                raise ConnectError(Code.UNIMPLEMENTED, "Not Found")
+            except ConnectError as ce:
+                raise RuntimeError(f"SelectCluster failed for operation=1: {ce}") from ce
+        except RuntimeError:
+            raise RuntimeSystemError("RuntimeError", "Upload failed for /tmp/x/spec.pb (org='apple', ...): Not Found")
+    except RuntimeSystemError as e:
+        err = e
+
+    with mock.patch.object(_sentry, "init") as init_mock:
+        _sentry.capture_exception(err)
+    init_mock.assert_not_called()
+
+
 def _wrap_as_upload_system_error(inner: BaseException):
     """Reproduce the flyte.remote._data shape: the real network failure is wrapped
     in RuntimeError('SelectCluster failed...') -> RuntimeSystemError('Failed to

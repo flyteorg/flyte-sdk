@@ -87,6 +87,11 @@ _USER_ACTIONABLE_CONNECT_CODES: frozenset[str] = frozenset(
         "INVALID_ARGUMENT",
         "NOT_FOUND",
         "ALREADY_EXISTS",
+        # Endpoint/version skew — the control-plane route the SDK called isn't
+        # served (HTTP 404 → connect maps to UNIMPLEMENTED, not NOT_FOUND). This
+        # is a wrong endpoint / incompatible backend version / misrouted ingress,
+        # never a Python-SDK logic bug, so the SDK can't recover from it.
+        "UNIMPLEMENTED",
         # Transient infra / availability problems — DNS lookup failed, TCP
         # connect refused, connection reset, request timed out. The SDK
         # cannot recover from these, so they shouldn't be crash-reported.
@@ -108,6 +113,10 @@ def _is_user_actionable_connect_error(exc: BaseException) -> bool:
       lookup failures, TCP connect refused, connection reset, request timed out
       against the cluster service. These are not SDK bugs; INTERNAL is
       intentionally NOT filtered because it can indicate a real bug.
+    * Endpoint/version skew (UNIMPLEMENTED) — a raw HTTP 404 from the ingress or
+      a missing control-plane route (connect maps 404 → UNIMPLEMENTED). The
+      endpoint config is wrong or the backend doesn't serve that RPC; the SDK
+      can't recover (FLYTE-SDK-4F: SelectCluster "Not Found" → RuntimeSystemError).
 
     Code paths outside the CLI (capture_exception in _run.py, capture_errors on
     deploy) surface RuntimeSystemError wrappers whose cause chain still
