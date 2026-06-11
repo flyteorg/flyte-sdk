@@ -256,6 +256,38 @@ def action(
 @get.command(cls=common.CommandBase)
 @click.argument("run_name", type=str, required=True)
 @click.argument("action_name", type=str, required=False)
+@click.pass_obj
+def condition(
+    cfg: common.CLIConfig,
+    run_name: str,
+    action_name: str | None = None,
+    project: str | None = None,
+    domain: str | None = None,
+):
+    """
+    List conditions (paused condition actions) for a run, optionally filtered to a
+    specific parent action.
+
+    Each condition corresponds to a condition action registered via
+    ``flyte.new_condition(...)`` from a workflow. Use ``flyte signal condition`` to
+    resolve one.
+    """
+    cfg.init(project=project, domain=domain)
+
+    console = common.get_console()
+    title = f"Conditions for {run_name}.{action_name}" if action_name else f"Conditions for {run_name}"
+    console.print(
+        common.format(
+            title,
+            remote.Condition.listall(run_name=run_name, action_name=action_name),
+            cfg.output_format,
+        )
+    )
+
+
+@get.command(cls=common.CommandBase)
+@click.argument("run_name", type=str, required=True)
+@click.argument("action_name", type=str, required=False)
 @click.option("--lines", "-l", type=int, default=30, help="Number of lines to show, only useful for --pretty")
 @click.option("--show-ts", is_flag=True, help="Show timestamps")
 @click.option(

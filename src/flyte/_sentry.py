@@ -5,6 +5,7 @@ Initializes Sentry with a hardcoded DSN to report errors from CLI commands
 (e.g., `flyte start demo`). Users can opt out by setting FLYTE_DISABLE_SENTRY=true.
 """
 
+import errno
 import logging
 import os
 
@@ -77,6 +78,114 @@ def _iter_cause_chain(exc: BaseException):
         depth += 1
 
 
+_USER_ACTIONABLE_CONNECT_CODES: frozenset[str] = frozenset(
+    {
+        # User/config problems — backend rejects the request as invalid.
+        "UNAUTHENTICATED",
+        "PERMISSION_DENIED",
+        "FAILED_PRECONDITION",
+        "INVALID_ARGUMENT",
+        "NOT_FOUND",
+        "ALREADY_EXISTS",
+        # Transient infra / availability problems — DNS lookup failed, TCP
+        # connect refused, connection reset, request timed out. The SDK
+        # cannot recover from these, so they shouldn't be crash-reported.
+        "UNAVAILABLE",
+        "DEADLINE_EXCEEDED",
+    }
+)
+
+
+def _is_user_actionable_connect_error(exc: BaseException) -> bool:
+    """ConnectError responses the SDK cannot recover from.
+
+    Two flavors live in the same filter set:
+
+    * User/config problems (UNAUTHENTICATED, PERMISSION_DENIED, INVALID_ARGUMENT, …)
+      — the backend rejects the request as invalid; the CLI's InvokeBaseMixin
+      (flyte/cli/_common.py) already maps these to ClickException.
+    * Transient infrastructure problems (UNAVAILABLE, DEADLINE_EXCEEDED) — DNS
+      lookup failures, TCP connect refused, connection reset, request timed out
+      against the cluster service. These are not SDK bugs; INTERNAL is
+      intentionally NOT filtered because it can indicate a real bug.
+
+    Code paths outside the CLI (capture_exception in _run.py, capture_errors on
+    deploy) surface RuntimeSystemError wrappers whose cause chain still
+    terminates in a ConnectError, and those leak into Sentry as if they were
+    SDK bugs. The cause-chain walk in _is_user_error catches them here.
+    """
+    try:
+        from connectrpc.errors import ConnectError
+    except ImportError:
+        return False
+    if not isinstance(exc, ConnectError):
+        return False
+    code = getattr(exc, "code", None)
+    return getattr(code, "name", None) in _USER_ACTIONABLE_CONNECT_CODES
+
+
+_USER_ENVIRONMENT_OSERROR_ERRNOS: frozenset[int] = frozenset({errno.ENOSPC})
+
+
+def _is_user_environment_oserror(exc: BaseException) -> bool:
+    """OSError variants caused by the user's local environment, not SDK bugs.
+
+    ENOSPC ("No space left on device") surfaces from shutil._fastcopy_sendfile
+    during `flyte deploy` bundle uploads when the user's machine is out of disk
+    (FLYTE-SDK-32). Disk-full is a user environment problem, not something the
+    SDK can fix, so it shouldn't be reported as a crash.
+    """
+    if not isinstance(exc, OSError):
+        return False
+    return exc.errno in _USER_ENVIRONMENT_OSERROR_ERRNOS
+
+
+def _is_transient_network_error(exc: BaseException) -> bool:
+    """Transient network / connectivity failures, not SDK bugs.
+
+    The `flyte deploy`/`flyte run` upload path (flyte.remote._data) reaches the
+    cluster service (SelectCluster) and then PUTs the bundle to a signed object
+    store URL. Both legs ride the user's network, so flaky links, VPN drops,
+    refused/reset connections and request timeouts surface here as
+    RuntimeSystemError wrappers whose cause chain terminates in a timeout or a
+    transport-level connection error. None of those are something the SDK can
+    fix, so they shouldn't be reported as crashes. Covers, among others:
+
+    - FLYTE-SDK-29: SelectCluster ``TimeoutError`` ("Request timed out")
+    - FLYTE-SDK-47: builtin ``ConnectionError`` ("Connection refused")
+    - FLYTE-SDK-3W: ``httpx.WriteError`` ("Connection reset by peer")
+    - FLYTE-SDK-36: ``httpx.ReadError`` during the signed-URL upload
+    - FLYTE-SDK-4M: ``httpx.RemoteProtocolError`` ("Server disconnected without
+      sending a response") — the object store dropped the PUT mid-flight
+
+    Transient ConnectError status codes (DEADLINE_EXCEEDED / UNAVAILABLE) are
+    handled by ``_is_user_actionable_connect_error`` and intentionally not
+    duplicated here. INTERNAL / UNKNOWN stay reported — they can signal a real
+    backend bug worth tracking.
+    """
+    # Builtin timeouts (asyncio.TimeoutError and socket.timeout are both aliases
+    # of TimeoutError on 3.11+) and connection errors (ConnectionRefused/Reset/
+    # Aborted/BrokenPipe) are all OSError subclasses raised by the network stack,
+    # never by SDK logic.
+    if isinstance(exc, (TimeoutError, ConnectionError)):
+        return True
+
+    # httpx transport failures from the signed-URL PUT. TimeoutException and
+    # NetworkError are the two transport-error families (ConnectTimeout,
+    # ReadTimeout, ReadError, WriteError, ConnectError, PoolTimeout, ...).
+    # RemoteProtocolError (a ProtocolError, not a NetworkError) is the server
+    # hanging up mid-response. None are OSError subclasses, so check explicitly.
+    try:
+        import httpx
+
+        if isinstance(exc, (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError)):
+            return True
+    except ImportError:
+        pass
+
+    return False
+
+
 def _is_user_error(exc: BaseException) -> bool:
     """Errors raised intentionally as user-facing messages — not crash reports."""
     try:
@@ -109,11 +218,15 @@ def _is_user_error(exc: BaseException) -> bool:
         auth_user_exc = ()
 
     user_excs = click_user_exc + flyte_user_exc + auth_user_exc
-    if not user_excs:
-        return False
 
     for cause in _iter_cause_chain(exc):
-        if isinstance(cause, user_excs):
+        if user_excs and isinstance(cause, user_excs):
+            return True
+        if _is_user_actionable_connect_error(cause):
+            return True
+        if _is_user_environment_oserror(cause):
+            return True
+        if _is_transient_network_error(cause):
             return True
     return False
 

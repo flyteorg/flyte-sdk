@@ -500,6 +500,10 @@ def pod_spec_from_resources(
         for resource in fields(resources):
             resource_value = getattr(resources, resource.name)
             if resource_value is not None:
+                if resource.name == "gpu":
+                    device = resources.get_device()
+                    if device is not None:
+                        resource_value = str(device.quantity)
                 k8s_pod_resources[resources_map[resource.name]] = resource_value
 
         return k8s_pod_resources

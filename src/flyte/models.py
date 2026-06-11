@@ -219,6 +219,10 @@ class TaskContext:
     :param run_start_time: UTC datetime at which the parent run was triggered. Populated by the backend via the
       ``{{.runStartTime}}`` template; defaults to ``datetime.now(timezone.utc)`` when not supplied so local runs
       always have a value.
+    :param task_action: The action ID of the real task running in this container. Unlike ``action`` — which
+      ``@trace`` swaps out for a per-trace pseudo-action — this stays pinned to the running task for the whole
+      execution. Defaults to ``action`` when not given. Used as ``parent_action_name`` when submitting trace
+      records, so trace bookkeeping nests under the real running task — not the outer trace's pseudo-action.
     """
 
     action: ActionID
@@ -241,6 +245,13 @@ class TaskContext:
     #: Type transformers should omit non-essential side effects (e.g. duplicate HTML tabs) when set.
     in_driver_literal_conversion: bool = False
     run_start_time: Optional[datetime] = field(default_factory=lambda: datetime.now(timezone.utc))
+    task_action: ActionID | None = None
+
+    def __post_init__(self):
+        # Pin task_action to the running task's action by default. @trace swaps `action` per trace scope,
+        # but task_action must keep pointing at the real running task; replace() copies it across those swaps.
+        if self.task_action is None:
+            object.__setattr__(self, "task_action", self.action)
 
     def replace(self, **kwargs) -> TaskContext:
         if "data" in kwargs:
@@ -302,6 +313,55 @@ class TaskContext:
         :return: The attempt number.
         """
         return int(os.environ.get("FLYTE_ATTEMPT_NUMBER", "0"))
+
+    # ------------------------------------------------------------------
+    # Distributed / clustered fields — all None on non-clustered tasks.
+    # Set by torchrun in the child-process environment before a0 runs.
+    # ------------------------------------------------------------------
+
+    @property
+    def rank(self) -> Optional[int]:
+        v = os.environ.get("RANK")
+        return int(v) if v is not None else None
+
+    @property
+    def local_rank(self) -> Optional[int]:
+        v = os.environ.get("LOCAL_RANK")
+        return int(v) if v is not None else None
+
+    @property
+    def world_size(self) -> Optional[int]:
+        v = os.environ.get("WORLD_SIZE")
+        return int(v) if v is not None else None
+
+    @property
+    def local_world_size(self) -> Optional[int]:
+        v = os.environ.get("LOCAL_WORLD_SIZE")
+        return int(v) if v is not None else None
+
+    @property
+    def node_rank(self) -> Optional[int]:
+        v = os.environ.get("NODE_RANK")
+        return int(v) if v is not None else None
+
+    @property
+    def nnodes(self) -> Optional[int]:
+        v = os.environ.get("NNODES")
+        return int(v) if v is not None else None
+
+    @property
+    def master_addr(self) -> Optional[str]:
+        return os.environ.get("MASTER_ADDR")
+
+    @property
+    def master_port(self) -> Optional[int]:
+        v = os.environ.get("MASTER_PORT")
+        return int(v) if v is not None else None
+
+    @property
+    def restart_attempt(self) -> Optional[int]:
+        v = os.environ.get("JOBSET_RESTART_ATTEMPT")
+        return int(v) if v is not None else None
 
 
 @rich.repr.auto

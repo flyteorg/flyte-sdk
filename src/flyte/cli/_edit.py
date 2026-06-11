@@ -118,11 +118,7 @@ def settings(cfg: common.CLIConfig, project: str | None, domain: str | None, fro
 
     console = common.Console()
 
-    try:
-        settings = remote.Settings.get_settings_for_edit(project=project, domain=domain)
-    except Exception as e:
-        console.print(f"[red]Error fetching settings:[/red] {e}")
-        raise click.Abort
+    settings = remote.Settings.get_settings_for_edit(project=project, domain=domain)
 
     # -------------------- non-interactive path -----------------------------
     if from_file is not None:

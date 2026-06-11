@@ -44,7 +44,6 @@ class _Shell:
     retries: int = 0
     timeout: int | None = None
     cache: str = "auto"
-    block_network: bool = False
     env_vars: dict[str, str] | None = None
     secrets: list | None = None
     local_logs: bool = True
@@ -102,15 +101,30 @@ class _Shell:
         ]
         mkdir_preamble = "; ".join(mkdirs) + ";" if mkdirs else ""
 
-        debug_preamble = ""
+        # Emit debug diagnostics to real stderr, outside the captured stderr
+        # redirect, so they are visible in local and remote task logs.
+        debug_pre = ""
+        debug_post = ""
         if self.debug:
-            debug_preamble = f"echo \"--- shell task: rendered script ---\" >&2; cat <<'_EOF_' >&2\n{body}\n_EOF_\n"
+            qin = shlex.quote(str(self.input_data_dir))
+            debug_pre = (
+                f'echo "--- shell task {self.name!r}: staged inputs ({self.input_data_dir}) ---" >&2; '
+                f"ls -la {qin} >&2 || true; "
+                f'echo "--- shell task {self.name!r}: rendered command ---" >&2; '
+                f"cat <<'_FLYTE_SHELL_DEBUG_' >&2\n{body}\n_FLYTE_SHELL_DEBUG_\n"
+            )
+            debug_post = (
+                f'echo "--- shell task {self.name!r}: captured stdout ---" >&2; cat {stdout_target} >&2 || true; '
+                f'echo "--- shell task {self.name!r}: captured stderr ---" >&2; cat {stderr_target} >&2 || true; '
+            )
 
         wrapped = (
             f"{mkdir_preamble} "
+            f"{debug_pre}"
             "set -o pipefail; "
-            f"( {debug_preamble}{body} ) > {stdout_target} 2> {stderr_target}; "
+            f"( {body} ) > {stdout_target} 2> {stderr_target}; "
             "_rc=$?; "
+            f"{debug_post}"
             f"echo $_rc > {self.output_data_dir / '_returncode'}; "
             "exit $_rc"
         )
@@ -250,7 +264,6 @@ class _ShellContainerTask(ContainerTask):
             retries=shell.retries,
             timeout=shell.timeout,
             cache=shell.cache,
-            block_network=shell.block_network,
             env_vars=shell.env_vars,
             secrets=shell.secrets,
             local_logs=shell.local_logs,
@@ -373,7 +386,6 @@ def create(
     retries: int = 0,
     timeout: int | None = None,
     cache: str = "auto",
-    block_network: bool = False,
     env_vars: dict[str, str] | None = None,
     secrets: list | None = None,
     local_logs: bool = True,
@@ -491,7 +503,7 @@ def create(
         shell: Shell binary to use. Defaults to ``/bin/bash``.
         debug: If True, container prints the rendered script to stderr
             before running. Invaluable when authoring a new wrapper.
-        resources, retries, timeout, cache, block_network, env_vars,
+        resources, retries, timeout, cache, env_vars,
             secrets: Standard task knobs forwarded to ContainerTask.
         local_logs: When ``True`` (default), the rendered command and the
             container's captured stdout/stderr are emitted through the
@@ -584,7 +596,6 @@ def create(
         retries=retries,
         timeout=timeout,
         cache=cache,
-        block_network=block_network,
         env_vars=env_vars,
         secrets=secrets,
         local_logs=local_logs,

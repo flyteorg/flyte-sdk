@@ -1,22 +1,25 @@
 from __future__ import annotations
 
+import functools
 import json
 from typing import Any, Awaitable, Callable, ClassVar
 
 from rich.text import Text
-from textual import events
+from textual import events, on
 from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
-from textual.containers import Horizontal, VerticalScroll
+from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.message import Message
 from textual.reactive import reactive
-from textual.widgets import Footer, Header, RichLog, Static, TabbedContent, TabPane, Tree
+from textual.widgets import Button, Footer, Header, Input, Markdown, RichLog, Static, TabbedContent, TabPane, Tree
 from textual.widgets.tree import TreeNode
 from textual.worker import Worker, WorkerState
 
-from ._tracker import ActionNode, ActionStatus, ActionTracker
+from ._tracker import ActionNode, ActionStatus, ActionTracker, PendingCondition
 
 _STATUS_ICON = {
     ActionStatus.RUNNING: ("●", "dodger_blue1"),
+    ActionStatus.PAUSED: ("⏸", "yellow"),
     ActionStatus.SUCCEEDED: ("✓", "green"),
     ActionStatus.FAILED: ("✗", "red"),
 }
@@ -129,6 +132,14 @@ class ActionTreeWidget(Tree[str]):
             if action is not None:
                 tree_node.set_label(_label(action, children))
 
+    def focus_action(self, action_id: str) -> bool:
+        """Move the cursor to *action_id*'s tree node. Returns True on success."""
+        tree_node = self._node_map.get(action_id)
+        if tree_node is None:
+            return False
+        self.move_cursor(tree_node)
+        return True
+
     def _sync_node(
         self,
         action_id: str,
@@ -167,6 +178,146 @@ class _DetailBox(Static):
         super().__init__(*args, **kwargs)
 
 
+class ConditionInputPanel(Vertical):
+    """Interactive panel shown when a task is paused waiting for a condition."""
+
+    DEFAULT_CSS = """
+    ConditionInputPanel {
+        height: auto;
+        padding: 1;
+    }
+    ConditionInputPanel .condition-prompt {
+        margin-bottom: 1;
+    }
+    ConditionInputPanel .condition-description {
+        color: $text-muted;
+        margin-bottom: 1;
+    }
+    ConditionInputPanel .condition-buttons {
+        height: auto;
+        layout: horizontal;
+    }
+    ConditionInputPanel .condition-buttons Button {
+        margin-right: 1;
+    }
+    ConditionInputPanel .condition-input-row {
+        height: auto;
+        layout: horizontal;
+    }
+    ConditionInputPanel .condition-input-row Input {
+        width: 1fr;
+        margin-right: 1;
+    }
+    ConditionInputPanel .condition-validation-error {
+        color: red;
+        height: auto;
+    }
+    """
+
+    class Submitted(Message):
+        """Posted when the user submits a value for a pending condition."""
+
+        def __init__(self, action_id: str, value: Any) -> None:
+            super().__init__()
+            self.action_id = action_id
+            self.value = value
+
+    def __init__(self, pending: PendingCondition, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._pending = pending
+
+    def compose(self) -> ComposeResult:
+        pc = self._pending
+        if pc.description:
+            yield Static(pc.description, classes="condition-description")
+
+        if pc.prompt_type == "markdown":
+            yield Markdown(pc.prompt, classes="condition-prompt")
+        else:
+            yield Static(pc.prompt, classes="condition-prompt")
+
+        if pc.data_type is bool:
+            with Horizontal(classes="condition-buttons"):
+                yield Button("Yes", id="condition-yes", variant="success")
+                yield Button("No", id="condition-no", variant="error")
+        else:
+            type_name = pc.data_type.__name__
+            with Horizontal(classes="condition-input-row"):
+                yield Input(placeholder=f"Enter a {type_name} value...", id="condition-input")
+                yield Button("Submit", id="condition-submit", variant="primary")
+            yield Static("", id="condition-validation-error", classes="condition-validation-error")
+
+    @on(Button.Pressed, "#condition-yes")
+    def _on_yes(self) -> None:
+        self.post_message(self.Submitted(self._pending.action_id, True))
+
+    @on(Button.Pressed, "#condition-no")
+    def _on_no(self) -> None:
+        self.post_message(self.Submitted(self._pending.action_id, False))
+
+    @on(Button.Pressed, "#condition-submit")
+    def _on_submit(self) -> None:
+        self._try_submit()
+
+    @on(Input.Submitted, "#condition-input")
+    def _on_input_submitted(self) -> None:
+        self._try_submit()
+
+    def _try_submit(self) -> None:
+        inp = self.query_one("#condition-input", Input)
+        err_label = self.query_one("#condition-validation-error", Static)
+        raw = inp.value.strip()
+        if not raw:
+            err_label.update("Value cannot be empty.")
+            return
+        try:
+            value = self._pending.data_type(raw)
+        except (ValueError, TypeError):
+            type_name = self._pending.data_type.__name__
+            err_label.update(f"Please enter a valid {type_name}.")
+            return
+        err_label.update("")
+        self.post_message(self.Submitted(self._pending.action_id, value))
+
+
+class ConditionResultPanel(Vertical):
+    """Read-only panel showing a resolved condition's prompt and the submitted response."""
+
+    DEFAULT_CSS = """
+    ConditionResultPanel {
+        height: auto;
+        padding: 1;
+    }
+    ConditionResultPanel .condition-prompt {
+        margin-bottom: 1;
+    }
+    ConditionResultPanel .condition-description {
+        color: $text-muted;
+        margin-bottom: 1;
+    }
+    ConditionResultPanel .condition-response {
+        color: $success;
+    }
+    """
+
+    def __init__(self, pending: PendingCondition, value: Any, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._pending = pending
+        self._value = value
+
+    def compose(self) -> ComposeResult:
+        pc = self._pending
+        if pc.description:
+            yield Static(pc.description, classes="condition-description")
+
+        if pc.prompt_type == "markdown":
+            yield Markdown(pc.prompt, classes="condition-prompt")
+        else:
+            yield Static(pc.prompt, classes="condition-prompt")
+
+        yield Static(f"response: {self._value!r}", classes="condition-response")
+
+
 class DetailPanel(VerticalScroll):
     """Right panel: separate boxes for task details, inputs, outputs.
 
@@ -179,11 +330,15 @@ class DetailPanel(VerticalScroll):
     def __init__(self, tracker: ActionTracker, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._tracker = tracker
+        # Identifies the panel currently mounted in the condition box:
+        # "<action_id>|pending" or "<action_id>|resolved".
+        self._current_condition_key: str | None = None
         self._selected_attempts_by_action: dict[str, int] = {}
 
     def compose(self) -> ComposeResult:
         yield _DetailBox(id="box-attempt-controls")
         yield _DetailBox(id="box-task-details")
+        yield _DetailBox(id="box-condition")
         yield _DetailBox(id="box-report")
         yield _DetailBox(id="box-log-links")
         yield _DetailBox(id="box-inputs")
@@ -198,6 +353,31 @@ class DetailPanel(VerticalScroll):
 
     def refresh_detail(self) -> None:
         self._render_detail()
+
+    def _clear_condition_box(self, condition_box: _DetailBox) -> None:
+        """Remove any mounted condition panel (interactive or read-only)."""
+        if self._current_condition_key is not None:
+            for input_panel in condition_box.query(ConditionInputPanel):
+                input_panel.remove()
+            for result_panel in condition_box.query(ConditionResultPanel):
+                result_panel.remove()
+            self._current_condition_key = None
+
+    def _hide_condition_box(self, condition_box: _DetailBox) -> None:
+        """Remove any mounted condition panel and hide the condition box."""
+        condition_box.display = False
+        self._clear_condition_box(condition_box)
+
+    def _show_condition_panel(
+        self, condition_box: _DetailBox, key: str, panel_factory: Callable[[], Any], title: str
+    ) -> None:
+        """Mount *panel_factory()* into the condition box unless *key* is already shown."""
+        if self._current_condition_key != key:
+            self._clear_condition_box(condition_box)
+            condition_box.border_title = title
+            condition_box.mount(panel_factory())
+            self._current_condition_key = key
+        condition_box.display = True
 
     def _attempt_numbers_for_action(self, action_id: str) -> list[int]:
         node = self._tracker.get_action(action_id)
@@ -233,6 +413,7 @@ class DetailPanel(VerticalScroll):
         try:
             attempt_box = self.query_one("#box-attempt-controls", _DetailBox)
             task_box = self.query_one("#box-task-details", _DetailBox)
+            condition_box = self.query_one("#box-condition", _DetailBox)
             report_box = self.query_one("#box-report", _DetailBox)
             log_links_box = self.query_one("#box-log-links", _DetailBox)
             inputs_box = self.query_one("#box-inputs", _DetailBox)
@@ -246,6 +427,7 @@ class DetailPanel(VerticalScroll):
             attempt_box.display = False
             task_box.update("Select an action to view details.")
             task_box.border_title = "Task Details"
+            self._hide_condition_box(condition_box)
             report_box.display = False
             log_links_box.display = False
             inputs_box.update("")
@@ -259,6 +441,7 @@ class DetailPanel(VerticalScroll):
         if node is None:
             attempt_box.display = False
             task_box.update(f"Action {aid} not found.")
+            self._hide_condition_box(condition_box)
             report_box.display = False
             log_links_box.display = False
             inputs_box.update("")
@@ -305,6 +488,7 @@ class DetailPanel(VerticalScroll):
             if elapsed:
                 details.append(f"duration:   {elapsed}")
             task_box.update("\n".join(details))
+            self._hide_condition_box(condition_box)
             report_box.display = False
             log_links_box.display = False
             inputs_box.display = False
@@ -335,6 +519,39 @@ class DetailPanel(VerticalScroll):
             cache_str = "disabled"
         details.append(f"cache:      {cache_str}")
         task_box.update("\n".join(details))
+
+        # -- Condition box (interactive while paused) --
+        if node.status == ActionStatus.PAUSED:
+            pending = self._tracker.get_pending_condition(aid)
+            if pending is not None:
+                self._show_condition_panel(
+                    condition_box,
+                    f"{aid}|pending",
+                    functools.partial(ConditionInputPanel, pending),
+                    f"Condition: {pending.condition_name}",
+                )
+            else:
+                self._hide_condition_box(condition_box)
+            # Hide other detail boxes when paused
+            report_box.display = False
+            log_links_box.display = False
+            inputs_box.display = False
+            context_box.display = False
+            outputs_box.display = False
+            return
+
+        # -- Condition box (read-only after the condition was resolved) --
+        resolved = self._tracker.get_resolved_condition(aid)
+        if resolved is not None:
+            pc, value = resolved
+            self._show_condition_panel(
+                condition_box,
+                f"{aid}|resolved",
+                lambda: ConditionResultPanel(pc, value),
+                f"Condition: {pc.condition_name} (signaled)",
+            )
+        else:
+            self._hide_condition_box(condition_box)
 
         # -- Report box (only when available) --
         if node.has_report and node.output_path:
@@ -462,10 +679,24 @@ class FlyteTUIApp(App[None]):
         height: auto;
         color: {_FLYTE_PURPLE_LIGHT};
     }}
+    ConditionInputPanel {{
+        color: {_FLYTE_PURPLE_LIGHT};
+    }}
+    ConditionInputPanel Button {{
+        margin-right: 1;
+    }}
+    ConditionInputPanel Input {{
+        width: 1fr;
+        margin-right: 1;
+    }}
+    ConditionInputPanel .condition-validation-error {{
+        color: red;
+    }}
     """
 
     BINDINGS: ClassVar[list[BindingType]] = [
         Binding("q", "quit", "Quit"),
+        Binding("ctrl+q", "quit", "Quit", priority=True, show=False),
         Binding("d", "show_details", "Details"),
         Binding("l", "show_logs", "Logs"),
         Binding("[", "previous_attempt", "Prev Attempt"),
@@ -482,6 +713,7 @@ class FlyteTUIApp(App[None]):
         self._tracker = tracker
         self._execute_fn = execute_fn
         self._last_version: int = -1
+        self._seen_pending_condition_ids: set[str] = set()
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -524,17 +756,46 @@ class FlyteTUIApp(App[None]):
             tree = self.query_one("#action-tree", ActionTreeWidget)
             tree.refresh_from_tracker()
             detail = self.query_one("#detail-panel", DetailPanel)
+            # Jump to a newly pending condition's sub-action so its input panel is shown.
+            for pc in self._tracker.get_all_pending_conditions():
+                if pc.action_id not in self._seen_pending_condition_ids:
+                    self._seen_pending_condition_ids.add(pc.action_id)
+                    if tree.focus_action(pc.action_id):
+                        detail.action_id = pc.action_id
             detail.refresh_detail()
 
     def on_tree_node_selected(self, event: Tree.NodeSelected[str]) -> None:
         detail = self.query_one("#detail-panel", DetailPanel)
         detail.action_id = event.node.data
 
+    @on(ConditionInputPanel.Submitted)
+    def _on_condition_submitted(self, event: ConditionInputPanel.Submitted) -> None:
+        self._tracker.resolve_condition(event.action_id, event.value)
+
     def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
         if event.state == WorkerState.SUCCESS:
             self.sub_title = "completed"
         elif event.state == WorkerState.ERROR:
             self.sub_title = "failed"
+
+    async def action_quit(self) -> None:
+        # Cancel all pending conditions so blocked threads don't hang
+        for pc in self._tracker.get_all_pending_conditions():
+            pc.set_result(None)
+        self.exit()
+        # The execution worker may be blocked on synchronous calls (via
+        # syncify) that Textual's worker cancellation cannot interrupt.
+        # Schedule a hard exit as a safety net so the terminal is not
+        # left in a broken state.
+        import os
+        import threading
+        import time
+
+        def _force_exit() -> None:
+            time.sleep(2)
+            os._exit(0)
+
+        threading.Thread(target=_force_exit, daemon=True).start()
 
     def action_show_details(self) -> None:
         self.query_one("#right-tabs", TabbedContent).active = "tab-details"

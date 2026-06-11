@@ -114,6 +114,23 @@ class Controller(Protocol):
         """
         ...
 
+    async def register_condition(self, condition: Any):
+        """
+        Register a condition that can be awaited. This is used to register conditions that can pause execution
+        until an external signal is received.
+        :param condition: Condition object to register
+        :return:
+        """
+        ...
+
+    async def wait_for_condition(self, condition: Any) -> Any:
+        """
+        Wait for a condition to be signaled. This will block until the condition receives data.
+        :param condition: Condition object to wait for
+        :return: The payload associated with the condition when it is signaled
+        """
+        ...
+
     async def stop(self):
         """
         Stops the engine and should be called when the engine is no longer needed.

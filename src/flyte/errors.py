@@ -121,6 +121,15 @@ class TaskTimeoutError(RuntimeUserError):
         super().__init__("TaskTimeoutError", message, "user")
 
 
+class ConditionTimedoutError(RuntimeUserError):
+    """
+    This error is raised when a condition is not signaled within its specified timeout.
+    """
+
+    def __init__(self, message: str):
+        super().__init__("ConditionTimedoutError", message, "user")
+
+
 class RetriesExhaustedError(RuntimeUserError):
     """
     This error is raised when the underlying task execution fails after all retries have been exhausted.
@@ -337,3 +346,33 @@ class NonRecoverableError(RuntimeUserError):
 
     def __init__(self, message: str, code: str = "NonRecoverableError"):
         super().__init__(code, message)
+
+
+class ConditionAlreadyExistsError(RuntimeUserError):
+    """
+    This error is raised when the user tries to create a condition that already exists within the action.
+    """
+
+    def __init__(self, message: str):
+        super().__init__("ConditionAlreadyExistsError", message, "user")
+
+
+class ConditionFailedError(RuntimeUserError):
+    """
+    This error is raised when a condition fails during execution.
+
+    This can happen when the backend encounters an error while processing the condition,
+    or when the condition is explicitly marked as failed by the system.
+    """
+
+    def __init__(self, message: str):
+        super().__init__("ConditionFailedError", message, "user")
+
+
+class ConditionNotFoundError(RuntimeUserError):
+    """
+    This error is raised when the user tries to access a condition that does not exist.
+    """
+
+    def __init__(self, message: str):
+        super().__init__("ConditionNotFoundError", message, "user")

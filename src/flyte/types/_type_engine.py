@@ -351,7 +351,7 @@ class SimpleTransformer(TypeTransformer[T]):
         return self._lt
 
     async def to_literal(self, python_val: T, python_type: Type[T], expected: Optional[LiteralType] = None) -> Literal:
-        if type(python_val) is not self._type:
+        if not isinstance(python_val, self._type):
             raise TypeTransformerFailedError(
                 f"Expected value of type {self._type} but got '{python_val}' of type {type(python_val)}"
             )
@@ -584,6 +584,17 @@ class PydanticTransformer(TypeTransformer[BaseModel]):
         python_type: Type[BaseModel],
         expected: LiteralType,
     ) -> Literal:
+        # Auto-coerce a plain dict into the target BaseModel so callers (e.g. flyte.run as an
+        # API-service entrypoint) can pass JSON-like inputs without constructing the model. Missing
+        # fields are filled from the model's defaults; only missing required fields error. This
+        # mirrors the CLI param-parsing path (cli/_params.py) and keeps the Union/Optional path
+        # working since UnionTransformer delegates here and catches TypeTransformerFailedError.
+        if isinstance(python_val, dict):
+            try:
+                python_val = python_type.model_validate(python_val, strict=False, context={"deserialize": True})
+            except Exception as e:
+                raise TypeTransformerFailedError(f"Failed to coerce dict into {python_type}: {e}") from e
+
         # Pre-process the model to invoke any lazy uploaders on nested Flyte IO types.
         # This ensures uploads happen in the syncify context where gRPC clients work correctly,
         # and prevents deadlocks when @model_serializer tries to run async code via loop_manager.
@@ -679,6 +690,17 @@ def _get_pydantic_element_type(
             return typing.Optional[inner_type] if has_null else inner_type  # type: ignore
         return type(None)
 
+    # Discriminated unions in Pydantic v2 produce oneOf rather than anyOf
+    if element_property.get("oneOf"):
+        variants = element_property["oneOf"]
+        non_null = [v for v in variants if v.get("type") != "null"]
+        has_null = len(non_null) < len(variants)
+        if non_null:
+            variant_types = tuple(_get_pydantic_element_type(v, schema) for v in non_null)
+            inner_type = variant_types[0] if len(variant_types) == 1 else typing.Union[variant_types]  # type: ignore
+            return typing.Optional[inner_type] if has_null else inner_type  # type: ignore
+        return type(None)
+
     element_type = element_property.get("type")
     if element_type == "object":
         if element_property.get("additionalProperties"):
@@ -700,7 +722,16 @@ def _create_pydantic_model_from_schema(schema: dict) -> Type:
 
     title = schema.get(TITLE, "DynamicModel")
     properties = schema.get("properties", {})
-    property_order = schema.get("required", list(properties.keys()))
+    # Reconstruct every field, not just the required ones. ``required`` is an ordered list that
+    # preserves field-definition order (the ``properties`` map can lose ordering after the schema
+    # round-trips through a protobuf Struct), so we keep it first for byte/cache-key consistency,
+    # then append the remaining fields. Those remaining fields are exactly the ones with defaults;
+    # previously they were dropped entirely, which broke the decoupled flyte.run case (client
+    # without the original class) — defaulted fields would vanish and couldn't be filled from
+    # their defaults.
+    required_order = [name for name in (schema.get("required") or ()) if name in properties]
+    remaining = [name for name in properties if name not in set(required_order)]
+    property_order = required_order + remaining
 
     fields: dict[str, typing.Any] = {}
     required_set = set(schema.get("required") or ())
@@ -713,7 +744,7 @@ def _create_pydantic_model_from_schema(schema: dict) -> Type:
         if "default" in prop:
             fields[name] = (field_type, prop["default"])
         elif schema_declares_required and name not in required_set:
-            if prop.get("anyOf"):
+            if prop.get("anyOf") or prop.get("oneOf"):
                 fields[name] = (typing.Optional[field_type], None)
             else:
                 fields[name] = (field_type, ...)
@@ -803,12 +834,20 @@ class DataclassTransformer(TypeTransformer[object]):
             # Find the Optional keys in expected_fields_dict
             optional_keys = {k for k, t in expected_fields_dict.items() if UnionTransformer.is_optional_type(t)}
 
+            # Fields with a default (or default_factory) may also be omitted from the dict and filled
+            # in during decoding, so they should not count as "missing".
+            defaulted_keys = {
+                f.name
+                for f in dataclasses.fields(expected_type)
+                if f.default is not dataclasses.MISSING or f.default_factory is not dataclasses.MISSING
+            }
+
             # Remove the Optional keys from the keys of original_dict
             original_key = set(original_dict.keys()) - optional_keys
             expected_key = set(expected_fields_dict.keys()) - optional_keys
 
-            # Check if original_key is missing any keys from expected_key
-            missing_keys = expected_key - original_key
+            # Check if original_key is missing any keys from expected_key (defaulted fields excepted)
+            missing_keys = (expected_key - original_key) - defaulted_keys
             if missing_keys:
                 raise TypeTransformerFailedError(
                     f"The original fields are missing the following keys from the dataclass fields: "
@@ -825,14 +864,23 @@ class DataclassTransformer(TypeTransformer[object]):
 
             for k, v in original_dict.items():
                 if k in expected_fields_dict:
+                    expected_type = expected_fields_dict[k]
+                    if UnionTransformer.is_optional_type(expected_type):
+                        expected_type = UnionTransformer.get_sub_type_in_optional(expected_type)
                     if isinstance(v, dict):
-                        self.assert_type(expected_fields_dict[k], v)
+                        # Only recurse for nested dataclasses. A plain dict-typed field
+                        # (e.g. Dict[str, str]) is a subscripted generic that can't be passed to
+                        # issubclass()/dataclasses.fields(); its contents are validated at decode time.
+                        if dataclasses.is_dataclass(expected_type):
+                            self.assert_type(expected_type, v)
                     else:
-                        expected_type = expected_fields_dict[k]
                         original_type = type(v)
-                        if UnionTransformer.is_optional_type(expected_type):
-                            expected_type = UnionTransformer.get_sub_type_in_optional(expected_type)
-                        if original_type != expected_type:
+                        # Only enforce when the field annotation resolved to a concrete type.
+                        # With `from __future__ import annotations`, dataclasses.fields(...).type
+                        # is the *string* annotation (e.g. "str"); likewise subscripted generics
+                        # (List[int]) are not plain types. In those cases skip the early check and
+                        # let the decode step in to_literal do the real validation.
+                        if isinstance(expected_type, type) and original_type is not expected_type:
                             raise TypeTransformerFailedError(
                                 f"Type of Val '{original_type}' is not an instance of {expected_type}"
                             )
@@ -903,8 +951,20 @@ class DataclassTransformer(TypeTransformer[object]):
 
     async def to_literal(self, python_val: T, python_type: Type[T], expected: LiteralType) -> Literal:
         if isinstance(python_val, dict):
-            msgpack_bytes = msgpack.dumps(python_val)
-            return Literal(scalar=Scalar(binary=Binary(value=msgpack_bytes, tag=MESSAGEPACK)))
+            # Auto-coerce a plain dict into the target dataclass so callers (e.g. flyte.run) can pass
+            # JSON-like inputs without constructing the dataclass. Decoding (rather than a raw
+            # msgpack dump of the dict) applies field validation and fills omitted fields from their
+            # defaults; only missing required fields error. This mirrors the CLI param-parsing path.
+            decode_type = get_underlying_type(python_type)
+            try:
+                decoder = self._json_decoder[decode_type]
+            except KeyError:
+                decoder = JSONDecoder(decode_type)
+                self._json_decoder[decode_type] = decoder
+            try:
+                python_val = decoder.decode(json.dumps(python_val))
+            except Exception as e:
+                raise TypeTransformerFailedError(f"Failed to coerce dict into {python_type}: {e}") from e
 
         if not dataclasses.is_dataclass(python_val):
             raise TypeTransformerFailedError(
@@ -1173,9 +1233,56 @@ def _match_registered_type_from_schema(schema: dict) -> typing.Optional[type]:
     return None
 
 
+@dataclasses.dataclass(frozen=True)
+class _DiscriminatedUnion:
+    """Descriptor for a Pydantic v2 discriminated union field.
+
+    Captures the discriminator property name and a mapping of discriminator
+    values to the resolved Python classes so dict-to-object conversion in the
+    generated dataclass's ``__init__`` can pick the right variant.
+    """
+
+    discriminator_property: typing.Optional[str]
+    mapping: typing.Mapping[typing.Any, type]
+    variants: typing.Tuple[type, ...]
+
+
+def _normalize_discriminator_value(value: typing.Any) -> typing.Any:
+    """Normalize a discriminator value for mapping lookup.
+
+    Pydantic v2 emits the schema-level ``discriminator.mapping`` keys as JSON
+    primitives (strings/ints/bools), but at runtime the corresponding model
+    field value can be an ``Enum`` member (e.g. when the discriminator field
+    is typed as a non-``str`` ``Enum``). Unwrap such values to their underlying
+    primitive so the lookup keys match.
+    """
+    if isinstance(value, enum.Enum):
+        return value.value
+    return value
+
+
+def _select_unambiguous_variant(variants: typing.Sequence[type], value: dict[str, Any]) -> type | None:
+    """Return the single variant whose dataclass fields accept ``value`` keys.
+
+    Used as a safe fallback when a ``oneOf`` schema lacks a usable discriminator.
+    Returns ``None`` if zero or more than one variant matches so the caller can
+    raise a clear ambiguity error instead of silently picking the first match.
+    """
+    value_keys = set(value.keys())
+    matches: list[type] = []
+    for variant_cls in variants:
+        try:
+            variant_fields = {f.name for f in dataclasses.fields(variant_cls)}
+        except TypeError:
+            continue
+        if value_keys.issubset(variant_fields):
+            matches.append(variant_cls)
+    return matches[0] if len(matches) == 1 else None
+
+
 def _mutable_schema_default_factory(
-    default: list[typing.Any] | dict[typing.Any, typing.Any],
-) -> typing.Callable[[], list[typing.Any] | dict[typing.Any, typing.Any]]:
+    default: list[Any] | dict[Any, Any],
+) -> typing.Callable[[], list[Any] | dict[Any, Any]]:
     """Return a no-arg factory for dataclass fields with mutable JSON-schema defaults."""
     snapshot = copy.deepcopy(default)
 
@@ -1186,11 +1293,11 @@ def _mutable_schema_default_factory(
 
 
 def _append_schema_field(
-    attribute_list: typing.List[typing.Tuple[Any, ...]],
+    attribute_list: list[tuple[Any, ...]],
     property_key: str,
-    field_type: typing.Any,
-    property_val: typing.Dict[str, typing.Any],
-    schema: typing.Dict[str, typing.Any],
+    field_type: Any,
+    property_val: dict[str, Any],
+    schema: dict[str, Any],
 ) -> None:
     """Append a dataclass field tuple, honoring JSON-schema ``default`` and ``required``."""
     required_set = set(schema.get("required") or ())
@@ -1210,7 +1317,7 @@ def _append_schema_field(
             attribute_list.append((property_key, field_type, default))
         return
     if schema_declares_required and property_key not in required_set:
-        if property_val.get("anyOf"):
+        if property_val.get("anyOf") or property_val.get("oneOf"):
             attribute_list.append((property_key, typing.Optional[field_type], None))
         else:
             attribute_list.append((property_key, field_type))
@@ -1218,14 +1325,65 @@ def _append_schema_field(
     attribute_list.append((property_key, field_type))
 
 
+def _resolve_oneof_variants(
+    variants: typing.Sequence[typing.Dict[str, typing.Any]],
+    schema: typing.Dict[str, typing.Any],
+) -> typing.Tuple[typing.List[Any], typing.List[type], typing.Dict[str, type]]:
+    """Resolve the ``oneOf`` variants of a JSON schema property to Python types.
+
+    Returns a tuple of:
+      - ``variant_types``: list of resolved Python types (for building Union)
+      - ``variant_classes``: list of dynamically generated classes (for dict->object conversion)
+      - ``ref_name_to_class``: mapping from ``$ref`` name to the generated class
+        (used to wire up the discriminator's ``mapping`` to runtime classes)
+    """
+    variant_types: typing.List[Any] = []
+    variant_classes: typing.List[type] = []
+    ref_name_to_class: typing.Dict[str, type] = {}
+    defs = schema.get("$defs", schema.get("definitions", {}))
+
+    for variant in variants:
+        if not isinstance(variant, dict):
+            variant_types.append(_get_element_type(variant, schema))
+            continue
+        if variant.get("$ref"):
+            ref_name = variant["$ref"].split("/")[-1]
+            if ref_name in defs:
+                ref_schema = defs[ref_name].copy()
+                if ref_schema.get("enum"):
+                    variant_types.append(str)
+                    continue
+                matched = _match_registered_type_from_schema(ref_schema)
+                if matched is not None:
+                    variant_types.append(matched)
+                    continue
+                if "$defs" not in ref_schema and defs:
+                    ref_schema["$defs"] = defs
+                nested_class: type = convert_mashumaro_json_schema_to_python_class(ref_schema, ref_name)
+                variant_types.append(nested_class)
+                variant_classes.append(nested_class)
+                ref_name_to_class[ref_name] = nested_class
+                continue
+        variant_types.append(_get_element_type(variant, schema))
+
+    return variant_types, variant_classes, ref_name_to_class
+
+
 def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name: typing.Any):
 
     attribute_list: typing.List[typing.Tuple[Any, Any]] = []
-    nested_types: typing.Dict[str, type] = {}  # Track nested model types for conversion
+    # Tracks nested model types for dict-to-object conversion. Values are either a single class
+    # (for $ref / anyOf single-variant fields) or a _DiscriminatedUnion (for oneOf fields).
+    nested_types: typing.Dict[str, typing.Any] = {}
 
-    # Use 'required' field to preserve property order, as protobuf Struct doesn't preserve dict order
+    # Use 'required' field to preserve property order, as protobuf Struct doesn't preserve dict order.
+    # ``required`` lists only the no-default fields though, so we keep it first (for ordering) and
+    # then append the remaining (defaulted) fields, which were previously dropped entirely. Dropping
+    # them broke the decoupled flyte.run case (client without the original class): defaulted fields
+    # would vanish and couldn't be filled in from their defaults.
     properties = schema["properties"]
-    property_order = schema.get("required", list(properties.keys()))
+    required_order = [name for name in (schema.get("required") or ()) if name in properties]
+    property_order = required_order + [name for name in properties if name not in set(required_order)]
 
     for property_key in property_order:
         property_val = properties[property_key]
@@ -1260,12 +1418,96 @@ def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name:
                 nested_types[property_key] = nested_class
             continue
 
+        # Handle oneOf -- Pydantic v2 emits this for discriminated unions
+        # (e.g. Annotated[Union[A, B], Field(discriminator="kind")]). The property has no
+        # top-level "type"; instead it has "oneOf" with the variant schemas.
+        if property_val.get("oneOf"):
+            variants = property_val["oneOf"]
+            non_null_variants = [v for v in variants if not (isinstance(v, dict) and v.get("type") == "null")]
+            has_null = len(non_null_variants) < len(variants)
+
+            variant_types, variant_classes, ref_name_to_class = _resolve_oneof_variants(non_null_variants, schema)
+
+            if not variant_types:
+                field_type: Any = type(None)
+            elif len(variant_types) == 1:
+                field_type = variant_types[0]
+            else:
+                field_type = typing.Union[tuple(variant_types)]  # type: ignore
+
+            if has_null:
+                field_type = typing.Optional[field_type]  # type: ignore
+
+            _append_schema_field(
+                attribute_list, property_key, typing.cast(GenericAlias, field_type), property_val, schema
+            )
+
+            if variant_classes:
+                discriminator = property_val.get("discriminator") or {}
+                discriminator_property = discriminator.get("propertyName")
+                mapping_from_schema = discriminator.get("mapping") or {}
+                # Map discriminator values to the runtime classes via the $ref name
+                discriminator_mapping: typing.Dict[typing.Any, type] = {}
+                for disc_value, ref_path in mapping_from_schema.items():
+                    ref_name = ref_path.split("/")[-1] if isinstance(ref_path, str) else None
+                    if ref_name is not None and ref_name in ref_name_to_class:
+                        discriminator_mapping[disc_value] = ref_name_to_class[ref_name]
+                # If the schema didn't supply an explicit mapping (it's optional per the
+                # JSON Schema/OpenAPI specs), or it's incomplete, derive entries from the
+                # variants' own schemas by looking at the discriminator field's ``const``
+                # / single-element ``enum`` value. This is also what makes enum-typed
+                # discriminator fields work without any explicit mapping.
+                if discriminator_property is not None:
+                    defs = schema.get("$defs", schema.get("definitions", {}))
+                    mapped_classes = set(discriminator_mapping.values())
+                    for ref_name, variant_cls in ref_name_to_class.items():
+                        if variant_cls in mapped_classes:
+                            continue
+                        variant_schema = defs.get(ref_name, {})
+                        disc_field = (variant_schema.get("properties") or {}).get(discriminator_property)
+                        if not isinstance(disc_field, dict):
+                            continue
+                        const_val: typing.Any = disc_field.get("const")
+                        if const_val is None:
+                            enum_vals = disc_field.get("enum")
+                            if isinstance(enum_vals, list) and len(enum_vals) == 1:
+                                const_val = enum_vals[0]
+                        if const_val is not None:
+                            discriminator_mapping[const_val] = variant_cls
+                nested_types[property_key] = _DiscriminatedUnion(
+                    discriminator_property=discriminator_property,
+                    mapping=discriminator_mapping,
+                    variants=tuple(variant_classes),
+                )
+            continue
+
         if property_val.get("anyOf"):
-            property_type = property_val["anyOf"][0]["type"]
+            # Resolve the first variant's "type" carefully -- anyOf variants may be
+            # $refs (e.g. Optional[Dataclass]) and not have a top-level "type" key.
+            anyof_variants = property_val["anyOf"]
+            non_null_anyof = [v for v in anyof_variants if not (isinstance(v, dict) and v.get("type") == "null")]
+            first_variant = non_null_anyof[0] if non_null_anyof else (anyof_variants[0] if anyof_variants else {})
+            if isinstance(first_variant, dict) and "type" in first_variant:
+                property_type = first_variant["type"]
+            elif isinstance(first_variant, dict) and "$ref" in first_variant:
+                # Treat $ref variant as a nested object (existing object branch handles it)
+                property_type = "object"
+            else:
+                # Fall through to general element resolution
+                _append_schema_field(
+                    attribute_list, property_key, _get_element_type(property_val, schema), property_val, schema
+                )
+                continue
         elif property_val.get("enum"):
             property_type = "enum"
-        else:
+        elif "type" in property_val:
             property_type = property_val["type"]
+        else:
+            # Unknown/exotic schema shape -- fall back to best-effort element type resolution
+            _append_schema_field(
+                attribute_list, property_key, _get_element_type(property_val, schema), property_val, schema
+            )
+            continue
         # Handle list
         if property_type == "array":
             _append_schema_field(
@@ -1278,9 +1520,24 @@ def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name:
         # Handle dataclass and dict
         elif property_type == "object":
             if property_val.get("anyOf"):
-                # For optional with dataclass
-                sub_schemea = property_val["anyOf"][0]
-                sub_schemea_name = sub_schemea["title"]
+                # For optional with dataclass / dict. Use the non-null variant (e.g. X | None -> X).
+                non_null_variants = [
+                    v for v in property_val["anyOf"] if not (isinstance(v, dict) and v.get("type") == "null")
+                ]
+                sub_schemea = non_null_variants[0] if non_null_variants else property_val["anyOf"][0]
+                # A dict-shaped variant (e.g. dict[str, str] | None) has additionalProperties and no
+                # "title"; handle it as a typing.Dict, not a nested dataclass. Reading ["title"]
+                # blindly here is what caused the original KeyError on dict[str, str] | None.
+                if isinstance(sub_schemea, dict) and sub_schemea.get("additionalProperties"):
+                    elem_type = _get_element_type(sub_schemea["additionalProperties"], schema)
+                    _append_schema_field(
+                        attribute_list,
+                        property_key,
+                        typing.Dict[str, elem_type],  # type: ignore
+                        property_val,
+                        schema,
+                    )
+                    continue
                 matched_type = _match_registered_type_from_schema(property_val) or _match_registered_type_from_schema(
                     sub_schemea
                 )
@@ -1289,6 +1546,7 @@ def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name:
                         attribute_list, property_key, typing.cast(GenericAlias, matched_type), property_val, schema
                     )
                     continue
+                sub_schemea_name = sub_schemea.get("title", property_key)
                 nested_class = convert_mashumaro_json_schema_to_python_class(sub_schemea, sub_schemea_name)
                 _append_schema_field(
                     attribute_list, property_key, typing.cast(GenericAlias, nested_class), property_val, schema
@@ -2349,11 +2607,50 @@ def convert_mashumaro_json_schema_to_python_class(schema: dict, schema_name: typ
 
         def __init__(self, *args, **kwargs):  # type: ignore[misc]
             # Convert dict values to nested types before calling original __init__
-            for field_name, field_type in nested_types.items():
-                if field_name in kwargs:
-                    value = kwargs[field_name]
-                    if isinstance(value, dict):
-                        kwargs[field_name] = field_type(**value)
+            for field_name, descriptor in nested_types.items():
+                if field_name not in kwargs:
+                    continue
+                value = kwargs[field_name]
+                if not isinstance(value, dict):
+                    continue
+                if isinstance(descriptor, _DiscriminatedUnion):
+                    disc_property = descriptor.discriminator_property
+                    # Preferred path: dispatch using the schema-declared discriminator.
+                    # This is unambiguous even when two variants share fields.
+                    if disc_property is not None and descriptor.mapping:
+                        if disc_property not in value:
+                            raise ValueError(
+                                f"Cannot construct field {field_name!r} from discriminated union: "
+                                f"input is missing the discriminator property {disc_property!r}. "
+                                f"Expected one of {sorted(descriptor.mapping.keys())!r}."
+                            )
+                        raw_disc_value = value[disc_property]
+                        lookup_value = _normalize_discriminator_value(raw_disc_value)
+                        target_cls = descriptor.mapping.get(lookup_value)
+                        if target_cls is None:
+                            raise ValueError(
+                                f"Cannot construct field {field_name!r} from discriminated union: "
+                                f"discriminator value {raw_disc_value!r} for property {disc_property!r} "
+                                f"does not match any known variant. Expected one of "
+                                f"{sorted(descriptor.mapping.keys())!r}."
+                            )
+                        kwargs[field_name] = target_cls(**value)
+                    else:
+                        # No usable discriminator: only dispatch when exactly one variant's
+                        # fields accept the input dict, so we never silently pick the wrong
+                        # variant for two models that share fields.
+                        matched_cls = _select_unambiguous_variant(descriptor.variants, value)
+                        if matched_cls is None:
+                            variant_names = [c.__name__ for c in descriptor.variants]
+                            raise ValueError(
+                                f"Cannot construct field {field_name!r} from union: input dict is "
+                                f"ambiguous (or matches no variant) across {variant_names!r} and no "
+                                f"discriminator is available. Provide a discriminator field or pass "
+                                f"the variant instance directly."
+                            )
+                        kwargs[field_name] = matched_cls(**value)
+                else:
+                    kwargs[field_name] = descriptor(**value)
             original_init(self, *args, **kwargs)
 
         cls.__init__ = __init__  # type: ignore[method-assign, misc]
@@ -2419,6 +2716,18 @@ def _get_element_type(
             inner_type = _get_element_type(non_null[0], schema)
             return typing.Optional[inner_type] if has_null else inner_type  # type: ignore
         # return None if all types are None
+        return type(None)
+
+    # Handle oneOf (Pydantic v2 emits this for discriminated unions,
+    # e.g. Annotated[Union[A, B], Field(discriminator=...)])
+    if element_property.get("oneOf"):
+        variants = element_property["oneOf"]
+        non_null = [v for v in variants if v.get("type") != "null"]
+        has_null = len(non_null) < len(variants)
+        if non_null:
+            variant_types = tuple(_get_element_type(v, schema) for v in non_null)
+            inner_type = variant_types[0] if len(variant_types) == 1 else typing.Union[variant_types]  # type: ignore
+            return typing.Optional[inner_type] if has_null else inner_type  # type: ignore
         return type(None)
 
     element_type = element_property.get("type", "string")

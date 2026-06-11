@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import pathlib
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, get_args
@@ -12,6 +13,7 @@ from flyte.ai.mcp._mcp_app import MCPAppEnvironment
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
+    from starlette.middleware import Middleware
 
 
 # NOTE: This module uses `from __future__ import annotations`, which means annotations
@@ -47,13 +49,6 @@ MCPTool = Literal[
     # trigger
     "activate_trigger",
     "deactivate_trigger",
-    # build
-    "build_image",
-    # script
-    "build_uv_script_image_remote",
-    "run_uv_script_remote",
-    "flyte_uv_script_format",
-    "flyte_uv_script_example",
     # search
     "search_flyte_sdk_examples",
     "search_flyte_docs_examples",
@@ -69,8 +64,6 @@ MCPToolGroup = Literal[
     "run",
     "app",
     "trigger",
-    "build",
-    "script",
     "search",
 ]
 
@@ -85,15 +78,21 @@ TOOL_GROUP_MAPPING: dict[MCPToolGroup, tuple[MCPTool, ...]] = {
     "run": ("get_run", "get_run_io", "abort_run", "list_runs", "wait_for_run"),
     "app": ("get_app", "activate_app", "deactivate_app"),
     "trigger": ("activate_trigger", "deactivate_trigger"),
-    "build": ("build_image",),
-    "script": (
-        "build_uv_script_image_remote",
-        "run_uv_script_remote",
-        "flyte_uv_script_format",
-        "flyte_uv_script_example",
-    ),
     "search": ("search_flyte_sdk_examples", "search_flyte_docs_examples", "search_full_docs"),
 }
+
+DEFAULT_IMAGE = (
+    flyte.Image.from_debian_base()
+    .with_apt_packages("ca-certificates", "git", "curl")
+    .with_pip_packages("mcp", "starlette", "uvicorn")
+    .with_commands(
+        [
+            "git clone --depth 1 https://github.com/flyteorg/flyte-sdk.git /root/flyte-sdk",
+            "git clone --depth 1 https://github.com/unionai/unionai-examples.git /root/unionai-examples",
+            "curl -fsSL https://www.union.ai/docs/v2/union/llms.txt -o /root/llms.txt",
+        ]
+    )
+)
 
 
 def _resolve_tools(tool_groups: list[str] | None, tools: list[str] | None) -> set[str]:
@@ -163,82 +162,6 @@ def _is_trigger_allowed(allowlist: list[str] | None, task_name: str, trigger_nam
         if "/" not in allowed and allowed == trigger_name:
             return True
     return False
-
-
-# ------------------------------
-# Script templates (tools return these)
-# ------------------------------
-
-
-UV_SCRIPT_FORMAT = """# /// script
-# dependencies = [
-#   "flyte>=0.0.0",
-# ]
-# ///
-
-import flyte
-
-
-env = flyte.TaskEnvironment(
-    name="my-script",
-    image=flyte.Image.from_uv_script(__file__).with_pip_packages(
-        # add your packages here
-    ),
-)
-
-
-@env.task
-def my_task() -> str:
-    return "hello"
-
-
-if __name__ == "__main__":
-    # For remote execution with an MCP tool:
-    # 1) build_uv_script_image_remote(script=...)
-    # 2) run_uv_script_remote(script=...)
-    # (Build with --build first, then run.)
-    #
-    # For local testing:
-    flyte.init_passthrough()
-    print(my_task())
-""".strip()
-
-
-UV_SCRIPT_EXAMPLE = """# /// script
-# dependencies = [
-#   "flyte>=0.0.0",
-#   "scikit-learn",
-# ]
-# ///
-
-import asyncio
-
-import flyte
-from sklearn.datasets import load_iris
-
-
-env = flyte.TaskEnvironment(
-    name="iris-example",
-    image=flyte.Image.from_uv_script(__file__).with_pip_packages("scikit-learn"),
-)
-
-
-@env.task
-def load_data() -> int:
-    data = load_iris()
-    return len(data.data)
-
-
-async def main() -> None:
-    flyte.init_passthrough()
-    n = load_data()
-    print(f"Loaded rows: {n}")
-
-
-if __name__ == "__main__":
-    # For MCP usage, build with --build first, then run.
-    asyncio.run(main())
-""".strip()
 
 
 # ------------------------------
@@ -336,8 +259,8 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
     """Serve a Flyte-facing MCP server over HTTP (FastMCP + Starlette + Uvicorn).
 
     Use this environment when you want LLM clients to call Flyte operations
-    (tasks, runs, apps, triggers, image builds, UV scripts, docs search) through
-    the Model Context Protocol. Install extras with ``pip install 'flyte[mcp]'``.
+    (tasks, runs, apps, triggers, docs search) through the Model Context
+    Protocol. Install extras with ``pip install 'flyte[mcp]'``.
 
     **HTTP layout**
 
@@ -355,8 +278,12 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
     require ``sdk_examples_path``, ``docs_examples_path``, and/or
     ``full_docs_path`` when those tools are enabled.
 
-    The UV script remote build/run tools are placeholders when not backed by a
-    remote MCP deployment that implements them.
+    **Image**
+
+    When ``image`` is omitted (or set to ``"auto"``), the environment uses
+    :data:`DEFAULT_IMAGE`, which preinstalls the MCP/Starlette/Uvicorn stack
+    and clones the flyte-sdk + unionai-examples repos and the Union docs
+    ``llms.txt`` into ``/root`` so the search tools have content to scan.
     """
 
     type: str = "FlyteMCPApp"
@@ -373,9 +300,10 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
     app_allowlist: list[str] | None = None
     trigger_allowlist: list[str] | None = None
 
-    sdk_examples_path: str | None = None
-    docs_examples_path: str | None = None
-    full_docs_path: str | None = None
+    # Search default paths
+    sdk_examples_path: str | None = "/root/flyte-sdk/examples"
+    docs_examples_path: str | None = "/root/unionai-examples/v2"
+    full_docs_path: str | None = "/root/llms.txt"
 
     mcp: FastMCP | None = field(init=False, default=None)  # type: ignore[assignment]
     _enabled_tools: set[str] = field(init=False, default_factory=set)
@@ -384,6 +312,9 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
         if self.tools is not None and self.tool_groups is not None:
             raise ValueError("Cannot specify both tools and tool_groups.")
 
+        if getattr(self, "image", None) in (None, "auto"):
+            self.image = DEFAULT_IMAGE
+
         self._enabled_tools = _resolve_tools(self.tool_groups, self.tools)
         self.mcp = self._create_mcp_server()
         super().__post_init__()
@@ -391,6 +322,34 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
     @property
     def enabled_tools(self) -> set[str]:
         return set(self._enabled_tools)
+
+    def _starlette_middleware(self) -> list[Middleware]:
+        """Install ``FastAPIPassthroughAuthMiddleware`` so per-request ``Authorization``
+        headers are propagated to Flyte remote calls via the request-scoped auth
+        context. The health endpoint is excluded so liveness probes can hit
+        ``/health`` without credentials.
+        """
+        from starlette.middleware import Middleware
+
+        from flyte.app.extras import FastAPIPassthroughAuthMiddleware
+
+        if not self.requires_auth:
+            return []
+
+        return [
+            Middleware(FastAPIPassthroughAuthMiddleware, excluded_paths={"/health"}),
+        ]
+
+    async def _starlette_lifespan_startup(self) -> None:
+        """Initialize the Flyte SDK in passthrough mode so that Flyte remote calls
+        made by tool handlers use the per-request ``Authorization`` header
+        (populated by :class:`FastAPIPassthroughAuthMiddleware`) instead of the
+        cluster-injected credentials from ``init_in_cluster``.
+        """
+        project = os.environ.get("FLYTE_PROJECT") or os.environ.get("FLYTE_INTERNAL_EXECUTION_PROJECT")
+        domain = os.environ.get("FLYTE_DOMAIN") or os.environ.get("FLYTE_INTERNAL_EXECUTION_DOMAIN")
+        if self.requires_auth:
+            await flyte.init_passthrough.aio(project=project, domain=domain)
 
     def _create_mcp_server(self) -> FastMCP:
         try:
@@ -596,38 +555,6 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
                 if hasattr(deactivated, "to_dict")
                 else {"task_name": task_name, "name": trigger_name, "deactivated": True}
             )
-
-        @mcp.tool()
-        async def build_image(image: str, ctx: MCPContext | None = None) -> dict:
-            from flyte._internal.imagebuild import remote_builder as _remote_builder
-
-            _build_image = getattr(_remote_builder, "build_image", None)
-            if _build_image is None:  # pragma: no cover
-                raise NotImplementedError("Image build is not available in this Flyte installation.")
-
-            run = await _build_image(image)  # type: ignore[misc]
-            return run if isinstance(run, dict) else {"result": str(run)}
-
-        @mcp.tool()
-        async def build_uv_script_image_remote(script: str, ctx: MCPContext | None = None) -> dict:
-            raise NotImplementedError(
-                "Remote UV script image builds require a remote MCP backend. "
-                "Use a connected remote MCP server for this tool."
-            )
-
-        @mcp.tool()
-        async def run_uv_script_remote(script: str, ctx: MCPContext | None = None) -> dict:
-            raise NotImplementedError(
-                "Remote UV script runs require a remote MCP backend. Use a connected remote MCP server for this tool."
-            )
-
-        @mcp.tool()
-        async def flyte_uv_script_format(ctx: MCPContext | None = None) -> str:
-            return UV_SCRIPT_FORMAT
-
-        @mcp.tool()
-        async def flyte_uv_script_example(ctx: MCPContext | None = None) -> str:
-            return UV_SCRIPT_EXAMPLE
 
         @mcp.tool()
         async def search_flyte_sdk_examples(
