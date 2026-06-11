@@ -39,6 +39,38 @@ def test_run_command(runner):
     assert "Run a task from a python file" in result.output
 
 
+def test_run_command_has_max_action_concurrency_option():
+    option_names = {decl for p in run.params for decl in p.opts}
+    assert "--max-action-concurrency" in option_names
+
+
+def test_run_arguments_max_action_concurrency_from_dict():
+    from flyte.cli._run import RunArguments
+
+    run_args = RunArguments.from_dict({"max_action_concurrency": 7})
+    assert run_args.max_action_concurrency == 7
+    assert RunArguments.from_dict({}).max_action_concurrency is None
+
+
+def test_run_max_action_concurrency_rejects_negative(runner):
+    result = runner.invoke(run, ["--max-action-concurrency", "-1", str(HELLO_WORLD_PY), "say_hello"])
+    assert result.exit_code != 0
+    assert "max-action-concurrency" in result.output
+
+
+def test_run_local_with_max_action_concurrency(runner):
+    try:
+        cmd = ["--max-action-concurrency", "3", "--local", str(HELLO_WORLD_PY), "say_hello", "--name", "World"]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            # https://github.com/pallets/click/issues/824
+            return
+        else:
+            raise ve
+
+
 def test_run_hello_world(runner):
     try:
         cmd = ["--local", str(HELLO_WORLD_PY), "say_hello", "--name", "World"]

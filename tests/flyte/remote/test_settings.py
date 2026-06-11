@@ -177,6 +177,20 @@ class TestProtoFlatRoundtrip:
         assert proto.task_resource.min.cpu.quantity_value == "2"
         assert proto.task_resource.min.cpu.state == settings_definition_pb2.SETTING_STATE_VALUE
 
+    def test_flat_to_proto_max_action_concurrency(self):
+        proto = _flat_to_proto({"run.max_action_concurrency": 25})
+        assert proto.HasField("run")
+        assert proto.run.HasField("max_action_concurrency")
+        assert proto.run.max_action_concurrency.int_value == 25
+        assert proto.run.max_action_concurrency.state == settings_definition_pb2.SETTING_STATE_VALUE
+
+    def test_max_action_concurrency_roundtrip(self):
+        proto = _flat_to_proto({"run.max_action_concurrency": 10})
+        assert dict(_proto_to_flat(proto)) == {"run.max_action_concurrency": 10}
+
+    def test_max_action_concurrency_in_available_keys(self):
+        assert "run.max_action_concurrency" in Settings.available_keys()
+
     def test_flat_to_proto_unknown_key_raises(self):
         with pytest.raises(ValueError, match="unknown settings key"):
             _flat_to_proto({"not.a.real.key": "x"})

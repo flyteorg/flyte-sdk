@@ -740,6 +740,9 @@ class Trigger:
         task's configured value.
     :param overwrite_cache: Force cache refresh on triggered runs. Default `False`.
     :param queue: Queue name for triggered runs (overrides the task's configured value).
+    :param max_action_concurrency: Maximum number of actions that can run concurrently within a
+        triggered run. `None` (default) defers to the platform default (the
+        ``run.max_action_concurrency`` setting).
     :param labels: Kubernetes labels to attach to triggered runs.
     :param annotations: Kubernetes annotations to attach to triggered runs.
     :param custom_context: Metadata propagated through the entire task hierarchy of
@@ -755,6 +758,7 @@ class Trigger:
     interruptible: bool | None = None
     overwrite_cache: bool = False
     queue: str | None = None
+    max_action_concurrency: int | None = None
     labels: Mapping[str, str] | None = None
     annotations: Mapping[str, str] | None = None
     notifications: NamedRule | Notification | Tuple[Notification, ...] | None = None
@@ -765,6 +769,10 @@ class Trigger:
             raise ValueError("Trigger name cannot be empty")
         if self.automation is None:
             raise ValueError("Automation cannot be None")
+        if self.max_action_concurrency is not None and self.max_action_concurrency < 0:
+            raise ValueError(
+                f"max_action_concurrency must be a non-negative integer, got {self.max_action_concurrency}"
+            )
         if self.description and len(self.description) > 255:
             from flyte._utils.description_parser import parse_description
 
@@ -783,6 +791,7 @@ class Trigger:
         interruptible: bool | None = None,
         overwrite_cache: bool = False,
         queue: str | None = None,
+        max_action_concurrency: int | None = None,
         labels: Mapping[str, str] | None = None,
         annotations: Mapping[str, str] | None = None,
         custom_context: Mapping[str, str] | None = None,
@@ -801,6 +810,8 @@ class Trigger:
             interruptible (bool | None): Whether the triggered run is interruptible.
             overwrite_cache (bool): Whether to overwrite the cache.
             queue (str | None): Optional queue to run the trigger in.
+            max_action_concurrency (int | None): Optional maximum number of actions that can run
+                concurrently within a triggered run.
             labels (Mapping[str, str] | None): Optional labels to attach to the trigger.
             annotations (Mapping[str, str] | None): Optional annotations to attach to the trigger.
             custom_context (Mapping[str, str] | None): Optional context metadata propagated to triggered runs.
@@ -824,6 +835,7 @@ class Trigger:
             interruptible=interruptible,
             overwrite_cache=overwrite_cache,
             queue=queue,
+            max_action_concurrency=max_action_concurrency,
             labels=labels,
             annotations=annotations,
             custom_context=custom_context,
@@ -842,6 +854,7 @@ class Trigger:
         interruptible: bool | None = None,
         overwrite_cache: bool = False,
         queue: str | None = None,
+        max_action_concurrency: int | None = None,
         labels: Mapping[str, str] | None = None,
         annotations: Mapping[str, str] | None = None,
         custom_context: Mapping[str, str] | None = None,
@@ -860,6 +873,8 @@ class Trigger:
             interruptible (bool | None): Whether the trigger is interruptible.
             overwrite_cache (bool): Whether to overwrite the cache.
             queue (str | None): Optional queue to run the trigger in.
+            max_action_concurrency (int | None): Optional maximum number of actions that can run
+                concurrently within a triggered run.
             labels (Mapping[str, str] | None): Optional labels to attach to the trigger.
             annotations (Mapping[str, str] | None): Optional annotations to attach to the trigger.
             custom_context (Mapping[str, str] | None): Optional context metadata propagated to triggered runs.
@@ -883,6 +898,7 @@ class Trigger:
             interruptible=interruptible,
             overwrite_cache=overwrite_cache,
             queue=queue,
+            max_action_concurrency=max_action_concurrency,
             labels=labels,
             annotations=annotations,
             custom_context=custom_context,
@@ -901,6 +917,7 @@ class Trigger:
         interruptible: bool | None = None,
         overwrite_cache: bool = False,
         queue: str | None = None,
+        max_action_concurrency: int | None = None,
         labels: Mapping[str, str] | None = None,
         annotations: Mapping[str, str] | None = None,
         custom_context: Mapping[str, str] | None = None,
@@ -919,6 +936,8 @@ class Trigger:
             interruptible (bool | None): Whether the trigger is interruptible.
             overwrite_cache (bool): Whether to overwrite the cache.
             queue (str | None): Optional queue to run the trigger in.
+            max_action_concurrency (int | None): Optional maximum number of actions that can run
+                concurrently within a triggered run.
             labels (Mapping[str, str] | None): Optional labels to attach to the trigger.
             annotations (Mapping[str, str] | None): Optional annotations to attach to the trigger.
             custom_context (Mapping[str, str] | None): Optional context metadata propagated to triggered runs.
@@ -942,6 +961,7 @@ class Trigger:
             interruptible=interruptible,
             overwrite_cache=overwrite_cache,
             queue=queue,
+            max_action_concurrency=max_action_concurrency,
             labels=labels,
             annotations=annotations,
             custom_context=custom_context,
@@ -960,6 +980,7 @@ class Trigger:
         interruptible: bool | None = None,
         overwrite_cache: bool = False,
         queue: str | None = None,
+        max_action_concurrency: int | None = None,
         labels: Mapping[str, str] | None = None,
         annotations: Mapping[str, str] | None = None,
         custom_context: Mapping[str, str] | None = None,
@@ -978,6 +999,8 @@ class Trigger:
             interruptible (bool | None): Whether the trigger is interruptible.
             overwrite_cache (bool): Whether to overwrite the cache.
             queue (str | None): Optional queue to run the trigger in.
+            max_action_concurrency (int | None): Optional maximum number of actions that can run
+                concurrently within a triggered run.
             labels (Mapping[str, str] | None): Optional labels to attach to the trigger.
             annotations (Mapping[str, str] | None): Optional annotations to attach to the trigger.
             custom_context (Mapping[str, str] | None): Optional context metadata propagated to triggered runs.
@@ -1001,6 +1024,7 @@ class Trigger:
             interruptible=interruptible,
             overwrite_cache=overwrite_cache,
             queue=queue,
+            max_action_concurrency=max_action_concurrency,
             labels=labels,
             annotations=annotations,
             custom_context=custom_context,
@@ -1019,6 +1043,7 @@ class Trigger:
         interruptible: bool | None = None,
         overwrite_cache: bool = False,
         queue: str | None = None,
+        max_action_concurrency: int | None = None,
         labels: Mapping[str, str] | None = None,
         annotations: Mapping[str, str] | None = None,
         custom_context: Mapping[str, str] | None = None,
@@ -1037,6 +1062,8 @@ class Trigger:
             interruptible (bool | None): Whether the trigger is interruptible.
             overwrite_cache (bool): Whether to overwrite the cache.
             queue (str | None): Optional queue to run the trigger in.
+            max_action_concurrency (int | None): Optional maximum number of actions that can run
+                concurrently within a triggered run.
             labels (Mapping[str, str] | None): Optional labels to attach to the trigger.
             annotations (Mapping[str, str] | None): Optional annotations to attach to the trigger.
             custom_context (Mapping[str, str] | None): Optional context metadata propagated to triggered runs.
@@ -1060,6 +1087,7 @@ class Trigger:
             interruptible=interruptible,
             overwrite_cache=overwrite_cache,
             queue=queue,
+            max_action_concurrency=max_action_concurrency,
             labels=labels,
             annotations=annotations,
             custom_context=custom_context,

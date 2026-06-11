@@ -56,6 +56,7 @@ Interactive editing (via CLI)::
 Available setting keys (dot-notation)::
 
     run.default_queue,
+    run.max_action_concurrency,
     security.service_account,
     storage.raw_data_path,
     task_resource.min.{cpu,gpu,memory,storage},

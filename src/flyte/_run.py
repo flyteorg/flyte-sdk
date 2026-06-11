@@ -102,6 +102,7 @@ class _Runner:
         reset_root_logger: bool = False,
         disable_run_cache: bool = False,
         queue: Optional[str] = None,
+        max_action_concurrency: int | None = None,
         custom_context: Dict[str, str] | None = None,
         notifications: NamedRule | Notification | Tuple[Notification, ...] | None = None,
         cache_lookup_scope: CacheLookupScope = "global",
@@ -147,6 +148,7 @@ class _Runner:
         self._reset_root_logger = reset_root_logger
         self._disable_run_cache = disable_run_cache
         self._queue = queue
+        self._max_action_concurrency = max_action_concurrency
         self._notifications = notifications
         self._custom_context = custom_context or {}
         self._cache_lookup_scope = cache_lookup_scope
@@ -423,6 +425,7 @@ class _Runner:
                             labels=labels,
                             envs=env_kv,
                             cluster=self._queue or task.queue,
+                            max_action_concurrency=self._max_action_concurrency or 0,
                             raw_data_storage=raw_data_storage,
                             security_context=security_context,
                             cache_config=run_pb2.CacheConfig(
@@ -838,6 +841,7 @@ def with_runcontext(
     reset_root_logger: bool = False,
     disable_run_cache: bool = False,
     queue: Optional[str] = None,
+    max_action_concurrency: int | None = None,
     notifications: Notification | Tuple[Notification, ...] | None = None,
     custom_context: Dict[str, str] | None = None,
     cache_lookup_scope: CacheLookupScope = "global",
@@ -903,6 +907,9 @@ def with_runcontext(
     :param reset_root_logger: If true, the root logger will be preserved and not modified by Flyte.
     :param disable_run_cache: Optional If true, the run cache will be disabled. This is useful for testing purposes.
     :param queue: Optional The queue to use for the run. This is used to specify the cluster to use for the run.
+    :param max_action_concurrency: Optional Maximum number of actions that can run concurrently within this run.
+        Only applies to remote runs. If not provided, the platform default (configurable via the
+        ``run.max_action_concurrency`` setting at org/domain/project scope) applies.
     :param notifications: Optional Notification(s) to send when the run reaches specific execution phases.
         Accepts a single notification or a tuple of notifications. Supports Email, Slack, Teams, and Webhook types.
         See `flyte.notify` for available notification types and template variables.
@@ -928,6 +935,8 @@ def with_runcontext(
         raise ValueError("copy_style='custom' is not yet supported through with_runcontext.")
     if copy_style == "none" and not version:
         raise ValueError("Version is required when copy_style is 'none'")
+    if max_action_concurrency is not None and max_action_concurrency < 0:
+        raise ValueError(f"max_action_concurrency must be a non-negative integer, got {max_action_concurrency}")
 
     return _Runner(
         force_mode=mode,
@@ -954,6 +963,7 @@ def with_runcontext(
         reset_root_logger=reset_root_logger,
         disable_run_cache=disable_run_cache,
         queue=queue,
+        max_action_concurrency=max_action_concurrency,
         notifications=notifications,
         custom_context=custom_context,
         cache_lookup_scope=cache_lookup_scope,
