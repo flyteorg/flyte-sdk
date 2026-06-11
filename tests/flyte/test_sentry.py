@@ -462,3 +462,21 @@ def test_capture_exception_still_reports_connect_error_internal_in_upload_chain(
     ):
         _sentry.capture_exception(err)
     capture_mock.assert_called_once_with(err)
+
+
+def test_capture_exception_skips_invalid_auth_mode_wrapped_as_system_error():
+    """FLYTE-SDK-50: an unrecognized auth mode (creds misconfig) raised from the
+    authenticator factory is wrapped through RuntimeError('SelectCluster failed...')
+    -> RuntimeSystemError('Failed to get signed url...'). It's a user-config mistake,
+    so it must be filtered out of Sentry."""
+    from flyte.errors import InitializationError
+
+    inner = InitializationError(
+        "InvalidAuthMode",
+        "user",
+        "Invalid auth mode [None] specified. Please update the creds config to use a valid value",
+    )
+    err = _wrap_as_upload_system_error(inner)
+    with mock.patch.object(_sentry, "init") as init_mock:
+        _sentry.capture_exception(err)
+    init_mock.assert_not_called()
