@@ -742,7 +742,9 @@ class Trigger:
     :param queue: Queue name for triggered runs (overrides the task's configured value).
     :param max_action_concurrency: Maximum number of actions that can run concurrently within a
         triggered run. `None` (default) defers to the platform default (the
-        ``run.max_action_concurrency`` setting).
+        ``run.max_action_concurrency`` setting). Must be 0 (platform default) or at least 2 —
+        a value of 1 would deadlock the run, since the parent action holds a concurrency slot
+        while waiting for its child actions.
     :param labels: Kubernetes labels to attach to triggered runs.
     :param annotations: Kubernetes annotations to attach to triggered runs.
     :param custom_context: Metadata propagated through the entire task hierarchy of
@@ -769,9 +771,13 @@ class Trigger:
             raise ValueError("Trigger name cannot be empty")
         if self.automation is None:
             raise ValueError("Automation cannot be None")
-        if self.max_action_concurrency is not None and self.max_action_concurrency < 0:
+        if self.max_action_concurrency is not None and (
+            self.max_action_concurrency < 0 or self.max_action_concurrency == 1
+        ):
             raise ValueError(
-                f"max_action_concurrency must be a non-negative integer, got {self.max_action_concurrency}"
+                f"max_action_concurrency must be 0 (platform default) or at least 2, "
+                f"got {self.max_action_concurrency}. A value of 1 would deadlock the run: the parent "
+                "action holds a concurrency slot while waiting for its child actions to run."
             )
         if self.description and len(self.description) > 255:
             from flyte._utils.description_parser import parse_description

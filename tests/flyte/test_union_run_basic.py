@@ -247,3 +247,14 @@ async def test_run_spec_max_action_concurrency_default_unset(
 def test_with_runcontext_rejects_negative_max_action_concurrency():
     with pytest.raises(ValueError, match="max_action_concurrency"):
         flyte.with_runcontext(max_action_concurrency=-1)
+
+
+def test_with_runcontext_rejects_max_action_concurrency_of_one():
+    """A value of 1 would deadlock: the parent action holds the only concurrency slot."""
+    with pytest.raises(ValueError, match="deadlock"):
+        flyte.with_runcontext(max_action_concurrency=1)
+
+
+def test_with_runcontext_allows_zero_max_action_concurrency():
+    flyte.with_runcontext(max_action_concurrency=0)
+    flyte.with_runcontext(max_action_concurrency=2)

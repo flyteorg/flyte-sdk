@@ -379,6 +379,15 @@ class TestToTaskTrigger:
                 max_action_concurrency=-1,
             )
 
+    def test_trigger_rejects_max_action_concurrency_of_one(self):
+        """A value of 1 would deadlock: the parent action holds the only concurrency slot."""
+        with pytest.raises(ValueError, match="deadlock"):
+            Trigger(
+                name="bad_trigger",
+                automation=Cron("0 0 * * *"),
+                max_action_concurrency=1,
+            )
+
     @pytest.mark.asyncio
     async def test_trigger_with_trigger_time(self):
         """Test trigger with TriggerTime input"""

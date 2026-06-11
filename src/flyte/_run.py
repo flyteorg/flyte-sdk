@@ -909,7 +909,9 @@ def with_runcontext(
     :param queue: Optional The queue to use for the run. This is used to specify the cluster to use for the run.
     :param max_action_concurrency: Optional Maximum number of actions that can run concurrently within this run.
         Only applies to remote runs. If not provided, the platform default (configurable via the
-        ``run.max_action_concurrency`` setting at org/domain/project scope) applies.
+        ``run.max_action_concurrency`` setting at org/domain/project scope) applies. Must be 0
+        (platform default) or at least 2 — a value of 1 would deadlock the run, since the parent
+        action holds a concurrency slot while waiting for its child actions.
     :param notifications: Optional Notification(s) to send when the run reaches specific execution phases.
         Accepts a single notification or a tuple of notifications. Supports Email, Slack, Teams, and Webhook types.
         See `flyte.notify` for available notification types and template variables.
@@ -935,8 +937,12 @@ def with_runcontext(
         raise ValueError("copy_style='custom' is not yet supported through with_runcontext.")
     if copy_style == "none" and not version:
         raise ValueError("Version is required when copy_style is 'none'")
-    if max_action_concurrency is not None and max_action_concurrency < 0:
-        raise ValueError(f"max_action_concurrency must be a non-negative integer, got {max_action_concurrency}")
+    if max_action_concurrency is not None and (max_action_concurrency < 0 or max_action_concurrency == 1):
+        raise ValueError(
+            f"max_action_concurrency must be 0 (platform default) or at least 2, got {max_action_concurrency}. "
+            "A value of 1 would deadlock the run: the parent action holds a concurrency slot while "
+            "waiting for its child actions to run."
+        )
 
     return _Runner(
         force_mode=mode,
