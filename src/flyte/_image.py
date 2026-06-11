@@ -667,6 +667,12 @@ class Image:
         if install_flyte and dev_mode:
             if os.path.exists(DIST_FOLDER):
                 image = image.with_local_v2()
+                # Bake locally-built plugin wheels (built into dist/ via `make dist-plugins`) when
+                # opted in, e.g. _F_LOCAL_PLUGINS=flyteplugins-redis. Comma-separated. This keeps
+                # example/task code unchanged while the default dev image gains the plugins.
+                local_plugins = [p.strip() for p in os.getenv("_F_LOCAL_PLUGINS", "").split(",") if p.strip()]
+                if local_plugins:
+                    image = image.with_local_v2_plugins(local_plugins)
             else:
                 from packaging.version import Version
 
