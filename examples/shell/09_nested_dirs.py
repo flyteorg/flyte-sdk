@@ -1,17 +1,8 @@
-"""Nested Dir output from a ContainerTask — exercises the CoPilot multipart
-nested-upload fix.
+"""Nested Dir output from a ContainerTask.
 
-The container writes a directory *tree* into its ``Dir`` output: a root file
+The container writes a directory tree into its ``Dir`` output: a root file
 plus two subdirectories, where a filename (``dup.txt``) collides across the two
-subdirs. Before the fix, ``Uploader.handleBlobType`` skipped subdirectories and
-keyed every file by basename only, so ``nested/dup.txt`` and ``other/dup.txt``
-flattened to the same key and nondeterministically clobbered each other on
-upload. The verify task downloads the Dir back and asserts the full structure
-(and contents) survived the round-trip.
-
-Run remotely (needs a devbox whose ``co-pilot.image`` is built from this branch)::
-
-    uv run python 09_nested_dirs.py remote
+subdirs.
 """
 
 import os
@@ -22,7 +13,6 @@ import flyte
 from flyte.extras import shell
 from flyte.io import Dir
 
-# rel_path -> expected contents (printf writes no trailing newline)
 EXPECTED = {
     "root.txt": "root",
     "nested/deep.txt": "deep",
@@ -44,7 +34,7 @@ make_nested = shell.create(
     cache="disable",
 )
 
-env = flyte.TaskEnvironment(name="nested_dirs", depends_on=[make_nested.env], image=flyte.Image.from_debian_base(flyte_version="2.4.1"))
+env = flyte.TaskEnvironment(name="nested_dirs", depends_on=[make_nested.env])
 
 
 @env.task
