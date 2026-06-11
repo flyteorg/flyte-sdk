@@ -5,6 +5,7 @@ plus two subdirectories, where a filename (``dup.txt``) collides across the two
 subdirs.
 """
 
+import aiofiles
 import os
 import sys
 import tempfile
@@ -49,8 +50,8 @@ async def verify_nested() -> str:
         for f in files:
             full = os.path.join(parent, f)
             rel = os.path.relpath(full, local).replace(os.sep, "/")
-            with open(full) as fh:
-                found[rel] = fh.read()
+            async with aiofiles.open(full) as fh:
+                found[rel] = await fh.read()
 
     problems = []
     for rel, body in EXPECTED.items():
@@ -64,9 +65,7 @@ async def verify_nested() -> str:
 
     if problems:
         raise AssertionError(
-            "Nested Dir round-trip FAILED (the fix is not active):\n  "
-            + "\n  ".join(problems)
-            + f"\n  found = {found}"
+            "Nested Dir round-trip FAILED (the fix is not active):\n  " + "\n  ".join(problems) + f"\n  found = {found}"
         )
 
     return f"OK — {len(found)} files, nesting preserved: {sorted(found)}"
