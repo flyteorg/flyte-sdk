@@ -25,15 +25,17 @@ The harness deeply integrates with Flyte 2:
 ## How it works
 
 `Agent(...)` collapses heterogeneous tool sources into a single registry +
-system prompt; `agent.run(message)` then drives an LLM ↔ tool-call loop
-until the model returns a plain text reply (or `max_turns` is reached):
+system prompt; `agent.run(message)` (sync by default) then drives an LLM ↔
+tool-call loop until the model returns a plain text reply (or `max_turns` is
+reached). Inside `async def` — Flyte tasks, FastAPI handlers, etc. — use
+`await agent.run.aio(message)` instead.
 
 ```mermaid
 flowchart TB
     inputs["tools (fn / task / MCP),<br/> skills, memory, and instructions"]
     inputs --> agent[["Agent<br/>(tool registry, skills, system prompt)"]]
 
-    subgraph loop["agent.run(message)"]
+    subgraph loop["agent.run(message)  ·  agent.run.aio(message) in async code"]
       direction TB
       llm["call_llm"] --loop max_turns times--> branch{"tool_calls?"}
       branch -- yes --> exec["execute tools<br/>(optional HITL approval)"]
@@ -49,13 +51,23 @@ flowchart TB
 Every step also emits a typed `AgentEvent` via `agent_progress_cb`, which
 the chat UI, webhook handlers, and structured loggers subscribe to.
 
+### Sync vs async
+
+| Context | Call |
+|---------|------|
+| Scripts, notebooks, sync code | `result = agent.run(message, memory=[])` |
+| `async def` tasks / handlers | `result = await agent.run.aio(message, memory=[])` |
+
+`AgentChatAppEnvironment` calls `agent.run.aio` automatically when chat
+requests are routed to the agent directly (without a parent task entrypoint).
+
 ## Layout
 
 | File | What it shows |
 |------|---------------|
-| `basic_agent.py` | Minimal agent — plain async tools, run locally from the CLI. |
+| `basic_agent.py` | Minimal agent — plain async tools, sync `agent.run()` from the CLI. |
 | `scheduled_triage_agent.py` | Agent that wakes daily via `flyte.Cron`, uses durable Flyte tasks. |
-| `agent_with_memory.py` | Persist `MemoryStore` (transcript + artifacts) to `flyte.io.Dir` between task invocations. |
+| `agent_with_memory.py` | Pass a keyed `MemoryStore` into `agent.run(message, memory=...)`; the transcript is auto-saved and persists across runs. |
 | `hitl_approval_agent.py` | Gate sensitive tools behind human approval (`flyteplugins-hitl`). |
 | `agent_chat_ui.py` | Wrap an `Agent` in the built-in `AgentChatAppEnvironment` UI. |
 | `mcp_powered_agent.py` | Mix local Flyte task tools with remote MCP servers. |
@@ -110,7 +122,7 @@ agent = Agent(
 
 @env.task(triggers=flyte.Trigger.daily())
 async def daily_run() -> str:
-    result = await agent.run("Post the digest to #support.")
+    result = await agent.run.aio("Post the digest to #support.")
     return result.summary or result.error
 ```
 

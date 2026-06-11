@@ -15,10 +15,13 @@ Architecture::
 
     Browser (FastAPI Chat UI)
       └── AgentChatAppEnvironment
-            └── CodeModeAgent.run(message, history)
+            └── Agent.run.aio(message, memory)  # async HTTP handler, code_mode=True
                   ├── LLM call (generate code using tool functions)
                   ├── Monty sandbox execution
-                  └── retry on failure
+                  └── self-correct on failure across turns
+
+    ``Agent.run`` is synchronous by default; the chat UI and async
+    Flyte tasks use ``run.aio``.
 
 Install dependencies::
 
@@ -35,7 +38,7 @@ import pathlib
 from typing import Callable, Literal, TypedDict
 
 import flyte
-from flyte.ai.agents import CodeModeAgent
+from flyte.ai.agents import Agent
 from flyte.ai.chat import AgentChatAppEnvironment, CustomTheme
 
 # ---------------------------------------------------------------------------
@@ -965,11 +968,13 @@ These tools already return a complete formatted response. Just return the result
 dict directly — do NOT call format_response after calling these tools.
 """
 
-agent = CodeModeAgent(
-    tools=ALL_TOOLS,
+agent = Agent(
+    name="sales-agent",
+    instructions=SYSTEM_PROMPT_PREFIX,
     model="claude-haiku-4-5",
-    max_retries=2,
-    system_prompt_prefix=SYSTEM_PROMPT_PREFIX,
+    tools=ALL_TOOLS,
+    code_mode=True,
+    max_turns=10,
 )
 
 env = AgentChatAppEnvironment(

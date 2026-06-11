@@ -1,26 +1,39 @@
 """Long-lived agent that persists memory to a keyed blob-store namespace.
 
 This example shows how to give a :class:`flyte.ai.agents.Agent` continuity
-across runs by loading a deterministic :class:`~flyte.ai.agents.MemoryStore`
-with ``MemoryStore.get_or_create(key=...)``.
+across runs *functionally*: memory is not attached to the agent, it is passed
+into :meth:`Agent.run` per call and returned on the result.
 
 Use case: a recurring assistant that remembers context across wakeups (e.g. an
 "inbox triage" agent that recalls which threads it has already responded to,
 or a research agent that builds up its scratchpad over many days).
 
-The store lives under the stable raw-data root in the Flyte-managed
-``agents/memory-store/v0`` namespace. It holds ``messages.json`` (the live
-transcript), an opt-in ``audit/log.jsonl`` audit trail, and any path-addressed
-artifacts the agent / its tools have written.
+How memory flows
+----------------
+
+1. The caller loads (or creates) a deterministic, keyed store with
+   ``MemoryStore.get_or_create(key=...)``. It lives under the stable raw-data
+   root in the Flyte-managed ``agents/memory-store/v0`` namespace.
+2. The store is handed to ``agent.run(message, memory=store)``. The agent
+   prepends the prior transcript, runs the tool-use loop, and appends the new
+   transcript back to the store. No ``agent.memory = ...`` assignment.
+3. The caller saves the updated store with ``memory.save()`` (saving is
+   explicit, not magic). The same (updated) store is also returned on
+   ``result.memory``.
+
+Note that tools never touch the ``MemoryStore``: they are plain functions and
+their effects are captured in the conversation transcript, which is what gives
+the agent continuity. The store's path-addressed artifacts / audit / version
+features remain available to the *caller* (not tools) via
+``memory.read_json`` / ``memory.write_json`` when richer state is needed.
 """
 
 from __future__ import annotations
 
 import flyte
-from flyte.ai.agents import Agent, ConcurrencyError, MemoryStore
+from flyte.ai.agents import Agent, MemoryStore
 
 MEMORY_KEY = "my-assistant"
-NOTES_PATH = "notes/notes.json"
 
 env = flyte.TaskEnvironment(
     name="persistent-agent",
@@ -31,59 +44,26 @@ env = flyte.TaskEnvironment(
 
 
 @env.task
-async def add_note(note: str) -> str:
-    """Save a free-form note to the agent's scratchpad.
+async def current_time() -> str:
+    """Return the current UTC time as an ISO-8601 string.
 
-    Returns a short acknowledgement string.
+    A plain, stateless tool: it knows nothing about the agent's memory. Whatever
+    it returns is recorded in the transcript, so the agent can recall it later.
     """
-    memory = await MemoryStore.get_or_create(key=MEMORY_KEY)
-    notes = await memory.read_json(NOTES_PATH, default=[])
-    sha = await memory.current_sha(NOTES_PATH)
-    notes.append(note)
-    try:
-        await memory.write_json(NOTES_PATH, notes, expected_sha=sha, reason="agent note")
-    except ConcurrencyError:
-        # Another tool/task updated the notes between our read and write.
-        # Surface a retryable result to the agent rather than silently dropping
-        # memory.
-        return "Memory changed while saving the note; please retry add_note."
-    await memory.save()
-    return f"Noted: {note}"
+    from datetime import datetime, timezone
 
-
-@env.task
-async def list_history(count: int = 5) -> str:
-    """Return recent persisted notes and conversation messages."""
-    memory = await MemoryStore.get_or_create(key=MEMORY_KEY)
-    notes = await memory.read_json(NOTES_PATH, default=[])
-    recent_notes = notes[-count:]
-    recent_messages = memory.messages[-count:]
-
-    parts: list[str] = []
-    if recent_notes:
-        parts.append("Persisted notes:\n" + "\n".join(f"- {note}" for note in recent_notes))
-    if recent_messages:
-        msg_lines = []
-        for msg in recent_messages:
-            role = msg.get("role", "unknown")
-            content = str(msg.get("content", ""))
-            if content:
-                msg_lines.append(f"- {role}: {content}")
-        if msg_lines:
-            parts.append("Recent transcript:\n" + "\n".join(msg_lines))
-    return "\n\n".join(parts) if parts else "No persisted memory found yet."
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 agent = Agent(
     name="memory-assistant",
     instructions=(
-        "You are a continuity-aware assistant. You can record notes and look "
-        "up recent history. When the user asks you to remember something, call "
-        "add_note. When the user asks you to recall something, call list_history "
-        "and answer from the returned persisted notes."
+        "You are a continuity-aware assistant. You remember facts the user "
+        "shares with you across conversations because your prior transcript is "
+        "always available. When the user asks what time it is, call current_time."
     ),
     model="claude-haiku-4-5",
-    tools=[add_note, list_history],
+    tools=[current_time],
     max_turns=12,
 )
 
@@ -98,18 +78,17 @@ async def chat(message: str, memory_key: str = MEMORY_KEY) -> str:
             continuity across runs.
 
     Returns:
-        The agent's reply. Memory is saved back to the keyed store before the
-        task returns.
+        The agent's reply. The updated memory is saved explicitly via
+        ``memory.save`` before this task returns.
     """
-    memory = await MemoryStore.get_or_create(key=memory_key)
+    memory = await MemoryStore.get_or_create.aio(key=memory_key)
     flyte.logger.info("Restored %d prior messages from memory.", len(memory.messages))
 
-    agent.memory = memory
-    result = await agent.run(message)
-
-    # Persist the updated transcript (and any tool-written artifacts) back to the
-    # deterministic key path so the next run picks up where this one left off.
-    await memory.save()
+    # The agent prepends the prior transcript and appends this turn back onto the
+    # store, returning it on ``result.memory``. Saving is explicit: persist the
+    # updated transcript to the deterministic key path before returning.
+    result = await agent.run.aio(message, memory=memory)
+    await memory.save.aio()
     return result.summary or result.error
 
 

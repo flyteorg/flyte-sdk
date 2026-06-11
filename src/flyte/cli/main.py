@@ -184,6 +184,15 @@ def _verbosity_to_loglevel(verbosity: int) -> int | None:
     default=False,
     show_default=True,
 )
+@click.option(
+    "--no-progress",
+    is_flag=True,
+    required=False,
+    help="Disable the animated progress spinner — useful in CI / non-interactive logs.",
+    type=bool,
+    default=False,
+    show_default=True,
+)
 @click.rich_config(help_config=help_config)
 @click.pass_context
 def main(
@@ -199,6 +208,7 @@ def main(
     auth_type: str | None = None,
     output_format: common.OutputFormat = "table",
     user_log_level: str = "info",
+    no_progress: bool = False,
 ):
     """
     The Flyte CLI is the command line interface for working with the Flyte SDK and backend.
@@ -264,6 +274,7 @@ def main(
         ctx=ctx,
         auth_type=auth_type,
         output_format=output_format,
+        no_progress=no_progress,
     )
 
     from flyte._status import set_output_mode

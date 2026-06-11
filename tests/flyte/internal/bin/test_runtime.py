@@ -11,6 +11,31 @@ import flyte.errors
 from flyte._bin.runtime import main
 
 
+def test_a0_disables_controller_under_torchrun(monkeypatch):
+    """`a0` workers spawned by torchrun (clustered tasks) run with no controller.
+
+    The launcher execs `torchrun ... -- a0 <args>`; torchrun sets TORCHELASTIC_RUN_ID on every
+    worker, which `a0` uses to gate the controller off (clustered tasks never enqueue subtasks).
+    """
+    import flyte._bin.runtime as runtime
+
+    captured = {}
+
+    def fake_run_action(ctx, *, controller_enabled, **params):
+        captured["controller_enabled"] = controller_enabled
+
+    monkeypatch.setattr(runtime, "_run_action", fake_run_action)
+    base_args = ["--inputs", "i", "--outputs-path", "o", "--version", "v", "--run-base-dir", "b"]
+
+    monkeypatch.setenv("TORCHELASTIC_RUN_ID", "run-xyz")
+    assert CliRunner().invoke(main, base_args).exit_code == 0
+    assert captured["controller_enabled"] is False
+
+    monkeypatch.delenv("TORCHELASTIC_RUN_ID", raising=False)
+    assert CliRunner().invoke(main, base_args).exit_code == 0
+    assert captured["controller_enabled"] is True
+
+
 def test_runtime_task_coroutine_exception():
     """Test that task_coroutine exceptions are properly handled and uploaded to outputs_path"""
 

@@ -9,11 +9,11 @@ import sys
 from ._build import ImageBuild, build
 from ._cache import Cache, CachePolicy, CacheRequest
 from ._checkpoint import BaseCheckpoint, Checkpoint, latest_checkpoint
+from ._condition import ConditionWebhook, new_condition
 from ._context import ctx
 from ._custom_context import custom_context, get_custom_context
 from ._deploy import build_images, deploy
 from ._environment import Environment
-from ._event import EventWebhook, new_event
 from ._excepthook import custom_excepthook
 from ._group import group
 from ._image import Image
@@ -66,11 +66,11 @@ __all__ = [
     "CachePolicy",
     "CacheRequest",
     "Checkpoint",
+    "ConditionWebhook",
     "Cron",
     "Device",
     "DeviceClass",
     "Environment",
-    "EventWebhook",
     "FixedRate",
     "Image",
     "ImageBuild",
@@ -105,7 +105,7 @@ __all__ = [
     "latest_checkpoint",
     "logger",
     "map",
-    "new_event",
+    "new_condition",
     "run",
     "run_python_script",
     "serve",

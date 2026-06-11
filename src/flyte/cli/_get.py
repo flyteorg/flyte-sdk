@@ -257,7 +257,7 @@ def action(
 @click.argument("run_name", type=str, required=True)
 @click.argument("action_name", type=str, required=False)
 @click.pass_obj
-def event(
+def condition(
     cfg: common.CLIConfig,
     run_name: str,
     action_name: str | None = None,
@@ -265,21 +265,21 @@ def event(
     domain: str | None = None,
 ):
     """
-    List events (paused condition actions) for a run, optionally filtered to a
+    List conditions (paused condition actions) for a run, optionally filtered to a
     specific parent action.
 
-    Each event corresponds to a condition action registered via
-    ``flyte.new_event(...)`` from a workflow. Use ``flyte signal event`` to
+    Each condition corresponds to a condition action registered via
+    ``flyte.new_condition(...)`` from a workflow. Use ``flyte signal condition`` to
     resolve one.
     """
     cfg.init(project=project, domain=domain)
 
     console = common.get_console()
-    title = f"Events for {run_name}.{action_name}" if action_name else f"Events for {run_name}"
+    title = f"Conditions for {run_name}.{action_name}" if action_name else f"Conditions for {run_name}"
     console.print(
         common.format(
             title,
-            remote.Event.listall(run_name=run_name, action_name=action_name),
+            remote.Condition.listall(run_name=run_name, action_name=action_name),
             cfg.output_format,
         )
     )

@@ -57,6 +57,25 @@ def hash_file(file_path: typing.Union[os.PathLike, str]) -> Tuple[bytes, str, in
     return h.digest(), h.hexdigest(), size
 
 
+def _parse_retry_after(value: typing.Optional[str], cap_sec: float) -> typing.Optional[float]:
+    """
+    Parse a Retry-After header value in integer-seconds form.
+
+    Returns the parsed (and capped) sleep duration in seconds, or None if the
+    value is missing or in HTTP-date form (which we don't honor — callers
+    should fall back to exponential backoff).
+    """
+    if value is None:
+        return None
+    try:
+        seconds = float(int(value.strip()))
+    except (ValueError, AttributeError):
+        return None
+    if seconds < 0:
+        return None
+    return min(seconds, cap_sec)
+
+
 async def _upload_with_retry(
     fp: Path,
     signed_url: str,
@@ -64,13 +83,19 @@ async def _upload_with_retry(
     verify: bool,
     max_retries: int = 3,
     min_backoff_sec: float = 0.5,
-    max_backoff_sec: float = 10.0,
+    max_backoff_sec: float = 30.0,
+    retry_after_cap_sec: float = 60.0,
 ):
     """
     Upload file to signed URL with exponential backoff retry.
 
     Retries on transient network errors and 5xx/429/408 HTTP errors.
     Does not retry on 4xx client errors (except 408/429).
+
+    When the response is 429 or 503 and carries a ``Retry-After`` header in
+    integer-seconds form, the next backoff honors that value (clamped to
+    ``retry_after_cap_sec``). HTTP-date form is not parsed; in that case we
+    fall back to exponential backoff.
 
     Args:
         fp: Path to file to upload
@@ -79,7 +104,9 @@ async def _upload_with_retry(
         verify: Whether to verify SSL certificates
         max_retries: Maximum retry attempts (default: 3)
         min_backoff_sec: Initial backoff delay (default: 0.5)
-        max_backoff_sec: Maximum backoff delay (default: 10.0)
+        max_backoff_sec: Maximum exponential backoff delay (default: 30.0)
+        retry_after_cap_sec: Upper bound for any honored Retry-After value
+            (default: 60.0)
 
     Raises:
         RuntimeSystemError: If upload fails after all retries
@@ -88,8 +115,10 @@ async def _upload_with_retry(
 
     retry_attempt = 0
     last_error: str | Exception | None = None
+    next_backoff_override: typing.Optional[float] = None
 
     while retry_attempt <= max_retries:
+        next_backoff_override = None
         try:
             async with aiofiles.open(str(fp), "rb") as file:
                 async with httpx.AsyncClient(verify=verify, timeout=_UPLOAD_TIMEOUT) as aclient:
@@ -110,6 +139,11 @@ async def _upload_with_retry(
                                 "UploadFailed",
                                 f"Failed to upload {fp} after {max_retries} retries: {last_error}",
                             )
+                        # Honor Retry-After for rate-limit / overload signals.
+                        if put_resp.status_code in (429, 503):
+                            next_backoff_override = _parse_retry_after(
+                                put_resp.headers.get("Retry-After"), retry_after_cap_sec
+                            )
                     else:
                         # Non-retryable HTTP error
                         raise RuntimeSystemError(
@@ -119,17 +153,22 @@ async def _upload_with_retry(
         except RuntimeSystemError:
             raise
         except (httpx.TimeoutException, httpx.NetworkError, OSError) as e:
-            last_error = e
+            # Some httpx/httpcore errors (e.g. ReadError) carry an empty str(e),
+            # so include the exception type to keep the message actionable.
+            last_error = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
             if retry_attempt >= max_retries:
                 raise RuntimeSystemError(
                     "UploadFailed",
-                    f"Failed to upload {fp} after {max_retries} retries: {e}",
+                    f"Failed to upload {fp} after {max_retries} retries: {last_error}",
                 ) from e
 
         # Backoff and retry
         retry_attempt += 1
         if retry_attempt <= max_retries:
-            backoff_delay = min(min_backoff_sec * (2 ** (retry_attempt - 1)), max_backoff_sec)
+            if next_backoff_override is not None:
+                backoff_delay = next_backoff_override
+            else:
+                backoff_delay = min(min_backoff_sec * (2 ** (retry_attempt - 1)), max_backoff_sec)
             logger.warning(
                 f"Upload failed for {fp.name}, backing off for {backoff_delay:.2f}s "
                 f"[retry {retry_attempt}/{max_retries}]: {last_error}"

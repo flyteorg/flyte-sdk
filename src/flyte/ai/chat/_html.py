@@ -241,7 +241,8 @@ if (collapseAllToolsBtn) {
 })();
 
 // Step 0 ("Preparing…") only on the first assistant reply in the session; later
-// replies use three steps. Steps 1-3 align with CodeModeAgent phases on first turn.
+// replies use three steps. Steps 1-3 map to agent progress phases (see
+// _AGENT_EVENT_TO_UI_PHASE in app.py).
 const PROGRESS_STEP_LABELS = [
     'Preparing runtime environment...',
     'Creating plan...',
