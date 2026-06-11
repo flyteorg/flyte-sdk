@@ -5,10 +5,11 @@ plus two subdirectories, where a filename (``dup.txt``) collides across the two
 subdirs.
 """
 
-import aiofiles
 import os
 import sys
 import tempfile
+
+import aiofiles
 
 import flyte
 from flyte.extras import shell
