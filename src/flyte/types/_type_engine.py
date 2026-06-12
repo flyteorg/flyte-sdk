@@ -1387,41 +1387,16 @@ def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name:
 
     for property_key in property_order:
         property_val = properties[property_key]
-        # Handle $ref for nested Pydantic models
-        if property_val.get("$ref"):
-            ref_path = property_val["$ref"]
-            # Extract the definition name from the $ref path (e.g., "#/$defs/MyNestedModel" -> "MyNestedModel")
-            ref_name = ref_path.split("/")[-1]
-            # Get the referenced schema from $defs (or definitions for older schemas)
-            defs = schema.get("$defs", schema.get("definitions", {}))
-            if ref_name in defs:
-                ref_schema = defs[ref_name].copy()
-                # Check if the $ref points to an enum definition (no properties)
-                if ref_schema.get("enum"):
-                    _append_schema_field(attribute_list, property_key, str, property_val, schema)
-                    continue
-                # Check if the $ref matches a registered custom type
-                matched_type = _match_registered_type_from_schema(ref_schema)
-                if matched_type is not None:
-                    _append_schema_field(
-                        attribute_list, property_key, typing.cast(GenericAlias, matched_type), property_val, schema
-                    )
-                    continue
-                # Include $defs so nested models can resolve their own $refs
-                if "$defs" not in ref_schema and defs:
-                    ref_schema["$defs"] = defs
-                nested_class: type = convert_mashumaro_json_schema_to_python_class(ref_schema, ref_name)
-                _append_schema_field(
-                    attribute_list, property_key, typing.cast(GenericAlias, nested_class), property_val, schema
-                )
-                # Track this as a nested type that needs dict-to-object conversion
-                nested_types[property_key] = nested_class
+
+        # Ensure property_val is a dictionary
+        if not isinstance(property_val, dict):
+            _append_schema_field(
+                attribute_list, property_key, _get_element_type(property_val, schema), property_val, schema
+            )
             continue
 
-        # Handle oneOf -- Pydantic v2 emits this for discriminated unions
-        # (e.g. Annotated[Union[A, B], Field(discriminator="kind")]). The property has no
-        # top-level "type"; instead it has "oneOf" with the variant schemas.
-        if property_val.get("oneOf"):
+        # Handle discriminated unions (Pydantic v2) - check for both discriminator and oneOf together
+        if "discriminator" in property_val and "oneOf" in property_val:
             variants = property_val["oneOf"]
             non_null_variants = [v for v in variants if not (isinstance(v, dict) and v.get("type") == "null")]
             has_null = len(non_null_variants) < len(variants)
@@ -1479,6 +1454,37 @@ def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name:
                     mapping=discriminator_mapping,
                     variants=tuple(variant_classes),
                 )
+            continue
+
+        # Handle $ref for nested Pydantic models
+        if property_val.get("$ref"):
+            ref_path = property_val["$ref"]
+            # Extract the definition name from the $ref path (e.g., "#/$defs/MyNestedModel" -> "MyNestedModel")
+            ref_name = ref_path.split("/")[-1]
+            # Get the referenced schema from $defs (or definitions for older schemas)
+            defs = schema.get("$defs", schema.get("definitions", {}))
+            if ref_name in defs:
+                ref_schema = defs[ref_name].copy()
+                # Check if the $ref points to an enum definition (no properties)
+                if ref_schema.get("enum"):
+                    _append_schema_field(attribute_list, property_key, str, property_val, schema)
+                    continue
+                # Check if the $ref matches a registered custom type
+                matched_type = _match_registered_type_from_schema(ref_schema)
+                if matched_type is not None:
+                    _append_schema_field(
+                        attribute_list, property_key, typing.cast(GenericAlias, matched_type), property_val, schema
+                    )
+                    continue
+                # Include $defs so nested models can resolve their own $refs
+                if "$defs" not in ref_schema and defs:
+                    ref_schema["$defs"] = defs
+                nested_class: type = convert_mashumaro_json_schema_to_python_class(ref_schema, ref_name)
+                _append_schema_field(
+                    attribute_list, property_key, typing.cast(GenericAlias, nested_class), property_val, schema
+                )
+                # Track this as a nested type that needs dict-to-object conversion
+                nested_types[property_key] = nested_class
             continue
 
         if property_val.get("anyOf"):
