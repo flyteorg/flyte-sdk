@@ -1522,3 +1522,71 @@ async def test_current_output_name_cleared_on_transformer_error():
         convert.TypeEngine.to_literal = original_to_literal
 
     assert current_output_name() is None
+
+
+def test_inputs_context_excludes_reserved_kickoff_key():
+    """The reserved kickoff-arg key is internal plumbing and must not surface in user context."""
+    from flyteidl2.core import literals_pb2 as _lit
+
+    proto = _task_common_pb2.Inputs(
+        context=[
+            _lit.KeyValuePair(key=convert.KICKOFF_TIME_INPUT_ARG_CONTEXT_KEY, value="start_time"),
+            _lit.KeyValuePair(key="team", value="ml"),
+        ]
+    )
+    assert Inputs(proto_inputs=proto).context == {"team": "ml"}
+
+
+@pytest.mark.asyncio
+async def test_convert_inputs_fills_kickoff_arg_from_run_start():
+    """A trigger's kickoff arg (named via context, absent from literals) is filled from
+    ctx().run_start_time during native conversion."""
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    from flyteidl2.core import literals_pb2 as _lit
+
+    run_start = datetime(2026, 6, 4, 12, 0, tzinfo=timezone.utc)
+    proto = _task_common_pb2.Inputs(
+        literals=[
+            _task_common_pb2.NamedLiteral(
+                name="x", value=_lit.Literal(scalar=_lit.Scalar(primitive=_lit.Primitive(integer=7)))
+            )
+        ],
+        context=[_lit.KeyValuePair(key=convert.KICKOFF_TIME_INPUT_ARG_CONTEXT_KEY, value="start_time")],
+    )
+    interface = NativeInterface.from_types(
+        {"start_time": (datetime, inspect.Parameter.empty), "x": (int, inspect.Parameter.empty)}, {}
+    )
+
+    with patch.object(convert, "ctx", return_value=SimpleNamespace(run_start_time=run_start)):
+        out = await convert.convert_inputs_to_native(Inputs(proto_inputs=proto), interface)
+
+    assert out["start_time"] == run_start
+    assert out["x"] == 7
+
+
+@pytest.mark.asyncio
+async def test_convert_inputs_no_kickoff_key_is_noop():
+    """Without the reserved key, conversion is unaffected (no run_start_time injection)."""
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    from flyteidl2.core import literals_pb2 as _lit
+
+    proto = _task_common_pb2.Inputs(
+        literals=[
+            _task_common_pb2.NamedLiteral(
+                name="x", value=_lit.Literal(scalar=_lit.Scalar(primitive=_lit.Primitive(integer=7)))
+            )
+        ]
+    )
+    interface = NativeInterface.from_types({"x": (int, inspect.Parameter.empty)}, {})
+
+    rs = datetime(2026, 6, 4, 12, 0, tzinfo=timezone.utc)
+    with patch.object(convert, "ctx", return_value=SimpleNamespace(run_start_time=rs)):
+        out = await convert.convert_inputs_to_native(Inputs(proto_inputs=proto), interface)
+
+    assert out == {"x": 7}
