@@ -126,6 +126,13 @@ class Authenticator(object):
         """
         self._creds = creds
 
+    async def _refresh_credentials_once(self) -> Credentials:
+        creds = await self._do_refresh_credentials()
+        KeyringStore.store(creds, disable=self._disable_keyring)
+        self._creds = creds
+        self._creds_id = creds.id
+        return creds
+
     async def get_auth_headers(self) -> typing.Optional[AuthHeaders]:
         """
         Fetch the authentication headers.
@@ -176,16 +183,25 @@ class Authenticator(object):
                 # Another thread/coroutine refreshed credentials while we were waiting for the lock
                 return
 
+            retry_with_fresh_metadata = bool(
+                self._cfg_store is not None and self._cfg_store.has_cached_public_client_auth_metadata()
+            )
+
             # Perform the actual credential refresh
             try:
-                self._creds = await self._do_refresh_credentials()
-                KeyringStore.store(self._creds, disable=self._disable_keyring)
+                await self._refresh_credentials_once()
             except Exception:
+                if retry_with_fresh_metadata and self._cfg_store is not None:
+                    self._cfg_store.invalidate_cached_public_client_auth_metadata()
+                    self._resolved_config = None
+                    try:
+                        await self._refresh_credentials_once()
+                        return
+                    except Exception:
+                        KeyringStore.delete(self._endpoint, disable=self._disable_keyring)
+                        raise
                 KeyringStore.delete(self._endpoint, disable=self._disable_keyring)
                 raise
-
-            # Update the timestamp to indicate credentials have been refreshed
-            self._creds_id = self._creds.id
 
     @abstractmethod
     async def _do_refresh_credentials(self) -> Credentials:

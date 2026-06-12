@@ -99,9 +99,7 @@ async def test_remote_client_config_store_fetches_public_client_config_when_endp
 
 @pytest.mark.asyncio
 async def test_remote_client_config_store_treats_malformed_endpoint_cache_as_miss(tmp_path: Path):
-    cache_path = get_public_client_auth_metadata_cache_path(
-        "dogfood.cloud-staging.union.ai", cache_root=tmp_path
-    )
+    cache_path = get_public_client_auth_metadata_cache_path("dogfood.cloud-staging.union.ai", cache_root=tmp_path)
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     cache_path.write_text("not: [valid")
 
@@ -181,9 +179,7 @@ async def test_remote_client_config_store_uses_endpoint_specific_cache_files(tmp
 
 @pytest.mark.asyncio
 async def test_remote_client_config_store_accepts_cached_metadata_without_audience(tmp_path: Path):
-    cache_path = get_public_client_auth_metadata_cache_path(
-        "dogfood.cloud-staging.union.ai", cache_root=tmp_path
-    )
+    cache_path = get_public_client_auth_metadata_cache_path("dogfood.cloud-staging.union.ai", cache_root=tmp_path)
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     cache_path.write_text(
         """authType: Pkce

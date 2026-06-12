@@ -8,9 +8,11 @@ from flyteidl2.auth.auth_service_pb2 import GetOAuth2MetadataRequest, GetPublicC
 
 from flyte.remote._client.auth._public_client_cache import (
     CachedPublicClientAuthMetadata,
-    get_public_client_auth_metadata_cache_root,
-    read_cached_public_client_auth_metadata,
     extract_public_client_auth_metadata_cache_key,
+    get_public_client_auth_metadata_cache_path,
+    get_public_client_auth_metadata_cache_root,
+    invalidate_cached_public_client_auth_metadata,
+    read_cached_public_client_auth_metadata,
     write_cached_public_client_auth_metadata,
 )
 
@@ -81,6 +83,12 @@ class ClientConfigStore(object):
     @abstractmethod
     async def get_client_config(self) -> ClientConfig: ...
 
+    def has_cached_public_client_auth_metadata(self) -> bool:
+        return False
+
+    def invalidate_cached_public_client_auth_metadata(self) -> None:
+        return None
+
 
 class StaticClientConfigStore(ClientConfigStore):
     def __init__(self, cfg: ClientConfig):
@@ -111,6 +119,12 @@ class RemoteClientConfigStore(ClientConfigStore):
         self._insecure = insecure
         self._cache_root = get_public_client_auth_metadata_cache_root(cache_root)
         self._cache_endpoint = extract_public_client_auth_metadata_cache_key(endpoint)
+
+    def has_cached_public_client_auth_metadata(self) -> bool:
+        return get_public_client_auth_metadata_cache_path(self._cache_endpoint, cache_root=self._cache_root).exists()
+
+    def invalidate_cached_public_client_auth_metadata(self) -> None:
+        invalidate_cached_public_client_auth_metadata(self._cache_endpoint, cache_root=self._cache_root)
 
     def _cached_overrides(self) -> LocalClientConfigOverrides | None:
         # attempt to read auth metadata from the local cache file

@@ -73,6 +73,16 @@ def get_public_client_auth_metadata_cache_path(endpoint: str, cache_root: Path |
     return resolved_root / f"{extract_public_client_auth_metadata_cache_key(endpoint)}.yaml"
 
 
+def invalidate_cached_public_client_auth_metadata(endpoint: str, cache_root: Path | None = None) -> None:
+    file_path = get_public_client_auth_metadata_cache_path(endpoint, cache_root=cache_root)
+    try:
+        if file_path.exists():
+            file_path.unlink()
+            logger.info(f"Invalidated cached auth metadata at {file_path}")
+    except OSError as e:
+        logger.warning(f"Failed to invalidate cached auth metadata at {file_path}: {e}")
+
+
 def read_cached_public_client_auth_metadata(
     endpoint: str, cache_root: Path | None = None
 ) -> Optional[CachedPublicClientAuthMetadata]:
@@ -87,7 +97,8 @@ def read_cached_public_client_auth_metadata(
             raise ValueError(f"Invalid cached auth metadata content in {file_path}")
         return CachedPublicClientAuthMetadata.model_validate(payload)
     except (OSError, yaml.YAMLError, pydantic.ValidationError, ValueError) as e:
-        logger.warning(f"Failed to read cached auth metadata from {file_path}: {e}")
+        logger.warning(f"Failed to read cached auth metadata from {file_path}")
+        invalidate_cached_public_client_auth_metadata(endpoint, cache_root=cache_root)
         return None
 
 
