@@ -1,7 +1,8 @@
-"""Tests for run-path behavior in taskrunner — notably that `controller` is optional.
+"""Tests for taskrunner behavior.
 
-Clustered/jobset tasks run with no controller (they never enqueue subtasks); the only controller
-touchpoint on the leaf path is `finalize_parent_action`, which must be skipped when there is none.
+`run_task`: the `controller` argument is optional. Clustered/jobset tasks run with no controller
+(they never enqueue subtasks); the only controller touchpoint on the leaf path is
+`finalize_parent_action`, which must be skipped when there is none.
 """
 
 import asyncio
