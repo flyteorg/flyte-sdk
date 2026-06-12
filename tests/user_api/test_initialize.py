@@ -644,6 +644,15 @@ class TestInitInCluster:
         yield
         init_module._init_config = None
 
+    @pytest.fixture(autouse=True)
+    def no_config_env_vars(self, monkeypatch):
+        """These tests cover the legacy api-key / endpoint-env-var branch.
+        init_in_cluster's new fallback fires when UCTL_CONFIG or
+        FLYTECTL_CONFIG point at an existing file; clear them so we
+        exercise the legacy branch we mean to test."""
+        monkeypatch.delenv("UCTL_CONFIG", raising=False)
+        monkeypatch.delenv("FLYTECTL_CONFIG", raising=False)
+
     @patch("flyte._initialize.init")
     @pytest.mark.asyncio
     async def test_init_in_cluster_default_insecure_with_docker_endpoint(self, mock_init, monkeypatch):
