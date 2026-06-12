@@ -4,6 +4,7 @@ from typing import AsyncIterator
 from urllib.parse import urlparse
 
 from async_lru import alru_cache
+from connectrpc.errors import ConnectError
 from flyteidl2.app.app_service_connect import AppServiceClient
 from flyteidl2.auth.identity_connect import IdentityServiceClient
 from flyteidl2.cluster import payload_pb2 as cluster_payload_pb2
@@ -223,6 +224,33 @@ class ClusterAwareDataProxy:
         )
         return await client.upload_inputs(request)
 
+    async def upload_trigger(
+        self, request: dataproxy_service_pb2.UploadInputsRequest
+    ) -> dataproxy_service_pb2.UploadInputsResponse:
+        """Upload trigger inputs, routing via SelectCluster's OPERATION_UPLOAD_TRIGGER.
+
+        The actual upload is the same UploadInputs RPC; only the cluster-selection operation differs,
+        so zero-trust backends can route trigger uploads to the data plane. When zero-trust is not
+        enabled the backend returns UNIMPLEMENTED for this operation, which propagates to the caller
+        (`trigger_serde.offload_trigger_inputs`) so it can fall back to inline trigger inputs.
+        """
+        which = request.WhichOneof("id")
+        if which == "run_id":
+            org, project, domain = request.run_id.org, request.run_id.project, request.run_id.domain
+        elif which == "project_id":
+            org = request.project_id.organization
+            project = request.project_id.name
+            domain = request.project_id.domain
+        else:
+            raise ValueError("UploadInputsRequest must set either run_id or project_id")
+        client = await self._resolve(
+            int(cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_UPLOAD_TRIGGER),
+            org,
+            project,
+            domain,
+        )
+        return await client.upload_inputs(request)
+
     async def get_action_data(
         self, request: dataproxy_service_pb2.GetActionDataRequest
     ) -> dataproxy_service_pb2.GetActionDataResponse:
@@ -295,6 +323,10 @@ class ClusterAwareDataProxy:
 
         try:
             resp = await self._cluster_service.select_cluster(req)
+        except ConnectError:
+            # Preserve the gRPC code (e.g. UNIMPLEMENTED for an unsupported operation) so callers
+            # can branch on it — notably the OPERATION_UPLOAD_TRIGGER fallback to inline inputs.
+            raise
         except Exception as e:
             raise RuntimeError(f"SelectCluster failed for operation={req.operation}: {e}") from e
 

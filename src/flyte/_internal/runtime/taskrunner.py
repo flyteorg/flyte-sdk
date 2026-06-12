@@ -144,7 +144,8 @@ async def convert_and_run(
         inputs = await load_inputs(input_path, path_rewrite_config=raw_data_path.path_rewrite)
         sw.stop()
 
-    # Extract context from inputs
+    # Extract context from inputs (the kickoff-time input arg is filled from run_start_time during
+    # native conversion in convert_inputs_to_native; its reserved context key is excluded here).
     custom_context = inputs.context if inputs else {}
 
     parent_tctx = ctx.data.task_context
