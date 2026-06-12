@@ -107,7 +107,9 @@ async def run_task(
     code_bundle: CodeBundle | None = None,
     input_path: str | None = None,
     path_rewrite_cfg: str | None = None,
-    # Defaulted so existing Rust-side callers keep working; TaskContext fills in now(UTC) when absent.
+    # The actor worker parses the RFC3339 string (and the unsubstituted "{{.runStartTime}}"
+    # placeholder → None) Rust-side and passes a datetime here; absent → None and TaskContext
+    # fills in now(UTC).
     run_start_time: Optional[datetime] = None,
 ):
     """

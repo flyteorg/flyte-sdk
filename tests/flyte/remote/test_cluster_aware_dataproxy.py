@@ -78,6 +78,38 @@ async def test_upload_inputs_with_project_id_routes_by_project():
 
 
 @pytest.mark.asyncio
+async def test_upload_trigger_routes_by_upload_trigger_operation():
+    wrapper, cluster_service, default_client = _make_wrapper()
+    pid = identifier_pb2.ProjectIdentifier(name="p", domain="d", organization="o")
+    req = dataproxy_service_pb2.UploadInputsRequest(project_id=pid)
+
+    await wrapper.upload_trigger(req)
+
+    sent = cluster_service.select_cluster.await_args[0][0]
+    assert sent.operation == cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_UPLOAD_TRIGGER
+    assert sent.project_id == pid
+    # The actual upload is still the UploadInputs RPC on the resolved cluster.
+    default_client.upload_inputs.assert_awaited_once_with(req)
+
+
+@pytest.mark.asyncio
+async def test_upload_trigger_propagates_unimplemented():
+    """SelectCluster UNIMPLEMENTED (zero trust off) propagates with its code, not wrapped."""
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
+    wrapper, cluster_service, _default_client = _make_wrapper()
+    cluster_service.select_cluster = AsyncMock(side_effect=ConnectError(Code.UNIMPLEMENTED, "no zero trust"))
+    req = dataproxy_service_pb2.UploadInputsRequest(
+        project_id=identifier_pb2.ProjectIdentifier(name="p", domain="d", organization="o")
+    )
+
+    with pytest.raises(ConnectError) as exc:
+        await wrapper.upload_trigger(req)
+    assert exc.value.code == Code.UNIMPLEMENTED
+
+
+@pytest.mark.asyncio
 async def test_upload_inputs_with_run_id_routes_by_derived_project():
     wrapper, cluster_service, default_client = _make_wrapper()
     run_id = identifier_pb2.RunIdentifier(org="o", project="p", domain="d", name="r")

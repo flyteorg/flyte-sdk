@@ -8,6 +8,7 @@ from flyteidl2.task import common_pb2
 from flyte import Cron, FixedRate, TaskEnvironment, Trigger, TriggerTime
 from flyte._internal.runtime.convert import convert_upload_default_inputs
 from flyte._internal.runtime.trigger_serde import (
+    KICKOFF_TIME_INPUT_ARG_CONTEXT_KEY,
     _to_schedule,
     process_default_inputs,
     to_task_trigger,
@@ -409,7 +410,11 @@ class TestToTaskTrigger:
 
         result = await to_task_trigger(trigger, "test_task", task_inputs, task_default_inputs)
 
+        # The kickoff arg is set on the schedule, and also carried in the inputs context so the
+        # runtime can fill that input from run_start_time at execution.
         assert result.automation_spec.schedule.kickoff_time_input_arg == "trigger_time"
+        context_dict = {kv.key: kv.value for kv in result.spec.inputs.context}
+        assert context_dict[KICKOFF_TIME_INPUT_ARG_CONTEXT_KEY] == "trigger_time"
 
     @pytest.mark.asyncio
     async def test_trigger_with_trigger_time_invalid_input(self):
@@ -489,6 +494,8 @@ class TestToTaskTrigger:
         result = await to_task_trigger(trigger, "test_task", task_inputs, task_default_inputs)
 
         assert result.automation_spec.schedule.kickoff_time_input_arg == "trigger_time"
+        context_dict = {kv.key: kv.value for kv in result.spec.inputs.context}
+        assert context_dict[KICKOFF_TIME_INPUT_ARG_CONTEXT_KEY] == "trigger_time"
         assert len(result.spec.inputs.literals) == 1
         assert result.spec.inputs.literals[0].name == "count"
         assert result.spec.inputs.literals[0].value.scalar.primitive.integer == 100
@@ -597,6 +604,8 @@ class TestAutomationSpec:
         assert result.automation_spec.schedule.cron.expression == "0 12 * * *"
         assert result.automation_spec.schedule.cron.timezone == DEFAULT_TIMEZONE
         assert result.automation_spec.schedule.kickoff_time_input_arg == "scheduled_at"
+        context_dict = {kv.key: kv.value for kv in result.spec.inputs.context}
+        assert context_dict[KICKOFF_TIME_INPUT_ARG_CONTEXT_KEY] == "scheduled_at"
 
 
 @pytest.mark.asyncio
@@ -655,6 +664,8 @@ async def test_task_with_trigger_all_options():
     assert result.automation_spec.schedule.rate.value == 30
     assert result.automation_spec.schedule.rate.unit == common_pb2.FixedRateUnit.FIXED_RATE_UNIT_MINUTE
     assert result.automation_spec.schedule.kickoff_time_input_arg == "trigger_time"
+    context_dict = {kv.key: kv.value for kv in result.spec.inputs.context}
+    assert context_dict[KICKOFF_TIME_INPUT_ARG_CONTEXT_KEY] == "trigger_time"
 
     # Validate trigger spec - active state
     assert result.spec.active is False
