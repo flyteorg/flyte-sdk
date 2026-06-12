@@ -53,11 +53,7 @@ class Inputs:
     @property
     def context(self) -> Dict[str, str]:
         """Get the context as a dictionary (excluding internal reserved keys)."""
-        return {
-            kv.key: kv.value
-            for kv in self.proto_inputs.context
-            if kv.key != KICKOFF_TIME_INPUT_ARG_CONTEXT_KEY
-        }
+        return {kv.key: kv.value for kv in self.proto_inputs.context if kv.key != KICKOFF_TIME_INPUT_ARG_CONTEXT_KEY}
 
 
 @dataclass(frozen=True)
