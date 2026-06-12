@@ -487,6 +487,20 @@ def test_capture_exception_skips_wrapped_invalid_endpoint_error():
     chain = list(_sentry._iter_cause_chain(err))
     assert any(isinstance(c, InitializationError) for c in chain)
 
+
+def test_capture_exception_skips_invalid_client_credentials_wrapped_as_system_error():
+    """FLYTE-SDK-55: missing client_id / secret (creds misconfig) raised from the
+    ClientCredentialsAuthenticator is wrapped through RuntimeError('SelectCluster
+    failed...') -> RuntimeSystemError('Failed to get signed url...'). It's a
+    user-config mistake, so it must be filtered out of Sentry."""
+    from flyte.errors import InitializationError
+
+    inner = InitializationError(
+        "InvalidClientCredentials",
+        "user",
+        "both client_id and client_credentials_secret are required.",
+    )
+    err = _wrap_as_upload_system_error(inner)
     with mock.patch.object(_sentry, "init") as init_mock:
         _sentry.capture_exception(err)
     init_mock.assert_not_called()
