@@ -17,6 +17,7 @@ from ._logging import LogFormat, initialize_logger, logger
 if TYPE_CHECKING:
     from flyte._internal.imagebuild import ImageBuildEngine
     from flyte.config import Config
+    from flyte.config._config import PlatformConfig
     from flyte.remote._client.auth import AuthType, ClientConfig
     from flyte.remote._client.controlplane import ClientSet
     from flyte.storage import Storage
@@ -54,6 +55,54 @@ class _InitConfig(CommonInit):
 # Global singleton to store initialization configuration
 _init_config: _InitConfig | None = None
 _init_lock = threading.RLock()  # Reentrant lock for thread safety
+
+
+def _platform_to_client_kwargs(pc: "PlatformConfig") -> dict[str, typing.Any]:
+    """Translate PlatformConfig fields into kwargs accepted by both
+    _initialize_client (via init) and create_remote_controller. Single
+    source of truth — extending the HTTP/auth stack with a new
+    PlatformConfig field means editing this one function.
+
+    Callers may need to layer on caller-specific kwargs that are NOT
+    derived from PlatformConfig (api_key, headless, in-cluster env-var
+    overrides); those stay at the call site.
+
+    ca_cert_file_path takes precedence over insecure_skip_verify when
+    both are present. _resolve_tls_ca_cert otherwise prefers the
+    bootstrap path, which fetches only what the server's leaf presents
+    and trips "UnknownIssuer" on chains nginx serves without
+    intermediates.
+    """
+    kw: dict[str, typing.Any] = {}
+    if pc.endpoint:
+        kw["endpoint"] = pc.endpoint
+    if pc.insecure:
+        kw["insecure"] = True
+    if pc.ca_cert_file_path:
+        kw["ca_cert_file_path"] = pc.ca_cert_file_path
+    elif pc.insecure_skip_verify:
+        kw["insecure_skip_verify"] = True
+    if pc.client_id:
+        kw["client_id"] = pc.client_id
+    if pc.client_credentials_secret:
+        kw["client_credentials_secret"] = pc.client_credentials_secret
+    if pc.auth_mode:
+        kw["auth_type"] = pc.auth_mode
+    if pc.command:
+        kw["command"] = pc.command
+    if pc.proxy_command:
+        kw["proxy_command"] = pc.proxy_command
+    if pc.http_proxy_url:
+        kw["http_proxy_url"] = pc.http_proxy_url
+    if pc.rpc_retries:
+        kw["rpc_retries"] = pc.rpc_retries
+    # NOTE: disable_keyring is intentionally NOT emitted here. The helper
+    # output flows both into _initialize_client (via init) AND into
+    # create_remote_controller (via init_in_cluster). The controller's
+    # constructor doesn't accept disable_keyring, so emitting it would
+    # raise TypeError on the in-cluster path. init_from_config threads
+    # disable_keyring through to init separately, alongside this helper.
+    return kw
 
 
 async def _initialize_client(
@@ -283,6 +332,7 @@ async def init_from_config(
     log_level: int | None = None,
     log_format: LogFormat = "console",
     user_log_level: int | None = None,
+    org: str | None = None,
     project: str | None = None,
     domain: str | None = None,
     storage: Storage | None = None,
@@ -296,6 +346,7 @@ async def init_from_config(
     other Flyte remote API methods are called. Thread-safe implementation.
 
     :param path_or_config: Path to the configuration file or Config object
+    :param org: Org name, this will override the org in the configuration file when non-empty
     :param project: Project name, this will override any project names in the configuration file
     :param domain: Domain name, this will override any domain names in the configuration file
     :param root_dir: Optional root directory from which to determine how to load files, and find paths to
@@ -345,19 +396,9 @@ async def init_from_config(
     parse_images(cfg, images)
 
     await init.aio(
-        org=cfg.task.org,
+        org=org or cfg.task.org,
         project=project or cfg.task.project,
         domain=domain or cfg.task.domain,
-        endpoint=cfg.platform.endpoint,
-        insecure=cfg.platform.insecure,
-        insecure_skip_verify=cfg.platform.insecure_skip_verify,
-        ca_cert_file_path=cfg.platform.ca_cert_file_path,
-        auth_type=cfg.platform.auth_mode,
-        command=cfg.platform.command,
-        proxy_command=cfg.platform.proxy_command,
-        client_id=cfg.platform.client_id,
-        client_credentials_secret=cfg.platform.client_credentials_secret,
-        disable_keyring=cfg.platform.disable_keyring,
         root_dir=root_dir,
         log_level=log_level,
         log_format=log_format,
@@ -369,6 +410,12 @@ async def init_from_config(
         source_config_path=cfg_path,
         sync_local_sys_paths=sync_local_sys_paths,
         local_persistence=cfg.local.persistence,
+        # disable_keyring is threaded outside _platform_to_client_kwargs
+        # because the helper output is also spread into
+        # create_remote_controller from init_in_cluster, and the
+        # controller's constructor doesn't accept this kwarg.
+        disable_keyring=cfg.platform.disable_keyring,
+        **_platform_to_client_kwargs(cfg.platform),
     )
 
 
@@ -471,6 +518,45 @@ async def init_in_cluster(
     INSECURE_OVERRIDE = "_U_INSECURE"
     _UNION_EAGER_API_KEY_ENV_VAR = "_UNION_EAGER_API_KEY"
     EAGER_API_KEY = "EAGER_API_KEY"
+
+    # When the cluster mounts a credentials config file (typical for the
+    # file-mounted client-secret deploy path), prefer it over the legacy
+    # env-var-injected api key. The chart sets FLYTECTL_CONFIG on the
+    # task pod pointing at the mount, so a direct env-var probe is all
+    # we need — no point walking resolve_config_path's full precedence
+    # chain (which includes a `git rev-parse` subprocess that is wasted
+    # work in a task pod and shows up in subprocess-mock tests).
+    # If api_key is supplied by the caller explicitly, that wins.
+    if api_key is None:
+        from flyte.config._reader import FLYTECTL_CONFIG_ENV_VAR, UCTL_CONFIG_ENV_VAR
+
+        cfg_path_str = os.getenv(UCTL_CONFIG_ENV_VAR) or os.getenv(FLYTECTL_CONFIG_ENV_VAR)
+        if cfg_path_str:
+            # Existence is intentionally NOT pre-checked: a typo in the
+            # env var should surface as the FileNotFoundError that
+            # init_from_config raises when it tries to open the path,
+            # not silently fall back to the legacy api-key branch.
+            logger.info(f"init_in_cluster: delegating to init_from_config({cfg_path_str})")
+            # init_from_config is @syncify-decorated; call its async form so we don't
+            # block the syncify thread.
+            await init_from_config.aio(
+                path_or_config=cfg_path_str,
+                org=org or os.getenv(ORG_NAME),
+                project=project or os.getenv(PROJECT_NAME),
+                domain=domain or os.getenv(DOMAIN_NAME),
+            )
+            # runtime._run_action spreads our return as **kwargs into
+            # create_remote_controller. Build that dict from the same
+            # PlatformConfig mapping init_from_config used above so the
+            # two clients can't drift apart on a future field addition.
+            from flyte.config import Config
+
+            cfg = Config.auto(cfg_path_str)
+            kwargs = _platform_to_client_kwargs(cfg.platform)
+            kwargs["headless"] = True  # task pod never has a browser available
+            if ep := os.getenv(ENDPOINT_OVERRIDE):
+                kwargs["endpoint"] = ep
+            return kwargs
 
     org = org or os.getenv(ORG_NAME)
     project = project or os.getenv(PROJECT_NAME)
