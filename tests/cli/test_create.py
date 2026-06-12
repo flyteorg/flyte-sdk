@@ -1,3 +1,4 @@
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
@@ -5,6 +6,10 @@ import yaml
 from click.testing import CliRunner
 
 from flyte.cli.main import main
+from flyte.remote._client.auth._public_client_cache import (
+    CachedPublicClientAuthMetadata,
+    get_public_client_auth_metadata_cache_path,
+)
 
 
 @pytest.fixture(scope="function")
@@ -333,13 +338,71 @@ def test_create_config_no_flags_fails(runner: CliRunner, tmp_path):
     assert "--local-persistence" in result.output
 
 
-def test_create_config_with_local_persistence(runner: CliRunner, tmp_path):
-    """Test that --local-persistence writes the local.persistence field to the config YAML."""
+def test_create_config_does_not_require_domain_when_endpoint_is_provided(
+    runner: CliRunner, tmp_path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
     outpath = str(tmp_path / "config.yaml")
-    result = runner.invoke(
-        main,
-        ["create", "config", "--endpoint", "dns:///test.example.com", "--local-persistence", "-o", outpath, "--force"],
+    metadata = CachedPublicClientAuthMetadata(
+        authType="Pkce",
+        clientId="dogfood-uctl",
+        insecure=False,
+        authorizationHeader="flyte-authorization",
+        redirectUri="http://localhost:53593/callback",
+        scopes=["all"],
+        audience="dogfood-audience",
     )
+
+    with patch("flyte.cli._create.fetch_public_client_auth_metadata_sync", return_value=metadata):
+        result = runner.invoke(
+            main,
+            [
+                "create",
+                "config",
+                "--endpoint",
+                "dns:///dogfood.cloud-staging.union.ai",
+                "--org",
+                "dogfood",
+                "-o",
+                outpath,
+                "--force",
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+
+
+def test_create_config_with_local_persistence(runner: CliRunner, tmp_path, monkeypatch: pytest.MonkeyPatch):
+    """Test that --local-persistence writes the local.persistence field to the config YAML."""
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    outpath = str(tmp_path / "config.yaml")
+    metadata = CachedPublicClientAuthMetadata(
+        authType="Pkce",
+        clientId="test-uctl",
+        insecure=False,
+        authorizationHeader="flyte-authorization",
+        redirectUri="http://localhost:53593/callback",
+        scopes=["all"],
+        audience="dogfood-audience",
+    )
+
+    with patch("flyte.cli._create.fetch_public_client_auth_metadata_sync", return_value=metadata):
+        result = runner.invoke(
+            main,
+            [
+                "create",
+                "config",
+                "--endpoint",
+                "dns:///test.example.com",
+                "--domain",
+                "development",
+                "--local-persistence",
+                "-o",
+                outpath,
+                "--force",
+            ],
+        )
+
     assert result.exit_code == 0, result.output
     with open(outpath) as f:
         d = yaml.safe_load(f)
@@ -347,14 +410,347 @@ def test_create_config_with_local_persistence(runner: CliRunner, tmp_path):
     assert d["local"]["persistence"] is True
 
 
-def test_create_config_without_local_persistence(runner: CliRunner, tmp_path):
+def test_create_config_without_local_persistence(runner: CliRunner, tmp_path, monkeypatch: pytest.MonkeyPatch):
     """Test that without --local-persistence the local section is omitted."""
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
     outpath = str(tmp_path / "config.yaml")
-    result = runner.invoke(
-        main,
-        ["create", "config", "--endpoint", "dns:///test.example.com", "-o", outpath, "--force"],
+    metadata = CachedPublicClientAuthMetadata(
+        authType="Pkce",
+        clientId="test-uctl",
+        insecure=False,
+        authorizationHeader="flyte-authorization",
+        redirectUri="http://localhost:53593/callback",
+        scopes=["all"],
+        audience="dogfood-audience",
     )
+
+    with patch("flyte.cli._create.fetch_public_client_auth_metadata_sync", return_value=metadata):
+        result = runner.invoke(
+            main,
+            [
+                "create",
+                "config",
+                "--endpoint",
+                "dns:///test.example.com",
+                "--domain",
+                "development",
+                "-o",
+                outpath,
+                "--force",
+            ],
+        )
+
     assert result.exit_code == 0, result.output
     with open(outpath) as f:
         d = yaml.safe_load(f)
     assert d.get("local") is None
+
+
+def test_create_config_skips_auth_metadata_fetch_for_localhost_endpoint(
+    runner: CliRunner, tmp_path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    outpath = str(tmp_path / "config.yaml")
+
+    with patch("flyte.cli._create.fetch_public_client_auth_metadata_sync") as fetch_metadata:
+        result = runner.invoke(
+            main,
+            [
+                "create",
+                "config",
+                "--endpoint",
+                "localhost:30080",
+                "--project",
+                "flytesnacks",
+                "--domain",
+                "development",
+                "--insecure",
+                "-o",
+                outpath,
+                "--force",
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    fetch_metadata.assert_not_called()
+    assert not get_public_client_auth_metadata_cache_path("localhost:30080").exists()
+    with open(outpath) as f:
+        d = yaml.safe_load(f)
+    assert d["admin"] == {"endpoint": "dns:///localhost:30080", "insecure": True}
+
+
+def test_create_config_fetches_and_caches_auth_metadata_when_cache_is_missing(
+    runner: CliRunner, tmp_path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    outpath = str(tmp_path / "config.yaml")
+    metadata = CachedPublicClientAuthMetadata(
+        authType="Pkce",
+        clientId="dogfood-uctl",
+        insecure=False,
+        authorizationHeader="flyte-authorization",
+        redirectUri="http://localhost:53593/callback",
+        scopes=["all"],
+        audience="dogfood-audience",
+    )
+
+    with patch("flyte.cli._create.fetch_public_client_auth_metadata_sync", return_value=metadata) as fetch_metadata:
+        result = runner.invoke(
+            main,
+            [
+                "create",
+                "config",
+                "--endpoint",
+                "dns:///dogfood.cloud-staging.union.ai",
+                "--org",
+                "dogfood",
+                "--project",
+                "edward-test",
+                "--domain",
+                "staging",
+                "--image-builder",
+                "remote",
+                "-o",
+                outpath,
+                "--force",
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    fetch_metadata.assert_called_once()
+    with open(outpath) as f:
+        d = yaml.safe_load(f)
+    assert d["admin"] == {"endpoint": "dns:///dogfood.cloud-staging.union.ai"}
+    cache_path = get_public_client_auth_metadata_cache_path("dogfood.cloud-staging.union.ai")
+    assert cache_path.exists()
+    with cache_path.open() as f:
+        cached = yaml.safe_load(f)
+    assert cached == {
+        "authType": "Pkce",
+        "clientId": "dogfood-uctl",
+        "insecure": False,
+        "authorizationHeader": "flyte-authorization",
+        "redirectUri": "http://localhost:53593/callback",
+        "scopes": ["all"],
+        "audience": "dogfood-audience",
+    }
+
+
+def test_create_config_aborts_when_cached_auth_metadata_exists_and_user_declines_overwrite(
+    runner: CliRunner, tmp_path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    outpath = str(tmp_path / "config.yaml")
+    cache_path = get_public_client_auth_metadata_cache_path("dogfood.cloud-staging.union.ai")
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_text("existing: true")
+
+    with patch("flyte.cli._create.fetch_public_client_auth_metadata_sync") as fetch_metadata:
+        result = runner.invoke(
+            main,
+            [
+                "create",
+                "config",
+                "--endpoint",
+                "dns:///dogfood.cloud-staging.union.ai",
+                "--org",
+                "dogfood",
+                "--domain",
+                "staging",
+                "-o",
+                outpath,
+            ],
+            input="n\n",
+        )
+
+    assert result.exit_code == 0, result.output
+    assert "Will not overwrite the existing auth metadata cache" in result.output
+    fetch_metadata.assert_not_called()
+    assert not Path(outpath).exists()
+
+
+def test_create_config_refreshes_cached_auth_metadata_when_user_accepts_overwrite(
+    runner: CliRunner, tmp_path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    outpath = str(tmp_path / "config.yaml")
+    cache_path = get_public_client_auth_metadata_cache_path("dogfood.cloud-staging.union.ai")
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_text("existing: true")
+    metadata = CachedPublicClientAuthMetadata(
+        authType="Pkce",
+        clientId="dogfood-uctl",
+        insecure=False,
+        authorizationHeader="flyte-authorization",
+        redirectUri="http://localhost:53593/callback",
+        scopes=["all"],
+        audience="dogfood-audience",
+    )
+
+    with patch("flyte.cli._create.fetch_public_client_auth_metadata_sync", return_value=metadata) as fetch_metadata:
+        result = runner.invoke(
+            main,
+            [
+                "create",
+                "config",
+                "--endpoint",
+                "dns:///dogfood.cloud-staging.union.ai",
+                "--org",
+                "dogfood",
+                "--domain",
+                "staging",
+                "-o",
+                outpath,
+                "--force",
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    fetch_metadata.assert_called_once()
+    with open(outpath) as f:
+        d = yaml.safe_load(f)
+    assert d["admin"] == {"endpoint": "dns:///dogfood.cloud-staging.union.ai"}
+
+
+def test_create_config_prompts_for_config_file_overwrite_after_cache_resolution(
+    runner: CliRunner, tmp_path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    outpath = Path(tmp_path / "config.yaml")
+    outpath.write_text("original")
+    metadata = CachedPublicClientAuthMetadata(
+        authType="Pkce",
+        clientId="dogfood-uctl",
+        insecure=False,
+        authorizationHeader="flyte-authorization",
+        redirectUri="http://localhost:53593/callback",
+        scopes=["all"],
+        audience="dogfood-audience",
+    )
+
+    with patch("flyte.cli._create.fetch_public_client_auth_metadata_sync", return_value=metadata):
+        result = runner.invoke(
+            main,
+            [
+                "create",
+                "config",
+                "--endpoint",
+                "dns:///dogfood.cloud-staging.union.ai",
+                "--org",
+                "dogfood",
+                "--domain",
+                "staging",
+                "-o",
+                str(outpath),
+            ],
+            input="n\n",
+        )
+
+    assert result.exit_code == 0, result.output
+    assert outpath.read_text() == "original"
+
+
+def test_create_config_fetch_failure_aborts_before_writing_cache_or_config(
+    runner: CliRunner, tmp_path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    outpath = Path(tmp_path / "config.yaml")
+
+    with patch("flyte.cli._create.fetch_public_client_auth_metadata_sync", side_effect=RuntimeError("boom")):
+        result = runner.invoke(
+            main,
+            [
+                "create",
+                "config",
+                "--endpoint",
+                "dns:///dogfood.cloud-staging.union.ai",
+                "--org",
+                "dogfood",
+                "--domain",
+                "staging",
+                "-o",
+                str(outpath),
+                "--force",
+            ],
+        )
+
+    assert result.exit_code != 0
+    assert not outpath.exists()
+    assert not get_public_client_auth_metadata_cache_path("dogfood.cloud-staging.union.ai").exists()
+
+
+def test_create_config_dns_fetch_failure_shows_endpoint_guidance(
+    runner: CliRunner, tmp_path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    outpath = Path(tmp_path / "config.yaml")
+
+    with patch(
+        "flyte.cli._create.fetch_public_client_auth_metadata_sync",
+        side_effect=RuntimeError("dns error: failed to resolve host"),
+    ):
+        result = runner.invoke(
+            main,
+            [
+                "create",
+                "config",
+                "--endpoint",
+                "dns:///dogfood.cloud-staging.union.ai",
+                "--org",
+                "dogfood",
+                "--domain",
+                "staging",
+                "-o",
+                str(outpath),
+                "--force",
+            ],
+        )
+
+    assert result.exit_code != 0
+    assert "Please double check the endpoint" in result.output
+    assert "retry." in result.output
+    assert not outpath.exists()
+    assert not get_public_client_auth_metadata_cache_path("dogfood.cloud-staging.union.ai").exists()
+
+
+def test_create_config_cache_write_failure_does_not_block_config_write(
+    runner: CliRunner, tmp_path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    outpath = Path(tmp_path / "config.yaml")
+    metadata = CachedPublicClientAuthMetadata(
+        authType="Pkce",
+        clientId="dogfood-gcp-uctl",
+        insecure=False,
+        authorizationHeader="flyte-authorization",
+        redirectUri="http://localhost:53593/callback",
+        scopes=["all"],
+        audience="dogfood-audience",
+    )
+
+    with (
+        patch("flyte.cli._create.fetch_public_client_auth_metadata_sync", return_value=metadata),
+        patch("flyte.cli._create.write_cached_public_client_auth_metadata", return_value=None),
+    ):
+        result = runner.invoke(
+            main,
+            [
+                "create",
+                "config",
+                "--endpoint",
+                "dns:///dogfood-gcp.cloud-staging.union.ai",
+                "--project",
+                "edward-test",
+                "--domain",
+                "staging",
+                "-o",
+                str(outpath),
+                "--force",
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    with outpath.open() as f:
+        d = yaml.safe_load(f)
+    assert d["task"]["org"] == "dogfood-gcp"
+    assert d["admin"] == {"endpoint": "dns:///dogfood-gcp.cloud-staging.union.ai"}

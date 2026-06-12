@@ -23,6 +23,7 @@ from flyte._initialize import (
 )
 from flyte.config import Config
 from flyte.errors import InitializationError
+from flyte.remote._client.auth._client_config import LocalClientConfigOverrides
 
 
 class TestInitFromConfig:
@@ -60,6 +61,9 @@ task:
         config.platform.proxy_command = None
         config.platform.client_id = None
         config.platform.client_credentials_secret = None
+        config.platform.authorization_header = None
+        config.platform.redirect_uri = None
+        config.platform.audience = None
         config.image.builder = "local"
         return config
 
@@ -79,6 +83,9 @@ task:
         config.platform.proxy_command = None
         config.platform.client_id = None
         config.platform.client_credentials_secret = None
+        config.platform.authorization_header = None
+        config.platform.redirect_uri = None
+        config.platform.audience = None
         config.image.builder = "remote"
         return config
 
@@ -151,6 +158,9 @@ task:
         mock_config.platform.proxy_command = None
         mock_config.platform.client_id = None
         mock_config.platform.client_credentials_secret = None
+        mock_config.platform.authorization_header = None
+        mock_config.platform.redirect_uri = None
+        mock_config.platform.audience = None
         mock_config.image.builder = "local"
 
         await init_from_config.aio(path_or_config=mock_config, root_dir=test_root_dir)
@@ -182,6 +192,9 @@ task:
         mock_config.platform.proxy_command = None
         mock_config.platform.client_id = None
         mock_config.platform.client_credentials_secret = None
+        mock_config.platform.authorization_header = None
+        mock_config.platform.redirect_uri = None
+        mock_config.platform.audience = None
         mock_config.image.builder = "local"
 
         mock_config_auto.return_value = mock_config
@@ -197,6 +210,46 @@ task:
         mock_init.aio.assert_called_once()
         call_kwargs = mock_init.aio.call_args[1]
         assert call_kwargs["root_dir"] == test_root_dir
+
+    @patch("flyte._initialize.init")
+    @pytest.mark.asyncio
+    async def test_init_from_config_builds_local_client_config_overrides(self, mock_init):
+        mock_init.aio = AsyncMock()
+        test_root_dir = Path("/test/root")
+
+        mock_config = Mock(spec=Config)
+        mock_config.task.org = "test-org"
+        mock_config.task.project = "test-project"
+        mock_config.task.domain = "test-domain"
+        mock_config.platform.endpoint = "test.flyte.example.com"
+        mock_config.platform.insecure = False
+        mock_config.platform.insecure_skip_verify = False
+        mock_config.platform.ca_cert_file_path = None
+        mock_config.platform.auth_mode = "Pkce"
+        mock_config.platform.command = None
+        mock_config.platform.proxy_command = None
+        mock_config.platform.client_id = "client-id"
+        mock_config.platform.client_credentials_secret = None
+        mock_config.platform.scopes = ["scope-a"]
+        mock_config.platform.authorization_header = "flyte-authorization"
+        mock_config.platform.redirect_uri = "http://localhost:53593/callback"
+        mock_config.platform.audience = "my-audience"
+        mock_config.platform.disable_keyring = False
+        mock_config.image.builder = "local"
+
+        await init_from_config.aio(path_or_config=mock_config, root_dir=test_root_dir)
+
+        mock_init.aio.assert_called_once()
+        call_kwargs = mock_init.aio.call_args[1]
+        assert call_kwargs["root_dir"] == test_root_dir
+        local_client_config_overrides = call_kwargs["local_client_config_overrides"]
+        assert isinstance(local_client_config_overrides, LocalClientConfigOverrides)
+        assert local_client_config_overrides.client_id == "client-id"
+        assert local_client_config_overrides.scopes == ["scope-a"]
+        assert local_client_config_overrides.header_key == "flyte-authorization"
+        assert local_client_config_overrides.redirect_uri == "http://localhost:53593/callback"
+        assert local_client_config_overrides.audience == "my-audience"
+        assert call_kwargs["audience"] == "my-audience"
 
     @patch("flyte._initialize.init")
     @patch("flyte.config.auto")
@@ -598,6 +651,10 @@ class TestInitFunction:
         assert config.project == "test-project"
         assert config.domain == "test-domain"
         assert config.client == mock_client
+        mock_init_client.assert_called_once()
+        call_kwargs = mock_init_client.call_args.kwargs
+        assert call_kwargs["org"] is None
+        assert call_kwargs["domain"] == "test-domain"
 
     @patch("flyte._initialize._initialize_client")
     @patch("flyte._utils.org_from_endpoint")
@@ -615,6 +672,10 @@ class TestInitFunction:
         config = _get_init_config()
         assert config is not None
         assert config.root_dir == Path.cwd()
+        mock_init_client.assert_called_once()
+        call_kwargs = mock_init_client.call_args.kwargs
+        assert call_kwargs["org"] == "test-org"
+        assert call_kwargs["domain"] == "test-domain"
 
     @patch("flyte._initialize._initialize_client")
     @pytest.mark.asyncio

@@ -46,7 +46,15 @@ def create_auth_interceptors(endpoint: str, http_client=None, **kwargs) -> list:
 
     def authenticator_factory() -> Authenticator:
         return get_async_authenticator(
-            endpoint=endpoint, cfg_store=RemoteClientConfigStore(endpoint, http_client=http_client), **kwargs
+            endpoint=endpoint,
+            cfg_store=RemoteClientConfigStore(
+                endpoint,
+                http_client=http_client,
+                client_config_overrides=kwargs.get("local_client_config_overrides"),
+                auth_type=kwargs.get("auth_type"),
+                insecure=kwargs.get("insecure") or False,
+            ),
+            **kwargs,
         )
 
     return [

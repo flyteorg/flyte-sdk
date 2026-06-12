@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from flyte._internal.imagebuild import ImageBuildEngine
     from flyte.config import Config
     from flyte.remote._client.auth import AuthType, ClientConfig
+    from flyte.remote._client.auth._client_config import LocalClientConfigOverrides
     from flyte.remote._client.controlplane import ClientSet
     from flyte.storage import Storage
 
@@ -60,7 +61,11 @@ async def _initialize_client(
     api_key: str | None = None,
     auth_type: AuthType = "Pkce",
     endpoint: str | None = None,
+    org: str | None = None,
+    domain: str | None = None,
     client_config: ClientConfig | None = None,
+    local_client_config_overrides: LocalClientConfigOverrides | None = None,
+    audience: str | None = None,
     headless: bool = False,
     insecure: bool = False,
     insecure_skip_verify: bool = False,
@@ -92,6 +97,10 @@ async def _initialize_client(
             client_id=client_id,
             client_credentials_secret=client_credentials_secret,
             client_config=client_config,
+            local_client_config_overrides=local_client_config_overrides,
+            org=org,
+            domain=domain,
+            audience=audience,
             rpc_retries=rpc_retries,
             http_proxy_url=http_proxy_url,
             disable_keyring=disable_keyring,
@@ -109,6 +118,10 @@ async def _initialize_client(
             client_id=client_id,
             client_credentials_secret=client_credentials_secret,
             client_config=client_config,
+            local_client_config_overrides=local_client_config_overrides,
+            org=org,
+            domain=domain,
+            audience=audience,
             rpc_retries=rpc_retries,
             http_proxy_url=http_proxy_url,
             disable_keyring=disable_keyring,
@@ -159,6 +172,8 @@ async def init(
     client_id: str | None = None,
     client_credentials_secret: str | None = None,
     auth_client_config: ClientConfig | None = None,
+    local_client_config_overrides: LocalClientConfigOverrides | None = None,
+    audience: str | None = None,
     rpc_retries: int = 3,
     http_proxy_url: str | None = None,
     disable_keyring: bool = False,
@@ -239,6 +254,8 @@ async def init(
                 api_key=api_key,
                 auth_type=auth_type,
                 endpoint=endpoint,
+                org=org,
+                domain=domain,
                 headless=headless,
                 insecure=insecure,
                 insecure_skip_verify=insecure_skip_verify,
@@ -248,6 +265,8 @@ async def init(
                 client_id=client_id,
                 client_credentials_secret=client_credentials_secret,
                 client_config=auth_client_config,
+                local_client_config_overrides=local_client_config_overrides,
+                audience=audience,
                 rpc_retries=rpc_retries,
                 http_proxy_url=http_proxy_url,
                 disable_keyring=disable_keyring,
@@ -318,6 +337,7 @@ async def init_from_config(
 
     import flyte.config as config
     from flyte.cli._common import parse_images
+    from flyte.remote._client.auth._client_config import LocalClientConfigOverrides
 
     cfg: config.Config
     cfg_path: Optional[Path] = None
@@ -340,9 +360,30 @@ async def init_from_config(
         cfg = path_or_config
 
     logger.info(f"Flyte config initialized as {cfg}", extra={"highlighter": ReprHighlighter()})
-
     # parse image, this will overwrite the image_refs set in the config file
     parse_images(cfg, images)
+
+    client_id = cfg.platform.client_id if isinstance(cfg.platform.client_id, str) and cfg.platform.client_id else None
+    scopes = cfg.platform.scopes if isinstance(cfg.platform.scopes, list) and cfg.platform.scopes else None
+    authorization_header = (
+        cfg.platform.authorization_header
+        if isinstance(cfg.platform.authorization_header, str) and cfg.platform.authorization_header
+        else None
+    )
+    redirect_uri = (
+        cfg.platform.redirect_uri if isinstance(cfg.platform.redirect_uri, str) and cfg.platform.redirect_uri else None
+    )
+    audience = cfg.platform.audience if isinstance(cfg.platform.audience, str) and cfg.platform.audience else None
+
+    local_client_config_overrides = None
+    if any([client_id, scopes, authorization_header, redirect_uri, audience]):
+        local_client_config_overrides = LocalClientConfigOverrides(
+            client_id=client_id,
+            scopes=scopes,
+            header_key=authorization_header,
+            redirect_uri=redirect_uri,
+            audience=audience,
+        )
 
     await init.aio(
         org=cfg.task.org,
@@ -357,6 +398,8 @@ async def init_from_config(
         proxy_command=cfg.platform.proxy_command,
         client_id=cfg.platform.client_id,
         client_credentials_secret=cfg.platform.client_credentials_secret,
+        local_client_config_overrides=local_client_config_overrides,
+        audience=audience,
         disable_keyring=cfg.platform.disable_keyring,
         root_dir=root_dir,
         log_level=log_level,
