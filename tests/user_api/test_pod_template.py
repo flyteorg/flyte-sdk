@@ -62,6 +62,86 @@ def test_pod_template_to_k8s_pod_with_empty_container():
     assert k8s_pod is not None
 
 
+def _serialize_with_task_resources(pod_template, *, cpu=None, memory=None):
+    """Run a pod template through task_serde._get_k8s_pod with task-declared
+    cpu/memory, returning the rendered primary container's resources dict.
+    """
+    from flyteidl2.core import tasks_pb2
+
+    from flyte._internal.runtime.task_serde import _get_k8s_pod
+
+    primary = tasks_pb2.Container()
+    if cpu is not None:
+        primary.resources.requests.append(
+            tasks_pb2.Resources.ResourceEntry(name=tasks_pb2.Resources.ResourceName.CPU, value=cpu)
+        )
+    if memory is not None:
+        primary.resources.limits.append(
+            tasks_pb2.Resources.ResourceEntry(name=tasks_pb2.Resources.ResourceName.MEMORY, value=memory)
+        )
+    from google.protobuf.json_format import MessageToDict
+
+    k8s_pod = _get_k8s_pod(primary, pod_template)
+    pod_spec = MessageToDict(k8s_pod.pod_spec)
+    container = next(c for c in pod_spec["containers"] if c["name"] == pod_template.primary_container_name)
+    return container.get("resources", {})
+
+
+def test_extended_resource_in_pod_template_survives_task_resources():
+    """Extended resources (e.g. device-plugin resources) set on the pod template's
+    primary container must be merged with — not clobbered by — the task's declared
+    cpu/memory. Regression test for the overwrite that dropped them at serialization.
+    """
+    from kubernetes.client import V1Container, V1PodSpec, V1ResourceRequirements
+
+    pt = PodTemplate(
+        pod_spec=V1PodSpec(
+            containers=[
+                V1Container(
+                    name="primary",
+                    resources=V1ResourceRequirements(
+                        limits={"smarter-devices/fuse": "1"},
+                        requests={"smarter-devices/fuse": "1"},
+                    ),
+                )
+            ]
+        ),
+        primary_container_name="primary",
+    )
+
+    resources = _serialize_with_task_resources(pt, cpu="1", memory="1Gi")
+
+    # task-declared cpu/memory present...
+    assert resources["requests"]["cpu"] == "1"
+    assert resources["limits"]["memory"] == "1Gi"
+    # ...and the extended resource from the pod template survived on both sides.
+    assert resources["limits"]["smarter-devices/fuse"] == "1"
+    assert resources["requests"]["smarter-devices/fuse"] == "1"
+
+
+def test_task_resources_override_pod_template_same_key():
+    """When both the task and the pod template set the same resource key, the
+    task-declared value wins (merge precedence)."""
+    from kubernetes.client import V1Container, V1PodSpec, V1ResourceRequirements
+
+    pt = PodTemplate(
+        pod_spec=V1PodSpec(
+            containers=[
+                V1Container(
+                    name="primary",
+                    resources=V1ResourceRequirements(requests={"cpu": "8", "smarter-devices/fuse": "1"}),
+                )
+            ]
+        ),
+        primary_container_name="primary",
+    )
+
+    resources = _serialize_with_task_resources(pt, cpu="1")
+
+    assert resources["requests"]["cpu"] == "1"  # task wins
+    assert resources["requests"]["smarter-devices/fuse"] == "1"  # template-only key kept
+
+
 def test_pod_template_importable():
     assert flyte.PodTemplate is PodTemplate
 
