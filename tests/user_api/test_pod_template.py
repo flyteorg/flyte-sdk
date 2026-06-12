@@ -83,9 +83,7 @@ def _serialize_with_task_resources(pod_template, *, cpu=None, memory=None):
 
     k8s_pod = _get_k8s_pod(primary, pod_template)
     pod_spec = MessageToDict(k8s_pod.pod_spec)
-    container = next(
-        c for c in pod_spec["containers"] if c["name"] == pod_template.primary_container_name
-    )
+    container = next(c for c in pod_spec["containers"] if c["name"] == pod_template.primary_container_name)
     return container.get("resources", {})
 
 
