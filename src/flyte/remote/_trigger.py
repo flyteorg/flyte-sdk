@@ -153,18 +153,20 @@ class Trigger(ToJSONMixin):
             task_default_inputs=list(task.pb2.spec.default_inputs),
         )
 
-        # Offload the trigger inputs out-of-band via DataProxy and store only the resulting URI + hash
-        # on the trigger spec. At fire time the backend passes this straight through as the run's
-        # OffloadedInputData and stamps run_start_time, instead of inlining a kickoff literal.
-        # The task was just fetched above and is already registered, so we reference it by task_id.
-        offloaded_input_data = await trigger_serde.offload_trigger_inputs(
-            task_trigger.spec.inputs,
-            org=cfg.org,
-            project=cfg.project,
-            domain=cfg.domain,
-            task_name=task_name,
-            task_version=task.version,
-        )
+        # Offload the trigger inputs out-of-band via DataProxy, but only when there is input data worth
+        # offloading. At fire time the backend passes the stored URI + hash through as the run's
+        # OffloadedInputData. The task was just fetched above and is already registered, so we
+        # reference it by task_id.
+        offloaded_input_data = None
+        if task_trigger.spec.inputs.literals:
+            offloaded_input_data = await trigger_serde.offload_trigger_inputs(
+                task_trigger.spec.inputs,
+                org=cfg.org,
+                project=cfg.project,
+                domain=cfg.domain,
+                task_name=task_name,
+                task_version=task.version,
+            )
 
         spec = trigger_definition_pb2.TriggerSpec(
             active=task_trigger.spec.active,

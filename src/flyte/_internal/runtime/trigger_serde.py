@@ -10,13 +10,10 @@ from google.protobuf import timestamp_pb2, wrappers_pb2
 import flyte.types
 from flyte import Cron, FixedRate, Trigger, TriggerTime
 
-# Reserved key under which the trigger's kickoff-time input arg name is stashed in the offloaded
-# Inputs.context. Triggers now offload their inputs at registration (UploadInputs), so the backend
-# no longer injects a kickoff-time literal at fire time and instead stamps run_start_time on the run.
-# The runtime reads this key out of the offloaded inputs at execution and writes run_start_time into
-# the named input, preserving the `inputs={"start_time": flyte.TriggerTime}` API. Context is not part
-# of the cache-key hash, so carrying it here does not perturb input hashing.
-KICKOFF_TIME_INPUT_ARG_CONTEXT_KEY = "_u_kickoff_time_input_arg"
+# Reserved Inputs.context key carrying the kickoff-time input arg name. Defined in convert (where the
+# runtime fills the input from run_start_time); re-exported here since this module sets it at
+# registration. Context is not part of the cache-key hash, so carrying it does not perturb hashing.
+from flyte._internal.runtime.convert import KICKOFF_TIME_INPUT_ARG_CONTEXT_KEY
 
 
 def _to_schedule(m: Union[Cron, FixedRate], kickoff_arg_name: str | None = None) -> common_pb2.Schedule:

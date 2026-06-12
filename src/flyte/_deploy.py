@@ -249,17 +249,19 @@ async def _deploy_task(
             # registered in this very request and so is not yet resolvable by id, so we reference it by
             # task_spec (resolved server-side without a lookup). Setting offloaded_input_data on the
             # input_wrapper oneof clears the inline inputs we just read.
-            offloaded_input_data = await offload_trigger_inputs(
-                task_trigger.spec.inputs,
-                org=task_id.org,
-                project=task_id.project,
-                domain=task_id.domain,
-                task_version=task_id.version,
-                task_spec=spec,
-            )
+            offloaded_input_data = None
+            if task_trigger.spec.inputs.literals:
+                offloaded_input_data = await offload_trigger_inputs(
+                    task_trigger.spec.inputs,
+                    org=task_id.org,
+                    project=task_id.project,
+                    domain=task_id.domain,
+                    task_version=task_id.version,
+                    task_spec=spec,
+                )
             if offloaded_input_data is not None:
                 task_trigger.spec.offloaded_input_data.CopyFrom(offloaded_input_data)
-            # else: zero trust off — keep the inline inputs to_task_trigger already set (pre-offload flow).
+            # else: no data to offload, or zero trust off — keep the inline inputs to_task_trigger set.
             deployable_triggers.append(task_trigger)
 
         try:

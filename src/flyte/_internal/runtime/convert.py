@@ -18,6 +18,12 @@ from flyte._context import ctx
 from flyte.models import ActionID, NativeInterface, TaskContext
 from flyte.types import TypeEngine, TypeTransformerFailedError
 
+# Reserved key under which a scheduled trigger stashes the name of its kickoff-time-bound input arg
+# in Inputs.context (set by trigger_serde at registration). The per-fire value is never in the
+# (offloaded) inputs blob; at execution we fill that input from the run start time on the task
+# context. The key is internal plumbing, so it is excluded from the user-facing Inputs.context.
+KICKOFF_TIME_INPUT_ARG_CONTEXT_KEY = "_u_kickoff_time_input_arg"
+
 # Name of the output slot currently being serialized (e.g. "o0"), scoped to
 # a single ``TypeEngine.to_literal`` call by ``convert_from_native_to_outputs``.
 # Lets a TypeTransformer attribute a value to the output it's being returned
@@ -46,8 +52,12 @@ class Inputs:
 
     @property
     def context(self) -> Dict[str, str]:
-        """Get the context as a dictionary."""
-        return {kv.key: kv.value for kv in self.proto_inputs.context}
+        """Get the context as a dictionary (excluding internal reserved keys)."""
+        return {
+            kv.key: kv.value
+            for kv in self.proto_inputs.context
+            if kv.key != KICKOFF_TIME_INPUT_ARG_CONTEXT_KEY
+        }
 
 
 @dataclass(frozen=True)
@@ -82,6 +92,17 @@ async def convert_inputs_to_native(inputs: Inputs, python_interface: NativeInter
     native_vals = await TypeEngine.literal_map_to_kwargs(
         literals_pb2.LiteralMap(literals=literals), python_interface.get_input_types()
     )
+    # A scheduled trigger conveys the name of its kickoff-time-bound input via inputs.context (the
+    # per-fire value is never carried in the inputs blob). Fill it from the run start time already on
+    # the task context rather than reopening/mutating the proto inputs.
+    kickoff_arg = next(
+        (kv.value for kv in inputs.proto_inputs.context if kv.key == KICKOFF_TIME_INPUT_ARG_CONTEXT_KEY),
+        None,
+    )
+    if kickoff_arg:
+        tctx = ctx()
+        if tctx is not None and tctx.run_start_time is not None:
+            native_vals[kickoff_arg] = tctx.run_start_time
     return native_vals
 
 

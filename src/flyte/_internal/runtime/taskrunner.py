@@ -114,51 +114,6 @@ async def run_task(
             await controller.finalize_parent_action(tctx.action)
 
 
-def _inject_kickoff_time_from_run_start(inputs: Inputs, run_start_time: datetime) -> Inputs:
-    """Fill an offloaded trigger's kickoff-time input from the run start time.
-
-    Offloaded triggers convey the name of the ``flyte.TriggerTime``-bound input arg via a reserved
-    key in ``Inputs.context`` (see :data:`trigger_serde.KICKOFF_TIME_INPUT_ARG_CONTEXT_KEY`) instead
-    of relying on the backend to inject a kickoff literal at fire time. Here we write ``run_start_time``
-    (the trigger's scheduled fire time, surfaced via the ``{{.runStartTime}}`` container arg) into that
-    input as a datetime literal, and strip the reserved key so it does not leak into the user-visible
-    ``custom_context`` or propagate to spawned sub-actions.
-
-    No-op when the reserved key is absent (i.e. non-triggered runs or inline-input triggers).
-    """
-    from flyte._internal.runtime.trigger_serde import KICKOFF_TIME_INPUT_ARG_CONTEXT_KEY
-
-    proto = inputs.proto_inputs
-    arg_name = next(
-        (kv.value for kv in proto.context if kv.key == KICKOFF_TIME_INPUT_ARG_CONTEXT_KEY),
-        None,
-    )
-    if not arg_name:
-        return inputs
-
-    from flyteidl2.core import literals_pb2
-    from flyteidl2.task import common_pb2
-    from google.protobuf import timestamp_pb2
-
-    ts = timestamp_pb2.Timestamp()
-    ts.FromDatetime(run_start_time.astimezone(timezone.utc))
-    literal = literals_pb2.Literal(scalar=literals_pb2.Scalar(primitive=literals_pb2.Primitive(datetime=ts)))
-
-    # Override an existing literal for the arg if present, otherwise append it.
-    for entry in proto.literals:
-        if entry.name == arg_name:
-            entry.value.CopyFrom(literal)
-            break
-    else:
-        proto.literals.append(common_pb2.NamedLiteral(name=arg_name, value=literal))
-
-    # Drop the reserved key so it stays out of custom_context.
-    remaining = [kv for kv in proto.context if kv.key != KICKOFF_TIME_INPUT_ARG_CONTEXT_KEY]
-    del proto.context[:]
-    proto.context.extend(remaining)
-    return inputs
-
-
 async def convert_and_run(
     *,
     task: TaskTemplate,
@@ -189,12 +144,8 @@ async def convert_and_run(
         inputs = await load_inputs(input_path, path_rewrite_config=raw_data_path.path_rewrite)
         sw.stop()
 
-    # Offloaded triggers carry the kickoff-time input arg name in inputs.context; fill that input
-    # from run_start_time (the scheduled fire time) before native conversion. No-op otherwise.
-    if inputs is not None and run_start_time is not None:
-        inputs = _inject_kickoff_time_from_run_start(inputs, run_start_time)
-
-    # Extract context from inputs
+    # Extract context from inputs (the kickoff-time input arg is filled from run_start_time during
+    # native conversion in convert_inputs_to_native; its reserved context key is excluded here).
     custom_context = inputs.context if inputs else {}
 
     parent_tctx = ctx.data.task_context
