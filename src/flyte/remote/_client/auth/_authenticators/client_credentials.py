@@ -35,7 +35,17 @@ class ClientCredentialsAuthenticator(Authenticator):
         :param audience: Audience for the token
         """
         if not client_id or not client_credentials_secret:
-            raise ValueError("both client_id and client_credentials_secret are required.")
+            # Missing client_id / secret is a creds-config mistake, not an SDK crash.
+            # Raise a typed InitializationError so the Sentry filter (flyte/_sentry.py)
+            # skips it — otherwise it leaks as RuntimeError("SelectCluster failed...")
+            # -> RuntimeSystemError with no actionable signal (FLYTE-SDK-55).
+            from flyte.errors import InitializationError
+
+            raise InitializationError(
+                "InvalidClientCredentials",
+                "user",
+                "both client_id and client_credentials_secret are required.",
+            )
         self._client_id = client_id
         self._client_credentials_secret = client_credentials_secret
         super().__init__(**kwargs)
