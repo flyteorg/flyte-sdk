@@ -5,9 +5,11 @@ It uses the storage module to handle the actual uploading and downloading of fil
 """
 
 import os
+from inspect import isawaitable
 
 from flyteidl2.core import execution_pb2
 from flyteidl2.task import common_pb2
+from fsspec.asyn import AsyncFileSystem
 
 import flyte.storage as storage
 from flyte._logging import logger
@@ -32,6 +34,66 @@ def _is_nonzero_rank_clustered_worker() -> bool:
     have ``RANK`` set in its environment would silently skip uploading its outputs/errors.
     """
     return bool(os.environ.get("TORCHELASTIC_RUN_ID")) and os.environ.get("RANK", "0") != "0"
+
+
+def _get_clustered_restart_attempt() -> int | None:
+    raw_attempt = os.environ.get("JOBSET_RESTART_ATTEMPT")
+    if raw_attempt is None:
+        return None
+    try:
+        return int(raw_attempt)
+    except ValueError:
+        logger.warning(f"Ignoring invalid JOBSET_RESTART_ATTEMPT={raw_attempt!r}")
+        return None
+
+
+async def _delete_path(path: str) -> None:
+    fs = storage.get_underlying_filesystem(path=path)
+    if isinstance(fs, AsyncFileSystem):
+        if hasattr(fs, "_rm_file"):
+            await fs._rm_file(path)  # pylint: disable=W0212
+            return
+        if hasattr(fs, "_rm"):
+            await fs._rm(path)  # pylint: disable=W0212
+            return
+        if hasattr(fs, "rm_file"):
+            result = fs.rm_file(path)
+            if isawaitable(result):
+                await result
+            return
+        if hasattr(fs, "rm"):
+            result = fs.rm(path)
+            if isawaitable(result):
+                await result
+            return
+    else:
+        if hasattr(fs, "rm_file"):
+            fs.rm_file(path)
+            return
+        if hasattr(fs, "rm"):
+            fs.rm(path)
+            return
+    raise NotImplementedError(f"Filesystem {type(fs).__name__} does not support deleting paths")
+
+
+async def _clear_stale_clustered_error_if_needed(output_path: str) -> None:
+    restart_attempt = _get_clustered_restart_attempt()
+    if restart_attempt is None or restart_attempt <= 0:
+        return
+
+    stale_error_uri = error_path(output_path)
+    if not await storage.exists(stale_error_uri):
+        return
+
+    try:
+        await _delete_path(stale_error_uri)
+    except FileNotFoundError:
+        logger.debug(f"No stale {stale_error_uri} found while preparing restarted attempt outputs upload")
+    except Exception as e:
+        logger.warning(
+            f"Failed to delete stale {stale_error_uri} before uploading outputs "
+            f"for restart attempt {restart_attempt}: {e}"
+        )
 
 
 def pkl_path(base_path: str, pkl_name: str) -> str:
@@ -81,6 +143,7 @@ async def upload_outputs(outputs: Outputs, output_path: str, max_bytes: int = -1
             f"Output file at {output_path} exceeds max_bytes limit of {max_bytes},"
             f" size: {outputs.proto_outputs.ByteSize()}"
         )
+    await _clear_stale_clustered_error_if_needed(output_path)
     output_uri = outputs_path(output_path)
     await storage.put_stream(data_iterable=outputs.proto_outputs.SerializeToString(), to_path=output_uri)
     logger.debug(f"Uploaded {output_uri} to {output_path}")
