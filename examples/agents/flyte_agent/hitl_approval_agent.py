@@ -34,8 +34,9 @@ from flyte.ai.agents import Agent, tool
 env = flyte.TaskEnvironment(
     name="hitl-agent",
     image=(
-        flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages(
-            "flyteplugins-hitl>=2.3.6",
+        flyte.Image.from_debian_base(python_version=(3, 12), install_flyte=False).with_pip_packages(
+            "flyte==2.4.4",
+            "flyteplugins-hitl==2.4.4",
             "fastapi",
             "uvicorn",
             "python-multipart",

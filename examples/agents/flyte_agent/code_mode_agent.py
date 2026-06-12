@@ -156,7 +156,7 @@ Keep intermediate results as plain lists/dicts of primitives.
 agent = Agent(
     name="code-mode-agent",
     instructions=INSTRUCTIONS,
-    model="claude-haiku-4-5",
+    model="claude-sonnet-4-6",
     tools=[list_tickers, fetch_prices, moving_average, render_report],
     code_mode=True,
     max_turns=10,
@@ -177,7 +177,7 @@ if __name__ == "__main__":
         request=(
             "Rank all available tickers by their 5-day trailing moving average, "
             "highest first, visualize the rankings as a Flyte report, and tell me "
-            "the top 3 with their values."
+            "the top 3 with their values. Make sure the render the report at the end."
         ),
     )
     print(f"Run URL: {run.url}")

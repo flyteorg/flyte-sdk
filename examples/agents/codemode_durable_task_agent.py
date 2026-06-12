@@ -132,5 +132,5 @@ async def analyze(request: str) -> str:
 
 if __name__ == "__main__":
     flyte.init_from_config()
-    run = flyte.run(analyze, request="Show me monthly revenue trends for 2024, broken down by region")
+    run = flyte.run(analyze, request="Show me monthly revenue trends for 2024, aggregate them by region")
     print(f"Run URL: {run.url}")
