@@ -250,8 +250,10 @@ class PythonWheelHandler:
         )
         dockerfile += delta1
 
-        # Second install: Install dependencies from PyPI
-        pip_install_args_deps = [*pip_install_args, layer.package_name]
+        # Second install: Install dependencies from PyPI. Keep /dist as a findlink so the package
+        # itself resolves to the local wheel even when it isn't published to PyPI (e.g. a local
+        # plugin wheel); its dependencies still come from the index.
+        pip_install_args_deps = [*pip_install_args, "--find-links", "/dist", layer.package_name]
         delta2 = UV_WHEEL_INSTALL_COMMAND_TEMPLATE.substitute(
             PIP_INSTALL_ARGS=" ".join(pip_install_args_deps), SECRET_MOUNT=secret_mounts
         )
