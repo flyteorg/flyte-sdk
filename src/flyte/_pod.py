@@ -345,7 +345,6 @@ def _apply_fuse_privileged(pt: PodTemplate, primary: "V1Container") -> None:
 
     primary.security_context = primary.security_context or V1SecurityContext()
     primary.security_context.privileged = True
-    return pt
 
 
 def _apply_sandboxing(pod_template: PodTemplate) -> PodTemplate:
