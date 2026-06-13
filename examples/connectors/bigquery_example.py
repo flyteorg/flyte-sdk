@@ -11,7 +11,7 @@ bigquery_task = BigQueryTask(
     query_template="SELECT * from dataset.flyte_table3;",
 )
 
-flyte.TaskEnvironment.from_task("bigquery_env", bigquery_task)
+bigquery_env = flyte.TaskEnvironment.from_task("bigquery_env", bigquery_task)
 
 
 if __name__ == "__main__":
