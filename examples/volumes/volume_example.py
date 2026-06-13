@@ -54,7 +54,7 @@ VOL_NAME = os.environ.get("VOL_NAME", "demo-vol")
 
 # A plain image + the released flyteplugins-union package is all Volumes need
 # (juicefs is bundled in the PyPI platform wheels; the default sqlite store
-# mounts via raw syscalls under enable_fuse_mount).
+# mounts via raw syscalls; enable FUSE with PodTemplate.allow_fuse()).
 image = (
     flyte.Image.from_debian_base(install_flyte=False, name="volume-demo")
     .with_pip_packages("flyteplugins-union>=0.4.0")
@@ -63,8 +63,11 @@ image = (
 
 env = flyte.TaskEnvironment(
     name="volume-demo",
-    # CAP_SYS_ADMIN + /dev/fuse come from this flag; no PodTemplate needed.
-    enable_fuse_mount=True,
+    # Unprivileged FUSE via the cluster's FUSE device plugin: the pod template
+    # requests smarter-devices/fuse (kubelet injects /dev/fuse) + CAP_SYS_ADMIN
+    # for mount(2). No privileged container, no hostPath. The Union dataplane
+    # chart ships an opt-in fuseDevicePlugin DaemonSet that advertises it.
+    pod_template=flyte.PodTemplate().allow_fuse(),
     image=image,
     resources=flyte.Resources(cpu="500m", memory="1Gi"),
 )

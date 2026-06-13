@@ -63,8 +63,11 @@ image = with_high_throughput_volume_deps(base)
 
 env = flyte.TaskEnvironment(
     name="vol-bench",
-    # CAP_SYS_ADMIN + /dev/fuse come from this flag; no PodTemplate needed.
-    enable_fuse_mount=True,
+    # Unprivileged FUSE via the cluster's FUSE device plugin: the pod template
+    # requests smarter-devices/fuse (kubelet injects /dev/fuse) + CAP_SYS_ADMIN
+    # for mount(2). No privileged container, no hostPath. The Union dataplane
+    # chart ships an opt-in fuseDevicePlugin DaemonSet that advertises it.
+    pod_template=flyte.PodTemplate().allow_fuse(),
     image=image,
     resources=flyte.Resources(cpu="2", memory="4Gi"),
 )
