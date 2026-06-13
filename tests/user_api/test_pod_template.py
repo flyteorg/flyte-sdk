@@ -278,8 +278,59 @@ class TestCapabilityLaws:
 
 
 class TestAllowFuse:
-    def test_fuse_device_volume_and_mount(self):
+    """Default (unprivileged) device-plugin path."""
+
+    def test_requests_fuse_device_resource(self):
         pt = PodTemplate().allow_fuse()
+        primary = next(c for c in pt.pod_spec.containers if c.name == "primary")
+        assert primary.resources.requests["smarter-devices/fuse"] == "1"
+        assert primary.resources.limits["smarter-devices/fuse"] == "1"
+
+    def test_not_privileged_and_no_hostpath(self):
+        pt = PodTemplate().allow_fuse()
+        primary = next(c for c in pt.pod_spec.containers if c.name == "primary")
+        sc = primary.security_context
+        assert sc.privileged is not True
+        assert "SYS_ADMIN" in sc.capabilities.add
+        # composability: must not pin allowPrivilegeEscalation either way
+        assert sc.allow_privilege_escalation is None
+        # no /dev/fuse hostPath in the device-plugin path
+        assert not any(getattr(v, "name", None) == "fuse-device" for v in (pt.pod_spec.volumes or []))
+
+    def test_privileged_false_is_the_default(self):
+        assert PodTemplate().allow_fuse() == PodTemplate().allow_fuse(privileged=False)
+
+    def test_merges_with_existing_resources(self):
+        from kubernetes.client import V1Container, V1PodSpec, V1ResourceRequirements
+
+        pt = PodTemplate(
+            pod_spec=V1PodSpec(
+                containers=[V1Container(name="primary", resources=V1ResourceRequirements(requests={"cpu": "1"}))]
+            )
+        ).allow_fuse()
+        primary = next(c for c in pt.pod_spec.containers if c.name == "primary")
+        assert primary.resources.requests["cpu"] == "1"
+        assert primary.resources.requests["smarter-devices/fuse"] == "1"
+
+    def test_composes_with_sandboxing_in_both_orders(self):
+        a = PodTemplate().allow_fuse().allow_nested_sandboxing()
+        b = PodTemplate().allow_nested_sandboxing().allow_fuse()
+        assert a == b  # order-free law holds for the composable pair
+        primary = next(c for c in a.pod_spec.containers if c.name == "primary")
+        sc = primary.security_context
+        assert sc.capabilities.add == ["SYS_ADMIN"]
+        assert sc.allow_privilege_escalation is False
+        assert sc.privileged is not True
+        assert primary.resources.requests["smarter-devices/fuse"] == "1"
+        assert a.annotations["flyte.org/capability-fuse"] == "true"
+        assert a.annotations["flyte.org/capability-nested-sandboxing"] == "true"
+
+
+class TestAllowFusePrivileged:
+    """Legacy escape hatch (privileged=True): hostPath + privileged."""
+
+    def test_fuse_device_volume_and_mount(self):
+        pt = PodTemplate().allow_fuse(privileged=True)
         vol = next(v for v in pt.pod_spec.volumes if v.name == "fuse-device")
         assert vol.host_path.path == "/dev/fuse"
         assert vol.host_path.type == "CharDevice"
@@ -288,9 +339,10 @@ class TestAllowFuse:
         assert mount.mount_path == "/dev/fuse"
 
     def test_privileged(self):
-        pt = PodTemplate().allow_fuse()
+        pt = PodTemplate().allow_fuse(privileged=True)
         primary = next(c for c in pt.pod_spec.containers if c.name == "primary")
         assert primary.security_context.privileged is True
+        assert "SYS_ADMIN" in primary.security_context.capabilities.add
 
     def test_conflicts_with_explicit_unprivileged(self):
         from kubernetes.client import V1Container, V1PodSpec, V1SecurityContext
@@ -301,49 +353,11 @@ class TestAllowFuse:
             )
         )
         with pytest.raises(ValueError, match="privileged=false"):
-            pt.allow_fuse()
+            pt.allow_fuse(privileged=True)
 
     def test_conflicts_allow_nested_sandboxing(self):
         with pytest.raises(ValueError, match="allowPrivilegeEscalation"):
-            PodTemplate().allow_nested_sandboxing().allow_fuse()
-
-
-class TestAllowFuseUnprivileged:
-    def test_not_privileged(self):
-        pt = PodTemplate().allow_fuse(privileged=False)
-        primary = next(c for c in pt.pod_spec.containers if c.name == "primary")
-        sc = primary.security_context
-        assert sc.privileged is not True
-        assert "SYS_ADMIN" in sc.capabilities.add
-        # composability: must not pin allowPrivilegeEscalation either way
-        assert sc.allow_privilege_escalation is None
-
-    def test_device_volume_still_mounted(self):
-        pt = PodTemplate().allow_fuse(privileged=False)
-        assert any(v.name == "fuse-device" for v in pt.pod_spec.volumes)
-
-    def test_sets_apparmor_unconfined(self):
-        pt = PodTemplate(primary_container_name="worker").allow_fuse(privileged=False)
-        assert pt.annotations["container.apparmor.security.beta.kubernetes.io/worker"] == "unconfined"
-
-    def test_conflicts_with_other_apparmor_profile(self):
-        pt = PodTemplate(annotations={"container.apparmor.security.beta.kubernetes.io/primary": "runtime/default"})
-        with pytest.raises(ValueError, match="AppArmor"):
-            pt.allow_fuse(privileged=False)
-
-    def test_composes_with_sandboxing_in_both_orders(self):
-        a = PodTemplate().allow_fuse(privileged=False).allow_nested_sandboxing()
-        b = PodTemplate().allow_nested_sandboxing().allow_fuse(privileged=False)
-        assert a == b  # order-free law holds for the composable pair
-        primary = next(c for c in a.pod_spec.containers if c.name == "primary")
-        sc = primary.security_context
-        assert sc.capabilities.add == ["SYS_ADMIN"]
-        assert sc.allow_privilege_escalation is False
-        assert sc.privileged is not True
-        assert any(v.name == "fuse-device" for v in a.pod_spec.volumes)
-        assert a.annotations["container.apparmor.security.beta.kubernetes.io/primary"] == "unconfined"
-        assert a.annotations["flyte.org/capability-fuse"] == "true"
-        assert a.annotations["flyte.org/capability-nested-sandboxing"] == "true"
+            PodTemplate().allow_nested_sandboxing().allow_fuse(privileged=True)
 
 
 class TestAllowNestedSandboxing:
@@ -371,9 +385,15 @@ class TestAllowNestedSandboxing:
         with pytest.raises(ValueError, match="privileged=true"):
             pt.allow_nested_sandboxing()
 
-    def test_conflicts_allow_fuse(self):
-        with pytest.raises(ValueError, match="privileged"):
-            PodTemplate().allow_fuse().allow_nested_sandboxing()
+    def test_composes_with_default_allow_fuse(self):
+        # The default (device-plugin) allow_fuse is unprivileged, so it composes
+        # with nested sandboxing in either order.
+        PodTemplate().allow_fuse().allow_nested_sandboxing()
+        PodTemplate().allow_nested_sandboxing().allow_fuse()
+
+    def test_conflicts_allow_fuse_privileged(self):
+        with pytest.raises(ValueError, match="allowPrivilegeEscalation"):
+            PodTemplate().allow_nested_sandboxing().allow_fuse(privileged=True)
 
     def test_conflicts_with_other_apparmor_profile(self):
         pt = PodTemplate(annotations={"container.apparmor.security.beta.kubernetes.io/primary": "runtime/default"})
