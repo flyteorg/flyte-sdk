@@ -275,22 +275,35 @@ def _set_apparmor_unconfined(pt: PodTemplate, caller: str) -> None:
 
 
 def _apply_fuse(pod_template: PodTemplate, *, privileged: bool = False) -> PodTemplate:
-    """Augmentor behind :meth:`PodTemplate.allow_fuse`."""
+    """Augmentor behind :meth:`PodTemplate.allow_fuse`. Dispatches to one of two
+    clearly separate strategies; both grant CAP_SYS_ADMIN and stamp the fuse
+    capability annotation."""
     pt = _clone_with_primary(pod_template)
     primary = _get_primary_container(pt)
 
-    if not privileged:
-        # Default device-plugin path: request smarter-devices/fuse so kubelet
-        # injects /dev/fuse into the devices cgroup; CAP_SYS_ADMIN for mount(2).
-        # No privileged, no hostPath. Composes with allow_nested_sandboxing()
-        # (SYS_ADMIN + allowPrivilegeEscalation=false is permitted).
-        _add_fuse_device_resource(primary)
-        _add_sys_admin(primary)
-        _stamp_capability(pt, "fuse")
-        return pt
+    if privileged:
+        _apply_fuse_privileged(pt, primary)
+    else:
+        _apply_fuse_device_plugin(primary)
 
-    # Legacy escape hatch (privileged=True): /dev/fuse hostPath + privileged, for
-    # clusters WITHOUT a FUSE device plugin (privilege bypasses the device cgroup).
+    _add_sys_admin(primary)  # the mount(2) syscall needs it on both paths
+    _stamp_capability(pt, "fuse")
+    return pt
+
+
+def _apply_fuse_device_plugin(primary: "V1Container") -> None:
+    """Default, UNPRIVILEGED path: request the ``smarter-devices/fuse`` extended
+    resource so a FUSE device plugin makes kubelet inject ``/dev/fuse`` into the
+    container's devices-cgroup allowlist. No privileged, no hostPath — composes
+    with ``allow_nested_sandboxing()``. Requires a FUSE device plugin on the
+    cluster."""
+    _add_fuse_device_resource(primary)
+
+
+def _apply_fuse_privileged(pt: PodTemplate, primary: "V1Container") -> None:
+    """Legacy escape hatch for clusters WITHOUT a FUSE device plugin: a
+    ``/dev/fuse`` hostPath + ``privileged=true`` (privilege bypasses the device
+    cgroup that would otherwise deny ``open()``)."""
     from kubernetes.client import V1HostPathVolumeSource, V1Volume, V1VolumeMount
 
     # Conflict checks: a privileged container cannot deny privilege escalation
@@ -328,10 +341,10 @@ def _apply_fuse(pod_template: PodTemplate, *, privileged: bool = False) -> PodTe
         mounts.append(V1VolumeMount(name=_FUSE_DEVICE_VOLUME_NAME, mount_path=_FUSE_DEVICE_PATH))
         primary.volume_mounts = mounts
 
-    _add_sys_admin(primary)
-    primary.security_context.privileged = True
+    from kubernetes.client import V1SecurityContext
 
-    _stamp_capability(pt, "fuse")
+    primary.security_context = primary.security_context or V1SecurityContext()
+    primary.security_context.privileged = True
     return pt
 
 
