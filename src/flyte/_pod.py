@@ -12,10 +12,17 @@ if TYPE_CHECKING:
 _PRIMARY_CONTAINER_NAME_FIELD = "primary_container_name"
 _PRIMARY_CONTAINER_DEFAULT_NAME = "primary"
 
-# Name used for the hostPath volume and its volumeMount added by
-# ``PodTemplate.allow_fuse()``.
+# Name/path for the hostPath volume + volumeMount used by the legacy
+# ``allow_fuse(privileged=True)`` escape hatch.
 _FUSE_DEVICE_VOLUME_NAME = "fuse-device"
 _FUSE_DEVICE_PATH = "/dev/fuse"
+
+# Extended resource advertised by a FUSE device plugin (smarter-device-manager /
+# fuse-device-plugin DaemonSet). Requesting it makes kubelet inject /dev/fuse
+# into the container's devices-cgroup allowlist — granting an UNPRIVILEGED
+# container access to the device, which a hostPath cannot do. This is what the
+# default (device-plugin) path of ``PodTemplate.allow_fuse()`` uses.
+_FUSE_DEVICE_RESOURCE = "smarter-devices/fuse"
 
 # Every capability helper stamps ``flyte.org/capability-<name>: "true"`` on the
 # resulting template so the requested grant is auditable on the pod itself
@@ -95,44 +102,51 @@ class PodTemplate(object):
             annotations=dict(annotations) if annotations else None,
         )
 
-    def allow_fuse(self, privileged: bool = True) -> PodTemplate:
+    def allow_fuse(self, privileged: bool = False) -> PodTemplate:
         """
-        Return a copy of this template granted everything a container needs to
-        perform an in-process FUSE mount (e.g. for ``Volume`` support).
+        Return a copy of this template granted everything an **unprivileged**
+        container needs to perform an in-process FUSE mount (e.g. for ``Volume``
+        support).
 
-        Specifically, the copy:
+        By default (``privileged=False``) the copy:
 
-        * adds a ``hostPath`` volume named ``fuse-device`` pointing at
-          ``/dev/fuse`` on the node, mounted into the primary container;
-        * adds ``CAP_SYS_ADMIN`` to the primary container so the ``mount``
-          syscall is permitted;
-        * with ``privileged=True`` (the default), sets ``privileged: true`` on
-          the primary container; with ``privileged=False``, instead sets the
-          ``container.apparmor.security.beta.kubernetes.io/<primary>:
-          unconfined`` pod annotation (the default AppArmor profile would
-          otherwise block ``mount``);
+        * requests the ``smarter-devices/fuse`` extended resource (request +
+          limit) on the primary container, so the cluster's FUSE **device
+          plugin** (smarter-device-manager / fuse-device-plugin DaemonSet)
+          injects ``/dev/fuse`` into the container's devices-cgroup allowlist —
+          making the node device *usable* from an unprivileged container; and
+        * adds ``CAP_SYS_ADMIN`` to the primary container, required for the
+          ``mount(2)`` syscall that attaches the FUSE filesystem;
         * stamps the ``flyte.org/capability-fuse`` annotation for auditability.
 
-        Why privileged is the default: opening ``/dev/fuse`` is gated by the
-        container runtime's device-cgroup allowlist, which only ``privileged``
-        bypasses — there is no pod-spec field to whitelist a device for a
-        non-privileged container. Pass ``privileged=False`` **only** on
-        clusters that permit ``/dev/fuse`` for non-privileged containers (e.g.
-        via a FUSE device plugin or runtime device-allowlist configuration);
-        otherwise the pod deploys fine but ``open("/dev/fuse")`` fails with
-        ``EPERM`` at runtime. ``privileged=False`` composes with
-        ``allow_nested_sandboxing()``; ``privileged=True`` does not (Kubernetes
-        rejects privileged containers that set
-        ``allowPrivilegeEscalation: false``).
+        It does **not** set ``privileged: true`` and does **not** add a
+        ``/dev/fuse`` hostPath. A hostPath only makes the device *node* visible;
+        the devices cgroup still denies ``open()`` with ``EPERM`` — the device
+        plugin is what actually grants access. This default composes with
+        ``allow_nested_sandboxing()``. The cluster must run a FUSE device plugin
+        advertising ``smarter-devices/fuse`` (the Union dataplane chart ships an
+        opt-in ``fuseDevicePlugin`` DaemonSet for this).
+
+        ``privileged=True`` is a legacy escape hatch for clusters **without** a
+        FUSE device plugin: it instead adds a ``/dev/fuse`` hostPath volume +
+        mount and sets ``privileged: true`` on the primary container (the device
+        cgroup is bypassed by privilege). It does not compose with
+        ``allow_nested_sandboxing()`` (Kubernetes rejects privileged containers
+        that set ``allowPrivilegeEscalation: false``).
+
+        AppArmor note: on clusters that enforce a restrictive default AppArmor
+        profile, the ``mount`` syscall may additionally need the primary
+        container's profile set to ``unconfined`` — set that annotation on the
+        template yourself if needed; it is not applied by default to keep this
+        grant minimal.
 
         The original template is never mutated; existing volumes, mounts,
-        sidecars, labels, annotations, and unrelated security-context fields
-        are preserved. Re-applying with the same arguments is idempotent.
+        resources, sidecars, labels, annotations, and unrelated security-context
+        fields are preserved. Re-applying with the same arguments is idempotent.
 
-        Raises ``ValueError`` if the template already pins a conflicting
-        security posture (with ``privileged=True``: ``privileged: false`` or
-        ``allowPrivilegeEscalation: false`` pre-set; with ``privileged=False``:
-        a different AppArmor profile for the primary container).
+        Raises ``ValueError`` if the template already pins a conflicting security
+        posture (with ``privileged=True``: ``privileged: false`` or
+        ``allowPrivilegeEscalation: false`` pre-set).
         """
         return _apply_fuse(self, privileged=privileged)
 
@@ -231,6 +245,18 @@ def _add_sys_admin(primary: "V1Container") -> None:
     primary.security_context = sc
 
 
+def _add_fuse_device_resource(primary: "V1Container") -> None:
+    """Request the FUSE device-plugin resource on the primary container, merging
+    into any resources the caller already set (request + limit, per the k8s rule
+    that extended resources must have request == limit)."""
+    from kubernetes.client import V1ResourceRequirements
+
+    resources = primary.resources or V1ResourceRequirements()
+    resources.requests = {**(resources.requests or {}), _FUSE_DEVICE_RESOURCE: "1"}
+    resources.limits = {**(resources.limits or {}), _FUSE_DEVICE_RESOURCE: "1"}
+    primary.resources = resources
+
+
 def _set_apparmor_unconfined(pt: PodTemplate, caller: str) -> None:
     """Set the AppArmor-unconfined annotation for the primary container.
 
@@ -248,40 +274,42 @@ def _set_apparmor_unconfined(pt: PodTemplate, caller: str) -> None:
     pt.annotations = annotations
 
 
-def _apply_fuse(pod_template: PodTemplate, *, privileged: bool = True) -> PodTemplate:
+def _apply_fuse(pod_template: PodTemplate, *, privileged: bool = False) -> PodTemplate:
     """Augmentor behind :meth:`PodTemplate.allow_fuse`."""
-    from kubernetes.client import V1HostPathVolumeSource, V1Volume, V1VolumeMount
-
     pt = _clone_with_primary(pod_template)
     primary = _get_primary_container(pt)
 
-    if privileged:
-        # Conflict checks: a privileged container cannot deny privilege
-        # escalation (Kubernetes rejects the combination), and an explicit
-        # privileged=False contradicts what this grant needs.
-        sc = primary.security_context
-        if sc is not None:
-            if sc.privileged is False:
-                raise ValueError(
-                    f"allow_fuse() requires privileged=true on the primary container "
-                    f"({pt.primary_container_name!r}), but the pod template explicitly sets privileged=false. "
-                    "On clusters that permit /dev/fuse for non-privileged containers, use "
-                    "allow_fuse(privileged=False)."
-                )
-            if sc.allow_privilege_escalation is False:
-                raise ValueError(
-                    "allow_fuse() makes the primary container privileged, which Kubernetes rejects when "
-                    "allowPrivilegeEscalation=false is set (e.g. after allow_nested_sandboxing()). On clusters "
-                    "that permit /dev/fuse for non-privileged containers, use allow_fuse(privileged=False), "
-                    "which composes with allow_nested_sandboxing()."
-                )
-    else:
-        # Non-privileged FUSE: mount needs CAP_SYS_ADMIN (added below) and an
-        # unconfined AppArmor profile; the cluster must separately permit
-        # /dev/fuse for non-privileged containers (device plugin or runtime
-        # device-allowlist config). Leaves privileged/allowPrivilegeEscalation
-        # untouched, so it composes with allow_nested_sandboxing().
-        _set_apparmor_unconfined(pt, "allow_fuse(privileged=False)")
+    if not privileged:
+        # Default device-plugin path: request smarter-devices/fuse so kubelet
+        # injects /dev/fuse into the devices cgroup; CAP_SYS_ADMIN for mount(2).
+        # No privileged, no hostPath. Composes with allow_nested_sandboxing()
+        # (SYS_ADMIN + allowPrivilegeEscalation=false is permitted).
+        _add_fuse_device_resource(primary)
+        _add_sys_admin(primary)
+        _stamp_capability(pt, "fuse")
+        return pt
+
+    # Legacy escape hatch (privileged=True): /dev/fuse hostPath + privileged, for
+    # clusters WITHOUT a FUSE device plugin (privilege bypasses the device cgroup).
+    from kubernetes.client import V1HostPathVolumeSource, V1Volume, V1VolumeMount
+
+    # Conflict checks: a privileged container cannot deny privilege escalation
+    # (Kubernetes rejects the combination), and an explicit privileged=False
+    # contradicts what this grant needs.
+    sc = primary.security_context
+    if sc is not None:
+        if sc.privileged is False:
+            raise ValueError(
+                f"allow_fuse(privileged=True) requires privileged=true on the primary container "
+                f"({pt.primary_container_name!r}), but the pod template explicitly sets privileged=false. "
+                "On clusters with a FUSE device plugin, use allow_fuse() (the unprivileged default)."
+            )
+        if sc.allow_privilege_escalation is False:
+            raise ValueError(
+                "allow_fuse(privileged=True) makes the primary container privileged, which Kubernetes rejects "
+                "when allowPrivilegeEscalation=false is set (e.g. after allow_nested_sandboxing()). Use the "
+                "unprivileged default allow_fuse(), which composes with allow_nested_sandboxing()."
+            )
 
     # Volume + volumeMount for /dev/fuse — idempotent: skip if already present.
     assert pt.pod_spec is not None  # _clone_with_primary guarantees it
@@ -300,11 +328,8 @@ def _apply_fuse(pod_template: PodTemplate, *, privileged: bool = True) -> PodTem
         mounts.append(V1VolumeMount(name=_FUSE_DEVICE_VOLUME_NAME, mount_path=_FUSE_DEVICE_PATH))
         primary.volume_mounts = mounts
 
-    # SecurityContext: CAP_SYS_ADMIN (+ privileged unless opted out). Preserve
-    # any other security-context fields the caller set.
     _add_sys_admin(primary)
-    if privileged:
-        primary.security_context.privileged = True
+    primary.security_context.privileged = True
 
     _stamp_capability(pt, "fuse")
     return pt
