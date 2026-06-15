@@ -232,11 +232,8 @@ def action(
 
     console = common.get_console()
     if action_name:
-        console.print(
-            common.format(
-                f"Action {run_name}.{action_name}", [remote.Action.get(run_name=run_name, name=action_name)], "json"
-            )
-        )
+        details = remote.ActionDetails.get(run_name=run_name, name=action_name)
+        console.print(common.format(f"Action {run_name}.{action_name}", [details], "json"))
     else:
         # List all actions for the run
         if in_phase:
