@@ -15,7 +15,8 @@ from flyte._task import TaskTemplate
 from flyte.models import ActionID, CheckpointPaths, CodeBundle, RawDataPath
 
 from ..._utils import adjust_sys_path
-from .convert import Error, Inputs, Outputs
+from .convert import Error, Inputs, Outputs, convert_from_native_to_error
+from .io import upload_error
 from .taskrunner import (
     convert_and_run,
     extract_download_run_upload,
@@ -243,7 +244,24 @@ async def load_and_run_task(
     """
     sw = Stopwatch("load_and_run_task_total")
     sw.start()
-    task = await _download_and_load_task(code_bundle, resolver, resolver_args)
+    try:
+        task = await _download_and_load_task(code_bundle, resolver, resolver_args)
+    except Exception as e:
+        # Loading the task (downloading the bundle, importing the user module, running the
+        # resolver) happens *before* the contextual_run wrapper below, which is what writes
+        # the error document (error.pb) on failure. If loading raises -- e.g. a top-level
+        # `ModuleNotFoundError` because a dependency is missing from the image -- the process
+        # would crash with no error.pb, leaving the backend with no message to display. The
+        # UI then shows only an empty "terminated with exit code (1)" and the real cause is
+        # buried at the bottom of the task logs.
+        #
+        # Surface it: write the error document here so the actual failure reason shows up in
+        # the task UI, then re-raise so the process still exits non-zero.
+        logger.exception(f"Failed to load task before execution: {e}")
+        if output_path:
+            error = convert_from_native_to_error(e)
+            await upload_error(error.err, output_path, recoverable=error.recoverable)
+        raise
 
     await contextual_run(
         extract_download_run_upload,
