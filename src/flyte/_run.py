@@ -189,7 +189,11 @@ class _Runner:
             else:
                 task = obj
             task_spec = task.pb2.spec
-            task_id = task.pb2.task_id
+            # A fetched task is normally run by reference (task_id only). But if it was modified via
+            # `.override(...)`, the local spec no longer matches the registered task, so we must send
+            # the full spec instead. Setting task_id to None routes every downstream branch to the
+            # spec path.
+            task_id = None if task.overridden else task.pb2.task_id
             inputs = await convert_from_native_to_inputs(
                 task.interface, *args, custom_context=self._custom_context, **kwargs
             )
@@ -354,8 +358,9 @@ class _Runner:
                 )
             # Fill in task id inside the task template if it's not provided.
             # Maybe this should be done here, or the backend.
-            # Only needed for locally-defined tasks; a fetched task (task_id set) already
-            # carries a fully-populated id and is sent by reference, not as a spec.
+            # Only needed for locally-defined tasks; a fetched task sent by reference (task_id set)
+            # is skipped here. An overridden fetched task (task_id None) already carries a
+            # fully-populated id, so the `== ""` guards below leave it untouched.
             if task_id is None:
                 if task_spec.task_template.id.project == "":
                     task_spec.task_template.id.project = project or ""
