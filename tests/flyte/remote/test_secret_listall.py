@@ -11,9 +11,7 @@ from flyte.remote._secret import Secret
 @pytest.mark.asyncio
 async def test_listall_paginates_via_scalar_token():
     # Page 1 returns a continuation token; page 2 returns an empty token (end).
-    page1 = payload_pb2.ListSecretsResponse(
-        secrets=[definition_pb2.Secret(), definition_pb2.Secret()], token="t1"
-    )
+    page1 = payload_pb2.ListSecretsResponse(secrets=[definition_pb2.Secret(), definition_pb2.Secret()], token="t1")
     page2 = payload_pb2.ListSecretsResponse(secrets=[definition_pb2.Secret()], token="")
     svc = MagicMock()
     svc.list_secrets = AsyncMock(side_effect=[page1, page2])
