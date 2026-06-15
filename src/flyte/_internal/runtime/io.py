@@ -5,7 +5,6 @@ It uses the storage module to handle the actual uploading and downloading of fil
 """
 
 import os
-from inspect import isawaitable
 
 from flyteidl2.core import execution_pb2
 from flyteidl2.task import common_pb2
@@ -50,30 +49,9 @@ def _get_clustered_restart_attempt() -> int | None:
 async def _delete_path(path: str) -> None:
     fs = storage.get_underlying_filesystem(path=path)
     if isinstance(fs, AsyncFileSystem):
-        if hasattr(fs, "_rm_file"):
-            await fs._rm_file(path)  # pylint: disable=W0212
-            return
-        if hasattr(fs, "_rm"):
-            await fs._rm(path)  # pylint: disable=W0212
-            return
-        if hasattr(fs, "rm_file"):
-            result = fs.rm_file(path)
-            if isawaitable(result):
-                await result
-            return
-        if hasattr(fs, "rm"):
-            result = fs.rm(path)
-            if isawaitable(result):
-                await result
-            return
+        await fs._rm_file(path)  # pylint: disable=W0212
     else:
-        if hasattr(fs, "rm_file"):
-            fs.rm_file(path)
-            return
-        if hasattr(fs, "rm"):
-            fs.rm(path)
-            return
-    raise NotImplementedError(f"Filesystem {type(fs).__name__} does not support deleting paths")
+        fs.rm_file(path)
 
 
 async def _clear_stale_clustered_error_if_needed(output_path: str) -> None:
