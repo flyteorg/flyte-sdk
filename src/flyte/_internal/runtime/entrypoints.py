@@ -16,7 +16,6 @@ from flyte.models import ActionID, CheckpointPaths, CodeBundle, RawDataPath
 
 from ..._utils import adjust_sys_path
 from .convert import Error, Inputs, Outputs, convert_from_native_to_error
-from .io import upload_error
 from .taskrunner import (
     convert_and_run,
     extract_download_run_upload,
@@ -251,6 +250,8 @@ async def load_and_run_task(
         # also be uploaded to the error file -- otherwise the UI shows an empty message.
         logger.exception(f"Failed to load task before execution: {e}")
         if output_path:
+            from .io import upload_error
+
             error = convert_from_native_to_error(e)
             await upload_error(error.err, output_path, recoverable=error.recoverable)
         raise

@@ -129,7 +129,7 @@ async def test_load_failure_uploads_error_document():
             side_effect=boom,
         ),
         mock.patch(
-            "flyte._internal.runtime.entrypoints.upload_error",
+            "flyte._internal.runtime.io.upload_error",
             new_callable=mock.AsyncMock,
         ) as mock_upload_error,
     ):
@@ -163,7 +163,7 @@ async def test_load_failure_without_output_path_still_raises():
             side_effect=boom,
         ),
         mock.patch(
-            "flyte._internal.runtime.entrypoints.upload_error",
+            "flyte._internal.runtime.io.upload_error",
             new_callable=mock.AsyncMock,
         ) as mock_upload_error,
     ):
