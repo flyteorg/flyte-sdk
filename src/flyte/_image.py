@@ -736,7 +736,11 @@ class Image:
         return base_image
 
     @classmethod
-    def from_base(cls, image_uri: str) -> Image:
+    def from_base(
+        cls,
+        image_uri: str,
+        platform: Union[Architecture, Tuple[Architecture, ...], None] = None,
+    ) -> Image:
         """
         Use this method to start with a pre-built base image. This image must already exist in the registry of course.
 
@@ -753,9 +757,15 @@ class Image:
         for the full pattern.
 
         :param image_uri: The full URI of the image, in the format <registry>/<name>:<tag>
+        :param platform: Architecture(s) to build for, default is ``("linux/amd64",)``. Pass a tuple for
+            multi-arch builds, e.g. ``("linux/amd64", "linux/arm64")``. The base image must publish a
+            manifest for each requested platform.
         :return:
         """
-        img = cls._new(base_image=image_uri)
+        kwargs: dict[str, Any] = {"base_image": image_uri}
+        if platform is not None:
+            kwargs["platform"] = _ensure_tuple(platform)
+        img = cls._new(**kwargs)
         return img
 
     @classmethod
@@ -847,6 +857,7 @@ class Image:
         python_version: Optional[Tuple[int, int]] = None,
         addl_layer: Optional[Layer] = None,
         extendable: Optional[bool] = None,
+        platform: Union[Architecture, Tuple[Architecture, ...], None] = None,
     ) -> Image:
         """
         Clone an existing image, optionally with a new name or registry.
@@ -865,6 +876,8 @@ class Image:
          image for other images, and additional layers can be added on top of it. If False, the image cannot be
           used as a base image for other images, and additional layers cannot be added on top of it. If None (default),
           defaults to False for safety.
+        :param platform: Architecture(s) to build for. If not specified, the cloned image keeps the original's
+            platform. Pass a tuple for multi-arch builds, e.g. ``("linux/amd64", "linux/arm64")``.
         :return:
         """
         from flyte import Secret
@@ -895,7 +908,7 @@ class Image:
             dockerfile=self.dockerfile,
             registry=registry,
             name=name,
-            platform=self.platform,
+            platform=_ensure_tuple(platform) if platform else self.platform,
             python_version=python_version or self.python_version,
             extendable=extendable if extendable is not None else self.extendable,
             _is_cloned=True,
