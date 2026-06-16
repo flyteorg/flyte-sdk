@@ -468,6 +468,16 @@ _LOCALHOST_REGISTRY = "localhost:30000"
 _DEFAULT_IMAGE_NAME = "flyte"
 _DEFAULT_IMAGE_REF_NAME = "default"
 
+# Shell command that creates the non-root `flyte` runtime user. Only the `from_debian_base`
+# path adds this (as a Commands layer); `from_base`/`from_dockerfile` intentionally do not.
+_CREATE_FLYTE_USER_CMD = (
+    "if ! id -u flyte >/dev/null 2>&1; then"
+    " useradd --create-home --shell /bin/bash flyte; fi &&"
+    " mkdir -p /home/flyte &&"
+    " chown -R flyte:flyte /home/flyte &&"
+    " chown -R flyte:flyte /root"
+)
+
 
 def _get_base_registry() -> str:
     """
@@ -643,15 +653,7 @@ class Image:
         # Use Commands + WorkDir (rather than _DockerLines) so both the local docker
         # builder and the remote builder pick up the flyte user setup, since the
         # remote builder protobuf IDL only understands Layer types like Commands.
-        create_flyte_user = Commands(
-            commands=(
-                "if ! id -u flyte >/dev/null 2>&1; then"
-                " useradd --create-home --shell /bin/bash flyte; fi &&"
-                " mkdir -p /home/flyte &&"
-                " chown -R flyte:flyte /home/flyte &&"
-                " chown -R flyte:flyte /root",
-            ),
-        )
+        create_flyte_user = Commands(commands=(_CREATE_FLYTE_USER_CMD,))
         image = image.clone(addl_layer=labels)
         image = image.clone(addl_layer=create_flyte_user)
         image = image.clone(addl_layer=WorkDir(workdir="/home/flyte"))
