@@ -22,7 +22,7 @@ from google.protobuf.json_format import MessageToDict
 from mashumaro.codecs.json import JSONEncoder
 
 from flyte._logging import logger
-from flyte.io import Dir, File
+from flyte.io import DataFrame, Dir, File
 from flyte.types._pickle import FlytePickleTransformer
 
 # ---------------------------------------------------
@@ -105,6 +105,11 @@ class StructuredDatasetParamType(click.ParamType):
         # Check if we're in local mode (when run_args is available and local=True)
         run_args = getattr(ctx.obj, "run_args", None) if ctx and ctx.obj else None
         if run_args is not None and run_args.local:
+            if storage.is_remote(value):
+                format = "parquet"
+                if value.endswith(".csv"):
+                    format = "csv"
+                return io.DataFrame.from_existing_remote(remote_path=value, format=format)
             # In local mode, create DataFrame from the file path (not upload)
             path = pathlib.Path(value)
             if not path.exists():
@@ -464,7 +469,7 @@ class JsonParamType(click.ParamType):
         if converter is None:
             return value
 
-        if isinstance(value, (File, Dir)):
+        if isinstance(value, (File, Dir, DataFrame)):
             return value
 
         if isinstance(value, str):
