@@ -33,7 +33,7 @@ import flyte
 import flyte.io
 
 image = (
-    flyte.Image.from_base("apache/spark-py:v3.4.0")
+    flyte.Image.from_base("apache/spark-py:v3.4.0", platform=("linux/amd64", "linux/arm64"))
     .clone(name="pandera-pyspark-sql", python_version=(3, 10), extendable=True)
     .with_pip_packages(
         "flyteplugins-spark==2.0.9",

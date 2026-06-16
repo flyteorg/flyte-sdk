@@ -9,7 +9,7 @@ import flyte
 from flyte.io import File
 
 image = (
-    flyte.Image.from_base("apache/spark-py:v3.4.0")
+    flyte.Image.from_base("apache/spark-py:v3.4.0", platform=("linux/amd64", "linux/arm64"))
     .clone(name="spark", python_version=(3, 10), registry="ghcr.io/flyteorg", extendable=True)
     .with_pip_packages("flyteplugins-spark")
     .with_pip_packages("pandas", "pyarrow")
