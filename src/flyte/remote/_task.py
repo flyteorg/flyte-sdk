@@ -165,6 +165,7 @@ class TaskDetails(ToJSONMixin):
     pb2: task_definition_pb2.TaskDetails
     max_inline_io_bytes: int = 10 * 1024 * 1024  # 10 MB
     overriden_queue: Optional[str] = None
+    overridden: bool = False  # Flag if the TaskDetails was overridden
 
     @classmethod
     def get(
@@ -487,6 +488,7 @@ class TaskDetails(ToJSONMixin):
             pb2,
             max_inline_io_bytes=max_inline_io_bytes or self.max_inline_io_bytes,
             overriden_queue=queue,
+            overridden=True,
         )
 
     def __rich_repr__(self) -> rich.repr.Result:

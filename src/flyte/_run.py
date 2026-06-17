@@ -182,12 +182,18 @@ class _Runner:
         domain = self._domain or cfg.domain
 
         task: TaskTemplate[P, R, F] | TaskDetails
+        task_id = None
         if isinstance(obj, (LazyEntity, TaskDetails)):
             if isinstance(obj, LazyEntity):
                 task = await obj.fetch.aio()
             else:
                 task = obj
             task_spec = task.pb2.spec
+            # A fetched task is normally run by reference (task_id only). But if it was modified via
+            # `.override(...)`, the local spec no longer matches the registered task, so we must send
+            # the full spec instead. Setting task_id to None routes every downstream branch to the
+            # spec path.
+            task_id = None if task.overridden else task.pb2.task_id
             inputs = await convert_from_native_to_inputs(
                 task.interface, *args, custom_context=self._custom_context, **kwargs
             )
@@ -352,14 +358,18 @@ class _Runner:
                 )
             # Fill in task id inside the task template if it's not provided.
             # Maybe this should be done here, or the backend.
-            if task_spec.task_template.id.project == "":
-                task_spec.task_template.id.project = project or ""
-            if task_spec.task_template.id.domain == "":
-                task_spec.task_template.id.domain = domain or ""
-            if task_spec.task_template.id.org == "":
-                task_spec.task_template.id.org = cfg.org or ""
-            if task_spec.task_template.id.version == "":
-                task_spec.task_template.id.version = version
+            # Only needed for locally-defined tasks; a fetched task sent by reference (task_id set)
+            # is skipped here. An overridden fetched task (task_id None) already carries a
+            # fully-populated id, so the `== ""` guards below leave it untouched.
+            if task_id is None:
+                if task_spec.task_template.id.project == "":
+                    task_spec.task_template.id.project = project or ""
+                if task_spec.task_template.id.domain == "":
+                    task_spec.task_template.id.domain = domain or ""
+                if task_spec.task_template.id.org == "":
+                    task_spec.task_template.id.org = cfg.org or ""
+                if task_spec.task_template.id.version == "":
+                    task_spec.task_template.id.version = version
 
             kv_pairs: List[literals_pb2.KeyValuePair] = []
             for k, v in env.items():
@@ -399,10 +409,12 @@ class _Runner:
             try:
                 from flyteidl2.dataproxy import dataproxy_service_pb2
 
-                upload_req = dataproxy_service_pb2.UploadInputsRequest(
-                    inputs=inputs.proto_inputs,
-                    task_spec=task_spec,
-                )
+                upload_req = dataproxy_service_pb2.UploadInputsRequest(inputs=inputs.proto_inputs)
+                # Reference an already-registered task by id; otherwise upload the full spec.
+                if task_id is not None:
+                    upload_req.task_id.CopyFrom(task_id)
+                else:
+                    upload_req.task_spec.CopyFrom(task_spec)
                 if run_id is not None:
                     upload_req.run_id.CopyFrom(run_id)
                 else:
@@ -410,35 +422,39 @@ class _Runner:
 
                 upload_resp = await get_client().dataproxy_service.upload_inputs(upload_req)
 
-                resp = await get_client().run_service.create_run(
-                    run_service_pb2.CreateRunRequest(
-                        run_id=run_id,
-                        project_id=project_id,
-                        task_spec=task_spec,
-                        offloaded_input_data=upload_resp.offloaded_input_data,
-                        run_spec=run_pb2.RunSpec(
+                create_req = run_service_pb2.CreateRunRequest(
+                    run_id=run_id,
+                    project_id=project_id,
+                    offloaded_input_data=upload_resp.offloaded_input_data,
+                    run_spec=run_pb2.RunSpec(
+                        overwrite_cache=self._overwrite_cache,
+                        interruptible=wrappers_pb2.BoolValue(value=self._interruptible)
+                        if self._interruptible is not None
+                        else None,
+                        annotations=annotations,
+                        labels=labels,
+                        envs=env_kv,
+                        cluster=self._queue or task.queue,
+                        max_action_concurrency=self._max_action_concurrency or 0,
+                        raw_data_storage=raw_data_storage,
+                        security_context=security_context,
+                        cache_config=run_pb2.CacheConfig(
                             overwrite_cache=self._overwrite_cache,
-                            interruptible=wrappers_pb2.BoolValue(value=self._interruptible)
-                            if self._interruptible is not None
+                            cache_lookup_scope=_to_cache_lookup_scope(self._cache_lookup_scope)
+                            if self._cache_lookup_scope
                             else None,
-                            annotations=annotations,
-                            labels=labels,
-                            envs=env_kv,
-                            cluster=self._queue or task.queue,
-                            max_action_concurrency=self._max_action_concurrency or 0,
-                            raw_data_storage=raw_data_storage,
-                            security_context=security_context,
-                            cache_config=run_pb2.CacheConfig(
-                                overwrite_cache=self._overwrite_cache,
-                                cache_lookup_scope=_to_cache_lookup_scope(self._cache_lookup_scope)
-                                if self._cache_lookup_scope
-                                else None,
-                            ),
-                            notification_rule_name=notification_rule_name,
-                            notification_rules=notification_rules,
                         ),
+                        notification_rule_name=notification_rule_name,
+                        notification_rules=notification_rules,
                     ),
                 )
+                # Reference an already-registered task by id; otherwise send the full spec.
+                if task_id is not None:
+                    create_req.task_id.CopyFrom(task_id)
+                else:
+                    create_req.task_spec.CopyFrom(task_spec)
+
+                resp = await get_client().run_service.create_run(create_req)
                 return Run(pb2=resp.run, _preserve_original_types=self._preserve_original_types)
             except ConnectError as e:
                 if e.code == Code.UNAVAILABLE:
