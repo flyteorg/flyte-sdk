@@ -449,7 +449,6 @@ class _Runner:
                     ),
                 )
                 # Reference an already-registered task by id; otherwise send the full spec.
-                # The user should have Action_ACTION_REGISTER_FLYTE_INVENTORY permission while sending the full spec.
                 if task_id is not None:
                     create_req.task_id.CopyFrom(task_id)
                 else:
