@@ -282,7 +282,7 @@ async def test_register_condition_with_webhook():
 
 @pytest.mark.asyncio
 async def test_register_condition_with_timeout():
-    """register_condition should work with timeout-configured conditions."""
+    """register_condition should forward the condition timeout onto the condition action proto."""
     await flyte.init.aio()
     condition = _make_condition(name="timed_condition", timeout=timedelta(seconds=30))
 
@@ -297,6 +297,9 @@ async def test_register_condition_with_timeout():
             with patch.object(controller, "start_action", new_callable=AsyncMock) as mock_start:
                 await controller.register_condition(condition)
                 mock_start.assert_called_once()
+                action = mock_start.call_args[0][0]
+                assert action.condition.HasField("timeout")
+                assert action.condition.timeout.ToTimedelta().total_seconds() == 30
 
 
 @pytest.mark.asyncio
@@ -657,6 +660,70 @@ def test_action_from_condition_with_description():
     )
     assert action.type == "condition"
     assert action.condition is not None
+
+
+def test_action_from_condition_sets_timeout():
+    """from_condition should write a positive timeout onto the ConditionAction proto."""
+    action_id = identifier_pb2.ActionIdentifier(
+        name="condition-timeout",
+        run=identifier_pb2.RunIdentifier(name="test_run"),
+    )
+    action = Action.from_condition(
+        parent_action_name="parent",
+        action_id=action_id,
+        condition_name="timed_condition",
+        prompt="Approve?",
+        data_type=bool,
+        run_output_base="/run_base",
+        inputs_uri="/run_base/inputs.pb",
+        timeout_seconds=10.0,
+    )
+    assert action.condition is not None
+    assert action.condition.HasField("timeout")
+    assert action.condition.timeout.ToTimedelta().total_seconds() == 10
+    assert action.condition.timeout.seconds == 10
+
+
+def test_action_from_condition_sets_fractional_timeout():
+    """from_condition should preserve fractional seconds in the timeout."""
+    action_id = identifier_pb2.ActionIdentifier(
+        name="condition-frac-timeout",
+        run=identifier_pb2.RunIdentifier(name="test_run"),
+    )
+    action = Action.from_condition(
+        parent_action_name="parent",
+        action_id=action_id,
+        condition_name="frac_condition",
+        prompt="Approve?",
+        data_type=bool,
+        run_output_base="/run_base",
+        inputs_uri="/run_base/inputs.pb",
+        timeout_seconds=1.5,
+    )
+    assert action.condition is not None
+    assert action.condition.HasField("timeout")
+    assert action.condition.timeout.ToTimedelta().total_seconds() == 1.5
+
+
+@pytest.mark.parametrize("timeout_seconds", [None, 0])
+def test_action_from_condition_no_timeout_when_unset_or_zero(timeout_seconds):
+    """from_condition should leave timeout unset when timeout_seconds is None or 0."""
+    action_id = identifier_pb2.ActionIdentifier(
+        name="condition-no-timeout",
+        run=identifier_pb2.RunIdentifier(name="test_run"),
+    )
+    action = Action.from_condition(
+        parent_action_name="parent",
+        action_id=action_id,
+        condition_name="no_timeout_condition",
+        prompt="Approve?",
+        data_type=bool,
+        run_output_base="/run_base",
+        inputs_uri="/run_base/inputs.pb",
+        timeout_seconds=timeout_seconds,
+    )
+    assert action.condition is not None
+    assert not action.condition.HasField("timeout")
 
 
 @pytest.mark.parametrize("data_type", [bool, int, float, str])

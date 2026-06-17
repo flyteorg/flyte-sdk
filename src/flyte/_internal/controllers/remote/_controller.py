@@ -660,6 +660,7 @@ class RemoteController(Controller):
             prompt=condition.prompt,
             data_type=condition.data_type,
             description=condition.description,
+            timeout_seconds=condition._timeout_seconds,
             group_data=tctx.group_data,
             run_output_base=tctx.run_base_dir,
             inputs_uri=io.inputs_path(sub_action_output_path),

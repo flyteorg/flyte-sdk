@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import builtins
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import ClassVar, Literal, Optional
 
 from flyteidl2.common import identifier_pb2, phase_pb2
@@ -260,9 +261,9 @@ class Action:
         inputs_uri: str,
         group_data: GroupData | None = None,
         description: str = "",
+        timeout_seconds: float | None = None,
         # TODO: proto does not yet have these fields — will be added separately
         # prompt_type: str = "text",
-        # timeout: float | None = None,
         # webhook_url: str | None = None,
         # webhook_payload: dict | None = None,
     ) -> Action:
@@ -277,6 +278,15 @@ class Action:
 
         literal_type = types_pb2.LiteralType(simple=simple_type)
 
+        condition_action = run_definition_pb2.ConditionAction(
+            name=condition_name,
+            type=literal_type,
+            prompt=prompt,
+            description=description,
+        )
+        if timeout_seconds is not None and timeout_seconds > 0:
+            condition_action.timeout.FromTimedelta(timedelta(seconds=timeout_seconds))
+
         return cls(
             action_id=action_id,
             parent_action_name=parent_action_name,
@@ -285,10 +295,5 @@ class Action:
             group=group_data,
             inputs_uri=inputs_uri,
             run_output_base=run_output_base,
-            condition=run_definition_pb2.ConditionAction(
-                name=condition_name,
-                type=literal_type,
-                prompt=prompt,
-                description=description,
-            ),
+            condition=condition_action,
         )
