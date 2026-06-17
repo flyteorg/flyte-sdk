@@ -34,7 +34,12 @@ import flyte.io
 
 image = (
     flyte.Image.from_base("apache/spark-py:v3.4.0")
-    .clone(name="pandera-pyspark-sql", python_version=(3, 10), extendable=True)
+    .clone(
+        name="pandera-pyspark-sql",
+        python_version=(3, 10),
+        extendable=True,
+        platform=("linux/amd64", "linux/arm64"),
+    )
     .with_pip_packages(
         "flyteplugins-spark==2.0.9",
         "pandera[pyspark]",

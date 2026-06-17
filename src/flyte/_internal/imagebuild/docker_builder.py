@@ -15,6 +15,7 @@ from flyte import Secret
 from flyte._code_bundle._ignore import STANDARD_IGNORE_PATTERNS
 from flyte._code_bundle._utils import copy_code_bundle_to_context
 from flyte._image import (
+    _CREATE_FLYTE_USER_CMD,
     AptPackages,
     CodeBundleLayer,
     Commands,
@@ -178,10 +179,22 @@ ENV PATH="$$PATH:/usr/local/nvidia/bin:/usr/local/cuda/bin" \
 # This gets added on to the end of the dockerfile
 DOCKER_FILE_BASE_FOOTER = Template("""\
 ENV _F_IMG_ID=$F_IMG_ID
-USER flyte
-WORKDIR /home/flyte
 SHELL ["/bin/bash", "-c"]
 """)
+
+# Switches the runtime user/workdir to the non-root `flyte` user. Appended only when the
+# image created that flyte user. `from_base` and `from_dockerfile` images intentionally
+# run as whatever USER their base declares, so forcing `USER flyte` on them would point
+# at a nonexistent user.
+DOCKER_FILE_FLYTE_USER_FOOTER = """\
+USER flyte
+WORKDIR /home/flyte
+"""
+
+
+def _image_creates_flyte_user(image: Image) -> bool:
+    """True if the image creates the non-root `flyte` user."""
+    return any(isinstance(layer, Commands) and _CREATE_FLYTE_USER_CMD in layer.commands for layer in image._layers)
 
 
 class Handler(Protocol):
@@ -767,6 +780,9 @@ class DockerImageBuilder(ImageBuilder):
 
             for layer in image._layers:
                 dockerfile = await _process_layer(layer, tmp_path, dockerfile, docker_ignore_patterns)
+
+            if _image_creates_flyte_user(image):
+                dockerfile += DOCKER_FILE_FLYTE_USER_FOOTER
 
             dockerfile += DOCKER_FILE_BASE_FOOTER.substitute(F_IMG_ID=image.uri)
 
