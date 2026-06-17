@@ -194,14 +194,13 @@ async def test_pip_package_handling_with_version_constraints():
 
 
 @pytest.mark.asyncio
-async def test_python_wheel_handler_installs_local_wheel_by_path():
-    """The local wheel must be installed directly by file path (not by bare package name).
+async def test_python_wheel_handler_pins_local_wheel_version():
+    """The local wheel is installed pinned to its exact version via ``--find-links /dist``.
 
-    Passing the bare name with ``--find-links`` lets uv discard a locally-built ``.dev``
-    pre-release wheel in favor of a stable release on PyPI (PEP 440 pre-release exclusion).
-    Pointing uv at the wheel file avoids that resolution contest, while dependencies still
-    resolve from the index. ``/dist`` may also hold other packages' wheels (e.g. plugins),
-    so the emitted glob must match only this package.
+    Passing the bare name lets uv discard a locally-built ``.dev`` pre-release wheel in favor of
+    a stable release on PyPI (PEP 440 pre-release exclusion). Pinning ``<pkg>==<version>`` opts
+    into the local pre-release and guarantees it wins over PyPI, while ``--find-links`` lets uv
+    select the platform-compatible wheel and the index still provides dependencies.
     """
     from flyte._image import PythonWheels
     from flyte._internal.imagebuild.docker_builder import PythonWheelHandler
@@ -217,34 +216,53 @@ async def test_python_wheel_handler_installs_local_wheel_by_path():
             layer=layer, context_path=Path(tmp_context), dockerfile=""
         )
 
-        # Installs the local wheel by path via a glob anchored to this package's distribution name.
-        assert "/dist/flyte-*.whl" in docker_update
+        # Pins the package to the exact version of the local wheel, resolved from /dist.
+        assert "--find-links /dist flyte==2.5.2.dev1+gabcdef.d20260101" in docker_update
         # A single install command -- no more two-step (no-deps + deps) dance.
         assert docker_update.count("uv pip install") == 1
-        # None of the resolver work-arounds that caused the pre-release to be dropped remain.
-        for flag in ("--no-deps", "--no-index", "--reinstall", "--find-links"):
-            assert flag not in docker_update
-        # The trailing dash keeps the glob from matching the plugin wheel.
-        assert "/dist/flyteplugins" not in docker_update
+        # The version is derived from the correct package, not the sibling plugin wheel.
+        assert "flyteplugins_spark==" not in docker_update
 
 
 @pytest.mark.asyncio
-async def test_python_wheel_handler_glob_matches_normalized_plugin_name():
-    """Plugin layers pass an underscore-normalized ``package_name``; the glob must match it."""
+async def test_python_wheel_handler_multi_arch_pins_single_version():
+    """Per-arch wheels (e.g. the Rust controller) share one version; the pin must be unambiguous.
+
+    ``--find-links`` lets uv pick the wheel matching the build platform, so the emitted command
+    must reference a single ``==<version>`` (not multiple wheel paths, which uv rejects as
+    conflicting URLs).
+    """
     from flyte._image import PythonWheels
     from flyte._internal.imagebuild.docker_builder import PythonWheelHandler
 
     with tempfile.TemporaryDirectory() as tmp_wheels, tempfile.TemporaryDirectory() as tmp_context:
         wheel_dir = Path(tmp_wheels)
-        (wheel_dir / "flyteplugins_spark-2.5.2.dev1-py3-none-any.whl").write_text("")
+        ver = "0.1.0.dev1"
+        (wheel_dir / f"flyte_controller_base-{ver}-cp310-abi3-manylinux_2_17_x86_64.whl").write_text("")
+        (wheel_dir / f"flyte_controller_base-{ver}-cp310-abi3-manylinux_2_17_aarch64.whl").write_text("")
 
-        layer = PythonWheels(wheel_dir=wheel_dir, package_name="flyteplugins_spark")
+        layer = PythonWheels(wheel_dir=wheel_dir, package_name="flyte_controller_base")
         docker_update = await PythonWheelHandler.handle(
             layer=layer, context_path=Path(tmp_context), dockerfile=""
         )
 
-        assert "/dist/flyteplugins_spark-*.whl" in docker_update
+        assert f"--find-links /dist flyte_controller_base=={ver}" in docker_update
         assert docker_update.count("uv pip install") == 1
+
+
+@pytest.mark.asyncio
+async def test_python_wheel_handler_raises_when_wheel_missing():
+    """A descriptive error is raised when no wheel for the package exists in the dir."""
+    from flyte._image import PythonWheels
+    from flyte._internal.imagebuild.docker_builder import PythonWheelHandler
+
+    with tempfile.TemporaryDirectory() as tmp_wheels, tempfile.TemporaryDirectory() as tmp_context:
+        wheel_dir = Path(tmp_wheels)
+        (wheel_dir / "somethingelse-1.0.0-py3-none-any.whl").write_text("")
+
+        layer = PythonWheels(wheel_dir=wheel_dir, package_name="flyte")
+        with pytest.raises(ValueError, match="No wheel for package 'flyte'"):
+            await PythonWheelHandler.handle(layer=layer, context_path=Path(tmp_context), dockerfile="")
 
 
 @pytest.mark.asyncio

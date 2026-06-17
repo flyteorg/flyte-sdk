@@ -241,19 +241,38 @@ class PipAndRequirementsHandler:
 class PythonWheelHandler:
     @staticmethod
     async def handle(layer: PythonWheels, context_path: Path, dockerfile: str) -> str:
+        from packaging.utils import InvalidWheelFilename, canonicalize_name, parse_wheel_filename
+
         shutil.copytree(layer.wheel_dir, context_path / "dist", dirs_exist_ok=True)
         pip_install_args = layer.get_pip_install_args()
         secret_mounts = _get_secret_mounts_layer(layer.secret_mounts)
 
-        # Install the local wheel directly by its file path (the glob is expanded by the build
-        # shell). Pointing uv at the file means there is no resolution contest for the package
-        # itself, so a locally-built pre-release wheel (e.g. ``2.5.2.dev1+g...``) is never swapped
-        # for a stable release on PyPI by PEP 440 pre-release exclusion -- which is what happened
-        # when the package name was passed unpinned. The wheel's dependencies still resolve from
-        # the index. ``package_name`` is already the underscore-normalized distribution name, so
-        # ``/dist/<package_name>-*.whl`` matches only this package's wheel (the trailing dash keeps
-        # ``flyte-*`` from matching ``flyteplugins_*``).
-        install_args = [*pip_install_args, f"/dist/{layer.package_name}-*.whl"]
+        # Resolve the exact version of the local wheel(s) for this package. A package may ship
+        # several wheels in /dist for the same version (e.g. the Rust controller builds per-arch
+        # wheels), so they all share one version -- the first match is enough.
+        target = canonicalize_name(layer.package_name)
+        wheel_version = None
+        for whl in sorted(layer.wheel_dir.glob("*.whl")):
+            try:
+                name, version, _, _ = parse_wheel_filename(whl.name)
+            except InvalidWheelFilename:
+                # Not a parseable wheel filename; skip it.
+                continue
+            if canonicalize_name(name) == target:
+                wheel_version = str(version)
+                break
+        if wheel_version is None:
+            raise ValueError(f"No wheel for package '{layer.package_name}' found in {layer.wheel_dir}")
+
+        # Pin the install to the exact local version, resolved via --find-links /dist:
+        #   - --find-links lets uv select the wheel matching the build platform (multi-arch wheels);
+        #   - the exact `==<version>` pin opts into the local pre-release (PEP 440 only considers
+        #     pre-releases when explicitly requested) and guarantees the local build wins over any
+        #     stable release published to PyPI -- without it, an unpinned name would let uv discard
+        #     the local `.dev` wheel as a pre-release and install the stable PyPI version instead;
+        #   - the index stays enabled so the wheel's dependencies still resolve from PyPI.
+        package_spec = f"{layer.package_name}=={wheel_version}"
+        install_args = [*pip_install_args, "--find-links", "/dist", package_spec]
         dockerfile += UV_WHEEL_INSTALL_COMMAND_TEMPLATE.substitute(
             PIP_INSTALL_ARGS=" ".join(install_args), SECRET_MOUNT=secret_mounts
         )
