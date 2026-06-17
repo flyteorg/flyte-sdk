@@ -265,6 +265,9 @@ def get_proto_task(
             is_entrypoint=task.entrypoint,
             log_links=log_links,
             image_build_run=image_build_run,
+            code_bundle_uri=serialize_context.code_bundle.tgz or serialize_context.code_bundle.pkl
+            if serialize_context.code_bundle
+            else None,
         ),
         interface=transform_native_to_typed_interface(task.native_interface),
         custom=custom if len(custom) > 0 else None,
