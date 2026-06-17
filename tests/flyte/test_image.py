@@ -164,18 +164,6 @@ def test_with_apt_packages():
     assert img._layers[-1].packages == ("curl",)
 
 
-def test_with_install_fuse():
-    img = Image.from_debian_base(registry="localhost", name="test-image").with_install_fuse()
-    # Installs the fuse3 apt package (setuid fusermount3 set by its post-install)...
-    apt_layer = img._layers[-2]
-    assert isinstance(apt_layer, AptPackages)
-    assert apt_layer.packages == ("fuse3",)
-    # ...and ensures /etc/mtab exists for the fusermount helper.
-    cmd_layer = img._layers[-1]
-    assert isinstance(cmd_layer, Commands)
-    assert cmd_layer.commands == ("ln -sf /proc/mounts /etc/mtab",)
-
-
 def test_with_workdir():
     workdir = "/app"
     img = Image.from_debian_base(registry="localhost", name="test-image").with_workdir(workdir)

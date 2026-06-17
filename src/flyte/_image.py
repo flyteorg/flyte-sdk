@@ -533,7 +533,6 @@ class Image:
     - `with_pip_packages()` — Add pip packages
     - `with_apt_packages()` — Add system packages via apt-get
     - `with_commands()` — Run arbitrary shell commands
-    - `with_install_fuse()` — Install FUSE tools for mounting (e.g. Volumes)
     - `with_env_vars()` — Set environment variables
     - `with_requirements()` — Install from a requirements.txt file
     - `with_uv_project()` — Install from a uv/pyproject.toml project
@@ -1326,28 +1325,6 @@ class Image:
             )
         )
         return new_image
-
-    def with_install_fuse(self) -> Image:
-        """
-        Install the FUSE userspace tools needed to mount a FUSE filesystem (for
-        example a ``Volume``) from inside the container.
-
-        This layers two things on top of the current image:
-
-        - the ``fuse3`` apt package — its post-install sets the **setuid** bit on
-          ``fusermount3``, which is what lets an **unprivileged** (non-root) task
-          perform the mount via the helper. Slim base images ship neither
-          ``fuse3`` nor the helper, so the mount otherwise fails with
-          ``fusermount: not found``.
-        - an ``/etc/mtab`` symlink to ``/proc/mounts`` — slim images omit
-          ``/etc/mtab``, and the helper reads/updates it on (un)mount.
-
-        Pair this with a pod template that grants the FUSE device and
-        ``CAP_SYS_ADMIN`` (``flyte.PodTemplate.allow_fuse()``).
-
-        :return: Image
-        """
-        return self.with_apt_packages("fuse3").with_commands(["ln -sf /proc/mounts /etc/mtab"])
 
     def with_local_v2(self) -> Image:
         """
