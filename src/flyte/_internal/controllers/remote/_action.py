@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import builtins
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import ClassVar, Literal, Optional
 
 from flyteidl2.common import identifier_pb2, phase_pb2
@@ -248,6 +249,12 @@ class Action:
         str: types_pb2.STRING,
     }
 
+    # Mapping from condition prompt-type strings to flyteidl ConditionPromptType enum values
+    _PROMPT_TYPE_TO_ENUM: ClassVar[dict[str, int]] = {
+        "text": run_definition_pb2.CONDITION_PROMPT_TYPE_TEXT,
+        "markdown": run_definition_pb2.CONDITION_PROMPT_TYPE_MARKDOWN,
+    }
+
     @classmethod
     def from_condition(
         cls,
@@ -260,11 +267,10 @@ class Action:
         inputs_uri: str,
         group_data: GroupData | None = None,
         description: str = "",
-        # TODO: proto does not yet have these fields — will be added separately
-        # prompt_type: str = "text",
-        # timeout: float | None = None,
-        # webhook_url: str | None = None,
-        # webhook_payload: dict | None = None,
+        timeout_seconds: float | None = None,
+        prompt_type: str = "text",
+        webhook_url: str | None = None,
+        webhook_payload: dict | None = None,
     ) -> Action:
         """Create a condition action.
 
@@ -277,6 +283,24 @@ class Action:
 
         literal_type = types_pb2.LiteralType(simple=simple_type)
 
+        prompt_type_enum = cls._PROMPT_TYPE_TO_ENUM.get(prompt_type)
+        if prompt_type_enum is None:
+            raise ValueError(f"Unsupported condition prompt_type {prompt_type!r}")
+
+        condition_action = run_definition_pb2.ConditionAction(
+            name=condition_name,
+            type=literal_type,
+            prompt=prompt,
+            description=description,
+            prompt_type=prompt_type_enum,
+        )
+        if timeout_seconds is not None and timeout_seconds > 0:
+            condition_action.timeout.FromTimedelta(timedelta(seconds=timeout_seconds))
+        if webhook_url:
+            condition_action.webhook.url = webhook_url
+            if webhook_payload:
+                condition_action.webhook.payload.update(webhook_payload)
+
         return cls(
             action_id=action_id,
             parent_action_name=parent_action_name,
@@ -285,10 +309,5 @@ class Action:
             group=group_data,
             inputs_uri=inputs_uri,
             run_output_base=run_output_base,
-            condition=run_definition_pb2.ConditionAction(
-                name=condition_name,
-                type=literal_type,
-                prompt=prompt,
-                description=description,
-            ),
+            condition=condition_action,
         )
