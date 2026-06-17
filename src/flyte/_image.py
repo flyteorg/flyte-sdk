@@ -741,7 +741,6 @@ class Image:
     def from_base(
         cls,
         image_uri: str,
-        platform: Union[Architecture, Tuple[Architecture, ...], None] = None,
     ) -> Image:
         """
         Use this method to start with a pre-built base image. This image must already exist in the registry of course.
@@ -759,15 +758,9 @@ class Image:
         for the full pattern.
 
         :param image_uri: The full URI of the image, in the format <registry>/<name>:<tag>
-        :param platform: Architecture(s) to build for, default is ``("linux/amd64",)``. Pass a tuple for
-            multi-arch builds, e.g. ``("linux/amd64", "linux/arm64")``. The base image must publish a
-            manifest for each requested platform.
         :return:
         """
-        kwargs: dict[str, Any] = {"base_image": image_uri}
-        if platform is not None:
-            kwargs["platform"] = _ensure_tuple(platform)
-        img = cls._new(**kwargs)
+        img = cls._new(base_image=image_uri)
         return img
 
     @classmethod
