@@ -468,6 +468,16 @@ _LOCALHOST_REGISTRY = "localhost:30000"
 _DEFAULT_IMAGE_NAME = "flyte"
 _DEFAULT_IMAGE_REF_NAME = "default"
 
+# Shell command that creates the non-root `flyte` runtime user. Only the `from_debian_base`
+# path adds this (as a Commands layer); `from_base`/`from_dockerfile` intentionally do not.
+_CREATE_FLYTE_USER_CMD = (
+    "if ! id -u flyte >/dev/null 2>&1; then"
+    " useradd --create-home --shell /bin/bash flyte; fi &&"
+    " mkdir -p /home/flyte &&"
+    " chown -R flyte:flyte /home/flyte &&"
+    " chown -R flyte:flyte /root"
+)
+
 
 def _get_base_registry() -> str:
     """
@@ -643,15 +653,7 @@ class Image:
         # Use Commands + WorkDir (rather than _DockerLines) so both the local docker
         # builder and the remote builder pick up the flyte user setup, since the
         # remote builder protobuf IDL only understands Layer types like Commands.
-        create_flyte_user = Commands(
-            commands=(
-                "if ! id -u flyte >/dev/null 2>&1; then"
-                " useradd --create-home --shell /bin/bash flyte; fi &&"
-                " mkdir -p /home/flyte &&"
-                " chown -R flyte:flyte /home/flyte &&"
-                " chown -R flyte:flyte /root",
-            ),
-        )
+        create_flyte_user = Commands(commands=(_CREATE_FLYTE_USER_CMD,))
         image = image.clone(addl_layer=labels)
         image = image.clone(addl_layer=create_flyte_user)
         image = image.clone(addl_layer=WorkDir(workdir="/home/flyte"))
@@ -736,7 +738,10 @@ class Image:
         return base_image
 
     @classmethod
-    def from_base(cls, image_uri: str) -> Image:
+    def from_base(
+        cls,
+        image_uri: str,
+    ) -> Image:
         """
         Use this method to start with a pre-built base image. This image must already exist in the registry of course.
 
@@ -847,6 +852,7 @@ class Image:
         python_version: Optional[Tuple[int, int]] = None,
         addl_layer: Optional[Layer] = None,
         extendable: Optional[bool] = None,
+        platform: Union[Architecture, Tuple[Architecture, ...], None] = None,
     ) -> Image:
         """
         Clone an existing image, optionally with a new name or registry.
@@ -865,6 +871,8 @@ class Image:
          image for other images, and additional layers can be added on top of it. If False, the image cannot be
           used as a base image for other images, and additional layers cannot be added on top of it. If None (default),
           defaults to False for safety.
+        :param platform: Architecture(s) to build for. If not specified, the cloned image keeps the original's
+            platform. Pass a tuple for multi-arch builds, e.g. ``("linux/amd64", "linux/arm64")``.
         :return:
         """
         from flyte import Secret
@@ -895,7 +903,7 @@ class Image:
             dockerfile=self.dockerfile,
             registry=registry,
             name=name,
-            platform=self.platform,
+            platform=_ensure_tuple(platform) if platform else self.platform,
             python_version=python_version or self.python_version,
             extendable=extendable if extendable is not None else self.extendable,
             _is_cloned=True,
