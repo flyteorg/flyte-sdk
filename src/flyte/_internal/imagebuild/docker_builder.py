@@ -245,32 +245,18 @@ class PythonWheelHandler:
         pip_install_args = layer.get_pip_install_args()
         secret_mounts = _get_secret_mounts_layer(layer.secret_mounts)
 
-        # First install: Install the wheel without dependencies using --no-deps
-        pip_install_args_no_deps = [
-            *pip_install_args,
-            *[
-                "--find-links",
-                "/dist",
-                "--no-deps",
-                "--no-index",
-                "--reinstall",
-                layer.package_name,
-            ],
-        ]
-
-        delta1 = UV_WHEEL_INSTALL_COMMAND_TEMPLATE.substitute(
-            PIP_INSTALL_ARGS=" ".join(pip_install_args_no_deps), SECRET_MOUNT=secret_mounts
+        # Install the local wheel directly by its file path (the glob is expanded by the build
+        # shell). Pointing uv at the file means there is no resolution contest for the package
+        # itself, so a locally-built pre-release wheel (e.g. ``2.5.2.dev1+g...``) is never swapped
+        # for a stable release on PyPI by PEP 440 pre-release exclusion -- which is what happened
+        # when the package name was passed unpinned. The wheel's dependencies still resolve from
+        # the index. ``package_name`` is already the underscore-normalized distribution name, so
+        # ``/dist/<package_name>-*.whl`` matches only this package's wheel (the trailing dash keeps
+        # ``flyte-*`` from matching ``flyteplugins_*``).
+        install_args = [*pip_install_args, f"/dist/{layer.package_name}-*.whl"]
+        dockerfile += UV_WHEEL_INSTALL_COMMAND_TEMPLATE.substitute(
+            PIP_INSTALL_ARGS=" ".join(install_args), SECRET_MOUNT=secret_mounts
         )
-        dockerfile += delta1
-
-        # Second install: Install dependencies from PyPI. Keep /dist as a findlink so the package
-        # itself resolves to the local wheel even when it isn't published to PyPI (e.g. a local
-        # plugin wheel); its dependencies still come from the index.
-        pip_install_args_deps = [*pip_install_args, "--find-links", "/dist", layer.package_name]
-        delta2 = UV_WHEEL_INSTALL_COMMAND_TEMPLATE.substitute(
-            PIP_INSTALL_ARGS=" ".join(pip_install_args_deps), SECRET_MOUNT=secret_mounts
-        )
-        dockerfile += delta2
 
         return dockerfile
 
