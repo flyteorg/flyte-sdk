@@ -14,6 +14,7 @@ from typing import (
     Callable,
     Coroutine,
     Iterator,
+    Optional,
     ParamSpec,
     Protocol,
     TypeVar,
@@ -23,6 +24,7 @@ from typing import (
 )
 
 from flyte._logging import logger
+from flyte._utils.runtime_env import background_loop_disabled
 
 P = ParamSpec("P")
 
@@ -255,7 +257,7 @@ class _SyncWrapper:
     def __init__(
         self,
         fn: Any,
-        bg_loop: _BackgroundLoop,
+        bg_loop: Optional[_BackgroundLoop],
         underlying_obj: Any = None,
     ):
         self.fn = fn
@@ -283,6 +285,13 @@ class _SyncWrapper:
         return wrapper
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        if self._bg_loop is None:
+            # Async-only mode (no background-loop thread, e.g. Pyodide/WASM). The blocking sync
+            # API cannot be supported without a thread to drive the loop from a sync context.
+            raise RuntimeError(
+                f"The synchronous flyte API is unavailable in this runtime (no thread support); "
+                f"call `await {self.fn.__name__}.aio(...)` from an async context instead."
+            )
         if threading.current_thread().name == self._bg_loop.thread.name:
             # If we are already in the background loop thread, we can call the function directly
             raise AssertionError(
@@ -319,10 +328,16 @@ class _SyncWrapper:
             if inspect.isasyncgenfunction(fn):
                 # If the function is an async generator, we need to handle it differently
                 async_iter = fn(*args, **kwargs)
+                if self._bg_loop is None:
+                    # Async-only mode: yield directly in the caller's running event loop.
+                    return async_iter
                 return self._bg_loop.iterate_in_loop(async_iter)
             else:
                 # If we are already in the background loop, just return the coroutine
                 coro = fn(*args, **kwargs)
+                if self._bg_loop is None:
+                    # Async-only mode: the coroutine / async iterator runs in the caller's loop.
+                    return coro
                 if hasattr(coro, "__aiter__"):
                     # If the coroutine is an async iterator, we need to handle it differently
                     return self._bg_loop.iterate_in_loop(coro)
@@ -371,7 +386,10 @@ class Syncify:
     """
 
     def __init__(self, name: str = "flyte_syncify"):
-        self._bg_loop = _BackgroundLoop(name=name)
+        # In constrained runtimes without thread support (e.g. Pyodide/WASM), do not start the
+        # background event-loop thread. flyte then operates in async-only mode: synchronous calls
+        # raise, and ``.aio()`` runs coroutines directly in the caller's own running event loop.
+        self._bg_loop: Optional[_BackgroundLoop] = None if background_loop_disabled() else _BackgroundLoop(name=name)
 
     @overload
     def __call__(self, func: Callable[P, Awaitable[R_co]]) -> SyncFunction[P, R_co]: ...
