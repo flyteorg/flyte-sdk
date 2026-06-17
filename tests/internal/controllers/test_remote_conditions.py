@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from flyteidl2.common import identifier_pb2, phase_pb2
 from flyteidl2.task import task_definition_pb2
+from flyteidl2.workflow import run_definition_pb2
 
 import flyte
 import flyte.errors
@@ -262,7 +263,7 @@ async def test_register_condition_rejects_non_condition():
 
 @pytest.mark.asyncio
 async def test_register_condition_with_webhook():
-    """register_condition should work with webhook-configured conditions."""
+    """register_condition should forward webhook url and payload onto the condition action proto."""
     await flyte.init.aio()
     webhook = ConditionWebhook(url="https://example.com/hook", payload={"cb": "{callback_uri}"})
     condition = _make_condition(name="webhook_condition", webhook=webhook)
@@ -278,6 +279,10 @@ async def test_register_condition_with_webhook():
             with patch.object(controller, "start_action", new_callable=AsyncMock) as mock_start:
                 await controller.register_condition(condition)
                 mock_start.assert_called_once()
+                action = mock_start.call_args[0][0]
+                assert action.condition.HasField("webhook")
+                assert action.condition.webhook.url == "https://example.com/hook"
+                assert action.condition.webhook.payload["cb"] == "{callback_uri}"
 
 
 @pytest.mark.asyncio
@@ -724,6 +729,104 @@ def test_action_from_condition_no_timeout_when_unset_or_zero(timeout_seconds):
     )
     assert action.condition is not None
     assert not action.condition.HasField("timeout")
+
+
+def test_action_from_condition_defaults_prompt_type_text():
+    """from_condition should default prompt_type to TEXT."""
+    action_id = identifier_pb2.ActionIdentifier(
+        name="condition-prompt-default",
+        run=identifier_pb2.RunIdentifier(name="test_run"),
+    )
+    action = Action.from_condition(
+        parent_action_name="parent",
+        action_id=action_id,
+        condition_name="prompt_condition",
+        prompt="Approve?",
+        data_type=bool,
+        run_output_base="/run_base",
+        inputs_uri="/run_base/inputs.pb",
+    )
+    assert action.condition.prompt_type == run_definition_pb2.CONDITION_PROMPT_TYPE_TEXT
+
+
+def test_action_from_condition_sets_markdown_prompt_type():
+    """from_condition should map prompt_type='markdown' to the MARKDOWN enum."""
+    action_id = identifier_pb2.ActionIdentifier(
+        name="condition-prompt-md",
+        run=identifier_pb2.RunIdentifier(name="test_run"),
+    )
+    action = Action.from_condition(
+        parent_action_name="parent",
+        action_id=action_id,
+        condition_name="prompt_condition",
+        prompt="Approve?",
+        data_type=bool,
+        run_output_base="/run_base",
+        inputs_uri="/run_base/inputs.pb",
+        prompt_type="markdown",
+    )
+    assert action.condition.prompt_type == run_definition_pb2.CONDITION_PROMPT_TYPE_MARKDOWN
+
+
+def test_action_from_condition_rejects_unknown_prompt_type():
+    """from_condition should raise on an unsupported prompt_type."""
+    action_id = identifier_pb2.ActionIdentifier(
+        name="condition-prompt-bad",
+        run=identifier_pb2.RunIdentifier(name="test_run"),
+    )
+    with pytest.raises(ValueError, match="prompt_type"):
+        Action.from_condition(
+            parent_action_name="parent",
+            action_id=action_id,
+            condition_name="prompt_condition",
+            prompt="Approve?",
+            data_type=bool,
+            run_output_base="/run_base",
+            inputs_uri="/run_base/inputs.pb",
+            prompt_type="html",
+        )
+
+
+def test_action_from_condition_sets_webhook():
+    """from_condition should write webhook url and payload onto the ConditionAction proto."""
+    action_id = identifier_pb2.ActionIdentifier(
+        name="condition-webhook",
+        run=identifier_pb2.RunIdentifier(name="test_run"),
+    )
+    action = Action.from_condition(
+        parent_action_name="parent",
+        action_id=action_id,
+        condition_name="webhook_condition",
+        prompt="Approve?",
+        data_type=bool,
+        run_output_base="/run_base",
+        inputs_uri="/run_base/inputs.pb",
+        webhook_url="https://example.com/hook",
+        webhook_payload={"callback": "{callback_uri}", "n": 5},
+    )
+    assert action.condition.HasField("webhook")
+    assert action.condition.webhook.url == "https://example.com/hook"
+    assert action.condition.webhook.payload["callback"] == "{callback_uri}"
+    assert action.condition.webhook.payload["n"] == 5
+
+
+def test_action_from_condition_no_webhook_when_url_absent():
+    """from_condition should leave webhook unset when no url is given (even if a payload is)."""
+    action_id = identifier_pb2.ActionIdentifier(
+        name="condition-no-webhook",
+        run=identifier_pb2.RunIdentifier(name="test_run"),
+    )
+    action = Action.from_condition(
+        parent_action_name="parent",
+        action_id=action_id,
+        condition_name="no_webhook_condition",
+        prompt="Approve?",
+        data_type=bool,
+        run_output_base="/run_base",
+        inputs_uri="/run_base/inputs.pb",
+        webhook_payload={"callback": "{callback_uri}"},
+    )
+    assert not action.condition.HasField("webhook")
 
 
 @pytest.mark.parametrize("data_type", [bool, int, float, str])
