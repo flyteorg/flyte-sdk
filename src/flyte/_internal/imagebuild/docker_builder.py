@@ -783,10 +783,6 @@ class DockerImageBuilder(ImageBuilder):
             for layer in image._layers:
                 dockerfile = await _process_layer(layer, tmp_path, dockerfile, docker_ignore_patterns)
 
-            # Only switch to the `flyte` user for images that actually created it (the
-            # `from_debian_base` path adds the create-flyte-user command layer). Doing this
-            # unconditionally breaks `from_base`/`from_dockerfile` images whose base never
-            # created that user — containerd then fails with "no users found".
             if _image_creates_flyte_user(image):
                 dockerfile += DOCKER_FILE_FLYTE_USER_FOOTER
 
