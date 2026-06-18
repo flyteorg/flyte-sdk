@@ -291,3 +291,28 @@ jobs:
           FLYTE_DOCKER_BUILDER_CACHE_TO: "type=gha,mode=max"
         run: |
           uv run python maint_tools/build_default_image.py --type connector
+
+  notify-docs:
+    name: Signal unionai-docs to regenerate API docs
+    needs: [flyte-pypi, plugin-pypi]
+    # Fire only on a real release once the core `flyte` package is on PyPI.
+    # Tolerates partial plugin-publish failures (docs regen picks up whatever is
+    # live on PyPI). Mirrors the always()+result gating used by the image job.
+    if: always() && github.event_name == 'release' && needs.flyte-pypi.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send repository_dispatch to unionai/unionai-docs
+        env:
+          # Fine-grained token with `contents:write` (repository_dispatch) on
+          # unionai/unionai-docs. Cross-org, so it lives in this repo's secrets.
+          GH_TOKEN: ${{ secrets.UNIONAI_DOCS_DISPATCH_TOKEN }}
+        run: |
+          if [ -z "${GH_TOKEN}" ]; then
+            echo "::warning title=docs regen signal skipped::UNIONAI_DOCS_DISPATCH_TOKEN is not set — skipping the unionai-docs regen signal. Set the secret to enable it."
+            exit 0
+          fi
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          echo "Signaling unionai/unionai-docs to regenerate API docs for flyte ${VERSION}"
+          gh api repos/unionai/unionai-docs/dispatches \
+            -f event_type=sdk-release \
+            -f 'client_payload[version]='"${VERSION}"
