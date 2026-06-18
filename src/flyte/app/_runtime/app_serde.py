@@ -153,10 +153,19 @@ def _serialized_pod_spec(
                 for resource in resources.requests:
                     requests[_sanitize_resource_name(resource)] = resource.value
 
-                resource_requirements = V1ResourceRequirements(limits=limits, requests=requests)
-
-                if limits or requests:
-                    container.resources = resource_requirements
+            if limits or requests:
+                # Merge the app-declared resources (cpu/mem/gpu from Resources(...))
+                # into whatever the pod template's primary container already set,
+                # instead of replacing it. This preserves extended-resource requests
+                # (e.g. device-plugin resources like "smarter-devices/fuse" added by
+                # PodTemplate.allow_fuse()) that can only be expressed through the pod
+                # template — replacing would silently drop them. App-declared keys win
+                # on conflict. Mirrors the task-serde resource merge.
+                existing = container.resources or V1ResourceRequirements()
+                container.resources = V1ResourceRequirements(
+                    limits={**(existing.limits or {}), **limits},
+                    requests={**(existing.requests or {}), **requests},
+                )
 
             if app_env.env_vars:
                 container.env = [V1EnvVar(name=k, value=v) for k, v in app_env.env_vars.items()] + (container.env or [])
