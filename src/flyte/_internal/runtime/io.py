@@ -24,6 +24,11 @@ _REPORT_FILE_NAME = "report.html"
 _PKL_EXT = ".pkl.gz"
 
 
+def _is_clustered_worker() -> bool:
+    """True for any worker process of a clustered/jobset task (torchrun sets this on every rank)."""
+    return bool(os.environ.get("TORCHELASTIC_RUN_ID"))
+
+
 def _is_nonzero_rank_clustered_worker() -> bool:
     """True only for a non-rank-0 process of a clustered/jobset task.
 
@@ -31,7 +36,47 @@ def _is_nonzero_rank_clustered_worker() -> bool:
     torchrun marker rather than ``RANK`` alone — otherwise a regular Python task that happens to
     have ``RANK`` set in its environment would silently skip uploading its outputs/errors.
     """
-    return bool(os.environ.get("TORCHELASTIC_RUN_ID")) and os.environ.get("RANK", "0") != "0"
+    return _is_clustered_worker() and os.environ.get("RANK", "0") != "0"
+
+
+def _get_clustered_restart_attempt() -> int | None:
+    raw_attempt = os.environ.get("JOBSET_RESTART_ATTEMPT")
+    if raw_attempt is None:
+        return None
+    try:
+        return int(raw_attempt)
+    except ValueError:
+        logger.warning(f"Ignoring invalid JOBSET_RESTART_ATTEMPT={raw_attempt!r}")
+        return None
+
+
+def _get_clustered_max_restarts() -> int | None:
+    raw_max = os.environ.get("JOBSET_MAX_RESTARTS")
+    if raw_max is None:
+        return None
+    try:
+        return int(raw_max)
+    except ValueError:
+        logger.warning(f"Ignoring invalid JOBSET_MAX_RESTARTS={raw_max!r}")
+        return None
+
+
+def _is_terminal_clustered_attempt() -> bool:
+    """Whether a failure in this attempt should write error.pb.
+
+    For a clustered/jobset task the JobSet restarts the whole pod set up to ``max_restarts`` times
+    within a single Flyte attempt. We only write error.pb on the terminal attempt (budget exhausted)
+    so transient restarts don't leave a stale error that a later successful restart would have to
+    delete. Returns True (write) for non-clustered tasks, and as a safe fallback whenever the budget
+    is unknown — errors must never be silently hidden.
+    """
+    attempt = _get_clustered_restart_attempt()
+    if attempt is None:
+        return True  # not a clustered restart context → write normally
+    max_restarts = _get_clustered_max_restarts()
+    if max_restarts is None:
+        return True  # budget unknown (env not injected yet) → write, never hide errors
+    return attempt >= max_restarts
 
 
 def pkl_path(base_path: str, pkl_name: str) -> str:
@@ -96,6 +141,12 @@ async def upload_error(err: execution_pb2.ExecutionError, output_prefix: str, re
     # In clustered tasks, only rank-0 owns the error file; other ranks skip the write
     # so they don't race to clobber error.pb.
     if _is_nonzero_rank_clustered_worker():
+        return error_uri
+    # For a clustered task, only write error.pb once the JobSet has exhausted its restart budget.
+    # Transient restarts recover on their own, so writing on every attempt would leave a stale
+    # error that a later successful restart would have to delete.
+    if not _is_terminal_clustered_attempt():
+        logger.info(f"Skipping error.pb on transient JobSet restart (budget remaining): {error_uri}")
         return error_uri
     error_document = execution_pb2.ErrorDocument(
         error=execution_pb2.ContainerError(
