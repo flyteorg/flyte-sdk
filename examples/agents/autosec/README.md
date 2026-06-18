@@ -3,8 +3,8 @@
 A deliberately minimal, **5–10 minute** slice of an "auto security ops"
 researcher: a Flyte pipeline that fans out across several small C programs (each
 with a planted vulnerability) **in parallel**, finds the bug in each, and
-delegates the high-security proof-of-concept validation to a **Daytona** VM
-sandbox.
+delegates the high-security proof-of-concept validation to an **on-device
+user-namespace sandbox** (``unionai-sandbox``).
 
 The point is the **orchestration story** — how Flyte makes a flaky, multi-step,
 resource-heterogeneous agent pipeline *reliable* — not finding a real 0-day.
@@ -12,7 +12,7 @@ See [`SPEC.md`](./SPEC.md) for the full requirements (the demo is §11).
 
 > **Safety.** This is a *defensive* tool that runs against bundled, authorized
 > targets (`src/autosec/targets/*.c`) — some with a planted bug, some secure.
-> Exploit code executes inside Daytona, never on the Flyte node.
+> Exploit code executes inside the on-device sandbox, never on the Flyte node.
 
 ## What it does
 
@@ -29,10 +29,10 @@ flowchart TB
   subgraph perTarget["Per-target pipeline"]
     direction TB
     s1["① scan_static<br/>grep dangerous APIs · CPU · OOM → .override(resources)"]
-    s2["② hypothesize<br/>LLM via call_llm · @flyte.trace checkpoint"]
+    s2["② hypothesize<br/>LLM via Agent (flyte.ai.agents)"]
     gate{vulnerable?}
     s3["③ build_poc<br/>overflow payload sizing"]
-    s4["④ validate_in_daytona<br/>compile + run inside Daytona VM"]
+    s4["④ validate_in_sandbox<br/>compile + run in on-device sandbox"]
     row["Per-target finding"]
 
     s1 --> s2 --> gate
@@ -48,8 +48,9 @@ flowchart TB
 `run_autosec_agent` fans out over every file in `targets/` with `asyncio.gather`, so each
 target is researched as its own Flyte action **in parallel**; within a target
 the stages run sequentially. Targets the model judges **secure** short-circuit
-after `hypothesize` (no PoC, no Daytona VM). The LLM sub-steps are `@flyte.trace`
-helpers so they checkpoint independently of the task. Each stage demonstrates a
+after `hypothesize` (no PoC, no sandbox). The hypothesis step uses a
+`flyte.ai.agents.Agent` with tools = [`scan_static`, `build_poc`, `validate_in_sandbox`].
+Each stage demonstrates a
 Flyte feature that a naive agent loop gets wrong (see [`SPEC.md` §11.4](./SPEC.md)):
 
 | Problem | Flyte solution |
@@ -57,7 +58,7 @@ Flyte feature that a naive agent loop gets wrong (see [`SPEC.md` §11.4](./SPEC.
 | LLM API timeouts | `@env.task(retries=, timeout=)` |
 | Agent hallucination / bad tool calls | checkpoint & resume (`@flyte.trace` + `@env.task`) |
 | Infra failures (e.g. OOM) | user `try/except` + `.override(resources=...)` |
-| Cost runaway | per-task resource limits + execution timeouts + guaranteed VM teardown |
+| Cost runaway | per-task resource limits + execution timeouts + guaranteed sandbox teardown |
 
 ## Layout
 
@@ -86,15 +87,12 @@ examples/agents/autosec/
   `config.yaml`).
 - An Anthropic API key (or set `AUTOSEC_MODEL` to another litellm-supported
   model).
-- A **Daytona** sandbox + API key, provisioned separately.
-
 Set the secrets/keys (the pipeline reads them from the environment, and
-`pyproject.toml` declares the matching Flyte secrets `anthropic-api-key` and
-`daytona-api-key` for backend runs):
+`pyproject.toml` declares the matching Flyte secret `anthropic-api-key` for
+backend runs):
 
 ```bash
 export ANTHROPIC_API_KEY=sk-...
-export DAYTONA_API_KEY=dtn-...
 ```
 
 ## Run
@@ -110,8 +108,8 @@ uv run python -m autosec.demo
 ```
 
 Expected wallclock: **~5–10 minutes**, dominated by a handful of parallel LLM
-calls and short Daytona VM runs (one per target). Output: a per-target report
-with the planted bug located, a PoC, and a Daytona `exit_code`/log proving it
+calls and short sandbox runs (one per target). Output: a per-target report
+with the planted bug located, a PoC, and a sandbox `exit_code`/log proving it
 triggers — plus visible retry/timeout/OOM recovery in the run UI.
 
 ## Demo beats (optional)

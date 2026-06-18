@@ -3,11 +3,11 @@
 A deliberately minimal, 5-10 minute slice of the "auto security ops" researcher.
 It fans out a 4-stage Flyte pipeline across every bundled C file in `targets/`
 (each with a planted memory-corruption bug) **in parallel**, then delegates the
-high-security PoC validation to a **Daytona** VM sandbox (the SPEC §2.6
-"external VM SaaS provider").
+high-security PoC validation to an **on-device user-namespace sandbox**
+(``unionai-sandbox`` with ``sb.on_device.session(backend="userns")``).
 
 The point of the demo is the *orchestration story*, not finding a real 0-day.
-Each Flyte feature below maps to a failure mode a naive `while True:` agent loop
+Each Flyte feature below maps to a failure mode a naive ``while True:`` agent loop
 gets wrong (see SPEC §11.4):
 
   A. LLM API timeouts        -> @env.task(retries=, timeout=)
@@ -26,7 +26,6 @@ Optional "demo beats" (toggle one between runs to show recovery deterministicall
 Run (from ``examples/agents/autosec``)::
 
     export ANTHROPIC_API_KEY=sk-...
-    export DAYTONA_API_KEY=dtn-...      # Daytona sandbox provisioned separately
     uv run autosec                       # console script (see pyproject.toml)
     # or: uv run python -m autosec.demo
 """
@@ -34,7 +33,6 @@ Run (from ``examples/agents/autosec``)::
 from __future__ import annotations
 
 import asyncio
-import base64
 import html
 import json
 import os
@@ -45,17 +43,13 @@ from typing import Any
 import flyte
 import flyte.errors
 import flyte.report
+from flyte.ai.agents import Agent
 
 HERE = pathlib.Path(__file__).parent
-PROJECT_ROOT = HERE.parent.parent  # .../examples/agents/autosec (holds pyproject.toml)
+PROJECT_ROOT = HERE.parent.parent
 TARGETS_DIR = HERE / "targets"
 MODEL = os.getenv("AUTOSEC_MODEL", "claude-haiku-4-5")
 
-# `include=[targets/]` bundles the whole `targets/` directory into the code bundle
-# next to this module, so `TARGETS_DIR` resolves at runtime (the task loads from
-# the code bundle, not from the installed site-packages copy). Dependencies
-# (flyte, litellm, daytona) come from pyproject.toml via with_uv_project; the
-# .dockerignore keeps secrets like .env out of the image build context.
 env = flyte.TaskEnvironment(
     name="autosec-demo",
     image=(
@@ -64,31 +58,23 @@ env = flyte.TaskEnvironment(
         .with_uv_project(PROJECT_ROOT / "pyproject.toml", project_install_mode="install_project")
     ),
     resources=flyte.Resources(cpu=1, memory="1Gi"),
-    # Absolute path: relative includes are anchored at the env's "declaring file",
-    # which is mis-detected when a project-local .venv lives under examples/. An
-    # absolute path bypasses that anchoring; the directory is bundled next to this module.
     include=[str(TARGETS_DIR)],
     secrets=[
-        # Create these on your Flyte backend (or run locally with the env vars set).
         flyte.Secret(key="internal-anthropic-api-key", as_env_var="ANTHROPIC_API_KEY"),
-        flyte.Secret(key="internal-daytona-api-key", as_env_var="DAYTONA_API_KEY"),
     ],
 )
 
 
 def _attempt() -> int:
-    """0 on the first try, 1+ on retries. Used to make demo beats deterministic."""
     tc = flyte.ctx()
     return tc.attempt_number if tc is not None else 0
 
 
 def _force(flag: str) -> bool:
-    """True if a specific demo-beat flag is set, or the master AUTOSEC_FORCE_ALL is set."""
     return bool(os.getenv(flag) or os.getenv("AUTOSEC_FORCE_ALL"))
 
 
 def _extract_json(text: str) -> dict[str, Any]:
-    """Pull the first JSON object out of an LLM reply; raise if there is none."""
     match = re.search(r"\{.*\}", text, re.DOTALL)
     if not match:
         raise ValueError(f"no JSON object in model reply: {text[:200]!r}")
@@ -96,30 +82,8 @@ def _extract_json(text: str) -> dict[str, Any]:
     try:
         return json.loads(blob)
     except json.JSONDecodeError:
-        # LLMs frequently emit invalid JSON escapes (e.g. '\0' NUL terminators,
-        # '\x..' in C snippets). Escape any backslash that isn't a valid JSON
-        # escape, then retry.
         fixed = re.sub(r'\\(?!["\\/bfnrtu])', r"\\\\", blob)
         return json.loads(fixed)
-
-
-# --- LLM helper -------------------------------------------------------------
-# @flyte.trace makes this a checkpoint boundary: once a call succeeds its output
-# is memoized, so a later task retry (beat B) does NOT re-run or re-bill it.
-@flyte.trace
-async def call_llm(prompt: str, *, force_timeout: bool = False) -> str:
-    if force_timeout:
-        # Beat A: hang longer than the task timeout so Flyte kills + retries us.
-        await asyncio.sleep(600)
-
-    from litellm import acompletion
-
-    resp = await acompletion(
-        model=MODEL,
-        messages=[{"role": "user", "content": prompt}],
-        timeout=25,  # per-request ceiling; the task timeout is the outer guard
-    )
-    return resp["choices"][0]["message"]["content"]
 
 
 # --- Stage 1: static analysis (CPU, OOM-prone) ------------------------------
@@ -127,16 +91,11 @@ async def call_llm(prompt: str, *, force_timeout: bool = False) -> str:
 async def scan_static(source: str, scope: str = "whole") -> str:
     """Cheap stand-in for whole-program analysis (Joern/CodeQL in the real system)."""
     try:
-        # Beat C: simulate an OOM on the first whole-program attempt only.
         if scope == "whole" and _force("AUTOSEC_FORCE_OOM") and _attempt() == 0:
             raise flyte.errors.OOMError("whole-program graph exceeded memory limit")
         findings = _grep_dangerous_calls(source)
         return findings or "(no dangerous-call sites found)"
     except flyte.errors.OOMError as exc:
-        # Infra-level recovery: re-dispatch the SAME task with a bigger box and a
-        # narrower (file-scoped) analysis. Flyte lets user code change the infra
-        # profile of a retry via .override(resources=...). scope="file" avoids
-        # re-triggering the simulated OOM, so this terminates.
         print(f"[scan_static] {exc}; escalating resources + narrowing scope")
         return await scan_static.override(
             short_name="scan_static_more_resources", resources=flyte.Resources(cpu=2, memory="4Gi")
@@ -152,47 +111,33 @@ def _grep_dangerous_calls(source: str) -> str:
     return "\n".join(hits)
 
 
-# --- Stage 2: hypothesize the vulnerability (LLM) ---------------------------
-@env.task(retries=3, timeout=20)
-async def hypothesize(source: str, static_findings: str) -> dict:
-    prompt = (
-        "You are a vulnerability researcher. Decide whether this C source contains "
-        "an exploitable memory-corruption bug reachable from argv. Reply with ONLY "
-        "a JSON object.\n"
-        'If vulnerable: {"vulnerable": true, "function": str, '
-        '"buffer_size": int (bytes of the overflowable buffer), "vuln_class": str, '
-        '"reasoning": str}.\n'
-        "If the code looks safe (bounded copies, length checks, snprintf/strlcpy, "
-        'etc.): {"vulnerable": false, "reasoning": str}.\n\n'
-        f"SOURCE:\n{source}\n\nDANGEROUS CALLS:\n{static_findings}\n"
-    )
-    # Beat A: hang on the first attempt -> task timeout -> retry.
-    timeout_on = _force("AUTOSEC_FORCE_LLM_TIMEOUT")
-    bad_on = _force("AUTOSEC_FORCE_BAD_TOOL_CALL")
-    raw = await call_llm(prompt, force_timeout=timeout_on and _attempt() == 0)
+# --- Stage 2: hypothesize the vulnerability (LLM via Agent) ------------------
+ANALYSIS_INSTRUCTIONS = """\
+You are a vulnerability researcher. Your job is to determine whether a given \
+C source file contains an exploitable memory-corruption bug reachable from argv.
 
-    # Beat B: simulate a hallucinated/malformed tool call. When the timeout beat is
-    # also active it consumes attempt 0, so defer this to attempt 1 — that way both
-    # beats are actually demonstrated in a single run (e.g. with AUTOSEC_FORCE_ALL).
-    bad_attempt = 1 if timeout_on else 0
-    if bad_on and _attempt() == bad_attempt:
-        raw = "Sure! The bug is somewhere around here, trust me."
+You have access to these tools during your analysis:
+- scan_static: Run static analysis on the source to find dangerous function calls.
+- build_poc: Build a proof-of-concept payload (do not call during analysis).
+- validate_in_sandbox: Compile and run the target with a PoC input (do not call during analysis).
 
-    hyp = _extract_json(raw)  # malformed -> raises -> task retries -> resumes
-    if "vulnerable" not in hyp:
-        # Back-compat: a bare hypothesis with a buffer_size implies a finding.
-        hyp["vulnerable"] = "buffer_size" in hyp
-    if hyp.get("vulnerable") and "buffer_size" not in hyp:
-        raise ValueError(f"vulnerable hypothesis missing buffer_size: {hyp}")
-    return hyp
+Focus on analyzing the source and the provided static analysis findings. Call \
+scan_static only if you need additional details about dangerous function usage.
+
+Reply with ONLY a JSON object (no prose, no markdown fences):
+If vulnerable: {"vulnerable": true, "function": str, \
+"buffer_size": int (bytes of the overflowable buffer), "vuln_class": str, \
+"reasoning": str}.
+If the code looks safe (bounded copies, length checks, snprintf/strlcpy, \
+etc.): {"vulnerable": false, "reasoning": str}.
+"""
 
 
 # --- Stage 3: build a proof-of-concept --------------------------------------
 @env.task(retries=2, timeout=90)
 async def build_poc(hypothesis: dict) -> dict:
-    """Construct a trigger input that overflows the identified buffer."""
     buffer_size = int(hypothesis.get("buffer_size", 64))
-    payload_len = buffer_size + 64  # comfortably past the saved return address
+    payload_len = buffer_size + 64
     return {
         "payload_len": payload_len,
         "payload_repr": f'"A" * {payload_len}',
@@ -200,68 +145,103 @@ async def build_poc(hypothesis: dict) -> dict:
     }
 
 
-# --- Stage 4: validate in a Daytona VM (delegated high-security step) --------
+# --- Stage 4: validate in an on-device sandbox -------------------------------
 @env.task(retries=2, timeout=300)
-async def validate_in_daytona(source: str, poc: dict) -> dict:
-    """Compile + run the target with the PoC input inside an isolated Daytona VM.
+async def validate_in_sandbox(source: str, poc: dict) -> dict:
+    """Compile + run the target with the PoC input inside an on-device sandbox.
 
-    The exploit code executes in Daytona's sandbox, never on the Flyte node
-    (SPEC §2.6 / §7). The VM is torn down in `finally` regardless of outcome
-    (SPEC VD-5) so a stuck or failed run cannot leak a billable VM.
+    The exploit code runs in a user-namespace sandbox on the same machine, never
+    on the Flyte orchestration node (SPEC §2.6 / §7). The session is torn down
+    in __aexit__ regardless of outcome (SPEC VD-5) so a stuck or failed run
+    cannot leak resources.
     """
-    from daytona import CreateSandboxFromSnapshotParams, Daytona, DaytonaConfig
+    from union import sandbox as sb
 
-    api_key = os.environ["DAYTONA_API_KEY"]
-    daytona = Daytona(DaytonaConfig(api_key=api_key))
-    sandbox = daytona.create(CreateSandboxFromSnapshotParams(ephemeral=True, auto_stop_internal=1))
-    try:
-        driver = _build_sandbox_driver(source, int(poc["payload_len"]))
-        resp = sandbox.process.code_run(driver)
-        triggered = "SIGSEGV" in (resp.result or "") or resp.exit_code not in (0, None)
+    async with sb.on_device.session(backend="userns") as sbx:
+        await sbx.put_bytes("target.c", source.encode())
+
+        compile_proc = await sbx.run(
+            "gcc -fno-stack-protector -w -o target target.c",
+            stdout=True,
+            stderr=True,
+            timeout_s=60,
+        )
+        compile_out, compile_err = await compile_proc.communicate_text()
+        log = compile_out + compile_err
+        if "error" in log.lower():
+            return {
+                "triggered": False,
+                "sandbox_exit_code": -1,
+                "log": f"COMPILE_FAILED\n{log}",
+            }
+
+        payload = "A" * int(poc["payload_len"])
+        run_proc = await sbx.run(
+            f"./target {payload}",
+            stdout=True,
+            stderr=True,
+            timeout_s=60,
+        )
+        run_out, run_err = await run_proc.communicate_text()
+        log = run_out + "\n" + run_err
+        triggered = "SIGSEGV" in log
+
         return {
             "triggered": bool(triggered),
-            "sandbox_exit_code": resp.exit_code,
-            "log": resp.result,
+            "sandbox_exit_code": getattr(run_proc, "returncode", 0),
+            "log": log,
         }
-    finally:
-        sandbox.delete()  # guaranteed teardown (VD-5)
 
 
-def _build_sandbox_driver(source: str, payload_len: int) -> str:
-    """Python program that runs INSIDE the Daytona VM: compile + fire the PoC."""
-    b64 = base64.b64encode(source.encode()).decode()
-    return (
-        "import base64, subprocess\n"
-        f"open('target.c','w').write(base64.b64decode('{b64}').decode())\n"
-        "c = subprocess.run(['gcc','-fno-stack-protector','-w','-o','target','target.c'],"
-        " capture_output=True, text=True)\n"
-        "if c.returncode != 0:\n"
-        "    print('COMPILE_FAILED'); print(c.stderr)\n"
-        "else:\n"
-        f"    r = subprocess.run(['./target', 'A'*{payload_len}], capture_output=True, text=True)\n"
-        "    rc = r.returncode\n"
-        "    print('EXIT', rc)\n"
-        "    if rc and rc < 0:\n"
-        "        import signal\n"
-        "        print('SIGNAL', signal.Signals(-rc).name)\n"
-        "        if -rc == signal.SIGSEGV: print('SIGSEGV')\n"
-        "    print(r.stdout); print(r.stderr)\n"
+# --- Agent + hypothesize task (depends on all tools above) ------------------
+hypothesis_agent = Agent(
+    name="autosec-hypothesis",
+    instructions=ANALYSIS_INSTRUCTIONS,
+    model=MODEL,
+    tools=[scan_static, build_poc, validate_in_sandbox],
+    max_turns=6,
+)
+
+
+@env.task(retries=3, timeout=20)
+async def hypothesize(source: str, static_findings: str) -> dict:
+    prompt = (
+        "Analyze this C source file for memory-corruption vulnerabilities.\n\n"
+        f"SOURCE:\n{source}\n\nDANGEROUS CALLS:\n{static_findings}\n"
     )
+
+    # Beat A: hang on the first attempt -> task timeout -> retry.
+    timeout_on = _force("AUTOSEC_FORCE_LLM_TIMEOUT") and _attempt() == 0
+    bad_on = _force("AUTOSEC_FORCE_BAD_TOOL_CALL")
+
+    if timeout_on:
+        await asyncio.sleep(600)
+
+    result = await hypothesis_agent.run.aio(prompt, memory=[])
+    raw = result.summary or ""
+
+    # Beat B: simulate a hallucinated/malformed tool call. When the timeout beat
+    # is also active it consumes attempt 0, so defer this to attempt 1 — that way
+    # both beats are actually demonstrated in a single run (e.g. AUTOSEC_FORCE_ALL).
+    bad_attempt = 1 if _force("AUTOSEC_FORCE_LLM_TIMEOUT") else 0
+    if bad_on and _attempt() == bad_attempt:
+        raw = "Sure! The bug is somewhere around here, trust me."
+
+    hyp = _extract_json(raw)
+    if "vulnerable" not in hyp:
+        hyp["vulnerable"] = "buffer_size" in hyp
+    if hyp.get("vulnerable") and "buffer_size" not in hyp:
+        raise ValueError(f"vulnerable hypothesis missing buffer_size: {hyp}")
+    return hyp
 
 
 # --- Orchestration ----------------------------------------------------------
 def _load_targets() -> dict[str, str]:
-    """Read every ``targets/*.c`` file into a {name: source} mapping."""
     return {p.name: p.read_text() for p in sorted(TARGETS_DIR.glob("*.c"))}
 
 
 @env.task
 async def analyze_target(name: str, source: str) -> dict:
-    """Run the full pipeline against a single target file.
-
-    Secure targets short-circuit after `hypothesize`: no PoC is built and no
-    Daytona VM is spun up (saving cost), and the report marks them as clean.
-    """
     findings = await scan_static(source)
     hypothesis = await hypothesize(source, findings)
 
@@ -270,7 +250,7 @@ async def analyze_target(name: str, source: str) -> dict:
         verdict = {"triggered": False, "skipped": True}
     else:
         poc = await build_poc(hypothesis)
-        verdict = await validate_in_daytona(source, poc)
+        verdict = await validate_in_sandbox(source, poc)
 
     return {
         "target": name,
@@ -319,7 +299,6 @@ _REPORT_CSS = """
     border:1px solid rgba(182,121,31,.35); }
   .autosec .b-secure { background:rgba(30,126,52,.10); color:var(--green);
     border:1px solid rgba(30,126,52,.35); }
-  /* Column widths: REASONING is the widest. */
   .autosec col.c-target  { width:15%; }
   .autosec col.c-status  { width:11%; }
   .autosec col.c-class   { width:11%; }
@@ -328,7 +307,6 @@ _REPORT_CSS = """
   .autosec col.c-payload { width:8%; }
   .autosec col.c-exit    { width:6%; }
   .autosec col.c-reason  { width:30%; }
-  /* Per-target tab elements */
   .autosec .kv { display:flex; flex-wrap:wrap; gap:12px 28px; margin:16px 0 4px; }
   .autosec .kv .k { color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.6px; }
   .autosec .kv .v { font-weight:600; font-size:14px; margin-top:3px; }
@@ -339,7 +317,6 @@ _REPORT_CSS = """
   .autosec pre.code { background:#f6f8fa; border:1px solid var(--line); border-radius:8px;
     padding:14px 16px; overflow:auto; font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
     font-size:12.5px; line-height:1.5; color:#1b2330; margin:0; }
-  /* CSS-only sub-tabs (one panel per target file) */
   .autosec .subtabs > input[type=radio] { position:absolute; opacity:0; pointer-events:none; }
   .autosec .subnav { display:flex; flex-wrap:wrap; gap:4px; border-bottom:1px solid var(--line);
     margin:8px 0 18px; }
@@ -357,7 +334,6 @@ _REPORT_CSS = """
 
 
 def _status(finding: dict) -> tuple[str, str]:
-    """Return (css_class, label) for a finding's three-state status badge."""
     hyp = finding.get("hypothesis") or {}
     verdict = finding.get("verdict") or {}
     if not hyp.get("vulnerable"):
@@ -368,7 +344,6 @@ def _status(finding: dict) -> tuple[str, str]:
 
 
 def _render_report_html(findings: list[dict]) -> str:
-    """Render the per-target findings into a styled HTML security report."""
     exploited = sum(1 for f in findings if (f.get("verdict") or {}).get("triggered"))
     vulnerable = sum(1 for f in findings if (f.get("hypothesis") or {}).get("vulnerable"))
     secure = len(findings) - vulnerable
@@ -379,11 +354,11 @@ def _render_report_html(findings: list[dict]) -> str:
         verdict = f.get("verdict") or {}
         cls, label = _status(f)
         is_vuln = bool(hyp.get("vulnerable"))
-        vuln_class = hyp.get("vuln_class", "—") if is_vuln else "—"
-        fn = hyp.get("function", "—") if is_vuln else "—"
-        buf = hyp.get("buffer_size", "—") if is_vuln else "—"
-        payload = (f.get("poc") or {}).get("payload_len", "—") if is_vuln else "—"
-        exit_code = verdict.get("sandbox_exit_code", "—")
+        vuln_class = hyp.get("vuln_class", "\u2014") if is_vuln else "\u2014"
+        fn = hyp.get("function", "\u2014") if is_vuln else "\u2014"
+        buf = hyp.get("buffer_size", "\u2014") if is_vuln else "\u2014"
+        payload = (f.get("poc") or {}).get("payload_len", "\u2014") if is_vuln else "\u2014"
+        exit_code = verdict.get("sandbox_exit_code", "\u2014")
         rows.append(
             "<tr>"
             f"<td><code>{html.escape(str(f['target']))}</code></td>"
@@ -400,7 +375,7 @@ def _render_report_html(findings: list[dict]) -> str:
     return f"""{_REPORT_CSS}
     <div class="autosec">
       <h2>AutoSec &middot; security findings report</h2>
-      <p class="sub">{len(findings)} target(s) analyzed in parallel &middot; PoCs validated in isolated Daytona VMs.</p>
+      <p class="sub">{len(findings)} target(s) analyzed in parallel &middot; PoCs validated in isolated sandbox.</p>
       <div class="cards">
         <div class="card"><div class="n">{len(findings)}</div><div class="l">Targets</div></div>
         <div class="card"><div class="n" style="color:#ff6b6b">{exploited}</div><div class="l">Exploited</div></div>
@@ -429,7 +404,6 @@ def _render_report_html(findings: list[dict]) -> str:
 
 
 def _target_detail_html(finding: dict, source: str) -> str:
-    """Inner detail markup for one target: title, status, stats, reasoning, code."""
     hyp = finding.get("hypothesis") or {}
     verdict = finding.get("verdict") or {}
     cls, label = _status(finding)
@@ -442,20 +416,20 @@ def _target_detail_html(finding: dict, source: str) -> str:
     verdict_txt = "skipped (secure)" if verdict.get("skipped") else ("triggered" if triggered else "not triggered")
     stats = "".join(
         [
-            cell("Vuln class", hyp.get("vuln_class", "—") if is_vuln else "—"),
-            cell("Function", hyp.get("function", "—") if is_vuln else "—"),
-            cell("Buffer (B)", hyp.get("buffer_size", "—") if is_vuln else "—"),
-            cell("Payload (B)", (finding.get("poc") or {}).get("payload_len", "—") if is_vuln else "—"),
-            cell("Daytona exit", verdict.get("sandbox_exit_code", "—")),
+            cell("Vuln class", hyp.get("vuln_class", "\u2014") if is_vuln else "\u2014"),
+            cell("Function", hyp.get("function", "\u2014") if is_vuln else "\u2014"),
+            cell("Buffer (B)", hyp.get("buffer_size", "\u2014") if is_vuln else "\u2014"),
+            cell("Payload (B)", (finding.get("poc") or {}).get("payload_len", "\u2014") if is_vuln else "\u2014"),
+            cell("Sandbox exit", verdict.get("sandbox_exit_code", "\u2014")),
             cell("PoC", verdict_txt),
         ]
     )
-    reasoning = html.escape(str(hyp.get("reasoning", "")) or "—")
+    reasoning = html.escape(str(hyp.get("reasoning", "")) or "\u2014")
     code = html.escape(source or "(source unavailable)")
     return f"""
       <h3 style="margin:0 0 4px"><code>{html.escape(str(finding["target"]))}</code>
           &nbsp;<span class="badge {cls}">{label}</span></h3>
-      <p class="sub">Per-target detail &middot; PoCs validated in an isolated Daytona VM.</p>
+      <p class="sub">Per-target detail &middot; PoCs validated in an isolated sandbox.</p>
       <div class="kv">{stats}</div>
       <div class="section-label">Reasoning</div>
       <div class="reason-block">{reasoning}</div>
@@ -465,7 +439,6 @@ def _target_detail_html(finding: dict, source: str) -> str:
 
 
 def _render_targets_tab_html(findings: list[dict], sources: dict[str, str]) -> str:
-    """Render ONE 'targets' tab whose HTML contains CSS-only sub-tabs per target file."""
     ordered = sorted(findings, key=lambda x: x["target"])
 
     radios, nav, panels, rules = [], [], [], []
@@ -476,7 +449,6 @@ def _render_targets_tab_html(findings: list[dict], sources: dict[str, str]) -> s
         radios.append(f'<input type="radio" name="as-targets" id="as-t{i}"{checked}>')
         nav.append(f'<label for="as-t{i}"><span class="dot {cls}"></span><code>{html.escape(str(name))}</code></label>')
         panels.append(f'<div class="panel" id="as-p{i}">{_target_detail_html(f, sources.get(name, ""))}</div>')
-        # Show the active label + its panel when this radio is checked.
         rules.append(
             f'.autosec #as-t{i}:checked ~ .subnav label[for="as-t{i}"]'
             "{background:#fff;color:var(--text);border-color:var(--line);font-weight:600;}"
@@ -510,18 +482,12 @@ async def run_autosec_agent() -> dict:
     if not targets:
         raise FileNotFoundError(f"no targets found under {TARGETS_DIR}")
 
-    # Fan out: analyze every target concurrently. Each `analyze_target` is its own
-    # Flyte action, so the targets are researched in parallel; per-target stages
-    # still run sequentially with their own retries/timeouts/resource overrides.
     findings = list(await asyncio.gather(*(analyze_target(name, src) for name, src in targets.items())))
 
-    # Main tab: the aggregated summary table (unchanged).
     await flyte.report.replace.aio(_render_report_html(findings))
-    # A single "targets" tab whose HTML carries CSS-only sub-tabs, one per file.
     flyte.report.get_tab("targets").replace(_render_targets_tab_html(findings, targets))
     await flyte.report.flush.aio()
 
-    # Sprinkle in a random error on the first attempt of this task.
     await random_error()
 
     return {
@@ -532,7 +498,6 @@ async def run_autosec_agent() -> dict:
 
 
 def cli() -> None:
-    """Console-script entry point (see pyproject.toml ``[project.scripts]``)."""
     flyte.init_from_config(root_dir=HERE)
     run = flyte.with_runcontext(env_vars={"AUTOSEC_FORCE_ALL": "1"}).run(run_autosec_agent)
     print(f"Run URL: {run.url}")
