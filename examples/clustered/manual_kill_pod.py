@@ -74,8 +74,7 @@ async def idle_for_chaos(minutes: int = RUN_MINUTES) -> int:
     dist.init_process_group(backend="gloo")
     world_size = dist.get_world_size()
     print(
-        f"[rank {rank}/{world_size}] restart_attempt={attempt} — ready. Kill a worker pod now; "
-        f"watch the set restart.",
+        f"[rank {rank}/{world_size}] restart_attempt={attempt} — ready. Kill a worker pod now; watch the set restart.",
         flush=True,
     )
 
