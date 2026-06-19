@@ -1,5 +1,5 @@
 """
-Composability: pretrain -> evaluate, two sequential JobSets (§9 exit-criterion #6).
+Composability: pretrain -> evaluate, two sequential JobSets.
 
 A realistic pipeline chains a distributed pretrain step into a distributed evaluate step. Each
 clustered task emits its OWN JobSet, and they run sequentially when one awaits the other.

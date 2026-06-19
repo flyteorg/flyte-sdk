@@ -1,5 +1,5 @@
 """
-Bad-spec fast-fail (§9 exit-criterion #4).
+Bad-spec fast-fail.
 
 A misconfigured clustered task must FAIL FAST with a clear diagnosis instead of looping restarts
 forever. There are two distinct guards, at two different layers:

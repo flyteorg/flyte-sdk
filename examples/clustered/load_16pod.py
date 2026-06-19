@@ -1,5 +1,5 @@
 """
-Scale / load test: 16-pod rendezvous on plain TCP (§9 exit-criterion #11).
+Scale / load test: 16-pod rendezvous on plain TCP.
 
 Most correctness bugs in distributed bootstrapping only show up at non-trivial scale: headless DNS
 for 16 pod names, the static rendezvous all 16 ranks must agree on, and the gang landing together.
