@@ -28,6 +28,7 @@ from flyte._code_bundle.bundle import (
     build_code_bundle,
     build_code_bundle_from_relative_paths,
 )
+from flyte.errors import CodeBundleError
 
 TESTDATA_ROOT = Path(__file__).parent / "testdata"
 
@@ -430,7 +431,7 @@ async def test_build_code_bundle_include_outside_source_raises():
         outside_file = Path(tmp_outside) / "stray.txt"
         outside_file.write_text("oops")
 
-        with pytest.raises(ValueError, match="outside the bundle root"):
+        with pytest.raises(CodeBundleError, match="outside the bundle root"):
             await build_code_bundle(
                 from_dir=layout,
                 dryrun=True,
