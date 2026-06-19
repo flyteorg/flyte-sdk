@@ -54,6 +54,8 @@ class Run(ToJSONMixin):
         domain: str | None = None,
         created_at: TimeFilter | None = None,
         updated_at: TimeFilter | None = None,
+        with_labels: dict[str, str] | None = None,
+        with_label_keys: list[str] | None = None,
     ) -> AsyncIterator[Run]:
         """
         Get all runs for the current project and domain.
@@ -68,6 +70,8 @@ class Run(ToJSONMixin):
         :param domain: The domain to list runs for. Defaults to the globally configured domain.
         :param created_at: Filter runs by creation time range.
         :param updated_at: Filter runs by last-update time range.
+        :param with_labels: Filter runs whose labels include all of these key=value pairs (AND semantics).
+        :param with_label_keys: Filter runs that have all of these label keys present (existence check).
         :return: An iterator of runs.
         """
         ensure_client()
@@ -122,6 +126,27 @@ class Run(ToJSONMixin):
             filters.extend(time_filtering("created_at", created_at))
         if updated_at:
             filters.extend(time_filtering("updated_at", updated_at))
+
+        # Label filters are expressed through the generic filter mechanism using a ``labels.<key>``
+        # field convention: ``--with-label k=v`` becomes an EQUAL match, ``--with-label-key k`` an
+        # EXISTS match. Multiple label filters are ANDed together with the other filters.
+        if with_labels:
+            for k, v in with_labels.items():
+                filters.append(
+                    list_pb2.Filter(
+                        function=list_pb2.Filter.Function.EQUAL,
+                        field=f"labels.{k}",
+                        values=[v],
+                    ),
+                )
+        if with_label_keys:
+            for k in with_label_keys:
+                filters.append(
+                    list_pb2.Filter(
+                        function=list_pb2.Filter.Function.EXISTS,
+                        field=f"labels.{k}",
+                    ),
+                )
 
         cfg = get_init_config()
         i = 0
@@ -337,6 +362,7 @@ class Run(ToJSONMixin):
         Rich representation of the Run object.
         """
         yield "url", f"[blue bold][link={self.url}]link[/link][/blue bold]"
+        yield "labels", dict(self.pb2.labels) if self.pb2.labels else {}
         yield from _action_rich_repr(self.pb2.action)
 
     def __repr__(self) -> str:
