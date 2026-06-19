@@ -3,7 +3,7 @@ import copy
 import json
 import os
 import typing
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
 import flyte
@@ -13,10 +13,12 @@ from flyte.extend import (
     AsyncFunctionTaskTemplate,
     TaskPluginRegistry,
     get_proto_extended_resources,
+    get_proto_resources,
     pod_spec_from_resources,
 )
 from flyte.models import SerializationContext
-from flyteidl2.plugins.ray_pb2 import HeadGroupSpec, RayCluster, RayJob, WorkerGroupSpec
+from flyteidl2.core.literals_pb2 import KeyValuePair
+from flyteidl2.plugins.ray_pb2 import AutoscalerOptions, HeadGroupSpec, RayCluster, RayJob, WorkerGroupSpec
 from google.protobuf.json_format import MessageToDict
 
 import ray
@@ -27,6 +29,32 @@ if typing.TYPE_CHECKING:
 
 _RAY_HEAD_CONTAINER_NAME = "ray-head"
 _RAY_WORKER_CONTAINER_NAME = "ray-worker"
+
+_UPSCALING_MODE_MAP: Dict[str, int] = {
+    "DEFAULT": AutoscalerOptions.UPSCALING_MODE_DEFAULT,
+    "AGGRESSIVE": AutoscalerOptions.UPSCALING_MODE_AGGRESSIVE,
+    "CONSERVATIVE": AutoscalerOptions.UPSCALING_MODE_CONSERVATIVE,
+}
+
+
+@dataclass
+class AutoscalerOptionsConfig:
+    """Configuration for the Ray autoscaler sidecar.
+
+    upscaling_mode: one of "DEFAULT", "AGGRESSIVE", or "CONSERVATIVE".
+    idle_timeout_seconds: seconds before an idle node is removed.
+    image: custom container image for the autoscaler sidecar.
+    env: environment variables injected into the autoscaler container.
+    resources: CPU/memory/GPU resource requests and limits for the sidecar.
+               Use tuple values (request, limit) for request/limit pairs,
+               e.g. Resources(cpu=("500m", "1"), memory=("512Mi", "1Gi")).
+    """
+
+    upscaling_mode: Optional[str] = None
+    idle_timeout_seconds: Optional[int] = None
+    image: Optional[str] = None
+    env: Optional[Dict[str, str]] = None
+    resources: Optional[Resources] = None
 
 
 def _build_node_pod_template(
@@ -116,10 +144,25 @@ class RayJobConfig:
     worker_node_config: typing.List[WorkerNodeConfig]
     head_node_config: typing.Optional[HeadNodeConfig] = None
     enable_autoscaling: bool = False
+    autoscaler_options: typing.Optional[AutoscalerOptionsConfig] = None
     runtime_env: typing.Optional[dict] = None
     address: typing.Optional[str] = None
     shutdown_after_job_finishes: bool = False
     ttl_seconds_after_finished: typing.Optional[int] = None
+
+
+def _build_autoscaler_options(opts: Optional[AutoscalerOptionsConfig]) -> Optional[AutoscalerOptions]:
+    if opts is None:
+        return None
+    mode = _UPSCALING_MODE_MAP.get(opts.upscaling_mode or "", AutoscalerOptions.UPSCALING_MODE_UNSPECIFIED)
+    env = [KeyValuePair(key=k, value=v) for k, v in (opts.env or {}).items()]
+    return AutoscalerOptions(
+        upscaling_mode=mode,
+        idle_timeout_seconds=opts.idle_timeout_seconds or 0,
+        image=opts.image or "",
+        env=env,
+        resources=get_proto_resources(opts.resources),
+    )
 
 
 @dataclass(kw_only=True)
@@ -188,11 +231,14 @@ class RayFunctionTask(AsyncFunctionTaskTemplate):
                 )
             )
 
+        autoscaler_options = _build_autoscaler_options(cfg.autoscaler_options)
+
         ray_job = RayJob(
             ray_cluster=RayCluster(
                 head_group_spec=head_group_spec,
                 worker_group_spec=worker_group_spec,
                 enable_autoscaling=(cfg.enable_autoscaling or False),
+                autoscaler_options=autoscaler_options,
             ),
             runtime_env=runtime_env,
             runtime_env_yaml=runtime_env_yaml,
