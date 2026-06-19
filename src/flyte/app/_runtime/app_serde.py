@@ -14,6 +14,7 @@ from typing import List, Optional, Union
 from flyteidl2.app import app_definition_pb2
 from flyteidl2.common import runtime_version_pb2
 from flyteidl2.core import literals_pb2, tasks_pb2
+from flyteidl2.task import task_definition_pb2
 from google.protobuf.duration_pb2 import Duration
 
 import flyte
@@ -284,6 +285,24 @@ async def translate_parameters(parameters: List[Parameter]) -> app_definition_pb
     return app_definition_pb2.InputList(items=parameters_list)
 
 
+def _get_code_bundle_uri(serialization_context: SerializationContext) -> str | None:
+    # Only the tgz bundle is a downloadable source archive; the pkl is a pickled
+    # interactive bundle that the download-link feature cannot serve.
+    if serialization_context.code_bundle is None:
+        return None
+    return serialization_context.code_bundle.tgz or None
+
+
+def _get_source_code() -> task_definition_pb2.SourceCode | None:
+    from flyte.git import GitStatus
+
+    git_status = GitStatus.from_current_repo()
+    if not git_status.is_valid:
+        return None
+    url = f"{git_status.remote_url}/tree/{git_status.commit_sha}"
+    return task_definition_pb2.SourceCode(link=url)
+
+
 @syncify
 async def translate_app_env_to_idl(
     app_env: AppEnvironment,
@@ -393,6 +412,8 @@ async def translate_app_env_to_idl(
                 domain=serialization_context.domain,
                 name=app_env.name,
             ),
+            code_bundle_uri=_get_code_bundle_uri(serialization_context),
+            source_code=_get_source_code(),
         ),
         spec=app_definition_pb2.Spec(
             desired_state=desired_state,
