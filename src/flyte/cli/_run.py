@@ -303,6 +303,18 @@ class RunArguments:
             )
         },
     )
+    rerun_from: str | None = field(
+        default=None,
+        metadata={
+            "click.option": click.Option(
+                ["--rerun-from"],
+                type=str,
+                default=None,
+                help="Re-run an existing run with THIS local code, reusing that run's inputs "
+                "(no per-task input flags are needed). Remote-only.",
+            )
+        },
+    )
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> RunArguments:
@@ -417,7 +429,11 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
                 labels=self.run_args.parsed_labels(),
                 recover=self.run_args.recover_from,
             )
-            result = await execution_context.run.aio(self.obj, **ctx.params)
+            if self.run_args.rerun_from:
+                # Re-run a prior run with THIS local code, reusing the prior run's inputs.
+                result = await execution_context.rerun.aio(self.run_args.rerun_from, task_template=self.obj)
+            else:
+                result = await execution_context.run.aio(self.obj, **ctx.params)
         except Exception as e:
             if isinstance(e, RuntimeSystemError):
                 capture_exception(e)
@@ -495,6 +511,8 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
             tuple(self.run_args.image) or None,
             not self.run_args.no_sync_local_sys_paths,
         )
+        if self.run_args.rerun_from and self.run_args.local:
+            raise click.UsageError("--rerun-from requires remote mode (it cannot be combined with --local)")
         self._validate_required_params(ctx)
         if self.run_args.tui:
             if not self.run_args.local:
@@ -506,6 +524,11 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
 
     def get_params(self, ctx: click.Context) -> List[click.Parameter]:
         # Note this function may be called multiple times by click.
+        # With --rerun-from, inputs come from the prior run, so don't expose (or require) per-task
+        # input options. (Overriding specific inputs alongside --rerun-from is a follow-up.)
+        if self.run_args.rerun_from:
+            return super().get_params(ctx)
+
         task = self.obj
         from .._internal.runtime.types_serde import transform_native_to_typed_interface
 
