@@ -122,6 +122,7 @@ class _Runner:
         cache_lookup_scope: CacheLookupScope = "global",
         preserve_original_types: bool | None = None,
         debug: bool = False,
+        recover: str | None = None,
         _tracker: Any = None,
         _bundle_relative_paths: tuple[str, ...] | None = None,
         _bundle_from_dir: pathlib.Path | None = None,
@@ -170,6 +171,9 @@ class _Runner:
             preserve_original_types if preserve_original_types is not None else self._interactive_mode
         )
         self._debug = debug
+        # Reference run to recover from (reuse its succeeded actions). Carried on RunSpec.recover;
+        # gated in _apply_overrides until the flyteidl2 field + backend ship. Composes with run/rerun.
+        self._recover = recover
 
     async def _build_task_spec_from_template(self, obj: TaskTemplate[P, R, F]) -> Tuple[Any, Any, str]:
         """Build ``(task_spec, code_bundle, version)`` from a local ``TaskTemplate``.
@@ -426,8 +430,7 @@ class _Runner:
                 run_spec.notification_rules.CopyFrom(notification_rules)
 
         # recover: gated until flyteidl2 ships RunSpec.recover (+ backend support). One-line set then.
-        recover = getattr(self, "_recover", None)
-        if recover:
+        if self._recover:
             if "recover" not in run_pb2.RunSpec.DESCRIPTOR.fields_by_name:
                 raise NotImplementedError(
                     "recover is not yet supported by this backend "
@@ -435,7 +438,7 @@ class _Runner:
                 )
             from flyteidl2.common import identifier_pb2
 
-            run_spec.recover.CopyFrom(run_pb2.Recover(run_id=identifier_pb2.RunIdentifier(name=recover)))
+            run_spec.recover.CopyFrom(run_pb2.Recover(run_id=identifier_pb2.RunIdentifier(name=self._recover)))
 
         return run_spec
 
@@ -968,6 +971,7 @@ def with_runcontext(
     cache_lookup_scope: CacheLookupScope = "global",
     preserve_original_types: bool = False,
     debug: bool = False,
+    recover: str | None = None,
     _tracker: Any = None,
 ) -> _Runner:
     """
@@ -1048,6 +1052,9 @@ def with_runcontext(
         explicitly by this parameter.
     :param debug: Optional If true, the task will be run as a VSCode debug task, starting a code-server in the
         container so users can connect via the UI to interactively debug/run the task.
+    :param recover: Optional name of a prior run to recover from. The new run reuses the succeeded
+        actions of the referenced run and re-runs only what failed or changed. Not yet supported by
+        the backend (raises NotImplementedError at submit until flyteidl2 RunSpec.recover ships).
     :param _tracker: This is an internal only parameter used by the CLI to render the TUI.
 
     :return: runner
@@ -1097,6 +1104,7 @@ def with_runcontext(
         cache_lookup_scope=cache_lookup_scope,
         preserve_original_types=preserve_original_types,
         debug=debug,
+        recover=recover,
         _tracker=_tracker,
     )
 

@@ -289,6 +289,20 @@ class RunArguments:
             )
         },
     )
+    recover_from: str | None = field(
+        default=None,
+        metadata={
+            "click.option": click.Option(
+                ["--recover-from"],
+                type=str,
+                default=None,
+                # Hidden until the flyteidl2 RunSpec.recover field + backend support ship.
+                hidden=True,
+                help="(coming soon) Recover from a prior run: reuse its succeeded actions and "
+                "re-run only what failed or changed.",
+            )
+        },
+    )
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> RunArguments:
@@ -401,6 +415,7 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
                 env_vars=self.run_args.parsed_env_vars(),
                 max_action_concurrency=self.run_args.max_action_concurrency,
                 labels=self.run_args.parsed_labels(),
+                recover=self.run_args.recover_from,
             )
             result = await execution_context.run.aio(self.obj, **ctx.params)
         except Exception as e:
@@ -626,6 +641,7 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
                 env_vars=self.run_args.parsed_env_vars(),
                 max_action_concurrency=self.run_args.max_action_concurrency,
                 labels=self.run_args.parsed_labels(),
+                recover=self.run_args.recover_from,
             )
             result = await execution_context.run.aio(task, **ctx.params)
         except Exception as e:
