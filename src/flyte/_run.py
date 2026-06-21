@@ -74,6 +74,20 @@ def _get_main_run_mode() -> Mode | None:
     return _run_mode_var.get()
 
 
+def _to_cache_lookup_scope(scope: CacheLookupScope | None = None):
+    """Map the SDK cache-lookup-scope literal onto its RunSpec enum value."""
+    from flyteidl2.task import run_pb2
+
+    if scope == "global":
+        return run_pb2.CacheLookupScope.CACHE_LOOKUP_SCOPE_GLOBAL
+    elif scope == "project-domain":
+        return run_pb2.CacheLookupScope.CACHE_LOOKUP_SCOPE_PROJECT_DOMAIN
+    elif scope is None:
+        return run_pb2.CacheLookupScope.CACHE_LOOKUP_SCOPE_UNSPECIFIED
+    else:
+        raise ValueError(f"Unknown cache lookup scope: {scope}")
+
+
 class _Runner:
     def __init__(
         self,
@@ -265,15 +279,234 @@ class _Runner:
         task_spec = translate_task_to_wire(obj, s_ctx, default_inputs=None, task_context=tctx)
         return task_spec, code_bundle, version
 
-    @requires_initialization
-    async def _run_remote(self, obj: TaskTemplate[P, R, F] | LazyEntity, *args: P.args, **kwargs: P.kwargs) -> Run:
-        from connectrpc.code import Code
-        from connectrpc.errors import ConnectError
+    def _build_env_dict(self) -> Dict[str, str]:
+        """Assemble the runtime env dict from runner config.
+
+        User-supplied ``env_vars`` plus the always-injected LOG_* / debug / rust-controller /
+        sys-path keys. Shared by the fresh-build and inherited (rerun) RunSpec paths so debug's
+        ssh-env injection and the log settings apply identically. Returns a fresh dict (never
+        mutates ``self._env_vars``).
+        """
+        cfg = get_init_config()
+        env: Dict[str, str] = dict(self._env_vars or {})
+        if env.get("LOG_LEVEL") is None:
+            env["LOG_LEVEL"] = str(self._log_level) if self._log_level else str(logger.getEffectiveLevel())
+        env["LOG_FORMAT"] = self._log_format
+        if self._user_log_level is not None:
+            env["USER_LOG_LEVEL"] = str(self._user_log_level)
+        if self._reset_root_logger:
+            env["FLYTE_RESET_ROOT_LOGGER"] = "1"
+        if self._debug:
+            env["_F_E_VS"] = "1"
+
+        use_rust_controller_env_var = os.getenv("_F_USE_RUST_CONTROLLER")
+        if use_rust_controller_env_var:
+            env["_F_USE_RUST_CONTROLLER"] = use_rust_controller_env_var
+
+        # These paths will be appended to sys.path at runtime.
+        if cfg.sync_local_sys_paths:
+            root_dir_abs = pathlib.Path(cfg.root_dir).resolve()
+            env[FLYTE_SYS_PATH] = ":".join(
+                f"./{pathlib.Path(p).relative_to(root_dir_abs)}"
+                for p in sys.path
+                if pathlib.Path(p).is_relative_to(root_dir_abs)
+            )
+
+        # TODO: Remove once the actions service is the default and this env var is no longer needed.
+        if os.getenv("_U_USE_ACTIONS") == "1":
+            env["_U_USE_ACTIONS"] = "1"
+        return env
+
+    def _resolve_run_target(self, project: str | None, domain: str | None, org: str | None):
+        """Resolve the create-run target: a RunIdentifier when a name is set, else a ProjectIdentifier."""
         from flyteidl2.common import identifier_pb2
+
+        if self._name:
+            return (
+                identifier_pb2.RunIdentifier(project=project, domain=domain, org=org, name=self._name or None),
+                None,
+            )
+        return None, identifier_pb2.ProjectIdentifier(name=project, domain=domain, organization=org)
+
+    def _apply_overrides(self, base: Any, *, task: Any = None) -> Any:
+        """Build the ``RunSpec`` for ``create_run``.
+
+        ``base is None`` -> a fresh spec from runner config (the run / recover path).
+        ``base`` set     -> deep-copy a prior run's ``RunSpec`` and merge runner overrides by key
+        (the rerun path: env merge + explicitly-set field overrides). Pure proto assembly, no I/O.
+        This is the single place runner config maps onto a ``RunSpec``.
+        """
         from flyteidl2.core import literals_pb2, security_pb2
         from flyteidl2.task import run_pb2
-        from flyteidl2.workflow import run_definition_pb2, run_service_pb2
         from google.protobuf import wrappers_pb2
+
+        env = self._build_env_dict()
+        if base is not None:
+            # Inherit the prior run's env as the floor; runner overrides win.
+            merged = {kv.key: kv.value for kv in base.envs.values}
+            merged.update(env)
+            env = merged
+
+        kv_pairs: List[literals_pb2.KeyValuePair] = []
+        for k, v in env.items():
+            if not isinstance(v, str):
+                raise ValueError(f"Environment variable {k} must be a string, got {type(v)}")
+            kv_pairs.append(literals_pb2.KeyValuePair(key=k, value=v))
+        env_kv = run_pb2.Envs(values=kv_pairs)
+
+        notification_rule_name = None
+        notification_rules = None
+        if self._notifications:
+            from flyte._internal.runtime.notifications_serde import resolve_notification_settings
+
+            notification_rule_name, notification_rules = resolve_notification_settings(self._notifications)
+
+        if base is None:
+            raw_data_storage = (
+                run_pb2.RawDataStorage(raw_data_prefix=self._raw_data_path) if self._raw_data_path else None
+            )
+            security_context = (
+                security_pb2.SecurityContext(run_as=security_pb2.Identity(k8s_service_account=self._service_account))
+                if self._service_account
+                else None
+            )
+            run_spec = run_pb2.RunSpec(
+                overwrite_cache=self._overwrite_cache,
+                interruptible=wrappers_pb2.BoolValue(value=self._interruptible)
+                if self._interruptible is not None
+                else None,
+                annotations=run_pb2.Annotations(values=self._annotations),
+                labels=run_pb2.Labels(values=self._labels),
+                envs=env_kv,
+                cluster=self._queue or (task.queue if task is not None else ""),
+                max_action_concurrency=self._max_action_concurrency or 0,
+                raw_data_storage=raw_data_storage,
+                security_context=security_context,
+                cache_config=run_pb2.CacheConfig(
+                    overwrite_cache=self._overwrite_cache,
+                    cache_lookup_scope=_to_cache_lookup_scope(self._cache_lookup_scope)
+                    if self._cache_lookup_scope
+                    else None,
+                ),
+                notification_rule_name=notification_rule_name,
+                notification_rules=notification_rules,
+            )
+        else:
+            # Deep-copy the fetched spec (it is shared/cached on the RunDetails); never mutate in place.
+            run_spec = run_pb2.RunSpec()
+            run_spec.CopyFrom(base)
+            run_spec.envs.CopyFrom(env_kv)
+            if self._interruptible is not None:
+                run_spec.interruptible.CopyFrom(wrappers_pb2.BoolValue(value=self._interruptible))
+            if self._overwrite_cache:
+                run_spec.overwrite_cache = True
+                run_spec.cache_config.overwrite_cache = True
+            if self._labels:
+                for k, v in self._labels.items():
+                    run_spec.labels.values[k] = v
+            if self._annotations:
+                for k, v in self._annotations.items():
+                    run_spec.annotations.values[k] = v
+            if self._cache_lookup_scope:
+                run_spec.cache_config.cache_lookup_scope = _to_cache_lookup_scope(self._cache_lookup_scope)
+            if self._max_action_concurrency:
+                run_spec.max_action_concurrency = self._max_action_concurrency
+            if self._queue:
+                # TODO: cluster is being renamed to queue
+                run_spec.cluster = self._queue
+            if self._service_account:
+                run_spec.security_context.CopyFrom(
+                    security_pb2.SecurityContext(
+                        run_as=security_pb2.Identity(k8s_service_account=self._service_account)
+                    )
+                )
+            if notification_rule_name:
+                run_spec.notification_rule_name = notification_rule_name
+            if notification_rules:
+                run_spec.notification_rules.CopyFrom(notification_rules)
+
+        # recover: gated until flyteidl2 ships RunSpec.recover (+ backend support). One-line set then.
+        recover = getattr(self, "_recover", None)
+        if recover:
+            if "recover" not in run_pb2.RunSpec.DESCRIPTOR.fields_by_name:
+                raise NotImplementedError(
+                    "recover is not yet supported by this backend "
+                    "(RunSpec.recover is unavailable in this flyteidl2 build)."
+                )
+            from flyteidl2.common import identifier_pb2
+
+            run_spec.recover.CopyFrom(run_pb2.Recover(run_id=identifier_pb2.RunIdentifier(name=recover)))
+
+        return run_spec
+
+    async def _submit_remote(
+        self, *, task_spec: Any, task_id: Any, inputs: Any, run_spec: Any, run_id: Any, project_id: Any
+    ) -> Run:
+        """Upload inputs and create the run. The single network call site for remote submission.
+
+        Consumes an already-built ``run_spec`` (see ``_apply_overrides``) plus a task by
+        reference (``task_id``) or by value (``task_spec``); shared by ``_run_remote`` and ``rerun``.
+        """
+        from connectrpc.code import Code
+        from connectrpc.errors import ConnectError
+        from flyteidl2.dataproxy import dataproxy_service_pb2
+        from flyteidl2.workflow import run_service_pb2
+
+        import flyte.errors
+        from flyte.remote import Run
+
+        try:
+            upload_req = dataproxy_service_pb2.UploadInputsRequest(inputs=inputs.proto_inputs)
+            # Reference an already-registered task by id; otherwise upload the full spec.
+            if task_id is not None:
+                upload_req.task_id.CopyFrom(task_id)
+            else:
+                upload_req.task_spec.CopyFrom(task_spec)
+            if run_id is not None:
+                upload_req.run_id.CopyFrom(run_id)
+            else:
+                upload_req.project_id.CopyFrom(project_id)
+
+            upload_resp = await get_client().dataproxy_service.upload_inputs(upload_req)
+
+            create_req = run_service_pb2.CreateRunRequest(
+                run_id=run_id,
+                project_id=project_id,
+                offloaded_input_data=upload_resp.offloaded_input_data,
+                run_spec=run_spec,
+            )
+            # Reference an already-registered task by id; otherwise send the full spec.
+            if task_id is not None:
+                create_req.task_id.CopyFrom(task_id)
+            else:
+                create_req.task_spec.CopyFrom(task_spec)
+
+            resp = await get_client().run_service.create_run(create_req)
+            return Run(pb2=resp.run, _preserve_original_types=self._preserve_original_types)
+        except ConnectError as e:
+            if e.code == Code.UNAVAILABLE:
+                raise flyte.errors.RuntimeSystemError(
+                    "SystemUnavailableError",
+                    "Flyte system is currently unavailable. check your configuration, or the service status.",
+                ) from e
+            elif e.code == Code.INVALID_ARGUMENT:
+                raise flyte.errors.RuntimeUserError("InvalidArgumentError", e.message)
+            elif e.code == Code.ALREADY_EXISTS:
+                # TODO maybe this should be a pass and return existing run?
+                raise flyte.errors.RuntimeUserError(
+                    "RunAlreadyExistsError",
+                    f"A run with the name '{self._name}' already exists. Please choose a different name.",
+                )
+            else:
+                raise flyte.errors.RuntimeSystemError(
+                    "RunCreationError",
+                    f"Failed to create run: {e.message}",
+                ) from e
+
+    @requires_initialization
+    async def _run_remote(self, obj: TaskTemplate[P, R, F] | LazyEntity, *args: P.args, **kwargs: P.kwargs) -> Run:
+        from flyteidl2.common import identifier_pb2
+        from flyteidl2.workflow import run_definition_pb2
 
         import flyte.errors
         from flyte.remote import Run
@@ -312,38 +545,6 @@ class _Runner:
         else:
             raise ValueError(f"Not supported Task Type: {type(task)}")
 
-        env = self._env_vars or {}
-        if env.get("LOG_LEVEL") is None:
-            if self._log_level:
-                env["LOG_LEVEL"] = str(self._log_level)
-            else:
-                env["LOG_LEVEL"] = str(logger.getEffectiveLevel())
-        env["LOG_FORMAT"] = self._log_format
-        if self._user_log_level is not None:
-            env["USER_LOG_LEVEL"] = str(self._user_log_level)
-        if self._reset_root_logger:
-            env["FLYTE_RESET_ROOT_LOGGER"] = "1"
-        if self._debug:
-            env["_F_E_VS"] = "1"
-
-        use_rust_controller_env_var = os.getenv("_F_USE_RUST_CONTROLLER")
-        if use_rust_controller_env_var:
-            env["_F_USE_RUST_CONTROLLER"] = use_rust_controller_env_var
-
-        # These paths will be appended to sys.path at runtime.
-        if cfg.sync_local_sys_paths:
-            root_dir_abs = pathlib.Path(cfg.root_dir).resolve()
-            added_paths = [
-                f"./{pathlib.Path(p).relative_to(root_dir_abs)}"
-                for p in sys.path
-                if pathlib.Path(p).is_relative_to(root_dir_abs)
-            ]
-            env[FLYTE_SYS_PATH] = ":".join(added_paths)
-
-        # TODO: Remove once the actions service is the default and this env var is no longer needed.
-        if os.getenv("_U_USE_ACTIONS") == "1":
-            env["_U_USE_ACTIONS"] = "1"
-
         if not self._dry_run:
             if get_client() is None:
                 # This can only happen, if the user forces flyte.run(mode="remote") without initializing the client
@@ -354,21 +555,7 @@ class _Runner:
                     "Call flyte.init() with a valid endpoint/api-key before using this function"
                     "or Call flyte.init_from_config() with a valid path to the config file",
                 )
-            run_id = None
-            project_id = None
-            if self._name:
-                run_id = identifier_pb2.RunIdentifier(
-                    project=project,
-                    domain=domain,
-                    org=cfg.org,
-                    name=self._name or None,
-                )
-            else:
-                project_id = identifier_pb2.ProjectIdentifier(
-                    name=project,
-                    domain=domain,
-                    organization=cfg.org,
-                )
+            run_id, project_id = self._resolve_run_target(project, domain, cfg.org)
             # Fill in task id inside the task template if it's not provided.
             # Maybe this should be done here, or the backend.
             # Only needed for locally-defined tasks; a fetched task sent by reference (task_id set)
@@ -384,110 +571,15 @@ class _Runner:
                 if task_spec.task_template.id.version == "":
                     task_spec.task_template.id.version = version
 
-            kv_pairs: List[literals_pb2.KeyValuePair] = []
-            for k, v in env.items():
-                if not isinstance(v, str):
-                    raise ValueError(f"Environment variable {k} must be a string, got {type(v)}")
-                kv_pairs.append(literals_pb2.KeyValuePair(key=k, value=v))
-
-            env_kv = run_pb2.Envs(values=kv_pairs)
-            annotations = run_pb2.Annotations(values=self._annotations)
-            labels = run_pb2.Labels(values=self._labels)
-            raw_data_storage = (
-                run_pb2.RawDataStorage(raw_data_prefix=self._raw_data_path) if self._raw_data_path else None
+            run_spec = self._apply_overrides(None, task=task)
+            return await self._submit_remote(
+                task_spec=task_spec,
+                task_id=task_id,
+                inputs=inputs,
+                run_spec=run_spec,
+                run_id=run_id,
+                project_id=project_id,
             )
-            security_context = (
-                security_pb2.SecurityContext(run_as=security_pb2.Identity(k8s_service_account=self._service_account))
-                if self._service_account
-                else None
-            )
-
-            def _to_cache_lookup_scope(scope: CacheLookupScope | None = None) -> run_pb2.CacheLookupScope:
-                if scope == "global":
-                    return run_pb2.CacheLookupScope.CACHE_LOOKUP_SCOPE_GLOBAL
-                elif scope == "project-domain":
-                    return run_pb2.CacheLookupScope.CACHE_LOOKUP_SCOPE_PROJECT_DOMAIN
-                elif scope is None:
-                    return run_pb2.CacheLookupScope.CACHE_LOOKUP_SCOPE_UNSPECIFIED
-                else:
-                    raise ValueError(f"Unknown cache lookup scope: {scope}")
-
-            notification_rule_name = None
-            notification_rules = None
-            if self._notifications:
-                from flyte._internal.runtime.notifications_serde import resolve_notification_settings
-
-                notification_rule_name, notification_rules = resolve_notification_settings(self._notifications)
-
-            try:
-                from flyteidl2.dataproxy import dataproxy_service_pb2
-
-                upload_req = dataproxy_service_pb2.UploadInputsRequest(inputs=inputs.proto_inputs)
-                # Reference an already-registered task by id; otherwise upload the full spec.
-                if task_id is not None:
-                    upload_req.task_id.CopyFrom(task_id)
-                else:
-                    upload_req.task_spec.CopyFrom(task_spec)
-                if run_id is not None:
-                    upload_req.run_id.CopyFrom(run_id)
-                else:
-                    upload_req.project_id.CopyFrom(project_id)
-
-                upload_resp = await get_client().dataproxy_service.upload_inputs(upload_req)
-
-                create_req = run_service_pb2.CreateRunRequest(
-                    run_id=run_id,
-                    project_id=project_id,
-                    offloaded_input_data=upload_resp.offloaded_input_data,
-                    run_spec=run_pb2.RunSpec(
-                        overwrite_cache=self._overwrite_cache,
-                        interruptible=wrappers_pb2.BoolValue(value=self._interruptible)
-                        if self._interruptible is not None
-                        else None,
-                        annotations=annotations,
-                        labels=labels,
-                        envs=env_kv,
-                        cluster=self._queue or task.queue,
-                        max_action_concurrency=self._max_action_concurrency or 0,
-                        raw_data_storage=raw_data_storage,
-                        security_context=security_context,
-                        cache_config=run_pb2.CacheConfig(
-                            overwrite_cache=self._overwrite_cache,
-                            cache_lookup_scope=_to_cache_lookup_scope(self._cache_lookup_scope)
-                            if self._cache_lookup_scope
-                            else None,
-                        ),
-                        notification_rule_name=notification_rule_name,
-                        notification_rules=notification_rules,
-                    ),
-                )
-                # Reference an already-registered task by id; otherwise send the full spec.
-                if task_id is not None:
-                    create_req.task_id.CopyFrom(task_id)
-                else:
-                    create_req.task_spec.CopyFrom(task_spec)
-
-                resp = await get_client().run_service.create_run(create_req)
-                return Run(pb2=resp.run, _preserve_original_types=self._preserve_original_types)
-            except ConnectError as e:
-                if e.code == Code.UNAVAILABLE:
-                    raise flyte.errors.RuntimeSystemError(
-                        "SystemUnavailableError",
-                        "Flyte system is currently unavailable. check your configuration, or the service status.",
-                    ) from e
-                elif e.code == Code.INVALID_ARGUMENT:
-                    raise flyte.errors.RuntimeUserError("InvalidArgumentError", e.message)
-                elif e.code == Code.ALREADY_EXISTS:
-                    # TODO maybe this should be a pass and return existing run?
-                    raise flyte.errors.RuntimeUserError(
-                        "RunAlreadyExistsError",
-                        f"A run with the name '{self._name}' already exists. Please choose a different name.",
-                    )
-                else:
-                    raise flyte.errors.RuntimeSystemError(
-                        "RunCreationError",
-                        f"Failed to create run: {e.message}",
-                    ) from e
 
         class DryRun(Run):
             def __init__(self, _task_spec, _inputs, _code_bundle):

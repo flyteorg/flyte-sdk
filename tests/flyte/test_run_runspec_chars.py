@@ -301,3 +301,62 @@ async def test_dry_run_returns_dryrun_without_create_run(mock_code_bundler, mock
     assert run is not None
     assert run.task_spec is not None
     mock_run_service.create_run.assert_not_called()
+
+
+# --- _apply_overrides inherited path (the rerun seam, base != None) --------------------
+
+
+@pytest.mark.asyncio
+async def test_apply_overrides_inherited_merges_env_and_keys():
+    """base != None: deep-copy the prior RunSpec, overlay env by key, apply only set overrides."""
+    from flyteidl2.core import literals_pb2
+    from flyteidl2.task import run_pb2
+
+    from flyte._run import _Runner
+
+    mock_client, _ = _make_mock_client()
+    await _init_for_testing(client=mock_client, project="test", domain="test")
+
+    base = run_pb2.RunSpec(
+        envs=run_pb2.Envs(
+            values=[
+                literals_pb2.KeyValuePair(key="KEEP", value="1"),
+                literals_pb2.KeyValuePair(key="FOO", value="old"),
+            ]
+        ),
+        labels=run_pb2.Labels(values={"base": "yes"}),
+        cluster="orig-cluster",
+    )
+
+    runner = _Runner(force_mode="remote", env_vars={"FOO": "new", "BAR": "2"}, labels={"team": "ml"})
+    out = runner._apply_overrides(base)
+
+    envs = {kv.key: kv.value for kv in out.envs.values}
+    assert envs["KEEP"] == "1"  # prior key preserved
+    assert envs["FOO"] == "new"  # runner override wins
+    assert envs["BAR"] == "2"  # new key added
+    assert out.labels.values["base"] == "yes"  # prior label preserved
+    assert out.labels.values["team"] == "ml"  # runner label merged
+    assert out.cluster == "orig-cluster"  # queue not set on runner -> inherited cluster kept
+
+    # base is not mutated (deep copy).
+    assert {kv.key: kv.value for kv in base.envs.values} == {"KEEP": "1", "FOO": "old"}
+
+
+@pytest.mark.asyncio
+async def test_apply_overrides_recover_gated():
+    """recover raises until flyteidl2 RunSpec.recover ships (field absent today)."""
+    from flyteidl2.task import run_pb2
+
+    from flyte._run import _Runner
+
+    mock_client, _ = _make_mock_client()
+    await _init_for_testing(client=mock_client, project="test", domain="test")
+
+    runner = _Runner(force_mode="remote")
+    runner._recover = "some-run"  # Phase 4 wires this via with_runcontext(recover=...)
+
+    if "recover" in run_pb2.RunSpec.DESCRIPTOR.fields_by_name:
+        pytest.skip("RunSpec.recover is available; gating no longer applies")
+    with pytest.raises(NotImplementedError, match="recover is not yet supported"):
+        runner._apply_overrides(None)
