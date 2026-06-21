@@ -6,7 +6,7 @@ task + inputs from the platform, no local code needed. ``--recover`` reuses that
 succeeded actions (coming soon). To re-run with *new* code while recovering, use
 ``flyte run <file> <task> --recover-from <run>``.
 
-v1 re-uses the prior run's exact inputs; changing inputs from the CLI is a follow-up
+v1 reuses the prior run's exact inputs; changing inputs from the CLI is a follow-up
 (`flyte.rerun(run, x=2)` covers it programmatically today).
 """
 
@@ -40,9 +40,7 @@ def _parse_kv(items: Tuple[str, ...], flag: str) -> Optional[Dict[str, str]]:
 @click.option("-p", "--project", default=None, help="Project for the new run (defaults to config).")
 @click.option("-d", "--domain", default=None, help="Domain for the new run (defaults to config).")
 @click.option("--name", default=None, help="Name for the new run (a random name is generated if unset).")
-@click.option(
-    "-e", "--env", "env", multiple=True, help="Env var KEY=VALUE for the new run. Repeatable."
-)
+@click.option("-e", "--env", "env", multiple=True, help="Env var KEY=VALUE for the new run. Repeatable.")
 @click.option("--label", "label", multiple=True, help="Label KEY=VALUE for the new run. Repeatable.")
 @click.option("--follow", "-f", is_flag=True, default=False, help="Stream the parent action logs after launch.")
 @click.option(

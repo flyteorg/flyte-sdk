@@ -122,7 +122,7 @@ class _Runner:
         cache_lookup_scope: CacheLookupScope = "global",
         preserve_original_types: bool | None = None,
         debug: bool = False,
-        recover: bool | str = False,
+        recover: bool | str | None = False,
         _tracker: Any = None,
         _bundle_relative_paths: tuple[str, ...] | None = None,
         _bundle_from_dir: pathlib.Path | None = None,
@@ -1096,7 +1096,7 @@ def with_runcontext(
     cache_lookup_scope: CacheLookupScope = "global",
     preserve_original_types: bool = False,
     debug: bool = False,
-    recover: bool | str = False,
+    recover: bool | str | None = False,
     _tracker: Any = None,
 ) -> _Runner:
     """

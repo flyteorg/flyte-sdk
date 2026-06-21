@@ -139,16 +139,10 @@ async def test_runspec_overwrite_cache(mock_code_bundler, mock_build_image_bg):
 async def test_runspec_cache_lookup_scope(mock_code_bundler, mock_build_image_bg):
     """Default scope is global; project-domain maps to its enum."""
     req_global = await _run_and_capture(mock_build_image_bg, mock_code_bundler)
-    assert (
-        req_global.run_spec.cache_config.cache_lookup_scope
-        == run_pb2.CacheLookupScope.CACHE_LOOKUP_SCOPE_GLOBAL
-    )
+    assert req_global.run_spec.cache_config.cache_lookup_scope == run_pb2.CacheLookupScope.CACHE_LOOKUP_SCOPE_GLOBAL
 
     req_pd = await _run_and_capture(mock_build_image_bg, mock_code_bundler, cache_lookup_scope="project-domain")
-    assert (
-        req_pd.run_spec.cache_config.cache_lookup_scope
-        == run_pb2.CacheLookupScope.CACHE_LOOKUP_SCOPE_PROJECT_DOMAIN
-    )
+    assert req_pd.run_spec.cache_config.cache_lookup_scope == run_pb2.CacheLookupScope.CACHE_LOOKUP_SCOPE_PROJECT_DOMAIN
 
 
 @pytest.mark.asyncio
