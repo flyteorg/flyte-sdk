@@ -34,7 +34,7 @@ from ._pod import PodTemplate
 from ._resources import AMD_GPU, GPU, HABANA_GAUDI, TPU, Device, DeviceClass, Neuron, Resources
 from ._retry import Backoff, RetryStrategy
 from ._reusable_environment import ReusePolicy
-from ._run import run, with_runcontext
+from ._run import replay, rerun, run, with_runcontext
 from ._run_python_script import run_python_script
 from ._secret import Secret, SecretRequest
 from ._serve import AppHandle, serve, with_servecontext
@@ -106,6 +106,8 @@ __all__ = [
     "logger",
     "map",
     "new_condition",
+    "replay",
+    "rerun",
     "run",
     "run_python_script",
     "serve",

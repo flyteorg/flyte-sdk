@@ -443,12 +443,13 @@ class _Runner:
         return run_spec
 
     async def _submit_remote(
-        self, *, task_spec: Any, task_id: Any, inputs: Any, run_spec: Any, run_id: Any, project_id: Any
+        self, *, task_spec: Any, task_id: Any, proto_inputs: Any, run_spec: Any, run_id: Any, project_id: Any
     ) -> Run:
         """Upload inputs and create the run. The single network call site for remote submission.
 
-        Consumes an already-built ``run_spec`` (see ``_apply_overrides``) plus a task by
-        reference (``task_id``) or by value (``task_spec``); shared by ``_run_remote`` and ``rerun``.
+        Consumes an already-built ``run_spec`` (see ``_apply_overrides``), raw proto ``inputs``
+        (``flyteidl2.task.Inputs``), and a task by reference (``task_id``) or by value
+        (``task_spec``); shared by ``_run_remote`` and ``rerun``.
         """
         from connectrpc.code import Code
         from connectrpc.errors import ConnectError
@@ -459,7 +460,7 @@ class _Runner:
         from flyte.remote import Run
 
         try:
-            upload_req = dataproxy_service_pb2.UploadInputsRequest(inputs=inputs.proto_inputs)
+            upload_req = dataproxy_service_pb2.UploadInputsRequest(inputs=proto_inputs)
             # Reference an already-registered task by id; otherwise upload the full spec.
             if task_id is not None:
                 upload_req.task_id.CopyFrom(task_id)
@@ -578,7 +579,7 @@ class _Runner:
             return await self._submit_remote(
                 task_spec=task_spec,
                 task_id=task_id,
-                inputs=inputs,
+                proto_inputs=inputs.proto_inputs,
                 run_spec=run_spec,
                 run_id=run_id,
                 project_id=project_id,
@@ -937,6 +938,103 @@ class _Runner:
         finally:
             _run_mode_var.set(None)
 
+    @syncify  # type: ignore[arg-type]
+    async def rerun(
+        self,
+        run_name: str,
+        action_name: str = "a0",
+        task_template: TaskTemplate[P, R, F] | None = None,
+        inputs: Dict[str, Any] | None = None,
+    ) -> Run:
+        """Re-run a prior run, returning a new `Run`.
+
+        - `rerun("r1")` re-runs with the prior run's exact inputs, fetching its task spec from the
+          platform (no local code needed).
+        - `rerun("r1", inputs={"x": 2})` changes input parameters (converted against the fetched
+          task interface).
+        - `rerun("r1", task_template=fixed)` substitutes new code, validated against the original
+          inputs (or `inputs` if given).
+
+        The prior run's `RunSpec` is inherited and merged with this context's overrides
+        (`with_runcontext(env_vars=..., interruptible=..., recover=...)` etc.), so debug/recover
+        compose with rerun. Currently remote-only.
+
+        :param run_name: Name of the prior run to re-run.
+        :param action_name: Action within the prior run to source the task + inputs from (default `a0`).
+        :param task_template: Optional task to substitute for the prior run's code.
+        :param inputs: Optional native kwargs to change input parameters; omit to reuse prior inputs.
+        :return: the new Run.
+        """
+        if self._mode != "remote":
+            raise NotImplementedError(f"rerun is only supported in remote mode, got mode={self._mode!r}")
+
+        from flyteidl2.dataproxy import dataproxy_service_pb2
+
+        from flyte.remote._action import ActionDetails
+        from flyte.remote._run import RunDetails
+
+        from ._internal.runtime.convert import convert_from_native_to_inputs
+
+        cfg = get_init_config()
+        project = self._project or cfg.project
+        domain = self._domain or cfg.domain
+
+        run_details = await RunDetails.get.aio(name=run_name)
+        base_run_spec = run_details.pb2.run_spec
+        if action_name == "a0":
+            action_details = run_details.action_details
+        else:
+            action_details = await ActionDetails.get.aio(run_name=run_name, name=action_name)
+
+        # Task source: substitute a freshly-built local spec, or reuse the prior action's spec.
+        if task_template is not None:
+            task_spec, _code_bundle, version = await self._build_task_spec_from_template(task_template)
+        else:
+            if not action_details.pb2.HasField("task"):
+                raise ValueError(f"Action {run_name}/{action_name} has no task spec to rerun.")
+            task_spec = action_details.pb2.task
+            version = task_spec.task_template.id.version
+
+        # Inputs: reuse the prior raw proto inputs, or convert new native kwargs against the interface.
+        if inputs:
+            if task_template is not None:
+                iface = task_template.native_interface
+            else:
+                from flyte.types._interface import guess_interface
+
+                iface = guess_interface(task_spec.task_template.interface)
+            converted = await convert_from_native_to_inputs(iface, custom_context=self._custom_context, **inputs)
+            proto_inputs = converted.proto_inputs
+        else:
+            resp = await get_client().dataproxy_service.get_action_data(
+                request=dataproxy_service_pb2.GetActionDataRequest(action_id=action_details.pb2.id)
+            )
+            proto_inputs = resp.inputs
+
+        run_id, project_id = self._resolve_run_target(project, domain, cfg.org)
+
+        # A freshly-built substitute spec may carry empty ids; fill them like _run_remote does.
+        if task_template is not None:
+            tt_id = task_spec.task_template.id
+            if tt_id.project == "":
+                tt_id.project = project or ""
+            if tt_id.domain == "":
+                tt_id.domain = domain or ""
+            if tt_id.org == "":
+                tt_id.org = cfg.org or ""
+            if tt_id.version == "":
+                tt_id.version = version
+
+        run_spec = self._apply_overrides(base_run_spec)
+        return await self._submit_remote(
+            task_spec=task_spec,
+            task_id=None,
+            proto_inputs=proto_inputs,
+            run_spec=run_spec,
+            run_id=run_id,
+            project_id=project_id,
+        )
+
 
 def with_runcontext(
     mode: Mode | None = None,
@@ -1120,3 +1218,35 @@ async def run(task: TaskTemplate[P, R, F], *args: P.args, **kwargs: P.kwargs) ->
     """
     # using syncer causes problems
     return await _Runner().run.aio(task, *args, **kwargs)  # type: ignore
+
+
+@syncify
+async def rerun(
+    run_name: str,
+    action_name: str = "a0",
+    task_template: TaskTemplate[P, R, F] | None = None,
+    **inputs: Any,
+) -> Run:
+    """Re-run a prior run, returning a new `Run`.
+
+    `rerun("r1")` reuses the prior run's exact inputs (fetching its code from the platform);
+    pass keyword inputs to change parameters (`rerun("r1", x=2)`), or `task_template=` to substitute
+    code. Use `with_runcontext(...).rerun(...)` to apply run-context overrides (env_vars, recover, …).
+
+    :param run_name: Name of the prior run to re-run.
+    :param action_name: Action within the prior run to source the task + inputs from (default `a0`).
+    :param task_template: Optional task to substitute for the prior run's code.
+    :param inputs: Optional native keyword inputs to change parameters; omit to reuse prior inputs.
+    :return: the new Run.
+    """
+    return await _Runner().rerun.aio(run_name, action_name, task_template, inputs=inputs or None)
+
+
+@syncify
+async def replay(
+    run_name: str,
+    action_name: str = "a0",
+    task_template: TaskTemplate[P, R, F] | None = None,
+) -> Run:
+    """Deprecated alias for `rerun` with the prior run's exact inputs. Use `flyte.rerun` instead."""
+    return await _Runner().rerun.aio(run_name, action_name, task_template, inputs=None)
