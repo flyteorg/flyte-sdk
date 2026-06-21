@@ -157,6 +157,114 @@ class _Runner:
         )
         self._debug = debug
 
+    async def _build_task_spec_from_template(self, obj: TaskTemplate[P, R, F]) -> Tuple[Any, Any, str]:
+        """Build ``(task_spec, code_bundle, version)`` from a local ``TaskTemplate``.
+
+        Shared by ``_run_remote`` (local-task branch) and ``rerun`` with substitute code, so both
+        get identical fidelity (copy_files / dry_run / interactive_mode / include-files). Heavy
+        imports stay function-local to keep ``import flyte`` cheap. The built ``image_cache`` is
+        folded into the returned ``task_spec`` via the serialization context, so it is not returned.
+        """
+        import flyte.report
+        from flyte._image import Image, resolve_code_bundle_layer
+
+        from ._code_bundle import build_code_bundle, build_code_bundle_from_relative_paths, build_pkl_bundle
+        from ._code_bundle._includes import collect_env_include_files
+        from ._deploy import build_images, plan_deploy
+        from ._internal.runtime.task_serde import translate_task_to_wire
+
+        cfg = get_init_config()
+        project = self._project or cfg.project
+        domain = self._domain or cfg.domain
+
+        if obj.parent_env is None:
+            raise ValueError("Task is not attached to an environment. Please attach the task to an environment")
+
+        # Resolve any CodeBundleLayer layers before building images.
+        # Must cover the parent env AND all depends_on envs (recursively)
+        # so that _build_images can compute the content hash for every image.
+        parent_env = cast(Environment, obj.parent_env())
+        plan_envs = list(plan_deploy(parent_env)[0].envs.values())
+        for _env in plan_envs:
+            if isinstance(_env.image, Image):
+                _env.image = resolve_code_bundle_layer(_env.image, self._copy_files, pathlib.Path(cfg.root_dir))
+
+        if not self._dry_run:
+            image_cache = await build_images.aio(parent_env)
+        else:
+            image_cache = None
+
+        include_files = collect_env_include_files(plan_envs)
+        skip_cache = self._disable_run_cache
+
+        if self._interactive_mode:
+            if include_files:
+                raise ValueError(
+                    "Environment.include is not supported in interactive/pkl runs. "
+                    "Run from a file or remove `include` from the environment."
+                )
+            code_bundle = await build_pkl_bundle(
+                obj,
+                upload_to_controlplane=not self._dry_run,
+                copy_bundle_to=self._copy_bundle_to,
+            )
+        elif self._copy_files == "custom":
+            if not self._bundle_relative_paths or not self._bundle_from_dir:
+                raise ValueError("copy_style='custom' requires _bundle_relative_paths and _bundle_from_dir")
+            merged_paths = tuple(self._bundle_relative_paths) + include_files
+            code_bundle = await build_code_bundle_from_relative_paths(
+                merged_paths,
+                from_dir=self._bundle_from_dir,
+                dryrun=self._dry_run,
+                copy_bundle_to=self._copy_bundle_to,
+                skip_cache=skip_cache,
+            )
+        elif self._copy_files != "none":
+            code_bundle = await build_code_bundle(
+                from_dir=cfg.root_dir,
+                dryrun=self._dry_run,
+                copy_bundle_to=self._copy_bundle_to,
+                copy_style=self._copy_files,
+                additional_files=include_files,
+                skip_cache=skip_cache,
+            )
+        elif include_files:
+            code_bundle = await build_code_bundle_from_relative_paths(
+                include_files,
+                from_dir=pathlib.Path(cfg.root_dir),
+                dryrun=self._dry_run,
+                copy_bundle_to=self._copy_bundle_to,
+                skip_cache=skip_cache,
+            )
+        else:
+            code_bundle = None
+
+        version = self._version or (
+            code_bundle.computed_version if code_bundle and code_bundle.computed_version else None
+        )
+        if not version:
+            raise ValueError("Version is required when running a task")
+        s_ctx = SerializationContext(
+            code_bundle=code_bundle,
+            version=version,
+            image_cache=image_cache,
+            root_dir=cfg.root_dir,
+        )
+        action = ActionID(name="{{.actionName}}", run_name="{{.runName}}", project=project, domain=domain, org=cfg.org)
+        tctx = TaskContext(
+            action=action,
+            code_bundle=code_bundle,
+            output_path="",
+            version=version or "na",
+            raw_data_path=RawDataPath(path=""),
+            compiled_image_cache=image_cache,
+            run_base_dir="",
+            report=flyte.report.Report(name=action.name),
+            custom_context=self._custom_context,
+        )
+        task_spec = translate_task_to_wire(obj, s_ctx, default_inputs=None, task_context=tctx)
+        return task_spec, code_bundle, version
+
     @requires_initialization
     async def _run_remote(self, obj: TaskTemplate[P, R, F] | LazyEntity, *args: P.args, **kwargs: P.kwargs) -> Run:
         from connectrpc.code import Code
@@ -167,15 +275,11 @@ class _Runner:
         from flyteidl2.workflow import run_definition_pb2, run_service_pb2
         from google.protobuf import wrappers_pb2
 
-        import flyte.report
+        import flyte.errors
         from flyte.remote import Run
         from flyte.remote._task import LazyEntity, TaskDetails
 
-        from ._code_bundle import build_code_bundle, build_code_bundle_from_relative_paths, build_pkl_bundle
-        from ._code_bundle._includes import collect_env_include_files
-        from ._deploy import build_images
         from ._internal.runtime.convert import convert_from_native_to_inputs
-        from ._internal.runtime.task_serde import translate_task_to_wire
 
         cfg = get_init_config()
         project = self._project or cfg.project
@@ -201,98 +305,7 @@ class _Runner:
             code_bundle = None
         elif isinstance(obj, TaskTemplate):
             task = cast(TaskTemplate[P, R, F], obj)
-            if obj.parent_env is None:
-                raise ValueError("Task is not attached to an environment. Please attach the task to an environment")
-
-            # Resolve any CodeBundleLayer layers before building images.
-            # Must cover the parent env AND all depends_on envs (recursively)
-            # so that _build_images can compute the content hash for every image.
-            parent_env = cast(Environment, obj.parent_env())
-            from flyte._image import Image, resolve_code_bundle_layer
-
-            from ._deploy import plan_deploy
-
-            plan_envs = list(plan_deploy(parent_env)[0].envs.values())
-            for _env in plan_envs:
-                if isinstance(_env.image, Image):
-                    _env.image = resolve_code_bundle_layer(_env.image, self._copy_files, pathlib.Path(cfg.root_dir))
-
-            if not self._dry_run:
-                image_cache = await build_images.aio(parent_env)
-            else:
-                image_cache = None
-
-            include_files = collect_env_include_files(plan_envs)
-            skip_cache = self._disable_run_cache
-
-            if self._interactive_mode:
-                if include_files:
-                    raise ValueError(
-                        "Environment.include is not supported in interactive/pkl runs. "
-                        "Run from a file or remove `include` from the environment."
-                    )
-                code_bundle = await build_pkl_bundle(
-                    obj,
-                    upload_to_controlplane=not self._dry_run,
-                    copy_bundle_to=self._copy_bundle_to,
-                )
-            elif self._copy_files == "custom":
-                if not self._bundle_relative_paths or not self._bundle_from_dir:
-                    raise ValueError("copy_style='custom' requires _bundle_relative_paths and _bundle_from_dir")
-                merged_paths = tuple(self._bundle_relative_paths) + include_files
-                code_bundle = await build_code_bundle_from_relative_paths(
-                    merged_paths,
-                    from_dir=self._bundle_from_dir,
-                    dryrun=self._dry_run,
-                    copy_bundle_to=self._copy_bundle_to,
-                    skip_cache=skip_cache,
-                )
-            elif self._copy_files != "none":
-                code_bundle = await build_code_bundle(
-                    from_dir=cfg.root_dir,
-                    dryrun=self._dry_run,
-                    copy_bundle_to=self._copy_bundle_to,
-                    copy_style=self._copy_files,
-                    additional_files=include_files,
-                    skip_cache=skip_cache,
-                )
-            elif include_files:
-                code_bundle = await build_code_bundle_from_relative_paths(
-                    include_files,
-                    from_dir=pathlib.Path(cfg.root_dir),
-                    dryrun=self._dry_run,
-                    copy_bundle_to=self._copy_bundle_to,
-                    skip_cache=skip_cache,
-                )
-            else:
-                code_bundle = None
-
-            version = self._version or (
-                code_bundle.computed_version if code_bundle and code_bundle.computed_version else None
-            )
-            if not version:
-                raise ValueError("Version is required when running a task")
-            s_ctx = SerializationContext(
-                code_bundle=code_bundle,
-                version=version,
-                image_cache=image_cache,
-                root_dir=cfg.root_dir,
-            )
-            action = ActionID(
-                name="{{.actionName}}", run_name="{{.runName}}", project=project, domain=domain, org=cfg.org
-            )
-            tctx = TaskContext(
-                action=action,
-                code_bundle=code_bundle,
-                output_path="",
-                version=version or "na",
-                raw_data_path=RawDataPath(path=""),
-                compiled_image_cache=image_cache,
-                run_base_dir="",
-                report=flyte.report.Report(name=action.name),
-                custom_context=self._custom_context,
-            )
-            task_spec = translate_task_to_wire(obj, s_ctx, default_inputs=None, task_context=tctx)
+            task_spec, code_bundle, version = await self._build_task_spec_from_template(obj)
             inputs = await convert_from_native_to_inputs(
                 obj.native_interface, *args, custom_context=self._custom_context, **kwargs
             )
