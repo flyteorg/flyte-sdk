@@ -289,9 +289,18 @@ class RunArguments:
             )
         },
     )
-    # TODO: add a `--recover-from <run>` option (recover a fresh run from a prior run: reuse its
-    # succeeded actions) once the flyteidl2 RunSpec.recover field + backend support ship. Hidden
-    # options still surface in `flyte gen docs`, so it's omitted entirely for now.
+    recover_from: str | None = field(
+        default=None,
+        metadata={
+            "click.option": click.Option(
+                ["--recover-from"],
+                type=str,
+                default=None,
+                help="Recover a fresh run from a prior run: reuse its succeeded actions and re-run "
+                "only what failed or changed. Remote-only.",
+            )
+        },
+    )
     rerun_from: str | None = field(
         default=None,
         metadata={
@@ -416,6 +425,7 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
                 env_vars=self.run_args.parsed_env_vars(),
                 max_action_concurrency=self.run_args.max_action_concurrency,
                 labels=self.run_args.parsed_labels(),
+                recover=self.run_args.recover_from,
             )
             if self.run_args.rerun_from:
                 # Re-run a prior run with THIS local code, reusing the prior run's inputs.
@@ -652,6 +662,7 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
                 env_vars=self.run_args.parsed_env_vars(),
                 max_action_concurrency=self.run_args.max_action_concurrency,
                 labels=self.run_args.parsed_labels(),
+                recover=self.run_args.recover_from,
             )
             result = await execution_context.run.aio(task, **ctx.params)
         except Exception as e:
