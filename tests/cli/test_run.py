@@ -52,19 +52,10 @@ def test_run_arguments_max_action_concurrency_from_dict():
     assert RunArguments.from_dict({}).max_action_concurrency is None
 
 
-def test_run_command_has_recover_from_option():
-    """--recover-from is wired (hidden until the backend ships)."""
+def test_run_command_has_no_recover_from_option():
+    """--recover-from is omitted until the backend ships (see TODO in _run.py)."""
     option_names = {decl for p in run.params for decl in p.opts}
-    assert "--recover-from" in option_names
-    recover_opt = next(p for p in run.params if "--recover-from" in p.opts)
-    assert recover_opt.hidden is True
-
-
-def test_run_arguments_recover_from_from_dict():
-    from flyte.cli._run import RunArguments
-
-    assert RunArguments.from_dict({"recover_from": "r1"}).recover_from == "r1"
-    assert RunArguments.from_dict({}).recover_from is None
+    assert "--recover-from" not in option_names
 
 
 def test_run_max_action_concurrency_rejects_negative(runner):

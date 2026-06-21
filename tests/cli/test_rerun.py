@@ -13,13 +13,12 @@ def test_rerun_registered_on_main():
     assert "rerun" in main.commands
 
 
-def test_rerun_has_recover_flag_hidden():
-    opts = {o for p in rerun.params for o in p.opts}
-    assert "--recover" in opts
-    recover_opt = next(p for p in rerun.params if "--recover" in p.opts)
-    assert recover_opt.hidden is True
+def test_rerun_takes_run_name_and_no_recover_flag():
     # Takes the run name as a positional argument.
     assert any(p.name == "run_name" for p in rerun.params)
+    # --recover is omitted until the backend ships (see TODO in _rerun.py).
+    opts = {o for p in rerun.params for o in p.opts}
+    assert "--recover" not in opts
 
 
 def test_parse_kv():
@@ -41,25 +40,10 @@ def test_rerun_delegates_to_runner_rerun():
         result = CliRunner().invoke(rerun, ["my-run", "--name", "n", "-e", "K=V"])
 
     assert result.exit_code == 0, result.output
-    # recover flag default False, env parsed, name forwarded.
+    # env parsed, name forwarded; recover is not wired on the CLI yet.
     _, kwargs = wrc.call_args
-    assert kwargs["recover"] is False
+    assert "recover" not in kwargs
     assert kwargs["name"] == "n"
     assert kwargs["env_vars"] == {"K": "V"}
     assert kwargs["mode"] == "remote"
     runner_obj.rerun.aio.assert_awaited_once_with("my-run")
-
-
-def test_rerun_recover_flag_passed_through():
-    runner_obj = mock.MagicMock()
-    runner_obj.rerun.aio = AsyncMock(return_value=mock.MagicMock(name="new", url="http://x"))
-
-    with (
-        mock.patch("flyte.cli._common.initialize_config") as init_cfg,
-        mock.patch("flyte.with_runcontext", return_value=runner_obj) as wrc,
-    ):
-        init_cfg.return_value = mock.MagicMock(output_format="table")
-        result = CliRunner().invoke(rerun, ["my-run", "--recover"])
-
-    assert result.exit_code == 0, result.output
-    assert wrc.call_args.kwargs["recover"] is True

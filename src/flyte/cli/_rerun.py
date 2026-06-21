@@ -1,10 +1,9 @@
 """``flyte rerun <run>`` — re-run an existing run with its own code + exact inputs.
 
-Counterpart to ``flyte run``: where ``run`` launches *local* code (and can recover from a
-prior run via ``--recover-from``), ``rerun`` re-launches an *existing* run — fetching its
-task + inputs from the platform, no local code needed. ``--recover`` reuses that run's
-succeeded actions (coming soon). To re-run with *new* code while recovering, use
-``flyte run <file> <task> --recover-from <run>``.
+Counterpart to ``flyte run``: where ``run`` launches *local* code, ``rerun`` re-launches an
+*existing* run — fetching its task + inputs from the platform, no local code needed. To re-run
+with *new* local code (reusing the prior run's inputs), use ``flyte run <file> <task>
+--rerun-from <run>``.
 
 v1 reuses the prior run's exact inputs; changing inputs from the CLI is a follow-up
 (`flyte.rerun(run, x=2)` covers it programmatically today).
@@ -43,14 +42,9 @@ def _parse_kv(items: Tuple[str, ...], flag: str) -> Optional[Dict[str, str]]:
 @click.option("-e", "--env", "env", multiple=True, help="Env var KEY=VALUE for the new run. Repeatable.")
 @click.option("--label", "label", multiple=True, help="Label KEY=VALUE for the new run. Repeatable.")
 @click.option("--follow", "-f", is_flag=True, default=False, help="Stream the parent action logs after launch.")
-@click.option(
-    "--recover",
-    is_flag=True,
-    default=False,
-    # Hidden until the flyteidl2 RunSpec.recover field + backend support ship.
-    hidden=True,
-    help="(coming soon) Recover from this run: reuse its succeeded actions, re-run only what changed.",
-)
+# TODO: add a `--recover` flag (recover from this run: reuse its succeeded actions) once the
+# flyteidl2 RunSpec.recover field + backend support ship. Hidden options still surface in
+# `flyte gen docs`, so it's omitted entirely for now rather than marked hidden.
 @click.pass_context
 def rerun(
     ctx: click.Context,
@@ -61,14 +55,12 @@ def rerun(
     env: Tuple[str, ...],
     label: Tuple[str, ...],
     follow: bool,
-    recover: bool,
 ) -> None:
     """Re-run an existing run RUN_NAME with its original code and inputs.
 
     Fetches the prior run's task + inputs from the platform (no local code needed) and launches a
-    new run that returns the same way ``flyte run`` does. ``--recover`` reuses the prior run's
-    succeeded actions (coming soon). To re-run with *new* code, use
-    ``flyte run <file> <task> --recover-from <run>``.
+    new run that returns the same way ``flyte run`` does. To re-run with *new* local code (reusing
+    the prior run's inputs), use ``flyte run <file> <task> --rerun-from <run>``.
 
     Examples:
 
@@ -76,7 +68,7 @@ def rerun(
         $ flyte rerun ul56wcvgqrb9vzhzz5l2 --name retry-1 --follow
     """
     config = common.initialize_config(ctx, project=project, domain=domain)
-    asyncio.run(_execute(run_name, name, env, label, follow, recover, config))
+    asyncio.run(_execute(run_name, name, env, label, follow, config))
 
 
 async def _execute(
@@ -85,7 +77,6 @@ async def _execute(
     env: Tuple[str, ...],
     label: Tuple[str, ...],
     follow: bool,
-    recover: bool,
     config: common.CLIConfig,
 ) -> None:
     import flyte
@@ -99,7 +90,6 @@ async def _execute(
             name=name,
             env_vars=_parse_kv(env, "--env"),
             labels=_parse_kv(label, "--label"),
-            recover=recover,
         )
         result = await runner.rerun.aio(run_name)
     except Exception as e:
