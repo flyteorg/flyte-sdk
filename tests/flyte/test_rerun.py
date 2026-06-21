@@ -131,11 +131,6 @@ async def test_rerun_rejects_non_remote_mode():
         await flyte.with_runcontext(mode="local").rerun.aio("r1")
 
 
-@pytest.mark.asyncio
-async def test_module_replay_is_rerun_alias_with_no_input_override():
-    """flyte.replay delegates to rerun with inputs=None (same-inputs behavior)."""
-    with mock.patch("flyte._run._Runner") as R:
-        R.return_value.rerun.aio = AsyncMock(return_value="run")
-        await flyte.replay.aio("r1", "a0")
-    _, kwargs = R.return_value.rerun.aio.call_args
-    assert kwargs.get("inputs") is None
+def test_replay_is_removed():
+    """flyte.replay was deleted in favor of flyte.rerun."""
+    assert not hasattr(flyte, "replay")

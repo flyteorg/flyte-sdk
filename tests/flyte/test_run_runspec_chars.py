@@ -354,9 +354,31 @@ async def test_apply_overrides_recover_gated():
     await _init_for_testing(client=mock_client, project="test", domain="test")
 
     runner = _Runner(force_mode="remote")
-    runner._recover = "some-run"  # Phase 4 wires this via with_runcontext(recover=...)
 
     if "recover" in run_pb2.RunSpec.DESCRIPTOR.fields_by_name:
         pytest.skip("RunSpec.recover is available; gating no longer applies")
     with pytest.raises(NotImplementedError, match="recover is not yet supported"):
-        runner._apply_overrides(None)
+        runner._apply_overrides(None, recover_ref="some-run")
+
+
+def test_resolve_recover_ref_semantics():
+    """recover=False/True/str resolve to the right reference (or raise on run())."""
+    from flyte._run import _Runner
+
+    # default False -> no recover
+    assert _Runner()._resolve_recover_ref("r1") is None
+    # True -> the run being rerun
+    assert _Runner(recover=True)._resolve_recover_ref("r1") == "r1"
+    # True with no rerun target (a plain run()) -> error
+    with pytest.raises(ValueError, match="recover=True is only valid with rerun"):
+        _Runner(recover=True)._resolve_recover_ref(None)
+    # explicit name -> that name (works on run())
+    assert _Runner(recover="other")._resolve_recover_ref(None) == "other"
+
+
+@pytest.mark.asyncio
+async def test_recover_rejected_in_local_mode():
+    """recover is remote-only; a truthy recover in local mode fails fast on run()."""
+    await flyte.init.aio()
+    with pytest.raises(ValueError, match="recover is only supported in remote mode"):
+        await flyte.with_runcontext(mode="local", recover="r1").run.aio(task1, "hello")
