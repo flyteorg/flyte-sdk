@@ -273,7 +273,10 @@ class Informer:
                 # (none today) to detect -- tracked separately.
                 established = False
                 watch_iter = watcher.__aiter__()
-                while self._running:
+                # Equivalent to `async for resp in watcher`; the outer loop gates
+                # on self._running and stop() cancels the await, so no per-message
+                # running check is needed here.
+                while True:
                     try:
                         if established:
                             resp = await watch_iter.__anext__()
