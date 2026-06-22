@@ -44,7 +44,6 @@ tool_env = flyte.TaskEnvironment(
         flyte.Image.from_debian_base(flyte_version="2.3.6")
         .with_apt_packages("git")
         .with_pip_packages("litellm", "httpx")
-        .with_commands(["uv pip install git+https://github.com/flyteorg/flyte-sdk.git@67ba20c6"])
     ),
     resources=flyte.Resources(cpu=1, memory="1Gi"),
     secrets=[flyte.Secret(key="internal-anthropic-api-key", as_env_var="ANTHROPIC_API_KEY")],

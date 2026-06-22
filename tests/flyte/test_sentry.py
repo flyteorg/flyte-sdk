@@ -367,3 +367,98 @@ def test_capture_exception_skips_connect_error_deadline_exceeded_wrapped_as_syst
     with mock.patch.object(_sentry, "init") as init_mock:
         _sentry.capture_exception(err)
     init_mock.assert_not_called()
+
+
+def test_capture_exception_skips_connect_error_unimplemented_wrapped_as_system_error():
+    """FLYTE-SDK-4F: a raw HTTP 404 from the control-plane ingress surfaces as
+    ConnectError(UNIMPLEMENTED, "Not Found") (connect maps 404 → UNIMPLEMENTED,
+    not NOT_FOUND) wrapped through RuntimeError("SelectCluster failed...") ->
+    RuntimeSystemError("Upload failed..."). The endpoint is wrong or the backend
+    doesn't serve that RPC — not an SDK bug, so it shouldn't be crash-reported."""
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
+    from flyte.errors import RuntimeSystemError
+
+    try:
+        try:
+            try:
+                raise ConnectError(Code.UNIMPLEMENTED, "Not Found")
+            except ConnectError as ce:
+                raise RuntimeError(f"SelectCluster failed for operation=1: {ce}") from ce
+        except RuntimeError:
+            raise RuntimeSystemError("RuntimeError", "Upload failed for /tmp/x/spec.pb (org='apple', ...): Not Found")
+    except RuntimeSystemError as e:
+        err = e
+
+    with mock.patch.object(_sentry, "init") as init_mock:
+        _sentry.capture_exception(err)
+    init_mock.assert_not_called()
+
+
+def _wrap_as_upload_system_error(inner: BaseException):
+    """Reproduce the flyte.remote._data shape: the real network failure is wrapped
+    in RuntimeError('SelectCluster failed...') -> RuntimeSystemError('Failed to
+    get signed url...'), so isinstance() on the outer exc misses the cause."""
+    from flyte.errors import RuntimeSystemError
+
+    try:
+        try:
+            try:
+                raise inner
+            except BaseException as net_err:
+                raise RuntimeError(f"SelectCluster failed for operation=1: {net_err}") from net_err
+        except RuntimeError:
+            raise RuntimeSystemError("RuntimeError", "Failed to get signed url for /tmp/x.tar.gz.")
+    except RuntimeSystemError as e:
+        return e
+
+
+def test_capture_exception_skips_timeout_error():
+    """FLYTE-SDK-29: SelectCluster request times out (``TimeoutError``) on the way
+    to the cluster service. A network/backend timeout is not an SDK crash."""
+    err = _wrap_as_upload_system_error(TimeoutError("Request timed out"))
+    with mock.patch.object(_sentry, "init") as init_mock:
+        _sentry.capture_exception(err)
+    init_mock.assert_not_called()
+
+
+def test_capture_exception_skips_connection_error():
+    """FLYTE-SDK-47: builtin ``ConnectionError`` (connection refused) reaching the
+    cluster service is a local network problem, not an SDK bug."""
+    err = _wrap_as_upload_system_error(ConnectionRefusedError(errno.ECONNREFUSED, "Connection refused"))
+    with mock.patch.object(_sentry, "init") as init_mock:
+        _sentry.capture_exception(err)
+    init_mock.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "httpx_exc_name", ["WriteError", "ReadError", "ConnectError", "ConnectTimeout", "RemoteProtocolError"]
+)
+def test_capture_exception_skips_httpx_transport_errors(httpx_exc_name):
+    """FLYTE-SDK-3W / FLYTE-SDK-36 / FLYTE-SDK-4M: the signed-URL PUT fails at the
+    transport layer (connection reset, read/write error, connect timeout) or the
+    server hangs up mid-response (RemoteProtocolError). Transient network."""
+    import httpx
+
+    err = _wrap_as_upload_system_error(getattr(httpx, httpx_exc_name)("boom"))
+    with mock.patch.object(_sentry, "init") as init_mock:
+        _sentry.capture_exception(err)
+    init_mock.assert_not_called()
+
+
+def test_capture_exception_still_reports_connect_error_internal_in_upload_chain():
+    """ConnectError(INTERNAL) — a backend 500 (FLYTE-SDK-43) — is intentionally NOT
+    treated as transient: it can be a real backend bug, so it still reaches Sentry."""
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
+    err = _wrap_as_upload_system_error(ConnectError(Code.INTERNAL, "Internal Server Error"))
+    with (
+        mock.patch.object(_sentry, "init"),
+        mock.patch("sentry_sdk.is_initialized", return_value=True),
+        mock.patch("sentry_sdk.capture_exception") as capture_mock,
+        mock.patch("sentry_sdk.flush"),
+    ):
+        _sentry.capture_exception(err)
+    capture_mock.assert_called_once_with(err)

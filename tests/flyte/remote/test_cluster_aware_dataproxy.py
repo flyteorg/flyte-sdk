@@ -78,6 +78,38 @@ async def test_upload_inputs_with_project_id_routes_by_project():
 
 
 @pytest.mark.asyncio
+async def test_upload_trigger_routes_by_upload_trigger_operation():
+    wrapper, cluster_service, default_client = _make_wrapper()
+    pid = identifier_pb2.ProjectIdentifier(name="p", domain="d", organization="o")
+    req = dataproxy_service_pb2.UploadInputsRequest(project_id=pid)
+
+    await wrapper.upload_trigger(req)
+
+    sent = cluster_service.select_cluster.await_args[0][0]
+    assert sent.operation == cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_UPLOAD_TRIGGER
+    assert sent.project_id == pid
+    # The actual upload is still the UploadInputs RPC on the resolved cluster.
+    default_client.upload_inputs.assert_awaited_once_with(req)
+
+
+@pytest.mark.asyncio
+async def test_upload_trigger_propagates_unimplemented():
+    """SelectCluster UNIMPLEMENTED (zero trust off) propagates with its code, not wrapped."""
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
+    wrapper, cluster_service, _default_client = _make_wrapper()
+    cluster_service.select_cluster = AsyncMock(side_effect=ConnectError(Code.UNIMPLEMENTED, "no zero trust"))
+    req = dataproxy_service_pb2.UploadInputsRequest(
+        project_id=identifier_pb2.ProjectIdentifier(name="p", domain="d", organization="o")
+    )
+
+    with pytest.raises(ConnectError) as exc:
+        await wrapper.upload_trigger(req)
+    assert exc.value.code == Code.UNIMPLEMENTED
+
+
+@pytest.mark.asyncio
 async def test_upload_inputs_with_run_id_routes_by_derived_project():
     wrapper, cluster_service, default_client = _make_wrapper()
     run_id = identifier_pb2.RunIdentifier(org="o", project="p", domain="d", name="r")
@@ -208,6 +240,78 @@ async def test_remote_cluster_endpoint_propagates_auth_kwargs():
     # auth_endpoint must remain the parent session's endpoint so OAuth/passthrough
     # metadata stays anchored to the routing endpoint, not the cluster endpoint.
     assert forwarded_kwargs["auth_endpoint"] == "dns:///localhost:8090"
+
+
+@pytest.mark.asyncio
+async def test_clientsecret_session_does_not_downgrade_to_pkce_at_cluster_endpoint():
+    """End-to-end: a ClientSecret session must stay ClientSecret at the per-cluster endpoint.
+
+    Ties together the two halves of the fix that are otherwise only covered in
+    isolation: ``create_session_config`` *capturing* ``auth_kwargs`` (verified in
+    test_session.py) and ``_select_and_build`` *forwarding* them (verified above
+    with ``create_session_config`` mocked). Here the REAL ``create_session_config``
+    runs for both the control-plane session and the rebuilt per-cluster session,
+    so the test fails if either half regresses.
+    """
+    from flyte.remote._client.auth import _session as session_mod
+    from flyte.remote._client.auth._session import create_session_config
+
+    # Record the auth_type that each create_session_config build hands to the
+    # auth-interceptor factory. Missing/absent auth_type defaults to "Pkce" — the
+    # downgrade we are guarding against. Both auth flows are stubbed so no network
+    # or browser interaction occurs.
+    recorded_auth_types: list[str] = []
+
+    def _record_auth_interceptors(*, endpoint, http_client=None, **kwargs):
+        recorded_auth_types.append(kwargs.get("auth_type", "Pkce"))
+        return []
+
+    per_cluster_client = MagicMock()
+    per_cluster_client.create_upload_location = AsyncMock(
+        return_value=dataproxy_service_pb2.CreateUploadLocationResponse(signed_url="https://cluster/")
+    )
+
+    with (
+        patch.object(session_mod, "create_auth_interceptors", side_effect=_record_auth_interceptors),
+        patch.object(session_mod, "create_proxy_auth_interceptors", return_value=[]),
+        patch.object(session_mod, "get_async_session", return_value=MagicMock()),
+        patch(
+            "flyte.remote._client.controlplane.DataProxyServiceClient",
+            return_value=per_cluster_client,
+        ),
+    ):
+        # Real control-plane session configured for ClientSecret (no api_key, the
+        # config-file case where there is nothing else to fall back on).
+        main_cfg = await create_session_config(
+            "dns:///controlplane.example.com:443",
+            None,
+            insecure=False,
+            auth_type="ClientSecret",
+            client_id="demo-uctl",
+            client_credentials_secret="shhh",
+        )
+        # Capture half: auth_type must be snapshotted for the per-cluster rebuild.
+        assert main_cfg.auth_kwargs["auth_type"] == "ClientSecret"
+
+        cluster_service = MagicMock()
+        cluster_service.select_cluster = AsyncMock(
+            return_value=cluster_payload_pb2.SelectClusterResponse(cluster_endpoint="dns:///cluster-a.example.com:443")
+        )
+        wrapper = ClusterAwareDataProxy(
+            cluster_service=cluster_service,
+            session_config=main_cfg,
+            default_client=MagicMock(),
+        )
+
+        await wrapper.create_upload_location(
+            dataproxy_service_pb2.CreateUploadLocationRequest(project="p", domain="d", org="o")
+        )
+
+    # Exactly two real sessions were built — the control plane and the per-cluster
+    # endpoint — and NEITHER downgraded to Pkce. Before the fix the second entry
+    # would be "Pkce".
+    assert recorded_auth_types == ["ClientSecret", "ClientSecret"]
+    per_cluster_client.create_upload_location.assert_awaited_once()
 
 
 @pytest.mark.asyncio

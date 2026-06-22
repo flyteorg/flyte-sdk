@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from .memory import MemoryStore
 
 
 @dataclass
@@ -15,6 +18,7 @@ class AgentResult:
     summary: str = ""
     error: str = ""
     attempts: int = 1
+    memory: "MemoryStore | None" = None
 
 
 @runtime_checkable
@@ -23,8 +27,11 @@ class AgentProtocol(Protocol):
     :class:`AgentChatAppEnvironment`.
     """
 
-    def run(self, message: str, history: list[dict[str, str]]) -> AgentResult:
-        """Process *message* (with prior *history*) and return an :class:`AgentResult`.
+    def run(self, message: str, memory: list[dict[str, Any]] | "MemoryStore" | None = None) -> AgentResult:
+        """Process *message* (with prior *memory*) and return an :class:`AgentResult`.
+
+        ``memory`` may be a ``list[dict]`` of prior messages (e.g. a chat
+        ``history``) or a :class:`MemoryStore` for durable, cross-run state.
 
         Synchronous entry point. In async contexts, use ``run.aio(...)``.
         """

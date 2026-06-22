@@ -134,7 +134,7 @@ agent = Agent(
 @env.task(
     triggers=flyte.Trigger(
         "daily-triage",
-        flyte.FixedRate(2),  # run every 2 minutes
+        flyte.FixedRate(1),  # run every 1 minutes
         inputs={"trigger_time": flyte.TriggerTime, "repo": "flyteorg/flyte", "channel": "#flyte-triage"},
     ),
     report=True,

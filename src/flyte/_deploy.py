@@ -178,7 +178,7 @@ async def _deploy_task(
 
     from ._internal.runtime.convert import convert_upload_default_inputs
     from ._internal.runtime.task_serde import lookup_image_in_cache, translate_task_to_wire
-    from ._internal.runtime.trigger_serde import to_task_trigger
+    from ._internal.runtime.trigger_serde import offload_trigger_inputs, to_task_trigger
 
     assert task.parent_env_name is not None
     if isinstance(task.image, Image):
@@ -242,11 +242,27 @@ async def _deploy_task(
         for t in task.triggers:
             inputs = spec.task_template.interface.inputs
             default_inputs = spec.default_inputs
-            deployable_triggers.append(
-                await to_task_trigger(
-                    t=t, task_name=task.name, task_inputs=inputs, task_default_inputs=list(default_inputs)
-                )
+            task_trigger = await to_task_trigger(
+                t=t, task_name=task.name, task_inputs=inputs, task_default_inputs=list(default_inputs)
             )
+            # Offload the trigger inputs out-of-band, same as remote.Trigger.create. The task is being
+            # registered in this very request and so is not yet resolvable by id, so we reference it by
+            # task_spec (resolved server-side without a lookup). Setting offloaded_input_data on the
+            # input_wrapper oneof clears the inline inputs we just read.
+            offloaded_input_data = None
+            if task_trigger.spec.inputs.literals:
+                offloaded_input_data = await offload_trigger_inputs(
+                    task_trigger.spec.inputs,
+                    org=task_id.org,
+                    project=task_id.project,
+                    domain=task_id.domain,
+                    task_version=task_id.version,
+                    task_spec=spec,
+                )
+            if offloaded_input_data is not None:
+                task_trigger.spec.offloaded_input_data.CopyFrom(offloaded_input_data)
+            # else: no data to offload, or zero trust off — keep the inline inputs to_task_trigger set.
+            deployable_triggers.append(task_trigger)
 
         try:
             await get_client().task_service.deploy_task(
@@ -648,16 +664,29 @@ async def deploy(
 
 
 @syncify
-async def build_images(envs: Environment, copy_style: "CopyFiles" = "loaded_modules") -> ImageCache:
+async def build_images(*envs: Environment, copy_style: "CopyFiles" = "loaded_modules") -> ImageCache:
     """
-    Build the images for the given environment.
-    :param envs: Environment to build images for.
+    Build the images for the given environment(s).
+    :param envs: One or more environments to build images for. When multiple environments are
+        passed they are planned together in a single pass (mirroring ``deploy``), and the
+        resulting image caches are merged into one.
     :param copy_style: Copy style that the eventual deploy will use. Must match the deploy's
         ``--copy-style`` so the image content hashes — and therefore the registry tags — line
         up, letting deploy reuse the pre-built image.
     :return: ImageCache containing the built images.
     """
+    from ._internal.imagebuild.image_builder import ImageCache
+
     cfg = get_init_config()
     images = cfg.images if cfg else {}
-    deployment = plan_deploy(envs)
-    return await _build_images(deployment[0], images, copy_style)
+    deployment_plans = plan_deploy(*envs)
+    caches = [await _build_images(plan, images, copy_style) for plan in deployment_plans]
+    if len(caches) == 1:
+        return caches[0]
+
+    merged_lookup: Dict[str, str] = {}
+    merged_build_run_ids: Dict[str, Any] = {}
+    for cache in caches:
+        merged_lookup.update(cache.image_lookup)
+        merged_build_run_ids.update(cache.build_run_ids)
+    return ImageCache(image_lookup=merged_lookup, build_run_ids=merged_build_run_ids)

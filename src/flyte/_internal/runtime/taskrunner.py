@@ -4,6 +4,7 @@ invoked within a context tree.
 """
 
 import pathlib
+import sys
 import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
@@ -26,7 +27,11 @@ from .convert import (
     convert_from_native_to_outputs,
     convert_inputs_to_native,
 )
-from .io import load_inputs, upload_error, upload_outputs
+from .io import _is_clustered_worker, load_inputs, upload_error, upload_outputs
+
+# Exit code a clustered/jobset worker uses to fail its pod so the JobSet controller triggers a
+# whole-set restart. The JobSet keys off the pod exit code, not error.pb.
+_CLUSTERED_FAILURE_EXIT_CODE = 1
 
 
 def replace_task_cli(args: List[str], inputs: Inputs, tmp_path: pathlib.Path, action: ActionID) -> List[str]:
@@ -87,7 +92,7 @@ def replace_task_cli(args: List[str], inputs: Inputs, tmp_path: pathlib.Path, ac
 
 @log
 async def run_task(
-    tctx: TaskContext, controller: Controller, task: TaskTemplate, inputs: Dict[str, Any]
+    tctx: TaskContext, controller: Optional[Controller], task: TaskTemplate, inputs: Dict[str, Any]
 ) -> Tuple[Any, Optional[Exception]]:
     try:
         logger.info(f"Parent task executing {tctx.action}")
@@ -108,15 +113,17 @@ async def run_task(
         return {}, CustomError.from_exception(e)
     finally:
         logger.info(f"Parent task finalized {tctx.action}")
-        # reconstruct run id here
-        await controller.finalize_parent_action(tctx.action)
+        # reconstruct run id here. Clustered/jobset tasks run with no controller (they never
+        # enqueue subtasks), so there is nothing to finalize.
+        if controller is not None:
+            await controller.finalize_parent_action(tctx.action)
 
 
 async def convert_and_run(
     *,
     task: TaskTemplate,
     action: ActionID,
-    controller: Controller,
+    controller: Optional[Controller],
     raw_data_path: RawDataPath,
     version: str,
     output_path: str,
@@ -142,7 +149,8 @@ async def convert_and_run(
         inputs = await load_inputs(input_path, path_rewrite_config=raw_data_path.path_rewrite)
         sw.stop()
 
-    # Extract context from inputs
+    # Extract context from inputs (the kickoff-time input arg is filled from run_start_time during
+    # native conversion in convert_inputs_to_native; its reserved context key is excluded here).
     custom_context = inputs.context if inputs else {}
 
     parent_tctx = ctx.data.task_context
@@ -198,7 +206,7 @@ async def extract_download_run_upload(
     task: TaskTemplate,
     *,
     action: ActionID,
-    controller: Controller,
+    controller: Optional[Controller],
     raw_data_path: RawDataPath,
     output_path: str,
     run_base_dir: str,
@@ -235,9 +243,14 @@ async def extract_download_run_upload(
     if err is not None:
         path = await upload_error(err.err, output_path, recoverable=err.recoverable)
         logger.error(f"Task {task.name} failed with error: {err}. Uploaded error to {path}")
+        # A clustered/jobset worker must fail the pod (non-zero exit) so torchrun -> Job -> JobSet
+        # detects the failure and triggers a whole-set restart. The JobSet keys off the pod exit
+        # code, not error.pb. Normal tasks keep the exit-0 contract (the backend reads error.pb).
+        if _is_clustered_worker():
+            sys.exit(_CLUSTERED_FAILURE_EXIT_CODE)
         return
     if outputs is None:
         logger.info(f"Task {task.name} completed successfully, no outputs")
         return
     await upload_outputs(outputs, output_path) if output_path else None
-    logger.info(f"Task {task.name} completed successfully, uploaded outputs to {output_path} in {time.time() - t}s")
+    logger.info(f"Task {task.name} completed successfully, uploaded outputs to {output_path} in {time.time() - t:.2f}s")

@@ -14,6 +14,7 @@ Run locally::
 from __future__ import annotations
 
 import pathlib
+import re
 from typing import Any
 
 import flyte
@@ -26,12 +27,7 @@ from flyte.ai.chat import AgentChatAppEnvironment, CustomTheme
 
 task_env = flyte.TaskEnvironment(
     name="chat-agent-tools",
-    image=(
-        flyte.Image.from_debian_base()
-        .with_apt_packages("git")
-        .with_pip_packages("litellm", "httpx")
-        .with_commands(["uv pip install git+https://www.github.com/flyteorg/flyte-sdk.git@8efec60c"])
-    ),
+    image=(flyte.Image.from_debian_base().with_apt_packages("git").with_pip_packages("litellm", "httpx")),
     resources=flyte.Resources(cpu=1, memory="512Mi"),
     secrets=[flyte.Secret(key="internal-anthropic-api-key", as_env_var="ANTHROPIC_API_KEY")],
 )
@@ -92,9 +88,50 @@ async def search_docs(query: str, max_results: int = 3) -> list[dict[str, str]]:
             ),
         },
     ]
-    needle = query.lower()
-    matches = [doc for doc in corpus if needle in doc["body"].lower() or needle in doc["title"].lower()]
-    return matches[:max_results]
+    # Token-based scoring so partial / word-level overlaps still match. A strict
+    # substring match on the whole query is brittle: e.g. "schedule task" is not a
+    # literal substring of "Schedule a task ...", so it would return nothing.
+    stopwords = {
+        "a",
+        "an",
+        "the",
+        "to",
+        "of",
+        "in",
+        "on",
+        "for",
+        "and",
+        "or",
+        "is",
+        "are",
+        "how",
+        "do",
+        "i",
+        "can",
+        "you",
+        "me",
+        "my",
+        "with",
+        "show",
+        "what",
+        "this",
+    }
+    query_tokens = {tok for tok in _tokenize(query) if tok not in stopwords}
+
+    scored: list[tuple[int, dict[str, str]]] = []
+    for doc in corpus:
+        haystack = _tokenize(doc["title"]) | _tokenize(doc["body"])
+        score = sum(1 for tok in query_tokens if tok in haystack)
+        if score:
+            scored.append((score, doc))
+
+    scored.sort(key=lambda pair: pair[0], reverse=True)
+    return [doc for _, doc in scored[:max_results]]
+
+
+def _tokenize(text: str) -> set[str]:
+    """Lowercase, strip punctuation, and split ``text`` into a set of word tokens."""
+    return {re.sub(r"[^a-z0-9]", "", tok) for tok in text.lower().split()} - {""}
 
 
 @task_env.task
@@ -129,9 +166,9 @@ agent = Agent(
 
 
 @task_env.task(report=True)
-async def chat_entrypoint(message: str, history: list[dict[str, Any]]) -> dict[str, Any]:
+async def chat_entrypoint(message: str, memory: list[dict[str, Any]]) -> dict[str, Any]:
     """Parent task that owns the agent loop and the nested tool tasks."""
-    result = await agent.run.aio(message, history=history)
+    result = await agent.run.aio(message, memory=memory)
     return {
         "summary": result.summary,
         "error": result.error,
@@ -154,9 +191,12 @@ env = AgentChatAppEnvironment(
     theme=CustomTheme(accent_color="#6F2AEF", accent_hover_color="#8B52F2"),
     passthrough_auth=True,
     prompt_nudges=[
-        {"label": "Basics", "prompt": "Can you show me a hello world example?"},
+        {"label": "Tasks", "prompt": "Can you show me a hello world example of a task?"},
         {"label": "Triggers", "prompt": "How do I schedule a task?"},
-        {"label": "Apps", "prompt": "How do I serve a model using a FastAPI app?"},
+        {"label": "Environments", "prompt": "How do I serve a model using a FastAPI app?"},
+        {"label": "Auth", "prompt": "How do I authenticate a task?"},
+        {"label": "Secrets", "prompt": "How do I store and access secrets in a task?"},
+        {"label": "Caching", "prompt": "How do I cache a task?"},
     ],
     depends_on=[task_env],
     image=(flyte.Image.from_debian_base().with_pip_packages("litellm", "fastapi", "uvicorn")),

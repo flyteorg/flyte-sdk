@@ -265,6 +265,41 @@ class RunArguments:
             )
         },
     )
+    max_action_concurrency: int | None = field(
+        default=None,
+        metadata={
+            "click.option": click.Option(
+                ["--max-action-concurrency"],
+                type=click.IntRange(min=0),
+                default=None,
+                help="Maximum number of actions that can run concurrently within the run. "
+                "If not provided, the platform default (run.max_action_concurrency setting) applies.",
+            )
+        },
+    )
+    label: List[str] = field(
+        default_factory=list,
+        metadata={
+            "click.option": click.Option(
+                ["--label"],
+                type=str,
+                multiple=True,
+                help="User-defined label to attach to the run. Format: KEY=VALUE. "
+                "Can be specified multiple times, e.g. `--label team=ml --label env=prod`.",
+            )
+        },
+    )
+    queue: str | None = field(
+        default=None,
+        metadata={
+            "click.option": click.Option(
+                ["--queue"],
+                type=str,
+                default=None,
+                help="Queue (cluster) to send the run to. Overrides any queue set on the task.",
+            )
+        },
+    )
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> RunArguments:
@@ -282,6 +317,20 @@ class RunArguments:
             key, value = item.split("=", 1)
             if not key:
                 raise click.BadParameter(f"Invalid --env value {item!r}: key must not be empty.")
+            parsed[key] = value
+        return parsed
+
+    def parsed_labels(self) -> Dict[str, str] | None:
+        """Parse ``--label KEY=VALUE`` entries into a dict (returns None if none provided)."""
+        if not self.label:
+            return None
+        parsed: Dict[str, str] = {}
+        for item in self.label:
+            if "=" not in item:
+                raise click.BadParameter(f"Invalid --label value {item!r}: expected KEY=VALUE.")
+            key, value = item.split("=", 1)
+            if not key:
+                raise click.BadParameter(f"Invalid --label value {item!r}: key must not be empty.")
             parsed[key] = value
         return parsed
 
@@ -361,6 +410,9 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
                 reset_root_logger=config.reset_root_logger,
                 debug=self.run_args.debug,
                 env_vars=self.run_args.parsed_env_vars(),
+                max_action_concurrency=self.run_args.max_action_concurrency,
+                labels=self.run_args.parsed_labels(),
+                queue=self.run_args.queue,
             )
             result = await execution_context.run.aio(self.obj, **ctx.params)
         except Exception as e:
@@ -424,6 +476,8 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
                 reset_root_logger=config.reset_root_logger,
                 debug=self.run_args.debug,
                 env_vars=self.run_args.parsed_env_vars(),
+                labels=self.run_args.parsed_labels(),
+                queue=self.run_args.queue,
                 _tracker=tracker,
             )
             return await execution_context.run.aio(self.obj, **ctx.params)
@@ -583,6 +637,9 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
                 domain=self.run_args.run_domain,
                 debug=self.run_args.debug,
                 env_vars=self.run_args.parsed_env_vars(),
+                max_action_concurrency=self.run_args.max_action_concurrency,
+                labels=self.run_args.parsed_labels(),
+                queue=self.run_args.queue,
             )
             result = await execution_context.run.aio(task, **ctx.params)
         except Exception as e:

@@ -24,7 +24,7 @@ dependencies = [
     "async-lru>=2.0.5",
     "mashumaro",
     "aiolimiter>=1.2.1",
-    "flyteidl2==2.0.20",
+    "flyteidl2==2.0.24",
     "packaging",
     "sentry-sdk>=2.0",
     "pyOpenSSL>=24.0.0",
@@ -33,6 +33,7 @@ dependencies = [
 [project.scripts]
 flyte = "flyte.cli.main:main"
 a0 = "flyte._bin.runtime:main"
+clustered = "flyte._bin.clustered:main"
 fserve = "flyte._bin.serve:main"
 c0 = "flyte._bin.connect:main"
 flyte-mcp = "flyte._bin.mcp:main"

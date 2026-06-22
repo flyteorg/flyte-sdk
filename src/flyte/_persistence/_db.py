@@ -1,3 +1,4 @@
+import shutil
 import sqlite3
 import threading
 from pathlib import Path
@@ -121,15 +122,20 @@ class LocalDB:
     _write_lock = threading.Lock()
 
     @staticmethod
-    def _get_db_path() -> str:
-        """Get the database path, creating directory if needed."""
+    def _get_cache_dir() -> Path:
+        """Return the local-cache directory (parent of the cache DB), without creating it."""
         config = auto()
         if config.source:
-            cache_dir = config.source.parent
+            base_dir = config.source.parent
         else:
-            cache_dir = Path(DEFAULT_CACHE_DIR).expanduser()
+            base_dir = Path(DEFAULT_CACHE_DIR).expanduser()
 
-        db_path = cache_dir / CACHE_LOCATION
+        return base_dir / Path(CACHE_LOCATION).parent
+
+    @staticmethod
+    def _get_db_path() -> str:
+        """Get the database path, creating directory if needed."""
+        db_path = LocalDB._get_cache_dir() / Path(CACHE_LOCATION).name
         db_path.parent.mkdir(parents=True, exist_ok=True)
         logger.info(f"Use local DB path: {db_path}")
         return str(db_path)
@@ -220,3 +226,20 @@ class LocalDB:
                 LocalDB._conn_sync = None
             if LocalDB._conn is None:
                 LocalDB._initialized = False
+
+    @staticmethod
+    def purge() -> Path:
+        """Close all connections and delete the entire local-cache directory.
+
+        Returns the directory that was targeted for removal (whether or not it existed).
+        """
+        cache_dir = LocalDB._get_cache_dir()
+        with LocalDB._lock:
+            if LocalDB._conn_sync:
+                LocalDB._conn_sync.close()
+                LocalDB._conn_sync = None
+            LocalDB._conn = None
+            LocalDB._initialized = False
+        if cache_dir.exists():
+            shutil.rmtree(cache_dir)
+        return cache_dir

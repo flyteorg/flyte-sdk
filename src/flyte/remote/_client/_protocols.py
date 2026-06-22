@@ -117,6 +117,10 @@ class DataProxyService(Protocol):
         self, request: dataproxy_service_pb2.UploadInputsRequest
     ) -> dataproxy_service_pb2.UploadInputsResponse: ...
 
+    async def upload_trigger(
+        self, request: dataproxy_service_pb2.UploadInputsRequest
+    ) -> dataproxy_service_pb2.UploadInputsResponse: ...
+
     async def get_action_data(
         self, request: dataproxy_service_pb2.GetActionDataRequest
     ) -> dataproxy_service_pb2.GetActionDataResponse: ...

@@ -102,6 +102,7 @@ class _Runner:
         reset_root_logger: bool = False,
         disable_run_cache: bool = False,
         queue: Optional[str] = None,
+        max_action_concurrency: int | None = None,
         custom_context: Dict[str, str] | None = None,
         notifications: NamedRule | Notification | Tuple[Notification, ...] | None = None,
         cache_lookup_scope: CacheLookupScope = "global",
@@ -147,6 +148,7 @@ class _Runner:
         self._reset_root_logger = reset_root_logger
         self._disable_run_cache = disable_run_cache
         self._queue = queue
+        self._max_action_concurrency = max_action_concurrency
         self._notifications = notifications
         self._custom_context = custom_context or {}
         self._cache_lookup_scope = cache_lookup_scope
@@ -180,12 +182,18 @@ class _Runner:
         domain = self._domain or cfg.domain
 
         task: TaskTemplate[P, R, F] | TaskDetails
+        task_id = None
         if isinstance(obj, (LazyEntity, TaskDetails)):
             if isinstance(obj, LazyEntity):
                 task = await obj.fetch.aio()
             else:
                 task = obj
             task_spec = task.pb2.spec
+            # A fetched task is normally run by reference (task_id only). But if it was modified via
+            # `.override(...)`, the local spec no longer matches the registered task, so we must send
+            # the full spec instead. Setting task_id to None routes every downstream branch to the
+            # spec path.
+            task_id = None if task.overridden else task.pb2.task_id
             inputs = await convert_from_native_to_inputs(
                 task.interface, *args, custom_context=self._custom_context, **kwargs
             )
@@ -350,14 +358,18 @@ class _Runner:
                 )
             # Fill in task id inside the task template if it's not provided.
             # Maybe this should be done here, or the backend.
-            if task_spec.task_template.id.project == "":
-                task_spec.task_template.id.project = project or ""
-            if task_spec.task_template.id.domain == "":
-                task_spec.task_template.id.domain = domain or ""
-            if task_spec.task_template.id.org == "":
-                task_spec.task_template.id.org = cfg.org or ""
-            if task_spec.task_template.id.version == "":
-                task_spec.task_template.id.version = version
+            # Only needed for locally-defined tasks; a fetched task sent by reference (task_id set)
+            # is skipped here. An overridden fetched task (task_id None) already carries a
+            # fully-populated id, so the `== ""` guards below leave it untouched.
+            if task_id is None:
+                if task_spec.task_template.id.project == "":
+                    task_spec.task_template.id.project = project or ""
+                if task_spec.task_template.id.domain == "":
+                    task_spec.task_template.id.domain = domain or ""
+                if task_spec.task_template.id.org == "":
+                    task_spec.task_template.id.org = cfg.org or ""
+                if task_spec.task_template.id.version == "":
+                    task_spec.task_template.id.version = version
 
             kv_pairs: List[literals_pb2.KeyValuePair] = []
             for k, v in env.items():
@@ -397,10 +409,12 @@ class _Runner:
             try:
                 from flyteidl2.dataproxy import dataproxy_service_pb2
 
-                upload_req = dataproxy_service_pb2.UploadInputsRequest(
-                    inputs=inputs.proto_inputs,
-                    task_spec=task_spec,
-                )
+                upload_req = dataproxy_service_pb2.UploadInputsRequest(inputs=inputs.proto_inputs)
+                # Reference an already-registered task by id; otherwise upload the full spec.
+                if task_id is not None:
+                    upload_req.task_id.CopyFrom(task_id)
+                else:
+                    upload_req.task_spec.CopyFrom(task_spec)
                 if run_id is not None:
                     upload_req.run_id.CopyFrom(run_id)
                 else:
@@ -408,34 +422,39 @@ class _Runner:
 
                 upload_resp = await get_client().dataproxy_service.upload_inputs(upload_req)
 
-                resp = await get_client().run_service.create_run(
-                    run_service_pb2.CreateRunRequest(
-                        run_id=run_id,
-                        project_id=project_id,
-                        task_spec=task_spec,
-                        offloaded_input_data=upload_resp.offloaded_input_data,
-                        run_spec=run_pb2.RunSpec(
+                create_req = run_service_pb2.CreateRunRequest(
+                    run_id=run_id,
+                    project_id=project_id,
+                    offloaded_input_data=upload_resp.offloaded_input_data,
+                    run_spec=run_pb2.RunSpec(
+                        overwrite_cache=self._overwrite_cache,
+                        interruptible=wrappers_pb2.BoolValue(value=self._interruptible)
+                        if self._interruptible is not None
+                        else None,
+                        annotations=annotations,
+                        labels=labels,
+                        envs=env_kv,
+                        cluster=self._queue or task.queue,
+                        max_action_concurrency=self._max_action_concurrency or 0,
+                        raw_data_storage=raw_data_storage,
+                        security_context=security_context,
+                        cache_config=run_pb2.CacheConfig(
                             overwrite_cache=self._overwrite_cache,
-                            interruptible=wrappers_pb2.BoolValue(value=self._interruptible)
-                            if self._interruptible is not None
+                            cache_lookup_scope=_to_cache_lookup_scope(self._cache_lookup_scope)
+                            if self._cache_lookup_scope
                             else None,
-                            annotations=annotations,
-                            labels=labels,
-                            envs=env_kv,
-                            cluster=self._queue or task.queue,
-                            raw_data_storage=raw_data_storage,
-                            security_context=security_context,
-                            cache_config=run_pb2.CacheConfig(
-                                overwrite_cache=self._overwrite_cache,
-                                cache_lookup_scope=_to_cache_lookup_scope(self._cache_lookup_scope)
-                                if self._cache_lookup_scope
-                                else None,
-                            ),
-                            notification_rule_name=notification_rule_name,
-                            notification_rules=notification_rules,
                         ),
+                        notification_rule_name=notification_rule_name,
+                        notification_rules=notification_rules,
                     ),
                 )
+                # Reference an already-registered task by id; otherwise send the full spec.
+                if task_id is not None:
+                    create_req.task_id.CopyFrom(task_id)
+                else:
+                    create_req.task_spec.CopyFrom(task_spec)
+
+                resp = await get_client().run_service.create_run(create_req)
                 return Run(pb2=resp.run, _preserve_original_types=self._preserve_original_types)
             except ConnectError as e:
                 if e.code == Code.UNAVAILABLE:
@@ -838,6 +857,7 @@ def with_runcontext(
     reset_root_logger: bool = False,
     disable_run_cache: bool = False,
     queue: Optional[str] = None,
+    max_action_concurrency: int | None = None,
     notifications: Notification | Tuple[Notification, ...] | None = None,
     custom_context: Dict[str, str] | None = None,
     cache_lookup_scope: CacheLookupScope = "global",
@@ -892,7 +912,8 @@ def with_runcontext(
     :param project: Optional The project to use for the run
     :param domain: Optional The domain to use for the run
     :param env_vars: Optional Environment variables to set for the run
-    :param labels: Optional Labels to set for the run
+    :param labels: Optional user-defined labels to attach to the run as KEY=VALUE pairs, used for
+        filtering and organizing runs (e.g. ``flyte get run --with-label team=ml``)
     :param annotations: Optional Annotations to set for the run
     :param interruptible: Optional If true, the run can be scheduled on interruptible instances and false implies
         that all tasks in the run should only be scheduled on non-interruptible instances. If not specified the
@@ -903,6 +924,11 @@ def with_runcontext(
     :param reset_root_logger: If true, the root logger will be preserved and not modified by Flyte.
     :param disable_run_cache: Optional If true, the run cache will be disabled. This is useful for testing purposes.
     :param queue: Optional The queue to use for the run. This is used to specify the cluster to use for the run.
+    :param max_action_concurrency: Optional Maximum number of actions that can run concurrently within this run.
+        Only applies to remote runs. If not provided, the platform default (configurable via the
+        ``run.max_action_concurrency`` setting at org/domain/project scope) applies. Must be 0
+        (platform default) or at least 2 — a value of 1 would deadlock the run, since the parent
+        action holds a concurrency slot while waiting for its child actions.
     :param notifications: Optional Notification(s) to send when the run reaches specific execution phases.
         Accepts a single notification or a tuple of notifications. Supports Email, Slack, Teams, and Webhook types.
         See `flyte.notify` for available notification types and template variables.
@@ -928,6 +954,12 @@ def with_runcontext(
         raise ValueError("copy_style='custom' is not yet supported through with_runcontext.")
     if copy_style == "none" and not version:
         raise ValueError("Version is required when copy_style is 'none'")
+    if max_action_concurrency is not None and (max_action_concurrency < 0 or max_action_concurrency == 1):
+        raise ValueError(
+            f"max_action_concurrency must be 0 (platform default) or at least 2, got {max_action_concurrency}. "
+            "A value of 1 would deadlock the run: the parent action holds a concurrency slot while "
+            "waiting for its child actions to run."
+        )
 
     return _Runner(
         force_mode=mode,
@@ -954,6 +986,7 @@ def with_runcontext(
         reset_root_logger=reset_root_logger,
         disable_run_cache=disable_run_cache,
         queue=queue,
+        max_action_concurrency=max_action_concurrency,
         notifications=notifications,
         custom_context=custom_context,
         cache_lookup_scope=cache_lookup_scope,

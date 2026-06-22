@@ -55,8 +55,8 @@ the chat UI, webhook handlers, and structured loggers subscribe to.
 
 | Context | Call |
 |---------|------|
-| Scripts, notebooks, sync code | `result = agent.run(message, history=[])` |
-| `async def` tasks / handlers | `result = await agent.run.aio(message, history=[])` |
+| Scripts, notebooks, sync code | `result = agent.run(message, memory=[])` |
+| `async def` tasks / handlers | `result = await agent.run.aio(message, memory=[])` |
 
 `AgentChatAppEnvironment` calls `agent.run.aio` automatically when chat
 requests are routed to the agent directly (without a parent task entrypoint).
@@ -67,7 +67,7 @@ requests are routed to the agent directly (without a parent task entrypoint).
 |------|---------------|
 | `basic_agent.py` | Minimal agent — plain async tools, sync `agent.run()` from the CLI. |
 | `scheduled_triage_agent.py` | Agent that wakes daily via `flyte.Cron`, uses durable Flyte tasks. |
-| `agent_with_memory.py` | Persist `MemoryStore` (transcript + artifacts) to `flyte.io.Dir` between task invocations. |
+| `agent_with_memory.py` | Pass a keyed `MemoryStore` into `agent.run(message, memory=...)`; the transcript is auto-saved and persists across runs. |
 | `hitl_approval_agent.py` | Gate sensitive tools behind human approval (`flyteplugins-hitl`). |
 | `agent_chat_ui.py` | Wrap an `Agent` in the built-in `AgentChatAppEnvironment` UI. |
 | `mcp_powered_agent.py` | Mix local Flyte task tools with remote MCP servers. |

@@ -10,7 +10,7 @@ from flyte.cli import _common as common
 @click.group(name="signal")
 def signal():
     """
-    Signal an event waiting on a paused condition action.
+    Signal a paused condition action.
     """
 
 
@@ -19,7 +19,7 @@ def signal():
 @click.argument("action-name", type=str, required=True)
 @click.argument("value", type=str, required=False, default=None)
 @click.pass_obj
-def event(
+def condition(
     cfg: common.CLIConfig,
     run_name: str,
     action_name: str,
@@ -44,8 +44,8 @@ def event(
         raise click.ClickException(f"Action '{action_name}' in run '{run_name}' is not a signalable condition.")
     cond = details.pb2.condition
 
-    ev = remote.Event(pb2=action.pb2)
-    expected = ev.expected_type
+    cond_obj = remote.Condition(pb2=action.pb2)
+    expected = cond_obj.expected_type
     if expected is None:
         raise click.ClickException(f"Backend did not expose expected payload type for condition '{action_name}'.")
 
@@ -59,11 +59,11 @@ def event(
         console.print(f"signaling with: {payload!r}")
 
     with console.status(
-        f"Signaling event on action '{action_name}' (run '{run_name}')...",
+        f"Signaling condition on action '{action_name}' (run '{run_name}')...",
         spinner=common.safe_spinner("dots"),
     ):
-        ev.signal(payload)
-    console.print(f"Event on action '{action_name}' has been signaled.")
+        cond_obj.signal(payload)
+    console.print(f"Condition on action '{action_name}' has been signaled.")
 
 
 _BOOL_TRUE = {"true", "1", "yes", "y", "t"}

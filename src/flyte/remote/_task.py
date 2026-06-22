@@ -17,8 +17,9 @@ import flyte.errors
 from flyte._cache.cache import CacheBehavior
 from flyte._context import internal_ctx
 from flyte._initialize import ensure_client, get_client, get_init_config
-from flyte._internal.runtime.resources_serde import get_proto_resources
+from flyte._internal.runtime.resources_serde import get_proto_extended_resources, get_proto_resources
 from flyte._internal.runtime.task_serde import (
+    _sanitize_resource_name,
     get_proto_max_runtime,
     get_proto_retry_strategy,
     get_proto_timeout_strategy,
@@ -29,6 +30,61 @@ from flyte.models import NativeInterface
 from flyte.syncify import syncify
 
 from ._common import ToJSONMixin
+
+
+def _apply_overrides_to_primary_container(
+    template: Any,
+    resources: Optional[flyte.Resources] = None,
+    env_vars: Optional[Dict[str, str]] = None,
+) -> None:
+    """Apply container-level overrides to the primary container of a ``k8s_pod`` task.
+
+    Pod-template tasks store the primary container's resources and env inside
+    the ``k8s_pod.pod_spec`` Struct rather than in ``template.container``.
+    Mirror the build path (``task_serde._get_k8s_pod``): convert the resource
+    override to k8s resource maps (``cpu`` / ``memory`` / ``gpu`` /
+    ``ephemeral-storage``) and replace the primary container's ``resources``;
+    replace its ``env`` with the override entries. Both are full replacements,
+    matching the ``template.container`` override semantics.
+    """
+    from google.protobuf import json_format
+
+    # Lazy import: flyte._pod pulls in kubernetes, which we keep off the
+    # module-load path for `flyte.remote`.
+    from flyte._pod import _PRIMARY_CONTAINER_NAME_FIELD
+
+    primary_name = template.config.get(_PRIMARY_CONTAINER_NAME_FIELD)
+    spec = json_format.MessageToDict(template.k8s_pod.pod_spec)
+    containers = spec.get("containers", [])
+    # Fall back to a single-container pod's only container if the primary name
+    # isn't recorded in config for some reason.
+    target = None
+    for c in containers:
+        if c.get("name") == primary_name:
+            target = c
+            break
+    if target is None and len(containers) == 1:
+        target = containers[0]
+    if target is None:
+        return
+
+    if resources:
+        proto_res = get_proto_resources(resources)
+        if proto_res is not None:
+            requests = {_sanitize_resource_name(e): e.value for e in proto_res.requests}
+            limits = {_sanitize_resource_name(e): e.value for e in proto_res.limits}
+            rr: Dict[str, Any] = {}
+            if requests:
+                rr["requests"] = requests
+            if limits:
+                rr["limits"] = limits
+            target["resources"] = rr
+
+    if env_vars:
+        target["env"] = [{"name": k, "value": v} for k, v in env_vars.items()]
+
+    new_spec = json_format.ParseDict(spec, type(template.k8s_pod.pod_spec)())
+    template.k8s_pod.pod_spec.CopyFrom(new_spec)
 
 
 def _repr_task_metadata(metadata: task_definition_pb2.TaskMetadata) -> rich.repr.Result:
@@ -109,6 +165,7 @@ class TaskDetails(ToJSONMixin):
     pb2: task_definition_pb2.TaskDetails
     max_inline_io_bytes: int = 10 * 1024 * 1024  # 10 MB
     overriden_queue: Optional[str] = None
+    overridden: bool = False  # Flag if the TaskDetails was overridden
 
     @classmethod
     def get(
@@ -371,6 +428,31 @@ class TaskDetails(ToJSONMixin):
                 template.container.env.extend([literals_pb2.KeyValuePair(key=k, value=v) for k, v in env_vars.items()])
             if resources:
                 template.container.resources.CopyFrom(get_proto_resources(resources))
+        elif template.HasField("k8s_pod") and (resources or env_vars):
+            # Pod-template tasks (e.g. multi-container / sandbox envs) carry the
+            # primary container's resources and env inside the k8s_pod pod_spec
+            # Struct, not in template.container. Apply the override there too —
+            # otherwise the container resource requests (including the GPU
+            # *count*, nvidia.com/gpu) and env vars are dropped, and the pod
+            # schedules without a GPU even though the accelerator type is set
+            # below.
+            _apply_overrides_to_primary_container(template, resources=resources, env_vars=env_vars)
+
+        if resources:
+            # Resource overrides must also carry the extended resources — the
+            # GPU/accelerator (device type -> nodeSelector/toleration) and
+            # shared memory — not just the container CPU/memory/GPU-count
+            # entries. Without this an override that requests a GPU (e.g.
+            # Resources(gpu="L40s:1")) drops the accelerator entirely, so the
+            # pod never schedules on a GPU node. Mirrors the build path
+            # (task_serde.get_proto_extended_resources). `resources` is a full
+            # replacement, so clear the field when the override has no extended
+            # resources rather than leaving a stale accelerator behind.
+            ext = get_proto_extended_resources(resources)
+            if ext is not None:
+                template.extended_resources.CopyFrom(ext)
+            else:
+                template.ClearField("extended_resources")
 
         md = template.metadata
         if retries:
@@ -406,6 +488,7 @@ class TaskDetails(ToJSONMixin):
             pb2,
             max_inline_io_bytes=max_inline_io_bytes or self.max_inline_io_bytes,
             overriden_queue=queue,
+            overridden=True,
         )
 
     def __rich_repr__(self) -> rich.repr.Result:

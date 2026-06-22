@@ -87,6 +87,23 @@ def app(cfg: common.CLIConfig, name: str, project: str | None = None, domain: st
     console.log(f"[green]Successfully deleted app {name} [/green]")
 
 
+@delete.command(name="local-cache")
+def local_cache():
+    """
+    Delete the entire local cache directory (~/.flyte/local-cache).
+
+    This removes the local SQLite cache used for image lookups, bundle uploads,
+    run history, and task caching.
+    """
+    from flyte._persistence._db import LocalDB
+
+    console = common.get_console()
+    with console.status("Clearing local cache..."):
+        cache_dir = LocalDB.purge()
+
+    console.print(f"[green]Cleared local cache directory: {cache_dir}[/green]")
+
+
 @delete.command()
 @click.option(
     "--volume",

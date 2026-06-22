@@ -137,7 +137,7 @@ class RemoteController(Controller):
         self._submit_loop: asyncio.AbstractEventLoop | None = None
         self._submit_thread: threading.Thread | None = None
         self._submit_init_lock = threading.Lock()
-        self._pending_events: dict[str, Action] = {}
+        self._pending_conditions: dict[str, Action] = {}
 
     def generate_task_call_sequence(self, task_obj: object, action_id: ActionID) -> int:
         """
@@ -615,17 +615,17 @@ class RemoteController(Controller):
         async with self._parent_action_semaphore[unique_action_name(task_action)]:
             return await self._submit_task_ref(task_call_seq, _task, *args, **kwargs)
 
-    async def register_event(self, event: Any):
+    async def register_condition(self, condition: Any):
         """
-        Register an event by submitting a condition action to the backend.
+        Register a condition by submitting a condition action to the backend.
         Returns immediately after the action is enqueued (fire-and-forget).
 
-        :param event: Event object to register
+        :param condition: Condition object to register
         """
-        from flyte._event import _Event
+        from flyte._condition import _Condition
 
-        if not isinstance(event, _Event):
-            raise TypeError(f"Expected _Event, got {type(event)}")
+        if not isinstance(condition, _Condition):
+            raise TypeError(f"Expected _Condition, got {type(condition)}")
 
         ctx = internal_ctx()
         tctx = ctx.data.task_context
@@ -635,14 +635,14 @@ class RemoteController(Controller):
             raise flyte.errors.RuntimeSystemError("BadContext", "Task action not initialized")
 
         current_action_id = tctx.action
-        # Condition actions nest under the real running task (task_action), so events fired inside a
+        # Condition actions nest under the real running task (task_action), so conditions fired inside a
         # @trace still parent to the task rather than the trace pseudo-action.
         task_action = tctx.task_action
-        invoke_seq = self.generate_task_call_sequence(event, current_action_id)
+        invoke_seq = self.generate_task_call_sequence(condition, current_action_id)
 
-        # Generate a deterministic action name from event name + sequence
+        # Generate a deterministic action name from condition name + sequence
         sub_action_id, sub_action_output_path = convert.generate_sub_action_id_and_output_path(
-            tctx, event.name, event.name, invoke_seq
+            tctx, condition.name, condition.name, invoke_seq
         )
 
         action = Action.from_condition(
@@ -656,62 +656,70 @@ class RemoteController(Controller):
                     org=current_action_id.org,
                 ),
             ),
-            event_name=event.name,
-            prompt=event.prompt,
-            data_type=event.data_type,
-            description=event.description,
+            condition_name=condition.name,
+            prompt=condition.prompt,
+            data_type=condition.data_type,
+            description=condition.description,
+            timeout_seconds=condition._timeout_seconds,
+            prompt_type=condition.prompt_type,
+            webhook_url=condition.webhook.url if condition.webhook else None,
+            webhook_payload=condition.webhook.payload if condition.webhook else None,
             group_data=tctx.group_data,
             run_output_base=tctx.run_base_dir,
             inputs_uri=io.inputs_path(sub_action_output_path),
         )
 
         logger.info(
-            f"Registering event '{event.name}' as condition action [{action.name}] "
+            f"Registering condition '{condition.name}' as condition action [{action.name}] "
             f"Run:[{action.run_name}], Parent:[{action.parent_action_name}]"
         )
 
-        # Store for wait_for_event to retrieve later
-        self._pending_events[event.name] = action
+        # Store for wait_for_condition to retrieve later
+        self._pending_conditions[condition.name] = action
 
         # Submit without waiting — returns immediately
         await self.start_action(action)
 
-    async def wait_for_event(self, event: Any) -> Any:
+    async def wait_for_condition(self, condition: Any) -> Any:
         """
-        Wait for a previously registered event to be signaled by the backend.
+        Wait for a previously registered condition to be signaled by the backend.
 
-        :param event: Event object to wait for
-        :return: The typed payload associated with the event when it is signaled.
-            For bool events, returns ``True`` or ``False``.
-        :raises flyte.errors.EventTimedoutError: If the condition times out before being signaled.
-        :raises flyte.errors.EventFailedError: If the condition fails during execution.
+        :param condition: Condition object to wait for
+        :return: The typed payload associated with the condition when it is signaled.
+            For bool conditions, returns ``True`` or ``False``.
+        :raises flyte.errors.ConditionTimedoutError: If the condition times out before being signaled.
+        :raises flyte.errors.ConditionFailedError: If the condition fails during execution.
         :raises flyte.errors.ActionAbortedError: If the condition action is externally aborted.
         """
-        from flyte._event import _Event
+        from flyte._condition import _Condition
 
-        if not isinstance(event, _Event):
-            raise TypeError(f"Expected _Event, got {type(event)}")
+        if not isinstance(condition, _Condition):
+            raise TypeError(f"Expected _Condition, got {type(condition)}")
 
-        if event.name not in self._pending_events:
-            raise RuntimeError(f"Event '{event.name}' was not registered. Call register_event first.")
+        if condition.name not in self._pending_conditions:
+            raise RuntimeError(f"Condition '{condition.name}' was not registered. Call register_condition first.")
 
-        action = self._pending_events.pop(event.name)
+        action = self._pending_conditions.pop(condition.name)
 
-        logger.info(f"Waiting for event '{event.name}' condition action [{action.name}]")
+        logger.info(f"Waiting for condition '{condition.name}' condition action [{action.name}]")
 
         n = await self.wait_for_action(action)
 
         if n.phase == phase_pb2.ACTION_PHASE_ABORTED:
-            raise flyte.errors.ActionAbortedError(f"Event '{event.name}' action {n.action_id.name} was aborted")
+            raise flyte.errors.ActionAbortedError(f"Condition '{condition.name}' action {n.action_id.name} was aborted")
 
         if n.phase == phase_pb2.ACTION_PHASE_TIMED_OUT:
-            raise flyte.errors.EventTimedoutError(f"Event '{event.name}' was not signaled within the timeout period.")
+            raise flyte.errors.ConditionTimedoutError(
+                f"Condition '{condition.name}' was not signaled within the timeout period."
+            )
 
         if n.has_error() or n.phase == phase_pb2.ACTION_PHASE_FAILED:
-            raise flyte.errors.EventFailedError(f"Event '{event.name}' condition action {n.action_id.name} failed.")
+            raise flyte.errors.ConditionFailedError(
+                f"Condition '{condition.name}' condition action {n.action_id.name} failed."
+            )
 
         # Condition actions deliver the signaled Literal inline via ActionUpdate.value
         # (no output_uri). Convert to the expected Python type.
         if n.condition_output is not None:
-            return Action.literal_to_python(n.condition_output, event.data_type)
+            return Action.literal_to_python(n.condition_output, condition.data_type)
         return None

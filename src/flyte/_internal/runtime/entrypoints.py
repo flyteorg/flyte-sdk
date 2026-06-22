@@ -15,7 +15,7 @@ from flyte._task import TaskTemplate
 from flyte.models import ActionID, CheckpointPaths, CodeBundle, RawDataPath
 
 from ..._utils import adjust_sys_path
-from .convert import Error, Inputs, Outputs
+from .convert import Error, Inputs, Outputs, convert_from_native_to_error
 from .taskrunner import (
     convert_and_run,
     extract_download_run_upload,
@@ -213,7 +213,7 @@ async def load_and_run_task(
     output_path: str,
     run_base_dir: str,
     version: str,
-    controller: Controller,
+    controller: Optional[Controller],
     resolver: str,
     resolver_args: List[str],
     checkpoint_paths: CheckpointPaths | None = None,
@@ -243,7 +243,18 @@ async def load_and_run_task(
     """
     sw = Stopwatch("load_and_run_task_total")
     sw.start()
-    task = await _download_and_load_task(code_bundle, resolver, resolver_args)
+    try:
+        task = await _download_and_load_task(code_bundle, resolver, resolver_args)
+    except Exception as e:
+        # Import/load failures happen before the contextual_run wrapper below, so they must
+        # also be uploaded to the error file -- otherwise the UI shows an empty message.
+        logger.exception(f"Failed to load task before execution: {e}")
+        if output_path:
+            from .io import upload_error
+
+            error = convert_from_native_to_error(e)
+            await upload_error(error.err, output_path, recoverable=error.recoverable)
+        raise
 
     await contextual_run(
         extract_download_run_upload,

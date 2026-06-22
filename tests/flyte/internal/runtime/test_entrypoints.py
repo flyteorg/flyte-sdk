@@ -1,7 +1,11 @@
 import os
 import tempfile
+from unittest import mock
 
-from flyte._internal.runtime.entrypoints import _list_user_files
+import pytest
+
+from flyte._internal.runtime.entrypoints import _list_user_files, load_and_run_task
+from flyte.models import ActionID, RawDataPath
 
 
 def test_list_user_files_excludes_venv():
@@ -109,3 +113,70 @@ def test_list_user_files_empty_directory():
     with tempfile.TemporaryDirectory() as cwd:
         files = _list_user_files(cwd)
         assert files == []
+
+
+@pytest.mark.asyncio
+async def test_load_failure_uploads_error_document():
+    """A failure while loading the task (e.g. a missing module import) must write an error
+    document so the real reason is surfaced in the UI, instead of an empty
+    "terminated with exit code (1)" message. See entrypoints.load_and_run_task.
+    """
+    boom = ModuleNotFoundError("No module named 'emoji'")
+
+    with (
+        mock.patch(
+            "flyte._internal.runtime.entrypoints._download_and_load_task",
+            side_effect=boom,
+        ),
+        mock.patch(
+            "flyte._internal.runtime.io.upload_error",
+            new_callable=mock.AsyncMock,
+        ) as mock_upload_error,
+    ):
+        with pytest.raises(ModuleNotFoundError):
+            await load_and_run_task(
+                action=ActionID(name="a0", run_name="r0"),
+                raw_data_path=RawDataPath(path="/tmp/raw"),
+                output_path="s3://bucket/outputs",
+                run_base_dir="s3://bucket/run",
+                version="v1",
+                controller=None,
+                resolver="some.resolver",
+                resolver_args=["mod", "task"],
+            )
+
+    # The error document was uploaded to the task's output path before re-raising.
+    mock_upload_error.assert_awaited_once()
+    uploaded_err = mock_upload_error.call_args.args[0]
+    assert "emoji" in uploaded_err.message
+    assert uploaded_err.code == "ModuleNotFoundError"
+
+
+@pytest.mark.asyncio
+async def test_load_failure_without_output_path_still_raises():
+    """If there is no output path to write to, the load failure must still propagate."""
+    boom = ModuleNotFoundError("No module named 'emoji'")
+
+    with (
+        mock.patch(
+            "flyte._internal.runtime.entrypoints._download_and_load_task",
+            side_effect=boom,
+        ),
+        mock.patch(
+            "flyte._internal.runtime.io.upload_error",
+            new_callable=mock.AsyncMock,
+        ) as mock_upload_error,
+    ):
+        with pytest.raises(ModuleNotFoundError):
+            await load_and_run_task(
+                action=ActionID(name="a0", run_name="r0"),
+                raw_data_path=RawDataPath(path="/tmp/raw"),
+                output_path="",
+                run_base_dir="s3://bucket/run",
+                version="v1",
+                controller=None,
+                resolver="some.resolver",
+                resolver_args=["mod", "task"],
+            )
+
+    mock_upload_error.assert_not_awaited()

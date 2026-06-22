@@ -1,10 +1,19 @@
+import re
 import sys
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
 from click.testing import CliRunner
 
 from flyte.cli.main import main
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _strip_ansi(text: str) -> str:
+    return _ANSI_RE.sub("", text)
+
 
 # flyte.cli/__init__.py rebinds the `main` attribute to the click group, so
 # patch("flyte.cli.main.CLIConfig") resolves to the group, not the module.
@@ -82,3 +91,13 @@ def test_delete_secret_cluster_pool_rejects_domain(runner: CliRunner):
     assert "Illegal usage" in result.stderr
     assert "cluster_pool" in result.stderr
     assert "domain" in result.stderr
+
+
+@patch("flyte._persistence._db.LocalDB.purge", return_value=Path("/home/u/.flyte/local-cache"))
+def test_delete_local_cache(mock_purge, runner: CliRunner):
+    result = runner.invoke(main, ["delete", "local-cache"])
+    assert result.exit_code == 0, result.stderr
+    mock_purge.assert_called_once_with()
+    output = _strip_ansi(result.output)
+    assert "Cleared local cache directory" in output
+    assert "/home/u/.flyte/local-cache" in output
