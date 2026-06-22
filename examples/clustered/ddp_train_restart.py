@@ -1,31 +1,33 @@
 """
-End-to-end DDP training on a ClusteredTaskEnvironment.
+DDP training that FAILS on attempt 0 and SUCCEEDS on the JobSet restart.
 
-Trains a tiny linear-regression model with PyTorch DistributedDataParallel across
-``replicas x nproc_per_node`` workers. The workers are bootstrapped by ``torchrun``
-via the dedicated ``clustered`` runtime entrypoint, which the Go ``clustered`` plugin
-wires into a Kubernetes JobSet. Defaults to ``nccl`` + ``resources.gpu`` (one GPU per pod);
-flip ``USE_GPU = False`` to smoke on ``gloo`` (CPU) with no GPUs.
+This is a regression test for the clustered-restart fix on this branch: when a
+JobSet restarts (``JOBSET_RESTART_ATTEMPT`` > 0), ``upload_outputs`` must first
+delete the stale ``error.pb`` written by the previous failed attempt. Otherwise
+the successful retry's outputs land alongside a leftover error file and the
+execution is still reported as FAILED.
 
-This exercises the full path:
-    ClusteredTaskEnvironment  ->  task_serde (type=clustered-task, args -> `clustered`)
-      ->  JobSet (N pods)  ->  `clustered` entrypoint: DNS wait + torchrun  ->  N workers per pod
-      ->  torch.distributed rendezvous  ->  DDP training  ->  rank-0 uploads outputs.
+Mechanics:
+    - ``ClusterFailurePolicy(max_restarts=1)`` lets the JobSet restart once.
+    - Attempt 0 (``JOBSET_RESTART_ATTEMPT`` unset / "0") raises -> writes error.pb.
+    - Attempt 1 (``JOBSET_RESTART_ATTEMPT`` == "1") runs DDP and uploads outputs.
+      With the fix, the stale error.pb is cleared and the run ends SUCCEEDED.
+      Without the fix, the run ends FAILED despite the successful retry.
 
-Run (registers + runs on the configured cluster):
-    uv run python examples/clustered/ddp_train.py
+Run:
+    uv run python examples/clustered/ddp_train_restart.py
 """
 
 from __future__ import annotations
+
+import os
 
 import flyte
 from flyte._image import DIST_FOLDER, PythonWheels
 from flyte.clustered import ClusteredTaskEnvironment, ClusterFailurePolicy, TorchRun
 
-# Image carries the LOCAL flyte build (so the container has the `clustered` runtime
-# entrypoint and the clustered runtime fixes), plus torch for the actual DDP workload.
 image = (
-    flyte.Image.from_debian_base(name="ddp_train9")
+    flyte.Image.from_debian_base(name="ddp_train_restart_1")
     .clone(addl_layer=PythonWheels(wheel_dir=DIST_FOLDER, package_name="flyte"))
     .with_pip_packages("torch", "numpy")
 )
@@ -45,19 +47,27 @@ resources = (
 )
 
 env = ClusteredTaskEnvironment(
-    name="ddp_env",
+    name="ddp_restart_env",
     image=image,
     resources=resources,
     replicas=REPLICAS,
     nproc_per_node=NPROC_PER_NODE,
     runtime=TorchRun(rdzv_backend="static", max_restarts=0),
-    failure_policy=ClusterFailurePolicy(max_restarts=1),
+    failure_policy=ClusterFailurePolicy(max_restarts=1),  # allow ONE JobSet restart
 )
 
 
 @env.task
-async def train_ddp(steps: int = 50, lr: float = 0.05) -> float:
-    """Run DDP training and return the final (rank-0) training loss."""
+async def train_ddp_with_restart(steps: int = 50, lr: float = 0.05) -> float:
+    """Fail on the first JobSet attempt, then train + return loss on the restart."""
+    restart_attempt = int(os.environ.get("JOBSET_RESTART_ATTEMPT", "0") or "0")
+    rank = os.environ.get("RANK", "0")
+    print(f"[rank {rank}] JOBSET_RESTART_ATTEMPT={restart_attempt}", flush=True)
+
+    # Attempt 0 fails on every worker -> writes error.pb for the execution.
+    if restart_attempt == 0:
+        raise RuntimeError("Intentional failure on attempt 0 to force a JobSet restart")
+
     import torch
     import torch.distributed as dist
     import torch.nn as nn
@@ -72,25 +82,21 @@ async def train_ddp(steps: int = 50, lr: float = 0.05) -> float:
     else:
         device = torch.device("cpu")
 
-    # torchrun has already populated RANK / WORLD_SIZE / MASTER_ADDR / MASTER_PORT.
     dist.init_process_group(backend=_BACKEND)
-    rank = dist.get_rank()
+    rank_i = dist.get_rank()
     world_size = dist.get_world_size()
     print(
-        f"[rank {rank}/{world_size}] device={device} ctx.rank={ctx.rank} ctx.world_size={ctx.world_size} "
-        f"ctx.node_rank={ctx.node_rank} ctx.nnodes={ctx.nnodes} master_addr={ctx.master_addr}",
+        f"[rank {rank_i}/{world_size}] device={device} restart attempt {restart_attempt} — training",
         flush=True,
     )
 
-    # Tiny model the workers train cooperatively: learn y = x · [1,1,1,1].
     torch.manual_seed(0)
     model = nn.Linear(4, 1).to(device)
     ddp = DDP(model, device_ids=[device.index] if device.type == "cuda" else None)
     opt = torch.optim.SGD(ddp.parameters(), lr=lr)
     loss_fn = nn.MSELoss()
 
-    # Each rank trains on its own shard of synthetic data.
-    g = torch.Generator().manual_seed(rank)
+    g = torch.Generator().manual_seed(rank_i)
     x = torch.randn(64, 4, generator=g).to(device)
     y = x.sum(dim=1, keepdim=True)
 
@@ -101,18 +107,19 @@ async def train_ddp(steps: int = 50, lr: float = 0.05) -> float:
         loss.backward()
         opt.step()
         last_loss = float(loss.detach())
-        if rank == 0 and step % 10 == 0:
+        if rank_i == 0 and step % 10 == 0:
             print(f"[rank 0] step {step:3d}  loss {last_loss:.5f}", flush=True)
 
     dist.barrier()
     dist.destroy_process_group()
-    print(f"[rank {rank}] done — final loss {last_loss:.5f}", flush=True)
+    print(f"[rank {rank_i}] done — final loss {last_loss:.5f}", flush=True)
     return last_loss
 
 
 if __name__ == "__main__":
     flyte.init_from_config()
-    run = flyte.run(train_ddp, steps=50)
+    run = flyte.run(train_ddp_with_restart, steps=50)
     print("Run URL:", run.url)
     run.wait()
+    # Expected WITH the fix: SUCCEEDED. Without it: FAILED (stale error.pb).
     print("Final phase:", run.phase)

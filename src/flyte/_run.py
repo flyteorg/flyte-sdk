@@ -912,7 +912,8 @@ def with_runcontext(
     :param project: Optional The project to use for the run
     :param domain: Optional The domain to use for the run
     :param env_vars: Optional Environment variables to set for the run
-    :param labels: Optional Labels to set for the run
+    :param labels: Optional user-defined labels to attach to the run as KEY=VALUE pairs, used for
+        filtering and organizing runs (e.g. ``flyte get run --with-label team=ml``)
     :param annotations: Optional Annotations to set for the run
     :param interruptible: Optional If true, the run can be scheduled on interruptible instances and false implies
         that all tasks in the run should only be scheduled on non-interruptible instances. If not specified the

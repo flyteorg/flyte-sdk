@@ -22,6 +22,7 @@ ORG_NAME = "_U_ORG_NAME"
 ENDPOINT_OVERRIDE = "_U_EP_OVERRIDE"
 RUN_OUTPUT_BASE_DIR = "_U_RUN_BASE"
 FLYTE_ENABLE_VSCODE_KEY = "_F_E_VS"
+FLYTE_ENABLE_SSH_KEY = "_F_E_SSH"
 
 _UNION_EAGER_API_KEY_ENV_VAR = "_UNION_EAGER_API_KEY"
 _F_PATH_REWRITE = "_F_PATH_REWRITE"
@@ -154,7 +155,12 @@ def _run_action(
 
     logger.warning(f"Flyte runtime started for action {name} with run name {run_name}")
 
-    if debug and name == "a0":
+    ssh_debug = os.getenv(FLYTE_ENABLE_SSH_KEY, "").lower() in ("1", "true", "yes")
+    if ssh_debug and name == "a0":
+        from flyte._debug.ssh import _start_ssh_server
+
+        asyncio.run(_start_ssh_server(ctx))
+    elif debug and name == "a0":
         from flyte._debug.vscode import _start_vscode_server
 
         asyncio.run(_start_vscode_server(ctx))

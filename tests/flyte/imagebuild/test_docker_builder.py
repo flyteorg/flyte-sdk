@@ -8,7 +8,7 @@ import pytest
 import pytest_asyncio
 
 from flyte import Secret
-from flyte._image import AptPackages, Commands, Image, PipPackages, PoetryProject, Requirements, UVProject
+from flyte._image import AptPackages, Commands, Image, PipPackages, PoetryProject, PythonWheels, Requirements, UVProject
 from flyte._internal.imagebuild.docker_builder import (
     DOCKER_FILE_UV_BASE_TEMPLATE,
     CopyConfig,
@@ -16,6 +16,7 @@ from flyte._internal.imagebuild.docker_builder import (
     DockerImageBuilder,
     PipAndRequirementsHandler,
     PoetryProjectHandler,
+    PythonWheelHandler,
     UVProjectHandler,
     _get_secret_commands,
 )
@@ -175,6 +176,30 @@ async def test_pip_package_handling(monkeypatch):
         )
         assert "--mount=type=secret" in docker_update
         assert "uv pip install --python $UV_PYTHON pkg_a pkg_b" in docker_update
+
+
+@pytest.mark.asyncio
+async def test_python_wheel_handler_forces_local_wheel_last():
+    """The local wheel must be force-installed (--no-index --reinstall) *after* the dependency
+    resolution step. If the order is reversed, a full resolve can discard the local wheel in favor
+    of a stable PyPI release (e.g. when one of the wheel's deps can't be satisfied, uv backtracks to
+    the published version), silently undoing the local install."""
+    with tempfile.TemporaryDirectory() as wheel_dir, tempfile.TemporaryDirectory() as tmp_context:
+        # The handler copies wheel_dir into the build context, so it needs at least one file.
+        (Path(wheel_dir) / "flyte-2.5.2.dev1-py3-none-any.whl").write_text("")
+        context_path = Path(tmp_context)
+
+        layer = PythonWheels(wheel_dir=Path(wheel_dir), package_name="flyte")
+        docker_update = await PythonWheelHandler.handle(layer=layer, context_path=context_path, dockerfile="")
+
+        # Both install steps target the local wheel via --find-links /dist.
+        dep_step = "uv pip install --python $UV_PYTHON --find-links /dist flyte"
+        force_step = "uv pip install --python $UV_PYTHON --find-links /dist --no-deps --no-index --reinstall flyte"
+        assert dep_step in docker_update
+        assert force_step in docker_update
+
+        # The force-install step must come last so nothing re-resolves the package afterwards.
+        assert docker_update.index(force_step) > docker_update.index(dep_step)
 
 
 @pytest.mark.asyncio
