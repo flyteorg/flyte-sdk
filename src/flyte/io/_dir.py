@@ -597,7 +597,30 @@ class Dir(BaseModel, Generic[T], SerializableType):
                 return local_dest
 
         fs = storage.get_underlying_filesystem(path=self.path)
-        fs.get(self.path, local_dest, recursive=True)
+
+        # Enumerate the concrete object keys under the prefix and download each
+        # individually, rather than relying on fsspec's recursive get(). A
+        # recursive get() must first decide the remote prefix is a directory:
+        # it HEADs the bare prefix key (a 404, since only the child objects
+        # exist) and falls back to a listing. When that listing momentarily
+        # misfires, fsspec treats the prefix as a *file* and issues a GET on the
+        # directory key itself and errors out with 404 NoSuchKey, even though
+        # the data is present. find()/get_file() only ever touch real object keys,
+        # avoiding that.
+        files = fs.find(self.path)
+        if not files:
+            # Nothing under the prefix; fall back to a recursive get so behavior
+            # (and any error) matches the prior implementation.
+            fs.get(self.path, local_dest, recursive=True)
+            return local_dest
+
+        src_prefix = fs._strip_protocol(self.path).rstrip("/")
+        for remote_file in files:
+            rel = fs._strip_protocol(remote_file)[len(src_prefix) :].lstrip("/")
+            dest = os.path.join(local_dest, rel) if rel else local_dest
+            os.makedirs(os.path.dirname(dest) or local_dest, exist_ok=True)
+            fs.get_file(remote_file, dest)
+
         return local_dest
 
     @classmethod
