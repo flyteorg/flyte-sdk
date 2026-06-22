@@ -100,7 +100,6 @@ async def test_informer_does_not_recycle_idle_established_stream():
     """A healthy stream that idles (no updates) after the sentinel must NOT be
     torn down by the establishment deadline."""
     run_id = identifier_pb2.RunIdentifier(name="r2", project="p", domain="d")
-    child_id = identifier_pb2.ActionIdentifier(name="a1", run=run_id)
 
     class _IdleActions:
         def __init__(self):
