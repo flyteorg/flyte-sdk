@@ -58,6 +58,62 @@ def test_run_command_has_no_recover_from_option():
     assert "--recover-from" not in option_names
 
 
+def test_run_command_has_queue_option():
+    option_names = {decl for p in run.params for decl in p.opts}
+    assert "--queue" in option_names
+
+
+def test_run_arguments_queue_from_dict():
+    from flyte.cli._run import RunArguments
+
+    run_args = RunArguments.from_dict({"queue": "gpu-queue"})
+    assert run_args.queue == "gpu-queue"
+    assert RunArguments.from_dict({}).queue is None
+
+
+def _patch_with_runcontext(monkeypatch, captured):
+    """Replace flyte.with_runcontext with a stub that records kwargs and returns a no-op runner."""
+
+    class _FakeResult:
+        url = "local://fake"
+
+        def outputs(self):
+            return None
+
+    class _FakeRun:
+        async def aio(self, *args, **kwargs):
+            return _FakeResult()
+
+    class _FakeRunner:
+        run = _FakeRun()
+
+    def _fake_with_runcontext(*args, **kwargs):
+        captured.update(kwargs)
+        return _FakeRunner()
+
+    monkeypatch.setattr(flyte, "with_runcontext", _fake_with_runcontext)
+
+
+def test_run_queue_passed_to_runcontext(runner, monkeypatch):
+    captured = {}
+    _patch_with_runcontext(monkeypatch, captured)
+
+    cmd = ["--queue", "gpu-queue", "--local", str(HELLO_WORLD_PY), "say_hello", "--name", "World"]
+    result = runner.invoke(run, cmd)
+    assert result.exit_code == 0, result.output
+    assert captured.get("queue") == "gpu-queue"
+
+
+def test_run_queue_defaults_to_none_in_runcontext(runner, monkeypatch):
+    captured = {}
+    _patch_with_runcontext(monkeypatch, captured)
+
+    cmd = ["--local", str(HELLO_WORLD_PY), "say_hello", "--name", "World"]
+    result = runner.invoke(run, cmd)
+    assert result.exit_code == 0, result.output
+    assert captured.get("queue") is None
+
+
 def test_run_max_action_concurrency_rejects_negative(runner):
     result = runner.invoke(run, ["--max-action-concurrency", "-1", str(HELLO_WORLD_PY), "say_hello"])
     assert result.exit_code != 0
