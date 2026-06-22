@@ -32,12 +32,26 @@ image = (
     .with_pip_packages("torch", "numpy")
 )
 
+# --- Knobs ---------------------------------------------------------------------------------------
+USE_GPU = True
+GPU_DEVICE = "L4"  # one of flyte._resources.Accelerators device names; match the cluster's GPUs
+REPLICAS = 2  # pods (== nodes)
+NPROC_PER_NODE = 1  # processes (one per GPU) per pod  => world_size = REPLICAS * NPROC_PER_NODE
+
+_BACKEND = "nccl" if USE_GPU else "gloo"
+
+resources = (
+    flyte.Resources(cpu=(2, 4), memory=("4Gi", "8Gi"), gpu=f"{GPU_DEVICE}:{NPROC_PER_NODE}")
+    if USE_GPU
+    else flyte.Resources(cpu=(1, 2), memory=("1Gi", "2Gi"))
+)
+
 env = ClusteredTaskEnvironment(
     name="ddp_restart_env",
     image=image,
-    resources=flyte.Resources(cpu=(1, 2), memory=("1Gi", "2Gi")),
-    replicas=2,
-    nproc_per_node=2,
+    resources=resources,
+    replicas=REPLICAS,
+    nproc_per_node=NPROC_PER_NODE,
     runtime=TorchRun(rdzv_backend="static", max_restarts=0),
     failure_policy=ClusterFailurePolicy(max_restarts=1),  # allow ONE JobSet restart
 )
@@ -59,19 +73,31 @@ async def train_ddp_with_restart(steps: int = 50, lr: float = 0.05) -> float:
     import torch.nn as nn
     from torch.nn.parallel import DistributedDataParallel as DDP
 
-    dist.init_process_group(backend="gloo")
+    ctx = flyte.ctx()
+
+    # Bind this rank to its local GPU BEFORE init_process_group so NCCL binds the right device.
+    if _BACKEND == "nccl" and torch.cuda.is_available():
+        torch.cuda.set_device(ctx.local_rank or 0)
+        device = torch.device(f"cuda:{ctx.local_rank or 0}")
+    else:
+        device = torch.device("cpu")
+
+    dist.init_process_group(backend=_BACKEND)
     rank_i = dist.get_rank()
     world_size = dist.get_world_size()
-    print(f"[rank {rank_i}/{world_size}] restart attempt {restart_attempt} — training", flush=True)
+    print(
+        f"[rank {rank_i}/{world_size}] device={device} restart attempt {restart_attempt} — training",
+        flush=True,
+    )
 
     torch.manual_seed(0)
-    model = nn.Linear(4, 1)
-    ddp = DDP(model)
+    model = nn.Linear(4, 1).to(device)
+    ddp = DDP(model, device_ids=[device.index] if device.type == "cuda" else None)
     opt = torch.optim.SGD(ddp.parameters(), lr=lr)
     loss_fn = nn.MSELoss()
 
     g = torch.Generator().manual_seed(rank_i)
-    x = torch.randn(64, 4, generator=g)
+    x = torch.randn(64, 4, generator=g).to(device)
     y = x.sum(dim=1, keepdim=True)
 
     last_loss = 0.0
