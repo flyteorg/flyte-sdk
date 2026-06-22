@@ -260,9 +260,7 @@ class Informer:
                         if established:
                             resp = await watch_iter.__anext__()
                         else:
-                            resp = await asyncio.wait_for(
-                                watch_iter.__anext__(), timeout=self._watch_conn_timeout_sec
-                            )
+                            resp = await asyncio.wait_for(watch_iter.__anext__(), timeout=self._watch_conn_timeout_sec)
                     except StopAsyncIteration:
                         break
                     retries = 0

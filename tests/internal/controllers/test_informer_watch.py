@@ -22,16 +22,12 @@ from flyte._internal.controllers.remote._informer import Informer
 
 def _update(child_id, phase, output_uri="s3://out"):
     return actions_service_pb2.WatchForUpdatesResponse(
-        action_update=state_service_pb2.ActionUpdate(
-            action_id=child_id, phase=phase, output_uri=output_uri
-        )
+        action_update=state_service_pb2.ActionUpdate(action_id=child_id, phase=phase, output_uri=output_uri)
     )
 
 
 def _sentinel():
-    return actions_service_pb2.WatchForUpdatesResponse(
-        control_message=state_service_pb2.ControlMessage(sentinel=True)
-    )
+    return actions_service_pb2.WatchForUpdatesResponse(control_message=state_service_pb2.ControlMessage(sentinel=True))
 
 
 class _FlakyActions:
@@ -80,6 +76,7 @@ async def test_informer_recovers_from_hung_reconnect():
     )
     await informer.start(timeout=5)
     try:
+
         async def _await_terminal():
             while True:
                 a = await informer.get("a1")
