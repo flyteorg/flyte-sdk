@@ -477,13 +477,13 @@ class Controller:
                     if e.code in [
                         Code.INVALID_ARGUMENT,
                         Code.NOT_FOUND,
+                        Code.FAILED_PRECONDITION,
                     ]:
                         # Not retryable; surface as a per-action system error.
                         raise flyte.errors.RuntimeSystemError(
                             e.code.name, f"Action launch failed ({e.code.name}): {e.message}"
                         ) from e
-                    # FAILED_PRECONDITION indicates the shard is wrong or we've hit a limit — retry with backoff.
-                    # For all other errors, we will also retry with backoff.
+                    # For all other errors, retry with backoff.
                     logger.error(
                         f"Failed to launch action: {action.name}, Code: {e.code}, Details {e.message} backing off..."
                     )
