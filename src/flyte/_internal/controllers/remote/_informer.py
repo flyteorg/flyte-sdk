@@ -253,29 +253,8 @@ class Informer:
                             parent_action_id=parent_action_id,
                         ),
                     )
-                # Bound the time to receive each message of the initial snapshot
-                # up to the sentinel. After a server restart the transport can
-                # hand back a pooled keep-alive connection that is half-open
-                # (peer gone, no RST); the request is written but the chunked
-                # response read never returns, and with read_timeout unset on the
-                # transport this would wedge the watch -- and the parent action --
-                # forever. The deadline turns that hang into a TimeoutError so the
-                # retry/backoff path can re-issue the watch on a fresh connection,
-                # whose snapshot re-syncs the children's current states.
-                #
-                # `established` is per-attempt (NOT self._ready): the incident
-                # hung on a *reconnect* after the informer was already ready, so
-                # the deadline must guard every fresh stream. Once the sentinel
-                # arrives the stream may legitimately idle between updates, so the
-                # deadline is dropped.
-                # ponytail: this only guards establishment; a stream that dies
-                # silently *after* the sentinel still needs server-side heartbeats
-                # (none today) to detect -- tracked separately.
                 established = False
                 watch_iter = watcher.__aiter__()
-                # Equivalent to `async for resp in watcher`; the outer loop gates
-                # on self._running and stop() cancels the await, so no per-message
-                # running check is needed here.
                 while True:
                     try:
                         if established:
