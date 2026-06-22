@@ -4,8 +4,8 @@ End-to-end DDP training on a ClusteredTaskEnvironment.
 Trains a tiny linear-regression model with PyTorch DistributedDataParallel across
 ``replicas x nproc_per_node`` workers. The workers are bootstrapped by ``torchrun``
 via the dedicated ``clustered`` runtime entrypoint, which the Go ``clustered`` plugin
-wires into a Kubernetes JobSet. Backend is ``gloo`` (CPU) so it needs no GPUs — swap to
-``nccl`` + ``resources.gpu`` for real GPU training.
+wires into a Kubernetes JobSet. Defaults to ``nccl`` + ``resources.gpu`` (one GPU per pod);
+flip ``USE_GPU = False`` to smoke on ``gloo`` (CPU) with no GPUs.
 
 This exercises the full path:
     ClusteredTaskEnvironment  ->  task_serde (type=clustered-task, args -> `clustered`)
@@ -25,17 +25,31 @@ from flyte.clustered import ClusteredTaskEnvironment, ClusterFailurePolicy, Torc
 # Image carries the LOCAL flyte build (so the container has the `clustered` runtime
 # entrypoint and the clustered runtime fixes), plus torch for the actual DDP workload.
 image = (
-    flyte.Image.from_debian_base(name="ddp_train8")
+    flyte.Image.from_debian_base(name="ddp_train9")
     .clone(addl_layer=PythonWheels(wheel_dir=DIST_FOLDER, package_name="flyte"))
     .with_pip_packages("torch", "numpy")
+)
+
+# --- Knobs ---------------------------------------------------------------------------------------
+USE_GPU = True
+GPU_DEVICE = "L4"  # one of flyte._resources.Accelerators device names; match the cluster's GPUs
+REPLICAS = 2  # pods (== nodes)
+NPROC_PER_NODE = 1  # processes (one per GPU) per pod  => world_size = REPLICAS * NPROC_PER_NODE
+
+_BACKEND = "nccl" if USE_GPU else "gloo"
+
+resources = (
+    flyte.Resources(cpu=(2, 4), memory=("4Gi", "8Gi"), gpu=f"{GPU_DEVICE}:{NPROC_PER_NODE}")
+    if USE_GPU
+    else flyte.Resources(cpu=(1, 2), memory=("1Gi", "2Gi"))
 )
 
 env = ClusteredTaskEnvironment(
     name="ddp_env",
     image=image,
-    resources=flyte.Resources(cpu=(1, 2), memory=("1Gi", "2Gi")),
-    replicas=2,  # 2 pods (== 2 nodes)
-    nproc_per_node=2,  # 2 worker processes per pod  => world_size = 4
+    resources=resources,
+    replicas=REPLICAS,
+    nproc_per_node=NPROC_PER_NODE,
     runtime=TorchRun(rdzv_backend="static", max_restarts=0),
     failure_policy=ClusterFailurePolicy(max_restarts=1),
 )
@@ -51,26 +65,33 @@ async def train_ddp(steps: int = 50, lr: float = 0.05) -> float:
 
     ctx = flyte.ctx()
 
+    # Bind this rank to its local GPU BEFORE init_process_group so NCCL binds the right device.
+    if _BACKEND == "nccl" and torch.cuda.is_available():
+        torch.cuda.set_device(ctx.local_rank or 0)
+        device = torch.device(f"cuda:{ctx.local_rank or 0}")
+    else:
+        device = torch.device("cpu")
+
     # torchrun has already populated RANK / WORLD_SIZE / MASTER_ADDR / MASTER_PORT.
-    dist.init_process_group(backend="gloo")
+    dist.init_process_group(backend=_BACKEND)
     rank = dist.get_rank()
     world_size = dist.get_world_size()
     print(
-        f"[rank {rank}/{world_size}] ctx.rank={ctx.rank} ctx.world_size={ctx.world_size} "
+        f"[rank {rank}/{world_size}] device={device} ctx.rank={ctx.rank} ctx.world_size={ctx.world_size} "
         f"ctx.node_rank={ctx.node_rank} ctx.nnodes={ctx.nnodes} master_addr={ctx.master_addr}",
         flush=True,
     )
 
     # Tiny model the workers train cooperatively: learn y = x · [1,1,1,1].
     torch.manual_seed(0)
-    model = nn.Linear(4, 1)
-    ddp = DDP(model)
+    model = nn.Linear(4, 1).to(device)
+    ddp = DDP(model, device_ids=[device.index] if device.type == "cuda" else None)
     opt = torch.optim.SGD(ddp.parameters(), lr=lr)
     loss_fn = nn.MSELoss()
 
     # Each rank trains on its own shard of synthetic data.
     g = torch.Generator().manual_seed(rank)
-    x = torch.randn(64, 4, generator=g)
+    x = torch.randn(64, 4, generator=g).to(device)
     y = x.sum(dim=1, keepdim=True)
 
     last_loss = 0.0
