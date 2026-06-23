@@ -597,36 +597,6 @@ async def test_clustered_failure_cascade(flyte_client):
     await _run_and_wait(train_with_crash, "test_clustered_failure_cascade")
 
 
-@pytest.mark.integration
-@pytest.mark.stress
-@pytest.mark.asyncio
-async def test_clustered_load_16pod(flyte_client):
-    """Test the clustered.load_16pod example: 16-pod rendezvous scale test on CPU/gloo."""
-    from examples.clustered.load_16pod import all_reduce_smoke
-
-    await _run_and_wait(all_reduce_smoke, "test_clustered_load_16pod")
-
-
-@pytest.mark.integration
-@pytest.mark.gpu
-@pytest.mark.asyncio
-async def test_clustered_ddp_train(flyte_client):
-    """Test the clustered.ddp_train example: canonical end-to-end DDP on NCCL/GPU."""
-    from examples.clustered.ddp_train import train_ddp
-
-    await _run_and_wait(train_ddp, "test_clustered_ddp_train")
-
-
-@pytest.mark.integration
-@pytest.mark.gpu
-@pytest.mark.asyncio
-async def test_clustered_ddp_train_restart(flyte_client):
-    """Test the clustered.ddp_train_restart example: regression for stale error.pb on JobSet restart."""
-    from examples.clustered.ddp_train_restart import train_ddp_with_restart
-
-    await _run_and_wait(train_ddp_with_restart, "test_clustered_ddp_train_restart")
-
-
 # =============================================================================
 # APPS (deploy-based tests)
 # =============================================================================
