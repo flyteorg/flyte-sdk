@@ -12,11 +12,15 @@ from __future__ import annotations
 import dataclasses
 import inspect
 import typing
+from collections.abc import Callable
 from typing import Any, Union, get_args, get_origin
 
 from flyteidl2.core import literals_pb2, types_pb2
 
 from flyte.io import DataFrame, Dir, File
+
+# Optional hook for CLI/local path strings → File/Dir/DataFrame (upload, validation).
+StringBlobConverter = Callable[[str, Any], Any]
 
 
 def unwrap_optional_type(tp: Any) -> Any:
@@ -109,7 +113,27 @@ def _supplement_io_metadata(out: dict[str, Any], value: Any) -> dict[str, Any]:
     return out
 
 
-async def coerce_json_value(value: Any, py_type: Any) -> Any:
+def _literal_type_is_io(lt: types_pb2.LiteralType) -> bool:
+    return lt.HasField("blob") or lt.HasField("structured_dataset_type")
+
+
+def _is_io_python_type(py_type: Any) -> bool:
+    if not isinstance(py_type, type):
+        return False
+    from flyte.types._type_engine import TypeEngine
+
+    try:
+        return _literal_type_is_io(TypeEngine.to_literal_type(py_type))
+    except Exception:
+        return py_type in (File, Dir, DataFrame)
+
+
+async def coerce_json_value(
+    value: Any,
+    py_type: Any,
+    *,
+    string_blob_converter: StringBlobConverter | None = None,
+) -> Any:
     """Coerce a JSON-like value into *py_type* using the Flyte type engine."""
     if value is None:
         return None
@@ -120,18 +144,25 @@ async def coerce_json_value(value: Any, py_type: Any) -> Any:
 
     if origin is list and isinstance(value, list):
         elem_type = args[0] if args else Any
-        return [await coerce_json_value(v, elem_type) for v in value]
+        return [await coerce_json_value(v, elem_type, string_blob_converter=string_blob_converter) for v in value]
 
     if origin is dict and isinstance(value, dict):
         val_type = args[1] if len(args) >= 2 else Any
-        return {k: await coerce_json_value(v, val_type) for k, v in value.items()}
+        return {
+            k: await coerce_json_value(v, val_type, string_blob_converter=string_blob_converter)
+            for k, v in value.items()
+        }
 
     if isinstance(value, dict) and isinstance(py_type, type) and dataclasses.is_dataclass(py_type):
         field_types = typing.get_type_hints(py_type, include_extras=True)
         field_names = {f.name for f in dataclasses.fields(py_type)}
         return py_type(
             **{
-                name: await coerce_json_value(val, field_types.get(name, type(val)))
+                name: await coerce_json_value(
+                    val,
+                    field_types.get(name, type(val)),
+                    string_blob_converter=string_blob_converter,
+                )
                 for name, val in value.items()
                 if name in field_names
             }
@@ -141,6 +172,8 @@ async def coerce_json_value(value: Any, py_type: Any) -> Any:
         return value
 
     if isinstance(value, str):
+        if string_blob_converter is not None and _is_io_python_type(unwrap_optional_type(py_type)):
+            return string_blob_converter(value, py_type)
         if py_type is File:
             return File(path=value)
         if py_type is Dir:
@@ -164,11 +197,16 @@ async def coerce_json_value(value: Any, py_type: Any) -> Any:
     return value
 
 
-def coerce_json_value_sync(value: Any, py_type: Any) -> Any:
+def coerce_json_value_sync(
+    value: Any,
+    py_type: Any,
+    *,
+    string_blob_converter: StringBlobConverter | None = None,
+) -> Any:
     """Synchronous wrapper around :func:`coerce_json_value` for CLI use."""
     from flyte._utils.asyn import run_sync
 
-    return run_sync(coerce_json_value, value, py_type)
+    return run_sync(coerce_json_value, value, py_type, string_blob_converter=string_blob_converter)
 
 
 def serialize_json_value_sync(value: Any, py_type: Any | None = None) -> Any:

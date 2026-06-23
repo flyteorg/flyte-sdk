@@ -22,7 +22,7 @@ from google.protobuf.json_format import MessageToDict
 from mashumaro.codecs.json import JSONEncoder
 
 from flyte._logging import logger
-from flyte.io import DataFrame, Dir, File
+from flyte.io import Dir, File
 from flyte.types._pickle import FlytePickleTransformer
 
 # ---------------------------------------------------
@@ -432,22 +432,11 @@ class JsonParamType(click.ParamType):
             except json.JSONDecodeError as e:
                 raise click.BadParameter(f"parameter {param} should be a valid json object, {value}, error: {e}")
 
-    def _unwrap_field_type(self, tp: typing.Type) -> typing.Type:
-        from flyte.types._type_engine import get_underlying_type
-
-        tp = get_underlying_type(tp)
-        origin = typing.get_origin(tp)
-        args = get_args(tp)
-        if origin is typing.Union:
-            non_none = [a for a in args if a is not type(None)]
-            if len(non_none) == 1:
-                return self._unwrap_field_type(non_none[0])
-        return tp
-
     def _blob_param_converter_for_type(self, field_type: typing.Type) -> typing.Optional[click.ParamType]:
+        from flyte.types._json_coercion import unwrap_optional_type
         from flyte.types._type_engine import TypeEngine
 
-        field_type = self._unwrap_field_type(field_type)
+        field_type = unwrap_optional_type(field_type)
         try:
             lt = TypeEngine.to_literal_type(field_type)
             converter = literal_type_to_click_type(lt, field_type)
@@ -457,122 +446,32 @@ class JsonParamType(click.ParamType):
             pass
         return None
 
-    def _convert_blob_value(
+    def _make_string_blob_converter(
         self,
-        value: typing.Any,
-        field_type: typing.Type,
+        param: typing.Optional[click.Parameter],
+        ctx: typing.Optional[click.Context],
+    ) -> typing.Callable[[str, typing.Type], typing.Any]:
+        def convert_string_path(s: str, py_type: typing.Type) -> typing.Any:
+            converter = self._blob_param_converter_for_type(py_type)
+            if converter is None:
+                return s
+            return converter.convert(s, param, ctx)
+
+        return convert_string_path
+
+    def _coerce_parsed_json(
+        self,
+        parsed_value: typing.Any,
         param: typing.Optional[click.Parameter],
         ctx: typing.Optional[click.Context],
     ) -> typing.Any:
-        field_type = self._unwrap_field_type(field_type)
-        converter = self._blob_param_converter_for_type(field_type)
-        if converter is None:
-            return value
+        from flyte.types._json_coercion import coerce_json_value_sync
 
-        if isinstance(value, (File, Dir, DataFrame)):
-            return value
-
-        if isinstance(value, str):
-            return converter.convert(value, param, ctx)
-
-        if isinstance(value, dict) and isinstance(field_type, type):
-            from flyte.types._json_coercion import coerce_json_value_sync
-
-            return coerce_json_value_sync(value, field_type)
-
-        return value
-
-    def _convert_blob_collection_elements(
-        self,
-        parsed_value: typing.Union[typing.List[typing.Any], typing.Dict[str, typing.Any]],
-        element_type: typing.Type,
-        param: typing.Optional[click.Parameter],
-        ctx: typing.Optional[click.Context],
-    ) -> typing.Optional[typing.Any]:
-        """Convert string paths in list/dict CLI JSON to File, Dir, or DataFrame objects."""
-        if self._blob_param_converter_for_type(element_type) is None:
-            return None
-
-        if isinstance(parsed_value, list):
-            return [self._convert_blob_value(v, element_type, param, ctx) for v in parsed_value]
-        return {k: self._convert_blob_value(v, element_type, param, ctx) for k, v in parsed_value.items()}
-
-    def _convert_blob_fields_in_value(
-        self,
-        value: typing.Any,
-        python_type: typing.Type,
-        param: typing.Optional[click.Parameter],
-        ctx: typing.Optional[click.Context],
-    ) -> typing.Any:
-        if value is None:
-            return None
-
-        python_type = self._unwrap_field_type(python_type)
-        origin = typing.get_origin(python_type)
-        args = get_args(python_type)
-
-        if dataclasses.is_dataclass(python_type) and isinstance(value, dict):
-            field_types = typing.get_type_hints(python_type, include_extras=True)
-            return {
-                k: self._convert_blob_fields_in_value(v, field_types.get(k, type(v)), param, ctx)
-                for k, v in value.items()
-            }
-
-        if origin is list and isinstance(value, list):
-            elem_type = args[0] if args else typing.Any
-            return [self._convert_blob_fields_in_value(v, elem_type, param, ctx) for v in value]
-
-        if origin is dict and isinstance(value, dict):
-            val_type = args[1] if len(args) >= 2 else typing.Any
-            return {k: self._convert_blob_fields_in_value(v, val_type, param, ctx) for k, v in value.items()}
-
-        return self._convert_blob_value(value, python_type, param, ctx)
-
-    def _instantiate_dataclass(self, python_type: typing.Type, value: typing.Any) -> typing.Any:
-        if not isinstance(value, dict):
-            return value
-
-        field_types = typing.get_type_hints(python_type, include_extras=True)
-        kwargs: dict[str, typing.Any] = {}
-        for field in dataclasses.fields(python_type):
-            if field.name not in value:
-                continue
-            v = value[field.name]
-            if v is None:
-                kwargs[field.name] = None
-                continue
-
-            field_type = self._unwrap_field_type(field_types.get(field.name, field.type))
-            if dataclasses.is_dataclass(field_type) and isinstance(v, dict):
-                kwargs[field.name] = self._instantiate_dataclass(field_type, v)
-                continue
-
-            origin = typing.get_origin(field_type)
-            inner_args = get_args(field_type)
-            if origin is list and isinstance(v, list):
-                elem_type = self._unwrap_field_type(inner_args[0] if inner_args else typing.Any)
-                if dataclasses.is_dataclass(elem_type):
-                    kwargs[field.name] = [
-                        self._instantiate_dataclass(elem_type, item) if isinstance(item, dict) else item for item in v
-                    ]
-                else:
-                    kwargs[field.name] = v
-                continue
-
-            if origin is dict and isinstance(v, dict):
-                val_type = self._unwrap_field_type(inner_args[1] if len(inner_args) >= 2 else typing.Any)
-                if dataclasses.is_dataclass(val_type):
-                    kwargs[field.name] = {
-                        k: self._instantiate_dataclass(val_type, item) if isinstance(item, dict) else item
-                        for k, item in v.items()
-                    }
-                else:
-                    kwargs[field.name] = v
-                continue
-
-            kwargs[field.name] = v
-
-        return python_type(**kwargs)
+        return coerce_json_value_sync(
+            parsed_value,
+            self._python_type,
+            string_blob_converter=self._make_string_blob_converter(param, ctx),
+        )
 
     def convert(
         self, value: typing.Any, param: typing.Optional[click.Parameter], ctx: typing.Optional[click.Context]
@@ -594,34 +493,8 @@ class JsonParamType(click.ParamType):
             # We don't support native list/dict types with nested dataclasses.
             if get_args(self._python_type) == ():
                 return parsed_value
-            elif isinstance(parsed_value, list):
-                element_type = get_args(self._python_type)[0]
-                converted = self._convert_blob_collection_elements(parsed_value, element_type, param, ctx)
-                if converted is not None:
-                    return converted
-                if dataclasses.is_dataclass(element_type):
-                    dc_type = typing.cast(type[typing.Any], element_type)
-                    return [
-                        self._instantiate_dataclass(
-                            dc_type,
-                            self._convert_blob_fields_in_value(v, dc_type, param, ctx),
-                        )
-                        for v in parsed_value
-                    ]
-            elif isinstance(parsed_value, dict):
-                value_type = get_args(self._python_type)[1]
-                converted = self._convert_blob_collection_elements(parsed_value, value_type, param, ctx)
-                if converted is not None:
-                    return converted
-                if dataclasses.is_dataclass(value_type):
-                    dc_type = typing.cast(type[typing.Any], value_type)
-                    return {
-                        k: self._instantiate_dataclass(
-                            dc_type,
-                            self._convert_blob_fields_in_value(v, dc_type, param, ctx),
-                        )
-                        for k, v in parsed_value.items()
-                    }
+            elif isinstance(parsed_value, (list, dict)):
+                return self._coerce_parsed_json(parsed_value, param, ctx)
 
             return parsed_value
 
@@ -648,8 +521,7 @@ class JsonParamType(click.ParamType):
             )
         elif dataclasses.is_dataclass(self._python_type):
             if isinstance(parsed_value, dict):
-                converted = self._convert_blob_fields_in_value(parsed_value, self._python_type, param, ctx)
-                return self._instantiate_dataclass(self._python_type, converted)
+                return self._coerce_parsed_json(parsed_value, param, ctx)
 
             from mashumaro.codecs.json import JSONDecoder
 
