@@ -1292,6 +1292,25 @@ def _mutable_schema_default_factory(
     return factory
 
 
+def _is_noarg_constructible_dataclass(tp: Any) -> bool:
+    """Return True if ``tp`` is a dataclass class instantiable with no arguments.
+
+    Used to decide whether a non-required nested-model field -- a Pydantic
+    ``default_factory=SomeModel`` field, which omits ``default`` from the JSON schema -- can rebuild
+    its default by constructing the reconstructed nested class. A model used as a ``default_factory``
+    is no-arg constructible by definition, and the reconstructed nested class is built before this
+    runs, so every one of its fields already carries a default.
+    """
+    if not (isinstance(tp, type) and dataclasses.is_dataclass(tp)):
+        return False
+
+    return all(
+        f.default is not dataclasses.MISSING
+        or f.default_factory is not dataclasses.MISSING
+        for f in dataclasses.fields(tp)
+    )
+
+
 def _append_schema_field(
     attribute_list: list[tuple[Any, ...]],
     property_key: str,
@@ -1301,7 +1320,6 @@ def _append_schema_field(
 ) -> None:
     """Append a dataclass field tuple, honoring JSON-schema ``default`` and ``required``."""
     required_set = set(schema.get("required") or ())
-    schema_declares_required = "required" in schema
     if "default" in property_val:
         default = property_val["default"]
         if isinstance(default, (list, dict)):
@@ -1310,19 +1328,38 @@ def _append_schema_field(
                 (
                     property_key,
                     field_type,
-                    dataclasses.field(default_factory=_mutable_schema_default_factory(default_copy)),
+                    dataclasses.field(
+                        default_factory=_mutable_schema_default_factory(default_copy)
+                    ),
                 )
             )
         else:
             attribute_list.append((property_key, field_type, default))
         return
-    if schema_declares_required and property_key not in required_set:
-        if property_val.get("anyOf") or property_val.get("oneOf"):
-            attribute_list.append((property_key, typing.Optional[field_type], None))
-        else:
-            attribute_list.append((property_key, field_type))
+
+    if property_key in required_set:
+        # Genuinely required (no schema default). Emitted without a default; the caller orders
+        # required fields first, so this can never trail a defaulted field in make_dataclass.
+        attribute_list.append((property_key, field_type))
         return
-    attribute_list.append((property_key, field_type))
+
+    # Not required and no explicit ``default``. Pydantic omits ``default`` from the JSON schema for
+    # ``default_factory`` fields, so they land here. They must still carry a dataclass default.
+    field_origin = typing.get_origin(field_type)
+    if field_type is list or field_origin is list:
+        attribute_list.append(
+            (property_key, field_type, dataclasses.field(default_factory=list))
+        )
+    elif field_type is dict or field_origin is dict:
+        attribute_list.append(
+            (property_key, field_type, dataclasses.field(default_factory=dict))
+        )
+    elif _is_noarg_constructible_dataclass(field_type):
+        attribute_list.append(
+            (property_key, field_type, dataclasses.field(default_factory=field_type))
+        )
+    else:
+        attribute_list.append((property_key, typing.Optional[field_type], None))
 
 
 def _resolve_oneof_variants(
