@@ -32,7 +32,7 @@ image = (
 
 # --- Knobs ---------------------------------------------------------------------------------------
 USE_GPU = True
-GPU_DEVICE = "L4"  # one of flyte._resources.Accelerators device names; match the cluster's GPUs
+GPU_DEVICE = "T4"  # one of flyte._resources.Accelerators device names; match the cluster's GPUs
 REPLICAS = 2  # pods (== nodes)
 NPROC_PER_NODE = 1  # processes (one per GPU) per pod  => world_size = REPLICAS * NPROC_PER_NODE
 
