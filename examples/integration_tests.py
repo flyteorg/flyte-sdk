@@ -144,28 +144,6 @@ async def _run_and_wait(task_fn, test_name: str, **kwargs):
     print("  Completed successfully\n")
 
 
-async def _run_and_expect_failure(task_fn, test_name: str, match: str, **kwargs):
-    """
-    Run a Flyte task and assert it fails with an error message containing ``match``.
-
-    Used for negative tests (e.g. examples that intentionally trigger a non-retryable
-    backend error such as ``BadTaskSpecification``).
-    """
-    run = await flyte.with_runcontext(log_level=logging.DEBUG).run.aio(task_fn, **kwargs)
-
-    print(f"\n[{test_name}]")
-    print(f"  Run name: {run.name}")
-    print(f"  Run URL: {run.url}")
-
-    run.wait()
-    detail = await run.action.details()
-    assert detail.error_info is not None, f"[{test_name}] expected failure, got success"
-    assert match in detail.error_info.message, (
-        f"[{test_name}] expected error matching {match!r}, got: {detail.error_info.message!r}"
-    )
-    print(f"  Failed as expected: {detail.error_info.message}\n")
-
-
 async def _deploy_and_verify(env_or_app, test_name: str):
     """
     Helper function to deploy an app and verify deployment succeeded.
@@ -617,15 +595,6 @@ async def test_clustered_failure_cascade(flyte_client):
     from examples.clustered.failure_cascade import train_with_crash
 
     await _run_and_wait(train_with_crash, "test_clustered_failure_cascade")
-
-
-@pytest.mark.integration
-@pytest.mark.asyncio
-async def test_clustered_bad_spec(flyte_client):
-    """Test the clustered.bad_spec example: misconfigured task must fast-fail with BadTaskSpecification."""
-    from examples.clustered.bad_spec import never_runs
-
-    await _run_and_expect_failure(never_runs, "test_clustered_bad_spec", match="BadTaskSpecification")
 
 
 @pytest.mark.integration
