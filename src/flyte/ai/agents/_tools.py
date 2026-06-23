@@ -15,6 +15,7 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal, Mapping, Sequence, cast, overload
 
 from flyte._internal.resolvers.default import DefaultTaskResolver
+from flyte.types._json_coercion import coerce_json_args
 
 if TYPE_CHECKING:
     from flyte._task import TaskTemplate
@@ -156,6 +157,32 @@ def _callable_short_doc(fn: Callable[..., Any]) -> str:
     return doc.split("\n\n")[0].replace("\n", " ").strip()
 
 
+def _native_interface_for_target(target: Any) -> Any | None:
+    """Return a :class:`~flyte.models.NativeInterface` for *target*, if derivable."""
+    if target is None:
+        return None
+    from flyte._task import TaskTemplate
+    from flyte.models import NativeInterface
+
+    if isinstance(target, TaskTemplate):
+        return target.native_interface
+    if callable(target):
+        fn = getattr(target, "__wrapped__", target)
+        try:
+            return NativeInterface.from_callable(fn)
+        except Exception:
+            return None
+    return None
+
+
+async def _coerce_tool_args(target: Any, args: dict[str, Any]) -> dict[str, Any]:
+    """Coerce LLM JSON tool arguments using the wrapped callable's type hints."""
+    iface = _native_interface_for_target(target)
+    if iface is None:
+        return args
+    return await coerce_json_args(args, iface.inputs)
+
+
 def _json_schema_for_callable(fn: Callable[..., Any]) -> dict[str, Any]:
     """Best-effort JSON schema for a plain Python callable.
 
@@ -182,9 +209,10 @@ def _make_callable_tool(fn: Callable[..., Any], *, name: str | None = None) -> A
     is_async = inspect.iscoroutinefunction(fn) or inspect.iscoroutinefunction(getattr(fn, "__wrapped__", fn))
 
     async def execute(args: dict[str, Any]) -> Any:
+        coerced = await _coerce_tool_args(fn, args)
         if is_async:
-            return await fn(**args)
-        return await asyncio.to_thread(fn, **args)
+            return await fn(**coerced)
+        return await asyncio.to_thread(fn, **coerced)
 
     return AgentTool(
         name=actual_name,
@@ -208,7 +236,8 @@ def _make_task_tool(task: "TaskTemplate", *, name: str | None = None) -> AgentTo
         parameters = _json_schema_for_callable(underlying)
 
     async def execute(args: dict[str, Any]) -> Any:
-        return await task.aio(**args)
+        coerced = await _coerce_tool_args(task, args)
+        return await task.aio(**coerced)
 
     return AgentTool(
         name=actual_name,
@@ -456,19 +485,45 @@ def _summarize_signature(tool: AgentTool) -> str:
     return f"{tool.name}({', '.join(parts)})"
 
 
-def _stringify_tool_result(result: Any) -> str:
+async def _stringify_tool_result(result: Any) -> str:
     if result is None:
         return ""
     if isinstance(result, str):
         return result
+    from flyte.types._json_coercion import serialize_json_value
+
+    serialized = await serialize_json_value(result)
     try:
-        return json.dumps(result, default=str)
+        return json.dumps(serialized, default=str)
     except (TypeError, ValueError):
         return str(result)
 
 
+def _registry_uses_flyte_io(registry: Mapping[str, AgentTool]) -> bool:
+    """Return True when any registered tool accepts or exposes flyte.io blob types."""
+
+    def _schema_has_io(schema: Any) -> bool:
+        if not isinstance(schema, dict):
+            return False
+        if schema.get("format") in ("blob", "structured-dataset"):
+            return True
+        for prop in schema.get("properties", {}).values():
+            if _schema_has_io(prop):
+                return True
+        if _schema_has_io(schema.get("items")):
+            return True
+        for variant in schema.get("oneOf", []):
+            if _schema_has_io(variant):
+                return True
+        return False
+
+    return any(_schema_has_io(tool.parameters) for tool in registry.values())
+
+
 def _abbreviate(value: Any, *, max_chars: int = 500) -> str:
-    text = _stringify_tool_result(value)
+    from flyte._utils.asyn import run_sync
+
+    text = run_sync(_stringify_tool_result, value) if not isinstance(value, str) else value
     if len(text) <= max_chars:
         return text
     return text[:max_chars] + f"... [+{len(text) - max_chars} chars]"
