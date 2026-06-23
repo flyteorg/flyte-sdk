@@ -476,14 +476,20 @@ class TestSignatureFormatter:
 
 
 class TestStringify:
+    @staticmethod
+    def _s(result):
+        from flyte._utils.asyn import run_sync
+
+        return run_sync(_stringify_tool_result, result)
+
     def test_none_becomes_empty(self):
-        assert _stringify_tool_result(None) == ""
+        assert self._s(None) == ""
 
     def test_string_passes_through(self):
-        assert _stringify_tool_result("hello") == "hello"
+        assert self._s("hello") == "hello"
 
     def test_dict_jsonified(self):
-        out = _stringify_tool_result({"k": 1})
+        out = self._s({"k": 1})
         assert json.loads(out) == {"k": 1}
 
     def test_non_json_fallback(self):
@@ -491,8 +497,7 @@ class TestStringify:
             def __repr__(self):
                 return "<weird>"
 
-        # json.dumps falls through default=str, so we still serialize
-        assert "weird" in _stringify_tool_result(Weird())
+        assert "weird" in self._s(Weird())
 
 
 class TestAbbreviate:
@@ -1812,9 +1817,11 @@ class TestAsyncToolExecution:
 
 class TestStringifyEdgeCases:
     def test_circular_reference_falls_back_to_str(self):
+        from flyte._utils.asyn import run_sync
+
         circular: dict[str, object] = {}
         circular["self"] = circular
-        out = _stringify_tool_result(circular)
+        out = run_sync(_stringify_tool_result, circular)
         # json.dumps raises ValueError on circular refs even with default=str,
         # so we fall back to the plain ``str()`` representation.
         assert "self" in out
