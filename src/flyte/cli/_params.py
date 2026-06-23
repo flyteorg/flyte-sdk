@@ -476,10 +476,9 @@ class JsonParamType(click.ParamType):
             return converter.convert(value, param, ctx)
 
         if isinstance(value, dict) and isinstance(field_type, type):
-            from pydantic import BaseModel
+            from flyte.types._json_coercion import coerce_json_value_sync
 
-            if issubclass(field_type, BaseModel):
-                return field_type.model_validate(value)
+            return coerce_json_value_sync(value, field_type)
 
         return value
 
