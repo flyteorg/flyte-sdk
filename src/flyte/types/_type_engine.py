@@ -1305,8 +1305,7 @@ def _is_noarg_constructible_dataclass(tp: Any) -> bool:
         return False
 
     return all(
-        f.default is not dataclasses.MISSING
-        or f.default_factory is not dataclasses.MISSING
+        f.default is not dataclasses.MISSING or f.default_factory is not dataclasses.MISSING
         for f in dataclasses.fields(tp)
     )
 
@@ -1328,9 +1327,7 @@ def _append_schema_field(
                 (
                     property_key,
                     field_type,
-                    dataclasses.field(
-                        default_factory=_mutable_schema_default_factory(default_copy)
-                    ),
+                    dataclasses.field(default_factory=_mutable_schema_default_factory(default_copy)),
                 )
             )
         else:
@@ -1347,17 +1344,11 @@ def _append_schema_field(
     # ``default_factory`` fields, so they land here. They must still carry a dataclass default.
     field_origin = typing.get_origin(field_type)
     if field_type is list or field_origin is list:
-        attribute_list.append(
-            (property_key, field_type, dataclasses.field(default_factory=list))
-        )
+        attribute_list.append((property_key, field_type, dataclasses.field(default_factory=list)))
     elif field_type is dict or field_origin is dict:
-        attribute_list.append(
-            (property_key, field_type, dataclasses.field(default_factory=dict))
-        )
+        attribute_list.append((property_key, field_type, dataclasses.field(default_factory=dict)))
     elif _is_noarg_constructible_dataclass(field_type):
-        attribute_list.append(
-            (property_key, field_type, dataclasses.field(default_factory=field_type))
-        )
+        attribute_list.append((property_key, field_type, dataclasses.field(default_factory=field_type)))
     else:
         attribute_list.append((property_key, typing.Optional[field_type], None))
 
