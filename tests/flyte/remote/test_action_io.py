@@ -795,9 +795,7 @@ class TestActionDetailsTypedAccess:
     @pytest.mark.asyncio
     async def test_typed_outputs_only_converts_requested_leaving_siblings_untouched(self):
         # B1 non-fatal: only o0 is requested, so o1 is never reconstructed and can't fail the call.
-        outs = common_pb2.Outputs(
-            literals=[await _named("o0", _Report(name="x"), _Report), await _named("o1", 7, int)]
-        )
+        outs = common_pb2.Outputs(literals=[await _named("o0", _Report(name="x"), _Report), await _named("o1", 7, int)])
         typed = await _action_details(outputs=outs).typed_outputs({"o0": _Report})
         assert set(typed) == {"o0"}
 
@@ -819,9 +817,7 @@ class TestActionDetailsTypedAccess:
     async def test_typed_outputs_uses_caller_deserializer_to_migrate(self):
         # B4: a versioned model whose loader migrates a legacy payload (tags stored as a delimited
         # string) that the current model's default validation would reject.
-        outs = common_pb2.Outputs(
-            literals=[await _named("o0", {"name": "x", "tags": "a,b,c"}, dict)]
-        )
+        outs = common_pb2.Outputs(literals=[await _named("o0", {"name": "x", "tags": "a,b,c"}, dict)])
         typed = await _action_details(outputs=outs).typed_outputs(
             {"o0": _VersionedReport}, deserializers={_VersionedReport: _VersionedReport.load}
         )

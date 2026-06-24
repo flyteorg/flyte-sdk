@@ -963,9 +963,7 @@ class ActionDetails(ToJSONMixin):
         """
         if self._action_data is None:
             self._action_data = await get_client().dataproxy_service.get_action_data(
-                request=dataproxy_service_pb2.GetActionDataRequest(
-                    action_id=self.pb2.id
-                )
+                request=dataproxy_service_pb2.GetActionDataRequest(action_id=self.pb2.id)
             )
         return self._action_data
 
@@ -1086,9 +1084,7 @@ class ActionDetails(ToJSONMixin):
         :return: Mapping of output name to decoded value, restricted to the requested names that are
             present in the action's outputs.
         """
-        return await self._typed_literals(
-            await self.output_literals(), types, deserializers
-        )
+        return await self._typed_literals(await self.output_literals(), types, deserializers)
 
     async def typed_inputs(
         self,
@@ -1099,9 +1095,7 @@ class ActionDetails(ToJSONMixin):
         Fetch the action's inputs and re-hydrate the requested ones into caller-supplied types.
         The input-side equivalent of :meth:`typed_outputs`; ``deserializers`` works the same way.
         """
-        return await self._typed_literals(
-            await self.input_literals(), types, deserializers
-        )
+        return await self._typed_literals(await self.input_literals(), types, deserializers)
 
     @staticmethod
     async def _typed_literals(
@@ -1123,11 +1117,7 @@ class ActionDetails(ToJSONMixin):
             return {}
         deserializers = deserializers or {}
 
-        custom = {
-            name: lit
-            for name, lit in selected.items()
-            if py_types[name] in deserializers
-        }
+        custom = {name: lit for name, lit in selected.items() if py_types[name] in deserializers}
         standard = {name: lit for name, lit in selected.items() if name not in custom}
 
         result: Dict[str, Any] = {}
