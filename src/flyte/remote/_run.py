@@ -56,6 +56,7 @@ class Run(ToJSONMixin):
         updated_at: TimeFilter | None = None,
         with_labels: dict[str, str] | None = None,
         with_label_keys: list[str] | None = None,
+        paused_actions_only: bool = False,
     ) -> AsyncIterator[Run]:
         """
         Get all runs for the current project and domain.
@@ -72,6 +73,8 @@ class Run(ToJSONMixin):
         :param updated_at: Filter runs by last-update time range.
         :param with_labels: Filter runs whose labels include all of these key=value pairs (AND semantics).
         :param with_label_keys: Filter runs that have all of these label keys present (existence check).
+        :param paused_actions_only: If True, only return runs that have at least one paused action
+            (i.e. runs waiting on a human in the loop).
         :return: An iterator of runs.
         """
         ensure_client()
@@ -166,6 +169,7 @@ class Run(ToJSONMixin):
                         domain=domain or cfg.domain,
                         name=project or cfg.project,
                     ),
+                    paused_actions_only=paused_actions_only,
                 )
             )
             token = resp.token
