@@ -9,6 +9,7 @@ from typing import (
     Any,
     AsyncGenerator,
     AsyncIterator,
+    Callable,
     Dict,
     Iterator,
     List,
@@ -23,6 +24,7 @@ import rich.repr
 from connectrpc.code import Code
 from connectrpc.errors import ConnectError
 from flyteidl2.common import identifier_pb2, list_pb2, phase_pb2
+from flyteidl2.core import literals_pb2
 from flyteidl2.dataproxy import dataproxy_service_pb2
 from flyteidl2.task import common_pb2
 from flyteidl2.workflow import run_definition_pb2, run_service_pb2
@@ -640,6 +642,7 @@ class ActionDetails(ToJSONMixin):
     _inputs: ActionInputs | None = None
     _outputs: ActionOutputs | None = None
     _preserve_original_types: bool = False
+    _action_data: dataproxy_service_pb2.GetActionDataResponse | None = None
 
     @syncify
     @classmethod
@@ -951,6 +954,21 @@ class ActionDetails(ToJSONMixin):
             return attempts[attempt - 1].logs_available
         return False
 
+    async def _fetch_action_data(self) -> dataproxy_service_pb2.GetActionDataResponse:
+        """
+        Fetch the action's raw inputs/outputs from the data proxy, caching the response on the
+        instance. This deliberately does not reconstruct any types, so it never fails (or pays the
+        cost) when an input/output type can't be reconstructed on the client -- see
+        :meth:`output_literals` / :meth:`typed_outputs`.
+        """
+        if self._action_data is None:
+            self._action_data = await get_client().dataproxy_service.get_action_data(
+                request=dataproxy_service_pb2.GetActionDataRequest(
+                    action_id=self.pb2.id
+                )
+            )
+        return self._action_data
+
     @syncify
     async def _cache_data(self) -> bool:
         """
@@ -964,11 +982,7 @@ class ActionDetails(ToJSONMixin):
             return True
         if self._inputs and not self.done():
             return False
-        resp = await get_client().dataproxy_service.get_action_data(
-            request=dataproxy_service_pb2.GetActionDataRequest(
-                action_id=self.pb2.id,
-            )
-        )
+        resp = await self._fetch_action_data()
 
         with internal_ctx().new_preserve_original_types(self._preserve_original_types):
             native_iface = None
@@ -1022,6 +1036,115 @@ class ActionDetails(ToJSONMixin):
                     "Please wait for the action to complete."
                 )
         return cast(ActionOutputs, self._outputs)
+
+    async def output_literals(self) -> Dict[str, literals_pb2.Literal]:
+        """
+        Return the action's raw output literals keyed by output name (``o0``, ``o1``, ...) without
+        reconstructing the producer's types from the stored schema.
+
+        Unlike :meth:`outputs`, this never calls ``guess_python_type``, so it can't fail (or pay the
+        cost) when an output's type isn't reconstructable on the client, and it returns every output
+        even if a sibling's type is un-guessable. Pair it with :meth:`typed_outputs` (or
+        ``TypeEngine.literal_map_to_kwargs``) to decode the specific outputs you care about.
+        """
+        resp = await self._fetch_action_data()
+        if not resp.outputs:
+            return {}
+        return {nl.name: nl.value for nl in resp.outputs.literals}
+
+    async def input_literals(self) -> Dict[str, literals_pb2.Literal]:
+        """
+        Return the action's raw input literals keyed by input name, without reconstructing types.
+        The input-side equivalent of :meth:`output_literals`.
+        """
+        resp = await self._fetch_action_data()
+        if not resp.inputs:
+            return {}
+        return {nl.name: nl.value for nl in resp.inputs.literals}
+
+    async def typed_outputs(
+        self,
+        types: Dict[str, type],
+        deserializers: Dict[type, Callable[[Any], Any]] | None = None,
+    ) -> Dict[str, Any]:
+        """
+        Fetch the action's outputs and re-hydrate the requested ones into caller-supplied types.
+
+        This is the supported "give me this action's ``o0`` as ``MyModel``" path:
+
+        * Only the outputs named in ``types`` are converted -- sibling outputs are never
+          reconstructed, so an un-reconstructable sibling type can't fail the whole fetch.
+        * Because you supply the type, the result is your real class (with its validators, methods
+          and custom (de)serializers), not a permissive schema-derived look-alike.
+
+        :param types: Mapping of output name (``o0``, ``o1``, ...) to the Python type to decode into.
+        :param deserializers: Optional mapping of Python type -> a callable that builds an instance
+            from the raw (pre-validation) payload, e.g. ``{MyModel: MyModel.load}``. When a requested
+            output's type appears here, the raw payload is handed to the callable instead of the
+            default decode/``model_validate`` -- the hook for versioned-schema models that must
+            migrate historical payloads before validation. Types not listed use the normal decode.
+        :return: Mapping of output name to decoded value, restricted to the requested names that are
+            present in the action's outputs.
+        """
+        return await self._typed_literals(
+            await self.output_literals(), types, deserializers
+        )
+
+    async def typed_inputs(
+        self,
+        types: Dict[str, type],
+        deserializers: Dict[type, Callable[[Any], Any]] | None = None,
+    ) -> Dict[str, Any]:
+        """
+        Fetch the action's inputs and re-hydrate the requested ones into caller-supplied types.
+        The input-side equivalent of :meth:`typed_outputs`; ``deserializers`` works the same way.
+        """
+        return await self._typed_literals(
+            await self.input_literals(), types, deserializers
+        )
+
+    @staticmethod
+    async def _typed_literals(
+        literals: Dict[str, literals_pb2.Literal],
+        py_types: Dict[str, type],
+        deserializers: Dict[type, Callable[[Any], Any]] | None = None,
+    ) -> Dict[str, Any]:
+        """Decode only the ``py_types`` slots of ``literals`` using the caller-supplied types.
+
+        Passing ``python_types`` (not ``literal_types``) keeps ``literal_map_to_kwargs`` from calling
+        ``guess_python_type`` -- the conversion uses the caller's real type and touches no siblings.
+        Slots whose type has a ``deserializers`` entry skip the default decode: their raw payload is
+        handed to the caller's callable so versioned-schema models can migrate before validating.
+        """
+        from flyte.types import TypeEngine
+
+        selected = {name: lit for name, lit in literals.items() if name in py_types}
+        if not selected:
+            return {}
+        deserializers = deserializers or {}
+
+        custom = {
+            name: lit
+            for name, lit in selected.items()
+            if py_types[name] in deserializers
+        }
+        standard = {name: lit for name, lit in selected.items() if name not in custom}
+
+        result: Dict[str, Any] = {}
+        if standard:
+            result.update(
+                await TypeEngine.literal_map_to_kwargs(
+                    literals_pb2.LiteralMap(literals=standard),
+                    python_types={name: py_types[name] for name in standard},
+                )
+            )
+
+        for name, lit in custom.items():
+            # ``dict`` is the raw, un-validated payload form for STRUCT and msgpack-binary scalars.
+            raw_payload = await TypeEngine.to_python_value(lit, dict)
+            result[name] = deserializers[py_types[name]](raw_payload)
+
+        return result
 
     def done(self) -> bool:
         """
