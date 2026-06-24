@@ -24,9 +24,7 @@ dependencies = [
     "async-lru>=2.0.5",
     "mashumaro",
     "aiolimiter>=1.2.1",
-    # TEMP(run_base_dir): pin relaxed so the local flyte2 build (see [tool.uv.sources])
-    # can supply run_base_dir/base_dir before flyteidl2 is released. Restore "==2.0.23" after.
-    "flyteidl2>=2.0.23",
+    "flyteidl2==2.0.26",
     "packaging",
     "sentry-sdk>=2.0",
     "pyOpenSSL>=24.0.0",
@@ -205,10 +203,6 @@ flyte_controller_base = "0 days"
 
 [tool.uv.sources]
 flyte_controller_base = { path = "rs_controller" }
-# TEMP(run_base_dir): use the locally generated flyteidl2 from the cloud flyte2 submodule
-# so the SDK picks up run_base_dir/base_dir before a flyteidl2 release is cut. Remove this
-# (and restore the pinned dependency above) once flyteidl2 is published.
-flyteidl2 = { path = "/Users/katrina/src/union-scratch/cloud/flyte2/gen/python", editable = true }
 
 [tool.ty.rules]
 unused-ignore-comment = "warn"

@@ -21,12 +21,12 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-06-13T16:01:55.679382Z"
+exclude-newer = "2026-06-19T19:18:17.688884Z"
 exclude-newer-span = "P5D"
 
 [options.exclude-newer-package]
-flyteidl2 = { timestamp = "2026-06-18T16:01:55.679589Z", span = "PT0S" }
-flyte-controller-base = { timestamp = "2026-06-18T16:01:55.679772Z", span = "PT0S" }
+flyteidl2 = { timestamp = "2026-06-24T19:18:17.688937Z", span = "PT0S" }
+flyte-controller-base = { timestamp = "2026-06-24T19:18:17.688941Z", span = "PT0S" }
 
 [[package]]
 name = "aiofiles"
@@ -1188,7 +1188,7 @@ requires-dist = [
     { name = "docstring-parser", specifier = ">=0.16" },
     { name = "fastapi", marker = "extra == 'examples-test'" },
     { name = "flyte-controller-base", marker = "extra == 'rust-controller'", directory = "rs_controller" },
-    { name = "flyteidl2", editable = "../../union-scratch/cloud/flyte2/gen/python" },
+    { name = "flyteidl2", specifier = "==2.0.26" },
     { name = "fsspec", specifier = ">=2025.3.0" },
     { name = "grpcio", marker = "extra == 'connector'", specifier = ">=1.71.0" },
     { name = "grpcio-health-checking", marker = "extra == 'connector'" },
@@ -1262,24 +1262,20 @@ dependencies = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "flyteidl2", specifier = ">=2.0.23" }]
+requires-dist = [{ name = "flyteidl2", specifier = "==2.0.26" }]
 
 [[package]]
 name = "flyteidl2"
-source = { editable = "../../union-scratch/cloud/flyte2/gen/python" }
+version = "2.0.26"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "googleapis-common-protos" },
     { name = "protobuf" },
     { name = "protoc-gen-openapiv2" },
     { name = "protovalidate" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "googleapis-common-protos" },
-    { name = "protobuf", specifier = ">=4.21.1" },
-    { name = "protoc-gen-openapiv2" },
-    { name = "protovalidate", specifier = ">=1.0.0" },
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fb/1a/b89902f358bc243eebcae549da9b11d3964d8f0f2e998f5756c2caccaa47/flyteidl2-2.0.26-py3-none-any.whl", hash = "sha256:7ac8c7e3fabaabb8dbf6db330c3895a97d960aba2edc48ea6b5efbcae56ed7b5", size = 350021, upload-time = "2026-06-24T18:35:01.794Z" },
 ]
 
 [[package]]

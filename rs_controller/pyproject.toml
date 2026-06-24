@@ -9,9 +9,7 @@ description = "Rust controller for Union"
 requires-python = ">=3.10"
 classifiers = ["Programming Language :: Python", "Programming Language :: Rust"]
 dependencies = [
-    # TEMP(run_base_dir): relaxed so the locally-built flyteidl2 (2.0.x.dev from the
-    # cloud flyte2 submodule) unifies across the workspace. Restore "==2.0.23" after release.
-    "flyteidl2>=2.0.23",
+    "flyteidl2==2.0.26",
 ]
 [tool.maturin]
 module-name = "flyte_controller_base"
