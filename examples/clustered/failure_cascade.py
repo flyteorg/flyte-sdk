@@ -110,7 +110,7 @@ async def train_with_crash(steps: int = 40) -> int:
 
 if __name__ == "__main__":
     flyte.init_from_config()
-    run = flyte.run(train_with_crash, steps=40)
+    run = flyte.with_runcontext(env_vars={"_U_USE_ACTIONS": "1"}).run(train_with_crash, steps=40)
     print("Run URL:", run.url)
     run.wait()
     print("Final phase:", run.phase)
