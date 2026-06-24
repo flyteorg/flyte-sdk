@@ -82,12 +82,8 @@ class BatchReport(BaseModel):
     name: str  # required, no default
     status: str = "ok"  # literal default
     tags: list[str] = Field(default_factory=list)  # default_factory -> rebuilds as []
-    meta: dict[str, str] = Field(
-        default_factory=dict
-    )  # default_factory -> rebuilds as {}
-    summary: BatchSummary = Field(
-        default_factory=BatchSummary
-    )  # nested-model default_factory
+    meta: dict[str, str] = Field(default_factory=dict)  # default_factory -> rebuilds as {}
+    summary: BatchSummary = Field(default_factory=BatchSummary)  # nested-model default_factory
 
 
 @env.task
@@ -125,9 +121,7 @@ if __name__ == "__main__":
     # 5) A model with default_factory fields. Full dict, then a partial
     #    dict that omits tags/meta/summary -- they fill from their default_factory defaults ([], {},
     #    BatchSummary()).
-    r5 = flyte.run(
-        summarize_batch, report={"name": "nightly", "tags": ["t1"], "meta": {"k": "v"}}
-    )
+    r5 = flyte.run(summarize_batch, report={"name": "nightly", "tags": ["t1"], "meta": {"k": "v"}})
     print("factory full:", r5.outputs())
     r6 = flyte.run(summarize_batch, report={"name": "nightly"})
     print("factory part:", r6.outputs())
@@ -149,9 +143,7 @@ if __name__ == "__main__":
     lt = PydanticTransformer().get_literal_type(BatchReport)
     tagged = TypeEngine.guess_python_type(lt)
     lt_untagged = copy.deepcopy(lt)
-    lt_untagged.ClearField(
-        "structure"
-    )  # simulate an output produced by a pre-tagging SDK
+    lt_untagged.ClearField("structure")  # simulate an output produced by a pre-tagging SDK
     untagged = TypeEngine.guess_python_type(lt_untagged)
 
     expected = ["meta", "name", "status", "summary", "tags"]
