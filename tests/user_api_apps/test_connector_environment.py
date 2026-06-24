@@ -36,14 +36,14 @@ def test_connector_default_args():
     conn = ConnectorEnvironment(name="my-connector", image=Image.from_base("python:3.11"))
     ctx = SerializationContext(org="org", project="proj", domain="dev", version="v1", root_dir=pathlib.Path.cwd())
     args = conn.container_args(ctx)
-    assert args == ["c0", "--port", "8080", "--prometheus_port", "9092"]
+    assert args == ["c0", "--port", "8080", "--connect_port", "8090", "--prometheus_port", "9092"]
 
 
 def test_connector_default_args_custom_port():
     conn = ConnectorEnvironment(name="my-connector", image=Image.from_base("python:3.11"), port=9999)
     ctx = SerializationContext(org="org", project="proj", domain="dev", version="v1", root_dir=pathlib.Path.cwd())
     args = conn.container_args(ctx)
-    assert args == ["c0", "--port", "9999", "--prometheus_port", "9092"]
+    assert args == ["c0", "--port", "9999", "--connect_port", "8090", "--prometheus_port", "9092"]
 
 
 def test_connector_custom_args_list():

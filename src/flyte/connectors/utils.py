@@ -1,3 +1,4 @@
+import asyncio
 import importlib
 from concurrent import futures
 from importlib.metadata import entry_points
@@ -44,13 +45,25 @@ def convert_to_flyte_phase(state: str) -> TaskExecution.Phase:
     raise ValueError(f"Unrecognized state: {state}")
 
 
-async def _start_grpc_server(
-    port: int, prometheus_port: int, worker: int, timeout: int | None, modules: List[str] | None
+async def _start_connector_servers(
+    port: int,
+    connect_port: int,
+    prometheus_port: int,
+    worker: int,
+    timeout: int | None,
+    modules: List[str] | None,
 ):
+    """Run the gRPC and Connect connector servers side by side in one process.
+
+    During the migration away from gRPC the connector serves both transports:
+    the existing gRPC server on ``port`` (for the still-gRPC backend) and a
+    Connect/HTTP1.1 server on ``connect_port`` (for migrated clients). Connector
+    discovery and the Prometheus metrics server are set up once, shared by both.
+    """
     try:
         from flyte.connectors._server import (
-            AsyncConnectorService,
-            ConnectorMetadataService,
+            AsyncConnectorService,  # noqa: F401
+            ConnectorMetadataService,  # noqa: F401
         )
     except ImportError as e:
         raise ImportError(
@@ -64,6 +77,18 @@ async def _start_grpc_server(
 
     print_metadata()
 
+    await asyncio.gather(
+        _serve_grpc(port, worker, timeout),
+        _serve_connect(connect_port, timeout),
+    )
+
+
+async def _serve_grpc(port: int, worker: int, timeout: int | None):
+    from flyte.connectors._server import (
+        AsyncConnectorService,
+        ConnectorMetadataService,
+    )
+
     server = grpc.aio.server(futures.ThreadPoolExecutor(max_workers=worker))
 
     add_AsyncConnectorServiceServicer_to_server(AsyncConnectorService(), server)
@@ -71,8 +96,54 @@ async def _start_grpc_server(
     _start_health_check_server(server, worker)
 
     server.add_insecure_port(f"[::]:{port}")
+    click.secho(f"gRPC connector service listening on [::]:{port}")
     await server.start()
     await server.wait_for_termination(timeout)
+
+
+async def _serve_connect(port: int, timeout: int | None):
+    try:
+        import uvicorn
+    except ImportError as e:
+        raise ImportError(
+            "uvicorn is required to serve the Connect connector service."
+            " Please install it using `pip install flyteplugins-connector` or `pip install uvicorn`"
+        ) from e
+
+    from flyte.connectors._connect_server import build_asgi_app
+
+    class _NoSignalServer(uvicorn.Server):
+        # The connector process manages its own lifecycle and shares the event
+        # loop with the gRPC server, so don't let uvicorn install its own
+        # SIGINT/SIGTERM handlers (the default disposition terminates the
+        # process, tearing down both servers — matching the gRPC-only behavior).
+        def install_signal_handlers(self) -> None:
+            pass
+
+    config = uvicorn.Config(
+        build_asgi_app(),
+        host="0.0.0.0",
+        port=port,
+        log_level="warning",
+        access_log=False,
+        loop="asyncio",
+        lifespan="auto",
+    )
+    server = _NoSignalServer(config)
+    click.secho(f"Connect connector service listening on 0.0.0.0:{port}")
+
+    if timeout is None:
+        await server.serve()
+        return
+
+    # ``timeout`` is a testing aid mirroring grpc's wait_for_termination(timeout):
+    # serve for the requested window, then shut down gracefully.
+    serve_task = asyncio.ensure_future(server.serve())
+    try:
+        await asyncio.sleep(timeout)
+    finally:
+        server.should_exit = True
+        await serve_task
 
 
 def _start_http_server(prometheus_port: int):

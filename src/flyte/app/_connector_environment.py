@@ -55,7 +55,19 @@ class ConnectorEnvironment(AppEnvironment):
                 port = self.port.port
             else:
                 port = self.port
-            base_args = ["c0", "--port", str(port), "--prometheus_port", "9092"]
+            # The Connect (HTTP/1.1) server runs alongside the gRPC server on a
+            # separate internal container port during the migration away from
+            # gRPC. ``port`` (the gRPC port) remains the externally exposed port.
+            connect_port = 8090 if port != 8090 else 8091
+            base_args = [
+                "c0",
+                "--port",
+                str(port),
+                "--connect_port",
+                str(connect_port),
+                "--prometheus_port",
+                "9092",
+            ]
             if self.include:
                 # Convert file paths to module names
                 modules = []
