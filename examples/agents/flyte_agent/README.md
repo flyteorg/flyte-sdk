@@ -72,6 +72,7 @@ requests are routed to the agent directly (without a parent task entrypoint).
 | `agent_chat_ui.py` | Wrap an `Agent` in the built-in `AgentChatAppEnvironment` UI. |
 | `mcp_powered_agent.py` | Mix local Flyte task tools with remote MCP servers. |
 | `webhook_agent.py` | Trigger an agent run from an HTTP webhook (e.g. GitHub events). |
+| `io_types_agent.py` | Tools with `flyte.io.File`, `Dir`, and `DataFrame` inputs/outputs. |
 
 ## Quick start
 
