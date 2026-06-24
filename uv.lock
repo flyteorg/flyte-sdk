@@ -21,12 +21,12 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-06-06T19:01:20.271147Z"
+exclude-newer = "2026-06-13T16:01:55.679382Z"
 exclude-newer-span = "P5D"
 
 [options.exclude-newer-package]
-flyteidl2 = { timestamp = "2026-06-11T19:01:20.271153Z", span = "PT0S" }
-flyte-controller-base = { timestamp = "2026-06-11T19:01:20.271156Z", span = "PT0S" }
+flyteidl2 = { timestamp = "2026-06-18T16:01:55.679589Z", span = "PT0S" }
+flyte-controller-base = { timestamp = "2026-06-18T16:01:55.679772Z", span = "PT0S" }
 
 [[package]]
 name = "aiofiles"
@@ -1188,7 +1188,7 @@ requires-dist = [
     { name = "docstring-parser", specifier = ">=0.16" },
     { name = "fastapi", marker = "extra == 'examples-test'" },
     { name = "flyte-controller-base", marker = "extra == 'rust-controller'", directory = "rs_controller" },
-    { name = "flyteidl2", specifier = "==2.0.23" },
+    { name = "flyteidl2", editable = "../../union-scratch/cloud/flyte2/gen/python" },
     { name = "fsspec", specifier = ">=2025.3.0" },
     { name = "grpcio", marker = "extra == 'connector'", specifier = ">=1.71.0" },
     { name = "grpcio-health-checking", marker = "extra == 'connector'" },
@@ -1262,20 +1262,24 @@ dependencies = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "flyteidl2", specifier = "==2.0.23" }]
+requires-dist = [{ name = "flyteidl2", specifier = ">=2.0.23" }]
 
 [[package]]
 name = "flyteidl2"
-version = "2.0.23"
-source = { registry = "https://pypi.org/simple" }
+source = { editable = "../../union-scratch/cloud/flyte2/gen/python" }
 dependencies = [
     { name = "googleapis-common-protos" },
     { name = "protobuf" },
     { name = "protoc-gen-openapiv2" },
     { name = "protovalidate" },
 ]
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/2e/31/0f830765eb525e14319ae46d249bb00a3b663149419afed9cc4e033d8841/flyteidl2-2.0.23-py3-none-any.whl", hash = "sha256:c90d4414c27b31dd027807eb04e5443f9bc1ea521e57e12d31ce5661c6e9d903", size = 348528, upload-time = "2026-06-11T18:57:38.489Z" },
+
+[package.metadata]
+requires-dist = [
+    { name = "googleapis-common-protos" },
+    { name = "protobuf", specifier = ">=4.21.1" },
+    { name = "protoc-gen-openapiv2" },
+    { name = "protovalidate", specifier = ">=1.0.0" },
 ]
 
 [[package]]

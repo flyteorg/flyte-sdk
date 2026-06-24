@@ -410,6 +410,11 @@ class _Runner:
                 from flyteidl2.dataproxy import dataproxy_service_pb2
 
                 upload_req = dataproxy_service_pb2.UploadInputsRequest(inputs=inputs.proto_inputs)
+                # Pass the explicit run_base_dir so the offloaded inputs are written under the
+                # same base the CreateRun below resolves (RunSpec.run_base_dir). When unset the
+                # server falls back to settings/cluster default in both paths.
+                if self._run_base_dir:
+                    upload_req.base_dir = self._run_base_dir
                 # Reference an already-registered task by id; otherwise upload the full spec.
                 if task_id is not None:
                     upload_req.task_id.CopyFrom(task_id)
@@ -437,6 +442,7 @@ class _Runner:
                         cluster=self._queue or task.queue,
                         max_action_concurrency=self._max_action_concurrency or 0,
                         raw_data_storage=raw_data_storage,
+                        run_base_dir=self._run_base_dir or "",
                         security_context=security_context,
                         cache_config=run_pb2.CacheConfig(
                             overwrite_cache=self._overwrite_cache,
