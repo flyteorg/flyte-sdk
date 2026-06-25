@@ -737,7 +737,8 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
             sync_local_sys_paths=not self.run_args.no_sync_local_sys_paths,
         )
 
-        task = flyte.remote.Task.get(self.task_name, auto_version="latest")
+        # Build the input form from the pinned version, exactly like the execution path.
+        task = flyte.remote.Task.get(self.task_name, version=self.version, auto_version="latest")
         task_details = task.fetch()
 
         interface = transform_native_to_typed_interface(task_details.interface)
