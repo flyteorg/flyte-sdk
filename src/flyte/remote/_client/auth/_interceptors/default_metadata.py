@@ -4,6 +4,7 @@ from uuid import uuid4
 
 import flyte
 from flyte._logging import logger
+from flyte.remote._client.auth._interceptors._compat import request_headers
 
 ALPHABET = string.ascii_lowercase + string.digits
 
@@ -33,13 +34,14 @@ class DefaultMetadataInterceptor:
     """
 
     async def on_start(self, ctx) -> None:
-        existing_rid = ctx.request_headers().get("x-request-id")
+        headers = request_headers(ctx)
+        existing_rid = headers.get("x-request-id")
         if existing_rid is not None:
             return None
 
         rid = _generate_request_id()
         logger.debug(f"request-id: {rid}")
-        ctx.request_headers()["x-request-id"] = rid
+        headers["x-request-id"] = rid
         return None
 
     async def on_end(self, token, ctx, error) -> None:
