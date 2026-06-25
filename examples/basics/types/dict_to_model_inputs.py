@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 import flyte
 
@@ -72,6 +72,28 @@ async def regen_in_batch_dc(query_info: QueryInfoDC) -> str:
     return f"query={query_info.query!r} name={query_info.name!r} tags={query_info.tags}"
 
 
+# A model whose optional fields use ``default_factory``
+class BatchSummary(BaseModel):
+    total: int = 0
+    notes: list[str] = Field(default_factory=list)  # nested default_factory
+
+
+class BatchReport(BaseModel):
+    name: str  # required, no default
+    status: str = "ok"  # literal default
+    tags: list[str] = Field(default_factory=list)  # default_factory -> rebuilds as []
+    meta: dict[str, str] = Field(default_factory=dict)  # default_factory -> rebuilds as {}
+    summary: BatchSummary = Field(default_factory=BatchSummary)  # nested-model default_factory
+
+
+@env.task
+async def summarize_batch(report: BatchReport) -> str:
+    return (
+        f"name={report.name!r} status={report.status!r} "
+        f"tags={report.tags} meta={report.meta} summary={report.summary!r}"
+    )
+
+
 if __name__ == "__main__":
     # Local execution, so you can run this file directly and verify the coercion.
     flyte.init()
@@ -95,6 +117,41 @@ if __name__ == "__main__":
     # 4) Same behavior for a dataclass input.
     r4 = flyte.run(regen_in_batch_dc, query_info={"query": "select 4"})
     print("dataclass   :", r4.outputs())
+
+    # 5) A model with default_factory fields. Full dict, then a partial
+    #    dict that omits tags/meta/summary -- they fill from their default_factory defaults ([], {},
+    #    BatchSummary()).
+    r5 = flyte.run(summarize_batch, report={"name": "nightly", "tags": ["t1"], "meta": {"k": "v"}})
+    print("factory full:", r5.outputs())
+    r6 = flyte.run(summarize_batch, report={"name": "nightly"})
+    print("factory part:", r6.outputs())
+
+    # ---- Reconstruction check (v2.5.1 report, A1/A2) --------------------------------------------
+    # The decoupled/remote path below reconstructs the input/output type from the task's JSON schema
+    # when the client lacks the class.
+    import copy
+    import dataclasses
+
+    from flyte.types import TypeEngine
+    from flyte.types._type_engine import PydanticTransformer
+
+    def _field_names(t) -> list[str]:
+        if dataclasses.is_dataclass(t):
+            return sorted(f.name for f in dataclasses.fields(t))
+        return sorted(t.model_fields)
+
+    lt = PydanticTransformer().get_literal_type(BatchReport)
+    tagged = TypeEngine.guess_python_type(lt)
+    lt_untagged = copy.deepcopy(lt)
+    lt_untagged.ClearField("structure")  # simulate an output produced by a pre-tagging SDK
+    untagged = TypeEngine.guess_python_type(lt_untagged)
+
+    expected = ["meta", "name", "status", "summary", "tags"]
+    print("tagged  reconstruct:", _field_names(tagged))
+    print("untagged reconstruct:", _field_names(untagged))
+    assert _field_names(tagged) == expected, _field_names(tagged)
+    assert _field_names(untagged) == expected, _field_names(untagged)
+    print("OK: all 5 fields reconstructed on both paths (no crash, nothing dropped)")
 
     # ---- Decoupled / remote usage (no QueryInfo import needed) ----------------------------------
     # In a separate repo, a client can fetch the deployed task and launch it with a plain dict --

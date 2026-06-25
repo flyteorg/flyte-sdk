@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import AsyncGenerator, AsyncIterator, Literal, Tuple
+from typing import Any, AsyncGenerator, AsyncIterator, Callable, Dict, Literal, Tuple
 
 import rich.repr
 from connectrpc.code import Code
 from connectrpc.errors import ConnectError
 from flyteidl2.common import identifier_pb2, list_pb2, phase_pb2
+from flyteidl2.core import literals_pb2
 from flyteidl2.workflow import run_definition_pb2, run_service_pb2
 
 from flyte._initialize import ensure_client, get_client, get_init_config
@@ -305,6 +306,50 @@ class Run(ToJSONMixin):
         details = await self.details.aio()
         return await details.outputs()
 
+    @syncify
+    async def output_literals(self) -> Dict[str, literals_pb2.Literal]:
+        """Raw output literals of the run's action, without reconstructing types.
+
+        See :meth:`ActionDetails.output_literals`.
+        """
+        details = await self.details.aio()
+        return await details.output_literals()
+
+    @syncify
+    async def input_literals(self) -> Dict[str, literals_pb2.Literal]:
+        """Raw input literals of the run's action, without reconstructing types.
+
+        See :meth:`ActionDetails.input_literals`.
+        """
+        details = await self.details.aio()
+        return await details.input_literals()
+
+    @syncify
+    async def typed_outputs(
+        self,
+        types: Dict[str, type],
+        deserializers: Dict[type, Callable[[Any], Any]] | None = None,
+    ) -> Dict[str, Any]:
+        """Re-hydrate the run's requested outputs into caller-supplied types.
+
+        See :meth:`ActionDetails.typed_outputs`.
+        """
+        details = await self.details.aio()
+        return await details.typed_outputs(types, deserializers)
+
+    @syncify
+    async def typed_inputs(
+        self,
+        types: Dict[str, type],
+        deserializers: Dict[type, Callable[[Any], Any]] | None = None,
+    ) -> Dict[str, Any]:
+        """Re-hydrate the run's requested inputs into caller-supplied types.
+
+        See :meth:`ActionDetails.typed_inputs`.
+        """
+        details = await self.details.aio()
+        return await details.typed_inputs(types, deserializers)
+
     @property
     def url(self) -> str:
         """
@@ -468,6 +513,30 @@ class RunDetails(ToJSONMixin):
         Placeholder for outputs. This can be extended to handle outputs from the run context.
         """
         return await self.action_details.outputs()
+
+    async def output_literals(self) -> Dict[str, literals_pb2.Literal]:
+        """Raw output literals without reconstructing types. See :meth:`ActionDetails.output_literals`."""
+        return await self.action_details.output_literals()
+
+    async def input_literals(self) -> Dict[str, literals_pb2.Literal]:
+        """Raw input literals without reconstructing types. See :meth:`ActionDetails.input_literals`."""
+        return await self.action_details.input_literals()
+
+    async def typed_outputs(
+        self,
+        types: Dict[str, type],
+        deserializers: Dict[type, Callable[[Any], Any]] | None = None,
+    ) -> Dict[str, Any]:
+        """Re-hydrate requested outputs into caller-supplied types. See :meth:`ActionDetails.typed_outputs`."""
+        return await self.action_details.typed_outputs(types, deserializers)
+
+    async def typed_inputs(
+        self,
+        types: Dict[str, type],
+        deserializers: Dict[type, Callable[[Any], Any]] | None = None,
+    ) -> Dict[str, Any]:
+        """Re-hydrate requested inputs into caller-supplied types. See :meth:`ActionDetails.typed_inputs`."""
+        return await self.action_details.typed_inputs(types, deserializers)
 
     def __rich_repr__(self) -> rich.repr.Result:
         """
