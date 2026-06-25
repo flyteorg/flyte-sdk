@@ -12,7 +12,14 @@ from typing import Any, Hashable, Protocol
 
 import aiofiles
 import aiofiles.os
-import obstore
+
+try:
+    import obstore
+except ImportError:
+    # Native dep absent in constrained runtimes (e.g. Pyodide). The obstore-backed readers in
+    # this module are only reached on cloud (s3/gs/abfs) paths, which are disabled without it;
+    # importing the module (e.g. for the pure-python DownloadQueueEmpty) must still succeed.
+    obstore = None  # type: ignore[assignment]
 
 from flyte._logging import logger
 

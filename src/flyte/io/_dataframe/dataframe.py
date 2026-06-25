@@ -14,9 +14,19 @@ from typing import Any, Callable, ClassVar, Coroutine, Dict, Generic, List, Opti
 from flyteidl2.core import literals_pb2, types_pb2
 from fsspec.utils import get_protocol
 from mashumaro.types import SerializableType
-from obstore.exceptions import GenericError
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_serializer, model_validator
 from typing_extensions import Annotated, TypeAlias, get_args, get_origin
+
+try:
+    from obstore.exceptions import GenericError
+except ImportError:
+    # obstore is a native (Rust) dependency with no WASM wheel, so it is absent in constrained
+    # runtimes such as Pyodide. Importing this module must still succeed there (the type engine
+    # imports it eagerly for every task); the obstore-backed cloud IO paths below are unreachable
+    # without it, so the placeholder only needs to keep the ``except GenericError`` clause valid.
+    class GenericError(Exception):  # type: ignore[no-redef]
+        """Placeholder so ``except GenericError`` stays valid without obstore."""
+
 
 import flyte.storage as storage
 from flyte._logging import logger

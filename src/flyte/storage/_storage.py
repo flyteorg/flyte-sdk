@@ -9,12 +9,28 @@ from typing import AsyncGenerator, Optional
 from uuid import UUID
 
 import fsspec
-import obstore
 from fsspec.asyn import AsyncFileSystem
 from fsspec.utils import get_protocol
-from obstore.exceptions import GenericError
-from obstore.fsspec import register
-from obstore.store import ObjectStore
+
+try:
+    import obstore
+    from obstore.exceptions import GenericError
+    from obstore.fsspec import register
+    from obstore.store import ObjectStore
+
+    HAS_OBSTORE = True
+except ImportError:
+    # obstore is a native (Rust) dependency with no WASM wheel, so it is absent in constrained
+    # runtimes such as Pyodide. Local (file://) and other plain-fsspec protocols do not need it;
+    # only the cloud bypass fast-paths (s3/gs/abfs) do, and those are guarded by HAS_OBSTORE.
+    HAS_OBSTORE = False
+    obstore = None  # type: ignore[assignment]
+    register = None  # type: ignore[assignment]
+    ObjectStore = None  # type: ignore[assignment,misc]
+
+    class GenericError(Exception):  # type: ignore[no-redef]
+        """Placeholder so ``except (..., GenericError)`` clauses stay valid without obstore."""
+
 
 from flyte._initialize import get_storage
 from flyte._logging import logger
@@ -60,7 +76,7 @@ def _is_obstore_supported_protocol(protocol: str) -> bool:
     :param protocol: Protocol to check.
     :return: True if the protocol is supported, False otherwise.
     """
-    return protocol in _OBSTORE_SUPPORTED_PROTOCOLS
+    return HAS_OBSTORE and protocol in _OBSTORE_SUPPORTED_PROTOCOLS
 
 
 def is_remote(path: typing.Union[pathlib.Path | str]) -> bool:
@@ -582,5 +598,6 @@ def get_credentials_error(uri: str, protocol: str) -> str:
     raise ValueError(f"Unsupported protocol: {protocol}")
 
 
-register(_OBSTORE_SUPPORTED_PROTOCOLS, asynchronous=True)
+if HAS_OBSTORE:
+    register(_OBSTORE_SUPPORTED_PROTOCOLS, asynchronous=True)
 fsspec.register_implementation("flyte", FlyteFS, clobber=True)
