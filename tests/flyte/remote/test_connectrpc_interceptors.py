@@ -10,6 +10,7 @@ from connectrpc.errors import ConnectError
 from flyte._context import internal_ctx
 from flyte.models import ActionID, RawDataPath, TaskContext
 from flyte.remote._client.auth._authenticators.base import AuthHeaders
+from flyte.remote._client.auth._interceptors._compat import request_headers
 from flyte.remote._client.auth._interceptors.auth import (
     AuthBidiStreamInterceptor,
     AuthClientStreamInterceptor,
@@ -78,11 +79,42 @@ class TestRequestIdGeneration:
 
 
 def _make_ctx_mock():
-    """Create a mock RequestContext where request_headers() returns a mutable dict."""
+    """Create a mock RequestContext where request_headers() returns a mutable dict.
+
+    Mimics connectrpc < 0.11, where ``request_headers`` is a method.
+    """
     headers = {}
     ctx = Mock()
     ctx.request_headers.return_value = headers
     return ctx, headers
+
+
+def _make_ctx_mock_property():
+    """Create a mock RequestContext where request_headers is a property.
+
+    Mimics connectrpc >= 0.11, where ``request_headers`` is a ``@property`` that
+    returns the (non-callable) ``Headers`` object directly. Calling it as a
+    method raises ``TypeError: 'Headers' object is not callable`` — the crash
+    behind FLYTE-SDK-5T.
+    """
+    headers = {}
+    ctx = Mock()
+    ctx.request_headers = headers
+    return ctx, headers
+
+
+class TestRequestHeadersCompat:
+    """request_headers() must resolve both connectrpc API shapes (FLYTE-SDK-5T)."""
+
+    def test_method_form(self):
+        """connectrpc < 0.11: request_headers is a callable method."""
+        ctx, headers = _make_ctx_mock()
+        assert request_headers(ctx) is headers
+
+    def test_property_form(self):
+        """connectrpc >= 0.11: request_headers is a non-callable property."""
+        ctx, headers = _make_ctx_mock_property()
+        assert request_headers(ctx) is headers
 
 
 class TestDefaultMetadataInterceptor:
@@ -266,6 +298,36 @@ class TestAuthUnaryInterceptor:
         assert headers["flyte-authorization"] == "Bearer fresh"
         assert headers["x-request-id"] == "req-123", "non-auth headers must be preserved"
         assert headers["content-type"] == "application/proto", "non-auth headers must be preserved"
+
+
+class TestConnectrpc011PropertyForm:
+    """connectrpc >= 0.11 exposes request_headers as a property, not a method.
+
+    These guard against the FLYTE-SDK-5T regression where ``ctx.request_headers()``
+    raised ``TypeError: 'Headers' object is not callable`` on the property form,
+    breaking every control-plane RPC (SelectCluster, uploads, runs).
+    """
+
+    @pytest.mark.asyncio
+    async def test_default_metadata_injects_request_id(self):
+        interceptor = DefaultMetadataInterceptor()
+        ctx, headers = _make_ctx_mock_property()
+        await interceptor.on_start(ctx)
+        assert "x-request-id" in headers
+        assert len(headers["x-request-id"]) > 0
+
+    @pytest.mark.asyncio
+    async def test_auth_injects_headers(self):
+        auth = _make_mock_authenticator({"authorization": "Bearer token123"})
+        interceptor = AuthUnaryInterceptor(lambda: auth)
+
+        call_next = AsyncMock(return_value="response")
+        ctx, headers = _make_ctx_mock_property()
+
+        result = await interceptor.intercept_unary(call_next, "request", ctx)
+
+        assert result == "response"
+        assert headers["authorization"] == "Bearer token123"
 
 
 class TestIsAuthRetriable:
