@@ -450,6 +450,64 @@ class TestCallHandler:
         # Denied approval short-circuits before the handler runs.
         assert ran["handler"] is False
 
+    async def test_agent_tool_aio_runs_call_handler(self):
+        seen: dict[str, object] = {}
+
+        def base(x: int) -> int:
+            """Base tool."""
+            return x
+
+        async def handler(call_llm, tool_fn, **kwargs):
+            seen["call_llm"] = call_llm
+            seen["model"] = tool_fn.model
+            return (await tool_fn(**kwargs)) * 10
+
+        decorated = tool_decorator(base, call_handler=handler)
+        llm = AsyncMock()
+        from dataclasses import replace
+
+        bound = replace(decorated, call_llm=llm, model="bound-model")
+        assert await bound.aio(x=4) == 40
+        assert seen["call_llm"] is llm
+        assert seen["model"] == "bound-model"
+
+    async def test_agent_tool_call_runs_call_handler(self):
+        async def base(x: int) -> int:
+            return x
+
+        async def handler(call_llm, tool_fn, **kwargs):
+            return (await tool_fn(**kwargs)) + 1
+
+        decorated = tool_decorator(base, call_handler=handler)
+        assert await decorated(x=6) == 7
+
+    async def test_agent_binds_call_llm_for_handler_tools(self):
+        def base(x: int) -> int:
+            return x
+
+        async def handler(call_llm, tool_fn, **kwargs):
+            return await tool_fn(**kwargs)
+
+        decorated = tool_decorator(base, call_handler=handler)
+        llm = AsyncMock()
+        agent = Agent(name="t", instructions="I", model="agent-model", tools=[decorated], call_llm=llm)
+        tool = agent._registry["base"]
+        assert tool.call_llm is llm
+        assert tool.model == "agent-model"
+
+    async def test_agent_tool_aio_delegates_to_wrapped_task_without_handler(self):
+        env = TaskEnvironment(name="tool_aio_task_env", image="auto")
+
+        @tool_decorator
+        @env.task
+        async def fetch(x: int) -> int:
+            """Fetch."""
+            return x
+
+        with patch.object(fetch.target, "aio", new_callable=AsyncMock, return_value=99) as mock_aio:
+            assert await fetch.aio(x=41) == 99
+            mock_aio.assert_awaited_once_with(x=41)
+
 
 # ----------------------------------------------------------------------------
 # Signature + helpers

@@ -63,6 +63,7 @@ from ._mcp import MCPServerSpec, _MCPToolLoader
 from ._tools import (
     AgentTool,
     _abbreviate,
+    _bind_tool_invocation_context,
     _registry_uses_flyte_io,
     _resolve_tools,
     _stringify_tool_result,
@@ -300,7 +301,10 @@ class Agent:
     # ------------------------------------------------------------------
 
     def __post_init__(self) -> None:
-        self._registry = _resolve_tools(self.tools)
+        self._registry = {
+            name: _bind_tool_invocation_context(tool, call_llm=self.call_llm, model=self.model)
+            for name, tool in _resolve_tools(self.tools).items()
+        }
         self._mcp_loader = _MCPToolLoader(self.mcp_servers)
         if self.code_mode and any(t.requires_approval for t in self._registry.values()):
             logger.warning(
@@ -345,9 +349,9 @@ class Agent:
         for _tool in new.values():
             if _tool.name in self._registry:
                 raise ValueError(f"Duplicate tool name '{_tool.name}'")
-            self._registry[_tool.name] = _tool
+            self._registry[_tool.name] = _bind_tool_invocation_context(_tool, call_llm=self.call_llm, model=self.model)
         self._system_prompt = self._build_system_prompt()
-        return next(iter(new.values()))
+        return _bind_tool_invocation_context(next(iter(new.values())), call_llm=self.call_llm, model=self.model)
 
     # ------------------------------------------------------------------
     # Prompt construction

@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal, Mapping, Se
 from flyte._internal.resolvers.default import DefaultTaskResolver
 from flyte.types._json_coercion import coerce_json_args
 
-from ._llm import LLMCallable
+from ._llm import LLMCallable, _default_call_llm
 
 if TYPE_CHECKING:
     from flyte._task import TaskTemplate
@@ -37,6 +37,8 @@ _ToolExecutor = Callable[[dict[str, Any]], Awaitable[Any]]
 # the arguments the model produced for the call. Whatever the handler returns is
 # used as the tool result.
 ToolCallHandler = Callable[..., Awaitable[Any]]
+
+_DEFAULT_TOOL_MODEL = "claude-haiku-4-5"
 
 
 @dataclass
@@ -68,6 +70,44 @@ class AgentTool:
     # Optional interceptor that customizes how the tool is invoked. See
     # :data:`ToolCallHandler`.
     call_handler: ToolCallHandler | None = None
+    # When set (typically by :class:`Agent` during construction), used as the
+    # default ``call_llm`` / ``model`` for :meth:`aio` and direct calls that
+    # route through ``call_handler``.
+    call_llm: LLMCallable | None = None
+    model: str | None = None
+
+    async def aio(self, *args: Any, **kwargs: Any) -> Any:
+        """Invoke the tool, routing through ``call_handler`` when one is registered.
+
+        Mirrors :meth:`~flyte._task.TaskTemplate.aio` enough for ``flyte.map`` and
+        in-task calls on ``@tool``-wrapped tasks. When a ``call_handler`` is set,
+        it runs with :attr:`call_llm` and :attr:`model` (or their defaults).
+        Otherwise, durable ``@env.task`` / remote-task targets delegate to their
+        underlying ``.aio``; everything else goes through :meth:`execute`.
+        """
+        if self.call_handler is not None:
+            return await invoke_agent_tool_from_call(
+                self,
+                *args,
+                call_llm=_effective_call_llm(self, None),
+                model=_effective_model(self, None),
+                **kwargs,
+            )
+
+        from flyte._task import TaskTemplate
+
+        if isinstance(self.target, TaskTemplate):
+            return await self.target.aio(*args, **kwargs)
+        if _is_lazy_entity(self.target):
+            call_args = _kwargs_from_call(self.target, args, kwargs)
+            return await self.target.aio(**call_args)  # type: ignore[attr-defined]
+
+        call_args = _kwargs_from_call(self.target, args, kwargs)
+        return await self.execute(call_args)
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        """Invoke the tool (async tools return an awaitable coroutine)."""
+        return self.aio(*args, **kwargs)
 
     def to_openai_format(self) -> dict[str, Any]:
         """Convert to the OpenAI / litellm tools schema."""
@@ -206,34 +246,51 @@ def _kwargs_from_call(target: Any, args: tuple[Any, ...], kwargs: dict[str, Any]
     return dict(bound.arguments)
 
 
+def _effective_call_llm(tool: AgentTool, call_llm: LLMCallable | None) -> LLMCallable:
+    return call_llm or tool.call_llm or _default_call_llm
+
+
+def _effective_model(tool: AgentTool, model: str | None) -> str:
+    return model or tool.model or _DEFAULT_TOOL_MODEL
+
+
+def _bind_tool_invocation_context(tool: AgentTool, *, call_llm: LLMCallable, model: str) -> AgentTool:
+    """Attach the owning agent's LLM callback to tools that define ``call_handler``."""
+    if tool.call_handler is None:
+        return tool
+    return replace(tool, call_llm=call_llm, model=model)
+
+
 async def invoke_agent_tool(
     tool: AgentTool,
     args: dict[str, Any],
     *,
-    call_llm: LLMCallable,
-    model: str,
+    call_llm: LLMCallable | None = None,
+    model: str | None = None,
 ) -> Any:
     """Run *tool*, routing through ``call_handler`` when one is registered."""
+    resolved_llm = _effective_call_llm(tool, call_llm)
+    resolved_model = _effective_model(tool, model)
     if tool.call_handler is not None:
         coerced_args = await _coerce_tool_args(tool.target, args)
         bound = ToolFn(
             name=tool.name,
             description=tool.description,
             parameters=tool.parameters,
-            model=model,
+            model=resolved_model,
             target=tool.target,
             source=tool.source,
             _execute=tool.execute,
         )
-        return await tool.call_handler(call_llm, bound, **coerced_args)
+        return await tool.call_handler(resolved_llm, bound, **coerced_args)
     return await tool.execute(args)
 
 
 async def invoke_agent_tool_from_call(
     tool: AgentTool,
     *args: Any,
-    call_llm: LLMCallable,
-    model: str,
+    call_llm: LLMCallable | None = None,
+    model: str | None = None,
     **kwargs: Any,
 ) -> Any:
     """Like :func:`invoke_agent_tool` but accepts a Monty-style ``*args, **kwargs`` call."""
