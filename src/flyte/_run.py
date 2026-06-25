@@ -94,6 +94,7 @@ class _Runner:
         domain: str | None = None,
         env_vars: Dict[str, str] | None = None,
         labels: Dict[str, str] | None = None,
+        related_to: str | None = None,
         annotations: Dict[str, str] | None = None,
         interruptible: bool | None = None,
         log_level: int | None = None,
@@ -140,6 +141,7 @@ class _Runner:
         self._domain = domain
         self._env_vars = env_vars
         self._labels = labels
+        self._related_to = related_to
         self._annotations = annotations
         self._interruptible = interruptible
         self._log_level = log_level
@@ -380,6 +382,11 @@ class _Runner:
             env_kv = run_pb2.Envs(values=kv_pairs)
             annotations = run_pb2.Annotations(values=self._annotations)
             labels = run_pb2.Labels(values=self._labels)
+            related_to = (
+                identifier_pb2.RunIdentifier(project=project, domain=domain, org=cfg.org, name=self._related_to)
+                if self._related_to
+                else None
+            )
             raw_data_storage = (
                 run_pb2.RawDataStorage(raw_data_prefix=self._raw_data_path) if self._raw_data_path else None
             )
@@ -433,6 +440,7 @@ class _Runner:
                         else None,
                         annotations=annotations,
                         labels=labels,
+                        related_to=related_to,
                         envs=env_kv,
                         cluster=self._queue or task.queue,
                         max_action_concurrency=self._max_action_concurrency or 0,
@@ -849,6 +857,7 @@ def with_runcontext(
     domain: str | None = None,
     env_vars: Dict[str, str] | None = None,
     labels: Dict[str, str] | None = None,
+    related_to: str | None = None,
     annotations: Dict[str, str] | None = None,
     interruptible: bool | None = None,
     log_level: int | None = None,
@@ -914,6 +923,9 @@ def with_runcontext(
     :param env_vars: Optional Environment variables to set for the run
     :param labels: Optional user-defined labels to attach to the run as KEY=VALUE pairs, used for
         filtering and organizing runs (e.g. ``flyte get run --with-label team=ml``)
+    :param related_to: Optional name of a parent run that this run is derived from. Recorded on the run
+        as provenance (scoped to this run's project/domain/org) so the parent and its derived runs can
+        be linked. Set once at creation and immutable thereafter.
     :param annotations: Optional Annotations to set for the run
     :param interruptible: Optional If true, the run can be scheduled on interruptible instances and false implies
         that all tasks in the run should only be scheduled on non-interruptible instances. If not specified the
@@ -976,6 +988,7 @@ def with_runcontext(
         overwrite_cache=overwrite_cache,
         env_vars=env_vars,
         labels=labels,
+        related_to=related_to,
         annotations=annotations,
         interruptible=interruptible,
         project=project,

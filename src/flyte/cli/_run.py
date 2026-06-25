@@ -289,6 +289,18 @@ class RunArguments:
             )
         },
     )
+    related_to: str | None = field(
+        default=None,
+        metadata={
+            "click.option": click.Option(
+                ["--related-to"],
+                type=str,
+                default=None,
+                help="Name of a parent run this run is derived from (provenance). "
+                "Scoped to this run's project/domain/org.",
+            )
+        },
+    )
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> RunArguments:
@@ -401,6 +413,7 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
                 env_vars=self.run_args.parsed_env_vars(),
                 max_action_concurrency=self.run_args.max_action_concurrency,
                 labels=self.run_args.parsed_labels(),
+                related_to=self.run_args.related_to,
             )
             result = await execution_context.run.aio(self.obj, **ctx.params)
         except Exception as e:
@@ -465,6 +478,7 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
                 debug=self.run_args.debug,
                 env_vars=self.run_args.parsed_env_vars(),
                 labels=self.run_args.parsed_labels(),
+                related_to=self.run_args.related_to,
                 _tracker=tracker,
             )
             return await execution_context.run.aio(self.obj, **ctx.params)
@@ -626,6 +640,7 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
                 env_vars=self.run_args.parsed_env_vars(),
                 max_action_concurrency=self.run_args.max_action_concurrency,
                 labels=self.run_args.parsed_labels(),
+                related_to=self.run_args.related_to,
             )
             result = await execution_context.run.aio(task, **ctx.params)
         except Exception as e:

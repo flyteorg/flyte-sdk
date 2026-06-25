@@ -103,6 +103,13 @@ def project(cfg: common.CLIConfig, name: str | None = None, archived: bool = Fal
     default=(),
     help="Filter runs that have this label key present (existence check). Can be specified multiple times.",
 )
+@click.option(
+    "--related-to",
+    "related_to",
+    type=str,
+    default=None,
+    help="Filter runs derived from (whose parent is) the run with this name.",
+)
 @click.pass_obj
 def run(
     cfg: common.CLIConfig,
@@ -120,6 +127,7 @@ def run(
     updated_before: dt.datetime | None = None,
     with_label: Tuple[str, ...] = (),
     with_label_key: Tuple[str, ...] = (),
+    related_to: str | None = None,
 ):
     """
     Get a list of all runs, or details of a specific run by name.
@@ -140,6 +148,12 @@ def run(
     ```bash
     $ flyte get run --with-label team=ml --with-label env=prod
     $ flyte get run --with-label-key team
+    ```
+
+    You can filter runs by their parent run (provenance):
+
+    ```bash
+    $ flyte get run --related-to my_parent_run
     ```
     """
 
@@ -196,6 +210,7 @@ def run(
                     updated_at=updated_at,
                     with_labels=parsed_with_labels,
                     with_label_keys=list(with_label_key) or None,
+                    related_to=related_to,
                 ),
                 cfg.output_format,
             )

@@ -56,6 +56,7 @@ class Run(ToJSONMixin):
         updated_at: TimeFilter | None = None,
         with_labels: dict[str, str] | None = None,
         with_label_keys: list[str] | None = None,
+        related_to: str | None = None,
     ) -> AsyncIterator[Run]:
         """
         Get all runs for the current project and domain.
@@ -72,6 +73,7 @@ class Run(ToJSONMixin):
         :param updated_at: Filter runs by last-update time range.
         :param with_labels: Filter runs whose labels include all of these key=value pairs (AND semantics).
         :param with_label_keys: Filter runs that have all of these label keys present (existence check).
+        :param related_to: Filter runs derived from (whose parent is) the run with this name.
         :return: An iterator of runs.
         """
         ensure_client()
@@ -147,6 +149,16 @@ class Run(ToJSONMixin):
                         field=f"labels.{k}",
                     ),
                 )
+
+        # Filter by provenance: runs whose parent (``related_to``) is the given run name.
+        if related_to:
+            filters.append(
+                list_pb2.Filter(
+                    function=list_pb2.Filter.Function.EQUAL,
+                    field="related_to",
+                    values=[related_to],
+                ),
+            )
 
         cfg = get_init_config()
         i = 0
@@ -470,6 +482,7 @@ class RunDetails(ToJSONMixin):
         Rich representation of the Run object.
         """
         yield "labels", str(self.pb2.run_spec.labels)
+        yield "related-to", self.pb2.run_spec.related_to.name
         yield "annotations", str(self.pb2.run_spec.annotations)
         yield "env-vars", str(self.pb2.run_spec.envs)
         yield "is-interruptible", str(self.pb2.run_spec.interruptible)

@@ -211,6 +211,18 @@ class TestRunListallFilters:
         assert "created_at" not in fields
         assert "updated_at" not in fields
 
+    def test_related_to_filter_is_sent(self, mock_client, mock_init_config):
+        call_args = self._call_listall(mock_client, mock_init_config, related_to="parent-run")
+        filters = list(call_args[0][0].request.filters)
+        related = next(f for f in filters if f.field == "related_to")
+        assert related.function == list_pb2.Filter.Function.EQUAL
+        assert list(related.values) == ["parent-run"]
+
+    def test_no_related_to_sends_no_related_to_field(self, mock_client, mock_init_config):
+        call_args = self._call_listall(mock_client, mock_init_config)
+        fields = [f.field for f in call_args[0][0].request.filters]
+        assert "related_to" not in fields
+
 
 # ---------------------------------------------------------------------------
 # Action.listall() — verify time filters sent to the gRPC stub
@@ -315,3 +327,42 @@ class TestTimeFilterExport:
         from flyte.remote import TimeFilter as TF
 
         assert TF is TimeFilter
+
+
+# ---------------------------------------------------------------------------
+# RunDetails — verify related_to surfaces on read (get run)
+# ---------------------------------------------------------------------------
+
+
+class TestRunDetailsRelatedTo:
+    def _make_run_details(self, related_to_name: str = ""):
+        from flyteidl2.common import identifier_pb2
+        from flyteidl2.task import run_pb2
+        from flyteidl2.workflow import run_definition_pb2
+
+        from flyte.remote._run import RunDetails
+
+        action = run_definition_pb2.ActionDetails(
+            id=identifier_pb2.ActionIdentifier(
+                run=identifier_pb2.RunIdentifier(name="child-run"),
+                name="a0",
+            ),
+        )
+        spec = run_pb2.RunSpec()
+        if related_to_name:
+            spec.related_to.CopyFrom(identifier_pb2.RunIdentifier(name=related_to_name))
+        return RunDetails(run_definition_pb2.RunDetails(action=action, run_spec=spec))
+
+    def test_related_to_in_rich_repr(self):
+        rd = self._make_run_details(related_to_name="parent-run")
+        assert dict(rd.__rich_repr__())["related-to"] == "parent-run"
+
+    def test_related_to_empty_when_unset(self):
+        rd = self._make_run_details()
+        assert dict(rd.__rich_repr__())["related-to"] == ""
+
+    def test_related_to_in_json(self):
+        import json
+
+        rd = self._make_run_details(related_to_name="parent-run")
+        assert json.loads(rd.to_json())["runSpec"]["relatedTo"] == {"name": "parent-run"}

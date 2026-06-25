@@ -258,3 +258,39 @@ def test_with_runcontext_rejects_max_action_concurrency_of_one():
 def test_with_runcontext_allows_zero_max_action_concurrency():
     flyte.with_runcontext(max_action_concurrency=0)
     flyte.with_runcontext(max_action_concurrency=2)
+
+
+@pytest.mark.asyncio
+@mock.patch("flyte._deploy._build_image_bg", new_callable=AsyncMock)
+@mock.patch("flyte._code_bundle.build_code_bundle", new_callable=AsyncMock)
+async def test_run_spec_related_to(mock_code_bundler: AsyncMock, mock_build_image_bg: AsyncMock):
+    """related_to from with_runcontext should land on RunSpec as a RunIdentifier scoped to the run."""
+    mock_client, mock_run_service = _make_mock_client()
+    mock_code_bundler.return_value = CodeBundle(computed_version="v1", tgz="test.tgz")
+    mock_build_image_bg.return_value = (env.name, "image_name", None)
+
+    await _init_for_testing(client=mock_client, project="test", domain="test")
+    run = await flyte.with_runcontext(mode="remote", related_to="parent-run").run.aio(task1, "hello")
+
+    assert run
+    req: run_service_pb2.CreateRunRequest = mock_run_service.create_run.call_args[0][0]
+    assert req.run_spec.related_to.name == "parent-run"
+    assert req.run_spec.related_to.project == "test"
+    assert req.run_spec.related_to.domain == "test"
+
+
+@pytest.mark.asyncio
+@mock.patch("flyte._deploy._build_image_bg", new_callable=AsyncMock)
+@mock.patch("flyte._code_bundle.build_code_bundle", new_callable=AsyncMock)
+async def test_run_spec_related_to_default_unset(mock_code_bundler: AsyncMock, mock_build_image_bg: AsyncMock):
+    """When related_to is not provided, RunSpec carries an empty RunIdentifier (unset)."""
+    mock_client, mock_run_service = _make_mock_client()
+    mock_code_bundler.return_value = CodeBundle(computed_version="v1", tgz="test.tgz")
+    mock_build_image_bg.return_value = (env.name, "image_name", None)
+
+    await _init_for_testing(client=mock_client, project="test", domain="test")
+    run = await flyte.with_runcontext(mode="remote").run.aio(task1, "hello")
+
+    assert run
+    req: run_service_pb2.CreateRunRequest = mock_run_service.create_run.call_args[0][0]
+    assert req.run_spec.related_to.name == ""
