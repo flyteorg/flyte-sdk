@@ -62,13 +62,12 @@ from ._llm import LLMCallable, LLMMessage, _default_call_llm
 from ._mcp import MCPServerSpec, _MCPToolLoader
 from ._tools import (
     AgentTool,
-    ToolFn,
     _abbreviate,
-    _coerce_tool_args,
     _registry_uses_flyte_io,
     _resolve_tools,
     _stringify_tool_result,
     _summarize_signature,
+    invoke_agent_tool,
 )
 from .memory import (
     MemoryStore,
@@ -272,10 +271,11 @@ class Agent:
         expression becomes the observation for the next turn; the loop ends when
         the LLM replies with plain text (no code block). This unlocks generated
         control flow (loops, ``flyte_map`` fan-out, intermediate aggregation)
-        while still dispatching ``@env.task`` tools durably on-cluster. Requires
-        ``pydantic-monty`` in the runtime image. Note: per-tool HITL approval is
-        not enforced in code mode, since tools are invoked from inside the
-        sandbox rather than as discrete approved calls.
+        while still dispatching ``@env.task`` tools durably on-cluster. Tools
+        with a ``call_handler`` run through that handler in code mode as well.
+        Requires ``pydantic-monty`` in the runtime image. Note: per-tool HITL
+        approval is not enforced in code mode, since tools are invoked from inside
+        the sandbox rather than as discrete approved calls.
     """
 
     name: str = "flyte-agent"
@@ -419,21 +419,8 @@ class Agent:
             if not approved:
                 return (f"Human reviewer declined tool `{tool.name}`. Try a different approach.", True)
         await _emit(AgentEvent("tool_start", {"tool": tool.name, "args": args}))
-        coerced_args = await _coerce_tool_args(tool.target, args)
         try:
-            if tool.call_handler is not None:
-                bound = ToolFn(
-                    name=tool.name,
-                    description=tool.description,
-                    parameters=tool.parameters,
-                    model=self.model,
-                    target=tool.target,
-                    source=tool.source,
-                    _execute=tool.execute,
-                )
-                result = await tool.call_handler(self.call_llm, bound, **coerced_args)
-            else:
-                result = await tool.execute(args)
+            result = await invoke_agent_tool(tool, args, call_llm=self.call_llm, model=self.model)
         except Exception as exc:
             await _emit(AgentEvent("tool_error", {"tool": tool.name, "error": str(exc)}))
             return (f"Error executing tool `{tool.name}`: {exc}", True)
@@ -538,7 +525,7 @@ class Agent:
 
         from ._code import build_sandbox_tools, extract_python_code
 
-        sandbox_tools = build_sandbox_tools(self._registry)
+        sandbox_tools = build_sandbox_tools(self._registry, call_llm=self.call_llm, model=self.model)
         last_code = ""
 
         async def step(llm_msg: LLMMessage, messages: list[dict[str, Any]], attempts: int) -> _TurnResult:

@@ -17,6 +17,8 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal, Mapping, Se
 from flyte._internal.resolvers.default import DefaultTaskResolver
 from flyte.types._json_coercion import coerce_json_args
 
+from ._llm import LLMCallable
+
 if TYPE_CHECKING:
     from flyte._task import TaskTemplate
     from flyte.remote._task import LazyEntity
@@ -181,6 +183,62 @@ async def _coerce_tool_args(target: Any, args: dict[str, Any]) -> dict[str, Any]
     if iface is None:
         return args
     return await coerce_json_args(args, iface.inputs)
+
+
+def _kwargs_from_call(target: Any, args: tuple[Any, ...], kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Merge positional and keyword sandbox arguments into a kwargs dict."""
+    fn: Any = target
+    from flyte._task import TaskTemplate
+
+    if isinstance(target, TaskTemplate):
+        fn = getattr(target, "func", None)
+    elif callable(target):
+        fn = getattr(target, "__wrapped__", target)
+    if fn is None:
+        if args:
+            raise TypeError(f"Tool target does not accept positional arguments; got {args!r}")
+        return dict(kwargs)
+    try:
+        bound = inspect.signature(fn).bind_partial(*args, **kwargs)
+    except TypeError as exc:
+        raise TypeError(f"Invalid arguments for tool call: {exc}") from exc
+    bound.apply_defaults()
+    return dict(bound.arguments)
+
+
+async def invoke_agent_tool(
+    tool: AgentTool,
+    args: dict[str, Any],
+    *,
+    call_llm: LLMCallable,
+    model: str,
+) -> Any:
+    """Run *tool*, routing through ``call_handler`` when one is registered."""
+    if tool.call_handler is not None:
+        coerced_args = await _coerce_tool_args(tool.target, args)
+        bound = ToolFn(
+            name=tool.name,
+            description=tool.description,
+            parameters=tool.parameters,
+            model=model,
+            target=tool.target,
+            source=tool.source,
+            _execute=tool.execute,
+        )
+        return await tool.call_handler(call_llm, bound, **coerced_args)
+    return await tool.execute(args)
+
+
+async def invoke_agent_tool_from_call(
+    tool: AgentTool,
+    *args: Any,
+    call_llm: LLMCallable,
+    model: str,
+    **kwargs: Any,
+) -> Any:
+    """Like :func:`invoke_agent_tool` but accepts a Monty-style ``*args, **kwargs`` call."""
+    call_args = _kwargs_from_call(tool.target, args, kwargs)
+    return await invoke_agent_tool(tool, call_args, call_llm=call_llm, model=model)
 
 
 def _json_schema_for_callable(fn: Callable[..., Any]) -> dict[str, Any]:
