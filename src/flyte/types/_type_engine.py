@@ -716,6 +716,42 @@ def _get_pydantic_element_type(
     return _get_element_type(element_property, schema)
 
 
+def _is_noarg_constructible_model(tp: typing.Any) -> bool:
+    """Return True if ``tp`` is a Pydantic model class instantiable with no arguments.
+
+    The Pydantic-path analogue of :func:`_is_noarg_constructible_dataclass`: used to decide whether a
+    non-required nested-model field (a ``default_factory=SomeModel`` field, which omits ``default``
+    from the JSON schema) can rebuild its default by constructing the reconstructed nested model.
+    """
+    from pydantic import BaseModel
+
+    if isinstance(tp, type) and issubclass(tp, BaseModel):
+        return all(not f.is_required() for f in tp.model_fields.values())
+    return False
+
+
+def _pydantic_not_required_field(field_type: typing.Any) -> typing.Tuple[typing.Any, typing.Any]:
+    """``create_model`` field spec for a non-required field that has no explicit schema default.
+
+    Pydantic omits ``default`` from the JSON schema for ``default_factory`` fields, so they land here.
+    Mirrors :func:`_append_schema_field` (the untagged dataclass path) so a model reconstructs the
+    same way whichever path it takes: list/dict ``default_factory`` fields rebuild empty collections,
+    a no-arg-constructible nested model rebuilds an instance, and anything else (scalars, unions,
+    non-constructible models) becomes ``Optional[...] = None``. Returning a required ``(field_type,
+    ...)`` here would wrongly reject partial inputs that omit the defaulted field.
+    """
+    from pydantic import Field
+
+    field_origin = typing.get_origin(field_type)
+    if field_type is list or field_origin is list:
+        return (field_type, Field(default_factory=list))
+    if field_type is dict or field_origin is dict:
+        return (field_type, Field(default_factory=dict))
+    if _is_noarg_constructible_model(field_type):
+        return (field_type, Field(default_factory=field_type))
+    return (typing.Optional[field_type], None)
+
+
 def _create_pydantic_model_from_schema(schema: dict) -> Type:
     """Create a dynamic Pydantic BaseModel from a JSON schema dict."""
     from pydantic import ConfigDict, create_model
@@ -735,7 +771,6 @@ def _create_pydantic_model_from_schema(schema: dict) -> Type:
 
     fields: dict[str, typing.Any] = {}
     required_set = set(schema.get("required") or ())
-    schema_declares_required = "required" in schema
     for name in property_order:
         if name not in properties:
             continue
@@ -743,13 +778,14 @@ def _create_pydantic_model_from_schema(schema: dict) -> Type:
         field_type = _get_pydantic_element_type(prop, schema)
         if "default" in prop:
             fields[name] = (field_type, prop["default"])
-        elif schema_declares_required and name not in required_set:
-            if prop.get("anyOf") or prop.get("oneOf"):
-                fields[name] = (typing.Optional[field_type], None)
-            else:
-                fields[name] = (field_type, ...)
-        else:
+        elif name in required_set:
+            # Genuinely required (in the schema's ``required`` list, no default).
             fields[name] = (field_type, ...)
+        else:
+            # Not required and no explicit default -- e.g. a ``default_factory`` field, which Pydantic
+            # leaves out of both ``default`` and ``required``. Treat it as optional with a faithful
+            # default so partial inputs can omit it (rather than ``(field_type, ...)`` -> required).
+            fields[name] = _pydantic_not_required_field(field_type)
 
     return create_model(title, __config__=ConfigDict(extra="allow"), **fields)
 

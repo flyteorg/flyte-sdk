@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import itertools
 import json
@@ -11,7 +12,10 @@ import pytest
 from mashumaro.codecs.json import JSONDecoder
 from pydantic import Field
 
+from flyte.types import TypeEngine
 from flyte.types._type_engine import (
+    PydanticTransformer,
+    _create_pydantic_model_from_schema,
     _mutable_schema_default_factory,
     convert_mashumaro_json_schema_to_python_class,
 )
@@ -198,3 +202,85 @@ def test_convert_schema_reconstructs_pydantic_default_factory_model_fully():
     assert partial.tags == []
     assert partial.meta == {}
     assert partial.nested.val == 0
+
+
+# ---------------------------------------------------------------------------
+# Tagged Pydantic path (ENG26-791): _create_pydantic_model_from_schema. Same root cause as the
+# untagged dataclass path above (default_factory emits no "default" key), different symptom -- the
+# fields were reconstructed as *required*, blocking partial inputs to deployed tasks.
+# ---------------------------------------------------------------------------
+
+
+class _NestedDefault(pydantic.BaseModel):
+    val: int = 0
+    labels: list[str] = Field(default_factory=list)
+
+
+class _ExampleInput(pydantic.BaseModel):
+    name: str  # required
+    status: str = "ok"  # literal default
+    tags: list[str] = Field(default_factory=list)  # default_factory
+    meta: dict = Field(default_factory=dict)  # default_factory
+    nested: _NestedDefault = Field(default_factory=_NestedDefault)  # nested default_factory
+
+
+def test_pydantic_reconstruct_default_factory_fields_are_optional():
+    # Regression (ENG26-791): default_factory fields used to be reconstructed as required=True on the
+    # tagged Pydantic path. Only the genuinely-required field should stay required.
+    rt = _create_pydantic_model_from_schema(_ExampleInput.model_json_schema())
+    required = {name: f.is_required() for name, f in rt.model_fields.items()}
+    assert required == {"name": True, "status": False, "tags": False, "meta": False, "nested": False}
+
+
+def test_pydantic_reconstruct_rebuilds_empty_collections_and_nested():
+    rt = _create_pydantic_model_from_schema(_ExampleInput.model_json_schema())
+    inst = rt(name="x")  # omit every defaulted field
+    assert inst.status == "ok"
+    assert inst.tags == [] and inst.meta == {}
+    assert inst.nested.val == 0 and inst.nested.labels == []
+
+
+def test_pydantic_reconstruct_accepts_partial_input():
+    # The issue's symptom: dict_to_literal_map must accept a partial dict that omits defaulted fields.
+    rt = _create_pydantic_model_from_schema(_ExampleInput.model_json_schema())
+    lm = asyncio.run(TypeEngine.dict_to_literal_map({"x": {"name": "only"}}, {"x": rt}))
+    assert "x" in lm.literals
+
+
+def test_pydantic_reconstruct_nested_required_field_falls_back_to_optional():
+    # A nested model that isn't no-arg constructible (its own required field) can't be rebuilt as a
+    # default, so the field becomes Optional[...] = None rather than required.
+    class _NestedReq(pydantic.BaseModel):
+        required_val: int  # no default
+
+    class _Outer(pydantic.BaseModel):
+        name: str
+        nested: _NestedReq = Field(default_factory=lambda: _NestedReq(required_val=1))
+
+    rt = _create_pydantic_model_from_schema(_Outer.model_json_schema())
+    assert rt.model_fields["nested"].is_required() is False
+    assert rt(name="x").nested is None
+
+
+def test_tagged_literal_reconstructs_default_factory_as_optional_end_to_end():
+    # Mirrors the ENG26-791 repro: a tagged Pydantic STRUCT literal reconstructs (via guess_python_type)
+    # into a BaseModel whose default_factory fields are optional, so partial inputs are accepted.
+    lt = PydanticTransformer().get_literal_type(_ExampleInput)
+    assert lt.HasField("structure") and lt.structure.tag == "Pydantic Transformer"
+    rt = TypeEngine.guess_python_type(lt)
+    assert issubclass(rt, pydantic.BaseModel)
+    assert rt.model_fields["tags"].is_required() is False
+    assert rt(name="x").tags == []
+
+
+def test_tagged_and_untagged_paths_reconstruct_consistently():
+    # The same model must reconstruct the same way whether it took the tagged (Pydantic) path or the
+    # untagged (dataclass) path -- both optional defaulted fields, both rebuilding []/{}/instance.
+    schema = _ExampleInput.model_json_schema()
+    pyd = _create_pydantic_model_from_schema(schema)(name="x")
+    dc = JSONDecoder(convert_mashumaro_json_schema_to_python_class(schema, "ExampleInput")).decode(
+        json.dumps({"name": "x"})
+    )
+    assert pyd.tags == dc.tags == []
+    assert pyd.meta == dc.meta == {}
+    assert pyd.nested.val == dc.nested.val == 0
