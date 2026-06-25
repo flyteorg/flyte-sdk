@@ -3,9 +3,12 @@
 In *code mode* the agent does not emit JSON tool calls. Instead, on each turn the
 LLM writes a short Python program that is executed in the Monty sandbox
 (``flyte.sandbox.orchestrate_local``). The agent's tools are exposed to that
-sandbox as plain functions, so ``@env.task`` tools dispatch durably on the
-cluster, ``@flyte.trace`` helpers are traced, and ``flyte_map(...)`` fans out in
-parallel — all the usual Flyte features, driven by generated code.
+sandbox as plain functions. Tools with a ``call_handler`` are wrapped so the
+handler runs on each sandbox invocation (same as the tool-calling path).
+``@env.task`` tools without a handler are passed through as their underlying
+template so they dispatch durably on the cluster; ``@flyte.trace`` helpers are
+traced, and ``flyte_map(...)`` fans out in parallel — all the usual Flyte
+features, driven by generated code.
 
 This module is internal: the public surface is the ``code_mode`` flag on
 :class:`~flyte.ai.agents.Agent`.
@@ -18,7 +21,8 @@ import re
 import textwrap
 from typing import Any
 
-from ._tools import AgentTool, _summarize_signature
+from ._llm import LLMCallable
+from ._tools import AgentTool, _summarize_signature, invoke_agent_tool_from_call
 
 # A python code fence (```python / ```py / bare ```). Captures the body.
 _CODE_FENCE_RE = re.compile(r"```(?:python|py)?\s*\n?(.*?)```", re.DOTALL)
@@ -86,11 +90,30 @@ def _make_execute_wrapper(tool: AgentTool) -> Any:
     return _wrapper
 
 
-def build_sandbox_tools(registry: dict[str, AgentTool]) -> list[Any]:
+def _make_call_handler_wrapper(tool: AgentTool, *, call_llm: LLMCallable, model: str) -> Any:
+    """Expose an ``AgentTool`` with ``call_handler`` as a sandbox async function."""
+
+    async def _wrapper(*args: Any, **kwargs: Any) -> Any:
+        return await invoke_agent_tool_from_call(tool, *args, call_llm=call_llm, model=model, **kwargs)
+
+    _wrapper.__name__ = _sandbox_name(tool)
+    underlying = _underlying_callable(tool)
+    _wrapper.__doc__ = (inspect.getdoc(underlying) if underlying is not None else None) or tool.description
+    return _wrapper
+
+
+def build_sandbox_tools(
+    registry: dict[str, AgentTool],
+    *,
+    call_llm: LLMCallable,
+    model: str,
+) -> list[Any]:
     """Map the agent's tool registry to objects ``orchestrate_local`` understands.
 
-    ``@env.task`` / ``LazyEntity`` / plain-callable tools are passed through as
-    their underlying object so they keep their native dispatch (durable tasks
+    Tools with a ``call_handler`` are wrapped so sandbox calls route through the
+    handler (using the agent's ``call_llm`` and ``model``). ``@env.task`` /
+    ``LazyEntity`` / plain-callable tools without a handler are passed through as
+    their underlying object so they keep native dispatch (durable tasks
     run on-cluster). Tools without such a target (e.g. MCP or hand-built
     :class:`AgentTool`) are wrapped in a named async shim over ``execute``.
 
@@ -113,6 +136,10 @@ def build_sandbox_tools(registry: dict[str, AgentTool]) -> list[Any]:
                 "tool(..., name=...) or by renaming the underlying function)."
             )
         seen[name] = tool.name
+
+        if tool.call_handler is not None:
+            out.append(_make_call_handler_wrapper(tool, call_llm=call_llm, model=model))
+            continue
 
         target = tool.target
         if isinstance(target, TaskTemplate) or (callable(target) and getattr(target, "__name__", None)):

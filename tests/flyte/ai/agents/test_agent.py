@@ -450,6 +450,64 @@ class TestCallHandler:
         # Denied approval short-circuits before the handler runs.
         assert ran["handler"] is False
 
+    async def test_agent_tool_aio_runs_call_handler(self):
+        seen: dict[str, object] = {}
+
+        def base(x: int) -> int:
+            """Base tool."""
+            return x
+
+        async def handler(call_llm, tool_fn, **kwargs):
+            seen["call_llm"] = call_llm
+            seen["model"] = tool_fn.model
+            return (await tool_fn(**kwargs)) * 10
+
+        decorated = tool_decorator(base, call_handler=handler)
+        llm = AsyncMock()
+        from dataclasses import replace
+
+        bound = replace(decorated, call_llm=llm, model="bound-model")
+        assert await bound.aio(x=4) == 40
+        assert seen["call_llm"] is llm
+        assert seen["model"] == "bound-model"
+
+    async def test_agent_tool_call_runs_call_handler(self):
+        async def base(x: int) -> int:
+            return x
+
+        async def handler(call_llm, tool_fn, **kwargs):
+            return (await tool_fn(**kwargs)) + 1
+
+        decorated = tool_decorator(base, call_handler=handler)
+        assert await decorated(x=6) == 7
+
+    async def test_agent_binds_call_llm_for_handler_tools(self):
+        def base(x: int) -> int:
+            return x
+
+        async def handler(call_llm, tool_fn, **kwargs):
+            return await tool_fn(**kwargs)
+
+        decorated = tool_decorator(base, call_handler=handler)
+        llm = AsyncMock()
+        agent = Agent(name="t", instructions="I", model="agent-model", tools=[decorated], call_llm=llm)
+        tool = agent._registry["base"]
+        assert tool.call_llm is llm
+        assert tool.model == "agent-model"
+
+    async def test_agent_tool_aio_delegates_to_wrapped_task_without_handler(self):
+        env = TaskEnvironment(name="tool_aio_task_env", image="auto")
+
+        @tool_decorator
+        @env.task
+        async def fetch(x: int) -> int:
+            """Fetch."""
+            return x
+
+        with patch.object(fetch.target, "aio", new_callable=AsyncMock, return_value=99) as mock_aio:
+            assert await fetch.aio(x=41) == 99
+            mock_aio.assert_awaited_once_with(x=41)
+
 
 # ----------------------------------------------------------------------------
 # Signature + helpers
@@ -600,6 +658,11 @@ def _make_llm(responses: list[LLMMessage]) -> AsyncMock:
     """Build an async mock that returns successive ``LLMMessage`` values."""
     mock = AsyncMock(side_effect=responses)
     return mock
+
+
+def _sandbox_tool_build_kwargs() -> dict[str, object]:
+    """Keyword args required by :func:`build_sandbox_tools` since call_handler support."""
+    return {"call_llm": AsyncMock(return_value=LLMMessage(content="")), "model": "test-model"}
 
 
 @pytest.mark.asyncio
@@ -1882,9 +1945,41 @@ class TestCodeModeHelpers:
             """Fetch."""
             return x
 
-        tools = build_sandbox_tools({"fetch": fetch})
+        tools = build_sandbox_tools({"fetch": fetch}, **_sandbox_tool_build_kwargs())
         # The underlying TaskTemplate is passed through (durable dispatch).
         assert tools[0] is fetch.target
+
+    def test_build_sandbox_tools_wraps_tool_with_call_handler(self):
+        from flyte.ai.agents._code import build_sandbox_tools
+
+        def base(x: int) -> int:
+            """Base."""
+            return x
+
+        async def handler(call_llm, tool_fn, **kwargs):
+            return (await tool_fn(**kwargs)) * 10
+
+        decorated = tool_decorator(base, call_handler=handler)
+        llm = AsyncMock()
+        tools = build_sandbox_tools({"base": decorated}, call_llm=llm, model="m")
+        fn = tools[0]
+        assert fn is not decorated.target
+        assert fn.__name__ == "base"
+
+    @pytest.mark.asyncio
+    async def test_sandbox_call_handler_wrapper_invokes_handler(self):
+        from flyte.ai.agents._code import build_sandbox_tools
+
+        async def base(x: int) -> int:
+            return x
+
+        async def handler(call_llm, tool_fn, **kwargs):
+            return (await tool_fn(**kwargs)) * 10
+
+        decorated = tool_decorator(base, call_handler=handler)
+        llm = AsyncMock()
+        fn = build_sandbox_tools({"base": decorated}, call_llm=llm, model="m")[0]
+        assert await fn(x=4) == 40
 
     def test_build_sandbox_tools_wraps_targetless_tool(self):
         from flyte.ai.agents._code import build_sandbox_tools
@@ -1898,7 +1993,7 @@ class TestCodeModeHelpers:
             parameters={"type": "object", "properties": {}},
             execute=execute,
         )
-        tools = build_sandbox_tools({"custom": custom})
+        tools = build_sandbox_tools({"custom": custom}, **_sandbox_tool_build_kwargs())
         fn = tools[0]
         assert fn.__name__ == "custom"
         assert callable(fn)
@@ -1913,7 +2008,7 @@ class TestCodeModeHelpers:
         a = AgentTool(name="dup", description="a", parameters={"type": "object", "properties": {}}, execute=execute)
         b = AgentTool(name="dup", description="b", parameters={"type": "object", "properties": {}}, execute=execute)
         with pytest.raises(ValueError, match="distinct sandbox function names"):
-            build_sandbox_tools({"first": a, "second": b})
+            build_sandbox_tools({"first": a, "second": b}, **_sandbox_tool_build_kwargs())
 
     def test_tool_prompt_block_pseudo_signature_for_targetless_tool(self):
         from flyte.ai.agents._code import _tool_prompt_block
@@ -2127,7 +2222,7 @@ class TestCodeModeRun:
             parameters={"type": "object", "properties": {}},
             execute=execute,
         )
-        fn = build_sandbox_tools({"bump": custom})[0]
+        fn = build_sandbox_tools({"bump": custom}, **_sandbox_tool_build_kwargs())[0]
         assert await fn(x=41) == 42
 
     async def test_code_mode_warns_when_tool_requires_approval(self):

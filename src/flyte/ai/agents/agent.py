@@ -62,13 +62,13 @@ from ._llm import LLMCallable, LLMMessage, _default_call_llm
 from ._mcp import MCPServerSpec, _MCPToolLoader
 from ._tools import (
     AgentTool,
-    ToolFn,
     _abbreviate,
-    _coerce_tool_args,
+    _bind_tool_invocation_context,
     _registry_uses_flyte_io,
     _resolve_tools,
     _stringify_tool_result,
     _summarize_signature,
+    invoke_agent_tool,
 )
 from .memory import (
     MemoryStore,
@@ -272,10 +272,11 @@ class Agent:
         expression becomes the observation for the next turn; the loop ends when
         the LLM replies with plain text (no code block). This unlocks generated
         control flow (loops, ``flyte_map`` fan-out, intermediate aggregation)
-        while still dispatching ``@env.task`` tools durably on-cluster. Requires
-        ``pydantic-monty`` in the runtime image. Note: per-tool HITL approval is
-        not enforced in code mode, since tools are invoked from inside the
-        sandbox rather than as discrete approved calls.
+        while still dispatching ``@env.task`` tools durably on-cluster. Tools
+        with a ``call_handler`` run through that handler in code mode as well.
+        Requires ``pydantic-monty`` in the runtime image. Note: per-tool HITL
+        approval is not enforced in code mode, since tools are invoked from inside
+        the sandbox rather than as discrete approved calls.
     """
 
     name: str = "flyte-agent"
@@ -300,7 +301,10 @@ class Agent:
     # ------------------------------------------------------------------
 
     def __post_init__(self) -> None:
-        self._registry = _resolve_tools(self.tools)
+        self._registry = {
+            name: _bind_tool_invocation_context(tool, call_llm=self.call_llm, model=self.model)
+            for name, tool in _resolve_tools(self.tools).items()
+        }
         self._mcp_loader = _MCPToolLoader(self.mcp_servers)
         if self.code_mode and any(t.requires_approval for t in self._registry.values()):
             logger.warning(
@@ -345,9 +349,9 @@ class Agent:
         for _tool in new.values():
             if _tool.name in self._registry:
                 raise ValueError(f"Duplicate tool name '{_tool.name}'")
-            self._registry[_tool.name] = _tool
+            self._registry[_tool.name] = _bind_tool_invocation_context(_tool, call_llm=self.call_llm, model=self.model)
         self._system_prompt = self._build_system_prompt()
-        return next(iter(new.values()))
+        return _bind_tool_invocation_context(next(iter(new.values())), call_llm=self.call_llm, model=self.model)
 
     # ------------------------------------------------------------------
     # Prompt construction
@@ -419,21 +423,8 @@ class Agent:
             if not approved:
                 return (f"Human reviewer declined tool `{tool.name}`. Try a different approach.", True)
         await _emit(AgentEvent("tool_start", {"tool": tool.name, "args": args}))
-        coerced_args = await _coerce_tool_args(tool.target, args)
         try:
-            if tool.call_handler is not None:
-                bound = ToolFn(
-                    name=tool.name,
-                    description=tool.description,
-                    parameters=tool.parameters,
-                    model=self.model,
-                    target=tool.target,
-                    source=tool.source,
-                    _execute=tool.execute,
-                )
-                result = await tool.call_handler(self.call_llm, bound, **coerced_args)
-            else:
-                result = await tool.execute(args)
+            result = await invoke_agent_tool(tool, args, call_llm=self.call_llm, model=self.model)
         except Exception as exc:
             await _emit(AgentEvent("tool_error", {"tool": tool.name, "error": str(exc)}))
             return (f"Error executing tool `{tool.name}`: {exc}", True)
@@ -538,7 +529,7 @@ class Agent:
 
         from ._code import build_sandbox_tools, extract_python_code
 
-        sandbox_tools = build_sandbox_tools(self._registry)
+        sandbox_tools = build_sandbox_tools(self._registry, call_llm=self.call_llm, model=self.model)
         last_code = ""
 
         async def step(llm_msg: LLMMessage, messages: list[dict[str, Any]], attempts: int) -> _TurnResult:
