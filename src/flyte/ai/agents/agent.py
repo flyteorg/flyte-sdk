@@ -64,6 +64,8 @@ from ._tools import (
     AgentTool,
     ToolFn,
     _abbreviate,
+    _coerce_tool_args,
+    _registry_uses_flyte_io,
     _resolve_tools,
     _stringify_tool_result,
     _summarize_signature,
@@ -366,6 +368,15 @@ class Agent:
             tool_lines.append(f"- {_tool.name}: {_tool.description}")
         tools_block = "\n".join(tool_lines) if tool_lines else "(no tools registered)"
 
+        io_hint = ""
+        if _registry_uses_flyte_io(self._registry):
+            io_hint = (
+                "\n\nWhen a tool returns a flyte.io File, Dir, or DataFrame (a JSON object "
+                "with a `uri` field), pass the **complete** tool-result JSON as the argument "
+                "to downstream tools that accept that type. Continue calling tools until the "
+                "user's request is fully satisfied before giving a final text answer."
+            )
+
         return (
             f"{self.instructions}\n\n"
             f"You have access to the following tools (full JSON schemas are provided "
@@ -373,6 +384,7 @@ class Agent:
             f"{tools_block}\n"
             f"Use tools deliberately. Reply with plain text when you have a final "
             f"answer or do not need a tool."
+            f"{io_hint}"
             f"{skills_block}"
         )
 
@@ -407,6 +419,7 @@ class Agent:
             if not approved:
                 return (f"Human reviewer declined tool `{tool.name}`. Try a different approach.", True)
         await _emit(AgentEvent("tool_start", {"tool": tool.name, "args": args}))
+        coerced_args = await _coerce_tool_args(tool.target, args)
         try:
             if tool.call_handler is not None:
                 bound = ToolFn(
@@ -418,14 +431,15 @@ class Agent:
                     source=tool.source,
                     _execute=tool.execute,
                 )
-                result = await tool.call_handler(self.call_llm, bound, **args)
+                result = await tool.call_handler(self.call_llm, bound, **coerced_args)
             else:
                 result = await tool.execute(args)
         except Exception as exc:
             await _emit(AgentEvent("tool_error", {"tool": tool.name, "error": str(exc)}))
             return (f"Error executing tool `{tool.name}`: {exc}", True)
         await _emit(AgentEvent("tool_end", {"tool": tool.name, "result": _abbreviate(result)}))
-        return (_stringify_tool_result(result), False)
+        result_text = await _stringify_tool_result(result)
+        return (result_text, False)
 
     @syncify
     async def run(
@@ -562,7 +576,7 @@ class Agent:
                 await _emit(AgentEvent("turn_end", {"turn": attempts, "had_code": True, "error": True}))
                 return _TurnResult(done=False)
 
-            observation = _stringify_tool_result(result)
+            observation = await _stringify_tool_result(result)
             await _emit(AgentEvent("tool_end", {"tool": "<sandbox>", "result": _abbreviate(result)}))
             messages.append(
                 {
