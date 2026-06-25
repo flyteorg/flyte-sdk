@@ -13,7 +13,7 @@ dependencies = [
     "fsspec>=2025.3.0",
     # Floor at 0.11: RequestContext.request_headers is a property (not a method) as of
     # connectrpc 0.11.0; the auth/default-metadata interceptors access it accordingly.
-    "connectrpc>=0.11.0,<1.0.0",
+    "connectrpc>=0.11.0,<0.12.0",
     "obstore>=0.7.3",
     "protobuf>=6.30.1",
     "pydantic>=2.10.6",
