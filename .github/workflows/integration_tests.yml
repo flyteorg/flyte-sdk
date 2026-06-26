@@ -16,6 +16,14 @@ concurrency:
 jobs:
   integration-tests:
     runs-on: ubuntu-latest
+    env:
+      # Set at job level so every uv build of flyte (uv sync in setup-python-env,
+      # `make dist`, and `uv pip install "../[examples-test]"`) picks up this version.
+      # A per-step `export` only affects that step's shell, so the source builds in
+      # other steps fell back to setuptools_scm's default 0.1.devN (checkout is
+      # shallow with --no-tags, so no tag is available to derive a real version).
+      # Use the global var; vcs-versioning does not honor the _FOR_FLYTE variant.
+      SETUPTOOLS_SCM_PRETEND_VERSION: "9.9.9.dev0"
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -37,7 +45,7 @@ jobs:
           key: uv-${{ runner.os }}-${{ matrix.python-version }}
       - name: Install flyte & Build wheel
         run: |
-          export SETUPTOOLS_SCM_PRETEND_VERSION="9.9.9.dev"
+          # Version comes from the job-level SETUPTOOLS_SCM_PRETEND_VERSION env.
           make dist
       - name: Install plugins and example dependencies
         working-directory: plugins
