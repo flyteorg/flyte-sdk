@@ -4,6 +4,10 @@ Terminal UI for remote Flyte v2 clusters. Mirrors the Flyte 2 web UI (runs, acti
 
 ## Install
 
+The plugin must be installed in the **same Python environment as the `flyte` CLI**.
+Entry points alone are not enough if `flyte` and the plugin live in different envs
+(for example `uv tool install flyte` vs a project virtualenv).
+
 ```bash
 pip install flyteplugins-remote-tui
 # or from this repo:

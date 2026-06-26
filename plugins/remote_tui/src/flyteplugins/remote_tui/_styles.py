@@ -116,6 +116,22 @@ _DetailBox {{
     height: auto;
     color: {_FLYTE_PURPLE_LIGHT};
 }}
+ConditionInputPanel {{
+    color: {_FLYTE_PURPLE_LIGHT};
+}}
+ConditionInputPanel Button {{
+    margin-right: 1;
+}}
+ConditionInputPanel Input {{
+    width: 1fr;
+    margin-right: 1;
+}}
+ConditionInputPanel .condition-validation-error {{
+    color: red;
+}}
+ConditionResultPanel {{
+    color: {_FLYTE_PURPLE_LIGHT};
+}}
 ProjectsScreen #projects-content {{
     height: 1fr;
     layout: horizontal;
