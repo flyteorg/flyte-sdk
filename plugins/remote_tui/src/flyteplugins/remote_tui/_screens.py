@@ -40,7 +40,6 @@ from ._client import (
     fetch_log_tail,
     get_run,
     list_actions_for_run,
-    list_apps,
     list_apps_paginated,
     list_projects,
     list_runs_paginated,
@@ -700,15 +699,11 @@ class EntityDetailScreen(Screen):
             elif self._kind == "App":
                 import flyte.remote as remote
 
-                apps = list_apps(limit=500)
-                app = next((a for a in apps if a.name == self._name), None)
-                if app is None:
-                    lines.append(f"App '{self._name}' not found.")
-                else:
-                    lines.append(f"name:       {app.name}")
-                    lines.append(f"status:     {_format_app_deployment_status(app.deployment_status)}")
-                    lines.append(f"endpoint:   {app.endpoint or '(none)'}")
-                    lines.append(f"url:        {app.url}")
+                app_obj = remote.App.get(name=self._name)
+                lines.append(f"name:       {app_obj.name}")
+                lines.append(f"status:     {_format_app_deployment_status(app_obj.deployment_status)}")
+                lines.append(f"endpoint:   {app_obj.endpoint or '(none)'}")
+                lines.append(f"url:        {app_obj.url}")
             elif self._kind == "Trigger":
                 import flyte.remote as remote
 
@@ -745,9 +740,20 @@ class RunDetailScreen(Screen):
         super().__init__()
         self._run_name = run_name
         self._tracker = ActionTracker()
-        self._last_version = -1
         self._selected_action: str | None = None
         self._seen_pending_condition_ids: set[str] = set()
+        self._actions_by_name: dict[str, object] = {}
+        self._active = True
+        self._poll_timer = None
+
+    def _is_active(self) -> bool:
+        return self._active and not getattr(self.app, "_exit", False)
+
+    def on_unmount(self) -> None:
+        self._active = False
+        self.workers.cancel_node(self)
+        if self._poll_timer is not None:
+            self._poll_timer.stop()
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -774,17 +780,24 @@ class RunDetailScreen(Screen):
     def on_mount(self) -> None:
         self.title = f"Run: {self._run_name}"
         poll = getattr(self.app, "poll_interval", 2.0)
-        self.set_interval(poll, self._poll_run)
-        self._reload_run_data()
+        self._poll_timer = self.set_interval(poll, self._poll_run)
+        self._reload_run_data(fetch_io=True)
         self._refresh_logs()
 
-    @work(thread=True)
-    def _reload_run_data(self) -> None:
+    @work(thread=True, exclusive=True)
+    def _reload_run_data(self, fetch_io: bool = True) -> None:
+        if not self._is_active():
+            return
         app = as_remote_app(self.app)
         try:
             scope = list_scope(app)
             actions = list_actions_for_run(self._run_name, **scope)
-            load_run_into_tracker(self._tracker, actions, fetch_io=True)
+            if not self._is_active():
+                return
+            self._actions_by_name = {a.name: a for a in actions}
+            load_run_into_tracker(self._tracker, actions, fetch_io=fetch_io)
+            if not self._is_active():
+                return
             run = get_run(self._run_name)
             info_lines = [
                 f"run:        {self._run_name}",
@@ -797,10 +810,12 @@ class RunDetailScreen(Screen):
             phase = str(run.phase)
             self.app.call_from_thread(self._apply_run_data, info_lines, phase)
         except Exception as exc:
-            self.app.call_from_thread(self._apply_run_error, str(exc))
+            if self._is_active():
+                self.app.call_from_thread(self._apply_run_error, str(exc))
 
     def _apply_run_data(self, info_lines: list[str], phase: str) -> None:
-        self._last_version = self._tracker.version
+        if not self._is_active():
+            return
         try:
             self.query_one("#run-info-body", Static).update("\n".join(info_lines))
             tree = self.query_one("#action-tree", ActionTreeWidget)
@@ -811,6 +826,7 @@ class RunDetailScreen(Screen):
                     self._seen_pending_condition_ids.add(pc.action_id)
                     if tree.focus_action(pc.action_id):
                         detail.action_id = pc.action_id
+                    self.query_one("#right-tabs", TabbedContent).active = "tab-details"
             detail.refresh_detail()
             self.sub_title = phase
         except Exception:
@@ -820,18 +836,33 @@ class RunDetailScreen(Screen):
         self.sub_title = f"error: {message}"
 
     def _poll_run(self) -> None:
+        if not self._is_active():
+            return
         try:
             run = get_run(self._run_name)
             if not run.done():
-                self._reload_run_data()
+                # Poll only refreshes action phases; skip per-action I/O fetches.
+                self._reload_run_data(fetch_io=False)
         except Exception:
             pass
 
-    @work(thread=True, exit_on_error=False)
+    @work(thread=True, exclusive=True, exit_on_error=False)
     def _refresh_logs(self) -> None:
+        if not self._is_active():
+            return
         action_name = self._selected_action
+        cached_action = self._actions_by_name.get(action_name) if action_name else None
         try:
-            lines = fetch_log_tail(self._run_name, action_name, max_lines=300, show_ts=True)
+            lines = fetch_log_tail(
+                self._run_name,
+                action_name,
+                action=cached_action,  # type: ignore[arg-type]
+                max_lines=300,
+                show_ts=True,
+                should_continue=self._is_active,
+            )
+            if not self._is_active():
+                return
             text = "\n".join(lines) if lines else "(no logs yet)"
             self.app.call_from_thread(self._set_logs, text)
         except Exception as exc:
@@ -855,8 +886,10 @@ class RunDetailScreen(Screen):
     def _on_condition_submitted(self, event: ConditionInputPanel.Submitted) -> None:
         self._signal_condition(event.action_id, event.value)
 
-    @work(thread=True)
+    @work(thread=True, exclusive=True)
     def _signal_condition(self, action_id: str, value: object) -> None:
+        if not self._is_active():
+            return
         try:
             signal_condition_action(self._run_name, action_id, value)  # type: ignore[arg-type]
             self.app.call_from_thread(self.notify, "Condition signaled")

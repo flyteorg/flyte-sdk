@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, Callable, Generic, TypeVar
 
 T = TypeVar("T")
 
@@ -337,19 +337,25 @@ def fetch_log_tail(
     run_name: str,
     action_name: str | None = None,
     *,
+    action: remote.Action | None = None,
     max_lines: int = 200,
     show_ts: bool = False,
     filter_system: bool = False,
+    should_continue: Callable[[], bool] | None = None,
 ) -> list[str]:
     """Return up to *max_lines* recent log lines (non-blocking tail)."""
     import flyte.remote as remote
 
-    if action_name:
+    if action is not None:
+        log_source = action
+    elif action_name:
         log_source = remote.Action.get(run_name=run_name, name=action_name)
     else:
         log_source = get_run(run_name)
     lines: list[str] = []
     for line in log_source.get_logs(show_ts=show_ts, filter_system=filter_system):
+        if should_continue is not None and not should_continue():
+            break
         lines.append(line)
         if len(lines) >= max_lines:
             break

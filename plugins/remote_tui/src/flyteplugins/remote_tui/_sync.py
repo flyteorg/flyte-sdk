@@ -167,6 +167,7 @@ def _apply_condition_state(
     details_cache: dict[str, remote.ActionDetails],
 ) -> None:
     """Record pending or resolved condition UI state for a condition action."""
+    cond = remote.Condition(pb2=action.pb2)
     details = details_cache.get(action.name)
     if details is None and fetch_io:
         try:
@@ -180,27 +181,15 @@ def _apply_condition_state(
     else:
         from flyte.remote._condition import resolve_condition_expected_type
 
-        cond_obj = remote.Condition(pb2=action.pb2)
-        prompt = cond_obj.name
+        prompt = cond.name
         prompt_type = "text"
-        data_type = resolve_condition_expected_type(action.pb2, details_pb2=details.pb2 if details else None) or str
+        data_type = resolve_condition_expected_type(action.pb2, details_pb2=None) or str
         description = ""
 
-    if status == ActionStatus.RUNNING and not action.done():
+    if status in (ActionStatus.RUNNING, ActionStatus.PAUSED) and not action.done():
         tracker.record_condition_waiting(
             action_id=action.name,
-            condition_name=remote.Condition(pb2=action.pb2).name,
-            prompt=prompt,
-            prompt_type=prompt_type,
-            data_type=data_type,
-            description=description,
-        )
-        return
-
-    if status == ActionStatus.PAUSED and not action.done():
-        tracker.record_condition_waiting(
-            action_id=action.name,
-            condition_name=remote.Condition(pb2=action.pb2).name,
+            condition_name=cond.name,
             prompt=prompt,
             prompt_type=prompt_type,
             data_type=data_type,
@@ -212,7 +201,7 @@ def _apply_condition_state(
         outputs = _condition_output_from_details(details) if details is not None else None
         tracker.record_condition_waiting(
             action_id=action.name,
-            condition_name=remote.Condition(pb2=action.pb2).name,
+            condition_name=cond.name,
             prompt=prompt,
             prompt_type=prompt_type,
             data_type=data_type,
@@ -222,7 +211,7 @@ def _apply_condition_state(
         tracker.record_complete(action_id=action.name, outputs=outputs, end_time=end)
 
 
-def build_action_tree(actions: list) -> tuple[dict[str, str], dict[str, list[str]]]:
+def build_action_tree(actions: list) -> tuple[dict[str, str | None], dict[str, list[str]]]:
     """Return (parent_by_id, children_map) keyed by action name."""
     names = {a.name for a in actions}
     parent_by_id: dict[str, str | None] = {}
@@ -246,13 +235,13 @@ def load_run_into_tracker(
     fetch_io: bool = True,
 ) -> None:
     """Populate *tracker* from remote ``Action`` list (replaces prior state)."""
-    import flyte.remote as remote
-
     tracker._lock.acquire()
     try:
         tracker._nodes.clear()
         tracker._root_ids.clear()
         tracker._children.clear()
+        tracker._pending_conditions.clear()
+        tracker._resolved_conditions.clear()
         tracker._version = 0
     finally:
         tracker._lock.release()

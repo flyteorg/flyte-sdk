@@ -116,15 +116,58 @@ _DetailBox {{
     height: auto;
     color: {_FLYTE_PURPLE_LIGHT};
 }}
-ConditionInputPanel {{
+ConditionInputPanel .condition-prompt,
+ConditionInputPanel .condition-description {{
     color: {_FLYTE_PURPLE_LIGHT};
 }}
-ConditionInputPanel Button {{
+ConditionInputPanel .condition-buttons Button {{
     margin-right: 1;
+    color: #ffffff;
+    text-style: bold;
+}}
+ConditionInputPanel .condition-buttons Button:focus {{
+    text-style: bold;
+}}
+ConditionInputPanel .condition-prompt-scroll {{
+    max-height: 8;
+    height: auto;
+    margin-bottom: 1;
+}}
+ConditionInputPanel .condition-input-row {{
+    height: 1;
+    min-height: 1;
+    layout: horizontal;
+    dock: bottom;
+    margin-top: 1;
+}}
+ConditionInputPanel .condition-buttons {{
+    height: 1;
+    min-height: 1;
+    layout: horizontal;
+    dock: bottom;
+    margin-top: 1;
+}}
+ConditionInputPanel Markdown.condition-prompt MarkdownHeader {{
+    margin: 0 0 1 0;
+}}
+ConditionInputPanel Markdown.condition-prompt MarkdownParagraph {{
+    margin: 0;
+}}
+ConditionInputPanel Markdown.condition-prompt MarkdownBulletList {{
+    margin: 0;
 }}
 ConditionInputPanel Input {{
     width: 1fr;
     margin-right: 1;
+    height: 1;
+}}
+ConditionInputPanel Input.-textual-compact {{
+    background: #1a0a2e;
+    color: #ffffff;
+}}
+ConditionInputPanel Input.-textual-compact:focus {{
+    background: #2a1040;
+    background-tint: #ffffff 10%;
 }}
 ConditionInputPanel .condition-validation-error {{
     color: red;

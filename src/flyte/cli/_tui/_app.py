@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import functools
+import html
 import json
+import re
 from typing import Any, Awaitable, Callable, ClassVar
 
 from rich.text import Text
@@ -23,6 +25,47 @@ _STATUS_ICON = {
     ActionStatus.SUCCEEDED: ("✓", "green"),
     ActionStatus.FAILED: ("✗", "red"),
 }
+
+
+def _normalize_markdown_prompt_for_tui(prompt: str) -> str:
+    """Convert HTML-heavy markdown prompts into Textual-friendly markdown.
+
+    Condition prompts may embed HTML for the web UI. The terminal Markdown widget
+    ignores unknown HTML tags but still pays for their block spacing, which can
+    leave large gaps (for example around ``<br>`` before a list).
+    """
+    text = html.unescape(prompt)
+    text = re.sub(r"<br\s*/?>", "\n", text, flags=re.IGNORECASE)
+    text = re.sub(r"<code>(.*?)</code>", r"`\1`", text, flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(r"<kbd>(.*?)</kbd>", r"`\1`", text, flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(r"</?(?:small|em|strong)>", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"<[^>]+>", "", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
+def _format_text_prompt_for_tui(text: str) -> str:
+    """Render markdown-ish condition prompts as compact plain text."""
+    text = re.sub(r"^#{1,6}\s+", "", text, flags=re.MULTILINE)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    # Keep bullets tight under the preceding paragraph.
+    text = re.sub(r"\n\n(-\s)", r"\n\1", text)
+    return text.strip()
+
+
+def _condition_prompt_for_tui(prompt: str, prompt_type: str) -> tuple[str, str]:
+    """Return ``(render_mode, text)`` for displaying a condition prompt in the TUI.
+
+    ``render_mode`` is ``markdown`` or ``text``. Bullet lists are shown as plain
+    text because Textual's Markdown widget adds large vertical gaps between list
+    items inside narrow condition panels.
+    """
+    if prompt_type != "markdown":
+        return "text", _format_text_prompt_for_tui(prompt)
+    normalized = _normalize_markdown_prompt_for_tui(prompt)
+    if re.search(r"(?m)^-\s", normalized):
+        return "text", _format_text_prompt_for_tui(normalized)
+    return "markdown", normalized
 
 
 def _elapsed(node: ActionNode) -> str:
@@ -186,27 +229,67 @@ class ConditionInputPanel(Vertical):
         height: auto;
         padding: 1;
     }
-    ConditionInputPanel .condition-prompt {
+    ConditionInputPanel .condition-prompt-scroll {
+        max-height: 8;
+        height: auto;
         margin-bottom: 1;
+    }
+    ConditionInputPanel .condition-prompt-scroll Markdown,
+    ConditionInputPanel .condition-prompt-scroll Static {
+        height: auto;
+    }
+    ConditionInputPanel .condition-prompt {
+        height: auto;
+    }
+    ConditionInputPanel Markdown.condition-prompt MarkdownHeader {
+        margin: 0 0 1 0;
+    }
+    ConditionInputPanel Markdown.condition-prompt MarkdownParagraph {
+        margin: 0;
+    }
+    ConditionInputPanel Markdown.condition-prompt MarkdownBulletList {
+        margin: 0;
+    }
+    ConditionInputPanel Markdown.condition-prompt MarkdownBulletList Horizontal {
+        height: auto;
+        margin: 0;
     }
     ConditionInputPanel .condition-description {
         color: $text-muted;
         margin-bottom: 1;
     }
-    ConditionInputPanel .condition-buttons {
-        height: auto;
-        layout: horizontal;
-    }
-    ConditionInputPanel .condition-buttons Button {
-        margin-right: 1;
-    }
     ConditionInputPanel .condition-input-row {
-        height: auto;
+        height: 1;
+        min-height: 1;
         layout: horizontal;
+        dock: bottom;
+        margin-top: 1;
     }
     ConditionInputPanel .condition-input-row Input {
         width: 1fr;
         margin-right: 1;
+        height: 1;
+    }
+    ConditionInputPanel .condition-input-row Input.-textual-compact {
+        background: $surface;
+        color: $foreground;
+    }
+    ConditionInputPanel .condition-input-row Input.-textual-compact:focus {
+        background-tint: $foreground 10%;
+    }
+    ConditionInputPanel .condition-buttons {
+        height: auto;
+        layout: horizontal;
+        dock: bottom;
+        margin-top: 1;
+    }
+    ConditionInputPanel .condition-buttons Button {
+        margin-right: 1;
+        color: #ffffff;
+        text-style: bold;
+    }
+    ConditionInputPanel .condition-buttons Button:focus {
+        text-style: bold;
     }
     ConditionInputPanel .condition-validation-error {
         color: red;
@@ -228,24 +311,43 @@ class ConditionInputPanel(Vertical):
 
     def compose(self) -> ComposeResult:
         pc = self._pending
+        render_mode, prompt_text = _condition_prompt_for_tui(pc.prompt, pc.prompt_type)
+
         if pc.description:
             yield Static(pc.description, classes="condition-description")
 
-        if pc.prompt_type == "markdown":
-            yield Markdown(pc.prompt, classes="condition-prompt")
+        if render_mode == "markdown":
+            with VerticalScroll(classes="condition-prompt-scroll"):
+                yield Markdown(prompt_text, classes="condition-prompt")
         else:
-            yield Static(pc.prompt, classes="condition-prompt")
+            yield Static(prompt_text, classes="condition-prompt", markup=False)
 
         if pc.data_type is bool:
             with Horizontal(classes="condition-buttons"):
-                yield Button("Yes", id="condition-yes", variant="success")
-                yield Button("No", id="condition-no", variant="error")
+                # compact=True keeps the label visible when terminals collapse 3D button height.
+                yield Button("Yes", id="condition-yes", variant="success", compact=True)
+                yield Button("No", id="condition-no", variant="error", compact=True)
         else:
-            type_name = pc.data_type.__name__
-            with Horizontal(classes="condition-input-row"):
-                yield Input(placeholder=f"Enter a {type_name} value...", id="condition-input")
-                yield Button("Submit", id="condition-submit", variant="primary")
             yield Static("", id="condition-validation-error", classes="condition-validation-error")
+            with Horizontal(classes="condition-input-row"):
+                # compact=True: default tall Input needs 3 rows; VS Code/Cursor collapses to 1
+                # and only paints the top border, hiding the placeholder and cursor.
+                yield Input(
+                    placeholder=f"Enter a {pc.data_type.__name__} value...",
+                    id="condition-input",
+                    compact=True,
+                )
+                yield Button("Submit", id="condition-submit", variant="primary", compact=True)
+
+    def on_mount(self) -> None:
+        if self._pending.data_type is not bool:
+            self.call_after_refresh(self._focus_value_input)
+
+    def _focus_value_input(self) -> None:
+        try:
+            self.query_one("#condition-input", Input).focus()
+        except Exception:
+            pass
 
     @on(Button.Pressed, "#condition-yes")
     def _on_yes(self) -> None:
@@ -310,10 +412,11 @@ class ConditionResultPanel(Vertical):
         if pc.description:
             yield Static(pc.description, classes="condition-description")
 
-        if pc.prompt_type == "markdown":
-            yield Markdown(pc.prompt, classes="condition-prompt")
+        render_mode, prompt_text = _condition_prompt_for_tui(pc.prompt, pc.prompt_type)
+        if render_mode == "markdown":
+            yield Markdown(prompt_text, classes="condition-prompt")
         else:
-            yield Static(pc.prompt, classes="condition-prompt")
+            yield Static(prompt_text, classes="condition-prompt", markup=False)
 
         yield Static(f"response: {self._value!r}", classes="condition-response")
 
@@ -372,12 +475,28 @@ class DetailPanel(VerticalScroll):
         self, condition_box: _DetailBox, key: str, panel_factory: Callable[[], Any], title: str
     ) -> None:
         """Mount *panel_factory()* into the condition box unless *key* is already shown."""
+        pending = key.endswith("|pending")
         if self._current_condition_key != key:
             self._clear_condition_box(condition_box)
             condition_box.border_title = title
-            condition_box.mount(panel_factory())
+            condition_box.update("")
+            panel = panel_factory()
+            condition_box.mount(panel)
             self._current_condition_key = key
         condition_box.display = True
+        if pending:
+            self.call_after_refresh(self._scroll_to_pending_condition, condition_box)
+
+    def _scroll_to_pending_condition(self, condition_box: _DetailBox) -> None:
+        """Keep the value input visible and focused for pending conditions."""
+        try:
+            input_row = condition_box.query_one(".condition-input-row")
+        except Exception:
+            input_row = condition_box
+        self.scroll_to_widget(input_row, animate=False)
+        for panel in condition_box.query(ConditionInputPanel):
+            panel.call_after_refresh(panel._focus_value_input)
+            break
 
     def _attempt_numbers_for_action(self, action_id: str) -> list[int]:
         node = self._tracker.get_action(action_id)
@@ -524,6 +643,8 @@ class DetailPanel(VerticalScroll):
         if node.status == ActionStatus.PAUSED:
             pending = self._tracker.get_pending_condition(aid)
             if pending is not None:
+                attempt_box.display = False
+                task_box.display = False
                 self._show_condition_panel(
                     condition_box,
                     f"{aid}|pending",
@@ -679,15 +800,58 @@ class FlyteTUIApp(App[None]):
         height: auto;
         color: {_FLYTE_PURPLE_LIGHT};
     }}
-    ConditionInputPanel {{
+    ConditionInputPanel .condition-prompt,
+    ConditionInputPanel .condition-description {{
         color: {_FLYTE_PURPLE_LIGHT};
     }}
-    ConditionInputPanel Button {{
+    ConditionInputPanel .condition-buttons Button {{
         margin-right: 1;
+        color: #ffffff;
+        text-style: bold;
+    }}
+    ConditionInputPanel .condition-buttons Button:focus {{
+        text-style: bold;
+    }}
+    ConditionInputPanel .condition-prompt-scroll {{
+        max-height: 8;
+        height: auto;
+        margin-bottom: 1;
+    }}
+    ConditionInputPanel .condition-input-row {{
+        height: 1;
+        min-height: 1;
+        layout: horizontal;
+        dock: bottom;
+        margin-top: 1;
+    }}
+    ConditionInputPanel .condition-buttons {{
+        height: 1;
+        min-height: 1;
+        layout: horizontal;
+        dock: bottom;
+        margin-top: 1;
+    }}
+    ConditionInputPanel Markdown.condition-prompt MarkdownHeader {{
+        margin: 0 0 1 0;
+    }}
+    ConditionInputPanel Markdown.condition-prompt MarkdownParagraph {{
+        margin: 0;
+    }}
+    ConditionInputPanel Markdown.condition-prompt MarkdownBulletList {{
+        margin: 0;
     }}
     ConditionInputPanel Input {{
         width: 1fr;
         margin-right: 1;
+        height: 1;
+    }}
+    ConditionInputPanel Input.-textual-compact {{
+        background: #1a0a2e;
+        color: #ffffff;
+    }}
+    ConditionInputPanel Input.-textual-compact:focus {{
+        background: #2a1040;
+        background-tint: #ffffff 10%;
     }}
     ConditionInputPanel .condition-validation-error {{
         color: red;
@@ -762,6 +926,7 @@ class FlyteTUIApp(App[None]):
                     self._seen_pending_condition_ids.add(pc.action_id)
                     if tree.focus_action(pc.action_id):
                         detail.action_id = pc.action_id
+                    self.query_one("#right-tabs", TabbedContent).active = "tab-details"
             detail.refresh_detail()
 
     def on_tree_node_selected(self, event: Tree.NodeSelected[str]) -> None:

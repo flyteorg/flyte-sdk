@@ -157,3 +157,42 @@ def test_condition_info_from_details_reads_bool_type():
     assert prompt == "Approve?"
     assert prompt_type == "text"
     assert data_type is bool
+
+
+def test_condition_info_from_details_reads_markdown_str_type():
+    from flyteidl2.core import types_pb2
+    from flyteidl2.workflow import run_definition_pb2
+
+    action = _FakeConditionAction(
+        "cond-tag", parent="root", phase=ActionPhase.PAUSED, done=False, condition_name="release_tag"
+    )
+    details = MagicMock()
+    details.pb2 = run_definition_pb2.ActionDetails(
+        condition=run_definition_pb2.ConditionAction(
+            name="release_tag",
+            type=types_pb2.LiteralType(simple=types_pb2.STRING),
+            prompt="#### Release tag\n\nEnter `v2.1.0`",
+            prompt_type=run_definition_pb2.CONDITION_PROMPT_TYPE_MARKDOWN,
+        ),
+    )
+
+    name, prompt, prompt_type, data_type, _ = _condition_info_from_details(action, details)
+    assert name == "release_tag"
+    assert "Release tag" in prompt
+    assert prompt_type == "markdown"
+    assert data_type is str
+
+
+def test_load_run_into_tracker_clears_stale_pending_conditions():
+    tracker = ActionTracker()
+    actions = [
+        _FakeAction("root", parent=""),
+        _FakeConditionAction("cond-1", parent="root", phase=ActionPhase.PAUSED, done=False),
+    ]
+    load_run_into_tracker(tracker, actions, fetch_io=False)
+    assert tracker.get_pending_condition("cond-1") is not None
+
+    # Reload with no condition actions — stale pending state must not linger.
+    load_run_into_tracker(tracker, [_FakeAction("root", parent="")], fetch_io=False)
+    assert tracker.get_pending_condition("cond-1") is None
+    assert tracker.get_action("cond-1") is None
