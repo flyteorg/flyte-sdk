@@ -13,7 +13,19 @@ from textual.binding import Binding, BindingType
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message
 from textual.reactive import reactive
-from textual.widgets import Button, Footer, Header, Input, Markdown, RichLog, Static, TabbedContent, TabPane, Tree
+from textual.widgets import (
+    Button,
+    Footer,
+    Header,
+    Input,
+    Markdown,
+    RichLog,
+    Static,
+    TabbedContent,
+    TabPane,
+    TextArea,
+    Tree,
+)
 from textual.widgets.tree import TreeNode
 from textual.worker import Worker, WorkerState
 
@@ -277,6 +289,24 @@ class ConditionInputPanel(Vertical):
     ConditionInputPanel .condition-input-row Input.-textual-compact:focus {
         background-tint: $foreground 10%;
     }
+    ConditionInputPanel .condition-string-entry {
+        height: auto;
+        dock: bottom;
+        margin-top: 1;
+    }
+    ConditionInputPanel .condition-string-entry TextArea {
+        height: 4;
+        min-height: 3;
+        max-height: 8;
+        margin-bottom: 1;
+    }
+    ConditionInputPanel .condition-string-entry TextArea.-textual-compact {
+        background: $surface;
+        color: $foreground;
+    }
+    ConditionInputPanel .condition-string-entry TextArea.-textual-compact:focus {
+        background-tint: $foreground 10%;
+    }
     ConditionInputPanel .condition-buttons {
         height: auto;
         layout: horizontal;
@@ -329,15 +359,31 @@ class ConditionInputPanel(Vertical):
                 yield Button("No", id="condition-no", variant="error", compact=True)
         else:
             yield Static("", id="condition-validation-error", classes="condition-validation-error")
-            with Horizontal(classes="condition-input-row"):
-                # compact=True: default tall Input needs 3 rows; VS Code/Cursor collapses to 1
-                # and only paints the top border, hiding the placeholder and cursor.
-                yield Input(
-                    placeholder=f"Enter a {pc.data_type.__name__} value...",
-                    id="condition-input",
-                    compact=True,
-                )
-                yield Button("Submit", id="condition-submit", variant="primary", compact=True)
+            if pc.data_type is str:
+                with Vertical(classes="condition-string-entry", id="condition-value-entry"):
+                    yield TextArea(
+                        id="condition-input",
+                        compact=True,
+                        show_line_numbers=False,
+                        placeholder="Enter text (multiple lines supported)...",
+                    )
+                    yield Button("Submit", id="condition-submit", variant="primary", compact=True)
+            else:
+                with Horizontal(classes="condition-input-row"):
+                    # compact=True: default tall Input needs 3 rows; VS Code/Cursor collapses to 1
+                    # and only paints the top border, hiding the placeholder and cursor.
+                    yield Input(
+                        placeholder=f"Enter a {pc.data_type.__name__} value...",
+                        id="condition-input",
+                        compact=True,
+                    )
+                    yield Button("Submit", id="condition-submit", variant="primary", compact=True)
+
+    def _input_text(self) -> str:
+        widget = self.query_one("#condition-input")
+        if isinstance(widget, TextArea):
+            return widget.text
+        return self.query_one("#condition-input", Input).value
 
     def on_mount(self) -> None:
         if self._pending.data_type is not bool:
@@ -345,7 +391,7 @@ class ConditionInputPanel(Vertical):
 
     def _focus_value_input(self) -> None:
         try:
-            self.query_one("#condition-input", Input).focus()
+            self.query_one("#condition-input").focus()
         except Exception:
             pass
 
@@ -366,9 +412,8 @@ class ConditionInputPanel(Vertical):
         self._try_submit()
 
     def _try_submit(self) -> None:
-        inp = self.query_one("#condition-input", Input)
         err_label = self.query_one("#condition-validation-error", Static)
-        raw = inp.value.strip()
+        raw = self._input_text().strip()
         if not raw:
             err_label.update("Value cannot be empty.")
             return
@@ -490,10 +535,10 @@ class DetailPanel(VerticalScroll):
     def _scroll_to_pending_condition(self, condition_box: _DetailBox) -> None:
         """Keep the value input visible and focused for pending conditions."""
         try:
-            input_row = condition_box.query_one(".condition-input-row")
+            input_widget = condition_box.query_one("#condition-input")
         except Exception:
-            input_row = condition_box
-        self.scroll_to_widget(input_row, animate=False)
+            input_widget = condition_box
+        self.scroll_to_widget(input_widget, animate=False)
         for panel in condition_box.query(ConditionInputPanel):
             panel.call_after_refresh(panel._focus_value_input)
             break
@@ -850,6 +895,25 @@ class FlyteTUIApp(App[None]):
         color: #ffffff;
     }}
     ConditionInputPanel Input.-textual-compact:focus {{
+        background: #2a1040;
+        background-tint: #ffffff 10%;
+    }}
+    ConditionInputPanel .condition-string-entry {{
+        height: auto;
+        dock: bottom;
+        margin-top: 1;
+    }}
+    ConditionInputPanel .condition-string-entry TextArea {{
+        height: 4;
+        min-height: 3;
+        max-height: 8;
+        margin-bottom: 1;
+    }}
+    ConditionInputPanel .condition-string-entry TextArea.-textual-compact {{
+        background: #1a0a2e;
+        color: #ffffff;
+    }}
+    ConditionInputPanel .condition-string-entry TextArea.-textual-compact:focus {{
         background: #2a1040;
         background-tint: #ffffff 10%;
     }}

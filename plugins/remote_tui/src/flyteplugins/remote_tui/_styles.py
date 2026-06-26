@@ -169,6 +169,25 @@ ConditionInputPanel Input.-textual-compact:focus {{
     background: #2a1040;
     background-tint: #ffffff 10%;
 }}
+ConditionInputPanel .condition-string-entry {{
+    height: auto;
+    dock: bottom;
+    margin-top: 1;
+}}
+ConditionInputPanel .condition-string-entry TextArea {{
+    height: 4;
+    min-height: 3;
+    max-height: 8;
+    margin-bottom: 1;
+}}
+ConditionInputPanel .condition-string-entry TextArea.-textual-compact {{
+    background: #1a0a2e;
+    color: #ffffff;
+}}
+ConditionInputPanel .condition-string-entry TextArea.-textual-compact:focus {{
+    background: #2a1040;
+    background-tint: #ffffff 10%;
+}}
 ConditionInputPanel .condition-validation-error {{
     color: red;
 }}
