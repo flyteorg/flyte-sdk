@@ -1,5 +1,12 @@
 import rich_click as click
 
+_REMOTE_TUI_INSTALL_HINT = (
+    "The remote TUI requires flyteplugins-remote-tui in the same Python environment as flyte.\n\n"
+    "  pip install flyteplugins-remote-tui\n\n"
+    "If flyte was installed with uv tool install, add the plugin to that environment:\n"
+    "  uv tool install flyte --with flyteplugins-remote-tui --force"
+)
+
 
 @click.group()
 def start():
@@ -23,6 +30,37 @@ def tui():
     from flyte.cli._tui import launch_tui_explore
 
     launch_tui_explore()
+
+
+@start.command(name="remote-tui")
+@click.option(
+    "-c",
+    "--config",
+    "config_file",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False),
+    help="Path to the Flyte configuration file. Defaults to ~/.flyte/config.yaml.",
+)
+@click.option(
+    "--poll-interval",
+    type=float,
+    default=2.0,
+    show_default=True,
+    help="Seconds between run detail refreshes while a run is active.",
+)
+def remote_tui(config_file: str | None, poll_interval: float) -> None:
+    """
+    Interactive TUI for a remote Flyte v2 cluster.
+
+    Browse runs, actions, logs, tasks, apps, and triggers. Requires a Flyte config file
+    (``flyte create config``) and ``flyteplugins-remote-tui``.
+    """
+    try:
+        from flyteplugins.remote_tui import launch_remote_tui
+    except ImportError as exc:
+        raise click.ClickException(_REMOTE_TUI_INSTALL_HINT) from exc
+
+    launch_remote_tui(config=config_file, poll_interval=poll_interval)
 
 
 _DEFAULT_DEVBOX_IMAGE = "cr.flyte.org/flyteorg/flyte-devbox:latest"

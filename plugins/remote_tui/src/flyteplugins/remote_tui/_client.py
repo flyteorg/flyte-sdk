@@ -313,6 +313,26 @@ def abort_run(run_name: str, reason: str = "Aborted from remote TUI.") -> None:
     run.abort(reason=reason)
 
 
+def signal_condition_action(
+    run_name: str,
+    action_name: str,
+    payload: bool | int | float | str,
+) -> None:
+    """Signal a paused condition action on a remote run."""
+    import flyte.remote as remote
+    from flyte.remote._condition import coerce_condition_payload, resolve_condition_expected_type
+
+    action = remote.Action.get(run_name=run_name, name=action_name)
+    details = action._details
+    if details is None or not details.pb2.HasField("condition"):
+        raise ValueError(f"Action '{action_name}' in run '{run_name}' is not a signalable condition.")
+    expected = resolve_condition_expected_type(action.pb2, details_pb2=details.pb2)
+    if expected is None:
+        raise ValueError(f"Backend did not expose expected payload type for condition '{action_name}'.")
+    typed_payload = coerce_condition_payload(payload, expected)
+    remote.Condition(pb2=action.pb2).signal(typed_payload)
+
+
 def fetch_log_tail(
     run_name: str,
     action_name: str | None = None,

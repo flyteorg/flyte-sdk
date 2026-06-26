@@ -6,12 +6,12 @@ import datetime
 import webbrowser
 from typing import ClassVar
 
-from flyte.cli._tui._app import ActionTreeWidget, DetailPanel
+from flyte.cli._tui._app import ActionTreeWidget, ConditionInputPanel, DetailPanel
 from flyte.cli._tui._explore import StatusSelect, _fmt_duration, _fmt_time
 from flyte.cli._tui._tracker import ActionTracker
 from flyte.models import ActionPhase
 from rich.text import Text
-from textual import work
+from textual import on, work
 from textual.app import ComposeResult
 from textual.binding import Binding, BindingType
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -46,6 +46,7 @@ from ._client import (
     list_runs_paginated,
     list_tasks_paginated,
     list_triggers_paginated,
+    signal_condition_action,
 )
 from ._context import as_remote_app, list_scope
 from ._settings import get_recent_projects, record_recent_project
@@ -66,6 +67,7 @@ _STATUS_COLORS = {
     "queued": "dodger_blue1",
     "waiting_for_resources": "dodger_blue1",
     "initializing": "dodger_blue1",
+    "paused": "yellow",
     "succeeded": "green",
     "failed": "red",
     "aborted": "red",
@@ -79,6 +81,7 @@ _PHASE_FILTER_MAP = {
         ActionPhase.QUEUED,
         ActionPhase.WAITING_FOR_RESOURCES,
         ActionPhase.INITIALIZING,
+        ActionPhase.PAUSED,
     ),
     "succeeded": (ActionPhase.SUCCEEDED,),
     "failed": (
@@ -136,6 +139,8 @@ def _phase_icon(phase: str) -> str:
         return "✓"
     if phase in ("failed", "aborted", "timed_out"):
         return "✗"
+    if phase == "paused":
+        return "⏸"
     return "●"
 
 
@@ -742,6 +747,7 @@ class RunDetailScreen(Screen):
         self._tracker = ActionTracker()
         self._last_version = -1
         self._selected_action: str | None = None
+        self._seen_pending_condition_ids: set[str] = set()
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -797,8 +803,15 @@ class RunDetailScreen(Screen):
         self._last_version = self._tracker.version
         try:
             self.query_one("#run-info-body", Static).update("\n".join(info_lines))
-            self.query_one("#action-tree", ActionTreeWidget).refresh_from_tracker()
-            self.query_one("#detail-panel", DetailPanel).refresh_detail()
+            tree = self.query_one("#action-tree", ActionTreeWidget)
+            tree.refresh_from_tracker()
+            detail = self.query_one("#detail-panel", DetailPanel)
+            for pc in self._tracker.get_all_pending_conditions():
+                if pc.action_id not in self._seen_pending_condition_ids:
+                    self._seen_pending_condition_ids.add(pc.action_id)
+                    if tree.focus_action(pc.action_id):
+                        detail.action_id = pc.action_id
+            detail.refresh_detail()
             self.sub_title = phase
         except Exception:
             pass
@@ -837,6 +850,23 @@ class RunDetailScreen(Screen):
         detail.action_id = event.node.data
         self._selected_action = str(event.node.data) if event.node.data else None
         self._refresh_logs()
+
+    @on(ConditionInputPanel.Submitted)
+    def _on_condition_submitted(self, event: ConditionInputPanel.Submitted) -> None:
+        self._signal_condition(event.action_id, event.value)
+
+    @work(thread=True)
+    def _signal_condition(self, action_id: str, value: object) -> None:
+        try:
+            signal_condition_action(self._run_name, action_id, value)  # type: ignore[arg-type]
+            self.app.call_from_thread(self.notify, "Condition signaled")
+            self.app.call_from_thread(self._reload_run_data)
+        except Exception as exc:
+            self.app.call_from_thread(
+                self.notify,
+                f"Signal failed: {exc}",
+                severity="error",
+            )
 
     def action_go_back(self) -> None:
         self.app.pop_screen()
