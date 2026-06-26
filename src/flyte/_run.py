@@ -405,7 +405,6 @@ class _Runner:
                 labels=run_pb2.Labels(values=self._labels),
                 envs=env_kv,
                 cluster=self._queue or (task.queue if task is not None else ""),
-                max_action_concurrency=self._max_action_concurrency or 0,
                 raw_data_storage=raw_data_storage,
                 run_base_dir=self._run_base_dir or "",
                 security_context=security_context,
@@ -418,6 +417,8 @@ class _Runner:
                 notification_rule_name=notification_rule_name,
                 notification_rules=notification_rules,
             )
+            if self._max_action_concurrency:
+                run_spec.max_action_concurrency = self._max_action_concurrency
         else:
             # Deep-copy the fetched spec (it is shared/cached on the RunDetails); never mutate in place.
             run_spec = run_pb2.RunSpec()
