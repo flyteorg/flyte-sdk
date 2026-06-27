@@ -1,10 +1,12 @@
 import os
 import pathlib
+import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 from types import ModuleType
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -652,3 +654,72 @@ def test_list_all_files_returns_strings():
             assert isinstance(f, str), f"Expected str, got {type(f)}: {f}"
             # Paths should be absolute
             assert os.path.isabs(f), f"Expected absolute path, got: {f}"
+
+
+def test_ls_files_loaded_modules_includes_function_level_import():
+    """Test that ls_files(copy_style="loaded_modules") bundles a local module that is only
+    imported inside a function body.
+
+    `from helper import compute` inside `async def run()` never executes at bundle time, so
+    `helper` is absent from sys.modules. Static ruff analysis recovers the import edge from the
+    entrypoint, so helper.py is bundled — otherwise the task fails on the cluster with
+    ModuleNotFoundError.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        source_path = pathlib.Path(tmpdir)
+
+        entry_file = source_path / "entrypoint_mod.py"
+        helper_file = source_path / "helper.py"
+        entry_file.write_text("async def run() -> int:\n    from helper import compute\n    return compute()\n")
+        helper_file.write_text("def compute() -> int:\n    return 42\n")
+
+        # Seed sys.modules with the entrypoint only (without executing it, so the function-level
+        # import never runs) — mirrors the real bundle-time interpreter state.
+        entry_mod = ModuleType("entrypoint_mod")
+        entry_mod.__file__ = str(entry_file)
+
+        with patch.dict(sys.modules, {"entrypoint_mod": entry_mod}):
+            files, _ = ls_files(source_path, "loaded_modules")
+
+        names = {pathlib.Path(f).name for f in files}
+        assert "entrypoint_mod.py" in names
+        assert "helper.py" in names
+
+
+def test_ls_files_loaded_modules_includes_type_checking_import():
+    """Test that ls_files(copy_style="loaded_modules") bundles a local module imported only
+    inside an `if TYPE_CHECKING:` guard.
+
+    typing.TYPE_CHECKING is always False at runtime, so the guarded import never executes and
+    `helper` never appears in sys.modules. Static ruff analysis (with --type-checking-imports)
+    recovers the edge, so helper.py is bundled and runtime annotation evaluation on the cluster
+    does not fail with ImportError.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        source_path = pathlib.Path(tmpdir)
+
+        entry_file = source_path / "entrypoint_mod.py"
+        helper_file = source_path / "helper.py"
+        entry_file.write_text(
+            "from __future__ import annotations\n"
+            "from typing import TYPE_CHECKING\n"
+            "\n"
+            "if TYPE_CHECKING:\n"
+            "    from helper import Helper\n"
+            "\n"
+            "def process(x: Helper) -> None:\n"
+            "    pass\n"
+        )
+        helper_file.write_text("class Helper:\n    pass\n")
+
+        # Seed sys.modules with the entrypoint only; helper was never imported (TYPE_CHECKING
+        # is False at runtime).
+        entry_mod = ModuleType("entrypoint_mod")
+        entry_mod.__file__ = str(entry_file)
+
+        with patch.dict(sys.modules, {"entrypoint_mod": entry_mod}):
+            files, _ = ls_files(source_path, "loaded_modules")
+
+        names = {pathlib.Path(f).name for f in files}
+        assert "entrypoint_mod.py" in names
+        assert "helper.py" in names

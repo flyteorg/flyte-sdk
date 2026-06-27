@@ -4,11 +4,13 @@ import glob
 import gzip
 import hashlib
 import importlib.util
+import json
 import os
 import pathlib
 import shutil
 import site
 import stat
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -125,6 +127,17 @@ def ls_files(
     if copy_file_detection == "loaded_modules":
         sys_modules = list(sys.modules.values())
         all_files = list_imported_modules_as_files(str(source_path), sys_modules)
+        # Augment with a static import graph (ruff) to include lazily/conditionally imported local modules
+        # Falls back to the runtime-only set when ruff is unavailable.
+        graph = _ruff_static_imports(source_path)
+        if graph is not None:
+            invalid_directories = _build_invalid_directories()
+            all_files = list(_transitive_files_from_graph(set(all_files), graph, str(source_path), invalid_directories))
+        else:
+            logger.debug(
+                "ruff not found on PATH or analysis failed; bundling from sys.modules only. "
+                "Lazily/conditionally imported local modules may be omitted from the code bundle."
+            )
     # this is --copy all (--copy none should never invoke this function)
     else:
         all_files = list_all_files(source_path, deref_symlinks, ignore_group)
@@ -284,6 +297,43 @@ def _file_is_in_directory(file: str, directory: str) -> bool:
         return False
 
 
+def _build_invalid_directories() -> List[str]:
+    """Directories whose files are installed packages or stdlib modules, never user source.
+
+    A file under any of these is an installed dependency that the remote worker provisions from
+    the image/requirements, so it must not be shipped in the code bundle.
+    """
+    import flyte
+
+    flyte_root = os.path.dirname(flyte.__file__)
+    return [flyte_root, sys.prefix, sys.base_prefix, site.getusersitepackages(), *site.getsitepackages()]
+
+
+def _is_user_file(file_path: str, source_path: str, invalid_directories: List[str]) -> bool:
+    """Return True if ``file_path`` is a user source file worth bundling.
+
+    A file qualifies only when it is 
+    - (1) not inside an installed-package/stdlib directory
+    - (2) inside `source_path`
+    - (3) an actual file on disk.
+    """
+    if any(_file_is_in_directory(file_path, directory) for directory in invalid_directories):
+        return False
+
+    if not _file_is_in_directory(file_path, source_path):
+        # print log line for files that have common ancestor with source_path, but not in it.
+        logger.debug(f"{file_path} is not in {source_path}")
+        return False
+
+    if not pathlib.Path(file_path).is_file():
+        # Some modules have a __file__ attribute that are relative to the base package. Let's skip these,
+        # can add more rigorous logic to really pull out the correct file location if we need to.
+        logger.debug(f"Skipping {file_path} because it is not a file")
+        return False
+
+    return True
+
+
 def list_imported_modules_as_files(source_path: str, modules: List[ModuleType]) -> List[str]:
     """Lists the files of modules that have been loaded.  The files are only included if:
 
@@ -292,15 +342,13 @@ def list_imported_modules_as_files(source_path: str, modules: List[ModuleType]) 
     3. Shares a common path with the source_path.
     """
 
-    import flyte
     from flyte._utils.lazy_module import is_imported
 
     files = set()
-    flyte_root = os.path.dirname(flyte.__file__)
 
     # These directories contain installed packages or modules from the Python standard library.
     # If a module is from these directories, then they are not user files.
-    invalid_directories = [flyte_root, sys.prefix, sys.base_prefix, site.getusersitepackages(), *site.getsitepackages()]
+    invalid_directories = _build_invalid_directories()
 
     for mod in modules:
         # Be careful not to import a module with the .__file__ call if not yet imported.
@@ -321,24 +369,80 @@ def list_imported_modules_as_files(source_path: str, modules: List[ModuleType]) 
         if mod_file is None or not isinstance(mod_file, str):
             continue
 
-        if any(_file_is_in_directory(mod_file, directory) for directory in invalid_directories):
-            continue
-
-        if not _file_is_in_directory(mod_file, source_path):
-            # Only upload files where the module file in the source directory
-            # print log line for files that have common ancestor with source_path, but not in it.
-            logger.debug(f"{mod_file} is not in {source_path}")
-            continue
-
-        if not pathlib.Path(mod_file).is_file():
-            # Some modules have a __file__ attribute that are relative to the base package. Let's skip these,
-            # can add more rigorous logic to really pull out the correct file location if we need to.
-            logger.debug(f"Skipping {mod_file} from {mod.__name__} because it is not a file")
-            continue
-
-        files.add(mod_file)
+        if _is_user_file(mod_file, source_path, invalid_directories):
+            files.add(mod_file)
 
     return list(files)
+
+
+def _ruff_static_imports(source_path: pathlib.Path) -> Optional[typing.Dict[str, List[str]]]:
+    """Build a first-party import dependency graph for ``source_path`` via ``ruff analyze graph``.
+
+    Returns a mapping of absolute file path -> absolute paths it imports, or ``None`` when ruff is
+    unavailable or the analysis fails (callers fall back to the runtime ``sys.modules`` discovery).
+
+    Unlike the runtime snapshot, ruff statically detects imports inside function bodies and
+    ``if TYPE_CHECKING:`` blocks, so lazily/conditionally imported local modules are discovered even
+    when they were never executed at bundle time.
+    """
+    if shutil.which("ruff") is None:
+        return None
+
+    try:
+        proc = subprocess.run(
+            ["ruff", "analyze", "graph", "--type-checking-imports", "."],
+            cwd=str(source_path),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as e:
+        logger.warning(f"Failed to run 'ruff analyze graph': {e}")
+        return None
+
+    if proc.returncode != 0:
+        logger.warning(f"'ruff analyze graph' exited with {proc.returncode}: {proc.stderr.strip()}")
+        return None
+
+    try:
+        raw_graph = json.loads(proc.stdout)
+    except json.JSONDecodeError as e:
+        logger.warning(f"Failed to parse 'ruff analyze graph' output: {e}")
+        return None
+
+    # ruff emits paths relative to its working directory (source_path), POSIX-style. Resolve them to
+    # absolute paths so they line up with the runtime-discovered seed paths.
+    graph: typing.Dict[str, List[str]] = {}
+    for file, deps in raw_graph.items():
+        abs_file = str(source_path / file)
+        graph[abs_file] = [str(source_path / dep) for dep in deps]
+    return graph
+
+
+def _transitive_files_from_graph(
+    seeds: typing.Set[str],
+    graph: typing.Dict[str, List[str]],
+    source_path: str,
+    invalid_directories: List[str],
+) -> typing.Set[str]:
+    """
+    Walk `graph` from `seeds` and return every reachable user file (seeds included).
+    """
+    queue: List[str] = [s for s in seeds if _is_user_file(s, source_path, invalid_directories)]
+    visited: typing.Set[str] = set(queue)
+    result: typing.Set[str] = set()
+
+    while queue:
+        current = queue.pop()
+        result.add(current)
+        for dep in graph.get(current, []):
+            if dep in visited:
+                continue
+            visited.add(dep)
+            if _is_user_file(dep, source_path, invalid_directories):
+                queue.append(dep)
+
+    return result
 
 
 def add_imported_modules_from_source(source_path: str, destination: str, modules: List[ModuleType]):
