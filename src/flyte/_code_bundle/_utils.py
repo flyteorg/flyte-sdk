@@ -312,7 +312,7 @@ def _build_invalid_directories() -> List[str]:
 def _is_user_file(file_path: str, source_path: str, invalid_directories: List[str]) -> bool:
     """Return True if ``file_path`` is a user source file worth bundling.
 
-    A file qualifies only when it is 
+    A file qualifies only when it is
     - (1) not inside an installed-package/stdlib directory
     - (2) inside `source_path`
     - (3) an actual file on disk.
