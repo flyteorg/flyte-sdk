@@ -15,6 +15,7 @@ import sys
 import tarfile
 import tempfile
 import typing
+from collections import deque
 from datetime import datetime, timezone
 from functools import lru_cache
 from types import ModuleType
@@ -313,9 +314,9 @@ def _is_user_file(file_path: str, source_path: str, invalid_directories: List[st
     """Return True if ``file_path`` is a user source file worth bundling.
 
     A file qualifies only when it is
-    - (1) not inside an installed-package/stdlib directory
-    - (2) inside `source_path`
-    - (3) an actual file on disk.
+    (1) not inside an installed-package/stdlib directory
+    (2) inside `source_path`
+    (3) an actual file on disk.
     """
     if any(_file_is_in_directory(file_path, directory) for directory in invalid_directories):
         return False
@@ -376,13 +377,13 @@ def list_imported_modules_as_files(source_path: str, modules: List[ModuleType]) 
 
 
 def _build_import_graph(source_path: pathlib.Path) -> Optional[typing.Dict[str, List[str]]]:
-    """Build a first-party import dependency graph for ``source_path`` via ``ruff analyze graph``.
+    """Build a first-party import dependency graph for `source_path` via `ruff analyze graph`.
 
-    Returns a mapping of absolute file path -> absolute paths it imports, or ``None`` when ruff is
-    unavailable or the analysis fails (callers fall back to the runtime ``sys.modules`` discovery).
+    Returns a mapping of absolute file path -> absolute paths it imports, or `None` when ruff is
+    unavailable or the analysis fails (callers fall back to the runtime `sys.modules` discovery).
 
     Unlike the runtime snapshot, ruff statically detects imports inside function bodies and
-    ``if TYPE_CHECKING:`` blocks, so lazily/conditionally imported local modules are discovered even
+    `if TYPE_CHECKING:` blocks, so lazily/conditionally imported local modules are discovered even
     when they were never executed at bundle time.
     """
     if shutil.which("ruff") is None:
@@ -426,14 +427,18 @@ def _collect_reachable_files(
     invalid_directories: List[str],
 ) -> typing.Set[str]:
     """
-    Walk `graph` from `seeds` and return every reachable user file (seeds included).
+    Collect every user file reachable from `seeds` by following `graph`'s import edges.
+
+    Iteratively traverses the import graph (a queue-based walk; order is irrelevant since the
+    output is a set) starting from `seeds`, returning the seeds plus everything transitively
+    imported from them.
     """
-    queue: List[str] = [s for s in seeds if _is_user_file(s, source_path, invalid_directories)]
+    queue: deque[str] = deque(s for s in seeds if _is_user_file(s, source_path, invalid_directories))
     visited: typing.Set[str] = set(queue)
     result: typing.Set[str] = set()
 
     while queue:
-        current = queue.pop()
+        current = queue.popleft()
         result.add(current)
         for dep in graph.get(current, []):
             if dep in visited:
