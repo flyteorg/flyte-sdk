@@ -129,10 +129,10 @@ def ls_files(
         all_files = list_imported_modules_as_files(str(source_path), sys_modules)
         # Augment with a static import graph (ruff) to include lazily/conditionally imported local modules
         # Falls back to the runtime-only set when ruff is unavailable.
-        graph = _ruff_static_imports(source_path)
+        graph = _build_import_graph(source_path)
         if graph is not None:
             invalid_directories = _build_invalid_directories()
-            all_files = list(_transitive_files_from_graph(set(all_files), graph, str(source_path), invalid_directories))
+            all_files = list(_collect_reachable_files(set(all_files), graph, str(source_path), invalid_directories))
         else:
             logger.debug(
                 "ruff not found on PATH or analysis failed; bundling from sys.modules only. "
@@ -375,7 +375,7 @@ def list_imported_modules_as_files(source_path: str, modules: List[ModuleType]) 
     return list(files)
 
 
-def _ruff_static_imports(source_path: pathlib.Path) -> Optional[typing.Dict[str, List[str]]]:
+def _build_import_graph(source_path: pathlib.Path) -> Optional[typing.Dict[str, List[str]]]:
     """Build a first-party import dependency graph for ``source_path`` via ``ruff analyze graph``.
 
     Returns a mapping of absolute file path -> absolute paths it imports, or ``None`` when ruff is
@@ -419,7 +419,7 @@ def _ruff_static_imports(source_path: pathlib.Path) -> Optional[typing.Dict[str,
     return graph
 
 
-def _transitive_files_from_graph(
+def _collect_reachable_files(
     seeds: typing.Set[str],
     graph: typing.Dict[str, List[str]],
     source_path: str,
