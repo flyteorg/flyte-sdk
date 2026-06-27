@@ -15,7 +15,7 @@ Usage:
     # Run end-to-end demo with real dataset images (recommended):
     flyte run batch_inference.py batch_inference_demo \\
         --model_dir=<model_directory> \\
-        --dataset_name="beans" \\
+        --dataset_name="AI-Lab-Makerere/beans" \\
         --split="validation" \\
         --max_images=50
 
@@ -27,7 +27,7 @@ Usage:
 
     # Extract dataset images:
     flyte run batch_inference.py extract_dataset_images \\
-        --dataset_name="beans" \\
+        --dataset_name="AI-Lab-Makerere/beans" \\
         --split="validation" \\
         --max_images=100
 
@@ -202,7 +202,7 @@ async def process_image_batch(
             continue
 
         # Process batch
-        inputs = processor(images=images, return_tensors="pt", padding=True)
+        inputs = processor(images=images, return_tensors="pt")
 
         # Move to GPU if available
         if torch.cuda.is_available():
@@ -394,7 +394,7 @@ driver_with_report_env = driver_env.clone_with(
 
 @driver_with_report_env.task(cache="auto")
 async def extract_dataset_images(
-    dataset_name: str = "beans", split: str = "validation", max_images: int = 50
+    dataset_name: str = "AI-Lab-Makerere/beans", split: str = "validation", max_images: int = 50
 ) -> flyte.io.Dir:
     """
     Extract images from a HuggingFace dataset's validation or test split.
@@ -403,7 +403,7 @@ async def extract_dataset_images(
     which is more realistic for testing batch inference than synthetic images.
 
     Args:
-        dataset_name: HuggingFace dataset name (e.g., "beans", "cifar10", "food101")
+        dataset_name: HuggingFace dataset name (e.g., "AI-Lab-Makerere/beans", "uoft-cs/cifar10", "ethz/food101")
         split: Dataset split to use ("validation" or "test")
         max_images: Maximum number of images to extract (None for all)
 
@@ -527,7 +527,7 @@ async def batch_inference_with_report(
 @driver_with_report_env.task(cache="auto")
 async def batch_inference_demo(
     model_dir: flyte.io.Dir,
-    dataset_name: str = "beans",
+    dataset_name: str = "AI-Lab-Makerere/beans",
     split: str = "validation",
     max_images: int = 50,
     chunk_size: int = 20,
@@ -543,7 +543,7 @@ async def batch_inference_demo(
 
     Args:
         model_dir: Directory containing the fine-tuned model
-        dataset_name: HuggingFace dataset name (e.g., "beans", "cifar10", "food101")
+        dataset_name: HuggingFace dataset name (e.g., "AI-Lab-Makerere/beans", "uoft-cs/cifar10", "ethz/food101")
         split: Dataset split to use ("validation" or "test")
         max_images: Maximum number of images to extract
         chunk_size: Number of images per chunk (affects parallelism)
@@ -615,7 +615,7 @@ USAGE:
 # Run end-to-end demo with real dataset images (recommended):
 flyte run batch_inference.py batch_inference_demo \\
     --model_dir=<path_or_remote_ref> \\
-    --dataset_name="beans" \\
+    --dataset_name="AI-Lab-Makerere/beans" \\
     --split="validation" \\
     --max_images=50 \\
     --chunk_size=20
@@ -634,7 +634,7 @@ flyte run batch_inference.py batch_inference_pipeline \\
 
 # Extract dataset images for manual testing:
 flyte run batch_inference.py extract_dataset_images \\
-    --dataset_name="beans" \\
+    --dataset_name="AI-Lab-Makerere/beans" \\
     --split="validation" \\
     --max_images=100
 

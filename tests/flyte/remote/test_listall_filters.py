@@ -211,6 +211,14 @@ class TestRunListallFilters:
         assert "created_at" not in fields
         assert "updated_at" not in fields
 
+    def test_paused_actions_only_defaults_to_false(self, mock_client, mock_init_config):
+        call_args = self._call_listall(mock_client, mock_init_config)
+        assert call_args[0][0].paused_actions_only is False
+
+    def test_paused_actions_only_is_forwarded(self, mock_client, mock_init_config):
+        call_args = self._call_listall(mock_client, mock_init_config, paused_actions_only=True)
+        assert call_args[0][0].paused_actions_only is True
+
 
 # ---------------------------------------------------------------------------
 # Action.listall() — verify time filters sent to the gRPC stub
