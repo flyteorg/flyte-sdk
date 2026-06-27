@@ -41,7 +41,10 @@ import struct
 import sys
 from contextlib import suppress
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    import asyncssh
 
 from flyte._debug.constants import (
     DEFAULT_SSH_USER,
@@ -130,7 +133,7 @@ class SshServer:
         self.host = host
         self.port = port
         self.scratch = Path(scratch_dir)
-        self._acceptor = None  # asyncssh.SSHAcceptor
+        self._acceptor: Optional["asyncssh.SSHAcceptor"] = None
 
     # -- setup ---------------------------------------------------------------
 
