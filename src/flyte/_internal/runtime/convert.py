@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextvars
+import errno
 import hashlib
 import inspect
 from dataclasses import dataclass
@@ -369,6 +370,14 @@ def convert_from_native_to_error(err: BaseException) -> Error:
                 worker=err.worker,
             ),
             recoverable=False,
+        )
+    elif isinstance(err, OSError) and err.errno == errno.EIO:
+        return Error(
+            err=execution_pb2.ExecutionError(
+                kind=execution_pb2.ExecutionError.SYSTEM,
+                code="FilesystemIOError",
+                message=f"Filesystem I/O error: {err}",
+            )
         )
     elif isinstance(err, flyte.errors.RuntimeUnknownError):
         return Error(
