@@ -133,7 +133,9 @@ def ls_files(
         graph = _build_import_graph(source_path)
         if graph is not None:
             invalid_directories = _build_invalid_directories()
-            all_files = list(_collect_reachable_files(set(all_files), graph, str(source_path), invalid_directories))
+            all_files = list(
+                _collect_transitive_dependencies(set(all_files), graph, str(source_path), invalid_directories)
+            )
         else:
             logger.debug(
                 "ruff not found on PATH or analysis failed; bundling from sys.modules only. "
@@ -420,7 +422,7 @@ def _build_import_graph(source_path: pathlib.Path) -> Optional[typing.Dict[str, 
     return graph
 
 
-def _collect_reachable_files(
+def _collect_transitive_dependencies(
     seeds: typing.Set[str],
     graph: typing.Dict[str, List[str]],
     source_path: str,
