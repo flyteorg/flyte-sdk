@@ -82,7 +82,7 @@ image = (
 # Serving app
 #
 # `extra_args` is passed verbatim to `vllm serve`. The flags below come from the
-# NVIDIA Omni vLLM recipe, retuned for *latency* on a single user rather than
+# NVIDIA Omni vLLM recipe, re-tuned for *latency* on a single user rather than
 # throughput:
 #
 #   --max-model-len 32768   smaller context -> smaller KV cache, fits 48 GB,

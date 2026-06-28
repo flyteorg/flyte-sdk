@@ -58,6 +58,7 @@ SYSTEM_PROMPT = (
 # Microphone capture with energy-based voice-activity detection
 # ---------------------------------------------------------------------------
 
+
 def record_utterance(
     silence_secs: float = 0.8,
     start_timeout: float = 8.0,
@@ -123,6 +124,7 @@ def wav_to_data_url(wav_bytes: bytes) -> str:
 # Text-to-speech worker (sentence-by-sentence, off the main thread)
 # ---------------------------------------------------------------------------
 
+
 class Speaker:
     def __init__(self, enabled: bool = True):
         self.enabled = enabled
@@ -159,7 +161,7 @@ class Speaker:
         self._q.put(text)
 
 
-_SENTENCE_END = re.compile(r"(.+?[.!?…]+[\s\"')\]]*)", re.S)
+_SENTENCE_END = re.compile(r"(.+?[.!?…]+[\s\"')\]]*)", re.DOTALL)
 
 
 def split_sentences(buffer: str) -> tuple[list[str], str]:
@@ -172,12 +174,13 @@ def split_sentences(buffer: str) -> tuple[list[str], str]:
     return sentences, buffer[pos:]
 
 
-_THINK = re.compile(r"<think>.*?</think>", re.S)
+_THINK = re.compile(r"<think>.*?</think>", re.DOTALL)
 
 
 # ---------------------------------------------------------------------------
 # Streaming chat call
 # ---------------------------------------------------------------------------
+
 
 def stream_reply(
     client: httpx.Client,
@@ -211,7 +214,7 @@ def stream_reply(
         for line in r.iter_lines():
             if not line or not line.startswith("data:"):
                 continue
-            data = line[len("data:"):].strip()
+            data = line[len("data:") :].strip()
             if data == "[DONE]":
                 break
             try:
@@ -226,9 +229,9 @@ def stream_reply(
             pending += delta
             sentences, pending = split_sentences(pending)
             for s in sentences:
-                s = _THINK.sub("", s).strip()
-                if s:
-                    speaker.say(s)
+                clean = _THINK.sub("", s).strip()
+                if clean:
+                    speaker.say(clean)
 
     print()
     tail = _THINK.sub("", pending).strip()
@@ -240,6 +243,7 @@ def stream_reply(
 # ---------------------------------------------------------------------------
 # Main conversation loop
 # ---------------------------------------------------------------------------
+
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Mic voice chat for Nemotron-Omni on Flyte")
@@ -276,7 +280,7 @@ def main() -> None:
                     {"type": "text", "text": "Respond to what I just said."},
                 ],
             }
-            messages = history + [user_msg]
+            messages = [*history, user_msg]
 
             reply = stream_reply(client, base_url, args.model, messages, args.api_key, speaker)
 
@@ -285,7 +289,7 @@ def main() -> None:
             history.append({"role": "assistant", "content": reply})
             # Cap history so context stays small and latency stays low.
             if len(history) > 13:  # system + 6 turns
-                history = [history[0]] + history[-12:]
+                history = [history[0], *history[-12:]]
     except KeyboardInterrupt:
         print("\n👋 Bye.")
 

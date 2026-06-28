@@ -35,13 +35,12 @@ Then open the printed UI url in Chrome and click the mic.
 
 from __future__ import annotations
 
-import json
-import os
-import sys
-
 import asyncio
 import base64
 import io
+import json
+import os
+import sys
 import time
 
 import httpx
@@ -638,7 +637,10 @@ function browserSpeak(text) {
   u.lang = 'en-US'; u.rate = 1.06; if (voice) u.voice = voice;
   pending++;
   u.onstart = () => { setState('speaking'); markFirstAudio('browser', null); };
-  u.onend = u.onerror = () => { pending = Math.max(0, pending - 1); if (!isAiActive() && sessionOn) setState('listening'); };
+  u.onend = u.onerror = () => {
+    pending = Math.max(0, pending - 1);
+    if (!isAiActive() && sessionOn) setState('listening');
+  };
   speechSynthesis.speak(u);
 }
 
@@ -740,7 +742,9 @@ function initRec() {
   rec.lang = 'en-US';
   rec.interimResults = true;
   rec.continuous = true;
-  rec.onerror = (e) => { if (e.error !== 'no-speech' && e.error !== 'aborted') statusEl.textContent = 'Mic: ' + e.error; };
+  rec.onerror = (e) => {
+    if (e.error !== 'no-speech' && e.error !== 'aborted') statusEl.textContent = 'Mic: ' + e.error;
+  };
   rec.onend = () => { if (sessionOn) { try { rec.start(); } catch (e) {} } };
   rec.onresult = (e) => {
     let interim = '', finalText = '';
@@ -863,7 +867,11 @@ async function loadConfig() {
   } else {
     // both: default to Browser; enable Server once the model finishes loading.
     setTtsMode('browser');
-    if (!serverReady) { btnServer.disabled = true; btnServer.textContent = 'Server · Kokoro (loading…)'; pollServerReady(false); }
+    if (!serverReady) {
+      btnServer.disabled = true;
+      btnServer.textContent = 'Server · Kokoro (loading…)';
+      pollServerReady(false);
+    }
   }
 }
 async function pollServerReady(forceSelect) {
