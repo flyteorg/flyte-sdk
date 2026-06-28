@@ -30,6 +30,7 @@ dependencies = [
     "packaging",
     "sentry-sdk>=2.0",
     "pyOpenSSL>=24.0.0",
+    "asyncssh>=2.14",
 ]
 
 [project.scripts]
