@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import inspect
 import time
 from dataclasses import dataclass
@@ -7,6 +8,7 @@ from typing import Optional, Tuple, Union
 
 import pytest
 import pytest_asyncio
+from flyteidl2.core import execution_pb2
 from flyteidl2.core.interface_pb2 import TypedInterface, Variable, VariableEntry, VariableMap
 from flyteidl2.core.literals_pb2 import (
     Literal,
@@ -40,6 +42,23 @@ test_cases = [
     ((NativeInterface.from_types({"x": (int, inspect.Parameter.empty)}, {}), (3,)), "et7s2yhynbrhdtsawc2wny9o6"),
     ((NativeInterface.from_types({"x": (int, inspect.Parameter.empty)}, {}), (4,)), "5nf5f0zrm2jkqcijzjls1pgfh"),
 ]
+
+
+def test_convert_eio_os_error_to_recoverable_system_error():
+    err = convert.convert_from_native_to_error(OSError(errno.EIO, "Input/output error"))
+
+    assert err.recoverable is True
+    assert err.err.kind == execution_pb2.ExecutionError.SYSTEM
+    assert err.err.code == "FilesystemIOError"
+    assert "Input/output error" in err.err.message
+
+
+def test_convert_non_eio_os_error_uses_generic_unknown_error():
+    err = convert.convert_from_native_to_error(FileNotFoundError(errno.ENOENT, "No such file or directory"))
+
+    assert err.recoverable is True
+    assert err.err.kind == execution_pb2.ExecutionError.UNKNOWN
+    assert err.err.code == "FileNotFoundError"
 
 
 @pytest_asyncio.fixture(params=test_cases)
