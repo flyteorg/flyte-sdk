@@ -68,9 +68,32 @@ class RemoteClientConfigStore(ClientConfigStore):
         """
         Retrieves the ClientConfig from the AuthMetadataService via ConnectRPC.
         """
+        from connectrpc.errors import ConnectError
+
         oauth2_metadata_task = self._client.get_o_auth2_metadata(GetOAuth2MetadataRequest())
         public_client_config_task = self._client.get_public_client_config(GetPublicClientConfigRequest())
-        oauth2_metadata, public_client_config = await asyncio.gather(oauth2_metadata_task, public_client_config_task)
+        try:
+            oauth2_metadata, public_client_config = await asyncio.gather(
+                oauth2_metadata_task, public_client_config_task
+            )
+        except ConnectError as e:
+            # The endpoint answered with a non-protobuf (e.g. HTML) body, so connectrpc could not
+            # decode the response. This is virtually always a misconfigured endpoint -- the address
+            # points at a web console/login page or sits behind a proxy that doesn't forward
+            # gRPC/Connect traffic -- not an SDK bug. Re-raise as a user-facing InitializationError
+            # so it reaches the user with an actionable message instead of leaking as a system error.
+            if "invalid content-type" in str(e):
+                from flyte.errors import InitializationError
+
+                raise InitializationError(
+                    "InvalidEndpoint",
+                    "user",
+                    "The configured endpoint returned a non-protobuf (HTML) response while fetching the "
+                    "auth client configuration. Verify that the endpoint points to your Flyte/Union API "
+                    "endpoint (not a web console or login URL) and that any proxy/ingress in front of it "
+                    "forwards gRPC/Connect traffic.",
+                ) from e
+            raise
         return ClientConfig(
             token_endpoint=oauth2_metadata.token_endpoint,
             authorization_endpoint=oauth2_metadata.authorization_endpoint,

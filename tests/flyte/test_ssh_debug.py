@@ -1,8 +1,7 @@
 """Tests for the pod-side SSH-into-task debug server (flyte._debug.ssh).
 
-Covers the pure WebSocket framing helpers, the sshd config / authorized-keys
-rendering, and an end-to-end exercise of the in-process WS->sshd bridge against
-a fake echo "sshd".
+Covers the pure WebSocket framing helpers, the SshServer key/auth setup, and an
+end-to-end exercise of the in-process WS->sshd bridge against a fake echo "sshd".
 """
 
 from __future__ import annotations
@@ -97,38 +96,31 @@ class TestWsFrameRoundtrip:
 
 
 # ---------------------------------------------------------------------------
-# sshd config / authorized keys
+# SshServer: authorized keys / host key / user
 # ---------------------------------------------------------------------------
 
 
-class TestSshdConfigAndKeys:
+class TestSshServerSetup:
     def test_authorized_keys_written_0600(self, tmp_path):
-        sshd = ssh.Sshd("ssh-ed25519 AAAA... user@host", user="root", scratch_dir=tmp_path)
-        p = sshd._write_authorized_keys()
+        server = ssh.SshServer("ssh-ed25519 AAAA... user@host", user="root", scratch_dir=tmp_path)
+        p = server._write_authorized_keys()
         assert p.read_text() == "ssh-ed25519 AAAA... user@host\n"
         assert (p.stat().st_mode & 0o777) == 0o600
 
-    def test_sshd_config_directives(self, tmp_path):
-        sshd = ssh.Sshd("pk", user="root", host="127.0.0.1", port=2222, scratch_dir=tmp_path)
-        cfg = sshd._render_config(tmp_path / "hostkey", tmp_path / "authorized_keys").read_text()
-        assert "Port 2222" in cfg
-        assert "ListenAddress 127.0.0.1" in cfg
-        assert "PasswordAuthentication no" in cfg
-        assert "PubkeyAuthentication yes" in cfg
-        # VS Code Remote-SSH needs sftp; ssh -L (debugpy) needs forwarding.
-        assert "Subsystem sftp internal-sftp" in cfg
-        assert "AllowTcpForwarding yes" in cfg
-
     def test_user_defaults_to_container_user(self, tmp_path, monkeypatch):
         monkeypatch.setenv("_F_SSH_USER", "flyte")
-        assert ssh.Sshd("pk", scratch_dir=tmp_path).user == "flyte"
+        assert ssh.SshServer("pk", scratch_dir=tmp_path).user == "flyte"
 
-    def test_find_binary_locates_sshd(self):
-        import shutil
-
-        if not (shutil.which("sshd") or any(__import__("os").path.exists(p) for p in ("/usr/sbin/sshd",))):
-            pytest.skip("sshd not installed")
-        assert ssh.Sshd.find_binary().endswith("sshd")
+    def test_host_key_generated_and_reused(self, tmp_path):
+        server = ssh.SshServer("pk", scratch_dir=tmp_path)
+        key1 = server._host_key()
+        key_file = tmp_path / "ssh_host_ed25519_key"
+        assert key_file.exists()
+        assert (key_file.stat().st_mode & 0o777) == 0o600
+        # Second call must reuse the on-disk key, not regenerate it. (Private-key
+        # serialization embeds a random check value, so compare the public key.)
+        key2 = server._host_key()
+        assert key1.export_public_key() == key2.export_public_key()
 
     def test_get_ssh_user_env_override(self, monkeypatch):
         monkeypatch.setenv("_F_SSH_USER", "flyte")

@@ -584,6 +584,20 @@ async def test_pytorch(flyte_client):
 
 
 # =============================================================================
+# CLUSTERED (JOBSETS)
+# =============================================================================
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_clustered_failure_cascade(flyte_client):
+    """Test the clustered.failure_cascade example: whole-set restart + checkpoint resume on CPU/gloo."""
+    from examples.clustered.failure_cascade import train_with_crash
+
+    await _run_and_wait(train_with_crash, "test_clustered_failure_cascade")
+
+
+# =============================================================================
 # APPS (deploy-based tests)
 # =============================================================================
 
