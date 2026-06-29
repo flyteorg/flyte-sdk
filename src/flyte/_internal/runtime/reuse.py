@@ -58,6 +58,19 @@ def extract_unique_id_and_image(
         components += f":{reuse_policy.get_scaledown_ttl()}"
     if code_bundle is not None:
         components += f":{code_bundle.computed_version}"
+        # The actor bridge pins each warm pod to the first code bundle it loads
+        # and rejects any task whose bundle path differs ("Task TGZ does not
+        # match the configured TGZ tasks", fasttask actor_environment.rs). The
+        # warm-pool routing key is this version, so it must include the exact
+        # path the bridge pins on — otherwise two bundles whose content hashes
+        # (computed_version) happen to match, but whose uploaded paths differ,
+        # collide on one pool and the pod rejects the second. Keying on the path
+        # makes "same pool ⇒ same bundle" an invariant. Paths are content-
+        # addressed, so identical code still shares a warm pod (reuse preserved).
+        if code_bundle.tgz is not None:
+            components += f":{code_bundle.tgz}"
+        if code_bundle.pkl is not None:
+            components += f":{code_bundle.pkl}"
     if task.security_context is not None:
         security_ctx_str = task.security_context.SerializeToString(deterministic=True)
         components += f":{security_ctx_str}"
