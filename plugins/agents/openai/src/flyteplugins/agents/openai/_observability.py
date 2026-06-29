@@ -54,7 +54,7 @@ class FlyteTracingProcessor(TracingProcessor):
         self._timeline = ReportTimeline(tab_name)
 
     def on_trace_start(self, trace: typing.Any) -> None:
-        self._timeline.heading(getattr(trace, "name", None) or "agent run")
+        self._timeline.heading("OpenAI agent")
 
     def on_trace_end(self, trace: typing.Any) -> None:
         pass
