@@ -4,11 +4,11 @@ The OpenAI Agents ``Runner`` owns the agent loop. To make that loop durable we
 swap in a :class:`FlyteModelProvider`: it wraps the real model so every
 ``get_response`` (one model turn) is recorded through the shared
 :func:`~flyteplugins.agents.core.durable_step` (a ``flyte.trace`` leaf). Inside a
-Flyte task this means a crashed/retried run **replays** completed turns from
+Flyte task this means a crashed/retried run replays completed turns from
 their recorded outputs instead of re-calling (and re-billing) the model. Tool
-calls run as durable child actions (see
-:func:`flyteplugins.agents.openai.function_tool`), so the whole agent run becomes
-crash-resilient and self-healing when the enclosing task carries ``retries=...``.
+calls run as durable child actions (see :func:`flyteplugins.agents.openai.function_tool`),
+so the whole agent run becomes crash-resilient and self-healing when the enclosing task
+carries ``retries=...``.
 
 The turn is recorded as JSON (pydantic round-trips the SDK's ``ModelResponse``
 faithfully and stays readable in the Flyte UI). The non-serializable real call is

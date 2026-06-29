@@ -9,6 +9,7 @@ from flyte._image import (
     _LOCALHOST_REGISTRY,
     AptPackages,
     CodeBundleLayer,
+    Commands,
     CopyConfig,
     Image,
     UVScript,
@@ -218,7 +219,7 @@ def test_default_image_creates_flyte_user():
     """The default debian-base image should add a Commands layer that creates the flyte user
     and a WorkDir layer that sets the working directory to /home/flyte. Both layers are
     proto-backed so they're picked up by the remote image builder as well."""
-    from flyte._image import Commands, WorkDir
+    from flyte._image import WorkDir
 
     img = Image.from_debian_base(install_flyte=False)
     layer_types = [type(layer) for layer in img._layers]
@@ -611,7 +612,7 @@ def test_ids_for_different_python_version():
 
 def test_layer_unhashable_type_error_message():
     """Test that Layer subclasses provide helpful error messages when lists are used instead of tuples."""
-    from flyte._image import AptPackages, Commands, PipPackages
+    from flyte._image import AptPackages, PipPackages
 
     # Test PipPackages with a list inside a tuple (common mistake)
     with pytest.raises(TypeError) as exc_info:

@@ -38,22 +38,22 @@ async def city_agent(question: str) -> str:
 
 ## How it maps to Flyte
 
-- **The SDK owns the loop — we don't reimplement it.** `run_agent` drives the
-  OpenAI Agents `Runner`; the **agent run** is your `@env.task` (the durable
+- The SDK owns the loop — we don't reimplement it. `run_agent` drives the
+  OpenAI Agents `Runner`; the agent run is your `@env.task` (the durable
   parent) and the SDK runs its agent loop inside it.
-- **Tools as durable child actions.** `function_tool` wraps an `@env.task` so that
-  when the agent calls a tool, the task runs as a **durable Flyte child action**
+- Tools as durable child actions. `function_tool` wraps an `@env.task` so that
+  when the agent calls a tool, the task runs as a durable Flyte child action
   (its own container/resources, retries, caching) — not inline in the agent
   process. The SDK derives the tool's JSON schema, name and description from the
   task signature, so strict tool-calling works unchanged.
-- **Durable, replayable model turns.** Each model turn is recorded via
-  `flyte.trace` by tracing the **seam below the loop** — a `FlyteModelProvider`
+- Durable, replayable model turns. Each model turn is recorded via
+  `flyte.trace` by tracing the seam below the loop — a `FlyteModelProvider`
   set on `RunConfig.model_provider`. If the task crashes and Flyte retries it,
   completed turns and tool calls replay from their recorded outputs instead of
   re-calling (and re-billing) the model.
-- **Self-healing.** `retries=...` on the agent task plus per-turn / per-tool replay
+- Self-healing. `retries=...` on the agent task plus per-turn / per-tool replay
   means transient failures recover automatically without redoing completed work.
-- **Observability.** The OpenAI Agents trace (turns, tool calls, handoffs, token
+- Observability. The OpenAI Agents trace (turns, tool calls, handoffs, token
   usage) renders into the task report (`report=True`); `install_flyte_tracing()`
   replaces the OpenAI exporter (`exclusive=True`) so nothing is uploaded
   externally.
@@ -88,7 +88,7 @@ driving `Runner.run` yourself:
 
 ## Memory
 
-Pass `memory_key` (a user/thread id) for **cross-run memory** — the agent continues
+Pass `memory_key` (a user/thread id) for cross-run memory — the agent continues
 the same conversation across separate runs, workers and restarts:
 
 ```python
@@ -106,20 +106,20 @@ See [`examples/`](examples/):
 
 - [`openai_durable_agent.py`](examples/openai_durable_agent.py) — a single durable
   agent: tools as Flyte tasks, traced model turns, agent timeline in the report.
-- [`openai_multi_agent.py`](examples/openai_multi_agent.py) — **multi-agent
-  orchestration**: a planner agent decomposes a topic, researcher agents fan out
+- [`openai_multi_agent.py`](examples/openai_multi_agent.py) — multi-agent
+  orchestration: a planner agent decomposes a topic, researcher agents fan out
   in parallel, an editor agent synthesizes — each agent its own durable action.
-- [`openai_handoffs.py`](examples/openai_handoffs.py) — **handoffs + HITL**: a
+- [`openai_handoffs.py`](examples/openai_handoffs.py) — handoffs + HITL: a
   triage agent hands off to billing / technical specialists inside one
   `Runner.run`; durability spans the handoff (a mid-chain crash replays both
   agents' turns), a sensitive `issue_refund` tool is gated on a human-approval
   form, and a diagnostic tool runs in a higher-CPU environment.
-- [`openai_crash_resume.py`](examples/openai_crash_resume.py) — **crash &
-  resume**: the task crashes on its first attempt after doing real work; on retry
+- [`openai_crash_resume.py`](examples/openai_crash_resume.py) — crash &
+  resume: the task crashes on its first attempt after doing real work; on retry
   the completed model turns replay from their `flyte.trace` records and the tool
   calls are cache hits, so it finishes without re-calling the model. Run on a
   backend to see the replay.
-- [`openai_memory.py`](examples/openai_memory.py) — **cross-run memory**: two
+- [`openai_memory.py`](examples/openai_memory.py) — cross-run memory: two
   separate runs share a `memory_key`; the agent learns a fact in run 1 and recalls
   it in run 2.
 

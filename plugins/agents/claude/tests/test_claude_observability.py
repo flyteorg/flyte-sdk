@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 import pytest
 from claude_agent_sdk import ClaudeAgentOptions, HookMatcher
 
-from flyteplugins.agents.claude._run import _install_tool_hooks, _stringify
+from flyteplugins.agents.claude._run import _fmt_usage, _install_tool_hooks, _stringify
 
 
 def _callback(opts, event):
@@ -67,3 +67,22 @@ def test_install_merges_with_existing_user_hooks():
 def test_stringify_handles_str_and_objects():
     assert _stringify("hi") == "hi"
     assert _stringify({"a": 1}) == '{"a": 1}'
+
+
+def test_fmt_usage_breaks_down_tokens_that_drive_cost():
+    out = _fmt_usage(
+        {
+            "input_tokens": 1200,
+            "output_tokens": 340,
+            "cache_read_input_tokens": 5000,
+            "cache_creation_input_tokens": 1100,
+        }
+    )
+    assert out == "in 1.2k · out 340 · cache read 5.0k · cache write 1.1k"
+
+
+def test_fmt_usage_is_defensive_about_keys_and_empties():
+    assert _fmt_usage(None) == ""
+    assert _fmt_usage({}) == ""
+    assert _fmt_usage({"output_tokens": 0}) == ""  # zero-valued fields are dropped
+    assert _fmt_usage({"inputTokens": 500}) == "in 500"  # camelCase fallback

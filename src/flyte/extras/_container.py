@@ -53,6 +53,9 @@ class ContainerTask(TaskTemplate):
     :param output_data_dir: The directory where the output data is stored. This is a string or a Path object.
     :param metadata_format: The format of the output file. This can be "JSON", "YAML", or "PROTO".
     :param local_logs: If True, logs will be printed to the console in the local execution.
+    :param file_input_layout: How CoPilot stages File / list[File] inputs on disk.
+        "DIRECT" (default) uses the bare path/index; "NAMED_DIR" preserves each input's
+        original basename (and extension), so extension-sniffing tools work.
     """
 
     MetadataFormat = Literal["JSON", "YAML", "PROTO"]
@@ -69,6 +72,7 @@ class ContainerTask(TaskTemplate):
         output_data_dir: str | pathlib.Path = "/var/outputs",
         metadata_format: MetadataFormat = "JSON",
         local_logs: bool = True,
+        file_input_layout: Literal["DIRECT", "NAMED_DIR"] = "DIRECT",
         **kwargs,
     ):
         super().__init__(
@@ -104,6 +108,7 @@ class ContainerTask(TaskTemplate):
         self._inputs = inputs
         self._outputs = outputs
         self.local_logs = local_logs
+        self._file_input_layout = file_input_layout
 
     def _render_command_and_volume_binding(self, cmd: str, **kwargs) -> Tuple[str, Dict[str, Dict[str, str]]]:
         """
@@ -324,12 +329,22 @@ class ContainerTask(TaskTemplate):
             "PROTO": tasks_pb2.DataLoadingConfig.PROTO,
         }
 
-        return tasks_pb2.DataLoadingConfig(
+        config = tasks_pb2.DataLoadingConfig(
             input_path=str(self._input_data_dir) if self._input_data_dir else None,
             output_path=str(self._output_data_dir) if self._output_data_dir else None,
             enabled=True,
             format=literal_to_protobuf.get(self._metadata_format, "JSON"),
         )
+        # NAMED_DIR preserves each input's original basename; DIRECT (default) leaves the
+        # field unset, so existing tasks keep working on older flyteidl2.
+        if self._file_input_layout == "NAMED_DIR":
+            if not hasattr(tasks_pb2.DataLoadingConfig, "NAMED_DIR"):
+                raise ValueError(
+                    "file_input_layout='NAMED_DIR' requires a newer flyteidl2 that includes "
+                    "DataLoadingConfig.file_input_layout; please upgrade flyteidl2."
+                )
+            config.file_input_layout = tasks_pb2.DataLoadingConfig.NAMED_DIR
+        return config
 
     def container_args(self, sctx: SerializationContext) -> List[str]:
         return self._cmd + (self._args or [])

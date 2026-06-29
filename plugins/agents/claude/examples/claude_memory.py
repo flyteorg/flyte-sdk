@@ -13,7 +13,9 @@ Memory is keyed under the active org/project/domain, so run with a configured
 context (``flyte.init_from_config()`` / a backend). ``memory_key`` is a single
 segment (a user/thread id).
 
-Run:  python claude_memory.py
+Run:  flyte run claude_memory.py chat --message "Hi! My name is Alice and I love hiking." --memory_key user-alice
+      flyte run claude_memory.py chat --message "What's my name and what do I like?" --memory_key user-alice
+      (add `--local` after `run` to run locally; the shared `--memory_key` ties the two runs)
 """
 
 from pathlib import Path
@@ -30,7 +32,8 @@ env = flyte.TaskEnvironment(
     resources=flyte.Resources(cpu=1),
     secrets=[flyte.Secret(key="anthropic_api_key", as_env_var="ANTHROPIC_API_KEY")],
     image=(
-        flyte.Image.from_debian_base(name="claude-memory").clone(
+        flyte.Image.from_debian_base(name="claude-memory")
+        .clone(
             addl_layer=PythonWheels(
                 wheel_dir=Path(__file__).parent.parent / "dist",
                 package_name="flyteplugins-agents-core",

@@ -78,7 +78,7 @@ async def run_agent(
     timeline — assistant turns plus per-tool outcomes (via hooks) — is rendered into
     the task report.
 
-    Set ``memory_key`` (a user/thread id) for **cross-run memory**: the transcript is
+    Set ``memory_key`` (a user/thread id) for cross-run memory: the transcript is
     persisted to a durable, keyed ``MemoryStore`` and resumed on a later run with the
     same key (this also covers crash-resume, so it takes precedence over the per-run
     ``durable`` checkpoint).
@@ -135,6 +135,37 @@ def _render_assistant(timeline: ReportTimeline, message: AssistantMessage) -> No
             timeline.row(icon="🛠️", label=block.name, meta="tool", detail=abbrev(block.input, 160))
 
 
+def _compact(n: int) -> str:
+    """Compact a token count, e.g. 5000 -> '5.0k'."""
+    return f"{n / 1000:.1f}k" if n >= 1000 else str(n)
+
+
+def _fmt_usage(usage: dict[str, typing.Any] | None) -> str:
+    """A compact, auditable token breakdown from the result's ``usage`` dict.
+
+    These are the counts that drive ``total_cost_usd`` (the SDK's cost estimate), so
+    surfacing them lets you sanity-check the dollar figure at a glance. Keys are passed
+    through from the Claude Code CLI, so both snake_case and camelCase are accepted.
+    """
+    if not usage:
+        return ""
+
+    def pick(*keys: str) -> int:
+        for key in keys:
+            value = usage.get(key)
+            if isinstance(value, (int, float)) and value:
+                return int(value)
+        return 0
+
+    fields = [
+        ("in", pick("input_tokens", "inputTokens")),
+        ("out", pick("output_tokens", "outputTokens")),
+        ("cache read", pick("cache_read_input_tokens", "cacheReadInputTokens")),
+        ("cache write", pick("cache_creation_input_tokens", "cacheCreationInputTokens")),
+    ]
+    return " · ".join(f"{label} {_compact(n)}" for label, n in fields if n)
+
+
 def _render_result(timeline: ReportTimeline, message: ResultMessage) -> None:
     parts = []
     if message.num_turns:
@@ -143,7 +174,13 @@ def _render_result(timeline: ReportTimeline, message: ResultMessage) -> None:
         parts.append(f"{message.duration_ms} ms")
     if message.total_cost_usd:
         parts.append(f"${message.total_cost_usd:.4f}")
-    timeline.row(icon="✅", label="result", meta=" · ".join(parts), error="error" if message.is_error else None)
+    timeline.row(
+        icon="✅",
+        label="result",
+        meta=" · ".join(parts),
+        detail=_fmt_usage(message.usage),
+        error="error" if message.is_error else None,
+    )
 
 
 def _stringify(value: typing.Any) -> str:
@@ -156,9 +193,9 @@ def _stringify(value: typing.Any) -> str:
 
 
 def _install_tool_hooks(opts: ClaudeAgentOptions, timeline: ReportTimeline) -> None:
-    """Record each tool's *outcome* into the report via PostToolUse hooks.
+    """Record each tool's outcome into the report via PostToolUse hooks.
 
-    The streamed assistant turns already show the tool *request* (``ToolUseBlock``);
+    The streamed assistant turns already show the tool request (``ToolUseBlock``);
     these hooks add the result/error the message stream doesn't surface. They observe
     only — each returns an empty decision — and are merged into any user-provided
     ``opts.hooks`` rather than replacing them.

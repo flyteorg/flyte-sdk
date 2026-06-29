@@ -52,6 +52,68 @@ def test_run_arguments_max_action_concurrency_from_dict():
     assert RunArguments.from_dict({}).max_action_concurrency is None
 
 
+def test_run_command_has_no_recover_from_option():
+    """--recover-from is omitted until the backend ships (see TODO in _run.py)."""
+    option_names = {decl for p in run.params for decl in p.opts}
+    assert "--recover-from" not in option_names
+
+
+def test_run_command_has_queue_option():
+    option_names = {decl for p in run.params for decl in p.opts}
+    assert "--queue" in option_names
+
+
+def test_run_arguments_queue_from_dict():
+    from flyte.cli._run import RunArguments
+
+    run_args = RunArguments.from_dict({"queue": "gpu-queue"})
+    assert run_args.queue == "gpu-queue"
+    assert RunArguments.from_dict({}).queue is None
+
+
+def _patch_with_runcontext(monkeypatch, captured):
+    """Replace flyte.with_runcontext with a stub that records kwargs and returns a no-op runner."""
+
+    class _FakeResult:
+        url = "local://fake"
+
+        def outputs(self):
+            return None
+
+    class _FakeRun:
+        async def aio(self, *args, **kwargs):
+            return _FakeResult()
+
+    class _FakeRunner:
+        run = _FakeRun()
+
+    def _fake_with_runcontext(*args, **kwargs):
+        captured.update(kwargs)
+        return _FakeRunner()
+
+    monkeypatch.setattr(flyte, "with_runcontext", _fake_with_runcontext)
+
+
+def test_run_queue_passed_to_runcontext(runner, monkeypatch):
+    captured = {}
+    _patch_with_runcontext(monkeypatch, captured)
+
+    cmd = ["--queue", "gpu-queue", "--local", str(HELLO_WORLD_PY), "say_hello", "--name", "World"]
+    result = runner.invoke(run, cmd)
+    assert result.exit_code == 0, result.output
+    assert captured.get("queue") == "gpu-queue"
+
+
+def test_run_queue_defaults_to_none_in_runcontext(runner, monkeypatch):
+    captured = {}
+    _patch_with_runcontext(monkeypatch, captured)
+
+    cmd = ["--local", str(HELLO_WORLD_PY), "say_hello", "--name", "World"]
+    result = runner.invoke(run, cmd)
+    assert result.exit_code == 0, result.output
+    assert captured.get("queue") is None
+
+
 def test_run_max_action_concurrency_rejects_negative(runner):
     result = runner.invoke(run, ["--max-action-concurrency", "-1", str(HELLO_WORLD_PY), "say_hello"])
     assert result.exit_code != 0
@@ -83,6 +145,57 @@ def test_run_hello_world(runner):
             return
         else:
             raise ve
+
+
+def test_run_command_has_rerun_from_option():
+    """--rerun-from is a visible option on `flyte run` (not hidden — rerun works today)."""
+    opt_names = {decl for p in run.params for decl in p.opts}
+    assert "--rerun-from" in opt_names
+    rerun_opt = next(p for p in run.params if "--rerun-from" in p.opts)
+    assert rerun_opt.hidden is False
+
+
+def test_run_rerun_from_routes_to_rerun(runner):
+    """`flyte run <file> <task> --rerun-from r` routes to runner.rerun(r, task_template=task).
+
+    The required `name` input is NOT demanded — inputs come from the prior run.
+    """
+    from unittest import mock
+
+    from mock.mock import AsyncMock
+
+    runner_obj = mock.MagicMock()
+    runner_obj.rerun.aio = AsyncMock(return_value=mock.MagicMock())
+    runner_obj.run.aio = AsyncMock()
+
+    with mock.patch("flyte.with_runcontext", return_value=runner_obj):
+        cmd = ["--rerun-from", "r1", "--project", "p", "--domain", "d", str(HELLO_WORLD_PY), "say_hello"]
+        try:
+            result = runner.invoke(run, cmd)
+        except ValueError as ve:
+            if "I/O operation on closed file" in str(ve):
+                return
+            raise
+
+    assert result.exit_code == 0, result.output
+    runner_obj.rerun.aio.assert_awaited_once()
+    args, kwargs = runner_obj.rerun.aio.call_args
+    assert args[0] == "r1"
+    assert "task_template" in kwargs  # this local say_hello task is passed as the substitute code
+    runner_obj.run.aio.assert_not_awaited()
+
+
+def test_run_rerun_from_rejects_local(runner):
+    """--rerun-from cannot be combined with --local (rerun is remote-only)."""
+    cmd = ["--local", "--rerun-from", "r1", str(HELLO_WORLD_PY), "say_hello"]
+    try:
+        result = runner.invoke(run, cmd)
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise
+    assert result.exit_code != 0
+    assert "requires remote" in result.output.lower()
 
 
 @pytest.mark.integration
@@ -380,6 +493,360 @@ def test_dir_param_type_returns_dir_with_local_path_in_local_mode():
         # Should return a Dir object with the local path
         assert isinstance(result, Dir)
         assert result.path == tmp_dir
+
+
+def test_json_param_type_converts_list_of_file_paths_to_file_objects():
+    """list[File] CLI JSON should convert string paths to File objects like FileParamType does."""
+    import json
+    from unittest.mock import MagicMock
+
+    from flyte.cli._params import JsonParamType
+    from flyte.cli._run import RunArguments
+    from flyte.io import File
+
+    run_args = RunArguments(local=True)
+    mock_cli_obj = MagicMock()
+    mock_cli_obj.run_args = run_args
+
+    ctx = MagicMock()
+    ctx.obj = mock_cli_obj
+
+    param_type = JsonParamType(list[File])
+    value = json.dumps(["s3://example-path", "s3://example-path2"])
+    result = param_type.convert(value, None, ctx)
+
+    assert isinstance(result, list)
+    assert len(result) == 2
+    assert all(isinstance(f, File) for f in result)
+    assert result[0].path == "s3://example-path"
+    assert result[1].path == "s3://example-path2"
+
+
+def test_json_param_type_converts_dataclass_with_file_and_dir_paths():
+    """Dataclass CLI JSON should convert string File/Dir paths to typed objects."""
+    import json
+    from dataclasses import dataclass
+    from typing import Optional
+    from unittest.mock import MagicMock
+
+    from flyte.cli._params import JsonParamType
+    from flyte.cli._run import RunArguments
+    from flyte.io import Dir, File
+
+    @dataclass
+    class FlyteTypes:
+        flytefile: Optional[File] = None
+        flytedir: Optional[Dir] = None
+
+    run_args = RunArguments(local=True)
+    mock_cli_obj = MagicMock()
+    mock_cli_obj.run_args = run_args
+
+    ctx = MagicMock()
+    ctx.obj = mock_cli_obj
+
+    param_type = JsonParamType(FlyteTypes)
+    result = param_type.convert(
+        json.dumps({"flytefile": "s3://example-path", "flytedir": "s3://example-dir"}),
+        None,
+        ctx,
+    )
+
+    assert isinstance(result, FlyteTypes)
+    assert isinstance(result.flytefile, File)
+    assert isinstance(result.flytedir, Dir)
+    assert result.flytefile.path == "s3://example-path"
+    assert result.flytedir.path == "s3://example-dir"
+
+
+def test_json_param_type_converts_nested_dataclass_with_file_paths():
+    """Nested dataclass CLI JSON should convert nested string File paths."""
+    import json
+    from dataclasses import dataclass
+    from typing import List, Optional
+    from unittest.mock import MagicMock
+
+    from flyte.cli._params import JsonParamType
+    from flyte.cli._run import RunArguments
+    from flyte.io import File
+
+    @dataclass
+    class Inner:
+        flytefile: File
+
+    @dataclass
+    class Outer:
+        inner: Inner
+        list_inner: Optional[List[Inner]] = None
+
+    run_args = RunArguments(local=True)
+    mock_cli_obj = MagicMock()
+    mock_cli_obj.run_args = run_args
+
+    ctx = MagicMock()
+    ctx.obj = mock_cli_obj
+
+    param_type = JsonParamType(Outer)
+    result = param_type.convert(
+        json.dumps(
+            {
+                "inner": {"flytefile": "s3://inner-path"},
+                "list_inner": [{"flytefile": "s3://list-path-1"}, {"flytefile": "s3://list-path-2"}],
+            }
+        ),
+        None,
+        ctx,
+    )
+
+    assert isinstance(result.inner.flytefile, File)
+    assert result.inner.flytefile.path == "s3://inner-path"
+    assert len(result.list_inner) == 2
+    assert all(isinstance(item.flytefile, File) for item in result.list_inner)
+    assert result.list_inner[0].flytefile.path == "s3://list-path-1"
+
+
+def test_json_param_type_accepts_dataclass_file_dict_format():
+    """Dataclass File/Dir fields still accept the structured dict JSON format."""
+    import json
+    from dataclasses import dataclass
+    from unittest.mock import MagicMock
+
+    from flyte.cli._params import JsonParamType
+    from flyte.cli._run import RunArguments
+    from flyte.io import Dir, File
+
+    @dataclass
+    class FlyteTypes:
+        flytefile: File
+        flytedir: Dir
+
+    run_args = RunArguments(local=True)
+    mock_cli_obj = MagicMock()
+    mock_cli_obj.run_args = run_args
+
+    ctx = MagicMock()
+    ctx.obj = mock_cli_obj
+
+    param_type = JsonParamType(FlyteTypes)
+    result = param_type.convert(
+        json.dumps({"flytefile": {"path": "s3://example-path"}, "flytedir": {"path": "s3://example-dir"}}),
+        None,
+        ctx,
+    )
+
+    assert isinstance(result.flytefile, File)
+    assert isinstance(result.flytedir, Dir)
+    assert result.flytefile.path == "s3://example-path"
+    assert result.flytedir.path == "s3://example-dir"
+
+
+pd = None
+try:
+    import pandas as pd
+except ImportError:
+    pass
+
+
+@pytest.fixture
+def temp_parquet_file_for_json_param_type():
+    """Create a temporary parquet file for JsonParamType DataFrame tests."""
+    if pd is None:
+        pytest.skip("pandas is not installed")
+
+    df = pd.DataFrame({"name": ["Alice"], "age": [25]})
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".parquet") as f:
+        df.to_parquet(f.name)
+        yield f.name
+    Path(f.name).unlink(missing_ok=True)
+
+
+@pytest.mark.skipif(pd is None, reason="pandas is not installed")
+def test_json_param_type_converts_list_of_dataframe_paths_to_dataframe_objects(
+    temp_parquet_file_for_json_param_type,
+):
+    """list[DataFrame] CLI JSON should convert string paths to DataFrame objects."""
+    import json
+    from unittest.mock import MagicMock
+
+    from flyte.cli._params import JsonParamType
+    from flyte.cli._run import RunArguments
+    from flyte.io import DataFrame
+
+    run_args = RunArguments(local=True)
+    mock_cli_obj = MagicMock()
+    mock_cli_obj.run_args = run_args
+
+    ctx = MagicMock()
+    ctx.obj = mock_cli_obj
+
+    param_type = JsonParamType(list[DataFrame])
+    result = param_type.convert(
+        json.dumps(["s3://example-path/data.parquet", temp_parquet_file_for_json_param_type]),
+        None,
+        ctx,
+    )
+
+    assert isinstance(result, list)
+    assert len(result) == 2
+    assert all(isinstance(df, DataFrame) for df in result)
+    assert result[0].uri == "s3://example-path/data.parquet"
+    assert result[1].uri == temp_parquet_file_for_json_param_type
+
+
+@pytest.mark.skipif(pd is None, reason="pandas is not installed")
+def test_json_param_type_converts_dataclass_with_dataframe_paths():
+    """Dataclass CLI JSON should convert string DataFrame paths to typed objects."""
+    import json
+    from dataclasses import dataclass
+    from typing import Optional
+    from unittest.mock import MagicMock
+
+    from flyte.cli._params import JsonParamType
+    from flyte.cli._run import RunArguments
+    from flyte.io import DataFrame
+
+    @dataclass
+    class DataFrameInput:
+        dataframe: Optional[DataFrame] = None
+
+    run_args = RunArguments(local=True)
+    mock_cli_obj = MagicMock()
+    mock_cli_obj.run_args = run_args
+
+    ctx = MagicMock()
+    ctx.obj = mock_cli_obj
+
+    param_type = JsonParamType(DataFrameInput)
+    result = param_type.convert(
+        json.dumps({"dataframe": "s3://example-path/data.parquet"}),
+        None,
+        ctx,
+    )
+
+    assert isinstance(result, DataFrameInput)
+    assert isinstance(result.dataframe, DataFrame)
+    assert result.dataframe.uri == "s3://example-path/data.parquet"
+
+
+@pytest.mark.skipif(pd is None, reason="pandas is not installed")
+def test_json_param_type_converts_nested_dataclass_with_dataframe_paths(
+    temp_parquet_file_for_json_param_type,
+):
+    """Nested dataclass CLI JSON should convert nested string DataFrame paths."""
+    import json
+    from dataclasses import dataclass
+    from typing import List
+    from unittest.mock import MagicMock
+
+    from flyte.cli._params import JsonParamType
+    from flyte.cli._run import RunArguments
+    from flyte.io import DataFrame
+
+    @dataclass
+    class Inner:
+        dataframe: DataFrame
+
+    @dataclass
+    class Outer:
+        inner: Inner
+        list_inner: List[Inner]
+
+    run_args = RunArguments(local=True)
+    mock_cli_obj = MagicMock()
+    mock_cli_obj.run_args = run_args
+
+    ctx = MagicMock()
+    ctx.obj = mock_cli_obj
+
+    param_type = JsonParamType(Outer)
+    result = param_type.convert(
+        json.dumps(
+            {
+                "inner": {"dataframe": temp_parquet_file_for_json_param_type},
+                "list_inner": [
+                    {"dataframe": "s3://example-path/data-1.parquet"},
+                    {"dataframe": "s3://example-path/data-2.parquet"},
+                ],
+            }
+        ),
+        None,
+        ctx,
+    )
+
+    assert isinstance(result.inner.dataframe, DataFrame)
+    assert result.inner.dataframe.uri == temp_parquet_file_for_json_param_type
+    assert len(result.list_inner) == 2
+    assert all(isinstance(item.dataframe, DataFrame) for item in result.list_inner)
+    assert result.list_inner[0].dataframe.uri == "s3://example-path/data-1.parquet"
+
+
+@pytest.mark.skipif(pd is None, reason="pandas is not installed")
+def test_json_param_type_accepts_dataclass_dataframe_dict_format(temp_parquet_file_for_json_param_type):
+    """Dataclass DataFrame fields still accept the structured dict JSON format."""
+    import json
+    from dataclasses import dataclass
+    from unittest.mock import MagicMock
+
+    from flyte.cli._params import JsonParamType
+    from flyte.cli._run import RunArguments
+    from flyte.io import DataFrame
+
+    @dataclass
+    class DataFrameInput:
+        dataframe: DataFrame
+
+    run_args = RunArguments(local=True)
+    mock_cli_obj = MagicMock()
+    mock_cli_obj.run_args = run_args
+
+    ctx = MagicMock()
+    ctx.obj = mock_cli_obj
+
+    param_type = JsonParamType(DataFrameInput)
+    result = param_type.convert(
+        json.dumps({"dataframe": {"uri": temp_parquet_file_for_json_param_type, "format": "parquet"}}),
+        None,
+        ctx,
+    )
+
+    assert isinstance(result.dataframe, DataFrame)
+    assert result.dataframe.uri == temp_parquet_file_for_json_param_type
+    assert result.dataframe.format == "parquet"
+
+
+@pytest.mark.skipif(pd is None, reason="pandas is not installed")
+def test_json_param_type_converts_dict_of_dataframe_paths(temp_parquet_file_for_json_param_type):
+    """dict[str, DataFrame] CLI JSON should convert string paths to DataFrame objects."""
+    import json
+    from unittest.mock import MagicMock
+
+    from flyte.cli._params import JsonParamType
+    from flyte.cli._run import RunArguments
+    from flyte.io import DataFrame
+
+    run_args = RunArguments(local=True)
+    mock_cli_obj = MagicMock()
+    mock_cli_obj.run_args = run_args
+
+    ctx = MagicMock()
+    ctx.obj = mock_cli_obj
+
+    param_type = JsonParamType(dict[str, DataFrame])
+    result = param_type.convert(
+        json.dumps(
+            {
+                "remote": "s3://example-path/data.parquet",
+                "local": temp_parquet_file_for_json_param_type,
+            }
+        ),
+        None,
+        ctx,
+    )
+
+    assert isinstance(result["remote"], DataFrame)
+    assert isinstance(result["local"], DataFrame)
+    assert result["remote"].uri == "s3://example-path/data.parquet"
+    assert result["local"].uri == temp_parquet_file_for_json_param_type
 
 
 # ============================================================================

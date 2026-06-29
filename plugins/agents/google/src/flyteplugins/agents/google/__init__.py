@@ -8,6 +8,8 @@ conversation memory.
 
 - :func:`function_tool` — turn an ``@env.task`` into a Google ADK tool.
 - :func:`run_agent` — run the ADK agent loop inside your task and return the answer.
+- :func:`durable_model` — wrap a model so its turns are durable, for hand-built agent
+  trees (e.g. sub-agent transfers) passed to ``run_agent`` via ``agent=``.
 
 Set the model provider's API key in the environment (e.g. ``GOOGLE_API_KEY`` for
 Gemini) — wire it as a Flyte secret.
@@ -15,7 +17,7 @@ Gemini) — wire it as a Flyte secret.
 
 from flyteplugins.agents.core import function_tool
 
-from ._durable import FlyteLlm
+from ._durable import FlyteLlm, durable_model
 from ._run import run_agent
 
-__all__ = ["FlyteLlm", "function_tool", "run_agent"]
+__all__ = ["FlyteLlm", "durable_model", "function_tool", "run_agent"]

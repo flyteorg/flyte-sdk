@@ -4,6 +4,7 @@ invoked within a context tree.
 """
 
 import pathlib
+import sys
 import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
@@ -26,7 +27,11 @@ from .convert import (
     convert_from_native_to_outputs,
     convert_inputs_to_native,
 )
-from .io import load_inputs, upload_error, upload_outputs
+from .io import _is_clustered_worker, load_inputs, upload_error, upload_outputs
+
+# Exit code a clustered/jobset worker uses to fail its pod so the JobSet controller triggers a
+# whole-set restart. The JobSet keys off the pod exit code, not error.pb.
+_CLUSTERED_FAILURE_EXIT_CODE = 1
 
 
 def replace_task_cli(args: List[str], inputs: Inputs, tmp_path: pathlib.Path, action: ActionID) -> List[str]:
@@ -238,6 +243,11 @@ async def extract_download_run_upload(
     if err is not None:
         path = await upload_error(err.err, output_path, recoverable=err.recoverable)
         logger.error(f"Task {task.name} failed with error: {err}. Uploaded error to {path}")
+        # A clustered/jobset worker must fail the pod (non-zero exit) so torchrun -> Job -> JobSet
+        # detects the failure and triggers a whole-set restart. The JobSet keys off the pod exit
+        # code, not error.pb. Normal tasks keep the exit-0 contract (the backend reads error.pb).
+        if _is_clustered_worker():
+            sys.exit(_CLUSTERED_FAILURE_EXIT_CODE)
         return
     if outputs is None:
         logger.info(f"Task {task.name} completed successfully, no outputs")

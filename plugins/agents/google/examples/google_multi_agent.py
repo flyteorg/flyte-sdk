@@ -6,16 +6,17 @@ own durable, observable, cached Flyte action:
 
     plan --> research (parallel, one per subtopic) --> synthesize
 
-- ``plan`` runs a *planner* agent that breaks the topic into subtopics.
-- ``research`` runs a *researcher* agent per subtopic, **fanned out in parallel**
+- ``plan`` runs a planner agent that breaks the topic into subtopics.
+- ``research`` runs a researcher agent per subtopic, fanned out in parallel
   (``asyncio.gather``); each is a separate durable child action with its own
   ``search_web`` tool calls and report.
-- ``synthesize`` runs an *editor* agent that combines the findings.
+- ``synthesize`` runs an editor agent that combines the findings.
 
 Every agent is a first-class Flyte node — independently retried, cached,
 resource-sized and observable — and the fan-out is real distributed parallelism.
 
-Run:  python google_multi_agent.py
+Run:  flyte run google_multi_agent.py research_pipeline --topic "The state of electric-vehicle batteries in 2025"
+      (add `--local` right after `run` to execute locally instead of on the backend)
 """
 
 import asyncio
@@ -31,7 +32,8 @@ env = flyte.TaskEnvironment(
     resources=flyte.Resources(cpu=1),
     secrets=[flyte.Secret(key="google_api_key", as_env_var="GOOGLE_API_KEY")],
     image=(
-        flyte.Image.from_debian_base(name="google-research").clone(
+        flyte.Image.from_debian_base(name="google-research")
+        .clone(
             addl_layer=PythonWheels(
                 wheel_dir=Path(__file__).parent.parent / "dist",
                 package_name="flyteplugins-agents-core",
@@ -67,13 +69,13 @@ async def search_web(query: str) -> str:
     return "No strong match; rely on general knowledge and state assumptions."
 
 
-@env.task(retries=3)
+@env.task(cache="auto", retries=3)
 async def plan(topic: str) -> list[str]:
     """Planner agent: decompose a topic into focused research subtopics."""
     text = await run_agent(
         f"Break the topic '{topic}' into exactly 3 focused, distinct research subtopics.",
         instructions="Reply with ONLY a comma-separated list of 3 short subtopics. No numbering, no prose.",
-        model="gemini-2.0-flash",
+        model="gemini-3.1-flash-lite",
     )
     raw = [part.strip(" -•0123456789.").strip() for chunk in text.splitlines() for part in chunk.split(",")]
     subtopics = [s for s in raw if s]
@@ -86,23 +88,28 @@ async def research(subtopic: str) -> str:
     return await run_agent(
         f"Research this subtopic and summarize the key findings as 3 concise bullet points:\n{subtopic}",
         tools=[search_web],
-        instructions="You are a rigorous research assistant. Use search_web before answering. Be concise.",
-        model="gemini-2.0-flash",
+        instructions=(
+            "You are a rigorous research assistant. Call search_web exactly once for this "
+            "subtopic, then STOP searching and write exactly 3 concise bullet points from the "
+            "result (rely on general knowledge if the search was unhelpful). Do not search again."
+        ),
+        model="gemini-3.1-flash-lite",
+        max_llm_calls=6,  # hard backstop so a degenerate search can never run away
     )
 
 
-@env.task(report=True, retries=3)
+@env.task(cache="auto", retries=3)
 async def synthesize(topic: str, findings: list[str]) -> str:
     """Editor agent: synthesize the per-subtopic findings into a briefing."""
     notes = "\n\n".join(f"- {f}" for f in findings)
     return await run_agent(
         f"Topic: {topic}\n\nResearch notes:\n{notes}\n\nWrite a tight one-paragraph executive briefing.",
         instructions="You are a sharp editor. Synthesize the notes faithfully; do not invent facts.",
-        model="gemini-2.0-flash",
+        model="gemini-3.1-flash-lite",
     )
 
 
-@env.task(report=True, retries=3)
+@env.task(retries=3)
 async def research_pipeline(topic: str) -> str:
     """Orchestrate the agent team: plan → parallel research → synthesize."""
     subtopics = await plan(topic)

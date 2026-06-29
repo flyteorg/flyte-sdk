@@ -144,22 +144,23 @@ class Secret(ToJSONMixin):
         cfg = get_init_config()
         project, domain = _resolve_scope(cfg, cluster_pool, op="listing")
         svc = await _secrets_service_for(cluster_pool, cfg.org)
-        per_cluster_tokens = None
+        # The secret service paginates with a single continuation token (the underlying k8s list
+        # "continue" cursor): each response carries the cursor for the next page in `token`, and we
+        # pass it back until it comes back empty. (`per_cluster_tokens` is unused by the backend.)
+        token = None
         while True:
             request = payload_pb2.ListSecretsRequest(
                 organization=cfg.org,
                 project=project,
                 domain=domain,
-                per_cluster_tokens=per_cluster_tokens,
+                token=token,
                 limit=limit,
             )
             resp = await svc.list_secrets(request=request)  # type: ignore
-            per_cluster_tokens = resp.per_cluster_tokens
-            round_items = [v for _, v in per_cluster_tokens.items() if v]
-            has_next = any(round_items)
             for r in resp.secrets:
                 yield cls(r)
-            if not has_next:
+            token = resp.token
+            if not token:
                 break
 
     @syncify

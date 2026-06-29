@@ -37,7 +37,7 @@ def _content_text(content: typing.Any) -> str:
 
 def _render(timeline: ReportTimeline, event: typing.Any) -> None:
     content = getattr(event, "content", None)
-    for part in (getattr(content, "parts", None) or []):
+    for part in getattr(content, "parts", None) or []:
         call = getattr(part, "function_call", None)
         resp = getattr(part, "function_response", None)
         text = getattr(part, "text", None)
@@ -59,6 +59,50 @@ def _render(timeline: ReportTimeline, event: typing.Any) -> None:
             timeline.row(icon="💬", label="assistant", detail=abbrev(text, 200))
 
 
+def _run_config(max_llm_calls: int | None) -> typing.Any:
+    """Build an ADK ``RunConfig`` that caps model calls; ``None`` → ADK's default (500)."""
+    if max_llm_calls is None:
+        return None
+    from google.adk.agents.run_config import RunConfig
+
+    return RunConfig(max_llm_calls=max_llm_calls)
+
+
+class _UsageSink:
+    """Tally model-turn count + token usage across ADK's event stream.
+
+    Each model-response ``Event`` carries genai ``usage_metadata`` (tool-result events
+    don't), so events with usage = model turns and we sum their token counts. Gemini's
+    ``cached_content_token_count`` is surfaced as ``cached`` (its context cache, like
+    Claude's cache-read tokens), ``thoughts_token_count`` as ``thinking`` for those models.
+    """
+
+    def __init__(self) -> None:
+        self.turns = self.prompt = self.completion = self.total = self.cached = self.thinking = 0
+
+    def add(self, event: typing.Any) -> None:
+        um = getattr(event, "usage_metadata", None)
+        if um is None:
+            return
+        self.turns += 1
+        self.prompt += getattr(um, "prompt_token_count", 0) or 0
+        self.completion += getattr(um, "candidates_token_count", 0) or 0
+        self.total += getattr(um, "total_token_count", 0) or 0
+        self.cached += getattr(um, "cached_content_token_count", 0) or 0
+        self.thinking += getattr(um, "thoughts_token_count", 0) or 0
+
+    def detail(self) -> str:
+        out = (
+            f"{self.turns} model turns · {self.prompt} prompt · "
+            f"{self.completion} completion · {self.total} total tokens"
+        )
+        if self.thinking:
+            out += f" · {self.thinking} thinking"
+        if self.cached:
+            out += f" · {self.cached} cached"
+        return out
+
+
 async def run_agent(
     input: str,
     *,
@@ -66,8 +110,8 @@ async def run_agent(
     tools: typing.Sequence[typing.Any] = (),
     model: str = "gemini-2.0-flash",
     instructions: str | None = None,
-    name: str = "flyte_agent",
-    max_turns: int = 10,
+    name: str = "assistant",
+    max_llm_calls: int | None = None,
     durable: bool = True,
     observability: bool = True,
     memory_key: str | None = None,
@@ -87,8 +131,14 @@ async def run_agent(
         tools: ``function_tool``-wrapped tools or bare ``@env.task`` templates.
         model: Model name for the built agent (e.g. ``gemini-2.0-flash``).
         instructions: System instruction for the built agent.
-        name: Agent name.
-        max_turns: Accepted for interface parity; ADK manages loop termination.
+        name: Agent name (a valid Python identifier). ADK injects this into the system
+            prompt as the model's "internal name", so it can surface in replies — keep it
+            natural (defaults to ``"assistant"``; avoid a brand-y/internal label).
+        max_llm_calls: Cap on model (LLM) calls before ADK raises
+            ``LlmCallsLimitExceededError`` (its runaway-loop guard, via
+            ``RunConfig.max_llm_calls``); ``None`` uses ADK's default of 500. Counts LLM
+            calls, not conversational turns (a tool round is ~2 calls). For a wall-clock
+            bound on the whole run, set ``timeout=`` on the enclosing ``@env.task``.
         durable: Wrap the model so each turn is recorded/replayed via ``flyte.trace``.
         observability: Render the run timeline into the Flyte task report.
         memory_key: Stable id (user/thread) for cross-run memory. When set, the session
@@ -121,14 +171,20 @@ async def run_agent(
 
     runner = Runner(agent=agent, app_name=app_name, session_service=session_service)
     timeline = ReportTimeline() if observability else None
+    usage = _UsageSink() if observability else None
     if timeline is not None:
         timeline.heading("Google ADK agent")
 
     final = ""
     message = types.Content(role="user", parts=[types.Part.from_text(text=input)])
-    async for event in runner.run_async(user_id=user_id, session_id=session_id, new_message=message):
+    run_config = _run_config(max_llm_calls)
+    async for event in runner.run_async(
+        user_id=user_id, session_id=session_id, new_message=message, run_config=run_config
+    ):
         if timeline is not None:
             _render(timeline, event)
+        if usage is not None:
+            usage.add(event)
         if event.is_final_response() and event.content is not None:
             final = _content_text(event.content) or final
 
@@ -136,6 +192,8 @@ async def run_agent(
         latest = await session_service.get_session(app_name=app_name, user_id=user_id, session_id=session_id)
         await save_memory(store, getattr(latest, "events", session.events))
 
+    if timeline is not None and usage is not None and usage.turns:
+        timeline.row(icon="📊", label="usage", meta="model", detail=usage.detail())
     if observability:
         await flush_report()
     return final

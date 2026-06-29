@@ -11,7 +11,8 @@ Flyte is the runtime underneath:
 
 Set a Gemini API key (``GOOGLE_API_KEY``) as a Flyte secret.
 
-Run:  python google_durable_agent.py
+Run:  flyte run google_durable_agent.py city_agent --question "What's the weather and population of Paris?"
+      (add `--local` right after `run` to execute locally instead of on the backend)
 """
 
 from pathlib import Path
@@ -26,7 +27,8 @@ env = flyte.TaskEnvironment(
     resources=flyte.Resources(cpu=1),
     secrets=[flyte.Secret(key="google_api_key", as_env_var="GOOGLE_API_KEY")],
     image=(
-        flyte.Image.from_debian_base(name="google-durable-agent").clone(
+        flyte.Image.from_debian_base(name="google-durable-agent")
+        .clone(
             addl_layer=PythonWheels(
                 wheel_dir=Path(__file__).parent.parent / "dist",
                 package_name="flyteplugins-agents-core",
@@ -67,7 +69,7 @@ async def city_agent(question: str) -> str:
         question,
         tools=[get_weather, get_population],
         instructions="You are a concise city-facts assistant. Use the tools to answer.",
-        model="gemini-2.0-flash",
+        model="gemini-3.1-flash-lite",
     )
 
 

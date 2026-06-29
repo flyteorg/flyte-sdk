@@ -1,8 +1,8 @@
 """Cross-run agent memory on Flyte — a Mistral agent remembers across separate runs.
 
 ``run_agent(..., memory_key=...)`` persists the thread's server-side
-``conversation_id`` in a durable, keyed ``MemoryStore``. Two runs with the *same*
-``memory_key`` continue the **same** Mistral conversation — across workers and
+``conversation_id`` in a durable, keyed ``MemoryStore``. Two runs with the same
+``memory_key`` continue the same Mistral conversation — across workers and
 restarts (Mistral keeps the transcript server-side; Flyte durably remembers which
 conversation belongs to the thread).
 
@@ -13,7 +13,9 @@ Memory is keyed under the active org/project/domain, so run with a configured
 context (``flyte.init_from_config()`` / a backend). ``memory_key`` is a single
 segment (a user/thread id).
 
-Run:  python mistral_memory.py
+Run:  flyte run mistral_memory.py chat --message "Hi! My name is Alice and I love hiking." --memory_key user-alice
+      flyte run mistral_memory.py chat --message "What's my name and what do I like?" --memory_key user-alice
+      (add `--local` after `run` to run locally; the shared `--memory_key` ties the two runs)
 """
 
 from pathlib import Path
@@ -28,7 +30,8 @@ env = flyte.TaskEnvironment(
     resources=flyte.Resources(cpu=1),
     secrets=[flyte.Secret(key="mistral_api_key", as_env_var="MISTRAL_API_KEY")],
     image=(
-        flyte.Image.from_debian_base(name="mistral-memory").clone(
+        flyte.Image.from_debian_base(name="mistral-memory")
+        .clone(
             addl_layer=PythonWheels(
                 wheel_dir=Path(__file__).parent.parent / "dist",
                 package_name="flyteplugins-agents-core",
@@ -69,7 +72,7 @@ if __name__ == "__main__":
     r1.wait()
     print(f"run 1: {r1.outputs()}")
 
-    # Run 2 — a SEPARATE run with the same memory_key: the agent recalls it.
+    # Run 2 — a separate run with the same memory_key: the agent recalls it.
     r2 = flyte.run(chat, message="What's my name and what do I like?", memory_key="user-alice")
     print(f"View at: {r2.url}")
     r2.wait()

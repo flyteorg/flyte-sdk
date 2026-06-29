@@ -14,7 +14,8 @@ and Flyte is the runtime underneath.
 - The agent timeline (turns, tool calls, token usage) is rendered into the task
   report because the task is created with ``report=True``.
 
-Run:  python openai_durable_agent.py
+Run:  flyte run openai_durable_agent.py city_agent --question "What's the weather and population of Paris?"
+      (add `--local` right after `run` to execute locally instead of on the backend)
 """
 
 from pathlib import Path
@@ -29,9 +30,10 @@ from flyteplugins.agents.openai import function_tool, run_agent
 env = flyte.TaskEnvironment(
     "openai-durable-agent",
     resources=flyte.Resources(cpu=1),
-    secrets=[flyte.Secret(key="sam_openai_api_key", as_env_var="OPENAI_API_KEY")],
+    secrets=[flyte.Secret(key="openai_api_key", as_env_var="OPENAI_API_KEY")],
     image=(
-        flyte.Image.from_debian_base(name="openai-durable-agent").clone(
+        flyte.Image.from_debian_base(name="openai-durable-agent")
+        .clone(
             addl_layer=PythonWheels(
                 wheel_dir=Path(__file__).parent.parent / "dist",
                 package_name="flyteplugins-agents-core",

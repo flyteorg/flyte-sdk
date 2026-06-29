@@ -5,10 +5,10 @@ it durably on Flyte. The adapter provides three things, each independently
 usable:
 
 - :func:`function_tool` — turn a Flyte ``@env.task`` into an OpenAI Agents tool
-  that executes as a **durable child action** (own container/GPU, retries,
+  that executes as a durable child action (own container/GPU, retries,
   caching) when the agent calls it.
 - :class:`FlyteModelProvider` — a ``ModelProvider`` wrapper that records each
-  model turn through ``flyte.trace`` so a crashed/retried run **replays**
+  model turn through ``flyte.trace`` so a crashed/retried run replays
   completed turns instead of re-calling (and re-billing) the LLM.
 - :class:`FlyteTracingProcessor` — forwards the OpenAI Agents trace (turns, tool
   calls, handoffs, token usage) into the Flyte task report for observability.

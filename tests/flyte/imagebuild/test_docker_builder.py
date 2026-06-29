@@ -8,7 +8,7 @@ import pytest
 import pytest_asyncio
 
 from flyte import Secret
-from flyte._image import AptPackages, Commands, Image, PipPackages, PoetryProject, Requirements, UVProject
+from flyte._image import AptPackages, Commands, Image, PipPackages, PoetryProject, PythonWheels, Requirements, UVProject
 from flyte._internal.imagebuild.docker_builder import (
     DOCKER_FILE_UV_BASE_TEMPLATE,
     CopyConfig,
@@ -16,6 +16,7 @@ from flyte._internal.imagebuild.docker_builder import (
     DockerImageBuilder,
     PipAndRequirementsHandler,
     PoetryProjectHandler,
+    PythonWheelHandler,
     UVProjectHandler,
     _get_secret_commands,
 )
@@ -175,6 +176,30 @@ async def test_pip_package_handling(monkeypatch):
         )
         assert "--mount=type=secret" in docker_update
         assert "uv pip install --python $UV_PYTHON pkg_a pkg_b" in docker_update
+
+
+@pytest.mark.asyncio
+async def test_python_wheel_handler_forces_local_wheel_last():
+    """The local wheel must be force-installed (--no-index --reinstall) *after* the dependency
+    resolution step. If the order is reversed, a full resolve can discard the local wheel in favor
+    of a stable PyPI release (e.g. when one of the wheel's deps can't be satisfied, uv backtracks to
+    the published version), silently undoing the local install."""
+    with tempfile.TemporaryDirectory() as wheel_dir, tempfile.TemporaryDirectory() as tmp_context:
+        # The handler copies wheel_dir into the build context, so it needs at least one file.
+        (Path(wheel_dir) / "flyte-2.5.2.dev1-py3-none-any.whl").write_text("")
+        context_path = Path(tmp_context)
+
+        layer = PythonWheels(wheel_dir=Path(wheel_dir), package_name="flyte")
+        docker_update = await PythonWheelHandler.handle(layer=layer, context_path=context_path, dockerfile="")
+
+        # Both install steps target the local wheel via --find-links /dist.
+        dep_step = "uv pip install --python $UV_PYTHON --find-links /dist flyte"
+        force_step = "uv pip install --python $UV_PYTHON --find-links /dist --no-deps --no-index --reinstall flyte"
+        assert dep_step in docker_update
+        assert force_step in docker_update
+
+        # The force-install step must come last so nothing re-resolves the package afterwards.
+        assert docker_update.index(force_step) > docker_update.index(dep_step)
 
 
 @pytest.mark.asyncio
@@ -999,15 +1024,37 @@ async def test_build_from_dockerfile_uses_custom_builder_from_env(monkeypatch):
     assert cmd[builder_idx + 1] == "my-custom-builder"
 
 
-def test_dockerfile_footer_switches_to_flyte_user():
-    """The footer should switch the runtime user to flyte and set the workdir to /home/flyte."""
+def test_dockerfile_base_footer_always_applies():
+    """The base footer carries the image id and bash shell for every image, but must NOT
+    force a runtime user — that is added separately only for images that create it."""
     from flyte._internal.imagebuild.docker_builder import DOCKER_FILE_BASE_FOOTER
 
     rendered = DOCKER_FILE_BASE_FOOTER.substitute(F_IMG_ID="some-image-id")
 
-    assert "USER flyte" in rendered
-    assert "WORKDIR /home/flyte" in rendered
     assert "ENV _F_IMG_ID=some-image-id" in rendered
+    assert "USER flyte" not in rendered
+    assert "WORKDIR /home/flyte" not in rendered
+
+
+def test_dockerfile_flyte_user_footer_switches_user():
+    """The flyte-user footer switches the runtime user and workdir to the flyte user."""
+    from flyte._internal.imagebuild.docker_builder import DOCKER_FILE_FLYTE_USER_FOOTER
+
+    assert "USER flyte" in DOCKER_FILE_FLYTE_USER_FOOTER
+    assert "WORKDIR /home/flyte" in DOCKER_FILE_FLYTE_USER_FOOTER
+
+
+def test_image_creates_flyte_user_only_for_debian_base():
+    """`from_debian_base` creates the flyte user, so its image gets the user footer;
+    `from_base` does not, so forcing `USER flyte` on it would break at runtime."""
+    import flyte
+    from flyte._internal.imagebuild.docker_builder import _image_creates_flyte_user
+
+    debian = flyte.Image.from_debian_base()
+    assert _image_creates_flyte_user(debian) is True
+
+    external = flyte.Image.from_base("apache/spark:3.5.8-python3")
+    assert _image_creates_flyte_user(external) is False
 
 
 @pytest.mark.asyncio

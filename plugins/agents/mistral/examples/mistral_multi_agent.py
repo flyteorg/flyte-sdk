@@ -6,17 +6,18 @@ run is its own durable, observable, cached Flyte action:
 
     plan --> research (parallel, one per subtopic) --> synthesize
 
-- ``plan`` runs a *planner* agent that breaks the topic into subtopics.
-- ``research`` runs a *researcher* agent per subtopic, **fanned out in parallel**
+- ``plan`` runs a planner agent that breaks the topic into subtopics.
+- ``research`` runs a researcher agent per subtopic, fanned out in parallel
   (``asyncio.gather``); each is a separate durable child action with its own
   ``search_web`` tool calls and report.
-- ``synthesize`` runs an *editor* agent that combines the findings.
+- ``synthesize`` runs an editor agent that combines the findings.
 
 Every agent is a first-class Flyte node — independently retried, cached,
 resource-sized and observable — and the fan-out is real distributed parallelism,
 not just asyncio in one process.
 
-Run:  python mistral_multi_agent.py
+Run:  flyte run mistral_multi_agent.py research_pipeline --topic "The state of electric-vehicle batteries in 2025"
+      (add `--local` right after `run` to execute locally instead of on the backend)
 """
 
 import asyncio
@@ -32,7 +33,8 @@ env = flyte.TaskEnvironment(
     resources=flyte.Resources(cpu=1),
     secrets=[flyte.Secret(key="mistral_api_key", as_env_var="MISTRAL_API_KEY")],
     image=(
-        flyte.Image.from_debian_base(name="mistral-research").clone(
+        flyte.Image.from_debian_base(name="mistral-research")
+        .clone(
             addl_layer=PythonWheels(
                 wheel_dir=Path(__file__).parent.parent / "dist",
                 package_name="flyteplugins-agents-core",
@@ -74,7 +76,7 @@ async def plan(topic: str) -> list[str]:
     """Planner agent: decompose a topic into focused research subtopics."""
     text = await run_agent(
         f"Break the topic '{topic}' into exactly 3 focused, distinct research subtopics.",
-        instructions="Reply with ONLY a comma-separated list of 3 short subtopics. No numbering, no prose.",
+        instructions="Reply with only a comma-separated list of 3 short subtopics. No numbering, no prose.",
         model="mistral-large-latest",
     )
     # Forgiving parse: accept commas or newlines, strip bullets/numbering.
@@ -89,7 +91,13 @@ async def research(subtopic: str) -> str:
     return await run_agent(
         f"Research this subtopic and summarize the key findings as 3 concise bullet points:\n{subtopic}",
         tools=[search_web],
-        instructions="You are a rigorous research assistant. Use search_web before answering. Be concise.",
+        # A clear stop condition matters: this toy ``search_web`` returns the same snippet
+        # for related queries, so an open-ended "keep searching" prompt can make a model spin.
+        instructions=(
+            "You are a rigorous research assistant. Call search_web exactly once for this "
+            "subtopic, then stop searching and write exactly 3 concise bullet points from the "
+            "result (rely on general knowledge if the search was unhelpful). Do not search again."
+        ),
         model="mistral-large-latest",
     )
 

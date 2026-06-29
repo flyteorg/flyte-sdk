@@ -1,18 +1,20 @@
 """Cross-run agent memory on Flyte — the agent remembers across separate runs.
 
 ``run_agent(..., memory_key=...)`` backs the OpenAI Agents SDK ``Session`` with a
-durable, keyed ``MemoryStore`` (object storage), so two runs with the *same*
+durable, keyed ``MemoryStore`` (object storage), so two runs with the same
 ``memory_key`` continue the same conversation — across workers and restarts, which
 the SDK's default local-SQLite session can't do on a distributed backend.
 
-This drives the agent in **two separate runs** sharing one ``memory_key``: it
+This drives the agent in two separate runs sharing one ``memory_key``: it
 learns a fact in run 1 and recalls it in run 2.
 
 Memory is keyed under the active org/project/domain, so run with a configured
 context (``flyte.init_from_config()`` / a backend). ``memory_key`` is a single
 segment (a user/thread id).
 
-Run:  python openai_memory.py
+Run:  flyte run openai_memory.py chat --message "Hi! My name is Alice and I love hiking." --memory_key user-alice
+      flyte run openai_memory.py chat --message "What's my name and what do I like?" --memory_key user-alice
+      (add `--local` after `run` to run locally; the shared `--memory_key` ties the two runs)
 """
 
 from pathlib import Path
@@ -25,9 +27,10 @@ from flyteplugins.agents.openai import run_agent
 env = flyte.TaskEnvironment(
     "openai-memory",
     resources=flyte.Resources(cpu=1),
-    secrets=[flyte.Secret(key="sam_openai_api_key", as_env_var="OPENAI_API_KEY")],
+    secrets=[flyte.Secret(key="openai_api_key", as_env_var="OPENAI_API_KEY")],
     image=(
-        flyte.Image.from_debian_base(name="openai-memory").clone(
+        flyte.Image.from_debian_base(name="openai-memory")
+        .clone(
             addl_layer=PythonWheels(
                 wheel_dir=Path(__file__).parent.parent / "dist",
                 package_name="flyteplugins-agents-core",
@@ -68,7 +71,7 @@ if __name__ == "__main__":
     r1.wait()
     print(f"run 1: {r1.outputs()}")
 
-    # Run 2 — a SEPARATE run with the same memory_key: the agent recalls it.
+    # Run 2 — a separate run with the same memory_key: the agent recalls it.
     r2 = flyte.run(chat, message="What's my name and what do I like?", memory_key="user-alice")
     print(f"View at: {r2.url}")
     r2.wait()

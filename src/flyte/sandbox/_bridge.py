@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
 from typing import Any, Callable, Dict, List
 
@@ -114,9 +115,52 @@ class ExternalFunctionBridge:
             if key in kwargs:
                 map_kwargs[key] = kwargs[key]
 
-        results: List[Any] = []
-        async for r in flyte_map.aio(task, *iterables, **map_kwargs):
-            results.append(r)
+        from flyte._task import TaskTemplate
+
+        if isinstance(task, TaskTemplate):
+            results: List[Any] = []
+            async for r in flyte_map.aio(task, *iterables, **map_kwargs):  # type: ignore[arg-type]
+                results.append(r)
+            return results
+
+        return await self._map_callable(task, iterables, **map_kwargs)
+
+    async def _map_callable(
+        self,
+        fn: Callable[..., Any],
+        iterables: list[Any],
+        *,
+        concurrency: int | None = None,
+        return_exceptions: bool = False,
+        group_name: str | None = None,
+    ) -> list[Any]:
+        """Map *fn* over zipped *iterables* (for sandbox tools that are not TaskTemplates)."""
+        del group_name  # only supported for durable flyte.map over TaskTemplate
+        rows = list(zip(*iterables)) if iterables else []
+
+        async def run_row(row: tuple[Any, ...]) -> Any:
+            try:
+                result = fn(*row)
+                while inspect.iscoroutine(result):
+                    result = await result
+                return result
+            except Exception as exc:
+                if return_exceptions:
+                    return exc
+                raise
+
+        if concurrency and concurrency > 0:
+            sem = asyncio.Semaphore(concurrency)
+
+            async def limited(row: tuple[Any, ...]) -> Any:
+                async with sem:
+                    return await run_row(row)
+
+            return list(await asyncio.gather(*[limited(row) for row in rows]))
+
+        results: list[Any] = []
+        for row in rows:
+            results.append(await run_row(row))
         return results
 
     async def execute_monty(self, monty_cls: Any, code: str, input_names: list[str], inputs: Dict[str, Any]) -> Any:

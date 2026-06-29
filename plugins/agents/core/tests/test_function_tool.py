@@ -6,12 +6,13 @@ SDK-native versions, so they are exercised in their own packages.
 """
 
 import inspect
+import json
 from unittest.mock import AsyncMock, patch
 
 import flyte
 import pytest
 
-from flyteplugins.agents.core import ToolTaskResolver, function_tool
+from flyteplugins.agents.core import ToolTaskResolver, coerce_tool_args, function_tool, task_json_schema
 
 
 def test_task_becomes_plain_tool_with_resolver():
@@ -64,3 +65,62 @@ async def test_tool_dispatches_to_task_aio():
 
     mock_aio.assert_awaited_once_with(a=6, b=7)
     assert result == 42
+
+
+def test_coerce_tool_args_int_to_float():
+    # LLMs emit JSON numbers without a decimal as int; Flyte's type engine rejects
+    # int for a float param, so we coerce it before dispatch.
+    env = flyte.TaskEnvironment("core_ft_coerce")
+
+    @env.task
+    def issue_refund(account_id: str, amount_usd: float) -> str:
+        return "ok"
+
+    out = coerce_tool_args(issue_refund, {"account_id": "A-1", "amount_usd": 42})
+    assert out == {"account_id": "A-1", "amount_usd": 42.0}
+    assert isinstance(out["amount_usd"], float)
+
+
+def test_coerce_tool_args_leaves_ints_and_bools_alone():
+    env = flyte.TaskEnvironment("core_ft_coerce2")
+
+    @env.task
+    def f(n: int, flag: bool, ratio: float) -> str:
+        return "ok"
+
+    out = coerce_tool_args(f, {"n": 5, "flag": True, "ratio": 2})
+    assert out["n"] == 5 and isinstance(out["n"], int)  # int param untouched
+    assert out["flag"] is True  # bool not coerced to float
+    assert out["ratio"] == 2.0 and isinstance(out["ratio"], float)  # float param coerced
+
+
+@pytest.mark.asyncio
+async def test_dispatch_coerces_int_to_float_for_a_float_param():
+    env = flyte.TaskEnvironment("core_ft_coerce3")
+
+    @function_tool
+    @env.task
+    def refund(account_id: str, amount_usd: float) -> str:
+        """Refund."""
+        return "ok"
+
+    with patch.object(refund.task, "aio", new_callable=AsyncMock, return_value="ok") as mock_aio:
+        await refund(account_id="A-1", amount_usd=42)  # int from the "model"
+
+    mock_aio.assert_awaited_once_with(account_id="A-1", amount_usd=42.0)
+
+
+def test_task_json_schema_describes_the_task_inputs():
+    # Adapters that want a JSON-schema tool definition derive it from the task via the
+    # Flyte type engine; the schema must name the task's parameters.
+    env = flyte.TaskEnvironment("core_ft_schema")
+
+    @env.task
+    def lookup(account_id: str, amount: float) -> str:
+        """Look up an account balance."""
+        return "ok"
+
+    schema = task_json_schema(lookup)
+    assert isinstance(schema, dict)
+    blob = json.dumps(schema)
+    assert "account_id" in blob and "amount" in blob

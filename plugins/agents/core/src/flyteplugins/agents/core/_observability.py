@@ -14,13 +14,32 @@ from datetime import datetime
 import flyte.report
 from flyte._logging import logger
 
+# Hard ceiling on the full body of an expanded row, so a single huge tool result
+# (a big file read, a verbose API response) can't bloat the report unbounded.
+_MAX_FULL_CHARS = 20000
+
 
 def abbrev(value: typing.Any, limit: int = 300) -> str:
-    """HTML-escape ``value`` as a string, truncated with a ``+N`` suffix."""
+    """HTML-escape ``value`` for a report row.
+
+    Short values render inline. Longer ones collapse into an expandable ``<details>``:
+    the row shows a ``limit``-character preview with a ``+N`` overflow marker, and
+    clicking it reveals the full content (up to a hard cap). Nothing is dropped on the
+    floor, so a tool result that trails off in the report can always be opened in place.
+    """
     text = "" if value is None else str(value)
-    if len(text) > limit:
-        text = text[:limit] + f"... (+{len(text) - limit})"
-    return html.escape(text)
+    if len(text) <= limit:
+        return html.escape(text)
+    preview = html.escape(text[:limit])
+    body = html.escape(text[:_MAX_FULL_CHARS])
+    if len(text) > _MAX_FULL_CHARS:
+        body += f"\n... (+{len(text) - _MAX_FULL_CHARS} more, truncated)"
+    return (
+        '<details style="display:inline-block;vertical-align:top;max-width:100%">'
+        f'<summary style="cursor:pointer">{preview}... (+{len(text) - limit})</summary>'
+        f'<pre style="white-space:pre-wrap;word-break:break-word;margin:4px 0 0">{body}</pre>'
+        "</details>"
+    )
 
 
 def duration_ms(start_iso: typing.Any, end_iso: typing.Any) -> str:

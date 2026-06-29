@@ -6,11 +6,11 @@ run is its own durable, observable, cached Flyte action:
 
     plan --> research (parallel, one per subtopic) --> synthesize
 
-- ``plan`` runs a *planner* agent that breaks the topic into subtopics.
-- ``research`` runs a *researcher* agent per subtopic, **fanned out in parallel**
+- ``plan`` runs a planner agent that breaks the topic into subtopics.
+- ``research`` runs a researcher agent per subtopic, fanned out in parallel
   (``asyncio.gather``); each is a separate durable child action with its own
   ``search_web`` tool calls, model turns, and report.
-- ``synthesize`` runs an *editor* agent that combines the findings.
+- ``synthesize`` runs an editor agent that combines the findings.
 
 Why this is more than a single ``Runner.run`` with handoffs: every agent is a
 first-class Flyte node — independently retried, cached, resource-sized, and
@@ -18,7 +18,8 @@ observable — and the fan-out is real distributed parallelism, not just asyncio
 one process. (Handoffs / agents-as-tools inside a single ``run_agent`` still work;
 this example shows the orchestration layer on top.)
 
-Run:  python openai_multi_agent.py
+Run:  flyte run openai_multi_agent.py research_pipeline --topic "The state of electric-vehicle batteries in 2025"
+      (add `--local` right after `run` to execute locally instead of on the backend)
 """
 
 import asyncio
@@ -32,9 +33,10 @@ from flyteplugins.agents.openai import function_tool, run_agent
 env = flyte.TaskEnvironment(
     "openai-research",
     resources=flyte.Resources(cpu=1),
-    secrets=[flyte.Secret(key="sam_openai_api_key", as_env_var="OPENAI_API_KEY")],
+    secrets=[flyte.Secret(key="openai_api_key", as_env_var="OPENAI_API_KEY")],
     image=(
-        flyte.Image.from_debian_base(name="openai-research").clone(
+        flyte.Image.from_debian_base(name="openai-research")
+        .clone(
             addl_layer=PythonWheels(
                 wheel_dir=Path(__file__).parent.parent / "dist",
                 package_name="flyteplugins-agents-core",

@@ -7,6 +7,12 @@ When ``durable=True`` we wrap those two methods so each turn is recorded via
 turns from their recorded ``ConversationResponse`` and completed tool calls are
 cache hits.
 
+The same seam also drives observability: the SDK's ``RunResult`` exposes no token
+usage, but each turn's ``ConversationResponse`` does — so the wrapper tallies the
+model-turn count + token usage and we render it as a summary row in the report. On a
+retry, turns served from their durable record are counted as cached tokens so the row
+shows they weren't re-billed (rather than passing a free replay off as fresh spend).
+
 The API key is read from the environment — wire it as a Flyte secret.
 """
 
@@ -70,14 +76,53 @@ def _render(timeline: ReportTimeline, output_entries: list[typing.Any]) -> None:
             timeline.row(icon="💬", label="assistant", detail=abbrev(_entry_text(entry), 200))
 
 
-def _install_durable_turns(conversations: typing.Any) -> None:
-    """Route ``run_async``'s internal ``start``/``append`` through ``durable_step``.
+class _UsageSink:
+    """Tally model-turn count + token usage across the SDK's loop.
+
+    ``RunResult`` surfaces no usage, but each model turn's ``ConversationResponse``
+    carries ``.usage`` — and every turn flows through our start/append wrapper, so we
+    tally it there. Tokens for a turn served from a durable record on a retry (no real
+    model call) are counted as ``cached``, so the row shows they weren't re-billed.
+    """
+
+    def __init__(self) -> None:
+        self.turns = self.prompt = self.completion = self.total = self.connector = self.cached = 0
+
+    def add(self, response: typing.Any, *, cached: bool = False) -> None:
+        self.turns += 1
+        usage = getattr(response, "usage", None)
+        turn_total = (getattr(usage, "total_tokens", 0) or 0) if usage is not None else 0
+        if usage is not None:
+            self.prompt += getattr(usage, "prompt_tokens", 0) or 0
+            self.completion += getattr(usage, "completion_tokens", 0) or 0
+            self.total += turn_total
+            self.connector += getattr(usage, "connector_tokens", 0) or 0
+        if cached:
+            self.cached += turn_total
+
+    def detail(self) -> str:
+        out = (
+            f"{self.turns} model turns · {self.prompt} prompt · "
+            f"{self.completion} completion · {self.total} total tokens"
+        )
+        if self.connector:
+            out += f" · {self.connector} connector"
+        if self.cached:
+            out += f" · {self.cached} cached"
+        return out
+
+
+def _install_turn_hooks(conversations: typing.Any, *, durable: bool, usage: _UsageSink | None) -> None:
+    """Wrap ``run_async``'s internal ``start``/``append`` for durability + usage.
 
     ``run_async`` calls ``self.start_async``/``self.append_async`` for each model
-    turn, so shadowing those instance methods records/replays the turns — the seam
-    below the SDK's loop. Each turn's ``ConversationResponse`` round-trips through
-    pydantic JSON (verified faithful, incl. the polymorphic outputs).
+    turn, so shadowing those instance methods lets us (a) record/replay each turn via
+    ``durable_step`` (the seam below the SDK's loop) when ``durable``, and (b) tally
+    tokens from each turn's ``ConversationResponse`` when ``usage`` is given — neither
+    of which the SDK's ``RunResult`` exposes. The response round-trips through pydantic
+    JSON (verified faithful, incl. the polymorphic outputs).
     """
+
     from mistralai.client.models import ConversationResponse
 
     original = {"start": conversations.start_async, "append": conversations.append_async}
@@ -86,16 +131,38 @@ def _install_durable_turns(conversations: typing.Any) -> None:
         orig = original[phase]
 
         async def _turn(**kwargs: typing.Any) -> typing.Any:
-            key = fingerprint(
-                {"phase": phase, **{k: jsonable(kwargs[k]) for k in _TURN_KEY_FIELDS if kwargs.get(k) is not None}}
-            )
-            return await durable_step(
-                key,
-                lambda: orig(**kwargs),
-                name=f"conversation_{phase}",
-                dumps=lambda r: r.model_dump_json(),
-                loads=ConversationResponse.model_validate_json,
-            )
+            cached = False
+            if durable:
+                # ``durable_step`` invokes ``run`` only on a fresh execution; on a retry
+                # it returns the recorded result without calling it. Flip a flag inside
+                # the closure so we know per-turn whether the model was actually called
+                # (fresh) or the turn came from its record (counted as cached, not re-billed).
+                fired = False
+
+                async def _do() -> typing.Any:
+                    nonlocal fired
+                    fired = True
+                    return await orig(**kwargs)
+
+                key = fingerprint(
+                    {
+                        "phase": phase,
+                        **{k: jsonable(kwargs[k]) for k in _TURN_KEY_FIELDS if kwargs.get(k) is not None},
+                    }
+                )
+                response = await durable_step(
+                    key,
+                    _do,
+                    name=f"conversation_{phase}",
+                    dumps=lambda r: r.model_dump_json(),
+                    loads=ConversationResponse.model_validate_json,
+                )
+                cached = not fired
+            else:
+                response = await orig(**kwargs)
+            if usage is not None:
+                usage.add(response, cached=cached)
+            return response
 
         return _turn
 
@@ -109,7 +176,7 @@ async def run_agent(
     tools: typing.Sequence[typing.Any] = (),
     model: str | None = "mistral-large-latest",
     instructions: str | None = None,
-    max_turns: int = 10,
+    timeout_ms: int | None = None,
     durable: bool = True,
     observability: bool = True,
     agent_id: str | None = None,
@@ -129,15 +196,21 @@ async def run_agent(
         tools: ``function_tool``-wrapped tools or bare ``@env.task`` templates.
         model: Model for an inline run (when ``agent_id`` is not given).
         instructions: System instructions.
+        timeout_ms: Per-turn request timeout (ms), applied by the SDK to each model
+            call inside its loop; ``None`` uses the SDK default. This bounds a single
+            hung turn — it is not a whole-run cap (Mistral exposes no turn-count
+            limit). To bound the entire agent run, set ``timeout=`` on the enclosing
+            ``@env.task`` (the durable parent), which caps all turns + tool calls.
         durable: Record/replay each conversation turn via ``flyte.trace``.
         observability: Render the run timeline into the Flyte task report.
         agent_id: Reuse an existing server-side agent (instead of ``model``).
         api_key_env_var: Env var holding the Mistral API key (wire as a secret).
-        memory_key: Stable id (e.g. a user/thread id) for **cross-run memory**.
+        memory_key: Stable id (e.g. a user/thread id) for cross-run memory.
             When set, the thread's server-side ``conversation_id`` is persisted in a
             keyed ``MemoryStore`` and reused, so a later run with the same key
             continues the conversation. ``None`` disables memory.
     """
+
     from mistralai.client import Mistral
     from mistralai.extra.run.context import RunContext
 
@@ -150,15 +223,19 @@ async def run_agent(
 
     client = Mistral(api_key=api_key)
     conversations = client.beta.conversations
-    if durable:
-        try:
-            _install_durable_turns(conversations)
-        except Exception:  # pragma: no cover - never break the run over durability wiring
-            logger.warning("Could not install durable conversation turns; continuing without per-turn replay.")
 
     timeline = ReportTimeline() if observability else None
+    usage = _UsageSink() if observability else None
     if timeline is not None:
         timeline.heading("Mistral agent")
+
+    # Wrap the per-turn seam for durable replay (``durable``) and/or token tallying
+    # (``usage``) — the SDK's ``RunResult`` surfaces neither, but every turn flows here.
+    if durable or usage is not None:
+        try:
+            _install_turn_hooks(conversations, durable=durable, usage=usage)
+        except Exception:  # pragma: no cover - never break the run over hook wiring
+            logger.warning("Could not install conversation-turn hooks; continuing without replay/usage.")
 
     # Cross-run memory: Mistral keeps the transcript server-side, so we persist just
     # the conversation id and continue that conversation when the key recurs.
@@ -168,10 +245,12 @@ async def run_agent(
     run_ctx_kwargs = {"agent_id": agent_id} if agent_id is not None else {"model": model}
     if conversation_id:
         run_ctx_kwargs["conversation_id"] = conversation_id
+
     async with RunContext(**run_ctx_kwargs) as run_ctx:
         for tool in (_coerce_tool(t) for t in tools):
             run_ctx.register_func(tool)
-        result = await conversations.run_async(run_ctx, inputs=input, instructions=instructions)
+
+        result = await conversations.run_async(run_ctx, inputs=input, instructions=instructions, timeout_ms=timeout_ms)
 
     if store is not None and result.conversation_id:
         await store.write_json.aio(_MEMORY_CONV_PATH, result.conversation_id, actor="mistral-agent")
@@ -180,5 +259,7 @@ async def run_agent(
     output_entries = list(result.output_entries or [])
     if timeline is not None:
         _render(timeline, output_entries)
+        if usage is not None and usage.turns:
+            timeline.row(icon="📊", label="usage", meta="model", detail=usage.detail())
         await flush_report()
     return _final_text(output_entries)

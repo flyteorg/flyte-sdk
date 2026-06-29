@@ -9,7 +9,8 @@ Mistral runs the agent's reasoning server-side; Flyte is the runtime underneath:
   gets both per-turn and per-tool durability.
 - The agent timeline renders into the task report (``report=True``).
 
-Run:  python mistral_durable_agent.py
+Run:  flyte run mistral_durable_agent.py city_agent --question "What's the weather and population of Paris?"
+      (add `--local` right after `run` to execute locally instead of on the backend)
 """
 
 from pathlib import Path
@@ -24,7 +25,8 @@ env = flyte.TaskEnvironment(
     resources=flyte.Resources(cpu=1),
     secrets=[flyte.Secret(key="mistral_api_key", as_env_var="MISTRAL_API_KEY")],
     image=(
-        flyte.Image.from_debian_base(name="mistral-durable-agent").clone(
+        flyte.Image.from_debian_base(name="mistral-durable-agent")
+        .clone(
             addl_layer=PythonWheels(
                 wheel_dir=Path(__file__).parent.parent / "dist",
                 package_name="flyteplugins-agents-core",

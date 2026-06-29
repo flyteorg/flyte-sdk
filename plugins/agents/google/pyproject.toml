@@ -1,7 +1,7 @@
 [project]
 name = "flyteplugins-agents-google"
 dynamic = ["version"]
-description = "Run Google ADK (Agent Development Kit) agents on Flyte — durable turns + tools, observable."
+description = "Run Google ADK (Agent Development Kit) agents on Flyte."
 readme = "README.md"
 authors = [{ name = "Samhita Alla", email = "samhita@union.ai" }]
 requires-python = ">=3.10"

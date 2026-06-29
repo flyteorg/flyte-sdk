@@ -1,9 +1,9 @@
 """Drive a pre-created server-side Mistral agent (by id) durably on Flyte.
 
-Mistral lets you create a persistent, **server-side agent** — its model,
+Mistral lets you create a persistent, server-side agent — its model,
 instructions and guardrails live in Mistral and are managed in one place. This
 example creates such an agent once, then runs it on Flyte by ``agent_id`` instead
-of an inline ``model``, while still attaching **Flyte-task tools**, so the
+of an inline ``model``, while still attaching Flyte-task tools, so the
 server-side agent's tool calls are durable child actions.
 
     create_agent             ->  ag_xxx  (server-side, reusable)
@@ -12,7 +12,8 @@ server-side agent's tool calls are durable child actions.
 In practice you create the agent once (here, or in the Mistral console) and reuse
 its id across many runs — pass an existing ``agent_id`` to skip creation.
 
-Run:  python mistral_agent_id.py
+Run:  flyte run mistral_agent_id.py city_agent --question "What's the weather and population of Paris?"
+      (add `--local` right after `run` to execute locally instead of on the backend)
 """
 
 import os
@@ -28,7 +29,8 @@ env = flyte.TaskEnvironment(
     resources=flyte.Resources(cpu=1),
     secrets=[flyte.Secret(key="mistral_api_key", as_env_var="MISTRAL_API_KEY")],
     image=(
-        flyte.Image.from_debian_base(name="mistral-agent-id").clone(
+        flyte.Image.from_debian_base(name="mistral-agent-id")
+        .clone(
             addl_layer=PythonWheels(
                 wheel_dir=Path(__file__).parent.parent / "dist",
                 package_name="flyteplugins-agents-core",
@@ -83,7 +85,7 @@ async def run_with_agent(question: str, agent_id: str) -> str:
     return await run_agent(question, tools=[get_weather, get_population], agent_id=agent_id)
 
 
-@env.task(report=True, retries=3)
+@env.task(retries=3)
 async def city_agent(question: str) -> str:
     """Create the server-side agent, then run it — durably, on Flyte."""
     agent_id = await create_agent(

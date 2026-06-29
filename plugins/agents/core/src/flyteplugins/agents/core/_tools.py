@@ -3,7 +3,7 @@
 Every adapter stacks its ``function_tool`` on top of ``@env.task``, which rebinds
 the module attribute to the tool and shadows the task. Without a guard, the
 worker's default resolver loads the tool, the task runner calls the tool's
-``execute``, and the task **re-dispatches itself** — recursing without end.
+``execute``, and the task re-dispatches itself — recursing without end.
 
 :class:`ToolTaskResolver` recovers the real task via the tool's
 ``__wrapped_task__`` hook; :func:`attach_tool_resolver` wires it onto the task.
@@ -52,6 +52,27 @@ def attach_tool_resolver(task: typing.Any) -> None:
         task.task_resolver = ToolTaskResolver()
 
 
+def coerce_tool_args(task: AsyncFunctionTaskTemplate, kwargs: dict[str, typing.Any]) -> dict[str, typing.Any]:
+    """Coerce LLM-supplied tool args to the task's declared parameter types.
+
+    LLMs emit JSON numbers without a fractional part as ``int`` (e.g. ``42``), but
+    Flyte's type engine rejects an ``int`` where a ``float`` is declared — so the tool
+    call fails during input conversion, before the child action is even submitted (the
+    action never appears in the UI, and the task body never runs). This converts ``int``
+    -> ``float`` for float-annotated params (leaving ``bool`` alone). Best-effort: returns
+    the kwargs unchanged if the task's annotations can't be resolved.
+    """
+    try:
+        hints = typing.get_type_hints(task.func)
+    except Exception:  # pragma: no cover - unresolved annotations; pass through
+        return kwargs
+    coerced = dict(kwargs)
+    for name, value in kwargs.items():
+        if hints.get(name) is float and isinstance(value, int) and not isinstance(value, bool):
+            coerced[name] = float(value)
+    return coerced
+
+
 def function_tool(
     func: AsyncFunctionTaskTemplate | typing.Callable | None = None,
     *,
@@ -61,7 +82,7 @@ def function_tool(
     """Wrap a Flyte ``@env.task`` as a plain async tool function — the generic default.
 
     For SDKs that accept plain Python callables as tools (deriving the schema from the
-    signature + docstring), this *is* the whole adapter ``function_tool``: the returned
+    signature + docstring), this is the whole adapter ``function_tool``: the returned
     function carries the task's signature (``functools.wraps``), dispatches to
     ``task.aio()`` (so each call is a durable Flyte child action), exposes
     ``__wrapped_task__``, and wires the backing task to :class:`ToolTaskResolver`.
@@ -94,8 +115,8 @@ def _task_to_tool(
     async def tool(*args: typing.Any, **kwargs: typing.Any) -> typing.Any:
         # In a Flyte task context this submits a durable child action; locally it runs
         # inline. ``functools.wraps`` keeps ``inner``'s signature so the SDK builds the
-        # right tool declaration.
-        return await task.aio(*args, **kwargs)
+        # right tool declaration; ``coerce_tool_args`` relaxes LLM int->float args.
+        return await task.aio(*args, **coerce_tool_args(task, kwargs))
 
     if name:
         tool.__name__ = name

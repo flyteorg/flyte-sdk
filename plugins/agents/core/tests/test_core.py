@@ -10,11 +10,31 @@ from flyteplugins.agents.core import (
     attach_tool_resolver,
     durable_step,
     fingerprint,
+    jsonable,
 )
 
 
 def test_fingerprint_is_deterministic_and_order_insensitive():
     assert fingerprint({"a": 1, "b": 2}) == fingerprint({"b": 2, "a": 1})
+
+
+def test_jsonable_passes_through_primitives():
+    assert jsonable(None) is None
+    assert jsonable("x") == "x"
+    assert jsonable(3) == 3 and jsonable(True) is True
+
+
+def test_jsonable_uses_model_dump_then_falls_back_to_str():
+    class WithDump:
+        def model_dump(self):
+            return {"ok": 1}
+
+    class Opaque:
+        def __str__(self):
+            return "opaque"
+
+    assert jsonable(WithDump()) == {"ok": 1}  # serializer preferred
+    assert jsonable(Opaque()) == "opaque"  # last-resort str()
 
 
 def test_fingerprint_changes_with_payload():

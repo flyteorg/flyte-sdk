@@ -5,8 +5,7 @@ agents in each framework's own idioms; Flyte is the durable orchestration runtim
 underneath — replay, automatic retries / self-healing, per-tool containerized
 execution (CPU/GPU, caching), cross-run memory, and observability.
 
-Each SDK is a **separate, co-located package** on a shared core, so installing one
-never pulls the others:
+Each SDK is a separate, co-located package on a shared core:
 
 | Adapter | Package | Underlying SDK |
 | --- | --- | --- |
@@ -26,19 +25,16 @@ Each adapter has its own README (linked above) with the SDK-specific details.
 Every adapter follows the same division of labor, so the call shape is identical
 across SDKs:
 
-- The **agent run** is a Flyte `@env.task` — the durable parent (`retries=` →
-  self-healing, `report=True` → the agent timeline in the report).
-- Each **tool** is a Flyte task, invoked as a **durable child action** (its own
+- The agent run is a Flyte `@env.task` — the durable parent (`retries=` =
+  self-healing, `report=True` = the agent timeline in the report).
+- Each tool is a Flyte task, invoked as a durable child action (its own
   container/resources, retries, caching) — via `function_tool` on an `@env.task`.
-- Each **model turn** is recorded for replay by tracing the **seam below the SDK's
-  loop** (`durable=True`), so a crashed/retried run replays completed turns instead of
+- Each model turn is recorded for replay by tracing the seam below the SDK's
+  loop (`durable=True`), so a crashed/retried run replays completed turns instead of
   re-calling (and re-billing) the model. (Where the SDK runs its loop in a subprocess
   — Claude — durability is the SDK's own session-resume instead.)
-- **Cross-run memory** via `memory_key` — the conversation continues across separate
+- Cross-run memory via `memory_key` — the conversation continues across separate
   runs and workers, backed by a durable keyed store.
-
-We never reimplement an agent loop: if the SDK owns the loop, we run *its* loop and
-trace the seam beneath it.
 
 ```python
 import flyte
@@ -64,11 +60,10 @@ async def city_agent(question: str) -> str:
 
 ## Architecture
 
-- **`flyteplugins-agents-core`** holds the SDK-agnostic contract every adapter builds
-  on: `function_tool` / `ToolTaskResolver` (tools as durable actions, without
-  self-recursion on the worker), `durable_step` (the model-turn replay primitive),
-  `resolve_memory` (cross-run memory over a keyed store), and `ReportTimeline` /
-  `flush_report` (report rendering).
+- `flyteplugins-agents-core` holds the SDK-agnostic contract every adapter builds
+  on: `function_tool` / `ToolTaskResolver` (tools as durable actions),
+  `durable_step` (the model-turn replay primitive), `resolve_memory` (cross-run
+  memory over a keyed store), and `ReportTimeline` / `flush_report` (report rendering).
 - Every adapter passes the same
   `flyteplugins.agents.core.testing.assert_adapter_conforms` check, so `function_tool`
   + `run_agent` (with `tools` / `model` / `instructions` / `durable` /
@@ -76,6 +71,6 @@ async def city_agent(question: str) -> str:
 
 ## Notes
 
-- Call `run_agent` **from inside an `@env.task`** — that task is the durable parent.
+- Call `run_agent` from inside an `@env.task` — that task is the durable parent.
   Outside a task context the durability / observability / memory layers are transparent
   no-ops, so the same code runs locally unchanged.

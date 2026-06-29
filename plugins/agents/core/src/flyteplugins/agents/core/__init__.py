@@ -23,13 +23,14 @@ from ._durable import durable_step
 from ._fingerprint import fingerprint, jsonable
 from ._memory import resolve_memory
 from ._observability import ReportTimeline, abbrev, duration_ms, flush_report
-from ._tools import ToolTaskResolver, attach_tool_resolver, function_tool, task_json_schema
+from ._tools import ToolTaskResolver, attach_tool_resolver, coerce_tool_args, function_tool, task_json_schema
 
 __all__ = [
     "ReportTimeline",
     "ToolTaskResolver",
     "abbrev",
     "attach_tool_resolver",
+    "coerce_tool_args",
     "durable_step",
     "duration_ms",
     "fingerprint",

@@ -1,25 +1,10 @@
 """Crash-and-resume: durable agent recovery on Flyte.
 
-Shows that a crash mid-run does **not** redo completed work. On the first attempt
+Shows that a crash mid-run does not redo completed work. On the first attempt
 the agent does real work (model turns + tool calls), then the worker is killed
 (simulated). Flyte retries the task; on the second attempt the completed model
 turns replay from their ``flyte.trace`` records and the tool calls are cache
-hits, so the agent finishes **without re-calling (or re-billing) the model**.
-
-How to read the logs on a backend — the proof of replay is what DISAPPEARS on
-the retry (each 🧠 line prints only when the model is *actually* called):
-
-    ▶ resilient_agent attempt 0
-      🧠 live model call (recorded for replay)   # turn 1
-      🛠  get_weather EXECUTED ...                # tool runs
-      🧠 live model call (recorded for replay)   # turn 2
-      🛠  get_population EXECUTED ...
-      🧠 live model call (recorded for replay)   # turn 3 (final)
-    💥 simulated worker crash (first attempt only)
-    ▶ resilient_agent attempt 1
-    ✅ completed on retry — NO 🧠 / 🛠 lines this time: every model turn was
-       replayed from its trace record and every tool was a cache hit, so the
-       retry is far faster and never re-calls (or re-bills) the model.
+hits, so the agent finishes without re-calling (or re-billing) the model.
 
 Run this on a Flyte / Union backend, where attempt numbers and durable trace
 records are provided per attempt — that is where the replay is visible. In
@@ -27,7 +12,8 @@ records are provided per attempt — that is where the replay is visible. In
 attempts and does not set a per-attempt number, so this example simply runs once
 locally (the crash is skipped) and the replay is not exercised.
 
-Run:  python openai_crash_resume.py
+Run:  flyte run openai_crash_resume.py resilient_agent --question "What's the weather and population of Paris?"
+      (add `--local` right after `run` to execute locally instead of on the backend)
 """
 
 import os
@@ -44,9 +30,10 @@ from flyteplugins.agents.openai import function_tool, run_agent
 env = flyte.TaskEnvironment(
     "openai-crash-resume",
     resources=flyte.Resources(cpu=1),
-    secrets=[flyte.Secret(key="sam_openai_api_key", as_env_var="OPENAI_API_KEY")],
+    secrets=[flyte.Secret(key="openai_api_key", as_env_var="OPENAI_API_KEY")],
     image=(
-        flyte.Image.from_debian_base(name="openai-crash-resume").clone(
+        flyte.Image.from_debian_base(name="openai-crash-resume")
+        .clone(
             addl_layer=PythonWheels(
                 wheel_dir=Path(__file__).parent.parent / "dist",
                 package_name="flyteplugins-agents-core",
@@ -64,7 +51,7 @@ env = flyte.TaskEnvironment(
 )
 
 
-# A model wrapper that prints only when the REAL model is actually called. After
+# A model wrapper that prints only when the real model is actually called. After
 # a crash, replayed turns are served from flyte.trace records and never reach
 # this wrapper — so the absence of these lines on the retry is the proof.
 class _LoggingModel(Model):
@@ -125,12 +112,8 @@ async def resilient_agent(question: str) -> str:
         run_config=RunConfig(model_provider=LoggingModelProvider()),
     )
 
-    # Simulate a worker crash AFTER the agent did real work, but only on the
-    # first attempt on a backend. The crash is OUTSIDE any flyte.trace, so the
-    # completed turns are recorded with their OUTPUTS (a clean task-level
-    # failure) and replay on the retry — a crash *inside* a trace would instead
-    # record (and replay) the error. ``FLYTE_ATTEMPT_NUMBER`` is only set per
-    # attempt on a backend, so local runs skip the crash and just complete.
+    # Simulate a worker crash after the agent did real work, but only on the
+    # first attempt on a backend.
     on_backend = os.environ.get("FLYTE_ATTEMPT_NUMBER") is not None
     if on_backend and attempt == 0:
         raise RuntimeError("💥 simulated worker crash (first attempt only)")

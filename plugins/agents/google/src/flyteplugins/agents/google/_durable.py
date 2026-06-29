@@ -17,15 +17,11 @@ import typing
 
 from flyteplugins.agents.core import durable_step, fingerprint, jsonable
 
-try:
-    from google.adk.models import BaseLlm
-    from google.adk.models.llm_response import LlmResponse
-except Exception:  # pragma: no cover - import-time guard for environments without adk
-    BaseLlm = object  # type: ignore[assignment,misc]
-    LlmResponse = None  # type: ignore[assignment]
+from google.adk.models import BaseLlm
+from google.adk.models.llm_response import LlmResponse
 
 
-class FlyteLlm(BaseLlm):  # type: ignore[misc,valid-type]
+class FlyteLlm(BaseLlm):
     """A ``BaseLlm`` that records each model turn via ``durable_step`` for replay.
 
     Wraps an inner ``BaseLlm`` (resolved from the agent's ``model``); ``model`` is set

@@ -18,7 +18,7 @@ from claude_agent_sdk import SdkMcpTool
 from claude_agent_sdk import tool as claude_tool
 from flyte._task import AsyncFunctionTaskTemplate
 from flyte.models import NativeInterface
-from flyteplugins.agents.core import attach_tool_resolver, task_json_schema
+from flyteplugins.agents.core import attach_tool_resolver, coerce_tool_args, task_json_schema
 
 
 def function_tool(
@@ -60,8 +60,9 @@ def _task_to_tool(
 
     async def handler(args: dict[str, typing.Any]) -> dict[str, typing.Any]:
         # In a Flyte task context this submits a durable child action; locally it
-        # runs inline. The result is returned as MCP text content.
-        result = await task.aio(**(args or {}))
+        # runs inline. ``coerce_tool_args`` relaxes LLM int->float args so Flyte's
+        # type engine doesn't reject e.g. ``amount_usd=42`` for a ``float`` param.
+        result = await task.aio(**coerce_tool_args(task, args or {}))
         return _as_content(result)
 
     sdk_tool = claude_tool(tool_name, desc, task_json_schema(task))(handler)

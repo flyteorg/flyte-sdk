@@ -223,6 +223,14 @@ class TestTaskDetailsOverrideResources:
         names = {e.name for e in tmpl.container.resources.requests}
         assert tasks_pb2.Resources.ResourceName.GPU in names
 
+    def test_override_marks_task_as_overridden(self):
+        # A freshly fetched task is run by reference; once overridden, the local spec no longer
+        # matches the registered task, so `_run.py` must send the full spec instead of the task_id.
+        td = self._container_task_details()
+        assert td.overridden is False
+        out = td.override(resources=flyte.Resources(cpu="2", memory="2Gi"))
+        assert out.overridden is True
+
     def test_cpu_only_override_clears_stale_accelerator(self):
         td = self._container_task_details()
         gpu = td.override(resources=flyte.Resources(cpu="4", memory="16Gi", gpu="L40s:1"))

@@ -11,10 +11,8 @@ runtime); Flyte is the runtime underneath:
 Per-turn model replay isn't available for Claude (the model loop runs in the
 Claude Code runtime), but tool calls are durable regardless.
 
-The ``claude-agent-sdk`` wheel bundles the native ``claude`` CLI, so the image needs
-no separate Node.js / ``@anthropic-ai/claude-code`` install — just an Anthropic API key.
-
-Run:  python claude_durable_agent.py
+Run:  flyte run claude_durable_agent.py city_agent --question "What's the weather and population of Paris?"
+      (add `--local` right after `run` to execute locally instead of on the backend)
 """
 
 from pathlib import Path
@@ -24,14 +22,13 @@ from flyte._image import PythonWheels
 
 from flyteplugins.agents.claude import function_tool, run_agent
 
-# The Claude Agent SDK bundles the native `claude` CLI in its wheel, so the image
-# only needs the adapter — installed here from locally-built wheels under `../dist`.
 env = flyte.TaskEnvironment(
     "claude-durable-agent",
     resources=flyte.Resources(cpu=1),
     secrets=[flyte.Secret(key="anthropic_api_key", as_env_var="ANTHROPIC_API_KEY")],
     image=(
-        flyte.Image.from_debian_base(name="claude-durable-agent").clone(
+        flyte.Image.from_debian_base(name="claude-durable-agent")
+        .clone(
             addl_layer=PythonWheels(
                 wheel_dir=Path(__file__).parent.parent / "dist",
                 package_name="flyteplugins-agents-core",

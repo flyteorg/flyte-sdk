@@ -2,7 +2,7 @@
 
 The Claude Agent SDK runs the model loop inside the Claude Code CLI subprocess, so
 there is no in-process model-call seam to wrap in ``flyte.trace`` for per-turn replay.
-Instead we use the SDK's own **session mirror + resume**: the CLI mirrors the running
+Instead we use the SDK's own session mirror + resume: the CLI mirrors the running
 transcript to a ``SessionStore`` we provide, and on a retry it resumes from that store
 rather than starting over.
 
@@ -13,9 +13,9 @@ restored on the next attempt instead of replayed from scratch, without us owning
 the loop.
 
 Mapping to Flyte primitives:
-- **session id** is derived deterministically from the task's ``ActionID``, so every
+- session id is derived deterministically from the task's ``ActionID``, so every
   retry of the same action targets the same session;
-- **persistence** is ``flyte.Checkpoint`` — durable across container restarts.
+- persistence is ``flyte.Checkpoint`` — durable across container restarts.
 """
 
 from __future__ import annotations

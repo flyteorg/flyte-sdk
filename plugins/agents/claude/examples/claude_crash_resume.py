@@ -1,39 +1,24 @@
-"""Crash-and-resume: durable Claude agent recovery on Flyte.
+"""Crash and resume: durable Claude agent recovery on Flyte.
 
-Shows that a crash mid-run does **not** restart the agent from scratch. On the
+Shows that a crash mid-run does not restart the agent from scratch. On the
 first attempt the agent does real work (model turns in the Claude Code runtime +
 durable tool calls), then the worker is killed (simulated). Flyte retries the
 task; on the second attempt:
 
-- **the conversation resumes** — with ``durable=True`` (the default) ``run_agent``
+- the conversation resumes — with ``durable=True`` (the default) ``run_agent``
   mirrors the session transcript to a ``flyte.Checkpoint`` as it runs, and on the
   retry it sets ``resume=<session_id>`` so the Claude runtime continues the prior
   conversation instead of starting over (a deterministic session id derived from
   the task's action keeps every attempt pointed at the same session);
-- **completed tool calls are cache hits** — each tool is a durable Flyte child
+- completed tool calls are cache hits — each tool is a durable Flyte child
   action with ``cache="auto"``, so it isn't re-executed on the retry.
-
-Read the logs on a backend — the proof is the tool ``EXECUTED`` lines that
-DISAPPEAR on the retry:
-
-    ▶ resilient_agent attempt 0
-      🛠  get_weather EXECUTED for Paris (cache MISS)
-      🛠  get_population EXECUTED for Paris (cache MISS)
-    💥 simulated worker crash (first attempt only)
-    ▶ resilient_agent attempt 1
-    ✅ completed on retry — tools were cache hits, conversation resumed
-
-How this differs from the OpenAI/Mistral adapters: Claude's model loop runs in the
-Claude Code CLI subprocess, so there is no per-*turn* ``flyte.trace`` seam. Durability
-is the SDK's own session **resume** instead — coarser-grained (whole-session, not
-per-turn), and how much model work it avoids on resume is the Claude runtime's call.
-Tool durability is exact regardless.
 
 Backend only: per-attempt numbers and the previous attempt's checkpoint are provided
 by the platform per attempt — that is where resume is exercised. In ``local`` mode the
 crash is skipped and the example just runs once.
 
-Run:  python claude_crash_resume.py
+Run:  flyte run claude_crash_resume.py resilient_agent --question "What's the weather and population of Paris?"
+      (add `--local` right after `run` to execute locally instead of on the backend)
 """
 
 import os
@@ -44,14 +29,13 @@ from flyte._image import PythonWheels
 
 from flyteplugins.agents.claude import function_tool, run_agent
 
-# The Claude Agent SDK bundles the native `claude` CLI in its wheel, so the image
-# only needs the adapter — installed here from locally-built wheels under `../dist`.
 env = flyte.TaskEnvironment(
     "claude-crash-resume",
     resources=flyte.Resources(cpu=1),
-    secrets=[flyte.Secret(key="sam_anthropic_api_key", as_env_var="ANTHROPIC_API_KEY")],
+    secrets=[flyte.Secret(key="anthropic_api_key", as_env_var="ANTHROPIC_API_KEY")],
     image=(
-        flyte.Image.from_debian_base(name="claude-crash-resume").clone(
+        flyte.Image.from_debian_base(name="claude-crash-resume")
+        .clone(
             addl_layer=PythonWheels(
                 wheel_dir=Path(__file__).parent.parent / "dist",
                 package_name="flyteplugins-agents-core",

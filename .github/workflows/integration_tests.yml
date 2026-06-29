@@ -16,6 +16,8 @@ concurrency:
 jobs:
   integration-tests:
     runs-on: ubuntu-latest
+    env:
+      SETUPTOOLS_SCM_PRETEND_VERSION: "9.9.9.dev0"
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -37,7 +39,7 @@ jobs:
           key: uv-${{ runner.os }}-${{ matrix.python-version }}
       - name: Install flyte & Build wheel
         run: |
-          export SETUPTOOLS_SCM_PRETEND_VERSION="9.9.9.dev"
+          # Version comes from the job-level SETUPTOOLS_SCM_PRETEND_VERSION env.
           make dist
       - name: Install plugins and example dependencies
         working-directory: plugins

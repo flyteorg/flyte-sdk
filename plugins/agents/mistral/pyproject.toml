@@ -1,13 +1,13 @@
 [project]
 name = "flyteplugins-agents-mistral"
 dynamic = ["version"]
-description = "Run Mistral Agents (Conversations API) on Flyte — durable turns + tools, observable."
+description = "Run Mistral Agents (Conversations API) on Flyte."
 readme = "README.md"
 authors = [{ name = "Samhita Alla", email = "samhita@union.ai" }]
 requires-python = ">=3.10"
 dependencies = [
     "flyteplugins-agents-core",
-    "mistralai>=2.0",
+    "mistralai[agents]>=2.0",
 ]
 
 [build-system]

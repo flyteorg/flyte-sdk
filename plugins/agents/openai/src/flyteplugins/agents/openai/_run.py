@@ -61,7 +61,7 @@ async def run_agent(
         observability: Render the run timeline into the Flyte task report.
         run_config: A custom ``RunConfig``; ``model_provider`` is wrapped for
             durability unless ``durable=False``.
-        memory_key: Stable id (e.g. a user/thread id) for **cross-run memory**.
+        memory_key: Stable id (e.g. a user/thread id) for cross-run memory.
             When set, conversation history is loaded from and saved to a durable,
             keyed ``MemoryStore`` (via the SDK's ``Session``), so a later run with
             the same key continues the conversation. ``None`` disables memory.
