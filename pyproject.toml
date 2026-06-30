@@ -203,6 +203,7 @@ exclude-newer = "5 days"
 [tool.uv.exclude-newer-package]
 flyteidl2 = "0 days"
 flyte_controller_base = "0 days"
+flyteplugins-union = "0 days"
 
 [tool.uv.sources]
 flyte_controller_base = { path = "rs_controller" }
