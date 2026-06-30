@@ -8,6 +8,7 @@ import typing
 from datetime import timedelta
 from typing import Optional, cast
 
+from flyteidl2.common import identifier_pb2 as common_identifier_pb2
 from flyteidl2.core import identifier_pb2, literals_pb2, security_pb2, tasks_pb2
 from flyteidl2.core.execution_pb2 import TaskLog
 from flyteidl2.task import common_pb2, environment_pb2, task_definition_pb2
@@ -19,12 +20,11 @@ from flyte._logging import logger
 from flyte._pod import _PRIMARY_CONTAINER_NAME_FIELD, PodTemplate
 from flyte._secret import SecretRequest, secrets_from_request
 from flyte._task import AsyncFunctionTaskTemplate, TaskTemplate
-from flyte.models import CodeBundle, SerializationContext
+from flyte.models import CodeBundle, SerializationContext, TaskContext
 
 from ... import ReusePolicy
-from ..._context import internal_ctx
-from ..._retry import RetryStrategy
-from ..._timeout import TimeoutType, timeout_from_request
+from ..._retry import Backoff, RetryStrategy
+from ..._timeout import Timeout, TimeoutType, timeout_from_request
 from .resources_serde import get_proto_extended_resources, get_proto_resources
 from .reuse import add_reusable
 from .types_serde import transform_native_to_typed_interface
@@ -37,6 +37,7 @@ def translate_task_to_wire(
     task: TaskTemplate,
     serialization_context: SerializationContext,
     default_inputs: Optional[typing.List[common_pb2.NamedParameter]] = None,
+    task_context: Optional[TaskContext] = None,
 ) -> task_definition_pb2.TaskSpec:
     """
     Translate a task to a wire format. This is a placeholder function.
@@ -44,10 +45,11 @@ def translate_task_to_wire(
     :param task: The task to translate.
     :param serialization_context: The serialization context to use for the translation.
     :param default_inputs: Optional list of default inputs for the task.
+    :param task_context: Optional task context.
 
     :return: The translated task.
     """
-    tt = get_proto_task(task, serialization_context)
+    tt = get_proto_task(task, serialization_context, task_context)
     env: environment_pb2.Environment | None = None
 
     if task.parent_env and task.parent_env():
@@ -91,6 +93,37 @@ def get_security_context(
     )
 
 
+def _to_duration(value: timedelta | int | None) -> Optional[duration_pb2.Duration]:
+    """timedelta/int (seconds) -> google.protobuf.Duration; None passes through."""
+    if value is None:
+        return None
+    if isinstance(value, int):
+        value = timedelta(seconds=value)
+    total = value.total_seconds()
+    seconds = int(total)
+    nanos = round((total - seconds) * 1_000_000_000)
+    return duration_pb2.Duration(seconds=seconds, nanos=nanos)
+
+
+def _to_timeout_duration(value: timedelta | int | None) -> Optional[duration_pb2.Duration]:
+    """Like :func:`_to_duration`, but for timeout/deadline fields where ``0``
+    means "unlimited" (same as ``None``) and is omitted on the wire."""
+    if value is None:
+        return None
+    if isinstance(value, int):
+        value = timedelta(seconds=value)
+    if value.total_seconds() == 0:
+        return None
+    return _to_duration(value)
+
+
+def _backoff_to_proto(backoff: Backoff) -> literals_pb2.Backoff:
+    proto = literals_pb2.Backoff(base=_to_duration(backoff.base), factor=backoff.factor)
+    if backoff.cap is not None:
+        proto.cap.CopyFrom(_to_duration(backoff.cap))
+    return proto
+
+
 def get_proto_retry_strategy(
     retries: RetryStrategy | int | None,
 ) -> Optional[literals_pb2.RetryStrategy]:
@@ -100,19 +133,48 @@ def get_proto_retry_strategy(
     if isinstance(retries, int):
         raise AssertionError("Retries should be an instance of RetryStrategy, not int")
 
-    return literals_pb2.RetryStrategy(retries=retries.count)
+    proto = literals_pb2.RetryStrategy(retries=retries.count)
+    if retries.backoff is not None:
+        proto.backoff.CopyFrom(_backoff_to_proto(retries.backoff))
+    return proto
 
 
-def get_proto_timeout(timeout: TimeoutType | None) -> Optional[duration_pb2.Duration]:
+def get_proto_max_runtime(timeout: TimeoutType | None) -> Optional[duration_pb2.Duration]:
+    """Serialize ``Timeout.max_runtime`` for ``TaskMetadata.timeout``. Returns
+    ``None`` (omits the wire field) when the bound is unset or zero — both
+    mean unlimited."""
     if timeout is None:
         return None
-    max_runtime_timeout = timeout_from_request(timeout).max_runtime
-    if isinstance(max_runtime_timeout, int):
-        max_runtime_timeout = timedelta(seconds=max_runtime_timeout)
-    return duration_pb2.Duration(seconds=max_runtime_timeout.seconds)
+    return _to_timeout_duration(timeout_from_request(timeout).max_runtime)
 
 
-def get_proto_task(task: TaskTemplate, serialize_context: SerializationContext) -> tasks_pb2.TaskTemplate:
+def get_proto_timeout_strategy(timeout: TimeoutType | None) -> Optional[literals_pb2.TimeoutStrategy]:
+    """
+    Serialize the queued-timeout and deadline fields into
+    ``TaskMetadata.timeouts``. Returns ``None`` if neither bound is set, so
+    the caller can leave the wire field unset (= unlimited). A bound is
+    considered unset when it is ``None`` or zero.
+
+    SDK ``Timeout.max_queued_time`` maps to proto ``TimeoutStrategy.queued_timeout``.
+    """
+    if timeout is None:
+        return None
+    t: Timeout = timeout_from_request(timeout)
+    queued = _to_timeout_duration(t.max_queued_time)
+    deadline = _to_timeout_duration(t.deadline)
+    if queued is None and deadline is None:
+        return None
+    proto = literals_pb2.TimeoutStrategy()
+    if queued is not None:
+        proto.queued_timeout.CopyFrom(queued)
+    if deadline is not None:
+        proto.deadline.CopyFrom(deadline)
+    return proto
+
+
+def get_proto_task(
+    task: TaskTemplate, serialize_context: SerializationContext, task_context: Optional[TaskContext] = None
+) -> tasks_pb2.TaskTemplate:
     task_id = identifier_pb2.Identifier(
         resource_type=identifier_pb2.ResourceType.TASK,
         project=serialize_context.project,
@@ -123,27 +185,25 @@ def get_proto_task(task: TaskTemplate, serialize_context: SerializationContext) 
     )
 
     extra_config: typing.Dict[str, str] = {}
+    pod = None
+    container = None
+    sql = task.sql(serialize_context)
 
     if task.pod_template and not isinstance(task.pod_template, str):
         pod = _get_k8s_pod(_get_urun_container(serialize_context, task), task.pod_template)
         extra_config[_PRIMARY_CONTAINER_NAME_FIELD] = task.pod_template.primary_container_name
-        container = None
-    else:
+    elif sql is None:
         container = _get_urun_container(serialize_context, task)
-        pod = None
-
-    ctx = internal_ctx()
-    task_ctx = ctx.data.task_context
     log_links = []
-    if task.links and task_ctx:
-        action = task_ctx.action
+    if task.links and task_context:
+        action = task_context.action
         for link in task.links:
             uri = link.get_link(
-                run_name=action.run_name if action.run_name else "",
-                project=action.project if action.project else "",
-                domain=action.domain if action.domain else "",
-                context=task_ctx.custom_context if task_ctx.custom_context else {},
-                parent_action_name=action.name if action.name else "",
+                run_name=action.run_name or "",
+                project=action.project or "",
+                domain=action.domain or "",
+                context=task_context.custom_context or {},
+                parent_action_name=action.name or "",
                 action_name="{{.actionName}}",
                 pod_name="{{.podName}}",
             )
@@ -151,8 +211,6 @@ def get_proto_task(task: TaskTemplate, serialize_context: SerializationContext) 
             log_links.append(task_log)
 
     custom = task.custom_config(serialize_context)
-
-    sql = task.sql(serialize_context)
 
     # -------------- CACHE HANDLING ----------------------
     task_cache = cache_from_request(task.cache)
@@ -174,6 +232,16 @@ def get_proto_task(task: TaskTemplate, serialize_context: SerializationContext) 
     else:
         logger.debug(f"Cache disabled for task {task.name}")
 
+    image_build_run = None
+    if serialize_context.image_cache and task.parent_env_name in serialize_context.image_cache.build_run_ids:
+        run_id_data = serialize_context.image_cache.build_run_ids[task.parent_env_name]
+        image_build_run = common_identifier_pb2.RunIdentifier(
+            org=run_id_data.org,
+            project=run_id_data.project,
+            domain=run_id_data.domain,
+            name=run_id_data.name,
+        )
+
     task_template = tasks_pb2.TaskTemplate(
         id=task_id,
         type=task.task_type,
@@ -188,12 +256,16 @@ def get_proto_task(task: TaskTemplate, serialize_context: SerializationContext) 
                 flavor="python",
             ),
             retries=get_proto_retry_strategy(task.retries),
-            timeout=get_proto_timeout(task.timeout),
+            timeout=get_proto_max_runtime(task.timeout),
+            timeouts=get_proto_timeout_strategy(task.timeout),
             pod_template_name=(task.pod_template if task.pod_template and isinstance(task.pod_template, str) else None),
             interruptible=task.interruptible,
             generates_deck=wrappers_pb2.BoolValue(value=task.report),
-            debuggable=task.debuggable,
+            debuggable=task.debuggable if task.reusable is None else False,
+            is_entrypoint=task.entrypoint,
             log_links=log_links,
+            image_build_run=image_build_run,
+            code_bundle_uri=serialize_context.code_bundle.tgz if serialize_context.code_bundle else None,
         ),
         interface=transform_native_to_typed_interface(task.native_interface),
         custom=custom if len(custom) > 0 else None,
@@ -222,31 +294,36 @@ def get_proto_task(task: TaskTemplate, serialize_context: SerializationContext) 
 
 
 def lookup_image_in_cache(serialize_context: SerializationContext, env_name: str, image: flyte.Image) -> str:
-    if not serialize_context.image_cache or len(image._layers) == 0:
+    # Check cache first - this handles resolved ref_name images where base_image
+    # was set on the environment but not propagated to the task's image reference
+    if serialize_context.image_cache and env_name in serialize_context.image_cache.image_lookup:
+        return serialize_context.image_cache.image_lookup[env_name]
+
+    if image._ref_name is None and (not serialize_context.image_cache or len(image._layers) == 0):
         # This computes the image uri, computing hashes as necessary so can fail if done remotely.
         return image.uri
-    elif serialize_context.image_cache and env_name not in serialize_context.image_cache.image_lookup:
-        raise flyte.errors.RuntimeUserError(
-            "MissingEnvironment",
-            f"Environment '{env_name}' not found in image cache.\n\n"
-            "💡 To fix this:\n"
-            "  1. If your parent environment calls a task in another environment,"
-            " declare that dependency using 'depends_on=[...]'.\n"
-            "     Example:\n"
-            "         env1 = flyte.TaskEnvironment(\n"
-            "             name='outer',\n"
-            "             image=flyte.Image.from_debian_base().with_pip_packages('requests'),\n"
-            "             depends_on=[env2, env3],\n"
-            "         )\n"
-            "  2. If you're using os.getenv() to set the environment name,"
-            " make sure the runtime environment has the same environment variable defined.\n"
-            "     Example:\n"
-            "         env = flyte.TaskEnvironment(\n"
-            '             name=os.getenv("my-name"),\n'
-            '             env_vars={"my-name": os.getenv("my-name")},\n'
-            "         )\n",
-        )
-    return serialize_context.image_cache.image_lookup[env_name]
+
+    # Has cache and layers but env not found in cache
+    raise flyte.errors.RuntimeUserError(
+        "MissingEnvironment",
+        f"Environment '{env_name}' not found in image cache.\n\n"
+        "💡 To fix this:\n"
+        "  1. If your parent environment calls a task in another environment,"
+        " declare that dependency using 'depends_on=[...]'.\n"
+        "     Example:\n"
+        "         env1 = flyte.TaskEnvironment(\n"
+        "             name='outer',\n"
+        "             image=flyte.Image.from_debian_base().with_pip_packages('requests'),\n"
+        "             depends_on=[env2, env3],\n"
+        "         )\n"
+        "  2. If you're using os.getenv() to set the environment name,"
+        " make sure the runtime environment has the same environment variable defined.\n"
+        "     Example:\n"
+        "         env = flyte.TaskEnvironment(\n"
+        '             name=os.getenv("my-name"),\n'
+        '             env_vars={"my-name": os.getenv("my-name")},\n'
+        "         )\n",
+    )
 
 
 def _get_urun_container(
@@ -267,7 +344,10 @@ def _get_urun_container(
     if env_name is None:
         raise flyte.errors.RuntimeSystemError("BadConfig", f"Task {task_template.name} has no parent environment name")
 
-    img_uri = lookup_image_in_cache(serialize_context, env_name, img)
+    img_uri = lookup_image_in_cache(serialize_context, env_name, img) if img else None
+
+    config_dict = task_template.config(serialize_context)
+    config = [literals_pb2.KeyValuePair(key=k, value=v) for k, v in config_dict.items()] if config_dict else None
 
     return tasks_pb2.Container(
         image=img_uri,
@@ -276,7 +356,7 @@ def _get_urun_container(
         resources=resources,
         env=env,
         data_config=task_template.data_loading_config(serialize_context),
-        config=task_template.config(serialize_context),
+        config=config,
     )
 
 
@@ -327,10 +407,18 @@ def _get_k8s_pod(primary_container: tasks_pb2.Container, pod_template: PodTempla
             for resource in primary_container.resources.requests:
                 requests[_sanitize_resource_name(resource)] = resource.value
 
-            resource_requirements = V1ResourceRequirements(limits=limits, requests=requests)
             if len(limits) > 0 or len(requests) > 0:
-                # Important! Only copy over resource requirements if they are non-empty.
-                container.resources = resource_requirements
+                # Merge the task-declared resources (cpu/mem/gpu from Resources(...))
+                # into whatever the pod template's primary container already set,
+                # instead of replacing it. This preserves extended-resource requests
+                # (e.g. device-plugin resources like "smarter-devices/fuse") that can
+                # only be expressed through the pod template — replacing would silently
+                # drop them. Task-declared keys win on conflict. Mirrors the backend's
+                # flytek8s MergeResources behavior.
+                existing = container.resources or V1ResourceRequirements()
+                merged_limits = {**(existing.limits or {}), **limits}
+                merged_requests = {**(existing.requests or {}), **requests}
+                container.resources = V1ResourceRequirements(limits=merged_limits, requests=merged_requests)
 
             if primary_container.env is not None:
                 container.env = [V1EnvVar(name=e.key, value=e.value) for e in primary_container.env] + (

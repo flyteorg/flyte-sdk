@@ -1,0 +1,1363 @@
+"""Tests for remote controller condition registration and waiting.
+
+These tests cover:
+- register_condition: validates condition, creates condition action, submits to backend (fire-and-forget)
+- wait_for_condition: waits for condition action completion, returns typed payload
+- Various data types (bool, int, float, str)
+- Error/failure/abort/timeout terminal phases
+- Integration with core controller start_action / wait_for_action split
+"""
+
+from __future__ import annotations
+
+import asyncio
+import pathlib
+from datetime import timedelta
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+from flyteidl2.common import identifier_pb2, phase_pb2
+from flyteidl2.task import task_definition_pb2
+from flyteidl2.workflow import run_definition_pb2
+
+import flyte
+import flyte.errors
+import flyte.report
+from flyte._condition import ConditionWebhook, _Condition
+from flyte._context import internal_ctx
+from flyte._internal.controllers.remote._action import Action
+from flyte._internal.controllers.remote._controller import RemoteController
+from flyte._internal.controllers.remote._core import Controller
+from flyte._internal.controllers.remote._service_protocol import ClientSet
+from flyte.models import ActionID, CodeBundle, RawDataPath, TaskContext
+
+this_dir_str = str(pathlib.Path(__file__).parent.absolute())
+
+
+def _make_task_context(**overrides) -> TaskContext:
+    defaults = {
+        "action": ActionID(name="parent_action", run_name="test_run", project="proj", domain="dev", org="org"),
+        "raw_data_path": RawDataPath(path="test"),
+        "output_path": "/tmp",
+        "version": "v1",
+        "run_base_dir": "/run_base",
+        "report": flyte.report.Report(name="test_report"),
+        "code_bundle": CodeBundle(
+            computed_version="vcode-bundle",
+            destination=this_dir_str,
+            tgz="dummy.tgz",
+        ),
+    }
+    defaults.update(overrides)
+    return TaskContext(**defaults)
+
+
+def _make_condition(name="approval", data_type=bool, **kwargs) -> _Condition:
+    return _Condition(name=name, data_type=data_type, **kwargs)
+
+
+async def _make_client() -> ClientSet:
+    return AsyncMock()  # type: ignore
+
+
+def _make_controller(**kwargs) -> RemoteController:
+    defaults = {"client_coro": _make_client(), "workers": 2, "max_system_retries": 2}
+    defaults.update(kwargs)
+    return RemoteController(**defaults)
+
+
+# ── Core controller: start_action + wait_for_action split ──────────────────
+
+
+def _make_bare_controller():
+    """Create a Controller without running __init__, with minimal attributes for _bg_* methods."""
+    controller = object.__new__(Controller)
+    controller._informers = MagicMock()
+    controller._informer_start_wait_timeout = 5.0
+    controller._shared_queue = asyncio.Queue()
+    controller._state_service = AsyncMock()
+    controller._actions_service = None
+    controller._trace_submit = False
+    return controller
+
+
+@pytest.mark.asyncio
+async def test_start_action_returns_immediately():
+    """start_action should submit to the informer and return without waiting for completion."""
+    controller = _make_bare_controller()
+    informer = AsyncMock()
+    controller._informers.get_or_create = AsyncMock(return_value=informer)
+
+    # Minimal action
+    run_id = identifier_pb2.RunIdentifier(name="root_run")
+    action = Action(
+        action_id=identifier_pb2.ActionIdentifier(name="subrun-1", run=run_id),
+        parent_action_name="parent",
+        task=task_definition_pb2.TaskSpec(),
+        inputs_uri="input_uri",
+        run_output_base="run-base",
+    )
+
+    await controller._bg_submit_action(action)
+
+    # Should have submitted to informer
+    informer.submit.assert_awaited_once_with(action)
+    # Should NOT have waited for completion
+    informer.wait_for_action_completion.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_wait_for_action_blocks_until_completion():
+    """wait_for_action should block until the action reaches a terminal state."""
+    controller = _make_bare_controller()
+
+    run_id = identifier_pb2.RunIdentifier(name="root_run")
+    action_id = identifier_pb2.ActionIdentifier(name="subrun-1", run=run_id)
+
+    action = Action(
+        action_id=action_id,
+        parent_action_name="parent",
+    )
+
+    final_action = Action(
+        action_id=action_id,
+        parent_action_name="parent",
+        phase=phase_pb2.ACTION_PHASE_SUCCEEDED,
+        realized_outputs_uri="s3://bucket/output",
+    )
+
+    informer = AsyncMock()
+    informer.get = AsyncMock(return_value=final_action)
+    controller._informers.get_or_create = AsyncMock(return_value=informer)
+
+    result = await controller._bg_wait_for_action(action)
+
+    informer.wait_for_action_completion.assert_awaited_once_with("subrun-1")
+    informer.get.assert_awaited_once_with("subrun-1")
+    informer.remove.assert_awaited_once_with("subrun-1")
+    assert result.phase == phase_pb2.ACTION_PHASE_SUCCEEDED
+
+
+@pytest.mark.asyncio
+async def test_submit_and_wait_combines_both():
+    """submit_and_wait_for_action should submit then wait, returning the final action."""
+    controller = _make_bare_controller()
+
+    run_id = identifier_pb2.RunIdentifier(name="root_run")
+    action = Action(
+        action_id=identifier_pb2.ActionIdentifier(name="subrun-1", run=run_id),
+        parent_action_name="parent",
+        task=task_definition_pb2.TaskSpec(),
+        inputs_uri="input_uri",
+        run_output_base="run-base",
+    )
+
+    final_action = Action(
+        action_id=action.action_id,
+        parent_action_name="parent",
+        phase=phase_pb2.ACTION_PHASE_SUCCEEDED,
+        realized_outputs_uri="s3://bucket/output",
+    )
+
+    informer = AsyncMock()
+    informer.get = AsyncMock(return_value=final_action)
+    controller._informers.get_or_create = AsyncMock(return_value=informer)
+
+    result = await controller._bg_submit_and_wait_for_action(action)
+
+    informer.submit.assert_awaited_once_with(action)
+    informer.wait_for_action_completion.assert_awaited_once_with("subrun-1")
+    assert result.phase == phase_pb2.ACTION_PHASE_SUCCEEDED
+
+
+# ── RemoteController: register_condition ──────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_register_condition_bool():
+    """register_condition with bool data_type should submit a condition action and return immediately."""
+    await flyte.init.aio()
+    condition = _make_condition(name="approve", data_type=bool, prompt="Approve deployment?")
+
+    with patch("flyte._initialize.get_init_config") as mock_config:
+        mock_config.return_value.root_dir = pathlib.Path(__file__).parent
+        ctx = internal_ctx()
+        tctx = _make_task_context()
+
+        with ctx.replace_task_context(tctx):
+            controller = _make_controller()
+
+            with patch.object(controller, "start_action", new_callable=AsyncMock) as mock_start:
+                await controller.register_condition(condition)
+                mock_start.assert_called_once()
+                action = mock_start.call_args[0][0]
+                assert action.type == "condition"
+
+
+@pytest.mark.asyncio
+async def test_register_condition_str():
+    """register_condition with str data_type."""
+    await flyte.init.aio()
+    condition = _make_condition(name="user_input", data_type=str, prompt="Enter value:")
+
+    with patch("flyte._initialize.get_init_config") as mock_config:
+        mock_config.return_value.root_dir = pathlib.Path(__file__).parent
+        ctx = internal_ctx()
+        tctx = _make_task_context()
+
+        with ctx.replace_task_context(tctx):
+            controller = _make_controller()
+
+            with patch.object(controller, "start_action", new_callable=AsyncMock) as mock_start:
+                await controller.register_condition(condition)
+                mock_start.assert_called_once()
+                action = mock_start.call_args[0][0]
+                assert action.type == "condition"
+
+
+@pytest.mark.asyncio
+async def test_register_condition_int():
+    """register_condition with int data_type."""
+    await flyte.init.aio()
+    condition = _make_condition(name="count", data_type=int, prompt="How many?")
+
+    with patch("flyte._initialize.get_init_config") as mock_config:
+        mock_config.return_value.root_dir = pathlib.Path(__file__).parent
+        ctx = internal_ctx()
+        tctx = _make_task_context()
+
+        with ctx.replace_task_context(tctx):
+            controller = _make_controller()
+
+            with patch.object(controller, "start_action", new_callable=AsyncMock) as mock_start:
+                await controller.register_condition(condition)
+                mock_start.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_register_condition_float():
+    """register_condition with float data_type."""
+    await flyte.init.aio()
+    condition = _make_condition(name="threshold", data_type=float, prompt="Set threshold:")
+
+    with patch("flyte._initialize.get_init_config") as mock_config:
+        mock_config.return_value.root_dir = pathlib.Path(__file__).parent
+        ctx = internal_ctx()
+        tctx = _make_task_context()
+
+        with ctx.replace_task_context(tctx):
+            controller = _make_controller()
+
+            with patch.object(controller, "start_action", new_callable=AsyncMock) as mock_start:
+                await controller.register_condition(condition)
+                mock_start.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_register_condition_rejects_non_condition():
+    """register_condition should raise TypeError for non-_Condition objects."""
+    controller = _make_controller()
+    with pytest.raises(TypeError, match="Expected _Condition"):
+        await controller.register_condition("not_a_condition")
+
+
+@pytest.mark.asyncio
+async def test_register_condition_with_webhook():
+    """register_condition should forward webhook url and payload onto the condition action proto."""
+    await flyte.init.aio()
+    webhook = ConditionWebhook(url="https://example.com/hook", payload={"cb": "{callback_uri}"})
+    condition = _make_condition(name="webhook_condition", webhook=webhook)
+
+    with patch("flyte._initialize.get_init_config") as mock_config:
+        mock_config.return_value.root_dir = pathlib.Path(__file__).parent
+        ctx = internal_ctx()
+        tctx = _make_task_context()
+
+        with ctx.replace_task_context(tctx):
+            controller = _make_controller()
+
+            with patch.object(controller, "start_action", new_callable=AsyncMock) as mock_start:
+                await controller.register_condition(condition)
+                mock_start.assert_called_once()
+                action = mock_start.call_args[0][0]
+                assert action.condition.HasField("webhook")
+                assert action.condition.webhook.url == "https://example.com/hook"
+                assert action.condition.webhook.payload["cb"] == "{callback_uri}"
+
+
+@pytest.mark.asyncio
+async def test_register_condition_with_timeout():
+    """register_condition should forward the condition timeout onto the condition action proto."""
+    await flyte.init.aio()
+    condition = _make_condition(name="timed_condition", timeout=timedelta(seconds=30))
+
+    with patch("flyte._initialize.get_init_config") as mock_config:
+        mock_config.return_value.root_dir = pathlib.Path(__file__).parent
+        ctx = internal_ctx()
+        tctx = _make_task_context()
+
+        with ctx.replace_task_context(tctx):
+            controller = _make_controller()
+
+            with patch.object(controller, "start_action", new_callable=AsyncMock) as mock_start:
+                await controller.register_condition(condition)
+                mock_start.assert_called_once()
+                action = mock_start.call_args[0][0]
+                assert action.condition.HasField("timeout")
+                assert action.condition.timeout.ToTimedelta().total_seconds() == 30
+
+
+@pytest.mark.asyncio
+async def test_register_condition_with_description():
+    """register_condition should pass description through to the condition action."""
+    await flyte.init.aio()
+    condition = _make_condition(name="described_condition", description="This needs human review")
+
+    with patch("flyte._initialize.get_init_config") as mock_config:
+        mock_config.return_value.root_dir = pathlib.Path(__file__).parent
+        ctx = internal_ctx()
+        tctx = _make_task_context()
+
+        with ctx.replace_task_context(tctx):
+            controller = _make_controller()
+
+            with patch.object(controller, "start_action", new_callable=AsyncMock) as mock_start:
+                await controller.register_condition(condition)
+                mock_start.assert_called_once()
+
+
+# ── RemoteController: wait_for_condition ──────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_wait_for_condition_bool_succeeded():
+    """wait_for_condition should return bool payload on successful completion."""
+    await flyte.init.aio()
+    condition = _make_condition(name="approve", data_type=bool)
+
+    succeeded_action = Action(
+        action_id=identifier_pb2.ActionIdentifier(
+            name="condition-approve",
+            run=identifier_pb2.RunIdentifier(name="test_run"),
+        ),
+        parent_action_name="parent_action",
+        type="condition",
+        phase=phase_pb2.ACTION_PHASE_SUCCEEDED,
+        realized_outputs_uri="/tmp/outputs",
+    )
+
+    with patch("flyte._initialize.get_init_config") as mock_config:
+        mock_config.return_value.root_dir = pathlib.Path(__file__).parent
+        ctx = internal_ctx()
+        tctx = _make_task_context()
+
+        with ctx.replace_task_context(tctx):
+            controller = _make_controller()
+
+            # Simulate that register_condition was called first
+            with (
+                patch.object(controller, "start_action", new_callable=AsyncMock),
+                patch.object(
+                    controller,
+                    "wait_for_action",
+                    new_callable=AsyncMock,
+                    return_value=succeeded_action,
+                ) as mock_wait,
+            ):
+                await controller.register_condition(condition)
+                await controller.wait_for_condition(condition)
+                mock_wait.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_wait_for_condition_str_succeeded():
+    """wait_for_condition should return str payload on successful completion."""
+    await flyte.init.aio()
+    condition = _make_condition(name="user_input", data_type=str)
+
+    succeeded_action = Action(
+        action_id=identifier_pb2.ActionIdentifier(
+            name="condition-user_input",
+            run=identifier_pb2.RunIdentifier(name="test_run"),
+        ),
+        parent_action_name="parent_action",
+        type="condition",
+        phase=phase_pb2.ACTION_PHASE_SUCCEEDED,
+        realized_outputs_uri="/tmp/outputs",
+    )
+
+    with patch("flyte._initialize.get_init_config") as mock_config:
+        mock_config.return_value.root_dir = pathlib.Path(__file__).parent
+        ctx = internal_ctx()
+        tctx = _make_task_context()
+
+        with ctx.replace_task_context(tctx):
+            controller = _make_controller()
+
+            with (
+                patch.object(controller, "start_action", new_callable=AsyncMock),
+                patch.object(
+                    controller,
+                    "wait_for_action",
+                    new_callable=AsyncMock,
+                    return_value=succeeded_action,
+                ),
+            ):
+                await controller.register_condition(condition)
+                await controller.wait_for_condition(condition)
+
+
+@pytest.mark.asyncio
+async def test_wait_for_condition_int_succeeded():
+    """wait_for_condition should return int payload on successful completion."""
+    await flyte.init.aio()
+    condition = _make_condition(name="count", data_type=int)
+
+    succeeded_action = Action(
+        action_id=identifier_pb2.ActionIdentifier(
+            name="condition-count",
+            run=identifier_pb2.RunIdentifier(name="test_run"),
+        ),
+        parent_action_name="parent_action",
+        type="condition",
+        phase=phase_pb2.ACTION_PHASE_SUCCEEDED,
+        realized_outputs_uri="/tmp/outputs",
+    )
+
+    with patch("flyte._initialize.get_init_config") as mock_config:
+        mock_config.return_value.root_dir = pathlib.Path(__file__).parent
+        ctx = internal_ctx()
+        tctx = _make_task_context()
+
+        with ctx.replace_task_context(tctx):
+            controller = _make_controller()
+
+            with (
+                patch.object(controller, "start_action", new_callable=AsyncMock),
+                patch.object(
+                    controller,
+                    "wait_for_action",
+                    new_callable=AsyncMock,
+                    return_value=succeeded_action,
+                ),
+            ):
+                await controller.register_condition(condition)
+                await controller.wait_for_condition(condition)
+
+
+@pytest.mark.asyncio
+async def test_wait_for_condition_float_succeeded():
+    """wait_for_condition should return float payload on successful completion."""
+    await flyte.init.aio()
+    condition = _make_condition(name="threshold", data_type=float)
+
+    succeeded_action = Action(
+        action_id=identifier_pb2.ActionIdentifier(
+            name="condition-threshold",
+            run=identifier_pb2.RunIdentifier(name="test_run"),
+        ),
+        parent_action_name="parent_action",
+        type="condition",
+        phase=phase_pb2.ACTION_PHASE_SUCCEEDED,
+        realized_outputs_uri="/tmp/outputs",
+    )
+
+    with patch("flyte._initialize.get_init_config") as mock_config:
+        mock_config.return_value.root_dir = pathlib.Path(__file__).parent
+        ctx = internal_ctx()
+        tctx = _make_task_context()
+
+        with ctx.replace_task_context(tctx):
+            controller = _make_controller()
+
+            with (
+                patch.object(controller, "start_action", new_callable=AsyncMock),
+                patch.object(
+                    controller,
+                    "wait_for_action",
+                    new_callable=AsyncMock,
+                    return_value=succeeded_action,
+                ),
+            ):
+                await controller.register_condition(condition)
+                await controller.wait_for_condition(condition)
+
+
+@pytest.mark.asyncio
+async def test_wait_for_condition_failed_phase():
+    """wait_for_condition should raise ConditionFailedError when the condition action fails."""
+    await flyte.init.aio()
+    condition = _make_condition(name="fail_condition", data_type=bool)
+
+    failed_action = Action(
+        action_id=identifier_pb2.ActionIdentifier(
+            name="condition-fail_condition",
+            run=identifier_pb2.RunIdentifier(name="test_run"),
+        ),
+        parent_action_name="parent_action",
+        type="condition",
+        phase=phase_pb2.ACTION_PHASE_FAILED,
+        client_err=Exception("Condition failed"),
+    )
+
+    with patch("flyte._initialize.get_init_config") as mock_config:
+        mock_config.return_value.root_dir = pathlib.Path(__file__).parent
+        ctx = internal_ctx()
+        tctx = _make_task_context()
+
+        with ctx.replace_task_context(tctx):
+            controller = _make_controller()
+
+            with (
+                patch.object(controller, "start_action", new_callable=AsyncMock),
+                patch.object(
+                    controller,
+                    "wait_for_action",
+                    new_callable=AsyncMock,
+                    return_value=failed_action,
+                ),
+            ):
+                await controller.register_condition(condition)
+                with pytest.raises(flyte.errors.ConditionFailedError):
+                    await controller.wait_for_condition(condition)
+
+
+@pytest.mark.asyncio
+async def test_wait_for_condition_aborted_phase():
+    """wait_for_condition should raise ActionAbortedError when the condition action is aborted."""
+    await flyte.init.aio()
+    condition = _make_condition(name="abort_condition", data_type=bool)
+
+    aborted_action = Action(
+        action_id=identifier_pb2.ActionIdentifier(
+            name="condition-abort_condition",
+            run=identifier_pb2.RunIdentifier(name="test_run"),
+        ),
+        parent_action_name="parent_action",
+        type="condition",
+        phase=phase_pb2.ACTION_PHASE_ABORTED,
+    )
+
+    with patch("flyte._initialize.get_init_config") as mock_config:
+        mock_config.return_value.root_dir = pathlib.Path(__file__).parent
+        ctx = internal_ctx()
+        tctx = _make_task_context()
+
+        with ctx.replace_task_context(tctx):
+            controller = _make_controller()
+
+            with (
+                patch.object(controller, "start_action", new_callable=AsyncMock),
+                patch.object(
+                    controller,
+                    "wait_for_action",
+                    new_callable=AsyncMock,
+                    return_value=aborted_action,
+                ),
+            ):
+                await controller.register_condition(condition)
+                with pytest.raises(flyte.errors.ActionAbortedError):
+                    await controller.wait_for_condition(condition)
+
+
+@pytest.mark.asyncio
+async def test_wait_for_condition_timed_out_phase():
+    """wait_for_condition should raise ConditionTimedoutError when the condition action times out."""
+    await flyte.init.aio()
+    condition = _make_condition(name="timeout_condition", data_type=bool, timeout=10)
+
+    timed_out_action = Action(
+        action_id=identifier_pb2.ActionIdentifier(
+            name="condition-timeout_condition",
+            run=identifier_pb2.RunIdentifier(name="test_run"),
+        ),
+        parent_action_name="parent_action",
+        type="condition",
+        phase=phase_pb2.ACTION_PHASE_TIMED_OUT,
+    )
+
+    with patch("flyte._initialize.get_init_config") as mock_config:
+        mock_config.return_value.root_dir = pathlib.Path(__file__).parent
+        ctx = internal_ctx()
+        tctx = _make_task_context()
+
+        with ctx.replace_task_context(tctx):
+            controller = _make_controller()
+
+            with (
+                patch.object(controller, "start_action", new_callable=AsyncMock),
+                patch.object(
+                    controller,
+                    "wait_for_action",
+                    new_callable=AsyncMock,
+                    return_value=timed_out_action,
+                ),
+            ):
+                await controller.register_condition(condition)
+                with pytest.raises(flyte.errors.ConditionTimedoutError):
+                    await controller.wait_for_condition(condition)
+
+
+@pytest.mark.asyncio
+async def test_wait_for_condition_rejects_non_condition():
+    """wait_for_condition should raise TypeError for non-_Condition objects."""
+    controller = _make_controller()
+    with pytest.raises(TypeError, match="Expected _Condition"):
+        await controller.wait_for_condition("not_a_condition")
+
+
+@pytest.mark.asyncio
+async def test_wait_for_condition_without_register_raises():
+    """wait_for_condition should raise if condition was not previously registered."""
+    await flyte.init.aio()
+    condition = _make_condition(name="unregistered")
+
+    with patch("flyte._initialize.get_init_config") as mock_config:
+        mock_config.return_value.root_dir = pathlib.Path(__file__).parent
+        ctx = internal_ctx()
+        tctx = _make_task_context()
+
+        with ctx.replace_task_context(tctx):
+            controller = _make_controller()
+            with pytest.raises((RuntimeError, KeyError)):
+                await controller.wait_for_condition(condition)
+
+
+# ── Action.from_condition ──────────────────────────────────────────────────
+
+
+def test_action_from_condition_creates_condition_type():
+    """Action.from_condition should create an action with type='condition'."""
+    action_id = identifier_pb2.ActionIdentifier(
+        name="condition-test",
+        run=identifier_pb2.RunIdentifier(name="test_run"),
+    )
+    action = Action.from_condition(
+        parent_action_name="parent",
+        action_id=action_id,
+        condition_name="test_condition",
+        prompt="Approve?",
+        data_type=bool,
+        run_output_base="/run_base",
+        inputs_uri="/run_base/inputs.pb",
+    )
+    assert action.type == "condition"
+    assert action.condition is not None
+    assert action.name == "condition-test"
+    assert action.inputs_uri == "/run_base/inputs.pb"
+
+
+def test_action_from_condition_with_description():
+    """from_condition should pass description to the ConditionAction proto."""
+    action_id = identifier_pb2.ActionIdentifier(
+        name="condition-desc",
+        run=identifier_pb2.RunIdentifier(name="test_run"),
+    )
+    action = Action.from_condition(
+        parent_action_name="parent",
+        action_id=action_id,
+        condition_name="desc_condition",
+        prompt="Review?",
+        data_type=str,
+        description="Needs human review",
+        run_output_base="/run_base",
+        inputs_uri="/run_base/inputs.pb",
+    )
+    assert action.type == "condition"
+    assert action.condition is not None
+
+
+def test_action_from_condition_sets_timeout():
+    """from_condition should write a positive timeout onto the ConditionAction proto."""
+    action_id = identifier_pb2.ActionIdentifier(
+        name="condition-timeout",
+        run=identifier_pb2.RunIdentifier(name="test_run"),
+    )
+    action = Action.from_condition(
+        parent_action_name="parent",
+        action_id=action_id,
+        condition_name="timed_condition",
+        prompt="Approve?",
+        data_type=bool,
+        run_output_base="/run_base",
+        inputs_uri="/run_base/inputs.pb",
+        timeout_seconds=10.0,
+    )
+    assert action.condition is not None
+    assert action.condition.HasField("timeout")
+    assert action.condition.timeout.ToTimedelta().total_seconds() == 10
+    assert action.condition.timeout.seconds == 10
+
+
+def test_action_from_condition_sets_fractional_timeout():
+    """from_condition should preserve fractional seconds in the timeout."""
+    action_id = identifier_pb2.ActionIdentifier(
+        name="condition-frac-timeout",
+        run=identifier_pb2.RunIdentifier(name="test_run"),
+    )
+    action = Action.from_condition(
+        parent_action_name="parent",
+        action_id=action_id,
+        condition_name="frac_condition",
+        prompt="Approve?",
+        data_type=bool,
+        run_output_base="/run_base",
+        inputs_uri="/run_base/inputs.pb",
+        timeout_seconds=1.5,
+    )
+    assert action.condition is not None
+    assert action.condition.HasField("timeout")
+    assert action.condition.timeout.ToTimedelta().total_seconds() == 1.5
+
+
+@pytest.mark.parametrize("timeout_seconds", [None, 0])
+def test_action_from_condition_no_timeout_when_unset_or_zero(timeout_seconds):
+    """from_condition should leave timeout unset when timeout_seconds is None or 0."""
+    action_id = identifier_pb2.ActionIdentifier(
+        name="condition-no-timeout",
+        run=identifier_pb2.RunIdentifier(name="test_run"),
+    )
+    action = Action.from_condition(
+        parent_action_name="parent",
+        action_id=action_id,
+        condition_name="no_timeout_condition",
+        prompt="Approve?",
+        data_type=bool,
+        run_output_base="/run_base",
+        inputs_uri="/run_base/inputs.pb",
+        timeout_seconds=timeout_seconds,
+    )
+    assert action.condition is not None
+    assert not action.condition.HasField("timeout")
+
+
+def test_action_from_condition_defaults_prompt_type_text():
+    """from_condition should default prompt_type to TEXT."""
+    action_id = identifier_pb2.ActionIdentifier(
+        name="condition-prompt-default",
+        run=identifier_pb2.RunIdentifier(name="test_run"),
+    )
+    action = Action.from_condition(
+        parent_action_name="parent",
+        action_id=action_id,
+        condition_name="prompt_condition",
+        prompt="Approve?",
+        data_type=bool,
+        run_output_base="/run_base",
+        inputs_uri="/run_base/inputs.pb",
+    )
+    assert action.condition.prompt_type == run_definition_pb2.CONDITION_PROMPT_TYPE_TEXT
+
+
+def test_action_from_condition_sets_markdown_prompt_type():
+    """from_condition should map prompt_type='markdown' to the MARKDOWN enum."""
+    action_id = identifier_pb2.ActionIdentifier(
+        name="condition-prompt-md",
+        run=identifier_pb2.RunIdentifier(name="test_run"),
+    )
+    action = Action.from_condition(
+        parent_action_name="parent",
+        action_id=action_id,
+        condition_name="prompt_condition",
+        prompt="Approve?",
+        data_type=bool,
+        run_output_base="/run_base",
+        inputs_uri="/run_base/inputs.pb",
+        prompt_type="markdown",
+    )
+    assert action.condition.prompt_type == run_definition_pb2.CONDITION_PROMPT_TYPE_MARKDOWN
+
+
+def test_action_from_condition_rejects_unknown_prompt_type():
+    """from_condition should raise on an unsupported prompt_type."""
+    action_id = identifier_pb2.ActionIdentifier(
+        name="condition-prompt-bad",
+        run=identifier_pb2.RunIdentifier(name="test_run"),
+    )
+    with pytest.raises(ValueError, match="prompt_type"):
+        Action.from_condition(
+            parent_action_name="parent",
+            action_id=action_id,
+            condition_name="prompt_condition",
+            prompt="Approve?",
+            data_type=bool,
+            run_output_base="/run_base",
+            inputs_uri="/run_base/inputs.pb",
+            prompt_type="html",
+        )
+
+
+def test_action_from_condition_sets_webhook():
+    """from_condition should write webhook url and payload onto the ConditionAction proto."""
+    action_id = identifier_pb2.ActionIdentifier(
+        name="condition-webhook",
+        run=identifier_pb2.RunIdentifier(name="test_run"),
+    )
+    action = Action.from_condition(
+        parent_action_name="parent",
+        action_id=action_id,
+        condition_name="webhook_condition",
+        prompt="Approve?",
+        data_type=bool,
+        run_output_base="/run_base",
+        inputs_uri="/run_base/inputs.pb",
+        webhook_url="https://example.com/hook",
+        webhook_payload={"callback": "{callback_uri}", "n": 5},
+    )
+    assert action.condition.HasField("webhook")
+    assert action.condition.webhook.url == "https://example.com/hook"
+    assert action.condition.webhook.payload["callback"] == "{callback_uri}"
+    assert action.condition.webhook.payload["n"] == 5
+
+
+def test_action_from_condition_no_webhook_when_url_absent():
+    """from_condition should leave webhook unset when no url is given (even if a payload is)."""
+    action_id = identifier_pb2.ActionIdentifier(
+        name="condition-no-webhook",
+        run=identifier_pb2.RunIdentifier(name="test_run"),
+    )
+    action = Action.from_condition(
+        parent_action_name="parent",
+        action_id=action_id,
+        condition_name="no_webhook_condition",
+        prompt="Approve?",
+        data_type=bool,
+        run_output_base="/run_base",
+        inputs_uri="/run_base/inputs.pb",
+        webhook_payload={"callback": "{callback_uri}"},
+    )
+    assert not action.condition.HasField("webhook")
+
+
+@pytest.mark.parametrize("data_type", [bool, int, float, str])
+def test_action_from_condition_all_data_types(data_type):
+    """from_condition should work with all supported data types."""
+    action_id = identifier_pb2.ActionIdentifier(
+        name=f"condition-{data_type.__name__}",
+        run=identifier_pb2.RunIdentifier(name="test_run"),
+    )
+    action = Action.from_condition(
+        parent_action_name="parent",
+        action_id=action_id,
+        condition_name=f"condition_{data_type.__name__}",
+        prompt="Enter value:",
+        data_type=data_type,
+        run_output_base="/run_base",
+        inputs_uri="/run_base/inputs.pb",
+    )
+    assert action.type == "condition"
+    assert action.condition is not None
+
+
+# ── Existing callers still work after rename ──────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_submit_task_uses_submit_and_wait():
+    """After the rename, _submit should call submit_and_wait_for_action (not start_action)."""
+    await flyte.init.aio()
+
+    env = flyte.TaskEnvironment("test_rename")
+
+    @env.task
+    async def dummy_task():
+        pass
+
+    action = Action(
+        parent_action_name="test_parent_action",
+        action_id=identifier_pb2.ActionIdentifier(name="test_action"),
+        phase=phase_pb2.ACTION_PHASE_SUCCEEDED,
+    )
+
+    with (
+        patch(
+            "flyte._internal.controllers.remote._controller.upload_inputs_with_retry",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "flyte._internal.controllers.remote._controller.RemoteController.submit_and_wait_for_action",
+            new_callable=AsyncMock,
+            return_value=action,
+        ) as mock_submit_and_wait,
+        patch("flyte._initialize.get_init_config") as mock_config,
+    ):
+        mock_config.return_value.root_dir = pathlib.Path(__file__).parent
+        ctx = internal_ctx()
+        tctx = _make_task_context()
+
+        with ctx.replace_task_context(tctx):
+            controller = _make_controller()
+            await controller.submit(dummy_task)
+
+        mock_submit_and_wait.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_record_trace_uses_submit_and_wait():
+    """After the rename, record_trace should call submit_and_wait_for_action."""
+    await flyte.init.aio()
+    from flyte._internal.controllers import TraceInfo
+    from flyte.models import NativeInterface
+
+    interface = NativeInterface(inputs={}, outputs={"result": int})
+    trace_info = TraceInfo(
+        name="test_function",
+        action=ActionID(name="test_action"),
+        interface=interface,
+        inputs_path="/tmp/inputs",
+        output=42,
+    )
+
+    with (
+        patch("flyte._internal.runtime.io.upload_outputs", new_callable=AsyncMock),
+        patch(
+            "flyte._internal.controllers.remote._controller.RemoteController.submit_and_wait_for_action",
+            new_callable=AsyncMock,
+        ) as mock_submit_and_wait,
+        patch("flyte._initialize.get_init_config") as mock_config,
+    ):
+        mock_config.return_value.root_dir = pathlib.Path(__file__).parent
+        ctx = internal_ctx()
+        tctx = _make_task_context()
+
+        with ctx.replace_task_context(tctx):
+            controller = _make_controller()
+            await controller.record_trace(trace_info)
+
+        mock_submit_and_wait.assert_called_once()
+
+
+# ── Condition output handling ────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_wait_for_condition_failed_raises_condition_failed_error():
+    """wait_for_condition should raise ConditionFailedError (not generic Exception) on FAILED phase."""
+    await flyte.init.aio()
+    condition = _make_condition(name="fail_cond", data_type=str)
+
+    failed_action = Action(
+        action_id=identifier_pb2.ActionIdentifier(
+            name="condition-fail_cond",
+            run=identifier_pb2.RunIdentifier(name="test_run"),
+        ),
+        parent_action_name="parent_action",
+        type="condition",
+        phase=phase_pb2.ACTION_PHASE_FAILED,
+    )
+
+    with patch("flyte._initialize.get_init_config") as mock_config:
+        mock_config.return_value.root_dir = pathlib.Path(__file__).parent
+        ctx = internal_ctx()
+        tctx = _make_task_context()
+
+        with ctx.replace_task_context(tctx):
+            controller = _make_controller()
+
+            with (
+                patch.object(controller, "start_action", new_callable=AsyncMock),
+                patch.object(
+                    controller,
+                    "wait_for_action",
+                    new_callable=AsyncMock,
+                    return_value=failed_action,
+                ),
+            ):
+                await controller.register_condition(condition)
+                with pytest.raises(flyte.errors.ConditionFailedError, match="fail_cond"):
+                    await controller.wait_for_condition(condition)
+
+
+@pytest.mark.asyncio
+async def test_wait_for_condition_failed_with_client_err_raises_condition_failed():
+    """wait_for_condition should raise ConditionFailedError even when client_err is set."""
+    await flyte.init.aio()
+    condition = _make_condition(name="fail_client", data_type=int)
+
+    failed_action = Action(
+        action_id=identifier_pb2.ActionIdentifier(
+            name="condition-fail_client",
+            run=identifier_pb2.RunIdentifier(name="test_run"),
+        ),
+        parent_action_name="parent_action",
+        type="condition",
+        phase=phase_pb2.ACTION_PHASE_FAILED,
+        client_err=Exception("internal error"),
+    )
+
+    with patch("flyte._initialize.get_init_config") as mock_config:
+        mock_config.return_value.root_dir = pathlib.Path(__file__).parent
+        ctx = internal_ctx()
+        tctx = _make_task_context()
+
+        with ctx.replace_task_context(tctx):
+            controller = _make_controller()
+
+            with (
+                patch.object(controller, "start_action", new_callable=AsyncMock),
+                patch.object(
+                    controller,
+                    "wait_for_action",
+                    new_callable=AsyncMock,
+                    return_value=failed_action,
+                ),
+            ):
+                await controller.register_condition(condition)
+                with pytest.raises(flyte.errors.ConditionFailedError):
+                    await controller.wait_for_condition(condition)
+
+
+@pytest.mark.asyncio
+async def test_wait_for_condition_timed_out_raises_condition_timedout():
+    """wait_for_condition should raise ConditionTimedoutError on TIMED_OUT phase for all data types."""
+    await flyte.init.aio()
+
+    for dt in (bool, int, float, str):
+        condition = _make_condition(name=f"timeout_{dt.__name__}", data_type=dt, timeout=5)
+
+        timed_out_action = Action(
+            action_id=identifier_pb2.ActionIdentifier(
+                name=f"condition-timeout_{dt.__name__}",
+                run=identifier_pb2.RunIdentifier(name="test_run"),
+            ),
+            parent_action_name="parent_action",
+            type="condition",
+            phase=phase_pb2.ACTION_PHASE_TIMED_OUT,
+        )
+
+        with patch("flyte._initialize.get_init_config") as mock_config:
+            mock_config.return_value.root_dir = pathlib.Path(__file__).parent
+            ctx = internal_ctx()
+            tctx = _make_task_context()
+
+            with ctx.replace_task_context(tctx):
+                controller = _make_controller()
+
+                with (
+                    patch.object(controller, "start_action", new_callable=AsyncMock),
+                    patch.object(
+                        controller,
+                        "wait_for_action",
+                        new_callable=AsyncMock,
+                        return_value=timed_out_action,
+                    ),
+                ):
+                    await controller.register_condition(condition)
+                    with pytest.raises(flyte.errors.ConditionTimedoutError):
+                        await controller.wait_for_condition(condition)
+
+
+# ── Action.literal_to_python ─────────────────────────────────────────────────
+
+
+class TestLiteralToPython:
+    """Tests for Action.literal_to_python which converts flyteidl Literal to Python values."""
+
+    def test_bool_true(self):
+        from flyteidl2.core.literals_pb2 import Literal, Primitive, Scalar
+
+        lit = Literal(scalar=Scalar(primitive=Primitive(boolean=True)))
+        assert Action.literal_to_python(lit, bool) is True
+
+    def test_bool_false(self):
+        from flyteidl2.core.literals_pb2 import Literal, Primitive, Scalar
+
+        lit = Literal(scalar=Scalar(primitive=Primitive(boolean=False)))
+        assert Action.literal_to_python(lit, bool) is False
+
+    def test_int_value(self):
+        from flyteidl2.core.literals_pb2 import Literal, Primitive, Scalar
+
+        lit = Literal(scalar=Scalar(primitive=Primitive(integer=42)))
+        result = Action.literal_to_python(lit, int)
+        assert result == 42
+        assert isinstance(result, int)
+
+    def test_float_value(self):
+        from flyteidl2.core.literals_pb2 import Literal, Primitive, Scalar
+
+        lit = Literal(scalar=Scalar(primitive=Primitive(float_value=3.14)))
+        result = Action.literal_to_python(lit, float)
+        assert abs(result - 3.14) < 1e-6
+        assert isinstance(result, float)
+
+    def test_str_value(self):
+        from flyteidl2.core.literals_pb2 import Literal, Primitive, Scalar
+
+        lit = Literal(scalar=Scalar(primitive=Primitive(string_value="hello")))
+        result = Action.literal_to_python(lit, str)
+        assert result == "hello"
+        assert isinstance(result, str)
+
+    def test_unsupported_type_raises(self):
+        from flyteidl2.core.literals_pb2 import Literal, Primitive, Scalar
+
+        lit = Literal(scalar=Scalar(primitive=Primitive(integer=1)))
+        with pytest.raises(TypeError, match="Unsupported expected_type"):
+            Action.literal_to_python(lit, list)
+
+
+# ── Action.condition_output field ────────────────────────────────────────────
+
+
+def test_action_condition_output_defaults_none():
+    """Action.condition_output should default to None."""
+    action = Action(
+        action_id=identifier_pb2.ActionIdentifier(name="test", run=identifier_pb2.RunIdentifier(name="run")),
+        parent_action_name="parent",
+    )
+    assert action.condition_output is None
+
+
+def test_action_from_state_sets_condition_output_none():
+    """from_state leaves condition_output unset when ActionUpdate.value is absent."""
+    from flyteidl2.workflow.state_service_pb2 import ActionUpdate
+
+    update = ActionUpdate(
+        action_id=identifier_pb2.ActionIdentifier(name="cond-1", run=identifier_pb2.RunIdentifier(name="run")),
+        phase=phase_pb2.ACTION_PHASE_SUCCEEDED,
+        output_uri="",
+    )
+    action = Action.from_state("parent", update)
+    assert action.condition_output is None
+
+
+def test_action_from_state_copies_value_when_set():
+    """from_state should copy ActionUpdate.value into condition_output."""
+    from flyteidl2.core.literals_pb2 import Literal, Primitive, Scalar
+    from flyteidl2.workflow.state_service_pb2 import ActionUpdate
+
+    literal = Literal(scalar=Scalar(primitive=Primitive(boolean=True)))
+    update = ActionUpdate(
+        action_id=identifier_pb2.ActionIdentifier(name="cond-1", run=identifier_pb2.RunIdentifier(name="run")),
+        phase=phase_pb2.ACTION_PHASE_SUCCEEDED,
+        value=literal,
+    )
+    action = Action.from_state("parent", update)
+    assert action.condition_output == literal
+
+
+def test_merge_state_copies_value_for_condition():
+    """merge_state should populate condition_output from ActionUpdate.value on condition actions."""
+    from flyteidl2.core.literals_pb2 import Literal, Primitive, Scalar
+    from flyteidl2.workflow.state_service_pb2 import ActionUpdate
+
+    action = Action(
+        action_id=identifier_pb2.ActionIdentifier(name="cond-1", run=identifier_pb2.RunIdentifier(name="run")),
+        parent_action_name="parent",
+        type="condition",
+    )
+    literal = Literal(scalar=Scalar(primitive=Primitive(string_value="approved")))
+    update = ActionUpdate(
+        action_id=action.action_id,
+        phase=phase_pb2.ACTION_PHASE_SUCCEEDED,
+        value=literal,
+    )
+    action.merge_state(update)
+    assert action.condition_output == literal
+
+
+def test_merge_state_ignores_value_for_non_condition():
+    """merge_state should not populate condition_output on non-condition actions."""
+    from flyteidl2.core.literals_pb2 import Literal, Primitive, Scalar
+    from flyteidl2.workflow.state_service_pb2 import ActionUpdate
+
+    action = Action(
+        action_id=identifier_pb2.ActionIdentifier(name="task-1", run=identifier_pb2.RunIdentifier(name="run")),
+        parent_action_name="parent",
+        type="task",
+    )
+    update = ActionUpdate(
+        action_id=action.action_id,
+        phase=phase_pb2.ACTION_PHASE_SUCCEEDED,
+        value=Literal(scalar=Scalar(primitive=Primitive(boolean=True))),
+    )
+    action.merge_state(update)
+    assert action.condition_output is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "data_type, primitive_kwargs, expected",
+    [
+        (bool, {"boolean": True}, True),
+        (bool, {"boolean": False}, False),
+        (int, {"integer": 42}, 42),
+        (float, {"float_value": 3.5}, 3.5),
+        (str, {"string_value": "hello"}, "hello"),
+    ],
+)
+async def test_wait_for_condition_returns_signaled_value(data_type, primitive_kwargs, expected):
+    """wait_for_condition should return the Python value carried in ActionUpdate.value."""
+    from flyteidl2.core.literals_pb2 import Literal, Primitive, Scalar
+
+    await flyte.init.aio()
+    condition = _make_condition(name=f"signal_{data_type.__name__}", data_type=data_type)
+
+    succeeded_action = Action(
+        action_id=identifier_pb2.ActionIdentifier(
+            name=f"condition-{data_type.__name__}",
+            run=identifier_pb2.RunIdentifier(name="test_run"),
+        ),
+        parent_action_name="parent_action",
+        type="condition",
+        phase=phase_pb2.ACTION_PHASE_SUCCEEDED,
+        condition_output=Literal(scalar=Scalar(primitive=Primitive(**primitive_kwargs))),
+    )
+
+    with patch("flyte._initialize.get_init_config") as mock_config:
+        mock_config.return_value.root_dir = pathlib.Path(__file__).parent
+        ctx = internal_ctx()
+        tctx = _make_task_context()
+
+        with ctx.replace_task_context(tctx):
+            controller = _make_controller()
+
+            with (
+                patch.object(controller, "start_action", new_callable=AsyncMock),
+                patch.object(
+                    controller,
+                    "wait_for_action",
+                    new_callable=AsyncMock,
+                    return_value=succeeded_action,
+                ),
+            ):
+                await controller.register_condition(condition)
+                result = await controller.wait_for_condition(condition)
+                assert result == expected
+                assert isinstance(result, data_type)
+
+
+@pytest.mark.asyncio
+async def test_wait_for_condition_returns_none_when_value_absent():
+    """wait_for_condition should return None if the action succeeded without a value."""
+    await flyte.init.aio()
+    condition = _make_condition(name="no_value", data_type=bool)
+
+    succeeded_action = Action(
+        action_id=identifier_pb2.ActionIdentifier(
+            name="condition-no_value",
+            run=identifier_pb2.RunIdentifier(name="test_run"),
+        ),
+        parent_action_name="parent_action",
+        type="condition",
+        phase=phase_pb2.ACTION_PHASE_SUCCEEDED,
+    )
+
+    with patch("flyte._initialize.get_init_config") as mock_config:
+        mock_config.return_value.root_dir = pathlib.Path(__file__).parent
+        ctx = internal_ctx()
+        tctx = _make_task_context()
+
+        with ctx.replace_task_context(tctx):
+            controller = _make_controller()
+
+            with (
+                patch.object(controller, "start_action", new_callable=AsyncMock),
+                patch.object(
+                    controller,
+                    "wait_for_action",
+                    new_callable=AsyncMock,
+                    return_value=succeeded_action,
+                ),
+            ):
+                await controller.register_condition(condition)
+                result = await controller.wait_for_condition(condition)
+                assert result is None
+
+
+# ── register_condition parent lineage (task_action) ──────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_register_condition_parent_is_action_for_regular_task():
+    """For a regular task (no @trace), task_action defaults to action, so the condition action
+    parents under tctx.action.name."""
+    await flyte.init.aio()
+    condition = _make_condition(name="approve", data_type=bool)
+
+    with patch("flyte._initialize.get_init_config") as mock_config:
+        mock_config.return_value.root_dir = pathlib.Path(__file__).parent
+        ctx = internal_ctx()
+        # _make_task_context's default action name is "parent_action"; task_action omitted → defaults to it.
+        tctx = _make_task_context()
+
+        with ctx.replace_task_context(tctx):
+            controller = _make_controller()
+            with patch.object(controller, "start_action", new_callable=AsyncMock) as mock_start:
+                await controller.register_condition(condition)
+                action = mock_start.call_args[0][0]
+                assert action.type == "condition"
+                assert action.parent_action_name == "parent_action"
+
+
+@pytest.mark.asyncio
+async def test_register_condition_reparents_to_task_action_inside_trace():
+    """When tctx.action has been swapped by @trace, a registered condition must parent under
+    tctx.task_action.name (the real running task), not the trace pseudo-action."""
+    await flyte.init.aio()
+    condition = _make_condition(name="approve", data_type=bool)
+
+    with patch("flyte._initialize.get_init_config") as mock_config:
+        mock_config.return_value.root_dir = pathlib.Path(__file__).parent
+        ctx = internal_ctx()
+        tctx = _make_task_context(
+            action=ActionID(name="outer_trace_action", run_name="test_run", project="proj", domain="dev", org="org"),
+            task_action=ActionID(
+                name="real_container_action", run_name="test_run", project="proj", domain="dev", org="org"
+            ),
+        )
+
+        with ctx.replace_task_context(tctx):
+            controller = _make_controller()
+            with patch.object(controller, "start_action", new_callable=AsyncMock) as mock_start:
+                await controller.register_condition(condition)
+                action = mock_start.call_args[0][0]
+                assert action.type == "condition"
+                assert action.parent_action_name == "real_container_action"
+
+
+@pytest.mark.asyncio
+async def test_start_then_wait_equivalent_to_submit_and_wait():
+    """The enqueue/wait split must compose: start_action() then wait_for_action() yields the same
+    terminal action as the combined submit_and_wait_for_action()."""
+    run_id = identifier_pb2.RunIdentifier(name="root_run")
+    action_id = identifier_pb2.ActionIdentifier(name="subrun-1", run=run_id)
+    action = Action(
+        action_id=action_id,
+        parent_action_name="parent",
+        task=task_definition_pb2.TaskSpec(),
+        inputs_uri="input_uri",
+        run_output_base="run-base",
+    )
+    final_action = Action(
+        action_id=action_id,
+        parent_action_name="parent",
+        phase=phase_pb2.ACTION_PHASE_SUCCEEDED,
+        realized_outputs_uri="s3://bucket/output",
+    )
+
+    def _make_informer():
+        informer = AsyncMock()
+        informer.get = AsyncMock(return_value=final_action)
+        return informer
+
+    # Path 1: explicit split — start then wait.
+    split_controller = _make_bare_controller()
+    split_informer = _make_informer()
+    split_controller._informers.get_or_create = AsyncMock(return_value=split_informer)
+    await split_controller._bg_submit_action(action)
+    split_result = await split_controller._bg_wait_for_action(action)
+    split_informer.submit.assert_awaited_once_with(action)
+    split_informer.wait_for_action_completion.assert_awaited_once_with("subrun-1")
+
+    # Path 2: combined.
+    combined_controller = _make_bare_controller()
+    combined_informer = _make_informer()
+    combined_controller._informers.get_or_create = AsyncMock(return_value=combined_informer)
+    combined_result = await combined_controller._bg_submit_and_wait_for_action(action)
+    combined_informer.submit.assert_awaited_once_with(action)
+    combined_informer.wait_for_action_completion.assert_awaited_once_with("subrun-1")
+
+    assert split_result.phase == combined_result.phase == phase_pb2.ACTION_PHASE_SUCCEEDED
+    assert split_result.realized_outputs_uri == combined_result.realized_outputs_uri

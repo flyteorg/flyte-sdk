@@ -8,7 +8,7 @@
 #     "pydantic",
 #     "pandas",
 #     "pyarrow",
-#     "flyte>=2.0.0b35",
+#     "flyte",
 # ]
 # ///
 """
@@ -40,8 +40,7 @@ from pydantic import BaseModel, Field
 from sentence_transformers import SentenceTransformer
 
 import flyte
-import flyte.io
-from flyte.app import Parameter
+from flyte.app import Parameter, RunOutput
 from flyte.app.extras import FastAPIAppEnvironment
 
 logging.basicConfig(level=logging.INFO)
@@ -84,7 +83,7 @@ app = FastAPI(
 )
 
 # Create Flyte FastAPI App Environment
-image = flyte.Image.from_uv_script(__file__, name="recsys-serving", pre=True)
+image = flyte.Image.from_uv_script(__file__, name="recsys-serving")
 
 env = FastAPIAppEnvironment(
     name="recsys-fastapi-app",
@@ -96,7 +95,7 @@ env = FastAPIAppEnvironment(
     parameters=[
         Parameter(
             name="artifacts",
-            value=flyte.app.RunOutput(task_name="recsys_training.training_pipeline", type="directory"),
+            value=RunOutput(task_name="recsys_training.training_pipeline", type="directory"),
             mount="/tmp/recsys_artifacts",
         )
     ],

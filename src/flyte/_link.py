@@ -14,6 +14,7 @@ class Link(Protocol):
         parent_action_name: str,
         action_name: str,
         pod_name: str,
+        **kwargs,
     ) -> str:
         """
         Returns a task log link given the action.
@@ -25,6 +26,7 @@ class Link(Protocol):
         :param parent_action_name: The name of the parent action.
         :param action_name: The name of the action.
         :param pod_name: The name of the pod.
+        :param kwargs: Additional keyword arguments.
         :return: The generated link.
         """
         raise NotImplementedError

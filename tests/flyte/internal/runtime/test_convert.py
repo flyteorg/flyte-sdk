@@ -3,10 +3,11 @@ from __future__ import annotations
 import inspect
 import time
 from dataclasses import dataclass
-from typing import Awaitable, Optional, Tuple, Union
+from typing import Optional, Tuple, Union
 
 import pytest
-from flyteidl2.core.interface_pb2 import TypedInterface, Variable, VariableMap
+import pytest_asyncio
+from flyteidl2.core.interface_pb2 import TypedInterface, Variable, VariableEntry, VariableMap
 from flyteidl2.core.literals_pb2 import (
     Literal,
     LiteralCollection,
@@ -26,7 +27,7 @@ from flyteidl2.task import common_pb2 as _task_common_pb2
 from flyteidl2.task import common_pb2 as run_definition_pb2
 
 import flyte._internal.runtime.convert as convert
-from flyte._internal.runtime.convert import Inputs, generate_sub_action_id_and_output_path
+from flyte._internal.runtime.convert import Inputs, current_output_name, generate_sub_action_id_and_output_path
 from flyte._internal.runtime.types_serde import transform_native_to_typed_interface
 from flyte.models import ActionID, NativeInterface, RawDataPath, TaskContext
 from flyte.report import Report
@@ -41,7 +42,7 @@ test_cases = [
 ]
 
 
-@pytest.fixture(params=test_cases)
+@pytest_asyncio.fixture(params=test_cases)
 async def generate_inputs(request) -> Tuple[Inputs, str]:
     if request.param[0] is None:
         return Inputs.empty(), request.param[1]
@@ -52,7 +53,7 @@ async def generate_inputs(request) -> Tuple[Inputs, str]:
 
 
 @pytest.mark.asyncio
-async def test_generate_sub_action_id_and_output_path_consistency_task_name(generate_inputs: Awaitable):
+async def test_generate_sub_action_id_and_output_path_consistency_task_name(generate_inputs: Tuple[Inputs, str]):
     """
     This test checks that the algorithm is consistent and has not changed.
     """
@@ -65,7 +66,7 @@ async def test_generate_sub_action_id_and_output_path_consistency_task_name(gene
         report=Report(name="test"),
     )
 
-    inputs, expected_hash = await generate_inputs
+    inputs, expected_hash = generate_inputs
     serialized_inputs = inputs.proto_inputs.SerializeToString(deterministic=True)
     inputs_hash = convert.generate_inputs_hash(serialized_inputs)
     sub_action_id, path = generate_sub_action_id_and_output_path(
@@ -157,7 +158,7 @@ async def test_generate_cache_key_hash_consistency(_):
 
     task_name = "test_task"
     cache_key = convert.generate_cache_key_hash(task_name, inputs_hash, typed_interface, "v1", [], inputs.proto_inputs)
-    assert cache_key == "nlphRTBV/ONbns4FPKlk7yOSqXGwl9qARlb5ommqKJs="
+    assert cache_key == "7GD8K8xR0xYpA9i7dbEfNTvBhO1xrwcqIPumkFOmvOA="
 
 
 @pytest.mark.asyncio
@@ -428,18 +429,24 @@ def test_generate_inputs_hash_from_proto(name, inputs, expected_hash):
             "integer",
             TypedInterface(
                 inputs=VariableMap(
-                    variables={
-                        "input_1": Variable(
-                            type=LiteralType(simple=SimpleType.INTEGER),
+                    variables=[
+                        VariableEntry(
+                            key="input_1",
+                            value=Variable(
+                                type=LiteralType(simple=SimpleType.INTEGER),
+                            ),
                         )
-                    }
+                    ]
                 ),
                 outputs=VariableMap(
-                    variables={
-                        "output_1": Variable(
-                            type=LiteralType(simple=SimpleType.INTEGER),
+                    variables=[
+                        VariableEntry(
+                            key="output_1",
+                            value=Variable(
+                                type=LiteralType(simple=SimpleType.INTEGER),
+                            ),
                         )
-                    }
+                    ]
                 ),
             ),
             "58JU0tE+NylwXlWV5HtOgajWkrbhcqKFsbXdX/QXNPM=",
@@ -448,18 +455,24 @@ def test_generate_inputs_hash_from_proto(name, inputs, expected_hash):
             "string",
             TypedInterface(
                 inputs=VariableMap(
-                    variables={
-                        "input_1": Variable(
-                            type=LiteralType(simple=SimpleType.STRING),
+                    variables=[
+                        VariableEntry(
+                            key="input_1",
+                            value=Variable(
+                                type=LiteralType(simple=SimpleType.STRING),
+                            ),
                         )
-                    }
+                    ]
                 ),
                 outputs=VariableMap(
-                    variables={
-                        "output_1": Variable(
-                            type=LiteralType(simple=SimpleType.STRING),
+                    variables=[
+                        VariableEntry(
+                            key="output_1",
+                            value=Variable(
+                                type=LiteralType(simple=SimpleType.STRING),
+                            ),
                         )
-                    }
+                    ]
                 ),
             ),
             "HAPF+vmah1Zt0RLi0cBmewehzCnkvOAbMfmvFO9H3LE=",
@@ -468,18 +481,24 @@ def test_generate_inputs_hash_from_proto(name, inputs, expected_hash):
             "float",
             TypedInterface(
                 inputs=VariableMap(
-                    variables={
-                        "input_1": Variable(
-                            type=LiteralType(simple=SimpleType.FLOAT),
+                    variables=[
+                        VariableEntry(
+                            key="input_1",
+                            value=Variable(
+                                type=LiteralType(simple=SimpleType.FLOAT),
+                            ),
                         )
-                    }
+                    ]
                 ),
                 outputs=VariableMap(
-                    variables={
-                        "output_1": Variable(
-                            type=LiteralType(simple=SimpleType.FLOAT),
+                    variables=[
+                        VariableEntry(
+                            key="output_1",
+                            value=Variable(
+                                type=LiteralType(simple=SimpleType.FLOAT),
+                            ),
                         )
-                    }
+                    ]
                 ),
             ),
             "qoEbscaX4yyh7pZ8TGgPxrH7dpEFrdMnWNlagZmUdAs=",
@@ -488,18 +507,24 @@ def test_generate_inputs_hash_from_proto(name, inputs, expected_hash):
             "boolean",
             TypedInterface(
                 inputs=VariableMap(
-                    variables={
-                        "input_1": Variable(
-                            type=LiteralType(simple=SimpleType.BOOLEAN),
+                    variables=[
+                        VariableEntry(
+                            key="input_1",
+                            value=Variable(
+                                type=LiteralType(simple=SimpleType.BOOLEAN),
+                            ),
                         )
-                    }
+                    ]
                 ),
                 outputs=VariableMap(
-                    variables={
-                        "output_1": Variable(
-                            type=LiteralType(simple=SimpleType.BOOLEAN),
+                    variables=[
+                        VariableEntry(
+                            key="output_1",
+                            value=Variable(
+                                type=LiteralType(simple=SimpleType.BOOLEAN),
+                            ),
                         )
-                    }
+                    ]
                 ),
             ),
             "WdPjloDgYp6PIg7/gaVq2jL4lNsLjGXjJUdT4XzyBis=",
@@ -508,22 +533,28 @@ def test_generate_inputs_hash_from_proto(name, inputs, expected_hash):
             "blob_type",
             TypedInterface(
                 inputs=VariableMap(
-                    variables={
-                        "input_1": Variable(
-                            type=LiteralType(
-                                blob=BlobType(format="csv", dimensionality=BlobType.BlobDimensionality.SINGLE)
+                    variables=[
+                        VariableEntry(
+                            key="input_1",
+                            value=Variable(
+                                type=LiteralType(
+                                    blob=BlobType(format="csv", dimensionality=BlobType.BlobDimensionality.SINGLE)
+                                ),
                             ),
                         )
-                    }
+                    ]
                 ),
                 outputs=VariableMap(
-                    variables={
-                        "output_1": Variable(
-                            type=LiteralType(
-                                blob=BlobType(format="csv", dimensionality=BlobType.BlobDimensionality.SINGLE)
+                    variables=[
+                        VariableEntry(
+                            key="output_1",
+                            value=Variable(
+                                type=LiteralType(
+                                    blob=BlobType(format="csv", dimensionality=BlobType.BlobDimensionality.SINGLE)
+                                ),
                             ),
                         )
-                    }
+                    ]
                 ),
             ),
             "DEmszHKzr6b/darsO4qwndUGwtT3yriahy4h2A2+vJU=",
@@ -532,18 +563,24 @@ def test_generate_inputs_hash_from_proto(name, inputs, expected_hash):
             "collection_type",
             TypedInterface(
                 inputs=VariableMap(
-                    variables={
-                        "input_1": Variable(
-                            type=LiteralType(collection_type=LiteralType(simple=SimpleType.INTEGER)),
+                    variables=[
+                        VariableEntry(
+                            key="input_1",
+                            value=Variable(
+                                type=LiteralType(collection_type=LiteralType(simple=SimpleType.INTEGER)),
+                            ),
                         )
-                    }
+                    ]
                 ),
                 outputs=VariableMap(
-                    variables={
-                        "output_1": Variable(
-                            type=LiteralType(collection_type=LiteralType(simple=SimpleType.INTEGER)),
+                    variables=[
+                        VariableEntry(
+                            key="output_1",
+                            value=Variable(
+                                type=LiteralType(collection_type=LiteralType(simple=SimpleType.INTEGER)),
+                            ),
                         )
-                    }
+                    ]
                 ),
             ),
             "uKGETsnLL4WR+vTE4I2XppcgQ8H/p+TrcDzoISsbmnM=",
@@ -552,18 +589,24 @@ def test_generate_inputs_hash_from_proto(name, inputs, expected_hash):
             "map_type",
             TypedInterface(
                 inputs=VariableMap(
-                    variables={
-                        "input_1": Variable(
-                            type=LiteralType(map_value_type=LiteralType(simple=SimpleType.STRING)),
+                    variables=[
+                        VariableEntry(
+                            key="input_1",
+                            value=Variable(
+                                type=LiteralType(map_value_type=LiteralType(simple=SimpleType.STRING)),
+                            ),
                         )
-                    }
+                    ]
                 ),
                 outputs=VariableMap(
-                    variables={
-                        "output_1": Variable(
-                            type=LiteralType(map_value_type=LiteralType(simple=SimpleType.STRING)),
+                    variables=[
+                        VariableEntry(
+                            key="output_1",
+                            value=Variable(
+                                type=LiteralType(map_value_type=LiteralType(simple=SimpleType.STRING)),
+                            ),
                         )
-                    }
+                    ]
                 ),
             ),
             "OgRavSp74HNEZdW/5SSn0eg/wU5PeEO52sbfNpl06/I=",
@@ -572,18 +615,28 @@ def test_generate_inputs_hash_from_proto(name, inputs, expected_hash):
             "enum_type",
             TypedInterface(
                 inputs=VariableMap(
-                    variables={
-                        "input_1": Variable(
-                            type=LiteralType(enum_type=EnumType(values=["PENDING", "RUNNING", "COMPLETED", "FAILED"])),
+                    variables=[
+                        VariableEntry(
+                            key="input_1",
+                            value=Variable(
+                                type=LiteralType(
+                                    enum_type=EnumType(values=["PENDING", "RUNNING", "COMPLETED", "FAILED"])
+                                ),
+                            ),
                         )
-                    }
+                    ]
                 ),
                 outputs=VariableMap(
-                    variables={
-                        "output_1": Variable(
-                            type=LiteralType(enum_type=EnumType(values=["PENDING", "RUNNING", "COMPLETED", "FAILED"])),
+                    variables=[
+                        VariableEntry(
+                            key="output_1",
+                            value=Variable(
+                                type=LiteralType(
+                                    enum_type=EnumType(values=["PENDING", "RUNNING", "COMPLETED", "FAILED"])
+                                ),
+                            ),
                         )
-                    }
+                    ]
                 ),
             ),
             "MoJfuK5E44Xy5bhH1ZSm+Hr0v6XUb9uS4h/ZVj1wUcE=",
@@ -592,32 +645,38 @@ def test_generate_inputs_hash_from_proto(name, inputs, expected_hash):
             "union_type",
             TypedInterface(
                 inputs=VariableMap(
-                    variables={
-                        "input_1": Variable(
-                            type=LiteralType(
-                                union_type=UnionType(
-                                    variants=[
-                                        LiteralType(simple=SimpleType.INTEGER),
-                                        LiteralType(simple=SimpleType.STRING),
-                                    ]
-                                )
+                    variables=[
+                        VariableEntry(
+                            key="input_1",
+                            value=Variable(
+                                type=LiteralType(
+                                    union_type=UnionType(
+                                        variants=[
+                                            LiteralType(simple=SimpleType.INTEGER),
+                                            LiteralType(simple=SimpleType.STRING),
+                                        ]
+                                    )
+                                ),
                             ),
                         )
-                    }
+                    ]
                 ),
                 outputs=VariableMap(
-                    variables={
-                        "output_1": Variable(
-                            type=LiteralType(
-                                union_type=UnionType(
-                                    variants=[
-                                        LiteralType(simple=SimpleType.INTEGER),
-                                        LiteralType(simple=SimpleType.STRING),
-                                    ]
-                                )
+                    variables=[
+                        VariableEntry(
+                            key="output_1",
+                            value=Variable(
+                                type=LiteralType(
+                                    union_type=UnionType(
+                                        variants=[
+                                            LiteralType(simple=SimpleType.INTEGER),
+                                            LiteralType(simple=SimpleType.STRING),
+                                        ]
+                                    )
+                                ),
                             ),
                         )
-                    }
+                    ]
                 ),
             ),
             "FHbQNnyP0k7IJt3Jpp8lfgJ/RU8EZEEcYXPuc2ieV5s=",
@@ -626,71 +685,83 @@ def test_generate_inputs_hash_from_proto(name, inputs, expected_hash):
             "structured_dataset",
             TypedInterface(
                 inputs=VariableMap(
-                    variables={
-                        "input_1": Variable(
-                            type=LiteralType(
-                                structured_dataset_type=StructuredDatasetType(
-                                    columns=[
-                                        StructuredDatasetType.DatasetColumn(
-                                            name="feature1", literal_type=LiteralType(simple=SimpleType.FLOAT)
-                                        ),
-                                        StructuredDatasetType.DatasetColumn(
-                                            name="feature2", literal_type=LiteralType(simple=SimpleType.INTEGER)
-                                        ),
-                                    ],
-                                    format="parquet",
-                                )
+                    variables=[
+                        VariableEntry(
+                            key="input_1",
+                            value=Variable(
+                                type=LiteralType(
+                                    structured_dataset_type=StructuredDatasetType(
+                                        columns=[
+                                            StructuredDatasetType.DatasetColumn(
+                                                name="feature1", literal_type=LiteralType(simple=SimpleType.FLOAT)
+                                            ),
+                                            StructuredDatasetType.DatasetColumn(
+                                                name="feature2", literal_type=LiteralType(simple=SimpleType.INTEGER)
+                                            ),
+                                        ],
+                                        format="parquet",
+                                    )
+                                ),
                             ),
-                        ),
-                    }
+                        )
+                    ]
                 ),
                 outputs=VariableMap(
-                    variables={
-                        "output_1": Variable(
-                            type=LiteralType(
-                                structured_dataset_type=StructuredDatasetType(
-                                    columns=[
-                                        StructuredDatasetType.DatasetColumn(
-                                            name="feature1", literal_type=LiteralType(simple=SimpleType.FLOAT)
-                                        ),
-                                        StructuredDatasetType.DatasetColumn(
-                                            name="feature2", literal_type=LiteralType(simple=SimpleType.INTEGER)
-                                        ),
-                                    ],
-                                    format="parquet",
-                                )
+                    variables=[
+                        VariableEntry(
+                            key="output_1",
+                            value=Variable(
+                                type=LiteralType(
+                                    structured_dataset_type=StructuredDatasetType(
+                                        columns=[
+                                            StructuredDatasetType.DatasetColumn(
+                                                name="feature1", literal_type=LiteralType(simple=SimpleType.FLOAT)
+                                            ),
+                                            StructuredDatasetType.DatasetColumn(
+                                                name="feature2", literal_type=LiteralType(simple=SimpleType.INTEGER)
+                                            ),
+                                        ],
+                                        format="parquet",
+                                    )
+                                ),
                             ),
-                        ),
-                    }
+                        )
+                    ]
                 ),
             ),
             "kqwSBWQVv4KQ7hzCh4R/8+tErcPkjW7aunm6X0lxFFc=",
         ),
         (
             "empty_interface",
-            TypedInterface(inputs=VariableMap(variables={}), outputs=VariableMap(variables={})),
+            TypedInterface(inputs=VariableMap(variables=[]), outputs=VariableMap(variables=[])),
             "j44Ly/GI2FgswKx1w3LUwxY0q/AlHmyoLxfXsDBc9H8=",
         ),
         (
             "nested_collection",
             TypedInterface(
                 inputs=VariableMap(
-                    variables={
-                        "input_1": Variable(
-                            type=LiteralType(
-                                collection_type=LiteralType(collection_type=LiteralType(simple=SimpleType.FLOAT))
+                    variables=[
+                        VariableEntry(
+                            key="input_1",
+                            value=Variable(
+                                type=LiteralType(
+                                    collection_type=LiteralType(collection_type=LiteralType(simple=SimpleType.FLOAT))
+                                ),
                             ),
                         )
-                    }
+                    ]
                 ),
                 outputs=VariableMap(
-                    variables={
-                        "output_1": Variable(
-                            type=LiteralType(
-                                collection_type=LiteralType(collection_type=LiteralType(simple=SimpleType.FLOAT))
+                    variables=[
+                        VariableEntry(
+                            key="output_1",
+                            value=Variable(
+                                type=LiteralType(
+                                    collection_type=LiteralType(collection_type=LiteralType(simple=SimpleType.FLOAT))
+                                ),
                             ),
                         )
-                    }
+                    ]
                 ),
             ),
             "YYCb/LJXF/eKhRfyHXEx9icYagyQ+HTqrZuO6Xui9qs=",
@@ -699,22 +770,28 @@ def test_generate_inputs_hash_from_proto(name, inputs, expected_hash):
             "complex_map",
             TypedInterface(
                 inputs=VariableMap(
-                    variables={
-                        "input_1": Variable(
-                            type=LiteralType(
-                                map_value_type=LiteralType(collection_type=LiteralType(simple=SimpleType.INTEGER))
+                    variables=[
+                        VariableEntry(
+                            key="input_1",
+                            value=Variable(
+                                type=LiteralType(
+                                    map_value_type=LiteralType(collection_type=LiteralType(simple=SimpleType.INTEGER))
+                                ),
                             ),
                         )
-                    }
+                    ]
                 ),
                 outputs=VariableMap(
-                    variables={
-                        "output_1": Variable(
-                            type=LiteralType(
-                                map_value_type=LiteralType(collection_type=LiteralType(simple=SimpleType.INTEGER))
+                    variables=[
+                        VariableEntry(
+                            key="output_1",
+                            value=Variable(
+                                type=LiteralType(
+                                    map_value_type=LiteralType(collection_type=LiteralType(simple=SimpleType.INTEGER))
+                                ),
                             ),
                         )
-                    }
+                    ]
                 ),
             ),
             "1DpgVTQynJAY+4RUedCTOFcSxcirq6Q72EIMidmIXBQ=",
@@ -723,24 +800,36 @@ def test_generate_inputs_hash_from_proto(name, inputs, expected_hash):
             "multiple_inputs_and_outputs",
             TypedInterface(
                 inputs=VariableMap(
-                    variables={
-                        "input_1": Variable(
-                            type=LiteralType(simple=SimpleType.INTEGER),
+                    variables=[
+                        VariableEntry(
+                            key="input_1",
+                            value=Variable(
+                                type=LiteralType(simple=SimpleType.INTEGER),
+                            ),
                         ),
-                        "input_2": Variable(
-                            type=LiteralType(simple=SimpleType.STRING),
+                        VariableEntry(
+                            key="input_2",
+                            value=Variable(
+                                type=LiteralType(simple=SimpleType.STRING),
+                            ),
                         ),
-                    }
+                    ]
                 ),
                 outputs=VariableMap(
-                    variables={
-                        "output_1": Variable(
-                            type=LiteralType(simple=SimpleType.INTEGER),
+                    variables=[
+                        VariableEntry(
+                            key="output_1",
+                            value=Variable(
+                                type=LiteralType(simple=SimpleType.INTEGER),
+                            ),
                         ),
-                        "output_2": Variable(
-                            type=LiteralType(simple=SimpleType.STRING),
+                        VariableEntry(
+                            key="output_2",
+                            value=Variable(
+                                type=LiteralType(simple=SimpleType.STRING),
+                            ),
                         ),
-                    }
+                    ]
                 ),
             ),
             "dmOxMQ5/OKGLvtPFNOG4XcNrcXyaWw9bGaRQqHmk2uw=",
@@ -940,17 +1029,26 @@ def test_cache_key_hash_with_file_objects():
     # Create a minimal typed interface for blob types
     interface = TypedInterface(
         inputs=VariableMap(
-            variables={
-                "input_file1": Variable(
-                    type=LiteralType(blob=BlobType(format="", dimensionality=BlobType.BlobDimensionality.SINGLE))
+            variables=[
+                VariableEntry(
+                    key="input_file1",
+                    value=Variable(
+                        type=LiteralType(blob=BlobType(format="", dimensionality=BlobType.BlobDimensionality.SINGLE))
+                    ),
                 ),
-                "input_file2": Variable(
-                    type=LiteralType(blob=BlobType(format="", dimensionality=BlobType.BlobDimensionality.SINGLE))
+                VariableEntry(
+                    key="input_file2",
+                    value=Variable(
+                        type=LiteralType(blob=BlobType(format="", dimensionality=BlobType.BlobDimensionality.SINGLE))
+                    ),
                 ),
-                "input_file3": Variable(
-                    type=LiteralType(blob=BlobType(format="", dimensionality=BlobType.BlobDimensionality.SINGLE))
+                VariableEntry(
+                    key="input_file3",
+                    value=Variable(
+                        type=LiteralType(blob=BlobType(format="", dimensionality=BlobType.BlobDimensionality.SINGLE))
+                    ),
                 ),
-            }
+            ]
         )
     )
 
@@ -992,11 +1090,20 @@ def test_generate_cache_key_hash_with_ignored_inputs():
     # Create a task interface with 3 inputs
     interface = TypedInterface(
         inputs=VariableMap(
-            variables={
-                "required_input": Variable(type=LiteralType(simple=SimpleType.STRING)),
-                "ignored_input": Variable(type=LiteralType(simple=SimpleType.INTEGER)),
-                "another_required": Variable(type=LiteralType(simple=SimpleType.BOOLEAN)),
-            }
+            variables=[
+                VariableEntry(
+                    key="required_input",
+                    value=Variable(type=LiteralType(simple=SimpleType.STRING)),
+                ),
+                VariableEntry(
+                    key="ignored_input",
+                    value=Variable(type=LiteralType(simple=SimpleType.INTEGER)),
+                ),
+                VariableEntry(
+                    key="another_required",
+                    value=Variable(type=LiteralType(simple=SimpleType.BOOLEAN)),
+                ),
+            ]
         )
     )
 
@@ -1155,17 +1262,26 @@ def test_cache_key_hash_with_dir_objects():
     # Create a minimal typed interface for blob types
     interface = TypedInterface(
         inputs=VariableMap(
-            variables={
-                "input_dir1": Variable(
-                    type=LiteralType(blob=BlobType(format="", dimensionality=BlobType.BlobDimensionality.MULTIPART))
+            variables=[
+                VariableEntry(
+                    key="input_dir1",
+                    value=Variable(
+                        type=LiteralType(blob=BlobType(format="", dimensionality=BlobType.BlobDimensionality.MULTIPART))
+                    ),
                 ),
-                "input_dir2": Variable(
-                    type=LiteralType(blob=BlobType(format="", dimensionality=BlobType.BlobDimensionality.MULTIPART))
+                VariableEntry(
+                    key="input_dir2",
+                    value=Variable(
+                        type=LiteralType(blob=BlobType(format="", dimensionality=BlobType.BlobDimensionality.MULTIPART))
+                    ),
                 ),
-                "input_dir3": Variable(
-                    type=LiteralType(blob=BlobType(format="", dimensionality=BlobType.BlobDimensionality.MULTIPART))
+                VariableEntry(
+                    key="input_dir3",
+                    value=Variable(
+                        type=LiteralType(blob=BlobType(format="", dimensionality=BlobType.BlobDimensionality.MULTIPART))
+                    ),
                 ),
-            }
+            ]
         )
     )
 
@@ -1203,19 +1319,31 @@ def test_cache_key_hash_with_dir_objects():
 def test_generate_interface_hash_order_independence():
     interface1 = TypedInterface(
         inputs=VariableMap(
-            variables={
-                "a": Variable(type=LiteralType(simple=SimpleType.INTEGER)),
-                "b": Variable(type=LiteralType(simple=SimpleType.STRING)),
-            }
+            variables=[
+                VariableEntry(
+                    key="a",
+                    value=Variable(type=LiteralType(simple=SimpleType.INTEGER)),
+                ),
+                VariableEntry(
+                    key="b",
+                    value=Variable(type=LiteralType(simple=SimpleType.STRING)),
+                ),
+            ]
         )
     )
 
     interface2 = TypedInterface(
         inputs=VariableMap(
-            variables={
-                "b": Variable(type=LiteralType(simple=SimpleType.STRING)),
-                "a": Variable(type=LiteralType(simple=SimpleType.INTEGER)),
-            }
+            variables=[
+                VariableEntry(
+                    key="b",
+                    value=Variable(type=LiteralType(simple=SimpleType.STRING)),
+                ),
+                VariableEntry(
+                    key="a",
+                    value=Variable(type=LiteralType(simple=SimpleType.INTEGER)),
+                ),
+            ]
         )
     )
 
@@ -1260,6 +1388,48 @@ async def test_convert_upload_default_inputs_with_defaults():
 
 
 @pytest.mark.asyncio
+async def test_convert_upload_default_inputs_with_falsy_defaults():
+    """
+    convert_upload_default_inputs must not drop defaults whose value is falsy
+    (e.g. 0, False, ""). Regression test for the `if default_value and ...` bug
+    where falsy values were silently excluded from the serialized task spec.
+    """
+
+    def func(a: int = 10, b: int = 0, c: bool = False, d: str = ""):
+        pass
+
+    interface = NativeInterface.from_callable(func)
+    result = await convert.convert_upload_default_inputs(interface)
+
+    assert [p.name for p in result] == ["a", "b", "c", "d"]
+
+    named = {p.name: p for p in result}
+    assert named["a"].parameter.default.scalar.primitive.integer == 10
+    assert named["b"].parameter.default.scalar.primitive.integer == 0
+    assert named["c"].parameter.default.scalar.primitive.boolean is False
+    assert named["d"].parameter.default.scalar.primitive.string_value == ""
+
+
+@pytest.mark.asyncio
+async def test_convert_upload_default_inputs_rejects_trigger_time():
+    """
+    convert_upload_default_inputs must raise a clear ValueError when flyte.TriggerTime
+    is used as a default value for a regular task input. Previously this produced an
+    opaque TypeTransformerFailedError because TriggerTime is a sentinel, not a datetime.
+    """
+    from datetime import datetime
+
+    import flyte
+
+    interface = NativeInterface.from_types(
+        {"trigger_time": (datetime, flyte.TriggerTime)},
+        {},
+    )
+    with pytest.raises(ValueError, match=r"flyte\.TriggerTime"):
+        await convert.convert_upload_default_inputs(interface)
+
+
+@pytest.mark.asyncio
 async def test_convert_upload_default_inputs_remote_interface():
     """
     convert_upload_default_inputs should handle remote interfaces correctly.
@@ -1284,3 +1454,139 @@ async def test_convert_upload_default_inputs_remote_interface():
             value=await TypeEngine.to_literal("hello", str, TypeEngine.to_literal_type(str)),
         ),
     ]
+
+
+# ---------------------------------------------------------------------------
+# current_output_name
+# ---------------------------------------------------------------------------
+
+
+def test_current_output_name_is_none_outside_conversion():
+    """Outside of output conversion the slot name should be absent."""
+    assert current_output_name() is None
+
+
+def test_current_output_name_reflects_contextvar():
+    """current_output_name() is a thin wrapper over the ContextVar."""
+    from flyte._internal.runtime.convert import _output_name_var
+
+    assert current_output_name() is None
+    tok = _output_name_var.set("o0")
+    try:
+        assert current_output_name() == "o0"
+    finally:
+        _output_name_var.reset(tok)
+    assert current_output_name() is None
+
+
+@pytest.mark.asyncio
+async def test_current_output_name_set_during_output_conversion():
+    """current_output_name() returns each output slot name while its value is
+    being converted, and is None again both before and after."""
+    observed: list[str | None] = []
+    original_to_literal = convert.TypeEngine.to_literal
+
+    async def _capturing_to_literal(value, python_type, expected_literal_type):
+        observed.append(current_output_name())
+        return await original_to_literal(value, python_type, expected_literal_type)
+
+    # int is natively supported — no pickle fallback.
+    interface = NativeInterface.from_types({}, {"slot_a": int, "slot_b": int})
+
+    assert current_output_name() is None
+    convert.TypeEngine.to_literal = _capturing_to_literal
+    try:
+        await convert.convert_from_native_to_outputs((1, 2), interface, "test_task")
+    finally:
+        convert.TypeEngine.to_literal = original_to_literal
+
+    assert observed == ["slot_a", "slot_b"]
+    assert current_output_name() is None
+
+
+@pytest.mark.asyncio
+async def test_current_output_name_cleared_on_transformer_error():
+    """Even when a transformer raises, the slot name is cleared."""
+    original_to_literal = convert.TypeEngine.to_literal
+
+    async def _failing_to_literal(value, python_type, expected_literal_type):
+        raise convert.TypeTransformerFailedError("boom")
+
+    interface = NativeInterface.from_types({}, {"out": int})
+
+    convert.TypeEngine.to_literal = _failing_to_literal
+    try:
+        with pytest.raises(Exception):
+            await convert.convert_from_native_to_outputs((42,), interface, "test_task")
+    finally:
+        convert.TypeEngine.to_literal = original_to_literal
+
+    assert current_output_name() is None
+
+
+def test_inputs_context_excludes_reserved_kickoff_key():
+    """The reserved kickoff-arg key is internal plumbing and must not surface in user context."""
+    from flyteidl2.core import literals_pb2 as _lit
+
+    proto = _task_common_pb2.Inputs(
+        context=[
+            _lit.KeyValuePair(key=convert.KICKOFF_TIME_INPUT_ARG_CONTEXT_KEY, value="start_time"),
+            _lit.KeyValuePair(key="team", value="ml"),
+        ]
+    )
+    assert Inputs(proto_inputs=proto).context == {"team": "ml"}
+
+
+@pytest.mark.asyncio
+async def test_convert_inputs_fills_kickoff_arg_from_run_start():
+    """A trigger's kickoff arg (named via context, absent from literals) is filled from
+    ctx().run_start_time during native conversion."""
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    from flyteidl2.core import literals_pb2 as _lit
+
+    run_start = datetime(2026, 6, 4, 12, 0, tzinfo=timezone.utc)
+    proto = _task_common_pb2.Inputs(
+        literals=[
+            _task_common_pb2.NamedLiteral(
+                name="x", value=_lit.Literal(scalar=_lit.Scalar(primitive=_lit.Primitive(integer=7)))
+            )
+        ],
+        context=[_lit.KeyValuePair(key=convert.KICKOFF_TIME_INPUT_ARG_CONTEXT_KEY, value="start_time")],
+    )
+    interface = NativeInterface.from_types(
+        {"start_time": (datetime, inspect.Parameter.empty), "x": (int, inspect.Parameter.empty)}, {}
+    )
+
+    with patch.object(convert, "ctx", return_value=SimpleNamespace(run_start_time=run_start)):
+        out = await convert.convert_inputs_to_native(Inputs(proto_inputs=proto), interface)
+
+    assert out["start_time"] == run_start
+    assert out["x"] == 7
+
+
+@pytest.mark.asyncio
+async def test_convert_inputs_no_kickoff_key_is_noop():
+    """Without the reserved key, conversion is unaffected (no run_start_time injection)."""
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    from flyteidl2.core import literals_pb2 as _lit
+
+    proto = _task_common_pb2.Inputs(
+        literals=[
+            _task_common_pb2.NamedLiteral(
+                name="x", value=_lit.Literal(scalar=_lit.Scalar(primitive=_lit.Primitive(integer=7)))
+            )
+        ]
+    )
+    interface = NativeInterface.from_types({"x": (int, inspect.Parameter.empty)}, {})
+
+    rs = datetime(2026, 6, 4, 12, 0, tzinfo=timezone.utc)
+    with patch.object(convert, "ctx", return_value=SimpleNamespace(run_start_time=rs)):
+        out = await convert.convert_inputs_to_native(Inputs(proto_inputs=proto), interface)
+
+    assert out == {"x": 7}

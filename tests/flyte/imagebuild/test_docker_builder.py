@@ -1,19 +1,26 @@
+import asyncio
+import subprocess
 import tempfile
 from pathlib import Path, PurePath
 from unittest.mock import patch
 
 import pytest
+import pytest_asyncio
 
 from flyte import Secret
-from flyte._image import Image, PipPackages, PoetryProject, Requirements
+from flyte._image import AptPackages, Commands, Image, PipPackages, PoetryProject, PythonWheels, Requirements, UVProject
 from flyte._internal.imagebuild.docker_builder import (
+    DOCKER_FILE_UV_BASE_TEMPLATE,
     CopyConfig,
     CopyConfigHandler,
     DockerImageBuilder,
     PipAndRequirementsHandler,
     PoetryProjectHandler,
+    PythonWheelHandler,
     UVProjectHandler,
+    _get_secret_commands,
 )
+from flyte._internal.imagebuild.remote_builder import _get_build_secrets_from_image
 
 
 @pytest.mark.integration
@@ -48,6 +55,75 @@ async def test_doesnt_work_yet():
     default_image = Image.from_debian_base()
     builder = DockerImageBuilder()
     await builder.build_image(default_image, dry_run=False)
+
+
+@pytest.mark.asyncio
+async def test_build_from_dockerfile_wraps_calledprocesserror_as_image_build_error(tmp_path):
+    """
+    Regression: when `docker buildx build -f Dockerfile` fails (non-zero exit), the raw
+    `subprocess.CalledProcessError` previously bubbled out of `_build_from_dockerfile`
+    and surfaced in Sentry as an unhandled SDK crash (FLYTE-SDK-34). Wrap as
+    `ImageBuildError` so the error is filtered out of Sentry and presented as
+    user-facing image-build feedback.
+    """
+    from flyte.errors import ImageBuildError
+
+    dockerfile = tmp_path / "Dockerfile"
+    dockerfile.write_text("FROM scratch\n")
+
+    img = Image.from_dockerfile(file=dockerfile, registry="localhost:30000", name="bad_dockerfile")
+    builder = DockerImageBuilder()
+
+    def _raise_called_process(*args, **kwargs):
+        raise subprocess.CalledProcessError(returncode=1, cmd=args[0] if args else ["docker"])
+
+    with patch.object(DockerImageBuilder, "_resolve_builder_name", return_value="flytex"):
+        with patch("flyte._internal.imagebuild.docker_builder.subprocess.run", side_effect=_raise_called_process):
+            with pytest.raises(ImageBuildError, match="Failed to build image from"):
+                await builder._build_from_dockerfile(img, push=False, wait=True)
+
+
+@pytest.mark.asyncio
+async def test_build_image_wraps_calledprocesserror_as_image_build_error(monkeypatch, tmp_path):
+    """
+    Regression: when the generated buildx command fails, `_build_image` previously
+    wrapped the error as a plain `RuntimeError` (FLYTE-SDK-2R). `RuntimeError` is
+    not in the Sentry user-error filter set, so the crash leaked into Sentry as an
+    SDK bug. Wrap as `ImageBuildError` so it is filtered.
+    """
+    from flyte.errors import ImageBuildError
+
+    img = Image.from_debian_base(registry="localhost:30000", name="img_build_fails")
+    builder = DockerImageBuilder()
+
+    def _raise_called_process(*args, **kwargs):
+        raise subprocess.CalledProcessError(returncode=1, cmd=args[0] if args else ["docker"])
+
+    # Patch the subprocess.run used inside _build_image's try-block. _ensure_buildx_builder
+    # is also called via _resolve_builder_name, so stub it out so we don't trip its own
+    # subprocess.run patching with a CalledProcessError.
+    with patch.object(DockerImageBuilder, "_resolve_builder_name", return_value="flytex"):
+        with patch("flyte._internal.imagebuild.docker_builder.subprocess.run", side_effect=_raise_called_process):
+            with pytest.raises(ImageBuildError, match="Failed to build image"):
+                await builder._build_image(img, push=False, wait=True)
+
+
+@pytest.mark.asyncio
+async def test_ensure_buildx_builder_raises_image_build_error_when_docker_missing(monkeypatch):
+    """
+    Regression: when docker is not installed/in PATH, `subprocess.run(["docker", ...])`
+    raises `FileNotFoundError`, which previously bubbled up to Sentry as an unhandled
+    SDK crash. The user should instead get an actionable `ImageBuildError` telling
+    them docker isn't installed and pointing at the remote builder fallback.
+    """
+    from flyte.errors import ImageBuildError
+
+    def _raise_filenotfound(*args, **kwargs):
+        raise FileNotFoundError(2, "No such file or directory", "docker")
+
+    with patch("flyte._internal.imagebuild.docker_builder.subprocess.run", side_effect=_raise_filenotfound):
+        with pytest.raises(ImageBuildError, match="Docker is not installed"):
+            await DockerImageBuilder._ensure_buildx_builder()
 
 
 @pytest.mark.asyncio
@@ -100,6 +176,46 @@ async def test_pip_package_handling(monkeypatch):
         )
         assert "--mount=type=secret" in docker_update
         assert "uv pip install --python $UV_PYTHON pkg_a pkg_b" in docker_update
+
+
+@pytest.mark.asyncio
+async def test_python_wheel_handler_forces_local_wheel_last():
+    """The local wheel must be force-installed (--no-index --reinstall) *after* the dependency
+    resolution step. If the order is reversed, a full resolve can discard the local wheel in favor
+    of a stable PyPI release (e.g. when one of the wheel's deps can't be satisfied, uv backtracks to
+    the published version), silently undoing the local install."""
+    with tempfile.TemporaryDirectory() as wheel_dir, tempfile.TemporaryDirectory() as tmp_context:
+        # The handler copies wheel_dir into the build context, so it needs at least one file.
+        (Path(wheel_dir) / "flyte-2.5.2.dev1-py3-none-any.whl").write_text("")
+        context_path = Path(tmp_context)
+
+        layer = PythonWheels(wheel_dir=Path(wheel_dir), package_name="flyte")
+        docker_update = await PythonWheelHandler.handle(layer=layer, context_path=context_path, dockerfile="")
+
+        # Both install steps target the local wheel via --find-links /dist.
+        dep_step = "uv pip install --python $UV_PYTHON --find-links /dist flyte"
+        force_step = "uv pip install --python $UV_PYTHON --find-links /dist --no-deps --no-index --reinstall flyte"
+        assert dep_step in docker_update
+        assert force_step in docker_update
+
+        # The force-install step must come last so nothing re-resolves the package afterwards.
+        assert docker_update.index(force_step) > docker_update.index(dep_step)
+
+
+@pytest.mark.asyncio
+async def test_pip_package_handling_with_version_constraints():
+    """Package specs containing shell metacharacters (<, >) must be quoted in the generated Dockerfile
+    so that the shell does not interpret them as redirection operators."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        context_path = Path(tmpdir)
+
+        pip_packages = PipPackages(packages=("apache-airflow<=3.0.0", "requests>=2.0,<3"))
+        docker_update = await PipAndRequirementsHandler.handle(
+            layer=pip_packages, context_path=context_path, dockerfile=""
+        )
+        # Each spec with a shell metacharacter must be single-quoted
+        assert "'apache-airflow<=3.0.0'" in docker_update
+        assert "'requests>=2.0,<3'" in docker_update
 
 
 @pytest.mark.asyncio
@@ -306,7 +422,7 @@ async def test_poetry_handler_without_project_install():
             )
 
             initial_dockerfile = "FROM python:3.9\n"
-            result = await PoetryProjectHandler.handel(
+            result = await PoetryProjectHandler.handle(
                 layer=poetry_project,
                 context_path=context_path,
                 dockerfile=initial_dockerfile,
@@ -348,7 +464,7 @@ async def test_poetry_handler_with_project_install():
             (user_folder / "main.py").write_text("print('hello')")
 
             initial_dockerfile = "FROM python:3.9\n"
-            result = await PoetryProjectHandler.handel(
+            result = await PoetryProjectHandler.handle(
                 layer=poetry_project,
                 context_path=context_path,
                 dockerfile=initial_dockerfile,
@@ -429,3 +545,567 @@ async def test_uvproject_handler_with_project_install():
             assert (expected_dst_path / "uv.lock").exists(), "uv.lock should be included"
             assert not (expected_dst_path / "memo.txt").exists(), "memo.txt should be excluded"
             assert not (expected_dst_path / ".cache").exists(), ".cache directory should be excluded"
+
+
+@pytest_asyncio.fixture
+async def uv_project_with_editable(tmp_path: Path):
+    """An empty uv project with a single editable dependency"""
+
+    async def _uv(cmd: list[str], cwd: Path):
+        return await asyncio.to_thread(
+            subprocess.run, ["uv", *cmd], cwd=str(cwd), capture_output=True, text=True, check=True
+        )
+
+    project_root = tmp_path / "project"
+    project_root.mkdir(parents=True)
+    # Create a main project
+    await _uv(["init", "--lib"], project_root)
+    # Create an editable dependency
+    dep_folder = project_root / "libs" / "editable_dep"
+    dep_folder.mkdir(parents=True)
+    # Create an editable dependency project and add it to the main project
+    await _uv(["init", "--lib"], dep_folder)
+    await _uv(["add", "--editable", "./libs/editable_dep", "--no-sync"], project_root)
+    # Generate a lock file for the main project
+    await _uv(["lock"], project_root)
+    yield project_root, dep_folder
+
+
+@pytest.mark.asyncio
+async def test_uvproject_handler_includes_editable_mounts_in_dependencies_only_mode(uv_project_with_editable):
+    with tempfile.TemporaryDirectory() as tmp_context:
+        context_path = Path(tmp_context)
+
+        project_root, dep_folder = uv_project_with_editable
+        pyproject_file = project_root / "pyproject.toml"
+        uv_lock_file = project_root / "uv.lock"
+
+        uv_project = UVProject(
+            pyproject=pyproject_file.absolute(),
+            uvlock=uv_lock_file.absolute(),
+            project_install_mode="dependencies_only",
+        )
+
+        initial_dockerfile = "FROM python:3.9\n"
+        result = await UVProjectHandler.handle(
+            layer=uv_project,
+            context_path=context_path,
+            dockerfile=initial_dockerfile,
+            docker_ignore_patterns=[],
+        )
+        expected_dep_in_context = "_flyte_abs_context" + str(dep_folder)
+        expected_dep_in_container = dep_folder.relative_to(project_root)
+        expected_mount = f"--mount=type=bind,src={expected_dep_in_context},target={expected_dep_in_container}"
+        assert expected_mount in result
+
+
+@pytest.mark.asyncio
+async def test_uvproject_handler_without_uvlock():
+    """Test that UVProjectHandler works correctly when uvlock is None."""
+    with tempfile.TemporaryDirectory() as tmp_context, tempfile.TemporaryDirectory() as tmp_user:
+        context_path = Path(tmp_context)
+        user_folder = Path(tmp_user)
+
+        # Create a pyproject.toml but no uv.lock file
+        pyproject_file = user_folder / "pyproject.toml"
+        pyproject_file.write_text("[project]\nname = 'test-project'\nversion='0.1.0'")
+
+        # Create UVProject without uvlock
+        uv_project = UVProject(
+            pyproject=pyproject_file.absolute(),
+            uvlock=None,
+            project_install_mode="dependencies_only",
+        )
+
+        initial_dockerfile = "FROM python:3.9\n"
+        result = await UVProjectHandler.handle(
+            layer=uv_project,
+            context_path=context_path,
+            dockerfile=initial_dockerfile,
+            docker_ignore_patterns=[],
+        )
+
+        # Verify the dockerfile is generated correctly
+        assert result.startswith(initial_dockerfile)
+        assert "RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv" in result
+        assert "uv sync" in result
+        # Verify that uvlock mount is NOT present
+        assert "--mount=type=bind,target=uv.lock" not in result
+        # Verify pyproject mount IS present
+        assert "--mount=type=bind,target=pyproject.toml" in result
+
+
+def test_get_secret_commands_deduplicates_secrets(monkeypatch):
+    """Test that _get_secret_commands does not add duplicate secrets."""
+    monkeypatch.setenv("GITHUB_TOKEN", "test-value")
+
+    # Create layers with the same secret used multiple times
+    same_secret = Secret(key="github_token")
+    layers = (
+        AptPackages(packages=("git", "vim"), secret_mounts=(same_secret,)),
+        PipPackages(packages=("requests",), secret_mounts=(same_secret,)),
+        Commands(commands=("echo hello",), secret_mounts=(same_secret,)),
+    )
+
+    commands = _get_secret_commands(layers)
+
+    # Count how many times the secret appears in commands
+    secret_count = sum(1 for cmd in commands if cmd == "--secret")
+    assert secret_count == 1, f"Expected 1 secret, got {secret_count}. Commands: {commands}"
+
+
+def test_get_secret_commands_allows_different_secrets(monkeypatch):
+    """Test that _get_secret_commands allows different secrets."""
+    monkeypatch.setenv("SECRET_A", "value-a")
+    monkeypatch.setenv("SECRET_B", "value-b")
+
+    secret_a = Secret(key="secret_a")
+    secret_b = Secret(key="secret_b")
+    layers = (
+        AptPackages(packages=("git",), secret_mounts=(secret_a,)),
+        PipPackages(packages=("requests",), secret_mounts=(secret_b,)),
+    )
+
+    commands = _get_secret_commands(layers)
+
+    # Should have 2 different secrets
+    secret_count = sum(1 for cmd in commands if cmd == "--secret")
+    assert secret_count == 2, f"Expected 2 secrets, got {secret_count}. Commands: {commands}"
+
+
+def test_get_secret_commands_deduplicates_string_secrets(monkeypatch):
+    """Test that _get_secret_commands deduplicates string-based secrets."""
+    monkeypatch.setenv("MY_TOKEN", "test-value")
+
+    layers = (
+        AptPackages(packages=("git",), secret_mounts=("my_token",)),
+        PipPackages(packages=("requests",), secret_mounts=("my_token",)),
+    )
+
+    commands = _get_secret_commands(layers)
+
+    secret_count = sum(1 for cmd in commands if cmd == "--secret")
+    assert secret_count == 1, f"Expected 1 secret, got {secret_count}. Commands: {commands}"
+
+
+def test_get_secret_commands_deduplicates_with_group(monkeypatch):
+    """Test that _get_secret_commands deduplicates secrets with the same group and key."""
+    monkeypatch.setenv("MYGROUP_MYKEY", "test-value")
+
+    same_secret = Secret(group="mygroup", key="mykey")
+    layers = (
+        AptPackages(packages=("git",), secret_mounts=(same_secret,)),
+        PipPackages(packages=("requests",), secret_mounts=(same_secret,)),
+    )
+
+    commands = _get_secret_commands(layers)
+
+    secret_count = sum(1 for cmd in commands if cmd == "--secret")
+    assert secret_count == 1, f"Expected 1 secret, got {secret_count}. Commands: {commands}"
+
+
+def test_get_build_secrets_from_image_deduplicates_secrets():
+    """Test that _get_build_secrets_from_image does not add duplicate secrets."""
+    same_secret = Secret(key="github_token")
+
+    image = (
+        Image.from_debian_base(registry="localhost:30000", name="test", install_flyte=False)
+        .with_apt_packages("git", "vim", secret_mounts=same_secret)
+        .with_pip_packages("requests", secret_mounts=same_secret)
+        .with_commands(["echo hello"], secret_mounts=same_secret)
+    )
+
+    secrets = _get_build_secrets_from_image(image)
+
+    # Should only have 1 secret, not 3
+    assert len(secrets) == 1, f"Expected 1 secret, got {len(secrets)}. Secrets: {secrets}"
+    assert secrets[0].key == "github_token"
+
+
+def test_get_build_secrets_from_image_allows_different_secrets():
+    """Test that _get_build_secrets_from_image allows different secrets."""
+    secret_a = Secret(key="secret_a")
+    secret_b = Secret(key="secret_b")
+
+    image = (
+        Image.from_debian_base(registry="localhost:30000", name="test", install_flyte=False)
+        .with_apt_packages("git", secret_mounts=secret_a)
+        .with_pip_packages("requests", secret_mounts=secret_b)
+    )
+
+    secrets = _get_build_secrets_from_image(image)
+
+    assert len(secrets) == 2, f"Expected 2 secrets, got {len(secrets)}. Secrets: {secrets}"
+    keys = {s.key for s in secrets}
+    assert keys == {"secret_a", "secret_b"}
+
+
+def test_get_build_secrets_from_image_deduplicates_string_secrets():
+    """Test that _get_build_secrets_from_image deduplicates string-based secrets."""
+    image = (
+        Image.from_debian_base(registry="localhost:30000", name="test", install_flyte=False)
+        .with_apt_packages("git", secret_mounts="my_token")
+        .with_pip_packages("requests", secret_mounts="my_token")
+    )
+
+    secrets = _get_build_secrets_from_image(image)
+
+    assert len(secrets) == 1, f"Expected 1 secret, got {len(secrets)}. Secrets: {secrets}"
+    assert secrets[0].key == "my_token"
+
+
+def test_get_build_secrets_from_image_deduplicates_with_group():
+    """Test that _get_build_secrets_from_image deduplicates secrets with the same group and key."""
+    same_secret = Secret(group="mygroup", key="mykey")
+
+    image = (
+        Image.from_debian_base(registry="localhost:30000", name="test", install_flyte=False)
+        .with_apt_packages("git", secret_mounts=same_secret)
+        .with_pip_packages("requests", secret_mounts=same_secret)
+    )
+
+    secrets = _get_build_secrets_from_image(image)
+
+    assert len(secrets) == 1, f"Expected 1 secret, got {len(secrets)}. Secrets: {secrets}"
+    assert secrets[0].key == "mykey"
+    assert secrets[0].group == "mygroup"
+
+
+def test_uv_base_template_default_venv():
+    """When base image has no UV_PYTHON, the template should default to /opt/venv and create a venv."""
+    dockerfile = DOCKER_FILE_UV_BASE_TEMPLATE.substitute(
+        BASE_IMAGE="python:3.12-slim",
+        PYTHON_VERSION="3.12",
+    )
+
+    # Should declare default paths via ARG
+    assert "ARG VIRTUALENV=/opt/venv" in dockerfile
+    assert "ARG UV_PYTHON=$VIRTUALENV/bin/python" in dockerfile
+
+    # Should set ENV from ARGs
+    assert "VIRTUALENV=$VIRTUALENV" in dockerfile
+    assert "UV_PYTHON=$UV_PYTHON" in dockerfile
+
+    # Should conditionally create venv only if UV_PYTHON binary doesn't exist
+    assert 'if [ ! -f "$UV_PYTHON" ]' in dockerfile
+    assert "uv venv $VIRTUALENV --python=3.12" in dockerfile
+
+    # Should add VIRTUALENV/bin to PATH
+    assert 'PATH="$VIRTUALENV/bin:$PATH"' in dockerfile
+
+
+def test_uv_base_template_preserves_existing_uv_python():
+    """When base image has UV_PYTHON set, the template should preserve it and skip venv creation."""
+    dockerfile = DOCKER_FILE_UV_BASE_TEMPLATE.substitute(
+        BASE_IMAGE="my-custom-image:latest",
+        PYTHON_VERSION="3.12",
+    )
+
+    # UV_PYTHON ARG defaults to $VIRTUALENV/bin/python but can be overridden by base image
+    assert "ARG UV_PYTHON=$VIRTUALENV/bin/python" in dockerfile
+
+    # The conditional block skips venv creation when UV_PYTHON binary already exists
+    assert 'if [ ! -f "$UV_PYTHON" ]' in dockerfile
+
+    # PATH includes VIRTUALENV/bin
+    assert 'PATH="$VIRTUALENV/bin:$PATH"' in dockerfile
+
+
+@pytest.mark.asyncio
+async def test_ensure_buildx_builder_creates_with_host_network():
+    """When creating a new buildx builder, it should use --driver-opt network=host."""
+    calls = []
+
+    def mock_run(cmd, **kwargs):
+        calls.append(cmd)
+        result = subprocess.CompletedProcess(cmd, 0)
+        # For 'docker buildx ls', return output without the builder name
+        if cmd == ["docker", "buildx", "ls"]:
+            result.stdout = "default"
+            result.stderr = ""
+        return result
+
+    with patch(
+        "flyte._internal.imagebuild.docker_builder.run_sync_with_loop", side_effect=lambda fn, *a, **kw: fn(*a, **kw)
+    ):
+        with patch("subprocess.run", side_effect=mock_run):
+            await DockerImageBuilder._ensure_buildx_builder()
+
+    # Find the create command
+    create_cmds = [c for c in calls if "create" in c]
+    assert len(create_cmds) == 1
+    create_cmd = create_cmds[0]
+    assert "--driver-opt" in create_cmd
+    assert "network=host" in create_cmd
+
+
+@pytest.mark.asyncio
+async def test_ensure_buildx_builder_skips_when_network_host_present():
+    """When the builder already exists with network=host, it should not recreate."""
+    calls = []
+
+    def mock_run(cmd, **kwargs):
+        calls.append(cmd)
+        result = subprocess.CompletedProcess(cmd, 0)
+        if cmd == ["docker", "buildx", "ls"]:
+            result.stdout = f"default\n{DockerImageBuilder._builder_name}  docker-container"
+            result.stderr = ""
+        elif "inspect" in cmd:
+            result.stdout = (
+                f"Name:          {DockerImageBuilder._builder_name}\n"
+                "Driver:        docker-container\n"
+                "Nodes:\n"
+                'Driver Options: network="host"\n'
+            )
+            result.stderr = ""
+        return result
+
+    with patch(
+        "flyte._internal.imagebuild.docker_builder.run_sync_with_loop", side_effect=lambda fn, *a, **kw: fn(*a, **kw)
+    ):
+        with patch("subprocess.run", side_effect=mock_run):
+            await DockerImageBuilder._ensure_buildx_builder()
+
+    # Should NOT have called create or rm
+    assert not any("create" in c for c in calls)
+    assert not any("rm" in c for c in calls)
+
+
+@pytest.mark.asyncio
+async def test_ensure_buildx_builder_recreates_when_network_host_missing():
+    """When the builder exists but is missing network=host, it should be removed and recreated."""
+    calls = []
+
+    def mock_run(cmd, **kwargs):
+        calls.append(cmd)
+        result = subprocess.CompletedProcess(cmd, 0)
+        if cmd == ["docker", "buildx", "ls"]:
+            result.stdout = f"default\n{DockerImageBuilder._builder_name}  docker-container"
+            result.stderr = ""
+        elif "inspect" in cmd:
+            result.stdout = (
+                f"Name:          {DockerImageBuilder._builder_name}\n"
+                "Driver:        docker-container\n"
+                "Nodes:\n"
+                "Driver Options: <none>\n"
+            )
+            result.stderr = ""
+        return result
+
+    with patch(
+        "flyte._internal.imagebuild.docker_builder.run_sync_with_loop", side_effect=lambda fn, *a, **kw: fn(*a, **kw)
+    ):
+        with patch("subprocess.run", side_effect=mock_run):
+            await DockerImageBuilder._ensure_buildx_builder()
+
+    # Should have called rm then create
+    rm_cmds = [c for c in calls if "rm" in c]
+    create_cmds = [c for c in calls if "create" in c]
+    assert len(rm_cmds) == 1
+    assert DockerImageBuilder._builder_name in rm_cmds[0]
+    assert len(create_cmds) == 1
+    assert "--driver-opt" in create_cmds[0]
+    assert "network=host" in create_cmds[0]
+
+
+@pytest.mark.asyncio
+async def test_build_image_uses_custom_builder_from_env(monkeypatch):
+    """When FLYTE_DOCKER_BUILDKIT_BUILDER_NAME is set, _build_image should use it and skip _ensure_buildx_builder."""
+    from flyte._internal.imagebuild import docker_builder as db
+
+    monkeypatch.setenv("FLYTE_DOCKER_BUILDKIT_BUILDER_NAME", "my-custom-builder")
+
+    calls = []
+
+    def mock_run(cmd, **kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0)
+
+    ensure_called = False
+
+    async def fake_ensure():
+        nonlocal ensure_called
+        ensure_called = True
+
+    img = Image.from_debian_base(registry="localhost:30000", name="custom_builder_test", install_flyte=False)
+
+    with patch.object(db.DockerImageBuilder, "_ensure_buildx_builder", side_effect=fake_ensure):
+        with patch(
+            "flyte._internal.imagebuild.docker_builder.run_sync_with_loop",
+            side_effect=lambda fn, *a, **kw: fn(*a, **kw),
+        ):
+            with patch("subprocess.run", side_effect=mock_run):
+                await db.DockerImageBuilder()._build_image(img, push=False, dry_run=False)
+
+    assert ensure_called is False
+    build_cmds = [c for c in calls if isinstance(c, list) and "build" in c and "buildx" in c]
+    assert build_cmds, "expected a buildx build command"
+    cmd = build_cmds[0]
+    builder_idx = cmd.index("--builder")
+    assert cmd[builder_idx + 1] == "my-custom-builder"
+
+
+@pytest.mark.asyncio
+async def test_build_image_uses_default_builder_when_env_unset(monkeypatch):
+    # When FLYTE_DOCKER_BUILDKIT_BUILDER_NAME is unset, _build_image should
+    # call _ensure_buildx_builder and use the default name.
+    from flyte._internal.imagebuild import docker_builder as db
+
+    monkeypatch.delenv("FLYTE_DOCKER_BUILDKIT_BUILDER_NAME", raising=False)
+
+    calls = []
+
+    def mock_run(cmd, **kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0)
+
+    ensure_called = False
+
+    async def fake_ensure():
+        nonlocal ensure_called
+        ensure_called = True
+
+    img = Image.from_debian_base(registry="localhost:30000", name="default_builder_test", install_flyte=False)
+
+    with patch.object(db.DockerImageBuilder, "_ensure_buildx_builder", side_effect=fake_ensure):
+        with patch(
+            "flyte._internal.imagebuild.docker_builder.run_sync_with_loop",
+            side_effect=lambda fn, *a, **kw: fn(*a, **kw),
+        ):
+            with patch("subprocess.run", side_effect=mock_run):
+                await db.DockerImageBuilder()._build_image(img, push=False, dry_run=False)
+
+    assert ensure_called is True
+    build_cmds = [c for c in calls if isinstance(c, list) and "build" in c and "buildx" in c]
+    assert build_cmds
+    cmd = build_cmds[0]
+    builder_idx = cmd.index("--builder")
+    assert cmd[builder_idx + 1] == db.DockerImageBuilder._builder_name
+
+
+@pytest.mark.asyncio
+async def test_build_from_dockerfile_uses_custom_builder_from_env(monkeypatch):
+    """_build_from_dockerfile should respect FLYTE_DOCKER_BUILDKIT_BUILDER_NAME and skip ensure when set."""
+    from flyte._internal.imagebuild import docker_builder as db
+
+    monkeypatch.setenv("FLYTE_DOCKER_BUILDKIT_BUILDER_NAME", "my-custom-builder")
+
+    calls = []
+
+    def mock_run(cmd, **kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0)
+
+    ensure_called = False
+
+    async def fake_ensure():
+        nonlocal ensure_called
+        ensure_called = True
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        dockerfile = Path(tmp_dir) / "Dockerfile"
+        dockerfile.write_text("FROM python:3.12\n")
+
+        img = Image.from_dockerfile(file=dockerfile, registry="localhost:30000", name="custom_dockerfile_test")
+
+        with patch.object(db.DockerImageBuilder, "_ensure_buildx_builder", side_effect=fake_ensure):
+            with patch(
+                "flyte._internal.imagebuild.docker_builder.run_sync_with_loop",
+                side_effect=lambda fn, *a, **kw: fn(*a, **kw),
+            ):
+                with patch("subprocess.run", side_effect=mock_run):
+                    await db.DockerImageBuilder()._build_from_dockerfile(img, push=False)
+
+    assert ensure_called is False
+    build_cmds = [c for c in calls if isinstance(c, list) and "build" in c and "buildx" in c]
+    assert build_cmds
+    cmd = build_cmds[0]
+    builder_idx = cmd.index("--builder")
+    assert cmd[builder_idx + 1] == "my-custom-builder"
+
+
+def test_dockerfile_base_footer_always_applies():
+    """The base footer carries the image id and bash shell for every image, but must NOT
+    force a runtime user — that is added separately only for images that create it."""
+    from flyte._internal.imagebuild.docker_builder import DOCKER_FILE_BASE_FOOTER
+
+    rendered = DOCKER_FILE_BASE_FOOTER.substitute(F_IMG_ID="some-image-id")
+
+    assert "ENV _F_IMG_ID=some-image-id" in rendered
+    assert "USER flyte" not in rendered
+    assert "WORKDIR /home/flyte" not in rendered
+
+
+def test_dockerfile_flyte_user_footer_switches_user():
+    """The flyte-user footer switches the runtime user and workdir to the flyte user."""
+    from flyte._internal.imagebuild.docker_builder import DOCKER_FILE_FLYTE_USER_FOOTER
+
+    assert "USER flyte" in DOCKER_FILE_FLYTE_USER_FOOTER
+    assert "WORKDIR /home/flyte" in DOCKER_FILE_FLYTE_USER_FOOTER
+
+
+def test_image_creates_flyte_user_only_for_debian_base():
+    """`from_debian_base` creates the flyte user, so its image gets the user footer;
+    `from_base` does not, so forcing `USER flyte` on it would break at runtime."""
+    import flyte
+    from flyte._internal.imagebuild.docker_builder import _image_creates_flyte_user
+
+    debian = flyte.Image.from_debian_base()
+    assert _image_creates_flyte_user(debian) is True
+
+    external = flyte.Image.from_base("apache/spark:3.5.8-python3")
+    assert _image_creates_flyte_user(external) is False
+
+
+@pytest.mark.asyncio
+async def test_copy_config_handler_uses_chown_flyte():
+    """CopyConfigHandler should emit COPY --chown=flyte:flyte so the runtime user owns the
+    files added via with_source_file / with_source_folder."""
+    with tempfile.TemporaryDirectory() as tmp_context:
+        context_path = Path(tmp_context)
+
+        with tempfile.TemporaryDirectory() as tmp_src_dir:
+            src_dir = Path(tmp_src_dir)
+            test_file = src_dir / "main.py"
+            test_file.write_text("print('hello')")
+
+            copy_config = CopyConfig(
+                src=test_file,
+                dst="/home/flyte/main.py",
+                path_type=0,
+            )
+
+            result = await CopyConfigHandler.handle(
+                layer=copy_config,
+                context_path=context_path,
+                dockerfile="FROM python:3.12\n",
+                docker_ignore_patterns=[],
+            )
+
+            assert "COPY --chown=flyte:flyte" in result
+            assert "/home/flyte/main.py" in result
+
+
+@pytest.mark.asyncio
+async def test_code_bundle_handler_uses_chown_flyte():
+    """_CodeBundleHandler should emit COPY --chown=flyte:flyte for code bundles baked into the image."""
+    from flyte._image import CodeBundleLayer
+    from flyte._internal.imagebuild.docker_builder import _CodeBundleHandler
+
+    with tempfile.TemporaryDirectory() as tmp_context:
+        context_path = Path(tmp_context)
+
+        with tempfile.TemporaryDirectory() as tmp_src_dir:
+            src_dir = Path(tmp_src_dir)
+            (src_dir / "task.py").write_text("print('task')")
+
+            layer = CodeBundleLayer(copy_style="all", dst="/home/flyte/code", root_dir=src_dir)
+
+            result = await _CodeBundleHandler.handle(
+                layer=layer,
+                context_path=context_path,
+                dockerfile="FROM python:3.12\n",
+            )
+
+            assert "COPY --chown=flyte:flyte" in result
+            assert "/home/flyte/code" in result

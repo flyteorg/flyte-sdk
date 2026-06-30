@@ -1,5 +1,6 @@
 import os
 import pathlib
+import shutil
 from typing import Any, Dict, List, Literal, Optional, Tuple, Type, Union
 
 from flyteidl2.core import tasks_pb2
@@ -39,7 +40,7 @@ def _extract_path_command_key(cmd: str, input_data_dir: Optional[str]) -> Option
 class ContainerTask(TaskTemplate):
     """
     This is an intermediate class that represents Flyte Tasks that run a container at execution time. This is the vast
-    majority of tasks - the typical ``@task`` decorated tasks; for instance, all run a container. An example of
+    majority of tasks - the typical `@task` decorated tasks; for instance, all run a container. An example of
     something that doesn't run a container would be something like the Athena SQL task.
 
     :param name: Name of the task
@@ -52,6 +53,9 @@ class ContainerTask(TaskTemplate):
     :param output_data_dir: The directory where the output data is stored. This is a string or a Path object.
     :param metadata_format: The format of the output file. This can be "JSON", "YAML", or "PROTO".
     :param local_logs: If True, logs will be printed to the console in the local execution.
+    :param file_input_layout: How CoPilot stages File / list[File] inputs on disk.
+        "DIRECT" (default) uses the bare path/index; "NAMED_DIR" preserves each input's
+        original basename (and extension), so extension-sniffing tools work.
     """
 
     MetadataFormat = Literal["JSON", "YAML", "PROTO"]
@@ -68,13 +72,17 @@ class ContainerTask(TaskTemplate):
         output_data_dir: str | pathlib.Path = "/var/outputs",
         metadata_format: MetadataFormat = "JSON",
         local_logs: bool = True,
+        file_input_layout: Literal["DIRECT", "NAMED_DIR"] = "DIRECT",
         **kwargs,
     ):
         super().__init__(
             task_type="raw-container",
             name=name,
             image=image,
-            interface=NativeInterface({k: (v, None) for k, v in inputs.items()} if inputs else {}, outputs or {}),
+            interface=NativeInterface(
+                {k: (v, None) for k, v in inputs.items()} if inputs else {},
+                outputs or {},
+            ),
             **kwargs,
         )
         self._image = image
@@ -100,6 +108,7 @@ class ContainerTask(TaskTemplate):
         self._inputs = inputs
         self._outputs = outputs
         self.local_logs = local_logs
+        self._file_input_layout = file_input_layout
 
     def _render_command_and_volume_binding(self, cmd: str, **kwargs) -> Tuple[str, Dict[str, Dict[str, str]]]:
         """
@@ -135,7 +144,12 @@ class ContainerTask(TaskTemplate):
                         "mode": "rw",
                     }
                 else:
-                    command = command.replace(f"{{{{.inputs.{k}}}}}", str(input_val))
+                    # Normalize booleans to lowercase so local template
+                    # substitution matches the string form used by
+                    # container/runtime execution ("true"/"false")
+                    # instead of Python's "True"/"False".
+                    rendered = str(input_val).lower() if isinstance(input_val, bool) else str(input_val)
+                    command = command.replace(f"{{{{.inputs.{k}}}}}", rendered)
         else:
             command = cmd
 
@@ -220,11 +234,17 @@ class ContainerTask(TaskTemplate):
         if self._outputs:
             for k, output_type in self._outputs.items():
                 output_path = output_directory / k
-                if os.path.isfile(output_path):
+
+                # File/Dir outputs are rebuilt from the path, so only scalar
+                # outputs should be read back as text here.
+                if isinstance(output_type, type) and issubclass(output_type, (File, Dir)):
+                    output_val = None
+                elif os.path.isfile(output_path):
                     with output_path.open("r") as f:
                         output_val = f.read()
                 else:
                     output_val = None
+
                 parsed = await self._convert_output_val_to_correct_type(output_path, output_val, output_type)
                 output_items.append(parsed)
         # return a tuple so that each element is treated as a separate output.
@@ -245,27 +265,61 @@ class ContainerTask(TaskTemplate):
         output_directory = storage.get_random_local_directory()
         cmd_and_args = (self._cmd or []) + (self._args or [])
         commands, volume_bindings = self._prepare_command_and_volumes(cmd_and_args, **kwargs)
-        volume_bindings[str(output_directory)] = {"bind": self._output_data_dir, "mode": "rw"}
+
+        # Mount any File/Dir inputs not already bound via command templates.
+        # This covers verbatim mode in sandbox, where inputs aren't referenced in the command
+        # string but the container expects them at /var/inputs/<name>.
+        for k, v in kwargs.items():
+            if isinstance(v, (File, Dir)):
+                local_path = v.path
+                if local_path not in volume_bindings:
+                    remote_path = os.path.join(str(self._input_data_dir), k)
+                    volume_bindings[local_path] = {"bind": remote_path, "mode": "rw"}
+
+        # Materialize list[File] inputs into /var/inputs/<name>/<i> so local
+        # docker execution matches the CoPilot layout used remotely.
+        for k, v in kwargs.items():
+            if isinstance(v, list) and all(isinstance(item, File) for item in v):
+                local_dir = storage.get_random_local_directory()
+                for i, item in enumerate(v):
+                    target = pathlib.Path(local_dir) / str(i)
+                    shutil.copy2(item.path, target)
+                remote_path = os.path.join(str(self._input_data_dir), k)
+                volume_bindings[str(local_dir)] = {"bind": remote_path, "mode": "rw"}
+
+        volume_bindings[str(output_directory)] = {
+            "bind": self._output_data_dir,
+            "mode": "rw",
+        }
 
         client = docker.from_env()
         if isinstance(self._image, str):
             raise AssertionError(f"Only Image objects are supported, not strings. Got {self._image} instead.")
         uri = self._image.uri
         self._pull_image_if_not_exists(client, uri)
-        print(f"Command: {commands!r}")
 
-        container = client.containers.run(uri, command=commands, remove=True, volumes=volume_bindings, detach=True)
+        run_kwargs: Dict[str, Any] = {
+            "volumes": volume_bindings,
+            "detach": True,
+        }
+
+        if self.local_logs:
+            logger.debug(f"Container command for task {self.name!r}: {commands!r}")
+
+        container = client.containers.run(uri, command=commands, **run_kwargs)
 
         # Wait for the container to finish the task
         # TODO: Add a 'timeout' parameter to control the max wait time for the container to finish the task.
-
-        if self.local_logs:
-            for log in container.logs(stream=True):
-                print(f"[Local Container] {log.strip()!r}")
-
         container.wait()
 
+        if self.local_logs:
+            logs = container.logs()
+            for line in logs.splitlines():
+                logger.debug(f"[Local Container {self.name!r}] {line!r}")
+
         output = await self._get_output(output_directory)
+
+        container.remove()
         return output
 
     def data_loading_config(self, sctx: SerializationContext) -> tasks_pb2.DataLoadingConfig:
@@ -275,12 +329,22 @@ class ContainerTask(TaskTemplate):
             "PROTO": tasks_pb2.DataLoadingConfig.PROTO,
         }
 
-        return tasks_pb2.DataLoadingConfig(
+        config = tasks_pb2.DataLoadingConfig(
             input_path=str(self._input_data_dir) if self._input_data_dir else None,
             output_path=str(self._output_data_dir) if self._output_data_dir else None,
             enabled=True,
             format=literal_to_protobuf.get(self._metadata_format, "JSON"),
         )
+        # NAMED_DIR preserves each input's original basename; DIRECT (default) leaves the
+        # field unset, so existing tasks keep working on older flyteidl2.
+        if self._file_input_layout == "NAMED_DIR":
+            if not hasattr(tasks_pb2.DataLoadingConfig, "NAMED_DIR"):
+                raise ValueError(
+                    "file_input_layout='NAMED_DIR' requires a newer flyteidl2 that includes "
+                    "DataLoadingConfig.file_input_layout; please upgrade flyteidl2."
+                )
+            config.file_input_layout = tasks_pb2.DataLoadingConfig.NAMED_DIR
+        return config
 
     def container_args(self, sctx: SerializationContext) -> List[str]:
-        return self._cmd + (self._args if self._args else [])
+        return self._cmd + (self._args or [])

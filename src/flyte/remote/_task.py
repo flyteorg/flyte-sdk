@@ -5,8 +5,9 @@ import functools
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Callable, Coroutine, Dict, Iterator, Literal, Optional, Tuple, Union, cast
 
-import grpc
 import rich.repr
+from connectrpc.code import Code
+from connectrpc.errors import ConnectError
 from flyteidl2.common import identifier_pb2, list_pb2
 from flyteidl2.core import literals_pb2
 from flyteidl2.task import task_definition_pb2, task_service_pb2
@@ -16,13 +17,74 @@ import flyte.errors
 from flyte._cache.cache import CacheBehavior
 from flyte._context import internal_ctx
 from flyte._initialize import ensure_client, get_client, get_init_config
-from flyte._internal.runtime.resources_serde import get_proto_resources
-from flyte._internal.runtime.task_serde import get_proto_retry_strategy, get_proto_timeout, get_security_context
+from flyte._internal.runtime.resources_serde import get_proto_extended_resources, get_proto_resources
+from flyte._internal.runtime.task_serde import (
+    _sanitize_resource_name,
+    get_proto_max_runtime,
+    get_proto_retry_strategy,
+    get_proto_timeout_strategy,
+    get_security_context,
+)
 from flyte._logging import logger
 from flyte.models import NativeInterface
 from flyte.syncify import syncify
 
 from ._common import ToJSONMixin
+
+
+def _apply_overrides_to_primary_container(
+    template: Any,
+    resources: Optional[flyte.Resources] = None,
+    env_vars: Optional[Dict[str, str]] = None,
+) -> None:
+    """Apply container-level overrides to the primary container of a ``k8s_pod`` task.
+
+    Pod-template tasks store the primary container's resources and env inside
+    the ``k8s_pod.pod_spec`` Struct rather than in ``template.container``.
+    Mirror the build path (``task_serde._get_k8s_pod``): convert the resource
+    override to k8s resource maps (``cpu`` / ``memory`` / ``gpu`` /
+    ``ephemeral-storage``) and replace the primary container's ``resources``;
+    replace its ``env`` with the override entries. Both are full replacements,
+    matching the ``template.container`` override semantics.
+    """
+    from google.protobuf import json_format
+
+    # Lazy import: flyte._pod pulls in kubernetes, which we keep off the
+    # module-load path for `flyte.remote`.
+    from flyte._pod import _PRIMARY_CONTAINER_NAME_FIELD
+
+    primary_name = template.config.get(_PRIMARY_CONTAINER_NAME_FIELD)
+    spec = json_format.MessageToDict(template.k8s_pod.pod_spec)
+    containers = spec.get("containers", [])
+    # Fall back to a single-container pod's only container if the primary name
+    # isn't recorded in config for some reason.
+    target = None
+    for c in containers:
+        if c.get("name") == primary_name:
+            target = c
+            break
+    if target is None and len(containers) == 1:
+        target = containers[0]
+    if target is None:
+        return
+
+    if resources:
+        proto_res = get_proto_resources(resources)
+        if proto_res is not None:
+            requests = {_sanitize_resource_name(e): e.value for e in proto_res.requests}
+            limits = {_sanitize_resource_name(e): e.value for e in proto_res.limits}
+            rr: Dict[str, Any] = {}
+            if requests:
+                rr["requests"] = requests
+            if limits:
+                rr["limits"] = limits
+            target["resources"] = rr
+
+    if env_vars:
+        target["env"] = [{"name": k, "value": v} for k, v in env_vars.items()]
+
+    new_spec = json_format.ParseDict(spec, type(template.k8s_pod.pod_spec)())
+    template.k8s_pod.pod_spec.CopyFrom(new_spec)
 
 
 def _repr_task_metadata(metadata: task_definition_pb2.TaskMetadata) -> rich.repr.Result:
@@ -53,6 +115,9 @@ class LazyEntity:
 
     @property
     def name(self) -> str:
+        """
+        Get the name of the task.
+        """
         return self._name
 
     @syncify
@@ -100,6 +165,7 @@ class TaskDetails(ToJSONMixin):
     pb2: task_definition_pb2.TaskDetails
     max_inline_io_bytes: int = 10 * 1024 * 1024  # 10 MB
     overriden_queue: Optional[str] = None
+    overridden: bool = False  # Flag if the TaskDetails was overridden
 
     @classmethod
     def get(
@@ -144,7 +210,7 @@ class TaskDetails(ToJSONMixin):
                     ):
                         tasks.append(x)
                     if not tasks:
-                        raise flyte.errors.RemoteTaskError(
+                        raise flyte.errors.RemoteTaskNotFoundError(
                             f"No versions found for Task {name} in project {project}, domain {domain}."
                         )
                     _version = tasks[0].version
@@ -162,15 +228,15 @@ class TaskDetails(ToJSONMixin):
                 version=_version,
             )
             try:
-                resp = await get_client().task_service.GetTaskDetails(
+                resp = await get_client().task_service.get_task_details(
                     task_service_pb2.GetTaskDetailsRequest(
                         task_id=task_id,
                     )
                 )
                 return cls(resp.details)
-            except grpc.aio.AioRpcError as err:
-                if err.code() == grpc.StatusCode.NOT_FOUND:
-                    raise flyte.errors.RemoteTaskError(
+            except ConnectError as err:
+                if err.code == Code.NOT_FOUND:
+                    raise flyte.errors.RemoteTaskNotFoundError(
                         f"Task {name}, version {_version} not found in {project} {domain}."
                     )
                 raise
@@ -251,7 +317,7 @@ class TaskDetails(ToJSONMixin):
 
         return flyte.Cache(
             behavior=behavior,
-            version_override=metadata.discovery_version if metadata.discovery_version else None,
+            version_override=metadata.discovery_version or None,
             serialize=metadata.cache_serializable,
             ignored_inputs=tuple(metadata.cache_ignore_input_vars),
         )
@@ -259,14 +325,14 @@ class TaskDetails(ToJSONMixin):
     @property
     def secrets(self):
         """
-        The secrets of the task.
+        Get the list of secret keys required by the task.
         """
         return [s.key for s in self.pb2.spec.task_template.security_context.secrets]
 
     @property
     def resources(self):
         """
-        The resources of the task.
+        Get the resource requests and limits for the task as a tuple (requests, limits).
         """
         if self.pb2.spec.task_template.container is None:
             return ()
@@ -281,8 +347,9 @@ class TaskDetails(ToJSONMixin):
         """
         # TODO support kwargs, for this we need ordered inputs to be stored in the task spec.
         if len(args) > 0:
-            raise flyte.errors.RemoteTaskError(
-                f"Remote task {self.name} does not support positional argumentscurrently. Please use keyword arguments."
+            raise flyte.errors.RemoteTaskUsageError(
+                f"Remote task {self.name} does not support positional arguments currently. "
+                f"Please use keyword arguments."
             )
 
         ctx = internal_ctx()
@@ -301,12 +368,14 @@ class TaskDetails(ToJSONMixin):
                     )
             if controller:
                 return await controller.submit_task_ref(self, *args, **kwargs)
-        raise flyte.errors.RemoteTaskError(f"Remote tasks [{self.name}] cannot be executed locally, only remotely.")
+        raise flyte.errors.RemoteTaskUsageError(
+            f"Remote tasks [{self.name}] cannot be executed locally, only remotely."
+        )
 
     @property
     def queue(self) -> Optional[str]:
         """
-        The queue to use for the task.
+        Get the queue name to use for task execution, if overridden.
         """
         return self.overriden_queue
 
@@ -324,8 +393,22 @@ class TaskDetails(ToJSONMixin):
         queue: Optional[str] = None,
         **kwargs: Any,
     ) -> TaskDetails:
+        """
+        Create a new TaskDetails with overridden properties.
+
+        :param short_name: Optional short name for the task.
+        :param resources: Optional resource requirements.
+        :param retries: Number of retries or retry strategy.
+        :param timeout: Execution timeout.
+        :param env_vars: Environment variables to set.
+        :param secrets: Secret requests for the task.
+        :param max_inline_io_bytes: Maximum inline I/O size in bytes.
+        :param cache: Cache configuration.
+        :param queue: Queue name for task execution.
+        :return: A new TaskDetails instance with the overrides applied.
+        """
         if len(kwargs) > 0:
-            raise ValueError(
+            raise flyte.errors.RemoteTaskUsageError(
                 f"RemoteTasks [{self.name}] do not support overriding with kwargs: {kwargs}, "
                 f"Check the parameters for override method."
             )
@@ -333,7 +416,7 @@ class TaskDetails(ToJSONMixin):
         pb2.CopyFrom(self.pb2)
 
         if short_name:
-            pb2.metadata.short_name = short_name
+            pb2.spec.short_name = short_name
 
         template = pb2.spec.task_template
         if secrets:
@@ -345,13 +428,45 @@ class TaskDetails(ToJSONMixin):
                 template.container.env.extend([literals_pb2.KeyValuePair(key=k, value=v) for k, v in env_vars.items()])
             if resources:
                 template.container.resources.CopyFrom(get_proto_resources(resources))
+        elif template.HasField("k8s_pod") and (resources or env_vars):
+            # Pod-template tasks (e.g. multi-container / sandbox envs) carry the
+            # primary container's resources and env inside the k8s_pod pod_spec
+            # Struct, not in template.container. Apply the override there too —
+            # otherwise the container resource requests (including the GPU
+            # *count*, nvidia.com/gpu) and env vars are dropped, and the pod
+            # schedules without a GPU even though the accelerator type is set
+            # below.
+            _apply_overrides_to_primary_container(template, resources=resources, env_vars=env_vars)
+
+        if resources:
+            # Resource overrides must also carry the extended resources — the
+            # GPU/accelerator (device type -> nodeSelector/toleration) and
+            # shared memory — not just the container CPU/memory/GPU-count
+            # entries. Without this an override that requests a GPU (e.g.
+            # Resources(gpu="L40s:1")) drops the accelerator entirely, so the
+            # pod never schedules on a GPU node. Mirrors the build path
+            # (task_serde.get_proto_extended_resources). `resources` is a full
+            # replacement, so clear the field when the override has no extended
+            # resources rather than leaving a stale accelerator behind.
+            ext = get_proto_extended_resources(resources)
+            if ext is not None:
+                template.extended_resources.CopyFrom(ext)
+            else:
+                template.ClearField("extended_resources")
 
         md = template.metadata
         if retries:
             md.retries.CopyFrom(get_proto_retry_strategy(retries))
 
         if timeout:
-            md.timeout.CopyFrom(get_proto_timeout(timeout))
+            mr = get_proto_max_runtime(timeout)
+            if mr is not None:
+                md.timeout.CopyFrom(mr)
+            ts = get_proto_timeout_strategy(timeout)
+            if ts is not None:
+                md.timeouts.CopyFrom(ts)
+            else:
+                md.ClearField("timeouts")
 
         if cache:
             if cache.behavior == "disable":
@@ -373,6 +488,7 @@ class TaskDetails(ToJSONMixin):
             pb2,
             max_inline_io_bytes=max_inline_io_bytes or self.max_inline_io_bytes,
             overriden_queue=queue,
+            overridden=True,
         )
 
     def __rich_repr__(self) -> rich.repr.Result:
@@ -400,6 +516,11 @@ class Task(ToJSONMixin):
     pb2: task_definition_pb2.Task
 
     def __init__(self, pb2: task_definition_pb2.Task):
+        """
+        Initialize a Task object.
+
+        :param pb2: The task protobuf definition.
+        """
         self.pb2 = pb2
 
     @property
@@ -417,7 +538,18 @@ class Task(ToJSONMixin):
         return self.pb2.task_id.version
 
     @property
+    def entrypoint(self) -> bool:
+        """
+        Whether this task is marked as an entrypoint. Not populated in listing responses;
+        fetch ``TaskDetails`` to read the authoritative value from the task template.
+        """
+        return False
+
+    @property
     def url(self) -> str:
+        """
+        Get the console URL for viewing the task.
+        """
         client = get_client()
         return client.console.task_url(
             project=self.pb2.task_id.project,
@@ -460,9 +592,10 @@ class Task(ToJSONMixin):
         domain: str | None = None,
         sort_by: Tuple[str, Literal["asc", "desc"]] | None = None,
         limit: int = 100,
+        entrypoint: bool | None = None,
     ) -> Union[AsyncIterator[Task], Iterator[Task]]:
         """
-        Get all runs for the current project and domain.
+        Get all tasks for the current project and domain.
 
         :param by_task_name: If provided, only tasks with this name will be returned.
         :param by_task_env: If provided, only tasks with this environment prefix will be returned.
@@ -470,7 +603,8 @@ class Task(ToJSONMixin):
         :param domain: The domain to filter tasks by. If None, the current domain will be used.
         :param sort_by: The sorting criteria for the project list, in the format (field, order).
         :param limit: The maximum number of tasks to return.
-        :return: An iterator of runs.
+        :param entrypoint: If True, only entrypoint tasks will be returned.
+        :return: An iterator of tasks.
         """
         ensure_client()
         token = None
@@ -497,12 +631,15 @@ class Task(ToJSONMixin):
                     values=[f"{by_task_env}."],
                 )
             )
+        known_filters = []
+        if entrypoint is not None:
+            known_filters.append(task_service_pb2.ListTasksRequest.KnownFilter(is_entrypoint=entrypoint))
         original_limit = limit
         if limit > cfg.batch_size:
             limit = cfg.batch_size
         retrieved = 0
         while True:
-            resp = await get_client().task_service.ListTasks(
+            resp = await get_client().task_service.list_tasks(
                 task_service_pb2.ListTasksRequest(
                     org=cfg.org,
                     project_id=identifier_pb2.ProjectIdentifier(
@@ -516,6 +653,7 @@ class Task(ToJSONMixin):
                         limit=limit,
                         token=token,
                     ),
+                    known_filters=known_filters,
                 )
             )
             token = resp.token

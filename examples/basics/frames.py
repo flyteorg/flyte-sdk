@@ -4,7 +4,7 @@ import flyte
 
 img = flyte.Image.from_debian_base()
 # assumes you have permission to push to the flyte default registry, if not
-# img = img.clone(registry="ghcr.io/flyteorg", name="flyte")
+# img = img.clone(registry="ghcr.io/flyteorg", name="flyte", extendable=True)
 img = img.with_pip_packages("pandas", "pyarrow")
 
 env = flyte.TaskEnvironment(

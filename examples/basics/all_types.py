@@ -19,7 +19,7 @@ from flyte.types import FlytePickle
 # Set up environment with required dependencies for different types
 env = flyte.TaskEnvironment(
     name="all_types",
-    image=flyte.Image.from_debian_base().with_pip_packages("pandas", "pyarrow", "unionai-reuse==0.1.7"),
+    image=flyte.Image.from_debian_base().with_pip_packages("pandas", "pyarrow", "unionai-reuse"),
     resources=flyte.Resources(cpu="1", memory="1Gi"),
     reusable=flyte.ReusePolicy(replicas=2, concurrency=20),
 )

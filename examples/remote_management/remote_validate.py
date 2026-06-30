@@ -1,5 +1,5 @@
 import flyte
-from flyte.errors import RemoteTaskError
+import flyte.errors
 from flyte.remote import Task
 
 env = flyte.TaskEnvironment(
@@ -26,7 +26,7 @@ async def check_reference_task_exists(task_name: str, project: str | None = None
         # Get the lazy entity - this doesn't fetch yet
         lazy_task = Task.get(task_name, project=project, domain=domain, auto_version="latest")
 
-        # Explicitly fetch to trigger the validation - this is where RemoteTaskError is raised
+        # Explicitly fetch to trigger the validation - this is where RemoteTaskNotFoundError is raised
         task_details = await lazy_task.fetch.aio()
 
         print(f"✓ Task '{task_name}' exists")
@@ -35,7 +35,7 @@ async def check_reference_task_exists(task_name: str, project: str | None = None
         print(f"  - Required args: {task_details.required_args}")
         return True
 
-    except RemoteTaskError as e:
+    except flyte.errors.RemoteTaskNotFoundError as e:
         # Task doesn't exist in the backend
         print(f"✗ Task '{task_name}' not found: {e}")
         print(f"  - Error code: {e.code}")

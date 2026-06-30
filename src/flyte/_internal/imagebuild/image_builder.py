@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
+import random
+import sqlite3
+import time
 import typing
-from typing import ClassVar, Dict, Optional, Tuple
+from importlib.metadata import entry_points
+from typing import TYPE_CHECKING, ClassVar, Dict, Optional, Tuple
 
 from async_lru import alru_cache
 from pydantic import BaseModel
@@ -12,10 +17,19 @@ from typing_extensions import Protocol
 from flyte._image import Architecture, Image
 from flyte._initialize import _get_init_config
 from flyte._logging import logger
+from flyte._persistence._db import LocalDB
+from flyte._status import status
+
+_IMAGE_CACHE_TTL_DAYS = 1
+
+if TYPE_CHECKING:
+    from flyte._build import ImageBuild
 
 
 class ImageBuilder(Protocol):
-    async def build_image(self, image: Image, dry_run: bool) -> str: ...
+    async def build_image(
+        self, image: Image, dry_run: bool, wait: bool = True, force: bool = False
+    ) -> "ImageBuild": ...
 
     def get_checkers(self) -> Optional[typing.List[typing.Type[ImageChecker]]]:
         """
@@ -29,7 +43,15 @@ class ImageChecker(Protocol):
     @classmethod
     async def image_exists(
         cls, repository: str, tag: str, arch: Tuple[Architecture, ...] = ("linux/amd64",)
-    ) -> Optional[str]: ...
+    ) -> Optional[str]:
+        """
+        Check whether an image exists in a registry or cache.
+
+        Returns the image URI if found, or None if the image definitively does not exist.
+        Raise an exception if existence cannot be determined (e.g. cache miss, network failure)
+        so the next checker in the chain gets a chance.
+        """
+        ...
 
 
 class DockerAPIImageChecker(ImageChecker):
@@ -86,6 +108,65 @@ class DockerAPIImageChecker(ImageChecker):
                 return None
 
 
+def _cache_key(repository: str, tag: str, arch: Tuple[str, ...]) -> str:
+    """Return a stable cache key for an image, scoped to the current endpoint/project/domain."""
+    from flyte._persistence._db import _cache_scope
+
+    raw = f"{_cache_scope()}:{repository}:{tag}:{','.join(sorted(arch))}"
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def _read_image_cache(repository: str, tag: str, arch: Tuple[str, ...]) -> Optional[str]:
+    """Look up a previously verified image URI by repository, tag, and arch. Returns image_uri or None."""
+    try:
+        conn = LocalDB.get_sync()
+        cutoff = time.time() - _IMAGE_CACHE_TTL_DAYS * 86400
+        row = conn.execute(
+            "SELECT image_uri FROM image_cache WHERE key = ? AND created_at > ?",
+            (_cache_key(repository, tag, arch), cutoff),
+        ).fetchone()
+        # Prune expired entries ~5% of the time to avoid doing it on every read
+        if random.random() < 0.05:
+            with LocalDB._write_lock:
+                conn.execute("DELETE FROM image_cache WHERE created_at <= ?", (cutoff,))
+                conn.commit()
+        if row:
+            return row[0]
+    except (OSError, sqlite3.Error) as e:
+        logger.debug(f"Failed to read image cache: {e}")
+    return None
+
+
+def _write_image_cache(repository: str, tag: str, arch: Tuple[str, ...], image_uri: str) -> None:
+    """Persist a verified image URI to the SQLite cache."""
+    try:
+        conn = LocalDB.get_sync()
+        with LocalDB._write_lock:
+            conn.execute(
+                "INSERT OR REPLACE INTO image_cache (key, image_uri, created_at) VALUES (?, ?, ?)",
+                (_cache_key(repository, tag, arch), image_uri, time.time()),
+            )
+            conn.commit()
+    except (OSError, sqlite3.Error) as e:
+        logger.debug(f"Failed to write image cache: {e}")
+
+
+class PersistentCacheImageChecker(ImageChecker):
+    """Check if image was previously verified and cached in SQLite (~0ms)."""
+
+    @classmethod
+    async def image_exists(
+        cls, repository: str, tag: str, arch: Tuple[Architecture, ...] = ("linux/amd64",)
+    ) -> Optional[str]:
+        uri = _read_image_cache(repository, tag, arch)
+        if uri:
+            logger.debug(f"Image {uri} found in persistent cache")
+            return uri
+        # Cache miss — raise so the next checker in the chain gets a chance.
+        # Returning None would mean "image definitely doesn't exist".
+        raise LookupError(f"Image {repository}:{tag} not found in persistent cache")
+
+
 class LocalDockerCommandImageChecker(ImageChecker):
     command_name: ClassVar[str] = "docker"
 
@@ -93,27 +174,32 @@ class LocalDockerCommandImageChecker(ImageChecker):
     async def image_exists(
         cls, repository: str, tag: str, arch: Tuple[Architecture, ...] = ("linux/amd64",)
     ) -> Optional[str]:
-        # Check if the image exists locally by running the docker inspect command
+        # Use buildx imagetools inspect which works with both OCI and Docker manifest formats,
+        # including local/insecure registries that docker manifest inspect doesn't handle well.
         process = await asyncio.create_subprocess_exec(
             cls.command_name,
-            "manifest",
+            "buildx",
+            "imagetools",
             "inspect",
             f"{repository}:{tag}",
+            "--raw",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
         stdout, stderr = await process.communicate()
-        if (stderr and "manifest unknown") or "no such manifest" in stderr.decode():
-            logger.debug(f"Image {repository}:{tag} not found using the docker command.")
-            return None
-
         if process.returncode != 0:
-            raise RuntimeError(f"Failed to run docker image inspect {repository}:{tag}")
+            stderr_str = stderr.decode() if stderr else ""
+            if "manifest unknown" in stderr_str or "no such manifest" in stderr_str or "not found" in stderr_str:
+                logger.debug(f"Image {repository}:{tag} not found using the docker command.")
+                return None
+            raise RuntimeError(f"Failed to run docker buildx imagetools inspect {repository}:{tag}: {stderr_str}")
 
         inspect_data = json.loads(stdout.decode())
         if "manifests" not in inspect_data:
-            raise RuntimeError(f"Invalid data returned from docker image inspect for {repository}:{tag}")
-        manifest_list = inspect_data["manifests"]
+            # Single-platform image without a manifest list — image exists
+            logger.debug(f"Image {repository}:{tag} found (single-platform manifest)")
+            return f"{repository}:{tag}"
+        manifest_list = [m for m in inspect_data["manifests"] if "platform" in m and "os" in m.get("platform", {})]
         architectures = [f"{x['platform']['os']}/{x['platform']['architecture']}" for x in manifest_list]
         if set(architectures) >= set(arch):
             logger.debug(f"Image {repository}:{tag} found for architecture(s) {arch}, has {architectures}")
@@ -138,10 +224,13 @@ class ImageBuildEngine:
     @staticmethod
     @alru_cache
     async def image_exists(image: Image) -> Optional[str]:
-        if image.base_image is not None and not image._layers:
-            logger.debug(f"Image {image} has a base image: {image.base_image} and no layers. Skip existence check.")
+        if not image._is_cloned:
+            # Unmodified flyte default images are built and pushed as part of flyte releases,
+            # so they are guaranteed to exist — skip the existence check.
             return image.uri
-        assert image.name is not None, f"Image name is not set for {image}"
+        if image.name is None:
+            logger.debug(f"Image {image} has no name. Skip existence check.")
+            return image.uri
 
         tag = image._final_tag
 
@@ -156,7 +245,7 @@ class ImageBuildEngine:
         image_builder = ImageBuildEngine._get_builder(builder)
         image_checker = image_builder.get_checkers()
         if image_checker is None:
-            logger.info(f"No image checkers found for builder `{image_builder}`, assuming it exists")
+            status.info(f"No image checkers found for builder `{image_builder}`, assuming it exists")
             return image.uri
         for checker in image_checker:
             try:
@@ -164,13 +253,18 @@ class ImageBuildEngine:
                 image_uri = await checker.image_exists(repository, tag, tuple(image.platform))
                 if image_uri:
                     logger.debug(f"Image {image_uri} in registry")
-                return image_uri
+                    # Persist to disk so future process invocations skip network checks
+                    if checker is not PersistentCacheImageChecker:
+                        _write_image_cache(repository, tag, tuple(image.platform), image_uri)
+                    return image_uri
+                # Checker ran successfully and returned None — image not found
+                return None
             except Exception as e:
                 logger.debug(f"Error checking image existence with {checker.__name__}: {e}")
                 continue
 
-        # If all checkers fail, then assume the image exists. This is current flytekit behavior
-        logger.info(f"All checkers failed to check existence of {image.uri}, assuming it does exists")
+        # All checkers raised exceptions (e.g. network failures) — assume image exists
+        status.info(f"All checkers failed to check existence of {image.uri}, assuming it exists")
         return image.uri
 
     @classmethod
@@ -181,7 +275,8 @@ class ImageBuildEngine:
         builder: ImageBuildEngine.ImageBuilderType | None = None,
         dry_run: bool = False,
         force: bool = False,
-    ) -> str:
+        wait: bool = True,
+    ) -> "ImageBuild":
         """
         Build the image. Images to be tagged with latest will always be built. Otherwise, this engine will check the
         registry to see if the manifest exists.
@@ -189,29 +284,45 @@ class ImageBuildEngine:
         :param image:
         :param builder:
         :param dry_run: Tell the builder to not actually build. Different builders will have different behaviors.
-        :param force: Skip the existence check. Normally if the image already exists we won't build it.
-        :return:
+        :param force: Skip the existence check and force a rebuild. When using the remote builder, this
+            also sets overwrite_cache=True on the build run.
+        :param wait: Wait for the build to finish. If wait is False when using the remote image builder, the function
+            will return the build image task URL.
+        :return: An ImageBuild object with the image URI and remote run (if applicable).
         """
-        # Always trigger a build if this is a dry run since builder shouldn't really do anything, or a force.
-        image_uri = (await cls.image_exists(image)) or image.uri
-        if force or dry_run or not await cls.image_exists(image):
-            logger.info(f"Image {image_uri} does not exist in registry or force/dry-run, building...")
+        from flyte._build import ImageBuild
 
-            # Validate the image before building
-            image.validate()
-
-            # If a builder is not specified, use the first registered builder
-            cfg = _get_init_config()
-            if cfg and cfg.image_builder:
-                builder = builder or cfg.image_builder
-            img_builder = ImageBuildEngine._get_builder(builder)
-            logger.debug(f"Using `{img_builder}` image builder to build image.")
-
-            result = await img_builder.build_image(image, dry_run=dry_run)
-            return result
+        # Skip the existence check when force or dry_run is set.
+        image_uri: str | None
+        if force or dry_run:
+            image_uri = image.uri
+            status.step(f"Building image {image_uri}...")
+        elif image_uri := await cls.image_exists(image):
+            status.info(f"Image {image_uri} already exists, skipping build")
+            return ImageBuild(uri=image_uri, remote_run=None)
         else:
-            logger.info(f"Image {image_uri} already exists in registry. Skipping build.")
-            return image_uri
+            image_uri = image.uri
+            status.step(f"Image {image_uri} not found, building...")
+
+        # Validate the image before building
+        image.validate()
+
+        # If a builder is not specified, use the first registered builder
+        cfg = _get_init_config()
+        if cfg and cfg.image_builder:
+            builder = builder or cfg.image_builder
+        img_builder = ImageBuildEngine._get_builder(builder)
+        logger.debug(f"Using `{img_builder}` image builder to build image.")
+
+        result = await img_builder.build_image(image, dry_run=dry_run, wait=wait, force=force)
+
+        # Persist the freshly built image URI so future runs skip the registry check.
+        # Skip when the build wasn't actually pushed (dry_run) or hasn't finished yet (wait=False).
+        if not dry_run and wait and result.uri and image.name is not None:
+            repository = image.registry + "/" + image.name if image.registry else image.name
+            _write_image_cache(repository, image._final_tag, tuple(image.platform), result.uri)
+
+        return result
 
     @classmethod
     def _get_builder(cls, builder: ImageBuildEngine.ImageBuilderType | None = "local") -> ImageBuilder:
@@ -226,11 +337,38 @@ class ImageBuildEngine:
 
             return DockerImageBuilder()
         else:
-            raise ValueError(f"Unknown image builder type: {builder}. Supported types are 'local' and 'remote'.")
+            return cls._load_custom_image_builders(builder)
+
+    @classmethod
+    def _load_custom_image_builders(cls, name: str) -> ImageBuilder:
+        plugins = entry_points(group="flyte.plugins.image_builders")
+        for ep in plugins:
+            if ep.name != name:
+                continue
+            try:
+                status.info(f"Loading image builder: {ep.name}")
+                builder = ep.load()
+                if callable(builder):
+                    return builder()
+                return builder
+            except Exception as e:
+                raise RuntimeError(f"Failed to load image builder {ep.name} with error: {e}")
+        raise ValueError(
+            f"Unknown image builder type: {name}. Available builders:"
+            f" {[ep.name for ep in plugins] + ['local', 'remote']}"
+        )
+
+
+class RunIdentifierData(BaseModel):
+    org: str
+    project: str
+    domain: str
+    name: str
 
 
 class ImageCache(BaseModel):
     image_lookup: Dict[str, str]
+    build_run_ids: Dict[str, RunIdentifierData] = {}
     serialized_form: str | None = None
 
     @property

@@ -1,6 +1,8 @@
+import errno
 import importlib
 import os
 import traceback
+from datetime import datetime
 from typing import List, Optional, Tuple, Type
 
 import flyte.errors
@@ -9,11 +11,12 @@ from flyte._context import contextual_run
 from flyte._internal import Controller
 from flyte._internal.imagebuild.image_builder import ImageCache
 from flyte._logging import log, logger
+from flyte._metrics import Stopwatch
 from flyte._task import TaskTemplate
-from flyte.models import ActionID, Checkpoints, CodeBundle, RawDataPath
+from flyte.models import ActionID, CheckpointPaths, CodeBundle, RawDataPath
 
 from ..._utils import adjust_sys_path
-from .convert import Error, Inputs, Outputs
+from .convert import Error, Inputs, Outputs, convert_from_native_to_error
 from .taskrunner import (
     convert_and_run,
     extract_download_run_upload,
@@ -29,9 +32,10 @@ async def direct_dispatch(
     version: str,
     output_path: str,
     run_base_dir: str,
-    checkpoints: Checkpoints | None = None,
+    checkpoint_paths: CheckpointPaths | None = None,
     code_bundle: CodeBundle | None = None,
     inputs: Inputs | None = None,
+    run_start_time: Optional[datetime] = None,
 ) -> Tuple[Optional[Outputs], Optional[Error]]:
     """
     This method is used today by the local_controller and is positioned to be used by a rust core in the future.
@@ -45,12 +49,13 @@ async def direct_dispatch(
         inputs=inputs or Inputs.empty(),
         action=action,
         raw_data_path=raw_data_path,
-        checkpoints=checkpoints,
+        checkpoint_paths=checkpoint_paths,
         code_bundle=code_bundle,
         controller=controller,
         version=version,
         output_path=output_path,
         run_base_dir=run_base_dir,
+        run_start_time=run_start_time,
     )
 
 
@@ -63,6 +68,49 @@ def load_class(qualified_name) -> Type:
     module_name, class_name = qualified_name.rsplit(".", 1)  # Split module and class
     module = importlib.import_module(module_name)  # Import the module
     return getattr(module, class_name)  # Retrieve the class
+
+
+_SKIP_DIRS = frozenset(
+    {
+        ".git",
+        ".hg",
+        ".svn",
+        ".venv",
+        "venv",
+        "env",
+        ".local",
+        ".cache",
+        ".uv",
+        "__pycache__",
+        "node_modules",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".idea",
+        ".tox",
+        ".nox",
+        ".eggs",
+        "site-packages",
+        "dist-packages",
+        "dist",
+        "build",
+    }
+)
+
+
+def _list_user_files(cwd: str) -> list[str]:
+    """List user-relevant files under cwd, filtering out virtual envs, caches, and other non-user directories."""
+    files: list[str] = []
+    try:
+        for root, dirs, filenames in os.walk(cwd):
+            # Prune irrelevant directories in-place so os.walk won't descend into them
+            dirs[:] = [d for d in dirs if d not in _SKIP_DIRS]
+            for name in filenames:
+                rel_path = os.path.relpath(os.path.join(root, name), cwd)
+                files.append(rel_path)
+    except Exception as list_err:
+        files = [f"(Failed to list directory: {list_err})"]
+    return files
 
 
 def load_task(resolver: str, *resolver_args: str) -> TaskTemplate:
@@ -79,14 +127,7 @@ def load_task(resolver: str, *resolver_args: str) -> TaskTemplate:
         return resolver_instance.load_task(resolver_args)
     except ModuleNotFoundError as e:
         cwd = os.getcwd()
-        files = []
-        try:
-            for root, dirs, filenames in os.walk(cwd):
-                for name in dirs + filenames:
-                    rel_path = os.path.relpath(os.path.join(root, name), cwd)
-                    files.append(rel_path)
-        except Exception as list_err:
-            files = [f"(Failed to list directory: {list_err})"]
+        files = _list_user_files(cwd)
 
         msg = (
             "\n\nFull traceback:\n" + "".join(traceback.format_exc()) + f"\n[ImportError Diagnostics]\n"
@@ -95,6 +136,15 @@ def load_task(resolver: str, *resolver_args: str) -> TaskTemplate:
             f"Files found under current directory:\n" + "\n".join(f"  - {f}" for f in files)
         )
         raise ModuleNotFoundError(msg) from e
+
+
+def _classify_load_error(err: Exception) -> Exception:
+    if isinstance(err, OSError) and err.errno == errno.EIO:
+        return flyte.errors.RuntimeSystemError(
+            "FilesystemIOError",
+            f"Filesystem I/O error while loading task: {err}",
+        )
+    return err
 
 
 def load_pkl_task(code_bundle: CodeBundle) -> TaskTemplate:
@@ -124,7 +174,10 @@ async def download_code_bundle(code_bundle: CodeBundle) -> CodeBundle:
     """
     adjust_sys_path([str(code_bundle.destination)])
     logger.debug(f"Downloading {code_bundle}")
+    sw = Stopwatch("download_code_bundle")
+    sw.start()
     downloaded_path = await download_bundle(code_bundle)
+    sw.stop()
     return code_bundle.with_downloaded_path(downloaded_path)
 
 
@@ -135,7 +188,11 @@ async def _download_and_load_task(
         logger.debug(f"Downloading {code_bundle}")
         code_bundle = await download_code_bundle(code_bundle)
         if code_bundle.pkl:
-            return load_pkl_task(code_bundle)
+            sw = Stopwatch("load_pkl_task")
+            sw.start()
+            result = load_pkl_task(code_bundle)
+            sw.stop()
+            return result
 
         if not resolver or not resolver_args:
             raise flyte.errors.RuntimeSystemError(
@@ -144,11 +201,19 @@ async def _download_and_load_task(
         logger.debug(
             f"Loading task from tgz: {code_bundle.downloaded_path}, resolver: {resolver}, args: {resolver_args}"
         )
-        return load_task(resolver, *resolver_args)
+        sw = Stopwatch("load_task_from_tgz")
+        sw.start()
+        result = load_task(resolver, *resolver_args)
+        sw.stop()
+        return result
     if not resolver or not resolver_args:
         raise flyte.errors.RuntimeSystemError("MalformedCommand", "Resolver and resolver args are required. for task")
     logger.debug(f"No code bundle provided, loading task from resolver: {resolver}, args: {resolver_args}")
-    return load_task(resolver, *resolver_args)
+    sw = Stopwatch("load_task_from_resolver")
+    sw.start()
+    result = load_task(resolver, *resolver_args)
+    sw.stop()
+    return result
 
 
 @log
@@ -158,14 +223,15 @@ async def load_and_run_task(
     output_path: str,
     run_base_dir: str,
     version: str,
-    controller: Controller,
+    controller: Optional[Controller],
     resolver: str,
     resolver_args: List[str],
-    checkpoints: Checkpoints | None = None,
+    checkpoint_paths: CheckpointPaths | None = None,
     code_bundle: CodeBundle | None = None,
     input_path: str | None = None,
     image_cache: ImageCache | None = None,
     interactive_mode: bool = False,
+    run_start_time: Optional[datetime] = None,
 ):
     """
     This method is invoked from the runtime/CLI and is used to run a task. This creates the context tree,
@@ -179,13 +245,29 @@ async def load_and_run_task(
     :param output_path: The output path to use for the task.
     :param run_base_dir: Base output directory to pass down to child tasks.
     :param version: The version of the task to run.
-    :param checkpoints: The checkpoints to use for the task.
+    :param checkpoint_paths: The checkpoint paths to use for the task.
     :param code_bundle: The code bundle to use for the task.
     :param input_path: The input path to use for the task.
     :param image_cache: Mappings of Image identifiers to image URIs.
     :param interactive_mode: Whether to run the task in interactive mode.
     """
-    task = await _download_and_load_task(code_bundle, resolver, resolver_args)
+    sw = Stopwatch("load_and_run_task_total")
+    sw.start()
+    try:
+        task = await _download_and_load_task(code_bundle, resolver, resolver_args)
+    except Exception as e:
+        classified_error = _classify_load_error(e)
+        # Import/load failures happen before the contextual_run wrapper below, so they must
+        # also be uploaded to the error file -- otherwise the UI shows an empty message.
+        logger.exception(f"Failed to load task before execution: {e}")
+        if output_path:
+            from .io import upload_error
+
+            error = convert_from_native_to_error(classified_error)
+            await upload_error(error.err, output_path, recoverable=error.recoverable)
+        if classified_error is not e:
+            raise classified_error from e
+        raise
 
     await contextual_run(
         extract_download_run_upload,
@@ -196,9 +278,11 @@ async def load_and_run_task(
         raw_data_path=raw_data_path,
         output_path=output_path,
         run_base_dir=run_base_dir,
-        checkpoints=checkpoints,
+        checkpoint_paths=checkpoint_paths,
         code_bundle=code_bundle,
         input_path=input_path,
         image_cache=image_cache,
         interactive_mode=interactive_mode,
+        run_start_time=run_start_time,
     )
+    sw.stop()

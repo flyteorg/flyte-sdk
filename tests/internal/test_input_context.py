@@ -3,9 +3,10 @@
 import pytest
 
 import flyte
+import flyte.notify as notify
 from flyte._context import internal_ctx
 from flyte._run import with_runcontext
-from flyte.models import ActionID, RawDataPath, TaskContext
+from flyte.models import ActionID, ActionPhase, RawDataPath, TaskContext
 from flyte.report import Report
 
 
@@ -237,7 +238,7 @@ def test_with_runcontext_basic():
 
     # Simulate main block: with_runcontext().run() to trigger execution
     result = with_runcontext(mode="local", custom_context={"project": "my-project", "env": "prod"}).run(test_task)
-    assert result.outputs() == {"project": "my-project", "env": "prod"}
+    assert result.outputs()[0] == {"project": "my-project", "env": "prod"}
 
 
 def test_with_runcontext_child_task_propagation():
@@ -264,7 +265,7 @@ def test_with_runcontext_child_task_propagation():
     result = with_runcontext(mode="local", custom_context={"project": "test-proj", "entity": "test-entity"}).run(
         parent_task
     )
-    outputs = result.outputs()
+    outputs = result.outputs()[0]
     assert outputs["parent"] == {"project": "test-proj", "entity": "test-entity"}
     assert outputs["child"] == {"project": "test-proj", "entity": "test-entity"}
 
@@ -294,7 +295,7 @@ def test_with_runcontext_multiple_levels():
 
     # Main block: context should propagate through all levels
     result = with_runcontext(mode="local", custom_context={"project": "test", "region": "us-west-2"}).run(parent_task)
-    outputs = result.outputs()
+    outputs = result.outputs()[0]
     expected = {"project": "test", "region": "us-west-2"}
     assert outputs["parent"] == expected
     assert outputs["child"] == expected
@@ -326,7 +327,7 @@ def test_with_runcontext_and_context_manager():
     result = with_runcontext(mode="local", custom_context={"project": "base-project", "entity": "base-entity"}).run(
         parent_task
     )
-    outputs = result.outputs()
+    outputs = result.outputs()[0]
 
     # Without override should have base context
     assert outputs["without_override"] == {"project": "base-project", "entity": "base-entity"}
@@ -349,7 +350,7 @@ def test_with_runcontext_empty():
 
     # Main block: no context provided
     result = with_runcontext(mode="local").run(test_task)
-    assert result.outputs() == {}
+    assert result.outputs()[0] == {}
 
 
 def test_with_runcontext_parallel_tasks():
@@ -375,7 +376,7 @@ def test_with_runcontext_parallel_tasks():
 
     # Main block: context should propagate to both parallel tasks
     result = with_runcontext(mode="local", custom_context={"project": "parallel-test", "batch": "123"}).run(parent_task)
-    outputs = result.outputs()
+    outputs = result.outputs()[0]
 
     # Both tasks should have the same context
     expected = {"project": "parallel-test", "batch": "123"}
@@ -395,12 +396,82 @@ def test_with_runcontext_isolation():
 
     # First execution with context
     result1 = with_runcontext(mode="local", custom_context={"project": "project1"}).run(test_task)
-    assert result1.outputs() == {"project": "project1"}
+    assert result1.outputs()[0] == {"project": "project1"}
 
     # Second execution with different context - should not have first context
     result2 = with_runcontext(mode="local", custom_context={"project": "project2", "env": "staging"}).run(test_task)
-    assert result2.outputs() == {"project": "project2", "env": "staging"}
+    assert result2.outputs()[0] == {"project": "project2", "env": "staging"}
 
     # Third execution without context
     result3 = with_runcontext(mode="local").run(test_task)
-    assert result3.outputs() == {}
+    assert result3.outputs()[0] == {}
+
+
+def test_with_runcontext_single_notification():
+    """Test that with_runcontext accepts a single notification."""
+    runner = with_runcontext(
+        mode="local",
+        notifications=notify.Slack(
+            on_phase=ActionPhase.FAILED,
+            webhook_url="https://hooks.slack.com/services/T/B/X",
+            message="Task failed: {run.error}",
+        ),
+    )
+
+    assert isinstance(runner._notifications, notify.Slack)
+    assert runner._notifications.on_phase == (ActionPhase.FAILED,)
+    assert runner._notifications.webhook_url == "https://hooks.slack.com/services/T/B/X"
+
+
+def test_with_runcontext_multiple_notifications():
+    """Test that with_runcontext accepts a tuple of notifications."""
+    notifications = (
+        notify.Slack(
+            on_phase=ActionPhase.FAILED,
+            webhook_url="https://hooks.slack.com/services/T/B/X",
+            message="Task failed",
+        ),
+        notify.Email(
+            on_phase=ActionPhase.SUCCEEDED,
+            recipients=("oncall@example.com",),
+        ),
+        notify.Webhook(
+            on_phase=(ActionPhase.FAILED, ActionPhase.TIMED_OUT),
+            url="https://api.example.com/alerts",
+        ),
+    )
+
+    runner = with_runcontext(mode="local", notifications=notifications)
+
+    assert isinstance(runner._notifications, tuple)
+    assert len(runner._notifications) == 3
+    assert isinstance(runner._notifications[0], notify.Slack)
+    assert isinstance(runner._notifications[1], notify.Email)
+    assert isinstance(runner._notifications[2], notify.Webhook)
+
+
+def test_with_runcontext_no_notifications():
+    """Test that with_runcontext defaults to no notifications."""
+    runner = with_runcontext(mode="local")
+
+    assert runner._notifications is None
+
+
+def test_with_runcontext_notifications_with_other_params():
+    """Test that notifications work alongside other run context parameters."""
+    runner = with_runcontext(
+        mode="local",
+        name="test-run",
+        labels={"team": "ml"},
+        notifications=notify.Email(
+            on_phase=ActionPhase.FAILED,
+            recipients=("oncall@example.com",),
+        ),
+        custom_context={"project": "test"},
+    )
+
+    assert runner._name == "test-run"
+    assert runner._labels == {"team": "ml"}
+    assert runner._custom_context == {"project": "test"}
+    assert isinstance(runner._notifications, notify.Email)
+    assert runner._notifications.recipients == ("oncall@example.com",)

@@ -1,6 +1,7 @@
 from unittest.mock import Mock, patch
 
 import pytest
+import yaml
 from click.testing import CliRunner
 
 from flyte.cli.main import main
@@ -26,7 +27,7 @@ def test_create_secret_value(mock_cli_config, mock_secret_create, runner: CliRun
 
     result = runner.invoke(main, ["create", "secret", "my_secret", "--value", secret_value])
     assert result.exit_code == 0, result.stderr
-    mock_secret_create.assert_called_once_with(name="my_secret", value=b"my_value", type="regular")
+    mock_secret_create.assert_called_once_with(name="my_secret", value=b"my_value", type="regular", cluster_pool=None)
 
 
 @patch("flyte.remote.Secret.create")
@@ -40,7 +41,41 @@ def test_create_secret_from_file(mock_cli_config, mock_secret_create, runner: Cl
 
     result = runner.invoke(main, ["create", "secret", "my_secret", "--from-file", str(tmp_path / "secret.txt")])
     assert result.exit_code == 0, result.stderr
-    mock_secret_create.assert_called_once_with(name="my_secret", value=b"my_value", type="regular")
+    mock_secret_create.assert_called_once_with(name="my_secret", value=b"my_value", type="regular", cluster_pool=None)
+
+
+@patch("flyte.remote.Secret.create")
+@patch("flyte.cli._common.CLIConfig", return_value=Mock())
+def test_create_secret_with_cluster_pool(mock_cli_config, mock_secret_create, runner: CliRunner):
+    mock_secret_create.return_value = None
+
+    result = runner.invoke(main, ["create", "secret", "my_secret", "--value", "my_value", "--cluster-pool", "pool-a"])
+    assert result.exit_code == 0, result.stderr
+    mock_secret_create.assert_called_once_with(
+        name="my_secret", value=b"my_value", type="regular", cluster_pool="pool-a"
+    )
+
+
+def test_create_secret_cluster_pool_rejects_project(runner: CliRunner):
+    result = runner.invoke(
+        main,
+        ["create", "secret", "my_secret", "--value", "v", "--cluster-pool", "pool-a", "--project", "p"],
+    )
+    assert result.exit_code == 2
+    assert "Illegal usage" in result.stderr
+    assert "cluster_pool" in result.stderr
+    assert "project" in result.stderr
+
+
+def test_create_secret_cluster_pool_rejects_domain(runner: CliRunner):
+    result = runner.invoke(
+        main,
+        ["create", "secret", "my_secret", "--value", "v", "--cluster-pool", "pool-a", "--domain", "d"],
+    )
+    assert result.exit_code == 2
+    assert "Illegal usage" in result.stderr
+    assert "cluster_pool" in result.stderr
+    assert "domain" in result.stderr
 
 
 def test_create_secret_invalid_combination(runner: CliRunner):
@@ -261,3 +296,65 @@ def test_create_image_pull_secret_invalid_combination_registry_and_from_docker_c
     assert result.exit_code == 2
     error_msg = "are mutually exclusive"
     assert error_msg in result.stderr
+
+
+def test_config_with_params_preserves_local():
+    """Verify Config.with_params() doesn't drop LocalConfig."""
+    from flyte.config._config import Config, LocalConfig, PlatformConfig, TaskConfig
+
+    cfg = Config(local=LocalConfig(persistence=True), source=None)
+    updated = cfg.with_params(PlatformConfig(), TaskConfig())
+    assert updated.local.persistence is True
+
+
+def test_create_config_local_persistence_only(runner: CliRunner, tmp_path):
+    """Test that --local-persistence alone (no endpoint/org) succeeds."""
+    outpath = str(tmp_path / "config.yaml")
+    result = runner.invoke(
+        main,
+        ["create", "config", "--local-persistence", "-o", outpath, "--force"],
+    )
+    assert result.exit_code == 0, result.output
+    with open(outpath) as f:
+        d = yaml.safe_load(f)
+    assert d["local"]["persistence"] is True
+    assert "admin" not in d
+    assert "task" not in d
+
+
+def test_create_config_no_flags_fails(runner: CliRunner, tmp_path):
+    """Test that no flags at all still raises an error."""
+    outpath = str(tmp_path / "config.yaml")
+    result = runner.invoke(
+        main,
+        ["create", "config", "-o", outpath, "--force"],
+    )
+    assert result.exit_code != 0
+    assert "--local-persistence" in result.output
+
+
+def test_create_config_with_local_persistence(runner: CliRunner, tmp_path):
+    """Test that --local-persistence writes the local.persistence field to the config YAML."""
+    outpath = str(tmp_path / "config.yaml")
+    result = runner.invoke(
+        main,
+        ["create", "config", "--endpoint", "dns:///test.example.com", "--local-persistence", "-o", outpath, "--force"],
+    )
+    assert result.exit_code == 0, result.output
+    with open(outpath) as f:
+        d = yaml.safe_load(f)
+    assert "local" in d
+    assert d["local"]["persistence"] is True
+
+
+def test_create_config_without_local_persistence(runner: CliRunner, tmp_path):
+    """Test that without --local-persistence the local section is omitted."""
+    outpath = str(tmp_path / "config.yaml")
+    result = runner.invoke(
+        main,
+        ["create", "config", "--endpoint", "dns:///test.example.com", "-o", outpath, "--force"],
+    )
+    assert result.exit_code == 0, result.output
+    with open(outpath) as f:
+        d = yaml.safe_load(f)
+    assert d.get("local") is None

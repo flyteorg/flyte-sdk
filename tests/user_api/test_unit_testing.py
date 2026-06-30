@@ -29,7 +29,7 @@ async def traced_multiply(a: int, b: int) -> int:
 
 
 @env.task
-def not_supported_types(x: Tuple[str, str]) -> str:
+def tuple_types(x: Tuple[str, str]) -> str:
     return x[0]
 
 
@@ -51,22 +51,21 @@ async def test_traced_multiply():
 
 
 @pytest.mark.asyncio
-async def test_not_supported_types():
-    not_supported_types(x=("a", "b"))
-    with pytest.raises(flyte.errors.RestrictedTypeError):
-        flyte.run(not_supported_types, x=("a", "b"))
+async def test_tuple_types():
+    tuple_types(x=("a", "b"))
+    flyte.run(tuple_types, x=("a", "b"))
 
 
 @pytest.mark.asyncio
 async def test_add_run():
     v = flyte.run(add, 3, 5)
-    assert v.outputs() == 8
+    assert v.outputs()[0] == 8
 
 
 @pytest.mark.asyncio
 async def test_nested_run():
     v = flyte.run(nested, 3, 5)
-    assert v.outputs() == 8
+    assert v.outputs()[0] == 8
 
 
 @pytest.mark.asyncio

@@ -3,7 +3,6 @@ import os
 import sys
 from typing import Generator
 
-import sglang.srt.model_loader.loader
 import torch
 from flyte.app.extras._model_loader.config import (
     LOCAL_MODEL_PATH,
@@ -11,6 +10,22 @@ from flyte.app.extras._model_loader.config import (
     STREAM_SAFETENSORS,
 )
 from flyte.app.extras._model_loader.loader import SafeTensorsStreamer, prefetch
+
+from flyteplugins.sglang._constants import SGLANG_MIN_VERSION, SGLANG_MIN_VERSION_STR
+
+try:
+    import sglang
+except ImportError:
+    raise ImportError(
+        f"sglang is not installed. Please install 'sglang>={SGLANG_MIN_VERSION_STR}', to use the model loader."
+    )
+
+if tuple([int(part) for part in sglang.__version__.split(".") if part.isdigit()]) < SGLANG_MIN_VERSION:
+    raise ImportError(
+        f"sglang version >={SGLANG_MIN_VERSION_STR} required, but found {sglang.__version__}. Please upgrade sglang."
+    )
+
+import sglang.srt.model_loader.loader
 from sglang.srt.configs.device_config import DeviceConfig
 from sglang.srt.configs.model_config import ModelConfig
 from sglang.srt.server_args import prepare_server_args

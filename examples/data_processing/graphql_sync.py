@@ -2,7 +2,7 @@
 # requires-python = "==3.13"
 # dependencies = [
 #    "gql>=3.4.1",
-#    "flyte>=0.2.0b20",
+#    "flyte",
 # ]
 # ///
 
@@ -27,7 +27,7 @@ import flyte
 
 env = flyte.TaskEnvironment(
     name="graphql_sync",
-    image=flyte.Image.from_uv_script(__file__, name="graphql_sync", pre=True),
+    image=flyte.Image.from_uv_script(__file__, name="graphql_sync"),
 )
 
 

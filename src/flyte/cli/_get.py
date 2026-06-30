@@ -1,13 +1,18 @@
 import asyncio
-from typing import Tuple, Union
+import datetime as dt
+from pathlib import Path
+from typing import Any, Tuple, Union
 
 import rich_click as click
 from rich.pretty import pretty_repr
 
 import flyte.remote as remote
 from flyte.models import ActionPhase
+from flyte.remote._common import TimeFilter
 
 from . import _common as common
+from . import _params
+from ._option import MutuallyExclusiveOption
 
 
 @click.group(name="get")
@@ -35,10 +40,14 @@ def get():
 
 @get.command()
 @click.argument("name", type=str, required=False)
+@click.option("--archived", is_flag=True, default=False, help="Show archived projects instead of active ones.")
 @click.pass_obj
-def project(cfg: common.CLIConfig, name: str | None = None):
+def project(cfg: common.CLIConfig, name: str | None = None, archived: bool = False):
     """
     Get a list of all projects, or details of a specific project by name.
+
+    By default, only active (unarchived) projects are shown. Use `--archived` to
+    show archived projects instead.
     """
     cfg.init()
 
@@ -46,7 +55,7 @@ def project(cfg: common.CLIConfig, name: str | None = None):
     if name:
         console.print(pretty_repr(remote.Project.get(name)))
     else:
-        console.print(common.format("Projects", remote.Project.listall(), cfg.output_format))
+        console.print(common.format("Projects", remote.Project.listall(archived=archived), cfg.output_format))
 
 
 @get.command(cls=common.CommandBase)
@@ -58,8 +67,48 @@ def project(cfg: common.CLIConfig, name: str | None = None):
     help="Filter runs by their status.",
 )
 @click.option("--only-mine", is_flag=True, default=False, help="Show only runs created by the current user (you).")
+@click.option(
+    "--paused-only",
+    is_flag=True,
+    default=False,
+    help="Show only runs that have a paused action (waiting on a human in the loop).",
+)
 @click.option("--task-name", type=str, default=None, help="Filter runs by task name.")
 @click.option("--task-version", type=str, default=None, help="Filter runs by task version.")
+@click.option(
+    "--created-after",
+    type=_params.DateTimeType(),
+    default=None,
+    help="Show runs created at or after this datetime (UTC). Accepts ISO dates, 'now', 'today', or 'now - 1 day'.",
+)
+@click.option(
+    "--created-before", type=_params.DateTimeType(), default=None, help="Show runs created before this datetime (UTC)."
+)
+@click.option(
+    "--updated-after",
+    type=_params.DateTimeType(),
+    default=None,
+    help="Show runs updated at or after this datetime (UTC). Accepts ISO dates, 'now', 'today', or 'now - 1 day'.",
+)
+@click.option(
+    "--updated-before", type=_params.DateTimeType(), default=None, help="Show runs updated before this datetime (UTC)."
+)
+@click.option(
+    "--with-label",
+    "with_label",
+    type=str,
+    multiple=True,
+    default=(),
+    help="Filter runs that have this label key=value. Can be specified multiple times (AND semantics).",
+)
+@click.option(
+    "--with-label-key",
+    "with_label_key",
+    type=str,
+    multiple=True,
+    default=(),
+    help="Filter runs that have this label key present (existence check). Can be specified multiple times.",
+)
 @click.pass_obj
 def run(
     cfg: common.CLIConfig,
@@ -69,8 +118,15 @@ def run(
     limit: int = 100,
     in_phase: str | Tuple[str, ...] | None = None,
     only_mine: bool = False,
+    paused_only: bool = False,
     task_name: str | None = None,
     task_version: str | None = None,
+    created_after: dt.datetime | None = None,
+    created_before: dt.datetime | None = None,
+    updated_after: dt.datetime | None = None,
+    updated_before: dt.datetime | None = None,
+    with_label: Tuple[str, ...] = (),
+    with_label_key: Tuple[str, ...] = (),
 ):
     """
     Get a list of all runs, or details of a specific run by name.
@@ -84,6 +140,19 @@ def run(
     ```bash
     $ flyte get run --task-name my_task
     $ flyte get run --task-name my_task --task-version v1.0
+    ```
+
+    You can filter runs by their user-defined labels:
+
+    ```bash
+    $ flyte get run --with-label team=ml --with-label env=prod
+    $ flyte get run --with-label-key team
+    ```
+
+    You can show only runs that have a paused action (waiting on a human in the loop):
+
+    ```bash
+    $ flyte get run --paused-only
     ```
     """
 
@@ -102,6 +171,31 @@ def run(
             usr = remote.User.get()
             subject = usr.subject()
 
+        def _utc(d: dt.datetime | None) -> dt.datetime | None:
+            return d.replace(tzinfo=dt.timezone.utc) if d is not None and d.tzinfo is None else d
+
+        created_at = (
+            TimeFilter(after=_utc(created_after), before=_utc(created_before))
+            if created_after or created_before
+            else None
+        )
+        updated_at = (
+            TimeFilter(after=_utc(updated_after), before=_utc(updated_before))
+            if updated_after or updated_before
+            else None
+        )
+
+        parsed_with_labels: dict[str, str] | None = None
+        if with_label:
+            parsed_with_labels = {}
+            for item in with_label:
+                if "=" not in item:
+                    raise click.BadParameter(f"Invalid --with-label value {item!r}: expected KEY=VALUE.")
+                k, v = item.split("=", 1)
+                if not k:
+                    raise click.BadParameter(f"Invalid --with-label value {item!r}: key must not be empty.")
+                parsed_with_labels[k] = v
+
         console.print(
             common.format(
                 "Runs",
@@ -111,6 +205,11 @@ def run(
                     created_by_subject=subject,
                     task_name=task_name,
                     task_version=task_version,
+                    created_at=created_at,
+                    updated_at=updated_at,
+                    with_labels=parsed_with_labels,
+                    with_label_keys=list(with_label_key) or None,
+                    paused_actions_only=paused_only,
                 ),
                 cfg.output_format,
             )
@@ -121,6 +220,7 @@ def run(
 @click.argument("name", type=str, required=False)
 @click.argument("version", type=str, required=False)
 @click.option("--limit", type=int, default=100, help="Limit the number of tasks to fetch.")
+@click.option("--entrypoint", is_flag=True, default=False, help="Show only entrypoint tasks.")
 @click.pass_obj
 def task(
     cfg: common.CLIConfig,
@@ -129,6 +229,7 @@ def task(
     version: str | None = None,
     project: str | None = None,
     domain: str | None = None,
+    entrypoint: bool = False,
 ):
     """
     Retrieve a list of all tasks, or details of a specific task by name and version.
@@ -147,10 +248,16 @@ def task(
             console.print(common.format(f"Task {name}", [t], "json"))
         else:
             console.print(
-                common.format("Tasks", remote.Task.listall(by_task_name=name, limit=limit), cfg.output_format)
+                common.format(
+                    "Tasks",
+                    remote.Task.listall(by_task_name=name, limit=limit, entrypoint=entrypoint or None),
+                    cfg.output_format,
+                )
             )
     else:
-        console.print(common.format("Tasks", remote.Task.listall(limit=limit), cfg.output_format))
+        console.print(
+            common.format("Tasks", remote.Task.listall(limit=limit, entrypoint=entrypoint or None), cfg.output_format)
+        )
 
 
 @get.command(cls=common.CommandBase)
@@ -177,11 +284,8 @@ def action(
 
     console = common.get_console()
     if action_name:
-        console.print(
-            common.format(
-                f"Action {run_name}.{action_name}", [remote.Action.get(run_name=run_name, name=action_name)], "json"
-            )
-        )
+        details = remote.ActionDetails.get(run_name=run_name, name=action_name)
+        console.print(common.format(f"Action {run_name}.{action_name}", [details], "json"))
     else:
         # List all actions for the run
         if in_phase:
@@ -196,6 +300,38 @@ def action(
                 cfg.output_format,
             )
         )
+
+
+@get.command(cls=common.CommandBase)
+@click.argument("run_name", type=str, required=True)
+@click.argument("action_name", type=str, required=False)
+@click.pass_obj
+def condition(
+    cfg: common.CLIConfig,
+    run_name: str,
+    action_name: str | None = None,
+    project: str | None = None,
+    domain: str | None = None,
+):
+    """
+    List conditions (paused condition actions) for a run, optionally filtered to a
+    specific parent action.
+
+    Each condition corresponds to a condition action registered via
+    ``flyte.new_condition(...)`` from a workflow. Use ``flyte signal condition`` to
+    resolve one.
+    """
+    cfg.init(project=project, domain=domain)
+
+    console = common.get_console()
+    title = f"Conditions for {run_name}.{action_name}" if action_name else f"Conditions for {run_name}"
+    console.print(
+        common.format(
+            title,
+            remote.Condition.listall(run_name=run_name, action_name=action_name),
+            cfg.output_format,
+        )
+    )
 
 
 @get.command(cls=common.CommandBase)
@@ -270,10 +406,19 @@ def logs(
 
 @get.command(cls=common.CommandBase)
 @click.argument("name", type=str, required=False)
+@click.option(
+    "--cluster-pool",
+    type=str,
+    default=None,
+    help="Scope the secret to a cluster pool. Mutually exclusive with --project and --domain.",
+    cls=MutuallyExclusiveOption,
+    mutually_exclusive=["project", "domain"],
+)
 @click.pass_obj
 def secret(
     cfg: common.CLIConfig,
     name: str | None = None,
+    cluster_pool: str | None = None,
     project: str | None = None,
     domain: str | None = None,
 ):
@@ -284,13 +429,17 @@ def secret(
         project = ""
     if domain is None:
         domain = ""
+
+    if cluster_pool and (project != "" or domain != ""):
+        raise click.ClickException("Project and domain must not be set when --cluster-pool is specified.")
+
     cfg.init(project=project, domain=domain)
 
     console = common.get_console()
     if name:
-        console.print(common.format("Secret", [remote.Secret.get(name)], "json"))
+        console.print(common.format("Secret", [remote.Secret.get(name, cluster_pool=cluster_pool)], "json"))
     else:
-        console.print(common.format("Secrets", remote.Secret.listall(), cfg.output_format))
+        console.print(common.format("Secrets", remote.Secret.listall(cluster_pool=cluster_pool), cfg.output_format))
 
 
 @get.command(cls=common.CommandBase)
@@ -361,6 +510,146 @@ def io(
             cfg.output_format,
         )
     )
+
+
+@get.command(cls=common.CommandBase)
+@click.option(
+    "--to-file",
+    "-o",
+    "to_file",
+    type=click.Path(dir_okay=False, writable=True, path_type=Path),
+    default=None,
+    help="Write the scope's YAML to this file instead of printing it. The file "
+    "round-trips through `flyte edit settings --from-file`.",
+)
+@click.pass_obj
+def settings(
+    cfg: common.CLIConfig,
+    project: str | None = None,
+    domain: str | None = None,
+    to_file: Path | None = None,
+):
+    """
+    Get settings for a scope as editable YAML.
+
+    Renders three sections:
+
+    \b
+    * Local overrides — uncommented, applied at this scope.
+    * Inherited settings — commented, with the scope they come from.
+    * Available settings — commented placeholders for every key that
+      isn't set anywhere yet, so you can see what can be configured.
+
+    \b
+    Examples:
+
+    ```bash
+    # Get ORG-level settings
+    flyte get settings
+
+    # Get settings for a domain
+    flyte get settings --domain production
+
+    # Get settings for a project (inherits from domain, which inherits from org)
+    flyte get settings --domain production --project ml-pipeline
+
+    # Dump to a file, edit it, then apply non-interactively
+    flyte get settings --domain production -o prod.yaml
+    # ...edit prod.yaml...
+    flyte edit settings --domain production --from-file prod.yaml
+    ```
+
+    Use `flyte edit settings` to interactively modify these values.
+    """
+    from rich.panel import Panel
+
+    cfg.init()
+
+    console = common.get_console()
+    s = remote.Settings.get_settings_for_edit(domain=domain, project=project)
+
+    if to_file is not None:
+        # Dump the raw YAML (with ### / ## / # markers preserved) so the file
+        # round-trips through `flyte edit settings --from-file`.
+        to_file.write_text(s.to_yaml() + "\n")
+        console.print(
+            f"[green]✓ Wrote settings for {s.scope_description()} (v{s._version}) to [bold]{to_file}[/bold][/green]"
+        )
+        return
+
+    console.print(
+        Panel(
+            _stylize_settings_yaml(s.to_yaml()),
+            title=f"[bold]Settings[/bold] · [cyan]{s.scope_description()}[/cyan] · [dim]v{s._version}[/dim]",
+            title_align="left",
+            border_style="bright_black",
+            padding=(1, 2),
+        )
+    )
+
+
+def _stylize_settings_yaml(yaml_content: str) -> "Any":
+    """Render settings YAML for display, replacing comment markers with visual
+    cues. The raw ``#`` / ``##`` / ``###`` prefixes emitted by
+    ``Settings.to_yaml`` are stripped for readability — callers that need the
+    round-trippable form (``flyte edit settings``) should use ``to_yaml``
+    directly, *not* this function.
+
+    Visual hierarchy:
+
+    * ``### Section`` → ``▌ Section`` in bold bright cyan.
+    * ``## description`` → the description text only, grey50.
+    * ``# key: value`` → ``key: value`` rendered dim (clearly inactive but
+      still legible so users can see what to uncomment). Any trailing
+      ``  ## meta`` is lifted into a parenthesised italic suffix.
+    * ``key: value`` → bold bright_blue key + bright_green value.
+    """
+    from rich.text import Text
+
+    out = Text(no_wrap=False)
+    lines = yaml_content.split("\n")
+
+    def _append_kv(indent: str, key: str, value: str, key_style: str, val_style: str) -> None:
+        out.append(indent)
+        out.append(key, style=key_style)
+        out.append(":", style="white")
+        out.append(value, style=val_style)
+
+    for i, line in enumerate(lines):
+        stripped = line.lstrip()
+        indent = line[: len(line) - len(stripped)]
+
+        if stripped.startswith("### "):
+            out.append(indent)
+            out.append("▌ ", style="bold bright_cyan")
+            out.append(stripped[4:], style="bold bright_cyan")
+        elif stripped.startswith("## "):
+            out.append(indent)
+            out.append(stripped[3:], style="grey50")
+        elif stripped.startswith("# "):
+            content = stripped[2:]
+            meta = ""
+            meta_idx = content.find("  ## ")
+            if meta_idx >= 0:
+                meta = content[meta_idx + len("  ## ") :]
+                content = content[:meta_idx]
+            if ":" in content:
+                key, value = content.split(":", 1)
+                _append_kv(indent, key, value, key_style="magenta", val_style="grey66")
+            else:
+                out.append(indent)
+                out.append(content, style="grey66")
+            if meta:
+                out.append(f"  ({meta})", style="italic grey50")
+        elif ":" in stripped:
+            key, value = stripped.split(":", 1)
+            _append_kv(indent, key, value, key_style="bold bright_magenta", val_style="bright_green")
+        else:
+            out.append(line)
+
+        if i < len(lines) - 1:
+            out.append("\n")
+    return out
 
 
 @get.command(cls=click.RichCommand)

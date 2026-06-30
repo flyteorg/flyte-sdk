@@ -9,7 +9,7 @@ Usage:
 
     Or with custom parameters:
     flyte run training.py finetune_image_model \\
-        --dataset_name="food101" \\
+        --dataset_name="ethz/food101" \\
         --num_epochs=5 \\
         --batch_size=32
 """
@@ -41,7 +41,7 @@ training_image = flyte.Image.from_debian_base().with_uv_project(
 training_env = flyte.TaskEnvironment(
     name="image_finetune_training",
     image=training_image,
-    resources=flyte.Resources(cpu=4, memory="16Gi", gpu=1),
+    resources=flyte.Resources(cpu=4, memory="16Gi", gpu=1, disk="10Gi"),
     cache=flyte.Cache("auto", "1.0"),
     env_vars={"HF_XET_HIGH_PERFORMANCE": "1"},
 )
@@ -49,7 +49,7 @@ training_env = flyte.TaskEnvironment(
 
 @training_env.task
 async def finetune_image_model(
-    dataset_name: str = "beans",
+    dataset_name: str = "AI-Lab-Makerere/beans",
     model_name: str = "WinKawaks/vit-tiny-patch16-224",
     num_epochs: int = 3,
     batch_size: int = 32,
@@ -59,7 +59,7 @@ async def finetune_image_model(
     Fine-tune a small vision transformer model on an image classification dataset.
 
     Args:
-        dataset_name: HuggingFace dataset name (e.g., "beans", "cifar10", "food101")
+        dataset_name: HuggingFace dataset name (e.g., "AI-Lab-Makerere/beans", "uoft-cs/cifar10", "ethz/food101")
         model_name: HuggingFace model name (small ViT models work best)
         num_epochs: Number of training epochs
         batch_size: Training batch size
@@ -106,7 +106,10 @@ async def finetune_image_model(
     def preprocess_images(examples):
         images = [img.convert("RGB") for img in examples["image"]]
         inputs = processor(images, return_tensors="pt")
-        inputs["labels"] = examples["labels"]
+        if "labels" in examples:
+            inputs["labels"] = examples["labels"]
+        elif "label" in examples:
+            inputs["labels"] = examples["label"]
         return inputs
 
     # Prepare datasets
@@ -177,7 +180,7 @@ if __name__ == "__main__":
     # Run training pipeline
     run = flyte.run(
         finetune_image_model,
-        dataset_name="beans",
+        dataset_name="AI-Lab-Makerere/beans",
         model_name="WinKawaks/vit-tiny-patch16-224",
         num_epochs=3,
         batch_size=32,

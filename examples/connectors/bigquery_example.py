@@ -1,4 +1,4 @@
-from flyteplugins.connectors.bigquery import BigQueryConfig, BigQueryTask
+from flyteplugins.bigquery import BigQueryConfig, BigQueryTask
 
 import flyte
 from flyte.io import DataFrame

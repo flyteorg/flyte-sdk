@@ -1,0 +1,20 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "sibling-packages-dev"
+version = "0.1.0"
+description = "Dev-only root: installs both packages as editable for local development"
+requires-python = ">=3.11"
+dependencies = ["my-app", "my-lib"]
+
+[tool.uv.sources]
+my-app = { path = "my_app", editable = true }
+my-lib = { path = "my_lib", editable = true }
+
+[tool.hatch.build.targets.wheel]
+packages = [
+    "my_app/src/my_app",
+    "my_lib/src/my_lib",
+]

@@ -1,0 +1,19 @@
+optimizer:
+  lr: 0.001
+  weight_decay: 1.0e-4
+  momentum: 0.9
+
+model:
+  hidden_dim: 512
+  num_layers: 6
+  dropout: 0.1
+
+training:
+  epochs: 50
+  batch_size: 32
+  grad_clip: 1.0
+
+data:
+  dataset: imagenet
+  num_workers: 4
+  input_size: [224, 224]

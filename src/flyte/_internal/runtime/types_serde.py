@@ -1,4 +1,4 @@
-from typing import Dict, Optional, TypeVar
+from typing import Dict, List, Optional, TypeVar
 
 from flyteidl2.core import interface_pb2
 
@@ -10,15 +10,16 @@ T = TypeVar("T")
 
 def transform_variable_map(
     variable_map: Dict[str, type],
-) -> Dict[str, interface_pb2.Variable]:
+) -> List[interface_pb2.VariableEntry]:
     """
-    Given a map of str (names of inputs for instance) to their Python native types, return a map of the name to a
-    Flyte Variable object with that type.
+    Given a map of str (names of inputs for instance) to their Python native types, return a list of
+    VariableEntry objects with that type, sorted by key for consistency.
     """
-    res = {}
+    res = []
     if variable_map:
-        for k, v in variable_map.items():
-            res[k] = transform_type(v)
+        # Sort by key to ensure consistent ordering for hashing
+        for k in sorted(variable_map.keys()):
+            res.append(interface_pb2.VariableEntry(key=k, value=transform_type(variable_map[k])))
     return res
 
 
@@ -31,10 +32,11 @@ def transform_native_to_typed_interface(
     if interface is None:
         return None
 
-    inputs_map = transform_variable_map(interface.get_input_types())
-    outputs_map = transform_variable_map(interface.outputs)
+    inputs_list = transform_variable_map(interface.get_input_types())
+    outputs_list = transform_variable_map(interface.outputs)
     return interface_pb2.TypedInterface(
-        inputs=interface_pb2.VariableMap(variables=inputs_map), outputs=interface_pb2.VariableMap(variables=outputs_map)
+        inputs=interface_pb2.VariableMap(variables=inputs_list),
+        outputs=interface_pb2.VariableMap(variables=outputs_list),
     )
 
 

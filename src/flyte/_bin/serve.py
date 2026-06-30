@@ -26,6 +26,36 @@ _F_PATH_REWRITE = "_F_PATH_REWRITE"
 ENDPOINT_OVERRIDE = "_U_EP_OVERRIDE"
 
 
+def _ensure_dest_writable(dest_path: str, param_name: str) -> None:
+    """Ensure the directory for a parameter destination exists and is writable.
+
+    For file paths (e.g. ``/tmp/model.bin``), checks the parent directory.
+    For directory paths ending with a separator (e.g. ``/tmp/``), checks the
+    directory itself.
+
+    Raises RuntimeError with an informative message when the directory cannot
+    be created or is not writable.
+    """
+    import pathlib
+
+    if dest_path.endswith(os.sep):
+        dest_dir = pathlib.Path(dest_path)
+    else:
+        dest_dir = pathlib.Path(dest_path).parent
+    try:
+        os.makedirs(dest_dir, exist_ok=True)
+    except OSError as e:
+        raise RuntimeError(
+            f"Cannot create destination directory '{dest_dir}' for parameter '{param_name}'. "
+            f"Ensure the mount path '{dest_path}' is within a writable filesystem: {e}"
+        ) from e
+    if not os.access(dest_dir, os.W_OK):
+        raise RuntimeError(
+            f"Destination directory '{dest_dir}' for parameter '{param_name}' is not writable. "
+            f"Ensure the mount path '{dest_path}' is within a writable filesystem."
+        )
+
+
 async def sync_parameters(serialized_parameters: str, dest: str) -> tuple[dict, dict, dict]:
     """
     Converts parameters into simple dict of name to value, downloading any files/directories as needed.
@@ -40,12 +70,13 @@ async def sync_parameters(serialized_parameters: str, dest: str) -> tuple[dict, 
         The environment variables dictionary maps environment variable names to their values.
     """
     import flyte.storage as storage
-    from flyte.app._parameter import SerializableParameterCollection
+    from flyte.app._parameter import AppEndpoint, SerializableParameterCollection
 
     print(f"Log level: {logger.getEffectiveLevel()} is set from env {os.environ.get('LOG_LEVEL')}", flush=True)
     logger.info("Reading parameters...")
 
     user_parameters = SerializableParameterCollection.from_transport(serialized_parameters)
+    logger.info(f"User parameters: {user_parameters}")
 
     # these will be serialized to json, the app can fetch these values via
     # env var or with flyte.app.get_input()
@@ -57,6 +88,7 @@ async def sync_parameters(serialized_parameters: str, dest: str) -> tuple[dict, 
     env_vars = {}
 
     for parameter in user_parameters.parameters:
+        logger.info(f"Processing parameter: {parameter}")
         parameter_type = parameter.type
         ser_value = parameter.value
 
@@ -66,10 +98,24 @@ async def sync_parameters(serialized_parameters: str, dest: str) -> tuple[dict, 
             materialized_value = flyte.io.File(path=ser_value)
         elif parameter_type == "directory":
             materialized_value = flyte.io.Dir(path=ser_value)
+        elif parameter_type == "app_endpoint":
+            app_endpoint = AppEndpoint.model_validate_json(ser_value)
+            materialized_value = await app_endpoint._retrieve_endpoint()
+            ser_value = materialized_value
+
+        logger.info(f"Materialized value: {materialized_value}")
+        logger.info(f"Serializable value: {ser_value}")
 
         # download files or directories
         if parameter.download:
             user_dest = parameter.dest or dest
+
+            if parameter.dest and parameter_type == "file" and parameter.dest.endswith(os.sep):
+                source_filename = os.path.basename(ser_value)
+                user_dest = os.path.join(parameter.dest, source_filename)
+
+            if parameter.dest:
+                _ensure_dest_writable(user_dest, parameter.name)
 
             # replace file and directory inputs with the local paths if download is True
             if parameter_type == "file":
@@ -131,15 +177,10 @@ def load_app_env(
     try:
         return resolver_instance.load_app_env(resolver_args)
     except ModuleNotFoundError as e:
+        from flyte._internal.runtime.entrypoints import _list_user_files
+
         cwd = os.getcwd()
-        files = []
-        try:
-            for root, dirs, filenames in os.walk(cwd):
-                for name in dirs + filenames:
-                    rel_path = os.path.relpath(os.path.join(root, name), cwd)
-                    files.append(rel_path)
-        except Exception as list_err:
-            files = [f"(Failed to list directory: {list_err})"]
+        files = _list_user_files(cwd)
 
         msg = (
             "\n\nFull traceback:\n" + "".join(traceback.format_exc()) + f"\n[ImportError Diagnostics]\n"
@@ -197,30 +238,28 @@ def _bind_parameters(
 async def _serve(
     app_env: AppEnvironment,
     materialized_parameters: dict[str, str | flyte.io.File | flyte.io.Dir],
+    raw_data_path: str | None = None,
 ):
-    import signal
+    if raw_data_path:
+        from flyte.app._context import set_raw_data_path
+
+        set_raw_data_path(raw_data_path)
+        logger.info(f"Set raw_data_path in AppContext: {raw_data_path}")
 
     logger.info("Running app via server function")
     assert app_env._server is not None
 
-    # Use the asyncio event loop's add_signal_handler, and ensure all cleanup happens
-    # within the running event loop, not from a synchronous signal handler.
     loop = asyncio.get_running_loop()
 
-    async def shutdown():
-        logger.info("Received SIGTERM, shutting down server...")
+    async def run_user_shutdown_hooks() -> None:
         if app_env._on_shutdown is not None:
+            logger.info("Running on_shutdown function")
             bound_params = _bind_parameters(app_env._on_shutdown, materialized_parameters)
             if asyncio.iscoroutinefunction(app_env._on_shutdown):
                 await app_env._on_shutdown(**bound_params)
             else:
                 app_env._on_shutdown(**bound_params)
         logger.info("Server shut down")
-        # Use loop.stop() to gracefully stop the loop after shutdown
-        loop.stop()
-
-    logger.info("Adding signal handler for SIGTERM using signal.signal")
-    signal.signal(signal.SIGTERM, lambda signum, frame: asyncio.create_task(shutdown()))
 
     if app_env._on_startup is not None:
         logger.info("Running on_startup function")
@@ -234,11 +273,19 @@ async def _serve(
         logger.info("Running server function")
         bound_params = _bind_parameters(app_env._server, materialized_parameters)
         if asyncio.iscoroutinefunction(app_env._server):
+            # Do not register SIGTERM with signal.signal or call loop.stop(): that races
+            # asyncio.run() teardown (RuntimeError: Event loop stopped before Future completed).
+            # Async servers (e.g. uvicorn) should install asyncio-safe handlers themselves.
             await app_env._server(**bound_params)
         else:
-            app_env._server(**bound_params)
+            # Run the function on a separate thread, in case the sync function
+            # relies on third party libraries that use an event loop internally.
+            def run_sync():
+                return app_env._server(**bound_params)
+
+            await loop.run_in_executor(None, run_sync)
     finally:
-        await shutdown()
+        await run_user_shutdown_hooks()
 
 
 @click.command()
@@ -248,6 +295,7 @@ async def _serve(
 @click.option("--tgz", required=False)
 @click.option("--pkl", required=False)
 @click.option("--dest", required=False)
+@click.option("--raw-data-path", "-r", required=False)
 @click.option("--project", envvar=PROJECT_NAME, required=False)
 @click.option("--domain", envvar=DOMAIN_NAME, required=False)
 @click.option("--org", envvar=ORG_NAME, required=False)
@@ -263,6 +311,7 @@ def main(
     tgz: str,
     pkl: str,
     dest: str,
+    raw_data_path: str | None = None,
     command: tuple[str, ...] | None = None,
     project: str | None = None,
     domain: str | None = None,
@@ -290,13 +339,16 @@ def main(
         ),
     )
 
+    app_env: AppEnvironment | None = None
     if code_bundle is not None:
         if code_bundle.pkl:
             app_env = load_pkl_app_env(code_bundle)
         elif code_bundle.tgz:
-            if resolver is None or resolver_args is None:
-                raise ValueError("--resolver and --resolver-args are required when using --tgz code bundle")
-            app_env = load_app_env(resolver, resolver_args)
+            if resolver is not None and resolver_args is not None:
+                logger.info(f"Loading app env from resolver: {resolver}, args: {resolver_args}")
+                app_env = load_app_env(resolver, resolver_args)
+            else:
+                logger.info("Resolver arguments not provided, started server from command.")
         else:
             raise ValueError("Code bundle did not contain a tgz or pkl file")
 
@@ -311,13 +363,22 @@ def main(
 
     os.environ[RUNTIME_PARAMETERS_FILE] = parameters_file
 
-    if code_bundle is not None and app_env._server is not None:
-        asyncio.run(_serve(app_env, materialized_parameters))
+    logger.info(f"RAW DATA PATH: {raw_data_path}")
+
+    if app_env and app_env._server is not None:
+        asyncio.run(_serve(app_env, materialized_parameters, raw_data_path=raw_data_path))
         exit(0)
+
+    if raw_data_path:
+        from flyte.app._context import set_raw_data_path
+
+        set_raw_data_path(raw_data_path)
+        logger.info(f"Set raw_data_path in AppContext: {raw_data_path}")
 
     if command is None or len(command) == 0:
         raise ValueError("No command provided to execute")
 
+    logger.info(f"Serving app with command: {command}")
     command_list = []
     for arg in command:
         logger.info(f"Processing arg: {arg}")

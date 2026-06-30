@@ -153,6 +153,47 @@ class TestSyncParameters:
             assert custom_dest in materialized_file.path
 
     @pytest.mark.asyncio
+    async def test_sync_parameters_with_directory_mount_uses_source_filename(self):
+        """
+        GOAL: Verify that when mount is a directory (ends with os.sep), the
+        downloaded file uses the original filename from the object store path.
+        """
+        from flyte.io import File
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_file = os.path.join(tmpdir, "source", "model_weights.bin")
+            os.makedirs(os.path.dirname(source_file), exist_ok=True)
+            async with aiofiles.open(source_file, "w") as f:
+                await f.write("weight data")
+
+            mount_dir = os.path.join(tmpdir, "mount") + os.sep
+            os.makedirs(mount_dir, exist_ok=True)
+
+            file_obj = File(path=f"file://{source_file}")
+            parameters = [
+                Parameter(value=file_obj, name="weights", mount=mount_dir),
+            ]
+            collection = SerializableParameterCollection.from_parameters(parameters)
+            serialized = collection.to_transport
+
+            default_dest = os.path.join(tmpdir, "default")
+            os.makedirs(default_dest, exist_ok=True)
+
+            serializable_parameters, materialized_parameters, _env_vars = await sync_parameters(
+                serialized, dest=str(default_dest)
+            )
+
+            downloaded_path = serializable_parameters["weights"]
+            assert downloaded_path == os.path.join(mount_dir, "model_weights.bin")
+            assert os.path.exists(downloaded_path)
+            async with aiofiles.open(downloaded_path, "r") as f:
+                assert await f.read() == "weight data"
+
+            materialized_file = materialized_parameters["weights"]
+            assert isinstance(materialized_file, File)
+            assert materialized_file.path == downloaded_path
+
+    @pytest.mark.asyncio
     async def test_sync_parameters_with_directory_download(self):
         """
         GOAL: Verify sync_parameters correctly downloads directory parameters.
@@ -355,6 +396,79 @@ class TestSyncParameters:
         assert serializable_parameters == {}
         assert materialized_parameters == {}
         assert env_vars == {}
+
+
+class TestEnsureDestWritable:
+    """Tests for _ensure_dest_writable validation in sync_parameters."""
+
+    def test_ensure_dest_writable_creates_parent_dir(self):
+        """Validate that _ensure_dest_writable creates the parent directory."""
+        from flyte._bin.serve import _ensure_dest_writable
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            dest = os.path.join(tmpdir, "new_parent", "file.txt")
+            _ensure_dest_writable(dest, "test_param")
+            assert os.path.isdir(os.path.join(tmpdir, "new_parent"))
+
+    def test_ensure_dest_writable_existing_dir(self):
+        """Validate that _ensure_dest_writable succeeds for an existing writable directory."""
+        from flyte._bin.serve import _ensure_dest_writable
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            dest = os.path.join(tmpdir, "file.txt")
+            _ensure_dest_writable(dest, "test_param")
+
+    def test_ensure_dest_writable_non_writable_dir(self):
+        """Validate that _ensure_dest_writable raises when the directory is not writable."""
+        from flyte._bin.serve import _ensure_dest_writable
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            read_only_dir = os.path.join(tmpdir, "readonly")
+            os.makedirs(read_only_dir)
+            os.chmod(read_only_dir, 0o444)
+            try:
+                dest = os.path.join(read_only_dir, "file.txt")
+                with pytest.raises(RuntimeError, match="is not writable"):
+                    _ensure_dest_writable(dest, "my_param")
+            finally:
+                os.chmod(read_only_dir, 0o755)
+
+    def test_ensure_dest_writable_uncreatable_dir(self):
+        """Validate that _ensure_dest_writable raises when the directory cannot be created."""
+        from flyte._bin.serve import _ensure_dest_writable
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            read_only_dir = os.path.join(tmpdir, "readonly")
+            os.makedirs(read_only_dir)
+            os.chmod(read_only_dir, 0o444)
+            try:
+                dest = os.path.join(read_only_dir, "subdir", "file.txt")
+                with pytest.raises(RuntimeError, match="Cannot create destination directory"):
+                    _ensure_dest_writable(dest, "my_param")
+            finally:
+                os.chmod(read_only_dir, 0o755)
+
+    @pytest.mark.asyncio
+    async def test_sync_parameters_validates_dest_before_download(self):
+        """Validate that sync_parameters checks dest writability before attempting download."""
+        from flyte.io import File
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            read_only_dir = os.path.join(tmpdir, "readonly")
+            os.makedirs(read_only_dir)
+            os.chmod(read_only_dir, 0o444)
+            try:
+                file_obj = File(path="s3://bucket/data.txt")
+                parameters = [
+                    Parameter(value=file_obj, name="data", mount=os.path.join(read_only_dir, "subdir", "data.txt")),
+                ]
+                collection = SerializableParameterCollection.from_parameters(parameters)
+                serialized = collection.to_transport
+
+                with pytest.raises(RuntimeError, match="Cannot create destination directory"):
+                    await sync_parameters(serialized, dest=tmpdir)
+            finally:
+                os.chmod(read_only_dir, 0o755)
 
 
 class TestDownloadCodeParameters:

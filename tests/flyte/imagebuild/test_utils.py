@@ -1,9 +1,15 @@
+import os
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from flyte import Image
-from flyte._internal.imagebuild.utils import get_and_list_dockerignore
+from flyte._internal.imagebuild.utils import (
+    copy_files_to_context,
+    get_and_list_dockerignore,
+    get_uv_editable_install_mounts,
+    get_uv_project_editable_dependencies,
+)
 
 
 def test_get_and_list_dockerignore_with_dockerignore_file():
@@ -68,3 +74,230 @@ def test_get_and_list_dockerignore_layer_priority():
             patterns = get_and_list_dockerignore(image)
             expected_patterns = ["*.txt", ".cache"]
             assert patterns == expected_patterns
+
+
+def test_get_uv_lock_editable_dependencies_resolves_paths():
+    with tempfile.TemporaryDirectory() as tmp_context:
+        project_root = Path(tmp_context)
+        editable_abs = project_root / "editable-abs"
+        editable_rel = "editable-rel"
+        editable_parent = "../editable-parent"
+        expected_abs = editable_abs
+        expected_rel = project_root / editable_rel
+        expected_parent = project_root / editable_parent
+
+        export_output = "\n".join(
+            [
+                f"-e {editable_abs}",
+                f"-e {editable_rel}",
+                f"-e {editable_parent}",
+                "somepkg==1.2.3",
+            ]
+        )
+        mock_result = MagicMock(stdout=export_output)
+        with patch("flyte._internal.imagebuild.utils.subprocess.run", return_value=mock_result):
+            paths = get_uv_project_editable_dependencies(project_root)
+
+        assert paths == [expected_abs, expected_rel, expected_parent]
+
+
+def test_get_uv_editable_install_mounts():
+    with tempfile.TemporaryDirectory() as tmp_context:
+        project_root = Path(tmp_context) / "project"
+        context_path = Path(tmp_context) / "context"
+        project_root.mkdir(parents=True)
+        context_path.mkdir(parents=True)
+
+        editable_abs = str(project_root / "editable-abs")
+        editable_rel = "./editable-rel"
+
+        # Create the editable dependencies
+        for path in (Path(editable_abs), Path(project_root / editable_rel)):
+            os.makedirs(path, exist_ok=True)
+
+        with patch(
+            "flyte._internal.imagebuild.utils._extract_editables_from_uv_export",
+            return_value=[editable_abs, editable_rel],
+        ):
+            mounts = get_uv_editable_install_mounts(project_root, context_path, ignore_patterns=[])
+
+        # NOTE: If any library at path <PATH> should be expected under _flyte_abs_context/<PATH>.
+        # within the build context.
+        # However, within the container, it should be mounted to its path relative to the project root.
+        # This is done by using the relative_to method on the Path objects.
+        expected_mounts = [
+            f"--mount=type=bind,src=_flyte_abs_context{editable_abs},"
+            f"target={Path(editable_abs).relative_to(project_root)},rw",
+            f"--mount=type=bind,src=_flyte_abs_context{project_root / editable_rel},"
+            f"target={Path(editable_rel).name},rw",
+        ]
+        assert mounts == " ".join(expected_mounts)
+
+
+def test_copy_files_to_context_ignores_egg_info():
+    """Test that copy_files_to_context ignores .egg-info directories."""
+    with tempfile.TemporaryDirectory() as tmp_context:
+        src_dir = Path(tmp_context) / "src"
+        context_dir = Path(tmp_context) / "context"
+        src_dir.mkdir()
+        context_dir.mkdir()
+
+        # Create a normal Python file
+        (src_dir / "main.py").write_text("print('hello')")
+
+        # Create a nested directory with a Python file
+        (src_dir / "subdir").mkdir()
+        (src_dir / "subdir" / "module.py").write_text("def func(): pass")
+
+        # Create an .egg-info directory at root level
+        egg_info_dir = src_dir / "seeds.egg-info"
+        egg_info_dir.mkdir()
+        (egg_info_dir / "PKG-INFO").write_text("Name: seeds")
+        (egg_info_dir / "SOURCES.txt").write_text("seeds/__init__.py")
+
+        # Create an .egg-info directory in a subdirectory
+        nested_egg_info = src_dir / "subdir" / "nested.egg-info"
+        nested_egg_info.mkdir()
+        (nested_egg_info / "PKG-INFO").write_text("Name: nested")
+
+        # Copy files to context
+        dst_path = copy_files_to_context(src_dir, context_dir)
+
+        # Verify normal files are copied
+        assert (dst_path / "main.py").exists(), "main.py should be copied"
+        assert (dst_path / "subdir" / "module.py").exists(), "subdir/module.py should be copied"
+
+        # Verify .egg-info directories are NOT copied
+        assert not (dst_path / "seeds.egg-info").exists(), "seeds.egg-info should be ignored"
+        assert not (dst_path / "subdir" / "nested.egg-info").exists(), "nested.egg-info should be ignored"
+
+
+def test_copy_files_to_context_basic():
+    """Test copy behavior for absolute dirs and single files."""
+    with tempfile.TemporaryDirectory() as tmp:
+        src_dir = Path(tmp) / "project"
+        context_dir = Path(tmp) / "context"
+        src_dir.mkdir()
+        context_dir.mkdir()
+
+        # Create some source files
+        (src_dir / "app.py").write_text("print('app')")
+        (src_dir / "lib").mkdir()
+        (src_dir / "lib" / "helper.py").write_text("def h(): pass")
+
+        # Create a .git directory with some contents
+        (src_dir / ".git").mkdir()
+        (src_dir / ".git" / "HEAD").write_text("ref: refs/heads/main")
+        (src_dir / ".git" / "config").write_text("[core]\n\tbare = false")
+
+        dst = copy_files_to_context(src_dir, context_dir)
+        assert "_flyte_abs_context" in str(dst)
+        assert (dst / "app.py").exists()
+        assert (dst / "app.py").read_text() == "print('app')"
+        assert (dst / "lib" / "helper.py").exists()
+        assert (dst / "lib" / "helper.py").read_text() == "def h(): pass"
+
+        # --- .git/ should NOT be copied ---
+        assert not (dst / ".git").exists(), ".git directory should be ignored"
+
+
+def test_copy_files_to_context_missing_src_raises_image_build_error():
+    """When the user points an image layer at a path that doesn't exist on disk,
+    ``copy_files_to_context`` should surface an actionable ``ImageBuildError`` instead of letting
+    ``shutil.copy``'s raw ``FileNotFoundError`` bubble up to Sentry.
+
+    Reproduces FLYTE-SDK-2X: user's image build crashed with
+    ``FileNotFoundError: [Errno 2] No such file or directory: '/Users/.../flyte-sdk/.venv/lib/python3.13/dist'``
+    from ``shutil.py:copyfile`` inside ``copy_files_to_context``.
+    """
+    import pytest
+
+    from flyte.errors import ImageBuildError
+
+    with tempfile.TemporaryDirectory() as tmp_context:
+        context_path = Path(tmp_context)
+        missing = context_path / "does_not_exist.txt"
+
+        with pytest.raises(ImageBuildError) as excinfo:
+            copy_files_to_context(missing, context_path)
+
+        msg = str(excinfo.value)
+        assert "does not exist" in msg
+        assert str(missing) in msg
+
+
+def test_copy_files_to_context_skips_files_that_vanish_mid_walk():
+    """If a file listed by the directory walker disappears before ``shutil.copy2`` runs (e.g. a
+    transient venv entry or a broken symlink), the build should warn and keep going rather than
+    aborting with ``FileNotFoundError``.
+    """
+    with tempfile.TemporaryDirectory() as src_root, tempfile.TemporaryDirectory() as ctx_root:
+        src = Path(src_root)
+        keep = src / "keep.txt"
+        keep.write_text("kept\n")
+        vanishing = src / "vanishing.txt"
+        vanishing.write_text("temp\n")
+
+        real_copy2 = shutil.copy2
+
+        def fragile_copy2(s, d, *args, **kwargs):
+            # Simulate the file disappearing between enumeration and copy.
+            if Path(s).name == "vanishing.txt":
+                raise FileNotFoundError(2, "No such file or directory", str(s))
+            return real_copy2(s, d, *args, **kwargs)
+
+        import shutil as _shutil_mod
+
+        with patch.object(_shutil_mod, "copy2", side_effect=fragile_copy2):
+            # Should not raise — vanishing file is logged and skipped, kept file is copied.
+            dst = copy_files_to_context(src, Path(ctx_root))
+
+        assert (dst / "keep.txt").exists()
+
+
+import shutil  # noqa: E402  (kept at bottom so the new tests own the import)
+
+
+def test_extract_editables_surfaces_uv_export_failure():
+    """
+    Regression test for FLYTE-SDK-3F: `uv export` failures used to bubble up as
+    raw CalledProcessError with no stderr context. The SDK should wrap them in
+    ImageBuildError so the user sees what uv complained about.
+    """
+    import subprocess
+
+    import pytest
+
+    from flyte._internal.imagebuild.utils import _extract_editables_from_uv_export
+    from flyte.errors import ImageBuildError
+
+    err = subprocess.CalledProcessError(
+        returncode=2,
+        cmd=["uv", "export", "--no-emit-project"],
+        output="",
+        stderr="error: Failed to parse `pyproject.toml`\n  caused by: missing field `name`",
+    )
+    with patch("flyte._internal.imagebuild.utils.subprocess.run", side_effect=err):
+        with pytest.raises(ImageBuildError) as exc_info:
+            _extract_editables_from_uv_export(Path("/tmp/fake-root"))
+
+    msg = str(exc_info.value)
+    assert "uv export" in msg
+    assert "exit code 2" in msg
+    assert "missing field `name`" in msg
+
+
+def test_extract_editables_surfaces_missing_uv_binary():
+    """If uv isn't installed at all, point the user to install it instead of leaking
+    FileNotFoundError."""
+    import pytest
+
+    from flyte._internal.imagebuild.utils import _extract_editables_from_uv_export
+    from flyte.errors import ImageBuildError
+
+    with patch("flyte._internal.imagebuild.utils.subprocess.run", side_effect=FileNotFoundError("uv")):
+        with pytest.raises(ImageBuildError) as exc_info:
+            _extract_editables_from_uv_export(Path("/tmp/fake-root"))
+
+    assert "uv" in str(exc_info.value).lower()
+    assert "not found" in str(exc_info.value).lower()

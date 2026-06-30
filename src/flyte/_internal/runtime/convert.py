@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextvars
 import hashlib
 import inspect
 from dataclasses import dataclass
 from types import NoneType
-from typing import Any, Dict, List, Tuple, Union, get_args
+from typing import Any, Dict, List, Optional, Tuple, Union, get_args
 
 from flyteidl2.core import execution_pb2, interface_pb2, literals_pb2
 from flyteidl2.task import common_pb2, task_definition_pb2
@@ -16,6 +17,29 @@ import flyte.storage as storage
 from flyte._context import ctx
 from flyte.models import ActionID, NativeInterface, TaskContext
 from flyte.types import TypeEngine, TypeTransformerFailedError
+
+# Reserved key under which a scheduled trigger stashes the name of its kickoff-time-bound input arg
+# in Inputs.context (set by trigger_serde at registration). The per-fire value is never in the
+# (offloaded) inputs blob; at execution we fill that input from the run start time on the task
+# context. The key is internal plumbing, so it is excluded from the user-facing Inputs.context.
+KICKOFF_TIME_INPUT_ARG_CONTEXT_KEY = "_u_kickoff_time_input_arg"
+
+# Name of the output slot currently being serialized (e.g. "o0"), scoped to
+# a single ``TypeEngine.to_literal`` call by ``convert_from_native_to_outputs``.
+# Lets a TypeTransformer attribute a value to the output it's being returned
+# as — without threading the name through ``to_literal``'s signature (which
+# every transformer would have to adopt). ``None`` outside output conversion
+# (e.g. on the input path), so readers must treat absence as "unknown".
+_output_name_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
+    "flyte_current_output_name", default=None
+)
+
+
+def current_output_name() -> Optional[str]:
+    """The output slot name being converted right now (e.g. ``"o0"``), or
+    ``None`` when not inside output conversion. See :data:`_output_name_var`.
+    """
+    return _output_name_var.get()
 
 
 @dataclass(frozen=True)
@@ -28,8 +52,8 @@ class Inputs:
 
     @property
     def context(self) -> Dict[str, str]:
-        """Get the context as a dictionary."""
-        return {kv.key: kv.value for kv in self.proto_inputs.context}
+        """Get the context as a dictionary (excluding internal reserved keys)."""
+        return {kv.key: kv.value for kv in self.proto_inputs.context if kv.key != KICKOFF_TIME_INPUT_ARG_CONTEXT_KEY}
 
 
 @dataclass(frozen=True)
@@ -40,6 +64,7 @@ class Outputs:
 @dataclass
 class Error:
     err: execution_pb2.ExecutionError
+    recoverable: bool = True
 
 
 # ------------------------------- CONVERT Methods ------------------------------- #
@@ -63,10 +88,23 @@ async def convert_inputs_to_native(inputs: Inputs, python_interface: NativeInter
     native_vals = await TypeEngine.literal_map_to_kwargs(
         literals_pb2.LiteralMap(literals=literals), python_interface.get_input_types()
     )
+    # A scheduled trigger conveys the name of its kickoff-time-bound input via inputs.context (the
+    # per-fire value is never carried in the inputs blob). Fill it from the run start time already on
+    # the task context rather than reopening/mutating the proto inputs.
+    kickoff_arg = next(
+        (kv.value for kv in inputs.proto_inputs.context if kv.key == KICKOFF_TIME_INPUT_ARG_CONTEXT_KEY),
+        None,
+    )
+    if kickoff_arg:
+        tctx = ctx()
+        if tctx is not None and tctx.run_start_time is not None:
+            native_vals[kickoff_arg] = tctx.run_start_time
     return native_vals
 
 
-async def convert_upload_default_inputs(interface: NativeInterface) -> List[common_pb2.NamedParameter]:
+async def convert_upload_default_inputs(
+    interface: NativeInterface,
+) -> List[common_pb2.NamedParameter]:
     """
     Converts the default inputs of a NativeInterface to a list of NamedParameters for upload.
     This is used to upload default inputs to the Flyte backend.
@@ -74,17 +112,30 @@ async def convert_upload_default_inputs(interface: NativeInterface) -> List[comm
     if not interface.inputs:
         return []
 
+    # flyte.TriggerTime is a sentinel that gets bound at trigger fire time, not a
+    # serializable default. Importing lazily avoids a circular import at module load.
+    from flyte._trigger import _trigger_time
+
     vars = []
     literal_coros = []
     for input_name, (input_type, default_value) in interface.inputs.items():
-        if default_value and default_value is not inspect.Parameter.empty:
+        if default_value is not None and default_value is not inspect.Parameter.empty:
+            if isinstance(default_value, _trigger_time):
+                raise ValueError(
+                    f"Input '{input_name}' uses flyte.TriggerTime as its default value. "
+                    "flyte.TriggerTime is only valid as a value in `flyte.Trigger(inputs=...)` — "
+                    "it cannot be used as a regular task default. Remove the default from the "
+                    "task signature and pass it through the Trigger inputs instead."
+                )
             lt = TypeEngine.to_literal_type(input_type)
             literal_coros.append(TypeEngine.to_literal(default_value, input_type, lt))
             vars.append((input_name, lt))
 
-    literals: List[literals_pb2.Literal] = await asyncio.gather(*literal_coros)
+    literals: List[literals_pb2.Literal] = await asyncio.gather(*literal_coros, return_exceptions=True)
     named_params = []
     for (name, lt), literal in zip(vars, literals):
+        if isinstance(literal, Exception):
+            raise RuntimeError(f"Failed to convert default value for parameter '{name}'") from literal
         param = interface_pb2.Parameter(
             var=interface_pb2.Variable(
                 type=lt,
@@ -109,9 +160,38 @@ def is_optional_type(tp) -> bool:
 
 
 async def convert_from_native_to_inputs(
-    interface: NativeInterface, *args, custom_context: Dict[str, str] | None = None, **kwargs
+    interface: NativeInterface,
+    *args,
+    custom_context: Dict[str, str] | None = None,
+    **kwargs,
+) -> Inputs:
+    return await _convert_from_native_to_inputs_impl(interface, args, custom_context, kwargs)
+
+
+def _is_has_default_sentinel(value: Any) -> bool:
+    """
+    Return True if `value` is the `_has_default` sentinel (the class itself or an instance).
+
+    The class is intended purely as a *marker* on `NativeInterface.inputs[name][1]` to indicate
+    "this remote task input has a default value stored on the spec". It must never be treated as a
+    real input value. We check both forms because the CLI's click integration used to coerce the
+    class into an instance (click instantiates callable defaults), so either shape can leak through
+    into kwargs.
+    """
+    return value is NativeInterface.has_default or isinstance(value, NativeInterface.has_default)
+
+
+async def _convert_from_native_to_inputs_impl(
+    interface: NativeInterface,
+    args: Tuple[Any, ...],
+    custom_context: Dict[str, str] | None,
+    kwargs: Dict[str, Any],
 ) -> Inputs:
     kwargs = interface.convert_to_kwargs(*args, **kwargs)
+
+    # Drop any sentinel values from kwargs so the loop below falls through to the `_remote_defaults`
+    # branch and substitutes the literal default instead of attempting to serialize the sentinel.
+    kwargs = {k: v for k, v in kwargs.items() if not _is_has_default_sentinel(v)}
 
     missing = [key for key in interface.required_inputs() if key not in kwargs]
     if missing:
@@ -211,11 +291,16 @@ async def convert_from_native_to_outputs(o: Any, interface: NativeInterface, tas
         )
     named = []
     for (output_name, python_type), v in zip(interface.outputs.items(), o):
+        # Expose the output slot name to transformers for the duration of this
+        # single conversion (see ``current_output_name``), then always clear it.
+        tok = _output_name_var.set(output_name)
         try:
             lit = await TypeEngine.to_literal(v, python_type, TypeEngine.to_literal_type(python_type))
             named.append(common_pb2.NamedLiteral(name=output_name, value=lit))
         except TypeTransformerFailedError as e:
             raise flyte.errors.RuntimeDataValidationError(output_name, e, task_name)
+        finally:
+            _output_name_var.reset(tok)
 
     return Outputs(proto_outputs=common_pb2.Outputs(literals=named))
 
@@ -230,11 +315,14 @@ async def convert_outputs_to_native(interface: NativeInterface, outputs: Outputs
     elif len(kwargs) == 1:
         return next(iter(kwargs.values()))
     else:
-        # Return as tuple if multiple outputs, make sure to order correctly as it seems proto maps can change ordering
+        # Return as tuple if multiple outputs are defined in the interface,
+        # to match the order of outputs in the interface
         return tuple(kwargs[k] for k in interface.outputs.keys())
 
 
-def convert_error_to_native(err: execution_pb2.ExecutionError | Exception | Error) -> Exception | None:
+def convert_error_to_native(
+    err: execution_pb2.ExecutionError | Exception | Error,
+) -> Exception | None:
     if not err:
         return None
 
@@ -272,7 +360,17 @@ def convert_error_to_native(err: execution_pb2.ExecutionError | Exception | Erro
 
 
 def convert_from_native_to_error(err: BaseException) -> Error:
-    if isinstance(err, flyte.errors.RuntimeUnknownError):
+    if isinstance(err, flyte.errors.NonRecoverableError):
+        return Error(
+            err=execution_pb2.ExecutionError(
+                kind=execution_pb2.ExecutionError.USER,
+                code=err.code,
+                message=str(err),
+                worker=err.worker,
+            ),
+            recoverable=False,
+        )
+    elif isinstance(err, flyte.errors.RuntimeUnknownError):
         return Error(
             err=execution_pb2.ExecutionError(
                 kind=execution_pb2.ExecutionError.UNKNOWN,
@@ -373,7 +471,9 @@ def generate_inputs_repr_for_literal(literal: literals_pb2.Literal) -> bytes:
     return literal.SerializeToString(deterministic=True)
 
 
-def generate_inputs_hash_for_named_literals(inputs: list[common_pb2.NamedLiteral]) -> str:
+def generate_inputs_hash_for_named_literals(
+    inputs: list[common_pb2.NamedLiteral],
+) -> str:
     """
     Generate a hash for the inputs using the new literal representation approach that respects
     hash values already present in literals. This is used to uniquely identify the inputs for a task
@@ -416,7 +516,22 @@ def generate_interface_hash(task_interface: interface_pb2.TypedInterface) -> str
     """
     if not task_interface:
         return ""
-    serialized_interface = task_interface.SerializeToString(deterministic=True)
+
+    # Create a copy and sort variables by key to ensure order-independent hashing
+    sorted_interface = interface_pb2.TypedInterface()
+    sorted_interface.CopyFrom(task_interface)
+
+    if sorted_interface.inputs and sorted_interface.inputs.variables:
+        sorted_inputs = sorted(sorted_interface.inputs.variables, key=lambda entry: entry.key)
+        del sorted_interface.inputs.variables[:]
+        sorted_interface.inputs.variables.extend(sorted_inputs)
+
+    if sorted_interface.outputs and sorted_interface.outputs.variables:
+        sorted_outputs = sorted(sorted_interface.outputs.variables, key=lambda entry: entry.key)
+        del sorted_interface.outputs.variables[:]
+        sorted_interface.outputs.variables.extend(sorted_outputs)
+
+    serialized_interface = sorted_interface.SerializeToString(deterministic=True)
     return hash_data(serialized_interface)
 
 

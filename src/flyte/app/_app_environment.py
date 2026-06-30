@@ -5,46 +5,130 @@ import os
 import re
 import shlex
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, Callable, List, Literal, Optional, Union
+from typing import Any, Callable, List, Literal, Optional, Union
 
 import rich.repr
 
 from flyte import Environment, Image, Resources, SecretRequest
 from flyte.app._parameter import Parameter
-from flyte.app._types import Domain, Link, Port, Scaling
+from flyte.app._types import Domain, Link, Port, Scaling, Timeouts
 from flyte.models import SerializationContext
-
-if TYPE_CHECKING:
-    pass
-
 
 APP_NAME_RE = re.compile(r"[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*")
 INVALID_APP_PORTS = [8012, 8022, 8112, 9090, 9091]
 INTERNAL_APP_ENDPOINT_PATTERN_ENV_VAR = "INTERNAL_APP_ENDPOINT_PATTERN"
+
+# Root of the flyte SDK source tree (the directory that contains ``flyte/``).
+# Used by ``_find_user_caller_frame`` to skip every frame whose source file
+# lives inside the SDK, so that subclass ``__post_init__`` chains, helper
+# methods, and the synthesized dataclass ``__init__`` never get reported as
+# the user's caller.
+_SDK_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# Filenames that ``inspect.getframeinfo`` may report for synthesized frames
+# (e.g. dataclass-generated ``__init__`` is compiled with ``"<string>"``) that
+# can't possibly belong to user code.
+_SYNTHESIZED_FILENAME_PREFIXES = ("<",)
+
+
+def _is_sdk_frame(filename: str) -> bool:
+    """Return True if ``filename`` lives inside the flyte SDK source tree."""
+    if not filename or filename.startswith(_SYNTHESIZED_FILENAME_PREFIXES):
+        return True
+    try:
+        abs_filename = os.path.abspath(filename)
+    except (OSError, ValueError):
+        return False
+    try:
+        return os.path.commonpath([_SDK_ROOT, abs_filename]) == _SDK_ROOT
+    except ValueError:
+        # commonpath raises on mixed drives / unrelated roots.
+        return False
+
+
+def _find_user_caller_frame() -> inspect.Traceback | None:
+    """Walk up the call stack to the first user-code frame outside the SDK.
+
+    Returns an :class:`inspect.Traceback` pointing at whatever line of user
+    code triggered the construction of an :class:`AppEnvironment`. The walker
+    skips:
+
+    * frames whose source file lives inside the SDK source tree (covers every
+      ``AppEnvironment``/subclass ``__post_init__`` plus helper methods),
+    * synthesized frames whose ``co_filename`` is angle-bracketed
+      (``"<string>"``, ``"<frozen ...>"``, etc. — produced by the dataclass-
+      generated ``__init__``, ``exec``-compiled modules, frozen importers),
+    * user-authored ``__post_init__`` / ``__init__`` frames so that a user
+      subclass calling ``super().__post_init__()`` still resolves to the
+      caller that actually instantiated the env (factory helper, module
+      scope, …).
+
+    Whatever the first remaining frame is — module scope, factory helper, or
+    any other regular function — that's what we report.
+    """
+    f = inspect.currentframe()
+    f = f.f_back if f is not None else None
+    while f is not None:
+        co_filename = f.f_code.co_filename
+        if _is_sdk_frame(co_filename):
+            f = f.f_back
+            continue
+        if f.f_code.co_name in ("__post_init__", "__init__"):
+            # User-defined subclass init frame chaining super().__post_init__().
+            f = f.f_back
+            continue
+        break
+    if f is None:
+        return None
+    return inspect.getframeinfo(f)
 
 
 @rich.repr.auto
 @dataclass(init=True, repr=True)
 class AppEnvironment(Environment):
     """
-    :param type: Type of the environment.
-    :param port: Port to use for the app server.
-    :param args: Arguments to pass to app.
-    :param command: Command to run in the app.
-    :param requires_auth: Whether the app requires authentication.
-    :param scaling: Scaling configuration for the app environment.
-    :param domain: Domain to use for the app.
-    :param links: Links to other environments.
-    :param include: Files to include in the environment to run the app.
-    :param parameters: Parameters to pass to the app environment.
-    :param cluster_pool: Cluster pool to use for the app environment.
-    :param name: Name of the app environment
-    :param image: Docker image to use for the environment. If set to "auto", will use the default image.
-    :param resources: Resources to allocate for the environment.
-    :param env_vars: Environment variables to set for the environment.
-    :param secrets: Secrets to inject into the environment.
-    :param depends_on: Environment dependencies to hint, so when you deploy the environment, the dependencies are
-        also deployed. This is useful when you have a set of environments that depend on each other.
+    Configure a long-running app environment for APIs, dashboards, or model servers.
+
+    Example:
+
+    ```python
+    app_env = flyte.app.AppEnvironment(
+        name="my-api",
+        image=flyte.Image.from_debian_base(python="3.12").with_pip_packages("fastapi", "uvicorn"),
+        port=8080,
+        scaling=flyte.app.Scaling(replicas=(1, 3)),
+    )
+    ```
+
+    :param type: App type identifier (e.g., `"streamlit"`, `"fastapi"`). When set,
+        the platform may apply framework-specific defaults.
+    :param port: Port for the app server. Default `8080`. Ports 8012, 8022, 8112, 9090,
+        and 9091 are reserved and cannot be used. Can also be a `Port` object for
+        advanced configuration.
+    :param args: Arguments passed to the app process. Can be a list of strings or a
+        single string. Used for script-based apps (e.g., Streamlit's
+        `["--server.port", "8080"]`).
+    :param command: Full command to run in the container. Alternative to `args` —
+        use when you need to override the container's entrypoint entirely.
+    :param requires_auth: Whether the app endpoint requires authentication.
+        Default `True`. Set to `False` for public endpoints.
+    :param scaling: `Scaling` object controlling replicas and autoscaling behavior.
+        Default is `Scaling()` (scale-to-zero, max 1 replica).
+    :param domain: `Domain` object for custom domain configuration.
+    :param links: List of `Link` objects for connecting to other environments.
+    :param parameters: List of `Parameter` objects for app inputs. Use `RunOutput`
+        to connect app parameters to task outputs, or `AppEndpoint` to reference
+        other app endpoints.
+    :param cluster_pool: Cluster pool for scheduling. Default `"default"`.
+    :param timeouts: `Timeouts` object for startup/health check timeouts.
+    :param name: Name of the app (required). Must be lowercase alphanumeric with hyphens.
+        Inherited from Environment.
+    :param image: Docker image for the environment. Inherited from Environment.
+    :param resources: Compute resources (CPU, memory, GPU). Inherited from Environment.
+    :param env_vars: Environment variables. Inherited from Environment.
+    :param secrets: Secrets to inject. Inherited from Environment.
+    :param depends_on: Dependencies on other environments (deployed together).
+        Inherited from Environment.
     """
 
     type: Optional[str] = None
@@ -58,16 +142,22 @@ class AppEnvironment(Environment):
     links: List[Link] = field(default_factory=list)
 
     # Code
-    include: List[str] = field(default_factory=list)
     parameters: List[Parameter] = field(default_factory=list)
 
     # queue / cluster_pool
     cluster_pool: str = "default"
 
+    timeouts: Timeouts = field(default_factory=Timeouts)
+
     # private field
     _server: Callable[[], None] | None = field(init=False, default=None)
     _on_startup: Callable[[], None] | None = field(init=False, default=None)
     _on_shutdown: Callable[[], None] | None = field(init=False, default=None)
+    # Frame of the user code that instantiated this environment. Used by
+    # ``flyte._internal.resolvers.app_env.AppEnvResolver`` to locate the module
+    # that holds the module-level ``app_env`` binding the deployed container
+    # needs to import.
+    _caller_frame: inspect.Traceback | None = field(init=False, default=None, repr=False, compare=False)
 
     def _validate_name(self):
         if not APP_NAME_RE.fullmatch(self.name):
@@ -75,51 +165,6 @@ class AppEnvironment(Environment):
                 f"App name '{self.name}' must consist of lower case alphanumeric characters or '-', "
                 "and must start and end with an alphanumeric character."
             )
-
-    def _get_app_filename(self) -> str:
-        """
-        Get the filename of the file that declares this app environment.
-
-        Returns the actual file path instead of <string>, skipping flyte SDK internal files.
-        """
-
-        def is_user_file(filename: str) -> bool:
-            """Check if a file is a user file (not part of flyte SDK)."""
-            if filename in ("<string>", "<stdin>"):
-                return False
-            if not os.path.exists(filename):
-                return False
-            # Skip files that are part of the flyte SDK
-            abs_path = os.path.abspath(filename)
-            # Check if file is in flyte package
-            return ("site-packages/flyte" not in abs_path and "/flyte/" not in abs_path) or "/examples/" in abs_path
-
-        # Try frame inspection first - walk up the stack to find user file
-        frame = inspect.currentframe()
-        while frame is not None:
-            filename = frame.f_code.co_filename
-            if is_user_file(filename):
-                return os.path.abspath(filename)
-            frame = frame.f_back
-
-        # Fallback: Inspect the full stack to find the first user file
-        stack = inspect.stack()
-        for frame_info in stack:
-            filename = frame_info.filename
-            if is_user_file(filename):
-                return os.path.abspath(filename)
-
-        # Last fallback: Try to get from __main__ module
-        import sys
-
-        if hasattr(sys.modules.get("__main__"), "__file__"):
-            main_file = sys.modules["__main__"].__file__
-            if main_file and os.path.exists(main_file):
-                return os.path.abspath(main_file)
-
-        # Last resort: return the current working directory with a placeholder
-        # This shouldn't happen in normal usage
-        return os.path.join(os.getcwd(), "app.py")
 
     def __post_init__(self):
         super().__post_init__()
@@ -138,21 +183,28 @@ class AppEnvironment(Environment):
         for link in self.links:
             if not isinstance(link, Link):
                 raise TypeError(f"Expected links to be of type List[Link], got {type(link)}")
+        if not isinstance(self.timeouts, Timeouts):
+            raise TypeError(f"Expected timeouts to be of type Timeouts, got {type(self.timeouts)}")
+
+        if self.parameters and self.command is not None:
+            cmd_head = self.command.split()[0] if isinstance(self.command, str) else self.command[0]
+            if cmd_head != "fserve":
+                raise ValueError(
+                    "Cannot use 'parameters' with a custom 'command' that doesn't start with 'fserve'. "
+                    "Parameters require the fserve runtime to be materialized. "
+                    "Use 'args' instead of 'command', or use @app_env.server to define your app process."
+                )
 
         self._validate_name()
 
-        # get instantiated file to keep track of app root directory
-        self._app_filename = self._get_app_filename()
-
-        # Capture the frame where this environment was instantiated
-        # This helps us find the module where the app variable is defined
-        frame = inspect.currentframe()
-        if frame and frame.f_back:
-            # Go up the call stack to find the user's module
-            # Skip the dataclass __init__ frame
-            caller_frame = frame.f_back
-            if caller_frame and caller_frame.f_back:
-                self._caller_frame = inspect.getframeinfo(caller_frame.f_back)
+        # Capture the frame where this environment was instantiated. The Flyte
+        # ``AppEnvResolver`` uses ``self._caller_frame.filename`` to locate the
+        # module that holds the module-level ``app_env`` binding the container
+        # must import. We walk up past every SDK / dataclass-machinery frame
+        # so that we land on actual user code regardless of whether the env
+        # was created inline at module scope, inside a subclass with a custom
+        # ``__post_init__``, or via a user-provided factory helper.
+        self._caller_frame = _find_user_caller_frame()
 
     def container_args(self, serialize_context: SerializationContext) -> List[str]:
         if self.args is None:
@@ -219,6 +271,7 @@ class AppEnvironment(Environment):
             if version is None and serialize_context.code_bundle is not None:
                 version = serialize_context.code_bundle.computed_version
 
+            print("VERSION:", version)
             cmd: list[str] = [
                 "fserve",
                 "--version",
@@ -248,6 +301,9 @@ class AppEnvironment(Environment):
                 cmd.append("--parameters")
                 cmd.append(self._serialize_parameters(parameter_overrides))
 
+            # Add raw-data-path with template variable for backend to substitute at runtime
+            cmd.extend(["--raw-data-path", "{{.rawOutputDataPrefix}}"])
+
             # Only add resolver args if _caller_frame is set and we can extract the module
             # (i.e., app was created in a module and can be found)
             if self._caller_frame is not None:
@@ -264,9 +320,11 @@ class AppEnvironment(Environment):
                             loader_args,
                         ],
                     ]
-                except RuntimeError:
+                except RuntimeError as e:
                     # If we can't find the app in the module (e.g., in tests), skip resolver args
-                    pass
+                    from flyte._logging import logger
+
+                    logger.warning(f"Failed to extract app resolver args: {e}. Skipping resolver args.")
             return [*cmd, "--"]
         elif isinstance(self.command, str):
             return shlex.split(self.command)
@@ -281,6 +339,15 @@ class AppEnvironment(Environment):
 
     @property
     def endpoint(self) -> str:
+        # Check if this app is being served locally first
+        import flyte
+
+        from ._context import ctx as app_ctx
+
+        ctx = flyte.ctx() or app_ctx()
+        if ctx.mode == "local":
+            return f"http://localhost:{self.get_port().port}"
+
         endpoint_pattern = os.getenv(INTERNAL_APP_ENDPOINT_PATTERN_ENV_VAR)
         if endpoint_pattern is not None:
             return endpoint_pattern.format(app_fqdn=self.name)
@@ -317,6 +384,8 @@ class AppEnvironment(Environment):
         include = kwargs.pop("include", None)
         parameters = kwargs.pop("parameters", None)
         cluster_pool = kwargs.pop("cluster_pool", None)
+        pod_template = kwargs.pop("pod_template", None)
+        timeouts = kwargs.pop("timeouts", None)
 
         if kwargs:
             raise TypeError(f"Unexpected keyword arguments: {list(kwargs.keys())}")
@@ -325,6 +394,8 @@ class AppEnvironment(Environment):
         kwargs["name"] = name
         if image is not None:
             kwargs["image"] = image
+        if pod_template is not None:
+            kwargs["pod_template"] = pod_template
         if resources is not None:
             kwargs["resources"] = resources
         if env_vars is not None:
@@ -352,9 +423,11 @@ class AppEnvironment(Environment):
         if links is not None:
             kwargs["links"] = links
         if include is not None:
-            kwargs["include"] = include
+            kwargs["include"] = tuple(include) if not isinstance(include, tuple) else include
         if parameters is not None:
             kwargs["parameters"] = parameters
         if cluster_pool is not None:
             kwargs["cluster_pool"] = cluster_pool
+        if timeouts is not None:
+            kwargs["timeouts"] = timeouts
         return replace(self, **kwargs)

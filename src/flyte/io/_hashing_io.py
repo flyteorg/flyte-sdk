@@ -2,16 +2,78 @@ from __future__ import annotations
 
 import hashlib
 import inspect
-from typing import Any, Iterable, Optional, Protocol, Union, runtime_checkable
+from typing import Any, Callable, Iterable, Optional, Protocol, Union, runtime_checkable
 
 
 @runtime_checkable
 class HashMethod(Protocol):
-    def update(self, data: memoryview, /) -> None: ...
+    def update(self, data: Any, /) -> None: ...
     def result(self) -> str: ...
 
     # Optional convenience; not required by the writers.
     def reset(self) -> None: ...
+
+
+class HashFunction(HashMethod):
+    """A hash method that wraps a user-provided function to compute hashes.
+
+    This class allows you to define custom hashing logic by providing a callable
+    that takes data and returns a hash string. It implements the HashMethod protocol,
+    making it compatible with Flyte's hashing infrastructure.
+
+    Example:
+        >>> def my_hash(data: bytes) -> str:
+        ...     return hashlib.md5(data).hexdigest()
+        >>> hash_fn = HashFunction.from_fn(my_hash)
+        >>> hash_fn.update(b"hello")
+        >>> hash_fn.result()
+        '5d41402abc4b2a76b9719d911017c592'
+
+    Attributes:
+        _fn: The callable that computes the hash from input data.
+        _value: The most recently computed hash value.
+    """
+
+    def __init__(self, fn: Callable[[Any], str]):
+        """Initialize a HashFunction with a custom hash callable.
+
+        Args:
+            fn: A callable that takes data of any type and returns a hash string.
+        """
+        self._fn = fn
+
+    def update(self, data: Any):
+        """Update the hash value by applying the hash function to the given data.
+
+        Args:
+            data: The data to hash. The type depends on the hash function provided.
+        """
+        self._value = self._fn(data)
+
+    def result(self) -> str:
+        """Return the most recently computed hash value.
+
+        Returns:
+            The hash string from the last call to update().
+        """
+        return self._value
+
+    @classmethod
+    def from_fn(cls, fn: Callable[[Any], str]) -> HashFunction:
+        """Create a HashFunction from a callable.
+
+        This is a convenience factory method for creating HashFunction instances.
+
+        Args:
+            fn: A callable that takes data of any type and returns a hash string.
+
+        Returns:
+            A new HashFunction instance wrapping the provided callable.
+
+        Example:
+            >>> hash_fn = HashFunction.from_fn(lambda x: hashlib.sha256(x).hexdigest())
+        """
+        return cls(fn)
 
 
 class PrecomputedValue(HashMethod):
