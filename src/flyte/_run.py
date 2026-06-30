@@ -19,7 +19,7 @@ from flyte._initialize import (
     requires_initialization,
     requires_storage,
 )
-from flyte._logging import LogFormat, logger
+from flyte._logging import LogFormat, logger, user_logger
 from flyte._task import F, P, R, TaskTemplate
 from flyte.models import (
     ActionID,
@@ -317,8 +317,8 @@ class _Runner:
         if env.get("LOG_LEVEL") is None:
             env["LOG_LEVEL"] = str(self._log_level) if self._log_level else str(logger.getEffectiveLevel())
         env["LOG_FORMAT"] = self._log_format
-        if self._user_log_level is not None:
-            env["USER_LOG_LEVEL"] = str(self._user_log_level)
+        if env.get("USER_LOG_LEVEL") is None:
+            env["USER_LOG_LEVEL"] = str(self._user_log_level or user_logger.getEffectiveLevel())
         if self._reset_root_logger:
             env["FLYTE_RESET_ROOT_LOGGER"] = "1"
         if self._debug:
