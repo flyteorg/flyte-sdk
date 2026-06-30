@@ -389,6 +389,11 @@ def _build_import_graph(source_path: pathlib.Path) -> Optional[typing.Dict[str, 
     when they were never executed at bundle time.
     """
     if shutil.which("ruff") is None:
+        logger.debug(
+            "ruff not found on PATH; skipping static import graph analysis and falling back to runtime "
+            "sys.modules discovery. Lazily/conditionally imported local modules may be omitted from the "
+            "code bundle."
+        )
         return None
 
     try:
