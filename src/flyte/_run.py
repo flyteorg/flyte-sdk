@@ -944,8 +944,8 @@ class _Runner:
         if isinstance(task, (LazyEntity, TaskDetails)) and self._mode != "remote":
             raise ValueError("Remote task can only be run in remote mode.")
 
-        if not isinstance(task, TaskTemplate) and not isinstance(task, (LazyEntity, TaskDetails)):
-            raise TypeError(f"On Flyte tasks can be run, not generic functions or methods '{type(task)}'.")
+        if not isinstance(task, (TaskTemplate, LazyEntity, TaskDetails)):
+            raise TypeError(f"Only Flyte tasks can be run, not '{type(task)}'.")
 
         # recover is an actions-service / RunSpec concern — remote-only. Fail fast rather than silently
         # ignoring it in local/hybrid mode.
