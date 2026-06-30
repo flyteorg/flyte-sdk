@@ -191,7 +191,10 @@ def prepare_launch_json(ctx: click.Context, pid: int):
         "configurations": [
             {
                 "name": "Interactive Debugging",
-                "type": "python",
+                # "debugpy" is the modern adapter type; the legacy "python" alias is
+                # deprecated and fails to resolve on current ms-python.debugpy versions
+                # ("Cannot find a debug adapter for type 'python'").
+                "type": "debugpy",
                 "request": "launch",
                 "program": f"{virtual_venv}/bin/runtime.py",
                 "console": "integratedTerminal",
@@ -206,6 +209,12 @@ def prepare_launch_json(ctx: click.Context, pid: int):
                     ctx.params["version"],
                     "--run-base-dir",
                     ctx.params["run_base_dir"],
+                    "--raw-data-path",
+                    ctx.params["raw_data_path"],
+                    "--checkpoint-path",
+                    ctx.params["checkpoint_path"],
+                    "--prev-checkpoint",
+                    ctx.params["prev_checkpoint"],
                     "--name",
                     name,
                     "--run-name",
@@ -233,7 +242,7 @@ def prepare_launch_json(ctx: click.Context, pid: int):
             },
             {
                 "name": "Resume Task",
-                "type": "python",
+                "type": "debugpy",
                 "request": "launch",
                 "program": f"{virtual_venv}/bin/debug.py",
                 "console": "integratedTerminal",

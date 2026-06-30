@@ -8,8 +8,13 @@ from .cache import CachePolicy, VersionParameters
 
 class FunctionBodyPolicy(CachePolicy):
     """
-    A class that implements a versioning mechanism for functions by generating
-    a SHA-256 hash of the function's source code combined with a salt.
+    Default cache policy that generates versions by hashing the function's source code.
+
+    Computes a SHA-256 hash of the function body combined with a salt. This means
+    any change to the function source code automatically invalidates the cache,
+    while unchanged functions continue to use cached results.
+
+    This is the default policy used when `Cache(behavior="auto")` is specified.
     """
 
     def get_version(self, salt: str, params: VersionParameters) -> str:

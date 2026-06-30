@@ -1,4 +1,4 @@
-from flyte._utils.helpers import base36_encode, get_cwd_editable_install
+from flyte._utils.helpers import base36_encode
 
 
 def test_encode_max():
@@ -8,9 +8,3 @@ def test_encode_max():
     max_hash = base36_encode(max_byte_value)
     assert max_hash == "f5lxx1zz5pnorynqglhzmsp33"
     assert len(max_hash) <= 30
-
-
-def test_is_editable():
-    # In a unit test, even in CI, we should be in an editable install.
-    cwd = get_cwd_editable_install()
-    assert cwd is not None

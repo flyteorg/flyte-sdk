@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pathlib
+from datetime import timedelta
 
 import pytest
 from flyteidl2.core import identifier_pb2, interface_pb2, literals_pb2, tasks_pb2, types_pb2
@@ -19,11 +20,17 @@ from flyte import PodTemplate
 from flyte._internal.runtime.task_serde import (
     _get_k8s_pod,
     _get_urun_container,
+    get_proto_max_runtime,
+    get_proto_retry_strategy,
     get_proto_task,
+    get_proto_timeout_strategy,
     get_security_context,
+    lookup_image_in_cache,
     translate_task_to_wire,
 )
+from flyte._retry import Backoff, RetryStrategy
 from flyte._secret import Secret
+from flyte._timeout import Timeout
 from flyte.models import SerializationContext
 
 
@@ -133,9 +140,11 @@ def test_get_proto_container_task():
     assert proto_task.metadata.timeout.seconds == 60
 
     # Check interface
-    assert proto_task.interface.inputs.variables["a"].type.simple == types_pb2.INTEGER  # Integer
-    assert proto_task.interface.inputs.variables["b"].type.simple == types_pb2.STRING  # String
-    assert proto_task.interface.outputs.variables["o0"].type.simple == types_pb2.STRING  # String
+    inputs_dict = {entry.key: entry.value for entry in proto_task.interface.inputs.variables}
+    outputs_dict = {entry.key: entry.value for entry in proto_task.interface.outputs.variables}
+    assert inputs_dict["a"].type.simple == types_pb2.INTEGER  # Integer
+    assert inputs_dict["b"].type.simple == types_pb2.STRING  # String
+    assert outputs_dict["o0"].type.simple == types_pb2.STRING  # String
 
     # Check container
     assert proto_task.container.image.startswith("python:3.10")
@@ -358,3 +367,448 @@ def test_translate_task_to_wire_with_default_inputs(env_task_ctx):
     proto_task = translate_task_to_wire(task_template, context, default_inputs=default_inputs)
 
     assert proto_task.default_inputs == default_inputs
+
+
+def test_lookup_image_in_cache_with_cache():
+    """Test lookup_image_in_cache when image is found in cache"""
+    from flyte._internal.imagebuild.image_builder import ImageCache
+
+    # Create an image with no ref_name
+    image = flyte.Image.from_base("python:3.10")
+
+    # Create a cache with the environment
+    image_cache = ImageCache(image_lookup={"test_env": "cached-image:v1"})
+
+    context = SerializationContext(
+        project="test-project",
+        domain="test-domain",
+        version="test-version",
+        org="test-org",
+        input_path="/tmp/inputs",
+        output_path="/tmp/outputs",
+        image_cache=image_cache,
+        code_bundle=None,
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    result = lookup_image_in_cache(context, "test_env", image)
+    assert result == "cached-image:v1"
+
+
+def test_lookup_image_in_cache_no_ref_name_no_cache():
+    """Test lookup_image_in_cache when ref_name is None and no cache exists"""
+    # Create an image with no ref_name and no layers
+    image = flyte.Image.from_base("python:3.10-slim")
+
+    context = SerializationContext(
+        project="test-project",
+        domain="test-domain",
+        version="test-version",
+        org="test-org",
+        input_path="/tmp/inputs",
+        output_path="/tmp/outputs",
+        image_cache=None,
+        code_bundle=None,
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    # Should return image.uri since ref_name is None and no cache
+    result = lookup_image_in_cache(context, "test_env", image)
+    assert result == "python:3.10-slim"
+
+
+def test_lookup_image_in_cache_no_ref_name_no_layers():
+    """Test lookup_image_in_cache when ref_name is None and image has no layers"""
+    from flyte._internal.imagebuild.image_builder import ImageCache
+
+    # Create an image with no ref_name and no layers
+    image = flyte.Image.from_base("python:3.10-slim")
+
+    # Create empty cache
+    image_cache = ImageCache(image_lookup={})
+
+    context = SerializationContext(
+        project="test-project",
+        domain="test-domain",
+        version="test-version",
+        org="test-org",
+        input_path="/tmp/inputs",
+        output_path="/tmp/outputs",
+        image_cache=image_cache,
+        code_bundle=None,
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    # Should return image.uri since ref_name is None and no layers
+    result = lookup_image_in_cache(context, "test_env", image)
+    assert result == "python:3.10-slim"
+
+
+def test_get_proto_task_sets_image_build_url():
+    """image_build_run is set in TaskMetadata when a build run identifier exists in the cache."""
+    from flyte._internal.imagebuild.image_builder import ImageCache, RunIdentifierData
+
+    env = flyte.TaskEnvironment(name="test_env_build_url", image="python:3.10")
+
+    @env.task()
+    async def task_with_build_url(x: int) -> int:
+        return x
+
+    cache = ImageCache(
+        image_lookup={"test_env_build_url": "registry/my-image:sha256abc"},
+        build_run_ids={
+            "test_env_build_url": RunIdentifierData(
+                org="my-org", project="my-project", domain="development", name="abc123"
+            )
+        },
+    )
+    context = SerializationContext(
+        project="test-project",
+        domain="test-domain",
+        version="test-version",
+        image_cache=cache,
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    proto_task = get_proto_task(task_with_build_url, context)
+
+    assert proto_task.metadata.image_build_run.org == "my-org"
+    assert proto_task.metadata.image_build_run.project == "my-project"
+    assert proto_task.metadata.image_build_run.domain == "development"
+    assert proto_task.metadata.image_build_run.name == "abc123"
+
+
+def test_get_proto_task_no_image_build_url_without_cache():
+    """image_build_run is not set in TaskMetadata when no image cache is present."""
+    env = flyte.TaskEnvironment(name="test_env_no_build_url", image="python:3.10")
+
+    @env.task()
+    async def task_without_build_url(x: int) -> int:
+        return x
+
+    context = SerializationContext(
+        project="test-project",
+        domain="test-domain",
+        version="test-version",
+        image_cache=None,
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    proto_task = get_proto_task(task_without_build_url, context)
+
+    assert not proto_task.metadata.HasField("image_build_run")
+
+
+def test_get_proto_task_no_image_build_url_when_env_not_in_build_run_urls():
+    """image_build_run is not set when the task's env is not in build_run_ids."""
+    from flyte._internal.imagebuild.image_builder import ImageCache
+
+    env = flyte.TaskEnvironment(name="test_env_missing_url", image="python:3.10")
+
+    @env.task()
+    async def task_env_not_in_urls(x: int) -> int:
+        return x
+
+    cache = ImageCache(
+        image_lookup={"test_env_missing_url": "registry/my-image:sha256abc"},
+        build_run_ids={},
+    )
+    context = SerializationContext(
+        project="test-project",
+        domain="test-domain",
+        version="test-version",
+        image_cache=cache,
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    proto_task = get_proto_task(task_env_not_in_urls, context)
+
+    assert not proto_task.metadata.HasField("image_build_run")
+
+
+def test_reusable_task_disables_debuggable():
+    """When a task has reusable set, debuggable should be forced to False."""
+    env = flyte.TaskEnvironment(
+        name="test_env_reusable",
+        image="python:3.10",
+        resources=flyte.Resources(cpu="1", memory="2Gi"),
+        reusable=flyte.ReusePolicy(replicas=1, idle_ttl=300, concurrency=5),
+    )
+
+    @env.task()
+    async def reusable_task(x: int) -> int:
+        return x
+
+    # AsyncFunctionTaskTemplate defaults debuggable=True
+    assert reusable_task.debuggable is True
+
+    context = SerializationContext(
+        project="test-project",
+        domain="test-domain",
+        version="test-version",
+        image_cache=None,
+        code_bundle=None,
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    proto_task = get_proto_task(reusable_task, context)
+    assert proto_task.metadata.debuggable is False
+
+
+def test_non_reusable_task_preserves_debuggable():
+    """When a task is not reusable, debuggable should remain as set on the task."""
+    env = flyte.TaskEnvironment(
+        name="test_env_non_reusable",
+        image="python:3.10",
+    )
+
+    @env.task()
+    async def debuggable_task(x: int) -> int:
+        return x
+
+    assert debuggable_task.debuggable is True
+
+    context = SerializationContext(
+        project="test-project",
+        domain="test-domain",
+        version="test-version",
+        image_cache=None,
+        code_bundle=None,
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    proto_task = get_proto_task(debuggable_task, context)
+    assert proto_task.metadata.debuggable is True
+
+
+def test_lookup_image_in_cache_with_ref_name_not_in_cache():
+    """Test lookup_image_in_cache when image has ref_name but not found in cache"""
+    from flyte._internal.imagebuild.image_builder import ImageCache
+
+    # Create an image with a ref_name
+    image = flyte.Image.from_ref_name("my-ref")
+
+    # Create cache without the environment
+    image_cache = ImageCache(image_lookup={})
+
+    context = SerializationContext(
+        project="test-project",
+        domain="test-domain",
+        version="test-version",
+        org="test-org",
+        input_path="/tmp/inputs",
+        output_path="/tmp/outputs",
+        image_cache=image_cache,
+        code_bundle=None,
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    # Should raise RuntimeUserError because ref_name is not None
+    # and environment is not found in cache
+    with pytest.raises(flyte.errors.RuntimeUserError, match="Environment 'test_env' not found in image cache"):
+        lookup_image_in_cache(context, "test_env", image)
+
+
+def test_entrypoint_flag_on_task_template():
+    """Verify entrypoint flag is set on the template and serde doesn't crash."""
+    env = flyte.TaskEnvironment(name="test_env_entrypoint", image="python:3.10")
+
+    @env.task(entrypoint=True)
+    async def entrypoint_task(x: int) -> int:
+        return x
+
+    assert entrypoint_task.entrypoint is True
+
+    context = SerializationContext(
+        project="test-project",
+        domain="test-domain",
+        version="test-version",
+        image_cache=None,
+        code_bundle=None,
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    proto_task = get_proto_task(entrypoint_task, context)
+    assert proto_task is not None
+    assert proto_task.metadata.is_entrypoint is True
+
+
+# ---------------- Retry / Backoff serde ----------------
+
+
+def test_get_proto_retry_strategy_none():
+    assert get_proto_retry_strategy(None) is None
+
+
+def test_get_proto_retry_strategy_int_rejected():
+    with pytest.raises(AssertionError):
+        get_proto_retry_strategy(3)
+
+
+def test_get_proto_retry_strategy_count_only():
+    proto = get_proto_retry_strategy(RetryStrategy(count=5))
+    assert proto.retries == 5
+    # backoff field should be unset (default-constructed, empty).
+    assert not proto.HasField("backoff")
+
+
+def test_get_proto_retry_strategy_with_backoff():
+    backoff = Backoff(
+        base=timedelta(seconds=10),
+        factor=2.0,
+        cap=timedelta(minutes=5),
+    )
+    proto = get_proto_retry_strategy(RetryStrategy(count=5, backoff=backoff))
+    assert proto.retries == 5
+    assert proto.HasField("backoff")
+    assert proto.backoff.base.seconds == 10
+    assert proto.backoff.factor == 2.0
+    assert proto.backoff.cap.seconds == 300
+
+
+def test_get_proto_retry_strategy_backoff_constant_no_cap():
+    backoff = Backoff(base=timedelta(seconds=2))  # factor defaults to 1.0, cap unset
+    proto = get_proto_retry_strategy(RetryStrategy(count=2, backoff=backoff))
+    assert proto.backoff.base.seconds == 2
+    assert proto.backoff.factor == 1.0
+    assert not proto.backoff.HasField("cap")
+
+
+# ---------------- Timeout serde ----------------
+
+
+def test_get_proto_max_runtime_none():
+    assert get_proto_max_runtime(None) is None
+
+
+def test_get_proto_max_runtime_int():
+    proto = get_proto_max_runtime(60)
+    assert proto.seconds == 60
+
+
+def test_get_proto_max_runtime_timedelta():
+    proto = get_proto_max_runtime(timedelta(minutes=5))
+    assert proto.seconds == 300
+
+
+def test_get_proto_max_runtime_preserves_days():
+    # Regression: the old impl read .seconds (which drops days) and lost the
+    # day component for any timedelta >= 1 day.
+    proto = get_proto_max_runtime(Timeout(max_runtime=timedelta(days=2)))
+    assert proto.seconds == 2 * 24 * 3600
+
+
+def test_get_proto_timeout_strategy_none_when_only_max_runtime():
+    # Bare timedelta interpreted as max_runtime; no queued/deadline -> no strategy.
+    assert get_proto_timeout_strategy(timedelta(seconds=30)) is None
+    assert get_proto_timeout_strategy(Timeout(max_runtime=timedelta(seconds=30))) is None
+
+
+def test_get_proto_timeout_strategy_queued_only():
+    proto = get_proto_timeout_strategy(Timeout(max_queued_time=timedelta(minutes=15)))
+    assert proto is not None
+    assert proto.HasField("queued_timeout")
+    assert proto.queued_timeout.seconds == 15 * 60
+    assert not proto.HasField("deadline")
+
+
+def test_get_proto_timeout_strategy_deadline_only():
+    proto = get_proto_timeout_strategy(Timeout(deadline=timedelta(hours=2)))
+    assert proto is not None
+    assert not proto.HasField("queued_timeout")
+    assert proto.HasField("deadline")
+    assert proto.deadline.seconds == 2 * 3600
+
+
+def test_get_proto_timeout_strategy_both():
+    proto = get_proto_timeout_strategy(
+        Timeout(
+            max_runtime=timedelta(minutes=10),  # ignored by this helper
+            max_queued_time=timedelta(minutes=15),
+            deadline=timedelta(hours=2),
+        )
+    )
+    assert proto.queued_timeout.seconds == 15 * 60
+    assert proto.deadline.seconds == 2 * 3600
+
+
+def test_get_proto_task_writes_full_timeout_and_retry():
+    # End-to-end: a task with retries+backoff and all three timeout bounds
+    # produces TaskMetadata.timeout, TaskMetadata.timeouts, and
+    # TaskMetadata.retries with backoff populated.
+    env = flyte.TaskEnvironment(
+        name="rt_env",
+        image="python:3.10",
+        resources=flyte.Resources(cpu="1", memory="2Gi"),
+    )
+
+    @env.task(
+        short_name="rt_task",
+        retries=flyte.RetryStrategy(
+            count=5,
+            backoff=flyte.Backoff(
+                base=timedelta(seconds=10),
+                factor=2.0,
+                cap=timedelta(minutes=5),
+            ),
+        ),
+        timeout=flyte.Timeout(
+            max_runtime=timedelta(minutes=30),
+            max_queued_time=timedelta(minutes=15),
+            deadline=timedelta(hours=2),
+        ),
+    )
+    async def t(a: int) -> int:
+        return a
+
+    context = SerializationContext(
+        project="p",
+        domain="d",
+        version="v",
+        org="o",
+        input_path="/tmp/inputs",
+        output_path="/tmp/outputs",
+        image_cache=None,
+        code_bundle=None,
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    proto_task = get_proto_task(t, context)
+    md = proto_task.metadata
+
+    # max_runtime -> TaskMetadata.timeout
+    assert md.timeout.seconds == 30 * 60
+
+    # queued_timeout / deadline -> TaskMetadata.timeouts
+    assert md.HasField("timeouts")
+    assert md.timeouts.queued_timeout.seconds == 15 * 60
+    assert md.timeouts.deadline.seconds == 2 * 3600
+
+    # retries + backoff
+    assert md.retries.retries == 5
+    assert md.retries.backoff.base.seconds == 10
+    assert md.retries.backoff.factor == 2.0
+    assert md.retries.backoff.cap.seconds == 300
+
+
+def test_get_proto_task_no_timeout_strategy_when_only_max_runtime():
+    env = flyte.TaskEnvironment(name="rt_env_only_mr", image="python:3.10")
+
+    @env.task(short_name="t", timeout=60)
+    async def t() -> int:
+        return 1
+
+    context = SerializationContext(
+        project="p",
+        domain="d",
+        version="v",
+        org="o",
+        input_path="/tmp/inputs",
+        output_path="/tmp/outputs",
+        image_cache=None,
+        code_bundle=None,
+        root_dir=pathlib.Path.cwd(),
+    )
+    proto_task = get_proto_task(t, context)
+    assert proto_task.metadata.timeout.seconds == 60
+    assert not proto_task.metadata.HasField("timeouts")

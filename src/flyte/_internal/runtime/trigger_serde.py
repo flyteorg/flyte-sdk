@@ -1,12 +1,19 @@
 import asyncio
-from typing import Union
+from typing import Optional, Union
 
+from flyteidl2.common import identifier_pb2
+from flyteidl2.common import run_pb2 as common_run_pb2
 from flyteidl2.core import interface_pb2, literals_pb2
 from flyteidl2.task import common_pb2, run_pb2, task_definition_pb2
 from google.protobuf import timestamp_pb2, wrappers_pb2
 
 import flyte.types
 from flyte import Cron, FixedRate, Trigger, TriggerTime
+
+# Reserved Inputs.context key carrying the kickoff-time input arg name. Defined in convert (where the
+# runtime fills the input from run_start_time); re-exported here since this module sets it at
+# registration. Context is not part of the cache-key hash, so carrying it does not perturb hashing.
+from flyte._internal.runtime.convert import KICKOFF_TIME_INPUT_ARG_CONTEXT_KEY
 
 
 def _to_schedule(m: Union[Cron, FixedRate], kickoff_arg_name: str | None = None) -> common_pb2.Schedule:
@@ -52,19 +59,27 @@ async def process_default_inputs(
     Returns:
         List of NamedLiteral objects
     """
+    # Convert variables list to dict for easier lookup
+    variables_dict = {entry.key: entry.value for entry in task_inputs.variables}
+
     keys = []
     literal_coros = []
     for k, v in default_inputs.items():
-        if k not in task_inputs.variables:
+        if k not in variables_dict:
             raise ValueError(
                 f"Trigger default input '{k}' must be an input to the task, but not found in task {task_name}. "
-                f"Available inputs: {list(task_inputs.variables.keys())}"
+                f"Available inputs: {list(variables_dict.keys())}"
             )
         else:
-            literal_coros.append(flyte.types.TypeEngine.to_literal(v, type(v), task_inputs.variables[k].type))
+            literal_coros.append(flyte.types.TypeEngine.to_literal(v, type(v), variables_dict[k].type))
             keys.append(k)
 
-    final_literals: list[literals_pb2.Literal] = await asyncio.gather(*literal_coros)
+    final_literals: list[literals_pb2.Literal] = await asyncio.gather(*literal_coros, return_exceptions=True)
+
+    # Check for exceptions in the gathered results
+    for k, lit in zip(keys, final_literals):
+        if isinstance(lit, Exception):
+            raise RuntimeError(f"Failed to convert trigger default input '{k}'") from lit
 
     for p in task_default_inputs or []:
         if p.name not in keys:
@@ -109,13 +124,23 @@ async def to_task_trigger(
 
     annotations = run_pb2.Annotations(values=t.annotations) if t.annotations else None
 
+    notification_rule_name = None
+    notification_rules = None
+    if t.notifications:
+        from .notifications_serde import resolve_notification_settings
+
+        notification_rule_name, notification_rules = resolve_notification_settings(t.notifications)
+
     run_spec = run_pb2.RunSpec(
         overwrite_cache=t.overwrite_cache,
         envs=env,
         interruptible=wrappers_pb2.BoolValue(value=t.interruptible) if t.interruptible is not None else None,
         cluster=t.queue,
+        max_action_concurrency=t.max_action_concurrency or 0,
         labels=labels,
         annotations=annotations,
+        notification_rule_name=notification_rule_name,
+        notification_rules=notification_rules,
     )
 
     kickoff_arg_name = None
@@ -127,27 +152,38 @@ async def to_task_trigger(
             else:
                 default_inputs[k] = v
 
-    # assert that default_inputs and the kickoff_arg_name are infact in the task inputs
-    if kickoff_arg_name is not None and kickoff_arg_name not in task_inputs.variables:
+    # assert that default_inputs and the kickoff_arg_name are in fact in the task inputs
+    # Convert variables list to dict for checking
+    variables_dict = {entry.key: entry.value for entry in task_inputs.variables}
+    if kickoff_arg_name is not None and kickoff_arg_name not in variables_dict:
         raise ValueError(
             f"For a scheduled trigger, the TriggerTime input '{kickoff_arg_name}' "
             f"must be an input to the task, but not found in task {task_name}. "
-            f"Available inputs: {list(task_inputs.variables.keys())}"
+            f"Available inputs: {list(variables_dict.keys())}"
         )
 
     literals = await process_default_inputs(default_inputs, task_name, task_inputs, task_default_inputs)
 
-    automation = _to_schedule(
-        t.automation,
-        kickoff_arg_name=kickoff_arg_name,
-    )
+    context_kvs: list[literals_pb2.KeyValuePair] = []
+    if t.custom_context:
+        context_kvs.extend(literals_pb2.KeyValuePair(key=k, value=v) for k, v in t.custom_context.items())
+
+    # Also convey the kickoff-time input arg name through the (offloaded) inputs context, so the
+    # runtime can fill that input from run_start_time at execution (the offloaded blob never carries
+    # the per-fire value). Context is not part of the cache-key hash, so this does not perturb hashing.
+    if kickoff_arg_name is not None:
+        context_kvs.append(literals_pb2.KeyValuePair(key=KICKOFF_TIME_INPUT_ARG_CONTEXT_KEY, value=kickoff_arg_name))
+
+    # Keep the kickoff arg on the schedule too: the backend uses it for the scheduled-trigger
+    # contract (and folds run_start_time into the cache key on fire).
+    automation = _to_schedule(t.automation, kickoff_arg_name=kickoff_arg_name)
 
     return task_definition_pb2.TaskTrigger(
         name=t.name,
         spec=task_definition_pb2.TaskTriggerSpec(
             active=t.auto_activate,
             run_spec=run_spec,
-            inputs=common_pb2.Inputs(literals=literals),
+            inputs=common_pb2.Inputs(literals=literals, context=context_kvs),
             description=t.description,
         ),
         automation_spec=common_pb2.TriggerAutomationSpec(
@@ -155,3 +191,61 @@ async def to_task_trigger(
             schedule=automation,
         ),
     )
+
+
+async def offload_trigger_inputs(
+    inputs: common_pb2.Inputs,
+    *,
+    org: Optional[str],
+    project: Optional[str],
+    domain: Optional[str],
+    task_version: str,
+    task_name: Optional[str] = None,
+    task_spec: Optional[task_definition_pb2.TaskSpec] = None,
+) -> Optional[common_run_pb2.OffloadedInputData]:
+    """Offload trigger inputs out-of-band via DataProxy and return the URI + hash, or None.
+
+    Routing goes through SelectCluster's ``OPERATION_UPLOAD_TRIGGER`` (zero-trust path). When the
+    backend does not have zero trust enabled it returns ``UNIMPLEMENTED`` for that operation; we
+    catch it and return ``None`` so the caller falls back to inline trigger inputs (the pre-offload
+    flow).
+
+    The ``task`` reference is only used by the server to resolve the task template's
+    ``cache_ignore_input_vars`` so the input hash matches a later launch; it stores nothing
+    trigger-specific. ``project_id`` supplies the storage location (org/project/domain prefix);
+    no trigger id is involved, since offloaded inputs are content-addressed by hash and referenced
+    by URI from the trigger spec.
+
+    Pass ``task_spec`` when the task is not yet registered (deploy path: the task is being created in
+    the same request, so a ``task_id`` lookup would 404). Pass ``task_name`` to reference an
+    already-registered task by id (``remote.Trigger.create`` path).
+    """
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+    from flyteidl2.dataproxy import dataproxy_service_pb2
+
+    from flyte._initialize import get_client
+
+    req = dataproxy_service_pb2.UploadInputsRequest(
+        inputs=inputs,
+        project_id=identifier_pb2.ProjectIdentifier(organization=org, name=project, domain=domain),
+    )
+    if task_spec is not None:
+        req.task_spec.CopyFrom(task_spec)
+    elif task_name is not None:
+        req.task_id.CopyFrom(
+            task_definition_pb2.TaskIdentifier(
+                org=org, project=project, domain=domain, name=task_name, version=task_version
+            )
+        )
+    else:
+        raise ValueError("offload_trigger_inputs requires either task_spec or task_name")
+
+    try:
+        resp = await get_client().dataproxy_service.upload_trigger(req)
+    except ConnectError as e:
+        if e.code == Code.UNIMPLEMENTED:
+            # Zero trust is not enabled on the backend; fall back to inline trigger inputs.
+            return None
+        raise
+    return resp.offloaded_input_data

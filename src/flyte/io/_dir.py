@@ -2,21 +2,42 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import AsyncIterator, Dict, Generic, Iterator, List, Optional, Type, TypeVar, Union
+from typing import (
+    Any,
+    AsyncIterator,
+    Callable,
+    ClassVar,
+    Coroutine,
+    Dict,
+    Generic,
+    Iterator,
+    List,
+    Optional,
+    Type,
+    TypeVar,
+    Union,
+)
 
 from flyteidl2.core import literals_pb2, types_pb2
 from fsspec.asyn import AsyncFileSystem
 from fsspec.utils import get_protocol
 from mashumaro.types import SerializableType
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, PrivateAttr, model_validator
 
 import flyte.storage as storage
 from flyte._context import internal_ctx
+from flyte._logging import logger
 from flyte.io._file import File
 from flyte.types import TypeEngine, TypeTransformer, TypeTransformerFailedError
 
 # Type variable for the directory format
 T = TypeVar("T")
+
+# Sentinel path stamped onto :class:`EmptyDir` instances. Anything created via ``Dir.empty()``
+# or ``EmptyDir()`` carries this path; ``Dir.is_empty`` detects it. We deliberately use a path
+# that cannot collide with any real local or object-store path users might pass (no scheme,
+# leading colons, illegal in filesystems and URIs alike).
+_EMPTY_DIR_SENTINEL = "::flyte-empty-dir::"
 
 
 class Dir(BaseModel, Generic[T], SerializableType):
@@ -200,8 +221,15 @@ class Dir(BaseModel, Generic[T], SerializableType):
     format: str = ""
     hash: Optional[str] = None
 
+    # lazy uploader is used to upload local file to the remote storage when in remote mode
+    _lazy_uploader: Callable[[], Coroutine[Any, Any, tuple[str | None, str]]] | None = PrivateAttr(default=None)
+
     class Config:
         arbitrary_types_allowed = True
+        json_schema_extra: ClassVar[dict] = {
+            "description": "A directory reference with an optional format type.",
+            "x-flyte-type": "dir",
+        }
 
     @model_validator(mode="before")
     @classmethod
@@ -211,10 +239,35 @@ class Dir(BaseModel, Generic[T], SerializableType):
             data["name"] = Path(data["path"]).name
         return data
 
+    @property
+    def is_empty(self) -> bool:
+        """True when this is a sentinel ``Dir`` produced by :class:`EmptyDir`/``Dir.empty()`` —
+        i.e. the task didn't actually produce a directory. Use this to branch on whether the
+        upstream task emitted real data without dealing with ``Optional[Dir]`` (which the type
+        engine cannot round-trip correctly through ``SerializableType``)."""
+        return self.path == _EMPTY_DIR_SENTINEL
+
+    @classmethod
+    def empty(cls) -> "Dir":
+        """Return a sentinel ``Dir`` representing 'no directory was produced'.
+
+        Use as the return value when a task may or may not produce an output directory; the
+        caller can check :attr:`Dir.is_empty` to detect the sentinel. Round-trips cleanly
+        through Flyte serialization (unlike ``Optional[Dir]``)."""
+        return EmptyDir()
+
     def _serialize(self) -> Dict[str, Optional[str]]:
         """Internal: Serialize Dir to dictionary. Not intended for direct use."""
         pyd_dump = self.model_dump()
         return pyd_dump
+
+    @property
+    def lazy_uploader(self) -> Callable[[], Coroutine[Any, Any, tuple[str | None, str]]] | None:
+        return self._lazy_uploader
+
+    @lazy_uploader.setter
+    def lazy_uploader(self, lazy_uploader: Callable[[], Coroutine[Any, Any, tuple[str | None, str]]] | None):
+        self._lazy_uploader = lazy_uploader
 
     @classmethod
     def _deserialize(cls, file_dump: Dict[str, Optional[str]]) -> Dir:
@@ -224,6 +277,8 @@ class Dir(BaseModel, Generic[T], SerializableType):
     @classmethod
     def schema_match(cls, incoming: dict):
         """Internal: Check if incoming schema matches Dir schema. Not intended for direct use."""
+        if not isinstance(incoming, dict):
+            return False
         this_schema = cls.model_json_schema()
         current_required = this_schema.get("required")
         incoming_required = incoming.get("required")
@@ -551,6 +606,7 @@ class Dir(BaseModel, Generic[T], SerializableType):
         local_path: Union[str, Path],
         remote_destination: Optional[str] = None,
         dir_cache_key: Optional[str] = None,
+        batch_size: Optional[int] = None,
     ) -> Dir[T]:
         """
         Asynchronously create a new Dir by uploading a local directory to remote storage.
@@ -596,13 +652,35 @@ class Dir(BaseModel, Generic[T], SerializableType):
             dir_cache_key: Optional precomputed hash value to use for cache key computation when this Dir is used
                           as an input to discoverable tasks. If not specified, the cache key will be based on
                           directory attributes.
+            batch_size: Optional concurrency limit for uploading files. If not specified, the default value is
+              determined by the FLYTE_IO_BATCH_SIZE environment variable (default: 32).
 
         Returns:
             A new Dir instance pointing to the uploaded directory
         """
         local_path_str = str(local_path)
         dirname = os.path.basename(os.path.normpath(local_path_str))
-        resolved_remote_path = remote_destination or internal_ctx().raw_data.get_random_remote_path(dirname)
+
+        ctx = internal_ctx()
+        if not ctx.has_raw_data and remote_destination is None:
+
+            async def _lazy_uploader() -> tuple[str | None, str]:
+                from flyte._run import _get_main_run_mode
+
+                if _get_main_run_mode() == "local":
+                    return None, local_path_str
+
+                import flyte.remote as remote
+
+                logger.debug("Local context detected, Dir will be uploaded through Flyte local data upload system.")
+                remote_uri = await remote.upload_dir.aio(Path(local_path_str))
+                return None, remote_uri
+
+            dir = cls(path=local_path_str, name=dirname, hash=dir_cache_key)
+            dir.lazy_uploader = _lazy_uploader
+            return dir
+
+        resolved_remote_path = remote_destination or ctx.raw_data.get_random_remote_path(dirname)
         protocol = get_protocol(resolved_remote_path)
 
         # Shortcut for local, don't copy and just return
@@ -611,7 +689,9 @@ class Dir(BaseModel, Generic[T], SerializableType):
             return cls(path=output_path, name=dirname, hash=dir_cache_key)
 
         # todo: in the future, mirror File and set the file to_path here
-        output_path = await storage.put(from_path=local_path_str, to_path=remote_destination, recursive=True)
+        output_path = await storage.put(
+            from_path=local_path_str, to_path=resolved_remote_path, recursive=True, batch_size=batch_size
+        )
         return cls(path=output_path, name=dirname, hash=dir_cache_key)
 
     @classmethod
@@ -673,7 +753,26 @@ class Dir(BaseModel, Generic[T], SerializableType):
         local_path_str = str(local_path)
         dirname = os.path.basename(os.path.normpath(local_path_str))
 
-        resolved_remote_path = remote_destination or internal_ctx().raw_data.get_random_remote_path(dirname)
+        ctx = internal_ctx()
+        if not ctx.has_raw_data and remote_destination is None:
+
+            async def _lazy_uploader() -> tuple[str | None, str]:
+                from flyte._run import _get_main_run_mode
+
+                if _get_main_run_mode() == "local":
+                    return None, local_path_str
+
+                import flyte.remote as remote
+
+                logger.debug("Local context detected, Dir will be uploaded through Flyte local data upload system.")
+                remote_uri = await remote.upload_dir.aio(Path(local_path_str))
+                return None, remote_uri
+
+            dir = cls(path=local_path_str, name=dirname, hash=dir_cache_key)
+            dir.lazy_uploader = _lazy_uploader
+            return dir
+
+        resolved_remote_path = remote_destination or ctx.raw_data.get_random_remote_path(dirname)
         protocol = get_protocol(resolved_remote_path)
 
         # Shortcut for local, don't copy and just return
@@ -684,6 +783,35 @@ class Dir(BaseModel, Generic[T], SerializableType):
         fs = storage.get_underlying_filesystem(path=resolved_remote_path)
         fs.put(local_path_str, resolved_remote_path, recursive=True)
         return cls(path=resolved_remote_path, name=dirname, hash=dir_cache_key)
+
+    @classmethod
+    def new_remote(cls, dir_name: Optional[str] = None, hash: Optional[str] = None) -> Dir[T]:
+        """Create a new Dir reference for a remote directory that will be written to.
+
+        Use this when you want to create a new directory and write files into it
+        directly without creating a local directory first.
+
+        Example::
+
+            @env.task
+            async def create() -> Dir:
+                d = Dir.new_remote("output")
+                # write files into d ...
+                return d
+
+        Args:
+            dir_name: Optional name for the remote directory. If not set, a
+                generated name will be used.
+            hash: Optional precomputed hash value to use for cache key computation when this Dir is used
+                as an input to discoverable tasks.
+
+        Returns:
+            A new Dir instance with a generated remote path.
+        """
+        ctx = internal_ctx()
+        remote_path = ctx.raw_data.get_random_remote_path(dir_name)
+        name = dir_name or os.path.basename(remote_path)
+        return cls(path=remote_path, name=name, hash=hash)
 
     @classmethod
     def from_existing_remote(cls, remote_path: str, dir_cache_key: Optional[str] = None) -> Dir[T]:
@@ -835,6 +963,36 @@ class Dir(BaseModel, Generic[T], SerializableType):
         return None
 
 
+class EmptyDir(Dir):
+    """A sentinel :class:`Dir` representing 'no directory was produced'.
+
+    Use this as a return value when a task may or may not produce an output directory,
+    e.g. ``flyte.run_python_script`` when the user did not request ``output_dir``::
+
+        @env.task
+        async def maybe_produce_dir(...) -> Output:
+            if user_wants_dir:
+                return Output(output_dir=await Dir.from_local(path))
+            return Output(output_dir=EmptyDir())
+
+    On the receiving side, the value comes back as a plain ``Dir`` with
+    :attr:`Dir.is_empty` set to ``True`` (the deserializer doesn't preserve the
+    ``EmptyDir`` subclass identity, but the sentinel path round-trips). Callers should
+    branch on ``dir.is_empty`` rather than ``isinstance(dir, EmptyDir)``.
+
+    This exists because ``Optional[Dir]`` cannot round-trip through Flyte's
+    ``DataclassTransformer`` — mashumaro strips the ``Optional`` and calls
+    ``Dir._deserialize(None)`` which fails. ``EmptyDir`` keeps the field type as
+    plain ``Dir`` so the round-trip works.
+    """
+
+    def __init__(self, **data: Any):
+        # Force the sentinel path; ignore any caller-provided overrides for it.
+        data["path"] = _EMPTY_DIR_SENTINEL
+        data.setdefault("name", "")
+        super().__init__(**data)
+
+
 class DirTransformer(TypeTransformer[Dir]):
     """
     Transformer for Dir objects. This type transformer does not handle any i/o. That is now the responsibility of the
@@ -864,6 +1022,11 @@ class DirTransformer(TypeTransformer[Dir]):
         if not isinstance(python_val, Dir):
             raise TypeTransformerFailedError(f"Expected Dir object, received {type(python_val)}")
 
+        uri = python_val.path
+        hash_value = python_val.hash or None
+        if python_val.lazy_uploader:
+            hash_value, uri = await python_val.lazy_uploader()
+
         return literals_pb2.Literal(
             scalar=literals_pb2.Scalar(
                 blob=literals_pb2.Blob(
@@ -872,10 +1035,10 @@ class DirTransformer(TypeTransformer[Dir]):
                             format=python_val.format, dimensionality=types_pb2.BlobType.BlobDimensionality.MULTIPART
                         )
                     ),
-                    uri=python_val.path,
+                    uri=uri,
                 )
             ),
-            hash=python_val.hash if python_val.hash else None,
+            hash=hash_value,
         )
 
     async def to_python_value(
@@ -893,8 +1056,10 @@ class DirTransformer(TypeTransformer[Dir]):
 
         uri = lv.scalar.blob.uri
         filename = Path(uri).name
-        hash_value = lv.hash if lv.hash else None
-        f: Dir = Dir(path=uri, name=filename, format=lv.scalar.blob.metadata.type.format, hash=hash_value)
+        hash_value = lv.hash or None
+        f: Dir = expected_python_type(
+            path=uri, name=filename, format=lv.scalar.blob.metadata.type.format, hash=hash_value
+        )
         return f
 
     def guess_python_type(self, literal_type: types_pb2.LiteralType) -> Type[Dir]:

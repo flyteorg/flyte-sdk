@@ -11,10 +11,13 @@ from flyte.app import Parameter, RunOutput
 from flyte.app._types import Port
 from flyte.models import SerializationContext
 
+from flyteplugins.sglang._constants import SGLANG_MIN_VERSION_STR
+
 DEFAULT_SGLANG_IMAGE = (
-    flyte.Image.from_debian_base(name="sglang-app-image", python_version=(3, 12))
-    # install system dependencies, including CUDA toolkit
-    .with_apt_packages("libnuma-dev", "wget")
+    flyte.Image.from_debian_base(name="sglang-app-image")
+    # install system dependencies, including CUDA toolkit, which is needed by sglang for compiling the model
+    # and rust and cargo for installing sglang
+    .with_apt_packages("libnuma-dev", "wget", "curl", "openssl", "pkg-config", "libssl-dev", "build-essential")
     .with_commands(
         [
             "wget https://developer.download.nvidia.com/compute/cuda/repos/debian12/x86_64/cuda-keyring_1.1-1_all.deb",
@@ -23,10 +26,13 @@ DEFAULT_SGLANG_IMAGE = (
             "apt-get install -y cuda-toolkit-12-8",
         ]
     )
+    .with_commands(["curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && . $HOME/.cargo/env"])
+    .with_env_vars({"CUDA_HOME": "/usr/local/cuda-12.8", "PATH": "/root/.cargo/bin:/usr/local/cuda-12.8/bin:$PATH"})
     # install flash-infer
     .with_pip_packages("flashinfer-python", "flashinfer-cubin")
     .with_pip_packages("flashinfer-jit-cache", index_url="https://flashinfer.ai/whl/cu128")
     .with_pip_packages("flyteplugins-sglang", pre=True)
+    .with_pip_packages(f"sglang=={SGLANG_MIN_VERSION_STR}")
     .with_env_vars({"CUDA_HOME": "/usr/local/cuda-12.8"})
 )
 
@@ -56,9 +62,10 @@ class SGLangAppEnvironment(flyte.app.AppEnvironment):
     :param model_path: Remote path to model (e.g., s3://bucket/path/to/model).
     :param model_hf_path: Hugging Face path to model (e.g., Qwen/Qwen3-0.6B).
     :param model_id: Model id that is exposed by SGLang.
-    :param stream_model: Set to True to stream model from blob store to the GPU directly.
-        If False, the model will be downloaded to the local file system first and then loaded
-        into the GPU.
+    :param stream_model: When ``model_path`` is set, use True to stream weights from object
+        storage to the GPU (Flyte loader integration). Ignored for ``model_hf_path``-only apps,
+        which use SGLang's normal Hugging Face download path. If False with ``model_path``,
+        the model is downloaded to the local filesystem first, then loaded.
     """
 
     port: int | Port = 8080
@@ -117,8 +124,12 @@ class SGLangAppEnvironment(flyte.app.AppEnvironment):
         if self.parameters:
             raise ValueError("parameters cannot be set for SGLangAppEnvironment")
 
-        input_kwargs = {}
-        if self.stream_model:
+        # Flyte blob streaming requires ``model_path`` (remote / RunOutput). HF-only apps use
+        # SGLang's default loading regardless of ``stream_model``.
+        use_flyte_blob_streaming = bool(self.stream_model and self.model_path)
+
+        input_kwargs: dict[str, Any] = {}
+        if use_flyte_blob_streaming:
             self.env_vars["FLYTE_MODEL_LOADER_STREAM_SAFETENSORS"] = "true"
             input_kwargs["env_var"] = "FLYTE_MODEL_LOADER_REMOTE_MODEL_PATH"
             input_kwargs["download"] = False
@@ -131,7 +142,7 @@ class SGLangAppEnvironment(flyte.app.AppEnvironment):
             self.parameters = [Parameter(name="model_path", value=self.model_path, **input_kwargs)]
 
         self.env_vars["FLYTE_MODEL_LOADER_LOCAL_MODEL_PATH"] = self._model_mount_path
-        self.links = [flyte.app.Link(path="/docs", title="SGLang OpenAPI Docs", is_relative=True)]
+        self.links = [flyte.app.Link(path="/docs", title="SGLang OpenAPI Docs", is_relative=True), *self.links]
 
         if self.image is None or self.image == "auto":
             self.image = DEFAULT_SGLANG_IMAGE

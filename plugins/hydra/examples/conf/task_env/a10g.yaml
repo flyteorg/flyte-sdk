@@ -1,0 +1,5 @@
+train_model:
+  resources:
+    cpu: "4"
+    memory: "16Gi"
+    gpu: "A10G:1"

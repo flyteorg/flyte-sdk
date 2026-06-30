@@ -1,8 +1,8 @@
 # /// script
 # requires-python = "==3.13"
 # dependencies = [
-#    "flyte>=2.0.0b35",
-#    "sentence-transformers>=3.0.0",
+#    "flyte",
+#    "sentence-transformers>=5.1.2",
 #    "transformers>=4.41.0",
 #    "huggingface-hub>=0.24",
 #    "hf-transfer",
@@ -45,7 +45,7 @@ import flyte.io
 # Configure logging
 logger = logging.getLogger(__name__)
 
-image = flyte.Image.from_uv_script(__file__, name="embed_wikipedia_image", pre=True).with_pip_packages(
+image = flyte.Image.from_uv_script(__file__, name="embed_wikipedia_image").with_pip_packages(
     "unionai-reuse>=0.1.9",
 )
 
@@ -192,6 +192,6 @@ if __name__ == "__main__":
     # Run this with limit=-1 to embed all articles in the dataset (~61MM rows)
     # flyte.init()
     flyte.init_from_config()
-    run = flyte.run(main, 256, shard="20231101.en")
+    run = flyte.with_runcontext().run(main, 256, shard="20231101.en")
     print(run.url)
     # asyncio.run(high_mem_examples())

@@ -68,7 +68,7 @@ async def test_dataclass():
     res = await wf()
     assert res.region == "us-west-3"
     res = flyte.run(wf)
-    assert res.outputs().region == "us-west-3"
+    assert res.outputs()[0].region == "us-west-3"
 
 
 def test_dataclass_assert_works_for_annotated():
@@ -140,10 +140,10 @@ async def test_pure_dataclasses_with_python_types():
     DataclassTransformer().assert_type(DCWithOptional, dc2)
 
     o1 = flyte.run(t1)
-    dc1 = o1.outputs()
+    dc1 = o1.outputs()[0]
 
     o2 = flyte.run(t2)
-    dc2 = o2.outputs()
+    dc2 = o2.outputs()[0]
 
     assert dc1 == output
     assert dc2.string is None
@@ -294,7 +294,7 @@ async def test_pure_dataclasses_with_flyte_types(local_dummy_txt_file, local_dum
         return await get_empty_nested_type()
 
     nested_flyte_types = flyte.run(nested_dc_wf, txt_path=local_dummy_txt_file, dir_path=local_dummy_directory)
-    DataclassTransformer().assert_type(NestedFlyteTypes, nested_flyte_types.outputs())
+    DataclassTransformer().assert_type(NestedFlyteTypes, nested_flyte_types.outputs()[0])
 
     empty_nested_flyte_types = await empty_nested_dc_wf()
     DataclassTransformer().assert_type(NestedFlyteTypes, empty_nested_flyte_types)
@@ -352,9 +352,9 @@ async def test_mashumaro_dataclasses_json_mixin_with_python_types():
     )
 
     o1 = flyte.run(t1)
-    dc1 = o1.outputs()
+    dc1 = o1.outputs()[0]
     o2 = flyte.run(t2)
-    dc2 = o2.outputs()
+    dc2 = o2.outputs()[0]
 
     assert dc1 == output
     assert dc2.string is None
@@ -396,10 +396,10 @@ async def test_ret_unions():
     assert dc.my_float == 3.14
 
     o = flyte.run(make_union_wf, a=15)
-    dc = o.outputs()
+    dc = o.outputs()[0]
     assert dc.my_string == "hello"
     o = flyte.run(make_union_wf, a=5)
-    dc = o.outputs()
+    dc = o.outputs()[0]
     assert dc.my_float == 3.14
 
 
@@ -565,9 +565,9 @@ async def test_pure_frozen_dataclasses_with_python_types():
     DataclassTransformer().assert_type(DCWithOptional, dc2)
 
     o1 = flyte.run(t1)
-    dc1 = o1.outputs()
+    dc1 = o1.outputs()[0]
     o2 = flyte.run(t2)
-    dc2 = o2.outputs()
+    dc2 = o2.outputs()[0]
 
     assert dc1 == output
     assert dc2.string is None

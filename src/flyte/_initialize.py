@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import functools
+import os
 import sys
 import threading
 import typing
@@ -16,6 +17,7 @@ from ._logging import LogFormat, initialize_logger, logger
 if TYPE_CHECKING:
     from flyte._internal.imagebuild import ImageBuildEngine
     from flyte.config import Config
+    from flyte.config._config import PlatformConfig
     from flyte.remote._client.auth import AuthType, ClientConfig
     from flyte.remote._client.controlplane import ClientSet
     from flyte.storage import Storage
@@ -36,6 +38,7 @@ class CommonInit:
     batch_size: int = 1000
     source_config_path: Optional[Path] = None  # Only used for documentation
     sync_local_sys_paths: bool = True
+    local_persistence: bool = False
 
 
 @dataclass(init=True, kw_only=True, repr=True, eq=True, frozen=True)
@@ -54,6 +57,54 @@ _init_config: _InitConfig | None = None
 _init_lock = threading.RLock()  # Reentrant lock for thread safety
 
 
+def _platform_to_client_kwargs(pc: "PlatformConfig") -> dict[str, typing.Any]:
+    """Translate PlatformConfig fields into kwargs accepted by both
+    _initialize_client (via init) and create_remote_controller. Single
+    source of truth — extending the HTTP/auth stack with a new
+    PlatformConfig field means editing this one function.
+
+    Callers may need to layer on caller-specific kwargs that are NOT
+    derived from PlatformConfig (api_key, headless, in-cluster env-var
+    overrides); those stay at the call site.
+
+    ca_cert_file_path takes precedence over insecure_skip_verify when
+    both are present. _resolve_tls_ca_cert otherwise prefers the
+    bootstrap path, which fetches only what the server's leaf presents
+    and trips "UnknownIssuer" on chains nginx serves without
+    intermediates.
+    """
+    kw: dict[str, typing.Any] = {}
+    if pc.endpoint:
+        kw["endpoint"] = pc.endpoint
+    if pc.insecure:
+        kw["insecure"] = True
+    if pc.ca_cert_file_path:
+        kw["ca_cert_file_path"] = pc.ca_cert_file_path
+    elif pc.insecure_skip_verify:
+        kw["insecure_skip_verify"] = True
+    if pc.client_id:
+        kw["client_id"] = pc.client_id
+    if pc.client_credentials_secret:
+        kw["client_credentials_secret"] = pc.client_credentials_secret
+    if pc.auth_mode:
+        kw["auth_type"] = pc.auth_mode
+    if pc.command:
+        kw["command"] = pc.command
+    if pc.proxy_command:
+        kw["proxy_command"] = pc.proxy_command
+    if pc.http_proxy_url:
+        kw["http_proxy_url"] = pc.http_proxy_url
+    if pc.rpc_retries:
+        kw["rpc_retries"] = pc.rpc_retries
+    # NOTE: disable_keyring is intentionally NOT emitted here. The helper
+    # output flows both into _initialize_client (via init) AND into
+    # create_remote_controller (via init_in_cluster). The controller's
+    # constructor doesn't accept disable_keyring, so emitting it would
+    # raise TypeError on the in-cluster path. init_from_config threads
+    # disable_keyring through to init separately, alongside this helper.
+    return kw
+
+
 async def _initialize_client(
     api_key: str | None = None,
     auth_type: AuthType = "Pkce",
@@ -69,21 +120,13 @@ async def _initialize_client(
     client_credentials_secret: str | None = None,
     rpc_retries: int = 3,
     http_proxy_url: str | None = None,
+    disable_keyring: bool = False,
 ) -> ClientSet:
     """
     Initialize the client based on the execution mode.
     :return: The initialized client
     """
     from flyte.remote._client.controlplane import ClientSet
-
-    # https://grpc.io/docs/guides/keepalive/#keepalive-configuration-specification
-    channel_options = [
-        ("grpc.keepalive_permit_without_calls", 1),
-        ("grpc.keepalive_time_ms", 30000),  # Send keepalive ping every 30 seconds
-        ("grpc.keepalive_timeout_ms", 10000),  # Wait 10 seconds for keepalive response
-        ("grpc.http2.max_pings_without_data", 0),  # Allow unlimited pings without data
-        ("grpc.http2.min_ping_interval_without_data_ms", 30000),  # Min 30s between pings
-    ]
 
     if endpoint and api_key is None:
         return await ClientSet.for_endpoint(
@@ -100,7 +143,7 @@ async def _initialize_client(
             client_config=client_config,
             rpc_retries=rpc_retries,
             http_proxy_url=http_proxy_url,
-            grpc_options=channel_options,
+            disable_keyring=disable_keyring,
         )
     elif api_key:
         return await ClientSet.for_api_key(
@@ -117,7 +160,7 @@ async def _initialize_client(
             client_config=client_config,
             rpc_retries=rpc_retries,
             http_proxy_url=http_proxy_url,
-            grpc_options=channel_options,
+            disable_keyring=disable_keyring,
         )
 
     raise InitializationError(
@@ -125,8 +168,22 @@ async def _initialize_client(
     )
 
 
-def _initialize_logger(log_level: int | None = None, log_format: LogFormat | None = None) -> None:
-    initialize_logger(log_level=log_level, log_format=log_format, enable_rich=True)
+def _initialize_logger(
+    log_level: int | None = None,
+    log_format: LogFormat | None = None,
+    reset_root_logger: bool = False,
+    user_log_level: int | None = None,
+) -> None:
+    # In-cluster runtimes never render Rich output (stdout is captured), so skip the Rich handler
+    # — this avoids rich.logging and the transitive ipython_check -> IPython import at startup.
+    enable_rich = os.environ.get("FLYTE_INTERNAL_EXECUTION_PROJECT") is None
+    initialize_logger(
+        log_level=log_level,
+        log_format=log_format,
+        enable_rich=enable_rich,
+        reset_root_logger=reset_root_logger,
+        user_log_level=user_log_level,
+    )
 
 
 @syncify
@@ -137,6 +194,8 @@ async def init(
     root_dir: Path | None = None,
     log_level: int | None = None,
     log_format: LogFormat | None = None,
+    reset_root_logger: bool = False,
+    user_log_level: int | None = None,
     endpoint: str | None = None,
     headless: bool = False,
     insecure: bool = False,
@@ -151,6 +210,7 @@ async def init(
     auth_client_config: ClientConfig | None = None,
     rpc_retries: int = 3,
     http_proxy_url: str | None = None,
+    disable_keyring: bool = False,
     storage: Storage | None = None,
     batch_size: int = 1000,
     image_builder: ImageBuildEngine.ImageBuilderType = "local",
@@ -158,6 +218,7 @@ async def init(
     source_config_path: Optional[Path] = None,
     sync_local_sys_paths: bool = True,
     load_plugin_type_transformers: bool = True,
+    local_persistence: bool = False,
 ) -> None:
     """
     Initialize the Flyte system with the given configuration. This method should be called before any other Flyte
@@ -171,6 +232,7 @@ async def init(
       defaults to the editable install directory if the cwd is in a Python editable install, else just the cwd.
     :param log_level: Optional logging level for the logger, default is set using the default initialization policies
     :param log_format: Optional logging format for the logger, default is "console"
+    :param reset_root_logger: By default, we clear out root logger handlers and set up our own.
     :param api_key: Optional API key for authentication
     :param endpoint: Optional API endpoint URL
     :param headless: Optional Whether to run in headless mode
@@ -199,12 +261,19 @@ async def init(
       into the remote container (default: True).
     :param load_plugin_type_transformers: If enabled (default True), load the type transformer plugins registered under
       the "flyte.plugins.types" entry point group.
+    :param local_persistence: Whether to enable SQLite persistence for local run metadata (default: False).
+    :param disable_keyring: Disable storage of tokens in local keyring.
     :return: None
     """
-    from flyte._utils import get_cwd_editable_install, org_from_endpoint, sanitize_endpoint
+    from flyte._utils import org_from_endpoint, sanitize_endpoint
     from flyte.types import _load_custom_type_transformers
 
-    _initialize_logger(log_level=log_level, log_format=log_format)
+    _initialize_logger(
+        log_level=log_level,
+        log_format=log_format,
+        reset_root_logger=reset_root_logger,
+        user_log_level=user_log_level,
+    )
     if load_plugin_type_transformers:
         _load_custom_type_transformers()
 
@@ -230,16 +299,11 @@ async def init(
                 client_config=auth_client_config,
                 rpc_retries=rpc_retries,
                 http_proxy_url=http_proxy_url,
+                disable_keyring=disable_keyring,
             )
 
         if not root_dir:
-            editable_root = get_cwd_editable_install()
-            if editable_root:
-                logger.info(f"Using editable install as root directory: {editable_root}")
-                root_dir = editable_root
-            else:
-                logger.info("No editable install found, using current working directory as root directory.")
-                root_dir = Path.cwd()
+            root_dir = Path.cwd()
         # We will inject the root_dir into the sys,path for module resolution
         sys.path.append(str(root_dir))
 
@@ -255,7 +319,10 @@ async def init(
             images=images or {},
             source_config_path=source_config_path,
             sync_local_sys_paths=sync_local_sys_paths,
+            local_persistence=local_persistence,
         )
+
+        logger.info(f"Flyte initialized with config: {_init_config}")
 
 
 @syncify
@@ -264,6 +331,8 @@ async def init_from_config(
     root_dir: Path | None = None,
     log_level: int | None = None,
     log_format: LogFormat = "console",
+    user_log_level: int | None = None,
+    org: str | None = None,
     project: str | None = None,
     domain: str | None = None,
     storage: Storage | None = None,
@@ -277,6 +346,7 @@ async def init_from_config(
     other Flyte remote API methods are called. Thread-safe implementation.
 
     :param path_or_config: Path to the configuration file or Config object
+    :param org: Org name, this will override the org in the configuration file when non-empty
     :param project: Project name, this will override any project names in the configuration file
     :param domain: Domain name, this will override any domain names in the configuration file
     :param root_dir: Optional root directory from which to determine how to load files, and find paths to
@@ -326,33 +396,31 @@ async def init_from_config(
     parse_images(cfg, images)
 
     await init.aio(
-        org=cfg.task.org,
+        org=org or cfg.task.org,
         project=project or cfg.task.project,
         domain=domain or cfg.task.domain,
-        endpoint=cfg.platform.endpoint,
-        insecure=cfg.platform.insecure,
-        insecure_skip_verify=cfg.platform.insecure_skip_verify,
-        ca_cert_file_path=cfg.platform.ca_cert_file_path,
-        auth_type=cfg.platform.auth_mode,
-        command=cfg.platform.command,
-        proxy_command=cfg.platform.proxy_command,
-        client_id=cfg.platform.client_id,
-        client_credentials_secret=cfg.platform.client_credentials_secret,
         root_dir=root_dir,
         log_level=log_level,
         log_format=log_format,
-        image_builder=image_builder or cfg.image.builder,
+        user_log_level=user_log_level,
+        image_builder=image_builder or cfg.image.builder or "local",
         batch_size=batch_size,
         images=cfg.image.image_refs,
         storage=storage,
         source_config_path=cfg_path,
         sync_local_sys_paths=sync_local_sys_paths,
+        local_persistence=cfg.local.persistence,
+        # disable_keyring is threaded outside _platform_to_client_kwargs
+        # because the helper output is also spread into
+        # create_remote_controller from init_in_cluster, and the
+        # controller's constructor doesn't accept this kwarg.
+        disable_keyring=cfg.platform.disable_keyring,
+        **_platform_to_client_kwargs(cfg.platform),
     )
 
 
 @syncify
 async def init_from_api_key(
-    endpoint: str,
     api_key: str | None = None,
     project: str | None = None,
     domain: str | None = None,
@@ -369,8 +437,13 @@ async def init_from_api_key(
     Initialize the Flyte system using an API key for authentication. This is a convenience
     method for API key-based authentication. Thread-safe implementation.
 
-    :param endpoint: The Flyte API endpoint URL
-    :param api_key: Optional API key for authentication. If None, reads from FLYTE_API_KEY environment variable.
+    The API key should be an encoded API key that contains the endpoint, client ID, client secret,
+    and organization information. You can obtain this encoded API key from your Flyte administrator
+    or cloud provider.
+
+    :param api_key: Optional encoded API key for authentication. If None, reads from FLYTE_API_KEY
+        environment variable. The API key is a base64-encoded string containing endpoint, client_id,
+        client_secret, and org information.
     :param project: Optional project name
     :param domain: Optional domain name
     :param root_dir: Optional root directory from which to determine how to load files, and find paths to files.
@@ -385,9 +458,8 @@ async def init_from_api_key(
       into the remote container (default: True)
     :return: None
     """
-    import os
-
-    from flyte._utils import org_from_endpoint, sanitize_endpoint
+    from flyte._utils import sanitize_endpoint
+    from flyte.remote._client.auth._auth_utils import decode_api_key
 
     # If api_key is not provided, read from environment variable
     if api_key is None:
@@ -399,16 +471,20 @@ async def init_from_api_key(
                 "API key must be provided either as a parameter or via the FLYTE_API_KEY environment variable.",
             )
 
-    # Sanitize the endpoint and extract org from it - sanitize should never return None if input is not None
+    # Decode the API key to extract endpoint, client_id, client_secret, and org
+    endpoint, client_id, client_secret, org = decode_api_key(api_key)
+
+    # Sanitize the endpoint
     endpoint = sanitize_endpoint(endpoint)  # type: ignore[assignment]
-    org = org_from_endpoint(endpoint)
 
     await init.aio(
-        org=org,
+        org=None if org == "None" else org,
         project=project,
         domain=domain,
         endpoint=endpoint,
         api_key=api_key,
+        client_id=client_id,
+        client_credentials_secret=client_secret,
         auth_type="ClientSecret",  # API keys use client credentials flow
         root_dir=root_dir,
         log_level=log_level,
@@ -432,8 +508,6 @@ async def init_in_cluster(
     endpoint: str | None = None,
     insecure: bool = False,
 ) -> dict[str, typing.Any]:
-    import os
-
     from flyte._utils import str2bool
 
     PROJECT_NAME = "FLYTE_INTERNAL_EXECUTION_PROJECT"
@@ -444,6 +518,45 @@ async def init_in_cluster(
     INSECURE_OVERRIDE = "_U_INSECURE"
     _UNION_EAGER_API_KEY_ENV_VAR = "_UNION_EAGER_API_KEY"
     EAGER_API_KEY = "EAGER_API_KEY"
+
+    # When the cluster mounts a credentials config file (typical for the
+    # file-mounted client-secret deploy path), prefer it over the legacy
+    # env-var-injected api key. The chart sets FLYTECTL_CONFIG on the
+    # task pod pointing at the mount, so a direct env-var probe is all
+    # we need — no point walking resolve_config_path's full precedence
+    # chain (which includes a `git rev-parse` subprocess that is wasted
+    # work in a task pod and shows up in subprocess-mock tests).
+    # If api_key is supplied by the caller explicitly, that wins.
+    if api_key is None:
+        from flyte.config._reader import FLYTECTL_CONFIG_ENV_VAR, UCTL_CONFIG_ENV_VAR
+
+        cfg_path_str = os.getenv(UCTL_CONFIG_ENV_VAR) or os.getenv(FLYTECTL_CONFIG_ENV_VAR)
+        if cfg_path_str:
+            # Existence is intentionally NOT pre-checked: a typo in the
+            # env var should surface as the FileNotFoundError that
+            # init_from_config raises when it tries to open the path,
+            # not silently fall back to the legacy api-key branch.
+            logger.info(f"init_in_cluster: delegating to init_from_config({cfg_path_str})")
+            # init_from_config is @syncify-decorated; call its async form so we don't
+            # block the syncify thread.
+            await init_from_config.aio(
+                path_or_config=cfg_path_str,
+                org=org or os.getenv(ORG_NAME),
+                project=project or os.getenv(PROJECT_NAME),
+                domain=domain or os.getenv(DOMAIN_NAME),
+            )
+            # runtime._run_action spreads our return as **kwargs into
+            # create_remote_controller. Build that dict from the same
+            # PlatformConfig mapping init_from_config used above so the
+            # two clients can't drift apart on a future field addition.
+            from flyte.config import Config
+
+            cfg = Config.auto(cfg_path_str)
+            kwargs = _platform_to_client_kwargs(cfg.platform)
+            kwargs["headless"] = True  # task pod never has a browser available
+            if ep := os.getenv(ENDPOINT_OVERRIDE):
+                kwargs["endpoint"] = ep
+            return kwargs
 
     org = org or os.getenv(ORG_NAME)
     project = project or os.getenv(PROJECT_NAME)
@@ -470,10 +583,61 @@ async def init_in_cluster(
         remote_kwargs["insecure_skip_verify"] = True
         logger.info("SSL certificate verification disabled (insecure_skip_verify=True)")
 
+    # Cluster runtime never benefits from keyring storage: tokens are short-lived, the pod is
+    # ephemeral, and there is no human keychain to read from. Disabling keyring also avoids the
+    # ~180ms cold-start hit from `keyring`'s backend enumeration (incl. the `keyring.backends.macOS.api`
+    # C-extension probe that runs even on Linux). Passed directly to ``init`` rather than via
+    # ``remote_kwargs`` because the returned dict is also used to construct the controller, which
+    # does not accept ``disable_keyring``.
     await init.aio(
-        org=org, project=project, domain=domain, root_dir=Path.cwd(), image_builder="remote", **remote_kwargs
+        org=org,
+        project=project,
+        domain=domain,
+        root_dir=Path.cwd(),
+        image_builder="remote",
+        disable_keyring=True,
+        **remote_kwargs,
     )
     return remote_kwargs
+
+
+@syncify
+async def init_passthrough(
+    endpoint: str | None = None,
+    org: str | None = None,
+    project: str | None = None,
+    domain: str | None = None,
+    insecure: bool = False,
+) -> dict[str, typing.Any]:
+    """
+    Initialize the Flyte system with passthrough authentication.
+
+    This authentication mode allows you to pass custom authentication metadata
+    using the `flyte.remote.auth_metadata()` context manager.
+
+    The endpoint is automatically configured from the environment if in a flyte cluster with endpoint injected.
+
+    :param org: Optional organization name
+    :param project: Optional project name
+    :param domain: Optional domain name
+    :param endpoint: Optional API endpoint URL
+    :param insecure: Whether to use an insecure channel
+    :return: Dictionary of remote kwargs used for initialization
+    """
+    ENDPOINT_OVERRIDE = "_U_EP_OVERRIDE"
+    ep = endpoint or os.environ.get(ENDPOINT_OVERRIDE, None)
+
+    await init.aio(
+        org=org,
+        project=project,
+        domain=domain,
+        root_dir=Path.cwd(),
+        image_builder="remote",
+        endpoint=ep,
+        insecure=insecure,
+        auth_type="Passthrough",
+    )
+    return {"endpoint": endpoint, "insecure": insecure}
 
 
 def _get_init_config() -> Optional[_InitConfig]:
@@ -495,10 +659,10 @@ def get_init_config() -> _InitConfig:
     cfg = _get_init_config()
     if cfg is None:
         raise InitializationError(
-            "StorageNotInitializedError",
+            "ClientNotInitializedError",
             "user",
-            "Configuration has not been initialized. Call flyte.init() with a valid endpoint or",
-            " api-key before using this function.",
+            "Configuration has not been initialized. Call flyte.init() with a valid endpoint/api-key before",
+            " using this function or Call flyte.init_from_config() with a valid path to the config file",
         )
     return cfg
 
@@ -514,8 +678,9 @@ def get_storage() -> Storage | None:
         raise InitializationError(
             "StorageNotInitializedError",
             "user",
-            "Configuration has not been initialized. Call flyte.init() with a valid endpoint or",
-            " api-key before using this function.",
+            "Configuration has not been initialized. Call flyte.init() with a valid"
+            " storage configuration before using this function or Call flyte.init_from_config()"
+            " with a valid path to the config file",
         )
     return cfg.storage
 
@@ -531,8 +696,8 @@ def get_client() -> ClientSet:
         raise InitializationError(
             "ClientNotInitializedError",
             "user",
-            "Client has not been initialized. Call flyte.init() with a valid endpoint or"
-            " api-key before using this function.",
+            "Client has not been initialized. Call flyte.init() with a valid endpoint/api-key "
+            "before using this function or Call flyte.init_from_config() with a valid path to the config file",
         )
     return cfg.client
 
@@ -544,6 +709,14 @@ def is_initialized() -> bool:
     :return: True if initialized, False otherwise
     """
     return _get_init_config() is not None
+
+
+def is_persistence_enabled() -> bool:
+    """Check if local run persistence is enabled."""
+    cfg = _get_init_config()
+    if cfg is None:
+        return False
+    return cfg.local_persistence
 
 
 def initialize_in_cluster() -> None:
@@ -568,8 +741,8 @@ def ensure_client():
         raise InitializationError(
             "ClientNotInitializedError",
             "user",
-            "Client has not been initialized. Call flyte.init() with a valid endpoint"
-            " or api-key before using this function.",
+            "Client has not been initialized. Call flyte.init() with a valid endpoint/api-key before using"
+            " this function or Call flyte.init_from_config() with a valid path to the config file",
         )
 
 
@@ -589,7 +762,8 @@ def requires_storage(func: T) -> T:
                 "StorageNotInitializedError",
                 "user",
                 f"Function '{func.__name__}' requires storage to be initialized. "
-                f"Call flyte.init() with a valid storage configuration before using this function.",
+                "Call flyte.init() with a valid storage configuration before using this function."
+                "or Call flyte.init_from_config() with a valid path to the config file",
             )
         return func(*args, **kwargs)
 
@@ -615,7 +789,8 @@ def requires_upload_location(func: T) -> T:
                 "No upload path configured",
                 "user",
                 f"Function '{func.__name__}' requires client to be initialized. "
-                f"Call flyte.init() with storage configuration before using this function.",
+                "Call flyte.init() with storage configuration before using this function."
+                "or Call flyte.init_from_config() with a valid path to the config file.",
             )
         return func(*args, **kwargs)
 
@@ -637,7 +812,8 @@ def requires_initialization(func: T) -> T:
             raise InitializationError(
                 "NotInitConfiguredError",
                 "user",
-                f"Function '{func.__name__}' requires initialization. Call flyte.init() before using this function.",
+                f"Function '{func.__name__}' requires initialization. Call flyte.init() before using this function"
+                " or Call flyte.init_from_config() with a valid path to the config file.",
             )
         return func(*args, **kwargs)
 
@@ -654,17 +830,21 @@ def require_project_and_domain(func):
     def wrapper(*args, **kwargs):
         cfg = get_init_config()
         if cfg.project is None:
-            raise ValueError(
+            raise InitializationError(
+                "ProjectNotConfigured",
+                "user",
                 "Project must be provided to initialize the client. "
                 "Please set 'project' in the 'task' section of your config file, "
-                "or pass it directly to flyte.init(project='your-project-name')."
+                "or pass it directly to flyte.init(project='your-project-name').",
             )
 
         if cfg.domain is None:
-            raise ValueError(
+            raise InitializationError(
+                "DomainNotConfigured",
+                "user",
                 "Domain must be provided to initialize the client. "
                 "Please set 'domain' in the 'task' section of your config file, "
-                "or pass it directly to flyte.init(domain='your-domain-name')."
+                "or pass it directly to flyte.init(domain='your-domain-name').",
             )
 
         return func(*args, **kwargs)
@@ -679,15 +859,13 @@ async def _init_for_testing(
     log_level: int | None = None,
     client: ClientSet | None = None,
 ):
-    from flyte._utils.helpers import get_cwd_editable_install
-
     global _init_config  # noqa: PLW0603
 
     if log_level:
         initialize_logger(log_level=log_level)
 
     with _init_lock:
-        root_dir = root_dir or get_cwd_editable_install() or Path.cwd()
+        root_dir = root_dir or Path.cwd()
         _init_config = _InitConfig(
             root_dir=root_dir,
             project=project,
@@ -726,6 +904,36 @@ def current_domain() -> str:
         raise InitializationError(
             "DomainNotInitializedError",
             "user",
-            "Domain has not been initialized. Call flyte.init() with a valid domain before using this function.",
+            "Domain has not been initialized. Call flyte.init() with a valid domain before using this function"
+            " or Call flyte.init_from_config() with a valid path to the config file",
         )
     return cfg.domain
+
+
+def current_project() -> str:
+    """
+    Returns the current project from the Runtime environment (on the cluster) or from the initialized configuration.
+    This is safe to be used during `deploy`, `run` and within `task` code.
+
+    NOTE: This will not work if you deploy a task to a project and then run it in another project.
+
+    Raises InitializationError if the configuration is not initialized or project is not set.
+    :return: The current project
+    """
+    from ._context import ctx
+
+    tctx = ctx()
+    if tctx is not None:
+        project = tctx.action.project
+        if project is not None:
+            return project
+
+    cfg = _get_init_config()
+    if cfg is None or cfg.project is None:
+        raise InitializationError(
+            "ProjectNotInitializedError",
+            "user",
+            "Project has not been initialized. Call flyte.init() with a valid project before using this function"
+            " or Call flyte.init_from_config() with a valid path to the config file",
+        )
+    return cfg.project

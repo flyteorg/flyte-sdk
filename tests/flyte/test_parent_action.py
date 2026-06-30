@@ -40,7 +40,7 @@ async def test_parent_action_local():
     _ = await parent_task(3)
     await flyte.init.aio()
     result = await flyte.run.aio(parent_task, 3)
-    assert result.outputs() == ["Hello, world 0!", "Hello, world 1!", "Hello, world 2!"]
+    assert result.outputs()[0] == ["Hello, world 0!", "Hello, world 1!", "Hello, world 2!"]
 
 
 @pytest.mark.asyncio

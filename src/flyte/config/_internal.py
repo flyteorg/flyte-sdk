@@ -8,6 +8,7 @@ class Platform(object):
     CONSOLE_ENDPOINT = ConfigEntry(YamlConfigEntry("console.endpoint"))
     CA_CERT_FILE_PATH = ConfigEntry(YamlConfigEntry("admin.caCertFilePath"))
     HTTP_PROXY_URL = ConfigEntry(YamlConfigEntry("admin.httpProxyURL"))
+    DISABLE_KEYRING = ConfigEntry(YamlConfigEntry("admin.disableKeyring", bool))
 
 
 class Credentials(object):
@@ -62,6 +63,10 @@ class Task(object):
     ORG = ConfigEntry(YamlConfigEntry("task.org"))
     PROJECT = ConfigEntry(YamlConfigEntry("task.project"))
     DOMAIN = ConfigEntry(YamlConfigEntry("task.domain"))
+
+
+class Local(object):
+    PERSISTENCE = ConfigEntry(YamlConfigEntry("local.persistence", bool))
 
 
 class Image(object):

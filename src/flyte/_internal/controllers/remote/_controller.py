@@ -6,6 +6,7 @@ import os
 import threading
 from collections import defaultdict
 from collections.abc import Callable
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, Awaitable, DefaultDict, Tuple, TypeVar
 
@@ -16,7 +17,7 @@ import flyte.errors
 import flyte.storage as storage
 from flyte._code_bundle import build_pkl_bundle
 from flyte._context import internal_ctx
-from flyte._internal.controllers import TraceInfo
+from flyte._internal.controllers import TaskCallSequencer, TraceInfo
 from flyte._internal.controllers.remote._action import Action
 from flyte._internal.controllers.remote._core import Controller
 from flyte._internal.controllers.remote._service_protocol import ClientSet
@@ -24,6 +25,7 @@ from flyte._internal.runtime import convert, io
 from flyte._internal.runtime.task_serde import translate_task_to_wire
 from flyte._internal.runtime.types_serde import transform_native_to_typed_interface
 from flyte._logging import logger
+from flyte._metrics import Stopwatch
 from flyte._task import TaskTemplate
 from flyte._utils.helpers import _selector_policy
 from flyte.models import MAX_INLINE_IO_BYTES, ActionID, NativeInterface, SerializationContext
@@ -131,37 +133,33 @@ class RemoteController(Controller):
         self._parent_action_semaphore: DefaultDict[str, asyncio.Semaphore] = defaultdict(
             lambda: asyncio.Semaphore(default_parent_concurrency)
         )
-        self._parent_action_task_call_sequence: DefaultDict[str, DefaultDict[int, int]] = defaultdict(
-            lambda: defaultdict(int)
-        )
+        self._sequencer = TaskCallSequencer()
         self._submit_loop: asyncio.AbstractEventLoop | None = None
         self._submit_thread: threading.Thread | None = None
+        self._submit_init_lock = threading.Lock()
+        self._pending_conditions: dict[str, Action] = {}
 
     def generate_task_call_sequence(self, task_obj: object, action_id: ActionID) -> int:
         """
         Generate a task call sequence for the given task object and action ID.
         This is used to track the number of times a task is called within an action.
         """
-        uniq = unique_action_name(action_id)
-        current_action_sequencer = self._parent_action_task_call_sequence[uniq]
-        current_task_id = id(task_obj)
-        v = current_action_sequencer[current_task_id]
-        new_seq = v + 1
-        current_action_sequencer[current_task_id] = new_seq
-        name = ""
-        if hasattr(task_obj, "__name__"):
-            name = task_obj.__name__
-        elif hasattr(task_obj, "name"):
-            name = task_obj.name
-        logger.info(f"For action {uniq}, task {name} call sequence is {new_seq}")
-        return new_seq
+        action_key = unique_action_name(action_id)
+        seq = self._sequencer.next_seq(task_obj, action_key)
+        logger.info(f"For action {action_key}, task call sequence is {seq}")
+        return seq
 
     async def _submit(self, _task_call_seq: int, _task: TaskTemplate, *args, **kwargs) -> Any:
         ctx = internal_ctx()
         tctx = ctx.data.task_context
         if tctx is None:
             raise flyte.errors.RuntimeSystemError("BadContext", "Task context not initialized")
+        if tctx.task_action is None:
+            raise flyte.errors.RuntimeSystemError("BadContext", "Task action not initialized")
         current_action_id = tctx.action
+        # Sub-actions nest under the real running task (task_action), not the @trace pseudo-action that
+        # @trace may have swapped into `action`. For a regular task these are identical.
+        task_action = tctx.task_action
 
         # In the case of a regular code bundle, we will just pass it down as it is to the downstream tasks
         # It is not allowed to change the code bundle (for regular code bundles) in the middle of a run.
@@ -175,7 +173,9 @@ class RemoteController(Controller):
                 upload_from_dataplane_base_path=tctx.run_base_dir,
             )
 
-        inputs = await convert.convert_from_native_to_inputs(_task.native_interface, *args, **kwargs)
+        _ctx = ctx.new_in_driver_literal_conversion(True) if ctx.is_task_context() else nullcontext()
+        with _ctx:
+            inputs = await convert.convert_from_native_to_inputs(_task.native_interface, *args, **kwargs)
 
         root_dir = Path(code_bundle.destination).absolute() if code_bundle else Path.cwd()
         # Don't set output path in sec context because node executor will set it
@@ -191,7 +191,7 @@ class RemoteController(Controller):
             root_dir=root_dir,
         )
 
-        task_spec = translate_task_to_wire(_task, new_serialization_context)
+        task_spec = translate_task_to_wire(_task, new_serialization_context, task_context=tctx)
         inputs_hash = convert.generate_inputs_hash_from_proto(inputs.proto_inputs)
         sub_action_id, sub_action_output_path = convert.generate_sub_action_id_and_output_path(
             tctx, task_spec, inputs_hash, _task_call_seq
@@ -232,7 +232,7 @@ class RemoteController(Controller):
                     org=current_action_id.org,
                 ),
             ),
-            parent_action_name=current_action_id.name,
+            parent_action_name=task_action.name,
             group_data=tctx.group_data,
             task_spec=task_spec,
             inputs_uri=inputs_uri,
@@ -246,7 +246,7 @@ class RemoteController(Controller):
                 f"Submitting action Run:[{action.run_name}, Parent:[{action.parent_action_name}], "
                 f"task:[{_task.name}], action:[{action.name}]"
             )
-            n = await self.submit_action(action)
+            n = await self.submit_and_wait_for_action(action)
             logger.info(f"Action for task [{_task.name}] action id: {action.name}, completed!")
         except asyncio.CancelledError:
             # If the action is cancelled, we need to cancel the action on the server as well
@@ -257,7 +257,7 @@ class RemoteController(Controller):
         # If the action is aborted, we should abort the controller as well
         if n.phase == phase_pb2.ACTION_PHASE_ABORTED:
             logger.warning(f"Action {n.action_id.name} was aborted, aborting current Action{current_action_id.name}")
-            raise flyte.errors.RunAbortedError(
+            raise flyte.errors.ActionAbortedError(
                 f"Action {n.action_id.name} was aborted, aborting current Action {current_action_id.name}"
             )
 
@@ -270,7 +270,10 @@ class RemoteController(Controller):
             )
 
         if n.has_error() or n.phase == phase_pb2.ACTION_PHASE_FAILED:
-            exc = await handle_action_failure(action, _task.name)
+            # Pass `n` (the observed/cached final state from the informer), not the local `action`
+            # stub. On a recovery the watch observes the pre-existing terminal sub-action before the
+            # parent submits, so the error lands on the cached object (`n`) while the stub stays empty.
+            exc = await handle_action_failure(n, _task.name)
             raise exc
 
         if _task.native_interface.outputs:
@@ -279,9 +282,11 @@ class RemoteController(Controller):
                     "RuntimeError",
                     f"Task {n.action_id.name} did not return an output path, but the task has outputs defined.",
                 )
-            return await load_and_convert_outputs(
-                _task.native_interface, n.realized_outputs_uri, max_bytes=_task.max_inline_io_bytes
-            )
+            _ctx = ctx.new_in_driver_literal_conversion(True) if ctx.is_task_context() else nullcontext()
+            with _ctx:
+                return await load_and_convert_outputs(
+                    _task.native_interface, n.realized_outputs_uri, max_bytes=_task.max_inline_io_bytes
+                )
         return None
 
     async def submit(self, _task: TaskTemplate, *args, **kwargs) -> Any:
@@ -292,10 +297,20 @@ class RemoteController(Controller):
         tctx = ctx.data.task_context
         if tctx is None:
             raise flyte.errors.RuntimeSystemError("BadContext", "Task context not initialized")
+        if tctx.task_action is None:
+            raise flyte.errors.RuntimeSystemError("BadContext", "Task action not initialized")
         current_action_id = tctx.action
+        # Concurrency is gated per real running task (task_action), consistent with the trace path and
+        # finalize_parent_action. The call sequence stays keyed on `action` to keep sub-action names
+        # unique-per-scope and deterministic for replay.
+        task_action = tctx.task_action
         task_call_seq = self.generate_task_call_sequence(_task, current_action_id)
-        async with self._parent_action_semaphore[unique_action_name(current_action_id)]:
-            return await self._submit(task_call_seq, _task, *args, **kwargs)
+        async with self._parent_action_semaphore[unique_action_name(task_action)]:
+            sw = Stopwatch(f"controller-submit-{unique_action_name(task_action)}")
+            sw.start()
+            result = await self._submit(task_call_seq, _task, *args, **kwargs)
+            sw.stop()
+            return result
 
     def _sync_thread_loop_runner(self) -> None:
         """This method runs the event loop and should be invoked in a separate thread."""
@@ -310,9 +325,9 @@ class RemoteController(Controller):
     def submit_sync(self, _task: TaskTemplate, *args, **kwargs) -> concurrent.futures.Future:
         """
         This function creates a cached thread and loop for the purpose of calling the submit method synchronously,
-        returning a concurrent Future that can be awaited. There's no need for a lock because this function itself is
-        single threaded and non-async. This pattern here is basically the trivial/degenerate case of the thread pool
-        in the LocalController.
+        returning a concurrent Future that can be awaited. There's no need for a lock butbecause this function should be
+        single threaded and is non-async, but we have one anyway just in case. This pattern here is basically
+        the trivial/degenerate case of the thread pool in the LocalController.
         Please see additional comments in protocol.
 
         :param _task:
@@ -321,20 +336,22 @@ class RemoteController(Controller):
         :return:
         """
         if self._submit_thread is None:
-            # Please see LocalController for the general implementation of this pattern.
-            def exc_handler(loop, context):
-                logger.error(f"Remote controller submit sync loop caught exception in {loop}: {context}")
+            with self._submit_init_lock:
+                if self._submit_thread is None:
+                    # Please see LocalController for the general implementation of this pattern.
+                    def exc_handler(loop, context):
+                        logger.error(f"Remote controller submit sync loop caught exception in {loop}: {context}")
 
-            with _selector_policy():
-                self._submit_loop = asyncio.new_event_loop()
-                self._submit_loop.set_exception_handler(exc_handler)
+                    with _selector_policy():
+                        self._submit_loop = asyncio.new_event_loop()
+                        self._submit_loop.set_exception_handler(exc_handler)
 
-            self._submit_thread = threading.Thread(
-                name=f"remote-controller-{os.getpid()}-submitter",
-                daemon=True,
-                target=self._sync_thread_loop_runner,
-            )
-            self._submit_thread.start()
+                    self._submit_thread = threading.Thread(
+                        name=f"remote-controller-{os.getpid()}-submitter",
+                        daemon=True,
+                        target=self._sync_thread_loop_runner,
+                    )
+                    self._submit_thread.start()
 
         coro = self.submit(_task, *args, **kwargs)
         assert self._submit_loop is not None, "Submit loop should always have been initialized by now"
@@ -354,7 +371,7 @@ class RemoteController(Controller):
         )
         await super()._finalize_parent_action(run_id=run_id, parent_action_name=action_id.name)
         self._parent_action_semaphore.pop(unique_action_name(action_id), None)
-        self._parent_action_task_call_sequence.pop(unique_action_name(action_id), None)
+        self._sequencer.clear(unique_action_name(action_id))
 
     async def get_action_outputs(
         self, _interface: NativeInterface, _func: Callable, *args, **kwargs
@@ -372,12 +389,16 @@ class RemoteController(Controller):
         tctx = ctx.data.task_context
         if tctx is None:
             raise flyte.errors.RuntimeSystemError("BadContext", "Task context not initialized")
+        if tctx.task_action is None:
+            raise flyte.errors.RuntimeSystemError("BadContext", "Task action not initialized")
         current_action_id = tctx.action
 
         func_name = _func.__name__
         invoke_seq_num = self.generate_task_call_sequence(_func, current_action_id)
 
-        inputs = await convert.convert_from_native_to_inputs(_interface, *args, **kwargs)
+        _ctx = ctx.new_in_driver_literal_conversion(True) if ctx.is_task_context() else nullcontext()
+        with _ctx:
+            inputs = await convert.convert_from_native_to_inputs(_interface, *args, **kwargs)
         serialized_inputs = inputs.proto_inputs.SerializeToString(deterministic=True)
         inputs_hash = convert.generate_inputs_hash_from_proto(inputs.proto_inputs)
 
@@ -400,7 +421,7 @@ class RemoteController(Controller):
                     org=current_action_id.org,
                 ),
             ),
-            current_action_id.name,
+            tctx.task_action.name,
         )
 
         if prev_action is None:
@@ -417,7 +438,9 @@ class RemoteController(Controller):
                 logger.warning(f"Action {prev_action.action_id.name} failed, but no error was found, re-running trace!")
         elif prev_action.realized_outputs_uri is not None:
             o = await io.load_outputs(prev_action.realized_outputs_uri, max_bytes=MAX_TRACE_BYTES)
-            outputs = await convert.convert_outputs_to_native(_interface, o)
+            _ctx = ctx.new_in_driver_literal_conversion(True) if ctx.is_task_context() else nullcontext()
+            with _ctx:
+                outputs = await convert.convert_outputs_to_native(_interface, o)
             return (
                 TraceInfo(func_name, sub_action_id, _interface, inputs_uri, output=outputs),
                 True,
@@ -435,6 +458,8 @@ class RemoteController(Controller):
         tctx = ctx.data.task_context
         if tctx is None:
             raise flyte.errors.RuntimeSystemError("BadContext", "Task context not initialized")
+        if tctx.task_action is None:
+            raise flyte.errors.RuntimeSystemError("BadContext", "Task action not initialized")
 
         current_action_id = tctx.action
         sub_run_output_path = storage.join(tctx.run_base_dir, info.action.name)
@@ -445,14 +470,17 @@ class RemoteController(Controller):
                 err = convert.convert_from_native_to_error(info.error)
                 await io.upload_error(err.err, sub_run_output_path)
             else:
-                outputs = await convert.convert_from_native_to_outputs(info.output, info.interface)
+                _ctx = ctx.new_in_driver_literal_conversion(True) if ctx.is_task_context() else nullcontext()
+                with _ctx:
+                    outputs = await convert.convert_from_native_to_outputs(info.output, info.interface)
                 outputs_file_path = io.outputs_path(sub_run_output_path)
                 await io.upload_outputs(outputs, sub_run_output_path, max_bytes=MAX_TRACE_BYTES)
 
         typed_interface = transform_native_to_typed_interface(info.interface)
 
+        task_action = tctx.task_action
         trace_action = Action.from_trace(
-            parent_action_name=current_action_id.name,
+            parent_action_name=task_action.name,
             action_id=identifier_pb2.ActionIdentifier(
                 name=info.action.name,
                 run=identifier_pb2.RunIdentifier(
@@ -469,17 +497,17 @@ class RemoteController(Controller):
             run_output_base=tctx.run_base_dir,
             start_time=info.start_time,
             end_time=info.end_time,
-            typed_interface=typed_interface if typed_interface else None,
+            typed_interface=typed_interface or None,
         )
 
-        async with self._parent_action_semaphore[unique_action_name(current_action_id)]:
+        async with self._parent_action_semaphore[unique_action_name(task_action)]:
             try:
                 logger.info(
                     f"Submitting Trace action Run:[{trace_action.run_name},"
                     f" Parent:[{trace_action.parent_action_name}],"
                     f" Trace fn:[{info.name}], action:[{info.action.name}]"
                 )
-                await self.submit_action(trace_action)
+                await self.submit_and_wait_for_action(trace_action)
                 logger.info(f"Trace Action for [{info.name}] action id: {info.action.name}, completed!")
             except asyncio.CancelledError:
                 # If the action is cancelled, we need to cancel the action on the server as well
@@ -490,13 +518,19 @@ class RemoteController(Controller):
         tctx = ctx.data.task_context
         if tctx is None:
             raise flyte.errors.RuntimeSystemError("BadContext", "Task context not initialized")
+        if tctx.task_action is None:
+            raise flyte.errors.RuntimeSystemError("BadContext", "Task action not initialized")
         current_action_id = tctx.action
+        # Nest under the real running task (task_action); identical to `action` for a regular task.
+        task_action = tctx.task_action
         task_name = _task.name
 
         native_interface = _task.interface
         pb_interface = _task.pb2.spec.task_template.interface
 
-        inputs = await convert.convert_from_native_to_inputs(native_interface, *args, **kwargs)
+        _ctx = ctx.new_in_driver_literal_conversion(True) if ctx.is_task_context() else nullcontext()
+        with _ctx:
+            inputs = await convert.convert_from_native_to_inputs(native_interface, *args, **kwargs)
         inputs_hash = convert.generate_inputs_hash_from_proto(inputs.proto_inputs)
         sub_action_id, sub_action_output_path = convert.generate_sub_action_id_and_output_path(
             tctx, task_name, inputs_hash, invoke_seq_num
@@ -536,7 +570,7 @@ class RemoteController(Controller):
                     org=current_action_id.org,
                 ),
             ),
-            parent_action_name=current_action_id.name,
+            parent_action_name=task_action.name,
             group_data=tctx.group_data,
             task_spec=_task.pb2.spec,
             inputs_uri=inputs_uri,
@@ -550,7 +584,7 @@ class RemoteController(Controller):
                 f"Submitting action Run:[{action.run_name}, Parent:[{action.parent_action_name}], "
                 f"task:[{task_name}], action:[{action.name}]"
             )
-            n = await self.submit_action(action)
+            n = await self.submit_and_wait_for_action(action)
             logger.info(f"Action for task [{task_name}] action id: {action.name}, completed!")
         except asyncio.CancelledError:
             # If the action is cancelled, we need to cancel the action on the server as well
@@ -559,7 +593,8 @@ class RemoteController(Controller):
             raise
 
         if n.has_error() or n.phase == phase_pb2.ACTION_PHASE_FAILED:
-            exc = await handle_action_failure(action, task_name)
+            # See _submit: use `n`, the observed final state, not the local `action` stub.
+            exc = await handle_action_failure(n, task_name)
             raise exc
 
         if native_interface.outputs:
@@ -576,7 +611,119 @@ class RemoteController(Controller):
         tctx = ctx.data.task_context
         if tctx is None:
             raise flyte.errors.RuntimeSystemError("BadContext", "Task context not initialized")
+        if tctx.task_action is None:
+            raise flyte.errors.RuntimeSystemError("BadContext", "Task action not initialized")
         current_action_id = tctx.action
+        task_action = tctx.task_action
         task_call_seq = self.generate_task_call_sequence(_task, current_action_id)
-        async with self._parent_action_semaphore[unique_action_name(current_action_id)]:
+        async with self._parent_action_semaphore[unique_action_name(task_action)]:
             return await self._submit_task_ref(task_call_seq, _task, *args, **kwargs)
+
+    async def register_condition(self, condition: Any):
+        """
+        Register a condition by submitting a condition action to the backend.
+        Returns immediately after the action is enqueued (fire-and-forget).
+
+        :param condition: Condition object to register
+        """
+        from flyte._condition import _Condition
+
+        if not isinstance(condition, _Condition):
+            raise TypeError(f"Expected _Condition, got {type(condition)}")
+
+        ctx = internal_ctx()
+        tctx = ctx.data.task_context
+        if tctx is None:
+            raise flyte.errors.RuntimeSystemError("BadContext", "Task context not initialized")
+        if tctx.task_action is None:
+            raise flyte.errors.RuntimeSystemError("BadContext", "Task action not initialized")
+
+        current_action_id = tctx.action
+        # Condition actions nest under the real running task (task_action), so conditions fired inside a
+        # @trace still parent to the task rather than the trace pseudo-action.
+        task_action = tctx.task_action
+        invoke_seq = self.generate_task_call_sequence(condition, current_action_id)
+
+        # Generate a deterministic action name from condition name + sequence
+        sub_action_id, sub_action_output_path = convert.generate_sub_action_id_and_output_path(
+            tctx, condition.name, condition.name, invoke_seq
+        )
+
+        action = Action.from_condition(
+            parent_action_name=task_action.name,
+            action_id=identifier_pb2.ActionIdentifier(
+                name=sub_action_id.name,
+                run=identifier_pb2.RunIdentifier(
+                    name=current_action_id.run_name,
+                    project=current_action_id.project,
+                    domain=current_action_id.domain,
+                    org=current_action_id.org,
+                ),
+            ),
+            condition_name=condition.name,
+            prompt=condition.prompt,
+            data_type=condition.data_type,
+            description=condition.description,
+            timeout_seconds=condition._timeout_seconds,
+            prompt_type=condition.prompt_type,
+            webhook_url=condition.webhook.url if condition.webhook else None,
+            webhook_payload=condition.webhook.payload if condition.webhook else None,
+            group_data=tctx.group_data,
+            run_output_base=tctx.run_base_dir,
+            inputs_uri=io.inputs_path(sub_action_output_path),
+        )
+
+        logger.info(
+            f"Registering condition '{condition.name}' as condition action [{action.name}] "
+            f"Run:[{action.run_name}], Parent:[{action.parent_action_name}]"
+        )
+
+        # Store for wait_for_condition to retrieve later
+        self._pending_conditions[condition.name] = action
+
+        # Submit without waiting — returns immediately
+        await self.start_action(action)
+
+    async def wait_for_condition(self, condition: Any) -> Any:
+        """
+        Wait for a previously registered condition to be signaled by the backend.
+
+        :param condition: Condition object to wait for
+        :return: The typed payload associated with the condition when it is signaled.
+            For bool conditions, returns ``True`` or ``False``.
+        :raises flyte.errors.ConditionTimedoutError: If the condition times out before being signaled.
+        :raises flyte.errors.ConditionFailedError: If the condition fails during execution.
+        :raises flyte.errors.ActionAbortedError: If the condition action is externally aborted.
+        """
+        from flyte._condition import _Condition
+
+        if not isinstance(condition, _Condition):
+            raise TypeError(f"Expected _Condition, got {type(condition)}")
+
+        if condition.name not in self._pending_conditions:
+            raise RuntimeError(f"Condition '{condition.name}' was not registered. Call register_condition first.")
+
+        action = self._pending_conditions.pop(condition.name)
+
+        logger.info(f"Waiting for condition '{condition.name}' condition action [{action.name}]")
+
+        n = await self.wait_for_action(action)
+
+        if n.phase == phase_pb2.ACTION_PHASE_ABORTED:
+            raise flyte.errors.ActionAbortedError(f"Condition '{condition.name}' action {n.action_id.name} was aborted")
+
+        if n.phase == phase_pb2.ACTION_PHASE_TIMED_OUT:
+            raise flyte.errors.ConditionTimedoutError(
+                f"Condition '{condition.name}' was not signaled within the timeout period."
+            )
+
+        if n.has_error() or n.phase == phase_pb2.ACTION_PHASE_FAILED:
+            raise flyte.errors.ConditionFailedError(
+                f"Condition '{condition.name}' condition action {n.action_id.name} failed."
+            )
+
+        # Condition actions deliver the signaled Literal inline via ActionUpdate.value
+        # (no output_uri). Convert to the expected Python type.
+        if n.condition_output is not None:
+            return Action.literal_to_python(n.condition_output, condition.data_type)
+        return None

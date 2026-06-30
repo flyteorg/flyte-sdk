@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.12"
 
 [manifest]
@@ -18,24 +18,18 @@ dependencies = [
 ]
 
 [package.dev-dependencies]
-dev = [
-    { name = "numpy" },
-]
-production = [
+albatross = [
     { name = "bird-feeder" },
     { name = "numpy" },
-    { name = "seeds" },
 ]
 
 [package.metadata]
 requires-dist = [{ name = "bird-feeder", editable = "packages/bird_feeder" }]
 
 [package.metadata.requires-dev]
-dev = [{ name = "numpy" }]
-production = [
+albatross = [
     { name = "bird-feeder", editable = "packages/bird_feeder" },
     { name = "numpy" },
-    { name = "seeds", editable = "packages/seeds" },
 ]
 
 [[package]]

@@ -11,7 +11,7 @@ env_reuse = flyte.TaskEnvironment(
         replicas=1,
         idle_ttl=300,
     ),
-    image=flyte.Image.from_debian_base().with_pip_packages("unionai-reuse==0.1.3"),
+    image=flyte.Image.from_debian_base().with_pip_packages("unionai-reuse"),
 )
 
 env = env_reuse.clone_with(

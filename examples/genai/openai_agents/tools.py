@@ -13,51 +13,50 @@ uv run tools.py
 # /// script
 # requires-python = "==3.13"
 # dependencies = [
-#    "flyte>=2.0.0b6",
-#    "flyteplugins-openai",
-#    "openai-agents==0.2.4",
-#    "pydantic>=2.10.6",
+#    "flyte>=2.0.0",
+#    "flyteplugins-openai>=2.0.0",
+#    "openai-agents>=0.11.1",
 # ]
 # ///
 
+import random
+
 from agents import Agent, Runner
 from flyteplugins.openai.agents import function_tool
-from pydantic import BaseModel
 
 import flyte
-
-
-class Weather(BaseModel):
-    city: str
-    temperature_range: str
-    conditions: str
-
 
 env = flyte.TaskEnvironment(
     name="openai_agents_tools",
     resources=flyte.Resources(cpu=1, memory="250Mi"),
-    image=(
-        flyte.Image.from_debian_base(
-            name="openai_agents_tools",
-            python_version=(3, 13),
-        ).with_pip_packages(
-            "flyte",
-            "flyteplugins-openai",
-            "openai-agents==0.2.4",
-            "pydantic>=2.10.6",
-            pre=True,
-            extra_args="--prerelease=allow",
-        )
-    ),
+    image=flyte.Image.from_uv_script(__file__, name="openai_agents_tools"),
     secrets=flyte.Secret("OPENAI_API_KEY", as_env_var="OPENAI_API_KEY"),
 )
 
 
 @function_tool
 @env.task
-async def get_weather(city: str) -> Weather:
-    """Get the weather for a given city."""
-    return Weather(city=city, temperature_range="14-20C", conditions="Sunny with wind.")
+async def get_weather(city: str) -> dict:
+    """Get random weather data."""
+    low = random.randint(-5, 25)
+    high = low + random.randint(3, 10)
+    conditions = random.choice(
+        [
+            "Sunny",
+            "Partly cloudy",
+            "Overcast",
+            "Light rain",
+            "Heavy rain",
+            "Thunderstorms",
+            "Snowy",
+            "Foggy",
+            "Windy",
+            "Sunny with wind",
+            "Clear skies",
+            "Hail",
+        ]
+    )
+    return {"city": city, "temperature_range": f"{low}-{high}C", "conditions": conditions}
 
 
 agent = Agent(

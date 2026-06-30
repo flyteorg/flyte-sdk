@@ -1,9 +1,16 @@
+from __future__ import annotations
+
 from asyncio import Protocol
 from pathlib import Path
-from typing import List, Optional
+from typing import TYPE_CHECKING, List, Optional
 
 from flyte._task import TaskTemplate
-from flyte.app._app_environment import AppEnvironment
+
+if TYPE_CHECKING:
+    # Annotation-only import; pulling ``flyte.app`` at module load drags ``flyte.io`` and
+    # ``flyte.io._dataframe.dataframe`` (mashumaro.jsonschema, markdown_it, pendulum) into
+    # the resolver hot path even though this Protocol's ``load_app_env`` is just a stub.
+    from flyte.app._app_environment import AppEnvironment
 
 
 class Resolver(Protocol):

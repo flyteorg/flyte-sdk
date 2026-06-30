@@ -11,13 +11,17 @@ from flyte.app import Parameter, RunOutput
 from flyte.app._types import Port
 from flyte.models import SerializationContext
 
+from flyteplugins.vllm._constants import VLLM_MIN_VERSION_STR
+
 DEFAULT_VLLM_IMAGE = (
-    flyte.Image.from_debian_base(name="vllm-app-image", python_version=(3, 12))
+    flyte.Image.from_debian_base(name="vllm-app-image")
     # install flashinfer and vllm
     .with_pip_packages("flashinfer-python", "flashinfer-cubin")
     .with_pip_packages("flashinfer-jit-cache", index_url="https://flashinfer.ai/whl/cu129")
     # install the vllm flyte plugin
     .with_pip_packages("flyteplugins-vllm", pre=True)
+    # install vllm in a separate layer due to dependency conflict with flyte (protovalidate)
+    .with_pip_packages(f"vllm=={VLLM_MIN_VERSION_STR}")
 )
 
 
@@ -47,9 +51,10 @@ class VLLMAppEnvironment(flyte.app.AppEnvironment):
     :param model_path: Remote path to model (e.g., s3://bucket/path/to/model).
     :param model_hf_path: Hugging Face path to model (e.g., Qwen/Qwen3-0.6B).
     :param model_id: Model id that is exposed by vllm.
-    :param stream_model: Set to True to stream model from blob store to the GPU directly.
-        If False, the model will be downloaded to the local file system first and then loaded
-        into the GPU.
+    :param stream_model: When ``model_path`` is set, use True to stream weights from object
+        storage to the GPU (Flyte custom loader). Ignored for ``model_hf_path``-only apps,
+        which always use vLLM's normal Hugging Face download path. If False with ``model_path``,
+        the model is downloaded to the local filesystem first, then loaded.
     """
 
     port: int | Port = 8080
@@ -94,8 +99,12 @@ class VLLMAppEnvironment(flyte.app.AppEnvironment):
         else:
             extra_args = self.extra_args
 
-        stream_model_args = []
-        if self.stream_model:
+        # Flyte streaming requires a remote ``model_path`` (and the model-loader env). HF-only
+        # apps must use vLLM's default loaders regardless of ``stream_model``.
+        use_flyte_blob_streaming = bool(self.stream_model and self.model_path)
+
+        stream_model_args: list[str] = []
+        if use_flyte_blob_streaming:
             stream_model_args.extend(["--load-format", "flyte-vllm-streaming"])
 
         self.args = [
@@ -113,8 +122,8 @@ class VLLMAppEnvironment(flyte.app.AppEnvironment):
         if self.parameters:
             raise ValueError("parameters cannot be set for VLLMAppEnvironment")
 
-        input_kwargs = {}
-        if self.stream_model:
+        input_kwargs: dict[str, Any] = {}
+        if use_flyte_blob_streaming:
             self.env_vars["FLYTE_MODEL_LOADER_STREAM_SAFETENSORS"] = "true"
             input_kwargs["env_var"] = "FLYTE_MODEL_LOADER_REMOTE_MODEL_PATH"
             input_kwargs["download"] = False
@@ -127,7 +136,7 @@ class VLLMAppEnvironment(flyte.app.AppEnvironment):
             self.parameters = [Parameter(name="model_path", value=self.model_path, **input_kwargs)]
 
         self.env_vars["FLYTE_MODEL_LOADER_LOCAL_MODEL_PATH"] = self._model_mount_path
-        self.links = [flyte.app.Link(path="/docs", title="vLLM OpenAPI Docs", is_relative=True)]
+        self.links = [flyte.app.Link(path="/docs", title="vLLM OpenAPI Docs", is_relative=True), *self.links]
 
         if self.image is None or self.image == "auto":
             self.image = DEFAULT_VLLM_IMAGE

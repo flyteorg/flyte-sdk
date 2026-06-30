@@ -69,6 +69,9 @@ def function_tool(
 
         _openai_fn_tool = asdict(openai_function_tool(func.func, **kwargs))
         _openai_fn_tool.pop("on_invoke_tool")
+        _openai_fn_tool.pop("_is_agent_tool")
+        _openai_fn_tool.pop("_is_codex_tool")
+        _openai_fn_tool.pop("_agent_instance")
         return FunctionTool(
             native_interface=func.native_interface,
             task=func,

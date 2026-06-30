@@ -14,6 +14,7 @@ from typing import List, Optional, Union
 from flyteidl2.app import app_definition_pb2
 from flyteidl2.common import runtime_version_pb2
 from flyteidl2.core import literals_pb2, tasks_pb2
+from flyteidl2.task import task_definition_pb2
 from google.protobuf.duration_pb2 import Duration
 
 import flyte
@@ -22,7 +23,7 @@ from flyte._internal.runtime.resources_serde import get_proto_extended_resources
 from flyte._internal.runtime.task_serde import get_security_context, lookup_image_in_cache
 from flyte._logging import logger
 from flyte.app import AppEnvironment, Parameter, Scaling
-from flyte.app._parameter import _DelayedValue
+from flyte.app._parameter import AppEndpoint, _DelayedValue
 from flyte.models import SerializationContext
 from flyte.syncify import syncify
 
@@ -48,14 +49,14 @@ def get_proto_container(
     resources = get_proto_resources(app_env.resources)
 
     if app_env.image == "auto":
-        img = Image.from_debian_base()
+        img: Image | None = Image.from_debian_base()
     elif isinstance(app_env.image, str):
         img = Image.from_base(app_env.image)
     else:
         img = app_env.image
 
     env_name = app_env.name
-    img_uri = lookup_image_in_cache(serialization_context, env_name, img)
+    img_uri = lookup_image_in_cache(serialization_context, env_name, img) if img else None
 
     p = app_env.get_port()
     container_ports = [tasks_pb2.ContainerPort(container_port=p.port, name=p.name)]
@@ -122,10 +123,24 @@ def _serialized_pod_spec(
 
     # Process containers
     for container in containers:
-        img = container.image
-        if isinstance(img, flyte.Image):
-            img = lookup_image_in_cache(serialization_context, container.name, img)
-        container.image = img
+        if container.name == pod_template.primary_container_name:
+            # For the primary container, merge the app_env.image if the container's image is not set
+            if container.image is None:
+                # Use app_env.image as the fallback for the primary container
+                img: flyte.Image | None = None
+                if app_env.image == "auto":
+                    img = flyte.Image.from_debian_base()
+                elif isinstance(app_env.image, str):
+                    img = flyte.Image.from_base(app_env.image)
+                else:
+                    img = app_env.image
+                container.image = lookup_image_in_cache(serialization_context, app_env.name, img) if img else None
+            elif isinstance(container.image, flyte.Image):
+                container.image = lookup_image_in_cache(serialization_context, container.name, container.image)
+        else:
+            # For non-primary containers, just resolve flyte.Image objects
+            if isinstance(container.image, flyte.Image):
+                container.image = lookup_image_in_cache(serialization_context, container.name, container.image)
 
         if container.name == pod_template.primary_container_name:
             container.args = app_env.container_args(serialization_context)
@@ -139,10 +154,19 @@ def _serialized_pod_spec(
                 for resource in resources.requests:
                     requests[_sanitize_resource_name(resource)] = resource.value
 
-                resource_requirements = V1ResourceRequirements(limits=limits, requests=requests)
-
-                if limits or requests:
-                    container.resources = resource_requirements
+            if limits or requests:
+                # Merge the app-declared resources (cpu/mem/gpu from Resources(...))
+                # into whatever the pod template's primary container already set,
+                # instead of replacing it. This preserves extended-resource requests
+                # (e.g. device-plugin resources like "smarter-devices/fuse" added by
+                # PodTemplate.allow_fuse()) that can only be expressed through the pod
+                # template — replacing would silently drop them. App-declared keys win
+                # on conflict. Mirrors the task-serde resource merge.
+                existing = container.resources or V1ResourceRequirements()
+                container.resources = V1ResourceRequirements(
+                    limits={**(existing.limits or {}), **limits},
+                    requests={**(existing.requests or {}), **requests},
+                )
 
             if app_env.env_vars:
                 container.env = [V1EnvVar(name=k, value=v) for k, v in app_env.env_vars.items()] + (container.env or [])
@@ -204,9 +228,9 @@ def _get_scaling_metric(
         return None
 
     if isinstance(metric, Scaling.Concurrency):
-        return app_definition_pb2.ScalingMetric(concurrency=app_definition_pb2.Concurrency(val=metric.val))
+        return app_definition_pb2.ScalingMetric(concurrency=app_definition_pb2.Concurrency(target_value=metric.val))
     elif isinstance(metric, Scaling.RequestRate):
-        return app_definition_pb2.ScalingMetric(request_rate=app_definition_pb2.RequestRate(val=metric.val))
+        return app_definition_pb2.ScalingMetric(request_rate=app_definition_pb2.RequestRate(target_value=metric.val))
 
     return None
 
@@ -227,7 +251,7 @@ async def _materialize_parameters_with_delayed_values(parameters: List[Parameter
         if isinstance(param.value, _DelayedValue):
             logger.info(f"Materializing {param.name} with delayed values of type {param.value.type}")
             value = await param.value.get()
-            assert isinstance(value, (str, flyte.io.File, flyte.io.Dir)), (
+            assert isinstance(value, (str, flyte.io.File, flyte.io.Dir, AppEndpoint)), (
                 f"Materialized value must be a string, file or directory, found {type(value)}"
             )
             _parameters.append(replace(param, value=await param.value.get()))
@@ -254,9 +278,29 @@ async def translate_parameters(parameters: List[Parameter]) -> app_definition_pb
             parameters_list.append(app_definition_pb2.Input(name=param.name, string_value=str(param.value.path)))
         elif isinstance(param.value, flyte.io.Dir):
             parameters_list.append(app_definition_pb2.Input(name=param.name, string_value=str(param.value.path)))
+        elif isinstance(param.value, AppEndpoint):
+            parameters_list.append(app_definition_pb2.Input(name=param.name, string_value=param.value.app_name))
         else:
             raise ValueError(f"Unsupported parameter value type: {type(param.value)}")
     return app_definition_pb2.InputList(items=parameters_list)
+
+
+def _get_code_bundle_uri(serialization_context: SerializationContext) -> str | None:
+    # Only the tgz bundle is a downloadable source archive; the pkl is a pickled
+    # interactive bundle that the download-link feature cannot serve.
+    if serialization_context.code_bundle is None:
+        return None
+    return serialization_context.code_bundle.tgz or None
+
+
+def _get_source_code() -> task_definition_pb2.SourceCode | None:
+    from flyte.git import GitStatus
+
+    git_status = GitStatus.from_current_repo()
+    if not git_status.is_valid:
+        return None
+    url = f"{git_status.remote_url}/tree/{git_status.commit_sha}"
+    return task_definition_pb2.SourceCode(link=url)
 
 
 @syncify
@@ -352,6 +396,13 @@ async def translate_app_env_to_idl(
         short_description=app_env.description,
     )
 
+    # Build timeout config
+    timeout_config = None
+    if app_env.timeouts.request is not None:
+        timeout_dur = Duration()
+        timeout_dur.FromTimedelta(app_env.timeouts.request)
+        timeout_config = app_definition_pb2.TimeoutConfig(request_timeout=timeout_dur)
+
     # Build the full App IDL
     return app_definition_pb2.App(
         metadata=app_definition_pb2.Meta(
@@ -361,6 +412,8 @@ async def translate_app_env_to_idl(
                 domain=serialization_context.domain,
                 name=app_env.name,
             ),
+            code_bundle_uri=_get_code_bundle_uri(serialization_context),
+            source_code=_get_source_code(),
         ),
         spec=app_definition_pb2.Spec(
             desired_state=desired_state,
@@ -379,5 +432,6 @@ async def translate_app_env_to_idl(
             container=container,
             pod=pod,
             inputs=await translate_parameters(parameters),
+            timeouts=timeout_config,
         ),
     )

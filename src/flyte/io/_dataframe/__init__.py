@@ -61,42 +61,6 @@ def register_arrow_handlers():
     DataFrameTransformerEngine.register_renderer(pa.Table, ArrowRenderer())
 
 
-@functools.lru_cache(maxsize=None)
-def register_bigquery_handlers():
-    try:
-        from .bigquery import (
-            ArrowToBQEncodingHandlers,
-            BQToArrowDecodingHandler,
-            BQToPandasDecodingHandler,
-            PandasToBQEncodingHandlers,
-        )
-
-        DataFrameTransformerEngine.register(PandasToBQEncodingHandlers())
-        DataFrameTransformerEngine.register(BQToPandasDecodingHandler())
-        DataFrameTransformerEngine.register(ArrowToBQEncodingHandlers())
-        DataFrameTransformerEngine.register(BQToArrowDecodingHandler())
-    except ImportError:
-        logger.info(
-            "We won't register bigquery handler for structured dataset because "
-            "we can't find the packages google-cloud-bigquery-storage and google-cloud-bigquery"
-        )
-
-
-@functools.lru_cache(maxsize=None)
-def register_snowflake_handlers():
-    try:
-        from .snowflake import PandasToSnowflakeEncodingHandlers, SnowflakeToPandasDecodingHandler
-
-        DataFrameTransformerEngine.register(SnowflakeToPandasDecodingHandler())
-        DataFrameTransformerEngine.register(PandasToSnowflakeEncodingHandlers())
-
-    except ImportError:
-        logger.info(
-            "We won't register snowflake handler for structured dataset because "
-            "we can't find package snowflake-connector-python"
-        )
-
-
 def lazy_import_dataframe_handler():
     if is_imported("pandas"):
         try:
@@ -109,16 +73,6 @@ def lazy_import_dataframe_handler():
             register_arrow_handlers()
         except DuplicateHandlerError:
             logger.debug("Transformer for arrow is already registered.")
-    if is_imported("google.cloud.bigquery"):
-        try:
-            register_bigquery_handlers()
-        except DuplicateHandlerError:
-            logger.debug("Transformer for bigquery is already registered.")
-    if is_imported("snowflake.connector"):
-        try:
-            register_snowflake_handlers()
-        except DuplicateHandlerError:
-            logger.debug("Transformer for snowflake is already registered.")
 
 
 __all__ = [

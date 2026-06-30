@@ -5,7 +5,7 @@ import re
 import typing
 from dataclasses import dataclass, field
 from functools import cache, cached_property
-from typing import TYPE_CHECKING, List, Literal, Optional
+from typing import TYPE_CHECKING, List, Literal, Optional, TypeAlias, Union
 
 from pydantic import BaseModel, model_validator
 
@@ -18,14 +18,9 @@ if TYPE_CHECKING:
 else:
     AutoVersioning = Literal["latest", "current"]
 
-ParameterTypes = str | flyte.io.File | flyte.io.Dir
-_SerializedParameterType = Literal["string", "file", "directory"]
 
-PARAMETER_TYPE_MAP = {
-    str: "string",
-    flyte.io.File: "file",
-    flyte.io.Dir: "directory",
-}
+ParameterTypes: TypeAlias = Union[str, flyte.io.File, flyte.io.Dir, "AppEndpoint"]
+_SerializedParameterType = Literal["string", "file", "directory", "app_endpoint"]
 
 RUNTIME_PARAMETERS_FILE = "flyte-parameters.json"
 
@@ -44,13 +39,11 @@ class _DelayedValue(BaseModel):
             data["type"] = PARAMETER_TYPE_MAP.get(data["type"], data["type"])
         return data
 
-    async def get(self) -> str | flyte.io.File | flyte.io.Dir:
+    async def get(self) -> str | flyte.io.File | flyte.io.Dir | AppEndpoint:
         value = await self.materialize()
-        assert isinstance(value, (str, flyte.io.File, flyte.io.Dir)), (
-            f"Materialized value must be a string, file or directory, found {type(value)}"
+        assert isinstance(value, (str, flyte.io.File, flyte.io.Dir, AppEndpoint)), (
+            f"Materialized value must be a string, file, directory or app endpoint, found {type(value)}"
         )
-        if isinstance(value, (flyte.io.File, flyte.io.Dir)):
-            return value
         return value
 
     async def materialize(self) -> ParameterTypes:
@@ -106,6 +99,8 @@ class RunOutput(_DelayedValue):
             raise ValueError("Either run_name or task_name must be provided")
         if self.run_name is not None and self.task_name is not None:
             raise ValueError("Only one of run_name or task_name must be provided")
+        if self.type == "app_endpoint":
+            raise ValueError("AppEndpoint is not supported as a run output")
 
     @requires_initialization
     async def materialize(self) -> ParameterTypes:
@@ -177,14 +172,19 @@ class AppEndpoint(_DelayedValue):
     public: bool = False
     type: Literal["string"] = "string"
 
+    async def materialize(self) -> AppEndpoint:
+        """Returns the AppEndpoint object, the endpoint is retrieved at serving time by the fserve executable."""
+        return self
+
     @requires_initialization
-    async def materialize(self) -> str:
+    async def _retrieve_endpoint(self) -> str:
+        """Get the endpoint of the specified app at serving time."""
         from flyte.app._app_environment import INTERNAL_APP_ENDPOINT_PATTERN_ENV_VAR
 
         if self.public:
             from flyte.remote import App
 
-            app = App.get(self.app_name)
+            app = await App.get.aio(self.app_name)
             return app.endpoint
 
         endpoint_pattern = os.getenv(INTERNAL_APP_ENDPOINT_PATTERN_ENV_VAR)
@@ -196,16 +196,26 @@ class AppEndpoint(_DelayedValue):
         )
 
 
+PARAMETER_TYPE_MAP = {
+    str: "string",
+    flyte.io.File: "file",
+    flyte.io.Dir: "directory",
+    AppEndpoint: "app_endpoint",
+}
+
+
 @dataclass
 class Parameter:
     """
     Parameter for application.
 
     :param name: Name of parameter.
-    :param value: Value for parameter.
+    :param value: Value for parameter. When ``None``, the value must be supplied at
+        serving time via ``parameter_values`` in :func:`flyte.with_servecontext`.
+    :param type: Type of parameter. If ``None``, the type will be inferred from the value.
     :param env_var: Environment name to set the value in the serving environment.
     :param download: When True, the parameter will be automatically downloaded. This
-        only works if the value refers to an item in a object store. i.e. `s3://...`
+        only works if the value refers to a file/directory in a object store. i.e. `s3://...`
     :param mount: If `value` is a directory, then the directory will be available
         at `mount`. If `value` is a file, then the file will be downloaded into the
         `mount` directory.
@@ -214,9 +224,10 @@ class Parameter:
     """
 
     name: str
-    value: ParameterTypes | _DelayedValue
+    value: Optional[ParameterTypes | _DelayedValue] = None
+    type: Optional[Literal["string", "file", "directory", "app_endpoint"]] = None
     env_var: Optional[str] = None
-    download: bool = False
+    download: bool = True
     mount: Optional[str] = None
     ignore_patterns: list[str] = field(default_factory=list)
 
@@ -228,7 +239,9 @@ class Parameter:
         if self.env_var is not None and env_name_re.match(self.env_var) is None:
             raise ValueError(f"env_var ({self.env_var}) is not a valid environment name for shells")
 
-        if self.value and not isinstance(self.value, (str, flyte.io.File, flyte.io.Dir, RunOutput, AppEndpoint)):
+        if self.value is not None and not isinstance(
+            self.value, (str, flyte.io.File, flyte.io.Dir, RunOutput, AppEndpoint)
+        ):
             raise TypeError(
                 f"Expected value to be of type str, file, dir, RunOutput or AppEndpoint, got {type(self.value)}"
             )
@@ -257,6 +270,13 @@ class SerializableParameter(BaseModel):
         # param.name is guaranteed to be set by Parameter.__post_init__
         assert param.name is not None, "Parameter name should be set by __post_init__"
 
+        if param.value is None:
+            raise ValueError(
+                f"Parameter '{param.name}' has no value. All parameters must have a value at deployment time. "
+                "Provide a value directly or supply one at serve time via parameter_values in "
+                "flyte.with_servecontext()."
+            )
+
         tpe: _SerializedParameterType = "string"
         if isinstance(param.value, flyte.io.File):
             value = param.value.path
@@ -266,13 +286,22 @@ class SerializableParameter(BaseModel):
             value = param.value.path
             tpe = "directory"
             download = True if param.mount is not None else param.download
-        elif isinstance(param.value, (RunOutput, AppEndpoint)):
+        elif isinstance(param.value, RunOutput):
             value = param.value.model_dump_json()
             tpe = param.value.type
             download = True if param.mount is not None else param.download
+        elif isinstance(param.value, AppEndpoint):
+            value = param.value.model_dump_json()
+            tpe = "app_endpoint"
+            download = False
         else:
             value = typing.cast(str, param.value)
             download = False
+
+        if param.type is not None:
+            tpe = param.type
+            if tpe in ("file", "directory") and param.mount is not None:
+                download = True
 
         return cls(
             name=param.name,

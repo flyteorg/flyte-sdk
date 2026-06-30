@@ -89,6 +89,7 @@ def list_files_to_bundle(
     deref_symlinks: bool = False,
     *ignores: typing.Type[Ignore],
     copy_style: CopyFiles = "all",
+    additional_files: typing.Optional[typing.Sequence[str]] = None,
 ) -> typing.Tuple[List[str], str]:
     """
     Takes a source directory and returns a list of all files to be included in the code bundle and a hexdigest of the
@@ -97,11 +98,13 @@ def list_files_to_bundle(
     :param deref_symlinks: Whether to dereference symlinks or not
     :param ignores: A list of Ignore classes to use for ignoring files
     :param copy_style: The copy style to use for the tarball
+    :param additional_files: Extra absolute paths (under ``source``) to include alongside
+        whatever ``copy_style`` discovers. Used for ``Environment.include``.
     :return: A list of all files to be included in the code bundle and a hexdigest of the included files
     """
     ignore = IgnoreGroup(source, *ignores)
 
-    ls, ls_digest = ls_files(source, copy_style, deref_symlinks, ignore)
+    ls, ls_digest = ls_files(source, copy_style, deref_symlinks, ignore, additional_files=additional_files)
     logger.debug(f"Hash of files to be included in the code bundle: {ls_digest}")
     return ls, ls_digest
 
@@ -144,14 +147,28 @@ def create_bundle(
     # Compute where the archive should be written
     archive_fname = output_dir / f"{FAST_PREFIX}{ls_digest}{FAST_FILEENDING}"
     tar_path = output_dir / "tmp.tar"
+    abs_source = os.path.abspath(str(source))
     with tarfile.open(str(tar_path), "w", dereference=deref_symlinks) as tar:
         for ws_file in ls:
-            rel_path = os.path.relpath(ws_file, start=source)
+            # Compute the arcname relative to source using os.path.relpath, which
+            # normalizes ".." components. We deliberately use os.path.abspath rather
+            # than Path.resolve() on both sides — resolve() follows symlinks, so a
+            # symlink inside source that points outside source (e.g.
+            # .venv/bin/python -> /usr/bin/python3.10) would crash relative_to with
+            # "<target> is not in the subpath of <source>".
+            abs_ws = os.path.abspath(ws_file)
+            rel_path = pathlib.PurePath(os.path.relpath(abs_ws, abs_source)).as_posix()
+            if rel_path.startswith(".."):
+                # Defensive: skip files that land outside the source root after
+                # normalization. Callers should have filtered these, but a stray
+                # entry shouldn't abort the entire bundle.
+                logger.warning(f"Skipping {ws_file}: resolves outside source root {abs_source}")
+                continue
             tar.add(
                 os.path.join(source, ws_file),
                 recursive=False,
                 arcname=rel_path,
-                filter=lambda x: tar_strip_file_attributes(x),
+                filter=tar_strip_file_attributes,
             )
 
     size_mbs = tar_path.stat().st_size / 1024 / 1024

@@ -2,8 +2,10 @@
 import asyncio
 import json
 import pathlib
+import tempfile
 from pathlib import Path
 
+import click
 import pytest
 from click.testing import CliRunner
 
@@ -13,11 +15,16 @@ from flyte._deploy import DeploymentPlan, _build_images
 from flyte._initialize import _get_init_config
 from flyte._task_environment import TaskEnvironment
 from flyte.cli._run import run
+from flyte.errors import InvalidImageNameError
 
 TEST_CODE_PATH = pathlib.Path(__file__).parent
 RUN_TESTDATA = TEST_CODE_PATH / "run_testdata"
 HELLO_WORLD_PY = RUN_TESTDATA / "hello_world.py"
 COMPLEX_INPUTS_PY = RUN_TESTDATA / "complex_inputs.py"
+DATAFRAME_INPUTS_PY = RUN_TESTDATA / "dataframe_inputs.py"
+TUPLE_INPUTS_PY = RUN_TESTDATA / "tuple_inputs.py"
+TYPEDDICT_INPUTS_PY = RUN_TESTDATA / "typeddict_inputs.py"
+FILE_INPUT_PY = RUN_TESTDATA / "file_input.py"
 PARQUET_FILE = RUN_TESTDATA / "df.parquet"
 
 
@@ -32,6 +39,100 @@ def test_run_command(runner):
     assert "Run a task from a python file" in result.output
 
 
+def test_run_command_has_max_action_concurrency_option():
+    option_names = {decl for p in run.params for decl in p.opts}
+    assert "--max-action-concurrency" in option_names
+
+
+def test_run_arguments_max_action_concurrency_from_dict():
+    from flyte.cli._run import RunArguments
+
+    run_args = RunArguments.from_dict({"max_action_concurrency": 7})
+    assert run_args.max_action_concurrency == 7
+    assert RunArguments.from_dict({}).max_action_concurrency is None
+
+
+def test_run_command_has_no_recover_from_option():
+    """--recover-from is omitted until the backend ships (see TODO in _run.py)."""
+    option_names = {decl for p in run.params for decl in p.opts}
+    assert "--recover-from" not in option_names
+
+
+def test_run_command_has_queue_option():
+    option_names = {decl for p in run.params for decl in p.opts}
+    assert "--queue" in option_names
+
+
+def test_run_arguments_queue_from_dict():
+    from flyte.cli._run import RunArguments
+
+    run_args = RunArguments.from_dict({"queue": "gpu-queue"})
+    assert run_args.queue == "gpu-queue"
+    assert RunArguments.from_dict({}).queue is None
+
+
+def _patch_with_runcontext(monkeypatch, captured):
+    """Replace flyte.with_runcontext with a stub that records kwargs and returns a no-op runner."""
+
+    class _FakeResult:
+        url = "local://fake"
+
+        def outputs(self):
+            return None
+
+    class _FakeRun:
+        async def aio(self, *args, **kwargs):
+            return _FakeResult()
+
+    class _FakeRunner:
+        run = _FakeRun()
+
+    def _fake_with_runcontext(*args, **kwargs):
+        captured.update(kwargs)
+        return _FakeRunner()
+
+    monkeypatch.setattr(flyte, "with_runcontext", _fake_with_runcontext)
+
+
+def test_run_queue_passed_to_runcontext(runner, monkeypatch):
+    captured = {}
+    _patch_with_runcontext(monkeypatch, captured)
+
+    cmd = ["--queue", "gpu-queue", "--local", str(HELLO_WORLD_PY), "say_hello", "--name", "World"]
+    result = runner.invoke(run, cmd)
+    assert result.exit_code == 0, result.output
+    assert captured.get("queue") == "gpu-queue"
+
+
+def test_run_queue_defaults_to_none_in_runcontext(runner, monkeypatch):
+    captured = {}
+    _patch_with_runcontext(monkeypatch, captured)
+
+    cmd = ["--local", str(HELLO_WORLD_PY), "say_hello", "--name", "World"]
+    result = runner.invoke(run, cmd)
+    assert result.exit_code == 0, result.output
+    assert captured.get("queue") is None
+
+
+def test_run_max_action_concurrency_rejects_negative(runner):
+    result = runner.invoke(run, ["--max-action-concurrency", "-1", str(HELLO_WORLD_PY), "say_hello"])
+    assert result.exit_code != 0
+    assert "max-action-concurrency" in result.output
+
+
+def test_run_local_with_max_action_concurrency(runner):
+    try:
+        cmd = ["--max-action-concurrency", "3", "--local", str(HELLO_WORLD_PY), "say_hello", "--name", "World"]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            # https://github.com/pallets/click/issues/824
+            return
+        else:
+            raise ve
+
+
 def test_run_hello_world(runner):
     try:
         cmd = ["--local", str(HELLO_WORLD_PY), "say_hello", "--name", "World"]
@@ -44,6 +145,57 @@ def test_run_hello_world(runner):
             return
         else:
             raise ve
+
+
+def test_run_command_has_rerun_from_option():
+    """--rerun-from is a visible option on `flyte run` (not hidden — rerun works today)."""
+    opt_names = {decl for p in run.params for decl in p.opts}
+    assert "--rerun-from" in opt_names
+    rerun_opt = next(p for p in run.params if "--rerun-from" in p.opts)
+    assert rerun_opt.hidden is False
+
+
+def test_run_rerun_from_routes_to_rerun(runner):
+    """`flyte run <file> <task> --rerun-from r` routes to runner.rerun(r, task_template=task).
+
+    The required `name` input is NOT demanded — inputs come from the prior run.
+    """
+    from unittest import mock
+
+    from mock.mock import AsyncMock
+
+    runner_obj = mock.MagicMock()
+    runner_obj.rerun.aio = AsyncMock(return_value=mock.MagicMock())
+    runner_obj.run.aio = AsyncMock()
+
+    with mock.patch("flyte.with_runcontext", return_value=runner_obj):
+        cmd = ["--rerun-from", "r1", "--project", "p", "--domain", "d", str(HELLO_WORLD_PY), "say_hello"]
+        try:
+            result = runner.invoke(run, cmd)
+        except ValueError as ve:
+            if "I/O operation on closed file" in str(ve):
+                return
+            raise
+
+    assert result.exit_code == 0, result.output
+    runner_obj.rerun.aio.assert_awaited_once()
+    args, kwargs = runner_obj.rerun.aio.call_args
+    assert args[0] == "r1"
+    assert "task_template" in kwargs  # this local say_hello task is passed as the substitute code
+    runner_obj.run.aio.assert_not_awaited()
+
+
+def test_run_rerun_from_rejects_local(runner):
+    """--rerun-from cannot be combined with --local (rerun is remote-only)."""
+    cmd = ["--local", "--rerun-from", "r1", str(HELLO_WORLD_PY), "say_hello"]
+    try:
+        result = runner.invoke(run, cmd)
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise
+    assert result.exit_code != 0
+    assert "requires remote" in result.output.lower()
 
 
 @pytest.mark.integration
@@ -167,10 +319,1335 @@ def test_build_images_image_name_not_found_error(runner):
     deployment_plan = DeploymentPlan(envs={env_name: task_env})
 
     cfg = _get_init_config()
-    # Check if _build_images raises ValueError for missing image name
-    with pytest.raises(ValueError) as exc_info:
+    # A reference to an undeclared image name is a user-config mistake, surfaced as
+    # InvalidImageNameError (a RuntimeUserError) so it's filtered from Sentry.
+    with pytest.raises(InvalidImageNameError) as exc_info:
         asyncio.run(_build_images(deployment_plan, cfg.images))
 
     error_msg = str(exc_info.value)
     assert "Image name 'invalid' not found in config" in error_msg
     assert "'custom'" in error_msg
+
+
+def test_run_with_local_file_input(runner):
+    """Test that --local mode correctly handles local file inputs without uploading.
+
+    This test uses an existing parquet file as input to avoid temp file path issues.
+    """
+    try:
+        cmd = [
+            "--local",
+            str(COMPLEX_INPUTS_PY),
+            "print_all",
+            "--a",
+            "1",
+            "--b",
+            "Hello",
+            "--c",
+            "1.1",
+            "--d",
+            '{"i":1,"a":["h","e"]}',
+            "--e",
+            "[1,2,3]",
+            "--f",
+            '{"x":1.0, "y":2.0}',
+            "--g",
+            str(PARQUET_FILE),  # File input - uses local path in local mode
+            "--i",
+            "2020-05-01",
+            "--j",
+            "P1D",
+            "--k",
+            "RED",
+            "--h",
+            "--m",
+            '{"hello": "world"}',
+            "--p",
+            "Any",
+            "--q",
+            str(RUN_TESTDATA),  # Dir input
+            "--r",
+            json.dumps([{"i": 1, "a": ["h", "e"]}]),
+            "--s",
+            json.dumps({"x": {"i": 1, "a": ["h", "e"]}}),
+            "--t",
+            json.dumps({"i": [{"i": 1, "a": ["h", "e"]}]}),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            # Known click issue
+            return
+        raise ve
+
+
+def test_run_with_local_dir_input(runner):
+    """Test that --local mode correctly handles local directory inputs without uploading.
+
+    This test uses an existing directory as input to avoid temp file path issues.
+    """
+    try:
+        cmd = [
+            "--local",
+            str(COMPLEX_INPUTS_PY),
+            "print_all",
+            "--a",
+            "1",
+            "--b",
+            "Hello",
+            "--c",
+            "1.1",
+            "--d",
+            '{"i":1,"a":["h","e"]}',
+            "--e",
+            "[1,2,3]",
+            "--f",
+            '{"x":1.0, "y":2.0}',
+            "--g",
+            str(PARQUET_FILE),  # File input
+            "--i",
+            "2020-05-01",
+            "--j",
+            "P1D",
+            "--k",
+            "RED",
+            "--h",
+            "--m",
+            '{"hello": "world"}',
+            "--p",
+            "Any",
+            "--q",
+            str(RUN_TESTDATA),  # Dir input - uses local path in local mode
+            "--r",
+            json.dumps([{"i": 1, "a": ["h", "e"]}]),
+            "--s",
+            json.dumps({"x": {"i": 1, "a": ["h", "e"]}}),
+            "--t",
+            json.dumps({"i": [{"i": 1, "a": ["h", "e"]}]}),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            # Known click issue
+            return
+        raise ve
+
+
+def test_file_param_type_returns_file_with_local_path_in_local_mode():
+    """Test that FileParamType returns File with local path when run_args.local is True."""
+    import tempfile
+    from unittest.mock import MagicMock
+
+    from flyte.cli._params import FileParamType
+    from flyte.cli._run import RunArguments
+    from flyte.io import File
+
+    # Create mock context object with run_args.local = True
+    run_args = RunArguments(local=True)
+    mock_cli_obj = MagicMock()
+    mock_cli_obj.run_args = run_args
+
+    ctx = MagicMock()
+    ctx.obj = mock_cli_obj
+
+    # Create a temporary file for testing
+    with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".txt") as tmp:
+        tmp.write("test content")
+        tmp_path = tmp.name
+
+    try:
+        param_type = FileParamType()
+        result = param_type.convert(tmp_path, None, ctx)
+
+        # Should return a File object with the local path
+        assert isinstance(result, File)
+        assert result.path == tmp_path
+    finally:
+        Path(tmp_path).unlink()
+
+
+def test_dir_param_type_returns_dir_with_local_path_in_local_mode():
+    """Test that DirParamType returns Dir with local path when run_args.local is True."""
+    import tempfile
+    from unittest.mock import MagicMock
+
+    from flyte.cli._params import DirParamType
+    from flyte.cli._run import RunArguments
+    from flyte.io import Dir
+
+    # Create mock context object with run_args.local = True
+    run_args = RunArguments(local=True)
+    mock_cli_obj = MagicMock()
+    mock_cli_obj.run_args = run_args
+
+    ctx = MagicMock()
+    ctx.obj = mock_cli_obj
+
+    # Create a temporary directory for testing
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        param_type = DirParamType()
+        result = param_type.convert(tmp_dir, None, ctx)
+
+        # Should return a Dir object with the local path
+        assert isinstance(result, Dir)
+        assert result.path == tmp_dir
+
+
+def test_json_param_type_converts_list_of_file_paths_to_file_objects():
+    """list[File] CLI JSON should convert string paths to File objects like FileParamType does."""
+    import json
+    from unittest.mock import MagicMock
+
+    from flyte.cli._params import JsonParamType
+    from flyte.cli._run import RunArguments
+    from flyte.io import File
+
+    run_args = RunArguments(local=True)
+    mock_cli_obj = MagicMock()
+    mock_cli_obj.run_args = run_args
+
+    ctx = MagicMock()
+    ctx.obj = mock_cli_obj
+
+    param_type = JsonParamType(list[File])
+    value = json.dumps(["s3://example-path", "s3://example-path2"])
+    result = param_type.convert(value, None, ctx)
+
+    assert isinstance(result, list)
+    assert len(result) == 2
+    assert all(isinstance(f, File) for f in result)
+    assert result[0].path == "s3://example-path"
+    assert result[1].path == "s3://example-path2"
+
+
+def test_json_param_type_converts_dataclass_with_file_and_dir_paths():
+    """Dataclass CLI JSON should convert string File/Dir paths to typed objects."""
+    import json
+    from dataclasses import dataclass
+    from typing import Optional
+    from unittest.mock import MagicMock
+
+    from flyte.cli._params import JsonParamType
+    from flyte.cli._run import RunArguments
+    from flyte.io import Dir, File
+
+    @dataclass
+    class FlyteTypes:
+        flytefile: Optional[File] = None
+        flytedir: Optional[Dir] = None
+
+    run_args = RunArguments(local=True)
+    mock_cli_obj = MagicMock()
+    mock_cli_obj.run_args = run_args
+
+    ctx = MagicMock()
+    ctx.obj = mock_cli_obj
+
+    param_type = JsonParamType(FlyteTypes)
+    result = param_type.convert(
+        json.dumps({"flytefile": "s3://example-path", "flytedir": "s3://example-dir"}),
+        None,
+        ctx,
+    )
+
+    assert isinstance(result, FlyteTypes)
+    assert isinstance(result.flytefile, File)
+    assert isinstance(result.flytedir, Dir)
+    assert result.flytefile.path == "s3://example-path"
+    assert result.flytedir.path == "s3://example-dir"
+
+
+def test_json_param_type_converts_nested_dataclass_with_file_paths():
+    """Nested dataclass CLI JSON should convert nested string File paths."""
+    import json
+    from dataclasses import dataclass
+    from typing import List, Optional
+    from unittest.mock import MagicMock
+
+    from flyte.cli._params import JsonParamType
+    from flyte.cli._run import RunArguments
+    from flyte.io import File
+
+    @dataclass
+    class Inner:
+        flytefile: File
+
+    @dataclass
+    class Outer:
+        inner: Inner
+        list_inner: Optional[List[Inner]] = None
+
+    run_args = RunArguments(local=True)
+    mock_cli_obj = MagicMock()
+    mock_cli_obj.run_args = run_args
+
+    ctx = MagicMock()
+    ctx.obj = mock_cli_obj
+
+    param_type = JsonParamType(Outer)
+    result = param_type.convert(
+        json.dumps(
+            {
+                "inner": {"flytefile": "s3://inner-path"},
+                "list_inner": [{"flytefile": "s3://list-path-1"}, {"flytefile": "s3://list-path-2"}],
+            }
+        ),
+        None,
+        ctx,
+    )
+
+    assert isinstance(result.inner.flytefile, File)
+    assert result.inner.flytefile.path == "s3://inner-path"
+    assert len(result.list_inner) == 2
+    assert all(isinstance(item.flytefile, File) for item in result.list_inner)
+    assert result.list_inner[0].flytefile.path == "s3://list-path-1"
+
+
+def test_json_param_type_accepts_dataclass_file_dict_format():
+    """Dataclass File/Dir fields still accept the structured dict JSON format."""
+    import json
+    from dataclasses import dataclass
+    from unittest.mock import MagicMock
+
+    from flyte.cli._params import JsonParamType
+    from flyte.cli._run import RunArguments
+    from flyte.io import Dir, File
+
+    @dataclass
+    class FlyteTypes:
+        flytefile: File
+        flytedir: Dir
+
+    run_args = RunArguments(local=True)
+    mock_cli_obj = MagicMock()
+    mock_cli_obj.run_args = run_args
+
+    ctx = MagicMock()
+    ctx.obj = mock_cli_obj
+
+    param_type = JsonParamType(FlyteTypes)
+    result = param_type.convert(
+        json.dumps({"flytefile": {"path": "s3://example-path"}, "flytedir": {"path": "s3://example-dir"}}),
+        None,
+        ctx,
+    )
+
+    assert isinstance(result.flytefile, File)
+    assert isinstance(result.flytedir, Dir)
+    assert result.flytefile.path == "s3://example-path"
+    assert result.flytedir.path == "s3://example-dir"
+
+
+pd = None
+try:
+    import pandas as pd
+except ImportError:
+    pass
+
+
+@pytest.fixture
+def temp_parquet_file_for_json_param_type():
+    """Create a temporary parquet file for JsonParamType DataFrame tests."""
+    if pd is None:
+        pytest.skip("pandas is not installed")
+
+    df = pd.DataFrame({"name": ["Alice"], "age": [25]})
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".parquet") as f:
+        df.to_parquet(f.name)
+        yield f.name
+    Path(f.name).unlink(missing_ok=True)
+
+
+@pytest.mark.skipif(pd is None, reason="pandas is not installed")
+def test_json_param_type_converts_list_of_dataframe_paths_to_dataframe_objects(
+    temp_parquet_file_for_json_param_type,
+):
+    """list[DataFrame] CLI JSON should convert string paths to DataFrame objects."""
+    import json
+    from unittest.mock import MagicMock
+
+    from flyte.cli._params import JsonParamType
+    from flyte.cli._run import RunArguments
+    from flyte.io import DataFrame
+
+    run_args = RunArguments(local=True)
+    mock_cli_obj = MagicMock()
+    mock_cli_obj.run_args = run_args
+
+    ctx = MagicMock()
+    ctx.obj = mock_cli_obj
+
+    param_type = JsonParamType(list[DataFrame])
+    result = param_type.convert(
+        json.dumps(["s3://example-path/data.parquet", temp_parquet_file_for_json_param_type]),
+        None,
+        ctx,
+    )
+
+    assert isinstance(result, list)
+    assert len(result) == 2
+    assert all(isinstance(df, DataFrame) for df in result)
+    assert result[0].uri == "s3://example-path/data.parquet"
+    assert result[1].uri == temp_parquet_file_for_json_param_type
+
+
+@pytest.mark.skipif(pd is None, reason="pandas is not installed")
+def test_json_param_type_converts_dataclass_with_dataframe_paths():
+    """Dataclass CLI JSON should convert string DataFrame paths to typed objects."""
+    import json
+    from dataclasses import dataclass
+    from typing import Optional
+    from unittest.mock import MagicMock
+
+    from flyte.cli._params import JsonParamType
+    from flyte.cli._run import RunArguments
+    from flyte.io import DataFrame
+
+    @dataclass
+    class DataFrameInput:
+        dataframe: Optional[DataFrame] = None
+
+    run_args = RunArguments(local=True)
+    mock_cli_obj = MagicMock()
+    mock_cli_obj.run_args = run_args
+
+    ctx = MagicMock()
+    ctx.obj = mock_cli_obj
+
+    param_type = JsonParamType(DataFrameInput)
+    result = param_type.convert(
+        json.dumps({"dataframe": "s3://example-path/data.parquet"}),
+        None,
+        ctx,
+    )
+
+    assert isinstance(result, DataFrameInput)
+    assert isinstance(result.dataframe, DataFrame)
+    assert result.dataframe.uri == "s3://example-path/data.parquet"
+
+
+@pytest.mark.skipif(pd is None, reason="pandas is not installed")
+def test_json_param_type_converts_nested_dataclass_with_dataframe_paths(
+    temp_parquet_file_for_json_param_type,
+):
+    """Nested dataclass CLI JSON should convert nested string DataFrame paths."""
+    import json
+    from dataclasses import dataclass
+    from typing import List
+    from unittest.mock import MagicMock
+
+    from flyte.cli._params import JsonParamType
+    from flyte.cli._run import RunArguments
+    from flyte.io import DataFrame
+
+    @dataclass
+    class Inner:
+        dataframe: DataFrame
+
+    @dataclass
+    class Outer:
+        inner: Inner
+        list_inner: List[Inner]
+
+    run_args = RunArguments(local=True)
+    mock_cli_obj = MagicMock()
+    mock_cli_obj.run_args = run_args
+
+    ctx = MagicMock()
+    ctx.obj = mock_cli_obj
+
+    param_type = JsonParamType(Outer)
+    result = param_type.convert(
+        json.dumps(
+            {
+                "inner": {"dataframe": temp_parquet_file_for_json_param_type},
+                "list_inner": [
+                    {"dataframe": "s3://example-path/data-1.parquet"},
+                    {"dataframe": "s3://example-path/data-2.parquet"},
+                ],
+            }
+        ),
+        None,
+        ctx,
+    )
+
+    assert isinstance(result.inner.dataframe, DataFrame)
+    assert result.inner.dataframe.uri == temp_parquet_file_for_json_param_type
+    assert len(result.list_inner) == 2
+    assert all(isinstance(item.dataframe, DataFrame) for item in result.list_inner)
+    assert result.list_inner[0].dataframe.uri == "s3://example-path/data-1.parquet"
+
+
+@pytest.mark.skipif(pd is None, reason="pandas is not installed")
+def test_json_param_type_accepts_dataclass_dataframe_dict_format(temp_parquet_file_for_json_param_type):
+    """Dataclass DataFrame fields still accept the structured dict JSON format."""
+    import json
+    from dataclasses import dataclass
+    from unittest.mock import MagicMock
+
+    from flyte.cli._params import JsonParamType
+    from flyte.cli._run import RunArguments
+    from flyte.io import DataFrame
+
+    @dataclass
+    class DataFrameInput:
+        dataframe: DataFrame
+
+    run_args = RunArguments(local=True)
+    mock_cli_obj = MagicMock()
+    mock_cli_obj.run_args = run_args
+
+    ctx = MagicMock()
+    ctx.obj = mock_cli_obj
+
+    param_type = JsonParamType(DataFrameInput)
+    result = param_type.convert(
+        json.dumps({"dataframe": {"uri": temp_parquet_file_for_json_param_type, "format": "parquet"}}),
+        None,
+        ctx,
+    )
+
+    assert isinstance(result.dataframe, DataFrame)
+    assert result.dataframe.uri == temp_parquet_file_for_json_param_type
+    assert result.dataframe.format == "parquet"
+
+
+@pytest.mark.skipif(pd is None, reason="pandas is not installed")
+def test_json_param_type_converts_dict_of_dataframe_paths(temp_parquet_file_for_json_param_type):
+    """dict[str, DataFrame] CLI JSON should convert string paths to DataFrame objects."""
+    import json
+    from unittest.mock import MagicMock
+
+    from flyte.cli._params import JsonParamType
+    from flyte.cli._run import RunArguments
+    from flyte.io import DataFrame
+
+    run_args = RunArguments(local=True)
+    mock_cli_obj = MagicMock()
+    mock_cli_obj.run_args = run_args
+
+    ctx = MagicMock()
+    ctx.obj = mock_cli_obj
+
+    param_type = JsonParamType(dict[str, DataFrame])
+    result = param_type.convert(
+        json.dumps(
+            {
+                "remote": "s3://example-path/data.parquet",
+                "local": temp_parquet_file_for_json_param_type,
+            }
+        ),
+        None,
+        ctx,
+    )
+
+    assert isinstance(result["remote"], DataFrame)
+    assert isinstance(result["local"], DataFrame)
+    assert result["remote"].uri == "s3://example-path/data.parquet"
+    assert result["local"].uri == temp_parquet_file_for_json_param_type
+
+
+# ============================================================================
+# Tests for DataFrame CLI inputs
+# ============================================================================
+
+pd = None
+try:
+    import pandas as pd
+except ImportError:
+    pass
+
+
+@pytest.fixture
+def temp_parquet_file():
+    """Create a temporary parquet file for testing."""
+    if pd is None:
+        pytest.skip("pandas is not installed")
+
+    df = pd.DataFrame({"name": ["Alice", "Bob", "Charlie"], "age": [25, 30, 35], "city": ["NYC", "SF", "LA"]})
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".parquet") as f:
+        df.to_parquet(f.name)
+        yield f.name
+    # Cleanup
+    Path(f.name).unlink(missing_ok=True)
+
+
+@pytest.fixture
+def temp_parquet_dir():
+    """Create a temporary directory with a single parquet file for testing."""
+    if pd is None:
+        pytest.skip("pandas is not installed")
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        df = pd.DataFrame({"name": ["Alice", "Bob", "Charlie"], "age": [25, 30, 35], "city": ["NYC", "SF", "LA"]})
+        # Write as a single parquet file in the directory
+        df.to_parquet(Path(temp_dir) / "data.parquet")
+        yield temp_dir
+
+
+@pytest.fixture
+def temp_partitioned_parquet_dir():
+    """Create a temporary directory with partitioned parquet files (using partition_cols)."""
+    if pd is None:
+        pytest.skip("pandas is not installed")
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        df = pd.DataFrame(
+            {
+                "name": ["Alice", "Bob", "Charlie", "David"],
+                "age": [25, 30, 35, 40],
+                "category": ["A", "B", "A", "C"],
+                "active": [True, False, True, True],
+            }
+        )
+        # Write as partitioned parquet files (creates subdirectories like category=A/, category=B/, etc.)
+        df.to_parquet(temp_dir, partition_cols=["category"])
+        yield temp_dir
+
+
+@pytest.mark.skipif(pd is None, reason="pandas is not installed")
+def test_cli_run_with_parquet_file_pd_dataframe_input(runner, temp_parquet_file):
+    """Test CLI run with a file path to parquet, task expects pd.DataFrame."""
+    try:
+        cmd = [
+            "--local",
+            str(DATAFRAME_INPUTS_PY),
+            "process_pd_df",
+            "--df",
+            temp_parquet_file,
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            # Known click issue
+            return
+        raise ve
+
+
+@pytest.mark.skipif(pd is None, reason="pandas is not installed")
+def test_cli_run_with_parquet_file_flyte_dataframe_input(runner, temp_parquet_file):
+    """Test CLI run with a file path to parquet, task expects flyte.io.DataFrame."""
+    try:
+        cmd = [
+            "--local",
+            str(DATAFRAME_INPUTS_PY),
+            "process_fdf",
+            "--df",
+            temp_parquet_file,
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            # Known click issue
+            return
+        raise ve
+
+
+@pytest.mark.integration
+def test_run_with_local_dataframe_file_input(runner):
+    """Test that --local mode correctly handles local parquet file inputs for DataFrames."""
+    try:
+        cmd = [
+            "--local",
+            str(COMPLEX_INPUTS_PY),
+            "print_all",
+            "--a",
+            "1",
+            "--b",
+            "Hello",
+            "--c",
+            "1.1",
+            "--d",
+            '{"i":1,"a":["h","e"]}',
+            "--e",
+            "[1,2,3]",
+            "--f",
+            '{"x":1.0, "y":2.0}',
+            "--g",
+            str(PARQUET_FILE),  # File input
+            "--i",
+            "2020-05-01",
+            "--j",
+            "P1D",
+            "--k",
+            "RED",
+            "--h",
+            "--m",
+            '{"hello": "world"}',
+            "--p",
+            "Any",
+            "--q",
+            str(RUN_TESTDATA),  # Dir input
+            "--r",
+            json.dumps([{"i": 1, "a": ["h", "e"]}]),
+            "--s",
+            json.dumps({"x": {"i": 1, "a": ["h", "e"]}}),
+            "--t",
+            json.dumps({"i": [{"i": 1, "a": ["h", "e"]}]}),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            # Known click issue
+            return
+        raise ve
+
+
+@pytest.mark.skipif(pd is None, reason="pandas is not installed")
+def test_cli_run_with_parquet_dir_pd_dataframe_input(runner, temp_parquet_dir):
+    """Test CLI run with a directory path to parquet, task expects pd.DataFrame."""
+    try:
+        cmd = [
+            "--local",
+            str(DATAFRAME_INPUTS_PY),
+            "process_pd_df",
+            "--df",
+            temp_parquet_dir,
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            # Known click issue
+            return
+        raise ve
+
+
+@pytest.mark.skipif(pd is None, reason="pandas is not installed")
+def test_cli_run_with_parquet_dir_flyte_dataframe_input(runner, temp_parquet_dir):
+    """Test CLI run with a directory path to parquet, task expects flyte.io.DataFrame."""
+    try:
+        cmd = [
+            "--local",
+            str(DATAFRAME_INPUTS_PY),
+            "process_fdf",
+            "--df",
+            temp_parquet_dir,
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            # Known click issue
+            return
+        raise ve
+
+
+@pytest.mark.skipif(pd is None, reason="pandas is not installed")
+def test_cli_run_with_existing_parquet_file(runner):
+    """Test CLI run with the existing df.parquet file in run_testdata."""
+    try:
+        cmd = [
+            "--local",
+            str(DATAFRAME_INPUTS_PY),
+            "process_pd_df",
+            "--df",
+            str(PARQUET_FILE),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            # Known click issue
+            return
+        raise ve
+
+
+@pytest.mark.skipif(pd is None, reason="pandas is not installed")
+def test_cli_run_with_existing_parquet_file_flyte_dataframe(runner):
+    """Test CLI run with the existing df.parquet file, task expects flyte.io.DataFrame."""
+    try:
+        cmd = [
+            "--local",
+            str(DATAFRAME_INPUTS_PY),
+            "process_fdf",
+            "--df",
+            str(PARQUET_FILE),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            # Known click issue
+            return
+        raise ve
+
+
+@pytest.mark.skipif(pd is None, reason="pandas is not installed")
+def test_cli_run_with_partitioned_parquet_dir_pd_dataframe_input(runner, temp_partitioned_parquet_dir):
+    """Test CLI run with a partitioned parquet directory (partition_cols), task expects pd.DataFrame."""
+    try:
+        cmd = [
+            "--local",
+            str(DATAFRAME_INPUTS_PY),
+            "process_pd_df",
+            "--df",
+            temp_partitioned_parquet_dir,
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            # Known click issue
+            return
+        raise ve
+
+
+@pytest.mark.skipif(pd is None, reason="pandas is not installed")
+def test_cli_run_with_partitioned_parquet_dir_flyte_dataframe_input(runner, temp_partitioned_parquet_dir):
+    """Test CLI run with a partitioned parquet directory (partition_cols), task expects flyte.io.DataFrame."""
+    try:
+        cmd = [
+            "--local",
+            str(DATAFRAME_INPUTS_PY),
+            "process_fdf",
+            "--df",
+            temp_partitioned_parquet_dir,
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            # Known click issue
+            return
+        raise ve
+
+
+# ============================================================================
+# Tests for tuple and NamedTuple CLI inputs
+# ============================================================================
+
+
+def test_cli_run_with_simple_tuple_input(runner):
+    """Test CLI run with a simple tuple[int, str, float] input."""
+    try:
+        cmd = [
+            "--local",
+            str(TUPLE_INPUTS_PY),
+            "process_simple_tuple",
+            "--data",
+            json.dumps({"item_0": 42, "item_1": "hello", "item_2": 3.14}),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise ve
+
+
+def test_cli_run_with_nested_tuple_input(runner):
+    """Test CLI run with a nested tuple[tuple[int, int], str] input."""
+    try:
+        cmd = [
+            "--local",
+            str(TUPLE_INPUTS_PY),
+            "process_nested_tuple",
+            "--data",
+            json.dumps({"item_0": {"item_0": 10, "item_1": 20}, "item_1": "nested"}),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise ve
+
+
+def test_cli_run_with_tuple_containing_dataclass(runner):
+    """Test CLI run with a tuple containing dataclass elements."""
+    try:
+        cmd = [
+            "--local",
+            str(TUPLE_INPUTS_PY),
+            "process_tuple_with_dataclass",
+            "--data",
+            json.dumps(
+                {
+                    "item_0": {"x": 0.0, "y": 0.0},
+                    "item_1": {"x": 3.0, "y": 4.0},
+                    "item_2": "line segment",
+                }
+            ),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise ve
+
+
+def test_cli_run_with_tuple_containing_list(runner):
+    """Test CLI run with a tuple containing a list."""
+    try:
+        cmd = [
+            "--local",
+            str(TUPLE_INPUTS_PY),
+            "process_tuple_with_list",
+            "--data",
+            json.dumps({"item_0": [1, 2, 3, 4, 5], "item_1": "numbers"}),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise ve
+
+
+def test_cli_run_with_coordinates_namedtuple(runner):
+    """Test CLI run with a Coordinates NamedTuple input."""
+    try:
+        cmd = [
+            "--local",
+            str(TUPLE_INPUTS_PY),
+            "process_coordinates",
+            "--coords",
+            json.dumps({"latitude": 37.7749, "longitude": -122.4194, "altitude": 16.0}),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise ve
+
+
+def test_cli_run_with_person_namedtuple(runner):
+    """Test CLI run with a PersonInfo NamedTuple input."""
+    try:
+        cmd = [
+            "--local",
+            str(TUPLE_INPUTS_PY),
+            "process_person",
+            "--person",
+            json.dumps({"name": "Alice", "age": 30, "email": "alice@example.com"}),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise ve
+
+
+def test_cli_run_with_metrics_namedtuple(runner):
+    """Test CLI run with a ModelMetrics NamedTuple input."""
+    try:
+        cmd = [
+            "--local",
+            str(TUPLE_INPUTS_PY),
+            "process_metrics",
+            "--metrics",
+            json.dumps({"accuracy": 0.95, "precision": 0.92, "recall": 0.88, "f1_score": 0.90}),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise ve
+
+
+def test_cli_run_with_nested_namedtuple(runner):
+    """Test CLI run with a nested NamedTuple (Employee) containing PersonInfo and Address."""
+    try:
+        cmd = [
+            "--local",
+            str(TUPLE_INPUTS_PY),
+            "process_employee",
+            "--emp",
+            json.dumps(
+                {
+                    "info": {"name": "Bob", "age": 35, "email": "bob@company.com"},
+                    "department": "Engineering",
+                    "address": {"street": "123 Main St", "city": "San Francisco", "country": "USA"},
+                }
+            ),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise ve
+
+
+# ============================================================================
+# Tests for TypedDict CLI inputs
+# ============================================================================
+
+
+def test_cli_run_with_simple_typeddict_coordinates(runner):
+    """Test CLI run with a simple Coordinates TypedDict input."""
+    try:
+        cmd = [
+            "--local",
+            str(TYPEDDICT_INPUTS_PY),
+            "process_coordinates",
+            "--coords",
+            json.dumps({"latitude": 37.7749, "longitude": -122.4194, "altitude": 16.0}),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise ve
+
+
+def test_cli_run_with_person_typeddict(runner):
+    """Test CLI run with a PersonInfo TypedDict input."""
+    try:
+        cmd = [
+            "--local",
+            str(TYPEDDICT_INPUTS_PY),
+            "process_person",
+            "--person",
+            json.dumps({"name": "Alice", "age": 30, "email": "alice@example.com"}),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise ve
+
+
+def test_cli_run_with_metrics_typeddict(runner):
+    """Test CLI run with a ModelMetrics TypedDict input."""
+    try:
+        cmd = [
+            "--local",
+            str(TYPEDDICT_INPUTS_PY),
+            "process_metrics",
+            "--metrics",
+            json.dumps({"accuracy": 0.95, "precision": 0.92, "recall": 0.88, "f1_score": 0.90}),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise ve
+
+
+def test_cli_run_with_typeddict_containing_dataclass(runner):
+    """Test CLI run with a TypedDict containing a dataclass (EmployeeInfo)."""
+    try:
+        cmd = [
+            "--local",
+            str(TYPEDDICT_INPUTS_PY),
+            "process_employee",
+            "--emp",
+            json.dumps(
+                {
+                    "name": "Bob",
+                    "age": 35,
+                    "department": "Engineering",
+                    "address": {"street": "123 Main St", "city": "San Francisco", "country": "USA"},
+                }
+            ),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise ve
+
+
+def test_cli_run_with_typeddict_containing_lists(runner):
+    """Test CLI run with a TypedDict containing list fields (TeamInfo)."""
+    try:
+        cmd = [
+            "--local",
+            str(TYPEDDICT_INPUTS_PY),
+            "process_team",
+            "--team",
+            json.dumps(
+                {
+                    "team_name": "Alpha",
+                    "members": ["Alice", "Bob", "Charlie"],
+                    "scores": [95.5, 88.0, 92.3],
+                }
+            ),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise ve
+
+
+def test_cli_run_with_nested_typeddict(runner):
+    """Test CLI run with a nested TypedDict (OuterConfig containing InnerConfig)."""
+    try:
+        cmd = [
+            "--local",
+            str(TYPEDDICT_INPUTS_PY),
+            "process_nested_typeddict",
+            "--config",
+            json.dumps(
+                {
+                    "name": "test_config",
+                    "inner": {"enabled": True, "threshold": 0.75},
+                }
+            ),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise ve
+
+
+def test_cli_run_with_typeddict_containing_dict_fields(runner):
+    """Test CLI run with a TypedDict containing dict fields."""
+    try:
+        cmd = [
+            "--local",
+            str(TYPEDDICT_INPUTS_PY),
+            "process_typeddict_with_dict",
+            "--config",
+            json.dumps(
+                {
+                    "name": "my_config",
+                    "settings": {"key1": "value1", "key2": "value2"},
+                    "labels": {"env": "prod", "team": "alpha"},
+                }
+            ),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise ve
+
+
+# ============================================================================
+# Tests for TypedDict with NotRequired fields
+# These tests verify:
+# 1. NotRequired[T] is properly unwrapped (no PydanticSchemaGenerationError)
+# 2. Optional fields not provided are absent from output (not None)
+# ============================================================================
+
+
+def test_cli_run_with_typeddict_notrequired_field_absent(runner):
+    """Test CLI run with TypedDict where NotRequired field is not provided.
+
+    This verifies that NotRequired[T] is properly unwrapped for Pydantic validation.
+    Without the fix, this would raise PydanticSchemaGenerationError.
+    """
+    try:
+        cmd = [
+            "--local",
+            str(TYPEDDICT_INPUTS_PY),
+            "process_ai_response",
+            "--response",
+            json.dumps({"content": "Hello!", "role": "assistant"}),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+        # Verify the output doesn't contain "tools:" since tool_calls was not provided
+        assert "tools:" not in result.output or "assistant: Hello!" in result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise ve
+
+
+def test_cli_run_with_typeddict_notrequired_field_present(runner):
+    """Test CLI run with TypedDict where NotRequired field is provided."""
+    try:
+        cmd = [
+            "--local",
+            str(TYPEDDICT_INPUTS_PY),
+            "process_ai_response",
+            "--response",
+            json.dumps(
+                {
+                    "content": "Let me search for that.",
+                    "role": "assistant",
+                    "tool_calls": [
+                        {"name": "web_search", "args": {"query": "flyte"}},
+                        {"name": "code_search", "args": {"pattern": "TypedDict"}},
+                    ],
+                }
+            ),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise ve
+
+
+def test_cli_run_with_typeddict_multiple_notrequired_fields_minimal(runner):
+    """Test CLI run with TypedDict having multiple NotRequired fields, providing only required."""
+    try:
+        cmd = [
+            "--local",
+            str(TYPEDDICT_INPUTS_PY),
+            "process_user_profile",
+            "--profile",
+            json.dumps({"username": "alice", "email": "alice@example.com"}),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise ve
+
+
+def test_cli_run_with_typeddict_multiple_notrequired_fields_partial(runner):
+    """Test CLI run with TypedDict having multiple NotRequired fields, providing some optional."""
+    try:
+        cmd = [
+            "--local",
+            str(TYPEDDICT_INPUTS_PY),
+            "process_user_profile",
+            "--profile",
+            json.dumps(
+                {
+                    "username": "bob",
+                    "email": "bob@example.com",
+                    "display_name": "Bob Smith",
+                    "age": 30,
+                    # bio is intentionally not provided
+                }
+            ),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise ve
+
+
+def test_cli_run_with_typeddict_multiple_notrequired_fields_all(runner):
+    """Test CLI run with TypedDict having multiple NotRequired fields, providing all."""
+    try:
+        cmd = [
+            "--local",
+            str(TYPEDDICT_INPUTS_PY),
+            "process_user_profile",
+            "--profile",
+            json.dumps(
+                {
+                    "username": "charlie",
+                    "email": "charlie@example.com",
+                    "display_name": "Charlie Brown",
+                    "bio": "Software engineer",
+                    "age": 28,
+                }
+            ),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise ve
+
+
+# ============================================================================
+# Tests for TaskPerFileGroup initialize_config
+# ============================================================================
+
+
+def test_task_per_file_group_list_commands_initializes_config(runner):
+    """Test that TaskPerFileGroup.list_commands calls initialize_config.
+
+    This ensures config is initialized before loading task modules that may
+    depend on config (e.g., tasks with File inputs that need project set).
+    """
+    from unittest.mock import patch
+
+    from flyte.cli._run import RunArguments, TaskPerFileGroup
+
+    run_args = RunArguments(project="test", domain="development")
+    group = TaskPerFileGroup(filename=FILE_INPUT_PY, run_args=run_args)
+
+    with patch("flyte.cli._common.initialize_config") as mock_init_config:
+        ctx = click.Context(click.Command("test"))
+        group.list_commands(ctx)
+
+        mock_init_config.assert_called_once_with(
+            ctx,
+            "test",
+            "development",
+            None,
+            sync_local_sys_paths=False,
+        )
+
+
+def test_task_per_file_group_get_command_initializes_config(runner):
+    """Test that TaskPerFileGroup.get_command calls initialize_config.
+
+    This ensures config is initialized before resolving a specific task command,
+    which is needed for tasks with config-dependent types like File.
+    """
+    from unittest.mock import patch
+
+    from flyte.cli._run import RunArguments, TaskPerFileGroup
+
+    run_args = RunArguments(project="test", domain="development")
+    group = TaskPerFileGroup(filename=FILE_INPUT_PY, run_args=run_args)
+
+    with patch("flyte.cli._common.initialize_config") as mock_init_config:
+        ctx = click.Context(click.Command("test"))
+        group.get_command(ctx, "test_file")
+
+        mock_init_config.assert_called_once_with(
+            ctx,
+            "test",
+            "development",
+            None,
+            sync_local_sys_paths=False,
+        )
+
+
+def test_run_task_with_file_input_and_project(runner):
+    """Test running a task with File input and --project flag via CLI.
+
+    Regression test: without initialize_config in TaskPerFileGroup.list_commands
+    and get_command, tasks with File inputs would fail when --project is specified
+    because config was not initialized before the task module was loaded.
+    """
+    with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".txt") as tmp:
+        tmp.write("test content")
+        tmp_path = tmp.name
+
+    try:
+        cmd = [
+            "--local",
+            "--project",
+            "test",
+            str(FILE_INPUT_PY),
+            "test_file",
+            "--project",
+            "test",
+            "--input_file",
+            tmp_path,
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise ve
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)

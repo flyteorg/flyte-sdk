@@ -10,9 +10,9 @@ from typing import Literal
 ErrorKind = Literal["system", "unknown", "user"]
 
 
-def silence_grpc_polling_error(loop, context):
+def silence_polling_error(loop, context):
     """
-    Suppress specific gRPC polling errors in the event loop.
+    Suppress specific polling errors in the event loop.
     """
     exc = context.get("exception")
     if isinstance(exc, BlockingIOError):
@@ -31,6 +31,27 @@ class BaseRuntimeError(RuntimeError):
         self.code = code
         self.kind = kind
         self.worker = worker
+
+    def _reraise(self, *_args):
+        """Re-raise this error when user code mistakenly treats it as a value.
+
+        When ``flyte.map`` is called with ``return_exceptions=True``, exceptions are
+        returned as values. If user code then performs arithmetic on them (e.g.
+        ``sum(results)``), this surfaces the *real* subtask error instead of a
+        confusing ``TypeError``.
+        """
+        raise self
+
+    __add__ = _reraise
+    __radd__ = _reraise
+    __sub__ = _reraise
+    __rsub__ = _reraise
+    __mul__ = _reraise
+    __rmul__ = _reraise
+    __truediv__ = _reraise
+    __rtruediv__ = _reraise
+    __floordiv__ = _reraise
+    __rfloordiv__ = _reraise
 
 
 class InitializationError(BaseRuntimeError):
@@ -100,6 +121,15 @@ class TaskTimeoutError(RuntimeUserError):
         super().__init__("TaskTimeoutError", message, "user")
 
 
+class ConditionTimedoutError(RuntimeUserError):
+    """
+    This error is raised when a condition is not signaled within its specified timeout.
+    """
+
+    def __init__(self, message: str):
+        super().__init__("ConditionTimedoutError", message, "user")
+
+
 class RetriesExhaustedError(RuntimeUserError):
     """
     This error is raised when the underlying task execution fails after all retries have been exhausted.
@@ -149,25 +179,26 @@ class ActionNotFoundError(RuntimeError):
     """
 
 
-# NOTE: Use RemoteTaskError instead, since "reference tasks" (from v1) are now
-# simply "remote tasks" in v2.
-class ReferenceTaskError(RuntimeUserError):
+class RemoteTaskNotFoundError(RuntimeUserError):
     """
     This error is raised when the user tries to access a task that does not exist.
     """
 
-    CODE = "ReferenceTaskUsageError"
+    CODE = "RemoteTaskNotFoundError"
 
     def __init__(self, message: str):
         super().__init__(self.CODE, message, "user")
 
 
-class RemoteTaskError(ReferenceTaskError):
+class RemoteTaskUsageError(RuntimeUserError):
     """
     This error is raised when the user tries to access a task that does not exist.
     """
 
     CODE = "RemoteTaskUsageError"
+
+    def __init__(self, message: str):
+        super().__init__(self.CODE, message, "user")
 
 
 class LogsNotYetAvailableError(BaseRuntimeError):
@@ -228,13 +259,13 @@ class InlineIOMaxBytesBreached(RuntimeUserError):
         super().__init__("InlineIOMaxBytesBreached", message, "user")
 
 
-class RunAbortedError(RuntimeUserError):
+class ActionAbortedError(RuntimeUserError):
     """
-    This error is raised when the run is aborted by the user.
+    This error is raised when an action was aborted, externally. The parent action will raise this error.
     """
 
     def __init__(self, message: str):
-        super().__init__("RunAbortedError", message, "user")
+        super().__init__("ActionAbortedError", message, "user")
 
 
 class SlowDownError(RuntimeUserError):
@@ -273,3 +304,75 @@ class RestrictedTypeError(RuntimeUserError):
 
     def __init__(self, message: str):
         super().__init__("RestrictedTypeUsage", message, "user")
+
+
+class CodeBundleError(RuntimeUserError):
+    """
+    This error is raised when the code bundle cannot be created, for example when no files are found to bundle.
+    """
+
+    def __init__(self, message: str):
+        super().__init__("CodeBundleError", message, "user")
+
+
+class TraceDoesNotAllowNestedTasksError(RuntimeUserError):
+    """
+    This error is raised when the user tries to use a task from within a trace. Tasks can be nested under tasks
+    not traces.
+    """
+
+    def __init__(self, message: str):
+        super().__init__("TraceDoesNotAllowNestedTasksError", message)
+
+
+class InvalidPackageError(RuntimeUserError):
+    """Raised when an invalid system package is detected during image build."""
+
+    def __init__(self, package_name: str, original_error: str):
+        self.package_name = package_name
+        self.original_error = original_error
+        super().__init__(
+            "InvalidPackageError",
+            f"Invalid system package detected: '{package_name}'. "
+            f"This package does not exist in apt repositories. "
+            f"Error: {original_error}",
+        )
+
+
+class NonRecoverableError(RuntimeUserError):
+    """
+    Raised when an error is encountered that is not recoverable. Retries are irrelevant.
+    """
+
+    def __init__(self, message: str, code: str = "NonRecoverableError"):
+        super().__init__(code, message)
+
+
+class ConditionAlreadyExistsError(RuntimeUserError):
+    """
+    This error is raised when the user tries to create a condition that already exists within the action.
+    """
+
+    def __init__(self, message: str):
+        super().__init__("ConditionAlreadyExistsError", message, "user")
+
+
+class ConditionFailedError(RuntimeUserError):
+    """
+    This error is raised when a condition fails during execution.
+
+    This can happen when the backend encounters an error while processing the condition,
+    or when the condition is explicitly marked as failed by the system.
+    """
+
+    def __init__(self, message: str):
+        super().__init__("ConditionFailedError", message, "user")
+
+
+class ConditionNotFoundError(RuntimeUserError):
+    """
+    This error is raised when the user tries to access a condition that does not exist.
+    """
+
+    def __init__(self, message: str):
+        super().__init__("ConditionNotFoundError", message, "user")

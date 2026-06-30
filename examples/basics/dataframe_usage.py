@@ -43,18 +43,6 @@ ADDL_EMPLOYEE_DATA = {
 
 
 @env.task
-async def create_raw_dataframe() -> pd.DataFrame:
-    """
-    This task creates a raw pandas DataFrame with basic employee information.
-    This is the most basic use-case of how to pass dataframes (of all kinds, not just pandas). Create the dataframe
-    as normal, and return it. Note that the output signature is of the dataframe library type.
-    Uploading of the actual bits of the dataframe (which for pandas is serialized to parquet) happens at the
-    end of the task, the TypeEngine uploads from memory to blob store.
-    """
-    return pd.DataFrame(BASIC_EMPLOYEE_DATA)
-
-
-@env.task
 async def create_flyte_dataframe() -> Annotated[flyte.io.DataFrame, "csv"]:
     """
     This task creates a Flyte DataFrame with compensation and project data.
@@ -79,16 +67,48 @@ async def get_employee_data(raw_dataframe: pd.DataFrame, flyte_dataframe: pd.Dat
 
 
 if __name__ == "__main__":
-    flyte.init_from_config()
+    # Make sure to set the following environment variables:
+    # - AWS_ACCESS_KEY_ID
+    # - AWS_SECRET_ACCESS_KEY
+    # - AWS_SESSION_TOKEN (if applicable)
+    #
+    # You may also set this with `aws sso login`:
+    # $ aws sso login --profile $profile
+    # $ eval "$(aws configure export-credentials --profile $profile --format env)"
+
+    flyte.init_from_config()  # log_level=logging.DEBUG)
     # Get the data sources
 
-    raw_df = flyte.with_runcontext(mode="local").run(create_raw_dataframe)
-    flyte_df = flyte.with_runcontext(mode="local").run(create_flyte_dataframe)
+    local_df = pd.DataFrame(BASIC_EMPLOYEE_DATA)
+    local_fdf = flyte.io.DataFrame.from_local_sync(local_df)
+    run2 = flyte.with_runcontext(
+        mode="local",
+    ).run(create_flyte_dataframe)
+    print(run2.url)
+    run2.wait()
+    print(run2.outputs()[0])
 
-    # Pass both to get_employee_data - Flyte auto-converts flyte.io.DataFrame to pd.DataFrame
-    run = flyte.with_runcontext(mode="local").run(
+    # Pass both to get_employee_data. When preserve_original_types is False (the default),
+    # the run outputs a flyte.io.DataFrame, which is the flyte representation of the pandas DataFrame.
+    run = flyte.with_runcontext(preserve_original_types=False).run(
         get_employee_data,
-        raw_dataframe=raw_df.outputs(),
-        flyte_dataframe=flyte_df.outputs(),
+        raw_dataframe=local_fdf,
+        flyte_dataframe=run2.outputs()[0],
     )
-    print("Results:", run.outputs())
+    print("Results:", run.url)
+    run.wait()
+    flyte_df = run.outputs()[0]
+    assert isinstance(flyte_df, flyte.io.DataFrame)
+    print(flyte_df)
+
+    # When preserve_original_types is True, the run outputs a flyte.io.DataFrame
+    run = flyte.with_runcontext(preserve_original_types=True).run(
+        get_employee_data,
+        raw_dataframe=local_fdf,
+        flyte_dataframe=run2.outputs()[0],
+    )
+    print("Results:", run.url)
+    run.wait()
+    pandas_df = run.outputs()[0]
+    assert isinstance(pandas_df, pd.DataFrame)
+    print(pandas_df)

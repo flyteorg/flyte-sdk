@@ -30,4 +30,4 @@ def test_typing():
 def test_parent_action_local():
     flyte.init()
     result = flyte.run(sync_parent_task, 3)
-    assert result.outputs() == ["Hello, world 0!", "Hello, world 1!", "Hello, world 2!"]
+    assert result.outputs()[0] == ["Hello, world 0!", "Hello, world 1!", "Hello, world 2!"]

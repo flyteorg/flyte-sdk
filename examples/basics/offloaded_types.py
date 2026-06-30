@@ -51,6 +51,12 @@ async def check_dir(my_dir: Dir):
             contents = await fh.read()
             print(f"Contents: {str(contents, 'utf-8')}")
 
+    # Also test synchronous download
+    local_path = my_dir.download_sync()
+    print(f"Downloaded dir sync to: {local_path}")
+    for path in Path(local_path).iterdir():
+        print(f"Sync downloaded file: {path.name}")
+
 
 @env.task
 async def create_and_check_dir():

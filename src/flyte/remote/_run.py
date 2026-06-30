@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import AsyncGenerator, AsyncIterator, Literal, Tuple
+from typing import Any, AsyncGenerator, AsyncIterator, Callable, Dict, Literal, Tuple
 
-import grpc
 import rich.repr
+from connectrpc.code import Code
+from connectrpc.errors import ConnectError
 from flyteidl2.common import identifier_pb2, list_pb2, phase_pb2
+from flyteidl2.core import literals_pb2
 from flyteidl2.workflow import run_definition_pb2, run_service_pb2
 
 from flyte._initialize import ensure_client, get_client, get_init_config
@@ -15,7 +17,7 @@ from flyte.syncify import syncify
 
 from . import Action, ActionDetails, ActionInputs, ActionOutputs
 from ._action import _action_details_rich_repr, _action_rich_repr
-from ._common import ToJSONMixin, filtering, sorting
+from ._common import TimeFilter, ToJSONMixin, filtering, sorting, time_filtering
 
 
 @dataclass
@@ -28,6 +30,7 @@ class Run(ToJSONMixin):
     pb2: run_definition_pb2.Run
     action: Action = field(init=False)
     _details: RunDetails | None = None
+    _preserve_original_types: bool = False
 
     def __post_init__(self):
         """
@@ -36,6 +39,7 @@ class Run(ToJSONMixin):
         if not self.pb2.HasField("action"):
             raise RuntimeError("Run does not have an action")
         self.action = Action(self.pb2.action)
+        self._debug_url = None
 
     @syncify
     @classmethod
@@ -47,6 +51,13 @@ class Run(ToJSONMixin):
         created_by_subject: str | None = None,
         sort_by: Tuple[str, Literal["asc", "desc"]] | None = None,
         limit: int = 100,
+        project: str | None = None,
+        domain: str | None = None,
+        created_at: TimeFilter | None = None,
+        updated_at: TimeFilter | None = None,
+        with_labels: dict[str, str] | None = None,
+        with_label_keys: list[str] | None = None,
+        paused_actions_only: bool = False,
     ) -> AsyncIterator[Run]:
         """
         Get all runs for the current project and domain.
@@ -57,6 +68,14 @@ class Run(ToJSONMixin):
         :param created_by_subject: Filter runs by the subject that created them. (this is not username, but the subject)
         :param sort_by: The sorting criteria for the Run list, in the format (field, order).
         :param limit: The maximum number of runs to return.
+        :param project: The project to list runs for. Defaults to the globally configured project.
+        :param domain: The domain to list runs for. Defaults to the globally configured domain.
+        :param created_at: Filter runs by creation time range.
+        :param updated_at: Filter runs by last-update time range.
+        :param with_labels: Filter runs whose labels include all of these key=value pairs (AND semantics).
+        :param with_label_keys: Filter runs that have all of these label keys present (existence check).
+        :param paused_actions_only: If True, only return runs that have at least one paused action
+            (i.e. runs waiting on a human in the loop).
         :return: An iterator of runs.
         """
         ensure_client()
@@ -107,6 +126,32 @@ class Run(ToJSONMixin):
 
         filters = filtering(created_by_subject, *filters)
 
+        if created_at:
+            filters.extend(time_filtering("created_at", created_at))
+        if updated_at:
+            filters.extend(time_filtering("updated_at", updated_at))
+
+        # Label filters are expressed through the generic filter mechanism using a ``labels.<key>``
+        # field convention: ``--with-label k=v`` becomes an EQUAL match, ``--with-label-key k`` an
+        # EXISTS match. Multiple label filters are ANDed together with the other filters.
+        if with_labels:
+            for k, v in with_labels.items():
+                filters.append(
+                    list_pb2.Filter(
+                        function=list_pb2.Filter.Function.EQUAL,
+                        field=f"labels.{k}",
+                        values=[v],
+                    ),
+                )
+        if with_label_keys:
+            for k in with_label_keys:
+                filters.append(
+                    list_pb2.Filter(
+                        function=list_pb2.Filter.Function.EXISTS,
+                        field=f"labels.{k}",
+                    ),
+                )
+
         cfg = get_init_config()
         i = 0
         while True:
@@ -116,15 +161,16 @@ class Run(ToJSONMixin):
                 sort_by=sort_pb2,
                 filters=filters,
             )
-            resp = await get_client().run_service.ListRuns(
+            resp = await get_client().run_service.list_runs(
                 run_service_pb2.ListRunsRequest(
                     request=req,
                     org=cfg.org,
                     project_id=identifier_pb2.ProjectIdentifier(
                         organization=cfg.org,
-                        domain=cfg.domain,
-                        name=cfg.project,
+                        domain=domain or cfg.domain,
+                        name=project or cfg.project,
                     ),
+                    paused_actions_only=paused_actions_only,
                 )
             )
             token = resp.token
@@ -214,12 +260,34 @@ class Run(ToJSONMixin):
         await self.action.show_logs.aio(attempt, max_lines, show_ts, raw, filter_system=filter_system)
 
     @syncify
+    async def get_logs(
+        self,
+        attempt: int | None = None,
+        filter_system: bool = False,
+        show_ts: bool = False,
+    ) -> AsyncGenerator[str, None]:
+        """
+        Get logs for the run as an iterator of strings.
+
+        Can be called synchronously (returns `Iterator[str]`) or asynchronously
+        via `.aio()` (returns `AsyncIterator[str]`).
+
+        :param attempt: The attempt number to retrieve logs for (defaults to latest attempt).
+        :param filter_system: If True, filter out system-generated log lines.
+        :param show_ts: If True, prefix each line with an ISO-8601 timestamp.
+        """
+        async for line in self.action.get_logs.aio(attempt, filter_system=filter_system, show_ts=show_ts):
+            yield line
+
+    @syncify
     async def details(self) -> RunDetails:
         """
         Get the details of the run. This is a placeholder for getting the run details.
         """
         if self._details is None or not self._details.done():
             self._details = await RunDetails.get_details.aio(self.pb2.action.id.run)
+        self._details._preserve_original_types = self._preserve_original_types
+        self._details.action_details._preserve_original_types = self._preserve_original_types
         return self._details
 
     @syncify
@@ -238,6 +306,50 @@ class Run(ToJSONMixin):
         details = await self.details.aio()
         return await details.outputs()
 
+    @syncify
+    async def output_literals(self) -> Dict[str, literals_pb2.Literal]:
+        """Raw output literals of the run's action, without reconstructing types.
+
+        See :meth:`ActionDetails.output_literals`.
+        """
+        details = await self.details.aio()
+        return await details.output_literals()
+
+    @syncify
+    async def input_literals(self) -> Dict[str, literals_pb2.Literal]:
+        """Raw input literals of the run's action, without reconstructing types.
+
+        See :meth:`ActionDetails.input_literals`.
+        """
+        details = await self.details.aio()
+        return await details.input_literals()
+
+    @syncify
+    async def typed_outputs(
+        self,
+        types: Dict[str, type],
+        deserializers: Dict[type, Callable[[Any], Any]] | None = None,
+    ) -> Dict[str, Any]:
+        """Re-hydrate the run's requested outputs into caller-supplied types.
+
+        See :meth:`ActionDetails.typed_outputs`.
+        """
+        details = await self.details.aio()
+        return await details.typed_outputs(types, deserializers)
+
+    @syncify
+    async def typed_inputs(
+        self,
+        types: Dict[str, type],
+        deserializers: Dict[type, Callable[[Any], Any]] | None = None,
+    ) -> Dict[str, Any]:
+        """Re-hydrate the run's requested inputs into caller-supplied types.
+
+        See :meth:`ActionDetails.typed_inputs`.
+        """
+        details = await self.details.aio()
+        return await details.typed_inputs(types, deserializers)
+
     @property
     def url(self) -> str:
         """
@@ -251,18 +363,32 @@ class Run(ToJSONMixin):
         )
 
     @syncify
-    async def abort(self):
+    async def get_debug_url(self) -> str:
+        """
+        Get the debug URL of the run. Returns `None` if the VS Code
+        Debugger log entry is not yet available in the action details.
+        """
+        if self._debug_url is not None:
+            return self._debug_url
+        from flyte._debug.client import watch_for_vscode_url
+
+        self._debug_url = await watch_for_vscode_url(self)
+        return self._debug_url
+
+    @syncify
+    async def abort(self, reason: str = "Manually aborted from the SDK api."):
         """
         Aborts / Terminates the run.
         """
         try:
-            await get_client().run_service.AbortRun(
+            await get_client().run_service.abort_run(
                 run_service_pb2.AbortRunRequest(
                     run_id=self.pb2.action.id.run,
+                    reason=reason,
                 )
             )
-        except grpc.aio.AioRpcError as e:
-            if e.code() == grpc.StatusCode.NOT_FOUND:
+        except ConnectError as e:
+            if e.code == Code.NOT_FOUND:
                 return
             raise
 
@@ -285,6 +411,7 @@ class Run(ToJSONMixin):
         Rich representation of the Run object.
         """
         yield "url", f"[blue bold][link={self.url}]link[/link][/blue bold]"
+        yield "labels", dict(self.pb2.labels) if self.pb2.labels else {}
         yield from _action_rich_repr(self.pb2.action)
 
     def __repr__(self) -> str:
@@ -305,12 +432,13 @@ class RunDetails(ToJSONMixin):
 
     pb2: run_definition_pb2.RunDetails
     action_details: ActionDetails = field(init=False)
+    _preserve_original_types: bool = False
 
     def __post_init__(self):
         """
         Initialize the RunDetails object with the given run definition.
         """
-        self.action_details = ActionDetails(self.pb2.action)
+        self.action_details = ActionDetails(self.pb2.action, _preserve_original_types=self._preserve_original_types)
 
     @syncify
     @classmethod
@@ -319,7 +447,7 @@ class RunDetails(ToJSONMixin):
         Get the details of the run. This is a placeholder for getting the run details.
         """
         ensure_client()
-        resp = await get_client().run_service.GetRunDetails(
+        resp = await get_client().run_service.get_run_details(
             run_service_pb2.GetRunDetailsRequest(
                 run_id=run_id,
             )
@@ -385,6 +513,30 @@ class RunDetails(ToJSONMixin):
         Placeholder for outputs. This can be extended to handle outputs from the run context.
         """
         return await self.action_details.outputs()
+
+    async def output_literals(self) -> Dict[str, literals_pb2.Literal]:
+        """Raw output literals without reconstructing types. See :meth:`ActionDetails.output_literals`."""
+        return await self.action_details.output_literals()
+
+    async def input_literals(self) -> Dict[str, literals_pb2.Literal]:
+        """Raw input literals without reconstructing types. See :meth:`ActionDetails.input_literals`."""
+        return await self.action_details.input_literals()
+
+    async def typed_outputs(
+        self,
+        types: Dict[str, type],
+        deserializers: Dict[type, Callable[[Any], Any]] | None = None,
+    ) -> Dict[str, Any]:
+        """Re-hydrate requested outputs into caller-supplied types. See :meth:`ActionDetails.typed_outputs`."""
+        return await self.action_details.typed_outputs(types, deserializers)
+
+    async def typed_inputs(
+        self,
+        types: Dict[str, type],
+        deserializers: Dict[type, Callable[[Any], Any]] | None = None,
+    ) -> Dict[str, Any]:
+        """Re-hydrate requested inputs into caller-supplied types. See :meth:`ActionDetails.typed_inputs`."""
+        return await self.action_details.typed_inputs(types, deserializers)
 
     def __rich_repr__(self) -> rich.repr.Result:
         """

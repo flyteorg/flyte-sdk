@@ -35,7 +35,7 @@ class YamlConfigEntry(object):
     def read_from_env(self, transform: typing.Optional[typing.Callable] = None) -> typing.Optional[typing.Any]:
         """
         Reads the config entry from environment variable, the structure of the env var is current
-        ``FLYTE_{SECTION}_{OPTION}`` all upper cased. We will change this in the future.
+        `FLYTE_{SECTION}_{OPTION}` all upper cased. We will change this in the future.
         :return:
         """
         env = self.get_env_name()
@@ -221,5 +221,5 @@ def read_file_if_exists(filename: typing.Optional[str], encoding=None) -> typing
         return None
 
     file = pathlib.Path(filename)
-    logger.debug(f"Reading file contents from [{file}] with current directory [{os.getcwd()}].")
+    logger.debug(f"Reading file contents from \\[{file}] with current directory \\[{os.getcwd()}].")
     return file.read_text(encoding=encoding)

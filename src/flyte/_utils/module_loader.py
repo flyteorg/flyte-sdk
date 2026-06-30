@@ -5,9 +5,33 @@ from pathlib import Path
 from types import ModuleType
 from typing import List, Tuple
 
+import click
+
 import flyte.errors
+from flyte._code_bundle._ignore import GitIgnore, IgnoreGroup, StandardIgnore
 from flyte._constants import FLYTE_SYS_PATH
 from flyte._logging import logger
+
+
+def _relative_to_root(path: Path, root_dir: Path) -> Path:
+    """Resolve ``path`` relative to ``root_dir`` and translate ``ValueError`` into a clear ClickException.
+
+    ``pathlib.Path.relative_to`` raises ``ValueError`` with an unhelpful "is not in the subpath of"
+    message when a user runs ``flyte deploy`` against a file that lives outside of the configured
+    project root (commonly: a src-layout project where the file is under ``src/`` but the root was
+    inferred as the project itself, or vice versa). Surfacing this as a ``click.ClickException``
+    gives the user an actionable message and short-circuits Sentry's user-error filter.
+    """
+    try:
+        return path.resolve().relative_to(root_dir)
+    except ValueError as e:
+        raise click.ClickException(
+            f"Cannot load '{path}' because it is not inside the project root '{root_dir}'.\n"
+            "This usually happens when running `flyte deploy` from outside your source root, "
+            "or when your project uses a src/ layout but --root-dir was not set.\n"
+            "Try passing --root-dir <your source root> (e.g. --root-dir src) so the file lives "
+            "underneath it."
+        ) from e
 
 
 def load_python_modules(
@@ -27,15 +51,39 @@ def load_python_modules(
     failed_paths = []
 
     if path.is_file() and path.suffix == ".py":
-        rel_path = path.resolve().relative_to(root_dir)
+        rel_path = _relative_to_root(path, root_dir)
         mod = (".".join(rel_path.parts))[:-3]
-        imported_module = importlib.import_module(mod)
-        loaded_modules.append(imported_module)
+        try:
+            imported_module = importlib.import_module(mod)
+            loaded_modules.append(imported_module)
+        except flyte.errors.ModuleLoadError as e:
+            failed_paths.append((path, str(e)))
+        except (
+            ImportError,
+            SyntaxError,
+            NameError,
+            AttributeError,
+            TypeError,
+            ValueError,
+            KeyError,
+            RuntimeError,
+        ) as e:
+            raise flyte.errors.ModuleLoadError(f"Failed to load {path}: {type(e).__name__}: {e}") from e
 
     elif path.is_dir():
         # Directory case - find all Python files
-        pattern = "**/*.py" if recursive else "*.py"
-        python_files = list(path.glob(pattern))
+        if recursive:
+            ignore = IgnoreGroup(root_dir.resolve(), StandardIgnore, GitIgnore)
+            python_files = []
+            for dirpath, dirnames, filenames in os.walk(path.resolve(), topdown=True):
+                dirnames[:] = [d for d in dirnames if not ignore.is_ignored(Path(os.path.join(dirpath, d)))]
+                for f in filenames:
+                    if f.endswith(".py"):
+                        file_path = Path(dirpath) / f
+                        if not ignore.is_ignored(file_path):
+                            python_files.append(file_path)
+        else:
+            python_files = list(path.glob("*.py"))
 
         # Filter out __init__.py files
         python_files = [f for f in python_files if f.name != "__init__.py"]
@@ -70,6 +118,20 @@ def load_python_modules(
                         loaded_modules.append(imported_module)
                     except flyte.errors.ModuleLoadError as e:
                         failed_paths.append((file_path, str(e)))
+                    except (
+                        ImportError,
+                        SyntaxError,
+                        NameError,
+                        AttributeError,
+                        TypeError,
+                        ValueError,
+                        KeyError,
+                        RuntimeError,
+                    ) as e:
+                        # User code failed at import time. Record as a load failure
+                        # (consistent with ModuleLoadError above) so deploy can either
+                        # warn or abort via --ignore-load-errors instead of crashing.
+                        failed_paths.append((file_path, f"{type(e).__name__}: {e}"))
 
                 progress.update(task, current_file="[green]Done[/green]")
 
@@ -112,10 +174,10 @@ def adjust_sys_path(additional_paths: List[str] | None = None):
     if "." not in sys.path or os.getcwd() not in sys.path:
         sys.path.insert(0, ".")
         logger.info(f"Added {os.getcwd()} to sys.path")
-    for p in os.environ.get(FLYTE_SYS_PATH, "").split(":"):
-        if p and p not in sys.path:
-            sys.path.insert(0, p)
-            logger.info(f"Added {p} to sys.path")
+    entries = [p for p in os.environ.get(FLYTE_SYS_PATH, "").split(":") if p and p not in sys.path]
+    for p in reversed(entries):
+        sys.path.insert(0, p)
+        logger.info(f"Added {p} to sys.path")
     if additional_paths:
         for p in additional_paths:
             if p and p not in sys.path:
