@@ -20,7 +20,20 @@ _KUBE_DIR = Path(
 )  # This path is used to store k3s kubeconfig file, we later merge it with the default kubeconfig
 _KUBECONFIG_PATH = _KUBE_DIR / "kubeconfig"
 _FLYTE_DEVBOX_CONFIG_DIR = Path.home() / ".flyte" / "devbox"
-_PORTS = ["6443:6443", "30000:30000", "30001:30001", "30002:30002", "30003:30003", "30080:30080", "30081:30081"]
+# 9000:30002 publishes the rustfs object store on the host as rustfs.localhost:9000 (the host
+# transparently resolves *.localhost -> 127.0.0.1), matching the presigned-URL endpoint the
+# control plane mints. Pods reach the same name via the coredns-custom rewrite to the rustfs
+# ClusterIP, so in-pod presigned uploads (e.g. flyteplugins-hitl) work too.
+_PORTS = [
+    "6443:6443",
+    "30000:30000",
+    "30001:30001",
+    "30002:30002",
+    "30003:30003",
+    "30080:30080",
+    "30081:30081",
+    "9000:30002",
+]
 _CONSOLE_READYZ_URL = "http://localhost:30080/readyz"
 
 
