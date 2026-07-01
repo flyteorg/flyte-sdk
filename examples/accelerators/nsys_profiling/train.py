@@ -6,6 +6,7 @@ regions on the timeline. Swap this out for your real training script (Lightning,
 HF Trainer, etc.); just keep a few NVTX markers so ``--trace=nvtx`` has something
 to show.
 """
+
 import torch
 import torch.cuda.nvtx as nvtx
 import torch.nn as nn

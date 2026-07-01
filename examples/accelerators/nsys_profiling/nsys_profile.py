@@ -30,6 +30,7 @@ Run::
 
     flyte run examples/accelerators/nsys_profiling/nsys_profile.py profile_training
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -85,8 +86,10 @@ _REPORT_NAME = "lightning_nsys_trace"  # -> lightning_nsys_trace.nsys-rep
 async def _run(*cmd: str, cwd: str) -> tuple[int, str, str]:
     """Run a subprocess, capturing stdout/stderr as text."""
     proc = await asyncio.create_subprocess_exec(
-        *cmd, cwd=cwd,
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        *cmd,
+        cwd=cwd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
     )
     out, err = await proc.communicate()
     return proc.returncode, out.decode(errors="replace"), err.decode(errors="replace")
@@ -103,15 +106,18 @@ def _torch_python() -> str:
     import subprocess
 
     candidates = [
-        "/usr/bin/python3.10", "/usr/bin/python3", "/usr/local/bin/python",
-        shutil.which("python3") or "", shutil.which("python") or "",
+        "/usr/bin/python3.10",
+        "/usr/bin/python3",
+        "/usr/local/bin/python",
+        shutil.which("python3") or "",
+        shutil.which("python") or "",
     ]
     tried = []
     for exe in candidates:
         if not exe or not os.path.exists(exe):
             continue
         tried.append(exe)
-        if subprocess.run([exe, "-c", "import torch"], capture_output=True).returncode == 0:
+        if subprocess.run([exe, "-c", "import torch"], capture_output=True, check=False).returncode == 0:
             return exe
     raise RuntimeError(f"no interpreter with torch found (tried: {tried})")
 
@@ -128,11 +134,13 @@ async def profile_training() -> File:
 
     # nsys profile --trace=cuda,nvtx,osrt --output=... --force-overwrite=true <py> train.py
     rc, out, err = await _run(
-        "nsys", "profile",
+        "nsys",
+        "profile",
         "--trace=cuda,nvtx,osrt",
         f"--output={_REPORT_NAME}",
         "--force-overwrite=true",
-        py, str(train_py),
+        py,
+        str(train_py),
         cwd=workdir,
     )
     print(out)
@@ -147,10 +155,14 @@ async def profile_training() -> File:
 
     # Summarize into the HTML report deck (viewable in the console).
     _, stats_out, stats_err = await _run(
-        "nsys", "stats",
-        "--report", "cuda_gpu_kern_sum",
-        "--report", "nvtx_sum",
-        "--report", "osrt_sum",
+        "nsys",
+        "stats",
+        "--report",
+        "cuda_gpu_kern_sum",
+        "--report",
+        "nvtx_sum",
+        "--report",
+        "osrt_sum",
         f"{_REPORT_NAME}.nsys-rep",
         cwd=workdir,
     )
