@@ -108,7 +108,10 @@ async def _deploy_app(
             app_idl.spec.container.image = serialization_context.image_cache.image_lookup[app.name]
 
         if dryrun:
-            return app_idl
+            # Wrap the raw IDL proto in an App so callers (e.g. table_repr) can use the same
+            # attribute accessors (.name, .revision, ...) as the non-dryrun path, which returns
+            # an App. Returning the bare proto here caused `AttributeError: name` in table_repr.
+            return App(app_idl)
         ensure_client()
         resolved_image = app_idl.spec.container.image if app_idl.spec.HasField("container") else image_uri_for_log
         msg = f"Deploying app {app.name}, with image {resolved_image} version {serialization_context.version}"
