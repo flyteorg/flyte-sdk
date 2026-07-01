@@ -22,6 +22,8 @@ from flyte._debug.constants import (
     DOWNLOAD_DIR,
     EXECUTABLE_NAME,
     EXIT_CODE_SUCCESS,
+    FLYTE_ENABLE_SSH_KEY,
+    FLYTE_ENABLE_VSCODE_KEY,
     HEARTBEAT_PATH,
     MAX_IDLE_SECONDS,
 )
@@ -199,6 +201,13 @@ def prepare_launch_json(ctx: click.Context, pid: int):
                 "program": f"{virtual_venv}/bin/runtime.py",
                 "console": "integratedTerminal",
                 "justMyCode": True,
+                # The debug-mode env vars are still set in the pod env. Without
+                # clearing them the entrypoint would re-enter ssh/vscode debug
+                # mode and try to bind a second server on the in-use debug port.
+                "env": {
+                    FLYTE_ENABLE_VSCODE_KEY: "",
+                    FLYTE_ENABLE_SSH_KEY: "",
+                },
                 "args": [
                     "a0",
                     "--inputs",
