@@ -602,6 +602,31 @@ def test_image_uri_changes_when_dockerignore_content_changes(tmp_path):
     assert uri1 != img2.uri
 
 
+def test_with_dockerignore_missing_file_raises_image_build_error(tmp_path):
+    """A non-existent .dockerignore path must raise a clear ImageBuildError, not a raw FileNotFoundError."""
+    from flyte.errors import ImageBuildError
+
+    missing = tmp_path / ".dockerignore"  # never created
+    with pytest.raises(ImageBuildError, match="with_dockerignore"):
+        Image.from_debian_base(registry="localhost", name="test").with_dockerignore(missing)
+
+
+def test_with_dockerignore_resolves_to_absolute_path(tmp_path, monkeypatch):
+    """with_dockerignore must store an absolute path so the file is locatable from any cwd at build time."""
+    from flyte._image import DockerIgnore
+
+    di_file = tmp_path / ".dockerignore"
+    di_file.write_text("*.log\n")
+
+    # Reference the file via a relative path from tmp_path, then change cwd to simulate the builder.
+    monkeypatch.chdir(tmp_path)
+    img = Image.from_debian_base(registry="localhost", name="test").with_dockerignore(Path(".dockerignore"))
+
+    layer = next(layer for layer in img._layers if isinstance(layer, DockerIgnore))
+    assert Path(layer.path).is_absolute()
+    assert Path(layer.path).is_file()
+
+
 def test_ids_for_different_python_version():
     ex_11 = Image.from_debian_base(python_version=(3, 11), install_flyte=False).with_source_file(Path(__file__))
     ex_12 = Image.from_debian_base(python_version=(3, 12), install_flyte=False).with_source_file(Path(__file__))

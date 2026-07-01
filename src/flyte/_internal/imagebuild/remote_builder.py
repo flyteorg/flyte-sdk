@@ -402,6 +402,11 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
             )
             layers.append(commands_layer)
         elif isinstance(layer, DockerIgnore):
+            if not Path(layer.path).is_file():
+                raise flyte.errors.ImageBuildError(
+                    f"The .dockerignore file specified via with_dockerignore() was not found at '{layer.path}'. "
+                    f"Ensure the path points to an existing file."
+                )
             shutil.copy(layer.path, context_path)
         elif isinstance(layer, CodeBundleLayer):
             if layer.root_dir is None:
