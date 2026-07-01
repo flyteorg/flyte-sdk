@@ -6,6 +6,7 @@ from connectrpc.code import Code
 from connectrpc.errors import ConnectError
 
 from flyte._logging import logger
+from flyte.remote._client.auth._interceptors._compat import request_headers
 
 if typing.TYPE_CHECKING:
     from flyte.remote._client.auth._authenticators.base import Authenticator, AuthHeaders
@@ -32,13 +33,13 @@ class _BaseAuthInterceptor:
         # before injecting fresh ones — otherwise a header key change (e.g. "authorization" →
         # "flyte-authorization") leaves the stale key behind.
         if previous is not None:
-            headers = ctx.request_headers()
+            headers = request_headers(ctx)
             for key in previous.headers:
                 headers.pop(key, None)
 
         auth_headers = await self.authenticator.get_auth_headers()
         if auth_headers:
-            ctx.request_headers().update(auth_headers.headers)
+            request_headers(ctx).update(auth_headers.headers)
         return auth_headers
 
     async def _refresh_and_reinject(self, previous: AuthHeaders | None, ctx) -> None:
