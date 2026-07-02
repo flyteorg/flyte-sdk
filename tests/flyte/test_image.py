@@ -864,6 +864,37 @@ def test_get_base_registry_returns_default_for_empty_endpoint():
         assert _get_base_registry() == _BASE_REGISTRY
 
 
+def test_get_base_registry_uses_env_var(monkeypatch):
+    """When FLYTE_IMAGE_REGISTRY is set, _get_base_registry returns it, overriding endpoint logic."""
+    from flyte.config._reader import get_config_file
+
+    get_config_file.cache_clear()
+    monkeypatch.setenv("FLYTE_IMAGE_REGISTRY", "my.registry.io/team")
+    mock_config = MagicMock()
+    mock_config.client.endpoint = "localhost:8090"
+    with patch("flyte._initialize._get_init_config", return_value=mock_config):
+        assert _get_base_registry() == "my.registry.io/team"
+
+
+def test_get_base_registry_uses_config(monkeypatch):
+    """When image.registry is set in config, _get_base_registry returns it."""
+    monkeypatch.delenv("FLYTE_IMAGE_REGISTRY", raising=False)
+    with patch("flyte.config._config.ImageConfig.auto") as mock_auto:
+        mock_auto.return_value = MagicMock(registry="cfg.registry.io/team")
+        assert _get_base_registry() == "cfg.registry.io/team"
+
+
+def test_get_base_registry_falls_back_when_registry_unset(monkeypatch):
+    """When no registry is configured, _get_base_registry falls back to endpoint-based logic."""
+    monkeypatch.delenv("FLYTE_IMAGE_REGISTRY", raising=False)
+    with patch("flyte.config._config.ImageConfig.auto") as mock_auto:
+        mock_auto.return_value = MagicMock(registry=None)
+        mock_config = MagicMock()
+        mock_config.client.endpoint = "localhost:8090"
+        with patch("flyte._initialize._get_init_config", return_value=mock_config):
+            assert _get_base_registry() == _LOCALHOST_REGISTRY
+
+
 def test_released_default_image_is_not_cloned():
     """A released, unmodified default image should have _is_cloned=False so the SDK skips building it."""
     with patch("flyte._version.__version__", "1.2.3"):
