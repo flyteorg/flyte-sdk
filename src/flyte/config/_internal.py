@@ -76,3 +76,9 @@ class Image(object):
 
     BUILDER = ConfigEntry(YamlConfigEntry("image.builder"))
     IMAGE_REFS = ConfigEntry(YamlConfigEntry("image.image_refs"))
+    REGISTRY = ConfigEntry(YamlConfigEntry("image.registry"))
+    """
+    The container registry to use as the base registry when building images (e.g. ``ghcr.io/my-org``).
+    Read from the ``image.registry`` config entry or the ``FLYTE_IMAGE_REGISTRY`` environment variable.
+    When set, this overrides the built-in default base registry.
+    """
