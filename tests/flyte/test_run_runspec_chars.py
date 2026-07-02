@@ -55,13 +55,13 @@ def _patch_build(fn):
     return fn
 
 
-async def _run_and_capture(mock_build_image_bg, mock_code_bundler, **runcontext_kwargs):
+async def _run_and_capture(mock_build_image_bg, mock_code_bundler, _org=None, **runcontext_kwargs):
     """Run task1 in remote mode with the given runcontext kwargs; return the CreateRunRequest."""
     mock_client, mock_run_service = _make_mock_client()
     mock_code_bundler.return_value = CodeBundle(computed_version="v1", tgz="test.tgz")
     mock_build_image_bg.return_value = (env.name, "image_name", None)
 
-    await _init_for_testing(client=mock_client, project="test", domain="test")
+    await _init_for_testing(client=mock_client, project="test", domain="test", org=_org)
     run = await flyte.with_runcontext(mode="remote", **runcontext_kwargs).run.aio(task1, "hello")
     assert run
     req: run_service_pb2.CreateRunRequest = mock_run_service.create_run.call_args[0][0]
@@ -376,3 +376,96 @@ async def test_recover_rejected_in_local_mode():
     await flyte.init.aio()
     with pytest.raises(ValueError, match="recover is only supported in remote mode"):
         await flyte.with_runcontext(mode="local", recover="r1").run.aio(task1, "hello")
+
+
+# --- related_to provenance pointer (implicit; descriptor-gated like recover) ------------
+
+_RELATED_TO_AVAILABLE = "related_to" in run_pb2.RunSpec.DESCRIPTOR.fields_by_name
+requires_related_to = pytest.mark.skipif(
+    not _RELATED_TO_AVAILABLE, reason="RunSpec.related_to not in this flyteidl2 build"
+)
+
+
+def _fake_remote_task_ctx(org="testorg", project="test", domain="test", run_name="parent-run"):
+    """A Context carrying an in-cluster TaskContext, as the container runtime would set up."""
+    from flyte._context import Context, ContextData
+    from flyte.models import ActionID, RawDataPath, TaskContext
+    from flyte.report import Report
+
+    action = ActionID(name="a0", run_name=run_name, project=project, domain=domain, org=org)
+    task_context = TaskContext(
+        action=action,
+        version="v1",
+        raw_data_path=RawDataPath(path="/tmp/raw"),
+        output_path="/tmp/out",
+        run_base_dir="/tmp/base",
+        report=Report(name="a0"),
+        mode="remote",
+    )
+    return Context(data=ContextData(task_context=task_context))
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(_RELATED_TO_AVAILABLE, reason="field available; the silent-skip gate no longer applies")
+async def test_apply_overrides_related_to_silent_noop_when_field_absent():
+    """Unlike recover (explicitly user-requested, raises), implicit provenance silently
+    skips on a flyteidl2 build without RunSpec.related_to — reruns must keep working."""
+    from flyteidl2.common import identifier_pb2
+
+    from flyte._run import _Runner
+
+    mock_client, _ = _make_mock_client()
+    await _init_for_testing(client=mock_client, project="test", domain="test")
+
+    related = identifier_pb2.RunIdentifier(org="o", project="p", domain="d", name="r1")
+    out = _Runner(force_mode="remote")._apply_overrides(None, related_to=related)
+    assert out is not None  # no raise, spec built normally
+
+
+@pytest.mark.asyncio
+@requires_related_to
+async def test_apply_overrides_related_to_stamped_overwritten_cleared():
+    """Fresh path stamps; base-copy overwrites a stale (grandparent) pointer; None clears it."""
+    from flyteidl2.common import identifier_pb2
+    from flyteidl2.task import run_pb2
+
+    from flyte._run import _Runner
+
+    mock_client, _ = _make_mock_client()
+    await _init_for_testing(client=mock_client, project="test", domain="test")
+    runner = _Runner(force_mode="remote")
+
+    related = identifier_pb2.RunIdentifier(org="o", project="p", domain="d", name="r1")
+    fresh = runner._apply_overrides(None, related_to=related)
+    assert fresh.related_to == related
+
+    base = run_pb2.RunSpec()
+    base.related_to.CopyFrom(identifier_pb2.RunIdentifier(org="o", project="p", domain="d", name="grandparent"))
+    overwritten = runner._apply_overrides(base, related_to=related)
+    assert overwritten.related_to.name == "r1"
+
+    cleared = runner._apply_overrides(base, related_to=None)
+    assert not cleared.HasField("related_to")
+
+
+@pytest.mark.asyncio
+@requires_related_to
+@_patch_build
+async def test_runspec_related_to_from_task_ctx(mock_code_bundler, mock_build_image_bg):
+    """flyte.run from inside a remote task container stamps the invoking run as related_to."""
+    with _fake_remote_task_ctx():
+        req = await _run_and_capture(mock_build_image_bg, mock_code_bundler, _org="testorg")
+    from flyteidl2.common import identifier_pb2
+
+    assert req.run_spec.related_to == identifier_pb2.RunIdentifier(
+        org="testorg", project="test", domain="test", name="parent-run"
+    )
+
+
+@pytest.mark.asyncio
+@requires_related_to
+@_patch_build
+async def test_runspec_related_to_unset_without_ctx(mock_code_bundler, mock_build_image_bg):
+    """A plain remote run (no task context) carries no provenance pointer."""
+    req = await _run_and_capture(mock_build_image_bg, mock_code_bundler, _org="testorg")
+    assert not req.run_spec.HasField("related_to")
