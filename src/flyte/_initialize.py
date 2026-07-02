@@ -858,6 +858,7 @@ async def _init_for_testing(
     root_dir: Path | None = None,
     log_level: int | None = None,
     client: ClientSet | None = None,
+    org: str | None = None,
 ):
     global _init_config  # noqa: PLW0603
 
@@ -871,6 +872,7 @@ async def _init_for_testing(
             project=project,
             domain=domain,
             client=client,
+            org=org,
         )
 
 

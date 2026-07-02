@@ -43,14 +43,19 @@ def _mock_client_with_run():
     return mock_client, mock_run_service, mock_dataproxy, prior_inputs
 
 
-def _fake_prior_run(base_envs=None):
-    """A stand-in RunDetails: prior RunSpec + a root action carrying a task spec."""
-    base_run_spec = run_pb2.RunSpec(
-        envs=run_pb2.Envs(values=[literals_pb2.KeyValuePair(key="KEEP", value="1")] + (base_envs or [])),
-        cluster="orig",
-    )
+def _fake_prior_run(base_envs=None, action_id=None, base_run_spec=None):
+    """A stand-in RunDetails: prior RunSpec + a root action carrying a task spec.
+
+    ``action_id`` optionally carries the prior run's full ActionIdentifier (as the real
+    fetch would); ``base_run_spec`` optionally substitutes the prior RunSpec wholesale.
+    """
+    if base_run_spec is None:
+        base_run_spec = run_pb2.RunSpec(
+            envs=run_pb2.Envs(values=[literals_pb2.KeyValuePair(key="KEEP", value="1")] + (base_envs or [])),
+            cluster="orig",
+        )
     task_spec = run_definition_pb2.ActionDetails(
-        id=run_definition_pb2.ActionDetails().id,
+        id=action_id,
         task=_task_spec_with_string_input(),
     )
     action_details = SimpleNamespace(pb2=task_spec)
@@ -134,3 +139,94 @@ async def test_rerun_rejects_non_remote_mode():
 def test_replay_is_removed():
     """flyte.replay was deleted in favor of flyte.rerun."""
     assert not hasattr(flyte, "replay")
+
+
+# --- related_to provenance pointer (descriptor-gated; see _apply_overrides) -------------
+
+_RELATED_TO_AVAILABLE = "related_to" in run_pb2.RunSpec.DESCRIPTOR.fields_by_name
+requires_related_to = pytest.mark.skipif(
+    not _RELATED_TO_AVAILABLE, reason="RunSpec.related_to not in this flyteidl2 build"
+)
+
+
+def _full_action_id(org="testorg", project="test", domain="test", run_name="r1"):
+    from flyteidl2.common import identifier_pb2
+
+    return identifier_pb2.ActionIdentifier(
+        run=identifier_pb2.RunIdentifier(org=org, project=project, domain=domain, name=run_name),
+        name="a0",
+    )
+
+
+async def _rerun_and_capture(prior_run, org="testorg", run_name="r1", **runcontext_kwargs):
+    """Rerun `run_name` against a mocked fetch of `prior_run`; return the CreateRunRequest."""
+    mock_client, mock_run_service, _, _ = _mock_client_with_run()
+    await _init_for_testing(client=mock_client, project="test", domain="test", org=org)
+
+    with mock.patch("flyte.remote._run.RunDetails") as RD:
+        RD.get.aio = AsyncMock(return_value=prior_run)
+        run = await flyte.with_runcontext(mode="remote", **runcontext_kwargs).rerun.aio(run_name)
+
+    assert run
+    req: run_service_pb2.CreateRunRequest = mock_run_service.create_run.call_args[0][0]
+    return req
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(_RELATED_TO_AVAILABLE, reason="field available; the silent-skip gate no longer applies")
+async def test_rerun_silent_noop_when_related_to_field_absent():
+    """Provenance is implicit: rerun must succeed unchanged on a flyteidl2 build without the field."""
+    req = await _rerun_and_capture(_fake_prior_run(action_id=_full_action_id()))
+    assert req.run_spec.cluster == "orig"  # normal inherited spec, no raise
+
+
+@pytest.mark.asyncio
+@requires_related_to
+async def test_rerun_stamps_source_run():
+    from flyteidl2.common import identifier_pb2
+
+    req = await _rerun_and_capture(_fake_prior_run(action_id=_full_action_id()))
+    assert req.run_spec.related_to == identifier_pb2.RunIdentifier(
+        org="testorg", project="test", domain="test", name="r1"
+    )
+
+
+@pytest.mark.asyncio
+@requires_related_to
+async def test_rerun_of_rerun_overwrites_grandparent():
+    """A rerun of a rerun points at its immediate source, not the inherited grandparent."""
+    from flyteidl2.common import identifier_pb2
+
+    base = run_pb2.RunSpec(cluster="orig")
+    base.related_to.CopyFrom(
+        identifier_pb2.RunIdentifier(org="testorg", project="test", domain="test", name="grandparent")
+    )
+    req = await _rerun_and_capture(_fake_prior_run(action_id=_full_action_id(), base_run_spec=base))
+    assert req.run_spec.related_to.name == "r1"
+
+
+@pytest.mark.asyncio
+@requires_related_to
+async def test_rerun_scope_mismatch_clears_related_to():
+    """Cross-scope rerun: no pointer stamped, and the inherited one is cleared, not propagated."""
+    from flyteidl2.common import identifier_pb2
+
+    base = run_pb2.RunSpec(cluster="orig")
+    base.related_to.CopyFrom(
+        identifier_pb2.RunIdentifier(org="testorg", project="test", domain="test", name="grandparent")
+    )
+    req = await _rerun_and_capture(_fake_prior_run(action_id=_full_action_id(), base_run_spec=base), project="other")
+    assert not req.run_spec.HasField("related_to")
+
+
+@pytest.mark.asyncio
+@requires_related_to
+async def test_rerun_empty_fetched_id_falls_back_to_run_name():
+    """A degenerate fetch (empty action id) still yields provenance: name from the rerun
+    argument, scope from the init config."""
+    from flyteidl2.common import identifier_pb2
+
+    req = await _rerun_and_capture(_fake_prior_run())
+    assert req.run_spec.related_to == identifier_pb2.RunIdentifier(
+        org="testorg", project="test", domain="test", name="r1"
+    )
