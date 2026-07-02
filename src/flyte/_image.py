@@ -481,9 +481,21 @@ _CREATE_FLYTE_USER_CMD = (
 
 def _get_base_registry() -> str:
     """
-    Returns the base registry based on the Flyte config endpoint.
-    If the endpoint contains 'localhost', use the localhost registry.
+    Returns the base registry to use when building images.
+
+    Resolution order:
+
+    1. The ``image.registry`` config entry or the ``FLYTE_IMAGE_REGISTRY`` environment variable,
+       if either is set. This takes precedence over everything else.
+    2. The localhost registry, if the Flyte config endpoint contains 'localhost'.
+    3. The built-in default base registry.
     """
+    from flyte.config._config import ImageConfig
+
+    registry = ImageConfig.auto().registry
+    if registry:
+        return registry
+
     from flyte._initialize import _get_init_config
 
     init_config = _get_init_config()
