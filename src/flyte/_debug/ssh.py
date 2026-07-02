@@ -1,15 +1,26 @@
 """SSH-into-task debug over WebSocket.
 
 Pod-side counterpart to ``_debug/vscode.py``. Instead of a browser code-server
-this starts a real ``sshd`` bound to loopback and a small in-process server on
-the debug port the dataplane already routes to (:6060) that (a) answers the
-cluster's code-server HTTP readiness probe with 200 so the pod goes Ready, and
-(b) terminates incoming WebSockets and bridges them to the local sshd.
+this starts an in-process SSH server (asyncssh) bound to loopback and a small
+in-process server on the debug port the dataplane already routes to (:6060) that
+(a) answers the cluster's code-server HTTP readiness probe with 200 so the pod
+goes Ready, and (b) terminates incoming WebSockets and bridges them to the local
+SSH server.
 
 ```
 desktop ssh -> ws stdio proxy (ProxyCommand) -> wss:// -> Cloudflare
-   -> Envoy (per-pod :6060 route) -> pod: ws bridge -> 127.0.0.1:2222 sshd
+   -> Envoy (per-pod :6060 route) -> pod: ws bridge -> 127.0.0.1:2222 asyncssh
 ```
+
+We use asyncssh (a pure-Python SSH server) rather than the system ``sshd``
+binary because the default task image runs as the non-root ``flyte`` user with a
+root-owned venv — so neither ``apt-get install openssh-server`` nor the binary
+is available at runtime. asyncssh is a flyte dependency (pure-Python, ~370 KB,
+its only requirement ``cryptography`` already ships via pyOpenSSL), so it's
+always present in the image with no runtime install. The ``import asyncssh`` is
+kept local to the server methods (not module-level), so importing this module —
+e.g. for the ``WsBridge`` — doesn't pull asyncssh; only actually starting the
+ssh debug server does.
 
 We terminate the WebSocket in-process (rather than running ``wstunnel server``)
 because the dataplane rewrites the request path to ``/?target_port=6060``, which
@@ -27,15 +38,19 @@ import hashlib
 import os
 import shutil
 import struct
-import subprocess
 import sys
 from contextlib import suppress
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    import asyncssh
 
 from flyte._debug.constants import (
     DEFAULT_SSH_USER,
     DEFAULT_UP_SECONDS,
+    FLYTE_ENABLE_SSH_KEY,
+    FLYTE_ENABLE_VSCODE_KEY,
     FLYTE_SSH_PUBKEY_KEY,
     FLYTE_SSH_USER_KEY,
     SSH_DEBUG_DIR,
@@ -73,13 +88,37 @@ def _get_ssh_user() -> str:
         return DEFAULT_SSH_USER
 
 
-class Sshd:
-    """Manages the in-pod sshd lifecycle: locate/install, configure, start, stop.
+def _build_forwarding_server():
+    """An ``SSHServer`` subclass that permits client-initiated TCP forwarding.
 
-    Everything sshd-specific lives here — finding (or apt-installing) the binary,
-    generating the host key, writing the authorized_keys + a minimal key-only
-    config, and running/terminating the daemon. Bound to loopback; only reachable
-    via the WebSocket bridge.
+    VS Code Remote-SSH opens a dynamic SOCKS forward (``ssh -D``) over the
+    connection to reach its in-pod server. asyncssh rejects ``direct-tcpip``
+    channels by default, which surfaces client-side as ``channel open failed:
+    Connection refused`` / ``Failed to set up socket for dynamic port forward …
+    TCP port forwarding may be disabled``. Returning ``True`` from
+    ``connection_requested`` makes asyncssh open the forwarded connection itself
+    — the equivalent of OpenSSH's ``AllowTcpForwarding yes``. Safe here: a
+    single-tenant debug pod with sshd on loopback behind authenticated ingress.
+
+    Built lazily so importing this module doesn't import asyncssh.
+    """
+    import asyncssh
+
+    class _ForwardingServer(asyncssh.SSHServer):
+        def connection_requested(self, dest_host, dest_port, orig_host, orig_port):
+            return True  # asyncssh opens the TCP connection and forwards bytes
+
+    return _ForwardingServer
+
+
+class SshServer:
+    """In-process asyncssh server: generate keys, authorize the user, serve shells.
+
+    Replaces a system ``sshd`` subprocess. Binds to loopback only; reachable
+    solely via the WebSocket bridge. Each session spawns the container's login
+    shell (or runs an ``ssh host <cmd>`` exec), with a PTY when the client asks
+    for one. SFTP is handled by asyncssh's filesystem server so VS Code
+    Remote-SSH (and ``scp``) work.
     """
 
     def __init__(
@@ -96,132 +135,235 @@ class Sshd:
         self.host = host
         self.port = port
         self.scratch = Path(scratch_dir)
-        self._proc: Optional[asyncio.subprocess.Process] = None
+        self._acceptor: Optional["asyncssh.SSHAcceptor"] = None
 
     # -- setup ---------------------------------------------------------------
 
-    @staticmethod
-    def find_binary() -> str:
-        """Locate the sshd binary, attempting a best-effort install if missing."""
-        sshd = shutil.which("sshd")
-        if sshd is None:
-            for candidate in ("/usr/sbin/sshd", "/usr/local/sbin/sshd"):
-                if os.path.exists(candidate):
-                    sshd = candidate
-                    break
-        if sshd is not None:
-            return sshd
-
-        # Best-effort install on Debian/Ubuntu base images. Most images won't
-        # have openssh-server; bake it in for fast cold starts.
-        logger.info("sshd not found, attempting best-effort install of openssh-server...")
-        try:
-            subprocess.run(["apt-get", "update", "-y"], check=True, capture_output=True)
-            subprocess.run(
-                ["apt-get", "install", "-y", "--no-install-recommends", "openssh-server"],
-                check=True,
-                capture_output=True,
-            )
-        except Exception as e:
-            raise RuntimeError(
-                "sshd is not installed and automatic install failed. Bake `openssh-server` into the task "
-                f"image to use ssh debug. Underlying error: {e}"
-            )
-        sshd = shutil.which("sshd") or "/usr/sbin/sshd"
-        if not os.path.exists(sshd):
-            raise RuntimeError("sshd still not found after install attempt; bake `openssh-server` into the image.")
-        return sshd
-
     def _write_authorized_keys(self) -> Path:
-        """Write the user's public key to an sshd-readable authorized_keys file."""
+        """Write the user's public key to an authorized_keys file for asyncssh."""
         self.scratch.mkdir(parents=True, exist_ok=True)
         auth_keys = self.scratch / "authorized_keys"
         auth_keys.write_text(self.pubkey + "\n")
         auth_keys.chmod(0o600)
         return auth_keys
 
-    def _generate_host_key(self) -> Path:
-        """Generate an ed25519 host key for the in-pod sshd (idempotent)."""
+    def _host_key(self):
+        """Load (or generate, in-process) the ed25519 host key. No ssh-keygen needed."""
+        import asyncssh
+
+        self.scratch.mkdir(parents=True, exist_ok=True)
         host_key = self.scratch / "ssh_host_ed25519_key"
-        if not host_key.exists():
-            subprocess.run(
-                ["ssh-keygen", "-t", "ed25519", "-f", str(host_key), "-N", "", "-q"],
-                check=True,
-                capture_output=True,
-            )
+        if host_key.exists():
+            return asyncssh.read_private_key(str(host_key))
+        key = asyncssh.generate_private_key("ssh-ed25519")
+        host_key.write_bytes(key.export_private_key())
         host_key.chmod(0o600)
-        return host_key
-
-    def _render_config(self, host_key: Path, authorized_keys: Path) -> Path:
-        """Render a minimal, key-only sshd_config bound to loopback."""
-        config_path = self.scratch / "sshd_config"
-        pid_path = self.scratch / "sshd.pid"
-        # internal-sftp: required by VS Code Remote-SSH (no external sftp-server binary).
-        # StrictModes off avoids permission-mode failures on the scratch dir; key file is 0600.
-        config_path.write_text(
-            f"""\
-Port {self.port}
-ListenAddress {self.host}
-HostKey {host_key}
-PidFile {pid_path}
-AuthorizedKeysFile {authorized_keys}
-PasswordAuthentication no
-PubkeyAuthentication yes
-PermitRootLogin yes
-KbdInteractiveAuthentication no
-ChallengeResponseAuthentication no
-UsePAM no
-StrictModes no
-PrintMotd no
-X11Forwarding no
-AllowTcpForwarding yes
-PermitTunnel yes
-Subsystem sftp internal-sftp
-LogLevel INFO
-"""
-        )
-        return config_path
-
-    @staticmethod
-    def _ensure_privsep_dir() -> None:
-        """sshd needs a privilege-separation dir (/run/sshd) to exist."""
-        for d in ("/run/sshd", "/var/run/sshd"):
-            try:
-                os.makedirs(d, exist_ok=True)
-                os.chmod(d, 0o755)
-            except Exception as e:
-                logger.debug(f"Could not create privsep dir {d}: {e}")
+        return key
 
     # -- lifecycle -----------------------------------------------------------
 
     async def start(self) -> None:
-        """Configure and launch sshd in the foreground as a child process."""
-        binary = self.find_binary()
-        self._ensure_privsep_dir()
-        authorized_keys = self._write_authorized_keys()
-        host_key = self._generate_host_key()
-        config = self._render_config(host_key, authorized_keys)
-        logger.info(f"Starting sshd ({binary}) on {self.host}:{self.port} for user {self.user!r}")
-        # -D foreground, -e log to stderr, -f config.
-        self._proc = await asyncio.create_subprocess_exec(binary, "-D", "-e", "-f", str(config))
+        """Start the in-process SSH server on loopback."""
+        import asyncssh
 
-    @property
-    def returncode(self) -> Optional[int]:
-        return self._proc.returncode if self._proc else None
+        authorized_keys = self._write_authorized_keys()
+        host_key = self._host_key()
+        logger.info(f"Starting in-process asyncssh server on {self.host}:{self.port} for user {self.user!r}")
+        self._acceptor = await asyncssh.listen(
+            self.host,
+            self.port,
+            server_factory=_build_forwarding_server(),  # allow ssh -L/-D (VS Code dynamic forward)
+            server_host_keys=[host_key],
+            authorized_client_keys=str(authorized_keys),
+            process_factory=self._handle_session,
+            sftp_factory=asyncssh.SFTPServer,  # filesystem SFTP (VS Code Remote-SSH, scp)
+            allow_scp=True,
+            encoding=None,  # raw bytes; the PTY does its own echo/line-editing
+            keepalive_interval=30,
+        )
+
+    async def _handle_session(self, process) -> None:
+        """Run one SSH session: a PTY login shell, or an ``ssh host <cmd>`` exec."""
+        import asyncssh
+
+        try:
+            command = process.command
+            term = process.get_terminal_type()
+            env = dict(os.environ)
+            env.pop("SHLVL", None)
+            # Mimic a real sshd login: seed HOME/USER/LOGNAME/SHELL from the passwd
+            # entry. Containers run as the non-root `flyte` user but usually leave
+            # HOME as "/", so without this VS Code Remote-SSH resolves `~` to "/"
+            # instead of /home/flyte (and `cd` lands in the wrong place).
+            with suppress(Exception):
+                import pwd
+
+                pw = pwd.getpwuid(os.getuid())
+                if pw.pw_dir:
+                    env["HOME"] = pw.pw_dir
+                env["USER"] = env["LOGNAME"] = pw.pw_name
+                if pw.pw_shell:
+                    env.setdefault("SHELL", pw.pw_shell)
+            shell = env.get("SHELL") or shutil.which("bash") or "/bin/bash"
+            argv = [shell, "-c", command] if command else [shell, "-l"]
+            if term:
+                env["TERM"] = term
+                await self._run_pty(process, argv, env)
+            else:
+                await self._run_pipe(process, argv, env)
+        except asyncssh.ConnectionLost:
+            pass
+        except Exception as e:  # never let a session crash take down the listener
+            logger.warning(f"ssh session error: {e}")
+            with suppress(Exception):
+                process.exit(1)
+
+    @staticmethod
+    def _set_winsize(fd: int, size) -> None:
+        """Apply a (cols, rows, ...) terminal size to a PTY via TIOCSWINSZ."""
+        import fcntl
+        import termios
+
+        cols, rows = (size[0] or 0), (size[1] or 0)
+        if not cols or not rows:
+            return
+        with suppress(Exception):
+            fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+
+    async def _run_pty(self, process, argv, env) -> None:
+        """Spawn the shell on a PTY and bridge it to the SSH channel (with resize)."""
+        import pty
+
+        import asyncssh
+
+        loop = asyncio.get_running_loop()
+        master_fd, slave_fd = pty.openpty()
+        self._set_winsize(slave_fd, process.get_terminal_size())
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *argv,
+                preexec_fn=os.setsid,
+                stdin=slave_fd,
+                stdout=slave_fd,
+                stderr=slave_fd,
+                env=env,
+            )
+        finally:
+            os.close(slave_fd)
+
+        os.set_blocking(master_fd, False)
+        drained = asyncio.Event()
+
+        def _on_master_readable():
+            try:
+                data = os.read(master_fd, 65536)
+            except (BlockingIOError, InterruptedError):
+                return
+            except OSError:
+                data = b""
+            if data:
+                process.stdout.write(data)
+            else:
+                with suppress(Exception):
+                    loop.remove_reader(master_fd)
+                drained.set()
+
+        loop.add_reader(master_fd, _on_master_readable)
+
+        async def _stdin_to_pty():
+            try:
+                while True:
+                    try:
+                        data = await process.stdin.read(65536)
+                    except asyncssh.TerminalSizeChanged as exc:
+                        self._set_winsize(master_fd, (exc.width, exc.height, exc.pixwidth, exc.pixheight))
+                        continue
+                    except (asyncssh.BreakReceived, asyncssh.SignalReceived):
+                        continue
+                    if not data:
+                        break
+                    os.write(master_fd, data)
+            except (asyncssh.ConnectionLost, BrokenPipeError, ConnectionResetError, OSError):
+                pass
+
+        stdin_task = loop.create_task(_stdin_to_pty())
+        try:
+            rc = await proc.wait()
+            with suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(drained.wait(), timeout=1)
+        finally:
+            stdin_task.cancel()
+            with suppress(Exception):
+                loop.remove_reader(master_fd)
+            with suppress(Exception):
+                os.close(master_fd)
+        with suppress(Exception):
+            await process.stdout.drain()
+        process.exit(rc if rc is not None and rc >= 0 else 1)
+
+    async def _run_pipe(self, process, argv, env) -> None:
+        """No PTY (typical for ``ssh host <cmd>`` / VS Code exec): pipe std streams."""
+        from asyncio.subprocess import PIPE
+
+        import asyncssh
+
+        proc = await asyncio.create_subprocess_exec(
+            *argv, stdin=PIPE, stdout=PIPE, stderr=PIPE, env=env, start_new_session=True
+        )
+
+        async def _feed_stdin():
+            try:
+                while True:
+                    try:
+                        data = await process.stdin.read(65536)
+                    except (asyncssh.BreakReceived, asyncssh.SignalReceived, asyncssh.TerminalSizeChanged):
+                        continue
+                    if not data:
+                        break
+                    proc.stdin.write(data)
+                    await proc.stdin.drain()
+            except (asyncssh.ConnectionLost, BrokenPipeError, ConnectionResetError, OSError):
+                pass
+            finally:
+                with suppress(Exception):
+                    proc.stdin.close()
+
+        async def _pump(src_reader, dst_writer):
+            try:
+                while True:
+                    data = await src_reader.read(65536)
+                    if not data:
+                        break
+                    dst_writer.write(data)
+                    await dst_writer.drain()
+            except (asyncssh.ConnectionLost, BrokenPipeError, ConnectionResetError, OSError):
+                pass
+
+        # stdin is a background pump: an exec command finishes when its *output*
+        # closes and it exits, regardless of whether the client closed stdin.
+        stdin_task = asyncio.get_running_loop().create_task(_feed_stdin())
+        try:
+            await asyncio.gather(_pump(proc.stdout, process.stdout), _pump(proc.stderr, process.stderr))
+            rc = await proc.wait()
+        finally:
+            stdin_task.cancel()
+        with suppress(Exception):
+            await process.stdout.drain()
+        process.exit(rc if rc is not None and rc >= 0 else 1)
 
     async def wait(self, timeout: Optional[float] = None) -> None:
-        """Block until sshd exits (or *timeout* elapses, raising TimeoutError)."""
-        if self._proc is None:
+        """Block until the server is closed (or *timeout* elapses, raising TimeoutError)."""
+        if self._acceptor is None:
             return
-        await asyncio.wait_for(self._proc.wait(), timeout=timeout)
+        await asyncio.wait_for(self._acceptor.wait_closed(), timeout=timeout)
 
     async def stop(self) -> None:
-        """Terminate sshd and reap it (best-effort)."""
-        if self._proc is None or self._proc.returncode is not None:
+        """Stop accepting and close the server (best-effort)."""
+        if self._acceptor is None:
             return
-        self._proc.terminate()
-        with suppress(asyncio.TimeoutError):
-            await asyncio.wait_for(self._proc.wait(), timeout=5)
+        self._acceptor.close()
+        with suppress(Exception):
+            await self._acceptor.wait_closed()
 
 
 def _write_debug_helpers(ctx) -> Optional[str]:
@@ -264,6 +406,11 @@ def _write_debug_helpers(ctx) -> Optional[str]:
             "#!/usr/bin/env bash\n"
             "# Run the task entrypoint under pdb. Set a breakpoint() in your task,\n"
             "# or step from the top. Same args VS Code's 'Interactive Debugging' uses.\n"
+            "#\n"
+            "# Unset the debug-mode env vars: they are still set in the pod env, and\n"
+            "# without this the entrypoint would re-enter ssh/vscode debug mode and try\n"
+            "# to bind a second server on the already-in-use debug port.\n"
+            f"unset {FLYTE_ENABLE_SSH_KEY} {FLYTE_ENABLE_VSCODE_KEY}\n"
             f"exec {_sys.executable} -m pdb {program} {quoted}\n"
         )
         script.chmod(0o755)
@@ -517,23 +664,23 @@ def _write_login_cd_hook(code_dir: str):
 
 
 async def _start_ssh_server(ctx=None):
-    """Start sshd + the in-process WS bridge, then block until uptime/death.
+    """Start the asyncssh server + the in-process WS bridge, then block until uptime/death.
 
     ``ctx`` carries the runtime args (code bundle, dest, version) used to stage
     the workspace and the debug helpers.
     """
-    sshd = Sshd(_get_pubkey(), user=_get_ssh_user())
+    server = SshServer(_get_pubkey(), user=_get_ssh_user())
 
     # Stage the task code (the entrypoint is blocked here before the normal
     # download), and land interactive ssh sessions in that directory.
     code_dir = await _prepare_workspace(ctx)
 
-    await sshd.start()
+    await server.start()
 
     # The in-process WS bridge answers the readiness probe AND terminates the
     # WebSocket, forwarding to the local sshd. No wstunnel server needed on the
     # pod (the dataplane's path rewrite would break wstunnel's path addressing).
-    bridge = WsBridge(sshd_host=sshd.host, sshd_port=sshd.port)
+    bridge = WsBridge(sshd_host=server.host, sshd_port=server.port)
     await bridge.start()
 
     # Drop a launch.json + pdb helper so you can debug the task once attached.
@@ -549,12 +696,12 @@ async def _start_ssh_server(ctx=None):
 
     max_uptime = int(os.getenv("SSH_SERVER_MAX_UPTIME_SECONDS", str(DEFAULT_UP_SECONDS)))
     try:
-        # Block until sshd exits or we hit the max-uptime ceiling.
-        await sshd.wait(timeout=max_uptime)
-        logger.info("sshd exited; shutting down SSH debug server.")
+        # Block until the server is closed or we hit the max-uptime ceiling.
+        await server.wait(timeout=max_uptime)
+        logger.info("SSH server closed; shutting down SSH debug server.")
     except asyncio.TimeoutError:
         logger.info(f"SSH debug server exceeded max uptime ({max_uptime}s). Terminating...")
     finally:
         await bridge.stop()
-        await sshd.stop()
+        await server.stop()
     sys.exit()
