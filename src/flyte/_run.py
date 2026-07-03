@@ -400,8 +400,7 @@ class _Runner:
         (the rerun path: env merge + explicitly-set field overrides). Pure proto assembly, no I/O.
         This is the single place runner config maps onto a ``RunSpec``. ``recover_ref`` is the already-
         resolved reference run to recover from (see ``_resolve_recover_ref``), or None. ``related_to``
-        is the already-resolved provenance pointer (see ``_resolve_related_to``), or None; stamped
-        only when this flyteidl2 build has the field.
+        is the already-resolved provenance pointer (see ``_resolve_related_to``), or None.
         """
         from flyteidl2.core import literals_pb2, security_pb2
         from flyteidl2.task import run_pb2
@@ -504,15 +503,10 @@ class _Runner:
 
             run_spec.recover.CopyFrom(run_pb2.Recover(run_id=identifier_pb2.RunIdentifier(name=recover_ref)))
 
-        # related_to: implicit provenance (rerun source, or the invoking in-cluster run). Unlike
-        # recover — explicitly user-requested, so absence raises — silently skip when this
-        # flyteidl2 build predates RunSpec.related_to so reruns keep working on older builds.
-        if "related_to" in run_pb2.RunSpec.DESCRIPTOR.fields_by_name:
-            run_spec.ClearField("related_to")  # never inherit a rerun base's stale (grandparent) pointer
-            if related_to is not None:
-                run_spec.related_to.CopyFrom(related_to)
-        elif related_to is not None:
-            logger.debug("RunSpec.related_to unavailable in this flyteidl2 build; skipping provenance pointer.")
+        # related_to: implicit provenance (rerun source, or the invoking in-cluster run).
+        run_spec.ClearField("related_to")  # never inherit a rerun base's stale (grandparent) pointer
+        if related_to is not None:
+            run_spec.related_to.CopyFrom(related_to)
 
         return run_spec
 

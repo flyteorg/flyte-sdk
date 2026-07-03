@@ -378,12 +378,7 @@ async def test_recover_rejected_in_local_mode():
         await flyte.with_runcontext(mode="local", recover="r1").run.aio(task1, "hello")
 
 
-# --- related_to provenance pointer (implicit; descriptor-gated like recover) ------------
-
-_RELATED_TO_AVAILABLE = "related_to" in run_pb2.RunSpec.DESCRIPTOR.fields_by_name
-requires_related_to = pytest.mark.skipif(
-    not _RELATED_TO_AVAILABLE, reason="RunSpec.related_to not in this flyteidl2 build"
-)
+# --- related_to provenance pointer (implicit) ------------
 
 
 def _fake_remote_task_ctx(org="testorg", project="test", domain="test", run_name="parent-run"):
@@ -406,24 +401,6 @@ def _fake_remote_task_ctx(org="testorg", project="test", domain="test", run_name
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(_RELATED_TO_AVAILABLE, reason="field available; the silent-skip gate no longer applies")
-async def test_apply_overrides_related_to_silent_noop_when_field_absent():
-    """Unlike recover (explicitly user-requested, raises), implicit provenance silently
-    skips on a flyteidl2 build without RunSpec.related_to — reruns must keep working."""
-    from flyteidl2.common import identifier_pb2
-
-    from flyte._run import _Runner
-
-    mock_client, _ = _make_mock_client()
-    await _init_for_testing(client=mock_client, project="test", domain="test")
-
-    related = identifier_pb2.RunIdentifier(org="o", project="p", domain="d", name="r1")
-    out = _Runner(force_mode="remote")._apply_overrides(None, related_to=related)
-    assert out is not None  # no raise, spec built normally
-
-
-@pytest.mark.asyncio
-@requires_related_to
 async def test_apply_overrides_related_to_stamped_overwritten_cleared():
     """Fresh path stamps; base-copy overwrites a stale (grandparent) pointer; None clears it."""
     from flyteidl2.common import identifier_pb2
@@ -449,7 +426,6 @@ async def test_apply_overrides_related_to_stamped_overwritten_cleared():
 
 
 @pytest.mark.asyncio
-@requires_related_to
 @_patch_build
 async def test_runspec_related_to_from_task_ctx(mock_code_bundler, mock_build_image_bg):
     """flyte.run from inside a remote task container stamps the invoking run as related_to."""
@@ -463,7 +439,6 @@ async def test_runspec_related_to_from_task_ctx(mock_code_bundler, mock_build_im
 
 
 @pytest.mark.asyncio
-@requires_related_to
 @_patch_build
 async def test_runspec_related_to_unset_without_ctx(mock_code_bundler, mock_build_image_bg):
     """A plain remote run (no task context) carries no provenance pointer."""

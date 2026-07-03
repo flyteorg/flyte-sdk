@@ -141,12 +141,7 @@ def test_replay_is_removed():
     assert not hasattr(flyte, "replay")
 
 
-# --- related_to provenance pointer (descriptor-gated; see _apply_overrides) -------------
-
-_RELATED_TO_AVAILABLE = "related_to" in run_pb2.RunSpec.DESCRIPTOR.fields_by_name
-requires_related_to = pytest.mark.skipif(
-    not _RELATED_TO_AVAILABLE, reason="RunSpec.related_to not in this flyteidl2 build"
-)
+# --- related_to provenance pointer (see _apply_overrides) -------------------------------
 
 
 def _full_action_id(org="testorg", project="test", domain="test", run_name="r1"):
@@ -173,15 +168,6 @@ async def _rerun_and_capture(prior_run, org="testorg", run_name="r1", **runconte
 
 
 @pytest.mark.asyncio
-@pytest.mark.skipif(_RELATED_TO_AVAILABLE, reason="field available; the silent-skip gate no longer applies")
-async def test_rerun_silent_noop_when_related_to_field_absent():
-    """Provenance is implicit: rerun must succeed unchanged on a flyteidl2 build without the field."""
-    req = await _rerun_and_capture(_fake_prior_run(action_id=_full_action_id()))
-    assert req.run_spec.cluster == "orig"  # normal inherited spec, no raise
-
-
-@pytest.mark.asyncio
-@requires_related_to
 async def test_rerun_stamps_source_run():
     from flyteidl2.common import identifier_pb2
 
@@ -192,7 +178,6 @@ async def test_rerun_stamps_source_run():
 
 
 @pytest.mark.asyncio
-@requires_related_to
 async def test_rerun_of_rerun_overwrites_grandparent():
     """A rerun of a rerun points at its immediate source, not the inherited grandparent."""
     from flyteidl2.common import identifier_pb2
@@ -206,7 +191,6 @@ async def test_rerun_of_rerun_overwrites_grandparent():
 
 
 @pytest.mark.asyncio
-@requires_related_to
 async def test_rerun_scope_mismatch_clears_related_to():
     """Cross-scope rerun: no pointer stamped, and the inherited one is cleared, not propagated."""
     from flyteidl2.common import identifier_pb2
@@ -220,7 +204,6 @@ async def test_rerun_scope_mismatch_clears_related_to():
 
 
 @pytest.mark.asyncio
-@requires_related_to
 async def test_rerun_empty_fetched_id_falls_back_to_run_name():
     """A degenerate fetch (empty action id) still yields provenance: name from the rerun
     argument, scope from the init config."""
