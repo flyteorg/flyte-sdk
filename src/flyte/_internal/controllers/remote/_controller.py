@@ -270,7 +270,10 @@ class RemoteController(Controller):
             )
 
         if n.has_error() or n.phase == phase_pb2.ACTION_PHASE_FAILED:
-            exc = await handle_action_failure(action, _task.name)
+            # Pass `n` (the observed/cached final state from the informer), not the local `action`
+            # stub. On a recovery the watch observes the pre-existing terminal sub-action before the
+            # parent submits, so the error lands on the cached object (`n`) while the stub stays empty.
+            exc = await handle_action_failure(n, _task.name)
             raise exc
 
         if _task.native_interface.outputs:
@@ -590,7 +593,8 @@ class RemoteController(Controller):
             raise
 
         if n.has_error() or n.phase == phase_pb2.ACTION_PHASE_FAILED:
-            exc = await handle_action_failure(action, task_name)
+            # See _submit: use `n`, the observed final state, not the local `action` stub.
+            exc = await handle_action_failure(n, task_name)
             raise exc
 
         if native_interface.outputs:

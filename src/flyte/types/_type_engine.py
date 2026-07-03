@@ -1316,6 +1316,90 @@ def _select_unambiguous_variant(variants: typing.Sequence[type], value: dict[str
     return matches[0] if len(matches) == 1 else None
 
 
+def _union_literal_to_dict(lv: Literal) -> Optional[dict]:
+    """Decode a union scalar's wrapped pydantic/struct value to a plain dict.
+
+    Returns ``None`` when the literal isn't a union, or its wrapped value isn't a
+    msgpack/struct object we can inspect for a discriminator. Best-effort: any
+    decode failure yields ``None`` so the caller falls back to structural matching.
+    """
+    if not (lv.HasField("scalar") and lv.scalar.HasField("union")):
+        return None
+    inner = lv.scalar.union.value
+    if not inner.HasField("scalar"):
+        return None
+    try:
+        if inner.scalar.HasField("binary"):
+            if inner.scalar.binary.tag != MESSAGEPACK:
+                return None
+            obj = msgpack.loads(inner.scalar.binary.value, strict_map_key=False)
+        elif inner.scalar.HasField("generic"):
+            obj = json.loads(_json_format.MessageToJson(inner.scalar.generic))
+        else:
+            return None
+    except Exception:
+        return None
+    return obj if isinstance(obj, dict) else None
+
+
+def _literal_discriminator_value(model_cls: type, field_name: str) -> Optional[Any]:
+    """If ``field_name`` on a pydantic model is a single-value ``typing.Literal``
+    (a discriminator like ``type: Literal["prior_run"]``), return that value, else
+    ``None``. ``Literal`` here is the protobuf type, so we qualify ``typing.Literal``."""
+    field = getattr(model_cls, "model_fields", {}).get(field_name)
+    if field is None:
+        return None
+    ann = field.annotation
+    if get_origin(ann) is typing.Literal:
+        args = get_args(ann)
+        if len(args) == 1:
+            return _normalize_discriminator_value(args[0])
+    return None
+
+
+def _resolve_pydantic_union_variant(variants: typing.Sequence[type], value: dict[str, Any]) -> Optional[type]:
+    """Pick the unique union variant for a decoded ``value`` dict.
+
+    Disambiguates pydantic-model union variants that the structural
+    ``UnionTransformer`` loop can't tell apart because they all resolve to the
+    same ``"Pydantic Transformer"``. Strategy, in order:
+
+      1. Discriminator: a field common to all variants, each typed as a
+         single-value ``typing.Literal`` with a value distinct per variant (e.g.
+         ``type``). Map the value's discriminator to its variant.
+      2. Fallback: exactly one variant whose ``model_fields`` is a superset of the
+         value's keys.
+
+    Returns ``None`` when it can't uniquely resolve, so the caller falls back to
+    the existing structural matching / ambiguity error (no behavior change for
+    non-pydantic or genuinely-ambiguous unions).
+    """
+    pyd = [v for v in variants if isinstance(v, type) and issubclass(v, BaseModel)]
+    if len(pyd) < 2:
+        return None
+
+    # (1) discriminator field: common to all variants, single-value Literal, distinct per variant.
+    common_fields = set.intersection(*[set(v.model_fields.keys()) for v in pyd])
+    for fname in sorted(common_fields):
+        mapping: Dict[Any, type] = {}
+        usable = True
+        for v in pyd:
+            dv = _literal_discriminator_value(v, fname)
+            if dv is None or dv in mapping:
+                usable = False
+                break
+            mapping[dv] = v
+        if usable and fname in value:
+            target = mapping.get(_normalize_discriminator_value(value[fname]))
+            if target is not None:
+                return target
+
+    # (2) unique field-superset match.
+    vkeys = set(value.keys())
+    supersets = [v for v in pyd if vkeys.issubset(set(v.model_fields.keys()))]
+    return supersets[0] if len(supersets) == 1 else None
+
+
 def _mutable_schema_default_factory(
     default: list[Any] | dict[Any, Any],
 ) -> typing.Callable[[], list[Any] | dict[Any, Any]]:
@@ -2380,6 +2464,20 @@ class UnionTransformer(TypeTransformer[T]):
             union_type = lv.scalar.union.type
             if union_type.HasField("structure"):
                 union_tag = union_type.structure.tag
+
+        # Discriminator-aware fast path. Pydantic-model union variants all resolve to the same
+        # "Pydantic Transformer", so the structural loop below can match more than one variant
+        # (lenient model_validate + structurally-castable types) and raise a false "ambiguous"
+        # error. Resolve by the variants' discriminator field (e.g. ``type``) — or a unique
+        # field-superset — first, and only fall through to structural matching if we can't.
+        value_dict = _union_literal_to_dict(lv)
+        if value_dict is not None:
+            target = _resolve_pydantic_union_variant(list(get_args(expected_python_type)), value_dict)
+            if target is not None:
+                try:
+                    return await TypeEngine.get_transformer(target).to_python_value(lv.scalar.union.value, target)
+                except Exception as e:
+                    logger.debug(f"Discriminator-selected union variant {target} failed, falling back: {e}")
 
         found_res = False
         is_ambiguous = False
