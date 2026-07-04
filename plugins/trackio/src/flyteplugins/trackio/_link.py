@@ -76,7 +76,6 @@ class Trackio(Link):
         # Self-hosted Trackio
         #
         if server_url:
-
             server_url = server_url.rstrip("/")
 
             if project_name:

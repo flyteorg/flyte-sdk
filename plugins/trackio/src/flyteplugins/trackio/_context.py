@@ -6,7 +6,10 @@ from typing import Any, Optional
 
 import flyte
 
+import trackio
+
 _TRACKIO_RUN_KEY = "_trackio_run"
+
 
 def _to_dict_helper(obj, prefix: str) -> dict[str, str]:
     """Serialize a dataclass into Flyte custom_context."""
@@ -113,11 +116,7 @@ class _TrackioConfig:
     def to_trackio_init(self) -> dict[str, Any]:
         """Convert to arguments for ``trackio.init()``."""
 
-        return {
-            k: v
-            for k, v in asdict(self).items()
-            if v is not None
-        }
+        return {k: v for k, v in asdict(self).items() if v is not None}
 
     def to_dict(self) -> dict[str, str]:
         return _to_dict_helper(self, "trackio")
@@ -152,15 +151,10 @@ def get_trackio_context() -> Optional[_TrackioConfig]:
     if ctx is None or not ctx.custom_context:
         return None
 
-    if not any(
-        k.startswith("trackio_")
-        for k in ctx.custom_context
-    ):
+    if not any(k.startswith("trackio_") for k in ctx.custom_context):
         return None
 
-    return _TrackioConfig.from_dict(
-        ctx.custom_context
-    )
+    return _TrackioConfig.from_dict(ctx.custom_context)
 
 
 def trackio_config(
@@ -198,8 +192,6 @@ def trackio_config(
         auto_log_cpu=auto_log_cpu,
         cpu_log_interval=cpu_log_interval,
     )
-
-
 
 
 def set_trackio_run(run) -> None:

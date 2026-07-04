@@ -1,6 +1,6 @@
-import flyte
-
 from typing import Any
+
+import flyte
 from datasets import load_dataset
 from transformers import (
     AutoModelForSequenceClassification,
@@ -19,18 +19,17 @@ env = flyte.TaskEnvironment(name="trackio")
 
 # remember to install psutil and accelerate
 
+
 @trackio_init
 @env.task
-def train()-> dict[str, Any]:
+def train() -> dict[str, Any]:
 
     dataset = load_dataset("stanfordnlp/imdb")
 
     train_ds = dataset["train"].shuffle(seed=42).select(range(60))
     eval_ds = dataset["test"].shuffle(seed=42).select(range(35))
 
-    tokenizer = AutoTokenizer.from_pretrained(
-        "distilbert/distilbert-base-uncased"
-    )
+    tokenizer = AutoTokenizer.from_pretrained("distilbert/distilbert-base-uncased")
 
     def preprocess(examples):
         return tokenizer(

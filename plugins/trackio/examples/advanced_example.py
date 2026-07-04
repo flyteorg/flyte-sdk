@@ -34,20 +34,10 @@ class TrackioCallback(TrainerCallback):
 def train_and_evaluate() -> dict[str, float]:
     dataset = load_dataset("AI-Lab-Makerere/beans")
 
-    train_ds  = (
-        dataset["train"]
-        .shuffle(seed=42)
-        .select(range(100))
-    )
-    valid_ds = (
-        dataset["validation"]
-        .shuffle(seed=42)
-        .select(range(20))
-    )
+    train_ds = dataset["train"].shuffle(seed=42).select(range(100))
+    valid_ds = dataset["validation"].shuffle(seed=42).select(range(20))
 
-    processor = AutoImageProcessor.from_pretrained(
-        "google/vit-base-patch16-224"
-    )
+    processor = AutoImageProcessor.from_pretrained("google/vit-base-patch16-224")
 
     def transform(example):
         image = example["image"].convert("RGB")
@@ -78,16 +68,14 @@ def train_and_evaluate() -> dict[str, float]:
         {
             "train_samples": len(train_ds),
             "validation_samples": len(valid_ds),
-            "num_classes": len(
-                dataset["train"].features["labels"].names
-            ),
+            "num_classes": len(dataset["train"].features["labels"].names),
         }
     )
 
     label_names = dataset["train"].features["labels"].names
 
-    id2label = {i: label for i, label in enumerate(label_names)}
-    label2id = {label: i for i, label in enumerate(label_names)}
+    id2label = dict(enumerate(label_names))
+    label2id = {label: idx for idx, label in id2label.items()}
 
     model = ViTForImageClassification.from_pretrained(
         "google/vit-base-patch16-224",
@@ -147,10 +135,10 @@ def train_and_evaluate() -> dict[str, float]:
 
     run.log(
         {
-        "train_samples": len(train_ds),
-        "validation_samples": len(valid_ds),
-        "num_classes": len(label_names),
-        "class_names": label_names,
+            "train_samples": len(train_ds),
+            "validation_samples": len(valid_ds),
+            "num_classes": len(label_names),
+            "class_names": label_names,
         }
     )
 

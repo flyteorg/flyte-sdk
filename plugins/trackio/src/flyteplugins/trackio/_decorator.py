@@ -7,8 +7,9 @@ from inspect import iscoroutinefunction
 from typing import Any, Callable, Optional, TypeVar, cast
 
 import flyte
-import trackio
 from flyte._task import AsyncFunctionTaskTemplate
+
+import trackio
 
 from ._context import (
     _TRACKIO_RUN_KEY,
@@ -21,7 +22,6 @@ from ._link import Trackio
 logger = logging.getLogger(__name__)
 
 F = TypeVar("F", bound=Callable[..., Any])
-
 
 
 def _build_init_kwargs() -> dict[str, Any]:
@@ -66,7 +66,7 @@ def _trackio_run(**decorator_kwargs):
     #
     if flyte_ctx.data is None:
         flyte_ctx.data = {}
-        
+
     saved_run = flyte_ctx.data.get(_TRACKIO_RUN_KEY)
 
     if saved_run is not None:
@@ -77,13 +77,7 @@ def _trackio_run(**decorator_kwargs):
 
     init_kwargs = context.to_trackio_init() if context else {}
 
-    init_kwargs.update(
-        {
-            k: v
-            for k, v in decorator_kwargs.items()
-            if v is not None
-        }
-    )
+    init_kwargs.update({k: v for k, v in decorator_kwargs.items() if v is not None})
 
     run = trackio.init(**init_kwargs)
 
@@ -130,7 +124,6 @@ def trackio_init(
         # Flyte Task
         #
         if isinstance(task, AsyncFunctionTaskTemplate):
-
             #
             # Add Trackio link
             #

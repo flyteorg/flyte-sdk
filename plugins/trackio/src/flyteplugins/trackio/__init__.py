@@ -30,9 +30,6 @@ Configuration can also be provided via `trackio_config()`:
 
 from __future__ import annotations
 
-import flyte
-import trackio
-
 from ._context import (
     get_trackio_context,
     get_trackio_run,
@@ -47,8 +44,8 @@ __version__ = "0.1.0"
 
 __all__ = [
     "Trackio",
-    "trackio_init",
-    "trackio_config",
     "get_trackio_context",
     "get_trackio_run",
+    "trackio_config",
+    "trackio_init",
 ]
