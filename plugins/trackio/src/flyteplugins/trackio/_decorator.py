@@ -1,122 +1,181 @@
 from __future__ import annotations
 
 import functools
-import inspect
 import logging
-from collections.abc import Callable
-from typing import Any
+from contextlib import contextmanager
+from inspect import iscoroutinefunction
+from typing import Any, Callable, Optional, TypeVar, cast
 
-try:
-    import trackio
-except ImportError as e:
-    raise ImportError(
-        "The flyteplugins-trackio package requires the 'trackio' package. "
-        "Install it with `pip install trackio`."
-    ) from e
+import flyte
+import trackio
+from flyte._task import AsyncFunctionTaskTemplate
 
-from .context import (
+from ._context import (
     clear_trackio_run,
     get_trackio_context,
     merge_trackio_config,
     set_trackio_run,
 )
+from ._link import Trackio
 
 logger = logging.getLogger(__name__)
 
+F = TypeVar("F", bound=Callable[..., Any])
 
-def _resolve_config(decorator_kwargs: dict[str, Any]) -> dict[str, Any]:
+_TRACKIO_RUN_KEY = "_trackio_run"
+
+
+def _build_init_kwargs() -> dict[str, Any]:
     """
-    Resolve Trackio configuration from the current Flyte context and decorator.
-
-    Configuration precedence:
-
-        decorator kwargs
-            >
-        trackio_config(...)
-            >
-        Trackio defaults
+    Build kwargs for ``trackio.init()`` from the current Flyte context.
     """
-    context = get_trackio_context()
+    ctx = get_trackio_context()
 
-    if context is None:
-        return decorator_kwargs.copy()
+    if ctx is None:
+        return {}
 
-    return merge_trackio_config(
-        context.to_dict(),
+    return ctx.to_trackio_init()
+
+
+@contextmanager
+def _trackio_run(**decorator_kwargs):
+    """
+    Context manager responsible for Trackio run lifecycle.
+
+    If a parent Trackio run already exists, it is reused.
+    Otherwise a new Trackio run is created for the duration
+    of the task.
+    """
+
+    flyte_ctx = flyte.ctx()
+
+    #
+    # Running outside Flyte
+    #
+    if flyte_ctx is None:
+        run = trackio.init(**decorator_kwargs)
+
+        try:
+            yield run
+        finally:
+            run.finish()
+
+        return
+
+    #
+    # Reuse parent run if available
+    #
+    saved_run = flyte_ctx.data.get(_TRACKIO_RUN_KEY)
+
+    if saved_run is not None:
+        yield saved_run
+        return
+
+    #
+    # Merge context configuration
+    #
+    init_kwargs = merge_trackio_config(
+        get_trackio_context(),
         decorator_kwargs,
     )
 
+    run = trackio.init(**init_kwargs)
+
+    set_trackio_run(run)
+
+    try:
+        yield run
+
+    finally:
+        try:
+            run.finish()
+        except Exception:
+            logger.exception("Failed to finish Trackio run.")
+        finally:
+            clear_trackio_run()
+
 
 def trackio_init(
-    _func: Callable[..., Any] | None = None,
+    _func: Optional[F] = None,
     **decorator_kwargs: Any,
-):
+) -> F:
     """
-    Decorator that initializes a Trackio run for the duration of a Flyte task.
+    Initialize a Trackio run around a Flyte task.
 
-    Examples
-    --------
+    Usage
+    -----
 
     @trackio_init
-
-    @trackio_init(project="llama")
+    @env.task
+    async def train():
+        ...
 
     @trackio_init(
-        project="llama",
-        space_id="org/dashboard",
-        bucket_id="org/storage",
+        project="vision",
+        space_id="user/demo",
     )
-
-    All keyword arguments are forwarded directly to ``trackio.init()``.
+    @env.task
+    async def train():
+        ...
     """
 
-    def decorator(func: Callable[..., Any]):
+    def decorator(task: F) -> F:
 
-        if inspect.iscoroutinefunction(func):
+        #
+        # Flyte Task
+        #
+        if isinstance(task, AsyncFunctionTaskTemplate):
 
-            @functools.wraps(func)
+            #
+            # Add Trackio link
+            #
+            existing_links = getattr(task, "links", ())
+
+            task = task.override(
+                links=(
+                    *existing_links,
+                    Trackio(
+                        project=decorator_kwargs.get("project"),
+                        server_url=decorator_kwargs.get("server_url"),
+                        space_id=decorator_kwargs.get("space_id"),
+                    ),
+                )
+            )
+
+            original_execute = task.execute
+
+            async def wrapped_execute(*args, **kwargs):
+
+                with _trackio_run(**decorator_kwargs):
+                    return await original_execute(*args, **kwargs)
+
+            task.execute = wrapped_execute
+
+            return cast(F, task)
+
+        #
+        # Plain async Python function
+        #
+        if iscoroutinefunction(task):
+
+            @functools.wraps(task)
             async def async_wrapper(*args, **kwargs):
 
-                config = _resolve_config(decorator_kwargs)
+                with _trackio_run(**decorator_kwargs):
+                    return await task(*args, **kwargs)
 
-                run = trackio.init(**config)
+            return cast(F, async_wrapper)
 
-                set_trackio_run(run)
+        #
+        # Plain sync Python function
+        #
+        @functools.wraps(task)
+        def sync_wrapper(*args, **kwargs):
 
-                try:
-                    return await func(*args, **kwargs)
+            with _trackio_run(**decorator_kwargs):
+                return task(*args, **kwargs)
 
-                finally:
-                    try:
-                        run.finish()
-                    except Exception:
-                        logger.exception("Failed to finish Trackio run.")
-                    finally:
-                        clear_trackio_run()
-
-            return async_wrapper
-
-        @functools.wraps(func)
-        def wrapper(*args, **kwargs):
-
-            config = _resolve_config(decorator_kwargs)
-
-            run = trackio.init(**config)
-
-            set_trackio_run(run)
-
-            try:
-                return func(*args, **kwargs)
-
-            finally:
-                try:
-                    run.finish()
-                except Exception:
-                    logger.exception("Failed to finish Trackio run.")
-                finally:
-                    clear_trackio_run()
-
-        return wrapper
+        return cast(F, sync_wrapper)
 
     if _func is None:
         return decorator

@@ -229,3 +229,36 @@ def merge_trackio_config(
     )
 
     return merged
+
+_TRACKIO_RUN_KEY = "_trackio_run"
+
+
+def set_trackio_run(run) -> None:
+    """Store the active Trackio run in the Flyte context."""
+    ctx = flyte.ctx()
+
+    if ctx is None:
+        return
+
+    if ctx.data is None:
+        ctx.data = {}
+
+    ctx.data[_TRACKIO_RUN_KEY] = run
+
+
+def get_trackio_run():
+    """Return the active Trackio run from the Flyte context."""
+    ctx = flyte.ctx()
+
+    if ctx is None or ctx.data is None:
+        return None
+
+    return ctx.data.get(_TRACKIO_RUN_KEY)
+
+
+def clear_trackio_run() -> None:
+    """Remove the Trackio run from the Flyte context."""
+    ctx = flyte.ctx()
+
+    if ctx and ctx.data:
+        ctx.data.pop(_TRACKIO_RUN_KEY, None)

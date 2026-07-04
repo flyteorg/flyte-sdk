@@ -33,14 +33,14 @@ from __future__ import annotations
 import flyte
 import trackio
 
-from .context import (
+from ._context import (
     get_trackio_context,
     trackio_config,
 )
-from .decorator import (
+from ._decorator import (
     trackio_init,
 )
-from .link import Trackio
+from ._link import Trackio
 
 __version__ = "0.1.0"
 
