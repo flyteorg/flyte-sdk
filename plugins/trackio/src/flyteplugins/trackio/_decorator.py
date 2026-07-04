@@ -13,7 +13,6 @@ from flyte._task import AsyncFunctionTaskTemplate
 from ._context import (
     clear_trackio_run,
     get_trackio_context,
-    merge_trackio_config,
     set_trackio_run,
 )
 from ._link import Trackio
@@ -65,18 +64,25 @@ def _trackio_run(**decorator_kwargs):
     #
     # Reuse parent run if available
     #
+    if flyte_ctx.data is None:
+        flyte_ctx.data = {}
+        
     saved_run = flyte_ctx.data.get(_TRACKIO_RUN_KEY)
 
     if saved_run is not None:
         yield saved_run
         return
 
-    #
-    # Merge context configuration
-    #
-    init_kwargs = merge_trackio_config(
-        get_trackio_context(),
-        decorator_kwargs,
+    context = get_trackio_context()
+
+    init_kwargs = context.to_trackio_init() if context else {}
+
+    init_kwargs.update(
+        {
+            k: v
+            for k, v in decorator_kwargs.items()
+            if v is not None
+        }
     )
 
     run = trackio.init(**init_kwargs)
@@ -85,7 +91,6 @@ def _trackio_run(**decorator_kwargs):
 
     try:
         yield run
-
     finally:
         try:
             run.finish()

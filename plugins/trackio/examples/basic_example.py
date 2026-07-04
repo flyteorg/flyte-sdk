@@ -1,5 +1,6 @@
 import flyte
 
+from typing import Any
 from datasets import load_dataset
 from transformers import (
     AutoModelForSequenceClassification,
@@ -16,15 +17,16 @@ from flyteplugins.trackio import (
 
 env = flyte.TaskEnvironment(name="trackio")
 
+# remember to install psutil and accelerate
 
 @trackio_init
 @env.task
-def train():
+def train()-> dict[str, Any]:
 
-    dataset = load_dataset("imdb")
+    dataset = load_dataset("stanfordnlp/imdb")
 
-    train_ds = dataset["train"].shuffle(seed=42).select(range(500))
-    eval_ds = dataset["test"].shuffle(seed=42).select(range(100))
+    train_ds = dataset["train"].shuffle(seed=42).select(range(60))
+    eval_ds = dataset["test"].shuffle(seed=42).select(range(35))
 
     tokenizer = AutoTokenizer.from_pretrained(
         "distilbert/distilbert-base-uncased"
@@ -52,6 +54,7 @@ def train():
             num_train_epochs=1,
             per_device_train_batch_size=8,
             logging_steps=10,
+            dataloader_pin_memory=False,
         ),
         train_dataset=train_ds,
         eval_dataset=eval_ds,
@@ -72,8 +75,7 @@ cfg = trackio_config(
     project="distilbert-imdb",
     space_id="AINovice2005/distilbert-demo",
     bucket_id="AINovice2005/distilbert-storage",
-    private=True,
-    tags=["flyte", "distilbert"],
+    auto_log_cpu=True,
 )
 
 flyte.with_runcontext(

@@ -35,6 +35,7 @@ import trackio
 
 from ._context import (
     get_trackio_context,
+    get_trackio_run,
     trackio_config,
 )
 from ._decorator import (

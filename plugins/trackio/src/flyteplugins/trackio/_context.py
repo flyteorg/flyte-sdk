@@ -35,7 +35,7 @@ def _from_dict_helper(cls, d: dict[str, str], prefix: str):
         if not key.startswith(prefix):
             continue
 
-        field = key[len(prefix):]
+        field = key[len(prefix) :]
 
         try:
             kwargs[field] = json.loads(value)
@@ -63,14 +63,12 @@ def _context_manager_enter(obj, prefix: str):
 
 
 def _context_manager_exit(ctx_mgr, saved: dict, prefix: str, *args):
-
     if ctx_mgr:
         ctx_mgr.__exit__(*args)
 
     ctx = flyte.ctx()
 
     if ctx and ctx.custom_context:
-
         for key in list(ctx.custom_context.keys()):
             if key.startswith(f"{prefix}_"):
                 del ctx.custom_context[key]
@@ -82,49 +80,41 @@ def _context_manager_exit(ctx_mgr, saved: dict, prefix: str, *args):
 class _TrackioConfig:
     """
     Trackio configuration stored inside the Flyte custom_context.
-
-    Explicit fields are used by the Flyte plugin itself.
-
-    Any additional Trackio parameters are forwarded through ``kwargs``.
+    Mirrors the supported subset of ``trackio.init()``.
     """
 
     project: Optional[str] = None
 
     name: Optional[str] = None
 
-    tags: Optional[list[str]] = None
-
-    config: Optional[dict[str, Any]] = None
-
     group: Optional[str] = None
 
-    notes: Optional[str] = None
-
     space_id: Optional[str] = None
+
+    dataset_id: Optional[str] = None
 
     bucket_id: Optional[str] = None
 
     server_url: Optional[str] = None
 
-    private: Optional[bool] = None
+    config: Optional[dict[str, Any]] = None
 
-    kwargs: Optional[dict[str, Any]] = None
+    resume: str = "never"
+
+    auto_log_gpu: Optional[bool] = None
+
+    gpu_log_interval: float = 10.0
+
+    auto_log_cpu: Optional[bool] = None
+
+    cpu_log_interval: float = 10.0
 
     def to_trackio_init(self) -> dict[str, Any]:
-        """
-        Convert to arguments for trackio.init().
-        """
-
-        cfg = asdict(self)
-
-        extra = cfg.pop("kwargs", None)
-
-        if extra:
-            cfg.update(extra)
+        """Convert to arguments for ``trackio.init()``."""
 
         return {
             k: v
-            for k, v in cfg.items()
+            for k, v in asdict(self).items()
             if v is not None
         }
 
@@ -176,15 +166,17 @@ def trackio_config(
     *,
     project: str | None = None,
     name: str | None = None,
-    tags: list[str] | None = None,
-    config: dict[str, Any] | None = None,
     group: str | None = None,
-    notes: str | None = None,
     space_id: str | None = None,
+    dataset_id: str | None = None,
     bucket_id: str | None = None,
     server_url: str | None = None,
-    private: bool | None = None,
-    **kwargs,
+    config: dict[str, Any] | None = None,
+    resume: str = "never",
+    auto_log_gpu: bool | None = None,
+    gpu_log_interval: float = 10.0,
+    auto_log_cpu: bool | None = None,
+    cpu_log_interval: float = 10.0,
 ) -> _TrackioConfig:
     """
     Create Trackio configuration for Flyte.
@@ -193,48 +185,26 @@ def trackio_config(
     return _TrackioConfig(
         project=project,
         name=name,
-        tags=tags,
-        config=config,
         group=group,
-        notes=notes,
         space_id=space_id,
+        dataset_id=dataset_id,
         bucket_id=bucket_id,
         server_url=server_url,
-        private=private,
-        kwargs=kwargs or None,
+        config=config,
+        resume=resume,
+        auto_log_gpu=auto_log_gpu,
+        gpu_log_interval=gpu_log_interval,
+        auto_log_cpu=auto_log_cpu,
+        cpu_log_interval=cpu_log_interval,
     )
 
-
-def merge_trackio_config(
-    context: _TrackioConfig | None,
-    decorator_kwargs: dict[str, Any],
-) -> dict[str, Any]:
-    """
-    Merge context configuration with decorator arguments.
-
-    Decorator arguments always win.
-    """
-
-    if context is None:
-        return decorator_kwargs.copy()
-
-    merged = context.to_trackio_init()
-
-    merged.update(
-        {
-            k: v
-            for k, v in decorator_kwargs.items()
-            if v is not None
-        }
-    )
-
-    return merged
 
 _TRACKIO_RUN_KEY = "_trackio_run"
 
 
 def set_trackio_run(run) -> None:
     """Store the active Trackio run in the Flyte context."""
+
     ctx = flyte.ctx()
 
     if ctx is None:
@@ -248,6 +218,7 @@ def set_trackio_run(run) -> None:
 
 def get_trackio_run():
     """Return the active Trackio run from the Flyte context."""
+
     ctx = flyte.ctx()
 
     if ctx is None or ctx.data is None:
@@ -258,6 +229,7 @@ def get_trackio_run():
 
 def clear_trackio_run() -> None:
     """Remove the Trackio run from the Flyte context."""
+
     ctx = flyte.ctx()
 
     if ctx and ctx.data:
