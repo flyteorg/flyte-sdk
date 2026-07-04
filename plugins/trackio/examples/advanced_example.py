@@ -19,28 +19,31 @@ from flyteplugins.trackio import (
 env = flyte.TaskEnvironment(name="trackio")
 
 
-#
-# Automatically log Trainer metrics to Trackio
-#
 class TrackioCallback(TrainerCallback):
+    """Automatically log Trainer metrics to Trackio."""
+
     def on_log(self, args, state, control, logs=None, **kwargs):
         if logs:
             run = get_trackio_run()
-            if run:
+            if run is not None:
                 run.log(logs)
 
 
-#
-# Task 1
-#
 @trackio_init
 @env.task
-def preprocess():
+def train_and_evaluate() -> dict[str, float]:
+    dataset = load_dataset("AI-Lab-Makerere/beans")
 
-    dataset = load_dataset("beans")
-
-    train_ds = dataset["train"].shuffle(seed=42).select(range(200))
-    valid_ds = dataset["validation"].shuffle(seed=42).select(range(50))
+    train_ds  = (
+        dataset["train"]
+        .shuffle(seed=42)
+        .select(range(100))
+    )
+    valid_ds = (
+        dataset["validation"]
+        .shuffle(seed=42)
+        .select(range(20))
+    )
 
     processor = AutoImageProcessor.from_pretrained(
         "google/vit-base-patch16-224"
@@ -75,23 +78,23 @@ def preprocess():
         {
             "train_samples": len(train_ds),
             "validation_samples": len(valid_ds),
-            "num_classes": len(dataset["train"].features["labels"].names),
+            "num_classes": len(
+                dataset["train"].features["labels"].names
+            ),
         }
     )
 
-    return train_ds, valid_ds
+    label_names = dataset["train"].features["labels"].names
 
-
-#
-# Task 2
-#
-@trackio_init
-@env.task
-def train(train_ds, valid_ds):
+    id2label = {i: label for i, label in enumerate(label_names)}
+    label2id = {label: i for i, label in enumerate(label_names)}
 
     model = ViTForImageClassification.from_pretrained(
         "google/vit-base-patch16-224",
-        num_labels=3,
+        num_labels=len(label_names),
+        id2label=id2label,
+        label2id=label2id,
+        ignore_mismatched_sizes=True,
     )
 
     training_args = TrainingArguments(
@@ -99,11 +102,12 @@ def train(train_ds, valid_ds):
         num_train_epochs=1,
         per_device_train_batch_size=8,
         per_device_eval_batch_size=8,
-        evaluation_strategy="epoch",
+        eval_strategy="epoch",
         save_strategy="no",
         logging_steps=5,
         remove_unused_columns=False,
         dataloader_num_workers=0,
+        dataloader_pin_memory=False,
         report_to=[],
     )
 
@@ -112,39 +116,22 @@ def train(train_ds, valid_ds):
         args=training_args,
         train_dataset=train_ds,
         eval_dataset=valid_ds,
-        tokenizer=None,
+        processing_class=processor,
         callbacks=[TrackioCallback()],
     )
 
     trainer.train()
 
-    run = get_trackio_run()
+    predictions = trainer.predict(valid_ds)
 
-    run.log(
-        {
-            "training_completed": True,
-        }
+    preds = np.argmax(
+        predictions.predictions,
+        axis=1,
     )
-
-    trainer.save_model("./model")
-
-    return trainer
-
-
-#
-# Task 3
-#
-@trackio_init
-@env.task
-def evaluate_model(trainer):
+    labels = predictions.label_ids
 
     accuracy = evaluate.load("accuracy")
     f1 = evaluate.load("f1")
-
-    predictions = trainer.predict(trainer.eval_dataset)
-
-    preds = np.argmax(predictions.predictions, axis=1)
-    labels = predictions.label_ids
 
     metrics = {
         **accuracy.compute(
@@ -158,35 +145,26 @@ def evaluate_model(trainer):
         ),
     }
 
-    run = get_trackio_run()
+    run.log(
+        {
+        "train_samples": len(train_ds),
+        "validation_samples": len(valid_ds),
+        "num_classes": len(label_names),
+        "class_names": label_names,
+        }
+    )
 
-    run.log(metrics)
+    trainer.save_model("./model")
 
     return metrics
 
 
-#
-# Flyte Workflow
-#
-@flyte.workflow
-def vit_training_pipeline():
+cfg = trackio_config(
+    project="vit-beans-demo",
+    space_id="AINovice2005/vit-beans-dashboard",
+    bucket_id="AINovice2005/vit-beans-storage",
+)
 
-    train_ds, valid_ds = preprocess()
-
-    trainer = train(train_ds, valid_ds)
-
-    return evaluate_model(trainer)
-
-
-#
-# Execute
-#
 flyte.with_runcontext(
-    custom_context=trackio_config(
-        project="vit-beans-demo",
-        space_id="AINovice2005/vit-beans-dashboard",
-        bucket_id="AINovice2005/vit-beans-storage",
-        private=True,
-        tags=["flyte", "vision", "vit"],
-    )
-).run(vit_training_pipeline)
+    custom_context=cfg.to_dict(),
+).run(train_and_evaluate)
