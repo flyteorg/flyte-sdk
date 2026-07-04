@@ -52,25 +52,3 @@ __all__ = [
     "get_trackio_context",
     "get_trackio_run",
 ]
-
-
-def get_trackio_run():
-    """
-    Return the active Trackio run.
-
-    If called inside a ``@trackio_init`` decorated Flyte task, this returns the
-    Trackio run managed by the plugin. Otherwise it falls back to Trackio's
-    globally active run (if one exists).
-
-    Returns:
-        trackio.Run | None: The active Trackio run.
-    """
-    ctx = flyte.ctx()
-
-    if ctx and ctx.data:
-        run = ctx.data.get("_trackio_run")
-        if run is not None:
-            return run
-
-    # Fallback to Trackio's global active run (if supported)
-    return getattr(trackio, "run", None)

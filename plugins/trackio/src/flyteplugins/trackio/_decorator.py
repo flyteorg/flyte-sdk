@@ -11,6 +11,7 @@ import trackio
 from flyte._task import AsyncFunctionTaskTemplate
 
 from ._context import (
+    _TRACKIO_RUN_KEY,
     clear_trackio_run,
     get_trackio_context,
     set_trackio_run,
@@ -21,7 +22,6 @@ logger = logging.getLogger(__name__)
 
 F = TypeVar("F", bound=Callable[..., Any])
 
-_TRACKIO_RUN_KEY = "_trackio_run"
 
 
 def _build_init_kwargs() -> dict[str, Any]:

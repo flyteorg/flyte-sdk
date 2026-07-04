@@ -6,6 +6,7 @@ from typing import Any, Optional
 
 import flyte
 
+_TRACKIO_RUN_KEY = "_trackio_run"
 
 def _to_dict_helper(obj, prefix: str) -> dict[str, str]:
     """Serialize a dataclass into Flyte custom_context."""
@@ -199,7 +200,6 @@ def trackio_config(
     )
 
 
-_TRACKIO_RUN_KEY = "_trackio_run"
 
 
 def set_trackio_run(run) -> None:
@@ -217,14 +217,24 @@ def set_trackio_run(run) -> None:
 
 
 def get_trackio_run():
-    """Return the active Trackio run from the Flyte context."""
+    """
+    Return the active Trackio run.
 
+    If called inside a ``@trackio_init`` decorated Flyte task, this returns the
+    Trackio run managed by the plugin. Otherwise it falls back to Trackio's
+    globally active run (if one exists).
+
+    Returns:
+        trackio.Run | None: The active Trackio run.
+    """
     ctx = flyte.ctx()
 
-    if ctx is None or ctx.data is None:
-        return None
+    if ctx and ctx.data:
+        run = ctx.data.get(_TRACKIO_RUN_KEY)
+        if run is not None:
+            return run
 
-    return ctx.data.get(_TRACKIO_RUN_KEY)
+    return getattr(trackio, "run", None)
 
 
 def clear_trackio_run() -> None:
