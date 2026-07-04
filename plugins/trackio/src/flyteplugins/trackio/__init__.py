@@ -1,0 +1,75 @@
+"""
+Flyte Trackio plugin.
+
+Provides seamless Trackio experiment tracking for Flyte tasks through the
+`@trackio_init` decorator.
+
+Basic usage:
+
+    from flyteplugins.trackio import (
+        trackio_init,
+        get_trackio_run,
+    )
+
+    @trackio_init(project="my-project")
+    @env.task
+    async def train():
+        run = get_trackio_run()
+        run.log({"loss": 0.123})
+        return run.id
+
+Configuration can also be provided via `trackio_config()`:
+
+    r = flyte.with_runcontext(
+        custom_context=trackio_config(
+            project="my-project",
+            tags=["baseline"],
+        )
+    ).run(train)
+"""
+
+from __future__ import annotations
+
+import flyte
+import trackio
+
+from .context import (
+    get_trackio_context,
+    trackio_config,
+)
+from .decorator import (
+    trackio_init,
+)
+from .link import Trackio
+
+__version__ = "0.1.0"
+
+__all__ = [
+    "Trackio",
+    "trackio_init",
+    "trackio_config",
+    "get_trackio_context",
+    "get_trackio_run",
+]
+
+
+def get_trackio_run():
+    """
+    Return the active Trackio run.
+
+    If called inside a ``@trackio_init`` decorated Flyte task, this returns the
+    Trackio run managed by the plugin. Otherwise it falls back to Trackio's
+    globally active run (if one exists).
+
+    Returns:
+        trackio.Run | None: The active Trackio run.
+    """
+    ctx = flyte.ctx()
+
+    if ctx and ctx.data:
+        run = ctx.data.get("_trackio_run")
+        if run is not None:
+            return run
+
+    # Fallback to Trackio's global active run (if supported)
+    return getattr(trackio, "run", None)
