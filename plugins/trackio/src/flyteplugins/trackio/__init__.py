@@ -2,13 +2,13 @@
 Flyte Trackio plugin.
 
 Provides seamless Trackio experiment tracking for Flyte tasks through the
-`@trackio_init` decorator.
+``@trackio_init`` decorator.
 
 Basic usage:
 
     from flyteplugins.trackio import (
-        trackio_init,
         get_trackio_run,
+        trackio_init,
     )
 
     @trackio_init(project="my-project")
@@ -18,12 +18,13 @@ Basic usage:
         run.log({"loss": 0.123})
         return run.id
 
-Configuration can also be provided via `trackio_config()`:
+Configuration can also be provided via ``trackio_config()``:
 
     r = flyte.with_runcontext(
         custom_context=trackio_config(
             project="my-project",
-            tags=["baseline"],
+            group="baseline",
+            config={"learning_rate": 1e-3},
         )
     ).run(train)
 """
