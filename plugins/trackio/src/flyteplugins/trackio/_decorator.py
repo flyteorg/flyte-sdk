@@ -24,16 +24,30 @@ logger = logging.getLogger(__name__)
 F = TypeVar("F", bound=Callable[..., Any])
 
 
-def _build_init_kwargs() -> dict[str, Any]:
+def _build_init_kwargs(
+    decorator_kwargs: dict[str, Any],
+) -> dict[str, Any]:
     """
-    Build kwargs for ``trackio.init()`` from the current Flyte context.
+    Build arguments for ``trackio.init()``.
+
+    Values from the current Trackio configuration are used as defaults and are
+    overridden by non-``None`` decorator arguments.
+
+    Args:
+        decorator_kwargs:
+            Keyword arguments supplied to ``@trackio_init``.
+
+    Returns:
+        A dictionary of resolved keyword arguments to pass to
+        ``trackio.init()``.
     """
     ctx = get_trackio_context()
 
-    if ctx is None:
-        return {}
+    init_kwargs = ctx.to_trackio_init() if ctx else {}
 
-    return ctx.to_trackio_init()
+    init_kwargs.update({k: v for k, v in decorator_kwargs.items() if v is not None})
+
+    return init_kwargs
 
 
 @contextmanager
@@ -73,11 +87,7 @@ def _trackio_run(**decorator_kwargs):
         yield saved_run
         return
 
-    context = get_trackio_context()
-
-    init_kwargs = context.to_trackio_init() if context else {}
-
-    init_kwargs.update({k: v for k, v in decorator_kwargs.items() if v is not None})
+    init_kwargs = _build_init_kwargs(decorator_kwargs)
 
     run = trackio.init(**init_kwargs)
 
