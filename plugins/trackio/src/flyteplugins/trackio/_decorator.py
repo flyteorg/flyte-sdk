@@ -62,9 +62,6 @@ def _trackio_run(**decorator_kwargs):
 
     flyte_ctx = flyte.ctx()
 
-    #
-    # Running outside Flyte
-    #
     if flyte_ctx is None:
         run = trackio.init(**decorator_kwargs)
 
@@ -75,9 +72,6 @@ def _trackio_run(**decorator_kwargs):
 
         return
 
-    #
-    # Reuse parent run if available
-    #
     if flyte_ctx.data is None:
         flyte_ctx.data = {}
 
@@ -130,13 +124,7 @@ def trackio_init(
 
     def decorator(task: F) -> F:
 
-        #
-        # Flyte Task
-        #
         if isinstance(task, AsyncFunctionTaskTemplate):
-            #
-            # Add Trackio link
-            #
             existing_links = getattr(task, "links", ())
 
             task = task.override(
@@ -161,9 +149,6 @@ def trackio_init(
 
             return cast(F, task)
 
-        #
-        # Plain async Python function
-        #
         if iscoroutinefunction(task):
 
             @functools.wraps(task)
@@ -174,9 +159,6 @@ def trackio_init(
 
             return cast(F, async_wrapper)
 
-        #
-        # Plain sync Python function
-        #
         @functools.wraps(task)
         def sync_wrapper(*args, **kwargs):
 

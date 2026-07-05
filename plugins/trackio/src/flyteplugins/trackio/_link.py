@@ -72,9 +72,6 @@ class Trackio(Link):
             server_url = server_url or cfg.server_url
             space_id = space_id or cfg.space_id
 
-        #
-        # Self-hosted Trackio
-        #
         if server_url:
             server_url = server_url.rstrip("/")
 
@@ -83,13 +80,7 @@ class Trackio(Link):
 
             return server_url
 
-        #
-        # Hugging Face Space deployment
-        #
         if space_id:
             return f"{self.host}/spaces/{space_id}"
 
-        #
-        # Fallback
-        #
         return f"{self.host}/docs/trackio"

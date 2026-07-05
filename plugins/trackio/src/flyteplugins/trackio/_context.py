@@ -9,6 +9,7 @@ import flyte
 import trackio
 
 _TRACKIO_RUN_KEY = "_trackio_run"
+_TRACKIO_CONTEXT_PREFIX = "trackio"
 
 
 def _to_dict_helper(obj, prefix: str) -> dict[str, str]:
@@ -119,16 +120,16 @@ class _TrackioConfig:
         return {k: v for k, v in asdict(self).items() if v is not None}
 
     def to_dict(self) -> dict[str, str]:
-        return _to_dict_helper(self, "trackio")
+        return _to_dict_helper(self, _TRACKIO_CONTEXT_PREFIX)
 
     @classmethod
     def from_dict(cls, d: dict[str, str]):
-        return _from_dict_helper(cls, d, "trackio")
+        return _from_dict_helper(cls, d, _TRACKIO_CONTEXT_PREFIX)
 
     def __enter__(self):
         self._saved, self._ctx = _context_manager_enter(
             self,
-            "trackio",
+            _TRACKIO_CONTEXT_PREFIX,
         )
         return self
 
@@ -136,7 +137,7 @@ class _TrackioConfig:
         _context_manager_exit(
             self._ctx,
             self._saved,
-            "trackio",
+            _TRACKIO_CONTEXT_PREFIX,
             *args,
         )
 
@@ -151,7 +152,9 @@ def get_trackio_context() -> Optional[_TrackioConfig]:
     if ctx is None or not ctx.custom_context:
         return None
 
-    if not any(k.startswith("trackio_") for k in ctx.custom_context):
+    prefix = f"{_TRACKIO_CONTEXT_PREFIX}_"
+
+    if not any(k.startswith(prefix) for k in ctx.custom_context):
         return None
 
     return _TrackioConfig.from_dict(ctx.custom_context)
