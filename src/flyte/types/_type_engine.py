@@ -2912,7 +2912,33 @@ IntTransformer = SimpleTransformer(
     _handle_flyte_console_float_input_to_int,
 )
 
-FloatTransformer = SimpleTransformer(
+
+class _FloatTransformer(SimpleTransformer[float]):
+    """Float transformer that also accepts an ``int`` and coerces it to ``float``.
+
+    A JSON/LLM integer such as ``42`` is a valid ``float`` argument, and Python itself
+    treats ``int`` as usable wherever a ``float`` is expected. Coercing here — instead of
+    rejecting — means a call like ``issue_refund(amount_usd=42)`` for a ``float``-typed
+    parameter is converted and the action is created, rather than failing invisibly during
+    input conversion before any action node exists. This mirrors the read side
+    (:func:`_check_and_covert_float`), which already accepts an integer literal for a float.
+
+    ``bool`` is excluded (it subclasses ``int``) so ``True`` is not silently turned into
+    ``1.0``.
+    """
+
+    async def to_literal(
+        self,
+        python_val: float,
+        python_type: Type[float],
+        expected: Optional[LiteralType] = None,
+    ) -> Literal:
+        if isinstance(python_val, int) and not isinstance(python_val, bool):
+            python_val = float(python_val)
+        return await super().to_literal(python_val, python_type, expected)
+
+
+FloatTransformer = _FloatTransformer(
     "float",
     float,
     types_pb2.LiteralType(simple=types_pb2.SimpleType.FLOAT),

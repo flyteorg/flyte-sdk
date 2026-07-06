@@ -81,6 +81,12 @@ _MEMORY_SCHEMA_VERSION = "v0"
 #: repeated runs sharing a memory key resolve to the same store.
 _RAW_DATA_SCRATCH_SEGMENT = "rd"
 
+#: Directory name of the default *local* raw-data root laid down by ``flyte.run``
+#: as ``/tmp/flyte/raw_data/{action_name}`` (see ``flyte._run``). Unlike the remote
+#: layout there is no ``/rd/{run_id}`` tail to strip, so the per-run ``{action_name}``
+#: segment is stripped by anchoring at this directory instead.
+_LOCAL_RAW_DATA_DIR = "raw_data"
+
 
 # ----------------------------------------------------------------------------
 # Errors
@@ -236,9 +242,10 @@ def _memory_storage_root(raw_data_path: str, *, path_rewrite: PathRewrite | None
 
     - **Remote URIs** are anchored at the provider root (``scheme://netloc``),
       dropping every bucket-internal prefix.
-    - **Local paths** keep the supplied raw-data directory, stripping only a
-      trailing ``/rd/<run_id>`` scratch suffix (see
-      :data:`_RAW_DATA_SCRATCH_SEGMENT`).
+    - **Local paths** strip the per-run tail: either a trailing ``/rd/<run_id>``
+      scratch suffix (see :data:`_RAW_DATA_SCRATCH_SEGMENT`) or, for the default
+      ``.../raw_data/<action_name>`` local layout, the per-run ``<action_name>``
+      segment (anchoring at :data:`_LOCAL_RAW_DATA_DIR`).
     """
     trimmed = _normalize_raw_data_path(raw_data_path, path_rewrite)
 
@@ -246,11 +253,16 @@ def _memory_storage_root(raw_data_path: str, *, path_rewrite: PathRewrite | None
     if parsed.scheme and parsed.netloc:
         return f"{parsed.scheme}://{parsed.netloc}"
 
-    # Local roots only differ from ``trimmed`` when they end in a
-    # ``<parent>/rd/<run_id>`` scratch tail (a parent before ``rd`` is required).
+    # Local roots differ from ``trimmed`` when they end in a per-run tail.
     parent, scratch, run_id = trimmed.rsplit("/", 2) if trimmed.count("/") >= 2 else (trimmed, "", "")
-    if scratch == _RAW_DATA_SCRATCH_SEGMENT and run_id:
-        return parent
+    if run_id:
+        # ``<parent>/rd/<run_id>``: drop both the scratch marker and the run id.
+        if scratch == _RAW_DATA_SCRATCH_SEGMENT:
+            return parent
+        # ``<parent>/raw_data/<action_name>``: keep the raw-data root, drop the
+        # per-run action name so two runs sharing a key resolve to one store.
+        if scratch == _LOCAL_RAW_DATA_DIR:
+            return f"{parent}/{scratch}"
     return trimmed
 
 
