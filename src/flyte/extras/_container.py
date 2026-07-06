@@ -257,17 +257,21 @@ class ContainerTask(TaskTemplate):
         # if we returned a list instead, it would be treated as a single output.
         return tuple(output_items)
 
-    async def execute(self, **kwargs) -> Any:
-        try:
-            import docker
-        except ImportError:
-            raise ImportError("Docker is not installed. Please install Docker by running `pip install docker`.")
+    def _prepare_execution_volumes(
+        self, output_directory: pathlib.Path, **kwargs
+    ) -> Tuple[List[str], Dict[str, Dict[str, str]]]:
+        """
+        Build the command list and full set of Docker volume bindings for a local run.
 
+        This is the Docker-independent half of execute(): it renders command templates,
+        stages File / list[File] / Dir inputs into the layout CoPilot uses remotely, and
+        binds the output directory. Factored out so the staging logic can be exercised
+        without a fake Docker client.
+        """
         # Normalize the input and output directories
         self._input_data_dir = os.path.normpath(self._input_data_dir) if self._input_data_dir else ""
         self._output_data_dir = os.path.normpath(self._output_data_dir) if self._output_data_dir else ""
 
-        output_directory = storage.get_random_local_directory()
         cmd_and_args = (self._cmd or []) + (self._args or [])
         commands, volume_bindings = self._prepare_command_and_volumes(cmd_and_args, **kwargs)
 
@@ -316,6 +320,17 @@ class ContainerTask(TaskTemplate):
             "bind": self._output_data_dir,
             "mode": "rw",
         }
+
+        return commands, volume_bindings
+
+    async def execute(self, **kwargs) -> Any:
+        try:
+            import docker
+        except ImportError:
+            raise ImportError("Docker is not installed. Please install Docker by running `pip install docker`.")
+
+        output_directory = storage.get_random_local_directory()
+        commands, volume_bindings = self._prepare_execution_volumes(output_directory, **kwargs)
 
         client = docker.from_env()
         if isinstance(self._image, str):
