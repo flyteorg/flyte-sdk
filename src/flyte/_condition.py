@@ -49,8 +49,8 @@ class _Condition(Generic[ConditionType]):
 
     @env.task
     async def my_task() -> Optional[int]:
-        condition = await flyte.new_condition(name="my_condition", prompt="Is it ok to continue?", data_type=bool)
-        result = await condition.wait()
+        condition = await flyte.new_condition.aio(name="my_condition", prompt="Is it ok to continue?", data_type=bool)
+        result = await condition.wait.aio()
         if result:
             return 42
         else:
