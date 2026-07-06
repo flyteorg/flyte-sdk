@@ -265,9 +265,9 @@ class ContainerTask(TaskTemplate):
 
         This is the Docker-independent half of execute(): it renders command templates,
         stages File / list[File] / Dir inputs into the layout CoPilot uses remotely, and
-        binds the output directory. Factored out so the staging logic can be exercised
-        without a fake Docker client.
+        binds the output directory.
         """
+
         # Normalize the input and output directories
         self._input_data_dir = os.path.normpath(self._input_data_dir) if self._input_data_dir else ""
         self._output_data_dir = os.path.normpath(self._output_data_dir) if self._output_data_dir else ""
