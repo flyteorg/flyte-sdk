@@ -52,6 +52,68 @@ def test_run_arguments_max_action_concurrency_from_dict():
     assert RunArguments.from_dict({}).max_action_concurrency is None
 
 
+def test_run_command_has_no_recover_from_option():
+    """--recover-from is omitted until the backend ships (see TODO in _run.py)."""
+    option_names = {decl for p in run.params for decl in p.opts}
+    assert "--recover-from" not in option_names
+
+
+def test_run_command_has_queue_option():
+    option_names = {decl for p in run.params for decl in p.opts}
+    assert "--queue" in option_names
+
+
+def test_run_arguments_queue_from_dict():
+    from flyte.cli._run import RunArguments
+
+    run_args = RunArguments.from_dict({"queue": "gpu-queue"})
+    assert run_args.queue == "gpu-queue"
+    assert RunArguments.from_dict({}).queue is None
+
+
+def _patch_with_runcontext(monkeypatch, captured):
+    """Replace flyte.with_runcontext with a stub that records kwargs and returns a no-op runner."""
+
+    class _FakeResult:
+        url = "local://fake"
+
+        def outputs(self):
+            return None
+
+    class _FakeRun:
+        async def aio(self, *args, **kwargs):
+            return _FakeResult()
+
+    class _FakeRunner:
+        run = _FakeRun()
+
+    def _fake_with_runcontext(*args, **kwargs):
+        captured.update(kwargs)
+        return _FakeRunner()
+
+    monkeypatch.setattr(flyte, "with_runcontext", _fake_with_runcontext)
+
+
+def test_run_queue_passed_to_runcontext(runner, monkeypatch):
+    captured = {}
+    _patch_with_runcontext(monkeypatch, captured)
+
+    cmd = ["--queue", "gpu-queue", "--local", str(HELLO_WORLD_PY), "say_hello", "--name", "World"]
+    result = runner.invoke(run, cmd)
+    assert result.exit_code == 0, result.output
+    assert captured.get("queue") == "gpu-queue"
+
+
+def test_run_queue_defaults_to_none_in_runcontext(runner, monkeypatch):
+    captured = {}
+    _patch_with_runcontext(monkeypatch, captured)
+
+    cmd = ["--local", str(HELLO_WORLD_PY), "say_hello", "--name", "World"]
+    result = runner.invoke(run, cmd)
+    assert result.exit_code == 0, result.output
+    assert captured.get("queue") is None
+
+
 def test_run_max_action_concurrency_rejects_negative(runner):
     result = runner.invoke(run, ["--max-action-concurrency", "-1", str(HELLO_WORLD_PY), "say_hello"])
     assert result.exit_code != 0
@@ -83,6 +145,57 @@ def test_run_hello_world(runner):
             return
         else:
             raise ve
+
+
+def test_run_command_has_rerun_from_option():
+    """--rerun-from is a visible option on `flyte run` (not hidden — rerun works today)."""
+    opt_names = {decl for p in run.params for decl in p.opts}
+    assert "--rerun-from" in opt_names
+    rerun_opt = next(p for p in run.params if "--rerun-from" in p.opts)
+    assert rerun_opt.hidden is False
+
+
+def test_run_rerun_from_routes_to_rerun(runner):
+    """`flyte run <file> <task> --rerun-from r` routes to runner.rerun(r, task_template=task).
+
+    The required `name` input is NOT demanded — inputs come from the prior run.
+    """
+    from unittest import mock
+
+    from mock.mock import AsyncMock
+
+    runner_obj = mock.MagicMock()
+    runner_obj.rerun.aio = AsyncMock(return_value=mock.MagicMock())
+    runner_obj.run.aio = AsyncMock()
+
+    with mock.patch("flyte.with_runcontext", return_value=runner_obj):
+        cmd = ["--rerun-from", "r1", "--project", "p", "--domain", "d", str(HELLO_WORLD_PY), "say_hello"]
+        try:
+            result = runner.invoke(run, cmd)
+        except ValueError as ve:
+            if "I/O operation on closed file" in str(ve):
+                return
+            raise
+
+    assert result.exit_code == 0, result.output
+    runner_obj.rerun.aio.assert_awaited_once()
+    args, kwargs = runner_obj.rerun.aio.call_args
+    assert args[0] == "r1"
+    assert "task_template" in kwargs  # this local say_hello task is passed as the substitute code
+    runner_obj.run.aio.assert_not_awaited()
+
+
+def test_run_rerun_from_rejects_local(runner):
+    """--rerun-from cannot be combined with --local (rerun is remote-only)."""
+    cmd = ["--local", "--rerun-from", "r1", str(HELLO_WORLD_PY), "say_hello"]
+    try:
+        result = runner.invoke(run, cmd)
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise
+    assert result.exit_code != 0
+    assert "requires remote" in result.output.lower()
 
 
 @pytest.mark.integration

@@ -291,3 +291,43 @@ jobs:
           FLYTE_DOCKER_BUILDER_CACHE_TO: "type=gha,mode=max"
         run: |
           uv run python maint_tools/build_default_image.py --type connector
+
+  notify-docs:
+    name: Signal unionai-docs to regenerate API docs
+    needs: [flyte-pypi, plugin-pypi]
+    # Fire only on a real release once the core `flyte` package is on PyPI.
+    # Tolerates partial plugin-publish failures (docs regen picks up whatever is
+    # live on PyPI). Mirrors the always()+result gating used by the image job.
+    if: always() && github.event_name == 'release' && needs.flyte-pypi.result == 'success'
+    runs-on: ubuntu-latest
+    # Job-level env so the App id is referenceable in step `if:` (secrets aren't).
+    env:
+      DOCSY_BOT_APP_ID: ${{ secrets.DOCSY_BOT_APP_ID }}
+    steps:
+      # Authenticate as the "docsy-bot" GitHub App and mint a short-lived token
+      # scoped to unionai/unionai-docs (where the App is installed). The App is
+      # NOT installed on this repo — we only hold its credentials as secrets to
+      # request a cross-org installation token. Skipped until the secrets exist.
+      - name: Mint docsy-bot App token for unionai-docs
+        id: app-token
+        if: ${{ env.DOCSY_BOT_APP_ID != '' }}
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.DOCSY_BOT_APP_ID }}
+          private-key: ${{ secrets.DOCSY_BOT_PRIVATE_KEY }}
+          owner: unionai
+          repositories: unionai-docs
+
+      - name: Send repository_dispatch to unionai/unionai-docs
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          if [ -z "${GH_TOKEN}" ]; then
+            echo "::warning title=docs regen signal skipped::docsy-bot App not configured (DOCSY_BOT_APP_ID / DOCSY_BOT_PRIVATE_KEY) — skipping the unionai-docs regen signal. Set the secrets to enable it."
+            exit 0
+          fi
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          echo "Signaling unionai/unionai-docs to regenerate API docs for flyte ${VERSION}"
+          gh api repos/unionai/unionai-docs/dispatches \
+            -f event_type=sdk-release \
+            -f 'client_payload[version]='"${VERSION}"

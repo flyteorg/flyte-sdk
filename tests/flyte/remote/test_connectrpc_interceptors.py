@@ -78,10 +78,10 @@ class TestRequestIdGeneration:
 
 
 def _make_ctx_mock():
-    """Create a mock RequestContext where request_headers() returns a mutable dict."""
+    """Create a mock RequestContext whose request_headers property is a mutable dict."""
     headers = {}
     ctx = Mock()
-    ctx.request_headers.return_value = headers
+    ctx.request_headers = headers
     return ctx, headers
 
 

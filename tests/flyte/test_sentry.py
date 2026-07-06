@@ -462,3 +462,31 @@ def test_capture_exception_still_reports_connect_error_internal_in_upload_chain(
     ):
         _sentry.capture_exception(err)
     capture_mock.assert_called_once_with(err)
+
+
+def test_capture_exception_skips_wrapped_invalid_endpoint_error():
+    """FLYTE-SDK-5N: the auth-config endpoint returns HTML instead of protobuf, surfaced by
+    connectrpc as ConnectError(UNKNOWN, 'invalid content-type ...'). RemoteClientConfigStore
+    re-raises it as a user-facing InitializationError, which then gets wrapped as
+    RuntimeSystemError('Upload failed ...') during a run. The cause chain reveals the user
+    misconfiguration, so it must not be reported to Sentry."""
+    from flyte.errors import InitializationError, RuntimeSystemError
+
+    try:
+        try:
+            raise InitializationError(
+                "InvalidEndpoint",
+                "user",
+                "The configured endpoint returned a non-protobuf (HTML) response ...",
+            )
+        except InitializationError:
+            raise RuntimeSystemError("RuntimeError", "Upload failed for /tmp/spec.pb (org='x', ...).")
+    except RuntimeSystemError as e:
+        err = e
+
+    chain = list(_sentry._iter_cause_chain(err))
+    assert any(isinstance(c, InitializationError) for c in chain)
+
+    with mock.patch.object(_sentry, "init") as init_mock:
+        _sentry.capture_exception(err)
+    init_mock.assert_not_called()

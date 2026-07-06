@@ -1,3 +1,4 @@
+import errno
 import importlib
 import os
 import traceback
@@ -137,6 +138,15 @@ def load_task(resolver: str, *resolver_args: str) -> TaskTemplate:
         raise ModuleNotFoundError(msg) from e
 
 
+def _classify_load_error(err: Exception) -> Exception:
+    if isinstance(err, OSError) and err.errno == errno.EIO:
+        return flyte.errors.RuntimeSystemError(
+            "FilesystemIOError",
+            f"Filesystem I/O error while loading task: {err}",
+        )
+    return err
+
+
 def load_pkl_task(code_bundle: CodeBundle) -> TaskTemplate:
     """
     Loads a task from a pickled code bundle.
@@ -246,14 +256,17 @@ async def load_and_run_task(
     try:
         task = await _download_and_load_task(code_bundle, resolver, resolver_args)
     except Exception as e:
+        classified_error = _classify_load_error(e)
         # Import/load failures happen before the contextual_run wrapper below, so they must
         # also be uploaded to the error file -- otherwise the UI shows an empty message.
         logger.exception(f"Failed to load task before execution: {e}")
         if output_path:
             from .io import upload_error
 
-            error = convert_from_native_to_error(e)
+            error = convert_from_native_to_error(classified_error)
             await upload_error(error.err, output_path, recoverable=error.recoverable)
+        if classified_error is not e:
+            raise classified_error from e
         raise
 
     await contextual_run(
