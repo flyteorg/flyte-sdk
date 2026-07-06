@@ -283,12 +283,17 @@ class ContainerTask(TaskTemplate):
 
         def _stage_files_into_dir(items: list) -> str:
             local_dir = storage.get_random_local_directory()
+            used: set[str] = set()
             for i, item in enumerate(items):
                 if named:
                     base = (item.name or os.path.basename(item.path)) or str(i)
-                    target = pathlib.Path(local_dir) / base
-                    if target.exists():
-                        target = pathlib.Path(local_dir) / f"{i}_{base}"
+                    name = base
+                    n = 1
+                    while name in used:
+                        name = f"{n}_{base}"
+                        n += 1
+                    used.add(name)
+                    target = pathlib.Path(local_dir) / name
                 else:
                     target = pathlib.Path(local_dir) / str(i)
                 shutil.copy2(item.path, target)

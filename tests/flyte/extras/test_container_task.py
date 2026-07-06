@@ -243,6 +243,42 @@ def test_local_execute_dedupes_list_file_name_collisions(monkeypatch, tmp_path):
     assert all(n.endswith(".fastq.gz") for n in names)
 
 
+def test_local_execute_dedupes_when_prefixed_name_collides(monkeypatch, tmp_path):
+    # A disambiguated name can coincide with another input's real basename:
+    # file.txt, 1_file.txt, file.txt. The second file.txt must not clobber the
+    # real 1_file.txt; every input has to land under a distinct name.
+    flyte.init()
+    paths = []
+    for i, base in enumerate(("file.txt", "1_file.txt", "file.txt")):
+        p = tmp_path / f"d{i}" / base
+        p.parent.mkdir()
+        p.write_text(f"{i}\n")
+        paths.append(p)
+    parts = [File.from_local_sync(str(p)) for p in paths]
+
+    fake_client = _install_fake_docker(monkeypatch)
+    task = ContainerTask(
+        name="test_prefixed_collision",
+        image="alpine:latest",
+        command=["sh", "-c", "true"],
+        inputs={"reads": list[File]},
+        outputs={},
+        file_input_layout="NAMED_DIR",
+    )
+
+    async def fake_get_output(output_directory):
+        return ()
+
+    monkeypatch.setattr(task, "_get_output", fake_get_output)
+    asyncio.run(task.execute(reads=parts))
+
+    staged = _staged_dir(fake_client, "/var/inputs/reads")
+    names = sorted(p.name for p in staged.iterdir())
+    # Nothing overwritten: all three inputs survive under distinct names.
+    assert len(names) == 3
+    assert names == ["1_file.txt", "2_file.txt", "file.txt"]
+
+
 def test_shell_single_file_staged_into_dir_with_original_name(monkeypatch, tmp_path):
     from flyte.extras import shell
 
