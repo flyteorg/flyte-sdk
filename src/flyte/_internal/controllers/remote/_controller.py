@@ -501,9 +501,7 @@ class RemoteController(Controller):
                 # Carry recoverability into error.pb (ContainerError.kind) so a later replay
                 # can distinguish a transient failure (RECOVERABLE -> re-run) from a
                 # deterministic one (NON_RECOVERABLE -> replay terminally).
-                await io.upload_error(
-                    err.err, sub_run_output_path, recoverable=err.recoverable
-                )
+                await io.upload_error(err.err, sub_run_output_path, recoverable=err.recoverable)
             else:
                 _ctx = ctx.new_in_driver_literal_conversion(True) if ctx.is_task_context() else nullcontext()
                 with _ctx:
