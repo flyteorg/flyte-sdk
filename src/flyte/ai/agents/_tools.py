@@ -15,6 +15,9 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal, Mapping, Sequence, cast, overload
 
 from flyte._internal.resolvers.default import DefaultTaskResolver
+from flyte.types._json_coercion import coerce_json_args
+
+from ._llm import LLMCallable, _default_call_llm
 
 if TYPE_CHECKING:
     from flyte._task import TaskTemplate
@@ -34,6 +37,8 @@ _ToolExecutor = Callable[[dict[str, Any]], Awaitable[Any]]
 # the arguments the model produced for the call. Whatever the handler returns is
 # used as the tool result.
 ToolCallHandler = Callable[..., Awaitable[Any]]
+
+_DEFAULT_TOOL_MODEL = "claude-haiku-4-5"
 
 
 @dataclass
@@ -65,6 +70,44 @@ class AgentTool:
     # Optional interceptor that customizes how the tool is invoked. See
     # :data:`ToolCallHandler`.
     call_handler: ToolCallHandler | None = None
+    # When set (typically by :class:`Agent` during construction), used as the
+    # default ``call_llm`` / ``model`` for :meth:`aio` and direct calls that
+    # route through ``call_handler``.
+    call_llm: LLMCallable | None = None
+    model: str | None = None
+
+    async def aio(self, *args: Any, **kwargs: Any) -> Any:
+        """Invoke the tool, routing through ``call_handler`` when one is registered.
+
+        Mirrors :meth:`~flyte._task.TaskTemplate.aio` enough for ``flyte.map`` and
+        in-task calls on ``@tool``-wrapped tasks. When a ``call_handler`` is set,
+        it runs with :attr:`call_llm` and :attr:`model` (or their defaults).
+        Otherwise, durable ``@env.task`` / remote-task targets delegate to their
+        underlying ``.aio``; everything else goes through :meth:`execute`.
+        """
+        if self.call_handler is not None:
+            return await invoke_agent_tool_from_call(
+                self,
+                *args,
+                call_llm=_effective_call_llm(self, None),
+                model=_effective_model(self, None),
+                **kwargs,
+            )
+
+        from flyte._task import TaskTemplate
+
+        if isinstance(self.target, TaskTemplate):
+            return await self.target.aio(*args, **kwargs)
+        if _is_lazy_entity(self.target):
+            call_args = _kwargs_from_call(self.target, args, kwargs)
+            return await self.target.aio(**call_args)  # type: ignore[attr-defined]
+
+        call_args = _kwargs_from_call(self.target, args, kwargs)
+        return await self.execute(call_args)
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        """Invoke the tool (async tools return an awaitable coroutine)."""
+        return self.aio(*args, **kwargs)
 
     def to_openai_format(self) -> dict[str, Any]:
         """Convert to the OpenAI / litellm tools schema."""
@@ -156,6 +199,105 @@ def _callable_short_doc(fn: Callable[..., Any]) -> str:
     return doc.split("\n\n")[0].replace("\n", " ").strip()
 
 
+def _native_interface_for_target(target: Any) -> Any | None:
+    """Return a :class:`~flyte.models.NativeInterface` for *target*, if derivable."""
+    if target is None:
+        return None
+    from flyte._task import TaskTemplate
+    from flyte.models import NativeInterface
+
+    if isinstance(target, TaskTemplate):
+        return target.native_interface
+    if callable(target):
+        fn = getattr(target, "__wrapped__", target)
+        try:
+            return NativeInterface.from_callable(fn)
+        except Exception:
+            return None
+    return None
+
+
+async def _coerce_tool_args(target: Any, args: dict[str, Any]) -> dict[str, Any]:
+    """Coerce LLM JSON tool arguments using the wrapped callable's type hints."""
+    iface = _native_interface_for_target(target)
+    if iface is None:
+        return args
+    return await coerce_json_args(args, iface.inputs)
+
+
+def _kwargs_from_call(target: Any, args: tuple[Any, ...], kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Merge positional and keyword sandbox arguments into a kwargs dict."""
+    fn: Any = target
+    from flyte._task import TaskTemplate
+
+    if isinstance(target, TaskTemplate):
+        fn = getattr(target, "func", None)
+    elif callable(target):
+        fn = getattr(target, "__wrapped__", target)
+    if fn is None:
+        if args:
+            raise TypeError(f"Tool target does not accept positional arguments; got {args!r}")
+        return dict(kwargs)
+    try:
+        bound = inspect.signature(fn).bind_partial(*args, **kwargs)
+    except TypeError as exc:
+        raise TypeError(f"Invalid arguments for tool call: {exc}") from exc
+    bound.apply_defaults()
+    return dict(bound.arguments)
+
+
+def _effective_call_llm(tool: AgentTool, call_llm: LLMCallable | None) -> LLMCallable:
+    return call_llm or tool.call_llm or _default_call_llm
+
+
+def _effective_model(tool: AgentTool, model: str | None) -> str:
+    return model or tool.model or _DEFAULT_TOOL_MODEL
+
+
+def _bind_tool_invocation_context(tool: AgentTool, *, call_llm: LLMCallable, model: str) -> AgentTool:
+    """Attach the owning agent's LLM callback to tools that define ``call_handler``."""
+    if tool.call_handler is None:
+        return tool
+    return replace(tool, call_llm=call_llm, model=model)
+
+
+async def invoke_agent_tool(
+    tool: AgentTool,
+    args: dict[str, Any],
+    *,
+    call_llm: LLMCallable | None = None,
+    model: str | None = None,
+) -> Any:
+    """Run *tool*, routing through ``call_handler`` when one is registered."""
+    resolved_llm = _effective_call_llm(tool, call_llm)
+    resolved_model = _effective_model(tool, model)
+    if tool.call_handler is not None:
+        coerced_args = await _coerce_tool_args(tool.target, args)
+        bound = ToolFn(
+            name=tool.name,
+            description=tool.description,
+            parameters=tool.parameters,
+            model=resolved_model,
+            target=tool.target,
+            source=tool.source,
+            _execute=tool.execute,
+        )
+        return await tool.call_handler(resolved_llm, bound, **coerced_args)
+    return await tool.execute(args)
+
+
+async def invoke_agent_tool_from_call(
+    tool: AgentTool,
+    *args: Any,
+    call_llm: LLMCallable | None = None,
+    model: str | None = None,
+    **kwargs: Any,
+) -> Any:
+    """Like :func:`invoke_agent_tool` but accepts a Monty-style ``*args, **kwargs`` call."""
+    call_args = _kwargs_from_call(tool.target, args, kwargs)
+    return await invoke_agent_tool(tool, call_args, call_llm=call_llm, model=model)
+
+
 def _json_schema_for_callable(fn: Callable[..., Any]) -> dict[str, Any]:
     """Best-effort JSON schema for a plain Python callable.
 
@@ -182,9 +324,10 @@ def _make_callable_tool(fn: Callable[..., Any], *, name: str | None = None) -> A
     is_async = inspect.iscoroutinefunction(fn) or inspect.iscoroutinefunction(getattr(fn, "__wrapped__", fn))
 
     async def execute(args: dict[str, Any]) -> Any:
+        coerced = await _coerce_tool_args(fn, args)
         if is_async:
-            return await fn(**args)
-        return await asyncio.to_thread(fn, **args)
+            return await fn(**coerced)
+        return await asyncio.to_thread(fn, **coerced)
 
     return AgentTool(
         name=actual_name,
@@ -208,7 +351,8 @@ def _make_task_tool(task: "TaskTemplate", *, name: str | None = None) -> AgentTo
         parameters = _json_schema_for_callable(underlying)
 
     async def execute(args: dict[str, Any]) -> Any:
-        return await task.aio(**args)
+        coerced = await _coerce_tool_args(task, args)
+        return await task.aio(**coerced)
 
     return AgentTool(
         name=actual_name,
@@ -456,19 +600,45 @@ def _summarize_signature(tool: AgentTool) -> str:
     return f"{tool.name}({', '.join(parts)})"
 
 
-def _stringify_tool_result(result: Any) -> str:
+async def _stringify_tool_result(result: Any) -> str:
     if result is None:
         return ""
     if isinstance(result, str):
         return result
+    from flyte.types._json_coercion import serialize_json_value
+
+    serialized = await serialize_json_value(result)
     try:
-        return json.dumps(result, default=str)
+        return json.dumps(serialized, default=str)
     except (TypeError, ValueError):
         return str(result)
 
 
+def _registry_uses_flyte_io(registry: Mapping[str, AgentTool]) -> bool:
+    """Return True when any registered tool accepts or exposes flyte.io blob types."""
+
+    def _schema_has_io(schema: Any) -> bool:
+        if not isinstance(schema, dict):
+            return False
+        if schema.get("format") in ("blob", "structured-dataset"):
+            return True
+        for prop in schema.get("properties", {}).values():
+            if _schema_has_io(prop):
+                return True
+        if _schema_has_io(schema.get("items")):
+            return True
+        for variant in schema.get("oneOf", []):
+            if _schema_has_io(variant):
+                return True
+        return False
+
+    return any(_schema_has_io(tool.parameters) for tool in registry.values())
+
+
 def _abbreviate(value: Any, *, max_chars: int = 500) -> str:
-    text = _stringify_tool_result(value)
+    from flyte._utils.asyn import run_sync
+
+    text = run_sync(_stringify_tool_result, value) if not isinstance(value, str) else value
     if len(text) <= max_chars:
         return text
     return text[:max_chars] + f"... [+{len(text) - max_chars} chars]"
