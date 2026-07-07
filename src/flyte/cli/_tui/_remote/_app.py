@@ -65,7 +65,7 @@ class RemoteTUIApp(App[None]):
             self.cluster = init_cluster(config=self._config)
         except Exception as exc:
             self.notify(f"Failed to connect: {exc}", severity="error", timeout=10)
-            self.exit(1)
+            self.exit(return_code=1)
             return
         domain = self.cluster.domain
         ep = self.cluster.endpoint or "(configured)"

@@ -29,7 +29,20 @@ from textual.widgets import (
 from textual.widgets.tree import TreeNode
 from textual.worker import Worker, WorkerState
 
+from ._theme import (
+    _FLYTE_BORDER,
+    _FLYTE_PURPLE,
+    _FLYTE_PURPLE_DARK,
+    _FLYTE_PURPLE_LIGHT,
+    BASE_CSS,
+    CONDITION_INPUT_CSS,
+    LOG_VIEWER_CSS,
+    TREE_DETAIL_CSS,
+)
 from ._tracker import ActionNode, ActionStatus, ActionTracker, PendingCondition
+
+# Re-exported for modules that historically imported the palette from ``_app``.
+__all__ = ["_FLYTE_BORDER", "_FLYTE_PURPLE", "_FLYTE_PURPLE_DARK", "_FLYTE_PURPLE_LIGHT"]
 
 _STATUS_ICON = {
     ActionStatus.RUNNING: ("●", "dodger_blue1"),
@@ -776,151 +789,20 @@ class DetailPanel(VerticalScroll):
             outputs_box.update("\n".join(output_parts))
 
 
-# Flyte brand purple palette
-_FLYTE_PURPLE = "#7652a2"
-_FLYTE_PURPLE_LIGHT = "#f7f5fd"
-_FLYTE_PURPLE_DARK = "#171020"
-_FLYTE_BORDER = "#DEDDE4"
-
-
 class FlyteTUIApp(App[None]):
     """Interactive TUI for `flyte run --local --tui`."""
 
-    CSS = f"""
-    Screen {{
-        background: {_FLYTE_PURPLE_DARK};
-    }}
-    Header {{
-        background: {_FLYTE_PURPLE};
-        color: {_FLYTE_PURPLE_LIGHT};
-    }}
-    Footer {{
-        background: {_FLYTE_PURPLE};
-        color: {_FLYTE_PURPLE_LIGHT};
-    }}
-    Horizontal {{
-        height: 1fr;
-    }}
-    ActionTreeWidget {{
-        width: 1fr;
-        min-width: 30;
-        border: solid {_FLYTE_PURPLE};
-        border-title-color: {_FLYTE_PURPLE_LIGHT};
-        background: {_FLYTE_PURPLE_DARK};
-        color: {_FLYTE_PURPLE_LIGHT};
-    }}
-    #right-tabs {{
-        width: 2fr;
-    }}
-    DetailPanel {{
-        background: {_FLYTE_PURPLE_DARK};
-    }}
-    #log-viewer {{
-        background: {_FLYTE_PURPLE_DARK};
-        color: {_FLYTE_PURPLE_LIGHT};
-    }}
-    TabPane {{
-        padding: 0;
-    }}
-    Tabs {{
-        background: {_FLYTE_PURPLE_DARK};
-        color: {_FLYTE_PURPLE_LIGHT};
-    }}
-    Tab {{
-        background: {_FLYTE_PURPLE_DARK};
-        color: {_FLYTE_PURPLE_LIGHT};
-    }}
-    Tab.-active {{
-        background: {_FLYTE_PURPLE};
-        color: {_FLYTE_PURPLE_LIGHT};
-    }}
-    Underline {{
-        color: {_FLYTE_PURPLE};
-    }}
-    _DetailBox {{
-        border: solid {_FLYTE_PURPLE};
-        border-title-color: {_FLYTE_PURPLE_LIGHT};
-        padding: 0 1;
-        margin-bottom: 1;
-        height: auto;
-        color: {_FLYTE_PURPLE_LIGHT};
-    }}
-    ConditionInputPanel .condition-prompt,
-    ConditionInputPanel .condition-description {{
-        color: {_FLYTE_PURPLE_LIGHT};
-    }}
-    ConditionInputPanel .condition-buttons Button {{
-        margin-right: 1;
-        color: #ffffff;
-        text-style: bold;
-    }}
-    ConditionInputPanel .condition-buttons Button:focus {{
-        text-style: bold;
-    }}
-    ConditionInputPanel .condition-prompt-scroll {{
-        max-height: 8;
-        height: auto;
-        margin-bottom: 1;
-    }}
-    ConditionInputPanel .condition-input-row {{
-        height: 1;
-        min-height: 1;
-        layout: horizontal;
-        dock: bottom;
-        margin-top: 1;
-    }}
-    ConditionInputPanel .condition-buttons {{
-        height: 1;
-        min-height: 1;
-        layout: horizontal;
-        dock: bottom;
-        margin-top: 1;
-    }}
-    ConditionInputPanel Markdown.condition-prompt MarkdownHeader {{
-        margin: 0 0 1 0;
-    }}
-    ConditionInputPanel Markdown.condition-prompt MarkdownParagraph {{
-        margin: 0;
-    }}
-    ConditionInputPanel Markdown.condition-prompt MarkdownBulletList {{
-        margin: 0;
-    }}
-    ConditionInputPanel Input {{
-        width: 1fr;
-        margin-right: 1;
-        height: 1;
-    }}
-    ConditionInputPanel Input.-textual-compact {{
-        background: #1a0a2e;
-        color: #ffffff;
-    }}
-    ConditionInputPanel Input.-textual-compact:focus {{
-        background: #2a1040;
-        background-tint: #ffffff 10%;
-    }}
-    ConditionInputPanel .condition-string-entry {{
-        height: auto;
-        dock: bottom;
-        margin-top: 1;
-    }}
-    ConditionInputPanel .condition-string-entry TextArea {{
-        height: 4;
-        min-height: 3;
-        max-height: 8;
-        margin-bottom: 1;
-    }}
-    ConditionInputPanel .condition-string-entry TextArea.-textual-compact {{
-        background: #1a0a2e;
-        color: #ffffff;
-    }}
-    ConditionInputPanel .condition-string-entry TextArea.-textual-compact:focus {{
-        background: #2a1040;
-        background-tint: #ffffff 10%;
-    }}
-    ConditionInputPanel .condition-validation-error {{
-        color: red;
-    }}
-    """
+    CSS = (
+        BASE_CSS
+        + """
+Horizontal {
+    height: 1fr;
+}
+"""
+        + TREE_DETAIL_CSS
+        + LOG_VIEWER_CSS
+        + CONDITION_INPUT_CSS
+    )
 
     BINDINGS: ClassVar[list[BindingType]] = [
         Binding("q", "quit", "Quit"),

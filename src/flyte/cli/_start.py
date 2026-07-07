@@ -1,12 +1,5 @@
 import rich_click as click
 
-_REMOTE_TUI_INSTALL_HINT = (
-    "The remote TUI requires flyteplugins-remote-tui in the same Python environment as flyte.\n\n"
-    "  pip install flyteplugins-remote-tui\n\n"
-    "If flyte was installed with uv tool install, add the plugin to that environment:\n"
-    "  uv tool install flyte --with flyteplugins-remote-tui --force"
-)
-
 
 @click.group()
 def start():
@@ -14,25 +7,6 @@ def start():
 
 
 @start.command()
-def tui():
-    """
-    Launch TUI explore mode to browse past local runs. To use the TUI install `pip install flyte[tui]`
-    TUI, allows you to explore all your local runs if you have persistence enabled.
-
-    Persistence can be enabled in 2 ways,
-    1. By setting it in the config to record every local run
-    ```bash
-    flyte create config --endpoint ...  --local-persistence
-    ```
-    2. By passing it in flyte.init(local_persistence=True)
-    This will record all `flyte.run` runs, that are local and are within the flyte.init being active.
-    """
-    from flyte.cli._tui import launch_tui_explore
-
-    launch_tui_explore()
-
-
-@start.command(name="remote-tui")
 @click.option(
     "-c",
     "--config",
@@ -46,21 +20,35 @@ def tui():
     type=float,
     default=2.0,
     show_default=True,
-    help="Seconds between run detail refreshes while a run is active.",
+    help="Seconds between run detail refreshes while browsing a remote run. Remote mode only.",
 )
-def remote_tui(config_file: str | None, poll_interval: float) -> None:
+def tui(config_file: str | None, poll_interval: float) -> None:
     """
-    Interactive TUI for a remote Flyte v2 cluster.
+    Launch the Flyte TUI. Install with ``pip install flyte[tui]``.
 
-    Browse runs, actions, logs, tasks, apps, and triggers. Requires a Flyte config file
-    (``flyte create config``) and ``flyteplugins-remote-tui``.
+    The mode is chosen from the resolved config:
+
+    \b
+    * Remote (config has an endpoint, or FLYTE_API_KEY is set): browse a remote
+      Flyte v2 cluster — projects, runs, actions, logs, tasks, apps, and triggers.
+      ``flyte start tui --config remote.yaml``
+    * Local (no endpoint): explore past local runs recorded with persistence.
+      ``flyte start tui --config local.yaml``
+
+    Local persistence can be enabled in 2 ways:
+
+    \b
+    1. In the config, to record every local run:
+       ``flyte create config --endpoint ... --local-persistence``
+    2. Via ``flyte.init(local_persistence=True)``, recording ``flyte.run`` runs
+       that are local and within the active ``flyte.init``.
     """
-    try:
-        from flyteplugins.remote_tui import launch_remote_tui
-    except ImportError as exc:
-        raise click.ClickException(_REMOTE_TUI_INSTALL_HINT) from exc
+    from flyte.cli._tui import config_is_remote, launch_tui_explore, launch_tui_remote
 
-    launch_remote_tui(config=config_file, poll_interval=poll_interval)
+    if config_is_remote(config_file):
+        launch_tui_remote(config=config_file, poll_interval=poll_interval)
+    else:
+        launch_tui_explore()
 
 
 _DEFAULT_DEVBOX_IMAGE = "cr.flyte.org/flyteorg/flyte-devbox:latest"

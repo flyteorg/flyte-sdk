@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import json
-import time
-from datetime import timezone
+from datetime import datetime, timezone
 from typing import Any
 
-import flyte.remote as remote
-from flyte.cli._tui._tracker import ActionStatus, ActionTracker
-from flyte.models import ActionPhase
 from flyteidl2.workflow import run_definition_pb2
+
+import flyte.remote as remote
+from flyte.models import ActionPhase
+
+from .._tracker import ActionStatus, ActionTracker
 
 _PHASE_TO_STATUS: dict[ActionPhase, ActionStatus] = {
     ActionPhase.QUEUED: ActionStatus.RUNNING,
@@ -34,9 +35,16 @@ def _phase_status(phase: ActionPhase | str) -> ActionStatus:
     return _PHASE_TO_STATUS.get(phase, ActionStatus.RUNNING)
 
 
-def _mono_ts(dt) -> float:
+def _epoch_ts(dt) -> float:
+    """Return a wall-clock (epoch seconds) timestamp for *dt*.
+
+    Uses the same clock as the timestamps stored on actions so that durations
+    computed by the tracker (``end_time - start_time``) are meaningful. Missing
+    timestamps fall back to "now" on the same wall clock rather than a monotonic
+    reference, which is not comparable to epoch timestamps.
+    """
     if dt is None:
-        return time.monotonic()
+        return datetime.now(timezone.utc).timestamp()
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return dt.timestamp()
@@ -255,12 +263,12 @@ def load_run_into_tracker(
 
         phase = action.phase
         status = _phase_status(phase)
-        start = _mono_ts(action.start_time)
+        start = _epoch_ts(action.start_time)
         end = None
         if action.done():
             end_pb = action.pb2.status
             if end_pb.HasField("end_time"):
-                end = _mono_ts(end_pb.end_time.ToDatetime().replace(tzinfo=timezone.utc))
+                end = _epoch_ts(end_pb.end_time.ToDatetime().replace(tzinfo=timezone.utc))
 
         task_name = action.task_name or action.name
         short_name = None
@@ -325,12 +333,12 @@ def load_run_into_tracker(
 
         phase = action.phase
         status = _phase_status(phase)
-        start = _mono_ts(action.start_time)
+        start = _epoch_ts(action.start_time)
         end = None
         if action.done():
             end_pb = action.pb2.status
             if end_pb.HasField("end_time"):
-                end = _mono_ts(end_pb.end_time.ToDatetime().replace(tzinfo=timezone.utc))
+                end = _epoch_ts(end_pb.end_time.ToDatetime().replace(tzinfo=timezone.utc))
 
         cond_obj = remote.Condition(pb2=action.pb2)
         parent_id = parent_by_id.get(action.name)

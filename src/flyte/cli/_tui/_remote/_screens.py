@@ -4,12 +4,8 @@ from __future__ import annotations
 
 import datetime
 import webbrowser
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
-from flyte.cli._tui._app import ActionTreeWidget, ConditionInputPanel, DetailPanel
-from flyte.cli._tui._explore import StatusSelect, _fmt_duration, _fmt_time
-from flyte.cli._tui._tracker import ActionTracker
-from flyte.models import ActionPhase
 from rich.text import Text
 from textual import on, work
 from textual.app import ComposeResult
@@ -32,6 +28,11 @@ from textual.widgets import (
     TabPane,
 )
 
+from flyte.models import ActionPhase
+
+from .._app import ActionTreeWidget, ConditionInputPanel, DetailPanel
+from .._explore import StatusSelect, _fmt_duration, _fmt_time
+from .._tracker import ActionTracker
 from ._client import (
     MIN_PAGE_SIZE,
     PagedResult,
@@ -50,6 +51,11 @@ from ._client import (
 from ._context import as_remote_app, list_scope
 from ._settings import get_recent_projects, record_recent_project
 from ._sync import load_run_into_tracker
+
+if TYPE_CHECKING:
+    from textual.timer import Timer
+
+    import flyte.remote as remote
 
 
 def _format_app_deployment_status(status: int | str) -> str:
@@ -134,7 +140,7 @@ def _format_labels(project) -> str:
 
 
 def _phase_icon(phase: str) -> str:
-    if phase in ("succeeded",):
+    if phase == "succeeded":
         return "✓"
     if phase in ("failed", "aborted", "timed_out"):
         return "✗"
@@ -196,7 +202,7 @@ class ProjectsScreen(Screen):
             sidebar.border_title = "Recent"
             table.add_row(f"Error: {exc}", "", "")
             return
-        by_id = {proj.pb2.id: proj for proj in projects}
+        by_id: dict[str, remote.Project] = {proj.pb2.id: proj for proj in projects}
         await self._populate_recent_projects(by_id, search)
         count = 0
         for proj in projects:
@@ -207,7 +213,7 @@ class ProjectsScreen(Screen):
             table.add_row(name, _format_labels(proj), proj.pb2.id, key=proj.pb2.id)
         self.sub_title = f"{count} total"
 
-    async def _populate_recent_projects(self, by_id: dict[str, object], search: str) -> None:
+    async def _populate_recent_projects(self, by_id: dict[str, remote.Project], search: str) -> None:
         sidebar = self.query_one("#recent-sidebar", Vertical)
         recent_list = self.query_one("#recent-projects", ListView)
         # ListView.clear() is async (queues a remove); await it so prior ListItem
@@ -481,7 +487,7 @@ class ProjectHubScreen(Screen):
             icon = Text(_phase_icon(phase), style=_STATUS_COLORS.get(phase, ""))
             task = run.action.task_name or "-"
             st = run.action.start_time
-            started = _fmt_time(st.timestamp() if hasattr(st, "timestamp") else float(st))
+            started = _fmt_time(st.timestamp())
             ended = ""
             if run.action.done() and run.action.pb2.status.HasField("end_time"):
                 end = run.action.pb2.status.end_time.ToDatetime()
@@ -674,7 +680,7 @@ class EntityDetailScreen(Screen):
     def __init__(self, kind: str, name: str, *, task_name: str | None = None) -> None:
         super().__init__()
         self._kind = kind
-        self._name = name
+        self._entity_name = name
         self._task_name = task_name
 
     def compose(self) -> ComposeResult:
@@ -683,23 +689,23 @@ class EntityDetailScreen(Screen):
         yield Footer()
 
     def on_mount(self) -> None:
-        self.title = f"{self._kind}: {self._name}"
+        self.title = f"{self._kind}: {self._entity_name}"
         body = self.query_one("#detail-body", Static)
         lines: list[str] = []
         try:
             if self._kind == "Task":
                 import flyte.remote as remote
 
-                t = remote.Task.get(name=self._name, version="latest")
+                t = remote.Task.get(name=self._entity_name, version="latest")
                 details = t.fetch()
-                lines.append(f"name:       {self._name}")
+                lines.append(f"name:       {self._entity_name}")
                 lines.append(f"version:    {details.pb2.id.version}")
                 lines.append(f"type:       {details.pb2.task_template.type}")
                 lines.append(f"deployed:   {details.pb2.metadata.deployed_at.ToDatetime()}")
             elif self._kind == "App":
                 import flyte.remote as remote
 
-                app_obj = remote.App.get(name=self._name)
+                app_obj = remote.App.get(name=self._entity_name)
                 lines.append(f"name:       {app_obj.name}")
                 lines.append(f"status:     {_format_app_deployment_status(app_obj.deployment_status)}")
                 lines.append(f"endpoint:   {app_obj.endpoint or '(none)'}")
@@ -708,7 +714,7 @@ class EntityDetailScreen(Screen):
                 import flyte.remote as remote
 
                 assert self._task_name
-                tr = remote.Trigger.get(name=self._name, task_name=self._task_name)
+                tr = remote.Trigger.get(name=self._entity_name, task_name=self._task_name)
                 lines.append(f"name:       {tr.name}")
                 lines.append(f"task:       {tr.task_name}")
                 lines.append(f"active:     {tr.is_active}")
@@ -744,7 +750,7 @@ class RunDetailScreen(Screen):
         self._seen_pending_condition_ids: set[str] = set()
         self._actions_by_name: dict[str, object] = {}
         self._active = True
-        self._poll_timer = None
+        self._poll_timer: Timer | None = None
 
     def _is_active(self) -> bool:
         return self._active and not getattr(self.app, "_exit", False)

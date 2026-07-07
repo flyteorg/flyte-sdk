@@ -5,17 +5,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 from unittest.mock import MagicMock
 
-from flyte.cli._tui._tracker import ActionStatus, ActionTracker
-from flyte.models import ActionPhase
-
-from flyteplugins.remote_tui._sync import (
+from flyte.cli._tui._remote._sync import (
     _condition_info_from_details,
+    _epoch_ts,
     _is_condition_action,
     _phase_status,
     _prompt_type_str,
     build_action_tree,
     load_run_into_tracker,
 )
+from flyte.cli._tui._tracker import ActionStatus, ActionTracker
+from flyte.models import ActionPhase
 
 
 @dataclass
@@ -59,6 +59,25 @@ class _FakeAction:
     @property
     def start_time(self):
         return __import__("datetime").datetime(2025, 1, 1, tzinfo=__import__("datetime").timezone.utc)
+
+
+def test_epoch_ts_uses_wall_clock_for_missing_and_naive_datetimes():
+    import datetime as _dt
+
+    # Aware datetime: returned as its epoch timestamp.
+    aware = _dt.datetime(2025, 1, 1, tzinfo=_dt.timezone.utc)
+    assert _epoch_ts(aware) == aware.timestamp()
+
+    # Naive datetime: treated as UTC (not local), so epoch matches the UTC reading.
+    naive = _dt.datetime(2025, 1, 1)
+    assert _epoch_ts(naive) == aware.timestamp()
+
+    # Missing timestamp falls back to "now" on the wall clock, not a monotonic
+    # reference, so it is comparable (roughly current epoch) to other timestamps.
+    before = _dt.datetime.now(_dt.timezone.utc).timestamp()
+    fallback = _epoch_ts(None)
+    after = _dt.datetime.now(_dt.timezone.utc).timestamp()
+    assert before <= fallback <= after
 
 
 def test_phase_status_maps_terminal_states():

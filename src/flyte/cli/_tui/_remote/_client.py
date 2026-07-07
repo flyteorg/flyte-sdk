@@ -80,8 +80,8 @@ def init_cluster(*, config: str | Path | None = None) -> ClusterContext:
     resolved = get_init_config()
 
     return ClusterContext(
-        domain=resolved.domain,
-        org=resolved.org,
+        domain=resolved.domain or "",
+        org=resolved.org or "",
         endpoint=updated_config.platform.endpoint,
         default_project=resolved.project,
     )
@@ -346,6 +346,7 @@ def fetch_log_tail(
     """Return up to *max_lines* recent log lines (non-blocking tail)."""
     import flyte.remote as remote
 
+    log_source: remote.Run | remote.Action
     if action is not None:
         log_source = action
     elif action_name:

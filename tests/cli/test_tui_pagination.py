@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from flyteplugins.remote_tui._client import PAGE_SIZE, _slice_page
+from flyte.cli._tui._remote._client import PAGE_SIZE, _slice_page
 
 
 def test_slice_page_first_page_has_next():

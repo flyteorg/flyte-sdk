@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from flyteplugins.remote_tui import _settings
+from flyte.cli._tui._remote import _settings
 
 
 @pytest.fixture
