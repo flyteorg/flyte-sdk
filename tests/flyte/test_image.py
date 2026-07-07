@@ -818,13 +818,26 @@ def test_resolve_code_bundle_loaded_modules_copy_style_none(tmp_path):
     assert bundle_layers[0].dst == "."
 
 
-def test_get_base_registry_returns_default_when_not_initialized():
+@pytest.fixture
+def no_ambient_registry(monkeypatch):
+    """Isolate _get_base_registry from any ambient registry (local .flyte config or env var).
+
+    The endpoint-based resolution only runs when no registry is configured, so tests that
+    exercise it must not pick up a registry from the environment they happen to run in.
+    """
+    monkeypatch.delenv("FLYTE_IMAGE_REGISTRY", raising=False)
+    with patch("flyte.config._config.ImageConfig.auto") as mock_auto:
+        mock_auto.return_value = MagicMock(registry=None)
+        yield
+
+
+def test_get_base_registry_returns_default_when_not_initialized(no_ambient_registry):
     """When flyte is not initialized, _get_base_registry returns the default registry."""
     with patch("flyte._initialize._get_init_config", return_value=None):
         assert _get_base_registry() == _BASE_REGISTRY
 
 
-def test_get_base_registry_returns_default_when_no_client():
+def test_get_base_registry_returns_default_when_no_client(no_ambient_registry):
     """When init config has no client, _get_base_registry returns the default registry."""
     mock_config = MagicMock()
     mock_config.client = None
@@ -832,7 +845,7 @@ def test_get_base_registry_returns_default_when_no_client():
         assert _get_base_registry() == _BASE_REGISTRY
 
 
-def test_get_base_registry_returns_default_for_remote_endpoint():
+def test_get_base_registry_returns_default_for_remote_endpoint(no_ambient_registry):
     """When endpoint is a remote URL, _get_base_registry returns the default registry."""
     mock_config = MagicMock()
     mock_config.client.endpoint = "dns:///my-cluster.example.com"
@@ -840,7 +853,7 @@ def test_get_base_registry_returns_default_for_remote_endpoint():
         assert _get_base_registry() == _BASE_REGISTRY
 
 
-def test_get_base_registry_returns_localhost_for_localhost_endpoint():
+def test_get_base_registry_returns_localhost_for_localhost_endpoint(no_ambient_registry):
     """When endpoint contains 'localhost', _get_base_registry returns the localhost registry."""
     mock_config = MagicMock()
     mock_config.client.endpoint = "localhost:8090"
@@ -848,7 +861,7 @@ def test_get_base_registry_returns_localhost_for_localhost_endpoint():
         assert _get_base_registry() == _LOCALHOST_REGISTRY
 
 
-def test_get_base_registry_returns_localhost_for_localhost_in_url():
+def test_get_base_registry_returns_localhost_for_localhost_in_url(no_ambient_registry):
     """When endpoint contains 'localhost' as part of a URL, _get_base_registry returns the localhost registry."""
     mock_config = MagicMock()
     mock_config.client.endpoint = "dns:///localhost:30080"
@@ -856,7 +869,7 @@ def test_get_base_registry_returns_localhost_for_localhost_in_url():
         assert _get_base_registry() == _LOCALHOST_REGISTRY
 
 
-def test_get_base_registry_returns_default_for_empty_endpoint():
+def test_get_base_registry_returns_default_for_empty_endpoint(no_ambient_registry):
     """When endpoint is empty string, _get_base_registry returns the default registry."""
     mock_config = MagicMock()
     mock_config.client.endpoint = ""
