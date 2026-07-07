@@ -1,3 +1,4 @@
+import asyncio
 import shutil
 import sqlite3
 import threading
@@ -120,6 +121,11 @@ class LocalDB:
     _initialized: bool = False
     _lock = threading.Lock()
     _write_lock = threading.Lock()
+    # Serializes the async init path. Must be an asyncio.Lock (not the sync `_lock`):
+    # coroutines that lose the race await this lock and yield the loop instead of
+    # blocking the loop thread, which is what deadlocks when a threading.Lock is held
+    # across the aiosqlite `await` below.
+    _async_lock: "asyncio.Lock | None" = None
 
     @staticmethod
     def _get_cache_dir() -> Path:
@@ -141,9 +147,29 @@ class LocalDB:
         return str(db_path)
 
     @staticmethod
+    def _get_async_lock() -> "asyncio.Lock":
+        """Return the shared async-init lock, creating it lazily.
+
+        Creation is guarded by the sync `_lock` for a brief, await-free critical
+        section only; the lock itself is awaited outside `_lock`.
+        """
+        if LocalDB._async_lock is None:
+            with LocalDB._lock:
+                if LocalDB._async_lock is None:
+                    LocalDB._async_lock = asyncio.Lock()
+        return LocalDB._async_lock
+
+    @staticmethod
     async def initialize():
         """Open async connection and create all tables."""
-        with LocalDB._lock:
+        # Double-checked locking: fast path with no lock at all, then serialize the
+        # real init on an asyncio.Lock. We must not hold a threading.Lock across the
+        # aiosqlite `await` in `_initialize_async`: a second coroutine hitting a held
+        # sync lock would block the loop thread, the aiosqlite worker callback could
+        # never be delivered, and the first coroutine's await would never resolve.
+        if LocalDB._initialized:
+            return
+        async with LocalDB._get_async_lock():
             if LocalDB._initialized:
                 return
             if HAS_AIOSQLITE:

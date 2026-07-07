@@ -1049,6 +1049,22 @@ class TestRemotePathHelpers:
         # ``rd`` only counts as scratch in the ``.../rd/<run_id>`` tail position.
         assert _memory_storage_root("/tmp/rd/data/keep") == "/tmp/rd/data/keep"
 
+    def test_storage_root_strips_local_raw_data_action_segment(self):
+        # The default local layout is ``/tmp/flyte/raw_data/<action_name>`` with no
+        # ``/rd/<run_id>`` tail. Anchor at the ``raw_data`` root so the per-run action
+        # name is dropped (see flyte._run).
+        assert _memory_storage_root("/tmp/flyte/raw_data/action-abc123") == "/tmp/flyte/raw_data"
+
+    def test_storage_root_local_raw_data_stable_across_runs(self):
+        # Two local runs get different random action names but must resolve to one store.
+        first = _memory_storage_root("/tmp/flyte/raw_data/action-abc123")
+        second = _memory_storage_root("/tmp/flyte/raw_data/action-zzz999")
+        assert first == second == "/tmp/flyte/raw_data"
+
+    def test_storage_root_raw_data_root_itself_unchanged(self):
+        # Already the raw-data root (no per-run tail) — must be left as-is.
+        assert _memory_storage_root("/tmp/flyte/raw_data") == "/tmp/flyte/raw_data"
+
     def test_ensure_namespace_segment_valid(self):
         assert _ensure_namespace_segment("my_key", name="key") == "my_key"
 

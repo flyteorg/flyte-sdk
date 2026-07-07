@@ -499,6 +499,69 @@ async def test_record_trace_with_error():
         mock_convert_error.assert_called_once_with(test_error)
         mock_upload_error.assert_called_once()
         mock_submit_and_wait.assert_called_once()
+        # The recorded errored trace must carry recoverability into error.pb so a replay can
+        # distinguish a transient failure (re-run) from a deterministic one (replay).
+        assert "recoverable" in mock_upload_error.call_args.kwargs
+
+
+def test_from_trace_success_is_succeeded():
+    """A trace with no error records SUCCEEDED (unchanged behavior)."""
+    action_id = identifier_pb2.ActionIdentifier(name="t", run=identifier_pb2.RunIdentifier(name="r"))
+    a = Action.from_trace(
+        parent_action_name="parent",
+        action_id=action_id,
+        friendly_name="fn",
+        group_data=None,
+        inputs_uri="in://x",
+        outputs_uri="out://x",
+        start_time=0.0,
+        end_time=1.0,
+        run_output_base="base://x",
+    )
+    assert a.phase == phase_pb2.ACTION_PHASE_SUCCEEDED
+    assert a.trace.phase == phase_pb2.ACTION_PHASE_SUCCEEDED
+    assert a.err is None
+
+
+def test_from_trace_error_is_failed():
+    """A trace that recorded an error must be FAILED, not SUCCEEDED — recording it as a
+    success with an empty outputs_uri both hides the failure and, on replay, sends the empty
+    URI into load_outputs (the reproduced IsADirectoryError crash)."""
+    action_id = identifier_pb2.ActionIdentifier(name="t", run=identifier_pb2.RunIdentifier(name="r"))
+    err = execution_pb2.ExecutionError(
+        code="429", message="rate limited", recoverability=execution_pb2.ContainerError.RECOVERABLE
+    )
+    a = Action.from_trace(
+        parent_action_name="parent",
+        action_id=action_id,
+        friendly_name="fn",
+        group_data=None,
+        inputs_uri="in://x",
+        outputs_uri="",
+        start_time=0.0,
+        end_time=1.0,
+        run_output_base="base://x",
+        error=err,
+    )
+    assert a.phase == phase_pb2.ACTION_PHASE_FAILED
+    assert a.trace.phase == phase_pb2.ACTION_PHASE_FAILED
+    assert a.err is err
+    assert a.has_error()
+
+
+def test_trace_error_is_recoverable_helper():
+    """Recoverability gates replay-vs-rerun: RECOVERABLE re-runs, everything else replays."""
+    from flyte._internal.controllers.remote._controller import _trace_error_is_recoverable
+
+    recoverable = execution_pb2.ExecutionError(recoverability=execution_pb2.ContainerError.RECOVERABLE)
+    non_recoverable = execution_pb2.ExecutionError(recoverability=execution_pb2.ContainerError.NON_RECOVERABLE)
+    unset = execution_pb2.ExecutionError(code="x", message="no recoverability set")
+
+    assert _trace_error_is_recoverable(recoverable) is True
+    assert _trace_error_is_recoverable(non_recoverable) is False
+    # Defaults to NON_RECOVERABLE (0) when unset or absent -> replay, matching prior behavior.
+    assert _trace_error_is_recoverable(unset) is False
+    assert _trace_error_is_recoverable(None) is False
 
 
 @pytest.mark.asyncio
