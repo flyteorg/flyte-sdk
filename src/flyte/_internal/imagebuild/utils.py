@@ -71,6 +71,21 @@ def copy_files_to_context(src: Path, context_path: Path, ignore_patterns: list[s
                         f"Skipping '{src_file}' while building image context: file disappeared "
                         "between enumeration and copy."
                     )
+                except PermissionError:
+                    # ``shutil.copy2`` also copies file metadata (mode, timestamps, flags and
+                    # xattrs via ``copystat``), which can raise ``PermissionError`` ([Errno 1]
+                    # Operation not permitted) on macOS for files carrying special flags or SIP
+                    # protection — e.g. entries under a user's ``.git`` directory that get pulled
+                    # into the build context. Fall back to copying just the file contents; only if
+                    # even the data cannot be read do we skip it with a warning, rather than
+                    # aborting the whole image build with a raw traceback (see FLYTE-SDK-6F).
+                    try:
+                        shutil.copyfile(src_file, dst_file)
+                    except OSError:
+                        logger.warning(
+                            f"Skipping '{src_file}' while building image context: permission "
+                            "denied. Check the file's permissions or exclude it via .dockerignore."
+                        )
 
     else:
         # Single file
