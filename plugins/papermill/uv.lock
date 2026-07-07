@@ -15,6 +15,7 @@ exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for 
 exclude-newer-span = "P5D"
 
 [options.exclude-newer-package]
+flyteplugins-union = { timestamp = "0001-01-01T00:00:00Z", span = "PT0S" }
 flyteidl2 = { timestamp = "0001-01-01T00:00:00Z", span = "PT0S" }
 flyte-controller-base = { timestamp = "0001-01-01T00:00:00Z", span = "PT0S" }
 
