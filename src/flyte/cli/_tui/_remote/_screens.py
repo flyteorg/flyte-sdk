@@ -58,6 +58,19 @@ if TYPE_CHECKING:
     import flyte.remote as remote
 
 
+def _call_from_thread(screen: Screen, fn, *args, **kwargs) -> None:
+    """Run ``fn(*args, **kwargs)`` on the UI thread; no-op if the app is shutting down.
+
+    Background (thread) workers cannot be interrupted, so a worker may still be
+    running after the app starts to exit. ``call_from_thread`` raises in that
+    window, which we swallow.
+    """
+    try:
+        screen.app.call_from_thread(lambda: fn(*args, **kwargs))
+    except Exception:
+        pass
+
+
 def _format_app_deployment_status(status: int | str) -> str:
     """Human-readable deployment status (matches flyte.remote.App.__rich_repr__)."""
     if isinstance(status, str):
@@ -164,6 +177,13 @@ class ProjectsScreen(Screen):
         Binding("enter", "open_project", "Open Project"),
     ]
 
+    def __init__(self) -> None:
+        super().__init__()
+        # Cache the fetched project list so filtering/resize re-render locally
+        # instead of re-hitting the network.
+        self._projects: list[remote.Project] | None = None
+        self._error: str | None = None
+
     def compose(self) -> ComposeResult:
         yield Header()
         with Horizontal(id="projects-content"):
@@ -178,30 +198,57 @@ class ProjectsScreen(Screen):
                 yield EntityTable(id="projects-table", classes="EntityTable")
         yield Footer()
 
-    async def on_mount(self) -> None:
+    def on_mount(self) -> None:
         self.title = "Projects"
         table = self.query_one("#projects-table", EntityTable)
         table.cursor_type = "row"
+        self._reset_columns(table)
+        table.add_row("Loading projects…", "", "")
         table.focus()
         self.query_one("#recent-sidebar", Vertical).border_title = "Recent"
-        await self._repopulate()
+        self._load_projects()
 
-    async def _repopulate(self) -> None:
-        table = self.query_one("#projects-table", EntityTable)
-        search = self.query_one("#project-search", Input).value.strip().lower()
-        sidebar = self.query_one("#recent-sidebar", Vertical)
-        recent_list = self.query_one("#recent-projects", ListView)
+    @staticmethod
+    def _reset_columns(table: EntityTable) -> None:
         table.clear(columns=True)
         table.add_column("Name", width=28)
         table.add_column("Labels", width=24)
         table.add_column("ID", width=28)
+
+    @work(thread=True, exclusive=True)
+    def _load_projects(self) -> None:
+        """Connect (if needed) and fetch projects off the UI thread."""
         try:
+            as_remote_app(self.app).ensure_connected()
             projects = list_projects()
         except Exception as exc:
+            _call_from_thread(self, self._on_projects_loaded, None, str(exc))
+            return
+        _call_from_thread(self, self._on_projects_loaded, projects, None)
+
+    def _on_projects_loaded(self, projects: list | None, error: str | None) -> None:
+        app = as_remote_app(self.app)
+        if error is None and app.cluster is not None:
+            ep = app.cluster.endpoint or "(configured)"
+            app.sub_title = f"{app.cluster.domain} @ {ep}"
+        self._projects = projects
+        self._error = error
+        self.run_worker(self._render_projects(), group="render", exclusive=True)
+
+    async def _render_projects(self) -> None:
+        """Render the cached project list (no network) into the table + recents."""
+        table = self.query_one("#projects-table", EntityTable)
+        search = self.query_one("#project-search", Input).value.strip().lower()
+        sidebar = self.query_one("#recent-sidebar", Vertical)
+        recent_list = self.query_one("#recent-projects", ListView)
+        self._reset_columns(table)
+        if self._error is not None:
             await recent_list.clear()
             sidebar.border_title = "Recent"
-            table.add_row(f"Error: {exc}", "", "")
+            table.add_row(f"Error: {self._error}", "", "")
+            self.sub_title = "error"
             return
+        projects = self._projects or []
         by_id: dict[str, remote.Project] = {proj.pb2.id: proj for proj in projects}
         await self._populate_recent_projects(by_id, search)
         count = 0
@@ -237,20 +284,38 @@ class ProjectsScreen(Screen):
             recent_list.append(ListItem(Static(name), id=f"recent-{project_id}"))
         sidebar.border_title = f"Recent ({len(shown)})" if shown else "Recent"
 
-    async def action_refresh(self) -> None:
-        await self._repopulate()
+    def action_refresh(self) -> None:
+        table = self.query_one("#projects-table", EntityTable)
+        self._reset_columns(table)
+        table.add_row("Loading projects…", "", "")
+        self._load_projects()
 
     def _open_project(self, project_id: str) -> None:
         app = as_remote_app(self.app)
         cluster = app.cluster
         if cluster is None:
             return
-        activate_project(
-            config=app._config,
-            project=project_id,
-            domain=cluster.domain,
-            org=cluster.org,
-        )
+        # activate_project re-inits the client (blocking gRPC); do it off the UI
+        # thread and push the hub screen once the scope is active.
+        self.sub_title = f"opening {project_id}…"
+        self._activate_and_open(project_id, cluster.domain, cluster.org)
+
+    @work(thread=True, exclusive=True)
+    def _activate_and_open(self, project_id: str, domain: str, org: str) -> None:
+        app = as_remote_app(self.app)
+        try:
+            activate_project(config=app._config, project=project_id, domain=domain, org=org)
+        except Exception as exc:
+            _call_from_thread(self, self._notify_error, f"Failed to open {project_id}: {exc}")
+            return
+        _call_from_thread(self, self._push_hub, project_id)
+
+    def _notify_error(self, message: str) -> None:
+        self.notify(message, severity="error", timeout=8)
+        self.sub_title = "error"
+
+    def _push_hub(self, project_id: str) -> None:
+        app = as_remote_app(self.app)
         record_recent_project(app.config_key, project_id)
         app.selected_project = project_id
         app.set_subtitle_for_project(project_id)
@@ -263,10 +328,10 @@ class ProjectsScreen(Screen):
         row_key, _ = table.coordinate_to_cell_key(table.cursor_coordinate)
         self._open_project(str(row_key.value))
 
-    async def on_input_submitted(self, event: Input.Submitted) -> None:
-        # Wait for the user to press Enter rather than refiltering on every keystroke.
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        # Filter the already-loaded list locally (no network) when Enter is pressed.
         if event.input.id == "project-search":
-            await self._repopulate()
+            self.run_worker(self._render_projects(), group="render", exclusive=True)
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         self._open_project(str(event.row_key.value))
@@ -275,9 +340,6 @@ class ProjectsScreen(Screen):
         item_id = event.item.id or ""
         if item_id.startswith("recent-"):
             self._open_project(item_id.removeprefix("recent-"))
-
-    async def on_resize(self, event: Resize) -> None:
-        await self._repopulate()
 
 
 class ProjectHubScreen(Screen):
@@ -442,46 +504,84 @@ class ProjectHubScreen(Screen):
 
     def _repopulate(self) -> None:
         self._page_size = self._effective_page_size()
+        section = self._section
         scope = list_scope(as_remote_app(self.app))
+        filt = self.query_one("#section-filter", Input).value.strip() or None
+        phase_key = str(self.query_one("#status-filter", Select).value or "all")
+        self.query_one("#hub-table", EntityTable).clear(columns=True)
+        self.sub_title = "loading…"
+        # Fetch off the UI thread so navigation/paging/filtering stays responsive.
+        self._load_section(section, self._page, self._page_size, filt, phase_key, scope)
+
+    @work(thread=True, exclusive=True)
+    def _load_section(
+        self,
+        section: str,
+        page: int,
+        page_size: int,
+        filt: str | None,
+        phase_key: str,
+        scope: dict[str, str],
+    ) -> None:
+        paged: PagedResult
+        try:
+            if section == "runs":
+                paged = list_runs_paginated(
+                    page=page,
+                    page_size=page_size,
+                    task_name=filt,
+                    in_phase=_PHASE_FILTER_MAP.get(phase_key),
+                    **scope,
+                )
+            elif section == "triggers":
+                paged = list_triggers_paginated(page=page, page_size=page_size, search=filt)
+            elif section == "tasks":
+                paged = list_tasks_paginated(page=page, page_size=page_size, task_name=filt, **scope)
+            elif section == "apps":
+                paged = list_apps_paginated(page=page, page_size=page_size, name=filt)
+            else:
+                return
+        except Exception as exc:
+            _call_from_thread(self, self._render_section_error, section, str(exc))
+            return
+        _call_from_thread(self, self._render_section, section, paged)
+
+    def _render_section(self, section: str, paged: PagedResult) -> None:
+        # Ignore a stale fetch if the user switched sections while it was in flight.
+        if section != self._section:
+            return
         table = self.query_one("#hub-table", EntityTable)
         table.clear(columns=True)
-        filt = self.query_one("#section-filter", Input).value.strip() or None
+        self._has_next = paged.has_next
+        self._update_page_indicator(paged)
+        self.sub_title = f"{len(paged.items)} on page"
+        if section == "runs":
+            self._render_runs(table, paged)
+        elif section == "triggers":
+            self._render_triggers(table, paged)
+        elif section == "tasks":
+            self._render_tasks(table, paged)
+        elif section == "apps":
+            self._render_apps(table, paged)
 
-        if self._section == "runs":
-            self._populate_runs(table, scope, filt)
-        elif self._section == "triggers":
-            self._populate_triggers(table, filt)
-        elif self._section == "tasks":
-            self._populate_tasks(table, scope, filt)
-        elif self._section == "apps":
-            self._populate_apps(table, filt)
+    def _render_section_error(self, section: str, message: str) -> None:
+        if section != self._section:
+            return
+        table = self.query_one("#hub-table", EntityTable)
+        table.clear(columns=True)
+        table.add_column("Error")
+        self._has_next = False
+        self._update_page_indicator()
+        table.add_row(f"Error: {message}")
+        self.sub_title = "error"
 
-    def _populate_runs(self, table: EntityTable, scope: dict[str, str], task_filter: str | None) -> None:
-        status_sel = self.query_one("#status-filter", Select)
-        phase_key = str(status_sel.value or "all")
-        in_phase = _PHASE_FILTER_MAP.get(phase_key)
+    def _render_runs(self, table: EntityTable, paged: PagedResult) -> None:
         table.add_column("", width=3)
         table.add_column("Run", width=22)
         table.add_column("Task", width=18)
         table.add_column("Duration", width=10)
         table.add_column("Started", width=14)
         table.add_column("Ended", width=14)
-        try:
-            paged = list_runs_paginated(
-                page=self._page,
-                page_size=self._page_size,
-                task_name=task_filter,
-                in_phase=in_phase,
-                **scope,
-            )
-        except Exception as exc:
-            self._has_next = False
-            self._update_page_indicator()
-            table.add_row("", f"Error: {exc!s}", "", "", "", "")
-            return
-        self._has_next = paged.has_next
-        self._update_page_indicator(paged)
-        self.sub_title = f"{len(paged.items)} on page"
         for run in paged.items:
             phase = str(run.phase).lower() if hasattr(run.phase, "value") else str(run.phase)
             icon = Text(_phase_icon(phase), style=_STATUS_COLORS.get(phase, ""))
@@ -492,81 +592,32 @@ class ProjectHubScreen(Screen):
             if run.action.done() and run.action.pb2.status.HasField("end_time"):
                 end = run.action.pb2.status.end_time.ToDatetime()
                 ended = _fmt_time(end.timestamp())
-            table.add_row(
-                icon,
-                run.name,
-                task,
-                _run_duration(run),
-                started,
-                ended,
-                key=run.name,
-            )
+            table.add_row(icon, run.name, task, _run_duration(run), started, ended, key=run.name)
 
-    def _populate_triggers(self, table: EntityTable, search: str | None) -> None:
+    def _render_triggers(self, table: EntityTable, paged: PagedResult) -> None:
         table.add_column("Name", width=24)
         table.add_column("Task", width=24)
         table.add_column("Active", width=10)
-        try:
-            paged = list_triggers_paginated(page=self._page, page_size=self._page_size, search=search)
-        except Exception as exc:
-            self._has_next = False
-            self._update_page_indicator()
-            table.add_row(f"Error: {exc!s}", "", "")
-            return
-        self._has_next = paged.has_next
-        self._update_page_indicator(paged)
-        rows = []
         for tr in paged.items:
-            tname = tr.task_name
-            name = tr.name
             active = "yes" if tr.is_active else "no"
-            rows.append((name, tname, active, f"{tname}/{name}"))
-        self.sub_title = f"{len(rows)} on page"
-        for name, tname, active, key in rows:
-            table.add_row(name, tname, active, key=key)
+            table.add_row(tr.name, tr.task_name, active, key=f"{tr.task_name}/{tr.name}")
 
-    def _populate_tasks(self, table: EntityTable, scope: dict[str, str], name_filter: str | None) -> None:
+    def _render_tasks(self, table: EntityTable, paged: PagedResult) -> None:
         table.add_column("Name", width=28)
         table.add_column("Version", width=14)
         table.add_column("Short name", width=18)
         table.add_column("Env", width=18)
-        try:
-            paged = list_tasks_paginated(page=self._page, page_size=self._page_size, task_name=name_filter, **scope)
-        except Exception as exc:
-            self._has_next = False
-            self._update_page_indicator()
-            table.add_row(f"Error: {exc!s}", "", "", "")
-            return
-        self._has_next = paged.has_next
-        self._update_page_indicator(paged)
-        self.sub_title = f"{len(paged.items)} on page"
         for t in paged.items:
             meta = t.pb2.metadata
             # Proto3 string fields have no presence; read values directly (empty string if unset).
             short = meta.short_name or "-"
             env = meta.environment_name or "-"
-            table.add_row(
-                t.name,
-                t.version,
-                short,
-                env,
-                key=t.name,
-            )
+            table.add_row(t.name, t.version, short, env, key=t.name)
 
-    def _populate_apps(self, table: EntityTable, name_filter: str | None) -> None:
+    def _render_apps(self, table: EntityTable, paged: PagedResult) -> None:
         table.add_column("Name", width=24)
         table.add_column("Status", width=18)
         table.add_column("Endpoint", width=36)
-        try:
-            paged = list_apps_paginated(page=self._page, page_size=self._page_size, name=name_filter)
-        except Exception as exc:
-            self._has_next = False
-            self._update_page_indicator()
-            table.add_row(f"Error: {exc!s}", "", "")
-            return
-        self._has_next = paged.has_next
-        self._update_page_indicator(paged)
-        self.sub_title = f"{len(paged.items)} on page"
         for app in paged.items:
             status = _format_app_deployment_status(app.deployment_status).lower()
             table.add_row(app.name, status, app.endpoint or "", key=app.name)
@@ -591,7 +642,9 @@ class ProjectHubScreen(Screen):
         self.app.pop_screen()
         screen = self.app.screen
         if isinstance(screen, ProjectsScreen):
-            screen.run_worker(screen._repopulate(), exclusive=True)
+            # Re-render from the cached project list (updates the recents panel);
+            # no network fetch needed.
+            screen.run_worker(screen._render_projects(), group="render", exclusive=True)
 
     def action_show_runs(self) -> None:
         self._highlight_nav(_NAV_RUNS)
@@ -690,37 +743,45 @@ class EntityDetailScreen(Screen):
 
     def on_mount(self) -> None:
         self.title = f"{self._kind}: {self._entity_name}"
-        body = self.query_one("#detail-body", Static)
-        lines: list[str] = []
+        self.query_one("#detail-body", Static).update("Loading…")
+        self._load_detail()
+
+    @work(thread=True, exclusive=True)
+    def _load_detail(self) -> None:
+        """Fetch the entity detail off the UI thread, then render the text."""
         try:
-            if self._kind == "Task":
-                import flyte.remote as remote
-
-                t = remote.Task.get(name=self._entity_name, version="latest")
-                details = t.fetch()
-                lines.append(f"name:       {self._entity_name}")
-                lines.append(f"version:    {details.pb2.id.version}")
-                lines.append(f"type:       {details.pb2.task_template.type}")
-                lines.append(f"deployed:   {details.pb2.metadata.deployed_at.ToDatetime()}")
-            elif self._kind == "App":
-                import flyte.remote as remote
-
-                app_obj = remote.App.get(name=self._entity_name)
-                lines.append(f"name:       {app_obj.name}")
-                lines.append(f"status:     {_format_app_deployment_status(app_obj.deployment_status)}")
-                lines.append(f"endpoint:   {app_obj.endpoint or '(none)'}")
-                lines.append(f"url:        {app_obj.url}")
-            elif self._kind == "Trigger":
-                import flyte.remote as remote
-
-                assert self._task_name
-                tr = remote.Trigger.get(name=self._entity_name, task_name=self._task_name)
-                lines.append(f"name:       {tr.name}")
-                lines.append(f"task:       {tr.task_name}")
-                lines.append(f"active:     {tr.is_active}")
+            lines = self._fetch_detail_lines()
         except Exception as exc:
-            lines.append(f"Error loading {self._kind}: {exc}")
-        body.update("\n".join(lines))
+            lines = [f"Error loading {self._kind}: {exc}"]
+        _call_from_thread(self, self._set_body, "\n".join(lines))
+
+    def _fetch_detail_lines(self) -> list[str]:
+        import flyte.remote as remote
+
+        lines: list[str] = []
+        if self._kind == "Task":
+            t = remote.Task.get(name=self._entity_name, version="latest")
+            details = t.fetch()
+            lines.append(f"name:       {self._entity_name}")
+            lines.append(f"version:    {details.pb2.id.version}")
+            lines.append(f"type:       {details.pb2.task_template.type}")
+            lines.append(f"deployed:   {details.pb2.metadata.deployed_at.ToDatetime()}")
+        elif self._kind == "App":
+            app_obj = remote.App.get(name=self._entity_name)
+            lines.append(f"name:       {app_obj.name}")
+            lines.append(f"status:     {_format_app_deployment_status(app_obj.deployment_status)}")
+            lines.append(f"endpoint:   {app_obj.endpoint or '(none)'}")
+            lines.append(f"url:        {app_obj.url}")
+        elif self._kind == "Trigger":
+            assert self._task_name
+            tr = remote.Trigger.get(name=self._entity_name, task_name=self._task_name)
+            lines.append(f"name:       {tr.name}")
+            lines.append(f"task:       {tr.task_name}")
+            lines.append(f"active:     {tr.is_active}")
+        return lines
+
+    def _set_body(self, text: str) -> None:
+        self.query_one("#detail-body", Static).update(text)
 
     def action_go_back(self) -> None:
         self.app.pop_screen()
@@ -930,9 +991,17 @@ class RunDetailScreen(Screen):
         self.query_one("#detail-panel", DetailPanel).select_next_attempt()
 
     def action_abort_run(self) -> None:
+        self.notify("Aborting run…")
+        self._abort_run()
+
+    @work(thread=True, exclusive=True)
+    def _abort_run(self) -> None:
+        if not self._is_active():
+            return
         try:
             abort_run(self._run_name)
-            self.notify("Run abort requested")
-            self._reload_run_data()
         except Exception as exc:
-            self.notify(f"Abort failed: {exc}", severity="error")
+            _call_from_thread(self, self.notify, f"Abort failed: {exc}", severity="error")
+            return
+        _call_from_thread(self, self.notify, "Run abort requested")
+        self._reload_run_data()

@@ -54,6 +54,7 @@ class RemoteTUIApp(App[None]):
         self.poll_interval = poll_interval
         self.cluster: ClusterContext | None = None
         self.selected_project: str | None = None
+        self._connect_lock = threading.Lock()
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -61,18 +62,23 @@ class RemoteTUIApp(App[None]):
 
     def on_mount(self) -> None:
         self.title = "Flyte"
-        try:
-            self.cluster = init_cluster(config=self._config)
-        except Exception as exc:
-            self.notify(f"Failed to connect: {exc}", severity="error", timeout=10)
-            self.exit(return_code=1)
-            return
-        domain = self.cluster.domain
-        ep = self.cluster.endpoint or "(configured)"
-        self.sub_title = f"{domain} @ {ep}"
+        self.sub_title = "connecting…"
+        # Push the (cheap, network-free) projects screen immediately so the app
+        # paints right away. The blocking connect + project fetch happen inside
+        # the screen's background worker via ``ensure_connected``.
         from ._screens import ProjectsScreen
 
         self.push_screen(ProjectsScreen())
+
+    def ensure_connected(self) -> None:
+        """Initialize the remote client once (idempotent, blocking).
+
+        Called from screen worker threads before issuing remote calls, so the
+        config load + auth handshake never runs on the UI thread.
+        """
+        with self._connect_lock:
+            if self.cluster is None:
+                self.cluster = init_cluster(config=self._config)
 
     def set_subtitle_for_project(self, project: str) -> None:
         if self.cluster is None:
