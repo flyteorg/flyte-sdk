@@ -6,7 +6,7 @@ swap in a :class:`FlyteModelProvider`: it wraps the real model so every
 :func:`~flyteplugins.agents.core.durable_step` (a ``flyte.trace`` leaf). Inside a
 Flyte task this means a crashed/retried run replays completed turns from
 their recorded outputs instead of re-calling (and re-billing) the model. Tool
-calls run as durable child actions (see :func:`flyteplugins.agents.openai.function_tool`),
+calls run as durable child actions (see :func:`flyteplugins.agents.openai.tool`),
 so the whole agent run becomes crash-resilient and self-healing when the enclosing task
 carries ``retries=...``.
 

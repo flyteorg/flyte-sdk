@@ -25,7 +25,7 @@ from pathlib import Path
 import flyte
 from flyte._image import PythonWheels
 
-from flyteplugins.agents.google import durable_model, function_tool, run_agent
+from flyteplugins.agents.google import durable_model, tool, run_agent
 
 _MODEL = "gemini-3.1-flash-lite"
 
@@ -53,7 +53,7 @@ env = flyte.TaskEnvironment(
 )
 
 
-@function_tool
+@tool
 @env.task(retries=3)
 async def share_details(question: str) -> str:
     """Ask the customer (a human) for a specific detail and return their reply.

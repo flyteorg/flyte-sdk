@@ -29,7 +29,7 @@ from flyteplugins.agents.core import (
     durable_step,
     fingerprint,
     flush_report,
-    function_tool,
+    tool,
     jsonable,
     resolve_memory,
 )
@@ -42,7 +42,7 @@ _MEMORY_CONV_PATH = "mistral/conversation_id"
 
 
 def _coerce_tool(t: typing.Any) -> typing.Callable:
-    return function_tool(t) if isinstance(t, AsyncFunctionTaskTemplate) else t
+    return tool(t) if isinstance(t, AsyncFunctionTaskTemplate) else t
 
 
 def _entry_type(entry: typing.Any) -> str | None:
@@ -193,7 +193,7 @@ async def run_agent(
 
     Args:
         input: The user prompt.
-        tools: ``function_tool``-wrapped tools or bare ``@env.task`` templates.
+        tools: ``tool``-wrapped tools or bare ``@env.task`` templates.
         model: Model for an inline run (when ``agent_id`` is not given).
         instructions: System instructions.
         timeout_ms: Per-turn request timeout (ms), applied by the SDK to each model
@@ -247,8 +247,8 @@ async def run_agent(
         run_ctx_kwargs["conversation_id"] = conversation_id
 
     async with RunContext(**run_ctx_kwargs) as run_ctx:
-        for tool in (_coerce_tool(t) for t in tools):
-            run_ctx.register_func(tool)
+        for fn in (_coerce_tool(t) for t in tools):
+            run_ctx.register_func(fn)
 
         result = await conversations.run_async(run_ctx, inputs=input, instructions=instructions, timeout_ms=timeout_ms)
 

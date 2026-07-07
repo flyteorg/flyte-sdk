@@ -20,7 +20,7 @@ from pathlib import Path
 import flyte
 from flyte._image import PythonWheels
 
-from flyteplugins.agents.google import function_tool, run_agent
+from flyteplugins.agents.google import tool, run_agent
 
 env = flyte.TaskEnvironment(
     "google-durable-agent",
@@ -46,16 +46,16 @@ env = flyte.TaskEnvironment(
 )
 
 
-# Stack @function_tool on top of @env.task: each is both an ADK tool and a normal,
+# Stack @tool on top of @env.task: each is both an ADK tool and a normal,
 # durable, cached Flyte task.
-@function_tool
+@tool
 @env.task(cache="auto", retries=3)
 async def get_weather(city: str) -> str:
     """Get the current weather for a city."""
     return f"The weather in {city} is sunny, 22°C."
 
 
-@function_tool
+@tool
 @env.task(cache="auto", retries=3)
 async def get_population(city: str) -> int:
     """Get the population of a city."""

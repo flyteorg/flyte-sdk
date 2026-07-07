@@ -25,7 +25,7 @@ from pathlib import Path
 import flyte
 from flyte._image import PythonWheels
 
-from flyteplugins.agents.mistral import function_tool, run_agent
+from flyteplugins.agents.mistral import tool, run_agent
 
 env = flyte.TaskEnvironment(
     "mistral-crash-resume",
@@ -51,7 +51,7 @@ env = flyte.TaskEnvironment(
 )
 
 
-@function_tool
+@tool
 @env.task(cache="auto", retries=3)
 async def get_weather(city: str) -> str:
     """Get the current weather for a city."""
@@ -59,7 +59,7 @@ async def get_weather(city: str) -> str:
     return f"sunny, 22°C in {city}"
 
 
-@function_tool
+@tool
 @env.task(cache="auto", retries=3)
 async def get_population(city: str) -> int:
     """Get the population of a city."""

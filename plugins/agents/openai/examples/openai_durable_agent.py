@@ -25,7 +25,7 @@ from agents import OpenAIProvider, RunConfig
 from flyte._image import PythonWheels
 from openai import AsyncOpenAI
 
-from flyteplugins.agents.openai import function_tool, run_agent
+from flyteplugins.agents.openai import tool, run_agent
 
 env = flyte.TaskEnvironment(
     "openai-durable-agent",
@@ -51,16 +51,16 @@ env = flyte.TaskEnvironment(
 )
 
 
-# Stack @function_tool on top of @env.task: each is both a tool the agent can
+# Stack @tool on top of @env.task: each is both a tool the agent can
 # call and a normal, durable, cached Flyte task.
-@function_tool
+@tool
 @env.task(cache="auto", retries=3)
 async def get_weather(city: str) -> str:
     """Get the current weather for a city."""
     return f"The weather in {city} is sunny, 22°C."
 
 
-@function_tool
+@tool
 @env.task(cache="auto", retries=3)
 async def get_population(city: str) -> int:
     """Get the population of a city."""

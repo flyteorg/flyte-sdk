@@ -10,14 +10,14 @@ pip install flyteplugins-agents-mistral
 
 ```python
 import flyte
-from flyteplugins.agents.mistral import function_tool, run_agent
+from flyteplugins.agents.mistral import tool, run_agent
 
 env = flyte.TaskEnvironment(
     "mistral-agent",
     secrets=[flyte.Secret(key="mistral_api_key", as_env_var="MISTRAL_API_KEY")],
 )
 
-@function_tool
+@tool
 @env.task(cache="auto", retries=3)
 async def get_weather(city: str) -> str:
     """Get the current weather for a city."""
@@ -32,7 +32,7 @@ async def city_agent(question: str) -> str:
 
 - The SDK owns the loop — we don't reimplement it. Mistral's own runner
   (`conversations.run_async` + `RunContext`) drives the agent loop and executes
-  the tools; we just register Flyte-task-backed tools with it. `function_tool`
+  the tools; we just register Flyte-task-backed tools with it. `tool`
   produces the Python function the runner calls, and its body dispatches to
   `task.aio()`, so each tool call is a durable Flyte child action.
 - Both per-turn and per-tool durability. The runner makes each model turn by

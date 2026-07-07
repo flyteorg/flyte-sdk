@@ -20,14 +20,14 @@ import typing
 import uuid
 
 from flyte._task import AsyncFunctionTaskTemplate
-from flyteplugins.agents.core import ReportTimeline, abbrev, flush_report, function_tool
+from flyteplugins.agents.core import ReportTimeline, abbrev, flush_report, tool
 
 from ._durable import durable_model
 from ._memory import load_memory, save_memory
 
 
 def _coerce_tool(t: typing.Any) -> typing.Any:
-    return function_tool(t) if isinstance(t, AsyncFunctionTaskTemplate) else t
+    return tool(t) if isinstance(t, AsyncFunctionTaskTemplate) else t
 
 
 def _content_text(content: typing.Any) -> str:
@@ -128,7 +128,7 @@ async def run_agent(
     Args:
         input: The user prompt.
         agent: A pre-built ADK agent. Mutually exclusive with ``tools``.
-        tools: ``function_tool``-wrapped tools or bare ``@env.task`` templates.
+        tools: ``tool``-wrapped tools or bare ``@env.task`` templates.
         model: Model name for the built agent (e.g. ``gemini-2.0-flash``).
         instructions: System instruction for the built agent.
         name: Agent name (a valid Python identifier). ADK injects this into the system

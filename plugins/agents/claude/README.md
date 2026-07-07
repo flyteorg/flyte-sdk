@@ -9,14 +9,14 @@ pip install flyteplugins-agents-claude
 
 ```python
 import flyte
-from flyteplugins.agents.claude import function_tool, run_agent
+from flyteplugins.agents.claude import tool, run_agent
 
 env = flyte.TaskEnvironment(
     "claude-agent",
     secrets=[flyte.Secret(key="anthropic_api_key", as_env_var="ANTHROPIC_API_KEY")],
 )
 
-@function_tool
+@tool
 @env.task(cache="auto", retries=3)
 async def get_weather(city: str) -> str:
     """Get the current weather for a city."""
@@ -29,7 +29,7 @@ async def city_agent(question: str) -> str:
 
 ## How it maps to Flyte
 
-- Tools are in-process MCP tools (the SDK's `@tool`/`SdkMcpTool`): `function_tool`
+- Tools are in-process MCP tools (the SDK's own `@tool`/`SdkMcpTool`); our `tool`
   wraps an `@env.task` so that when Claude calls it, the task runs as a durable
   Flyte child action (its own container/resources, retries, caching). The input
   schema is derived via the Flyte type engine.
@@ -110,5 +110,5 @@ See [`examples/`](examples/):
 
 This adapter passes the shared `flyteplugins.agents.core.testing.assert_adapter_conforms`
 check — the same one every adapter runs — so it follows the common format
-(`function_tool` + `run_agent`, tool tasks wired to the resolver) despite a very
+(`tool` + `run_agent`, tool tasks wired to the resolver) despite a very
 different underlying SDK shape.

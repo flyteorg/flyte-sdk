@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import flyte
 import pytest
 
-from flyteplugins.agents.mistral import function_tool, run_agent
+from flyteplugins.agents.mistral import tool, run_agent
 from flyteplugins.agents.mistral._run import _final_text, _install_turn_hooks, _render, _UsageSink
 
 
@@ -37,7 +37,7 @@ async def test_run_agent_registers_tools_and_returns_final_text(monkeypatch):
     monkeypatch.setenv("MISTRAL_API_KEY", "test-key")
     env = flyte.TaskEnvironment("mistral_run_a")
 
-    @function_tool
+    @tool
     @env.task
     def get_weather(city: str) -> str:
         """Get weather."""

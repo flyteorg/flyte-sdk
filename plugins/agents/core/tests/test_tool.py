@@ -1,4 +1,4 @@
-"""Tests for the shared generic ``function_tool`` (plain-callable tool wrapper).
+"""Tests for the shared generic ``tool`` (plain-callable tool wrapper).
 
 This lives in core because the Mistral and Google ADK adapters share it verbatim
 (their SDKs accept plain Python callables as tools). OpenAI/Claude provide their own
@@ -12,13 +12,13 @@ from unittest.mock import AsyncMock, patch
 import flyte
 import pytest
 
-from flyteplugins.agents.core import ToolTaskResolver, coerce_tool_args, function_tool, task_json_schema
+from flyteplugins.agents.core import ToolTaskResolver, coerce_tool_args, tool, task_json_schema
 
 
 def test_task_becomes_plain_tool_with_resolver():
     env = flyte.TaskEnvironment("core_ft_a")
 
-    @function_tool
+    @tool
     @env.task
     def get_weather(city: str) -> str:
         """Get weather."""
@@ -33,7 +33,7 @@ def test_task_becomes_plain_tool_with_resolver():
 def test_wrapper_preserves_the_task_signature():
     env = flyte.TaskEnvironment("core_ft_b")
 
-    @function_tool
+    @tool
     @env.task
     def add(a: int, b: int) -> int:
         """Add two numbers."""
@@ -47,14 +47,41 @@ def test_plain_callable_passes_through():
     def f(x: int) -> int:
         return x
 
-    assert function_tool(f) is f
+    assert tool(f) is f
+
+
+def test_callable_class_instance_is_supported():
+    # An instance of a class defining __call__ is a valid tool: SDKs that accept
+    # plain callables inspect it through its __call__.
+    class Search:
+        def __call__(self, query: str) -> str:
+            """Search the web."""
+            return query
+
+    s = Search()
+    assert tool(s) is s
+
+
+def test_name_and_description_override_a_plain_callable():
+    def f(x: int) -> int:
+        return x
+
+    out = tool(f, name="renamed", description="Overridden.")
+    assert out is f
+    assert out.__name__ == "renamed"
+    assert out.__doc__ == "Overridden."
+
+
+def test_non_callable_is_rejected():
+    with pytest.raises(TypeError):
+        tool(42)
 
 
 @pytest.mark.asyncio
 async def test_tool_dispatches_to_task_aio():
     env = flyte.TaskEnvironment("core_ft_c")
 
-    @function_tool
+    @tool
     @env.task
     def multiply(a: int, b: int) -> int:
         """Multiply."""
@@ -98,7 +125,7 @@ def test_coerce_tool_args_leaves_ints_and_bools_alone():
 async def test_dispatch_coerces_int_to_float_for_a_float_param():
     env = flyte.TaskEnvironment("core_ft_coerce3")
 
-    @function_tool
+    @tool
     @env.task
     def refund(account_id: str, amount_usd: float) -> str:
         """Refund."""

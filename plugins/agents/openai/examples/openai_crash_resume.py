@@ -25,7 +25,7 @@ from agents.models.interface import Model, ModelProvider
 from agents.models.multi_provider import MultiProvider
 from flyte._image import PythonWheels
 
-from flyteplugins.agents.openai import function_tool, run_agent
+from flyteplugins.agents.openai import tool, run_agent
 
 env = flyte.TaskEnvironment(
     "openai-crash-resume",
@@ -82,7 +82,7 @@ class LoggingModelProvider(ModelProvider):
         await self._inner.aclose()
 
 
-@function_tool
+@tool
 @env.task(cache="auto", retries=3)
 async def get_weather(city: str) -> str:
     """Get the current weather for a city."""
@@ -90,7 +90,7 @@ async def get_weather(city: str) -> str:
     return f"sunny, 22°C in {city}"
 
 
-@function_tool
+@tool
 @env.task(cache="auto", retries=3)
 async def get_population(city: str) -> int:
     """Get the population of a city."""

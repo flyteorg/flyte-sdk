@@ -1,7 +1,7 @@
 """The openai adapter must satisfy the shared agent-adapter contract.
 
 This is the enforcement: if the adapter drifts from the common format (missing
-``function_tool``/``run_agent``, wrong ``run_agent`` keyword surface, or a tool
+``tool``/``run_agent``, wrong ``run_agent`` keyword surface, or a tool
 task that isn't wired to the resolver), CI fails here.
 """
 

@@ -9,14 +9,14 @@ pip install flyteplugins-agents-google
 
 ```python
 import flyte
-from flyteplugins.agents.google import function_tool, run_agent
+from flyteplugins.agents.google import tool, run_agent
 
 env = flyte.TaskEnvironment(
     "google-agent",
     secrets=[flyte.Secret(key="google_api_key", as_env_var="GOOGLE_API_KEY")],
 )
 
-@function_tool
+@tool
 @env.task(cache="auto", retries=3)
 async def get_weather(city: str) -> str:
     """Get the current weather for a city."""
@@ -32,7 +32,7 @@ async def city_agent(question: str) -> str:
 - The SDK owns the loop — we don't reimplement it. ADK's `Runner` drives the
   agent loop (model + tools, yielding `Event`s); `run_agent` builds an `LlmAgent`,
   runs `Runner.run_async` inside your `@env.task`, and returns the final answer.
-- Tools as durable child actions. `function_tool` wraps an `@env.task` as the
+- Tools as durable child actions. `tool` wraps an `@env.task` as the
   Python function ADK calls; its body dispatches to `task.aio()`, so each tool call
   runs as a durable Flyte child action. ADK derives the tool declaration from the
   task signature.
@@ -82,5 +82,5 @@ See [`examples/`](examples/):
 
 This adapter passes the shared `flyteplugins.agents.core.testing.assert_adapter_conforms`
 check — the same one every adapter runs — so it follows the common format
-(`function_tool` + `run_agent`, tool tasks wired to the resolver), shared with the
+(`tool` + `run_agent`, tool tasks wired to the resolver), shared with the
 OpenAI, Claude and Mistral adapters.

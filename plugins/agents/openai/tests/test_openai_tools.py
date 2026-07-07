@@ -6,7 +6,7 @@ import flyte
 import pytest
 from agents import FunctionTool as OpenAIFunctionTool
 
-from flyteplugins.agents.openai import FunctionTool, function_tool
+from flyteplugins.agents.openai import FunctionTool, tool
 
 
 def test_task_becomes_flyte_backed_tool():
@@ -17,13 +17,13 @@ def test_task_becomes_flyte_backed_tool():
         """Echo the prompt."""
         return prompt
 
-    tool = function_tool(my_task)
-    assert isinstance(tool, FunctionTool)
-    assert tool.task is my_task
-    assert tool.report == my_task.report
-    assert tool.native_interface is my_task.native_interface
-    assert tool.name == "my_task"
-    assert "prompt" in tool.params_json_schema.get("properties", {})
+    built = tool(my_task)
+    assert isinstance(built, FunctionTool)
+    assert built.task is my_task
+    assert built.report == my_task.report
+    assert built.native_interface is my_task.native_interface
+    assert built.name == "my_task"
+    assert "prompt" in built.params_json_schema.get("properties", {})
 
 
 def test_plain_function_uses_native_tool():
@@ -31,9 +31,9 @@ def test_plain_function_uses_native_tool():
         """Double."""
         return x * 2
 
-    tool = function_tool(f)
-    assert isinstance(tool, OpenAIFunctionTool)
-    assert not isinstance(tool, FunctionTool)
+    built = tool(f)
+    assert isinstance(built, OpenAIFunctionTool)
+    assert not isinstance(built, FunctionTool)
 
 
 def test_trace_helper_uses_native_tool():
@@ -42,15 +42,15 @@ def test_trace_helper_uses_native_tool():
         """Double."""
         return x * 2
 
-    tool = function_tool(f)
-    assert isinstance(tool, OpenAIFunctionTool)
-    assert not isinstance(tool, FunctionTool)
+    built = tool(f)
+    assert isinstance(built, OpenAIFunctionTool)
+    assert not isinstance(built, FunctionTool)
 
 
 def test_bare_and_parametrized_decorator_forms():
     env = flyte.TaskEnvironment("tools_b")
 
-    @function_tool
+    @tool
     @env.task
     def a(x: int) -> int:
         """A."""
@@ -58,7 +58,7 @@ def test_bare_and_parametrized_decorator_forms():
 
     assert isinstance(a, FunctionTool)
 
-    @function_tool(name_override="bee")
+    @tool(name_override="bee")
     @env.task
     def b(x: int) -> int:
         """B."""
@@ -77,16 +77,16 @@ async def test_execute_dispatches_to_task_aio():
         """Multiply."""
         return a * b
 
-    tool = function_tool(multiply)
-    with patch.object(tool.task, "aio", new_callable=AsyncMock, return_value=42) as mock_aio:
-        result = await tool.execute(a=6, b=7)
+    built = tool(multiply)
+    with patch.object(built.task, "aio", new_callable=AsyncMock, return_value=42) as mock_aio:
+        result = await built.execute(a=6, b=7)
 
     mock_aio.assert_awaited_once_with(a=6, b=7)
     assert result == 42
 
 
-def test_function_tool_attaches_resolver_so_task_does_not_self_recurse():
-    """Regression: ``@function_tool`` on ``@env.task`` shadows the task at module
+def test_tool_attaches_resolver_so_task_does_not_self_recurse():
+    """Regression: ``@tool`` on ``@env.task`` shadows the task at module
     scope. Without a ``__wrapped_task__`` hook + ``ToolTaskResolver``, the worker
     loads the tool, calls ``FunctionTool.execute``, and the task re-dispatches
     itself indefinitely. Assert both guards are wired up."""
@@ -94,7 +94,7 @@ def test_function_tool_attaches_resolver_so_task_does_not_self_recurse():
 
     env = flyte.TaskEnvironment("tools_resolver")
 
-    @function_tool
+    @tool
     @env.task
     def my_task(city: str) -> str:
         """Echo."""

@@ -7,13 +7,13 @@ import flyte
 import pytest
 from flyteplugins.agents.core import ToolTaskResolver
 
-from flyteplugins.agents.google import function_tool
+from flyteplugins.agents.google import tool
 
 
 def test_task_becomes_adk_tool_with_resolver():
     env = flyte.TaskEnvironment("g_tools_a")
 
-    @function_tool
+    @tool
     @env.task
     def get_weather(city: str) -> str:
         """Get the current weather for a city."""
@@ -31,7 +31,7 @@ def test_adk_agent_accepts_the_tool():
 
     env = flyte.TaskEnvironment("g_tools_b")
 
-    @function_tool
+    @tool
     @env.task
     def get_weather(city: str) -> str:
         """Get weather."""
@@ -45,7 +45,7 @@ def test_adk_agent_accepts_the_tool():
 async def test_tool_dispatches_to_task_aio():
     env = flyte.TaskEnvironment("g_tools_c")
 
-    @function_tool
+    @tool
     @env.task
     def multiply(a: int, b: int) -> int:
         """Multiply."""

@@ -7,13 +7,13 @@ import pytest
 from claude_agent_sdk import SdkMcpTool
 from flyteplugins.agents.core import ToolTaskResolver
 
-from flyteplugins.agents.claude import function_tool
+from flyteplugins.agents.claude import tool
 
 
 def test_task_becomes_sdk_mcp_tool_with_resolver():
     env = flyte.TaskEnvironment("claude_tools_a")
 
-    @function_tool
+    @tool
     @env.task
     def get_weather(city: str) -> str:
         """Get the current weather for a city."""
@@ -33,7 +33,7 @@ def test_task_becomes_sdk_mcp_tool_with_resolver():
 async def test_tool_handler_dispatches_to_task_aio():
     env = flyte.TaskEnvironment("claude_tools_b")
 
-    @function_tool
+    @tool
     @env.task
     def echo(text: str) -> str:
         """Echo."""
@@ -50,7 +50,7 @@ async def test_tool_handler_dispatches_to_task_aio():
 async def test_tool_handler_serializes_non_string_result():
     env = flyte.TaskEnvironment("claude_tools_c")
 
-    @function_tool
+    @tool
     @env.task
     def get_data() -> dict:
         """Get data."""

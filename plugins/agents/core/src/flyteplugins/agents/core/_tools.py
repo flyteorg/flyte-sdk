@@ -1,6 +1,6 @@
 """Make a tool-backing Flyte task resolve to itself on the worker.
 
-Every adapter stacks its ``function_tool`` on top of ``@env.task``, which rebinds
+Every adapter stacks its ``tool`` on top of ``@env.task``, which rebinds
 the module attribute to the tool and shadows the task. Without a guard, the
 worker's default resolver loads the tool, the task runner calls the tool's
 ``execute``, and the task re-dispatches itself — recursing without end.
@@ -73,7 +73,7 @@ def coerce_tool_args(task: AsyncFunctionTaskTemplate, kwargs: dict[str, typing.A
     return coerced
 
 
-def function_tool(
+def tool(
     func: AsyncFunctionTaskTemplate | typing.Callable | None = None,
     *,
     name: str | None = None,
@@ -82,24 +82,66 @@ def function_tool(
     """Wrap a Flyte ``@env.task`` as a plain async tool function — the generic default.
 
     For SDKs that accept plain Python callables as tools (deriving the schema from the
-    signature + docstring), this is the whole adapter ``function_tool``: the returned
+    signature + docstring), this is the whole adapter ``tool``: the returned
     function carries the task's signature (``functools.wraps``), dispatches to
     ``task.aio()`` (so each call is a durable Flyte child action), exposes
     ``__wrapped_task__``, and wires the backing task to :class:`ToolTaskResolver`.
     Adapters whose SDK needs a native tool type (e.g. OpenAI's
     ``FunctionTool``, Claude's MCP ``SdkMcpTool``) provide their own instead.
 
+    Also accepts any other callable — a plain function or an instance of a callable
+    class defining ``__call__`` — and returns it usable as a tool as-is, since the
+    plain-callable SDKs derive the schema by inspecting the callable (a class instance
+    is inspected through its ``__call__``). A ``name`` or ``description`` override is
+    applied to the callable best-effort.
+
     Usable bare, parametrized or as a direct call::
 
-        @function_tool
+        @tool
         @env.task
         async def get_weather(city: str) -> str: ...
     """
+
     if func is None:
-        return partial(function_tool, name=name, description=description)
+        return partial(tool, name=name, description=description)
     if isinstance(func, AsyncFunctionTaskTemplate):
         return _task_to_tool(func, name=name, description=description)
-    # A plain function is already usable as a tool as-is.
+    if not callable(func):
+        raise TypeError(
+            f"tool() expects a Flyte @env.task or a callable, got {type(func).__name__!r}."
+        )
+    # A plain function or a callable class instance is already usable as a tool as-is.
+    return _relabel_callable(func, name=name, description=description)
+
+
+def _relabel_callable(
+    func: typing.Callable,
+    *,
+    name: str | None = None,
+    description: str | None = None,
+) -> typing.Callable:
+    """Apply ``name`` / ``description`` overrides to a callable in place, best-effort.
+
+    Functions accept ``__name__`` / ``__doc__`` assignment; a callable class instance
+    may reject it (e.g. ``__slots__``), in which case the override is silently skipped —
+    the callable is still returned and usable as a tool.
+    """
+    if name:
+        try:
+            func.__name__ = name  # type: ignore[attr-defined]
+        except (
+            AttributeError,
+            TypeError,
+        ):  # pragma: no cover - slotted/immutable callable
+            pass
+    if description:
+        try:
+            func.__doc__ = description
+        except (
+            AttributeError,
+            TypeError,
+        ):  # pragma: no cover - slotted/immutable callable
+            pass
     return func
 
 

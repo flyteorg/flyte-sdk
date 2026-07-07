@@ -1,7 +1,7 @@
 """Turn Flyte tasks into Claude Agent SDK tools that execute as durable actions.
 
 The Claude Agent SDK exposes custom tools as in-process MCP tools (``@tool`` /
-``SdkMcpTool``). :func:`function_tool` wraps a Flyte ``@env.task`` as one whose
+``SdkMcpTool``). :func:`tool` wraps a Flyte ``@env.task`` as one whose
 handler dispatches to the task via ``task.aio()`` — so when Claude calls the
 tool, it runs as a durable Flyte child action (its own container/resources, with
 retries and caching) rather than inline in the agent process.
@@ -21,7 +21,7 @@ from flyte.models import NativeInterface
 from flyteplugins.agents.core import attach_tool_resolver, coerce_tool_args, task_json_schema
 
 
-def function_tool(
+def tool(
     func: AsyncFunctionTaskTemplate | typing.Callable | None = None,
     *,
     name: str | None = None,
@@ -38,12 +38,12 @@ def function_tool(
 
     Usable bare, parametrized, or as a direct call::
 
-        @function_tool
+        @tool
         @env.task
         async def get_weather(city: str) -> str: ...
     """
     if func is None:
-        return partial(function_tool, name=name, description=description)
+        return partial(tool, name=name, description=description)
     if isinstance(func, AsyncFunctionTaskTemplate):
         return _task_to_tool(func, name=name, description=description)
     return _callable_to_tool(func, name=name, description=description)

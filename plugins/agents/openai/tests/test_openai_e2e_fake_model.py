@@ -26,7 +26,7 @@ except Exception:  # pragma: no cover - shape drift across SDK versions
 
 from agents import RunConfig  # noqa: E402
 
-from flyteplugins.agents.openai import function_tool, run_agent  # noqa: E402
+from flyteplugins.agents.openai import tool, run_agent  # noqa: E402
 
 _env = flyte.TaskEnvironment("agents_e2e")
 
@@ -59,7 +59,7 @@ def _tool_call(name: str, arguments: str) -> "ModelResponse":
 async def test_run_agent_full_loop_with_tool_call():
     executed = {"count": 0}
 
-    @function_tool
+    @tool
     @_env.task
     async def get_weather(city: str) -> str:
         """Get weather."""

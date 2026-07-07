@@ -30,7 +30,7 @@ from pathlib import Path
 import flyte
 from flyte._image import PythonWheels
 
-from flyteplugins.agents.mistral import function_tool, run_agent
+from flyteplugins.agents.mistral import tool, run_agent
 
 _MODEL = "mistral-large-latest"
 
@@ -74,7 +74,7 @@ env = flyte.TaskEnvironment(
 )
 
 
-@function_tool
+@tool
 @env.task(retries=3)
 async def share_details(question: str) -> str:
     """Ask the customer (a human) for a specific detail and return their reply.

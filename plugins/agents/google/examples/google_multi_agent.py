@@ -25,7 +25,7 @@ from pathlib import Path
 import flyte
 from flyte._image import PythonWheels
 
-from flyteplugins.agents.google import function_tool, run_agent
+from flyteplugins.agents.google import tool, run_agent
 
 env = flyte.TaskEnvironment(
     "google-research",
@@ -59,7 +59,7 @@ _CORPUS = {
 }
 
 
-@function_tool
+@tool
 @env.task(cache="auto", retries=3)
 async def search_web(query: str) -> str:
     """Search the web for a query and return the most relevant snippet."""

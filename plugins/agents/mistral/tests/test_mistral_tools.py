@@ -7,13 +7,13 @@ import flyte
 import pytest
 from flyteplugins.agents.core import ToolTaskResolver
 
-from flyteplugins.agents.mistral import function_tool
+from flyteplugins.agents.mistral import tool
 
 
 def test_task_becomes_registerable_tool_with_resolver():
     env = flyte.TaskEnvironment("mistral_tools_a")
 
-    @function_tool
+    @tool
     @env.task
     def get_weather(city: str) -> str:
         """Get the current weather for a city."""
@@ -31,7 +31,7 @@ def test_tool_schema_is_derived_from_the_task_signature():
 
     env = flyte.TaskEnvironment("mistral_tools_b")
 
-    @function_tool
+    @tool
     @env.task
     def get_weather(city: str) -> str:
         """Get weather."""
@@ -46,7 +46,7 @@ def test_tool_schema_is_derived_from_the_task_signature():
 async def test_tool_dispatches_to_task_aio():
     env = flyte.TaskEnvironment("mistral_tools_c")
 
-    @function_tool
+    @tool
     @env.task
     def multiply(a: int, b: int) -> int:
         """Multiply."""

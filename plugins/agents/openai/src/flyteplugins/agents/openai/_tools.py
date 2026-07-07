@@ -41,7 +41,7 @@ class FunctionTool(OpenAIFunctionTool):
     def __wrapped_task__(self) -> typing.Any:
         """The backing :class:`TaskTemplate` so :class:`ToolTaskResolver` can recover it.
 
-        Stacking ``@function_tool`` on ``@env.task`` rebinds the module attribute
+        Stacking ``@tool`` on ``@env.task`` rebinds the module attribute
         to this tool, hiding the task from the default resolver;
         ``flyteplugins.agents.core.ToolTaskResolver`` uses this hook to recover the
         real task on the worker (so the task runs its own body instead of
@@ -50,11 +50,11 @@ class FunctionTool(OpenAIFunctionTool):
         return self.task if isinstance(self.task, TaskTemplate) else None
 
 
-def function_tool(
+def tool(
     func: AsyncFunctionTaskTemplate | typing.Callable | None = None,
     **kwargs: typing.Any,
 ) -> FunctionTool | OpenAIFunctionTool:
-    """Flyte-aware replacement for ``agents.function_tool``.
+    """Flyte-aware replacement for ``agents.function_tool`` — named ``tool`` for consistency.
 
     - For an ``@env.task`` (an ``AsyncFunctionTaskTemplate``): returns a
       :class:`FunctionTool` whose invocation runs the task as a durable Flyte
@@ -70,14 +70,14 @@ def function_tool(
 
     Usable as a bare decorator, a parametrized decorator, or a direct call::
 
-        @function_tool
+        @tool
         @env.task
         async def get_weather(city: str) -> str: ...
 
-        weather = function_tool(get_weather, name_override="weather")
+        weather = tool(get_weather, name_override="weather")
     """
     if func is None:
-        return partial(function_tool, **kwargs)
+        return partial(tool, **kwargs)
 
     if isinstance(func, AsyncFunctionTaskTemplate):
         return _task_to_tool(func, **kwargs)

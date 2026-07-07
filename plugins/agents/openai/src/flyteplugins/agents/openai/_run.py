@@ -11,14 +11,14 @@ from flyteplugins.agents.core import flush_report, resolve_memory
 from ._durable import FlyteModelProvider
 from ._memory import FlyteSession
 from ._observability import install_flyte_tracing
-from ._tools import function_tool
+from ._tools import tool
 
 
 def _normalize_tools(tools: typing.Sequence[typing.Any]) -> list[typing.Any]:
     """Accept bare ``@env.task`` templates as tools by wrapping them on the fly."""
     normalized: list[typing.Any] = []
     for t in tools or ():
-        normalized.append(function_tool(t) if isinstance(t, TaskTemplate) else t)
+        normalized.append(tool(t) if isinstance(t, TaskTemplate) else t)
     return normalized
 
 
@@ -46,7 +46,7 @@ async def run_agent(
 
     Provide either a fully-built ``agent`` (keeping its handoffs/guardrails), or
     ``tools`` + ``instructions`` + ``model`` to have one built for you. ``tools``
-    may be :func:`function_tool`-wrapped tools or bare ``@env.task`` templates
+    may be :func:`tool`-wrapped tools or bare ``@env.task`` templates
     (wrapped automatically).
 
     Args:

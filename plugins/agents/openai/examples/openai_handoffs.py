@@ -36,7 +36,7 @@ from agents.models.interface import Model, ModelProvider
 from agents.models.multi_provider import MultiProvider
 from flyte._image import PythonWheels
 
-from flyteplugins.agents.openai import function_tool, run_agent
+from flyteplugins.agents.openai import tool, run_agent
 
 _secrets = [flyte.Secret(key="openai_api_key", as_env_var="OPENAI_API_KEY")]
 _image = (
@@ -103,14 +103,14 @@ class LoggingModelProvider(ModelProvider):
 
 
 # Tools: each is a durable Flyte task, sized and cached independently
-@function_tool
+@tool
 @env.task(retries=3)
 async def lookup_account(account_id: str) -> str:
     """Look up an account's plan, status and open invoices."""
     return f"account {account_id}: Pro plan, status active, 2 open invoices"
 
 
-@function_tool
+@tool
 @env.task(retries=3)
 async def issue_refund(account_id: str, amount_usd: float) -> str:
     """Issue a refund — pauses on a Flyte condition for human approval before it runs."""
@@ -125,7 +125,7 @@ async def issue_refund(account_id: str, amount_usd: float) -> str:
     return f"refunded ${amount_usd:.2f} to account {account_id}"
 
 
-@function_tool
+@tool
 @heavy_env.task(retries=3)
 async def run_diagnostic(service: str) -> str:
     """Run a diagnostic on a service (a heavier task — runs with more CPU)."""

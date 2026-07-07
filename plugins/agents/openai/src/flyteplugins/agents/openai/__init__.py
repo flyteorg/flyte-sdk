@@ -4,7 +4,7 @@ Bring your own ``openai-agents`` ``Agent`` (tools, handoffs, guardrails) and run
 it durably on Flyte. The adapter provides three things, each independently
 usable:
 
-- :func:`function_tool` — turn a Flyte ``@env.task`` into an OpenAI Agents tool
+- :func:`tool` — turn a Flyte ``@env.task`` into an OpenAI Agents tool
   that executes as a durable child action (own container/GPU, retries,
   caching) when the agent calls it.
 - :class:`FlyteModelProvider` — a ``ModelProvider`` wrapper that records each
@@ -21,7 +21,7 @@ from ._durable import FlyteModel, FlyteModelProvider
 from ._memory import FlyteSession
 from ._observability import FlyteTracingProcessor, install_flyte_tracing
 from ._run import run_agent
-from ._tools import FunctionTool, function_tool
+from ._tools import FunctionTool, tool
 
 __all__ = [
     "FlyteModel",
@@ -29,7 +29,7 @@ __all__ = [
     "FlyteSession",
     "FlyteTracingProcessor",
     "FunctionTool",
-    "function_tool",
     "install_flyte_tracing",
     "run_agent",
+    "tool",
 ]

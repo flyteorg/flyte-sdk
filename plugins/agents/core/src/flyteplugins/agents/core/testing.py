@@ -26,7 +26,7 @@ def assert_adapter_conforms(adapter: typing.Any) -> None:
 
     The contract:
 
-    1. exports a callable ``function_tool`` that turns an ``@env.task`` into the
+    1. exports a callable ``tool`` that turns an ``@env.task`` into the
        SDK's tool type, attaching :class:`~flyteplugins.agents.core.ToolTaskResolver`
        and exposing ``__wrapped_task__`` (so the task does not self-recurse on the
        worker);
@@ -40,8 +40,8 @@ def assert_adapter_conforms(adapter: typing.Any) -> None:
 
     name = getattr(adapter, "__name__", repr(adapter))
 
-    function_tool = getattr(adapter, "function_tool", None)
-    assert callable(function_tool), f"{name}: must export a callable `function_tool`"
+    tool = getattr(adapter, "tool", None)
+    assert callable(tool), f"{name}: must export a callable `tool`"
 
     run_agent = getattr(adapter, "run_agent", None)
     assert inspect.iscoroutinefunction(run_agent), f"{name}: must export an async `run_agent`"
@@ -49,17 +49,17 @@ def assert_adapter_conforms(adapter: typing.Any) -> None:
     for required in REQUIRED_RUN_AGENT_PARAMS:
         assert required in params, f"{name}: `run_agent` must accept `{required}`"
 
-    # function_tool on a task must expose the real task and wire the resolver.
+    # tool on a task must expose the real task and wire the resolver.
     env = flyte.TaskEnvironment("agents-core-conformance")
 
-    @function_tool
+    @tool
     @env.task
     def _sample(city: str) -> str:
         """A sample tool task."""
         return city
 
     wrapped = getattr(_sample, "__wrapped_task__", None)
-    assert wrapped is not None, f"{name}: `function_tool` result must expose `__wrapped_task__`"
+    assert wrapped is not None, f"{name}: `tool` result must expose `__wrapped_task__`"
     assert isinstance(getattr(wrapped, "task_resolver", None), ToolTaskResolver), (
         f"{name}: the tool's backing task must use ToolTaskResolver (or it self-recurses on the worker)"
     )

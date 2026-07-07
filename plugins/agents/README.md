@@ -28,7 +28,7 @@ across SDKs:
 - The agent run is a Flyte `@env.task` — the durable parent (`retries=` =
   self-healing, `report=True` = the agent timeline in the report).
 - Each tool is a Flyte task, invoked as a durable child action (its own
-  container/resources, retries, caching) — via `function_tool` on an `@env.task`.
+  container/resources, retries, caching) — via `tool` on an `@env.task`.
 - Each model turn is recorded for replay by tracing the seam below the SDK's
   loop (`durable=True`), so a crashed/retried run replays completed turns instead of
   re-calling (and re-billing) the model. (Where the SDK runs its loop in a subprocess
@@ -38,7 +38,7 @@ across SDKs:
 
 ```python
 import flyte
-from flyteplugins.agents.openai import function_tool, run_agent  # same shape for every adapter
+from flyteplugins.agents.openai import tool, run_agent  # same shape for every adapter
 
 env = flyte.TaskEnvironment(
     "agent",
@@ -46,7 +46,7 @@ env = flyte.TaskEnvironment(
 )
 
 # A tool that is also a durable, cached Flyte task.
-@function_tool
+@tool
 @env.task(cache="auto", retries=3)
 async def get_weather(city: str) -> str:
     """Get the current weather for a city."""
@@ -61,11 +61,11 @@ async def city_agent(question: str) -> str:
 ## Architecture
 
 - `flyteplugins-agents-core` holds the SDK-agnostic contract every adapter builds
-  on: `function_tool` / `ToolTaskResolver` (tools as durable actions),
+  on: `tool` / `ToolTaskResolver` (tools as durable actions),
   `durable_step` (the model-turn replay primitive), `resolve_memory` (cross-run
   memory over a keyed store), and `ReportTimeline` / `flush_report` (report rendering).
 - Every adapter passes the same
-  `flyteplugins.agents.core.testing.assert_adapter_conforms` check, so `function_tool`
+  `flyteplugins.agents.core.testing.assert_adapter_conforms` check, so `tool`
   + `run_agent` (with `tools` / `model` / `instructions` / `durable` /
   `observability` / `memory_key`) present a uniform surface across SDKs — CI-enforced.
 

@@ -29,7 +29,7 @@ invoked as a durable child action.
 ## Writing an adapter
 
 A `flyteplugins-agents-<sdk>` package depends on this core and exposes, at
-minimum, `function_tool` and `run_agent` (see the conformance contract). Its tool
+minimum, `tool` and `run_agent` (see the conformance contract). Its tool
 object exposes `__wrapped_task__`; `run_agent` runs the SDK's loop inside the
 calling `@env.task`, wraps the model in a durable provider built on `durable_step`,
 and renders the trace via `ReportTimeline`.

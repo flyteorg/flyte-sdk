@@ -21,7 +21,7 @@ from pathlib import Path
 import flyte
 from flyte._image import PythonWheels
 
-from flyteplugins.agents.claude import function_tool, run_agent
+from flyteplugins.agents.claude import tool, run_agent
 
 env = flyte.TaskEnvironment(
     "claude-hitl",
@@ -47,14 +47,14 @@ env = flyte.TaskEnvironment(
 )
 
 
-@function_tool
+@tool
 @env.task(cache="auto", retries=3)
 async def lookup_account(account_id: str) -> str:
     """Look up an account's plan, status and open invoices."""
     return f"account {account_id}: Pro plan, status active, last charge $42.00"
 
 
-@function_tool
+@tool
 @env.task(retries=3)
 async def issue_refund(account_id: str, amount_usd: float) -> str:
     """Issue a refund — pauses on a Flyte condition for human approval before it runs."""

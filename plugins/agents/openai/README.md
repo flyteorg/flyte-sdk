@@ -11,7 +11,7 @@ pip install flyteplugins-agents-openai
 
 ```python
 import flyte
-from flyteplugins.agents.openai import function_tool, run_agent
+from flyteplugins.agents.openai import tool, run_agent
 
 env = flyte.TaskEnvironment(
     "openai-agent",
@@ -19,7 +19,7 @@ env = flyte.TaskEnvironment(
 )
 
 # A tool that is also a durable, cached Flyte task.
-@function_tool
+@tool
 @env.task(cache="auto", retries=3)
 async def get_weather(city: str) -> str:
     """Get the current weather for a city."""
@@ -41,7 +41,7 @@ async def city_agent(question: str) -> str:
 - The SDK owns the loop — we don't reimplement it. `run_agent` drives the
   OpenAI Agents `Runner`; the agent run is your `@env.task` (the durable
   parent) and the SDK runs its agent loop inside it.
-- Tools as durable child actions. `function_tool` wraps an `@env.task` so that
+- Tools as durable child actions. `tool` wraps an `@env.task` so that
   when the agent calls a tool, the task runs as a durable Flyte child action
   (its own container/resources, retries, caching) — not inline in the agent
   process. The SDK derives the tool's JSON schema, name and description from the
@@ -79,7 +79,7 @@ async def run(goal: str) -> str:
 `run_agent` wires three independently usable pieces; reach for them directly when
 driving `Runner.run` yourself:
 
-- `function_tool` — turn a Flyte task into an OpenAI Agents tool.
+- `tool` — turn a Flyte task into an OpenAI Agents tool.
 - `FlyteModelProvider` — set on `RunConfig.model_provider` to make model turns
   durable (the seam below the loop).
 - `install_flyte_tracing()` / `FlyteTracingProcessor` — render the trace into the
@@ -131,5 +131,5 @@ See [`examples/`](examples/):
 ## Conformance
 
 This adapter passes the shared `flyteplugins.agents.core.testing.assert_adapter_conforms`
-check, so it follows the common format (`function_tool` + `run_agent`, tool tasks wired
+check, so it follows the common format (`tool` + `run_agent`, tool tasks wired
 to the resolver), shared with the Claude and Mistral adapters.

@@ -6,7 +6,7 @@ in-process MCP server from the tools, points the SDK at it, streams the run, and
 renders the timeline into the Flyte report.
 
 Durability: tool calls are durable Flyte child actions (see
-:func:`flyteplugins.agents.claude.function_tool`). Per-turn model replay is not
+:func:`flyteplugins.agents.claude.tool`). Per-turn model replay is not
 available here — the model loop runs in the Claude Code runtime (a subprocess
 Flyte doesn't intercept), so a model turn can't be a ``flyte.trace`` leaf the way
 it is for client-side SDKs. Instead, ``durable=True`` wires the SDK's own session
@@ -40,14 +40,14 @@ from flyteplugins.agents.core import ReportTimeline, abbrev, flush_report
 
 from ._durable import wire_durable_session
 from ._memory import wire_memory_session
-from ._tools import function_tool
+from ._tools import tool
 
 
 def _coerce_tool(t: typing.Any) -> SdkMcpTool:
     if isinstance(t, SdkMcpTool):
         return t
     if isinstance(t, TaskTemplate):
-        return function_tool(t)
+        return tool(t)
     return t
 
 
