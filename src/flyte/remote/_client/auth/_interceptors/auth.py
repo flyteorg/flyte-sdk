@@ -32,13 +32,13 @@ class _BaseAuthInterceptor:
         # before injecting fresh ones — otherwise a header key change (e.g. "authorization" →
         # "flyte-authorization") leaves the stale key behind.
         if previous is not None:
-            headers = ctx.request_headers
+            headers = ctx.request_headers()
             for key in previous.headers:
                 headers.pop(key, None)
 
         auth_headers = await self.authenticator.get_auth_headers()
         if auth_headers:
-            ctx.request_headers.update(auth_headers.headers)
+            ctx.request_headers().update(auth_headers.headers)
         return auth_headers
 
     async def _refresh_and_reinject(self, previous: AuthHeaders | None, ctx) -> None:
