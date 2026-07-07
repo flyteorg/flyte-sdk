@@ -9,7 +9,7 @@ import sys
 import tarfile
 import time
 from pathlib import Path
-from typing import List
+from typing import Dict, List, Optional
 
 import aiofiles
 import click
@@ -278,6 +278,16 @@ def prepare_launch_json(ctx: click.Context, pid: int):
         json.dump(settings_json, file, indent=4)
 
 
+def _run_code_server(cmd: str, env: Optional[Dict[str, str]] = None) -> None:
+    """
+    Entrypoint for the code-server child process.
+
+    Defined at module level (rather than as a lambda) so it is picklable: the ``spawn`` and ``forkserver``
+    multiprocessing start methods pickle the target, and ``forkserver`` is the default on Linux for Python 3.14+.
+    """
+    asyncio.run(execute_command(cmd, env=env))
+
+
 async def _start_vscode_server(ctx: click.Context):
     if ctx.params["tgz"] is None:
         await download_vscode()
@@ -286,11 +296,15 @@ async def _start_vscode_server(ctx: click.Context):
             download_tgz(ctx.params["dest"], ctx.params["version"], ctx.params["tgz"]), download_vscode()
         )
     code_server_idle_timeout_seconds = os.getenv("CODE_SERVER_IDLE_TIMEOUT_SECONDS", str(MAX_IDLE_SECONDS))
+    cmd = (
+        f"code-server --bind-addr 0.0.0.0:{VSCODE_PORT}"
+        f" --idle-timeout-seconds {code_server_idle_timeout_seconds}"
+        f" --disable-workspace-trust --auth none {os.getcwd()}"
+    )
     child_process = multiprocessing.Process(
-        target=lambda cmd, env: asyncio.run(execute_command(cmd, env=env)),
+        target=_run_code_server,
         kwargs={
-            "cmd": f"code-server --bind-addr 0.0.0.0:{VSCODE_PORT} --idle-timeout-seconds {code_server_idle_timeout_seconds}"
-            f" --disable-workspace-trust --auth none {os.getcwd()}",
+            "cmd": cmd,
             # code-server also reads the PORT env var when resolving its bind address. Explicitly pin it to
             # VSCODE_PORT so an inherited PORT (e.g. injected by Kubernetes) can't override --bind-addr.
             "env": {"PORT": str(VSCODE_PORT)},
