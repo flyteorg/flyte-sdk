@@ -26,6 +26,7 @@ from flyte._debug.constants import (
     FLYTE_ENABLE_VSCODE_KEY,
     HEARTBEAT_PATH,
     MAX_IDLE_SECONDS,
+    VSCODE_PORT,
 )
 from flyte._debug.utils import (
     execute_command,
@@ -286,10 +287,13 @@ async def _start_vscode_server(ctx: click.Context):
         )
     code_server_idle_timeout_seconds = os.getenv("CODE_SERVER_IDLE_TIMEOUT_SECONDS", str(MAX_IDLE_SECONDS))
     child_process = multiprocessing.Process(
-        target=lambda cmd: asyncio.run(asyncio.run(execute_command(cmd))),
+        target=lambda cmd, env: asyncio.run(execute_command(cmd, env=env)),
         kwargs={
-            "cmd": f"code-server --bind-addr 0.0.0.0:6060 --idle-timeout-seconds {code_server_idle_timeout_seconds}"
-            f" --disable-workspace-trust --auth none {os.getcwd()}"
+            "cmd": f"code-server --bind-addr 0.0.0.0:{VSCODE_PORT} --idle-timeout-seconds {code_server_idle_timeout_seconds}"
+            f" --disable-workspace-trust --auth none {os.getcwd()}",
+            # code-server also reads the PORT env var when resolving its bind address. Explicitly pin it to
+            # VSCODE_PORT so an inherited PORT (e.g. injected by Kubernetes) can't override --bind-addr.
+            "env": {"PORT": str(VSCODE_PORT)},
         },
     )
     child_process.start()
