@@ -168,16 +168,21 @@ if __name__ == "__main__":
     terminal = {"SUCCEEDED", "FAILED", "ABORTED", "TIMED_OUT"}
     while True:
         for e in remote.Condition.listall(run_name=r.name):
-            # Only surface conditions that haven't been signaled yet.
-            if e.phase != "RUNNING" or e.name in announced:
+            # Condition.phase is the raw proto name, e.g. "ACTION_PHASE_PAUSED".
+            # A condition waiting for a signal sits in PAUSED (briefly RUNNING first).
+            phase = e.phase.removeprefix("ACTION_PHASE_")
+            # Only surface conditions that are actively waiting to be signaled.
+            if phase not in ("RUNNING", "PAUSED") or e.name in announced:
                 continue
             announced.add(e.name)
-            type_name = e.data_type.__name__ if e.data_type else "value"
+            type_name = e.expected_type.__name__ if e.expected_type else "value"
             print(f"\n[waiting] condition '{e.name}' needs a {type_name}. Signal it with:")
             print(f"    flyte signal condition {r.name} {e.name} <{type_name}>")
 
-        # Re-fetch the run for a fresh phase ('r' holds a launch-time snapshot).
-        if remote.Condition.get(name=r.name).phase in terminal:
+        # Re-fetch the run for a fresh phase ('r' holds a launch-time snapshot) and
+        # stop once the whole chain finishes. Run.phase is an ActionPhase enum whose
+        # value is lower-case (e.g. "succeeded"), so upper-case before comparing.
+        if remote.Run.get(name=r.name).phase.upper() in terminal:
             break
         time.sleep(5)
 
