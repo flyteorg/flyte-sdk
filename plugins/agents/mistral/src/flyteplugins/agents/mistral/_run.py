@@ -29,9 +29,9 @@ from flyteplugins.agents.core import (
     durable_step,
     fingerprint,
     flush_report,
-    tool,
     jsonable,
     resolve_memory,
+    tool,
 )
 
 # Semantic fields of a start/append call used to key the durable turn.

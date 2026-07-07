@@ -20,7 +20,7 @@ from pathlib import Path
 import flyte
 from flyte._image import PythonWheels
 
-from flyteplugins.agents.google import tool, run_agent
+from flyteplugins.agents.google import run_agent, tool
 
 env = flyte.TaskEnvironment(
     "google-durable-agent",

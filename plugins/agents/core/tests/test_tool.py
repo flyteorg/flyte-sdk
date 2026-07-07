@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, patch
 import flyte
 import pytest
 
-from flyteplugins.agents.core import ToolTaskResolver, coerce_tool_args, tool, task_json_schema
+from flyteplugins.agents.core import ToolTaskResolver, coerce_tool_args, task_json_schema, tool
 
 
 def test_task_becomes_plain_tool_with_resolver():

@@ -25,7 +25,7 @@ from pathlib import Path
 import flyte
 from flyte._image import PythonWheels
 
-from flyteplugins.agents.google import durable_model, tool, run_agent
+from flyteplugins.agents.google import durable_model, run_agent, tool
 
 _MODEL = "gemini-3.1-flash-lite"
 

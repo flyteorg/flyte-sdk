@@ -25,7 +25,7 @@ from agents.models.interface import Model, ModelProvider
 from agents.models.multi_provider import MultiProvider
 from flyte._image import PythonWheels
 
-from flyteplugins.agents.openai import tool, run_agent
+from flyteplugins.agents.openai import run_agent, tool
 
 env = flyte.TaskEnvironment(
     "openai-crash-resume",

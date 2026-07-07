@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import flyte
 import pytest
 
-from flyteplugins.agents.mistral import tool, run_agent
+from flyteplugins.agents.mistral import run_agent, tool
 from flyteplugins.agents.mistral._run import _final_text, _install_turn_hooks, _render, _UsageSink
 
 

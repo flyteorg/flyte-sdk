@@ -13,4 +13,4 @@ from flyteplugins.agents.core import tool
 
 from ._run import run_agent
 
-__all__ = ["tool", "run_agent"]
+__all__ = ["run_agent", "tool"]

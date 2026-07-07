@@ -15,4 +15,4 @@ install needed); set an Anthropic API key in the environment.
 from ._run import run_agent
 from ._tools import tool
 
-__all__ = ["tool", "run_agent"]
+__all__ = ["run_agent", "tool"]

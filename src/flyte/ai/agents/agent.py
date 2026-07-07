@@ -61,6 +61,7 @@ from flyte.syncify import syncify
 # from here.
 from ._llm import LLMCallable, LLMMessage, _default_call_llm
 from ._mcp import MCPServerSpec, _MCPToolLoader
+from ._report import build_report_callback
 from ._tools import (
     AgentTool,
     _abbreviate,
@@ -71,7 +72,6 @@ from ._tools import (
     _summarize_signature,
     invoke_agent_tool,
 )
-from ._report import build_report_callback
 from .memory import (
     MemoryStore,
 )

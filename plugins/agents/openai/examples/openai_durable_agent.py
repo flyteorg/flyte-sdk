@@ -25,7 +25,7 @@ from agents import OpenAIProvider, RunConfig
 from flyte._image import PythonWheels
 from openai import AsyncOpenAI
 
-from flyteplugins.agents.openai import tool, run_agent
+from flyteplugins.agents.openai import run_agent, tool
 
 env = flyte.TaskEnvironment(
     "openai-durable-agent",

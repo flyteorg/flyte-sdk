@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from flyte.ai.agents import Agent, LLMMessage, agent_progress_cb
-from flyte.ai.agents.agent import AgentEvent
 from flyte.ai.agents._report import build_report_callback, render_event
+from flyte.ai.agents.agent import AgentEvent
 
 
 def _row_kwargs(timeline: MagicMock):

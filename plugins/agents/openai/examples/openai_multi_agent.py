@@ -28,7 +28,7 @@ from pathlib import Path
 import flyte
 from flyte._image import PythonWheels
 
-from flyteplugins.agents.openai import tool, run_agent
+from flyteplugins.agents.openai import run_agent, tool
 
 env = flyte.TaskEnvironment(
     "openai-research",

@@ -107,9 +107,7 @@ def tool(
     if isinstance(func, AsyncFunctionTaskTemplate):
         return _task_to_tool(func, name=name, description=description)
     if not callable(func):
-        raise TypeError(
-            f"tool() expects a Flyte @env.task or a callable, got {type(func).__name__!r}."
-        )
+        raise TypeError(f"tool() expects a Flyte @env.task or a callable, got {type(func).__name__!r}.")
     # A plain function or a callable class instance is already usable as a tool as-is.
     return _relabel_callable(func, name=name, description=description)
 

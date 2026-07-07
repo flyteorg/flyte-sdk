@@ -30,7 +30,7 @@ from pathlib import Path
 import flyte
 from flyte._image import PythonWheels
 
-from flyteplugins.agents.mistral import tool, run_agent
+from flyteplugins.agents.mistral import run_agent, tool
 
 _MODEL = "mistral-large-latest"
 

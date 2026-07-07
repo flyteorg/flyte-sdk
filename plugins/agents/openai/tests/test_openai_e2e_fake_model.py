@@ -26,7 +26,7 @@ except Exception:  # pragma: no cover - shape drift across SDK versions
 
 from agents import RunConfig  # noqa: E402
 
-from flyteplugins.agents.openai import tool, run_agent  # noqa: E402
+from flyteplugins.agents.openai import run_agent, tool  # noqa: E402
 
 _env = flyte.TaskEnvironment("agents_e2e")
 

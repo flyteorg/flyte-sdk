@@ -20,4 +20,4 @@ from flyteplugins.agents.core import tool
 from ._durable import FlyteLlm, durable_model
 from ._run import run_agent
 
-__all__ = ["FlyteLlm", "durable_model", "tool", "run_agent"]
+__all__ = ["FlyteLlm", "durable_model", "run_agent", "tool"]

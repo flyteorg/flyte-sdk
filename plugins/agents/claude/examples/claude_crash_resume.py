@@ -27,7 +27,7 @@ from pathlib import Path
 import flyte
 from flyte._image import PythonWheels
 
-from flyteplugins.agents.claude import tool, run_agent
+from flyteplugins.agents.claude import run_agent, tool
 
 env = flyte.TaskEnvironment(
     "claude-crash-resume",
