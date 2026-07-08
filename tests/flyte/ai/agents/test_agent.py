@@ -787,6 +787,82 @@ class TestRunLoop:
         assert "tool_start" in phases
         assert "tool_end" in phases
 
+    async def test_events_stamped_with_agent_and_run_id(self):
+        def make_agent() -> Agent:
+            llm = _make_llm(
+                [
+                    LLMMessage(
+                        content=None,
+                        tool_calls=[{"id": "c1", "name": "_add", "arguments": {"x": 1, "y": 2}}],
+                    ),
+                    LLMMessage(content="3.", tool_calls=[]),
+                ]
+            )
+            return Agent(name="stamped", instructions="I", tools=[_add], call_llm=llm)
+
+        events: list[AgentEvent] = []
+
+        async def on_event(event: AgentEvent) -> None:
+            events.append(event)
+
+        token = agent_progress_cb.set(on_event)
+        try:
+            await make_agent().run.aio("hi", [])
+            first_run_count = len(events)
+            await make_agent().run.aio("hi again", [])
+        finally:
+            agent_progress_cb.reset(token)
+
+        assert all(e.agent == "stamped" for e in events)
+        first_ids = {e.run_id for e in events[:first_run_count]}
+        second_ids = {e.run_id for e in events[first_run_count:]}
+        assert len(first_ids) == 1 and first_ids != {""}
+        assert len(second_ids) == 1 and second_ids != {""}
+        assert first_ids != second_ids
+
+    async def test_subagent_events_attributed_to_inner_run(self):
+        inner_llm = _make_llm([LLMMessage(content="inner answer", tool_calls=[])])
+        inner = Agent(name="inner", instructions="I", call_llm=inner_llm)
+
+        async def ask_inner(question: str) -> str:
+            """Delegate a question to the inner agent."""
+            result = await inner.run.aio(question, [])
+            return result.summary
+
+        outer_llm = _make_llm(
+            [
+                LLMMessage(
+                    content=None,
+                    tool_calls=[{"id": "c1", "name": "ask_inner", "arguments": {"question": "q"}}],
+                ),
+                LLMMessage(content="outer answer", tool_calls=[]),
+            ]
+        )
+        outer = Agent(name="outer", instructions="I", tools=[ask_inner], call_llm=outer_llm)
+
+        events: list[AgentEvent] = []
+
+        async def on_event(event: AgentEvent) -> None:
+            events.append(event)
+
+        token = agent_progress_cb.set(on_event)
+        try:
+            await outer.run.aio("go", [])
+        finally:
+            agent_progress_cb.reset(token)
+
+        by_agent = {name: [e for e in events if e.agent == name] for name in ("outer", "inner")}
+        assert {e.agent for e in events} == {"outer", "inner"}
+        assert {e.type for e in by_agent["inner"]} >= {"agent_start", "agent_end"}
+        assert len({e.run_id for e in by_agent["outer"]}) == 1
+        assert len({e.run_id for e in by_agent["inner"]}) == 1
+        assert by_agent["outer"][0].run_id != by_agent["inner"][0].run_id
+        # The outer run's identity is restored after the sub-agent finishes:
+        # events emitted after the inner agent_end (tool_end, turn_end,
+        # agent_end) still carry the outer run_id.
+        assert events[-1].agent == "outer"
+        assert events[-1].run_id == by_agent["outer"][0].run_id
+
     async def test_history_is_prepended(self):
         llm = _make_llm([LLMMessage(content="ack", tool_calls=[])])
         agent = Agent(name="t", instructions="I", call_llm=llm)
