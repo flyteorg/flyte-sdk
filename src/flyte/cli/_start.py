@@ -28,7 +28,6 @@ def tui(config_file: str | None, poll_interval: float) -> None:
 
     The mode is chosen from the resolved config:
 
-    \b
     * Remote (config has an endpoint, or FLYTE_API_KEY is set): browse a remote
       Flyte v2 cluster — projects, runs, actions, logs, tasks, apps, and triggers.
       ``flyte start tui --config remote.yaml``
@@ -37,7 +36,6 @@ def tui(config_file: str | None, poll_interval: float) -> None:
 
     Local persistence can be enabled in 2 ways:
 
-    \b
     1. In the config, to record every local run:
        ``flyte create config --endpoint ... --local-persistence``
     2. Via ``flyte.init(local_persistence=True)``, recording ``flyte.run`` runs
