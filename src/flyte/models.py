@@ -667,6 +667,7 @@ class ActionPhase(str, enum.Enum):
     - Waiting for resources: Action is waiting for compute resources
     - Initializing: Action is being initialized
     - Running: Action is currently executing
+    - Paused: Action is paused waiting for external input (e.g. a condition signal)
     - Succeeded: Action completed successfully
     - Failed: Action failed during execution
     - Aborted: Action was manually aborted
@@ -702,6 +703,9 @@ class ActionPhase(str, enum.Enum):
 
     RUNNING = "running"
     """Action is currently executing."""
+
+    PAUSED = "paused"
+    """Action is paused waiting for external input (e.g. a condition signal)."""
 
     SUCCEEDED = "succeeded"
     """Action completed successfully."""
