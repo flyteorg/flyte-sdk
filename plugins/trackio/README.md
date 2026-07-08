@@ -4,6 +4,15 @@ Native Flyte support for Trackio experiment tracking.
 
 This plugin makes it easy to manage Trackio runs inside Flyte tasks, log metrics from within task code or callbacks, and expose a Trackio dashboard link in the Flyte UI.
 
+## Deploying a Trackio Server
+
+This plugin works with Trackio's local-first design. By default, Trackio stores experiment data locally and can optionally send metrics to a self-hosted Trackio server or a Hugging Face Space by configuring the appropriate `server_url` or `space_id`.
+
+For deployment instructions, please refer to the official Trackio documentation:
+
+- Self-host a Trackio server: https://huggingface.co/docs/trackio/self_hosted_server
+- Deploy and embed Trackio dashboards: https://huggingface.co/docs/trackio/deploy_embed
+
 ## What it provides
 
 - `@trackio_init` decorator to initialize and manage a Trackio run for a Flyte task.
