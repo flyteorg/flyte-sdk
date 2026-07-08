@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import os
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from click.testing import CliRunner
 from flyteidl2.core.execution_pb2 import TaskLog
 
 from flyte._debug.client import _build_full_url, _extract_vscode_uri
+from flyte._debug.constants import EXIT_CODE_SUCCESS
+from flyte._debug.utils import execute_command
 from flyte._run import _Runner
 
 # ---------------------------------------------------------------------------
@@ -198,3 +202,79 @@ class TestRunGetDebugUrl:
             assert run.get_debug_url() == expected
             assert run.get_debug_url() == expected
             mock_watch.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# execute_command: env override pins PORT without dropping inherited vars
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_execute_command_passes_env_to_subprocess():
+    """execute_command should merge the provided env over os.environ when launching the subprocess."""
+    mock_proc = MagicMock()
+    mock_proc.returncode = EXIT_CODE_SUCCESS
+    mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+
+    with (
+        patch("asyncio.create_subprocess_shell", new=AsyncMock(return_value=mock_proc)) as mock_create,
+        patch.dict(os.environ, {"PORT": "9999", "EXISTING": "keep"}),
+    ):
+        await execute_command("code-server --bind-addr 0.0.0.0:6060", env={"PORT": "6060"})
+
+    _, kwargs = mock_create.call_args
+    # The provided env overrides the inherited PORT so code-server binds to the right port.
+    assert kwargs["env"]["PORT"] == "6060"
+    # The inherited environment is preserved for other variables.
+    assert kwargs["env"]["EXISTING"] == "keep"
+
+
+@pytest.mark.asyncio
+async def test_execute_command_without_env_inherits_process_env():
+    """When no env override is given, the subprocess inherits the parent environment (env=None)."""
+    mock_proc = MagicMock()
+    mock_proc.returncode = EXIT_CODE_SUCCESS
+    mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+
+    with patch("asyncio.create_subprocess_shell", new=AsyncMock(return_value=mock_proc)) as mock_create:
+        await execute_command("echo hello")
+
+    _, kwargs = mock_create.call_args
+    assert kwargs["env"] is None
+
+
+# ---------------------------------------------------------------------------
+# _start_vscode_server: pins PORT for code-server with a picklable target
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_start_vscode_server_pins_port_env_with_picklable_target():
+    """_start_vscode_server must launch code-server with PORT pinned to VSCODE_PORT via a picklable target."""
+    import pickle
+
+    from flyte._debug import vscode
+    from flyte._debug.constants import VSCODE_PORT
+
+    mock_proc = MagicMock()
+    mock_proc.pid = 4321
+    # is_alive() False so the heartbeat loop is skipped and the coroutine returns immediately.
+    mock_proc.is_alive.return_value = False
+
+    ctx = MagicMock()
+    ctx.params = {"tgz": None}
+
+    with (
+        patch.object(vscode, "download_vscode", new=AsyncMock()),
+        patch.object(vscode, "prepare_launch_json"),
+        patch.object(vscode.multiprocessing, "Process", return_value=mock_proc) as mock_process_cls,
+    ):
+        await vscode._start_vscode_server(ctx)
+
+    mock_process_cls.assert_called_once()
+    _, kwargs = mock_process_cls.call_args
+    # PORT is pinned so an inherited value can't override --bind-addr.
+    assert kwargs["kwargs"]["env"] == {"PORT": str(VSCODE_PORT)}
+    assert f"--bind-addr 0.0.0.0:{VSCODE_PORT}" in kwargs["kwargs"]["cmd"]
+    # The target must be picklable (lambdas are not) so the spawn/forkserver start methods work.
+    pickle.dumps(kwargs["target"])

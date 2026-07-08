@@ -62,9 +62,12 @@ def _render_command(
 
         if kind is None:
             raise KeyError(f"{{inputs.{name}}} used in script but {name!r} is not declared in inputs.")
-        if kind in ("file", "dir"):
+        if kind == "dir":
             return str(input_data_dir / name)
-        if kind == "list_file":
+        # A File is staged into its own directory under its original basename
+        # (so extension-sniffing tools see a real name), exactly like
+        # list[File]. Both expand via a glob.
+        if kind in ("file", "list_file"):
             return f"{input_data_dir / name}/*"
         if kind in ("scalar", "bool"):
             return f'"${{{alloc_slot(name)}}}"'
@@ -98,7 +101,7 @@ def _render_command(
                     is_optional=optionals[name],
                 )
             )
-        if kind in ("list_file", "dict_str"):
+        if kind in ("file", "list_file", "dict_str"):
             return f'"${{{flag_var}[@]}}"'
         return f"${{{flag_var}}}"
 
@@ -160,44 +163,38 @@ def _emit_flag_setter(
             f'{flag_var}={shlex.quote(flag + sep)}"${{{val_var}}}"; '
             f'else {flag_var}=""; fi'
         )
-    if kind in ("file", "dir"):
+    if kind == "dir":
         path = input_data_dir / name
         if is_optional:
             qpath = shlex.quote(str(path))
-            # Remote staging can materialize unset optional inputs at this path,
-            # so a bare `[ -e ]` can wrongly emit the flag.
-            if kind == "file":
-                # Treat the backend's "null" sentinel file as absent.
-                present = f'[ -f {qpath} ] && [ -s {qpath} ] && [ "$(head -c 4 {qpath})" != "null" ]'
-            else:
-                # A missing optional Dir shows up as a sentinel file, not a dir.
-                present = f'[ -d {qpath} ] && [ -n "$(ls -A {qpath} 2>/dev/null)" ]'
+            # A missing optional Dir shows up as a sentinel file, not a dir.
+            present = f'[ -d {qpath} ] && [ -n "$(ls -A {qpath} 2>/dev/null)" ]'
             return f'if {present}; then {flag_var}={shlex.quote(flag + sep + str(path))}; else {flag_var}=""; fi'
         return f"{flag_var}={shlex.quote(flag + sep + str(path))}"
-    if kind == "list_file":
+    if kind in ("file", "list_file"):
+        # A File and a list[File] both stage into a per-input directory, so a
+        # glob over that dir handles both. `nullglob` makes an absent/empty
+        # input (e.g. an unset optional File) expand to nothing rather than a
+        # literal "*", which also omits the flag entirely.
         dirpath = input_data_dir / name
         if spec.list_mode == "join":
             return (
-                f"{flag_var}=({shlex.quote(flag)}); "
-                f'for _f in {dirpath}/*; do {flag_var}+=("$_f"); done; '
-                f'if [ "${{#{flag_var}[@]}}" -le 1 ]; then {flag_var}=(); fi'
+                f"{flag_var}=(); shopt -s nullglob; "
+                f'for _f in {dirpath}/*; do {flag_var}+=("$_f"); done; shopt -u nullglob; '
+                f'if [ "${{#{flag_var}[@]}}" -gt 0 ]; then {flag_var}=({shlex.quote(flag)} "${{{flag_var}[@]}}"); fi'
             )
         if spec.list_mode == "repeat":
             return (
-                f"{flag_var}=(); "
-                f"for _f in {dirpath}/*; do "
-                f'if [ -e "$_f" ]; then {flag_var}+=({shlex.quote(flag)} "$_f"); fi; '
-                f"done"
+                f"{flag_var}=(); shopt -s nullglob; "
+                f'for _f in {dirpath}/*; do {flag_var}+=({shlex.quote(flag)} "$_f"); done; '
+                f"shopt -u nullglob"
             )
         if spec.list_mode == "comma":
             return (
-                f'_joined=""; '
-                f"for _f in {dirpath}/*; do "
-                f'if [ -e "$_f" ]; then _joined="${{_joined}}${{_joined:+,}}$_f"; fi; '
-                f"done; "
-                f'if [ -n "$_joined" ]; then '
-                f'{flag_var}=({shlex.quote(flag)} "$_joined"); '
-                f"else {flag_var}=(); fi"
+                f'_joined=""; shopt -s nullglob; '
+                f'for _f in {dirpath}/*; do _joined="${{_joined}}${{_joined:+,}}$_f"; done; '
+                f"shopt -u nullglob; "
+                f'{flag_var}=(); if [ -n "$_joined" ]; then {flag_var}=({shlex.quote(flag)} "$_joined"); fi'
             )
         raise AssertionError(spec.list_mode)
     if kind == "dict_str":
