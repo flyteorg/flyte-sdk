@@ -52,6 +52,7 @@ from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Literal, Mapping, Sequence
 
 import flyte
+import flyte.report
 from flyte.syncify import syncify
 
 # Internal building blocks. All four ``_``-prefixed tool helpers are used
@@ -60,6 +61,7 @@ from flyte.syncify import syncify
 # from here.
 from ._llm import LLMCallable, LLMMessage, _default_call_llm
 from ._mcp import MCPServerSpec, _MCPToolLoader
+from ._report import build_report_callback
 from ._tools import (
     AgentTool,
     _abbreviate,
@@ -74,6 +76,9 @@ from .memory import (
     MemoryStore,
 )
 from .protocol import AgentResult
+
+# Report tab the agent renders its progress timeline into.
+_REPORT_TAB = "Agent"
 
 logger = logging.getLogger(__name__)
 
@@ -630,53 +635,65 @@ class Agent:
         caller's responsibility.
         """
         await self._ensure_mcp_loaded()
-        start_data: dict[str, Any] = {"name": self.name, "model": self.model}
-        if mode is not None:
-            start_data["mode"] = mode
-        await _emit(AgentEvent("agent_start", start_data))
-        t0 = time.monotonic()
 
-        store, prior_len, messages = self._init_messages(memory, message)
+        # Render the loop's progress into the task report (best-effort; a no-op when
+        # there is no active report), chaining onto any callback the caller installed.
+        prev_cb = agent_progress_cb.get()
+        cb_token = agent_progress_cb.set(build_report_callback(_REPORT_TAB, prev_cb))
+        try:
+            start_data: dict[str, Any] = {"name": self.name, "model": self.model}
+            if mode is not None:
+                start_data["mode"] = mode
+            await _emit(AgentEvent("agent_start", start_data))
+            t0 = time.monotonic()
 
-        attempts = 0
-        last_text = ""
-        error_msg = ""
+            store, prior_len, messages = self._init_messages(memory, message)
 
-        for turn in range(self.max_turns):
-            attempts = turn + 1
-            await _emit(AgentEvent("turn_start", {"turn": attempts, "max_turns": self.max_turns}))
-            try:
-                with flyte.group(f"{self.name}-turn-{attempts}"):
-                    llm_msg = await self.call_llm(
-                        self.model,
-                        self._system_prompt,
-                        list[dict[str, Any]](messages),
-                        tools_schema,
-                    )
-            except Exception as exc:
-                error_msg = f"LLM call failed on turn {attempts}: {exc}"
-                break
+            attempts = 0
+            last_text = ""
+            error_msg = ""
 
-            outcome = await step(llm_msg, messages, attempts)
-            if outcome.done:
-                last_text = outcome.final_text
-                break
-        else:
-            error_msg = f"Reached max_turns={self.max_turns} without producing a final answer."
+            for turn in range(self.max_turns):
+                attempts = turn + 1
+                await _emit(AgentEvent("turn_start", {"turn": attempts, "max_turns": self.max_turns}))
+                try:
+                    with flyte.group(f"{self.name}-turn-{attempts}"):
+                        llm_msg = await self.call_llm(
+                            self.model,
+                            self._system_prompt,
+                            list[dict[str, Any]](messages),
+                            tools_schema,
+                        )
+                except Exception as exc:
+                    error_msg = f"LLM call failed on turn {attempts}: {exc}"
+                    break
 
-        if store is not None:
-            # Append only the in-flight tail back to the store (mutated in place,
-            # returned to the caller, but not persisted here).
-            store.extend(messages[prior_len:])
+                outcome = await step(llm_msg, messages, attempts)
+                if outcome.done:
+                    last_text = outcome.final_text
+                    break
+            else:
+                error_msg = f"Reached max_turns={self.max_turns} without producing a final answer."
 
-        elapsed = int((time.monotonic() - t0) * 1000)
-        await _emit(
-            AgentEvent(
-                "agent_end",
-                {"turns": attempts, "elapsed_ms": elapsed, "error": error_msg, "summary_len": len(last_text)},
+            if store is not None:
+                # Append only the in-flight tail back to the store (mutated in place,
+                # returned to the caller, but not persisted here).
+                store.extend(messages[prior_len:])
+
+            elapsed = int((time.monotonic() - t0) * 1000)
+            await _emit(
+                AgentEvent(
+                    "agent_end",
+                    {"turns": attempts, "elapsed_ms": elapsed, "error": error_msg, "summary_len": len(last_text)},
+                )
             )
-        )
-        return _RunOutcome(attempts=attempts, last_text=last_text, error_msg=error_msg, memory=store)
+            return _RunOutcome(attempts=attempts, last_text=last_text, error_msg=error_msg, memory=store)
+        finally:
+            try:
+                await flyte.report.flush()
+            except Exception:  # pragma: no cover - no active report / local run
+                pass
+            agent_progress_cb.reset(cb_token)
 
     async def _execute_calls(
         self,
