@@ -95,10 +95,37 @@ agent_progress_cb: contextvars.ContextVar[AgentProgressCallback | None] = contex
 )
 
 
+@dataclass(frozen=True)
+class _RunIdentity:
+    """Identifies the agent run that is emitting events in the current context.
+
+    Set by :meth:`Agent._run_loop` for the duration of a run so that
+    :func:`_emit` can stamp ``agent`` and ``run_id`` onto every event. Stored
+    in a :class:`~contextvars.ContextVar` so concurrent runs in the same
+    process (fan-out via ``asyncio.gather``, sub-agents invoked as tools) each
+    stamp their own identity instead of conflating.
+    """
+
+    agent: str
+    run_id: str
+
+
+_current_run: contextvars.ContextVar[_RunIdentity | None] = contextvars.ContextVar(
+    "agent_current_run",
+    default=None,
+)
+
+
 async def _emit(event: "AgentEvent") -> None:
     cb = agent_progress_cb.get()
     if cb is None:
         return
+    identity = _current_run.get()
+    if identity is not None:
+        if not event.agent:
+            event.agent = identity.agent
+        if not event.run_id:
+            event.run_id = identity.run_id
     try:
         await cb(event)
     except Exception:  # pragma: no cover - progress hooks must never break the loop
@@ -131,10 +158,17 @@ class AgentEvent:
     The agent stays decoupled from any specific UI: subscribe via
     :data:`agent_progress_cb` to forward these to logs, NDJSON streams, websockets,
     Flyte reports, etc.
+
+    ``agent`` and ``run_id`` are stamped automatically on every event so that
+    consumers receiving events from multiple runs in one process (concurrent
+    agents, sub-agents used as tools, parallel runs of the same agent) can
+    attribute each event to the run that produced it.
     """
 
     type: EventType
     data: dict[str, Any] = field(default_factory=dict)
+    agent: str = ""
+    run_id: str = ""
 
 
 # ----------------------------------------------------------------------------
@@ -634,13 +668,15 @@ class Agent:
         to a passed :class:`MemoryStore`) but never saved; persistence is the
         caller's responsibility.
         """
-        await self._ensure_mcp_loaded()
+        run_id = uuid.uuid4().hex[:8]
+        identity_token = _current_run.set(_RunIdentity(agent=self.name, run_id=run_id))
 
         # Render the loop's progress into the task report (best-effort; a no-op when
         # there is no active report), chaining onto any callback the caller installed.
         prev_cb = agent_progress_cb.get()
         cb_token = agent_progress_cb.set(build_report_callback(_REPORT_TAB, prev_cb))
         try:
+            await self._ensure_mcp_loaded()
             start_data: dict[str, Any] = {"name": self.name, "model": self.model}
             if mode is not None:
                 start_data["mode"] = mode
@@ -694,6 +730,7 @@ class Agent:
             except Exception:  # pragma: no cover - no active report / local run
                 pass
             agent_progress_cb.reset(cb_token)
+            _current_run.reset(identity_token)
 
     async def _execute_calls(
         self,

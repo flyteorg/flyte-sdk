@@ -517,7 +517,22 @@ class AgentChatAppEnvironment(flyte.app.AppEnvironment):
 
             # Map :class:`AgentEvent` types onto the UI's three progress steps
             # (plan → execute → format) so the existing chat JS works unchanged.
+            #
+            # Only the top-level run drives the UI: the first ``run_id`` seen is
+            # latched, and events stamped with a different ``run_id`` (sub-agents
+            # invoked as tools) are dropped so their ``turn_start`` doesn't clobber
+            # the attempt counter and their ``agent_end`` doesn't flip the phase
+            # early. Unstamped events (custom :class:`AgentProtocol`
+            # implementations emitting hand-built events) pass through unchanged.
+            top_run_id: str | None = None
+
             async def on_event(event: AgentEvent) -> None:
+                nonlocal top_run_id
+                if event.run_id:
+                    if top_run_id is None:
+                        top_run_id = event.run_id
+                    elif event.run_id != top_run_id:
+                        return
                 phase = _AGENT_EVENT_TO_UI_PHASE.get(event.type)
                 if phase is None:
                     return
