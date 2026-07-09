@@ -831,6 +831,17 @@ def no_ambient_registry(monkeypatch):
         yield
 
 
+def _mock_init_config(endpoint=None, image_registry=None):
+    """Init-config mock with image_registry defaulted to None (a bare MagicMock attr is truthy)."""
+    mock_config = MagicMock()
+    mock_config.image_registry = image_registry
+    if endpoint is None:
+        mock_config.client = None
+    else:
+        mock_config.client.endpoint = endpoint
+    return mock_config
+
+
 def test_get_base_registry_returns_default_when_not_initialized(no_ambient_registry):
     """When flyte is not initialized, _get_base_registry returns the default registry."""
     with patch("flyte._initialize._get_init_config", return_value=None):
@@ -839,52 +850,42 @@ def test_get_base_registry_returns_default_when_not_initialized(no_ambient_regis
 
 def test_get_base_registry_returns_default_when_no_client(no_ambient_registry):
     """When init config has no client, _get_base_registry returns the default registry."""
-    mock_config = MagicMock()
-    mock_config.client = None
-    with patch("flyte._initialize._get_init_config", return_value=mock_config):
+    with patch("flyte._initialize._get_init_config", return_value=_mock_init_config()):
         assert _get_base_registry() == _BASE_REGISTRY
 
 
 def test_get_base_registry_returns_default_for_remote_endpoint(no_ambient_registry):
     """When endpoint is a remote URL, _get_base_registry returns the default registry."""
-    mock_config = MagicMock()
-    mock_config.client.endpoint = "dns:///my-cluster.example.com"
+    mock_config = _mock_init_config(endpoint="dns:///my-cluster.example.com")
     with patch("flyte._initialize._get_init_config", return_value=mock_config):
         assert _get_base_registry() == _BASE_REGISTRY
 
 
 def test_get_base_registry_returns_localhost_for_localhost_endpoint(no_ambient_registry):
     """When endpoint contains 'localhost', _get_base_registry returns the localhost registry."""
-    mock_config = MagicMock()
-    mock_config.client.endpoint = "localhost:8090"
+    mock_config = _mock_init_config(endpoint="localhost:8090")
     with patch("flyte._initialize._get_init_config", return_value=mock_config):
         assert _get_base_registry() == _LOCALHOST_REGISTRY
 
 
 def test_get_base_registry_returns_localhost_for_localhost_in_url(no_ambient_registry):
     """When endpoint contains 'localhost' as part of a URL, _get_base_registry returns the localhost registry."""
-    mock_config = MagicMock()
-    mock_config.client.endpoint = "dns:///localhost:30080"
+    mock_config = _mock_init_config(endpoint="dns:///localhost:30080")
     with patch("flyte._initialize._get_init_config", return_value=mock_config):
         assert _get_base_registry() == _LOCALHOST_REGISTRY
 
 
 def test_get_base_registry_returns_default_for_empty_endpoint(no_ambient_registry):
     """When endpoint is empty string, _get_base_registry returns the default registry."""
-    mock_config = MagicMock()
-    mock_config.client.endpoint = ""
+    mock_config = _mock_init_config(endpoint="")
     with patch("flyte._initialize._get_init_config", return_value=mock_config):
         assert _get_base_registry() == _BASE_REGISTRY
 
 
 def test_get_base_registry_uses_env_var(monkeypatch):
     """When FLYTE_IMAGE_REGISTRY is set, _get_base_registry returns it, overriding endpoint logic."""
-    from flyte.config._reader import get_config_file
-
-    get_config_file.cache_clear()
     monkeypatch.setenv("FLYTE_IMAGE_REGISTRY", "my.registry.io/team")
-    mock_config = MagicMock()
-    mock_config.client.endpoint = "localhost:8090"
+    mock_config = _mock_init_config(endpoint="localhost:8090")
     with patch("flyte._initialize._get_init_config", return_value=mock_config):
         assert _get_base_registry() == "my.registry.io/team"
 
@@ -892,9 +893,18 @@ def test_get_base_registry_uses_env_var(monkeypatch):
 def test_get_base_registry_uses_config(monkeypatch):
     """When image.registry is set in config, _get_base_registry returns it."""
     monkeypatch.delenv("FLYTE_IMAGE_REGISTRY", raising=False)
-    with patch("flyte.config._config.ImageConfig.auto") as mock_auto:
-        mock_auto.return_value = MagicMock(registry="cfg.registry.io/team")
-        assert _get_base_registry() == "cfg.registry.io/team"
+    with patch("flyte._initialize._get_init_config", return_value=_mock_init_config()):
+        with patch("flyte.config._config.ImageConfig.auto") as mock_auto:
+            mock_auto.return_value = MagicMock(registry="cfg.registry.io/team")
+            assert _get_base_registry() == "cfg.registry.io/team"
+
+
+def test_get_base_registry_uses_init_config_registry(no_ambient_registry):
+    """The registry recorded at init time (e.g. from an explicit --config file) wins, even
+    when ambient config discovery finds nothing."""
+    mock_config = _mock_init_config(endpoint="localhost:8090", image_registry="init.registry.io/team")
+    with patch("flyte._initialize._get_init_config", return_value=mock_config):
+        assert _get_base_registry() == "init.registry.io/team"
 
 
 def test_get_base_registry_falls_back_when_registry_unset(monkeypatch):
@@ -902,8 +912,7 @@ def test_get_base_registry_falls_back_when_registry_unset(monkeypatch):
     monkeypatch.delenv("FLYTE_IMAGE_REGISTRY", raising=False)
     with patch("flyte.config._config.ImageConfig.auto") as mock_auto:
         mock_auto.return_value = MagicMock(registry=None)
-        mock_config = MagicMock()
-        mock_config.client.endpoint = "localhost:8090"
+        mock_config = _mock_init_config(endpoint="localhost:8090")
         with patch("flyte._initialize._get_init_config", return_value=mock_config):
             assert _get_base_registry() == _LOCALHOST_REGISTRY
 

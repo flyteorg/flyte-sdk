@@ -485,20 +485,22 @@ def _get_base_registry() -> str:
 
     Resolution order:
 
-    1. The ``image.registry`` config entry or the ``FLYTE_IMAGE_REGISTRY`` environment variable,
-       if either is set. This takes precedence over everything else.
-    2. The localhost registry, if the Flyte config endpoint contains 'localhost'.
-    3. The built-in default base registry.
+    1. The registry recorded at init time (``image.registry`` from the config file passed to
+       ``flyte.init_from_config``, or ``flyte.init(image_registry=...)``). This honors an
+       explicit ``--config`` path, which ambient discovery below would miss.
+    2. The ambient ``image.registry`` config entry or the ``FLYTE_IMAGE_REGISTRY`` environment
+       variable — covers images defined before init, or init calls that didn't set a registry.
+    3. The localhost registry, if the Flyte config endpoint contains 'localhost'.
+    4. The built-in default base registry.
     """
+    from flyte._initialize import _get_init_config
     from flyte.config._config import ImageConfig
 
-    registry = ImageConfig.auto().registry
+    init_config = _get_init_config()
+    registry = (init_config.image_registry if init_config else None) or ImageConfig.auto().registry
     if registry:
         return registry
 
-    from flyte._initialize import _get_init_config
-
-    init_config = _get_init_config()
     if init_config and init_config.client:
         endpoint = init_config.client.endpoint
         if endpoint and "localhost" in endpoint:
