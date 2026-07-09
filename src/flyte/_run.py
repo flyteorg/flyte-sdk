@@ -196,6 +196,43 @@ class _Runner:
             return rerun_run_name
         return r  # explicit run-name string
 
+    def _resolve_related_to(self, source_run: Any = None) -> Any | None:
+        """Resolve the provenance pointer (``RunSpec.related_to``) for the run being created.
+
+        An explicit ``source_run`` (the rerun path) wins; otherwise, when invoked from inside a
+        running remote task container (``TaskContext.is_in_cluster()``), the current run is the
+        parent. The effective source scope is the source's ids with empty fields inherited from
+        the init config; the pointer is stamped only when that scope equals the new run's target
+        scope exactly and all four id fields are non-empty (the server requires min_len=1 on
+        each, and related_to is same-org/project/domain as the new run by contract). Returns
+        None otherwise — a provenance pointer must never fail run creation. Pure resolution,
+        no I/O.
+        """
+        from flyteidl2.common import identifier_pb2
+
+        if source_run is not None:
+            org, project, domain, name = source_run.org, source_run.project, source_run.domain, source_run.name
+        else:
+            tctx = internal_ctx().data.task_context
+            if tctx is None or not tctx.is_in_cluster():
+                return None
+            action = tctx.action
+            org, project, domain, name = action.org or "", action.project or "", action.domain or "", action.run_name
+
+        cfg = get_init_config()
+        org = org or cfg.org or ""
+        project = project or cfg.project or ""
+        domain = domain or cfg.domain or ""
+
+        target = (cfg.org or "", self._project or cfg.project or "", self._domain or cfg.domain or "")
+        if (org, project, domain) != target:
+            logger.debug(f"Skipping RunSpec.related_to: source scope {(org, project, domain)} != target {target}")
+            return None
+        if not (org and project and domain and name):
+            logger.debug("Skipping RunSpec.related_to: incomplete source run identifier")
+            return None
+        return identifier_pb2.RunIdentifier(org=org, project=project, domain=domain, name=name)
+
     async def _build_task_spec_from_template(self, obj: TaskTemplate[P, R, F]) -> Tuple[Any, Any, str]:
         """Build ``(task_spec, code_bundle, version)`` from a local ``TaskTemplate``.
 
@@ -353,14 +390,17 @@ class _Runner:
             )
         return None, identifier_pb2.ProjectIdentifier(name=project, domain=domain, organization=org)
 
-    def _apply_overrides(self, base: Any, *, task: Any = None, recover_ref: str | None = None) -> Any:
+    def _apply_overrides(
+        self, base: Any, *, task: Any = None, recover_ref: str | None = None, related_to: Any = None
+    ) -> Any:
         """Build the ``RunSpec`` for ``create_run``.
 
         ``base is None`` -> a fresh spec from runner config (the run / recover path).
         ``base`` set     -> deep-copy a prior run's ``RunSpec`` and merge runner overrides by key
         (the rerun path: env merge + explicitly-set field overrides). Pure proto assembly, no I/O.
         This is the single place runner config maps onto a ``RunSpec``. ``recover_ref`` is the already-
-        resolved reference run to recover from (see ``_resolve_recover_ref``), or None.
+        resolved reference run to recover from (see ``_resolve_recover_ref``), or None. ``related_to``
+        is the already-resolved provenance pointer (see ``_resolve_related_to``), or None.
         """
         from flyteidl2.core import literals_pb2, security_pb2
         from flyteidl2.task import run_pb2
@@ -462,6 +502,11 @@ class _Runner:
             from flyteidl2.common import identifier_pb2
 
             run_spec.recover.CopyFrom(run_pb2.Recover(run_id=identifier_pb2.RunIdentifier(name=recover_ref)))
+
+        # related_to: implicit provenance (rerun source, or the invoking in-cluster run).
+        run_spec.ClearField("related_to")  # never inherit a rerun base's stale (grandparent) pointer
+        if related_to is not None:
+            run_spec.related_to.CopyFrom(related_to)
 
         return run_spec
 
@@ -603,7 +648,12 @@ class _Runner:
                 if task_spec.task_template.id.version == "":
                     task_spec.task_template.id.version = version
 
-            run_spec = self._apply_overrides(None, task=task, recover_ref=self._resolve_recover_ref(None))
+            run_spec = self._apply_overrides(
+                None,
+                task=task,
+                recover_ref=self._resolve_recover_ref(None),
+                related_to=self._resolve_related_to(),
+            )
             return await self._submit_remote(
                 task_spec=task_spec,
                 task_id=task_id,
@@ -1058,7 +1108,18 @@ class _Runner:
             if tt_id.version == "":
                 tt_id.version = version
 
-        run_spec = self._apply_overrides(base_run_spec, recover_ref=self._resolve_recover_ref(run_name))
+        # Provenance: the run being rerun. Explicit source wins entirely over any ambient task
+        # context (a rerun triggered from inside a task points at the rerun source, not the
+        # invoking run). The fetched id can be empty in degenerate cases; fall back to run_name.
+        from flyteidl2.common import identifier_pb2
+
+        src = action_details.pb2.id.run
+        related_to = self._resolve_related_to(
+            identifier_pb2.RunIdentifier(org=src.org, project=src.project, domain=src.domain, name=src.name or run_name)
+        )
+        run_spec = self._apply_overrides(
+            base_run_spec, recover_ref=self._resolve_recover_ref(run_name), related_to=related_to
+        )
         return await self._submit_remote(
             task_spec=task_spec,
             task_id=None,
