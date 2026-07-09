@@ -1,3 +1,24 @@
+"""
+Basic Trackio integration with Flyte.
+
+This example demonstrates how to use the ``@trackio_init`` decorator to
+automatically create and manage a Trackio experiment for a Flyte task.
+
+The example fine-tunes a DistilBERT model on a small subset of the IMDb
+sentiment analysis dataset using the Hugging Face Transformers ``Trainer``
+API. After training, evaluation metrics are logged to Trackio before the
+experiment is automatically finalized.
+
+This example demonstrates:
+
+* Automatic Trackio initialization with ``@trackio_init``.
+* Configuring Trackio with ``trackio_config``.
+* Accessing the active Trackio run with ``get_trackio_run``.
+* Logging evaluation metrics from a Flyte task.
+* Running the experiment locally with ``flyte.with_runcontext`
+
+"""
+
 from typing import Any
 
 import flyte
@@ -16,8 +37,6 @@ from flyteplugins.trackio import (
 )
 
 env = flyte.TaskEnvironment(name="trackio")
-
-# remember to install psutil and accelerate
 
 
 @trackio_init
@@ -70,13 +89,14 @@ def train() -> dict[str, Any]:
     return metrics
 
 
-cfg = trackio_config(
-    project="distilbert-imdb",
-    space_id="AINovice2005/distilbert-demo",
-    bucket_id="AINovice2005/distilbert-storage",
-    auto_log_cpu=True,
-)
+if __name__ == "__main__":
+    cfg = trackio_config(
+        project="distilbert-imdb",
+        space_id="AINovice2005/distilbert-demo",
+        bucket_id="AINovice2005/distilbert-storage",
+        auto_log_cpu=True,
+    )
 
-flyte.with_runcontext(
-    custom_context=cfg.to_dict(),
-).run(train)
+    flyte.with_runcontext(
+        custom_context=cfg.to_dict(),
+    ).run(train)

@@ -107,4 +107,8 @@ This link can be attached automatically by `trackio_init` for Flyte tasks.
 
 ## Examples
 
-See `[distilbert_text_classification]()` and `[vit_image_classification.py]()` for full usage patterns with Hugging Face training and callback-based metric logging.
+See [distilbert_text_classification.py](https://github.com/flyteorg/flyte-sdk/tree/main/plugins/trackio/examples) and [vit_image_classification.py](https://github.com/flyteorg/flyte-sdk/tree/main/plugins/trackio/examples) for full usage patterns with Hugging Face training and callback-based metric logging. Before running the examples, please install the required dependencies:
+
+```bash
+pip install datasets transformers accelerate evaluate psutil
+```
