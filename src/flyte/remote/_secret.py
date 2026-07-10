@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import AsyncIterator, Literal, Union
 
@@ -11,6 +12,12 @@ from flyte.remote._common import ToJSONMixin
 from flyte.syncify import syncify
 
 SecretTypes = Literal["regular", "image_pull"]
+
+_INCLUDE_SYSTEM_SECRETS_ENV_VAR = "_F_HAZMAT_SSV"
+
+
+def _include_system_secrets() -> bool:
+    return os.getenv(_INCLUDE_SYSTEM_SECRETS_ENV_VAR) == "1"
 
 
 def _resolve_scope(cfg, cluster_pool: str | None, op: str) -> tuple[str, str]:
@@ -123,7 +130,8 @@ class Secret(ToJSONMixin):
                 project=project,
                 domain=domain,
                 name=name,
-            )
+            ),
+            include_system_secrets=_include_system_secrets(),
         )
         svc = await _secrets_service_for(cluster_pool, cfg.org)
         resp = await svc.get_secret(request=request)
@@ -155,6 +163,7 @@ class Secret(ToJSONMixin):
                 domain=domain,
                 token=token,
                 limit=limit,
+                include_system_secrets=_include_system_secrets(),
             )
             resp = await svc.list_secrets(request=request)  # type: ignore
             for r in resp.secrets:
