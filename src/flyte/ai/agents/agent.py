@@ -52,6 +52,7 @@ from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Literal, Mapping, Sequence
 
 import flyte
+import flyte.report
 from flyte.syncify import syncify
 
 # Internal building blocks. All four ``_``-prefixed tool helpers are used
@@ -60,6 +61,7 @@ from flyte.syncify import syncify
 # from here.
 from ._llm import LLMCallable, LLMMessage, _default_call_llm
 from ._mcp import MCPServerSpec, _MCPToolLoader
+from ._report import build_report_callback
 from ._tools import (
     AgentTool,
     _abbreviate,
@@ -74,6 +76,9 @@ from .memory import (
     MemoryStore,
 )
 from .protocol import AgentResult
+
+# Report tab the agent renders its progress timeline into.
+_REPORT_TAB = "Agent"
 
 logger = logging.getLogger(__name__)
 
@@ -90,10 +95,37 @@ agent_progress_cb: contextvars.ContextVar[AgentProgressCallback | None] = contex
 )
 
 
+@dataclass(frozen=True)
+class _RunIdentity:
+    """Identifies the agent run that is emitting events in the current context.
+
+    Set by :meth:`Agent._run_loop` for the duration of a run so that
+    :func:`_emit` can stamp ``agent`` and ``run_id`` onto every event. Stored
+    in a :class:`~contextvars.ContextVar` so concurrent runs in the same
+    process (fan-out via ``asyncio.gather``, sub-agents invoked as tools) each
+    stamp their own identity instead of conflating.
+    """
+
+    agent: str
+    run_id: str
+
+
+_current_run: contextvars.ContextVar[_RunIdentity | None] = contextvars.ContextVar(
+    "agent_current_run",
+    default=None,
+)
+
+
 async def _emit(event: "AgentEvent") -> None:
     cb = agent_progress_cb.get()
     if cb is None:
         return
+    identity = _current_run.get()
+    if identity is not None:
+        if not event.agent:
+            event.agent = identity.agent
+        if not event.run_id:
+            event.run_id = identity.run_id
     try:
         await cb(event)
     except Exception:  # pragma: no cover - progress hooks must never break the loop
@@ -126,10 +158,17 @@ class AgentEvent:
     The agent stays decoupled from any specific UI: subscribe via
     :data:`agent_progress_cb` to forward these to logs, NDJSON streams, websockets,
     Flyte reports, etc.
+
+    ``agent`` and ``run_id`` are stamped automatically on every event so that
+    consumers receiving events from multiple runs in one process (concurrent
+    agents, sub-agents used as tools, parallel runs of the same agent) can
+    attribute each event to the run that produced it.
     """
 
     type: EventType
     data: dict[str, Any] = field(default_factory=dict)
+    agent: str = ""
+    run_id: str = ""
 
 
 # ----------------------------------------------------------------------------
@@ -629,54 +668,69 @@ class Agent:
         to a passed :class:`MemoryStore`) but never saved; persistence is the
         caller's responsibility.
         """
-        await self._ensure_mcp_loaded()
-        start_data: dict[str, Any] = {"name": self.name, "model": self.model}
-        if mode is not None:
-            start_data["mode"] = mode
-        await _emit(AgentEvent("agent_start", start_data))
-        t0 = time.monotonic()
+        run_id = uuid.uuid4().hex[:8]
+        identity_token = _current_run.set(_RunIdentity(agent=self.name, run_id=run_id))
 
-        store, prior_len, messages = self._init_messages(memory, message)
+        # Render the loop's progress into the task report (best-effort; a no-op when
+        # there is no active report), chaining onto any callback the caller installed.
+        prev_cb = agent_progress_cb.get()
+        cb_token = agent_progress_cb.set(build_report_callback(_REPORT_TAB, prev_cb))
+        try:
+            await self._ensure_mcp_loaded()
+            start_data: dict[str, Any] = {"name": self.name, "model": self.model}
+            if mode is not None:
+                start_data["mode"] = mode
+            await _emit(AgentEvent("agent_start", start_data))
+            t0 = time.monotonic()
 
-        attempts = 0
-        last_text = ""
-        error_msg = ""
+            store, prior_len, messages = self._init_messages(memory, message)
 
-        for turn in range(self.max_turns):
-            attempts = turn + 1
-            await _emit(AgentEvent("turn_start", {"turn": attempts, "max_turns": self.max_turns}))
-            try:
-                with flyte.group(f"{self.name}-turn-{attempts}"):
-                    llm_msg = await self.call_llm(
-                        self.model,
-                        self._system_prompt,
-                        list[dict[str, Any]](messages),
-                        tools_schema,
-                    )
-            except Exception as exc:
-                error_msg = f"LLM call failed on turn {attempts}: {exc}"
-                break
+            attempts = 0
+            last_text = ""
+            error_msg = ""
 
-            outcome = await step(llm_msg, messages, attempts)
-            if outcome.done:
-                last_text = outcome.final_text
-                break
-        else:
-            error_msg = f"Reached max_turns={self.max_turns} without producing a final answer."
+            for turn in range(self.max_turns):
+                attempts = turn + 1
+                await _emit(AgentEvent("turn_start", {"turn": attempts, "max_turns": self.max_turns}))
+                try:
+                    with flyte.group(f"{self.name}-turn-{attempts}"):
+                        llm_msg = await self.call_llm(
+                            self.model,
+                            self._system_prompt,
+                            list[dict[str, Any]](messages),
+                            tools_schema,
+                        )
+                except Exception as exc:
+                    error_msg = f"LLM call failed on turn {attempts}: {exc}"
+                    break
 
-        if store is not None:
-            # Append only the in-flight tail back to the store (mutated in place,
-            # returned to the caller, but not persisted here).
-            store.extend(messages[prior_len:])
+                outcome = await step(llm_msg, messages, attempts)
+                if outcome.done:
+                    last_text = outcome.final_text
+                    break
+            else:
+                error_msg = f"Reached max_turns={self.max_turns} without producing a final answer."
 
-        elapsed = int((time.monotonic() - t0) * 1000)
-        await _emit(
-            AgentEvent(
-                "agent_end",
-                {"turns": attempts, "elapsed_ms": elapsed, "error": error_msg, "summary_len": len(last_text)},
+            if store is not None:
+                # Append only the in-flight tail back to the store (mutated in place,
+                # returned to the caller, but not persisted here).
+                store.extend(messages[prior_len:])
+
+            elapsed = int((time.monotonic() - t0) * 1000)
+            await _emit(
+                AgentEvent(
+                    "agent_end",
+                    {"turns": attempts, "elapsed_ms": elapsed, "error": error_msg, "summary_len": len(last_text)},
+                )
             )
-        )
-        return _RunOutcome(attempts=attempts, last_text=last_text, error_msg=error_msg, memory=store)
+            return _RunOutcome(attempts=attempts, last_text=last_text, error_msg=error_msg, memory=store)
+        finally:
+            try:
+                await flyte.report.flush()
+            except Exception:  # pragma: no cover - no active report / local run
+                pass
+            agent_progress_cb.reset(cb_token)
+            _current_run.reset(identity_token)
 
     async def _execute_calls(
         self,
