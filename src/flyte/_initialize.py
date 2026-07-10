@@ -47,6 +47,7 @@ class _InitConfig(CommonInit):
     storage: Optional[Storage] = None
     image_builder: "ImageBuildEngine.ImageBuilderType" = "local"
     images: typing.Dict[str, str] = field(default_factory=dict)
+    image_registry: str | None = None
 
     def replace(self, **kwargs) -> _InitConfig:
         return replace(self, **kwargs)
@@ -215,6 +216,7 @@ async def init(
     batch_size: int = 1000,
     image_builder: ImageBuildEngine.ImageBuilderType = "local",
     images: typing.Dict[str, str] | None = None,
+    image_registry: str | None = None,
     source_config_path: Optional[Path] = None,
     sync_local_sys_paths: bool = True,
     load_plugin_type_transformers: bool = True,
@@ -256,6 +258,8 @@ async def init(
       batch_size will be split into multiple requests.
     :param image_builder: Optional image builder configuration, if not provided, the default image builder will be used.
     :param images: Optional dict of images that can be used by referencing the image name.
+    :param image_registry: Optional container registry to push built images to, overriding the
+      built-in default base registry. Equivalent to the ``image.registry`` config entry.
     :param source_config_path: Optional path to the source configuration file (This is only used for documentation)
     :param sync_local_sys_paths: Whether to include and synchronize local sys.path entries under the root directory
       into the remote container (default: True).
@@ -317,6 +321,7 @@ async def init(
             batch_size=batch_size,
             image_builder=image_builder,
             images=images or {},
+            image_registry=image_registry,
             source_config_path=source_config_path,
             sync_local_sys_paths=sync_local_sys_paths,
             local_persistence=local_persistence,
@@ -406,6 +411,7 @@ async def init_from_config(
         image_builder=image_builder or cfg.image.builder or "local",
         batch_size=batch_size,
         images=cfg.image.image_refs,
+        image_registry=cfg.image.registry,
         storage=storage,
         source_config_path=cfg_path,
         sync_local_sys_paths=sync_local_sys_paths,
