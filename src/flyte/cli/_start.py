@@ -7,22 +7,46 @@ def start():
 
 
 @start.command()
-def tui():
+@click.option(
+    "-c",
+    "--config",
+    "config_file",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False),
+    help="Path to the Flyte configuration file. Defaults to ~/.flyte/config.yaml.",
+)
+@click.option(
+    "--poll-interval",
+    type=float,
+    default=2.0,
+    show_default=True,
+    help="Seconds between run detail refreshes while browsing a remote run. Remote mode only.",
+)
+def tui(config_file: str | None, poll_interval: float) -> None:
     """
-    Launch TUI explore mode to browse past local runs. To use the TUI install `pip install flyte[tui]`
-    TUI, allows you to explore all your local runs if you have persistence enabled.
+    Launch the Flyte TUI. Install with ``pip install flyte[tui]``.
 
-    Persistence can be enabled in 2 ways,
-    1. By setting it in the config to record every local run
-    ```bash
-    flyte create config --endpoint ...  --local-persistence
-    ```
-    2. By passing it in flyte.init(local_persistence=True)
-    This will record all `flyte.run` runs, that are local and are within the flyte.init being active.
+    The mode is chosen from the resolved config:
+
+    * Remote (config has an endpoint, or FLYTE_API_KEY is set): browse a remote
+      Flyte v2 cluster — projects, runs, actions, logs, tasks, apps, and triggers.
+      ``flyte start tui --config remote.yaml``
+    * Local (no endpoint): explore past local runs recorded with persistence.
+      ``flyte start tui --config local.yaml``
+
+    Local persistence can be enabled in 2 ways:
+
+    1. In the config, to record every local run:
+       ``flyte create config --endpoint ... --local-persistence``
+    2. Via ``flyte.init(local_persistence=True)``, recording ``flyte.run`` runs
+       that are local and within the active ``flyte.init``.
     """
-    from flyte.cli._tui import launch_tui_explore
+    from flyte.cli._tui import config_is_remote, launch_tui_explore, launch_tui_remote
 
-    launch_tui_explore()
+    if config_is_remote(config_file):
+        launch_tui_remote(config=config_file, poll_interval=poll_interval)
+    else:
+        launch_tui_explore()
 
 
 _DEFAULT_DEVBOX_IMAGE = "cr.flyte.org/flyteorg/flyte-devbox:latest"

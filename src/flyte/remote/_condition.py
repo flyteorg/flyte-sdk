@@ -207,3 +207,82 @@ _SIMPLE_TO_PY: dict[int, type] = {
     types_pb2.FLOAT: float,
     types_pb2.STRING: str,
 }
+
+
+def _data_type_from_literal_type(literal_type: types_pb2.LiteralType | None) -> type | None:
+    """Map a ``LiteralType`` proto to a Python condition payload type."""
+    if literal_type is None:
+        return None
+    try:
+        if literal_type.HasField("simple"):
+            return _SIMPLE_TO_PY.get(literal_type.simple)
+    except ValueError:
+        pass
+    simple = getattr(literal_type, "simple", None)
+    if simple is not None:
+        return _SIMPLE_TO_PY.get(simple)
+    return None
+
+
+def resolve_condition_expected_type(
+    action_pb2: run_definition_pb2.Action,
+    *,
+    details_pb2: run_definition_pb2.ActionDetails | None = None,
+) -> type | None:
+    """Return the Python payload type for a condition action.
+
+    Checks ``metadata.condition.type`` first, then ``ActionDetails.condition.type``
+    when details are available (the backend often only populates the latter).
+    """
+    expected = Condition(pb2=action_pb2).expected_type
+    if expected is not None:
+        return expected
+    if details_pb2 is not None and details_pb2.HasField("condition"):
+        return _data_type_from_literal_type(details_pb2.condition.type)
+    return None
+
+
+_BOOL_TRUE = {"true", "1", "yes", "y", "t"}
+_BOOL_FALSE = {"false", "0", "no", "n", "f"}
+
+
+def coerce_condition_payload(value: Any, expected: type) -> ConditionPayload:
+    """Coerce *value* to the condition's declared payload type."""
+    if expected is bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            v = value.strip().lower()
+            if v in _BOOL_TRUE:
+                return True
+            if v in _BOOL_FALSE:
+                return False
+            raise ValueError(f"could not parse {value!r} as bool")
+        raise TypeError(f"expected bool payload, got {type(value).__name__}")
+    if expected is int:
+        if isinstance(value, bool):
+            raise TypeError("expected int payload, got bool")
+        if isinstance(value, int):
+            return value
+        if isinstance(value, str):
+            try:
+                return int(value)
+            except ValueError as e:
+                raise ValueError(f"could not parse {value!r} as int") from e
+        raise TypeError(f"expected int payload, got {type(value).__name__}")
+    if expected is float:
+        if isinstance(value, bool):
+            raise TypeError("expected float payload, got bool")
+        if isinstance(value, float):
+            return value
+        if isinstance(value, int):
+            return float(value)
+        if isinstance(value, str):
+            try:
+                return float(value)
+            except ValueError as e:
+                raise ValueError(f"could not parse {value!r} as float") from e
+        raise TypeError(f"expected float payload, got {type(value).__name__}")
+    if expected is str:
+        return str(value)
+    raise TypeError(f"unsupported expected condition type {expected!r}")

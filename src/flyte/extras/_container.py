@@ -137,6 +137,11 @@ class ContainerTask(TaskTemplate):
                             "Please use a path-like syntax, such as: /var/inputs/infile.\n"
                             "This requirement is due to how Flyte Propeller processes template syntax inputs."
                         )
+                    # Under NAMED_DIR, File inputs stage into a per-input directory
+                    # (handled in execute); don't direct-bind them here. Dir
+                    # inputs still bind directly.
+                    if self._file_input_layout == "NAMED_DIR" and type(input_val) is File:
+                        continue
                     local_flyte_file_or_dir_path = input_val.path
                     remote_flyte_file_or_dir_path = os.path.join(self._input_data_dir, k)  # type: ignore
                     volume_binding[local_flyte_file_or_dir_path] = {
@@ -252,45 +257,80 @@ class ContainerTask(TaskTemplate):
         # if we returned a list instead, it would be treated as a single output.
         return tuple(output_items)
 
+    def _prepare_execution_volumes(
+        self, output_directory: pathlib.Path, **kwargs
+    ) -> Tuple[List[str], Dict[str, Dict[str, str]]]:
+        """
+        Build the command list and full set of Docker volume bindings for a local run.
+
+        This is the Docker-independent half of execute(): it renders command templates,
+        stages File / list[File] / Dir inputs into the layout CoPilot uses remotely, and
+        binds the output directory.
+        """
+
+        # Normalize the input and output directories
+        self._input_data_dir = os.path.normpath(self._input_data_dir) if self._input_data_dir else ""
+        self._output_data_dir = os.path.normpath(self._output_data_dir) if self._output_data_dir else ""
+
+        cmd_and_args = (self._cmd or []) + (self._args or [])
+        commands, volume_bindings = self._prepare_command_and_volumes(cmd_and_args, **kwargs)
+
+        # Stage File / list[File] inputs into a per-input directory, mirroring how
+        # CoPilot stages them remotely for the chosen layout so `--local` matches:
+        #   NAMED_DIR -> keep each file's original basename (and extension), so
+        #               extension-sniffing tools (salmon, STAR, ...) work without
+        #               the wrapper renaming anything; collisions get an index prefix.
+        #   DIRECT    -> bare index names (0, 1, ...), matching CoPilot's default.
+        # A single File is staged into a dir only under NAMED_DIR; under DIRECT it
+        # binds directly at /var/inputs/<name>. Dir inputs always bind directly.
+        named = self._file_input_layout == "NAMED_DIR"
+
+        def _stage_files_into_dir(items: list) -> str:
+            local_dir = storage.get_random_local_directory()
+            used: set[str] = set()
+            for i, item in enumerate(items):
+                if named:
+                    base = (item.name or os.path.basename(item.path)) or str(i)
+                    name = base
+                    n = 1
+                    while name in used:
+                        name = f"{n}_{base}"
+                        n += 1
+                    used.add(name)
+                    target = pathlib.Path(local_dir) / name
+                else:
+                    target = pathlib.Path(local_dir) / str(i)
+                shutil.copy2(item.path, target)
+            return str(local_dir)
+
+        for k, v in kwargs.items():
+            remote_path = os.path.join(str(self._input_data_dir), k)
+            if isinstance(v, File):
+                if named:
+                    volume_bindings[_stage_files_into_dir([v])] = {"bind": remote_path, "mode": "rw"}
+                elif v.path not in volume_bindings:
+                    volume_bindings[v.path] = {"bind": remote_path, "mode": "rw"}
+            elif isinstance(v, Dir):
+                if v.path not in volume_bindings:
+                    volume_bindings[v.path] = {"bind": remote_path, "mode": "rw"}
+            elif isinstance(v, list) and v and all(isinstance(item, File) for item in v):
+                volume_bindings[_stage_files_into_dir(v)] = {"bind": remote_path, "mode": "rw"}
+
+        volume_bindings[str(output_directory)] = {
+            "bind": self._output_data_dir,
+            "mode": "rw",
+        }
+
+        return commands, volume_bindings
+
     async def execute(self, **kwargs) -> Any:
         try:
             import docker
         except ImportError:
             raise ImportError("Docker is not installed. Please install Docker by running `pip install docker`.")
 
-        # Normalize the input and output directories
-        self._input_data_dir = os.path.normpath(self._input_data_dir) if self._input_data_dir else ""
-        self._output_data_dir = os.path.normpath(self._output_data_dir) if self._output_data_dir else ""
-
         output_directory = storage.get_random_local_directory()
-        cmd_and_args = (self._cmd or []) + (self._args or [])
-        commands, volume_bindings = self._prepare_command_and_volumes(cmd_and_args, **kwargs)
-
-        # Mount any File/Dir inputs not already bound via command templates.
-        # This covers verbatim mode in sandbox, where inputs aren't referenced in the command
-        # string but the container expects them at /var/inputs/<name>.
-        for k, v in kwargs.items():
-            if isinstance(v, (File, Dir)):
-                local_path = v.path
-                if local_path not in volume_bindings:
-                    remote_path = os.path.join(str(self._input_data_dir), k)
-                    volume_bindings[local_path] = {"bind": remote_path, "mode": "rw"}
-
-        # Materialize list[File] inputs into /var/inputs/<name>/<i> so local
-        # docker execution matches the CoPilot layout used remotely.
-        for k, v in kwargs.items():
-            if isinstance(v, list) and all(isinstance(item, File) for item in v):
-                local_dir = storage.get_random_local_directory()
-                for i, item in enumerate(v):
-                    target = pathlib.Path(local_dir) / str(i)
-                    shutil.copy2(item.path, target)
-                remote_path = os.path.join(str(self._input_data_dir), k)
-                volume_bindings[str(local_dir)] = {"bind": remote_path, "mode": "rw"}
-
-        volume_bindings[str(output_directory)] = {
-            "bind": self._output_data_dir,
-            "mode": "rw",
-        }
+        commands, volume_bindings = self._prepare_execution_volumes(output_directory, **kwargs)
 
         client = docker.from_env()
         if isinstance(self._image, str):
