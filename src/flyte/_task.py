@@ -233,11 +233,11 @@ class TaskTemplate(Generic[P, R, F]):
         return self.interface
 
     @overload
-    async def aio(self: TaskTemplate[P, R, SyncFunctionType], *args: P.args, **kwargs: P.kwargs) -> R: ...
+    async def aio(self: TaskTemplate[P, R, Callable[P, R]], *args: P.args, **kwargs: P.kwargs) -> R: ...
 
     @overload
     async def aio(
-        self: TaskTemplate[P, R, AsyncFunctionType], *args: P.args, **kwargs: P.kwargs
+        self: TaskTemplate[P, R, Callable[P, Coroutine[Any, Any, R]]], *args: P.args, **kwargs: P.kwargs
     ) -> Coroutine[Any, Any, R]: ...
 
     async def aio(self, *args: P.args, **kwargs: P.kwargs) -> Coroutine[Any, Any, R] | R:
@@ -294,11 +294,11 @@ class TaskTemplate(Generic[P, R, F]):
             return self.forward(*args, **kwargs)
 
     @overload
-    def __call__(self: TaskTemplate[P, R, SyncFunctionType], *args: P.args, **kwargs: P.kwargs) -> R: ...
+    def __call__(self: TaskTemplate[P, R, Callable[P, R]], *args: P.args, **kwargs: P.kwargs) -> R: ...
 
     @overload
     def __call__(
-        self: TaskTemplate[P, R, AsyncFunctionType], *args: P.args, **kwargs: P.kwargs
+        self: TaskTemplate[P, R, Callable[P, Coroutine[Any, Any, R]]], *args: P.args, **kwargs: P.kwargs
     ) -> Coroutine[Any, Any, R]: ...
 
     def __call__(self, *args: P.args, **kwargs: P.kwargs) -> Coroutine[Any, Any, R] | R:

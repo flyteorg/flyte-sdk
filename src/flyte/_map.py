@@ -21,7 +21,7 @@ class MapAsyncIterator(Generic[P, R]):
 
     def __init__(
         self,
-        func: AsyncFunctionTaskTemplate[P, R, F] | functools.partial[R],
+        func: AsyncFunctionTaskTemplate[P, R, Any] | functools.partial[R],
         args: tuple,
         name: str,
         concurrency: int,
@@ -259,7 +259,7 @@ class _Mapper(Generic[P, R]):
     @overload
     def __call__(
         self,
-        func: AsyncFunctionTaskTemplate[P, R, F] | functools.partial[R],
+        func: AsyncFunctionTaskTemplate[P, R, Any] | functools.partial[R],
         *args: Iterable[Any],
         group_name: str | None = None,
         concurrency: int = 0,
@@ -268,7 +268,7 @@ class _Mapper(Generic[P, R]):
     @overload
     def __call__(
         self,
-        func: AsyncFunctionTaskTemplate[P, R, F] | functools.partial[R],
+        func: AsyncFunctionTaskTemplate[P, R, Any] | functools.partial[R],
         *args: Iterable[Any],
         group_name: str | None = None,
         concurrency: int = 0,
@@ -277,7 +277,7 @@ class _Mapper(Generic[P, R]):
 
     def __call__(
         self,
-        func: AsyncFunctionTaskTemplate[P, R, F] | functools.partial[R],
+        func: AsyncFunctionTaskTemplate[P, R, Any] | functools.partial[R],
         *args: Iterable[Any],
         group_name: str | None = None,
         concurrency: int = 0,
@@ -337,7 +337,7 @@ class _Mapper(Generic[P, R]):
 
     async def aio(
         self,
-        func: AsyncFunctionTaskTemplate[P, R, F] | functools.partial[R],
+        func: AsyncFunctionTaskTemplate[P, R, Any] | functools.partial[R],
         *args: Iterable[Any],
         group_name: str | None = None,
         concurrency: int = 0,
@@ -380,7 +380,7 @@ class _Mapper(Generic[P, R]):
 
 @syncify
 async def _map(
-    func: AsyncFunctionTaskTemplate[P, R, F] | functools.partial[R],
+    func: AsyncFunctionTaskTemplate[P, R, Any] | functools.partial[R],
     *args: Iterable[Any],
     name: str = "map",
     concurrency: int = 0,

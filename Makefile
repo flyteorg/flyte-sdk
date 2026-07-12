@@ -27,6 +27,10 @@ mypy:
 		examples/basics/hello.py \
 		examples/basics/hello_v2.py
 
+.PHONY: ty
+ty:
+	uv run ty check examples/basics/hello_v2.py
+
 .PHONY: uvlock
 uvlock:
 	bash maint_tools/uvlock.sh

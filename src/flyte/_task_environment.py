@@ -261,7 +261,7 @@ class TaskEnvironment(Environment):
 
     def task(
         self,
-        _func: F | None = None,
+        _func: Callable[P, R] | None = None,
         *,
         short_name: Optional[str] = None,
         cache: CacheRequest | None = None,
@@ -277,7 +277,7 @@ class TaskEnvironment(Environment):
         links: Tuple[Link, ...] | Link = (),
         task_resolver: Any | None = None,
         entrypoint: bool = False,
-    ) -> Callable[[F], AsyncFunctionTaskTemplate[P, R, F]] | AsyncFunctionTaskTemplate[P, R, F]:
+    ) -> Callable[[Callable[P, R]], AsyncFunctionTaskTemplate[P, R, Callable[P, R]]] | AsyncFunctionTaskTemplate[P, R, Callable[P, R]]:
         """
         Decorate a function to be a task.
 
@@ -316,13 +316,13 @@ class TaskEnvironment(Environment):
 
         :return: A TaskTemplate that can be used to deploy the task.
         """
-        from ._task import F, P, R
+        from ._task import P, R
 
         if self.reusable is not None:
             if pod_template is not None:
                 raise ValueError("Cannot set pod_template when environment is reusable.")
 
-        def decorator(func: F) -> AsyncFunctionTaskTemplate[P, R, F]:
+        def decorator(func: Callable[P, R]) -> AsyncFunctionTaskTemplate[P, R, Callable[P, R]]:
             short = short_name or func.__name__
             task_name = self.name + "." + func.__name__
 
@@ -336,7 +336,7 @@ class TaskEnvironment(Environment):
             if self.plugin_config is not None:
                 from flyte.extend import TaskPluginRegistry
 
-                task_template_class: type[AsyncFunctionTaskTemplate[P, R, F]] | None = TaskPluginRegistry.find(
+                task_template_class: type[AsyncFunctionTaskTemplate[P, R, Callable[P, R]]] | None = TaskPluginRegistry.find(
                     config_type=type(self.plugin_config)
                 )
                 if task_template_class is None:
@@ -345,9 +345,9 @@ class TaskEnvironment(Environment):
                         f"Please register a plugin using flyte.extend.TaskPluginRegistry.register() api."
                     )
             else:
-                task_template_class = AsyncFunctionTaskTemplate[P, R, F]
+                task_template_class = AsyncFunctionTaskTemplate[P, R, Callable[P, R]]
 
-            task_template_class = cast(type[AsyncFunctionTaskTemplate[P, R, F]], task_template_class)
+            task_template_class = cast(type[AsyncFunctionTaskTemplate[P, R, Callable[P, R]]], task_template_class)
             tmpl = task_template_class(
                 func=func,
                 name=task_name,
@@ -379,8 +379,8 @@ class TaskEnvironment(Environment):
             return tmpl
 
         if _func is None:
-            return cast(Callable[[F], AsyncFunctionTaskTemplate[P, R, F]], decorator)
-        return cast(AsyncFunctionTaskTemplate[P, R, F], decorator(_func))
+            return cast(Callable[[Callable[P, R]], AsyncFunctionTaskTemplate[P, R, Callable[P, R]]], decorator)
+        return cast(AsyncFunctionTaskTemplate[P, R, Callable[P, R]], decorator(_func))
 
     @property
     def sandbox(self) -> _SandboxNamespace:
@@ -447,7 +447,7 @@ class _SandboxNamespace:
     @overload
     def orchestrator(
         self,
-        _func_or_source: Callable,
+        _func_or_source: Callable[..., Any],
         /,
     ) -> "SandboxedTaskTemplate": ...
 
@@ -477,7 +477,7 @@ class _SandboxNamespace:
         name: str | None = None,
         cache: CacheRequest | None = None,
         retries: int = 0,
-    ) -> "Callable[[Callable], SandboxedTaskTemplate]": ...
+    ) -> "Callable[[Callable[..., Any]], SandboxedTaskTemplate]": ...
 
     def orchestrator(  # type: ignore[misc]
         self,
@@ -532,7 +532,7 @@ class _SandboxNamespace:
                 type_check=type_check,
             )
 
-            def decorator(func: Callable) -> SandboxedTaskTemplate:
+            def decorator(func: Callable[..., Any]) -> SandboxedTaskTemplate:
                 task_name = name or (env.name + "." + func.__name__)
                 interface = NativeInterface.from_callable(func)
                 tmpl = SandboxedTaskTemplate(
