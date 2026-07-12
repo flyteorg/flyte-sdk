@@ -204,9 +204,14 @@ class Action:
         run_output_base: str,
         report_uri: str | None = None,
         typed_interface: interface_pb2.TypedInterface | None = None,
+        error: execution_pb2.ExecutionError | None = None,
     ) -> Action:
         """
         This creates a new action for tracing purposes. It is used to track the execution of a trace.
+
+        When ``error`` is set the trace recorded a failure and the action is marked FAILED
+        (not SUCCEEDED): recording an errored step as a success — with an empty ``outputs_uri`` —
+        both hides the failure and, on replay, sends that empty URI into ``load_outputs``.
         """
         st = timestamp_pb2.Timestamp()
         st.FromSeconds(int(start_time))
@@ -218,6 +223,8 @@ class Action:
 
         spec = task_definition_pb2.TraceSpec(interface=typed_interface) if typed_interface else None
 
+        phase = phase_pb2.ACTION_PHASE_FAILED if error is not None else phase_pb2.ACTION_PHASE_SUCCEEDED
+
         return cls(
             action_id=action_id,
             parent_action_name=parent_action_name,
@@ -226,11 +233,12 @@ class Action:
             group=group_data,
             inputs_uri=inputs_uri,
             realized_outputs_uri=outputs_uri,
-            phase=phase_pb2.ACTION_PHASE_SUCCEEDED,
+            phase=phase,
+            err=error,
             run_output_base=run_output_base,
             trace=run_definition_pb2.TraceAction(
                 name=friendly_name,
-                phase=phase_pb2.ACTION_PHASE_SUCCEEDED,
+                phase=phase,
                 start_time=st,
                 end_time=et,
                 outputs=common_pb2.OutputReferences(

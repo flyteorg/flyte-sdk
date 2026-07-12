@@ -82,6 +82,59 @@ def test_serialized_pod_spec_merges_app_env_image_into_primary_container():
     assert primary_container.get("securityContext", {}).get("privileged") is True
 
 
+def test_serialized_pod_spec_merges_resources_preserving_extended():
+    """
+    GOAL: app_env.resources (cpu/mem) must MERGE into the primary container's
+    existing resources, not replace them — preserving extended-resource requests
+    (e.g. device-plugin "smarter-devices/fuse" set via the pod template /
+    PodTemplate.allow_fuse()). Regression for the resource-overwrite bug that
+    silently dropped the FUSE device request from apps.
+    """
+    from kubernetes.client import V1Container, V1PodSpec, V1ResourceRequirements
+
+    import flyte
+
+    pod_template = flyte.PodTemplate(
+        primary_container_name="app",
+        pod_spec=V1PodSpec(
+            containers=[
+                V1Container(
+                    name="app",
+                    image="python:3.11",
+                    resources=V1ResourceRequirements(
+                        limits={"smarter-devices/fuse": "1"},
+                        requests={"smarter-devices/fuse": "1"},
+                    ),
+                )
+            ]
+        ),
+    )
+
+    app_env = AppEnvironment(
+        name="test-app",
+        image=Image.from_base("python:3.11"),
+        pod_template=pod_template,
+        resources=Resources(cpu=1, memory="512Mi"),
+    )
+
+    ctx = SerializationContext(
+        org="test-org",
+        project="test-project",
+        domain="test-domain",
+        version="v1",
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    pod_spec_dict = _serialized_pod_spec(app_env, pod_template, ctx)
+    res = pod_spec_dict["containers"][0]["resources"]
+
+    # The extended resource from the pod template survives the merge...
+    assert "smarter-devices/fuse" in res["limits"]
+    assert "smarter-devices/fuse" in res["requests"]
+    # ...and the app-declared cpu/memory are merged in alongside it.
+    assert "cpu" in res["requests"] and "memory" in res["requests"]
+
+
 def test_serialized_pod_spec_preserves_explicit_container_image():
     """
     GOAL: Verify that an explicit image in the pod_template container is NOT overwritten.

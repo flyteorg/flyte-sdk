@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from flyteidl2.common import identifier_pb2, phase_pb2
+from flyteidl2.core import execution_pb2
 from flyteidl2.task import common_pb2
 
 import flyte
@@ -203,11 +204,82 @@ async def test_submit_task_with_error():
         )
         with ctx.replace_task_context(tctx):
             controller = RemoteController(client_coro=make_client(), workers=2, max_system_retries=2)
-            with pytest.raises(Exception, match="Error in task"):
+            # The returned action carries client_err — that real error must propagate, not be
+            # swallowed into a generic "Error in task ...: None" fallback.
+            with pytest.raises(Exception, match="Task failed"):
                 await controller.submit(t1)
 
         mock_upload_inputs.assert_called_once()
         mock_submit_and_wait.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_submit_task_error_from_observed_action_on_recovery():
+    """Regression: on recovery, the failed sub-action's error is observed on the action object
+    that submit_and_wait_for_action *returns* (the cache/`from_state` object), NOT on the local
+    stub that ``_submit`` builds via ``Action.from_task``.
+
+    The first run happens to work because the stub is also the cached object (submit-before-watch),
+    so ``merge_state`` lands the error on it. On a retry the watch observes the pre-existing FAILED
+    action first, so the returned ``n`` carries the error while the local stub stays empty. The
+    propagated exception must reflect the *real* user error, not a generic
+    ``UnableToConvertError: Error in task ...: None``.
+    """
+
+    async def make_client() -> ClientSet:
+        return AsyncMock()  # type: ignore
+
+    # `n` — the observed/cached action returned by submit_and_wait_for_action. Distinct object
+    # from the stub that _submit builds internally; it is the only one carrying the failure.
+    observed = Action(
+        parent_action_name="test_parent_action",
+        action_id=identifier_pb2.ActionIdentifier(name="test_action"),
+        phase=phase_pb2.ACTION_PHASE_FAILED,
+        err=execution_pb2.ExecutionError(
+            code="BadRequest",
+            message="400 Resources exceeded during query execution: Memory exceeded while reading Parquet",
+            kind=execution_pb2.ExecutionError.USER,
+        ),
+        run_output_base="/tmp/outputs/base",
+    )
+
+    with (
+        patch(
+            "flyte._internal.controllers.remote._controller.upload_inputs_with_retry",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "flyte._internal.controllers.remote._controller.RemoteController.submit_and_wait_for_action",
+            new_callable=AsyncMock,
+        ) as mock_submit_and_wait,
+        patch("flyte._initialize.get_init_config") as mock_get_common_config,
+    ):
+        mock_get_common_config.return_value.root_dir = pathlib.Path(__file__).parent
+        mock_submit_and_wait.return_value = observed
+
+        this_dir_str = str(pathlib.Path(__file__).parent.absolute())
+        ctx = internal_ctx()
+        tctx = TaskContext(
+            action=ActionID(name="test"),
+            raw_data_path=RawDataPath(path="test"),
+            output_path="/tmp",
+            version="v1",
+            run_base_dir="/tmp/outputs/base",
+            report=flyte.report.Report(name="test_report"),
+            code_bundle=CodeBundle(
+                computed_version="vcode-bundle",
+                destination=this_dir_str,
+                tgz="dummy.tgz",
+            ),
+        )
+        with ctx.replace_task_context(tctx):
+            controller = RemoteController(client_coro=make_client(), workers=2, max_system_retries=2)
+            with pytest.raises(flyte.errors.RuntimeUserError, match="Resources exceeded") as exc_info:
+                await controller.submit(t1)
+
+        # The propagated error must be the real USER error, not the generic dropped-error fallback.
+        assert "UnableToConvertError" not in str(exc_info.value)
+        assert "None" not in str(exc_info.value)
 
 
 @pytest.mark.asyncio
@@ -427,6 +499,69 @@ async def test_record_trace_with_error():
         mock_convert_error.assert_called_once_with(test_error)
         mock_upload_error.assert_called_once()
         mock_submit_and_wait.assert_called_once()
+        # The recorded errored trace must carry recoverability into error.pb so a replay can
+        # distinguish a transient failure (re-run) from a deterministic one (replay).
+        assert "recoverable" in mock_upload_error.call_args.kwargs
+
+
+def test_from_trace_success_is_succeeded():
+    """A trace with no error records SUCCEEDED (unchanged behavior)."""
+    action_id = identifier_pb2.ActionIdentifier(name="t", run=identifier_pb2.RunIdentifier(name="r"))
+    a = Action.from_trace(
+        parent_action_name="parent",
+        action_id=action_id,
+        friendly_name="fn",
+        group_data=None,
+        inputs_uri="in://x",
+        outputs_uri="out://x",
+        start_time=0.0,
+        end_time=1.0,
+        run_output_base="base://x",
+    )
+    assert a.phase == phase_pb2.ACTION_PHASE_SUCCEEDED
+    assert a.trace.phase == phase_pb2.ACTION_PHASE_SUCCEEDED
+    assert a.err is None
+
+
+def test_from_trace_error_is_failed():
+    """A trace that recorded an error must be FAILED, not SUCCEEDED — recording it as a
+    success with an empty outputs_uri both hides the failure and, on replay, sends the empty
+    URI into load_outputs (the reproduced IsADirectoryError crash)."""
+    action_id = identifier_pb2.ActionIdentifier(name="t", run=identifier_pb2.RunIdentifier(name="r"))
+    err = execution_pb2.ExecutionError(
+        code="429", message="rate limited", recoverability=execution_pb2.ContainerError.RECOVERABLE
+    )
+    a = Action.from_trace(
+        parent_action_name="parent",
+        action_id=action_id,
+        friendly_name="fn",
+        group_data=None,
+        inputs_uri="in://x",
+        outputs_uri="",
+        start_time=0.0,
+        end_time=1.0,
+        run_output_base="base://x",
+        error=err,
+    )
+    assert a.phase == phase_pb2.ACTION_PHASE_FAILED
+    assert a.trace.phase == phase_pb2.ACTION_PHASE_FAILED
+    assert a.err is err
+    assert a.has_error()
+
+
+def test_trace_error_is_recoverable_helper():
+    """Recoverability gates replay-vs-rerun: RECOVERABLE re-runs, everything else replays."""
+    from flyte._internal.controllers.remote._controller import _trace_error_is_recoverable
+
+    recoverable = execution_pb2.ExecutionError(recoverability=execution_pb2.ContainerError.RECOVERABLE)
+    non_recoverable = execution_pb2.ExecutionError(recoverability=execution_pb2.ContainerError.NON_RECOVERABLE)
+    unset = execution_pb2.ExecutionError(code="x", message="no recoverability set")
+
+    assert _trace_error_is_recoverable(recoverable) is True
+    assert _trace_error_is_recoverable(non_recoverable) is False
+    # Defaults to NON_RECOVERABLE (0) when unset or absent -> replay, matching prior behavior.
+    assert _trace_error_is_recoverable(unset) is False
+    assert _trace_error_is_recoverable(None) is False
 
 
 @pytest.mark.asyncio

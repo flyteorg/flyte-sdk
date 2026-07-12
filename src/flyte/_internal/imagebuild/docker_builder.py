@@ -245,7 +245,22 @@ class PythonWheelHandler:
         pip_install_args = layer.get_pip_install_args()
         secret_mounts = _get_secret_mounts_layer(layer.secret_mounts)
 
-        # First install: Install the wheel without dependencies using --no-deps
+        # First install: resolve and install the package's dependencies from the index. Keep /dist as
+        # a findlink so the package itself still resolves even when it isn't published to PyPI (e.g. a
+        # local plugin wheel); its dependencies come from the index. The exact local wheel is forced in
+        # the second step, so it does not matter which version of the package this step picks.
+        pip_install_args_deps = [*pip_install_args, "--find-links", "/dist", layer.package_name]
+        delta1 = UV_WHEEL_INSTALL_COMMAND_TEMPLATE.substitute(
+            PIP_INSTALL_ARGS=" ".join(pip_install_args_deps), SECRET_MOUNT=secret_mounts
+        )
+        dockerfile += delta1
+
+        # Second install (last): force the exact local wheel on top of whatever the dependency step
+        # installed. --no-index + --reinstall guarantees the local wheel wins and nothing re-resolves
+        # it to a published release afterwards. This must run after the dependency step: a full resolve
+        # can otherwise discard the local wheel in favor of a stable PyPI release -- e.g. when one of
+        # the local wheel's dependencies can't be satisfied, uv backtracks to the published version
+        # (silently swapping a `with_local_v2()` build back to the released package).
         pip_install_args_no_deps = [
             *pip_install_args,
             *[
@@ -257,18 +272,8 @@ class PythonWheelHandler:
                 layer.package_name,
             ],
         ]
-
-        delta1 = UV_WHEEL_INSTALL_COMMAND_TEMPLATE.substitute(
-            PIP_INSTALL_ARGS=" ".join(pip_install_args_no_deps), SECRET_MOUNT=secret_mounts
-        )
-        dockerfile += delta1
-
-        # Second install: Install dependencies from PyPI. Keep /dist as a findlink so the package
-        # itself resolves to the local wheel even when it isn't published to PyPI (e.g. a local
-        # plugin wheel); its dependencies still come from the index.
-        pip_install_args_deps = [*pip_install_args, "--find-links", "/dist", layer.package_name]
         delta2 = UV_WHEEL_INSTALL_COMMAND_TEMPLATE.substitute(
-            PIP_INSTALL_ARGS=" ".join(pip_install_args_deps), SECRET_MOUNT=secret_mounts
+            PIP_INSTALL_ARGS=" ".join(pip_install_args_no_deps), SECRET_MOUNT=secret_mounts
         )
         dockerfile += delta2
 

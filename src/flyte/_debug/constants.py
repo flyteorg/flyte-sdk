@@ -43,3 +43,37 @@ VSCODE_READY_MESSAGE = "Vscode server is ready"
 
 # Subprocess constants
 EXIT_CODE_SUCCESS = 0
+
+# ---------------------------------------------------------------------------
+# SSH-into-task debug over WebSocket (see prds/ssh-debug-wstunnel.md)
+#
+# Parallel to the code-server path: instead of a browser IDE we start an sshd
+# bound to loopback and an in-process WebSocket->sshd bridge on the same debug
+# port the dataplane already routes to (:6060). The bridge also answers the
+# code-server HTTP readiness probe so the pod goes Ready. Auth is two independent
+# gates: whatever gates the Cloudflare/Envoy route gates *reaching* the tunnel;
+# sshd key-auth gates *the shell*.
+# ---------------------------------------------------------------------------
+
+# Env var that flips the a0 entrypoint into code-server (VS Code) debug mode.
+FLYTE_ENABLE_VSCODE_KEY = "_F_E_VS"
+# Env var (parallel to _F_E_VS) that flips the a0 entrypoint into ssh-debug mode.
+FLYTE_ENABLE_SSH_KEY = "_F_E_SSH"
+# Env var carrying the user's SSH *public* key contents to authorize for login.
+FLYTE_SSH_PUBKEY_KEY = "_F_SSH_PK"
+# Optional override for the ssh login user name.
+FLYTE_SSH_USER_KEY = "_F_SSH_USER"
+
+# Loopback address + port the in-pod sshd listens on. Only reachable via the bridge.
+SSHD_BIND_HOST = "127.0.0.1"
+SSHD_PORT = 2222
+# The routed debug port the dataplane forwards to (same one code-server uses).
+WSTUNNEL_PORT = VSCODE_PORT  # 6060
+
+# Where ssh-debug scratch (host key, sshd_config, authorized_keys) is written.
+SSH_DEBUG_DIR = Path.home() / ".flyte-ssh-debug"
+
+# Printed in the cluster logs once sshd + the WS bridge are accepting connections.
+SSH_READY_MESSAGE = "SSH debug server is ready"
+# The login user defaults to whoever the container runs as.
+DEFAULT_SSH_USER = "root"

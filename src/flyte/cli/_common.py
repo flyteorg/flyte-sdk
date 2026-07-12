@@ -450,7 +450,10 @@ def format(title: str, vals: Iterable[Any], of: OutputFormat = "table") -> Table
         case "json-raw":
             if not vals:
                 return "[]"
-            return json.dumps([v.to_dict() if hasattr(v, "to_dict") else dict(v) for v in vals])
+            # default=str lets values that aren't natively JSON serializable (e.g. pathlib.Path
+            # module paths surfaced in deploy output) fall back to their string form instead of
+            # raising a raw TypeError.
+            return json.dumps([v.to_dict() if hasattr(v, "to_dict") else dict(v) for v in vals], default=str)
 
     raise click.ClickException("Unknown output format. Supported formats are: table, table-simple, json.")
 

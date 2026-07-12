@@ -268,6 +268,17 @@ def secret(
     show_default=True,
 )
 @click.option(
+    "--registry",
+    type=str,
+    default=None,
+    required=False,
+    help=(
+        "Container registry to use as the base registry when building images (e.g. 'ghcr.io/my-org'). "
+        "When set, this overrides the built-in default base registry. Equivalent to the 'image.registry' "
+        "config entry or the FLYTE_IMAGE_REGISTRY environment variable."
+    ),
+)
+@click.option(
     "--auth-type",
     type=click.Choice(common.ALL_AUTH_OPTIONS, case_sensitive=False),
     default=None,
@@ -291,6 +302,7 @@ def config(
     domain: str | None = None,
     force: bool = False,
     image_builder: str | None = None,
+    registry: str | None = None,
     auth_type: str | None = None,
     local_persistence: bool = False,
 ):
@@ -337,6 +349,8 @@ def config(
     image: Dict[str, str] = {}
     if image_builder:
         image["builder"] = image_builder
+    if registry:
+        image["registry"] = registry
 
     local: Dict[str, Any] = {}
     if local_persistence:
