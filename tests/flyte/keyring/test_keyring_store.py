@@ -66,28 +66,19 @@ def test_store_skips_when_disabled():
     assert result is creds
 
 
-def test_store_writes_access_and_refresh_when_enabled():
+def test_store_writes_single_keychain_item():
+    """One keychain item for both tokens = one macOS keychain prompt on retrieve."""
+    import json
+
     from flyte.remote._client.auth._keyring import Credentials, KeyringStore
 
     creds = Credentials(access_token="tok", for_endpoint="foo", refresh_token="rtok")
     with patch("keyring.set_password") as mock_set:
         KeyringStore.store(creds, disable=False)
 
-    # Expect both refresh_token and access_token writes.
-    assert mock_set.call_count == 2
-    call_args = {call.args[1]: call.args[2] for call in mock_set.call_args_list}
-    assert call_args == {"access_token": "tok", "refresh_token": "rtok"}
-
-
-def test_store_writes_only_access_when_no_refresh():
-    from flyte.remote._client.auth._keyring import Credentials, KeyringStore
-
-    creds = Credentials(access_token="tok", for_endpoint="foo")
-    with patch("keyring.set_password") as mock_set:
-        KeyringStore.store(creds, disable=False)
-
     assert mock_set.call_count == 1
-    assert mock_set.call_args.args[1] == "access_token"
+    assert mock_set.call_args.args[1] == "tokens"
+    assert json.loads(mock_set.call_args.args[2]) == {"access_token": "tok", "refresh_token": "rtok"}
 
 
 def test_store_swallows_no_keyring_error():
@@ -121,18 +112,27 @@ def test_retrieve_returns_none_when_no_tokens_stored():
 
 
 def test_retrieve_returns_credentials_when_access_token_present():
+    import json
+
     from flyte.remote._client.auth._keyring import KeyringStore
 
-    def fake_get(endpoint, key):
-        return {"access_token": "a", "refresh_token": "r"}.get(key)
-
-    with patch("keyring.get_password", side_effect=fake_get):
+    stored = json.dumps({"access_token": "a", "refresh_token": "r"})
+    with patch("keyring.get_password", return_value=stored) as mock_get:
         creds = KeyringStore.retrieve("https://flyte.example.com", disable=False)
 
+    # Exactly one keychain read = exactly one macOS keychain prompt.
+    assert mock_get.call_count == 1
     assert creds is not None
     assert creds.access_token == "a"
     assert creds.refresh_token == "r"
     assert creds.for_endpoint == "flyte.example.com"  # scheme stripped
+
+
+def test_retrieve_returns_none_on_unparseable_tokens():
+    from flyte.remote._client.auth._keyring import KeyringStore
+
+    with patch("keyring.get_password", return_value="not-json"):
+        assert KeyringStore.retrieve("foo", disable=False) is None
 
 
 def test_retrieve_strips_scheme_before_lookup():
@@ -164,15 +164,14 @@ def test_delete_skips_when_disabled():
     mock_del.assert_not_called()
 
 
-def test_delete_removes_both_keys_when_enabled():
+def test_delete_removes_tokens_and_legacy_keys_when_enabled():
     from flyte.remote._client.auth._keyring import KeyringStore
 
     with patch("keyring.delete_password") as mock_del:
         KeyringStore.delete("https://flyte.example.com", disable=False)
 
-    assert mock_del.call_count == 2
     keys_deleted = {call.args[1] for call in mock_del.call_args_list}
-    assert keys_deleted == {"access_token", "refresh_token"}
+    assert keys_deleted == {"tokens", "access_token", "refresh_token"}
 
 
 def test_delete_swallows_password_delete_error():
