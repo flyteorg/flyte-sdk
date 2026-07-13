@@ -47,7 +47,7 @@ class Controller:
         self,
         client_coro: Awaitable[ClientSet],
         workers: int = 20,
-        max_system_retries: int = 10,
+        max_system_retries: int = 100,
         resource_log_interval_sec: float = 10.0,
         min_backoff_on_err_sec: float = 0.5,
         thread_wait_timeout_sec: float = 5.0,
@@ -56,7 +56,11 @@ class Controller:
         """
         Create a new controller instance.
         :param workers: Number of worker threads.
-        :param max_system_retries: Maximum number of system retries.
+        :param max_system_retries: Maximum number of retries for retryable (system) failures. With backoff capped
+            at _F_MAX_BFF_ON_ERR (10s), this bounds how long a transient outage the controller rides out
+            (~100 retries is roughly 20-25 minutes). It must comfortably exceed control-plane rollouts and the
+            kernel's ~15 minute abandonment of a black-holed TCP connection, since a parent that has run for
+            hours should not be failed by a minutes-long blip.
         :param resource_log_interval_sec: Interval for logging resource stats.
         :param min_backoff_on_err_sec: Minimum backoff time on error.
         :param thread_wait_timeout_sec: Timeout for waiting for the controller thread to start.
@@ -528,7 +532,7 @@ class Controller:
                     action.retries += 1
                     if action.retries > self._max_retries:
                         raise
-                    backoff = min(self._min_backoff_on_err * (2 ** (action.retries - 1)), self._max_backoff_on_err)
+                    backoff = min(self._min_backoff_on_err * (2 ** min(action.retries - 1, 20)), self._max_backoff_on_err)
                     logger.warning(
                         f"[{worker_id}] Backing off for {backoff} [retry {action.retries}/{self._max_retries}] "
                         f"on action {action.name} due to error: {e}"
