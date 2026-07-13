@@ -114,6 +114,7 @@ dev = [
     "mcp>=1.26.0",
     "starlette",
     "uvicorn",
+    "ty>=0.0.56",
 ]
 
 [tool.setuptools]
@@ -211,8 +212,8 @@ flyte_controller_base = { path = "rs_controller" }
 [tool.ty.rules]
 unused-ignore-comment = "warn"
 redundant-cast = "ignore"
-possibly-unbound-attribute = "error"
-possibly-unbound-import = "error"
+possibly-missing-attribute = "error"
+possibly-missing-import = "error"
 
 [tool.codespell]
 # Ref: https://github.com/codespell-project/codespell#using-a-config-file
