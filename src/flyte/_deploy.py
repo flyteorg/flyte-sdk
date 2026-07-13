@@ -526,19 +526,27 @@ async def apply(deployment_plan: DeploymentPlan, copy_style: CopyFiles, dryrun: 
 
             import click
 
+            from ._utils import original_std_streams
+
             h = hashlib.md5()
             try:
-                h.update(cloudpickle.dumps(deployment_plan.envs))
-                h.update(code_bundle.computed_version.encode("utf-8"))
-                h.update(cloudpickle.dumps(image_cache))
+                # Pickle with the original std streams in place: a UI spinner (rich Live)
+                # may have swapped sys.stdout/sys.stderr for proxies, which breaks
+                # cloudpickle's identity-based handling of stream references held by
+                # module globals (e.g. loguru's default sink).
+                with original_std_streams():
+                    h.update(cloudpickle.dumps(deployment_plan.envs))
+                    h.update(code_bundle.computed_version.encode("utf-8"))
+                    h.update(cloudpickle.dumps(image_cache))
             except (_pickle.PicklingError, TypeError) as e:
                 raise click.ClickException(
-                    "Failed to compute deployment version: your task or environment captures an "
-                    f"unpicklable object ({type(e).__name__}: {e}). This is usually caused by closing "
-                    "over `sys.stdin` / `sys.stdout` / `sys.stderr`, an open file handle, a thread, "
-                    "or a lock from module-level code. Move the captured value inside the task "
-                    "function, or pass an explicit `version=...` to `flyte.deploy(...)` to skip "
-                    "version derivation."
+                    "Failed to compute deployment version: the deployment captures an "
+                    f"unpicklable object ({type(e).__name__}: {e}). This is usually caused by a "
+                    "reference to `sys.stdin` / `sys.stdout` / `sys.stderr`, an open file handle, "
+                    "a thread, or a lock reachable from module-level code — either in your task "
+                    "module or in a third-party library it imports. If the value is yours, move it "
+                    "inside the task function; otherwise pass an explicit `version=...` to "
+                    "`flyte.deploy(...)` to skip version derivation."
                 ) from e
             version = h.hexdigest()
 
