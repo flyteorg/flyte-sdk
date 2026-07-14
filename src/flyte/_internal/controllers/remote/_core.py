@@ -24,6 +24,12 @@ from ._action import Action
 from ._informer import InformerCache
 from ._service_protocol import ActionsService, ClientSet, QueueService, StateService
 
+# A request that dies at its client-side deadline may be riding a dead pooled connection
+# (a severed NAT/conntrack flow drops packets without RST, so the transport keeps reusing
+# the connection and every request on it hangs). After this many launch timeouts in a row,
+# the controller replaces the HTTP client so the next attempt opens a fresh connection.
+_LAUNCH_TIMEOUTS_BEFORE_NEW_CONNECTION = 3
+
 
 def _actions_metadata(action: Action) -> dict[str, str]:
     """Build request headers for Actions service calls."""
@@ -79,6 +85,7 @@ class Controller:
         self._client_coro = client_coro
         self._failure_event: Event | None = None
         self._enqueue_timeout = enqueue_timeout_sec
+        self._consecutive_launch_timeouts = 0
         self._informer_start_wait_timeout = thread_wait_timeout_sec
         max_qps = int(os.getenv("_F_MAX_QPS", "100"))
         self._rate_limiter = AsyncLimiter(max_qps, 1.0)
@@ -224,6 +231,7 @@ class Controller:
         self._running = True
         logger.debug("Waiting for Service Client to be ready")
         client_set = await self._client_coro
+        self._client_set: ClientSet = client_set
         self._state_service: StateService = client_set.state_service
         self._queue_service: QueueService = client_set.queue_service
         self._actions_service: ActionsService | None = client_set.actions_service
@@ -461,6 +469,7 @@ class Controller:
                             timeout_ms=int(self._enqueue_timeout * 1000),
                         )
                     logger.info(f"Successfully launched action: {action.name}")
+                    self._consecutive_launch_timeouts = 0
                 except httpx.TransportError as e:
                     # Transport-level failure (e.g. ConnectTimeout reaching the IDP during auth refresh,
                     # ReadTimeout, DNS failure). These never produced an HTTP response, so they bypass
@@ -471,6 +480,23 @@ class Controller:
                     )
                     raise flyte.errors.SlowDownError(f"Transient transport error ({type(e).__name__}): {e}") from e
                 except ConnectError as e:
+                    if e.code == Code.DEADLINE_EXCEEDED:
+                        self._consecutive_launch_timeouts += 1
+                        if self._consecutive_launch_timeouts >= _LAUNCH_TIMEOUTS_BEFORE_NEW_CONNECTION:
+                            logger.warning(
+                                f"{self._consecutive_launch_timeouts} consecutive launch timeouts; "
+                                "replacing the HTTP connection pool in case the pooled connection is dead."
+                            )
+                            self._consecutive_launch_timeouts = 0
+                            try:
+                                self._client_set.replace_http_client()
+                            except Exception:
+                                # Never let a failed replacement escape: it would bypass the
+                                # SlowDownError retry path and fail the action immediately.
+                                logger.exception("Failed to replace the HTTP client; keeping the existing one")
+                    else:
+                        # The server responded, so the connection is alive.
+                        self._consecutive_launch_timeouts = 0
                     if e.code == Code.ALREADY_EXISTS:
                         logger.info(f"Action {action.name} already exists, continuing to monitor.")
                         return
