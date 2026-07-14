@@ -206,7 +206,7 @@ env = AgentChatAppEnvironment(
 
 
 if __name__ == "__main__":
-    from flyte.app._deploy import DeployedAppEnvironment
+    from flyte.app import DeployedAppEnvironment
 
     flyte.init_from_config(root_dir=pathlib.Path(__file__).parent)
     deployments = flyte.deploy(env)

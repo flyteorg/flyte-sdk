@@ -233,7 +233,7 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    from flyte.app._deploy import DeployedAppEnvironment
+    from flyte.app import DeployedAppEnvironment
 
     flyte.init_from_config()
 

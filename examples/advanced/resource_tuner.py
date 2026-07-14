@@ -17,7 +17,7 @@ import typing
 
 import flyte
 import flyte.errors
-from flyte._task import TaskTemplate
+from flyte import TaskTemplate
 
 env = flyte.TaskEnvironment(
     "resource_tuner",

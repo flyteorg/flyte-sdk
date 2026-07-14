@@ -33,7 +33,7 @@ from _tools import ALL_TOOLS
 
 import flyte
 import flyte.report
-from flyte._task import AsyncFunctionTaskTemplate
+from flyte import AsyncFunctionTaskTemplate
 
 env = flyte.TaskEnvironment(
     name="llm-code-mode",
