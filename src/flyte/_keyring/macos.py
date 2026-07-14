@@ -46,23 +46,23 @@ class SecurityCliKeyring(KeyringBackend):
             [_SECURITY, "find-generic-password", "-a", username, "-s", service, "-w"],
             capture_output=True,
             text=True,
+            check=False,
         )
         if result.returncode != 0:
             return None
         # -w appends exactly one newline to the secret.
-        return result.stdout[:-1] if result.stdout.endswith("\n") else result.stdout
+        return result.stdout.removesuffix("\n")
 
     def set_password(self, service: str, username: str, password: str) -> None:
         # Interactive mode keeps the secret out of the process argv.
         # -U updates in place; the item stays owned by /usr/bin/security.
-        command = (
-            f"add-generic-password -U -a {_quote(username)} -s {_quote(service)} -w {_quote(password)}\n"
-        )
+        command = f"add-generic-password -U -a {_quote(username)} -s {_quote(service)} -w {_quote(password)}\n"
         result = subprocess.run(
             [_SECURITY, "-i"],
             input=command,
             capture_output=True,
             text=True,
+            check=False,
         )
         if result.returncode != 0:
             raise RuntimeError(f"security add-generic-password failed: {result.stderr.strip()}")
@@ -72,6 +72,7 @@ class SecurityCliKeyring(KeyringBackend):
             [_SECURITY, "delete-generic-password", "-a", username, "-s", service],
             capture_output=True,
             text=True,
+            check=False,
         )
         if result.returncode == _NOT_FOUND:
             raise PasswordDeleteError("Password not found")
