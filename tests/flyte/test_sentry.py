@@ -490,3 +490,44 @@ def test_capture_exception_skips_wrapped_invalid_endpoint_error():
     with mock.patch.object(_sentry, "init") as init_mock:
         _sentry.capture_exception(err)
     init_mock.assert_not_called()
+
+
+def test_track_operation_counts_success():
+    with mock.patch.object(_sentry, "count") as count_mock:
+        with _sentry.track_operation("create_run"):
+            pass
+    count_mock.assert_called_once_with("flyte.operation", operation="create_run", status="success")
+
+
+def test_track_operation_counts_system_error_and_reraises():
+    with mock.patch.object(_sentry, "count") as count_mock:
+        with pytest.raises(RuntimeError):
+            with _sentry.track_operation("deploy_task"):
+                raise RuntimeError("boom")
+    count_mock.assert_called_once_with(
+        "flyte.operation",
+        operation="deploy_task",
+        status="error",
+        error_type="RuntimeError",
+        error_kind="system",
+    )
+
+
+def test_track_operation_tags_user_errors():
+    from flyte.errors import DeploymentError
+
+    with mock.patch.object(_sentry, "count") as count_mock:
+        with pytest.raises(DeploymentError):
+            with _sentry.track_operation("deploy_app"):
+                raise DeploymentError("bad config")
+    assert count_mock.call_args.kwargs["error_kind"] == "user"
+
+
+def test_track_operation_tags_error_code_when_present():
+    from flyte.errors import RuntimeSystemError
+
+    with mock.patch.object(_sentry, "count") as count_mock:
+        with pytest.raises(RuntimeSystemError):
+            with _sentry.track_operation("create_run"):
+                raise RuntimeSystemError("RunCreationError", "Failed to create run")
+    assert count_mock.call_args.kwargs["error_code"] == "RunCreationError"

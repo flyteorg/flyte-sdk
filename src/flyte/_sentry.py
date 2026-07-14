@@ -5,9 +5,11 @@ Initializes Sentry with a hardcoded DSN to report errors from CLI commands
 (e.g., `flyte start demo`). Users can opt out by setting FLYTE_DISABLE_SENTRY=true.
 """
 
+import atexit
 import errno
 import logging
 import os
+from contextlib import contextmanager
 
 from flyte._logging import logger
 
@@ -55,6 +57,8 @@ def init() -> None:
             release=_get_version(),
             default_integrations=False,
         )
+        # count() doesn't flush per call, flush everything once at exit.
+        atexit.register(lambda: sentry_sdk.flush(timeout=2))
     except ImportError:
         pass
     except Exception:
@@ -280,11 +284,34 @@ def count(key: str, value: int = 1, **tags: str) -> None:
 
         if sentry_sdk.is_initialized():
             sentry_sdk.metrics.count(key, value, attributes=tags or None)
-            sentry_sdk.flush(timeout=2)
     except ImportError:
         pass
     except Exception:
         pass
+
+
+@contextmanager
+def track_operation(operation: str):
+    """Count success/failure of a key SDK operation."""
+    try:
+        yield
+    except BaseException as e:
+        tags = {
+            "operation": operation,
+            "status": "error",
+            "error_type": type(e).__name__,
+            "error_kind": "user" if _is_user_error(e) else "system",
+        }
+        # .code is a stable, low-cardinality failure mode (unlike str(e)).
+        code = getattr(e, "code", None)
+        if code is not None:
+            # ConnectError.code is an enum (use .name); flyte BaseRuntimeError.code
+            # is a str (no .name, fall back to str()).
+            tags["error_code"] = getattr(code, "name", None) or str(code)
+        count("flyte.operation", **tags)
+        raise
+    else:
+        count("flyte.operation", operation=operation, status="success")
 
 
 def _get_version() -> str | None:
