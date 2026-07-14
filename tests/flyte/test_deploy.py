@@ -526,3 +526,55 @@ async def test_apply_unpicklable_env_raises_click_exception():
             await apply(plan, copy_style="loaded_modules", dryrun=True)
     assert "unpicklable" in excinfo.value.message
     assert "version=" in excinfo.value.message
+
+
+@pytest.mark.asyncio
+async def test_apply_version_derivation_under_redirected_std_streams():
+    """Regression test for https://github.com/flyteorg/flyte/issues/7660.
+
+    The CLI runs apply() inside a rich status spinner, which rebinds sys.stdout/sys.stderr
+    to FileProxy objects. cloudpickle only pickles streams by reference via an identity
+    check against the *current* sys.stdout/sys.stderr, so an env graph holding the real
+    stderr (like loguru's default sink does) raised PicklingError. Version derivation must
+    restore the original streams around cloudpickle.dumps.
+    """
+    import io
+    import pathlib
+
+    from flyte._deploy import apply
+
+    class _StderrSink:
+        """Mimics loguru's default handler: captures the real stderr at import time."""
+
+        def __init__(self):
+            self._stream = sys.__stderr__
+
+    plan = DeploymentPlan(envs={"e": _StderrSink()}, version=None)  # type: ignore[dict-item]
+
+    fake_bundle = Mock()
+    fake_bundle.computed_version = "test-bundle-version"
+
+    fake_cfg = Mock()
+    fake_cfg.root_dir = pathlib.Path("/tmp")
+    fake_cfg.images = {}
+    fake_cfg.project = "p"
+    fake_cfg.domain = "d"
+    fake_cfg.org = "o"
+
+    deployed_env = Mock()
+    deployed_env.get_name.return_value = "e"
+
+    with (
+        patch("flyte._initialize.is_initialized", return_value=True),
+        patch("flyte._deploy.get_init_config", return_value=fake_cfg),
+        patch("flyte._deploy._build_images", new=AsyncMock(return_value={})),
+        patch("flyte._code_bundle._includes.collect_env_include_files", return_value=[]),
+        patch("flyte._code_bundle.build_code_bundle", new=AsyncMock(return_value=fake_bundle)),
+        patch("flyte._deployer.get_deployer", return_value=AsyncMock(return_value=deployed_env)),
+        # Simulate rich's Live display swapping the std streams for proxies.
+        patch.object(sys, "stdout", io.StringIO()),
+        patch.object(sys, "stderr", io.StringIO()),
+    ):
+        deployment = await apply(plan, copy_style="loaded_modules", dryrun=True)
+
+    assert "e" in deployment.envs
