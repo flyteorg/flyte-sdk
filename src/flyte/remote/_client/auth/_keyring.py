@@ -58,7 +58,8 @@ class KeyringStore:
     # Both tokens live in ONE keychain item so macOS only prompts for the
     # keychain password once per retrieve (one prompt per item otherwise).
     _tokens_key = "tokens"
-    # Legacy per-token keys, only used for cleanup in delete().
+    # JSON field names inside the tokens item; also the legacy per-token
+    # keychain keys cleaned up in delete().
     _access_token_key = "access_token"
     _refresh_token_key = "refresh_token"
 
@@ -87,8 +88,8 @@ class KeyringStore:
                 KeyringStore._tokens_key,
                 json.dumps(
                     {
-                        "access_token": credentials.access_token,
-                        "refresh_token": credentials.refresh_token,
+                        KeyringStore._access_token_key: credentials.access_token,
+                        KeyringStore._refresh_token_key: credentials.refresh_token,
                     }
                 ),
             )
@@ -135,8 +136,8 @@ class KeyringStore:
         except (json.JSONDecodeError, TypeError) as e:
             logger.debug(f"Failed to parse tokens from keyring. Error: {e}")
             return None
-        access_token = tokens.get("access_token")
-        refresh_token = tokens.get("refresh_token")
+        access_token = tokens.get(KeyringStore._access_token_key)
+        refresh_token = tokens.get(KeyringStore._refresh_token_key)
 
         if not access_token:
             if not refresh_token:
