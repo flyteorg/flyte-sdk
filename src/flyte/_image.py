@@ -1235,10 +1235,12 @@ class Image:
         :param pyproject_file: path to the pyproject.toml file
         :param uvlock: path to the uv.lock file, if not specified, will use the default uv.lock file in the same
         directory as the pyproject.toml file if it exists. (pyproject.parent / uv.lock)
-        :param index_url: index url to use for pip install, default is None
-        :param extra_index_urls: extra index urls to use for pip install, default is None
+        :param index_url: index URL for dependency resolution (passed through to ``uv sync``), default is None
+        :param extra_index_urls: extra index URLs for dependency resolution (passed through to ``uv sync``),
+         default is None
         :param pre: whether to allow pre-release versions, default is False
-        :param extra_args: extra arguments to pass to pip install, default is None
+        :param extra_args: extra arguments passed through to ``uv sync`` (e.g. ``--only-group <group>`` to install
+         a single dependency group), default is None
         :param secret_mounts: list of secret mounts to use for the build process.
         :param project_install_mode: whether to install the project as a package or
          only dependencies, default is "dependencies_only"
