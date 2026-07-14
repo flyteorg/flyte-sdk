@@ -2,7 +2,6 @@ from flyteplugins.bigquery import BigQueryConfig, BigQueryTask
 
 import flyte
 from flyte.io import DataFrame
-from flyte.remote import Run
 
 bigquery_task = BigQueryTask(
     name="bigquery",
@@ -18,5 +17,4 @@ flyte.TaskEnvironment.from_task("bigquery_env", bigquery_task)
 if __name__ == "__main__":
     flyte.init_from_config()
     run = flyte.with_runcontext(mode="local").run(bigquery_task, 123)
-    assert isinstance(run, Run)
     print(run.url)

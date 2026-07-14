@@ -3,7 +3,6 @@ import pathlib
 from my_task_library import flyte_entities
 
 import flyte
-from flyte.remote import Run
 
 img = flyte.Image.from_debian_base().with_pip_packages("my-task-library")
 env = flyte.TaskEnvironment(
@@ -35,5 +34,4 @@ if __name__ == "__main__":
     run = flyte.with_runcontext(copy_style="none", version="0.4.0").run(
         flyte_entities.library_parent_task, data="hello world", n=5
     )
-    assert isinstance(run, Run)
     print(run.url)

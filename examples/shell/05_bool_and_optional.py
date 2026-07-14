@@ -19,7 +19,6 @@ from typing import Literal
 import flyte
 from flyte.extras import shell
 from flyte.extras.shell import Stdout
-from flyte.remote import Run
 
 # A faux "tool" — echo just shows the composed argv. In a real bio tool,
 # the bool flags become e.g. -v, -w, --case-insensitive, etc.
@@ -69,6 +68,5 @@ if __name__ == "__main__":
     flyte.init_from_config()
     mode: Literal["local", "remote"] = "remote" if (len(sys.argv) > 1 and sys.argv[1] == "remote") else "local"
     run = flyte.with_runcontext(mode=mode).run(bool_demo)
-    assert isinstance(run, Run)
     print(run.url if mode == "remote" else run)
     print(f"Outputs:\n{run.outputs()}")

@@ -13,7 +13,6 @@ import wandb
 
 import flyte
 from flyte import Link
-from flyte.remote import Run
 
 
 @dataclass
@@ -195,7 +194,6 @@ if __name__ == "__main__":
     # Initialize Flyte and run the training
     flyte.init_from_config()
     run = flyte.with_runcontext(mode="remote").run(main)
-    assert isinstance(run, Run)
     run.wait()
 
     print("\n" + "=" * 60)

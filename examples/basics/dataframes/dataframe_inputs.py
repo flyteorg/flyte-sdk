@@ -42,7 +42,6 @@ import pandas as pd
 
 import flyte
 import flyte.io
-from flyte.remote import Run
 
 # Create task environment with required dependencies
 img = flyte.Image.from_debian_base()
@@ -105,12 +104,10 @@ if __name__ == "__main__":
         }
     )
     local_run = flyte.with_runcontext(mode="local").run(local_df)
-    assert isinstance(local_run, Run)
     local_task_df = local_run.outputs()[0]
 
     for dataframe in [in_mem_dataframe, local_task_df]:
         run = flyte.with_runcontext(preserve_original_types=True).run(process_df, df=dataframe)
-        assert isinstance(run, Run)
         print(run.url)
         run.wait()
         result = run.outputs()[0]
@@ -119,7 +116,6 @@ if __name__ == "__main__":
 
         flyte_dataframe = flyte.io.DataFrame.from_df(dataframe)
         run = flyte.with_runcontext(preserve_original_types=True).run(process_fdf_to_df, df=flyte_dataframe)
-        assert isinstance(run, Run)
         print(run.url)
         run.wait()
         result = run.outputs()[0]
@@ -127,7 +123,6 @@ if __name__ == "__main__":
         print(result)
 
         run = flyte.with_runcontext(preserve_original_types=True).run(process_df_to_fdf, df=dataframe)
-        assert isinstance(run, Run)
         print(run.url)
         run.wait()
         result = run.outputs()[0]
@@ -135,7 +130,6 @@ if __name__ == "__main__":
         print(result)
 
         run = flyte.with_runcontext(preserve_original_types=True).run(process_fdf_to_fdf, df=flyte_dataframe)
-        assert isinstance(run, Run)
         print(run.url)
         run.wait()
         result = run.outputs()[0]

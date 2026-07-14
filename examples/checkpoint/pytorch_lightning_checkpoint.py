@@ -40,7 +40,6 @@ from torch.utils.data import DataLoader, TensorDataset
 from typing_extensions import override
 
 import flyte
-from flyte.remote import Run
 
 env = flyte.TaskEnvironment(
     name="checkpoint_lightning",
@@ -169,5 +168,4 @@ def train_lightning(max_epochs: int = 3) -> float:
 if __name__ == "__main__":
     flyte.init_from_config()
     run = flyte.with_runcontext(mode="remote").run(train_lightning, max_epochs=10)
-    assert isinstance(run, Run)
     print(run.url)

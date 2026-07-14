@@ -17,7 +17,6 @@ import os
 import flyte
 from flyte import notify
 from flyte.models import ActionPhase
-from flyte.remote import Run
 
 env = flyte.TaskEnvironment(
     name="notify_all_channels",
@@ -84,7 +83,6 @@ if __name__ == "__main__":
         },
         notifications=notifications,
     ).run(compute, x=3, y=7)
-    assert isinstance(run, Run)
 
     print(run.name)
     print(run.url)

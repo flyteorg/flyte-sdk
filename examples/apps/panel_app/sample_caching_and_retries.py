@@ -1,7 +1,6 @@
 import random
 
 import flyte
-from flyte.remote import Run
 
 env = flyte.TaskEnvironment(name="caching-retries-example")
 
@@ -35,5 +34,4 @@ def main(user_id: int) -> dict[str, str]:
 if __name__ == "__main__":
     flyte.init()
     run = flyte.with_runcontext(mode="local", disable_run_cache=True).run(main, user_id=1)
-    assert isinstance(run, Run)
     print(run.outputs())

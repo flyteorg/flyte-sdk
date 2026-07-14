@@ -5,7 +5,6 @@ from datetime import timedelta
 import flyte
 import flyte.report
 from flyte.extras import Sleep
-from flyte.remote import Run
 
 # One shared image for all three environments. The driver builds + pushes it exactly once
 # (with whichever builder is configured, local or remote) before the run starts. The nested
@@ -211,5 +210,4 @@ if __name__ == "__main__":
         n_children=10,
         sleep_duration=timedelta(seconds=30),
     )
-    assert isinstance(run, Run)
     print(run.url)

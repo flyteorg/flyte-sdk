@@ -35,7 +35,6 @@ from typing_extensions import NotRequired, TypedDict
 import flyte
 from flyte.app import AppEnvironment, Domain, Scaling
 from flyte.cli._tui._explore import ExploreScreen, RunsTable
-from flyte.remote import Run
 
 app_env = AppEnvironment(
     name="panel-textual-app-test-1",
@@ -409,7 +408,6 @@ def create_panel_app():
                     module.main,
                     **run_kwargs,
                 )
-                assert isinstance(run, Run)
                 result = run.outputs()
                 update_output(
                     f"✅ Run completed!\nResult: {result}\nSee the 'Explore Runs' pane on the right for more details."

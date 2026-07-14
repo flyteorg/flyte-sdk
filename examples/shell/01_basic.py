@@ -13,7 +13,6 @@ from typing import Literal
 import flyte
 from flyte.extras import shell
 from flyte.io import File
-from flyte.remote import Run
 
 # Wrap `head` — emits the first N lines of an input file.
 head_task = shell.create(
@@ -49,6 +48,5 @@ if __name__ == "__main__":
         path = f.name
 
     run = flyte.with_runcontext(mode=mode).run(take_first_lines, File.from_local_sync(path), 5)
-    assert isinstance(run, Run)
     print(run.url if mode == "remote" else run)
     print(f"Output: {run.outputs()}")

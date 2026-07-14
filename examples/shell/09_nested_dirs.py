@@ -15,7 +15,6 @@ import aiofiles
 import flyte
 from flyte.extras import shell
 from flyte.io import Dir
-from flyte.remote import Run
 
 EXPECTED = {
     "root.txt": "root",
@@ -78,6 +77,5 @@ if __name__ == "__main__":
     flyte.init_from_config()
     mode: Literal["local", "remote"] = "remote" if (len(sys.argv) > 1 and sys.argv[1] == "remote") else "local"
     run = flyte.with_runcontext(mode=mode).run(verify_nested)
-    assert isinstance(run, Run)
     print(run.url if mode == "remote" else run)
     print(run.outputs())

@@ -54,6 +54,54 @@ CacheLookupScope = Literal["global", "project-domain"]
 _run_mode_var: contextvars.ContextVar[Mode | None] = contextvars.ContextVar("run_mode", default=None)
 
 
+def _wrap_inline_run(outputs: Tuple[Any, ...] | Any, url: str) -> Run:
+    """Wrap natively-computed task outputs in a `Run` so every execution mode returns one.
+
+    Local and hybrid modes execute the task in-process and end up holding the task's
+    native outputs rather than a platform run handle. This wrapper presents those
+    outputs through the same `Run` interface remote mode returns: `wait()` is an
+    immediate no-op (the work already happened) and `outputs()` serves the captured
+    values.
+    """
+    from flyteidl2.common import identifier_pb2
+    from flyteidl2.task import common_pb2
+    from flyteidl2.workflow import run_definition_pb2
+
+    from flyte.remote import ActionOutputs, Run
+
+    class _InlineRun(Run):
+        def __init__(self, outputs: Tuple[Any, ...] | Any):
+            self._outputs = ActionOutputs(common_pb2.Outputs(), outputs if isinstance(outputs, tuple) else (outputs,))
+            super().__init__(
+                pb2=run_definition_pb2.Run(
+                    action=run_definition_pb2.Action(
+                        id=identifier_pb2.ActionIdentifier(
+                            name="a0",
+                            run=identifier_pb2.RunIdentifier(name="dry-run"),
+                        )
+                    )
+                )
+            )
+
+        @property
+        def url(self) -> str:
+            return url
+
+        @syncify
+        async def wait(  # type: ignore[override]
+            self,
+            quiet: bool = False,
+            wait_for: Literal["terminal", "running"] = "terminal",
+        ) -> None:
+            pass
+
+        @syncify
+        async def outputs(self) -> ActionOutputs:  # type: ignore[override]
+            return self._outputs
+
+    return _InlineRun(outputs)
+
+
 async def _get_code_bundle_for_run(name: str) -> CodeBundle | None:
     """
     Get the code bundle for the run with the given name.
@@ -708,7 +756,7 @@ class _Runner:
 
     @requires_storage
     @requires_initialization
-    async def _run_hybrid(self, obj: TaskTemplate[P, R, F], *args: P.args, **kwargs: P.kwargs) -> R:
+    async def _run_hybrid(self, obj: TaskTemplate[P, R, F], *args: P.args, **kwargs: P.kwargs) -> Run:
         """
         Run a task in hybrid mode. This means that the parent action will be run locally, but the child actions will be
         run in the cluster remotely. This is currently only used for testing,
@@ -832,7 +880,7 @@ class _Runner:
         outputs, err = await contextual_run(_run_task)
         if err:
             raise err
-        return outputs
+        return _wrap_inline_run(outputs, url=output_path)
 
     async def _send_local_notifications(
         self,
@@ -864,12 +912,9 @@ class _Runner:
         )
 
     async def _run_local(self, obj: TaskTemplate[P, R, F], *args: P.args, **kwargs: P.kwargs) -> Run:
-        from flyteidl2.common import identifier_pb2
-        from flyteidl2.task import common_pb2
 
         from flyte._internal.controllers import create_controller
         from flyte._internal.controllers._local_controller import LocalController
-        from flyte.remote import ActionOutputs, Run
         from flyte.report import Report
 
         controller = cast(LocalController, create_controller("local"))
@@ -952,49 +997,15 @@ class _Runner:
             if self._notifications:
                 await self._send_local_notifications(phase=ActionPhase.SUCCEEDED, task_name=obj.name, run_name=run_name)
 
-        class _LocalRun(Run):
-            def __init__(self, outputs: Tuple[Any, ...] | Any):
-                from flyteidl2.workflow import run_definition_pb2
-
-                self._outputs = ActionOutputs(
-                    common_pb2.Outputs(), outputs if isinstance(outputs, tuple) else (outputs,)
-                )
-                super().__init__(
-                    pb2=run_definition_pb2.Run(
-                        action=run_definition_pb2.Action(
-                            id=identifier_pb2.ActionIdentifier(
-                                name="a0",
-                                run=identifier_pb2.RunIdentifier(name="dry-run"),
-                            )
-                        )
-                    )
-                )
-
-            @property
-            def url(self) -> str:
-                return str(metadata_path)
-
-            @syncify
-            async def wait(  # type: ignore[override]
-                self,
-                quiet: bool = False,
-                wait_for: Literal["terminal", "running"] = "terminal",
-            ) -> None:
-                pass
-
-            @syncify
-            async def outputs(self) -> ActionOutputs:  # type: ignore[override]
-                return self._outputs
-
-        return _LocalRun(outputs)
+        return _wrap_inline_run(outputs, url=str(metadata_path))
 
     @syncify  # type: ignore[arg-type]
     async def run(
         self,
-        task: TaskTemplate[P, Union[R, Run], F] | LazyEntity,
+        task: TaskTemplate[P, R, F] | LazyEntity,
         *args: P.args,
         **kwargs: P.kwargs,
-    ) -> Union[R, Run]:
+    ) -> Run:
         """
         Run an async `@env.task` or `TaskTemplate` instance. The existing async context will be used.
 
@@ -1014,7 +1025,9 @@ class _Runner:
         :param task: TaskTemplate instance `@env.task` or `TaskTemplate`
         :param args: Arguments to pass to the Task
         :param kwargs: Keyword arguments to pass to the Task
-        :return: Run instance or the result of the task
+        :return: A Run handle in every mode. Remote mode returns the platform run; local and
+            hybrid modes return an in-process wrapper whose `outputs()` serves the task's
+            native results and whose `wait()` is an immediate no-op.
         """
         from flyte.remote._task import LazyEntity, TaskDetails
 

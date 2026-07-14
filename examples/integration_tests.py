@@ -27,7 +27,6 @@ import pytest
 
 import flyte
 from flyte._code_bundle import build_code_bundle
-from flyte.remote import Run
 
 # =============================================================================
 # FIXTURES
@@ -131,7 +130,6 @@ async def _run_and_wait(task_fn, test_name: str, **kwargs):
         Any exception raised by run.wait() will propagate
     """
     run = await flyte.with_runcontext(log_level=logging.DEBUG).run.aio(task_fn, **kwargs)
-    assert isinstance(run, Run)
 
     print(f"\n[{test_name}]")
     print(f"  Run name: {run.name}")

@@ -31,7 +31,6 @@ from pyspark.sql import functions as F
 
 import flyte
 import flyte.io
-from flyte.remote import Run
 
 image = (
     flyte.Image.from_base("apache/spark-py:v3.4.0")
@@ -158,7 +157,6 @@ if __name__ == "__main__":
     flyte.init_from_config(log_level=logging.DEBUG, project="niels")
 
     run = flyte.with_runcontext(args.mode).run(main)
-    assert isinstance(run, Run)
     print(run.url)
     run.wait()
     print("pyspark_sql pandera example OK:", run.outputs()[0])

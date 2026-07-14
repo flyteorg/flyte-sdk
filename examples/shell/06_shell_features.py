@@ -17,7 +17,6 @@ import flyte
 from flyte.extras import shell
 from flyte.extras.shell import Stdout
 from flyte.io import File
-from flyte.remote import Run
 
 # Pipe chain + named-file output. Sort a file, dedupe, write to OutFile;
 # count of unique lines comes out on stdout.
@@ -121,6 +120,5 @@ if __name__ == "__main__":
         File.from_local_sync(src_path),
         File.from_local_sync(num_path),
     )
-    assert isinstance(run, Run)
     print(run.url if mode == "remote" else run)
     print(f"Output: {run.outputs()}")

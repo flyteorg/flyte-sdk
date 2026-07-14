@@ -24,7 +24,6 @@ import torch
 import torch.nn as nn
 
 import flyte
-from flyte.remote import Run
 
 env = flyte.TaskEnvironment(
     name="checkpoint_pytorch",
@@ -88,5 +87,4 @@ async def train_linear(epochs: int = 3) -> float:
 if __name__ == "__main__":
     flyte.init_from_config()
     run = flyte.with_runcontext(mode="remote").run(train_linear, epochs=10)
-    assert isinstance(run, Run)
     print(run.url)

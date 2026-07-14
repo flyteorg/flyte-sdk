@@ -8,7 +8,6 @@ the failure surface as a task error.
 
 import flyte
 import flyte.sandbox
-from flyte.remote import Run
 from flyte.sandbox import sandbox_environment
 
 env = flyte.TaskEnvironment(
@@ -34,5 +33,4 @@ async def trigger_failure(x: int = 1) -> int:
 if __name__ == "__main__":
     flyte.init_from_config()
     run = flyte.with_runcontext(mode="remote").run(trigger_failure, x=42)
-    assert isinstance(run, Run)
     print("Run URL:", run.url)

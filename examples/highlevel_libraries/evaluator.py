@@ -7,7 +7,6 @@ from eval_reporting import generate_evaluation_report
 from pydantic import BaseModel
 
 import flyte
-from flyte.remote import Run
 
 env = flyte.TaskEnvironment(
     "evaluator",
@@ -196,7 +195,6 @@ class Evaluator:
         r = await flyte.with_runcontext(mode=mode, copy_style="all").run.aio(
             _run_batch_eval, dataset, self.eval_func, self.aggregate_func, reference_dataset
         )
-        assert isinstance(r, Run)
         print(f"Evaluation results: {r.url}")
         await r.wait.aio()
         outputs = await r.outputs.aio()

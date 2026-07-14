@@ -41,7 +41,6 @@ from huggingface_hub import hf_hub_url
 from sentence_transformers import SentenceTransformer
 
 import flyte.io
-from flyte.remote import Run
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -198,6 +197,5 @@ if __name__ == "__main__":
     # flyte.init()
     flyte.init_from_config()
     run = flyte.with_runcontext().run(main, 256, shard="20231101.en")
-    assert isinstance(run, Run)
     print(run.url)
     # asyncio.run(high_mem_examples())

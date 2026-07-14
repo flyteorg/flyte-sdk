@@ -14,7 +14,6 @@ from pydantic import BaseModel
 
 import flyte
 from flyte.io import DataFrame, Dir, File
-from flyte.remote import Run
 from flyte.types import FlytePickle
 
 # Set up environment with required dependencies for different types
@@ -378,7 +377,6 @@ if __name__ == "__main__":
 
     print("Running all types demo...")
     run = flyte.with_runcontext("remote").run(demo_workflow)
-    assert isinstance(run, Run)
     print(f"Run URL: {run.url}")
 
     # Wait for completion and print results

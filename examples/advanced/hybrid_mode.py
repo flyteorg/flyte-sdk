@@ -72,9 +72,9 @@ if __name__ == "__main__":
 
     # Kick off a run of hybrid_parent_placeholder and fill in with kicked off things.
     run_name = "r9sfvk6plj7gld7fds6f"
-    outputs = flyte.with_runcontext(
+    run = flyte.with_runcontext(
         mode="hybrid",
         name=run_name,
         run_base_dir=f"s3://bucket/metadata/v2/testorg/testproject/development/{run_name}",
     ).run(say_hello_hybrid_nested, data="hello world")
-    print("Output:", outputs)
+    print("Output:", run.outputs()[0])

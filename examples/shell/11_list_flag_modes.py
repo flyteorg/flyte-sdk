@@ -22,7 +22,6 @@ import flyte
 from flyte.extras import shell
 from flyte.extras.shell import Stdout
 from flyte.io import File
-from flyte.remote import Run
 
 
 def _argv_dump_task(name: str, flag_alias: str | tuple[str, Literal["join", "repeat", "comma"]]):
@@ -70,6 +69,5 @@ if __name__ == "__main__":
             parts.append(File.from_local_sync(f.name))
 
     run = flyte.with_runcontext(mode=mode).run(list_mode_demo, parts)
-    assert isinstance(run, Run)
     print(run.url if mode == "remote" else run)
     print(f"Outputs:\n{run.outputs()}")

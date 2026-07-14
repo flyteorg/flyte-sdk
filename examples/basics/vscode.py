@@ -1,5 +1,4 @@
 import flyte
-from flyte.remote import Run
 
 env = flyte.TaskEnvironment(
     name="hello_world",
@@ -26,6 +25,5 @@ if __name__ == "__main__":
     run = flyte.with_runcontext(env_vars={"LOG_LEVEL": "10", "_F_E_VS": "True"}).run(
         say_hello_nested, data="hello world"
     )
-    assert isinstance(run, Run)
     print(run.name)
     print(run.url)

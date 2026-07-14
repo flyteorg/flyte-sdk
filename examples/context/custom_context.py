@@ -1,5 +1,4 @@
 import flyte
-from flyte.remote import Run
 
 env = flyte.TaskEnvironment("custom-context-example")
 
@@ -22,5 +21,4 @@ if __name__ == "__main__":
     flyte.init_from_config()
     # Base context for the entire run
     run = flyte.with_runcontext(custom_context={"trace_id": "root-abc", "experiment": "v1"}).run(root)
-    assert isinstance(run, Run)
     print(run.url)

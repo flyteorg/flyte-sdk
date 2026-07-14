@@ -21,7 +21,6 @@ import os
 import flyte
 from flyte import notify
 from flyte.models import ActionPhase
-from flyte.remote import Run
 
 env = flyte.TaskEnvironment(
     name="notify_webhook",
@@ -63,7 +62,6 @@ if __name__ == "__main__":
         env_vars={"ALERT_WEBHOOK_URL": ALERT_WEBHOOK_URL, "ALERT_API_KEY": ALERT_API_KEY},
         notifications=webhook_any,
     ).run(compute, x=3, y=7)
-    assert isinstance(run, Run)
 
     print(run.name)
     print(run.url)

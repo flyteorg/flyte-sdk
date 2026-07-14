@@ -50,7 +50,6 @@ from transformers import TrainerCallback
 from transformers.trainer_utils import get_last_checkpoint
 
 import flyte
-from flyte.remote import Run
 
 env = flyte.TaskEnvironment(
     name="checkpoint_unsloth_sft",
@@ -208,7 +207,6 @@ if __name__ == "__main__":
     flyte.init_from_config()
     try:
         run = flyte.with_runcontext(mode="remote").run(train_unsloth_sft, max_epochs=10)
-        assert isinstance(run, Run)
         print(run.url)
     except Exception as e:
         msg = str(e)

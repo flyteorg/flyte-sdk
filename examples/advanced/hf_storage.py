@@ -26,7 +26,6 @@ import tempfile
 
 import flyte
 from flyte.io import File
-from flyte.remote import Run
 
 env = flyte.TaskEnvironment(
     name="hf-raw-data-example",
@@ -73,7 +72,6 @@ if __name__ == "__main__":
     run = flyte.with_runcontext(raw_data_path=f"hf://buckets/{USERNAME}/{BUCKET}/raw-data/").run(
         pipeline, name="HuggingFace"
     )
-    assert isinstance(run, Run)
 
     print(f"Run URL: {run.url}")
     run.wait()

@@ -1,7 +1,6 @@
 from typing import Optional
 
 import flyte
-from flyte.remote import Run
 
 env = flyte.TaskEnvironment(
     name="traces",
@@ -90,7 +89,6 @@ async def traces_complex(n: int = 3) -> int:
 if __name__ == "__main__":
     flyte.init_from_config()
     run = flyte.with_runcontext().run(traces_complex, n=5)
-    assert isinstance(run, Run)
     print(run.name)
     print(run.url)
     run.wait()

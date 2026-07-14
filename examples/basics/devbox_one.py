@@ -3,7 +3,6 @@ import logging
 from typing import List
 
 import flyte
-from flyte.remote import Run
 
 env = flyte.TaskEnvironment(
     name="hello_world",
@@ -52,7 +51,6 @@ if __name__ == "__main__":
         overwrite_cache=True,
         interruptible=False,
     ).run(say_hello_nested, data="hello world", n=10)
-    assert isinstance(run, Run)
     print(run.name)
     print(run.url)
     run.wait()

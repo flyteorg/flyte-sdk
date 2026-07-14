@@ -16,7 +16,6 @@ import os
 import flyte
 from flyte import notify
 from flyte.models import ActionPhase
-from flyte.remote import Run
 
 env = flyte.TaskEnvironment(
     name="notify_slack",
@@ -72,5 +71,4 @@ if __name__ == "__main__":
         env_vars={"SLACK_WEBHOOK_URL": SLACK_WEBHOOK_URL},
         notifications=(slack_success, slack_failure),
     ).run(compute, x=3, y=7)
-    assert isinstance(run, Run)
     print(run.url)

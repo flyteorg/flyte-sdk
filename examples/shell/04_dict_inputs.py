@@ -40,7 +40,6 @@ import flyte
 from flyte._image import PythonWheels
 from flyte.extras import shell
 from flyte.extras.shell import FlagSpec, Stdout
-from flyte.remote import Run
 
 # `pairs` mode (default) — dict expanded as `key1 v1 key2 v2 …`.
 echo_pairs = shell.create(
@@ -156,6 +155,5 @@ if __name__ == "__main__":
     flyte.init_from_config()
     mode: Literal["local", "remote"] = "remote" if (len(sys.argv) > 1 and sys.argv[1] == "remote") else "local"
     run = flyte.with_runcontext(mode=mode).run(dict_demo)
-    assert isinstance(run, Run)
     print(run.url if mode == "remote" else run)
     print(f"Output: {run.outputs()}")

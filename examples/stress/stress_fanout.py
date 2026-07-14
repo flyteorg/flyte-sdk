@@ -3,7 +3,6 @@ import random
 import time
 
 import flyte
-from flyte.remote import Run
 
 env = flyte.TaskEnvironment(
     name="stress_fanout",
@@ -117,6 +116,5 @@ async def main(
 if __name__ == "__main__":
     flyte.init_from_config()
     run = flyte.with_runcontext("remote").run(main, fanout_per_layer=[5, 5, 1], sleep_sec=1.0, jitter_sec=0.5)
-    assert isinstance(run, Run)
     print(run.outputs)
     # print(run.url)

@@ -34,7 +34,6 @@ from typing_extensions import NotRequired, TypedDict
 
 import flyte
 import flyte.report
-from flyte.remote import Run
 
 agent_env = flyte.TaskEnvironment(
     name="langgraph-agent",
@@ -569,5 +568,4 @@ async def main() -> list[list[AgentOutput]]:
 if __name__ == "__main__":
     flyte.init_from_config()
     r = flyte.with_runcontext(mode="remote").run(main)
-    assert isinstance(r, Run)
     print(r.url)

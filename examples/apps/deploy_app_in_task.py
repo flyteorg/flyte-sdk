@@ -2,7 +2,6 @@ import fastapi
 
 import flyte
 import flyte.app.extras
-from flyte.remote import Run
 
 app = fastapi.FastAPI()
 
@@ -37,5 +36,4 @@ async def test_deploy_app_in_task() -> str:
 if __name__ == "__main__":
     flyte.init_from_config()
     run = flyte.with_runcontext(project="niels").run(test_deploy_app_in_task)
-    assert isinstance(run, Run)
     print(run.url)

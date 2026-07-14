@@ -1,7 +1,6 @@
 import asyncio
 
 import flyte
-from flyte.remote import Run
 
 env = flyte.TaskEnvironment(
     name="fanout",
@@ -39,6 +38,5 @@ async def fanout_with_failures(n: int = 50) -> int:
 if __name__ == "__main__":
     flyte.init_from_config()
     run = flyte.with_runcontext().run(fanout_with_failures, n=500)
-    assert isinstance(run, Run)
     print(run.name)
     print(run.url)

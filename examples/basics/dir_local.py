@@ -14,7 +14,6 @@ python examples/basics/dir_local.py
 
 import flyte
 from flyte.io import Dir
-from flyte.remote import Run
 
 env = flyte.TaskEnvironment(
     name="dir-local",
@@ -57,7 +56,6 @@ if __name__ == "__main__":
 
         dir = Dir.from_local_sync(temp_dir)
         run = flyte.with_runcontext(mode="local").run(process_dir, dir=dir)
-        assert isinstance(run, Run)
         print(run.url)
         run.wait()
         print("outputs")

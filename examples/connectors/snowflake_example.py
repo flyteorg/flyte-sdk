@@ -2,7 +2,6 @@ import pandas as pd
 from flyteplugins.snowflake import Snowflake, SnowflakeConfig
 
 import flyte
-from flyte.remote import Run
 
 """
 Example of using Snowflake connector.
@@ -75,5 +74,4 @@ async def main(ids: list[int], names: list[str], ages: list[int]) -> float:
 if __name__ == "__main__":
     flyte.init_from_config()
     run = flyte.with_runcontext(mode="local").run(main, ids=[123, 456], names=["Kevin", "Alice"], ages=[30, 25])
-    assert isinstance(run, Run)
     print(run.url)

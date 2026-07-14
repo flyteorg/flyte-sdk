@@ -30,7 +30,6 @@ import flyte
 from flyte.extras import shell
 from flyte.extras.shell import Glob
 from flyte.io import File
-from flyte.remote import Run
 
 split_task = shell.create(
     name="cat_and_split",
@@ -70,6 +69,5 @@ if __name__ == "__main__":
             parts.append(File.from_local_sync(f.name))
 
     run = flyte.with_runcontext(mode=mode).run(split_concatenated, parts, 7)
-    assert isinstance(run, Run)
     print(run.url if mode == "remote" else run)
     print(f"Output: {run.outputs()}")

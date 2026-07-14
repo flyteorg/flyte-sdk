@@ -18,7 +18,6 @@ import httpx
 
 import flyte
 from flyte.app import AppEnvironment
-from flyte.remote import Run
 
 app_env = AppEnvironment(
     name="local-multiply",
@@ -91,7 +90,6 @@ if __name__ == "__main__":
 
     # Run a task that calls the local app
     result = flyte.with_runcontext(mode="local").run(multiply_task, x=7, y=6)
-    assert isinstance(result, Run)
     print(f"Result: {result.outputs()[0]}")
     assert result.outputs()[0] == 42
 

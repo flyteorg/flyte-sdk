@@ -21,7 +21,6 @@ import flyte
 from flyte.extras import shell
 from flyte.extras.shell import Stderr, Stdout
 from flyte.io import File
-from flyte.remote import Run
 
 # 1) Stdout as parsed int — `wc -l` writes "  42 filename" so we extract just the count.
 line_count = shell.create(
@@ -95,6 +94,5 @@ if __name__ == "__main__":
         path = f.name
 
     run = flyte.with_runcontext(mode=mode).run(stream_demo, File.from_local_sync(path))
-    assert isinstance(run, Run)
     print(run.url if mode == "remote" else run)
     print(f"Output: {run.outputs()}")

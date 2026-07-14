@@ -5,7 +5,6 @@ Generic byte checkpointing
 from __future__ import annotations
 
 import flyte
-from flyte.remote import Run
 
 env = flyte.TaskEnvironment(
     name="checkpoint_generic_json",
@@ -45,5 +44,4 @@ if __name__ == "__main__":
 
     flyte.init_from_config(log_level=logging.DEBUG)
     run = flyte.with_runcontext(mode="remote").run(use_checkpoint, n_iterations=10)
-    assert isinstance(run, Run)
     print(run.url)

@@ -14,7 +14,6 @@ python examples/basics/file_local.py
 
 import flyte
 from flyte.io import File
-from flyte.remote import Run
 
 env = flyte.TaskEnvironment(
     name="file-local",
@@ -42,7 +41,6 @@ if __name__ == "__main__":
         temp_path = temp.name
         file = File.from_local_sync(temp_path)
         run = flyte.with_runcontext(mode="local").run(process_file, file=file)
-        assert isinstance(run, Run)
         print(run.url)
         run.wait()
         print("outputs")

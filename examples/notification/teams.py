@@ -17,7 +17,6 @@ import os
 import flyte
 from flyte import notify
 from flyte.models import ActionPhase
-from flyte.remote import Run
 
 env = flyte.TaskEnvironment(
     name="notify_teams",
@@ -76,7 +75,6 @@ if __name__ == "__main__":
         env_vars={"TEAMS_WEBHOOK_URL": TEAMS_WEBHOOK_URL},
         notifications=(teams_success, teams_failure),
     ).run(compute, x=3, y=7)
-    assert isinstance(run, Run)
 
     print(run.name)
     print(run.url)
