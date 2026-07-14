@@ -33,7 +33,6 @@ from _tools import ALL_TOOLS
 
 import flyte
 import flyte.report
-from flyte import AsyncFunctionTaskTemplate
 
 env = flyte.TaskEnvironment(
     name="llm-code-mode",
@@ -149,7 +148,7 @@ async def sort_data(data: list, column: str, descending: bool = False) -> list:
 
 # Plain functions from _tools for prompt generation (signatures + docstrings),
 # task-wrapped versions for durable sandbox execution.
-_tool_tasks: list[AsyncFunctionTaskTemplate] = [
+_tool_tasks: list[flyte.AsyncFunctionTaskTemplate] = [
     fetch_data,
     create_chart,
     calculate_statistics,
