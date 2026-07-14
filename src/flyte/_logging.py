@@ -175,19 +175,22 @@ class JSONFormatter(logging.Formatter):
             "funcName": record.funcName,
         }
 
-        # Add context fields if present
-        if getattr(record, "run_name", None):
-            log_data["run_name"] = record.run_name  # type: ignore[attr-defined]
-        if getattr(record, "action_name", None):
-            log_data["action_name"] = record.action_name  # type: ignore[attr-defined]
+        # Add context fields if present (set dynamically via logging's `extra` mechanism)
+        run_name = getattr(record, "run_name", None)
+        if run_name:
+            log_data["run_name"] = run_name
+        action_name = getattr(record, "action_name", None)
+        if action_name:
+            log_data["action_name"] = action_name
         if getattr(record, "is_flyte_internal", False):
             log_data["is_flyte_internal"] = True
 
         # Add metric fields if present
-        if getattr(record, "metric_type", None):
-            log_data["metric_type"] = record.metric_type  # type: ignore[attr-defined]
-            log_data["metric_name"] = record.metric_name  # type: ignore[attr-defined]
-            log_data["duration_seconds"] = record.duration_seconds  # type: ignore[attr-defined]
+        metric_type = getattr(record, "metric_type", None)
+        if metric_type:
+            log_data["metric_type"] = metric_type
+            log_data["metric_name"] = getattr(record, "metric_name")
+            log_data["duration_seconds"] = getattr(record, "duration_seconds")
 
         # Add exception info if present
         if record.exc_info:

@@ -25,6 +25,7 @@ Run::
 """
 
 import html as _html
+from typing import Callable
 
 import _tools
 from _agent import CodeModeAgent
@@ -32,6 +33,7 @@ from _tools import ALL_TOOLS
 
 import flyte
 import flyte.report
+from flyte._task import AsyncFunctionTaskTemplate
 
 env = flyte.TaskEnvironment(
     name="llm-code-mode",
@@ -147,8 +149,15 @@ async def sort_data(data: list, column: str, descending: bool = False) -> list:
 
 # Plain functions from _tools for prompt generation (signatures + docstrings),
 # task-wrapped versions for durable sandbox execution.
-_tool_tasks = [fetch_data, create_chart, calculate_statistics, filter_data, group_and_aggregate, sort_data]
-durable_tools = {t.func.__name__: t for t in _tool_tasks}
+_tool_tasks: list[AsyncFunctionTaskTemplate] = [
+    fetch_data,
+    create_chart,
+    calculate_statistics,
+    filter_data,
+    group_and_aggregate,
+    sort_data,
+]
+durable_tools: dict[str, Callable] = {t.func.__name__: t for t in _tool_tasks}
 
 agent = CodeModeAgent(tools=ALL_TOOLS, execution_tools=durable_tools)
 

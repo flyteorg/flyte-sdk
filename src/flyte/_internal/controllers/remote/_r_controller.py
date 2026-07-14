@@ -7,7 +7,8 @@ import threading
 from collections import defaultdict
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, DefaultDict, Tuple, TypeVar
+from types import FunctionType
+from typing import Any, DefaultDict, Tuple, TypeVar, cast
 
 from flyte_controller_base import Action, BaseController
 from flyteidl2.common import identifier_pb2, phase_pb2
@@ -381,7 +382,7 @@ class RemoteController(BaseController):
             self._submit_thread = None
         logger.info("RemoteController stopped.")
 
-    async def finalize_parent_action(self, action_id: ActionID):
+    async def finalize_parent_action(self, action: ActionID):
         """
         This method is invoked when the parent action is finished. It will finalize the run and upload the outputs
         to the control plane.
@@ -389,14 +390,14 @@ class RemoteController(BaseController):
         # translate the ActionID python object to something handleable in pyo3
         # will need to do this after we have multiple informers.
         run_id = identifier_pb2.RunIdentifier(
-            name=action_id.run_name,
-            project=action_id.project,
-            domain=action_id.domain,
-            org=action_id.org,
+            name=action.run_name,
+            project=action.project,
+            domain=action.domain,
+            org=action.org,
         )
-        await super().finalize_parent_action(run_id_bytes=run_id.SerializeToString(), parent_action_name=action_id.name)
-        self._parent_action_semaphore.pop(unique_action_name(action_id), None)
-        self._sequencer.clear(unique_action_name(action_id))
+        await super().finalize_parent_action(run_id_bytes=run_id.SerializeToString(), parent_action_name=action.name)
+        self._parent_action_semaphore.pop(unique_action_name(action), None)
+        self._sequencer.clear(unique_action_name(action))
 
     async def get_action_outputs(
         self, _interface: NativeInterface, _func: Callable, *args, **kwargs
@@ -416,7 +417,7 @@ class RemoteController(BaseController):
             raise flyte.errors.RuntimeSystemError("BadContext", "Task context not initialized")
         current_action_id = tctx.action
 
-        func_name = _func.__name__
+        func_name = cast(FunctionType, _func).__name__
         invoke_seq_num = self.generate_task_call_sequence(_func, current_action_id)
         inputs = await convert.convert_from_native_to_inputs(_interface, *args, **kwargs)
         serialized_inputs = inputs.proto_inputs.SerializeToString(deterministic=True)

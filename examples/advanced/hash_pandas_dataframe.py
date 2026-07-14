@@ -59,8 +59,10 @@ async def produce_dataframe() -> HashedPandasDataFrame:
     The return type annotation includes HashFunction, which tells Flyte to compute
     a content-based hash from the DataFrame using our custom hash function.
     """
+    tctx = flyte.ctx()
+    assert tctx is not None  # always set inside a task
     df = pd.DataFrame(SAMPLE_DATA)
-    df["action_name"] = flyte.ctx().action.run_name
+    df["action_name"] = tctx.action.run_name
     return df
 
 

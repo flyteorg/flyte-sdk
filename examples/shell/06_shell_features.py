@@ -11,11 +11,13 @@ Run locally::
 
 import sys
 import tempfile
+from typing import Literal
 
 import flyte
 from flyte.extras import shell
 from flyte.extras.shell import Stdout
 from flyte.io import File
+from flyte.remote import Run
 
 # Pipe chain + named-file output. Sort a file, dedupe, write to OutFile;
 # count of unique lines comes out on stdout.
@@ -104,7 +106,7 @@ async def features_demo(src: File, numbers: File) -> tuple[File, int, str, float
 
 if __name__ == "__main__":
     flyte.init_from_config()
-    mode = "remote" if (len(sys.argv) > 1 and sys.argv[1] == "remote") else "local"
+    mode: Literal["local", "remote"] = "remote" if (len(sys.argv) > 1 and sys.argv[1] == "remote") else "local"
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
         f.write("delta\nalpha\nalpha\nbravo\ncharlie\nbravo\n")
@@ -119,5 +121,6 @@ if __name__ == "__main__":
         File.from_local_sync(src_path),
         File.from_local_sync(num_path),
     )
+    assert isinstance(run, Run)
     print(run.url if mode == "remote" else run)
     print(f"Output: {run.outputs()}")

@@ -50,6 +50,7 @@ def train_model() -> flyte.io.File:
     return flyte.io.File.from_local_sync("./model.joblib")
 
 
+# NOTE: the SDK types server as accepting a sync callable, but async functions are supported at runtime.
 @env.server
 async def fastapi_app_server(model: flyte.io.File):
     import joblib
@@ -74,5 +75,5 @@ if __name__ == "__main__":
     print(f"training model run: {run.url}")
     run.wait()
 
-    app = flyte.with_servecontext(interactive_mode=True).serve(env)
-    print(app.url)
+    app_handle = flyte.with_servecontext(interactive_mode=True).serve(env)
+    print(app_handle.url)

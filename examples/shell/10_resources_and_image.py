@@ -30,10 +30,12 @@ Run locally::
 
 import sys
 import tempfile
+from typing import Literal
 
 import flyte
 from flyte.extras import shell
 from flyte.io import File
+from flyte.remote import Run
 
 # A layered Image — base + extra apt package. shell.create builds this on
 # first call via flyte.build (using the configured builder) and passes the
@@ -73,12 +75,13 @@ async def reformat(src: File) -> File:
 
 if __name__ == "__main__":
     flyte.init_from_config()
-    mode = "remote" if (len(sys.argv) > 1 and sys.argv[1] == "remote") else "local"
+    mode: Literal["local", "remote"] = "remote" if (len(sys.argv) > 1 and sys.argv[1] == "remote") else "local"
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
         f.write('{"name":"flyte","feature":"shell","ok":true}')
         path = f.name
 
     run = flyte.with_runcontext(mode=mode).run(reformat, File.from_local_sync(path))
+    assert isinstance(run, Run)
     print(run.url if mode == "remote" else run)
     print(f"Output: {run.outputs()}")

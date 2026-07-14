@@ -25,8 +25,9 @@ minutely_monitor = flyte.Trigger.minutely(
 
 @env.task(triggers=minutely_monitor)
 async def monitor_task(trigger_time: datetime) -> str:
-    ctx = flyte.ctx().custom_context
-    return f"Monitor ran for team={ctx.get('team')}"
+    tctx = flyte.ctx()
+    assert tctx is not None  # always set inside a task
+    return f"Monitor ran for team={tctx.custom_context.get('team')}"
 
 
 if __name__ == "__main__":

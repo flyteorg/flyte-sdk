@@ -1,4 +1,5 @@
 import flyte
+from flyte.remote import Run
 
 env = flyte.TaskEnvironment("custom-context-example")
 
@@ -6,8 +7,10 @@ env = flyte.TaskEnvironment("custom-context-example")
 @env.task
 async def leaf_task() -> str:
     # Reads run-level context
-    print("leaf sees:", flyte.ctx().custom_context)
-    return flyte.ctx().custom_context.get("trace_id")
+    tctx = flyte.ctx()
+    assert tctx is not None  # always set inside a task
+    print("leaf sees:", tctx.custom_context)
+    return tctx.custom_context.get("trace_id", "")
 
 
 @env.task
@@ -19,4 +22,5 @@ if __name__ == "__main__":
     flyte.init_from_config()
     # Base context for the entire run
     run = flyte.with_runcontext(custom_context={"trace_id": "root-abc", "experiment": "v1"}).run(root)
+    assert isinstance(run, Run)
     print(run.url)

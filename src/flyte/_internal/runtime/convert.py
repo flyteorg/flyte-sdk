@@ -7,7 +7,7 @@ import hashlib
 import inspect
 from dataclasses import dataclass
 from types import NoneType
-from typing import Any, Dict, List, Optional, Tuple, Union, get_args
+from typing import Any, Dict, List, Optional, Tuple, Union, cast, get_args
 
 from flyteidl2.core import execution_pb2, interface_pb2, literals_pb2
 from flyteidl2.task import common_pb2, task_definition_pb2
@@ -131,7 +131,9 @@ async def convert_upload_default_inputs(
             literal_coros.append(TypeEngine.to_literal(default_value, input_type, lt))
             vars.append((input_name, lt))
 
-    literals: List[literals_pb2.Literal] = await asyncio.gather(*literal_coros, return_exceptions=True)
+    literals: List[literals_pb2.Literal] = cast(
+        "List[literals_pb2.Literal]", await asyncio.gather(*literal_coros, return_exceptions=True)
+    )
     named_params = []
     for (name, lt), literal in zip(vars, literals):
         if isinstance(literal, Exception):

@@ -86,18 +86,18 @@ async def pydantic_task(dp: PyDataPoint) -> str:
 
 
 async def echo_pipe(x: typing.Any, src: typing.Callable, sink: typing.Callable) -> str:
-    if isinstance(x, typing.Tuple):
+    if isinstance(x, tuple):
         v = await src(*x)
     else:
         v = await src(x)
-    if isinstance(v, typing.Tuple):
+    if isinstance(v, tuple):
         return await sink(*v)
     return await sink(v)
 
 
 @env.task
 async def main() -> list[str]:
-    res: list[typing.Coroutine[..., ..., str]] = []
+    res: list[typing.Coroutine[typing.Any, typing.Any, str]] = []
     res.append(echo_pipe(Color.RED, enum_echo, enum_task))
     res.append(echo_pipe(("high", 1, Color.GREEN), literal_echo, literal_task))
     res.append(

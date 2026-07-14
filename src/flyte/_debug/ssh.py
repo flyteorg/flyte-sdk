@@ -41,7 +41,7 @@ import struct
 import sys
 from contextlib import suppress
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, cast
 
 if TYPE_CHECKING:
     import asyncssh
@@ -312,6 +312,8 @@ class SshServer:
         )
 
         async def _feed_stdin():
+            # stdin=PIPE above guarantees proc.stdin is a StreamWriter, not None.
+            proc_stdin = cast(asyncio.StreamWriter, proc.stdin)
             try:
                 while True:
                     try:
@@ -320,13 +322,13 @@ class SshServer:
                         continue
                     if not data:
                         break
-                    proc.stdin.write(data)
-                    await proc.stdin.drain()
+                    proc_stdin.write(data)
+                    await proc_stdin.drain()
             except (asyncssh.ConnectionLost, BrokenPipeError, ConnectionResetError, OSError):
                 pass
             finally:
                 with suppress(Exception):
-                    proc.stdin.close()
+                    proc_stdin.close()
 
         async def _pump(src_reader, dst_writer):
             try:

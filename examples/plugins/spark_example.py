@@ -58,7 +58,9 @@ async def get_pi(count: int, partitions: int) -> float:
 @spark_env.task
 async def hello_spark_nested(partitions: int = 3) -> float:
     n = 1 * partitions
-    spark = flyte.ctx().data["spark_session"]
+    tctx = flyte.ctx()
+    assert tctx is not None  # always set inside a task
+    spark = tctx.data["spark_session"]
     count = spark.sparkContext.parallelize(range(1, n + 1), partitions).map(f).reduce(add)
 
     return await get_pi(count, partitions)

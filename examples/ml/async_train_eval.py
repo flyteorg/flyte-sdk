@@ -129,7 +129,9 @@ async def main(
       5. If training finishes naturally -> run one final eval on the returned
          checkpoint.
     """
-    checkpoint_dir = flyte.ctx().run_base_dir
+    tctx = flyte.ctx()
+    assert tctx is not None  # always set inside a task
+    checkpoint_dir = tctx.run_base_dir
     # Start training in the background
     train_task = asyncio.create_task(train(checkpoint_dir, total_epochs, seconds_per_epoch))
 
@@ -141,7 +143,7 @@ async def main(
                 # Durable sleep — survives crashes and restarts.
                 # Race it against the training task so we wake up immediately
                 # if training finishes (or fails) during the sleep interval.
-                sleep_task = asyncio.create_task(flyte.durable.sleep.aio(eval_interval_seconds))
+                sleep_task = asyncio.ensure_future(flyte.durable.sleep.aio(eval_interval_seconds))
                 done, _ = await asyncio.wait(
                     [train_task, sleep_task],
                     return_when=asyncio.FIRST_COMPLETED,

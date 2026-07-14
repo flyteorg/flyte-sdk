@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import rich.repr
 
@@ -141,10 +141,12 @@ class MCPAppEnvironment(flyte.app.AppEnvironment):
             raise ModuleNotFoundError("uvicorn is not installed. Please install 'flyte[mcp]' to serve this app.") from e
 
         assert self._starlette_app is not None
+        # AppEnvironment.__post_init__ normalizes `port` to a Port instance.
+        port = cast(flyte.app.Port, self.port).port
         if self.uvicorn_config is None:
-            self.uvicorn_config = uvicorn.Config(self._starlette_app, port=self.port.port)
+            self.uvicorn_config = uvicorn.Config(self._starlette_app, port=port)
         elif self.uvicorn_config.port is None:
-            self.uvicorn_config.port = self.port.port
+            self.uvicorn_config.port = port
 
         await uvicorn.Server(self.uvicorn_config).serve()
 

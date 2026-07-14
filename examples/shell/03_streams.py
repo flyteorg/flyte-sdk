@@ -15,11 +15,13 @@ Run locally::
 
 import sys
 import tempfile
+from typing import Literal
 
 import flyte
 from flyte.extras import shell
 from flyte.extras.shell import Stderr, Stdout
 from flyte.io import File
+from flyte.remote import Run
 
 # 1) Stdout as parsed int — `wc -l` writes "  42 filename" so we extract just the count.
 line_count = shell.create(
@@ -85,7 +87,7 @@ async def stream_demo(src: File) -> tuple[int, File, str, float, int]:
 
 if __name__ == "__main__":
     flyte.init_from_config()
-    mode = "remote" if (len(sys.argv) > 1 and sys.argv[1] == "remote") else "local"
+    mode: Literal["local", "remote"] = "remote" if (len(sys.argv) > 1 and sys.argv[1] == "remote") else "local"
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
         # Unsorted input; sort + wc both have something to do.
@@ -93,5 +95,6 @@ if __name__ == "__main__":
         path = f.name
 
     run = flyte.with_runcontext(mode=mode).run(stream_demo, File.from_local_sync(path))
+    assert isinstance(run, Run)
     print(run.url if mode == "remote" else run)
     print(f"Output: {run.outputs()}")

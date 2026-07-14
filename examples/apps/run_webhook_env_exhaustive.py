@@ -227,7 +227,7 @@ class WebhookEndpointTester:
     ) -> TestResult:
         """Test POST /app/{name}/activate endpoint."""
         path = f"/app/{app_name}/activate"
-        params = {"wait": wait}
+        params: dict[str, Any] = {"wait": wait}
         if domain:
             params["domain"] = domain
         if project:
@@ -245,7 +245,7 @@ class WebhookEndpointTester:
     ) -> TestResult:
         """Test POST /app/{name}/deactivate endpoint."""
         path = f"/app/{app_name}/deactivate"
-        params = {"wait": wait}
+        params: dict[str, Any] = {"wait": wait}
         if domain:
             params["domain"] = domain
         if project:
@@ -311,7 +311,7 @@ class WebhookEndpointTester:
         """Test POST /build-image endpoint."""
         path = "/build-image"
         # FastAPI endpoint uses query parameters, not JSON body
-        params = {}
+        params: dict[str, Any] = {}
         if base_image:
             params["base_image"] = base_image
         if pip_packages:
@@ -561,11 +561,12 @@ if __name__ == "__main__":
         if run_result.success and isinstance(run_result.response, dict):
             run_name = run_result.response.get("name")
 
-            # Get run status
-            tester.test_get_run(run_name, expected_success=True)
+            if run_name is not None:
+                # Get run status
+                tester.test_get_run(run_name, expected_success=True)
 
-            # Get run I/O
-            tester.test_get_run_io(run_name, expected_success=True)
+                # Get run I/O
+                tester.test_get_run_io(run_name, expected_success=True)
 
         # Start a long-running task to test abort
         abort_run_result = tester.test_run_task(

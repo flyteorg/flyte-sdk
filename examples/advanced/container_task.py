@@ -1,5 +1,6 @@
 import flyte
 from flyte.extras import ContainerTask
+from flyte.remote import Run
 
 greeting_task = ContainerTask(
     name="echo_and_return_greeting",
@@ -25,4 +26,5 @@ async def say_hello(name: str = "flyte") -> str:
 if __name__ == "__main__":
     flyte.init_from_config()
     run = flyte.with_runcontext(mode="remote").run(say_hello, "Union")
+    assert isinstance(run, Run)
     print(run.url)

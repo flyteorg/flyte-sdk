@@ -24,11 +24,13 @@ Run locally::
 
 import sys
 import tempfile
+from typing import Literal
 
 import flyte
 from flyte.extras import shell
 from flyte.extras.shell import Glob
 from flyte.io import File
+from flyte.remote import Run
 
 split_task = shell.create(
     name="cat_and_split",
@@ -59,7 +61,7 @@ async def split_concatenated(parts: list[File], chunk_lines: int) -> list[File]:
 
 if __name__ == "__main__":
     flyte.init_from_config()
-    mode = "remote" if (len(sys.argv) > 1 and sys.argv[1] == "remote") else "local"
+    mode: Literal["local", "remote"] = "remote" if (len(sys.argv) > 1 and sys.argv[1] == "remote") else "local"
 
     parts: list[File] = []
     for i in range(3):
@@ -68,5 +70,6 @@ if __name__ == "__main__":
             parts.append(File.from_local_sync(f.name))
 
     run = flyte.with_runcontext(mode=mode).run(split_concatenated, parts, 7)
+    assert isinstance(run, Run)
     print(run.url if mode == "remote" else run)
     print(f"Output: {run.outputs()}")

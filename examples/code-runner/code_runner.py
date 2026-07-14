@@ -3,6 +3,7 @@ import pathlib
 import flyte
 from flyte.extras import ContainerTask
 from flyte.io import File
+from flyte.remote import Run
 
 env = flyte.TaskEnvironment(name="hello_world")
 
@@ -51,4 +52,5 @@ if __name__ == "__main__":
     # and all files in it, including the script.
     flyte.init_from_config(root_dir=pathlib.Path(__file__).parent)
     r = flyte.with_runcontext(copy_style="all").run(build_run_code2)  # Copy all files, including the script
+    assert isinstance(r, Run)
     print(r.url)

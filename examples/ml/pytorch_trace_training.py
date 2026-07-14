@@ -80,7 +80,9 @@ def checkpoint_path(config: TrainingConfig) -> str:
     The config hash makes each unique set of hyperparams its own checkpoint,
     and the path is stable across retries and across runs.
     """
-    raw = flyte.ctx().raw_data_path.path  # type: ignore[union-attr]
+    ctx = flyte.ctx()
+    assert ctx is not None and ctx.raw_data_path is not None
+    raw = ctx.raw_data_path.path
     parsed = urlparse(raw)
     bucket_root = f"{parsed.scheme}://{parsed.netloc}"
     config_hash = hashlib.sha256(config.model_dump_json().encode()).hexdigest()[:12]

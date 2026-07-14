@@ -15,6 +15,7 @@ from flyteidl2.connector.connector_pb2 import (
     GetTaskLogsResponse,
     GetTaskLogsResponseBody,
     GetTaskLogsResponseHeader,
+    TaskExecutionMetadata,
 )
 from flyteidl2.core.execution_pb2 import TaskExecution
 from flyteidl2.logs.dataplane.payload_pb2 import LogLine, LogLineOriginator
@@ -30,7 +31,7 @@ class BatchJobMetadata(ResourceMeta):
     created_at: float
 
 
-class BatchJobConnector(AsyncConnector):
+class BatchJobConnector(AsyncConnector[BatchJobMetadata]):
     """Simulates an external batch job service."""
 
     name = "Batch Job Connector"
@@ -40,7 +41,9 @@ class BatchJobConnector(AsyncConnector):
     async def create(
         self,
         task_template,
+        output_prefix: str = "",
         inputs: Optional[Dict[str, Any]] = None,
+        task_execution_metadata: Optional[TaskExecutionMetadata] = None,
         **kwargs,
     ) -> BatchJobMetadata:
         job_id = str(uuid.uuid4())[:8]

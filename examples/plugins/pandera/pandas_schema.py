@@ -16,6 +16,7 @@ import pandera.typing.pandas as pt
 from flyteplugins.pandera import ValidationConfig
 
 import flyte
+from flyte.remote import Run
 
 img = flyte.Image.from_debian_base(python_version=(3, 12)).with_local_v2_plugins("flyteplugins-pandera")
 
@@ -102,6 +103,7 @@ if __name__ == "__main__":
     flyte.init_from_config(log_level=logging.DEBUG)
 
     run = flyte.with_runcontext(args.mode).run(main)
+    assert isinstance(run, Run)
     print(run.url)
     run.wait()
     print("pandas pandera example OK:", run.outputs()[0])

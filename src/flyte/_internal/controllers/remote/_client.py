@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import cast
+
 from flyteidl2.actions.actions_service_connect import ActionsServiceClient
 from flyteidl2.workflow.queue_service_connect import QueueServiceClient
 from flyteidl2.workflow.state_service_connect import StateServiceClient
@@ -35,18 +37,20 @@ class ControllerClient:
         """
         The state service.
         """
-        return self._state_service
+        # The generated connect client matches the protocol at runtime (parameter names and
+        # streaming return types differ from the hand-written protocol declarations).
+        return cast(StateService, self._state_service)
 
     @property
     def queue_service(self) -> QueueService:
         """
         The queue service.
         """
-        return self._queue_service
+        return cast(QueueService, self._queue_service)
 
     @property
     def actions_service(self) -> ActionsService | None:
         """
         The unified actions service (replaces QueueService + StateService when available).
         """
-        return self._actions_service
+        return cast("ActionsService | None", self._actions_service)

@@ -23,10 +23,12 @@ Run locally::
 """
 
 import sys
+from typing import Literal
 
 import flyte
 from flyte.extras import shell
 from flyte.extras.shell import Stderr, Stdout
+from flyte.remote import Run
 
 # Captures both streams as typed outputs — the canonical pattern for
 # making a tool's output visible to downstream workflow tasks.
@@ -84,14 +86,16 @@ async def inspect_debug_dump(msg: str) -> tuple[str, str]:
 
 if __name__ == "__main__":
     flyte.init_from_config()
-    mode = "remote" if (len(sys.argv) > 1 and sys.argv[1] == "remote") else "local"
+    mode: Literal["local", "remote"] = "remote" if (len(sys.argv) > 1 and sys.argv[1] == "remote") else "local"
 
     print("\n--- inspect_streams ---")
     run = flyte.with_runcontext(mode=mode).run(inspect_streams, "hello")
+    assert isinstance(run, Run)
     print(run.url if mode == "remote" else run)
     print(f"Output: {run.outputs()}")
 
     print("\n--- inspect_debug_dump ---")
     run2 = flyte.with_runcontext(mode=mode).run(inspect_debug_dump, "hello")
+    assert isinstance(run2, Run)
     print(run2.url if mode == "remote" else run2)
     print(f"Output: {run2.outputs()}")

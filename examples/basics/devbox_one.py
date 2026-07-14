@@ -3,6 +3,7 @@ import logging
 from typing import List
 
 import flyte
+from flyte.remote import Run
 
 env = flyte.TaskEnvironment(
     name="hello_world",
@@ -12,21 +13,27 @@ env = flyte.TaskEnvironment(
 
 @env.task
 async def say_hello(data: str, lt: List[int]) -> str:
-    print(f"Hello, world! - {flyte.ctx().action}")
-    print(flyte.ctx().run_start_time)
+    tctx = flyte.ctx()
+    assert tctx is not None  # always set inside a task
+    print(f"Hello, world! - {tctx.action}")
+    print(tctx.run_start_time)
     return f"Hello {data} {lt}"
 
 
 @env.task
 async def square(i: int = 3) -> int:
-    print(flyte.ctx().action)
-    print(flyte.ctx().run_start_time)
+    tctx = flyte.ctx()
+    assert tctx is not None  # always set inside a task
+    print(tctx.action)
+    print(tctx.run_start_time)
     return i * i
 
 
 @env.task(entrypoint=True)
 async def say_hello_nested(data: str = "default string", n: int = 3) -> str:
-    print(f"Hello, nested! - {flyte.ctx().action}, {flyte.ctx().run_start_time}")
+    tctx = flyte.ctx()
+    assert tctx is not None  # always set inside a task
+    print(f"Hello, nested! - {tctx.action}, {tctx.run_start_time}")
     coros = []
     for i in range(n):
         coros.append(square(i=i))
@@ -45,6 +52,7 @@ if __name__ == "__main__":
         overwrite_cache=True,
         interruptible=False,
     ).run(say_hello_nested, data="hello world", n=10)
+    assert isinstance(run, Run)
     print(run.name)
     print(run.url)
     run.wait()

@@ -363,7 +363,7 @@ class Run(ToJSONMixin):
         )
 
     @syncify
-    async def get_debug_url(self) -> str:
+    async def get_debug_url(self) -> str | None:
         """
         Get the debug URL of the run. Returns `None` if the VS Code
         Debugger log entry is not yet available in the action details.

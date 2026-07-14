@@ -39,6 +39,7 @@ from torch.utils.data import DataLoader, DistributedSampler, TensorDataset
 
 import flyte
 from flyte._image import DIST_FOLDER, PythonWheels
+from flyte.remote import Run
 
 image = (
     flyte.Image.from_debian_base(name="torch")
@@ -135,5 +136,6 @@ def torch_oom_train(epochs: int) -> typing.Optional[float]:
 if __name__ == "__main__":
     flyte.init_from_config()
     run = flyte.with_runcontext(mode="remote").run(torch_oom_train, epochs=10)
+    assert isinstance(run, Run)
     print("run name:", run.name)
     print("run url:", run.url)

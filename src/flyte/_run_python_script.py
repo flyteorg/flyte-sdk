@@ -19,12 +19,13 @@ from __future__ import annotations
 import pathlib
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union, cast
 
 import flyte  # circular: returns the partial module; sufficient for annotation resolution.
 from flyte.syncify import syncify
 
 if TYPE_CHECKING:
+    import flyte.io
     from flyte._image import Image
     from flyte.io import Dir
     from flyte.remote import Run
@@ -216,7 +217,7 @@ async def run_python_script(
     if image is None:
         img = flyte.Image.from_debian_base(name="python-script-runner")
     elif isinstance(image, list):
-        img = flyte.Image.from_debian_base(name="python-script-runner").with_pip_packages(*image)
+        img = flyte.Image.from_debian_base(name="python-script-runner").with_pip_packages(*cast("List[str]", image))
     else:
         img = image
 
@@ -263,10 +264,13 @@ async def run_python_script(
         _bundle_relative_paths=(script.name,),
         _bundle_from_dir=script.parent,
     )
-    run = await runner.run.aio(
-        execute_script,
-        args=extra_args or [],
-        task_timeout=timeout,
+    run = cast(
+        "Run",
+        await runner.run.aio(
+            execute_script,
+            args=extra_args or [],
+            task_timeout=timeout,
+        ),
     )
 
     if wait:

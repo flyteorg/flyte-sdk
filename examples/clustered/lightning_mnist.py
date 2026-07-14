@@ -20,13 +20,14 @@ from __future__ import annotations
 
 import flyte
 from flyte._image import DIST_FOLDER, PythonWheels
+from flyte._resources import GPUQuantity, GPUType
 from flyte.clustered import ClusteredTaskEnvironment, ClusterFailurePolicy, TorchRun
 
 # --- Knobs ---------------------------------------------------------------------------------------
 USE_GPU = True
-GPU_DEVICE = "L4"
+GPU_DEVICE: GPUType = "L4"
 REPLICAS = 2  # nodes
-NPROC_PER_NODE = 1  # processes (GPUs) per node
+NPROC_PER_NODE: GPUQuantity = 1  # processes (GPUs) per node
 
 image = (
     flyte.Image.from_debian_base(name="lightning_mnist")
@@ -35,7 +36,7 @@ image = (
 )
 
 resources = (
-    flyte.Resources(cpu=(2, 4), memory=("4Gi", "8Gi"), gpu=f"{GPU_DEVICE}:{NPROC_PER_NODE}")
+    flyte.Resources(cpu=(2, 4), memory=("4Gi", "8Gi"), gpu=flyte.GPU(GPU_DEVICE, NPROC_PER_NODE))
     if USE_GPU
     else flyte.Resources(cpu=(2, 4), memory=("2Gi", "4Gi"))
 )
@@ -61,6 +62,7 @@ async def train_lightning(max_steps: int = 50) -> float:
     from torch.utils.data import DataLoader, TensorDataset
 
     ctx = flyte.ctx()
+    assert ctx is not None  # always set inside a task
     print(
         f"[rank {ctx.rank}/{ctx.world_size}] node_rank={ctx.node_rank} nnodes={ctx.nnodes} "
         f"local_rank={ctx.local_rank} master_addr={ctx.master_addr}",

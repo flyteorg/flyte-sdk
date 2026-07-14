@@ -1,4 +1,5 @@
 import flyte
+from flyte.remote import Run
 
 env = flyte.TaskEnvironment(
     name="hello_world",
@@ -9,7 +10,9 @@ env = flyte.TaskEnvironment(
 
 @env.task
 async def say_hello(data: str) -> str:
-    print(f"Hello, world! - {flyte.ctx().action}")
+    tctx = flyte.ctx()
+    assert tctx is not None  # always set inside a task
+    print(f"Hello, world! - {tctx.action}")
     return f"Hello {data}"
 
 
@@ -23,5 +26,6 @@ if __name__ == "__main__":
     run = flyte.with_runcontext(env_vars={"LOG_LEVEL": "10", "_F_E_VS": "True"}).run(
         say_hello_nested, data="hello world"
     )
+    assert isinstance(run, Run)
     print(run.name)
     print(run.url)

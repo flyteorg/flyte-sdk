@@ -37,19 +37,19 @@ _STUB_QC_METRICS = {
     "note": "Synthetic QC panel — replace with pipeline outputs.",
 }
 
-_STUB_DEG = [
+_STUB_DEG: list[dict[str, object]] = [
     {"gene": "STAT1", "log2fc_stub": 2.1, "adj_p_stub": 1e-6},
     {"gene": "CDK1", "log2fc_stub": 1.4, "adj_p_stub": 2e-5},
     {"gene": "TGFB1", "log2fc_stub": -1.1, "adj_p_stub": 4e-4},
 ]
 
-_STUB_PATHWAY_GSEA = [
+_STUB_PATHWAY_GSEA: list[dict[str, object]] = [
     {"pathway": "Interferon alpha response", "nes_stub": 1.9, "fdr_stub": 0.02},
     {"pathway": "E2F targets", "nes_stub": 1.6, "fdr_stub": 0.04},
     {"pathway": "TNF signaling", "nes_stub": -1.5, "fdr_stub": 0.08},
 ]
 
-_STUB_CLUSTERS = [
+_STUB_CLUSTERS: list[dict[str, object]] = [
     {"cluster_id": "C0", "label_stub": "Cycling T cells", "top_genes_stub": ["MKI67", "TOP2A"]},
     {"cluster_id": "C1", "label_stub": "Exhausted-like", "top_genes_stub": ["PDCD1", "LAG3"]},
     {"cluster_id": "C2", "label_stub": "NK-like", "top_genes_stub": ["NKG7", "GNLY"]},
@@ -76,7 +76,7 @@ _STUB_HYPOTHESES = [
     },
 ]
 
-_STUB_TARGETS = [
+_STUB_TARGETS: list[dict[str, object]] = [
     {"gene": "X", "tractability_stub": "high", "modality_fit_stub": ["small_molecule", "PROTAC"]},
     {"gene": "Y", "tractability_stub": "medium", "modality_fit_stub": ["antibody", "ADC"]},
 ]

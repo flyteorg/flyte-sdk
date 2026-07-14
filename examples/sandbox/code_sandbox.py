@@ -29,6 +29,7 @@ import flyte
 import flyte.sandbox
 from flyte._image import PythonWheels
 from flyte.io import Dir, File
+from flyte.remote import Run
 from flyte.sandbox import sandbox_environment
 
 nest_asyncio.apply()
@@ -308,7 +309,9 @@ if __name__ == "__main__":
     flyte.init_from_config()
 
     run_async = flyte.with_runcontext(mode="remote").run(run_pipeline)
+    assert isinstance(run_async, Run)
     run_sync = flyte.with_runcontext(mode="remote").run(run_pipeline_sync)
+    assert isinstance(run_sync, Run)
 
     print("Async run URL:", run_async.url)
     print("Sync run URL:", run_sync.url)

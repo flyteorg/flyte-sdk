@@ -25,14 +25,17 @@ import os
 import threading
 import time
 from pathlib import Path
+from typing import Any
 
 import param
 from panel.custom import JSComponent
 from textual.app import App
+from typing_extensions import NotRequired, TypedDict
 
 import flyte
 from flyte.app import AppEnvironment, Domain, Scaling
-from flyte.cli._tui._explore import ExploreScreen
+from flyte.cli._tui._explore import ExploreScreen, RunsTable
+from flyte.remote import Run
 
 app_env = AppEnvironment(
     name="panel-textual-app-test-1",
@@ -61,7 +64,7 @@ app_env = AppEnvironment(
         flyte.Secret(key="REO_CLIENT_ID"),
     ],
     domain=Domain(subdomain="flyte2intro"),
-    include=[
+    include=(
         "explore.tcss",
         "template.html",
         "header.html",
@@ -72,7 +75,7 @@ app_env = AppEnvironment(
         "sample_distributed_random_forest.py",
         "sample_mnist_training.py",
         "sample_langgraph_gemini_agent.py",
-    ],
+    ),
     requires_auth=False,
 )
 
@@ -173,7 +176,14 @@ class ReoInitializer(JSComponent):
     """
 
 
-EXAMPLES = {
+class ExampleConfig(TypedDict):
+    script: str
+    description: str
+    run_kwargs: dict[str, Any]
+    env_vars: NotRequired[list[str]]
+
+
+EXAMPLES: dict[str, ExampleConfig] = {
     "Hello World": {
         "script": "sample_hello_world.py",
         "description": "A simple example showing tasks, parallel mapping, conditionals, and basic orchestration.",
@@ -347,7 +357,9 @@ def create_panel_app():
 
             time.sleep(time_to_sleep)
             if flyte_tui_app._running:
-                flyte_tui_app.call_from_thread(lambda: flyte_tui_app.screen.query_one("#runs-table").populate())
+                flyte_tui_app.call_from_thread(
+                    lambda: flyte_tui_app.screen.query_one("#runs-table", RunsTable).populate()
+                )
 
         thread = threading.Thread(target=_do_refresh, daemon=True)
         thread.start()
@@ -387,7 +399,7 @@ def create_panel_app():
                         env_vars[env_var] = os.getenv(env_var)
 
                 run_kwargs = selected_config["run_kwargs"]
-                runcontext_kwargs = {"mode": "local", "env_vars": env_vars}
+                runcontext_kwargs: dict[str, Any] = {"mode": "local", "env_vars": env_vars}
                 if disable_cache:
                     update_output("🔄 Disabling run cache...\n")
                     runcontext_kwargs["disable_run_cache"] = True
@@ -397,6 +409,7 @@ def create_panel_app():
                     module.main,
                     **run_kwargs,
                 )
+                assert isinstance(run, Run)
                 result = run.outputs()
                 update_output(
                     f"✅ Run completed!\nResult: {result}\nSee the 'Explore Runs' pane on the right for more details."

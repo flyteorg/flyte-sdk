@@ -12,7 +12,7 @@ image = (
     .clone(name="spark", registry="ghcr.io/flyteorg", extendable=True)
     .with_env_vars({"UV_PYTHON": "/databricks/python3/bin/python"})
     .with_pip_packages("flyteplugins-databricks")
-    .with_env_vars({"AWS_REGION": "us-west-1", "LOG_LEVEL": 10})
+    .with_env_vars({"AWS_REGION": "us-west-1", "LOG_LEVEL": "10"})
 )
 
 task_env = flyte.TaskEnvironment(
@@ -80,7 +80,9 @@ def get_pi(count: int, partitions: int) -> float:
 async def hello_databricks_nested() -> float:
     partitions = 3
     n = 1 * partitions
-    spark = flyte.ctx().data["spark_session"]
+    tctx = flyte.ctx()
+    assert tctx is not None  # always set inside a task
+    spark = tctx.data["spark_session"]
     count = spark.sparkContext.parallelize(range(1, n + 1), partitions).map(f).reduce(add)
     res = get_pi(count, partitions)
     print(f"result: {res}")

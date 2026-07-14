@@ -12,7 +12,8 @@ from flyteidl2.common import identifier_pb2 as common_identifier_pb2
 from flyteidl2.core import identifier_pb2, literals_pb2, security_pb2, tasks_pb2
 from flyteidl2.core.execution_pb2 import TaskLog
 from flyteidl2.task import common_pb2, environment_pb2, task_definition_pb2
-from google.protobuf import duration_pb2, wrappers_pb2
+from google.protobuf.duration_pb2 import Duration
+from google.protobuf.wrappers_pb2 import BoolValue
 
 import flyte.errors
 from flyte._cache.cache import VersionParameters, cache_from_request
@@ -93,7 +94,7 @@ def get_security_context(
     )
 
 
-def _to_duration(value: timedelta | int | None) -> Optional[duration_pb2.Duration]:
+def _to_duration(value: timedelta | int | None) -> Optional[Duration]:
     """timedelta/int (seconds) -> google.protobuf.Duration; None passes through."""
     if value is None:
         return None
@@ -102,10 +103,10 @@ def _to_duration(value: timedelta | int | None) -> Optional[duration_pb2.Duratio
     total = value.total_seconds()
     seconds = int(total)
     nanos = round((total - seconds) * 1_000_000_000)
-    return duration_pb2.Duration(seconds=seconds, nanos=nanos)
+    return Duration(seconds=seconds, nanos=nanos)
 
 
-def _to_timeout_duration(value: timedelta | int | None) -> Optional[duration_pb2.Duration]:
+def _to_timeout_duration(value: timedelta | int | None) -> Optional[Duration]:
     """Like :func:`_to_duration`, but for timeout/deadline fields where ``0``
     means "unlimited" (same as ``None``) and is omitted on the wire."""
     if value is None:
@@ -139,7 +140,7 @@ def get_proto_retry_strategy(
     return proto
 
 
-def get_proto_max_runtime(timeout: TimeoutType | None) -> Optional[duration_pb2.Duration]:
+def get_proto_max_runtime(timeout: TimeoutType | None) -> Optional[Duration]:
     """Serialize ``Timeout.max_runtime`` for ``TaskMetadata.timeout``. Returns
     ``None`` (omits the wire field) when the bound is unset or zero — both
     mean unlimited."""
@@ -224,7 +225,7 @@ def get_proto_task(
             cache_version = serialize_context.code_bundle.computed_version
         else:
             if isinstance(task, AsyncFunctionTaskTemplate):
-                version_parameters = VersionParameters(func=task.func, image=task.image)
+                version_parameters = VersionParameters(func=cast(typing.Callable, task.func), image=task.image)
             else:
                 version_parameters = VersionParameters(func=None, image=task.image)
             cache_version = task_cache.get_version(version_parameters)
@@ -260,7 +261,7 @@ def get_proto_task(
             timeouts=get_proto_timeout_strategy(task.timeout),
             pod_template_name=(task.pod_template if task.pod_template and isinstance(task.pod_template, str) else None),
             interruptible=task.interruptible,
-            generates_deck=wrappers_pb2.BoolValue(value=task.report),
+            generates_deck=BoolValue(value=task.report),
             debuggable=task.debuggable if task.reusable is None else False,
             is_entrypoint=task.entrypoint,
             log_links=log_links,
@@ -274,7 +275,7 @@ def get_proto_task(
         security_context=get_security_context(task.secrets),
         config=extra_config,
         k8s_pod=pod,
-        sql=sql,
+        sql=cast(Optional[tasks_pb2.Sql], sql),
         extended_resources=get_proto_extended_resources(task.resources),
     )
 
@@ -326,9 +327,7 @@ def lookup_image_in_cache(serialize_context: SerializationContext, env_name: str
     )
 
 
-def _get_urun_container(
-    serialize_context: SerializationContext, task_template: TaskTemplate
-) -> Optional[tasks_pb2.Container]:
+def _get_urun_container(serialize_context: SerializationContext, task_template: TaskTemplate) -> tasks_pb2.Container:
     env = (
         [literals_pb2.KeyValuePair(key=k, value=v) for k, v in task_template.env_vars.items()]
         if task_template.env_vars

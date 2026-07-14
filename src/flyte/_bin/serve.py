@@ -281,7 +281,8 @@ async def _serve(
             # Run the function on a separate thread, in case the sync function
             # relies on third party libraries that use an event loop internally.
             def run_sync():
-                return app_env._server(**bound_params)
+                # asserted non-None above; the closure loses that narrowing
+                return typing.cast("typing.Callable", app_env._server)(**bound_params)
 
             await loop.run_in_executor(None, run_sync)
     finally:

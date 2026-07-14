@@ -1,6 +1,7 @@
 from dep import foo
 
 import flyte
+from flyte.remote import Run
 
 env = flyte.TaskEnvironment(
     name="full_build",
@@ -24,4 +25,5 @@ def main(n: int) -> list[int]:
 if __name__ == "__main__":
     flyte.init_from_config()
     run = flyte.with_runcontext(copy_style="none", version="x").run(main, n=10)
+    assert isinstance(run, Run)
     print(run.url)

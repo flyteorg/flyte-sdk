@@ -41,6 +41,7 @@ import logging
 import flyteplugins.hitl as hitl
 
 import flyte
+import flyte.report
 
 logging.basicConfig(
     level=logging.INFO,

@@ -107,6 +107,7 @@ dev = [
     "jupyterlab>=4.4.3",
     "ipywidgets>=8.1.7",
     "mypy>=1.16.0",
+    "ty>=0.0.59",
     "types-PyYAML",
     "types-aiofiles",
     "kubernetes",
@@ -194,6 +195,11 @@ ignore = ["PGH003", "PLC0415", "ASYNC210", "ASYNC240", "FURB122"]
 [tool.mypy]
 disable_error_code = ["import-untyped"]
 ignore_missing_imports = true
+# Examples are standalone scripts with recurring filenames (main.py, app.py, ...).
+# Deriving module names from full paths (with src/ as the package root for flyte
+# itself) lets mypy check them all in one invocation without duplicate-module errors.
+explicit_package_bases = true
+mypy_path = ["src"]
 
 [tool.uv]
 exclude-newer = "5 days"
@@ -204,15 +210,23 @@ exclude-newer = "5 days"
 flyteidl2 = "0 days"
 flyte_controller_base = "0 days"
 flyteplugins-union = "0 days"
+# ty releases frequently pre-1.0; the type-checking config targets the latest rules.
+ty = "0 days"
 
 [tool.uv.sources]
 flyte_controller_base = { path = "rs_controller" }
 
 [tool.ty.rules]
-unused-ignore-comment = "warn"
+# The codebase is checked by both mypy and ty; `# type: ignore` comments needed by
+# one checker often look unused to the other, so don't flag them.
+unused-ignore-comment = "ignore"
+unused-type-ignore-comment = "ignore"
 redundant-cast = "ignore"
-possibly-unbound-attribute = "error"
-possibly-unbound-import = "error"
+possibly-missing-attribute = "error"
+possibly-missing-import = "error"
+# Examples import optional heavy dependencies (torch, sklearn, ...) that are not
+# installed in the lint environment — same policy as mypy's ignore_missing_imports.
+unresolved-import = "ignore"
 
 [tool.codespell]
 # Ref: https://github.com/codespell-project/codespell#using-a-config-file

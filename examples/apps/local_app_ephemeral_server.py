@@ -20,6 +20,7 @@ from fastapi import FastAPI
 
 import flyte
 from flyte.app.extras import FastAPIAppEnvironment
+from flyte.remote import Run
 
 
 @asynccontextmanager
@@ -99,6 +100,7 @@ if __name__ == "__main__":
 
             # Run a task that calls the local app
             result = await flyte.with_runcontext(mode="local").run.aio(predict_task, data=[5, 10, 15])
+            assert isinstance(result, Run)
             print(f"Task result: {result.outputs()[0]}")
             assert result.outputs()[0] == [36, 61, 86]
 

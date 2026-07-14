@@ -31,7 +31,7 @@ _STUB_BRAND = {
     "cta_style": "One primary CTA per piece; specific verb + outcome.",
 }
 
-_STUB_PILLARS = [
+_STUB_PILLARS: list[dict[str, object]] = [
     {
         "pillar": "Product education",
         "goal": "Help buyers evaluate fit faster",
@@ -54,7 +54,7 @@ _STUB_PILLARS = [
     },
 ]
 
-_STUB_PERSONAS = [
+_STUB_PERSONAS: list[dict[str, object]] = [
     {
         "name": "Platform Dana",
         "role": "Senior data engineer",
@@ -99,7 +99,7 @@ _STUB_SOCIAL = {
     "instagram_caption": {"max_chars": 2200, "hashtags": 8, "tone": "Visual-first, short lines"},
 }
 
-_STUB_WORKFLOW = [
+_STUB_WORKFLOW: list[dict[str, object]] = [
     {"status": "idea", "owner": "content", "sla_days": 2},
     {"status": "draft", "owner": "writer", "sla_days": 5},
     {"status": "in_review", "owner": "editor", "sla_days": 3},

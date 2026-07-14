@@ -26,6 +26,7 @@ import tempfile
 
 import flyte
 from flyte.io import File
+from flyte.remote import Run
 
 env = flyte.TaskEnvironment(
     name="hf-raw-data-example",
@@ -39,8 +40,10 @@ BUCKET = "<BUCKET_NAME>"
 
 @env.task
 def write_greeting(name: str) -> File:
-    print(flyte.ctx().raw_data_path)
     """Write a greeting to a file stored on HuggingFace Hub via raw_data_path."""
+    tctx = flyte.ctx()
+    assert tctx is not None  # always set inside a task
+    print(tctx.raw_data_path)
     with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
         f.write(f"Hello, {name}! This file is stored on HuggingFace Hub.")
         tmp_path = f.name
@@ -70,6 +73,7 @@ if __name__ == "__main__":
     run = flyte.with_runcontext(raw_data_path=f"hf://buckets/{USERNAME}/{BUCKET}/raw-data/").run(
         pipeline, name="HuggingFace"
     )
+    assert isinstance(run, Run)
 
     print(f"Run URL: {run.url}")
     run.wait()

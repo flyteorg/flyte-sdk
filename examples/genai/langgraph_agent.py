@@ -21,15 +21,20 @@ The agent can:
 """
 
 import asyncio
-from typing import Annotated, Any, Callable, Coroutine, Literal, NotRequired, TypedDict
+from typing import Annotated, Any, Callable, Coroutine, Literal
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.graph.state import CompiledStateGraph
 
+# NotRequired/TypedDict come from typing_extensions so the TypedDict below works
+# on Python 3.10 (typing.NotRequired was added in 3.11).
+from typing_extensions import NotRequired, TypedDict
+
 import flyte
 import flyte.report
+from flyte.remote import Run
 
 agent_env = flyte.TaskEnvironment(
     name="langgraph-agent",
@@ -66,7 +71,7 @@ async def get_current_time() -> str:
 
 
 # Tool registry mapping tool names to functions
-TOOLS: dict[str, Callable[[Any], Coroutine[Any, Any, Any]]] = {
+TOOLS: dict[str, Callable[..., Coroutine[Any, Any, Any]]] = {
     "add": add,
     "multiply": multiply,
     "get_current_time": get_current_time,
@@ -250,10 +255,18 @@ def build_agent_graph() -> StateGraph:
 # --- Report Helper ---
 
 
+class AgentOutput(TypedDict):
+    type: str
+    content: str
+    tool_calls: NotRequired[list[dict]]
+    tool_call_id: NotRequired[str]
+    name: NotRequired[str]
+
+
 def generate_html_report(
     mermaid_diagram: str,
     query: str | None = None,
-    messages: list[dict] | None = None,
+    messages: list[AgentOutput] | None = None,
 ) -> str:
     """
     Generate an HTML report for the agent run.
@@ -455,14 +468,6 @@ def generate_html_report(
 # --- Flyte Tasks ---
 
 
-class AgentOutput(TypedDict):
-    type: str
-    content: str
-    tool_calls: NotRequired[list[dict]]
-    tool_call_id: NotRequired[str]
-    name: NotRequired[str]
-
-
 @agent_env.task(report=True)
 async def run_agent(query: str) -> list[AgentOutput]:
     """
@@ -486,7 +491,7 @@ async def run_agent(query: str) -> list[AgentOutput]:
     # Convert messages to serializable format
     output_messages = []
     for msg in result["messages"]:
-        msg_dict = {
+        msg_dict: AgentOutput = {
             "type": msg.__class__.__name__,
             "content": msg.content,
         }
@@ -495,7 +500,7 @@ async def run_agent(query: str) -> list[AgentOutput]:
         if isinstance(msg, ToolMessage):
             msg_dict["tool_call_id"] = msg.tool_call_id
             msg_dict["name"] = msg.name
-        output_messages.append(AgentOutput(**msg_dict))
+        output_messages.append(msg_dict)
 
     # Print the conversation
     for msg in output_messages:
@@ -564,4 +569,5 @@ async def main() -> list[list[AgentOutput]]:
 if __name__ == "__main__":
     flyte.init_from_config()
     r = flyte.with_runcontext(mode="remote").run(main)
+    assert isinstance(r, Run)
     print(r.url)

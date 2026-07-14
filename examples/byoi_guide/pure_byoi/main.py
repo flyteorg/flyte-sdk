@@ -20,6 +20,7 @@ Run (from v2_guide/pure_byoi/):
 from workflow_code.tasks import prepare
 
 import flyte
+from flyte.remote import Run
 
 DATA_PREP_IMAGE = "<your-registry>/data-prep:latest"
 TRAINING_IMAGE = "<your-registry>/training:latest"
@@ -38,6 +39,7 @@ if __name__ == "__main__":
     # Development: run the pipeline.
     # copy_style="none": no code bundle, the image IS the deployment.
     run = flyte.with_runcontext(copy_style="none", version="dev").run(prepare, raw="Hello World")
+    assert isinstance(run, Run)
     print(run.url)
     run.wait()
 

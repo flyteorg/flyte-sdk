@@ -1,4 +1,5 @@
 import flyte
+from flyte.remote import Run
 
 env = flyte.TaskEnvironment(name="debug_example")
 
@@ -13,6 +14,7 @@ def say_hello(name: str) -> str:
 if __name__ == "__main__":
     flyte.init_from_config()
     run = flyte.with_runcontext(debug=True).run(say_hello, name="World")
+    assert isinstance(run, Run)
     print(run.name)
     print("Run url", run.url)
     print("Waiting for debug url...")

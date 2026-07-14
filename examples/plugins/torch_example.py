@@ -9,6 +9,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, DistributedSampler, TensorDataset
 
 import flyte
+from flyte.remote import Run
 
 image = flyte.Image.from_debian_base(name="torch").with_pip_packages("flyteplugins-pytorch")
 
@@ -100,5 +101,6 @@ def torch_distributed_train(epochs: int) -> typing.Optional[float]:
 if __name__ == "__main__":
     flyte.init_from_config()
     run = flyte.with_runcontext(mode="remote").run(torch_distributed_train, epochs=1000)
+    assert isinstance(run, Run)
     print("run name:", run.name)
     print("run url:", run.url)

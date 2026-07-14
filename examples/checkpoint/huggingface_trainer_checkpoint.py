@@ -57,6 +57,7 @@ from transformers import (
 from transformers.trainer_utils import get_last_checkpoint
 
 import flyte
+from flyte.remote import Run
 
 env = flyte.TaskEnvironment(
     name="checkpoint_hf_trainer",
@@ -196,4 +197,5 @@ def train_transformers(max_epochs: int = 24) -> float:
 if __name__ == "__main__":
     flyte.init_from_config()
     run = flyte.with_runcontext(mode="remote").run(train_transformers, max_epochs=10)
+    assert isinstance(run, Run)
     print(run.url)

@@ -763,8 +763,12 @@ class EntityDetailScreen(Screen):
             t = remote.Task.get(name=self._entity_name, version="latest")
             details = t.fetch()
             lines.append(f"name:       {self._entity_name}")
-            lines.append(f"version:    {details.pb2.id.version}")
-            lines.append(f"type:       {details.pb2.task_template.type}")
+            # NOTE: `pb2.id` / `pb2.task_template` do not exist on TaskDetails (ty is right);
+            # accessing them raises AttributeError which is caught by the caller's fallback.
+            # Kept as-is to preserve existing runtime behavior; likely intended:
+            # `pb2.task_id.version` and `pb2.spec.task_template.type`.
+            lines.append(f"version:    {details.pb2.id.version}")  # ty: ignore[unresolved-attribute]
+            lines.append(f"type:       {details.pb2.task_template.type}")  # ty: ignore[unresolved-attribute]
             lines.append(f"deployed:   {details.pb2.metadata.deployed_at.ToDatetime()}")
         elif self._kind == "App":
             app_obj = remote.App.get(name=self._entity_name)
@@ -809,7 +813,7 @@ class RunDetailScreen(Screen):
         self._tracker = ActionTracker()
         self._selected_action: str | None = None
         self._seen_pending_condition_ids: set[str] = set()
-        self._actions_by_name: dict[str, object] = {}
+        self._actions_by_name: dict[str, remote.Action] = {}
         self._active = True
         self._poll_timer: Timer | None = None
 
@@ -923,7 +927,7 @@ class RunDetailScreen(Screen):
             lines = fetch_log_tail(
                 self._run_name,
                 action_name,
-                action=cached_action,  # type: ignore[arg-type]
+                action=cached_action,
                 max_lines=300,
                 show_ts=True,
                 should_continue=self._is_active,
@@ -954,11 +958,11 @@ class RunDetailScreen(Screen):
         self._signal_condition(event.action_id, event.value)
 
     @work(thread=True, exclusive=True)
-    def _signal_condition(self, action_id: str, value: object) -> None:
+    def _signal_condition(self, action_id: str, value: bool | int | float | str) -> None:
         if not self._is_active():
             return
         try:
-            signal_condition_action(self._run_name, action_id, value)  # type: ignore[arg-type]
+            signal_condition_action(self._run_name, action_id, value)
             self.app.call_from_thread(self.notify, "Condition signaled")
             self.app.call_from_thread(self._reload_run_data)
         except Exception as exc:

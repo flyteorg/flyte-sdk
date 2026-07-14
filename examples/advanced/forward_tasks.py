@@ -1,3 +1,5 @@
+from collections.abc import Coroutine
+
 import flyte
 
 env = flyte.TaskEnvironment("forward-tasks")
@@ -12,6 +14,7 @@ async def inner_task(x: int) -> int:
 async def outer_task(x: int) -> int:
     # you can invoke any task function, directly without invoking on remote using .forward() method
     v = await inner_task.forward(x=10)
+    assert not isinstance(v, Coroutine)  # awaiting forward on an async task yields the value
     return await inner_task(v)
 
 
@@ -23,6 +26,7 @@ def sync_inner_task(x: int) -> int:
 @env.task
 def sync_outer_task(x: int) -> int:
     v = sync_inner_task.forward(x=10)
+    assert not isinstance(v, Coroutine)  # forward on a sync task returns the value directly
     return sync_inner_task(v)
 
 

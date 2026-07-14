@@ -68,6 +68,7 @@ async def idle_for_chaos(minutes: int = RUN_MINUTES) -> int:
     import torch.distributed as dist
 
     ctx = flyte.ctx()
+    assert ctx is not None  # always set inside a task
     attempt = ctx.restart_attempt or 0
     rank = ctx.rank or 0
 

@@ -42,6 +42,7 @@ import polars as pl
 
 import flyte
 import flyte.io
+from flyte.remote import Run
 
 # Create task environment with required dependencies
 img = flyte.Image.from_debian_base(name="flyteplugins-polars-image").with_pip_packages("flyteplugins-polars")
@@ -197,7 +198,7 @@ if __name__ == "__main__":
     run = flyte.run(process_fdf_to_df, df=flyte_dataframe)
     print(f"   URL: {run.url}")
     run.wait()
-    result: pl.DataFrame = run.outputs()[0]
+    result = run.outputs()[0]  # pl.DataFrame
     print(f"   Result:\n{result}\n")
 
     # Example 3: Polars DataFrame to Flyte DataFrame
@@ -205,7 +206,7 @@ if __name__ == "__main__":
     run = flyte.run(process_df_to_fdf, df=dataframe)
     print(f"   URL: {run.url}")
     run.wait()
-    result: flyte.io.DataFrame = run.outputs()[0]
+    result = run.outputs()[0]  # flyte.io.DataFrame
     print(f"   Result:\n{result}\n")
 
     # Example 4: Flyte DataFrame passthrough
@@ -213,7 +214,7 @@ if __name__ == "__main__":
     run = flyte.run(process_fdf_to_fdf, df=flyte_dataframe)
     print(f"   URL: {run.url}")
     run.wait()
-    result: flyte.io.DataFrame = run.outputs()[0]
+    result = run.outputs()[0]  # flyte.io.DataFrame
     print(f"   Result:\n{result}\n")
 
     # ==========================================================================
@@ -226,6 +227,7 @@ if __name__ == "__main__":
     # Example 5: Process LazyFrame
     print("\n5. Processing Polars LazyFrame...")
     run = flyte.with_runcontext(preserve_original_types=True).run(process_lf, lf=lazyframe)
+    assert isinstance(run, Run)
     print(f"   URL: {run.url}")
     run.wait()
     result = run.outputs()[0]
@@ -235,17 +237,19 @@ if __name__ == "__main__":
     print("6. Flyte DataFrame -> Polars LazyFrame...")
     flyte_dataframe_for_lf = flyte.io.DataFrame.from_df(lazyframe)
     run = flyte.with_runcontext(preserve_original_types=True).run(process_fdf_to_lf, df=flyte_dataframe_for_lf)
+    assert isinstance(run, Run)
     print(f"   URL: {run.url}")
     run.wait()
-    result: pl.LazyFrame = run.outputs()[0]
+    result = run.outputs()[0]  # pl.LazyFrame
     print(f"   Result (collected):\n{result.collect()}\n")
 
     # Example 7: Polars LazyFrame to Flyte DataFrame
     print("7. Polars LazyFrame -> Flyte DataFrame...")
     run = flyte.with_runcontext(preserve_original_types=True).run(process_lf_to_fdf, lf=lazyframe)
+    assert isinstance(run, Run)
     print(f"   URL: {run.url}")
     run.wait()
-    result: flyte.io.DataFrame = run.outputs()[0]
+    result = run.outputs()[0]  # flyte.io.DataFrame
     print(f"   Result:\n{result}\n")
 
     # ==========================================================================
@@ -258,6 +262,7 @@ if __name__ == "__main__":
     # Example 8: DataFrame to LazyFrame
     print("\n8. Transform DataFrame -> LazyFrame...")
     run = flyte.with_runcontext(preserve_original_types=True).run(transform_df_to_lf, df=dataframe)
+    assert isinstance(run, Run)
     print(f"   URL: {run.url}")
     run.wait()
     result = run.outputs()[0]
@@ -266,6 +271,7 @@ if __name__ == "__main__":
     # Example 9: LazyFrame to DataFrame
     print("9. Transform LazyFrame -> DataFrame...")
     run = flyte.with_runcontext(preserve_original_types=True).run(transform_lf_to_df, lf=lazyframe)
+    assert isinstance(run, Run)
     print(f"   URL: {run.url}")
     run.wait()
     result = run.outputs()[0]
@@ -281,6 +287,7 @@ if __name__ == "__main__":
     # Example 10: Filter and aggregate DataFrame
     print("\n10. Filter and aggregate DataFrame...")
     run = flyte.with_runcontext(preserve_original_types=True).run(filter_and_aggregate, df=dataframe)
+    assert isinstance(run, Run)
     print(f"   URL: {run.url}")
     run.wait()
     result = run.outputs()[0]
@@ -289,6 +296,7 @@ if __name__ == "__main__":
     # Example 11: Filter and aggregate LazyFrame
     print("11. Filter and aggregate LazyFrame...")
     run = flyte.with_runcontext(preserve_original_types=True).run(lazy_filter_and_aggregate, lf=lazyframe)
+    assert isinstance(run, Run)
     print(f"   URL: {run.url}")
     run.wait()
     result = run.outputs()[0]

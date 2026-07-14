@@ -5,6 +5,7 @@ import yaml
 
 import flyte
 from flyte.io import File
+from flyte.remote import Run
 
 env = flyte.TaskEnvironment(
     "dynamic_dag",
@@ -123,5 +124,6 @@ if __name__ == "__main__":
         yaml_file=yaml_file,
         pipeline_name="pipeline_skip_1_2_3",
     )
+    assert isinstance(run, Run)
     print(run.url)
     run.wait()

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import contextvars
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional, ParamSpec, Tuple, TypeVar
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional, ParamSpec, Tuple, TypeVar, cast
 
 from flyte._logging import logger
 from flyte.models import GroupData, RawDataPath, TaskContext
@@ -54,7 +54,8 @@ class Context:
             raise ValueError("Cannot create a new context without contextdata.")
         self._data = data
         self._id = id(self)  # Immutable unique identifier
-        self._token = None  # Context variable token to restore the previous context
+        # Context variable token to restore the previous context
+        self._token: Optional[contextvars.Token[Context]] = None
 
     @property
     def data(self) -> ContextData:
@@ -155,9 +156,9 @@ class Context:
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Exit the context, restoring the previous context."""
         try:
-            root_context_var.reset(self._token)
+            root_context_var.reset(cast(contextvars.Token["Context"], self._token))
         except Exception as e:
-            logger.warn(f"Failed to reset context: {e}")
+            logger.warning(f"Failed to reset context: {e}")
             raise e
 
     async def __aenter__(self):
@@ -167,7 +168,7 @@ class Context:
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async version of context exit."""
-        root_context_var.reset(self._token)
+        root_context_var.reset(cast(contextvars.Token["Context"], self._token))
 
     def __repr__(self):
         return f"{self.data}"

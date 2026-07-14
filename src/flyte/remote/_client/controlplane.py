@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import AsyncIterator
+from typing import AsyncIterator, cast
 from urllib.parse import urlparse
 
 from async_lru import alru_cache
@@ -332,7 +332,9 @@ class ClusterAwareDataProxy:
 
         endpoint = resp.cluster_endpoint
         if not endpoint or endpoint == self._session_config.endpoint:
-            return self._default_client
+            # The generated connect client structurally satisfies the DataProxyService
+            # protocol at runtime; the stubs lag behind the protocol definition.
+            return cast(DataProxyService, self._default_client)
 
         # Forward the auth-related kwargs from the parent SessionConfig so the
         # per-cluster session preserves the configured ``auth_type`` (Passthrough,
@@ -354,7 +356,7 @@ class ClusterAwareDataProxy:
             raise RuntimeError(f"Failed to create session for cluster endpoint '{endpoint}': {e}") from e
 
         logger.debug(f"Created DataProxy client for cluster endpoint: {endpoint}")
-        return DataProxyServiceClient(**new_cfg.connect_kwargs())
+        return cast(DataProxyService, DataProxyServiceClient(**new_cfg.connect_kwargs()))
 
 
 class ClusterAwareSecretService:
@@ -529,11 +531,13 @@ class ClientSet:
 
     @property
     def app_service(self) -> AppService:
-        return self._app_service
+        # Generated connect clients satisfy the protocols at runtime; the stubs'
+        # streaming-method return annotations differ from the protocol's.
+        return cast(AppService, self._app_service)
 
     @property
     def run_service(self) -> RunService:
-        return self._run_service
+        return cast(RunService, self._run_service)
 
     @property
     def dataproxy_service(self) -> DataProxyService:

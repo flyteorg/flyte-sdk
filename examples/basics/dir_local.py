@@ -14,6 +14,7 @@ python examples/basics/dir_local.py
 
 import flyte
 from flyte.io import Dir
+from flyte.remote import Run
 
 env = flyte.TaskEnvironment(
     name="dir-local",
@@ -23,8 +24,9 @@ env = flyte.TaskEnvironment(
 @env.task
 async def process_dir(dir: Dir) -> dict[str, str]:
     """Process a directory and return file names with their content previews."""
-    file_contents = {}
+    file_contents: dict[str, str] = {}
     async for file in dir.walk(recursive=False):
+        assert file.name is not None  # name is always set for files from walk
         if file.name.endswith(".py"):
             async with file.open("rb") as f:
                 content = bytes(await f.read())
@@ -55,6 +57,7 @@ if __name__ == "__main__":
 
         dir = Dir.from_local_sync(temp_dir)
         run = flyte.with_runcontext(mode="local").run(process_dir, dir=dir)
+        assert isinstance(run, Run)
         print(run.url)
         run.wait()
         print("outputs")

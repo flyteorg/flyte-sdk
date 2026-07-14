@@ -1,5 +1,6 @@
 import hashlib
 import typing
+from datetime import timedelta
 
 from flyteidl2.core import tasks_pb2
 
@@ -53,7 +54,8 @@ def extract_unique_id_and_image(
     else:
         components += f":{reuse_policy.replicas}"
     if reuse_policy.idle_ttl:
-        components += f":{reuse_policy.idle_ttl.total_seconds()}"  # type: ignore [union-attr]
+        # __post_init__ normalizes idle_ttl to a timedelta.
+        components += f":{typing.cast(timedelta, reuse_policy.idle_ttl).total_seconds()}"
     if reuse_policy.get_scaledown_ttl() is not None:
         components += f":{reuse_policy.get_scaledown_ttl()}"
     if code_bundle is not None:
@@ -114,7 +116,10 @@ def add_reusable(
             "parallelism": reuse_policy.concurrency,
             "min_replica_count": reuse_policy.min_replicas,
             "replica_count": reuse_policy.max_replicas,
-            "ttl_seconds": reuse_policy.idle_ttl.total_seconds() if reuse_policy.idle_ttl else None,  # type: ignore [union-attr]
+            # __post_init__ normalizes idle_ttl to a timedelta.
+            "ttl_seconds": typing.cast(timedelta, reuse_policy.idle_ttl).total_seconds()
+            if reuse_policy.idle_ttl
+            else None,
             "scaledown_ttl_seconds": scaledown_ttl.total_seconds() if scaledown_ttl else None,
         },
     }

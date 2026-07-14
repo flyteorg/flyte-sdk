@@ -23,6 +23,7 @@ from pathlib import Path
 import flyte
 from flyte.extras import ContainerTask
 from flyte.io import File
+from flyte.remote import Run
 
 # Single File: NAMED_DIR stages it at /var/inputs/fasta/<original-name>; the command
 # globs the dir and reports whether the .fasta extension survived.
@@ -106,4 +107,5 @@ async def main_list() -> str:
 if __name__ == "__main__":
     flyte.init_from_config()
     run = flyte.with_runcontext(mode="remote").run(main)
+    assert isinstance(run, Run)
     print(run.url)

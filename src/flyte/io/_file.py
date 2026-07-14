@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import shutil
 import typing
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from pathlib import Path
 from typing import (
     IO,
@@ -16,9 +16,9 @@ from typing import (
     Dict,
     Generator,
     Generic,
+    Literal,
     Optional,
     Type,
-    TypeVar,
     Union,
 )
 
@@ -28,6 +28,7 @@ from fsspec.utils import get_protocol
 from mashumaro.types import SerializableType
 from pydantic import BaseModel, Field, PrivateAttr, model_validator
 from pydantic.json_schema import SkipJsonSchema
+from typing_extensions import TypeVar
 
 import flyte.errors
 import flyte.storage as storage
@@ -45,8 +46,10 @@ if typing.TYPE_CHECKING:
 
 _COPY_BUFSIZE = 8 * 1024 * 1024  # 8 MiB chunks for large-file transfers
 
-# Type variable for the file format
-T = TypeVar("T")
+# Type variable for the file format. Defaults to Any (PEP 696) so that calls that
+# cannot bind the format — e.g. `File(path=...)` or `File.new_remote()` — type-check
+# without an explicit annotation on the assignment target.
+T = TypeVar("T", default=Any)
 
 
 class File(BaseModel, Generic[T], SerializableType):
@@ -197,7 +200,7 @@ class File(BaseModel, Generic[T], SerializableType):
     name: Optional[str] = None
     format: str = ""
     hash: Optional[str] = None
-    hash_method: Annotated[Optional[HashMethod], Field(default=None, exclude=True), SkipJsonSchema()] = None
+    hash_method: Annotated[Optional[HashMethod], Field(default=None, exclude=True), SkipJsonSchema()] = None  # ty: ignore[call-non-callable]
 
     # lazy uploader is used to upload local file to the remote storage when in remote mode
     _lazy_uploader: Callable[[], Coroutine[Any, Any, tuple[str | None, str]]] | None = PrivateAttr(default=None)
@@ -223,9 +226,9 @@ class File(BaseModel, Generic[T], SerializableType):
         return pyd_dump
 
     @classmethod
-    def _deserialize(cls, file_dump: Dict[str, Optional[str]]) -> File:
+    def _deserialize(cls, value: Dict[str, Optional[str]]) -> File:
         """Internal: Deserialize File from dictionary. Not intended for direct use."""
-        return File.model_validate(file_dump)
+        return File.model_validate(value)
 
     @property
     def lazy_uploader(self) -> Callable[[], Coroutine[Any, Any, tuple[str | None, str]]] | None:
@@ -378,8 +381,36 @@ class File(BaseModel, Generic[T], SerializableType):
         """
         return cls(path=remote_path, hash=file_cache_key)
 
-    @asynccontextmanager
-    async def open(
+    # The overloads below are typing-only: they narrow the yielded type by open mode
+    # (read modes yield a readable handle, write modes a writable one) so callers
+    # don't have to discriminate the union themselves. The overloads live on a plain
+    # method delegating to the @asynccontextmanager generator because neither mypy
+    # nor ty reliably matches overloads through that decorator. Runtime behavior is
+    # unchanged: open() still returns the async context manager the generator yields.
+    @typing.overload
+    def open(
+        self,
+        mode: Literal["rb", "r", "rt"] = "rb",
+        block_size: Optional[int] = None,
+        cache_type: str = "readahead",
+        cache_options: Optional[dict] = None,
+        compression: Optional[str] = None,
+        **kwargs,
+    ) -> AbstractAsyncContextManager[AsyncReadableFile]: ...
+
+    @typing.overload
+    def open(
+        self,
+        mode: Literal["wb", "w", "wt", "ab", "a"],
+        block_size: Optional[int] = None,
+        cache_type: str = "readahead",
+        cache_options: Optional[dict] = None,
+        compression: Optional[str] = None,
+        **kwargs,
+    ) -> AbstractAsyncContextManager[Union[AsyncWritableFile, "HashingWriter"]]: ...
+
+    @typing.overload
+    def open(
         self,
         mode: str = "rb",
         block_size: Optional[int] = None,
@@ -387,7 +418,17 @@ class File(BaseModel, Generic[T], SerializableType):
         cache_options: Optional[dict] = None,
         compression: Optional[str] = None,
         **kwargs,
-    ) -> AsyncGenerator[Union[AsyncWritableFile, AsyncReadableFile, "HashingWriter"], None]:
+    ) -> AbstractAsyncContextManager[Union[AsyncWritableFile, AsyncReadableFile, "HashingWriter"]]: ...
+
+    def open(
+        self,
+        mode: str = "rb",
+        block_size: Optional[int] = None,
+        cache_type: str = "readahead",
+        cache_options: Optional[dict] = None,
+        compression: Optional[str] = None,
+        **kwargs,
+    ) -> AbstractAsyncContextManager[Union[AsyncWritableFile, AsyncReadableFile, "HashingWriter"]]:
         """
         Asynchronously open the file and return a file-like object.
 
@@ -441,6 +482,25 @@ class File(BaseModel, Generic[T], SerializableType):
         Returns:
             An async file-like object that can be used with async read/write operations
         """
+        return self._open(
+            mode=mode,
+            block_size=block_size,
+            cache_type=cache_type,
+            cache_options=cache_options,
+            compression=compression,
+            **kwargs,
+        )
+
+    @asynccontextmanager
+    async def _open(
+        self,
+        mode: str = "rb",
+        block_size: Optional[int] = None,
+        cache_type: str = "readahead",
+        cache_options: Optional[dict] = None,
+        compression: Optional[str] = None,
+        **kwargs,
+    ) -> AsyncGenerator[Union[AsyncWritableFile, AsyncReadableFile, "HashingWriter"], None]:
         # Check if we should use obstore bypass
         try:
             fh = await storage.open(
@@ -463,7 +523,7 @@ class File(BaseModel, Generic[T], SerializableType):
             # Fall back to aiofiles
             fs = storage.get_underlying_filesystem(path=self.path)
             if "file" in fs.protocol:
-                async with aiofiles.open(self.path, mode=mode, **kwargs) as f:  # type: ignore[call-overload]
+                async with aiofiles.open(self.path, mode=mode, **kwargs) as f:  # type: ignore[call-overload]  # ty: ignore[no-matching-overload]
                     yield f
                 return
             raise

@@ -22,6 +22,7 @@ from flyte._task_environment import TaskEnvironment
 from flyte.io import Dir
 
 if TYPE_CHECKING:
+    from flyte.models import TaskContext
     from flyte.remote import Run
 
 
@@ -394,7 +395,9 @@ def store_hf_model_task(info: str, raw_data_path: str | None = None) -> Dir:
             if raw_data_path is not None:
                 remote_path = raw_data_path
             else:
-                remote_path = flyte.ctx().raw_data_path.get_random_remote_path(artifact_name)  # type: ignore [union-attr]
+                # flyte.ctx() is always set inside a running task
+                tctx = typing.cast("TaskContext", flyte.ctx())
+                remote_path = tctx.raw_data_path.get_random_remote_path(artifact_name)
 
             remote_path, card = _stream_to_remote_dir(_info.repo, commit, token, remote_path)
             result_dir = Dir.from_existing_remote(remote_path)
@@ -556,8 +559,8 @@ def hf_model(
         resources=resources,
         secrets=[Secret(key=hf_token_key, as_env_var="HF_TOKEN")],
     )
-    task = env.task(report=True)(store_hf_model_task)  # type: ignore [assignment]
+    prefetch_task = env.task(report=True)(store_hf_model_task)
     run = flyte.with_runcontext(interactive_mode=True, disable_run_cache=disable_run_cache).run(
-        task, info.model_dump_json(), raw_data_path
+        prefetch_task, info.model_dump_json(), raw_data_path
     )
     return typing.cast(Run, run)

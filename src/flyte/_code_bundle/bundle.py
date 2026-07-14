@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Type
 
 from async_lru import alru_cache
-from flyteidl2.core.tasks_pb2 import TaskTemplate
 
 from flyte._logging import log, logger
 from flyte._status import status
@@ -27,6 +26,7 @@ from ._packaging import create_bundle, list_files_to_bundle, list_relative_files
 from ._utils import CopyFiles, hash_file
 
 if TYPE_CHECKING:
+    from flyte._task import TaskTemplate
     from flyte.app import AppEnvironment
 
 _pickled_file_extension = ".pkl.gz"

@@ -426,6 +426,9 @@ class _Runner:
         from flyteidl2.task import run_pb2
         from google.protobuf import wrappers_pb2
 
+        # google.protobuf ships no type stubs for the dynamically generated wrappers_pb2 module.
+        _bool_value_cls = cast(Any, wrappers_pb2).BoolValue
+
         env = self._build_env_dict()
         if base is not None:
             # Inherit the prior run's env as the floor; runner overrides win.
@@ -458,9 +461,7 @@ class _Runner:
             )
             run_spec = run_pb2.RunSpec(
                 overwrite_cache=self._overwrite_cache,
-                interruptible=wrappers_pb2.BoolValue(value=self._interruptible)
-                if self._interruptible is not None
-                else None,
+                interruptible=_bool_value_cls(value=self._interruptible) if self._interruptible is not None else None,
                 annotations=run_pb2.Annotations(values=self._annotations),
                 labels=run_pb2.Labels(values=self._labels),
                 envs=env_kv,
@@ -484,7 +485,7 @@ class _Runner:
             run_spec.CopyFrom(base)
             run_spec.envs.CopyFrom(env_kv)
             if self._interruptible is not None:
-                run_spec.interruptible.CopyFrom(wrappers_pb2.BoolValue(value=self._interruptible))
+                run_spec.interruptible.CopyFrom(_bool_value_cls(value=self._interruptible))
             if self._overwrite_cache:
                 run_spec.overwrite_cache = True
                 run_spec.cache_config.overwrite_cache = True
@@ -514,14 +515,18 @@ class _Runner:
 
         # recover: gated until flyteidl2 ships RunSpec.recover (+ backend support). One-line set then.
         if recover_ref:
-            if "recover" not in run_pb2.RunSpec.DESCRIPTOR.fields_by_name:
+            # google.protobuf ships no stubs for descriptor internals; DESCRIPTOR is opaque to checkers.
+            if "recover" not in cast(Any, run_pb2.RunSpec).DESCRIPTOR.fields_by_name:
                 raise NotImplementedError(
                     "recover is not yet supported by this backend "
                     "(RunSpec.recover is unavailable in this flyteidl2 build)."
                 )
             from flyteidl2.common import identifier_pb2
 
-            run_spec.recover.CopyFrom(run_pb2.Recover(run_id=identifier_pb2.RunIdentifier(name=recover_ref)))
+            # RunSpec.recover / run_pb2.Recover are absent from current flyteidl2 stubs (runtime-gated above).
+            cast(Any, run_spec).recover.CopyFrom(
+                cast(Any, run_pb2).Recover(run_id=identifier_pb2.RunIdentifier(name=recover_ref))
+            )
 
         # related_to: implicit provenance (rerun source, or the invoking in-cluster run).
         run_spec.ClearField("related_to")  # never inherit a rerun base's stale (grandparent) pointer
@@ -839,6 +844,7 @@ class _Runner:
     ) -> None:
         """Send notifications locally. Never raises — failures are logged."""
         from flyte.notify._notifiers import NamedRule as _NamedRule
+        from flyte.notify._notifiers import Notification as _Notification
         from flyte.notify._sender import send_notifications
 
         notifications = self._notifications
@@ -847,7 +853,8 @@ class _Runner:
             return
 
         await send_notifications(
-            notifications,  # type: ignore[arg-type]
+            # Only called when self._notifications is set (see call sites), so never None here.
+            cast(Union[_Notification, Tuple[_Notification, ...]], notifications),
             phase=phase,
             task_name=task_name,
             run_name=run_name,

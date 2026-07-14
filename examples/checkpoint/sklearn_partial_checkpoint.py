@@ -21,6 +21,7 @@ import numpy as np
 from sklearn.linear_model import SGDClassifier
 
 import flyte
+from flyte.remote import Run
 
 env = flyte.TaskEnvironment(
     name="checkpoint_sklearn_partial",
@@ -90,4 +91,5 @@ async def incremental_sgd(chunks: int = 4) -> float:
 if __name__ == "__main__":
     flyte.init_from_config()
     run = flyte.with_runcontext(mode="remote").run(incremental_sgd, chunks=10)
+    assert isinstance(run, Run)
     print(run.url)

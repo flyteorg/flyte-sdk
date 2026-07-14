@@ -15,6 +15,7 @@ from fastapi import FastAPI
 
 import flyte
 from flyte.app.extras import FastAPIAppEnvironment
+from flyte.remote import Run
 
 app = FastAPI(
     title="Local Add One",
@@ -70,6 +71,7 @@ if __name__ == "__main__":
 
     # Run a task that calls the local app
     result = flyte.with_runcontext(mode="local").run(add_one_task, x=5)
+    assert isinstance(result, Run)
     print(f"Result: {result.outputs()[0]}")
     assert result.outputs()[0] == 6
 

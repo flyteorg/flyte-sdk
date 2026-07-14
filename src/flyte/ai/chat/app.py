@@ -9,7 +9,7 @@ import re
 import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 import rich.repr
 from pydantic import BaseModel
@@ -606,7 +606,8 @@ class AgentChatAppEnvironment(flyte.app.AppEnvironment):
         import uvicorn
 
         fastapi_app = self.build_fastapi_app()
-        config = uvicorn.Config(fastapi_app, port=self.port.port)
+        # AppEnvironment.__post_init__ normalizes `port` to a Port instance.
+        config = uvicorn.Config(fastapi_app, port=cast(flyte.app.Port, self.port).port)
         await uvicorn.Server(config).serve()
 
     def container_command(self, serialization_context: SerializationContext) -> list[str]:

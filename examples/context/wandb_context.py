@@ -7,12 +7,13 @@ This example demonstrates how to use W&B with Flyte for experiment tracking.
 import os
 import random
 from dataclasses import dataclass
-from typing import Dict
+from typing import Any, Dict
 
 import wandb
 
 import flyte
 from flyte import Link
+from flyte.remote import Run
 
 
 @dataclass
@@ -31,6 +32,7 @@ class Wandb(Link):
         parent_action_name: str,
         action_name: str,
         pod_name: str,
+        **kwargs: Any,
     ) -> str:
         return f"https://wandb.ai/{self.entity}/{self.project}/runs/{self.id}"
 
@@ -80,10 +82,12 @@ def train_model(config: ModelConfig) -> TrainingResult:
     Returns:
         Training results including final accuracy and best epoch
     """
+    tctx = flyte.ctx()
+    assert tctx is not None  # always set inside a task
     with wandb.init(
         project=WANDB_PROJECT,
         entity=WANDB_ENTITY,
-        id=flyte.ctx().custom_context.get("wandb_id"),
+        id=tctx.custom_context.get("wandb_id"),
         config={
             "learning_rate": config.learning_rate,
             "batch_size": config.batch_size,
@@ -191,6 +195,7 @@ if __name__ == "__main__":
     # Initialize Flyte and run the training
     flyte.init_from_config()
     run = flyte.with_runcontext(mode="remote").run(main)
+    assert isinstance(run, Run)
     run.wait()
 
     print("\n" + "=" * 60)

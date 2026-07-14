@@ -206,7 +206,11 @@ env = AgentChatAppEnvironment(
 
 
 if __name__ == "__main__":
+    from flyte.app._deploy import DeployedAppEnvironment
+
     flyte.init_from_config(root_dir=pathlib.Path(__file__).parent)
     deployments = flyte.deploy(env)
     print(f"Agent chat UI deployed: {deployments[0].summary_repr()}")
-    print(f"Url: {deployments[0].envs['flyte-native-agent-chat-ui'].deployed_app.url}")
+    deployed_env = deployments[0].envs["flyte-native-agent-chat-ui"]
+    assert isinstance(deployed_env, DeployedAppEnvironment)
+    print(f"Url: {deployed_env.deployed_app.url}")

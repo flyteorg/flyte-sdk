@@ -33,7 +33,7 @@ import os
 import tempfile
 from collections import defaultdict
 from functools import lru_cache
-from typing import Any, AsyncGenerator, Dict
+from typing import Any, AsyncGenerator, Dict, Iterable
 
 import torch
 from datasets import load_dataset
@@ -41,6 +41,7 @@ from huggingface_hub import hf_hub_url
 from sentence_transformers import SentenceTransformer
 
 import flyte.io
+from flyte.remote import Run
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -130,11 +131,15 @@ async def embed_shard_to_file(repo_id: str, filename: str, model_name: str, batc
     return await flyte.io.File.from_local(out_path)
 
 
-async def _aiter(sync_iterable) -> AsyncGenerator[Dict[str, Any], None]:
+async def _aiter(sync_iterable: Iterable[Dict[str, Any]]) -> AsyncGenerator[Dict[str, Any], None]:
     """Wrap a synchronous iterable into an async generator."""
     loop = asyncio.get_running_loop()
+
+    def _identity(r: Dict[str, Any]) -> Dict[str, Any]:
+        return r
+
     for row in sync_iterable:
-        yield await loop.run_in_executor(None, lambda r=row: r)
+        yield await loop.run_in_executor(None, _identity, row)
 
 
 @driver.task(cache="auto")
@@ -193,5 +198,6 @@ if __name__ == "__main__":
     # flyte.init()
     flyte.init_from_config()
     run = flyte.with_runcontext().run(main, 256, shard="20231101.en")
+    assert isinstance(run, Run)
     print(run.url)
     # asyncio.run(high_mem_examples())

@@ -23,11 +23,13 @@ Run locally::
 import sys
 import tempfile
 from pathlib import Path
+from typing import Literal
 
 import flyte
 from flyte.extras import shell
 from flyte.extras.shell import Glob
 from flyte.io import Dir, File
+from flyte.remote import Run
 
 summarize_dir = shell.create(
     name="summarize_dir",
@@ -61,7 +63,7 @@ async def summarize_files(src: Dir) -> list[File]:
 
 if __name__ == "__main__":
     flyte.init_from_config()
-    mode = "remote" if (len(sys.argv) > 1 and sys.argv[1] == "remote") else "local"
+    mode: Literal["local", "remote"] = "remote" if (len(sys.argv) > 1 and sys.argv[1] == "remote") else "local"
 
     # Build a small input directory locally.
     tmp = Path(tempfile.mkdtemp())
@@ -69,5 +71,6 @@ if __name__ == "__main__":
         (tmp / f"file_{i}.txt").write_text(body)
 
     run = flyte.with_runcontext(mode=mode).run(summarize_files, Dir.from_local_sync(str(tmp)))
+    assert isinstance(run, Run)
     print(run.url if mode == "remote" else run)
     print(f"Output: {run.outputs()}")

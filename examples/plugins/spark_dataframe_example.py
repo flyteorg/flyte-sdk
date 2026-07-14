@@ -7,6 +7,7 @@ from pyspark.sql import SparkSession
 
 import flyte
 from flyte.io import File
+from flyte.remote import Run
 
 image = (
     flyte.Image.from_base("apache/spark-py:v3.4.0")
@@ -80,8 +81,9 @@ async def create_new_remote_file(content: str) -> File:
 
 @spark_env.task
 async def dataframe_transformer() -> int:
-    spark = flyte.ctx().data["spark_session"]
-    spark = cast(SparkSession, spark)
+    tctx = flyte.ctx()
+    assert tctx is not None  # always set inside a task
+    spark = cast(SparkSession, tctx.data["spark_session"])
 
     csv_data = "age,name\n10,alice\n20,bob\n30,charlie\n40,david\n50,edward\n60,frank"
     file = await create_new_remote_file(csv_data)
@@ -101,6 +103,7 @@ async def dataframe_transformer() -> int:
 if __name__ == "__main__":
     flyte.init_from_config()
     run = flyte.with_runcontext(mode="remote").run(dataframe_transformer)
+    assert isinstance(run, Run)
     print("run name:", run.name)
     print("run url:", run.url)
 

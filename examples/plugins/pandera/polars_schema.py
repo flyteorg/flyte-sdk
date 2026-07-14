@@ -18,6 +18,7 @@ import polars as pl
 from flyteplugins.pandera import ValidationConfig
 
 import flyte
+from flyte.remote import Run
 
 img = (
     flyte.Image.from_debian_base(python_version=(3, 12))
@@ -136,6 +137,7 @@ if __name__ == "__main__":
     flyte.init_from_config(log_level=logging.DEBUG)
 
     run = flyte.with_runcontext(args.mode).run(main)
+    assert isinstance(run, Run)
     print(run.url)
     run.wait()
     print("polars pandera example OK:", run.outputs()[0])

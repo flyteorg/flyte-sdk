@@ -118,7 +118,7 @@ async def review_pr(repo: str, pr_number: int, event: str) -> str:
 try:
     from fastapi import FastAPI
 except ImportError:  # pragma: no cover
-    FastAPI = None  # type: ignore[assignment]
+    FastAPI = None  # type: ignore[assignment, misc]  # ty: ignore[invalid-assignment]
 
 
 @asynccontextmanager
@@ -182,11 +182,14 @@ if __name__ == "__main__":
     import httpx
 
     import flyte.remote as remote
+    from flyte.app._deploy import DeployedAppEnvironment
 
     flyte.init_from_config()
     deployments = flyte.deploy(webhook_env)
     print(f"Webhook agent deployed: {deployments[0].summary_repr()}")
-    print(f"Webhook agent URL: {deployments[0].envs['flyte-agent-webhook'].deployed_app.url}")
+    deployed_env = deployments[0].envs["flyte-agent-webhook"]
+    assert isinstance(deployed_env, DeployedAppEnvironment)
+    print(f"Webhook agent URL: {deployed_env.deployed_app.url}")
 
     app_handle = remote.App.get(name="flyte-agent-webhook")
     print(f"Webhook agent endpoint: {app_handle.endpoint}")

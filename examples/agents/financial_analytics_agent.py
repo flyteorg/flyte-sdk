@@ -59,7 +59,7 @@ _STUB_MACRO = {
     "liquidity_note_stub": "Illustrative conditions — not a live macro feed.",
 }
 
-_STUB_PEER_COMPS = [
+_STUB_PEER_COMPS: list[dict[str, object]] = [
     {"name": "Peer A", "ev_ebitda_stub": 14.2, "revenue_growth_pct_stub": 11},
     {"name": "Peer B", "ev_ebitda_stub": 12.0, "revenue_growth_pct_stub": 8},
     {"name": "DEMO (subject)", "ev_ebitda_stub": 13.1, "revenue_growth_pct_stub": 10},
@@ -83,7 +83,7 @@ _STUB_PREMORTEM = [
     "Multiple compression sector-wide despite intact fundamentals",
 ]
 
-_STUB_EARNINGS = [
+_STUB_EARNINGS: list[dict[str, object]] = [
     {
         "symbol": "DEMO",
         "date_stub": "next_thursday",

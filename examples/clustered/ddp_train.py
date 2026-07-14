@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import flyte
 from flyte._image import DIST_FOLDER, PythonWheels
+from flyte._resources import GPUQuantity, GPUType
 from flyte.clustered import ClusteredTaskEnvironment, ClusterFailurePolicy, TorchRun
 
 # Image carries the LOCAL flyte build (so the container has the `clustered` runtime
@@ -32,14 +33,14 @@ image = (
 
 # --- Knobs ---------------------------------------------------------------------------------------
 USE_GPU = True
-GPU_DEVICE = "L4"  # one of flyte._resources.Accelerators device names; match the cluster's GPUs
+GPU_DEVICE: GPUType = "L4"  # one of flyte._resources.GPUType device names; match the cluster's GPUs
 REPLICAS = 2  # pods (== nodes)
-NPROC_PER_NODE = 1  # processes (one per GPU) per pod  => world_size = REPLICAS * NPROC_PER_NODE
+NPROC_PER_NODE: GPUQuantity = 1  # processes (one per GPU) per pod  => world_size = REPLICAS * NPROC_PER_NODE
 
 _BACKEND = "nccl" if USE_GPU else "gloo"
 
 resources = (
-    flyte.Resources(cpu=(2, 4), memory=("4Gi", "8Gi"), gpu=f"{GPU_DEVICE}:{NPROC_PER_NODE}")
+    flyte.Resources(cpu=(2, 4), memory=("4Gi", "8Gi"), gpu=flyte.GPU(GPU_DEVICE, NPROC_PER_NODE))
     if USE_GPU
     else flyte.Resources(cpu=(1, 2), memory=("1Gi", "2Gi"))
 )
@@ -64,6 +65,7 @@ async def train_ddp(steps: int = 50, lr: float = 0.05) -> float:
     from torch.nn.parallel import DistributedDataParallel as DDP
 
     ctx = flyte.ctx()
+    assert ctx is not None  # always set inside a task
 
     # Bind this rank to its local GPU BEFORE init_process_group so NCCL binds the right device.
     if _BACKEND == "nccl" and torch.cuda.is_available():

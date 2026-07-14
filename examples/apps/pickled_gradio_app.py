@@ -32,9 +32,10 @@ env = flyte.app.AppEnvironment(
 )
 
 # State that can be shared between startup and server
-state = {}
+state: dict[str, str] = {}
 
 
+# NOTE: the SDK types on_startup as accepting a sync callable, but async functions are supported at runtime.
 @env.on_startup
 async def app_startup(title: str, description: str):
     """Initialize the app state with parameters."""

@@ -19,12 +19,13 @@ from __future__ import annotations
 
 import flyte
 from flyte._image import DIST_FOLDER, PythonWheels
+from flyte._resources import GPUQuantity, GPUType
 from flyte.clustered import ClusteredTaskEnvironment, ClusterFailurePolicy, TorchRun
 
 # --- Knobs ---------------------------------------------------------------------------------------
-GPU_DEVICE = "L4"  # one of flyte._resources.Accelerators device names; match the cluster's GPUs
+GPU_DEVICE: GPUType = "L4"  # one of flyte._resources.GPUType device names; match the cluster's GPUs
 REPLICAS = 2  # pods (== nodes). Set to 1 for the 1x1 smoke, 2 for 2x1.
-NPROC_PER_NODE = 1  # GPUs (processes) per pod; must be <= the GPU count on the device
+NPROC_PER_NODE: GPUQuantity = 1  # GPUs (processes) per pod; must be <= the GPU count on the device
 
 # Image carries the LOCAL flyte build (so the container has the `clustered` runtime entrypoint),
 # plus torch. The PyPI `torch` wheel bundles CUDA + NCCL, so this same image runs on GPU nodes —
@@ -38,7 +39,7 @@ image = (
 env = ClusteredTaskEnvironment(
     name="ddp_gpu_env",
     image=image,
-    resources=flyte.Resources(cpu=(2, 4), memory=("4Gi", "8Gi"), gpu=f"{GPU_DEVICE}:{NPROC_PER_NODE}"),
+    resources=flyte.Resources(cpu=(2, 4), memory=("4Gi", "8Gi"), gpu=flyte.GPU(GPU_DEVICE, NPROC_PER_NODE)),
     replicas=REPLICAS,
     nproc_per_node=NPROC_PER_NODE,  # world_size = REPLICAS * NPROC_PER_NODE
     runtime=TorchRun(rdzv_backend="static", max_restarts=0),
@@ -55,6 +56,7 @@ async def train_ddp_gpu(steps: int = 50, lr: float = 0.05) -> float:
     from torch.nn.parallel import DistributedDataParallel as DDP
 
     ctx = flyte.ctx()
+    assert ctx is not None  # always set inside a task
     assert torch.cuda.is_available(), "no CUDA device visible — is this running on a GPU node?"
 
     # torchrun has already populated RANK / WORLD_SIZE / MASTER_ADDR / MASTER_PORT. Pin this rank

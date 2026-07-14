@@ -17,6 +17,7 @@ import typing
 
 import flyte
 import flyte.errors
+from flyte._task import TaskTemplate
 
 env = flyte.TaskEnvironment(
     "resource_tuner",
@@ -46,6 +47,7 @@ async def tune_memory(udf: typing.Callable, inputs: dict) -> str:
     """
     Retry foo with more memory if it fails.
     """
+    assert isinstance(udf, TaskTemplate)  # tasks passed as inputs are TaskTemplates
     i = 0
     with flyte.group(f"tune-memory-{inputs}"):
         while i < len(MEM_OVERRIDES):
@@ -62,6 +64,7 @@ async def tune_memory(udf: typing.Callable, inputs: dict) -> str:
                 if i >= len(MEM_OVERRIDES):
                     print("No more memory overrides available, giving up")
                     raise e
+    raise RuntimeError("Unreachable: memory overrides exhausted")
 
 
 @env.task(cache="auto")

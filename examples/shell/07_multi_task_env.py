@@ -17,10 +17,12 @@ Run locally::
 
 import sys
 import tempfile
+from typing import Literal
 
 import flyte
 from flyte.extras import shell
 from flyte.io import File
+from flyte.remote import Run
 
 BASE = "debian:12-slim"
 
@@ -75,12 +77,13 @@ async def chained(src: File) -> tuple[File, File, File]:
 
 if __name__ == "__main__":
     flyte.init_from_config()
-    mode = "remote" if (len(sys.argv) > 1 and sys.argv[1] == "remote") else "local"
+    mode: Literal["local", "remote"] = "remote" if (len(sys.argv) > 1 and sys.argv[1] == "remote") else "local"
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
         f.write("Hello World\nFlyte Shell\n")
         path = f.name
 
     run = flyte.with_runcontext(mode=mode).run(chained, File.from_local_sync(path))
+    assert isinstance(run, Run)
     print(run.url if mode == "remote" else run)
     print(f"Output: {run.outputs()}")

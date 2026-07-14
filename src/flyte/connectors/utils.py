@@ -1,7 +1,7 @@
 import importlib
 from concurrent import futures
 from importlib.metadata import entry_points
-from typing import List
+from typing import List, cast
 
 import click
 from flyteidl2.connector import service_pb2
@@ -64,7 +64,8 @@ async def _start_grpc_server(
 
     print_metadata()
 
-    server = grpc.aio.server(futures.ThreadPoolExecutor(max_workers=worker))
+    # grpc/__init__ imports `aio` unconditionally at runtime; the stubs mark it conditional.
+    server = grpc.aio.server(futures.ThreadPoolExecutor(max_workers=worker))  # ty: ignore[possibly-missing-attribute]
 
     add_AsyncConnectorServiceServicer_to_server(AsyncConnectorService(), server)
     add_ConnectorMetadataServiceServicer_to_server(ConnectorMetadataService(), server)
@@ -149,7 +150,8 @@ def _render_task_template(tt: TaskTemplate, file_prefix: str) -> TaskTemplate:
         tt.container.args[i] = args[i].replace("{{.rawOutputDataPrefix}}", f"{file_prefix}/raw_output")
         tt.container.args[i] = args[i].replace("{{.checkpointOutputPrefix}}", f"{file_prefix}/checkpoint_output")
         tt.container.args[i] = args[i].replace("{{.prevCheckpointPrefix}}", f"{file_prefix}/prev_checkpoint")
-        tt.container.args[i] = args[i].replace("{{.runName}}", ctx.action.run_name if ctx else "test-run")
+        # ActionID.__post_init__ guarantees run_name is populated.
+        tt.container.args[i] = args[i].replace("{{.runName}}", cast(str, ctx.action.run_name) if ctx else "test-run")
         tt.container.args[i] = args[i].replace("{{.actionName}}", "a1")
         tt.container.args[i] = args[i].replace(
             "{{.runStartTime}}",

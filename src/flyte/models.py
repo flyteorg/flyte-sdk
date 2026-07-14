@@ -16,6 +16,8 @@ from flyte._interface import extract_return_annotation, literal_to_enum
 from flyte._logging import logger
 
 if TYPE_CHECKING:
+    from types import FunctionType
+
     from flyteidl2.core import literals_pb2
 
     from flyte._checkpoint import Checkpoint
@@ -494,15 +496,19 @@ class NativeInterface:
             # Get fully evaluated, real Python types for type checking.
             hints = typing.get_type_hints(func, include_extras=True)
         except Exception as e:
-            logger.warning(f"Could not get type hints for function {func.__name__}: {e}")
+            logger.warning(f"Could not get type hints for function {typing.cast('FunctionType', func).__name__}: {e}")
             raise
 
         for name, param in sig.parameters.items():
             if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
-                raise ValueError(f"Function {func.__name__} cannot have variable positional or keyword arguments.")
+                raise ValueError(
+                    f"Function {typing.cast('FunctionType', func).__name__} cannot have variable positional "
+                    "or keyword arguments."
+                )
             if param.annotation is inspect.Parameter.empty:
                 logger.warning(
-                    f"Function {func.__name__} has parameter {name} without type annotation. Data will be pickled."
+                    f"Function {typing.cast('FunctionType', func).__name__} has parameter {name} "
+                    "without type annotation. Data will be pickled."
                 )
             arg_type = hints.get(name, param.annotation)
             if typing.get_origin(arg_type) is Literal:

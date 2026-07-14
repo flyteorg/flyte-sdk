@@ -25,10 +25,11 @@ from flyteidl2.core.literals_pb2 import Binary, Literal, LiteralCollection, Lite
 from flyteidl2.core.types_pb2 import LiteralType, SimpleType, TypeAnnotation, TypeStructure, UnionType
 from fsspec.asyn import _run_coros_in_chunks  # pylint: disable=W0212
 from google.protobuf import json_format as _json_format
-from google.protobuf import struct_pb2
 from google.protobuf.json_format import MessageToDict as _MessageToDict
 from google.protobuf.json_format import ParseDict as _ParseDict
 from google.protobuf.message import Message
+from google.protobuf.struct_pb2 import ListValue as _ListValue
+from google.protobuf.struct_pb2 import Struct as _Struct
 from mashumaro.codecs.json import JSONDecoder, JSONEncoder
 from mashumaro.codecs.msgpack import MessagePackDecoder, MessagePackEncoder
 from mashumaro.jsonschema.models import Context, JSONSchema
@@ -163,7 +164,7 @@ def modify_literal_uris(lit: Literal):
             and lit.scalar.blob.uri
             and lit.scalar.blob.uri.startswith(RemoteFSPathResolver.protocol)
         ):
-            lit.scalar.blob.uri = RemoteFSPathResolver.resolve_remote_path(lit.scalar.blob.uri)
+            lit.scalar.blob.uri = cast(str, RemoteFSPathResolver.resolve_remote_path(lit.scalar.blob.uri))
         elif lit.scalar.HasField("union"):
             modify_literal_uris(lit.scalar.union.value)
         elif (
@@ -171,8 +172,8 @@ def modify_literal_uris(lit: Literal):
             and lit.scalar.structured_dataset.uri
             and lit.scalar.structured_dataset.uri.startswith(RemoteFSPathResolver.protocol)
         ):
-            lit.scalar.structured_dataset.uri = RemoteFSPathResolver.resolve_remote_path(
-                lit.scalar.structured_dataset.uri
+            lit.scalar.structured_dataset.uri = cast(
+                str, RemoteFSPathResolver.resolve_remote_path(lit.scalar.structured_dataset.uri)
             )
 
 
@@ -273,7 +274,7 @@ class TypeTransformer(typing.Generic[T]):
             return False
         try:
             if hasattr(self.python_type, "model_json_schema") and self.python_type is not BaseModel:
-                this_schema = self.python_type.model_json_schema()  # type: ignore[attr-defined]
+                this_schema = cast(Type[BaseModel], self.python_type).model_json_schema()
                 return (
                     schema.get("title") == this_schema.get("title")
                     and schema.get("type") == this_schema.get("type")
@@ -421,7 +422,7 @@ class SimpleTransformer(TypeTransformer[T]):
             res = self._from_literal_transformer(lv)
             if type(res) is not self._type:
                 raise TypeTransformerFailedError(f"Cannot convert literal {lv} to {self._type}")
-            return res
+            return cast(T, res)
         except AttributeError:
             # Assume that this is because a property on `lv` was None
             raise TypeTransformerFailedError(f"Cannot convert literal {lv} to {self._type}")
@@ -562,7 +563,7 @@ class PydanticTransformer(TypeTransformer[BaseModel]):
     def get_literal_type(self, t: Type[BaseModel]) -> LiteralType:
         schema = t.model_json_schema(schema_generator=CustomPydanticJsonSchemaGenerator)
 
-        meta_struct = struct_pb2.Struct()
+        meta_struct = _Struct()
         meta_struct.update(
             {
                 CACHE_KEY_METADATA: {
@@ -752,7 +753,7 @@ def _pydantic_not_required_field(field_type: typing.Any) -> typing.Tuple[typing.
     return (typing.Optional[field_type], None)
 
 
-def _create_pydantic_model_from_schema(schema: dict) -> Type:
+def _create_pydantic_model_from_schema(schema: dict) -> Type[BaseModel]:
     """Create a dynamic Pydantic BaseModel from a JSON schema dict."""
     from pydantic import ConfigDict, create_model
 
@@ -837,9 +838,9 @@ class DataclassTransformer(TypeTransformer[object]):
         self._json_encoder: Dict[Type, JSONEncoder] = {}
         self._json_decoder: Dict[Type, JSONDecoder] = {}
 
-    def assert_type(self, expected_type: Type, v: T):
+    def assert_type(self, t: Type, v: T):
         # Skip iterating all attributes in the dataclass if the type of v already matches the expected_type
-        expected_type = get_underlying_type(expected_type)
+        expected_type = get_underlying_type(t)
         if type(v) is expected_type or issubclass(type(v), expected_type):
             return
 
@@ -865,7 +866,7 @@ class DataclassTransformer(TypeTransformer[object]):
             expected_fields_dict[f.name] = cast(type, f.type)
 
         if isinstance(v, dict):
-            original_dict = v
+            original_dict = cast(Dict[str, Any], v)
 
             # Find the Optional keys in expected_fields_dict
             optional_keys = {k for k, t in expected_fields_dict.items() if UnionTransformer.is_optional_type(t)}
@@ -969,7 +970,7 @@ class DataclassTransformer(TypeTransformer[object]):
                 f"Possibly remove `DataClassJsonMixin` and `dataclass_json` decorator from dataclass declaration"
             )
 
-        meta_struct = struct_pb2.Struct()
+        meta_struct = _Struct()
         meta_struct.update(
             {
                 CACHE_KEY_METADATA: {
@@ -998,7 +999,7 @@ class DataclassTransformer(TypeTransformer[object]):
                 decoder = JSONDecoder(decode_type)
                 self._json_decoder[decode_type] = decoder
             try:
-                python_val = decoder.decode(json.dumps(python_val))
+                python_val = cast(T, decoder.decode(json.dumps(python_val)))
             except Exception as e:
                 raise TypeTransformerFailedError(f"Failed to coerce dict into {python_type}: {e}") from e
 
@@ -1039,10 +1040,9 @@ class DataclassTransformer(TypeTransformer[object]):
         if get_origin(python_type) is list:
             return typing.List[self._get_origin_type_in_annotation(get_args(python_type)[0])]  # type: ignore
         elif get_origin(python_type) is dict:
-            return typing.Dict[  # type: ignore
-                self._get_origin_type_in_annotation(get_args(python_type)[0]),
-                self._get_origin_type_in_annotation(get_args(python_type)[1]),
-            ]
+            key_type = self._get_origin_type_in_annotation(get_args(python_type)[0])
+            value_type = self._get_origin_type_in_annotation(get_args(python_type)[1])
+            return typing.Dict[key_type, value_type]  # type: ignore
         elif is_annotated(python_type):
             return get_args(python_type)[0]
         elif dataclasses.is_dataclass(python_type):
@@ -1148,16 +1148,16 @@ class ProtobufTransformer(TypeTransformer[Message]):
         https://github.com/flyteorg/flyte/blob/a87585ab7cbb6a047c76d994b3f127c4210070fd/flytepropeller/pkg/controller/nodes/attr_path_resolver.go#L72-L106
         """
         try:
-            if type(python_val) is struct_pb2.ListValue:
+            if type(python_val) is _ListValue:
                 literals = []
-                for v in python_val:  # type: ignore[attr-defined]
+                for v in cast(typing.Iterable[typing.Any], python_val):
                     literal_type = TypeEngine.to_literal_type(type(v))
                     # Recursively convert python native values to literals
                     literal = await TypeEngine.to_literal(v, type(v), literal_type)
                     literals.append(literal)
                 return Literal(collection=LiteralCollection(literals=literals))
             else:
-                struct = struct_pb2.Struct()
+                struct = _Struct()
                 struct.update(_MessageToDict(cast(Message, python_val)))
                 return Literal(scalar=Scalar(generic=struct))
         except Exception:
@@ -1231,7 +1231,7 @@ class EnumTransformer(TypeTransformer[enum.Enum]):
         if expected_python_type.__name__ is LITERAL_ENUM:
             # This is the case when python Literal types are used as enums. The class name is always LiteralEnum an
             # hardcoded in flyte.models
-            return lv.scalar.primitive.string_value
+            return cast(T, lv.scalar.primitive.string_value)
         return expected_python_type[lv.scalar.primitive.string_value]  # type: ignore
 
     def guess_python_type(self, literal_type: LiteralType) -> Type[enum.Enum]:
@@ -1735,7 +1735,7 @@ class TypeEngine(typing.Generic[T]):
             except TypeError:
                 pass
             if python_type.__origin__ in cls._REGISTRY:
-                return cls._REGISTRY[python_type.__origin__]
+                return cls._REGISTRY[cast(type, python_type.__origin__)]
 
         if python_type is list:
             # Generic list, defaults to pickle
@@ -2002,7 +2002,7 @@ class TypeEngine(typing.Generic[T]):
 
     @classmethod
     def guess_python_types(
-        cls, flyte_variable_list: typing.List[interface_pb2.VariableEntry]
+        cls, flyte_variable_list: typing.Sequence[interface_pb2.VariableEntry]
     ) -> typing.Dict[str, Type[Any]]:
         """
         Transforms a list of flyte-specific `VariableEntry` objects to a dictionary of regular python values.
@@ -2091,7 +2091,7 @@ class ListTransformer(TypeTransformer[T]):
 
         return None
 
-    def get_literal_type(self, t: Type[T]) -> Optional[types_pb2.LiteralType]:
+    def get_literal_type(self, t: Type[T]) -> types_pb2.LiteralType:
         """
         Only univariate Lists are supported in Flyte
         """
@@ -2270,7 +2270,7 @@ class UnionTransformer(TypeTransformer[T]):
     """
 
     def __init__(self):
-        super().__init__("Typed Union", typing.Union)
+        super().__init__("Typed Union", cast(Type[T], typing.Union))
 
     @staticmethod
     def is_optional_type(t: Type[Any]) -> bool:
@@ -2303,7 +2303,7 @@ class UnionTransformer(TypeTransformer[T]):
                     continue
             raise TypeTransformerFailedError(f"Value {v} is not of type {t}")
 
-    def get_literal_type(self, t: Type[T]) -> Optional[types_pb2.LiteralType]:
+    def get_literal_type(self, t: Type[T]) -> types_pb2.LiteralType:
         t = get_underlying_type(t)
 
         try:
@@ -2395,7 +2395,7 @@ class UnionTransformer(TypeTransformer[T]):
                         continue
 
                     expected_literal_type = TypeEngine.to_literal_type(v)
-                    if not _are_types_castable(union_type, expected_literal_type):
+                    if not _are_types_castable(cast(types_pb2.LiteralType, union_type), expected_literal_type):
                         continue
 
                     assert lv.scalar.HasField("union"), f"Literal {lv} is not a union"  # type checker
@@ -2430,7 +2430,7 @@ class UnionTransformer(TypeTransformer[T]):
 
         raise TypeError(f"Cannot convert from {lv} to {expected_python_type} (using tag {union_tag})")
 
-    def guess_python_type(self, literal_type: LiteralType) -> type:
+    def guess_python_type(self, literal_type: LiteralType) -> Type[T]:
         if literal_type.HasField("union_type"):
             return typing.Union[tuple(TypeEngine.guess_python_type(v) for v in literal_type.union_type.variants)]  # type: ignore
 
@@ -2497,9 +2497,7 @@ class DictTransformer(TypeTransformer[dict]):
             if allow_pickle:
                 remote_path = await FlytePickle.to_pickle(v)
                 return Literal(
-                    scalar=Scalar(
-                        generic=_json_format.Parse(json.dumps({"pickle_file": remote_path}), struct_pb2.Struct())
-                    ),
+                    scalar=Scalar(generic=_json_format.Parse(json.dumps({"pickle_file": remote_path}), _Struct())),
                     metadata={"format": "pickle"},
                 )
             raise TypeTransformerFailedError(f"Cannot convert `{v}` to Flyte Literal.\nError Message: {e}")
@@ -2548,7 +2546,7 @@ class DictTransformer(TypeTransformer[dict]):
         if expected and expected.HasField("simple") and expected.simple == SimpleType.STRUCT:
             return await self.dict_to_binary_literal(python_val, python_type, allow_pickle)
 
-        lit_map = {}
+        lit_map: Dict[str, Any] = {}
         for k, v in python_val.items():
             if type(k) is not str:
                 raise ValueError("Flyte MapType expects all keys to be strings")
@@ -2717,9 +2715,9 @@ def convert_mashumaro_json_schema_to_python_class(schema: dict, schema_name: typ
                     kwargs[field_name] = descriptor(**value)
             original_init(self, *args, **kwargs)
 
-        cls.__init__ = __init__  # type: ignore[method-assign, misc]
+        cls.__init__ = __init__  # type: ignore[method-assign, misc]  # ty: ignore[invalid-assignment]
 
-    return cls
+    return cast(Type[T], cls)
 
 
 # The value in a JSON schema doesn't always have to be a string, they can be dicts e.g. items, additionalProperties,
@@ -3015,7 +3013,7 @@ def _register_default_type_transformers():
     TypeEngine.register(DateTransformer)
     TypeEngine.register(TimedeltaTransformer)
     TypeEngine.register(BoolTransformer)
-    TypeEngine.register(NoneTransformer, [None])
+    TypeEngine.register(NoneTransformer, [cast(Type, None)])
     TypeEngine.register(ListTransformer())
 
     if sys.version_info < (3, 14):
@@ -3186,7 +3184,7 @@ def is_annotated(t: Type) -> bool:
     return get_origin(t) is Annotated
 
 
-def get_underlying_type(t: Type) -> Type:
+def get_underlying_type(t: Type[T]) -> Type[T]:
     """Return the underlying type for annotated types or the type itself"""
     if is_annotated(t):
         return get_args(t)[0]

@@ -8,10 +8,12 @@ Run locally with::
 
 import sys
 import tempfile
+from typing import Literal
 
 import flyte
 from flyte.extras import shell
 from flyte.io import File
+from flyte.remote import Run
 
 # Wrap `head` — emits the first N lines of an input file.
 head_task = shell.create(
@@ -40,12 +42,13 @@ async def take_first_lines(src: File, n: int) -> File:
 
 if __name__ == "__main__":
     flyte.init_from_config()
-    mode = "remote" if (len(sys.argv) > 1 and sys.argv[1] == "remote") else "local"
+    mode: Literal["local", "remote"] = "remote" if (len(sys.argv) > 1 and sys.argv[1] == "remote") else "local"
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
         f.write("\n".join(f"line {i}" for i in range(1, 21)))
         path = f.name
 
     run = flyte.with_runcontext(mode=mode).run(take_first_lines, File.from_local_sync(path), 5)
+    assert isinstance(run, Run)
     print(run.url if mode == "remote" else run)
     print(f"Output: {run.outputs()}")
