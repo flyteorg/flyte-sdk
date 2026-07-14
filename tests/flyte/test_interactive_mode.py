@@ -9,10 +9,10 @@ from flyte._run import _Runner
 @pytest.mark.parametrize(
     ("in_ipython", "interactive_mode", "expected"),
     [
-        (True, None, True),     # Auto-detect notebook -> pkl bundle
-        (False, None, False),   # Auto-detect script -> tgz bundle
-        (True, False, False),   # Forced off wins over notebook detection
-        (False, True, True),    # Forced on wins over script detection
+        (True, None, True),  # Auto-detect notebook -> pkl bundle
+        (False, None, False),  # Auto-detect script -> tgz bundle
+        (True, False, False),  # Forced off wins over notebook detection
+        (False, True, True),  # Forced on wins over script detection
     ],
 )
 def test_interactive_mode_override(monkeypatch, in_ipython, interactive_mode, expected):
