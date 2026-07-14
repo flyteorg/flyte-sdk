@@ -558,7 +558,9 @@ class Controller:
                     action.retries += 1
                     if action.retries > self._max_retries:
                         raise
-                    backoff = min(self._min_backoff_on_err * (2 ** min(action.retries - 1, 20)), self._max_backoff_on_err)
+                    backoff = min(
+                        self._min_backoff_on_err * (2 ** min(action.retries - 1, 20)), self._max_backoff_on_err
+                    )
                     logger.warning(
                         f"[{worker_id}] Backing off for {backoff} [retry {action.retries}/{self._max_retries}] "
                         f"on action {action.name} due to error: {e}"
