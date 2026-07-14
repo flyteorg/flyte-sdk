@@ -496,7 +496,7 @@ def test_track_operation_counts_success():
     with mock.patch.object(_sentry, "count") as count_mock:
         with _sentry.track_operation("create_run"):
             pass
-    count_mock.assert_called_once_with("flyte.operation", operation="create_run", status="success")
+    count_mock.assert_called_once_with("flyte.operation", tags={"operation": "create_run", "status": "success"})
 
 
 def test_track_operation_counts_system_error_and_reraises():
@@ -506,10 +506,12 @@ def test_track_operation_counts_system_error_and_reraises():
                 raise RuntimeError("boom")
     count_mock.assert_called_once_with(
         "flyte.operation",
-        operation="deploy_task",
-        status="error",
-        error_type="RuntimeError",
-        error_kind="system",
+        tags={
+            "operation": "deploy_task",
+            "status": "error",
+            "error_type": "RuntimeError",
+            "error_kind": "system",
+        },
     )
 
 
@@ -520,7 +522,7 @@ def test_track_operation_tags_user_errors():
         with pytest.raises(DeploymentError):
             with _sentry.track_operation("deploy_app"):
                 raise DeploymentError("bad config")
-    assert count_mock.call_args.kwargs["error_kind"] == "user"
+    assert count_mock.call_args.kwargs["tags"]["error_kind"] == "user"
 
 
 def test_track_operation_tags_error_code_when_present():
@@ -530,4 +532,4 @@ def test_track_operation_tags_error_code_when_present():
         with pytest.raises(RuntimeSystemError):
             with _sentry.track_operation("create_run"):
                 raise RuntimeSystemError("RunCreationError", "Failed to create run")
-    assert count_mock.call_args.kwargs["error_code"] == "RunCreationError"
+    assert count_mock.call_args.kwargs["tags"]["error_code"] == "RunCreationError"

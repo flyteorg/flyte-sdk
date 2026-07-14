@@ -276,7 +276,7 @@ def capture_errors(func):
     return wrapper
 
 
-def count(key: str, value: int = 1, **tags: str) -> None:
+def count(key: str, value: int = 1, tags: dict[str, str] | None = None) -> None:
     """Emit a counter metric to Sentry."""
     try:
         init()
@@ -308,10 +308,10 @@ def track_operation(operation: str):
             # ConnectError.code is an enum (use .name); flyte BaseRuntimeError.code
             # is a str (no .name, fall back to str()).
             tags["error_code"] = getattr(code, "name", None) or str(code)
-        count("flyte.operation", **tags)
+        count("flyte.operation", tags=tags)
         raise
     else:
-        count("flyte.operation", operation=operation, status="success")
+        count("flyte.operation", tags={"operation": operation, "status": "success"})
 
 
 def _get_version() -> str | None:
