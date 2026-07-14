@@ -22,7 +22,7 @@ class SparkToParquetEncoder(DataFrameEncoder):
 
         if not path:
             tctx = flyte.ctx()
-            if tctx is not None:
+            if tctx:
                 path = tctx.raw_data_path.get_random_remote_path()
             else:
                 ic = internal_ctx()

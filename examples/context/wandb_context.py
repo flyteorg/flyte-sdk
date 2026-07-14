@@ -81,11 +81,10 @@ def train_model(config: ModelConfig) -> TrainingResult:
     Returns:
         Training results including final accuracy and best epoch
     """
-    tctx = flyte.ctx()
     with wandb.init(
         project=WANDB_PROJECT,
         entity=WANDB_ENTITY,
-        id=tctx.custom_context.get("wandb_id"),
+        id=flyte.ctx().custom_context.get("wandb_id"),
         config={
             "learning_rate": config.learning_rate,
             "batch_size": config.batch_size,

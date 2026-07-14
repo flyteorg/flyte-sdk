@@ -39,9 +39,8 @@ BUCKET = "<BUCKET_NAME>"
 
 @env.task
 def write_greeting(name: str) -> File:
+    print(flyte.ctx().raw_data_path)
     """Write a greeting to a file stored on HuggingFace Hub via raw_data_path."""
-    tctx = flyte.ctx()
-    print(tctx.raw_data_path)
     with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
         f.write(f"Hello, {name}! This file is stored on HuggingFace Hub.")
         tmp_path = f.name

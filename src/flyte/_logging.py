@@ -25,7 +25,9 @@ def _flyte_record_factory(*args: Any, **kwargs: Any) -> logging.LogRecord:
         c = _flyte_ctx()
     except Exception:
         c = None
-    if c is not None:
+    # Truthiness, not identity: outside a task ctx() returns a falsy null context
+    # whose attributes are all None.
+    if c:
         record.run_name = c.action.run_name
         record.action_name = c.action.name
     else:

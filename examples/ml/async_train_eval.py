@@ -129,8 +129,7 @@ async def main(
       5. If training finishes naturally -> run one final eval on the returned
          checkpoint.
     """
-    tctx = flyte.ctx()
-    checkpoint_dir = tctx.run_base_dir
+    checkpoint_dir = flyte.ctx().run_base_dir
     # Start training in the background
     train_task = asyncio.create_task(train(checkpoint_dir, total_epochs, seconds_per_epoch))
 

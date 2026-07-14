@@ -9,8 +9,7 @@ env = flyte.TaskEnvironment(
 
 @env.task
 async def say_hello(data: str) -> str:
-    tctx = flyte.ctx()
-    print(f"Hello, world! - {tctx.action}")
+    print(f"Hello, world! - {flyte.ctx().action}")
     return f"Hello {data}"
 
 

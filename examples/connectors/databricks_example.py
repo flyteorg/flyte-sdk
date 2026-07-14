@@ -80,8 +80,7 @@ def get_pi(count: int, partitions: int) -> float:
 async def hello_databricks_nested() -> float:
     partitions = 3
     n = 1 * partitions
-    tctx = flyte.ctx()
-    spark = tctx.data["spark_session"]
+    spark = flyte.ctx().data["spark_session"]
     count = spark.sparkContext.parallelize(range(1, n + 1), partitions).map(f).reduce(add)
     res = get_pi(count, partitions)
     print(f"result: {res}")

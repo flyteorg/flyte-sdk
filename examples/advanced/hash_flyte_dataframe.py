@@ -56,8 +56,7 @@ async def produce_dataframe() -> DataFrame:
 
     # Add the action run name to the DataFrame to ensure that the hash is
     # different for each run.
-    tctx = flyte.ctx()
-    df["action_name"] = tctx.action.run_name
+    df["action_name"] = flyte.ctx().action.run_name
 
     # Create a HashFunction from our custom hash function
     hash_method = HashFunction.from_fn(hash_pandas_dataframe)

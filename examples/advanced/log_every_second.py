@@ -8,8 +8,7 @@ env = flyte.TaskEnvironment(name="env_2", image=flyte.Image.from_debian_base())
 
 @env.task
 async def finish() -> str:
-    tctx = flyte.ctx()
-    print(f"Finished! - {tctx.action}", flush=True)
+    print(f"Finished! - {flyte.ctx().action}", flush=True)
     return "Finished!"
 
 
@@ -31,8 +30,7 @@ async def print_every_second_fanout() -> str:
 
 @env.task
 async def print_every_second(mult: int = 4) -> str:
-    tctx = flyte.ctx()
-    print(f"Hello, nested! - {tctx.action}", flush=True)
+    print(f"Hello, nested! - {flyte.ctx().action}", flush=True)
     for i in range(1000):
         print(f"{mult} * {i} = {mult * i}", flush=True)
         await asyncio.sleep(1)

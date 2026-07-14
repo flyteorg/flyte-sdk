@@ -81,8 +81,7 @@ class EmployeeSchemaWithStatus(EmployeeSchema):
 
 @env.task(report=True)
 async def build_valid_employees() -> pt.DataFrame[EmployeeSchema]:
-    tctx = flyte.ctx()
-    spark = cast(SparkSession, tctx.data["spark_session"])
+    spark = cast(SparkSession, flyte.ctx().data["spark_session"])
     data = [
         (1, "Ada", "Engineer"),
         (2, "Grace", "Mathematician"),

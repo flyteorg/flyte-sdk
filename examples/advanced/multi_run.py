@@ -9,12 +9,11 @@ env = flyte.TaskEnvironment(name="hello_world")
 
 @env.task
 async def double(x: int) -> int:
-    tctx = flyte.ctx()
-    print(tctx.action)
-    print(tctx.raw_data_path)
-    print(tctx.data)
-    print(tctx.code_bundle)
-    print(tctx.checkpoint_paths)
+    print(flyte.ctx().action)
+    print(flyte.ctx().raw_data_path)
+    print(flyte.ctx().data)
+    print(flyte.ctx().code_bundle)
+    print(flyte.ctx().checkpoint_paths)
     return x * 2
 
 

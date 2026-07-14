@@ -18,8 +18,7 @@ RETRIES = 3
 @env.task(retries=RETRIES)
 async def use_checkpoint(n_iterations: int) -> int:
     assert n_iterations > RETRIES
-    tctx = flyte.ctx()
-    checkpoint = tctx.checkpoint
+    checkpoint = flyte.ctx().checkpoint
     assert checkpoint is not None  # always available inside a task
 
     path = await checkpoint.load()

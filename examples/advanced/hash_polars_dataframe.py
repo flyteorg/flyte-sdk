@@ -63,9 +63,8 @@ async def produce_dataframe() -> HashedPolarsDataFrame:
     """
     # Add the action run name to the DataFrame to ensure that the hash is
     # different for each run.
-    tctx = flyte.ctx()
     df = pl.DataFrame(SAMPLE_DATA)
-    df = df.with_columns(pl.lit(tctx.action.run_name).alias("action_name"))
+    df = df.with_columns(pl.lit(flyte.ctx().action.run_name).alias("action_name"))
     return df
 
 
