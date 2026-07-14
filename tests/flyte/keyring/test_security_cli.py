@@ -2,9 +2,9 @@ from subprocess import CompletedProcess
 from unittest.mock import patch
 
 import pytest
-from keyring.errors import PasswordDeleteError
+from keyring.errors import KeyringError, PasswordDeleteError, PasswordSetError
 
-from flyte._keyring.macos import SecurityCliKeyring, _quote
+from flyte._keyring.macos import SecurityCliKeyring
 
 
 @pytest.fixture
@@ -12,50 +12,66 @@ def kr():
     return SecurityCliKeyring()
 
 
-def test_quote_escapes_backslashes_and_quotes():
-    assert _quote('a "b" c\\d') == '"a \\"b\\" c\\\\d"'
-
-
-def test_priority_darwin_only(kr):
-    with patch("platform.system", return_value="Darwin"):
-        assert kr.priority == 6  # outranks native macOS backend (5)
-    with patch("platform.system", return_value="Linux"):
-        assert kr.priority == -1
+def _proc(rc=0, stdout="", stderr=""):
+    return CompletedProcess(args=[], returncode=rc, stdout=stdout, stderr=stderr)
 
 
 def test_get_password_strips_single_trailing_newline(kr):
-    proc = CompletedProcess(args=[], returncode=0, stdout="tok\n\n", stderr="")
-    with patch("subprocess.run", return_value=proc):
+    with patch("subprocess.run", return_value=_proc(stdout="tok\n\n")):
         assert kr.get_password("svc", "tokens") == "tok\n"
 
 
-def test_get_password_returns_none_when_not_found(kr):
-    proc = CompletedProcess(args=[], returncode=44, stdout="", stderr="not found")
-    with patch("subprocess.run", return_value=proc):
+def test_get_password_returns_none_only_when_not_found(kr):
+    with patch("subprocess.run", return_value=_proc(rc=44, stderr="not found")):
         assert kr.get_password("svc", "tokens") is None
 
 
-def test_set_password_keeps_secret_out_of_argv(kr):
-    proc = CompletedProcess(args=[], returncode=0, stdout="", stderr="")
-    with patch("subprocess.run", return_value=proc) as mock_run:
-        kr.set_password("svc", "tokens", '{"access_token": "se cr\\"et"}')
-
-    argv = mock_run.call_args.args[0]
-    assert argv == ["/usr/bin/security", "-i"]
-    command = mock_run.call_args.kwargs["input"]
-    assert command.startswith("add-generic-password -U ")
-    assert '-w "{\\"access_token\\": \\"se cr\\\\\\"et\\"}"' in command
+def test_get_password_raises_on_other_failures(kr):
+    # A locked keychain / denied access must not masquerade as "no password".
+    with patch("subprocess.run", return_value=_proc(rc=36, stderr="User interaction is not allowed.")):
+        with pytest.raises(KeyringError, match="interaction"):
+            kr.get_password("svc", "tokens")
 
 
-def test_set_password_raises_on_failure(kr):
-    proc = CompletedProcess(args=[], returncode=1, stdout="", stderr="boom")
-    with patch("subprocess.run", return_value=proc):
-        with pytest.raises(RuntimeError, match="boom"):
+def test_set_password_passes_secret_as_single_argv_element(kr):
+    # argv is execve'd verbatim — no interpreter parses the secret, so
+    # newlines, quotes, and >4KiB payloads are stored exactly as given
+    # (all of which are unsafe through `security -i`).
+    secret = '{"access_token": "a\nb \\" c"}' + "x" * 8192
+    with patch("subprocess.run", return_value=_proc()) as mock_run:
+        kr.set_password("svc", "tokens", secret)
+
+    add_argv = mock_run.call_args.args[0]
+    assert add_argv[0] == "/usr/bin/security"
+    assert add_argv[1] == "add-generic-password"
+    assert add_argv[-2:] == ["-w", secret]
+
+
+def test_set_password_recreates_item(kr):
+    # delete-then-add: an in-place update (-U) would preserve a legacy
+    # interpreter-owned item's ACL and keep prompting.
+    with patch("subprocess.run", return_value=_proc()) as mock_run:
+        kr.set_password("svc", "tokens", "v")
+
+    subcommands = [call.args[0][1] for call in mock_run.call_args_list]
+    assert subcommands == ["delete-generic-password", "add-generic-password"]
+
+
+def test_set_password_raises_typed_error(kr):
+    with patch("subprocess.run", side_effect=[_proc(rc=44), _proc(rc=1, stderr="boom")]):
+        with pytest.raises(PasswordSetError, match="boom"):
             kr.set_password("svc", "tokens", "v")
 
 
 def test_delete_password_raises_when_not_found(kr):
-    proc = CompletedProcess(args=[], returncode=44, stdout="", stderr="")
-    with patch("subprocess.run", return_value=proc):
+    with patch("subprocess.run", return_value=_proc(rc=44)):
         with pytest.raises(PasswordDeleteError):
             kr.delete_password("svc", "tokens")
+
+
+def test_all_calls_have_timeouts(kr):
+    # A wedged SecurityAgent must not hang the auth path forever.
+    with patch("subprocess.run", return_value=_proc()) as mock_run:
+        kr.set_password("svc", "tokens", "v")
+        kr.get_password("svc", "tokens")
+    assert all(call.kwargs.get("timeout") for call in mock_run.call_args_list)

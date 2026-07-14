@@ -43,7 +43,6 @@ flyte-mcp = "flyte._bin.mcp:main"
 
 [project.entry-points."keyring.backends"]
 flyte_keyring_file = "flyte._keyring.file"
-flyte_keyring_macos = "flyte._keyring.macos"
 
 [build-system]
 requires = ["setuptools", "setuptools_scm"]
