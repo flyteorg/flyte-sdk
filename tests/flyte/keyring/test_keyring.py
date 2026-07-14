@@ -48,3 +48,17 @@ def test_password_delete_error(tmp_path):
     msg = "Password not found"
     with pytest.raises(PasswordDeleteError, match=msg):
         keyring.delete_password("my_servic", "wow")
+
+
+def test_priority_forced_by_env_var(tmp_path, monkeypatch):
+    keyring = _TestSimplePlainTextKeyring(home_root=tmp_path)
+
+    monkeypatch.delenv("FLYTE_USE_FILE_KEYRING", raising=False)
+    assert keyring.priority < 5  # system keyring (macOS = 5) wins by default
+
+    for value in ("1", "true", "True"):
+        monkeypatch.setenv("FLYTE_USE_FILE_KEYRING", value)
+        assert keyring.priority > 5  # forced: outranks the macOS keychain
+
+    monkeypatch.setenv("FLYTE_USE_FILE_KEYRING", "0")
+    assert keyring.priority < 5

@@ -1,3 +1,4 @@
+import os
 from base64 import decodebytes, encodebytes
 from configparser import ConfigParser, NoOptionError, NoSectionError
 from pathlib import Path
@@ -13,8 +14,12 @@ class SimplePlainTextKeyring(KeyringBackend):
     """
     Simple plain text keyring for remote notebook environments.
 
-    This backend is only active when running in IPython/Jupyter notebooks.
-    For local development, the system keyring is used instead.
+    This backend is only active when running in IPython/Jupyter notebooks, or
+    when FLYTE_USE_FILE_KEYRING=1 is set. The env var is an escape hatch for
+    macOS keychain password prompts: keychain ACLs are tied to the exact
+    interpreter binary, so ad-hoc-signed pythons (uv, python-build-standalone)
+    re-prompt for every new venv and "Always Allow" never sticks.
+    For local development the system keyring is used by default.
     """
 
     @property
@@ -23,6 +28,10 @@ class SimplePlainTextKeyring(KeyringBackend):
         Return priority based on whether we're in a notebook environment.
         Negative priority means this backend will be skipped by keyring.
         """
+        if os.getenv("FLYTE_USE_FILE_KEYRING", "").lower() in ("1", "true"):
+            # Explicitly requested - outrank the macOS keychain backend (priority 5)
+            return 10
+
         from flyte._tools import ipython_check
 
         if ipython_check():
