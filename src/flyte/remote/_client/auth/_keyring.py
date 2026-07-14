@@ -55,11 +55,10 @@ class KeyringStore:
     Methods to access Keyring Store.
     """
 
-    # Both tokens live in ONE keychain item so macOS only prompts for the
+    # Both tokens live in ONE keychain item, so macOS only prompts for the
     # keychain password once per retrieve (one prompt per item otherwise).
     _tokens_key = "tokens"
-    # JSON field names inside the tokens item; also the legacy per-token
-    # keychain keys cleaned up in delete().
+    # JSON field names inside the tokens item;
     _access_token_key = "access_token"
     _refresh_token_key = "refresh_token"
 
