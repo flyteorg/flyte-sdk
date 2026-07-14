@@ -5,6 +5,10 @@ from typing import Optional
 from keyring.backend import KeyringBackend
 from keyring.errors import PasswordDeleteError
 
+# macOS's built-in keychain CLI. Absolute path so a malicious `security` earlier
+# in $PATH can't intercept tokens; SIP guarantees this one is Apple's. Its stable
+# code signature is the whole point of this backend: the keychain authorizes
+# clients per app signature, and this binary is the same "app" from every venv.
 _SECURITY = "/usr/bin/security"
 # errSecItemNotFound exit code of /usr/bin/security
 _NOT_FOUND = 44
