@@ -181,15 +181,25 @@ class Context:
 root_context_var = contextvars.ContextVar("root", default=Context(data=ContextData()))
 
 
-def ctx() -> Optional[TaskContext]:
+def ctx() -> TaskContext:
     """
-    Returns flyte.models.TaskContext if within a task context, else None
+    Returns the current flyte.models.TaskContext when running inside a task.
+
+    Outside a task execution it returns a falsy null context whose fields are all None,
+    so task code can read ``flyte.ctx().<field>`` without a None-guard. To detect whether
+    a task context is active, rely on truthiness: ``if flyte.ctx(): ...``.
+
     Note: Only use this in task code and not module level.
 
     Use :attr:`flyte.models.TaskContext.checkpoint` for durable task checkpointing
     (object-store prefixes from the runtime).
     """
-    return internal_ctx().data.task_context
+    from flyte.models import NULL_TASK_CONTEXT
+
+    tctx = internal_ctx().data.task_context
+    if tctx is None:
+        return NULL_TASK_CONTEXT
+    return tctx
 
 
 def internal_ctx() -> Context:

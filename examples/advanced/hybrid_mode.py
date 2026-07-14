@@ -13,7 +13,6 @@ env = flyte.TaskEnvironment(name="hello_world", cache="disable")
 @env.task
 async def say_hello_hybrid(data: str, lt: List[int]) -> str:
     tctx = flyte.ctx()
-    assert tctx is not None  # always set inside a task
     print(f"Hello, world! - {tctx.action}")
     return f"Hello {data} {lt}"
 
@@ -21,7 +20,6 @@ async def say_hello_hybrid(data: str, lt: List[int]) -> str:
 @env.task
 async def squared(i: int = 3) -> int:
     tctx = flyte.ctx()
-    assert tctx is not None  # always set inside a task
     print(tctx.action)
     return i * i
 
@@ -29,7 +27,6 @@ async def squared(i: int = 3) -> int:
 @env.task
 async def squared_2(i: int = 3) -> int:
     tctx = flyte.ctx()
-    assert tctx is not None  # always set inside a task
     print(tctx.action)
     return i * i
 
@@ -37,7 +34,6 @@ async def squared_2(i: int = 3) -> int:
 @env.task
 async def say_hello_hybrid_nested(data: str = "default string") -> str:
     tctx = flyte.ctx()
-    assert tctx is not None  # always set inside a task
     print(f"Hello, nested! - {tctx.action}")
     coros = []
     for i in range(3):

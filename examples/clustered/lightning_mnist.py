@@ -62,7 +62,6 @@ async def train_lightning(max_steps: int = 50) -> float:
     from torch.utils.data import DataLoader, TensorDataset
 
     ctx = flyte.ctx()
-    assert ctx is not None  # always set inside a task
     print(
         f"[rank {ctx.rank}/{ctx.world_size}] node_rank={ctx.node_rank} nnodes={ctx.nnodes} "
         f"local_rank={ctx.local_rank} master_addr={ctx.master_addr}",

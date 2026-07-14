@@ -19,7 +19,6 @@ RETRIES = 3
 def use_checkpoint(n_iterations: int) -> int:
     assert n_iterations > RETRIES
     tctx = flyte.ctx()
-    assert tctx is not None  # always set inside a task
     checkpoint = tctx.checkpoint
     assert checkpoint is not None  # always available inside a task
 

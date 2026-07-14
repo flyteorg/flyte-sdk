@@ -82,7 +82,6 @@ class EmployeeSchemaWithStatus(EmployeeSchema):
 @env.task(report=True)
 async def build_valid_employees() -> pt.DataFrame[EmployeeSchema]:
     tctx = flyte.ctx()
-    assert tctx is not None  # always set inside a task
     spark = cast(SparkSession, tctx.data["spark_session"])
     data = [
         (1, "Ada", "Engineer"),

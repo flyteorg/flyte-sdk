@@ -216,7 +216,7 @@ class TaskDetails(ToJSONMixin):
                     _version = tasks[0].version
                 elif _auto_version == "current":
                     ctx = flyte.ctx()
-                    if ctx is None:
+                    if not ctx:
                         raise ValueError("auto_version=current can only be used within a task context.")
                     _version = ctx.version
             cfg = get_init_config()

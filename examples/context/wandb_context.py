@@ -82,7 +82,6 @@ def train_model(config: ModelConfig) -> TrainingResult:
         Training results including final accuracy and best epoch
     """
     tctx = flyte.ctx()
-    assert tctx is not None  # always set inside a task
     with wandb.init(
         project=WANDB_PROJECT,
         entity=WANDB_ENTITY,

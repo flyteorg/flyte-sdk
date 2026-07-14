@@ -224,7 +224,6 @@ def train(checkpoint_dir: str, max_epochs: int = 20) -> str | None:
     data = SyntheticDataModule()
 
     tctx = flyte.ctx()
-    assert tctx is not None  # always set inside a task
     training_run_name = tctx.action.run_name
     assert training_run_name is not None  # populated for running actions
 

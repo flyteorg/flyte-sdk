@@ -56,7 +56,6 @@ async def train_ddp_gpu(steps: int = 50, lr: float = 0.05) -> float:
     from torch.nn.parallel import DistributedDataParallel as DDP
 
     ctx = flyte.ctx()
-    assert ctx is not None  # always set inside a task
     assert torch.cuda.is_available(), "no CUDA device visible — is this running on a GPU node?"
 
     # torchrun has already populated RANK / WORLD_SIZE / MASTER_ADDR / MASTER_PORT. Pin this rank

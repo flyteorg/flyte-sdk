@@ -97,7 +97,7 @@ async def convert_inputs_to_native(inputs: Inputs, python_interface: NativeInter
     )
     if kickoff_arg:
         tctx = ctx()
-        if tctx is not None and tctx.run_start_time is not None:
+        if tctx and tctx.run_start_time is not None:
             native_vals[kickoff_arg] = tctx.run_start_time
     return native_vals
 

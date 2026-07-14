@@ -5,7 +5,7 @@ import inspect
 import os
 import pathlib
 import typing
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, replace
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Callable, ClassVar, Dict, List, Literal, Optional, Tuple, Type
 
@@ -364,6 +364,32 @@ class TaskContext:
     def restart_attempt(self) -> Optional[int]:
         v = os.environ.get("JOBSET_RESTART_ATTEMPT")
         return int(v) if v is not None else None
+
+
+class _NullTaskContext(TaskContext):
+    """Falsy stand-in returned by :func:`flyte.ctx` outside a task execution.
+
+    Exposes the full :class:`TaskContext` interface with every field set to ``None``, so
+    task code can read ``flyte.ctx().<field>`` without a None-guard. It is falsy, so
+    ``if flyte.ctx():`` still answers "am I running inside a task?". Env-var-backed
+    properties (``rank``, ``world_size``, ...) behave exactly as on a real context, and
+    ``checkpoint`` is ``None`` (no ``checkpoint_paths``).
+    """
+
+    def __init__(self):
+        # Bypass the dataclass __init__ (and __post_init__): every field reads as None.
+        for f in fields(TaskContext):
+            object.__setattr__(self, f.name, None)
+
+    def __bool__(self) -> bool:
+        return False
+
+    def __repr__(self) -> str:
+        return "NullTaskContext()"
+
+
+#: Singleton returned by ``flyte.ctx()`` when no task context is active.
+NULL_TASK_CONTEXT = _NullTaskContext()
 
 
 @rich.repr.auto

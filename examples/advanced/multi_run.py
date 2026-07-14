@@ -10,7 +10,6 @@ env = flyte.TaskEnvironment(name="hello_world")
 @env.task
 async def double(x: int) -> int:
     tctx = flyte.ctx()
-    assert tctx is not None  # always set inside a task
     print(tctx.action)
     print(tctx.raw_data_path)
     print(tctx.data)

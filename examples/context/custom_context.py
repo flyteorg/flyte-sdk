@@ -7,7 +7,6 @@ env = flyte.TaskEnvironment("custom-context-example")
 async def leaf_task() -> str:
     # Reads run-level context
     tctx = flyte.ctx()
-    assert tctx is not None  # always set inside a task
     print("leaf sees:", tctx.custom_context)
     return tctx.custom_context.get("trace_id", "")
 

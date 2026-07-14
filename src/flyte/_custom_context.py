@@ -30,7 +30,7 @@ def get_custom_context() -> dict[str, str]:
     :return: Dictionary of context key-value pairs
     """
     tctx = ctx()
-    if tctx is None or tctx.custom_context is None:
+    if not tctx or tctx.custom_context is None:
         return {}
     return tctx.custom_context
 

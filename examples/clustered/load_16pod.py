@@ -45,7 +45,6 @@ async def all_reduce_smoke() -> int:
     import torch.distributed as dist
 
     ctx = flyte.ctx()
-    assert ctx is not None  # always set inside a task
     dist.init_process_group(backend="gloo")
     rank = dist.get_rank()
     world_size = dist.get_world_size()

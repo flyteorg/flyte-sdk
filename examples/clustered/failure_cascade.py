@@ -59,7 +59,6 @@ async def train_with_crash(steps: int = 40) -> int:
     import torch.nn as nn
 
     ctx = flyte.ctx()
-    assert ctx is not None  # always set inside a task
     attempt = ctx.restart_attempt or 0
     rank = ctx.rank or 0
 

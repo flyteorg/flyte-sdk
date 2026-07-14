@@ -13,7 +13,6 @@ env = flyte.TaskEnvironment(
 @env.task
 async def say_hello(data: str, lt: List[int]) -> str:
     tctx = flyte.ctx()
-    assert tctx is not None  # always set inside a task
     print(f"Hello, world! - {tctx.action}")
     print(tctx.run_start_time)
     return f"Hello {data} {lt}"
@@ -22,7 +21,6 @@ async def say_hello(data: str, lt: List[int]) -> str:
 @env.task
 async def square(i: int = 3) -> int:
     tctx = flyte.ctx()
-    assert tctx is not None  # always set inside a task
     print(tctx.action)
     print(tctx.run_start_time)
     return i * i
@@ -31,7 +29,6 @@ async def square(i: int = 3) -> int:
 @env.task(entrypoint=True)
 async def say_hello_nested(data: str = "default string", n: int = 3) -> str:
     tctx = flyte.ctx()
-    assert tctx is not None  # always set inside a task
     print(f"Hello, nested! - {tctx.action}, {tctx.run_start_time}")
     coros = []
     for i in range(n):

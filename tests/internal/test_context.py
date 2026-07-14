@@ -13,7 +13,7 @@ from flyte.syncify import syncify
 @syncify
 async def inner_context_group(outer_group_name: str) -> str:
     final_return = ""
-    assert flyte.ctx() is not None
+    assert flyte.ctx()
     assert flyte.ctx().action.name is not None
     assert flyte.ctx().group_data is not None
     assert flyte.ctx().group_data.name == outer_group_name
@@ -26,18 +26,18 @@ async def inner_context_group(outer_group_name: str) -> str:
 
 async def outer_context_group(outer_name: str):
     final_return = ""
-    assert flyte.ctx() is not None
+    assert flyte.ctx()
     ctx = internal_ctx()
     tctx = ctx.data.task_context.replace(data={"x": "y"})
     with ctx.replace_task_context(tctx):
-        assert flyte.ctx() is not None
+        assert flyte.ctx()
         assert flyte.ctx().data == {"x": "y"}
         assert flyte.ctx().group_data is None
         with flyte.group(outer_name):
             assert flyte.ctx().group_data.name == outer_name
             assert await inner_context_group.aio(outer_name) == "inner"
             final_return = flyte.ctx().group_data.name
-        assert flyte.ctx() is not None
+        assert flyte.ctx()
         assert flyte.ctx().data == {"x": "y"}
         assert flyte.ctx().group_data is None
     return final_return
@@ -45,18 +45,18 @@ async def outer_context_group(outer_name: str):
 
 def outer_context_group_sync():
     final_return = ""
-    assert flyte.ctx() is not None
+    assert flyte.ctx()
     ctx = internal_ctx()
     tctx = ctx.data.task_context.replace(data={"x": "y"})
     with ctx.replace_task_context(tctx):
-        assert flyte.ctx() is not None
+        assert flyte.ctx()
         assert flyte.ctx().data == {"x": "y"}
         assert flyte.ctx().group_data is None
         with flyte.group("outer_sync"):
             assert flyte.ctx().group_data.name == "outer_sync"
             assert inner_context_group("outer_sync") == "inner"
             final_return = flyte.ctx().group_data.name
-        assert flyte.ctx() is not None
+        assert flyte.ctx()
         assert flyte.ctx().data == {"x": "y"}
         assert flyte.ctx().group_data is None
     return final_return
@@ -77,10 +77,10 @@ def outer_task_ctx():
 
 
 async def simulate_task(new_task_context, outer_group_name):
-    assert flyte.ctx() is None
+    assert not flyte.ctx()
     ctx = internal_ctx()
     with ctx.replace_task_context(new_task_context):
-        assert flyte.ctx() is not None
+        assert flyte.ctx()
         assert flyte.ctx().group_data is None
         assert await outer_context_group(outer_group_name) == outer_group_name
 
@@ -91,10 +91,10 @@ async def test_context_group_propagation(outer_task_ctx):
 
 
 def test_context_group_propagation_sync(outer_task_ctx):
-    assert flyte.ctx() is None
+    assert not flyte.ctx()
     ctx = internal_ctx()
     with ctx.replace_task_context(outer_task_ctx):
-        assert flyte.ctx() is not None
+        assert flyte.ctx()
         assert flyte.ctx().group_data is None
         assert outer_context_group_sync() == "outer_sync"
 
@@ -114,7 +114,7 @@ async def test_context_trees(outer_task_ctx):
 async def generator(n: int):
     # NOTE the generator function cannot have a context manager that updates the context, because it will not be
     # as the exit of the context manager will not be awaited until the generator is exhausted.
-    assert flyte.ctx() is not None
+    assert flyte.ctx()
     assert flyte.ctx().group_data.name == "generator"
     for i in range(n):
         yield f"Item {i}"
@@ -122,10 +122,10 @@ async def generator(n: int):
 
 
 async def simulate_gen_task(new_task_context):
-    assert flyte.ctx() is None
+    assert not flyte.ctx()
     ctx = internal_ctx()
     with ctx.replace_task_context(new_task_context):
-        assert flyte.ctx() is not None
+        assert flyte.ctx()
         assert flyte.ctx().group_data is None
         ctx = internal_ctx()
         tctx = ctx.data.task_context.replace(data={"x": "y"})
@@ -177,7 +177,7 @@ def test_in_driver_literal_conversion_on_task_context(outer_task_ctx):
     """Driver literal conversion is mirrored onto TaskContext so flyte.ctx() stays authoritative."""
     base = internal_ctx()
     with base.replace_task_context(outer_task_ctx):
-        assert flyte.ctx() is not None
+        assert flyte.ctx()
         assert flyte.ctx().in_driver_literal_conversion is False
         with internal_ctx().new_in_driver_literal_conversion(True):
             assert flyte.ctx().in_driver_literal_conversion is True
@@ -187,7 +187,7 @@ def test_in_driver_literal_conversion_on_task_context(outer_task_ctx):
 def test_new_in_driver_literal_conversion_requires_task_context():
     """Driver literal conversion is only tracked on TaskContext."""
     base = internal_ctx()
-    assert flyte.ctx() is None
+    assert not flyte.ctx()
     with pytest.raises(ValueError, match="TaskContext"):
         base.new_in_driver_literal_conversion(True)
 
@@ -204,7 +204,7 @@ def test_has_raw_data_with_task_context():
         report=Report("test"),
     )
     with ctx.replace_task_context(task_ctx):
-        assert flyte.ctx() is not None
+        assert flyte.ctx()
         assert internal_ctx().has_raw_data is True
 
 
@@ -228,7 +228,7 @@ def test_has_raw_data_without_raw_data_path():
         report=Report("test"),
     )
     with ctx.replace_task_context(task_ctx):
-        assert flyte.ctx() is not None
+        assert flyte.ctx()
         # Empty path should still return True as the RawDataPath object exists
         assert internal_ctx().has_raw_data is True
 

@@ -6,7 +6,6 @@ env = flyte.TaskEnvironment("custom_context")
 @env.task
 async def downstream_task(x: int) -> int:
     tctx = flyte.ctx()
-    assert tctx is not None  # always set inside a task
     custom_ctx = tctx.custom_context
     if "increment" not in custom_ctx:
         raise ValueError("Expected 'increment' in custom context")

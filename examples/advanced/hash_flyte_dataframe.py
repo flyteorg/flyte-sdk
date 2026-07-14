@@ -57,7 +57,6 @@ async def produce_dataframe() -> DataFrame:
     # Add the action run name to the DataFrame to ensure that the hash is
     # different for each run.
     tctx = flyte.ctx()
-    assert tctx is not None  # always set inside a task
     df["action_name"] = tctx.action.run_name
 
     # Create a HashFunction from our custom hash function

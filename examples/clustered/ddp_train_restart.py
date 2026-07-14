@@ -75,7 +75,6 @@ async def train_ddp_with_restart(steps: int = 50, lr: float = 0.05) -> float:
     from torch.nn.parallel import DistributedDataParallel as DDP
 
     ctx = flyte.ctx()
-    assert ctx is not None  # always set inside a task
 
     # Bind this rank to its local GPU BEFORE init_process_group so NCCL binds the right device.
     if _BACKEND == "nccl" and torch.cuda.is_available():

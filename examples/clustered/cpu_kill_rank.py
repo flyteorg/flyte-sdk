@@ -64,7 +64,6 @@ async def train_and_kill(steps: int = 40, lr: float = 0.05) -> float:
     from torch.nn.parallel import DistributedDataParallel as DDP
 
     ctx = flyte.ctx()
-    assert ctx is not None  # always set inside a task
     attempt = ctx.restart_attempt or 0
     rank = ctx.rank or 0
 

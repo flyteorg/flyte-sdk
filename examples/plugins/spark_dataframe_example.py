@@ -81,7 +81,6 @@ async def create_new_remote_file(content: str) -> File:
 @spark_env.task
 async def dataframe_transformer() -> int:
     tctx = flyte.ctx()
-    assert tctx is not None  # always set inside a task
     spark = cast(SparkSession, tctx.data["spark_session"])
 
     csv_data = "age,name\n10,alice\n20,bob\n30,charlie\n40,david\n50,edward\n60,frank"

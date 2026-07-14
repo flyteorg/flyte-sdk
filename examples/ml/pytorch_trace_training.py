@@ -81,7 +81,6 @@ def checkpoint_path(config: TrainingConfig) -> str:
     and the path is stable across retries and across runs.
     """
     ctx = flyte.ctx()
-    assert ctx is not None and ctx.raw_data_path is not None
     raw = ctx.raw_data_path.path
     parsed = urlparse(raw)
     bucket_root = f"{parsed.scheme}://{parsed.netloc}"

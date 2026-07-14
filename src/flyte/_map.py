@@ -308,7 +308,7 @@ class _Mapper(Generic[P, R]):
             import flyte
 
             tctx = flyte.ctx()
-            if tctx is None or tctx.mode == "local":
+            if not tctx or tctx.mode == "local":
                 logger.warning("Running map in local mode, which will run every task sequentially.")
                 for v in zip(*args):
                     try:
@@ -357,7 +357,7 @@ class _Mapper(Generic[P, R]):
             import flyte
 
             tctx = flyte.ctx()
-            if tctx is None or tctx.mode == "local":
+            if not tctx or tctx.mode == "local":
                 logger.warning("Running map in local mode, which will run every task sequentially.")
                 for v in zip(*args):
                     try:

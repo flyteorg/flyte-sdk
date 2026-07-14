@@ -907,7 +907,7 @@ def current_domain() -> str:
     from ._context import ctx
 
     tctx = ctx()
-    if tctx is not None:
+    if tctx:
         domain = tctx.action.domain
         if domain is not None:
             return domain
@@ -936,7 +936,7 @@ def current_project() -> str:
     from ._context import ctx
 
     tctx = ctx()
-    if tctx is not None:
+    if tctx:
         project = tctx.action.project
         if project is not None:
             return project

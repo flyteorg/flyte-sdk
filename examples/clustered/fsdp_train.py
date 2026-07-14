@@ -66,7 +66,6 @@ async def train_fsdp(steps: int = 30, lr: float = 0.01) -> float:
     from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 
     ctx = flyte.ctx()
-    assert ctx is not None  # always set inside a task
 
     if _BACKEND == "nccl" and torch.cuda.is_available():
         torch.cuda.set_device(ctx.local_rank or 0)

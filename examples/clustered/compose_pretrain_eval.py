@@ -77,7 +77,6 @@ async def pretrain(steps: int = 20) -> float:
     from torch.nn.parallel import DistributedDataParallel as DDP
 
     ctx = flyte.ctx()
-    assert ctx is not None  # always set inside a task
 
     # Bind this rank to its local GPU BEFORE init_process_group so NCCL binds the right device.
     if _BACKEND == "nccl" and torch.cuda.is_available():
@@ -117,7 +116,6 @@ async def evaluate(trained_loss: float) -> float:
     import torch.distributed as dist
 
     ctx = flyte.ctx()
-    assert ctx is not None  # always set inside a task
 
     # Bind this rank to its local GPU BEFORE init_process_group so NCCL binds the right device.
     if _BACKEND == "nccl" and torch.cuda.is_available():

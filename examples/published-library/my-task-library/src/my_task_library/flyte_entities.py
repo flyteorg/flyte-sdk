@@ -18,6 +18,5 @@ async def library_child_task(data: str, lt: List[int]) -> str:
 @library_environment.task
 async def library_parent_task(data: str = "default string", n: int = 3) -> str:
     tctx = flyte.ctx()
-    assert tctx is not None  # always set inside a task
     print(f"Hello from library_parent_task! - {tctx.action}")
     return await library_child_task(data=data, lt=list(range(n)))

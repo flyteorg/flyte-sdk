@@ -130,7 +130,6 @@ async def main(
          checkpoint.
     """
     tctx = flyte.ctx()
-    assert tctx is not None  # always set inside a task
     checkpoint_dir = tctx.run_base_dir
     # Start training in the background
     train_task = asyncio.create_task(train(checkpoint_dir, total_epochs, seconds_per_epoch))

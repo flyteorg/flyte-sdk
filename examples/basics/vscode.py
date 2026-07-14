@@ -10,7 +10,6 @@ env = flyte.TaskEnvironment(
 @env.task
 async def say_hello(data: str) -> str:
     tctx = flyte.ctx()
-    assert tctx is not None  # always set inside a task
     print(f"Hello, world! - {tctx.action}")
     return f"Hello {data}"
 

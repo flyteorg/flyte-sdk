@@ -10,7 +10,6 @@ env = flyte.TaskEnvironment(
 @env.task()
 async def hello_worker(id: int) -> str:
     ctx = flyte.ctx()
-    assert ctx is not None
     return f"hello, my id is: {id} and I am being run by Action: {ctx.action}"
 
 
