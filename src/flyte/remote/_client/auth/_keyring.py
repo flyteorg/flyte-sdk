@@ -50,7 +50,7 @@ class Credentials(pydantic.BaseModel):
         return self
 
 
-def _backend():
+def _get_keyring_backend():
     """Return the keyring interface flyte uses (the `keyring` module, or a backend instance).
 
     On macOS, talk to the keychain through flyte's own /usr/bin/security-based
@@ -99,7 +99,7 @@ class KeyringStore:
         if disable:
             logger.debug("Keyring is disabled, skipping token store.")
             return credentials
-        keyring = _backend()
+        keyring = _get_keyring_backend()
         from keyring.errors import NoKeyringError
 
         try:
@@ -135,7 +135,7 @@ class KeyringStore:
         if disable:
             logger.debug("Keyring is disabled, skipping token retrieve.")
             return None
-        keyring = _backend()
+        keyring = _get_keyring_backend()
         from keyring.errors import NoKeyringError
 
         for_endpoint = strip_scheme(for_endpoint)
@@ -187,7 +187,7 @@ class KeyringStore:
         if disable:
             logger.debug("Keyring is disabled, skipping token delete.")
             return
-        keyring = _backend()
+        keyring = _get_keyring_backend()
         from keyring.errors import NoKeyringError, PasswordDeleteError
 
         for_endpoint = strip_scheme(for_endpoint)
