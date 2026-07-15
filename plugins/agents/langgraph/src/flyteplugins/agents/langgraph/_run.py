@@ -1,95 +1,128 @@
-"""``run_agent`` — run a LangGraph agent on Flyte.
+"""``run_agent`` — drive a LangGraph graph on Flyte.
 
-LangGraph's ``StateGraph`` owns the agent loop. ``run_agent`` runs that loop inside
-your ``@env.task``: it builds the graph with Flyte-task tools, compiles it, and
-executes it. Each tool call runs as a durable Flyte child action (its own
-container/resources, with retries and caching).
+The intended devex is that *you* build the ``StateGraph`` (with
+:func:`~flyteplugins.agents.langgraph.ai_node` /
+:func:`~flyteplugins.agents.langgraph.tool_node`), compile it, and hand the
+compiled graph to ``run_agent(agent=...)``. ``run_agent`` runs that graph inside
+your ``@env.task``: each model turn is durable (replayed on retry) and each tool
+call runs as a durable Flyte child action.
 
-Observability: the run timeline — tool calls and AI message turns — is rendered into
+As a convenience, passing ``tools`` (instead of ``agent``) builds a default
+tool-calling graph for you from the same ``ai_node`` / ``tool_node`` building
+blocks.
+
+Observability: the run timeline — model turns and tool calls — is rendered into
 the Flyte task report.
-
-The adapter minimizes delta between native LangGraph code and Flyte integration by
-exposing tools that are drop-in replacements for LangChain ``BaseTool`` instances.
 """
 
 from __future__ import annotations
 
 import typing
 
-from flyteplugins.agents.core import ReportTimeline, abbrev, flush_report
+from flyteplugins.agents.core import ReportTimeline, flush_report
 
+from ._nodes import ai_node, tool_node
 from ._tools import _coerce_tool
 
-if typing.TYPE_CHECKING:
-    from langgraph.graph import StateGraph as _StateGraph
-else:
-    _StateGraph = None
+try:  # langgraph is a hard dependency; guarded only so imports never hard-crash.
+    from langgraph.graph import END, START, MessagesState, StateGraph
+    from langgraph.prebuilt import tools_condition
+except Exception:  # pragma: no cover - langgraph missing
+    END = START = MessagesState = StateGraph = tools_condition = None  # type: ignore[assignment]
+
+# Module-level aliases so the builder path can be redirected in tests.
+_StateGraph = StateGraph
+_MessagesState = MessagesState
+_START = START
+_tools_condition = tools_condition
+
+
+def _resolve_chat_model(model: typing.Any) -> typing.Any:
+    """Return a LangChain chat model. A model instance passes through; a string /
+    ``None`` builds a default ``ChatOpenAI`` (imported lazily)."""
+    if model is not None and not isinstance(model, str):
+        return model
+    from langchain_openai import ChatOpenAI
+
+    return ChatOpenAI(model=model or "gpt-4o")
+
+
+def _build_default_graph(
+    *,
+    model: typing.Any,
+    tools: typing.Sequence[typing.Any],
+    durable: bool,
+    observability: bool,
+) -> typing.Any:
+    """Build the standard tool-calling graph from ``ai_node`` + ``tool_node``."""
+    chat_model = _resolve_chat_model(model)
+    builder = _StateGraph(_MessagesState)
+    builder.add_node("ai", ai_node(chat_model, tools, name="ai", durable=durable, observability=observability))
+    builder.add_node("tools", tool_node(tools, name="tools", observability=observability))
+    builder.add_edge(_START, "ai")
+    builder.add_conditional_edges("ai", _tools_condition)
+    builder.add_edge("tools", "ai")
+    return builder.compile()
+
+
+def _final_text(result: typing.Any) -> str:
+    """Extract the final assistant text from a graph's output state."""
+    if isinstance(result, dict):
+        messages = result.get("messages", [])
+        if messages:
+            last = messages[-1]
+            content = last.get("content") if isinstance(last, dict) else getattr(last, "content", None)
+            if content is not None:
+                return content if isinstance(content, str) else str(content)
+        return ""
+    return str(result) if result is not None else ""
 
 
 async def run_agent(
     input: str | typing.Any,
     *,
     tools: typing.Sequence[typing.Any] = (),
-    model: str | None = None,
-    agent: typing.Any = None,
+    model: typing.Any = None,
     instructions: str | None = None,
+    agent: typing.Any = None,
     name: str = "langgraph-agent",
     durable: bool = True,
     observability: bool = True,
     memory_key: str | None = None,
     **run_kwargs: typing.Any,
 ) -> str:
-    """Run a LangGraph agent with the given tools and input; return the final text.
+    """Run a LangGraph graph and return the final text.
 
     Call this from inside an ``@env.task`` — that task is the durable parent.
-    Within it, each tool call runs as a durable Flyte child action. Give the
+    Within it, each model turn is recorded via ``flyte.trace`` (replayed on
+    retry) and each tool call runs as a durable Flyte child action. Give the
     enclosing task ``retries=...`` for self-healing and ``report=True`` to see
     the agent timeline.
 
-    Provide either a pre-built ``agent`` (a compiled LangGraph ``StateGraph``) or
-    ``tools`` to have one built for you. The ``model`` parameter is forwarded to
-    the built agent when ``agent`` is not given.
+    Provide either a pre-built ``agent`` (a compiled ``StateGraph`` you built
+    with :func:`ai_node` / :func:`tool_node`) or ``tools`` to have a default
+    tool-calling graph built for you. The two are mutually exclusive.
 
     Args:
-        input: The user prompt or state dict to start the graph with.
-        tools: ``tool``-wrapped tools or bare ``@env.task`` templates.
-        model: Model name or provider for the built agent (when ``agent`` is not
-            given). ``None`` uses the default.
-        agent: A pre-built compiled LangGraph agent. Mutually exclusive with ``tools``.
-        instructions: System instructions for the built agent.
+        input: The user prompt (a ``str``) or a full graph input state (a dict).
+        tools: ``@tool``-wrapped tools or bare ``@env.task`` templates (used only
+            when ``agent`` is not given).
+        model: A LangChain chat model, a model-name string, or ``None`` (defaults
+            to ``ChatOpenAI("gpt-4o")``) — used only when building the graph.
+        instructions: System prompt prepended to a built graph's messages.
+        agent: A pre-built compiled LangGraph graph. Mutually exclusive with ``tools``.
         name: Graph name (for debugging/observability).
-        durable: Record/replay each model turn via ``flyte.trace`` (when the graph
-            uses a model-aware node).
+        durable: Record each model turn via ``flyte.trace`` (built graphs only).
         observability: Render the run timeline into the Flyte task report.
-        memory_key: Stable id (e.g. a user/thread id) for cross-run memory.
-            When set, conversation history is persisted to a keyed ``MemoryStore``
-            and resumed on a later run with the same key.
-        **run_kwargs: Additional kwargs forwarded to the compiled graph's ``ainvoke``.
-
-    Args:
-        input: The user prompt or state dict to start the graph with.
-        tools: ``tool``-wrapped tools or bare ``@env.task`` templates.
-        agent: A pre-built compiled LangGraph agent. Mutually exclusive with ``tools``.
-        name: Graph name (for debugging/observability).
-        durable: Record/replay each model turn via ``flyte.trace`` (when the graph
-            uses a model-aware node).
-        observability: Render the run timeline into the Flyte task report.
-        memory_key: Stable id (e.g. a user/thread id) for cross-run memory.
-            When set, conversation history is persisted to a keyed ``MemoryStore``
-            and resumed on a later run with the same key.
-        **run_kwargs: Additional kwargs forwarded to the compiled graph's ``ainvoke``.
+        memory_key: Stable id for cross-run memory (reserved; see ``_memory``).
+        **run_kwargs: Additional kwargs forwarded to the graph's ``ainvoke``.
 
     Returns:
-        The agent's final output as a string.
+        The graph's final assistant message as a string.
     """
-    from langchain_core.messages import HumanMessage, ToolMessage
+    from langchain_core.messages import HumanMessage, SystemMessage
 
-    if _StateGraph is None:
-        from langgraph.graph import StateGraph as _LangGraphStateGraph
-    else:
-        _LangGraphStateGraph = _StateGraph
-
-    StateGraph = _LangGraphStateGraph
+    from ._memory import load_messages, resolve_memory, save_messages
 
     if agent is not None and tools:
         raise ValueError("Pass either `agent` (with its own tools) or `tools`, not both.")
@@ -98,102 +131,40 @@ async def run_agent(
     if timeline is not None:
         timeline.heading("LangGraph agent")
 
-    # Build the graph if not provided
+    # Cross-run memory: the prior transcript (if any) is prepended to the run's
+    # messages, and the full transcript is persisted back afterwards.
+    store = await resolve_memory(memory_key)
+    prior = await load_messages(store)
+
     if agent is None:
-        from langchain_core.messages import HumanMessage
-
-        # For a simple tool-use graph, build a minimal StateGraph
-        builder = StateGraph(typing.get_type_hints(type("Typing", (), {"messages": list[HumanMessage]})) or dict)
-
-        # Add a tool node that executes the tools
-        async def tool_node(state: dict) -> dict:
-            messages = state.get("messages", [])
-            if not messages:
-                return {"messages": []}
-            last = messages[-1]
-            if hasattr(last, "tool_calls") and last.tool_calls:
-                results = []
-                for tc in last.tool_calls:
-                    if timeline is not None:
-                        timeline.row(
-                            icon="🛠️",
-                            label=tc["name"],
-                            meta="tool",
-                            detail=abbrev(str(tc.get("args", {})), 160),
-                        )
-                    # Find and execute the tool
-                    tool_fn = None
-                    for t in tools:
-                        tname = getattr(t, "name", None) or getattr(t, "func", None)
-                        if tname and (
-                            tname == tc["name"] or (hasattr(tname, "__name__") and tname.__name__ == tc["name"])
-                        ):
-                            tool_fn = t
-                            break
-                    if tool_fn is not None:
-                        result = await _coerce_tool(tool_fn)
-                        # Execute the tool with the call args
-                        try:
-                            if callable(result):
-                                output = result(**tc.get("args", {}))
-                                if hasattr(output, "__await__"):
-                                    output = await output
-                            else:
-                                output = "No tool available"
-                        except Exception as e:
-                            output = f"Error: {e}"
-                        if timeline is not None:
-                            timeline.row(
-                                icon="🔧",
-                                label=tc["name"],
-                                meta="tool result",
-                                detail=abbrev(str(output), 160),
-                            )
-                        results.append({"id": tc.get("id", ""), "name": tc["name"], "output": str(output)})
-                return {"messages": [ToolMessage(content=str(r["output"]), tool_call_id=r["id"]) for r in results]}
-            return {"messages": []}
-
-        # Add the AI node (placeholder — the real model call is handled by the graph)
-        async def ai_node(state: dict) -> dict:
-            messages = state.get("messages", [])
-            if not messages:
-                return {"messages": []}
-            # Return empty — the actual model interaction happens via the graph's
-            # model binding. For a Flyte-integrated graph, the model call is
-            # captured by the durable_step mechanism.
-            return {"messages": []}
-
-        builder.add_node("ai", ai_node)
-        builder.add_node("tools", tool_node)
-        builder.set_entry_point("ai")
-        builder.add_conditional_edges("ai", lambda s: "tools" if s.get("messages") else "__end__")
-        builder.add_edge("tools", "ai")
-        agent = builder.compile()
-
-    # Run the graph
-    if isinstance(input, str):
-        from langchain_core.messages import HumanMessage
-
-        input_state = {"messages": [HumanMessage(content=input)]}
+        agent = _build_default_graph(
+            model=model,
+            tools=[_coerce_tool(t) for t in tools],
+            durable=durable,
+            observability=observability,
+        )
+        seed: list[typing.Any] = []
+        # The system prompt is only needed once; on resumed runs it already lives
+        # in the prior transcript.
+        if instructions and not prior:
+            seed.append(SystemMessage(content=instructions))
+        seed.extend(prior)
+        seed.append(HumanMessage(content=input))
+        input_state: typing.Any = {"messages": seed}
+    elif isinstance(input, str):
+        input_state = {"messages": [*prior, HumanMessage(content=input)]}
     else:
         input_state = input or {}
+        if prior:
+            input_state = {**input_state, "messages": [*prior, *input_state.get("messages", [])]}
 
-    result = await agent.ainvoke(input_state, **run_kwargs)
+    try:
+        result = await agent.ainvoke(input_state, **run_kwargs)
+    finally:
+        if observability:
+            await flush_report()
 
-    # Extract final text from result
-    final = ""
-    if isinstance(result, dict):
-        messages = result.get("messages", [])
-        if messages:
-            last_msg = messages[-1]
-            if hasattr(last_msg, "content"):
-                final = last_msg.content if isinstance(last_msg.content, str) else str(last_msg.content)
-            elif hasattr(last_msg, "text"):
-                final = last_msg.text
-            else:
-                final = str(last_msg)
+    if store is not None and isinstance(result, dict) and result.get("messages"):
+        await save_messages(store, result["messages"])
 
-    if observability:
-        await flush_report()
-
-    return final or str(result) if result else ""
+    return _final_text(result)

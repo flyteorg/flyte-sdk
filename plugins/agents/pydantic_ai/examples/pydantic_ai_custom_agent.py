@@ -13,6 +13,7 @@ Run:  flyte run pydantic_ai_custom_agent.py weather_agent --city "San Francisco"
       (add `--local` right after `run` to execute locally instead of on the backend)
 """
 
+import functools
 from pathlib import Path
 
 import flyte
@@ -44,16 +45,19 @@ env = flyte.TaskEnvironment(
 )
 
 
-# ── Step 1: Define your durable Flyte tasks ──────────────────────────────────
-# These are normal Flyte tasks — they can be cached, retried, sized independently.
+# ── Step 1: Define your durable Flyte tasks as tools ─────────────────────────
+# Stack ``@tool`` on top of ``@env.task``: each is both a normal, durable, cached
+# Flyte task AND a Pydantic AI tool you can hand to an ``Agent`` natively.
 
 
+@tool
 @env.task(cache="auto", retries=3)
 async def get_weather(city: str) -> str:
     """Get the current weather for a city."""
     return f"The weather in {city} is sunny, 22°C."
 
 
+@tool
 @env.task(cache="auto", retries=3)
 async def get_population(city: str) -> int:
     """Get the population of a city."""
@@ -61,96 +65,63 @@ async def get_population(city: str) -> int:
 
 
 # ── Step 2: Define your own Pydantic AI agent ────────────────────────────────
-# You control the agent definition — prompt, model, tools, etc.
-# Flyte provides the durable runtime via ``tool()`` and ``run_agent(agent=...)``.
+# You control the agent definition — prompt, model, tools, etc. The tools are
+# attached natively via ``Agent(tools=[...])``; Flyte makes each tool call durable.
 
 
+@functools.lru_cache
 def _build_city_agent():
-    """Build a Pydantic AI Agent with durable tools."""
+    """Build a Pydantic AI Agent with durable Flyte-task tools attached natively.
+
+    Built lazily (and cached) rather than at module scope: constructing an
+    ``Agent("openai:gpt-4o", ...)`` eagerly validates the OpenAI provider (it needs
+    an API key), so building at import time would force ``OPENAI_API_KEY`` into the
+    LOCAL env just to ``flyte run`` this file. Call it inside the task body, where
+    the ``openai_api_key`` secret is present.
+    """
     from pydantic_ai import Agent
 
-    # Create the agent with your custom configuration
     return Agent(
-        model="openai:gpt-4o",
+        "openai:gpt-4o",
         name="city-facts-agent",
         system_prompt=(
             "You are a helpful city-facts assistant. Use the available tools to answer "
             "questions about cities. Be concise and accurate."
         ),
+        tools=[get_weather, get_population],
     )
 
 
-# Build the agent once (in practice, cache this in module scope)
-city_agent = _build_city_agent()
-
-
 # ── Step 3: Run your agent durably inside a Flyte task ───────────────────────
-# The agent definition is fully yours; run_agent drives the loop durably.
+# The agent definition is fully yours; run_agent drives the loop durably. The
+# tools already live on the agent, so pass ``agent=`` with NO separate ``tools=``.
 
 
 @env.task(report=True, retries=3)
 async def weather_agent(city: str) -> str:
     """Run the custom-built agent durably on Flyte."""
-    result = await run_agent(
+    agent = _build_city_agent()
+    return await run_agent(
         f"What's the weather in {city}?",
-        agent=city_agent,
+        agent=agent,
     )
-    return result
 
 
-# ── Alternative: Pass tools directly to run_agent ────────────────────────────
-# If you don't need to separate agent definition from execution:
+# ── Alternative: let run_agent build the agent from tools ─────────────────────
+# If you don't want to define the ``Agent`` yourself, pass ``tools=`` + ``model=``
+# (and NO ``agent=``) and run_agent builds the agent for you.
 
 
 @env.task(report=True, retries=3)
 async def quick_weather_agent(city: str) -> str:
-    """Build and run in one call using run_agent's builder."""
-    from pydantic_ai import Agent
-
-    weather_tool = tool(get_weather, name="get_weather", description="Get the current weather for a city.")
-    population_tool = tool(get_population, name="get_population", description="Get the population of a city.")
-
-    # Build the agent with tools
-    agent = Agent(
-        model="openai:gpt-4o",
-        name="quick-agent",
-        system_prompt="You are a helpful city-facts assistant.",
-    )
-
+    """Build and run in one call using run_agent's builder path."""
     return await run_agent(
         f"What's the weather in {city}?",
-        agent=agent,
-        tools=[weather_tool, population_tool],
-    )
-
-
-# ── Alternative: Pre-build and customize the agent further ───────────────────
-# You can also get the raw Pydantic AI Agent and modify it before running.
-
-
-@env.task(report=True, retries=3)
-async def custom_weather_agent(city: str) -> str:
-    """Customize the agent before running."""
-    from pydantic_ai import Agent
-
-    weather_tool = tool(get_weather, name="get_weather", description="Get the current weather for a city.")
-
-    # Build the agent with custom configuration
-    agent = Agent(
+        tools=[get_weather, get_population],
         model="openai:gpt-4o",
-        name="custom-agent",
-        system_prompt="You are a weather expert. Always include temperature and conditions.",
+        instructions="You are a helpful city-facts assistant. Be concise and accurate.",
+        name="quick-agent",
     )
-
-    # You can access and modify the underlying agent here if needed
-    # For example, add additional tools or modify the model
-
-    result = await run_agent(
-        f"What's the weather in {city}?",
-        agent=agent,
-        tools=[weather_tool],
-    )
-    return result
 
 
 if __name__ == "__main__":

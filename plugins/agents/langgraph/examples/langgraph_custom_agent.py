@@ -1,14 +1,19 @@
 """Build your own LangGraph agent — durable tools on Flyte.
 
-This example shows the "bring your own agent" path: you define a LangGraph
-``StateGraph`` using the framework's native SDK, wrap your Flyte tasks as
-durable tools with ``tool()``, and pass the compiled graph to
-``run_agent(agent=...)``.
+This is the "bring your own graph" path: you build the ``StateGraph`` yourself
+with the framework's native SDK, and Flyte provides the durable runtime through
+three building blocks from ``flyteplugins.agents.langgraph``:
 
-- ``tool()`` wraps Flyte ``@env.task`` functions as durable LangGraph tool nodes
-  that execute as child actions (own container/GPU, retries, caching).
-- ``run_agent(agent=...)`` drives the graph loop durably on Flyte.
-- The graph definition is fully yours — custom nodes, edges, state, memory, etc.
+- ``@tool`` turns a Flyte ``@env.task`` into a first-class LangGraph tool (a
+  LangChain ``StructuredTool``) that executes as a durable child action
+  (own container/GPU, retries, caching).
+- ``ai_node(model, tools)`` is the model-calling node — it binds the tools to
+  your chat model and records each model turn durably (replayed on retry).
+- ``tool_node(tools)`` is the tool-executing node — it runs the model's tool
+  calls as durable Flyte child actions.
+
+You wire them into an ordinary tool-calling loop and compile the graph. Then
+``run_agent(agent=compiled_graph)`` drives it inside your task.
 
 Run:  flyte run langgraph_custom_agent.py city_agent --city "Tokyo"
       (add `--local` right after `run` to execute locally instead of on the backend)
@@ -19,7 +24,7 @@ from pathlib import Path
 import flyte
 from flyte._image import PythonWheels
 
-from flyteplugins.agents.langgraph import run_agent, tool
+from flyteplugins.agents.langgraph import ai_node, run_agent, tool, tool_node
 
 env = flyte.TaskEnvironment(
     "langgraph-custom-agent",
@@ -45,181 +50,82 @@ env = flyte.TaskEnvironment(
 )
 
 
-# ── Step 1: Define your durable Flyte tasks ──────────────────────────────────
-# These are normal Flyte tasks — they can be cached, retried, sized independently.
+# ── Step 1: Define your durable Flyte tasks and decorate them as tools ────────
+# Stacking @tool on @env.task makes each one both a durable, cached Flyte task
+# and a first-class LangGraph tool the model can call.
 
 
+@tool
 @env.task(cache="auto", retries=3)
 async def get_weather(city: str) -> str:
     """Get the current weather for a city."""
     return f"The weather in {city} is sunny, 22°C."
 
 
+@tool
 @env.task(cache="auto", retries=3)
 async def get_population(city: str) -> int:
     """Get the population of a city."""
     return {"San Francisco": 808988, "Paris": 2102650, "Tokyo": 13929286}.get(city, 1_000_000)
 
 
-# ── Step 2: Define your own LangGraph agent ──────────────────────────────────
-# You control the graph definition — nodes, edges, state, etc.
-# Flyte provides the durable runtime via ``tool()`` and ``run_agent(agent=...)``.
+# ── Step 2: Build your own StateGraph ────────────────────────────────────────
+# The graph is fully yours — ``ai_node`` and ``tool_node`` are the Flyte-durable
+# nodes; you own the state, edges, and control flow. This is the standard
+# tool-calling loop: ai → (tools → ai)* → END.
 
 
 def _build_city_graph():
-    """Build a LangGraph StateGraph with durable tools."""
+    """Build a tool-calling StateGraph whose nodes run durably on Flyte."""
     from langchain_openai import ChatOpenAI
-    from langgraph.graph.message import MessageGraph
+    from langgraph.graph import START, MessagesState, StateGraph
+    from langgraph.prebuilt import tools_condition
 
-    # Wrap Flyte tasks as durable LangGraph tool nodes
-    weather_tool = tool(get_weather, name="get_weather", description="Get the current weather for a city.")
-    population_tool = tool(get_population, name="get_population", description="Get the population of a city.")
+    tools = [get_weather, get_population]
+    model = ChatOpenAI(model="gpt-4o")
 
-    # Use MessageGraph for a simple chat-based graph
-    graph = MessageGraph()
-
-    # Add the AI model node
-    ChatOpenAI(model="gpt-4o").bind_tools([weather_tool, population_tool])
-
-    # Add tool nodes
-    graph.add_node("weather", weather_tool)
-    graph.add_node("population", population_tool)
-
-    # Compile the graph
-    return graph.compile()
+    builder = StateGraph(MessagesState)
+    builder.add_node("ai", ai_node(model, tools))
+    builder.add_node("tools", tool_node(tools))
+    builder.add_edge(START, "ai")
+    # ``tools_condition`` routes to the tool node when the model emitted tool
+    # calls, otherwise to END.
+    builder.add_conditional_edges("ai", tools_condition)
+    builder.add_edge("tools", "ai")
+    return builder.compile()
 
 
-# Build the graph once (in practice, cache this in module scope)
+# Build the graph once (module scope, reused across runs).
 city_graph = _build_city_graph()
 
 
-# ── Step 3: Run your graph durably inside a Flyte task ───────────────────────
-# The graph definition is fully yours; run_agent drives the loop durably.
+# ── Step 3: Run your graph durably inside a Flyte task ────────────────────────
+# The graph definition is fully yours; run_agent drives it durably and renders
+# the timeline into the task report.
 
 
 @env.task(report=True, retries=3)
 async def city_agent(city: str) -> str:
     """Run the custom-built graph durably on Flyte."""
-
-    result = await run_agent(
-        f"What's the weather in {city}?",
+    return await run_agent(
+        f"What's the weather and population of {city}?",
         agent=city_graph,
     )
-    return result
 
 
-# ── Alternative: Pass tools directly to run_agent ────────────────────────────
-# If you don't need to separate graph definition from execution:
+# ── Alternative: let run_agent build the default tool-calling graph ───────────
+# If you don't need a custom topology, pass tools and let run_agent assemble the
+# same ai → tools → ai loop for you.
 
 
 @env.task(report=True, retries=3)
 async def quick_city_agent(city: str) -> str:
-    """Build and run in one call using run_agent's builder."""
-    from langgraph.graph import StateGraph
-
-    weather_tool = tool(get_weather, name="get_weather", description="Get the current weather for a city.")
-    population_tool = tool(get_population, name="get_population", description="Get the population of a city.")
-
-    # Build a simple StateGraph
-    builder = StateGraph(dict)
-
-    async def ai_node(state: dict) -> dict:
-        messages = state.get("messages", [])
-        if not messages:
-            return {"messages": []}
-        return {"messages": messages}
-
-    async def tool_node(state: dict) -> dict:
-        messages = state.get("messages", [])
-        if not messages:
-            return {"messages": []}
-        last = messages[-1]
-        if hasattr(last, "tool_calls") and last.tool_calls:
-            results = []
-            for tc in last.tool_calls:
-                tool_fn = None
-                for t in [weather_tool, population_tool]:
-                    tname = getattr(t, "name", None) or getattr(t, "func", None)
-                    if tname and (tname == tc["name"] or (hasattr(tname, "__name__") and tname.__name__ == tc["name"])):
-                        tool_fn = t
-                        break
-                if tool_fn is not None:
-                    result = await tool(tool_fn)
-                    try:
-                        if callable(result):
-                            output = result(**tc.get("args", {}))
-                            if hasattr(output, "__await__"):
-                                output = await output
-                        else:
-                            output = "No tool available"
-                    except Exception as e:
-                        output = f"Error: {e}"
-                    results.append({"id": tc.get("id", ""), "name": tc["name"], "output": str(output)})
-            return {"messages": []}
-        return {"messages": []}
-
-    builder.add_node("ai", ai_node)
-    builder.add_node("tools", tool_node)
-    builder.set_entry_point("ai")
-    builder.add_conditional_edges("ai", lambda s: "tools" if s.get("messages") else "__end__")
-    builder.add_edge("tools", "ai")
-    agent = builder.compile()
-
+    """Build and run in one call using run_agent's default graph builder."""
     return await run_agent(
-        f"What's the weather in {city}?",
-        agent=agent,
+        f"What's the weather and population of {city}?",
+        tools=[get_weather, get_population],
+        instructions="You are a concise city-facts assistant. Use the tools to answer.",
     )
-
-
-# ── Alternative: Build and customize the graph further ───────────────────────
-# You can access the compiled graph and add custom nodes or edges.
-
-
-@env.task(report=True, retries=3)
-async def custom_city_agent(city: str) -> str:
-    """Customize the graph before running."""
-    from langgraph.graph import StateGraph
-
-    builder = StateGraph(dict)
-
-    async def ai_node(state: dict) -> dict:
-        messages = state.get("messages", [])
-        if not messages:
-            return {"messages": []}
-        return {"messages": messages}
-
-    async def tool_node(state: dict) -> dict:
-        messages = state.get("messages", [])
-        if not messages:
-            return {"messages": []}
-        last = messages[-1]
-        if hasattr(last, "tool_calls") and last.tool_calls:
-            results = []
-            for tc in last.tool_calls:
-                if tc["name"] == "get_weather":
-                    try:
-                        output = await tool(get_weather)(city=tc.get("args", {}).get("city", city))
-                    except Exception as e:
-                        output = f"Error: {e}"
-                    results.append({"id": tc.get("id", ""), "name": tc["name"], "output": str(output)})
-            return {"messages": []}
-        return {"messages": []}
-
-    builder.add_node("ai", ai_node)
-    builder.add_node("tools", tool_node)
-    builder.set_entry_point("ai")
-    builder.add_conditional_edges("ai", lambda s: "tools" if s.get("messages") else "__end__")
-    builder.add_edge("tools", "ai")
-    built = builder.compile()
-
-    # You can access and modify the underlying graph here if needed
-    # For example, add checkpointing, subgraphs, or human-in-the-loop nodes
-
-    result = await run_agent(
-        f"What's the weather in {city}?",
-        agent=built,
-    )
-    return result
 
 
 if __name__ == "__main__":

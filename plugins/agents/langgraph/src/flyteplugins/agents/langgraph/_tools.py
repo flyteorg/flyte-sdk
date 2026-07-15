@@ -1,49 +1,58 @@
-"""Turn Flyte tasks into LangGraph tools that execute as durable actions.
+"""Turn Flyte tasks into LangGraph-compatible tools that run as durable actions.
 
-LangGraph accepts LangChain ``BaseTool`` instances as nodes/tools. :func:`tool`
-wraps a Flyte ``@env.task`` as a LangChain ``StructuredTool`` whose ``arun``
-dispatches to the task via ``task.aio()`` — so when the graph calls the tool,
-it runs as a durable Flyte child action (its own container/resources, with
-retries and caching) rather than inline in the graph's process.
+LangGraph (via LangChain) drives tools that are ``BaseTool`` instances: it binds
+them to the model (``model.bind_tools([...])``) so the LLM can call them, and it
+executes them from a tool node. :func:`tool` wraps a Flyte ``@env.task`` as a
+LangChain ``StructuredTool`` whose async body dispatches to the task via
+``task.aio()`` — so when the graph executes the tool, it runs as a durable Flyte
+child action (its own container/resources, with retries and caching) rather than
+inline in the graph's process.
+
+The returned tool is a first-class ``StructuredTool``: pass it straight to
+``model.bind_tools(...)``, to :func:`~flyteplugins.agents.langgraph.tool_node`,
+or to LangGraph's ``ToolNode``. It additionally exposes ``__wrapped_task__`` /
+``task`` (so the backing task resolves to itself on the worker, no recursion) and
+``__name__`` for convenience.
 """
 
 from __future__ import annotations
 
-import dataclasses
+import functools
 import inspect
 import json
 import typing
 from functools import partial
 
 from flyte._task import AsyncFunctionTaskTemplate
-from flyte.models import NativeInterface
-from flyteplugins.agents.core import attach_tool_resolver, coerce_tool_args, task_json_schema
+from flyteplugins.agents.core import attach_tool_resolver, coerce_tool_args
+
+try:  # pragma: no cover - import shape only
+    from langchain_core.tools import StructuredTool
+except Exception:  # pragma: no cover
+    StructuredTool = None  # type: ignore[assignment,misc]
 
 
-@dataclasses.dataclass
-class LangGraphTool:
-    """A LangChain ``StructuredTool`` backed by a Flyte task."""
+if StructuredTool is not None:
 
-    structured_tool: typing.Any
-    _task: AsyncFunctionTaskTemplate = dataclasses.field(repr=False)
-    _name: str = ""
+    class FlyteStructuredTool(StructuredTool):
+        """A LangChain ``StructuredTool`` backed by a Flyte task.
 
-    @property
-    def task(self) -> AsyncFunctionTaskTemplate:
-        return self._task
+        Behaves exactly like a ``StructuredTool`` (so LangGraph's ``bind_tools`` /
+        ``ToolNode`` accept it), while carrying the backing task so it resolves to
+        itself on the worker.
+        """
 
-    @property
-    def __wrapped_task__(self) -> typing.Any:
-        return self._task
+        flyte_task: typing.Any = None
 
-    @property
-    def __name__(self) -> str:
-        return self._name
+        @property
+        def task(self) -> typing.Any:
+            return self.flyte_task
 
-    async def __call__(self, **kwargs: typing.Any) -> str:
-        """Execute the wrapped task as a durable child action."""
-        result = await self._task.aio(**coerce_tool_args(self._task, kwargs or {}))
-        return _as_content(result)
+        @property
+        def __wrapped_task__(self) -> typing.Any:
+            return self.flyte_task
+else:  # pragma: no cover - langchain-core missing
+    FlyteStructuredTool = None  # type: ignore[assignment,misc]
 
 
 def tool(
@@ -54,12 +63,16 @@ def tool(
 ) -> typing.Any:
     """Convert a Flyte task (or plain callable) into a LangChain ``StructuredTool``.
 
-    - For an ``@env.task``: returns a ``StructuredTool`` whose ``arun`` runs the
+    - For an ``@env.task``: returns a ``StructuredTool`` whose async body runs the
       task as a durable Flyte child action when the graph invokes it. The input
-      schema is derived from the task via the Flyte type engine. The backing task
-      is wired to :class:`~flyteplugins.agents.core.ToolTaskResolver` and exposed
-      via ``__wrapped_task__`` so it resolves to itself on the worker (no recursion).
+      schema is inferred from the task's typed signature. The backing task is
+      wired to :class:`~flyteplugins.agents.core.ToolTaskResolver` and exposed via
+      ``__wrapped_task__`` so it resolves to itself on the worker (no recursion).
     - For a plain (async) callable: returns a ``StructuredTool`` that runs it inline.
+
+    The result is a first-class LangGraph tool — bind it to a model or hand it to
+    :func:`~flyteplugins.agents.langgraph.tool_node` /
+    :func:`~flyteplugins.agents.langgraph.ai_node`.
 
     Usable bare, parametrized, or as a direct call::
 
@@ -81,32 +94,32 @@ def _task_to_tool(
     description: str | None = None,
 ) -> typing.Any:
     """Build a LangChain ``StructuredTool`` from a Flyte task."""
-    from langchain_core.tools import StructuredTool
-
     tool_name = name or task.func.__name__
     desc = (description or task.func.__doc__ or f"Run {tool_name}").strip()
-    schema = task_json_schema(task)
 
+    # ``functools.wraps`` copies the task function's signature (via ``__wrapped__``)
+    # so ``StructuredTool.from_function`` infers the correct args schema, while the
+    # body dispatches to ``task.aio`` for durable execution. ``coerce_tool_args``
+    # relaxes LLM int->float args so Flyte's type engine doesn't reject e.g.
+    # ``amount_usd=42`` for a ``float`` param.
+    @functools.wraps(task.func)
     async def _arun(**kwargs: typing.Any) -> str:
-        # In a Flyte task context this submits a durable child action; locally it
-        # runs inline. ``coerce_tool_args`` relaxes LLM int->float args so Flyte's
-        # type engine doesn't reject e.g. ``amount_usd=42`` for a ``float`` param.
         result = await task.aio(**coerce_tool_args(task, kwargs or {}))
         return _as_content(result)
+
+    _arun.__name__ = tool_name
 
     # Wire the shared resolver so the task resolves to itself on the worker.
     attach_tool_resolver(task)
 
-    structured = StructuredTool.from_function(
-        func=None,  # We use arun directly
+    structured = FlyteStructuredTool.from_function(
         coroutine=_arun,
         name=tool_name,
         description=desc,
-        args_schema=None,  # Use Flyte's schema
-        schema=schema,
+        flyte_task=task,
     )
-
-    return LangGraphTool(structured_tool=structured, _task=task, _name=tool_name)
+    structured.__name__ = tool_name  # type: ignore[attr-defined]
+    return structured
 
 
 def _callable_to_tool(
@@ -116,30 +129,27 @@ def _callable_to_tool(
     description: str | None = None,
 ) -> typing.Any:
     """Build a LangChain ``StructuredTool`` from a plain callable."""
-    from langchain_core.tools import StructuredTool
+    from langchain_core.tools import StructuredTool as _StructuredTool
 
     tool_name = name or getattr(func, "__name__", "tool")
     desc = (description or func.__doc__ or f"Run {tool_name}").strip()
-    schema = NativeInterface.from_callable(func).json_schema
 
+    @functools.wraps(func)
     async def _arun(**kwargs: typing.Any) -> str:
         out = func(**(kwargs or {}))
         if inspect.isawaitable(out):
             out = await out
         return _as_content(out)
 
-    return StructuredTool.from_function(
-        func=None,
-        coroutine=_arun,
-        name=tool_name,
-        description=desc,
-        args_schema=None,
-        schema=schema,
-    )
+    _arun.__name__ = tool_name
+
+    structured = _StructuredTool.from_function(coroutine=_arun, name=tool_name, description=desc)
+    structured.__name__ = tool_name  # type: ignore[attr-defined]
+    return structured
 
 
 def _as_content(result: typing.Any) -> str:
-    """Convert a tool result to a string for LangChain's ToolMessage."""
+    """Convert a tool result to a string for LangChain's ``ToolMessage``."""
     if isinstance(result, str):
         return result
     try:
@@ -149,7 +159,12 @@ def _as_content(result: typing.Any) -> str:
 
 
 def _coerce_tool(t: typing.Any) -> typing.Any:
-    """Coerce a tool to a LangChain-compatible tool."""
+    """Coerce a bare ``@env.task`` (or plain callable) into a LangChain tool.
+
+    Already-wrapped tools (anything exposing ``ainvoke``) pass through unchanged.
+    """
     if isinstance(t, AsyncFunctionTaskTemplate):
+        return tool(t)
+    if callable(t) and not hasattr(t, "ainvoke"):
         return tool(t)
     return t

@@ -2,14 +2,16 @@
 
 This example shows the "bring your own agent" path: you define a Hermes
 ``Agent`` using the framework's native SDK, wrap your Flyte tasks as durable
-tools with ``tool()``, and pass the agent to ``run_agent(agent=...)``.
+tools with ``@tool``, attach them to the agent (the framework convention), and
+pass the agent to ``run_agent(agent=...)``.
 
-- ``tool()`` wraps Flyte ``@env.task`` functions as durable Hermes tools
-  that execute as child actions (own container/GPU, retries, caching).
+- ``@tool`` stacked on ``@env.task`` makes each function both a durable, cached
+  Flyte task and a Hermes tool that executes as a child action (own
+  container/GPU, retries, caching).
+- ``_build_city_agent()`` attaches the tools natively via ``Agent(tools=[...])``.
 - ``run_agent(agent=...)`` drives the agent loop durably on Flyte.
-- The agent definition is fully yours — custom prompts, models, hand-offs, etc.
 
-Run:  flyte run hermes_custom_agent.py city_agent --city "San Francisco"
+Run:  flyte run hermes_custom_agent.py city_agent_task --city "San Francisco"
       (add `--local` right after `run` to execute locally instead of on the backend)
 """
 
@@ -44,32 +46,34 @@ env = flyte.TaskEnvironment(
 )
 
 
-# ── Step 1: Define your durable Flyte tasks ──────────────────────────────────
-# These are normal Flyte tasks — they can be cached, retried, sized independently.
+# ── Step 1: Define your durable Flyte tasks and decorate them as tools ────────
+# Stacking @tool on @env.task makes each one both a durable, cached Flyte task
+# and a Hermes tool the agent can call.
 
 
+@tool
 @env.task(cache="auto", retries=3)
 async def get_weather(city: str) -> str:
     """Get the current weather for a city."""
     return f"The weather in {city} is sunny, 22°C."
 
 
+@tool
 @env.task(cache="auto", retries=3)
 async def get_population(city: str) -> int:
     """Get the population of a city."""
     return {"San Francisco": 808988, "Paris": 2102650, "Tokyo": 13929286}.get(city, 1_000_000)
 
 
-# ── Step 2: Define your own Hermes agent ─────────────────────────────────────
-# You control the agent definition — prompt, model, tools, etc.
-# Flyte provides the durable runtime via ``tool()`` and ``run_agent(agent=...)``.
+# ── Step 2: Define your own Hermes agent with the tools attached ──────────────
+# You control the agent definition — prompt, model, tools, etc. Flyte provides
+# the durable runtime via ``@tool`` and ``run_agent(agent=...)``.
 
 
 def _build_city_agent():
-    """Build a Hermes Agent with durable tools."""
+    """Build a Hermes Agent with durable tools attached natively."""
     from hermes import Agent
 
-    # Create the agent with your custom configuration
     return Agent(
         model="gpt-4o",
         name="city-facts-agent",
@@ -77,10 +81,11 @@ def _build_city_agent():
             "You are a helpful city-facts assistant. Use the available tools to answer "
             "questions about cities. Be concise and accurate."
         ),
+        tools=[get_weather, get_population],
     )
 
 
-# Build the agent once (in practice, cache this in module scope)
+# Build the agent once (module scope, reused across runs).
 city_agent = _build_city_agent()
 
 
@@ -91,71 +96,31 @@ city_agent = _build_city_agent()
 @env.task(report=True, retries=3)
 async def city_agent_task(city: str) -> str:
     """Run the custom-built agent durably on Flyte."""
-    result = await run_agent(
-        f"What's the weather in {city}?",
+    return await run_agent(
+        f"What's the weather and population of {city}?",
         agent=city_agent,
     )
-    return result
 
 
-# ── Alternative: Pass tools directly to run_agent ────────────────────────────
-# If you don't need to separate agent definition from execution:
+# ── Alternative: let run_agent build the agent from tools ─────────────────────
+# If you don't need to separate agent definition from execution, hand the tools
+# to run_agent and it builds the agent for you.
 
 
 @env.task(report=True, retries=3)
 async def quick_city_agent(city: str) -> str:
     """Build and run in one call using run_agent's builder."""
-    from hermes import Agent
-
-    weather_tool = tool(get_weather, name="get_weather", description="Get the current weather for a city.")
-    population_tool = tool(get_population, name="get_population", description="Get the population of a city.")
-
-    # Build the agent with tools
-    agent = Agent(
-        model="gpt-4o",
-        name="quick-agent",
-        system_prompt="You are a helpful city-facts assistant.",
-    )
-
     return await run_agent(
-        f"What's the weather in {city}?",
-        agent=agent,
-        tools=[weather_tool, population_tool],
-    )
-
-
-# ── Alternative: Pre-build and customize the agent further ───────────────────
-# You can also get the raw Hermes Agent and modify it before running.
-
-
-@env.task(report=True, retries=3)
-async def custom_city_agent(city: str) -> str:
-    """Customize the agent before running."""
-    from hermes import Agent
-
-    weather_tool = tool(get_weather, name="get_weather", description="Get the current weather for a city.")
-
-    # Build the agent with custom configuration
-    agent = Agent(
+        f"What's the weather and population of {city}?",
+        tools=[get_weather, get_population],
+        instructions="You are a helpful city-facts assistant.",
         model="gpt-4o",
-        name="custom-agent",
-        system_prompt="You are a weather expert. Always include temperature and conditions.",
     )
-
-    # You can access and modify the underlying agent here if needed
-    # For example, add additional tools or modify the model
-
-    result = await run_agent(
-        f"What's the weather in {city}?",
-        agent=agent,
-        tools=[weather_tool],
-    )
-    return result
 
 
 if __name__ == "__main__":
     flyte.init_from_config()
-    run = flyte.run(city_agent, city="San Francisco")
+    run = flyte.run(city_agent_task, city="San Francisco")
     print(f"View at: {run.url}")
     run.wait()
     print(f"Result: {run.outputs()}")

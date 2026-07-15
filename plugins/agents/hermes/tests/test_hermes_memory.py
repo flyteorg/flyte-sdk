@@ -35,3 +35,19 @@ async def test_resolve_memory_returns_none_without_key():
 async def test_resolve_memory_returns_none_for_empty_key():
     store = await memory_mod.resolve_memory("")
     assert store is None
+
+
+@pytest.mark.asyncio
+async def test_transcript_round_trip():
+    store = _FakeStore()
+    assert await memory_mod.load_transcript(None) == []
+    assert await memory_mod.load_transcript(store) == []
+
+    transcript = [
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": "hello"},
+    ]
+    await memory_mod.save_transcript(store, transcript)
+
+    assert store.data[memory_mod._MEMORY_HISTORY_PATH] == transcript
+    assert await memory_mod.load_transcript(store) == transcript

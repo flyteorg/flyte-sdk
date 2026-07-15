@@ -1,15 +1,19 @@
 """Build your own CrewAI agent — durable tools on Flyte.
 
 This example shows the "bring your own agent" path: you define a CrewAI
-``Agent`` using the framework's native SDK, wrap your Flyte tasks as durable
-tools with ``tool()``, and pass the agent to ``run_agent(agent=...)``.
+``Agent`` using the framework's native SDK, attach your Flyte tasks as durable
+tools via ``Agent(tools=[...])``, and pass the agent to ``run_agent(agent=...)``.
 
-- ``tool()`` wraps Flyte ``@env.task`` functions as durable CrewAI tools
-  that execute as child actions (own container/GPU, retries, caching).
-- ``run_agent(agent=...)`` drives the agent loop durably on Flyte.
+- ``tool()`` wraps Flyte ``@env.task`` functions as native CrewAI ``BaseTool``
+  instances that execute as durable child actions (own container/GPU, retries,
+  caching). Because they are real ``BaseTool``s, they attach directly to
+  ``Agent(tools=[...])`` — exactly like any hand-written CrewAI tool.
+- ``run_agent(agent=...)`` drives the agent loop durably on Flyte. When you pass a
+  pre-built ``agent`` it already carries its own tools, so do NOT also pass
+  ``tools=`` (that raises ``ValueError``).
 - The agent definition is fully yours — custom roles, goals, backstory, etc.
 
-Run:  flyte run crewai_custom_agent.py city_agent --city "San Francisco"
+Run:  flyte run crewai_custom_agent.py city_agent_task --city "San Francisco"
       (add `--local` right after `run` to execute locally instead of on the backend)
 """
 
@@ -44,16 +48,20 @@ env = flyte.TaskEnvironment(
 )
 
 
-# ── Step 1: Define your durable Flyte tasks ──────────────────────────────────
-# These are normal Flyte tasks — they can be cached, retried, sized independently.
+# ── Step 1: Define your durable Flyte tasks as tools ─────────────────────────
+# Stack @tool on top of @env.task: each is both a normal, durable, cached Flyte
+# task AND a native CrewAI BaseTool you can attach to an Agent. Every tool call
+# the agent makes runs as a durable Flyte child action.
 
 
+@tool
 @env.task(cache="auto", retries=3)
 async def get_weather(city: str) -> str:
     """Get the current weather for a city."""
     return f"The weather in {city} is sunny, 22°C."
 
 
+@tool
 @env.task(cache="auto", retries=3)
 async def get_population(city: str) -> int:
     """Get the population of a city."""
@@ -61,15 +69,14 @@ async def get_population(city: str) -> int:
 
 
 # ── Step 2: Define your own CrewAI agent ─────────────────────────────────────
-# You control the agent definition — role, goal, backstory, tools, etc.
-# Flyte provides the durable runtime via ``tool()`` and ``run_agent(agent=...)``.
+# You control the agent definition — role, goal, backstory, tools, etc. The
+# durable tools attach natively via ``tools=[...]`` just like any CrewAI tool.
 
 
 def _build_city_agent():
-    """Build a CrewAI Agent with durable tools."""
+    """Build a CrewAI Agent with durable Flyte tools attached natively."""
     from crewai import Agent
 
-    # Create the agent with your custom configuration
     return Agent(
         role="City Facts Expert",
         goal="Provide accurate and concise information about cities worldwide.",
@@ -77,6 +84,7 @@ def _build_city_agent():
             "You are a knowledgeable city-facts assistant with expertise in urban "
             "demographics, climate, and geography. You answer questions helpfully."
         ),
+        tools=[get_weather, get_population],
         llm="gpt-4o",
     )
 
@@ -86,77 +94,34 @@ city_agent = _build_city_agent()
 
 
 # ── Step 3: Run your agent durably inside a Flyte task ───────────────────────
-# The agent definition is fully yours; run_agent drives the loop durably.
+# The agent definition is fully yours; run_agent drives the loop durably. The
+# pre-built agent already carries its tools, so we pass ``agent=`` only — never
+# ``tools=`` alongside it.
 
 
 @env.task(report=True, retries=3)
 async def city_agent_task(city: str) -> str:
     """Run the custom-built agent durably on Flyte."""
-    result = await run_agent(
-        f"What's the weather in {city}?",
+    return await run_agent(
+        f"What's the weather and population of {city}?",
         agent=city_agent,
     )
-    return result
 
 
-# ── Alternative: Pass tools directly to run_agent ────────────────────────────
-# If you don't need to separate agent definition from execution:
+# ── Alternative: let run_agent build the agent from tools ─────────────────────
+# If you don't need to hand-craft the Agent, pass the durable tools to run_agent
+# and it builds and drives an agent for you (no separate ``agent=``).
 
 
 @env.task(report=True, retries=3)
 async def quick_city_agent(city: str) -> str:
     """Build and run in one call using run_agent's builder."""
-    from crewai import Agent
-
-    weather_tool = tool(get_weather, name="get_weather", description="Get the current weather for a city.")
-    population_tool = tool(get_population, name="get_population", description="Get the population of a city.")
-
-    # Build the agent with tools
-    agent = Agent(
-        role="Assistant",
-        goal="Answer the user's question accurately and concisely.",
-        backstory="You are a helpful assistant.",
-        llm="gpt-4o",
-    )
-
     return await run_agent(
-        f"What's the weather in {city}?",
-        agent=agent,
-        tools=[weather_tool, population_tool],
+        f"What's the weather and population of {city}?",
+        tools=[get_weather, get_population],
+        instructions="You are a concise city-facts assistant. Use the tools to answer.",
+        model="gpt-4o",
     )
-
-
-# ── Alternative: Pre-build with custom role and goal ─────────────────────────
-# You can customize the agent with specific roles and goals for different tasks.
-
-
-@env.task(report=True, retries=3)
-async def custom_city_agent(city: str) -> str:
-    """Customize the agent with specific role and goal before running."""
-    from crewai import Agent
-
-    weather_tool = tool(get_weather, name="get_weather", description="Get the current weather for a city.")
-
-    # Build the agent with custom configuration
-    agent = Agent(
-        role="Weather Specialist",
-        goal="Provide detailed weather information including temperature, conditions, and forecasts.",
-        backstory=(
-            "You are a weather expert with deep knowledge of climate patterns, "
-            "meteorology, and environmental science. Always include temperature and conditions."
-        ),
-        llm="gpt-4o",
-    )
-
-    # You can access and modify the underlying agent here if needed
-    # For example, add additional tools or modify the model
-
-    result = await run_agent(
-        f"What's the weather in {city}?",
-        agent=agent,
-        tools=[weather_tool],
-    )
-    return result
 
 
 if __name__ == "__main__":

@@ -1,15 +1,19 @@
 """``run_agent`` — run a LangChain agent on Flyte.
 
 LangChain's agent framework owns the loop. ``run_agent`` runs that loop inside your
-``@env.task``: it builds an agent with Flyte-task tools, drives the agent executor,
-and returns the final answer. Each tool call runs as a durable Flyte child action
-(its own container/resources, with retries and caching).
+``@env.task``: it builds an agent (a compiled LangGraph graph) with Flyte-task tools,
+drives it, and returns the final answer. Each tool call runs as a durable Flyte child
+action (its own container/resources, with retries and caching).
 
-Observability: the run timeline — tool calls and AI message turns — is rendered into
-the Flyte task report.
+In langchain 1.x the agent is built with ``langchain.agents.create_agent(model, tools,
+system_prompt=...)``, which returns a compiled graph that is driven with a messages
+state: ``await graph.ainvoke({"messages": [{"role": "user", "content": input}]})``, and
+the final text is ``result["messages"][-1].content``.
+
+Observability: the run timeline is rendered into the Flyte task report.
 
 The adapter minimizes delta between native LangChain code and Flyte integration by
-exposing tools that are drop-in replacements for LangChain ``BaseTool`` instances.
+exposing tools that are drop-in ``BaseTool`` instances.
 """
 
 from __future__ import annotations
@@ -18,24 +22,37 @@ import typing
 
 from flyteplugins.agents.core import ReportTimeline, flush_report
 
+from ._durable import DurableChatModel
+from ._memory import load_history, resolve_memory, save_history
 from ._tools import _coerce_tool
 
 if typing.TYPE_CHECKING:
     from langchain_openai import ChatOpenAI as _ChatOpenAI
-
-    from langchain.agents import (
-        AgentExecutor as _AgentExecutor,
-    )
-    from langchain.agents import (
-        create_tool_calling_agent as _create_tool_calling_agent,
-    )
 else:
-    _AgentExecutor = None
-    _create_tool_calling_agent = None
     _ChatOpenAI = None
 
-# Module-level aliases for test monkeypatching.
+# Module-level aliases for test monkeypatching. ``ChatOpenAI`` is the public alias;
+# ``_create_agent`` lets tests substitute the graph builder without a real model.
 ChatOpenAI = _ChatOpenAI
+_create_agent = None
+
+
+def _final_text(result: typing.Any) -> str:
+    """Extract the agent's final text from a compiled-graph result.
+
+    ``create_agent`` graphs return a messages state ``{"messages": [...]}``; the
+    final answer is the content of the last message. Falls back gracefully for
+    other shapes (e.g. a legacy ``{"output": ...}`` dict or a bare string).
+    """
+    if isinstance(result, dict):
+        messages = result.get("messages")
+        if messages:
+            content = getattr(messages[-1], "content", messages[-1])
+            return content if isinstance(content, str) else str(content)
+        if "output" in result:
+            return str(result["output"])
+        return ""
+    return str(result)
 
 
 async def run_agent(
@@ -58,22 +75,28 @@ async def run_agent(
     enclosing task ``retries=...`` for self-healing and ``report=True`` to see
     the agent timeline.
 
-    Provide either a pre-built ``agent`` or ``tools`` + ``model`` to have one
-    built for you.
+    Provide either a pre-built ``agent`` (a compiled graph from ``create_agent``)
+    or ``tools`` + ``model`` to have one built for you.
 
     Args:
         input: The user prompt.
         tools: ``tool``-wrapped tools or bare ``@env.task`` templates.
         model: A LangChain-compatible chat model (e.g. ``ChatOpenAI()``). When
             ``agent`` is not given, one is built using this model.
-        agent: A pre-built LangChain agent executor. Mutually exclusive with ``tools``.
+        instructions: System prompt for the built agent.
+        agent: A pre-built LangChain agent (a compiled ``create_agent`` graph).
+            Mutually exclusive with ``tools``.
         name: Agent name (for debugging/observability).
-        durable: Record/replay each model turn via ``flyte.trace``.
+        durable: Record/replay each model turn via ``flyte.trace``. Applies when
+            a model is being built (``tools`` + ``model``, or a caller-passed
+            ``BaseChatModel``) — the model is wrapped in :class:`DurableChatModel`.
+            A fully pre-built compiled ``agent`` cannot be rewrapped, so its model
+            turns are not made durable (its tool calls remain durable regardless).
         observability: Render the run timeline into the Flyte task report.
         memory_key: Stable id (e.g. a user/thread id) for cross-run memory.
             When set, conversation history is persisted to a keyed ``MemoryStore``
             and resumed on a later run with the same key.
-        **agent_kwargs: Additional kwargs forwarded to the agent builder.
+        **agent_kwargs: Additional kwargs forwarded to ``create_agent``.
 
     Returns:
         The agent's final output as a string.
@@ -85,20 +108,12 @@ async def run_agent(
     if agent is not None and tools:
         raise ValueError("Pass either `agent` (with its own tools) or `tools`, not both.")
 
-    # Build the agent if not provided
+    # Build the agent (a compiled graph) if not provided.
     if agent is None:
-        from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-
-        if _AgentExecutor is None:
-            from langchain.agents import (
-                AgentExecutor as _LangChainAgentExecutor,
-            )
-            from langchain.agents import (
-                create_tool_calling_agent as _create_tool_calling_agent,
-            )
+        if _create_agent is None:
+            from langchain.agents import create_agent as create_agent_fn
         else:
-            _LangChainAgentExecutor = _AgentExecutor
-            _create_tool_calling_agent = _AgentExecutor
+            create_agent_fn = _create_agent
 
         if model is None:
             if _ChatOpenAI is None:
@@ -107,38 +122,54 @@ async def run_agent(
                 _LangChainChatOpenAI = _ChatOpenAI
             model = _LangChainChatOpenAI()
 
-        prompt = ChatPromptTemplate.from_messages(
-            [
-                ("system", f"You are a helpful assistant named {name}."),
-                MessagesPlaceholder("chat_history", optional=True),
-                ("human", "{input}"),
-                MessagesPlaceholder("agent_scratchpad"),
-            ]
-        )
+        # Wrap the inner chat model so each model turn is durable/replayable. We
+        # can only do this on the builder path (a fully pre-built compiled ``agent``
+        # owns its own model, which we cannot reach to rewrap).
+        if durable:
+            model = _wrap_durable(model)
 
         tool_objs = [_coerce_tool(t) for t in tools]
-        agent_creator = _create_tool_calling_agent(model, tool_objs, prompt)
-        agent = _LangChainAgentExecutor(
-            agent=agent_creator,
-            tools=tool_objs,
-            name=name,
-            handle_parsing_errors=True,
-            max_iterations=agent_kwargs.pop("max_iterations", 10),
-            **agent_kwargs,
-        )
+        system_prompt = instructions or f"You are a helpful assistant named {name}."
+        agent = create_agent_fn(model, tool_objs, system_prompt=system_prompt, **agent_kwargs)
 
-    # Run the agent
-    from langchain_core.messages import HumanMessage
+    # Cross-run memory: load prior history and prepend it to the messages passed
+    # to the graph, then persist the full transcript back after the run.
+    store = await resolve_memory(memory_key)
+    prior = await load_history(store)
+    messages = [*prior, {"role": "user", "content": input}]
 
-    _ = [HumanMessage(content=input)]  # used for observability tracking
-    result = await agent.ainvoke(
-        {"input": input, "chat_history": []},
-    )
+    result = await agent.ainvoke({"messages": messages})
 
-    # Extract final text
-    final = result.get("output", "") if isinstance(result, dict) else str(result)
+    await save_history(store, _result_messages(result))
+
+    final = _final_text(result)
 
     if observability:
         await flush_report()
 
     return final or ""
+
+
+def _wrap_durable(model: typing.Any) -> typing.Any:
+    """Wrap a chat model in :class:`DurableChatModel` when possible.
+
+    Best-effort: only ``BaseChatModel`` instances are wrappable; anything else
+    (or any failure) is returned unchanged so durability never breaks a run.
+    """
+    try:
+        from langchain_core.language_models.chat_models import BaseChatModel
+
+        if isinstance(model, BaseChatModel) and not isinstance(model, DurableChatModel):
+            return DurableChatModel(inner=model)
+    except Exception:  # pragma: no cover - durability is best-effort, never fatal
+        pass
+    return model
+
+
+def _result_messages(result: typing.Any) -> list[typing.Any]:
+    """Extract the message list from a compiled-graph result (empty on other shapes)."""
+    if isinstance(result, dict):
+        messages = result.get("messages")
+        if messages:
+            return list(messages)
+    return []

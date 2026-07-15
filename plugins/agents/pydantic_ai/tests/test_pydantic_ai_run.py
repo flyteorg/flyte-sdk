@@ -7,10 +7,13 @@ import flyteplugins.agents.pydantic_ai._run as run_mod
 
 
 class _FakeResult:
-    """A minimal fake Pydantic AI run result."""
+    """A minimal fake Pydantic AI run result.
 
-    def __init__(self, data):
-        self.data = data
+    Pydantic AI 2.x exposes the final answer on ``.output`` (``.data`` was removed).
+    """
+
+    def __init__(self, output):
+        self.output = output
 
 
 class _FakeAgent:

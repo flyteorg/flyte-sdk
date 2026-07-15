@@ -56,3 +56,54 @@ async def test_run_agent_with_prebuilt_agent(monkeypatch):
 async def test_run_agent_raises_on_both_agent_and_tools():
     with pytest.raises(ValueError, match="Pass either"):
         await run_mod.run_agent("hi", agent=_FakeAgent("x"), tools=[lambda: None])
+
+
+class _CapturingAgent:
+    """Fake agent that records the kwargs it was driven with and counts calls."""
+
+    def __init__(self, reply):
+        self.reply = reply
+        self.calls = []
+
+    async def run(self, message, **kwargs):
+        self.calls.append((message, kwargs))
+        return self.reply
+
+
+@pytest.mark.asyncio
+async def test_run_agent_persists_and_resumes_memory(monkeypatch):
+    """With a memory_key, the transcript is saved and replayed as message_history."""
+    from tests.test_hermes_memory import _FakeStore
+
+    store = _FakeStore()
+
+    async def _resolve(key):
+        return store if key else None
+
+    monkeypatch.setattr(run_mod, "resolve_memory", _resolve)
+
+    agent = _CapturingAgent("hello there")
+    await run_mod.run_agent("first", agent=agent, memory_key="u1")
+    await run_mod.run_agent("second", agent=agent, memory_key="u1")
+
+    # The second run resumes: it receives the first turn's transcript as history.
+    _, kwargs = agent.calls[1]
+    assert kwargs["message_history"] == [
+        {"role": "user", "content": "first"},
+        {"role": "assistant", "content": "hello there"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_run_agent_durable_records_once(monkeypatch):
+    """durable=True drives the agent through the durable step (still runs once)."""
+    calls = {"n": 0}
+
+    class _Once:
+        async def run(self, message, **kwargs):
+            calls["n"] += 1
+            return "answer"
+
+    result = await run_mod.run_agent("hi", agent=_Once(), durable=True)
+    assert result == "answer"
+    assert calls["n"] == 1

@@ -1,46 +1,24 @@
 """Turn Flyte tasks into Pydantic AI tools that execute as durable actions.
 
-Pydantic AI accepts ``Tool`` instances (or plain callables) as tools. :func:`tool`
-wraps a Flyte ``@env.task`` as a Pydantic AI ``Tool`` whose execution dispatches
-to the task via ``task.aio()`` — so when the agent calls the tool, it runs as a
-durable Flyte child action (its own container/resources, with retries and caching)
-rather than inline in the agent's process.
+Pydantic AI accepts plain (async) callables as tools in ``Agent(tools=[...])``
+and derives each tool's JSON schema by inspecting the callable's signature and
+docstring. :func:`tool` wraps a Flyte ``@env.task`` as one such callable: it
+preserves the task's typed signature (via ``functools.wraps(task.func)``, which
+also sets ``__wrapped__`` so Pydantic AI's schema inference sees the real
+parameters) and dispatches to the task via ``task.aio()`` — so when the agent
+calls the tool, it runs as a durable Flyte child action (its own
+container/resources, with retries and caching) rather than inline in the agent's
+process.
 """
 
 from __future__ import annotations
 
-import dataclasses
-import inspect
-import json
+import functools
 import typing
 from functools import partial
 
 from flyte._task import AsyncFunctionTaskTemplate
-from flyte.models import NativeInterface
 from flyteplugins.agents.core import attach_tool_resolver, coerce_tool_args, task_json_schema
-
-from pydantic_ai import Tool
-from pydantic_ai.messages import ToolCallPart, ToolReturnPart
-from pydantic_ai.models import Model
-
-
-@dataclasses.dataclass
-class FunctionTool:
-    """A Pydantic AI ``Tool`` backed by a Flyte task."""
-
-    task: AsyncFunctionTaskTemplate
-    tool_name: str
-    desc: str
-
-    async def execute(self, call: ToolCallPart, model: Model) -> ToolReturnPart:
-        args_dict = call.args_as_dict() if hasattr(call, "args_as_dict") else call.args
-        result = await self.task.aio(**coerce_tool_args(self.task, dict(args_dict) if args_dict else {}))
-        content = _as_content(result)
-        return ToolReturnPart(tool_name=call.tool_name, content=content, result_id=call.id)
-
-    @property
-    def __wrapped_task__(self) -> typing.Any:
-        return self.task
 
 
 def tool(
@@ -49,14 +27,18 @@ def tool(
     name: str | None = None,
     description: str | None = None,
 ) -> typing.Any:
-    """Convert a Flyte task (or plain callable) into a Pydantic AI ``Tool``.
+    """Convert a Flyte task (or plain callable) into a Pydantic AI tool.
 
-    - For an ``@env.task``: returns a ``Tool`` whose execution runs the task as a
-      durable Flyte child action when the agent invokes it. The input schema is
-      derived from the task via the Flyte type engine. The backing task is wired
-      to :class:`~flyteplugins.agents.core.ToolTaskResolver` and exposed via
-      ``__wrapped_task__`` so it resolves to itself on the worker (no recursion).
-    - For a plain (async) callable: returns a ``Tool`` that runs it inline.
+    - For an ``@env.task``: returns a plain async callable that Pydantic AI
+      accepts natively in ``Agent(tools=[...])``. It carries the task's typed
+      signature so Pydantic AI infers the correct input schema, and dispatches to
+      ``task.aio()`` so each agent tool call runs as a durable Flyte child action.
+      The backing task is wired to
+      :class:`~flyteplugins.agents.core.ToolTaskResolver` and exposed via
+      ``__wrapped_task__`` / ``.task`` so it resolves to itself on the worker
+      (no recursion).
+    - For a plain (async) callable: returned as-is (with ``name`` / ``description``
+      overrides applied best-effort) — Pydantic AI inspects it directly.
 
     Usable bare, parametrized, or as a direct call::
 
@@ -68,7 +50,9 @@ def tool(
         return partial(tool, name=name, description=description)
     if isinstance(func, AsyncFunctionTaskTemplate):
         return _task_to_tool(func, name=name, description=description)
-    return _callable_to_tool(func, name=name, description=description)
+    if not callable(func):
+        raise TypeError(f"tool() expects a Flyte @env.task or a callable, got {type(func).__name__!r}.")
+    return _relabel_callable(func, name=name, description=description)
 
 
 def _task_to_tool(
@@ -77,75 +61,70 @@ def _task_to_tool(
     name: str | None = None,
     description: str | None = None,
 ) -> typing.Any:
-    """Build a Pydantic AI ``Tool`` from a Flyte task.
+    """Build a Pydantic AI tool callable from a Flyte task.
 
-    Returns the original function with extra attributes so it:
-    - passes ``inspect.isfunction()``
-    - is directly callable (dispatches to ``task.aio()``)
-    - exposes ``__wrapped_task__`` and ``.task`` for conformance checks
+    Returns an async function that:
+    - passes ``inspect.isfunction()`` and carries the task's typed signature
+      (via ``functools.wraps``) so Pydantic AI infers the right input schema;
+    - dispatches to ``task.aio()`` (a durable Flyte child action), relaxing
+      LLM ``int``->``float`` args via ``coerce_tool_args``;
+    - exposes ``__wrapped_task__`` and ``.task`` for the resolver/conformance.
     """
-    tool_name = name or task.func.__name__
-    _ = (description or task.func.__doc__ or f"Run {tool_name}").strip()
-    task_json_schema(task)  # validate schema at construction time
+    inner = task.func
+    task_json_schema(task)  # validate the task's input schema at construction time
 
-    # Wire the shared resolver so the task resolves to itself on the worker.
+    @functools.wraps(inner)
+    async def _wrapper(*args: typing.Any, **kwargs: typing.Any) -> typing.Any:
+        # In a Flyte task context this submits a durable child action; locally it runs
+        # inline. ``functools.wraps`` keeps ``inner``'s signature (and ``__wrapped__``)
+        # so Pydantic AI builds the right tool schema; ``coerce_tool_args`` relaxes
+        # LLM int->float args.
+        return await task.aio(*args, **coerce_tool_args(task, kwargs))
+
+    if name:
+        _wrapper.__name__ = name
+    if description:
+        _wrapper.__doc__ = description
+
+    # The wrapper shadows the task at module scope; expose the real task and wire the
+    # shared resolver so it resolves to itself on the worker (no recursion).
+    _wrapper.__wrapped_task__ = task  # type: ignore[attr-defined]
+    _wrapper.task = task  # type: ignore[attr-defined]
     attach_tool_resolver(task)
-
-    func = task.func
-
-    async def _wrapper(**kwargs: typing.Any) -> typing.Any:
-        return await task.aio(**kwargs)
-
-    _wrapper.__name__ = tool_name
-    _wrapper.__qualname__ = func.__qualname__
-    _wrapper.__doc__ = func.__doc__
-    _wrapper.__wrapped_task__ = task
-    _wrapper.task = task
-
     return typing.cast(typing.Any, _wrapper)
 
 
-def _callable_to_tool(
+def _relabel_callable(
     func: typing.Callable,
     *,
     name: str | None = None,
     description: str | None = None,
-) -> typing.Any:
-    """Build a Pydantic AI ``Tool`` from a plain callable."""
-    tool_name = name or getattr(func, "__name__", "tool")
-    desc = (description or func.__doc__ or f"Run {tool_name}").strip()
-    NativeInterface.from_callable(func).json_schema  # validate schema at construction time
+) -> typing.Callable:
+    """Apply ``name`` / ``description`` overrides to a plain callable, best-effort.
 
-    async def _execute(call: ToolCallPart, model: Model) -> ToolReturnPart:
-        args_dict = call.args_as_dict() if hasattr(call, "args_as_dict") else call.args
-        out = func(**(dict(args_dict) if args_dict else {}))
-        if inspect.isawaitable(out):
-            out = await out
-        content = _as_content(out)
-        return ToolReturnPart(tool_name=call.tool_name, content=content, result_id=call.id)
-
-    return Tool(
-        tool_name,
-        desc,
-        _execute,
-        deps_type=None,
-        result_type=str,
-        return_direct=False,
-    )
-
-
-def _as_content(result: typing.Any) -> str:
-    """Convert a tool result to a string for Pydantic AI's ToolReturnPart."""
-    if isinstance(result, str):
-        return result
-    try:
-        return json.dumps(result, default=str)
-    except (TypeError, ValueError):
-        return str(result)
+    Pydantic AI inspects the callable directly to build its tool schema, so the
+    callable is returned usable as-is. A slotted/immutable callable that rejects
+    attribute assignment simply keeps its original name/doc.
+    """
+    if name:
+        try:
+            func.__name__ = name  # type: ignore[attr-defined]
+        except (AttributeError, TypeError):  # pragma: no cover - slotted/immutable callable
+            pass
+    if description:
+        try:
+            func.__doc__ = description
+        except (AttributeError, TypeError):  # pragma: no cover - slotted/immutable callable
+            pass
+    return func
 
 
 def _coerce_tool(t: typing.Any) -> typing.Any:
-    """Coerce a tool to a Pydantic AI-compatible tool."""
+    """Coerce a tool to a Pydantic AI-compatible callable.
+
+    A bare ``@env.task`` is wrapped via :func:`tool`; anything else (an already
+    ``tool``-wrapped callable, or a native Pydantic AI ``Tool``) is returned as-is.
+    """
     if isinstance(t, AsyncFunctionTaskTemplate):
         return tool(t)
     return t

@@ -14,7 +14,8 @@ Each tool call runs as a durable Flyte child action, and the run timeline is
 rendered into the Flyte task report.
 """
 
+from ._durable import make_durable_llm
 from ._run import run_agent
 from ._tools import tool
 
-__all__ = ["run_agent", "tool"]
+__all__ = ["make_durable_llm", "run_agent", "tool"]

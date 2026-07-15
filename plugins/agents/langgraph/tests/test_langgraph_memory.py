@@ -35,3 +35,24 @@ async def test_resolve_memory_returns_none_without_key():
 async def test_resolve_memory_returns_none_for_empty_key():
     store = await memory_mod.resolve_memory("")
     assert store is None
+
+
+@pytest.mark.asyncio
+async def test_load_messages_empty_store():
+    assert await memory_mod.load_messages(None) == []
+    assert await memory_mod.load_messages(_FakeStore()) == []
+
+
+@pytest.mark.asyncio
+async def test_messages_round_trip():
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    store = _FakeStore()
+    messages = [HumanMessage(content="hi"), AIMessage(content="hello")]
+    await memory_mod.save_messages(store, messages)
+
+    # The transcript is serialized to the history slot and survives a fresh load.
+    assert memory_mod._MEMORY_HISTORY_PATH in store.data
+    loaded = await memory_mod.load_messages(store)
+    assert [m.content for m in loaded] == ["hi", "hello"]
+    assert [type(m).__name__ for m in loaded] == ["HumanMessage", "AIMessage"]

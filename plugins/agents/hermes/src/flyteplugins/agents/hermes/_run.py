@@ -18,6 +18,8 @@ import typing
 
 from flyteplugins.agents.core import ReportTimeline, flush_report
 
+from ._durable import durable_run
+from ._memory import load_transcript, resolve_memory, save_transcript
 from ._tools import _coerce_tool
 
 if typing.TYPE_CHECKING:
@@ -55,7 +57,11 @@ async def run_agent(
         agent: A pre-built Hermes agent. Mutually exclusive with ``tools``.
         model: Model name for the built agent.
         name: Agent name (for debugging/observability).
-        durable: Record/replay each model turn via ``flyte.trace``.
+        durable: Record/replay the agent run via ``flyte.trace`` so a retried task
+            replays the recorded answer instead of re-driving the model. Hermes is
+            a template SDK with no per-turn model hook, so durability is recorded at
+            run granularity here (see ``_durable``); the real adapters record per
+            model turn.
         observability: Render the run timeline into the Flyte task report.
         memory_key: Stable id (e.g. a user/thread id) for cross-run memory.
             When set, conversation history is persisted to a keyed ``MemoryStore``
@@ -72,6 +78,10 @@ async def run_agent(
     if agent is not None and tools:
         raise ValueError("Pass either `agent` (with its own tools) or `tools`, not both.")
 
+    # Cross-run memory: load the prior transcript (if any) and resume the thread.
+    store = await resolve_memory(memory_key)
+    history = await load_transcript(store)
+
     # Build the agent if not provided
     if agent is None:
         if _Agent is None:
@@ -82,17 +92,40 @@ async def run_agent(
         if model is None:
             model = "gpt-4o"
 
+        # Attach the tools natively to the agent (the framework convention), so a
+        # built agent and a bring-your-own agent are driven the same way below.
         agent = _HermesAgent(
             name=name,
             model=model,
-            system_prompt=f"You are a helpful assistant named {name}.",
+            system_prompt=instructions or f"You are a helpful assistant named {name}.",
+            tools=[_coerce_tool(t) for t in tools],
         )
 
-    # Run the agent
-    result = await agent.run(input, tools=[_coerce_tool(t) for t in tools], **run_kwargs)
+    # Run the agent. A pre-built agent already owns its tools, so nothing is
+    # injected here. Prior history (when present) resumes the conversation.
+    call_kwargs = dict(run_kwargs)
+    if history:
+        call_kwargs["message_history"] = history
 
-    # Extract final text
-    final = str(result) if result is not None else ""
+    async def _drive() -> typing.Any:
+        return await agent.run(input, **call_kwargs)
+
+    # Durability: record the run so a retried task replays the answer instead of
+    # re-driving the model (see ``_durable`` for why this is run-grained here).
+    if durable:
+        final = await durable_run(
+            _drive, input=input, history=history, tools=tools, model=model, instructions=instructions
+        )
+    else:
+        result = await _drive()
+        final = str(result) if result is not None else ""
+
+    # Persist the updated transcript for the next run with this memory_key.
+    if store is not None:
+        await save_transcript(
+            store,
+            [*history, {"role": "user", "content": input}, {"role": "assistant", "content": final}],
+        )
 
     if observability:
         await flush_report()

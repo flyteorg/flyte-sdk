@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, patch
 import flyte
 import pytest
 from flyteplugins.agents.core import ToolTaskResolver
+from langchain_core.tools import BaseTool
 
 from flyteplugins.agents.langgraph import tool
 
@@ -18,33 +19,30 @@ def test_task_becomes_langchain_tool_with_resolver():
         """Get the current weather for a city."""
         return f"sunny in {city}"
 
-    # The tool wrapper carries the task + resolver.
+    # The tool is a first-class LangChain tool carrying the task + resolver.
+    assert isinstance(get_weather, BaseTool)
+    assert get_weather.name == "get_weather"
     assert get_weather.__name__ == "get_weather"
     assert get_weather.__wrapped_task__ is get_weather.task
     assert isinstance(get_weather.task.task_resolver, ToolTaskResolver)
+    # The args schema is inferred from the task's typed signature.
+    assert "city" in get_weather.args_schema.model_fields
 
 
-def test_langchain_agent_accepts_the_tool():
-    try:
-        from langchain.agents import create_tool_calling_agent
-        from langchain_openai import ChatOpenAI
+def test_bind_tools_and_tool_node_accept_the_tool():
+    from langgraph.prebuilt import ToolNode
 
-        env = flyte.TaskEnvironment("lg_tools_b")
+    env = flyte.TaskEnvironment("lg_tools_b")
 
-        @tool
-        @env.task
-        def get_weather(city: str) -> str:
-            """Get weather."""
-            return city
+    @tool
+    @env.task
+    def get_weather(city: str) -> str:
+        """Get weather."""
+        return city
 
-        agent = create_tool_calling_agent(
-            ChatOpenAI(),
-            [get_weather],
-            [],
-        )
-        assert agent is not None
-    except Exception:
-        pytest.skip("langchain_openai or create_tool_calling_agent not available")
+    # A real LangGraph ToolNode accepts the tool.
+    node = ToolNode([get_weather])
+    assert node is not None
 
 
 @pytest.mark.asyncio
@@ -58,7 +56,8 @@ async def test_tool_dispatches_to_task_aio():
         return a * b
 
     with patch.object(multiply.task, "aio", new_callable=AsyncMock, return_value=42) as mock_aio:
-        result = await multiply(a=6, b=7)
+        # Invoking the tool the way LangGraph does dispatches to task.aio().
+        result = await multiply.ainvoke({"a": 6, "b": 7})
 
     mock_aio.assert_awaited_once_with(a=6, b=7)
     assert result == "42"
@@ -73,6 +72,7 @@ def test_bare_and_parametrized_decorator_forms():
         """A."""
         return x
 
+    assert a.name == "a"
     assert a.__name__ == "a"
 
     @tool(name="bee")
@@ -81,4 +81,5 @@ def test_bare_and_parametrized_decorator_forms():
         """B."""
         return x
 
+    assert b.name == "bee"
     assert b.__name__ == "bee"
