@@ -327,9 +327,10 @@ class ImageBuildEngine:
                 f"Cannot build image '{image.name or image.uri}': no container registry is configured to push to. "
                 "The default base registry (ghcr.io/flyteorg) is read-only for pulls and cannot be pushed to. "
                 "Set a push registry via any of:\n"
-                "  - flyte.Image(...): pass registry='<your-registry>' (e.g. registry='docker.io/<user>')\n"
-                "  - re-run: flyte create config --registry <your-registry>\n"
-                "  - set image.registry in your config.yaml, or the FLYTE_IMAGE_REGISTRY environment variable"
+                "  - add `registry: <your-registry>` under the `image:` section of your config.yaml\n"
+                "  - re-run `flyte create config` and add `--registry <your-registry>`\n"
+                "  - set the FLYTE_IMAGE_REGISTRY environment variable to <your-registry>\n"
+                "  - flyte.Image(...): pass registry='<your-registry>' (e.g. registry='docker.io/<user>')"
             )
 
         result = await img_builder.build_image(image, dry_run=dry_run, wait=wait, force=force)
