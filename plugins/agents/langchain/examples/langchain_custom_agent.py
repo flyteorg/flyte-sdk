@@ -1,15 +1,14 @@
 """Build your own LangChain agent — durable tools on Flyte.
 
-This example shows the "bring your own agent SDK" path: you write your own
-LangChain agent with custom prompts, models, and tool bindings, and Flyte
-provides the durable runtime underneath.
+This example shows the "bring your own agent" path: you define a LangChain
+``AgentExecutor`` (or ``create_tool_calling_agent``) using the framework's
+native SDK, wrap your Flyte tasks as durable tools with ``tool()``, and pass
+the agent to ``run_agent(agent=...)``.
 
-- ``FlyteAgent.durable_tools()`` wraps your Flyte tasks so each tool call
-  executes as a durable child action (own container/GPU, retries, caching).
-- ``FlyteAgent.build()`` returns a ``langchain.agents.AgentExecutor`` you can
-  customize further (memory, callbacks, custom chains, etc.).
-- The agent runs durably inside a Flyte task — every tool call is a
-  first-class Flyte node.
+- ``tool()`` wraps Flyte ``@env.task`` functions as durable LangChain tools
+  that execute as child actions (own container/GPU, retries, caching).
+- ``run_agent(agent=...)`` drives the agent loop durably on Flyte.
+- The agent definition is fully yours — custom prompts, models, memory, etc.
 
 Run:  flyte run langchain_custom_agent.py city_agent --city "Paris"
       (add `--local` right after `run` to execute locally instead of on the backend)
@@ -20,7 +19,7 @@ from pathlib import Path
 import flyte
 from flyte._image import PythonWheels
 
-from flyteplugins.agents.langchain import FlyteAgent
+from flyteplugins.agents.langchain import run_agent, tool
 
 env = flyte.TaskEnvironment(
     "langchain-custom-agent",
@@ -62,49 +61,104 @@ async def get_population(city: str) -> int:
     return {"San Francisco": 808988, "Paris": 2102650, "Tokyo": 13929286}.get(city, 1_000_000)
 
 
-# ── Step 2: Build your own agent with FlyteAgent ─────────────────────────────
-# You control the agent definition — prompt, model, tools, etc.
-# FlyteAgent gives you durable tools and a clean builder.
+# ── Step 2: Define your own LangChain agent ──────────────────────────────────
+# You control the agent definition — prompt, model, tools, memory, etc.
+# Flyte provides the durable runtime via ``tool()`` and ``run_agent(agent=...)``.
 
 
-agent = FlyteAgent(
-    name="city-facts-agent",
-    instructions=(
-        "You are a helpful city-facts assistant. Use the available tools to answer "
-        "questions about cities. Be concise and accurate."
-    ),
-)
+def _build_city_agent():
+    """Build a LangChain AgentExecutor with durable tools."""
+    from langchain.agents import AgentExecutor, create_tool_calling_agent
+    from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+    from langchain_openai import ChatOpenAI
 
-# Wrap your Flyte tasks as durable LangChain tools
-tools = agent.durable_tools(get_weather, get_population)
+    # Wrap Flyte tasks as durable LangChain tools
+    weather_tool = tool(get_weather, name="get_weather", description="Get the current weather for a city.")
+    population_tool = tool(get_population, name="get_population", description="Get the population of a city.")
 
-# Build the agent — this returns an AgentExecutor you can customize further
-built_agent = agent.build(tools=tools)
+    # Create the prompt template
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            (
+                "system",
+                "You are a helpful city-facts assistant. Use the available tools to answer "
+                "questions about cities. Be concise and accurate.",
+            ),
+            MessagesPlaceholder("chat_history", optional=True),
+            ("human", "{input}"),
+            MessagesPlaceholder("agent_scratchpad"),
+        ]
+    )
+
+    # Create the tool-calling agent
+    agent_creator = create_tool_calling_agent(
+        ChatOpenAI(model="gpt-4o"),
+        [weather_tool, population_tool],
+        prompt,
+    )
+
+    # Wrap in AgentExecutor
+    return AgentExecutor(
+        agent=agent_creator,
+        tools=[weather_tool, population_tool],
+        name="city-facts-agent",
+        handle_parsing_errors=True,
+        max_iterations=10,
+    )
+
+
+# Build the agent once (in practice, cache this in module scope)
+city_agent = _build_city_agent()
 
 
 # ── Step 3: Run your agent durably inside a Flyte task ───────────────────────
-# The agent definition is fully yours; the task is the durable runtime.
+# The agent definition is fully yours; run_agent drives the loop durably.
 
 
 @env.task(report=True, retries=3)
-async def city_agent(city: str) -> str:
+async def city_agent_task(city: str) -> str:
     """Run the custom-built agent durably on Flyte."""
-    result = await built_agent.ainvoke({"input": f"What's the weather in {city}?"})
-    return result.get("output", "") if isinstance(result, dict) else str(result)
+    result = await run_agent(
+        f"What's the weather in {city}?",
+        agent=city_agent,
+    )
+    return result
 
 
-# ── Alternative: Use FlyteAgent.run() for a quick build-and-run ──────────────
+# ── Alternative: Pass tools directly to run_agent ────────────────────────────
 # If you don't need to separate agent definition from execution:
 
 
 @env.task(report=True, retries=3)
 async def quick_city_agent(city: str) -> str:
-    """Build and run in one call."""
-    quick_agent = FlyteAgent(name="quick-agent")
-    durable_tools = quick_agent.durable_tools(get_weather, get_population)
-    return await quick_agent.run(
+    """Build and run in one call using run_agent's builder."""
+    from langchain.agents import AgentExecutor, create_tool_calling_agent
+    from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+    from langchain_openai import ChatOpenAI
+
+    weather_tool = tool(get_weather, name="get_weather", description="Get the current weather for a city.")
+    population_tool = tool(get_population, name="get_population", description="Get the population of a city.")
+
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            ("system", "You are a helpful city-facts assistant."),
+            MessagesPlaceholder("chat_history", optional=True),
+            ("human", "{input}"),
+            MessagesPlaceholder("agent_scratchpad"),
+        ]
+    )
+
+    agent_creator = create_tool_calling_agent(ChatOpenAI(model="gpt-4o"), [weather_tool, population_tool], prompt)
+    agent = AgentExecutor(
+        agent=agent_creator,
+        tools=[weather_tool, population_tool],
+        name="quick-agent",
+        handle_parsing_errors=True,
+    )
+
+    return await run_agent(
         f"What's the weather in {city}?",
-        tools=durable_tools,
+        agent=agent,
     )
 
 
@@ -115,27 +169,45 @@ async def quick_city_agent(city: str) -> str:
 @env.task(report=True, retries=3)
 async def custom_city_agent(city: str) -> str:
     """Customize the agent with a specific model before running."""
+    from langchain.agents import AgentExecutor, create_tool_calling_agent
+    from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
     from langchain_openai import ChatOpenAI
 
-    agent = FlyteAgent(
-        name="custom-model-agent",
-        instructions="You are a weather expert. Always include temperature and conditions.",
+    weather_tool = tool(get_weather, name="get_weather", description="Get the current weather for a city.")
+
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            (
+                "system",
+                "You are a weather expert. Always include temperature and conditions.",
+            ),
+            MessagesPlaceholder("chat_history", optional=True),
+            ("human", "{input}"),
+            MessagesPlaceholder("agent_scratchpad"),
+        ]
     )
-    built = agent.build(
-        tools=agent.durable_tools(get_weather),
-        model=ChatOpenAI(model="gpt-4o"),
+
+    agent_creator = create_tool_calling_agent(ChatOpenAI(model="gpt-4o-mini"), [weather_tool], prompt)
+    agent = AgentExecutor(
+        agent=agent_creator,
+        tools=[weather_tool],
+        name="custom-model-agent",
+        handle_parsing_errors=True,
     )
 
     # You can access and modify the underlying agent here if needed
     # For example, add memory, callbacks, or custom chains
 
-    result = await built.ainvoke({"input": f"What's the weather in {city}?"})
-    return result.get("output", "") if isinstance(result, dict) else str(result)
+    result = await run_agent(
+        f"What's the weather in {city}?",
+        agent=agent,
+    )
+    return result
 
 
 if __name__ == "__main__":
     flyte.init_from_config()
-    run = flyte.run(city_agent, city="Paris")
+    run = flyte.run(city_agent_task, city="Paris")
     print(f"View at: {run.url}")
     run.wait()
     print(f"Result: {run.outputs()}")
