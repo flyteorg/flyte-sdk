@@ -1,4 +1,5 @@
 import hashlib  # Added import for hashing
+import json
 import typing
 from urllib.parse import urlparse  # Added import
 
@@ -54,6 +55,10 @@ class KeyringStore:
     Methods to access Keyring Store.
     """
 
+    # Both tokens live in ONE keychain item, so macOS only prompts for the
+    # keychain password once per retrieve (one prompt per item otherwise).
+    _tokens_key = "tokens"
+    # JSON field names inside the tokens item;
     _access_token_key = "access_token"
     _refresh_token_key = "refresh_token"
 
@@ -77,16 +82,15 @@ class KeyringStore:
         from keyring.errors import NoKeyringError
 
         try:
-            if credentials.refresh_token:
-                keyring.set_password(
-                    credentials.for_endpoint,
-                    KeyringStore._refresh_token_key,
-                    credentials.refresh_token,
-                )
             keyring.set_password(
                 credentials.for_endpoint,
-                KeyringStore._access_token_key,
-                credentials.access_token,
+                KeyringStore._tokens_key,
+                json.dumps(
+                    {
+                        KeyringStore._access_token_key: credentials.access_token,
+                        KeyringStore._refresh_token_key: credentials.refresh_token,
+                    }
+                ),
             )
         except NoKeyringError as e:
             logger.debug(f"KeyRing not available, tokens will not be cached. Error: {e}")
@@ -114,16 +118,25 @@ class KeyringStore:
         from keyring.errors import NoKeyringError
 
         for_endpoint = strip_scheme(for_endpoint)
-        access_token: str | None = None
         try:
-            refresh_token = keyring.get_password(for_endpoint, KeyringStore._refresh_token_key)
-            access_token = keyring.get_password(for_endpoint, KeyringStore._access_token_key)
+            tokens_json = keyring.get_password(for_endpoint, KeyringStore._tokens_key)
         except NoKeyringError as e:
             logger.debug(f"KeyRing not available, tokens will not be cached. Error: {e}")
             return None
         except Exception as e:
             logger.debug(f"Failed to retrieve tokens from keyring. Error: {e}")
             return None
+
+        if not tokens_json:
+            logger.debug("No tokens found in keyring.")
+            return None
+        try:
+            tokens = json.loads(tokens_json)
+        except (json.JSONDecodeError, TypeError) as e:
+            logger.debug(f"Failed to parse tokens from keyring. Error: {e}")
+            return None
+        access_token = tokens.get(KeyringStore._access_token_key)
+        refresh_token = tokens.get(KeyringStore._refresh_token_key)
 
         if not access_token:
             if not refresh_token:
@@ -175,5 +188,7 @@ class KeyringStore:
             except Exception as e:
                 logger.debug(f"Failed to delete key {key} from keyring. Error: {e}")
 
+        _delete_key(KeyringStore._tokens_key)
+        # Clean up legacy per-token items from before tokens were combined.
         _delete_key(KeyringStore._access_token_key)
         _delete_key(KeyringStore._refresh_token_key)

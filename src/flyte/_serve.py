@@ -668,11 +668,18 @@ class _Serve:
         elif app_deployment.version:
             version = app_deployment.version
         else:
+            from ._utils import original_std_streams
+
             h = hashlib.md5()
-            h.update(cloudpickle.dumps(app_deployment.envs))
-            if code_bundle:
-                h.update(code_bundle.computed_version.encode("utf-8"))
-            h.update(cloudpickle.dumps(image_cache))
+            # Pickle with the original std streams in place: a UI spinner (rich Live)
+            # may have swapped sys.stdout/sys.stderr for proxies, which breaks
+            # cloudpickle's identity-based handling of stream references held by
+            # module globals (e.g. loguru's default sink).
+            with original_std_streams():
+                h.update(cloudpickle.dumps(app_deployment.envs))
+                if code_bundle:
+                    h.update(code_bundle.computed_version.encode("utf-8"))
+                h.update(cloudpickle.dumps(image_cache))
             version = h.hexdigest()
 
         # Create serialization context
