@@ -479,19 +479,26 @@ _CREATE_FLYTE_USER_CMD = (
 )
 
 
-def _get_base_registry() -> str:
+def _get_push_registry() -> Optional[str]:
     """
-    Returns the base registry to use when building images.
+    Returns the registry to *push* freshly built images to, or ``None`` when none is resolved.
 
-    Resolution order:
+    This is deliberately distinct from the base/pull registry (``_get_base_registry``): the
+    default base registry (``ghcr.io/flyteorg``) is world-readable for *pulling* the released
+    Flyte images, but end users cannot *push* to it — doing so 403s and the build/run later
+    fails with a slow ``ImagePullBackOff``. So this resolver never falls back to that default;
+    callers are expected to fail fast when it returns ``None``.
+
+    Resolution order (first hit wins):
 
     1. The registry recorded at init time (``image.registry`` from the config file passed to
        ``flyte.init_from_config``, or ``flyte.init(image_registry=...)``). This honors an
        explicit ``--config`` path, which ambient discovery below would miss.
     2. The ambient ``image.registry`` config entry or the ``FLYTE_IMAGE_REGISTRY`` environment
        variable — covers images defined before init, or init calls that didn't set a registry.
-    3. The localhost registry, if the Flyte config endpoint contains 'localhost'.
-    4. The built-in default base registry.
+    3. The localhost registry, if the Flyte config endpoint contains 'localhost' (a real,
+       pushable dev registry).
+    4. ``None`` — nothing resolved. Never ``ghcr.io/flyteorg``.
     """
     from flyte._initialize import _get_init_config
     from flyte.config._config import ImageConfig
@@ -505,7 +512,17 @@ def _get_base_registry() -> str:
         endpoint = init_config.client.endpoint
         if endpoint and "localhost" in endpoint:
             return _LOCALHOST_REGISTRY
-    return _BASE_REGISTRY
+    return None
+
+
+def _get_base_registry() -> str:
+    """
+    Returns the base registry to use for the default *pull* image. Falls back to the built-in
+    default base registry (``ghcr.io/flyteorg``) when nothing else is configured. For the *push*
+    target of user-built images use ``_get_push_registry`` instead, which never returns the
+    default (unpushable) base registry.
+    """
+    return _get_push_registry() or _BASE_REGISTRY
 
 
 def _detect_python_version() -> Tuple[int, int]:
@@ -644,7 +661,7 @@ class Image:
                 # clones keep the multi-arch default.
                 return Image._new(
                     base_image=f"{_BASE_REGISTRY}/{_DEFAULT_IMAGE_NAME}:{preset_tag}",
-                    registry=_get_base_registry(),
+                    registry=_get_push_registry(),
                     name=_DEFAULT_IMAGE_NAME,
                     python_version=python_version,
                     platform=("linux/amd64", "linux/arm64") if platform is None else platform,
@@ -652,7 +669,7 @@ class Image:
                 )
         image = Image._new(
             base_image=f"python:{python_version[0]}.{python_version[1]}-slim-bookworm",
-            registry=_get_base_registry(),
+            registry=_get_push_registry(),
             name=_DEFAULT_IMAGE_NAME,
             python_version=python_version,
             platform=("linux/amd64", "linux/arm64") if platform is None else platform,
