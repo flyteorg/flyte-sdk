@@ -28,6 +28,7 @@ from flyte._image import (
     Env,
     PipOption,
     PipPackages,
+    PixiProject,
     PoetryProject,
     PythonWheels,
     Requirements,
@@ -373,6 +374,13 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
                 )
             )
             layers.append(uv_layer)
+        elif isinstance(layer, PixiProject):
+            # The image builder protobuf IDL has no PixiProject layer yet, and silently
+            # skipping it would produce an image without the user's environment.
+            raise flyte.errors.ImageBuildError(
+                "Pixi projects are not yet supported by the remote image builder. "
+                'Use the local image builder instead (e.g. flyte.init_from_config(image_builder="local")).'
+            )
         elif isinstance(layer, PoetryProject):
             extra_args = layer.extra_args or ""
             if layer.project_install_mode == "dependencies_only":

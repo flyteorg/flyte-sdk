@@ -264,6 +264,58 @@ class PoetryProject(Layer):
 
 @rich.repr.auto
 @dataclass(frozen=True, repr=True)
+class PixiProject(Layer):
+    """
+    Pixi resolves conda + PyPI packages from its own manifest and does not use pip options,
+    so the PixiProject class does not inherit from the PipOption class.
+    """
+
+    manifest: Path
+    pixi_lock: Optional[Path] = None
+    environment: str = "default"
+    extra_args: Optional[str] = None
+    project_install_mode: typing.Literal["dependencies_only", "install_project"] = "dependencies_only"
+    secret_mounts: Optional[Tuple[str | Secret, ...]] = None
+
+    def validate(self):
+        if not self.manifest.exists():
+            raise FileNotFoundError(f"Pixi manifest file {self.manifest.resolve()} does not exist")
+        if not self.manifest.is_file():
+            raise ValueError(f"Pixi manifest {self.manifest.resolve()} is not a file")
+        if self.manifest.name not in ("pixi.toml", "pyproject.toml"):
+            raise ValueError(
+                f"Pixi manifest {self.manifest.resolve()} must be named 'pixi.toml' or 'pyproject.toml', "
+                "since pixi only discovers manifests with those names."
+            )
+        if self.pixi_lock is not None and not self.pixi_lock.exists():
+            raise ValueError(f"Pixi lock file {self.pixi_lock.resolve()} does not exist")
+        super().validate()
+
+    def update_hash(self, hasher: hashlib._Hash, ignore: Optional[Any] = None):
+        from ._code_bundle._ignore import DockerfileIgnore
+        from ._utils import filehash_update, update_hasher_for_source
+
+        hash_input = self.environment
+        if self.extra_args:
+            hash_input += self.extra_args
+        if self.secret_mounts:
+            for secret_mount in self.secret_mounts:
+                hash_input += str(secret_mount)
+        hasher.update(hash_input.encode("utf-8"))
+
+        if self.project_install_mode == "dependencies_only":
+            if self.pixi_lock is not None:
+                filehash_update(self.pixi_lock, hasher)
+            filehash_update(self.manifest, hasher)
+        else:
+            project_dir = self.manifest.parent
+            if ignore is None:
+                ignore = DockerfileIgnore(project_dir)
+            update_hasher_for_source(project_dir, hasher, ignore=ignore)
+
+
+@rich.repr.auto
+@dataclass(frozen=True, repr=True)
 class UVScript(PipOption, Layer):
     script: Path
     script_name: str = field(init=False)
@@ -551,6 +603,7 @@ class Image:
     - `with_requirements()` — Install from a requirements.txt file
     - `with_uv_project()` — Install from a uv/pyproject.toml project
     - `with_poetry_project()` — Install from a Poetry project
+    - `with_pixi_project()` — Install from a pixi project (conda + PyPI packages)
     - `with_source_folder()` — Include a source directory
     - `with_source_file()` — Include a single source file
     - `with_code_bundle()` — Include a code bundle
@@ -1300,6 +1353,74 @@ class Image:
             addl_layer=PoetryProject(
                 pyproject=pyproject_file,
                 poetry_lock=poetry_lock or (pyproject_file.parent / "poetry.lock"),
+                extra_args=extra_args,
+                secret_mounts=_ensure_tuple(secret_mounts) if secret_mounts else None,
+                project_install_mode=project_install_mode,
+            )
+        )
+        return new_image
+
+    def with_pixi_project(
+        self,
+        manifest_file: str | Path,
+        pixi_lock: Path | None = None,
+        environment: str = "default",
+        extra_args: Optional[str] = None,
+        secret_mounts: Optional[SecretRequest] = None,
+        project_install_mode: typing.Literal["dependencies_only", "install_project"] = "dependencies_only",
+    ) -> Image:
+        """
+        Use this method to create a new image with the specified pixi project layered on top of the current image.
+        The manifest is resolved and installed with `pixi install` at build time, and the resulting pixi
+        environment becomes the image's runtime environment.
+
+        The manifest may be either a `pixi.toml` file or a `pyproject.toml` file with a `[tool.pixi]`
+        section. You may also pass the pixi project directory itself, in which case the manifest is
+        discovered the same way pixi discovers it (`pixi.toml` first, then `pyproject.toml`).
+
+        By default, this method copies only the manifest and lock file into the image. When the lock file
+        is present, `pixi install --locked` is used so the build reproduces the lock exactly.
+
+        If `project_install_mode` is "install_project", the entire directory containing the manifest is
+        copied into the image instead. Use this when the manifest installs the project itself, e.g. a
+        `pyproject.toml`-based pixi project that declares the project as an editable pypi dependency.
+
+        Note that after this layer, the pixi environment replaces the image's virtualenv as the active
+        runtime (and as the target of subsequent `with_pip_packages` / `with_requirements` layers), so
+        `flyte` must be available in it for tasks to run. Either declare `flyte` in the manifest (e.g.
+        under `[pypi-dependencies]`) or add `.with_pip_packages("flyte")` after this layer. The
+        environment must provide `python` (add it to the manifest's dependencies if it is conda-only).
+
+        If the manifest has a CUDA `[system-requirements]` and image builds run on GPU-less machines, set
+        `.with_env_vars({"CONDA_OVERRIDE_CUDA": "<version>"})` *before* this layer so install-time
+        validation of the `__cuda` virtual package succeeds.
+
+        :param manifest_file: path to the pixi manifest (`pixi.toml` or `pyproject.toml`), or to the pixi
+            project directory containing it
+        :param pixi_lock: path to the pixi.lock file, if not specified, will use the default pixi.lock file in the
+            same directory as the manifest if it exists. (manifest.parent / pixi.lock)
+        :param environment: name of the pixi environment to install and activate, default is "default"
+        :param extra_args: extra arguments to pass to `pixi install`, default is None
+        :param secret_mounts: list of secret mounts to use for the build process (e.g. private channels).
+        :param project_install_mode: whether to copy the whole project into the image or
+         only the manifest and lock file, default is "dependencies_only"
+        :return: Image
+        """
+        if isinstance(manifest_file, str):
+            manifest_file = Path(manifest_file)
+        if manifest_file.is_dir():
+            # Mirror pixi's own manifest discovery: pixi.toml wins over pyproject.toml.
+            pixi_toml = manifest_file / "pixi.toml"
+            manifest_file = pixi_toml if pixi_toml.exists() else manifest_file / "pyproject.toml"
+        # If pixi_lock is not provided, use the default pixi.lock file in the same directory if it exists
+        if pixi_lock is None:
+            default_pixi_lock = manifest_file.parent / "pixi.lock"
+            pixi_lock = default_pixi_lock if default_pixi_lock.exists() else None
+        new_image = self.clone(
+            addl_layer=PixiProject(
+                manifest=manifest_file,
+                pixi_lock=pixi_lock,
+                environment=environment,
                 extra_args=extra_args,
                 secret_mounts=_ensure_tuple(secret_mounts) if secret_mounts else None,
                 project_install_mode=project_install_mode,

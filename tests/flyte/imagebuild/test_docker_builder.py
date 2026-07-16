@@ -8,13 +8,25 @@ import pytest
 import pytest_asyncio
 
 from flyte import Secret
-from flyte._image import AptPackages, Commands, Image, PipPackages, PoetryProject, PythonWheels, Requirements, UVProject
+from flyte._image import (
+    AptPackages,
+    Commands,
+    Image,
+    PipPackages,
+    PixiProject,
+    PoetryProject,
+    PythonWheels,
+    Requirements,
+    UVProject,
+)
 from flyte._internal.imagebuild.docker_builder import (
     DOCKER_FILE_UV_BASE_TEMPLATE,
+    PIXI_VERSION,
     CopyConfig,
     CopyConfigHandler,
     DockerImageBuilder,
     PipAndRequirementsHandler,
+    PixiProjectHandler,
     PoetryProjectHandler,
     PythonWheelHandler,
     UVProjectHandler,
@@ -633,6 +645,158 @@ async def test_uvproject_handler_without_uvlock():
         assert "--mount=type=bind,target=uv.lock" not in result
         # Verify pyproject mount IS present
         assert "--mount=type=bind,target=pyproject.toml" in result
+
+
+@pytest.mark.asyncio
+async def test_pixi_handler_dependencies_only():
+    with tempfile.TemporaryDirectory() as tmp_context, tempfile.TemporaryDirectory() as tmp_user:
+        context_path = Path(tmp_context)
+        user_folder = Path(tmp_user)
+
+        manifest = user_folder / "pixi.toml"
+        manifest.write_text("[project]\nname = 'test-project'")
+        pixi_lock = user_folder / "pixi.lock"
+        pixi_lock.write_text("version: 6")
+
+        pixi_project = PixiProject(manifest=manifest.absolute(), pixi_lock=pixi_lock.absolute())
+
+        initial_dockerfile = "FROM python:3.12\n"
+        result = await PixiProjectHandler.handle(
+            layer=pixi_project,
+            context_path=context_path,
+            dockerfile=initial_dockerfile,
+            docker_ignore_patterns=[],
+        )
+
+        assert result.startswith(initial_dockerfile)
+        # The pinned pixi binary is copied out of the official pixi image
+        assert f"COPY --from=ghcr.io/prefix-dev/pixi:{PIXI_VERSION} /usr/local/bin/pixi /usr/local/bin/pixi" in result
+        # Only the manifest and lock file are copied into the image
+        assert " /opt/pixi-project/pixi.toml" in result
+        assert " /opt/pixi-project/pixi.lock" in result
+        assert "--mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/rattler,id=pixi" in result
+        assert "pixi install --manifest-path /opt/pixi-project/pixi.toml" in result
+        # A lock file means a reproducible install
+        assert "--environment default --locked" in result
+        # The pixi environment becomes the runtime env for the entrypoint and later uv/pip layers
+        assert "VIRTUAL_ENV=/opt/pixi-project/.pixi/envs/default" in result
+        assert "UV_PYTHON=/opt/pixi-project/.pixi/envs/default/bin/python" in result
+        assert "PIXI_PROJECT_MANIFEST=/opt/pixi-project/pixi.toml" in result
+        assert "PATH=/opt/pixi-project/.pixi/envs/default/bin:$PATH" in result
+
+
+@pytest.mark.asyncio
+async def test_pixi_handler_without_lock():
+    """Without a pixi.lock, the environment is resolved at build time (no --locked)."""
+    with tempfile.TemporaryDirectory() as tmp_context, tempfile.TemporaryDirectory() as tmp_user:
+        context_path = Path(tmp_context)
+        user_folder = Path(tmp_user)
+
+        manifest = user_folder / "pixi.toml"
+        manifest.write_text("[project]\nname = 'test-project'")
+
+        pixi_project = PixiProject(manifest=manifest.absolute(), pixi_lock=None)
+
+        initial_dockerfile = "FROM python:3.12\n"
+        result = await PixiProjectHandler.handle(
+            layer=pixi_project,
+            context_path=context_path,
+            dockerfile=initial_dockerfile,
+            docker_ignore_patterns=[],
+        )
+
+        assert "pixi install --manifest-path /opt/pixi-project/pixi.toml" in result
+        assert "--locked" not in result
+        assert "/opt/pixi-project/pixi.lock" not in result
+
+
+@pytest.mark.asyncio
+async def test_pixi_handler_named_environment_and_extra_args():
+    with tempfile.TemporaryDirectory() as tmp_context, tempfile.TemporaryDirectory() as tmp_user:
+        context_path = Path(tmp_context)
+        user_folder = Path(tmp_user)
+
+        manifest = user_folder / "pixi.toml"
+        manifest.write_text("[project]\nname = 'test-project'")
+
+        pixi_project = PixiProject(manifest=manifest.absolute(), environment="prod", extra_args="--verbose")
+
+        initial_dockerfile = "FROM python:3.12\n"
+        result = await PixiProjectHandler.handle(
+            layer=pixi_project,
+            context_path=context_path,
+            dockerfile=initial_dockerfile,
+            docker_ignore_patterns=[],
+        )
+
+        assert "--environment prod --verbose" in result
+        assert "VIRTUAL_ENV=/opt/pixi-project/.pixi/envs/prod" in result
+        assert "PATH=/opt/pixi-project/.pixi/envs/prod/bin:$PATH" in result
+
+
+@pytest.mark.asyncio
+async def test_pixi_handler_with_project_install():
+    """install_project mode copies the whole project directory, but the manifest and
+    lock file survive .dockerignore exclusions."""
+    with tempfile.TemporaryDirectory() as tmp_context, tempfile.TemporaryDirectory() as tmp_user:
+        context_path = Path(tmp_context)
+        user_folder = Path(tmp_user)
+
+        # A pyproject.toml-based pixi project that installs the project itself
+        manifest = user_folder / "pyproject.toml"
+        manifest.write_text("[project]\nname = 'test-project'\nversion='0.1.0'\n[tool.pixi.workspace]")
+        pixi_lock = user_folder / "pixi.lock"
+        pixi_lock.write_text("version: 6")
+        (user_folder / "main.py").write_text("print('hello')")
+        (user_folder / "memo.txt").write_text("memo")
+
+        pixi_project = PixiProject(
+            manifest=manifest.absolute(),
+            pixi_lock=pixi_lock.absolute(),
+            project_install_mode="install_project",
+        )
+
+        initial_dockerfile = "FROM python:3.12\n"
+        result = await PixiProjectHandler.handle(
+            layer=pixi_project,
+            context_path=context_path,
+            dockerfile=initial_dockerfile,
+            docker_ignore_patterns=["*.txt", "pyproject.toml", "*.toml", "pixi.lock", "*.lock"],
+        )
+
+        assert "pixi install --manifest-path /opt/pixi-project/pyproject.toml" in result
+        assert "--environment default --locked" in result
+        assert "PIXI_PROJECT_MANIFEST=/opt/pixi-project/pyproject.toml" in result
+
+        # Calculate expected destination path
+        src_absolute = user_folder.absolute()
+        rel_path = PurePath(*src_absolute.parts[1:])
+        expected_dst_path = context_path / "_flyte_abs_context" / rel_path
+
+        assert f"COPY {expected_dst_path.relative_to(context_path)} /opt/pixi-project" in result
+        assert expected_dst_path.is_dir(), "Project directory should be copied into the context"
+        assert (expected_dst_path / "main.py").exists(), "main.py should be included"
+        assert (expected_dst_path / "pyproject.toml").exists(), "the manifest should survive dockerignore"
+        assert (expected_dst_path / "pixi.lock").exists(), "pixi.lock should survive dockerignore"
+        assert not (expected_dst_path / "memo.txt").exists(), "memo.txt should be excluded"
+
+
+def test_remote_builder_raises_for_pixi_project():
+    """The image builder IDL has no pixi layer yet; the remote builder must fail loudly
+    rather than silently skipping the environment."""
+    from flyte._internal.imagebuild.remote_builder import _get_layers_proto
+    from flyte.errors import ImageBuildError
+
+    with tempfile.TemporaryDirectory() as tmp_context, tempfile.TemporaryDirectory() as tmp_user:
+        manifest = Path(tmp_user) / "pixi.toml"
+        manifest.write_text("[project]\nname = 'test-project'")
+
+        img = Image.from_debian_base(registry="localhost", name="test-image").with_pixi_project(
+            manifest_file=manifest,
+        )
+
+        with pytest.raises(ImageBuildError, match=r"not yet supported by the remote image builder"):
+            _get_layers_proto(img, Path(tmp_context))
 
 
 def test_get_secret_commands_deduplicates_secrets(monkeypatch):

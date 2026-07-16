@@ -1,0 +1,15 @@
+[workspace]
+name = "pixi-project"
+channels = ["conda-forge"]
+platforms = ["linux-64"]
+
+# Conda packages, resolved from the channels above. Python itself must be a
+# dependency: the pixi environment becomes the image's runtime environment.
+[dependencies]
+python = "3.13.*"
+numpy = "*"
+
+# PyPI packages, resolved by pixi in the same solve as the conda packages.
+# flyte must be available in the environment for tasks to run in the image.
+[pypi-dependencies]
+flyte = "*"
