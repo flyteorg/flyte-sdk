@@ -84,7 +84,7 @@ async def test_run_agent_full_loop_with_tool_call():
         def get_model(self, name):
             return fake
 
-    out = await run_agent(
+    out = await run_agent.aio(
         "weather in Paris?",
         tools=[get_weather],
         durable=True,
@@ -95,3 +95,26 @@ async def test_run_agent_full_loop_with_tool_call():
     assert "sunny in paris" in out.lower()
     assert fake.turns == 2
     assert executed["count"] == 1
+
+
+def test_run_agent_sync_call():
+    """run_agent is syncified: the plain sync form drives the loop end to end."""
+
+    class _OneTurnModel(Model):
+        async def get_response(self, *args, **kwargs):
+            return _final("Hello from the sync form.")
+
+        def stream_response(self, *args, **kwargs):  # pragma: no cover
+            raise NotImplementedError
+
+    class _Provider(ModelProvider):
+        def get_model(self, name):
+            return _OneTurnModel()
+
+    out = run_agent(
+        "say hi",
+        durable=False,
+        observability=False,
+        run_config=RunConfig(model_provider=_Provider()),
+    )
+    assert out == "Hello from the sync form."

@@ -22,10 +22,8 @@ Run:  flyte run langgraph_multi_agent.py research_pipeline --topic "The state of
 """
 
 import asyncio
-from pathlib import Path
 
 import flyte
-from flyte._image import PythonWheels
 
 from flyteplugins.agents.langgraph import run_agent, tool
 
@@ -33,21 +31,9 @@ env = flyte.TaskEnvironment(
     "langgraph-research",
     resources=flyte.Resources(cpu=1),
     secrets=[flyte.Secret(key="openai_api_key", as_env_var="OPENAI_API_KEY")],
-    image=(
-        flyte.Image.from_debian_base(name="langgraph-research")
-        .clone(
-            addl_layer=PythonWheels(
-                wheel_dir=Path(__file__).parent.parent / "dist",
-                package_name="flyteplugins-agents-core",
-            ),
-        )
-        .clone(
-            addl_layer=PythonWheels(
-                wheel_dir=Path(__file__).parent.parent / "dist",
-                package_name="flyteplugins-agents-langgraph",
-            ),
-        )
-    ),
+    image=flyte.Image.from_debian_base(name="langgraph-research")
+    .with_local_v2_plugins(["flyteplugins-agents-core", "flyteplugins-agents-langgraph"])
+    .with_pip_packages("langchain-openai"),
 )
 
 # A real deployment would call a search API here. Tools are Flyte tasks, so this
@@ -58,6 +44,13 @@ _CORPUS = {
     "charging": "Public DC fast-charger count doubled YoY; grid interconnect queues are the bottleneck.",
     "cost": "Pack prices fell below $80/kWh in 2025, crossing the oft-cited parity threshold.",
 }
+
+
+def _chat_model():
+    """The chat model each agent uses — built at call time, inside the task."""
+    from langchain_openai import ChatOpenAI
+
+    return ChatOpenAI(model="gpt-4o")
 
 
 @tool
@@ -73,8 +66,9 @@ async def search_web(query: str) -> str:
 @env.task(retries=3)
 async def plan(topic: str) -> list[str]:
     """Planner agent: decompose a topic into focused research subtopics."""
-    text = await run_agent(
+    text = await run_agent.aio(
         f"Break the topic '{topic}' into exactly 3 focused, distinct research subtopics.",
+        model=_chat_model(),
         instructions="Reply with ONLY a comma-separated list of 3 short subtopics. No numbering, no prose.",
     )
     # Forgiving parse: accept commas or newlines, strip bullets/numbering.
@@ -86,9 +80,10 @@ async def plan(topic: str) -> list[str]:
 @env.task(retries=3)
 async def research(subtopic: str) -> str:
     """Researcher agent: investigate one subtopic using the search tool."""
-    return await run_agent(
+    return await run_agent.aio(
         f"Research this subtopic and summarize the key findings as 3 concise bullet points:\n{subtopic}",
         tools=[search_web],
+        model=_chat_model(),
         instructions="You are a rigorous research assistant. Use search_web before answering. Be concise.",
     )
 
@@ -97,8 +92,9 @@ async def research(subtopic: str) -> str:
 async def synthesize(topic: str, findings: list[str]) -> str:
     """Editor agent: synthesize the per-subtopic findings into a briefing."""
     notes = "\n\n".join(f"- {f}" for f in findings)
-    return await run_agent(
+    return await run_agent.aio(
         f"Topic: {topic}\n\nResearch notes:\n{notes}\n\nWrite a tight one-paragraph executive briefing.",
+        model=_chat_model(),
         instructions="You are a sharp editor. Synthesize the notes faithfully; do not invent facts.",
     )
 

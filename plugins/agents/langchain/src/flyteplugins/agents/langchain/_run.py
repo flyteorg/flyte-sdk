@@ -20,20 +20,15 @@ from __future__ import annotations
 
 import typing
 
+from flyte.syncify import syncify
 from flyteplugins.agents.core import ReportTimeline, flush_report
 
 from ._durable import DurableChatModel
 from ._memory import load_history, resolve_memory, save_history
 from ._tools import _coerce_tool
 
-if typing.TYPE_CHECKING:
-    from langchain_openai import ChatOpenAI as _ChatOpenAI
-else:
-    _ChatOpenAI = None
-
-# Module-level aliases for test monkeypatching. ``ChatOpenAI`` is the public alias;
-# ``_create_agent`` lets tests substitute the graph builder without a real model.
-ChatOpenAI = _ChatOpenAI
+# Module-level alias for test monkeypatching: ``_create_agent`` lets tests
+# substitute the graph builder without constructing a real model or graph.
 _create_agent = None
 
 
@@ -55,6 +50,7 @@ def _final_text(result: typing.Any) -> str:
     return str(result)
 
 
+@syncify
 async def run_agent(
     input: str,
     *,
@@ -70,6 +66,9 @@ async def run_agent(
 ) -> str:
     """Run a LangChain agent with the given tools and prompt; return the final text.
 
+    ``run_agent`` is syncified: call it synchronously as ``run_agent(...)`` or
+    asynchronously as ``await run_agent.aio(...)``.
+
     Call this from inside an ``@env.task`` — that task is the durable parent.
     Within it, each tool call runs as a durable Flyte child action. Give the
     enclosing task ``retries=...`` for self-healing and ``report=True`` to see
@@ -81,8 +80,9 @@ async def run_agent(
     Args:
         input: The user prompt.
         tools: ``tool``-wrapped tools or bare ``@env.task`` templates.
-        model: A LangChain-compatible chat model (e.g. ``ChatOpenAI()``). When
-            ``agent`` is not given, one is built using this model.
+        model: A LangChain-compatible chat model (e.g.
+            ``ChatOpenAI(model="gpt-4o")``). Required when ``agent`` is not
+            given — one is built using this model.
         instructions: System prompt for the built agent.
         agent: A pre-built LangChain agent (a compiled ``create_agent`` graph).
             Mutually exclusive with ``tools``.
@@ -116,11 +116,10 @@ async def run_agent(
             create_agent_fn = _create_agent
 
         if model is None:
-            if _ChatOpenAI is None:
-                from langchain_openai import ChatOpenAI as _LangChainChatOpenAI
-            else:
-                _LangChainChatOpenAI = _ChatOpenAI
-            model = _LangChainChatOpenAI()
+            raise ValueError(
+                "Provide `model=` when building the agent (or pass a pre-built `agent=`). "
+                'For example: `model=ChatOpenAI(model="gpt-4o")`.'
+            )
 
         # Wrap the inner chat model so each model turn is durable/replayable. We
         # can only do this on the builder path (a fully pre-built compiled ``agent``

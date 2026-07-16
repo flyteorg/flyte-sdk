@@ -7,15 +7,15 @@ and Flyte is the runtime underneath.
   container/resources, with retries and caching) when the agent calls it.
 - The agent timeline (tool calls, AI messages) is rendered into the task report
   because the task is created with ``report=True``.
+- ``run_agent`` is syncified: ``await run_agent.aio(...)`` from async tasks, plain
+  ``run_agent(...)`` from sync tasks (see ``city_agent_sync``).
 
 Run:  flyte run langchain_durable_agent.py city_agent --question "What's the weather of Paris?"
+      (or drive the sync variant:  flyte run langchain_durable_agent.py city_agent_sync --question "...")
       (add `--local` right after `run` to execute locally instead of on the backend)
 """
 
-from pathlib import Path
-
 import flyte
-from flyte._image import PythonWheels
 
 from flyteplugins.agents.langchain import run_agent, tool
 
@@ -23,23 +23,9 @@ env = flyte.TaskEnvironment(
     "langchain-durable-agent",
     resources=flyte.Resources(cpu=1),
     secrets=[flyte.Secret(key="openai_api_key", as_env_var="OPENAI_API_KEY")],
-    image=(
-        flyte.Image.from_debian_base(name="langchain-durable-agent")
-        .clone(
-            addl_layer=PythonWheels(
-                wheel_dir=Path(__file__).parent.parent / "dist",
-                package_name="flyteplugins-agents-core",
-                pre=True,
-            ),
-        )
-        .clone(
-            addl_layer=PythonWheels(
-                wheel_dir=Path(__file__).parent.parent / "dist",
-                package_name="flyteplugins-agents-langchain",
-                pre=True,
-            ),
-        )
-    ),
+    image=flyte.Image.from_debian_base(name="langchain-durable-agent")
+    .with_local_v2_plugins(["flyteplugins-agents-core", "flyteplugins-agents-langchain"])
+    .with_pip_packages("langchain-openai"),
 )
 
 
@@ -62,9 +48,28 @@ async def get_population(city: str) -> int:
 @env.task(report=True, retries=3)
 async def city_agent(question: str) -> str:
     """The durable parent: the LangChain agent loop runs here, on Flyte."""
-    return await run_agent(
+    from langchain_openai import ChatOpenAI
+
+    return await run_agent.aio(
         question,
         tools=[get_weather, get_population],
+        model=ChatOpenAI(model="gpt-4o"),
+        instructions="You are a concise city-facts assistant. Use the tools to answer.",
+        name="city-agent",
+    )
+
+
+# ``run_agent`` is syncified: async tasks await ``run_agent.aio(...)`` (above),
+# while sync tasks simply call ``run_agent(...)``.
+@env.task(report=True, retries=3)
+def city_agent_sync(question: str) -> str:
+    """The same agent, driven from a sync task via the sync call form."""
+    from langchain_openai import ChatOpenAI
+
+    return run_agent(
+        question,
+        tools=[get_weather, get_population],
+        model=ChatOpenAI(model="gpt-4o"),
         instructions="You are a concise city-facts assistant. Use the tools to answer.",
         name="city-agent",
     )

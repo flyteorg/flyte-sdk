@@ -7,6 +7,7 @@ authors = [{ name = "Niels Bantilan", email = "niels@union.ai" }]
 requires-python = ">=3.11"
 dependencies = [
     "flyteplugins-agents-core",
+    "hermes-agent",
 ]
 
 [build-system]
@@ -52,4 +53,3 @@ ignore = ["PGH003", "PLC0415"]
 [tool.uv.sources]
 flyte = { path = "../../..", editable = true }
 flyteplugins-agents-core = { path = "../core", editable = true }
-hermes-agent = { git = "https://github.com/NousResearch/hermes-agent.git" }

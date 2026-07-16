@@ -19,10 +19,7 @@ Run:  flyte run langgraph_custom_agent.py city_agent --city "Tokyo"
       (add `--local` right after `run` to execute locally instead of on the backend)
 """
 
-from pathlib import Path
-
 import flyte
-from flyte._image import PythonWheels
 
 from flyteplugins.agents.langgraph import ai_node, run_agent, tool, tool_node
 
@@ -30,23 +27,9 @@ env = flyte.TaskEnvironment(
     "langgraph-custom-agent",
     resources=flyte.Resources(cpu=1),
     secrets=[flyte.Secret(key="openai_api_key", as_env_var="OPENAI_API_KEY")],
-    image=(
-        flyte.Image.from_debian_base(name="langgraph-custom-agent")
-        .clone(
-            addl_layer=PythonWheels(
-                wheel_dir=Path(__file__).parent.parent / "dist",
-                package_name="flyteplugins-agents-core",
-                pre=True,
-            ),
-        )
-        .clone(
-            addl_layer=PythonWheels(
-                wheel_dir=Path(__file__).parent.parent / "dist",
-                package_name="flyteplugins-agents-langgraph",
-                pre=True,
-            ),
-        )
-    ),
+    image=flyte.Image.from_debian_base(name="langgraph-custom-agent")
+    .with_local_v2_plugins(["flyteplugins-agents-core", "flyteplugins-agents-langgraph"])
+    .with_pip_packages("langchain-openai"),
 )
 
 
@@ -95,35 +78,35 @@ def _build_city_graph():
     return builder.compile()
 
 
-# Build the graph once (module scope, reused across runs).
-city_graph = _build_city_graph()
-
-
 # ── Step 3: Run your graph durably inside a Flyte task ────────────────────────
 # The graph definition is fully yours; run_agent drives it durably and renders
-# the timeline into the task report.
+# the timeline into the task report. The graph is built inside the task, where
+# the provider API key is available.
 
 
 @env.task(report=True, retries=3)
 async def city_agent(city: str) -> str:
     """Run the custom-built graph durably on Flyte."""
-    return await run_agent(
+    return await run_agent.aio(
         f"What's the weather and population of {city}?",
-        agent=city_graph,
+        agent=_build_city_graph(),
     )
 
 
 # ── Alternative: let run_agent build the default tool-calling graph ───────────
-# If you don't need a custom topology, pass tools and let run_agent assemble the
-# same ai → tools → ai loop for you.
+# If you don't need a custom topology, pass tools (and a model of your choice)
+# and let run_agent assemble the same ai → tools → ai loop for you.
 
 
 @env.task(report=True, retries=3)
 async def quick_city_agent(city: str) -> str:
     """Build and run in one call using run_agent's default graph builder."""
-    return await run_agent(
+    from langchain_openai import ChatOpenAI
+
+    return await run_agent.aio(
         f"What's the weather and population of {city}?",
         tools=[get_weather, get_population],
+        model=ChatOpenAI(model="gpt-4o"),
         instructions="You are a concise city-facts assistant. Use the tools to answer.",
     )
 

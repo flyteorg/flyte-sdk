@@ -20,6 +20,7 @@ import typing
 import uuid
 
 from flyte._task import AsyncFunctionTaskTemplate
+from flyte.syncify import syncify
 from flyteplugins.agents.core import ReportTimeline, abbrev, flush_report, tool
 
 from ._durable import durable_model
@@ -103,6 +104,7 @@ class _UsageSink:
         return out
 
 
+@syncify
 async def run_agent(
     input: str,
     *,

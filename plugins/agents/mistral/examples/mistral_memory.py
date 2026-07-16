@@ -18,10 +18,7 @@ Run:  flyte run mistral_memory.py chat --message "Hi! My name is Alice and I lov
       (add `--local` after `run` to run locally; the shared `--memory_key` ties the two runs)
 """
 
-from pathlib import Path
-
 import flyte
-from flyte._image import PythonWheels
 
 from flyteplugins.agents.mistral import run_agent
 
@@ -29,22 +26,8 @@ env = flyte.TaskEnvironment(
     "mistral-memory",
     resources=flyte.Resources(cpu=1),
     secrets=[flyte.Secret(key="mistral_api_key", as_env_var="MISTRAL_API_KEY")],
-    image=(
-        flyte.Image.from_debian_base(name="mistral-memory")
-        .clone(
-            addl_layer=PythonWheels(
-                wheel_dir=Path(__file__).parent.parent / "dist",
-                package_name="flyteplugins-agents-core",
-                pre=True,
-            ),
-        )
-        .clone(
-            addl_layer=PythonWheels(
-                wheel_dir=Path(__file__).parent.parent / "dist",
-                package_name="flyteplugins-agents-mistral",
-                pre=True,
-            ),
-        )
+    image=flyte.Image.from_debian_base(name="mistral-memory").with_local_v2_plugins(
+        ["flyteplugins-agents-core", "flyteplugins-agents-mistral"]
     ),
 )
 
@@ -56,7 +39,7 @@ async def chat(message: str, memory_key: str) -> str:
     Because ``memory_key`` is stable across runs, the agent continues the same
     server-side conversation every time it is called with the same key.
     """
-    return await run_agent(
+    return await run_agent.aio(
         message,
         instructions="You are a friendly assistant. Use the conversation history to stay consistent.",
         model="mistral-large-latest",

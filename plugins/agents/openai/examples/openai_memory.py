@@ -17,10 +17,7 @@ Run:  flyte run openai_memory.py chat --message "Hi! My name is Alice and I love
       (add `--local` after `run` to run locally; the shared `--memory_key` ties the two runs)
 """
 
-from pathlib import Path
-
 import flyte
-from flyte._image import PythonWheels
 
 from flyteplugins.agents.openai import run_agent
 
@@ -28,22 +25,8 @@ env = flyte.TaskEnvironment(
     "openai-memory",
     resources=flyte.Resources(cpu=1),
     secrets=[flyte.Secret(key="openai_api_key", as_env_var="OPENAI_API_KEY")],
-    image=(
-        flyte.Image.from_debian_base(name="openai-memory")
-        .clone(
-            addl_layer=PythonWheels(
-                wheel_dir=Path(__file__).parent.parent / "dist",
-                package_name="flyteplugins-agents-core",
-                pre=True,
-            ),
-        )
-        .clone(
-            addl_layer=PythonWheels(
-                wheel_dir=Path(__file__).parent.parent / "dist",
-                package_name="flyteplugins-agents-openai",
-                pre=True,
-            ),
-        )
+    image=flyte.Image.from_debian_base(name="openai-memory").with_local_v2_plugins(
+        ["flyteplugins-agents-core", "flyteplugins-agents-openai"]
     ),
 )
 
@@ -55,7 +38,7 @@ async def chat(message: str, memory_key: str) -> str:
     Because ``memory_key`` is stable across runs, the agent sees the prior turns
     every time it is called with the same key.
     """
-    return await run_agent(
+    return await run_agent.aio(
         message,
         instructions="You are a friendly assistant. Use the conversation history to stay consistent.",
         model="gpt-4.1",

@@ -36,6 +36,7 @@ from claude_agent_sdk import (
     query,
 )
 from flyte._task import TaskTemplate
+from flyte.syncify import syncify
 from flyteplugins.agents.core import ReportTimeline, abbrev, flush_report
 
 from ._durable import wire_durable_session
@@ -51,6 +52,7 @@ def _coerce_tool(t: typing.Any) -> SdkMcpTool:
     return t
 
 
+@syncify
 async def run_agent(
     input: str,
     *,

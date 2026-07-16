@@ -8,7 +8,6 @@ requires-python = ">=3.10"
 dependencies = [
     "flyteplugins-agents-core",
     "langgraph",
-    "langchain-openai",
 ]
 
 [build-system]
@@ -19,6 +18,9 @@ build-backend = "setuptools.build_meta"
 dev = [
     "pytest>=8.3.5",
     "pytest-asyncio>=0.26.0",
+    # Not a runtime dependency of the plugin — users bring the provider package
+    # for the model they choose. Tests/examples here use ChatOpenAI.
+    "langchain-openai",
 ]
 
 [tool.setuptools]

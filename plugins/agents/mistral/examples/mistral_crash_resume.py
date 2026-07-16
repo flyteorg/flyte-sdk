@@ -20,10 +20,8 @@ Run:  flyte run mistral_crash_resume.py resilient_agent --question "What's the w
 """
 
 import os
-from pathlib import Path
 
 import flyte
-from flyte._image import PythonWheels
 
 from flyteplugins.agents.mistral import run_agent, tool
 
@@ -31,22 +29,8 @@ env = flyte.TaskEnvironment(
     "mistral-crash-resume",
     resources=flyte.Resources(cpu=1),
     secrets=[flyte.Secret(key="mistral_api_key", as_env_var="MISTRAL_API_KEY")],
-    image=(
-        flyte.Image.from_debian_base(name="mistral-crash-resume")
-        .clone(
-            addl_layer=PythonWheels(
-                wheel_dir=Path(__file__).parent.parent / "dist",
-                package_name="flyteplugins-agents-core",
-                pre=True,
-            ),
-        )
-        .clone(
-            addl_layer=PythonWheels(
-                wheel_dir=Path(__file__).parent.parent / "dist",
-                package_name="flyteplugins-agents-mistral",
-                pre=True,
-            ),
-        )
+    image=flyte.Image.from_debian_base(name="mistral-crash-resume").with_local_v2_plugins(
+        ["flyteplugins-agents-core", "flyteplugins-agents-mistral"]
     ),
 )
 
@@ -72,7 +56,7 @@ async def resilient_agent(question: str) -> str:
     attempt = flyte.ctx().attempt_number if flyte.ctx() else 0
     print(f"▶ resilient_agent attempt {attempt}", flush=True)
 
-    answer = await run_agent(
+    answer = await run_agent.aio(
         question,
         tools=[get_weather, get_population],
         instructions="You are a concise city-facts assistant. Use the tools to answer.",

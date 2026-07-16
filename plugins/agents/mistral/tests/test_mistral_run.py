@@ -32,6 +32,21 @@ def test_render_emits_rows_for_tool_calls_and_assistant_messages():
     assert "assistant" in labels  # message.output rendered
 
 
+def test_run_agent_sync_call(monkeypatch):
+    """run_agent is syncified: the plain sync form drives the loop end to end."""
+    monkeypatch.setenv("MISTRAL_API_KEY", "test-key")
+
+    result = MagicMock()
+    result.output_entries = [_message("sync answer")]
+    client = MagicMock()
+    client.beta.conversations.run_async = AsyncMock(return_value=result)
+
+    with patch("mistralai.client.Mistral", return_value=client):
+        out = run_agent("hi", durable=False, observability=False)
+
+    assert out == "sync answer"
+
+
 @pytest.mark.asyncio
 async def test_run_agent_registers_tools_and_returns_final_text(monkeypatch):
     monkeypatch.setenv("MISTRAL_API_KEY", "test-key")
@@ -49,7 +64,7 @@ async def test_run_agent_registers_tools_and_returns_final_text(monkeypatch):
     client.beta.conversations.run_async = AsyncMock(return_value=result)
 
     with patch("mistralai.client.Mistral", return_value=client):
-        out = await run_agent("Weather in SF?", tools=[get_weather], durable=False, observability=False)
+        out = await run_agent.aio("Weather in SF?", tools=[get_weather], durable=False, observability=False)
 
     assert out == "It's sunny in SF!"
     # The SDK runner was invoked once with our RunContext.
@@ -66,7 +81,7 @@ async def test_timeout_ms_threads_into_run_async(monkeypatch):
     client.beta.conversations.run_async = AsyncMock(return_value=result)
 
     with patch("mistralai.client.Mistral", return_value=client):
-        await run_agent("hi", timeout_ms=5000, durable=False, observability=False)
+        await run_agent.aio("hi", timeout_ms=5000, durable=False, observability=False)
 
     # The per-turn request timeout is handed to the SDK runner (default None otherwise).
     _, kwargs = client.beta.conversations.run_async.call_args
@@ -77,7 +92,7 @@ async def test_timeout_ms_threads_into_run_async(monkeypatch):
 async def test_missing_api_key_raises(monkeypatch):
     monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
     with pytest.raises(ValueError, match="Mistral API key not found"):
-        await run_agent("hi", durable=False, observability=False)
+        await run_agent.aio("hi", durable=False, observability=False)
 
 
 def test_final_text_concatenates_only_message_outputs():

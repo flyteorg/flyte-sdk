@@ -6,6 +6,7 @@ import typing
 
 from agents import Agent, RunConfig, Runner
 from flyte._task import TaskTemplate
+from flyte.syncify import syncify
 from flyteplugins.agents.core import flush_report, resolve_memory
 
 from ._durable import FlyteModelProvider
@@ -22,6 +23,7 @@ def _normalize_tools(tools: typing.Sequence[typing.Any]) -> list[typing.Any]:
     return normalized
 
 
+@syncify
 async def run_agent(
     input: str | list[typing.Any],
     *,

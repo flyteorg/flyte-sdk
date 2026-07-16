@@ -24,7 +24,7 @@ async def get_weather(city: str) -> str:
 
 @env.task(report=True, retries=3)
 async def city_agent(question: str) -> str:
-    return await run_agent(question, tools=[get_weather], model="claude-sonnet-4-5")
+    return await run_agent.aio(question, tools=[get_weather], model="claude-sonnet-4-5")
 ```
 
 ## How it maps to Flyte
@@ -76,7 +76,7 @@ Pass `memory_key` (a user/thread id) for cross-run memory — the agent resumes 
 same conversation across separate runs:
 
 ```python
-await run_agent(message, model="claude-sonnet-4-5", memory_key="user-alice")
+await run_agent.aio(message, model="claude-sonnet-4-5", memory_key="user-alice")
 ```
 
 The transcript is persisted to a durable, keyed `MemoryStore` and resumed via the

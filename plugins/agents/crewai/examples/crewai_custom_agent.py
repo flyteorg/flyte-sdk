@@ -17,10 +17,7 @@ Run:  flyte run crewai_custom_agent.py city_agent_task --city "San Francisco"
       (add `--local` right after `run` to execute locally instead of on the backend)
 """
 
-from pathlib import Path
-
 import flyte
-from flyte._image import PythonWheels
 
 from flyteplugins.agents.crewai import run_agent, tool
 
@@ -28,22 +25,8 @@ env = flyte.TaskEnvironment(
     "crewai-custom-agent",
     resources=flyte.Resources(cpu=1),
     secrets=[flyte.Secret(key="openai_api_key", as_env_var="OPENAI_API_KEY")],
-    image=(
-        flyte.Image.from_debian_base(name="crewai-custom-agent")
-        .clone(
-            addl_layer=PythonWheels(
-                wheel_dir=Path(__file__).parent.parent / "dist",
-                package_name="flyteplugins-agents-core",
-                pre=True,
-            ),
-        )
-        .clone(
-            addl_layer=PythonWheels(
-                wheel_dir=Path(__file__).parent.parent / "dist",
-                package_name="flyteplugins-agents-crewai",
-                pre=True,
-            ),
-        )
+    image=flyte.Image.from_debian_base(name="crewai-custom-agent").with_local_v2_plugins(
+        ["flyteplugins-agents-core", "flyteplugins-agents-crewai"]
     ),
 )
 
@@ -102,7 +85,7 @@ city_agent = _build_city_agent()
 @env.task(report=True, retries=3)
 async def city_agent_task(city: str) -> str:
     """Run the custom-built agent durably on Flyte."""
-    return await run_agent(
+    return await run_agent.aio(
         f"What's the weather and population of {city}?",
         agent=city_agent,
     )
@@ -116,7 +99,7 @@ async def city_agent_task(city: str) -> str:
 @env.task(report=True, retries=3)
 async def quick_city_agent(city: str) -> str:
     """Build and run in one call using run_agent's builder."""
-    return await run_agent(
+    return await run_agent.aio(
         f"What's the weather and population of {city}?",
         tools=[get_weather, get_population],
         instructions="You are a concise city-facts assistant. Use the tools to answer.",

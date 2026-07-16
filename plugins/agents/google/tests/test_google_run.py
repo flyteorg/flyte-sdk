@@ -79,3 +79,25 @@ def test_default_agent_name_is_natural():
     from flyteplugins.agents.google._run import run_agent
 
     assert inspect.signature(run_agent).parameters["name"].default == "assistant"
+
+
+def test_run_agent_sync_call():
+    """run_agent is syncified: the plain sync form drives the loop end to end."""
+    from unittest.mock import patch
+
+    from flyteplugins.agents.google import run_agent
+
+    final_event = MagicMock()
+    final_event.is_final_response.return_value = True
+    final_event.content = gt.Content(role="model", parts=[gt.Part.from_text(text="Hello from the sync form.")])
+
+    async def fake_run_async(**kwargs):
+        yield final_event
+
+    fake_runner = MagicMock()
+    fake_runner.run_async = fake_run_async
+
+    with patch("google.adk.runners.Runner", return_value=fake_runner):
+        out = run_agent("say hi", model="gemini-2.0-flash", durable=False, observability=False)
+
+    assert out == "Hello from the sync form."

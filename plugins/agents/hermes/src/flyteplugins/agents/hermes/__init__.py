@@ -1,12 +1,11 @@
 """Hermes agent adapter for Flyte.
 
-Bring your own Hermes ``Agent`` and run it durably on Flyte. The adapter
-provides:
+Bring your own Hermes agent (the ``hermes-agent`` package's ``AIAgent``) and
+run it durably on Flyte. The adapter provides:
 
-- :class:`Agent` — build a Hermes ``Agent`` with durable tools,
-  cross-run memory, and observability.
 - :func:`tool` — turn a Flyte ``@env.task`` into a Hermes tool that executes as
-  a durable child action (own container/GPU, retries, caching).
+  a durable child action (own container/GPU, retries, caching), registered in
+  the Hermes tool registry under the :data:`FLYTE_TOOLSET` toolset.
 - :func:`run_agent` — run the Hermes agent loop inside your task and return the
   final answer.
 
@@ -15,6 +14,6 @@ rendered into the Flyte task report.
 """
 
 from ._run import run_agent
-from ._tools import tool
+from ._tools import FLYTE_TOOLSET, tool
 
-__all__ = ["run_agent", "tool"]
+__all__ = ["FLYTE_TOOLSET", "run_agent", "tool"]

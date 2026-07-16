@@ -14,10 +14,8 @@ Run:  flyte run pydantic_ai_custom_agent.py weather_agent --city "San Francisco"
 """
 
 import functools
-from pathlib import Path
 
 import flyte
-from flyte._image import PythonWheels
 
 from flyteplugins.agents.pydantic_ai import run_agent, tool
 
@@ -25,22 +23,8 @@ env = flyte.TaskEnvironment(
     "pydantic-ai-custom-agent",
     resources=flyte.Resources(cpu=1),
     secrets=[flyte.Secret(key="openai_api_key", as_env_var="OPENAI_API_KEY")],
-    image=(
-        flyte.Image.from_debian_base(name="pydantic-ai-custom-agent")
-        .clone(
-            addl_layer=PythonWheels(
-                wheel_dir=Path(__file__).parent.parent / "dist",
-                package_name="flyteplugins-agents-core",
-                pre=True,
-            ),
-        )
-        .clone(
-            addl_layer=PythonWheels(
-                wheel_dir=Path(__file__).parent.parent / "dist",
-                package_name="flyteplugins-agents-pydantic-ai",
-                pre=True,
-            ),
-        )
+    image=flyte.Image.from_debian_base(name="pydantic-ai-custom-agent").with_local_v2_plugins(
+        ["flyteplugins-agents-core", "flyteplugins-agents-pydantic-ai"]
     ),
 )
 
@@ -101,7 +85,7 @@ def _build_city_agent():
 async def weather_agent(city: str) -> str:
     """Run the custom-built agent durably on Flyte."""
     agent = _build_city_agent()
-    return await run_agent(
+    return await run_agent.aio(
         f"What's the weather in {city}?",
         agent=agent,
     )
@@ -115,7 +99,7 @@ async def weather_agent(city: str) -> str:
 @env.task(report=True, retries=3)
 async def quick_weather_agent(city: str) -> str:
     """Build and run in one call using run_agent's builder path."""
-    return await run_agent(
+    return await run_agent.aio(
         f"What's the weather in {city}?",
         tools=[get_weather, get_population],
         model="openai:gpt-4o",

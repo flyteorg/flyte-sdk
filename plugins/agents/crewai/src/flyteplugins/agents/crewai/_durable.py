@@ -99,7 +99,7 @@ def _loads(recorded: str) -> typing.Any:
     return recorded
 
 
-def _make_durable_llm_class(model: str | None) -> type:
+def _make_durable_llm_class(model: str) -> type:
     """Build a durable ``LLM`` subclass over the concrete provider for ``model``.
 
     Imported/derived lazily: ``crewai`` and its provider classes are heavy, and
@@ -107,7 +107,7 @@ def _make_durable_llm_class(model: str | None) -> type:
     """
     from crewai import LLM
 
-    probe = LLM(model=model or "gpt-4o")
+    probe = LLM(model=model)
     concrete_cls = type(probe)
 
     class DurableLLM(concrete_cls):  # type: ignore[valid-type, misc]
@@ -160,7 +160,7 @@ async def _as_awaitable(value: typing.Any) -> typing.Any:
     return value
 
 
-def make_durable_llm(model: str | None) -> typing.Any:
-    """Construct a durable ``crewai.LLM`` instance for ``model`` (or ``gpt-4o``)."""
+def make_durable_llm(model: str) -> typing.Any:
+    """Construct a durable ``crewai.LLM`` instance for the given ``model`` name."""
     cls = _make_durable_llm_class(model)
-    return cls(model=model or "gpt-4o")
+    return cls(model=model)

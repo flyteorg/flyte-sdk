@@ -22,10 +22,8 @@ Run:  flyte run crewai_multi_agent.py research_pipeline --topic "The state of el
 """
 
 import asyncio
-from pathlib import Path
 
 import flyte
-from flyte._image import PythonWheels
 
 from flyteplugins.agents.crewai import run_agent, tool
 
@@ -33,20 +31,8 @@ env = flyte.TaskEnvironment(
     "crewai-research",
     resources=flyte.Resources(cpu=1),
     secrets=[flyte.Secret(key="openai_api_key", as_env_var="OPENAI_API_KEY")],
-    image=(
-        flyte.Image.from_debian_base(name="crewai-research")
-        .clone(
-            addl_layer=PythonWheels(
-                wheel_dir=Path(__file__).parent.parent / "dist",
-                package_name="flyteplugins-agents-core",
-            ),
-        )
-        .clone(
-            addl_layer=PythonWheels(
-                wheel_dir=Path(__file__).parent.parent / "dist",
-                package_name="flyteplugins-agents-crewai",
-            ),
-        )
+    image=flyte.Image.from_debian_base(name="crewai-research").with_local_v2_plugins(
+        ["flyteplugins-agents-core", "flyteplugins-agents-crewai"]
     ),
 )
 
@@ -73,9 +59,10 @@ async def search_web(query: str) -> str:
 @env.task(retries=3)
 async def plan(topic: str) -> list[str]:
     """Planner agent: decompose a topic into focused research subtopics."""
-    text = await run_agent(
+    text = await run_agent.aio(
         f"Break the topic '{topic}' into exactly 3 focused, distinct research subtopics.",
         instructions="Reply with ONLY a comma-separated list of 3 short subtopics. No numbering, no prose.",
+        model="gpt-4o",
     )
     # Forgiving parse: accept commas or newlines, strip bullets/numbering.
     raw = [part.strip(" -•0123456789.").strip() for chunk in text.splitlines() for part in chunk.split(",")]
@@ -86,10 +73,11 @@ async def plan(topic: str) -> list[str]:
 @env.task(retries=3)
 async def research(subtopic: str) -> str:
     """Researcher agent: investigate one subtopic using the search tool."""
-    return await run_agent(
+    return await run_agent.aio(
         f"Research this subtopic and summarize the key findings as 3 concise bullet points:\n{subtopic}",
         tools=[search_web],
         instructions="You are a rigorous research assistant. Use search_web before answering. Be concise.",
+        model="gpt-4o",
     )
 
 
@@ -97,9 +85,10 @@ async def research(subtopic: str) -> str:
 async def synthesize(topic: str, findings: list[str]) -> str:
     """Editor agent: synthesize the per-subtopic findings into a briefing."""
     notes = "\n\n".join(f"- {f}" for f in findings)
-    return await run_agent(
+    return await run_agent.aio(
         f"Topic: {topic}\n\nResearch notes:\n{notes}\n\nWrite a tight one-paragraph executive briefing.",
         instructions="You are a sharp editor. Synthesize the notes faithfully; do not invent facts.",
+        model="gpt-4o",
     )
 
 

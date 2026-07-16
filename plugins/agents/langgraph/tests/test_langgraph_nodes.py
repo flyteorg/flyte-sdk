@@ -47,6 +47,18 @@ async def test_ai_node_binds_tools_and_appends_response():
 
 
 @pytest.mark.asyncio
+async def test_ai_node_durable_round_trips_response():
+    """durable=True serializes/rebuilds the model turn (outside a task, trace is
+    a pass-through, so the dumps/loads round-trip is still exercised)."""
+    response = AIMessage(content="hello")
+    node = ai_node(_FakeModel(response), [], durable=True, observability=False)
+    out = await node({"messages": [HumanMessage(content="hi")]})
+    (msg,) = out["messages"]
+    assert type(msg).__name__ == "AIMessage"
+    assert msg.content == "hello"
+
+
+@pytest.mark.asyncio
 async def test_tool_node_runs_tool_calls_durably():
     env = flyte.TaskEnvironment("lg_nodes_b")
 

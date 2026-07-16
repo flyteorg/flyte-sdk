@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import typing
 
+from flyte.syncify import syncify
 from flyteplugins.agents.core import ReportTimeline, flush_report
 
 from . import _memory
@@ -39,6 +40,7 @@ def _extract_text(result: typing.Any) -> str:
     return str(result)
 
 
+@syncify
 async def run_agent(
     input: str,
     *,
@@ -54,6 +56,9 @@ async def run_agent(
 ) -> str:
     """Run a CrewAI agent with the given tools and prompt; return the final text.
 
+    Syncified: call ``run_agent(...)`` from synchronous code, or
+    ``await run_agent.aio(...)`` from an async task body.
+
     Call this from inside an ``@env.task`` — that task is the durable parent.
     Within it, each tool call runs as a durable Flyte child action. Give the
     enclosing task ``retries=...`` for self-healing and ``report=True`` to see
@@ -67,7 +72,9 @@ async def run_agent(
         tools: ``tool``-wrapped tools or bare ``@env.task`` templates. Attached
             natively to the built ``Agent(tools=...)``. Ignored when ``agent`` is
             given (a pre-built agent carries its own tools).
-        model: Model name (e.g. ``"gpt-4o"``) for the built agent.
+        model: Model name (e.g. ``"gpt-4o"``) for the built agent. Required on
+            the builder path (no default is assumed — the adapter is provider
+            agnostic); ignored when a pre-built ``agent`` is given.
         instructions: Extra guidance folded into the built agent's backstory.
         agent: A pre-built CrewAI ``Agent``. Mutually exclusive with ``tools``.
         name: Agent name (for debugging/observability).
@@ -93,6 +100,11 @@ async def run_agent(
 
     # Build the agent if not provided, attaching the Flyte-task tools natively.
     if agent is None:
+        if model is None:
+            raise ValueError(
+                'No model was given. Provide `model=` (e.g. "gpt-4o") when building the agent '
+                "(or pass a pre-built `agent=`)."
+            )
         if _CrewAgent is None:
             from crewai import Agent as _LocalAgent
         else:
@@ -109,7 +121,7 @@ async def run_agent(
         if durable:
             llm: typing.Any = make_durable_llm(model)
         else:
-            llm = model or "gpt-4o"
+            llm = model
 
         agent = _LocalAgent(
             role="Assistant",

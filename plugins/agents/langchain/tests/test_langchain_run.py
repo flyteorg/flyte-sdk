@@ -1,7 +1,6 @@
 """Tests for LangChain run_agent (mocked)."""
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock
 
 import flyte
 import pytest
@@ -34,13 +33,10 @@ async def test_run_agent_with_tools(monkeypatch):
     def fake_create_agent(model, tools, *, system_prompt=None, **kwargs):
         return fake_agent
 
-    mock_chat_openai = MagicMock(spec=[])
-    # Patch _ChatOpenAI so the real ChatOpenAI import is skipped entirely, and
-    # _create_agent so no real graph (or model) is constructed.
-    monkeypatch.setattr(run_mod, "_ChatOpenAI", mock_chat_openai)
+    # Patch _create_agent so no real graph (or model) is constructed.
     monkeypatch.setattr(run_mod, "_create_agent", fake_create_agent)
 
-    result = await run_mod.run_agent("What's the weather?", tools=[get_weather], name="test-agent")
+    result = await run_mod.run_agent.aio("What's the weather?", tools=[get_weather], model=object(), name="test-agent")
     assert result == "The weather is sunny."
 
 
@@ -49,14 +45,27 @@ async def test_run_agent_with_prebuilt_agent(monkeypatch):
     """run_agent accepts a pre-built agent."""
     fake_agent = _FakeAgent({"output": "Hello!"})
 
-    result = await run_mod.run_agent("Hi", agent=fake_agent, name="test-agent")
+    result = await run_mod.run_agent.aio("Hi", agent=fake_agent, name="test-agent")
     assert result is not None
 
 
 @pytest.mark.asyncio
 async def test_run_agent_raises_on_both_agent_and_tools():
     with pytest.raises(ValueError, match="Pass either"):
-        await run_mod.run_agent("hi", agent=_FakeAgent({}), tools=[lambda: None])
+        await run_mod.run_agent.aio("hi", agent=_FakeAgent({}), tools=[lambda: None])
+
+
+@pytest.mark.asyncio
+async def test_run_agent_requires_model_on_builder_path():
+    """Building an agent (no `agent=`) without a model is an explicit error."""
+    with pytest.raises(ValueError, match="Provide `model=`"):
+        await run_mod.run_agent.aio("hi", tools=[])
+
+
+def test_run_agent_is_syncified():
+    """run_agent is callable synchronously, with an `.aio` async variant."""
+    result = run_mod.run_agent("Hi", agent=_FakeAgent({"output": "Hello!"}), name="test-agent")
+    assert result is not None
 
 
 class _Aio:
@@ -104,11 +113,9 @@ async def test_run_agent_memory_loads_prepends_and_saves(monkeypatch):
     def fake_create_agent(model, tools, *, system_prompt=None, **kwargs):
         return _RecordingAgent()
 
-    mock_chat_openai = MagicMock(spec=[])
-    monkeypatch.setattr(run_mod, "_ChatOpenAI", mock_chat_openai)
     monkeypatch.setattr(run_mod, "_create_agent", fake_create_agent)
 
-    result = await run_mod.run_agent("new question", tools=[], memory_key="user-1", durable=False)
+    result = await run_mod.run_agent.aio("new question", tools=[], model=object(), memory_key="user-1", durable=False)
     assert result == "final answer"
 
     # Prior messages were prepended, followed by the new user turn.
@@ -137,7 +144,7 @@ async def test_run_agent_wraps_model_when_durable(monkeypatch):
 
     monkeypatch.setattr(run_mod, "_create_agent", fake_create_agent)
 
-    result = await run_mod.run_agent("hi", tools=[], model=_FakeInner(), durable=True)
+    result = await run_mod.run_agent.aio("hi", tools=[], model=_FakeInner(), durable=True)
     assert result == "ok"
 
     from flyteplugins.agents.langchain._durable import DurableChatModel
@@ -160,7 +167,7 @@ async def test_run_agent_does_not_wrap_when_durable_false(monkeypatch):
     monkeypatch.setattr(run_mod, "_create_agent", fake_create_agent)
 
     inner = _FakeInner()
-    await run_mod.run_agent("hi", tools=[], model=inner, durable=False)
+    await run_mod.run_agent.aio("hi", tools=[], model=inner, durable=False)
     assert captured["model"] is inner
 
 

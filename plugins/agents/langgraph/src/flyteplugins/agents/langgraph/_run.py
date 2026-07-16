@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import typing
 
+from flyte.syncify import syncify
 from flyteplugins.agents.core import ReportTimeline, flush_report
 
 from ._nodes import ai_node, tool_node
@@ -38,13 +39,29 @@ _tools_condition = tools_condition
 
 
 def _resolve_chat_model(model: typing.Any) -> typing.Any:
-    """Return a LangChain chat model. A model instance passes through; a string /
-    ``None`` builds a default ``ChatOpenAI`` (imported lazily)."""
-    if model is not None and not isinstance(model, str):
-        return model
-    from langchain_openai import ChatOpenAI
+    """Return a LangChain chat model for the default-graph builder.
 
-    return ChatOpenAI(model=model or "gpt-4o")
+    A chat-model instance passes through unchanged. A ``provider:model`` string
+    resolves via ``langchain.chat_models.init_chat_model`` (requires the
+    ``langchain`` package). ``None`` is an error — the caller must choose a model.
+    """
+    if model is None:
+        raise ValueError(
+            "Provide `model=` when building the agent (or pass a pre-built `agent=`). "
+            'For example: `model=ChatOpenAI(model="gpt-4o")`.'
+        )
+    if not isinstance(model, str):
+        return model
+    try:
+        from langchain.chat_models import init_chat_model
+    except ImportError as e:
+        raise ImportError(
+            f"Resolving the model string {model!r} requires the `langchain` package. "
+            "Pass a chat-model instance instead, or install `langchain` to use "
+            "`provider:model` strings."
+        ) from e
+
+    return init_chat_model(model)
 
 
 def _build_default_graph(
@@ -78,6 +95,7 @@ def _final_text(result: typing.Any) -> str:
     return str(result) if result is not None else ""
 
 
+@syncify
 async def run_agent(
     input: str | typing.Any,
     *,
@@ -93,6 +111,9 @@ async def run_agent(
 ) -> str:
     """Run a LangGraph graph and return the final text.
 
+    ``run_agent`` is syncified: call it synchronously as ``run_agent(...)`` or
+    asynchronously as ``await run_agent.aio(...)``.
+
     Call this from inside an ``@env.task`` — that task is the durable parent.
     Within it, each model turn is recorded via ``flyte.trace`` (replayed on
     retry) and each tool call runs as a durable Flyte child action. Give the
@@ -107,14 +128,18 @@ async def run_agent(
         input: The user prompt (a ``str``) or a full graph input state (a dict).
         tools: ``@tool``-wrapped tools or bare ``@env.task`` templates (used only
             when ``agent`` is not given).
-        model: A LangChain chat model, a model-name string, or ``None`` (defaults
-            to ``ChatOpenAI("gpt-4o")``) — used only when building the graph.
+        model: A LangChain chat-model instance (e.g. ``ChatOpenAI(model="gpt-4o")``)
+            or a ``provider:model`` string (resolved via ``init_chat_model``, which
+            requires the ``langchain`` package). Required when building the graph
+            (i.e. when ``agent`` is not given).
         instructions: System prompt prepended to a built graph's messages.
         agent: A pre-built compiled LangGraph graph. Mutually exclusive with ``tools``.
         name: Graph name (for debugging/observability).
         durable: Record each model turn via ``flyte.trace`` (built graphs only).
         observability: Render the run timeline into the Flyte task report.
-        memory_key: Stable id for cross-run memory (reserved; see ``_memory``).
+        memory_key: Stable id (e.g. a user/thread id) for cross-run memory. When
+            set, the conversation transcript is persisted to a keyed ``MemoryStore``
+            and resumed on a later run with the same key.
         **run_kwargs: Additional kwargs forwarded to the graph's ``ainvoke``.
 
     Returns:

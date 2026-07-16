@@ -18,10 +18,7 @@ Run:  flyte run claude_memory.py chat --message "Hi! My name is Alice and I love
       (add `--local` after `run` to run locally; the shared `--memory_key` ties the two runs)
 """
 
-from pathlib import Path
-
 import flyte
-from flyte._image import PythonWheels
 
 from flyteplugins.agents.claude import run_agent
 
@@ -31,22 +28,8 @@ env = flyte.TaskEnvironment(
     "claude-memory",
     resources=flyte.Resources(cpu=1),
     secrets=[flyte.Secret(key="anthropic_api_key", as_env_var="ANTHROPIC_API_KEY")],
-    image=(
-        flyte.Image.from_debian_base(name="claude-memory")
-        .clone(
-            addl_layer=PythonWheels(
-                wheel_dir=Path(__file__).parent.parent / "dist",
-                package_name="flyteplugins-agents-core",
-                pre=True,
-            ),
-        )
-        .clone(
-            addl_layer=PythonWheels(
-                wheel_dir=Path(__file__).parent.parent / "dist",
-                package_name="flyteplugins-agents-claude",
-                pre=True,
-            ),
-        )
+    image=flyte.Image.from_debian_base(name="claude-memory").with_local_v2_plugins(
+        ["flyteplugins-agents-core", "flyteplugins-agents-claude"]
     ),
 )
 
@@ -58,7 +41,7 @@ async def chat(message: str, memory_key: str) -> str:
     Because ``memory_key`` is stable across runs, the agent resumes the prior
     conversation every time it is called with the same key.
     """
-    return await run_agent(
+    return await run_agent.aio(
         message,
         instructions="You are a friendly assistant. Use the conversation history to stay consistent.",
         model="claude-sonnet-4-5",

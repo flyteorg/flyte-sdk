@@ -1,54 +1,42 @@
 """Build your own Hermes agent — durable tools on Flyte.
 
-This example shows the "bring your own agent" path: you define a Hermes
-``Agent`` using the framework's native SDK, wrap your Flyte tasks as durable
-tools with ``@tool``, attach them to the agent (the framework convention), and
-pass the agent to ``run_agent(agent=...)``.
+This example shows the "bring your own agent" path: you configure Hermes'
+``AIAgent`` using the framework's native SDK, wrap your Flyte tasks as durable
+tools with ``@tool`` (which registers them in Hermes' tool registry under the
+``FLYTE_TOOLSET`` toolset — the framework convention), and pass the agent to
+``run_agent(agent=...)``.
 
 - ``@tool`` stacked on ``@env.task`` makes each function both a durable, cached
   Flyte task and a Hermes tool that executes as a child action (own
   container/GPU, retries, caching).
-- ``_build_city_agent()`` attaches the tools natively via ``Agent(tools=[...])``.
+- ``_build_city_agent()`` enables the tools natively via
+  ``AIAgent(enabled_toolsets=[FLYTE_TOOLSET])``. The agent is built inside the
+  task because Hermes resolves credentials at construction time.
 - ``run_agent(agent=...)`` drives the agent loop durably on Flyte.
 
 Run:  flyte run hermes_custom_agent.py city_agent_task --city "San Francisco"
       (add `--local` right after `run` to execute locally instead of on the backend)
 """
 
-from pathlib import Path
+import os
 
 import flyte
-from flyte._image import PythonWheels
 
-from flyteplugins.agents.hermes import run_agent, tool
+from flyteplugins.agents.hermes import FLYTE_TOOLSET, run_agent, tool
 
 env = flyte.TaskEnvironment(
     "hermes-custom-agent",
     resources=flyte.Resources(cpu=1),
     secrets=[flyte.Secret(key="openai_api_key", as_env_var="OPENAI_API_KEY")],
-    image=(
-        flyte.Image.from_debian_base(name="hermes-custom-agent")
-        .clone(
-            addl_layer=PythonWheels(
-                wheel_dir=Path(__file__).parent.parent / "dist",
-                package_name="flyteplugins-agents-core",
-                pre=True,
-            ),
-        )
-        .clone(
-            addl_layer=PythonWheels(
-                wheel_dir=Path(__file__).parent.parent / "dist",
-                package_name="flyteplugins-agents-hermes",
-                pre=True,
-            ),
-        )
+    image=flyte.Image.from_debian_base(name="hermes-custom-agent").with_local_v2_plugins(
+        ["flyteplugins-agents-core", "flyteplugins-agents-hermes"]
     ),
 )
 
 
 # ── Step 1: Define your durable Flyte tasks and decorate them as tools ────────
 # Stacking @tool on @env.task makes each one both a durable, cached Flyte task
-# and a Hermes tool the agent can call.
+# and a Hermes tool the agent can call (registered under FLYTE_TOOLSET).
 
 
 @tool
@@ -65,28 +53,26 @@ async def get_population(city: str) -> int:
     return {"San Francisco": 808988, "Paris": 2102650, "Tokyo": 13929286}.get(city, 1_000_000)
 
 
-# ── Step 2: Define your own Hermes agent with the tools attached ──────────────
-# You control the agent definition — prompt, model, tools, etc. Flyte provides
-# the durable runtime via ``@tool`` and ``run_agent(agent=...)``.
+# ── Step 2: Define your own Hermes agent with the tools enabled ───────────────
+# You control the agent definition — prompt, model, toolsets, etc. Flyte
+# provides the durable runtime via ``@tool`` and ``run_agent(agent=...)``.
 
 
 def _build_city_agent():
-    """Build a Hermes Agent with durable tools attached natively."""
-    from hermes import Agent
+    """Build a Hermes AIAgent with the Flyte toolset enabled natively."""
+    from run_agent import AIAgent  # hermes-agent's top-level module
 
-    return Agent(
+    return AIAgent(
         model="gpt-4o",
-        name="city-facts-agent",
-        system_prompt=(
+        ephemeral_system_prompt=(
             "You are a helpful city-facts assistant. Use the available tools to answer "
             "questions about cities. Be concise and accurate."
         ),
-        tools=[get_weather, get_population],
+        enabled_toolsets=[FLYTE_TOOLSET],
+        api_key=os.environ["OPENAI_API_KEY"],
+        base_url="https://api.openai.com/v1",
+        quiet_mode=True,
     )
-
-
-# Build the agent once (module scope, reused across runs).
-city_agent = _build_city_agent()
 
 
 # ── Step 3: Run your agent durably inside a Flyte task ───────────────────────
@@ -96,7 +82,9 @@ city_agent = _build_city_agent()
 @env.task(report=True, retries=3)
 async def city_agent_task(city: str) -> str:
     """Run the custom-built agent durably on Flyte."""
-    return await run_agent(
+    # Built in-task: Hermes reads credentials when the agent is constructed.
+    city_agent = _build_city_agent()
+    return await run_agent.aio(
         f"What's the weather and population of {city}?",
         agent=city_agent,
     )
@@ -104,13 +92,13 @@ async def city_agent_task(city: str) -> str:
 
 # ── Alternative: let run_agent build the agent from tools ─────────────────────
 # If you don't need to separate agent definition from execution, hand the tools
-# to run_agent and it builds the agent for you.
+# to run_agent and it builds the agent for you (model= is required).
 
 
 @env.task(report=True, retries=3)
 async def quick_city_agent(city: str) -> str:
     """Build and run in one call using run_agent's builder."""
-    return await run_agent(
+    return await run_agent.aio(
         f"What's the weather and population of {city}?",
         tools=[get_weather, get_population],
         instructions="You are a helpful city-facts assistant.",

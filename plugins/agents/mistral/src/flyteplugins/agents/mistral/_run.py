@@ -23,6 +23,7 @@ import typing
 
 from flyte._logging import logger
 from flyte._task import AsyncFunctionTaskTemplate
+from flyte.syncify import syncify
 from flyteplugins.agents.core import (
     ReportTimeline,
     abbrev,
@@ -170,6 +171,7 @@ def _install_turn_hooks(conversations: typing.Any, *, durable: bool, usage: _Usa
     conversations.append_async = _wrap("append")
 
 
+@syncify
 async def run_agent(
     input: str,
     *,

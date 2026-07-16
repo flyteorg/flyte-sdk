@@ -17,10 +17,11 @@ import contextlib
 import typing
 
 from flyte._logging import logger
-from flyteplugins.agents.core import ReportTimeline, flush_report
+from flyte._task import AsyncFunctionTaskTemplate
+from flyte.syncify import syncify
+from flyteplugins.agents.core import ReportTimeline, flush_report, tool
 
 from ._memory import load_history, resolve_memory, save_history
-from ._tools import _coerce_tool
 
 if typing.TYPE_CHECKING:
     from pydantic_ai import Agent as _AgentType
@@ -32,6 +33,19 @@ else:
 # Both names are kept so tests may patch either ``_Agent`` or ``Agent``.
 _Agent = None
 Agent = _AgentType
+
+
+def _coerce_tool(t: typing.Any) -> typing.Any:
+    """Coerce a tool to a Pydantic AI-compatible callable.
+
+    A bare ``@env.task`` is wrapped via the shared core :func:`tool` (Pydantic AI
+    accepts plain async callables and infers the schema from the preserved
+    signature); anything else — an already ``tool``-wrapped callable, or a native
+    Pydantic AI ``Tool`` — passes through unchanged.
+    """
+    if isinstance(t, AsyncFunctionTaskTemplate):
+        return tool(t)
+    return t
 
 
 def _result_text(result: typing.Any) -> str:
@@ -46,11 +60,12 @@ def _result_text(result: typing.Any) -> str:
     return "" if value is None else str(value)
 
 
+@syncify
 async def run_agent(
     input: str,
     *,
     tools: typing.Sequence[typing.Any] = (),
-    model: str | None = None,
+    model: typing.Any = None,
     instructions: str | None = None,
     agent: typing.Any = None,
     name: str = "pydantic-ai-agent",
@@ -60,6 +75,9 @@ async def run_agent(
     **run_kwargs: typing.Any,
 ) -> str:
     """Run a Pydantic AI agent with the given tools and prompt; return the final text.
+
+    Syncified: call ``run_agent(...)`` from synchronous code, or
+    ``await run_agent.aio(...)`` from an async task body.
 
     Call this from inside an ``@env.task`` — that task is the durable parent.
     Within it, each tool call runs as a durable Flyte child action. Give the
@@ -75,7 +93,10 @@ async def run_agent(
             when no ``agent`` is passed; the built agent attaches them natively.
         agent: A pre-built Pydantic AI ``Agent`` (tools already attached).
             Mutually exclusive with ``tools``.
-        model: Model name or provider for the built agent (default ``openai:gpt-4o``).
+        model: Model name (e.g. ``"openai:gpt-4o"``) or ``pydantic_ai`` ``Model``
+            instance for the built agent. Required on the builder path (no default
+            is assumed — the adapter is provider agnostic); ignored when a
+            pre-built ``agent`` is given.
         instructions: System prompt / instructions for the built agent.
         name: Agent name (for debugging/observability).
         durable: Record/replay each model turn via ``flyte.trace``. On the builder
@@ -107,6 +128,11 @@ async def run_agent(
     override_cm: typing.Any = contextlib.nullcontext()
 
     if agent is None:
+        if model is None:
+            raise ValueError(
+                'No model was given. Provide `model=` (e.g. "openai:gpt-4o") when building the agent '
+                "(or pass a pre-built `agent=`)."
+            )
         agent = _build_agent(
             tools=tools,
             model=model,
@@ -166,17 +192,18 @@ def _durable_override(agent: typing.Any) -> typing.Any:
 def _build_agent(
     *,
     tools: typing.Sequence[typing.Any],
-    model: str | None,
+    model: typing.Any,
     instructions: str | None,
     name: str,
     durable: bool = True,
 ) -> typing.Any:
     """Build a Pydantic AI ``Agent`` with the given Flyte-task tools attached natively.
 
-    When ``durable`` (and using the real ``pydantic_ai.Agent``) the model string is
-    resolved via ``infer_model`` and wrapped in :class:`FlyteModel` so each model
-    turn records/replays via ``flyte.trace``. Best-effort: if the model can't be
-    inferred/wrapped, falls back to the plain model string.
+    ``model`` is required (the caller validates it). When ``durable`` (and using
+    the real ``pydantic_ai.Agent``) the model is resolved via ``infer_model`` and
+    wrapped in :class:`FlyteModel` so each model turn records/replays via
+    ``flyte.trace``. Best-effort: if the model can't be inferred/wrapped, falls
+    back to the model as given.
     """
     # ``_Agent`` / ``Agent`` may be monkeypatched (tests) to a builder callable;
     # otherwise import the real ``pydantic_ai.Agent`` lazily.
@@ -188,7 +215,7 @@ def _build_agent(
     coerced = [_coerce_tool(t) for t in tools]
     system_prompt = instructions or f"You are a helpful assistant named {name}."
 
-    model_arg: typing.Any = model or "openai:gpt-4o"
+    model_arg: typing.Any = model
     if durable and is_real_agent:
         model_arg = _durable_model(model_arg)
 
@@ -200,12 +227,14 @@ def _build_agent(
     )
 
 
-def _durable_model(model: str) -> typing.Any:
-    """Wrap an inferred model in :class:`FlyteModel` for durable turns; fall back to the string.
+def _durable_model(model: typing.Any) -> typing.Any:
+    """Wrap an inferred model in :class:`FlyteModel` for durable turns; fall back to the input.
 
-    Best-effort: ``infer_model`` can raise (e.g. a missing provider API key at
-    build time); if it does we return the original string so the run proceeds
-    without model-turn durability rather than failing.
+    Accepts a model name string or an already-constructed ``Model`` instance
+    (``infer_model`` passes instances through unchanged). Best-effort:
+    ``infer_model`` can raise (e.g. a missing provider API key at build time); if
+    it does we return the original value so the run proceeds without model-turn
+    durability rather than failing.
     """
     try:
         from pydantic_ai.models import infer_model

@@ -17,13 +17,11 @@ Run:  flyte run openai_crash_resume.py resilient_agent --question "What's the we
 """
 
 import os
-from pathlib import Path
 
 import flyte
 from agents import RunConfig
 from agents.models.interface import Model, ModelProvider
 from agents.models.multi_provider import MultiProvider
-from flyte._image import PythonWheels
 
 from flyteplugins.agents.openai import run_agent, tool
 
@@ -31,22 +29,8 @@ env = flyte.TaskEnvironment(
     "openai-crash-resume",
     resources=flyte.Resources(cpu=1),
     secrets=[flyte.Secret(key="openai_api_key", as_env_var="OPENAI_API_KEY")],
-    image=(
-        flyte.Image.from_debian_base(name="openai-crash-resume")
-        .clone(
-            addl_layer=PythonWheels(
-                wheel_dir=Path(__file__).parent.parent / "dist",
-                package_name="flyteplugins-agents-core",
-                pre=True,
-            ),
-        )
-        .clone(
-            addl_layer=PythonWheels(
-                wheel_dir=Path(__file__).parent.parent / "dist",
-                package_name="flyteplugins-agents-openai",
-                pre=True,
-            ),
-        )
+    image=flyte.Image.from_debian_base(name="openai-crash-resume").with_local_v2_plugins(
+        ["flyteplugins-agents-core", "flyteplugins-agents-openai"]
     ),
 )
 
@@ -103,7 +87,7 @@ async def resilient_agent(question: str) -> str:
     attempt = flyte.ctx().attempt_number if flyte.ctx() else 0
     print(f"▶ resilient_agent attempt {attempt}", flush=True)
 
-    answer = await run_agent(
+    answer = await run_agent.aio(
         question,
         tools=[get_weather, get_population],
         instructions="You are a concise city-facts assistant. Use the tools to answer.",

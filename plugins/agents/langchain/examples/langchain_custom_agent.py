@@ -16,10 +16,7 @@ Run:  flyte run langchain_custom_agent.py city_agent_task --city "Paris"
       (add `--local` right after `run` to execute locally instead of on the backend)
 """
 
-from pathlib import Path
-
 import flyte
-from flyte._image import PythonWheels
 
 from flyteplugins.agents.langchain import run_agent, tool
 
@@ -27,23 +24,9 @@ env = flyte.TaskEnvironment(
     "langchain-custom-agent",
     resources=flyte.Resources(cpu=1),
     secrets=[flyte.Secret(key="openai_api_key", as_env_var="OPENAI_API_KEY")],
-    image=(
-        flyte.Image.from_debian_base(name="langchain-custom-agent")
-        .clone(
-            addl_layer=PythonWheels(
-                wheel_dir=Path(__file__).parent.parent / "dist",
-                package_name="flyteplugins-agents-core",
-                pre=True,
-            ),
-        )
-        .clone(
-            addl_layer=PythonWheels(
-                wheel_dir=Path(__file__).parent.parent / "dist",
-                package_name="flyteplugins-agents-langchain",
-                pre=True,
-            ),
-        )
-    ),
+    image=flyte.Image.from_debian_base(name="langchain-custom-agent")
+    .with_local_v2_plugins(["flyteplugins-agents-core", "flyteplugins-agents-langchain"])
+    .with_pip_packages("langchain-openai"),
 )
 
 
@@ -88,35 +71,36 @@ def _build_city_agent():
     )
 
 
-# Build the agent once at module scope.
-city_agent = _build_city_agent()
-
-
 # ── Step 3: Run your agent durably inside a Flyte task ───────────────────────
 # The agent definition is fully yours; run_agent drives the graph durably. The
 # agent already owns its tools, so do NOT pass `tools=` alongside `agent=`.
+# The agent is built inside the task, where the provider API key is available.
 
 
 @env.task(report=True, retries=3)
 async def city_agent_task(city: str) -> str:
     """Run the custom-built agent durably on Flyte."""
-    return await run_agent(
+    return await run_agent.aio(
         f"What's the weather in {city}?",
-        agent=city_agent,
+        agent=_build_city_agent(),
     )
 
 
 # ── Alternative: let run_agent build the agent from tools ────────────────────
 # If you don't need to separate agent definition from execution, hand the tools
-# (and optional instructions/model) straight to run_agent's builder path.
+# (plus instructions and a model of your choice) straight to run_agent's builder
+# path.
 
 
 @env.task(report=True, retries=3)
 async def quick_city_agent(city: str) -> str:
     """Build and run in one call using run_agent's builder."""
-    return await run_agent(
+    from langchain_openai import ChatOpenAI
+
+    return await run_agent.aio(
         f"What's the weather in {city} and how many people live there?",
         tools=[get_weather, get_population],
+        model=ChatOpenAI(model="gpt-4o"),
         instructions="You are a helpful city-facts assistant.",
     )
 

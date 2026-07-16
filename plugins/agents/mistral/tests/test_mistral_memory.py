@@ -69,7 +69,7 @@ async def test_memory_key_continues_prior_conversation_and_persists_new(monkeypa
         patch("mistralai.client.Mistral", return_value=client),
         patch("mistralai.extra.run.context.RunContext", _FakeRunCtx),
     ):
-        out = await run_agent("hi", durable=False, observability=False, memory_key="t1")
+        out = await run_agent.aio("hi", durable=False, observability=False, memory_key="t1")
 
     assert out == "hi Alice"
     assert captured.get("conversation_id") == "conv-prev"  # continued the prior conversation
@@ -104,7 +104,7 @@ async def test_no_memory_key_starts_fresh(monkeypatch):
         patch("mistralai.client.Mistral", return_value=client),
         patch("mistralai.extra.run.context.RunContext", _FakeRunCtx),
     ):
-        out = await run_agent("hi", durable=False, observability=False)
+        out = await run_agent.aio("hi", durable=False, observability=False)
 
     assert out == "hello"
     assert "conversation_id" not in captured  # fresh conversation, no continuation

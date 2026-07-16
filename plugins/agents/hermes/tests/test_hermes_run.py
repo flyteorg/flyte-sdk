@@ -1,4 +1,4 @@
-"""Tests for Hermes run_agent (mocked)."""
+"""Tests for Hermes run_agent (mocked — no network)."""
 
 import flyte
 import pytest
@@ -6,73 +6,91 @@ import pytest
 import flyteplugins.agents.hermes._run as run_mod
 
 
-class _FakeResult:
-    """A minimal fake Hermes run result."""
-
-    def __init__(self, data):
-        self.data = data
-
-
 class _FakeAgent:
-    """A minimal fake Hermes agent."""
+    """A minimal fake Hermes ``AIAgent``: sync ``run_conversation`` returning a dict."""
 
-    def __init__(self, result):
-        self._result = result
+    def __init__(self, reply):
+        self._reply = reply
+        self.calls = []
 
-    async def run(self, message, **kwargs):
-        return self._result
+    def run_conversation(self, user_message, **kwargs):
+        self.calls.append((user_message, kwargs))
+        return {"final_response": self._reply}
 
 
 @pytest.mark.asyncio
-async def test_run_agent_with_tools(monkeypatch):
-    """run_agent builds an agent from tools and runs it."""
+async def test_run_agent_with_tools_builds_agent(monkeypatch):
+    """run_agent builds an AIAgent from tools + model and drives it."""
     env = flyte.TaskEnvironment("h_run_a")
 
     @env.task
     def get_weather(city: str) -> str:
+        """Get weather."""
         return f"sunny in {city}"
 
-    fake_agent = _FakeAgent("The weather is sunny.")
+    captured = {}
 
-    def fake_build(*args, **kwargs):
-        return fake_agent
+    class _FakeAIAgent(_FakeAgent):
+        def __init__(self, **kwargs):
+            super().__init__("The weather is sunny.")
+            captured.update(kwargs)
 
-    monkeypatch.setattr(run_mod, "_Agent", fake_build)
+    monkeypatch.setattr(run_mod, "_AIAgent", _FakeAIAgent)
 
-    result = await run_mod.run_agent("What's the weather?", tools=[get_weather], name="test-agent")
-    assert result is not None
+    result = await run_mod.run_agent.aio(
+        "What's the weather?", tools=[get_weather], model="test-model", name="test-agent"
+    )
+    assert result == "The weather is sunny."
+    assert captured["model"] == "test-model"
+    assert captured["quiet_mode"] is True
+    assert captured["enabled_toolsets"] == ["flyte-test-agent"]
+    assert "helpful assistant" in captured["ephemeral_system_prompt"]
 
 
 @pytest.mark.asyncio
-async def test_run_agent_with_prebuilt_agent(monkeypatch):
-    """run_agent accepts a pre-built agent."""
-    fake_agent = _FakeAgent("Hello!")
+async def test_run_agent_requires_model_on_builder_path():
+    """No default model: the builder path without `model=` is an error."""
+    with pytest.raises(ValueError, match="Provide `model=`"):
+        await run_mod.run_agent.aio("hi", tools=[])
 
-    result = await run_mod.run_agent("Hi", agent=fake_agent, name="test-agent")
-    assert result is not None
+
+@pytest.mark.asyncio
+async def test_run_agent_with_prebuilt_agent():
+    """run_agent accepts a pre-built agent; instructions become the system message."""
+    agent = _FakeAgent("Hello!")
+
+    result = await run_mod.run_agent.aio("Hi", agent=agent, instructions="Be terse.")
+    assert result == "Hello!"
+    _, kwargs = agent.calls[0]
+    assert kwargs["system_message"] == "Be terse."
+
+
+@pytest.mark.asyncio
+async def test_run_agent_tolerates_plain_string_result():
+    """A fake/wrapper returning a bare string (not a dict) still works."""
+
+    class _Bare:
+        def run_conversation(self, user_message, **kwargs):
+            return "plain answer"
+
+    assert await run_mod.run_agent.aio("hi", agent=_Bare()) == "plain answer"
 
 
 @pytest.mark.asyncio
 async def test_run_agent_raises_on_both_agent_and_tools():
     with pytest.raises(ValueError, match="Pass either"):
-        await run_mod.run_agent("hi", agent=_FakeAgent("x"), tools=[lambda: None])
+        await run_mod.run_agent.aio("hi", agent=_FakeAgent("x"), tools=[lambda: None])
 
 
-class _CapturingAgent:
-    """Fake agent that records the kwargs it was driven with and counts calls."""
-
-    def __init__(self, reply):
-        self.reply = reply
-        self.calls = []
-
-    async def run(self, message, **kwargs):
-        self.calls.append((message, kwargs))
-        return self.reply
+@pytest.mark.asyncio
+async def test_run_agent_raises_on_agent_kwargs_with_prebuilt_agent():
+    with pytest.raises(ValueError, match="agent_kwargs"):
+        await run_mod.run_agent.aio("hi", agent=_FakeAgent("x"), api_key="sk-test")
 
 
 @pytest.mark.asyncio
 async def test_run_agent_persists_and_resumes_memory(monkeypatch):
-    """With a memory_key, the transcript is saved and replayed as message_history."""
+    """With a memory_key, the transcript is saved and replayed as conversation_history."""
     from tests.test_hermes_memory import _FakeStore
 
     store = _FakeStore()
@@ -82,28 +100,38 @@ async def test_run_agent_persists_and_resumes_memory(monkeypatch):
 
     monkeypatch.setattr(run_mod, "resolve_memory", _resolve)
 
-    agent = _CapturingAgent("hello there")
-    await run_mod.run_agent("first", agent=agent, memory_key="u1")
-    await run_mod.run_agent("second", agent=agent, memory_key="u1")
+    agent = _FakeAgent("hello there")
+    await run_mod.run_agent.aio("first", agent=agent, memory_key="u1")
+    await run_mod.run_agent.aio("second", agent=agent, memory_key="u1")
 
     # The second run resumes: it receives the first turn's transcript as history.
     _, kwargs = agent.calls[1]
-    assert kwargs["message_history"] == [
+    assert kwargs["conversation_history"] == [
         {"role": "user", "content": "first"},
         {"role": "assistant", "content": "hello there"},
     ]
 
 
 @pytest.mark.asyncio
-async def test_run_agent_durable_records_once(monkeypatch):
-    """durable=True drives the agent through the durable step (still runs once)."""
+async def test_run_agent_durable_is_a_noop_for_hermes():
+    """durable=True is a documented no-op: the agent is driven exactly once either way."""
     calls = {"n": 0}
 
     class _Once:
-        async def run(self, message, **kwargs):
+        def run_conversation(self, user_message, **kwargs):
             calls["n"] += 1
-            return "answer"
+            return {"final_response": "answer"}
 
-    result = await run_mod.run_agent("hi", agent=_Once(), durable=True)
-    assert result == "answer"
+    assert await run_mod.run_agent.aio("hi", agent=_Once(), durable=True) == "answer"
     assert calls["n"] == 1
+    assert await run_mod.run_agent.aio("hi", agent=_Once(), durable=False) == "answer"
+
+
+def test_run_agent_is_syncified():
+    """run_agent is sync-callable with an .aio async variant over a coroutine fn."""
+    import inspect
+
+    assert callable(run_mod.run_agent.aio)
+    assert inspect.iscoroutinefunction(run_mod.run_agent.fn)
+    # The sync form actually drives the agent (no event loop in this test).
+    assert run_mod.run_agent("Hi", agent=_FakeAgent("sync!")) == "sync!"

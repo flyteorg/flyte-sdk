@@ -589,12 +589,12 @@ name = "flyteplugins-agents-langgraph"
 source = { editable = "." }
 dependencies = [
     { name = "flyteplugins-agents-core" },
-    { name = "langchain-openai" },
     { name = "langgraph" },
 ]
 
 [package.dev-dependencies]
 dev = [
+    { name = "langchain-openai" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
 ]
@@ -602,12 +602,12 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "flyteplugins-agents-core", editable = "../core" },
-    { name = "langchain-openai" },
     { name = "langgraph" },
 ]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "langchain-openai" },
     { name = "pytest", specifier = ">=8.3.5" },
     { name = "pytest-asyncio", specifier = ">=0.26.0" },
 ]

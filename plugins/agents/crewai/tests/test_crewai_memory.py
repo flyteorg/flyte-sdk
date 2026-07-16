@@ -112,7 +112,7 @@ async def test_run_agent_resumes_and_appends_transcript(monkeypatch):
     monkeypatch.setattr(run_mod._memory, "resolve_memory", _fake_resolve)
 
     agent = _FakeAgent("the answer")
-    result = await run_mod.run_agent("new question", agent=agent, memory_key="user-1")
+    result = await run_mod.run_agent.aio("new question", agent=agent, memory_key="user-1")
 
     assert result == "the answer"
     # kickoff saw the prior transcript prepended to the new user turn.
@@ -133,7 +133,7 @@ async def test_run_agent_resumes_and_appends_transcript(monkeypatch):
 async def test_run_agent_without_memory_key_uses_plain_string():
     """No memory_key -> kickoff gets the plain input string, no store touched."""
     agent = _FakeAgent("ok")
-    result = await run_mod.run_agent("plain prompt", agent=agent)
+    result = await run_mod.run_agent.aio("plain prompt", agent=agent)
     assert result == "ok"
     assert agent.kicked_with == "plain prompt"
 

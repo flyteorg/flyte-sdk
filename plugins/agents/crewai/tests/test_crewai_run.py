@@ -31,7 +31,7 @@ class _FakeAgent:
 async def test_run_agent_with_prebuilt_agent():
     """run_agent drives a pre-built agent via kickoff_async and extracts .raw."""
     agent = _FakeAgent("Hello!")
-    result = await run_mod.run_agent("Hi", agent=agent, name="test-agent")
+    result = await run_mod.run_agent.aio("Hi", agent=agent, name="test-agent")
     assert result == "Hello!"
     assert agent.kicked_with == "Hi"
 
@@ -62,7 +62,7 @@ async def test_run_agent_builds_agent_and_attaches_tools_natively(monkeypatch):
 
     monkeypatch.setattr(crewai, "Agent", _BuiltAgent)
 
-    result = await run_mod.run_agent(
+    result = await run_mod.run_agent.aio(
         "What's the weather?",
         tools=[get_weather],
         model="gpt-4o",
@@ -77,4 +77,19 @@ async def test_run_agent_builds_agent_and_attaches_tools_natively(monkeypatch):
 @pytest.mark.asyncio
 async def test_run_agent_raises_on_both_agent_and_tools():
     with pytest.raises(ValueError, match="Pass either"):
-        await run_mod.run_agent("hi", agent=_FakeAgent("x"), tools=[lambda: None])
+        await run_mod.run_agent.aio("hi", agent=_FakeAgent("x"), tools=[lambda: None])
+
+
+@pytest.mark.asyncio
+async def test_run_agent_requires_model_on_builder_path():
+    """No default model is assumed: the builder path demands an explicit `model=`."""
+    with pytest.raises(ValueError, match="Provide `model=`"):
+        await run_mod.run_agent.aio("hi")
+
+
+def test_run_agent_is_syncified():
+    """run_agent is callable synchronously and exposes an `.aio` async variant."""
+    assert callable(run_mod.run_agent)
+    assert callable(run_mod.run_agent.aio)
+    agent = _FakeAgent("sync!")
+    assert run_mod.run_agent("Hi", agent=agent) == "sync!"

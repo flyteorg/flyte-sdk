@@ -30,7 +30,8 @@ def assert_adapter_conforms(adapter: typing.Any) -> None:
        SDK's tool type, attaching :class:`~flyteplugins.agents.core.ToolTaskResolver`
        and exposing ``__wrapped_task__`` (so the task does not self-recurse on the
        worker);
-    2. exports an async ``run_agent`` accepting the standard keyword surface.
+    2. exports a syncified ``run_agent`` — callable synchronously, with an
+       ``.aio`` async variant — accepting the standard keyword surface.
 
     Raises ``AssertionError`` with a specific message on any deviation.
     """
@@ -43,9 +44,16 @@ def assert_adapter_conforms(adapter: typing.Any) -> None:
     tool = getattr(adapter, "tool", None)
     assert callable(tool), f"{name}: must export a callable `tool`"
 
+    # ``run_agent`` is syncified: callable synchronously (``run_agent(...)``) with
+    # an async companion (``await run_agent.aio(...)``), backed by a coroutine.
     run_agent = getattr(adapter, "run_agent", None)
-    assert inspect.iscoroutinefunction(run_agent), f"{name}: must export an async `run_agent`"
-    params = inspect.signature(run_agent).parameters
+    assert callable(run_agent), f"{name}: must export a callable `run_agent`"
+    assert callable(getattr(run_agent, "aio", None)), (
+        f"{name}: `run_agent` must be syncified (sync-by-default with an `.aio` async variant)"
+    )
+    underlying = getattr(run_agent, "fn", None)
+    assert inspect.iscoroutinefunction(underlying), f"{name}: `run_agent` must wrap an async coroutine"
+    params = inspect.signature(underlying).parameters
     for required in REQUIRED_RUN_AGENT_PARAMS:
         assert required in params, f"{name}: `run_agent` must accept `{required}`"
 
