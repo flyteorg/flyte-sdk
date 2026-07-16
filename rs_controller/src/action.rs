@@ -64,8 +64,7 @@ impl Action {
     pub fn get_full_name(&self) -> String {
         format!(
             "{}:{}",
-            &self
-                .action_id
+            self.action_id
                 .run
                 .as_ref()
                 .expect("Action ID missing run")
