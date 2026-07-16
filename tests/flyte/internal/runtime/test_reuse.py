@@ -224,36 +224,6 @@ def test_add_reusable_with_existing_custom_raises_error(container_task, code_bun
     assert "Plugins do not support reusable policy. Only container tasks and pods." in str(excinfo.value)
 
 
-def test_add_reusable_ray_task_becomes_fastray(container_task, code_bundle):
-    """A ray task with a single-replica ReusePolicy is retyped to fastray, keeping its custom spec intact."""
-    container_task.type = "ray"
-    container_task.custom = {"rayCluster": {"headGroupSpec": {}}}
-
-    modified_task = add_reusable(
-        task=container_task,
-        reuse_policy=ReusePolicy(replicas=1),
-        code_bundle=code_bundle,
-    )
-
-    assert modified_task.type == "fastray"
-    assert modified_task.custom["rayCluster"] == {"headGroupSpec": {}}
-
-
-def test_add_reusable_ray_task_multi_replica_raises(container_task, code_bundle):
-    """Reusable Ray tasks only support one shared cluster; replicas > 1 must raise."""
-    container_task.type = "ray"
-    container_task.custom = {"rayCluster": {"headGroupSpec": {}}}
-
-    with pytest.raises(Exception) as excinfo:
-        add_reusable(
-            task=container_task,
-            reuse_policy=ReusePolicy(replicas=(1, 3)),
-            code_bundle=code_bundle,
-        )
-
-    assert "support exactly 1 replica" in str(excinfo.value)
-
-
 def test_add_reusable_none_policy(container_task, code_bundle):
     """Test that passing None as reuse policy returns the task unchanged."""
     original_task = tasks_pb2.TaskTemplate()

@@ -132,6 +132,27 @@ class RayFunctionTask(AsyncFunctionTaskTemplate):
     plugin_config: RayJobConfig
     debuggable: bool = True
 
+    # Ray tasks may declare a ReusePolicy: the job then runs on a shared, reusable RayCluster
+    # (keyed by the hash of the Ray spec) instead of an ephemeral per-task cluster.
+    supports_reuse_policy: typing.ClassVar[bool] = True
+
+    def apply_reuse_policy(self, task_template):
+        """Validate the environment's ReusePolicy and retype the task for the shared-cluster
+        backend plugin. The Ray custom spec is left untouched — the backend keys the shared
+        cluster off its hash."""
+        import flyte.errors
+
+        reuse_policy = self.reusable
+        # `replicas` maps to the number of shared clusters; only 1 is supported for now.
+        if reuse_policy is not None and reuse_policy.max_replicas != 1:
+            raise flyte.errors.RuntimeUserError(
+                "BadConfiguration",
+                f"Reusable Ray tasks currently support exactly 1 replica (one shared RayCluster); "
+                f"got replicas={reuse_policy.replicas}. Use ReusePolicy(replicas=1).",
+            )
+        task_template.type = "fastray"
+        return task_template
+
     async def pre(self, *args, **kwargs) -> Dict[str, Any]:
         init_params = {"address": self.plugin_config.address}
 

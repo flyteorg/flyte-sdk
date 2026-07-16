@@ -89,19 +89,6 @@ def add_reusable(
         return task
 
     if task.HasField("custom"):
-        if task.type == "ray":
-            # A Ray task with a ReusePolicy runs on a shared, reusable RayCluster. The backend keys
-            # the cluster off the RayJob spec hash, so the custom spec stays as-is; only the task
-            # type changes to route it to the shared-cluster plugin.
-            # `replicas` maps to the number of shared clusters; only 1 is supported for now.
-            if reuse_policy.max_replicas != 1:
-                raise flyte.errors.RuntimeUserError(
-                    "BadConfiguration",
-                    f"Reusable Ray tasks currently support exactly 1 replica (one shared RayCluster); "
-                    f"got replicas={reuse_policy.replicas}. Use ReusePolicy(replicas=1).",
-                )
-            task.type = "fastray"
-            return task
         raise flyte.errors.RuntimeUserError(
             "BadConfiguration", "Plugins do not support reusable policy. Only container tasks and pods."
         )

@@ -9,7 +9,7 @@ from flyteidl2.plugins.ray_pb2 import RayJob
 from google.protobuf.json_format import MessageToDict, ParseDict
 from kubernetes.client import V1Container, V1PodSpec, V1ResourceRequirements
 
-from flyteplugins.ray.task import HeadNodeConfig, RayJobConfig, WorkerNodeConfig
+from flyteplugins.ray.task import HeadNodeConfig, RayFunctionTask, RayJobConfig, WorkerNodeConfig
 
 
 @pytest.fixture
@@ -209,3 +209,36 @@ def test_pod_template_without_resources_is_unchanged(sctx):
     container = _primary_container(ray_job.ray_cluster.worker_group_spec[0].k8s_pod)
     assert container["args"] == ["wut update-aws-credentials-file default"]
     assert container["resources"]["requests"]["cpu"] == "15000m"
+
+
+def test_apply_reuse_policy_retypes_to_fastray():
+    import flyte
+    from flyteidl2.core import tasks_pb2
+
+    task = RayFunctionTask(
+        name="t",
+        interface=None,
+        func=lambda: None,
+        plugin_config=RayJobConfig(worker_node_config=[]),
+        reusable=flyte.ReusePolicy(replicas=1),
+    )
+    template = tasks_pb2.TaskTemplate(type="ray")
+    out = task.apply_reuse_policy(template)
+    assert out.type == "fastray"
+
+
+def test_apply_reuse_policy_rejects_multiple_replicas():
+    import flyte
+    import flyte.errors
+    import pytest
+    from flyteidl2.core import tasks_pb2
+
+    task = RayFunctionTask(
+        name="t",
+        interface=None,
+        func=lambda: None,
+        plugin_config=RayJobConfig(worker_node_config=[]),
+        reusable=flyte.ReusePolicy(replicas=(1, 3)),
+    )
+    with pytest.raises(flyte.errors.RuntimeUserError, match="exactly 1 replica"):
+        task.apply_reuse_policy(tasks_pb2.TaskTemplate(type="ray"))
