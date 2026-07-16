@@ -7,7 +7,7 @@ import hashlib
 import json
 import pathlib
 import sys
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -34,7 +34,7 @@ from flyte.ai.agents._tools import (
 )
 from flyte.ai.agents.agent import (
     _abbreviate,
-    _hitl_approval,
+    _condition_approval,
     _resolve_tools,
     _stringify_tool_result,
     _summarize_signature,
@@ -1860,23 +1860,54 @@ class TestMemoryPersistenceOnFailure:
 
 
 # ----------------------------------------------------------------------------
-# Default HITL approval callback
+# Default HITL approval callback (flyte-native conditions)
 # ----------------------------------------------------------------------------
 
 
+def _sensitive_tool() -> AgentTool:
+    return AgentTool(
+        name="sensitive",
+        description="d",
+        parameters={"type": "object", "properties": {}},
+        execute=AsyncMock(),
+        requires_approval=True,
+    )
+
+
+def _mock_new_condition(decision: bool) -> MagicMock:
+    """A stand-in for ``flyte.new_condition`` whose condition resolves to *decision*."""
+    condition = MagicMock()
+    condition.wait.aio = AsyncMock(return_value=decision)
+    new_condition = MagicMock()
+    new_condition.aio = AsyncMock(return_value=condition)
+    return new_condition
+
+
 @pytest.mark.asyncio
-class TestDefaultHitlApproval:
-    async def test_denies_when_hitl_plugin_missing(self):
-        t = AgentTool(
-            name="sensitive",
-            description="d",
-            parameters={"type": "object", "properties": {}},
-            execute=AsyncMock(),
-            requires_approval=True,
-        )
-        # Force ``import flyteplugins.hitl`` to raise ImportError.
-        with patch.dict(sys.modules, {"flyteplugins.hitl": None}):
-            approved = await _hitl_approval(t, {"k": "v"})
+class TestDefaultConditionApproval:
+    async def test_denies_outside_task_context(self):
+        # flyte.ctx() is falsy outside a task, so the callback denies without
+        # registering a condition.
+        approved = await _condition_approval(_sensitive_tool(), {"k": "v"})
+        assert approved is False
+
+    async def test_waits_on_condition_and_approves(self):
+        new_condition = _mock_new_condition(decision=True)
+        with patch("flyte.ctx", return_value=MagicMock()), patch("flyte.new_condition", new_condition):
+            approved = await _condition_approval(_sensitive_tool(), {"k": "v"})
+        assert approved is True
+        name = new_condition.aio.call_args.args[0]
+        assert name.startswith("approve_sensitive_")
+        kwargs = new_condition.aio.call_args.kwargs
+        assert kwargs["data_type"] is bool
+        assert kwargs["prompt_type"] == "markdown"
+        assert "`sensitive`" in kwargs["prompt"]
+        assert '"k": "v"' in kwargs["prompt"]
+
+    async def test_waits_on_condition_and_denies(self):
+        new_condition = _mock_new_condition(decision=False)
+        with patch("flyte.ctx", return_value=MagicMock()), patch("flyte.new_condition", new_condition):
+            approved = await _condition_approval(_sensitive_tool(), {"k": "v"})
         assert approved is False
 
 
