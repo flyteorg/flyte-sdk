@@ -74,7 +74,7 @@ def ai_node(
     timeline = ReportTimeline() if observability else None
 
     async def _ai(state: dict) -> dict:
-        from langchain_core.messages import message_to_dict, messages_from_dict, messages_to_dict
+        from langchain_core.messages import messages_from_dict, messages_to_dict
 
         messages = state["messages"]
 
