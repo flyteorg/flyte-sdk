@@ -112,8 +112,9 @@ RUN --mount=type=cache,sharing=locked,mode=0777,target=/tmp/poetry_cache,id=poet
 """)
 
 # Pinned pixi binary, copied out of the official pixi image (mirrors the pinned uv stage in
-# DOCKER_FILE_UV_BASE_TEMPLATE below).
-PIXI_VERSION = "0.73.0"
+# DOCKER_FILE_UV_BASE_TEMPLATE below). Note: the ghcr.io/prefix-dev/pixi image tags come from
+# the pixi-docker repo and can lag behind pixi releases.
+PIXI_VERSION = "0.72.2"
 
 # Where the pixi project (manifest, lock, and `.pixi/envs/*`) lives inside the image. Kept
 # stable across pixi layers so a later superset manifest incrementally updates the same

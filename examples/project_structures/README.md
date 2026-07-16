@@ -266,7 +266,7 @@ env = flyte.TaskEnvironment(
 [workspace]
 name = "pixi-project"
 channels = ["conda-forge"]
-platforms = ["linux-64"]
+platforms = ["linux-64", "linux-aarch64"]
 
 [dependencies]
 python = "3.13.*"

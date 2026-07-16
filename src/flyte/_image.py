@@ -1395,6 +1395,10 @@ class Image:
         `.with_env_vars({"CONDA_OVERRIDE_CUDA": "<version>"})` *before* this layer so install-time
         validation of the `__cuda` virtual package succeeds.
 
+        The manifest's `platforms` must cover every architecture the image is built for — e.g. a
+        multi-arch (`linux/amd64` + `linux/arm64`) image needs `platforms = ["linux-64", "linux-aarch64"]`
+        in the manifest, or `pixi install` fails for the missing architecture at build time.
+
         :param manifest_file: path to the pixi manifest (`pixi.toml` or `pyproject.toml`), or to the pixi
             project directory containing it
         :param pixi_lock: path to the pixi.lock file, if not specified, will use the default pixi.lock file in the

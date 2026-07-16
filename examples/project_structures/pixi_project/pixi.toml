@@ -1,7 +1,9 @@
 [workspace]
 name = "pixi-project"
 channels = ["conda-forge"]
-platforms = ["linux-64"]
+# Must cover every architecture the image is built for (flyte images are
+# linux/amd64 by default, and amd64 + arm64 for multi-arch builds).
+platforms = ["linux-64", "linux-aarch64"]
 
 # Conda packages, resolved from the channels above. Python itself must be a
 # dependency: the pixi environment becomes the image's runtime environment.
