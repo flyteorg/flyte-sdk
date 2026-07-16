@@ -208,8 +208,13 @@ class RayFunctionTask(AsyncFunctionTaskTemplate):
         custom = MessageToDict(ray_job)
 
         if self.reusable is not None:
-            # `replicas` maps to the shared cluster's worker scaling (min/max worker replicas);
-            # scaledown_ttl becomes the Ray autoscaler's idle timeout.
+            # `replicas` is the number of shared clusters; only 1 is supported for now.
+            if self.reusable.max_replicas != 1:
+                raise flyte.errors.RuntimeUserError(
+                    "BadConfiguration",
+                    f"Reusable Ray tasks currently support exactly 1 replica (one shared RayCluster); "
+                    f"got replicas={self.reusable.replicas}. Use ReusePolicy(replicas=1).",
+                )
             idle_ttl = self.reusable.idle_ttl
             scaledown_ttl = self.reusable.get_scaledown_ttl()
             # Same field names as the actor (fast-task) reuse spec, so the backend can share
