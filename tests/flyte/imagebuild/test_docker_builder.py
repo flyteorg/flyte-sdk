@@ -781,11 +781,43 @@ async def test_pixi_handler_with_project_install():
         assert not (expected_dst_path / "memo.txt").exists(), "memo.txt should be excluded"
 
 
-def test_remote_builder_raises_for_pixi_project():
-    """The image builder IDL has no pixi layer yet; the remote builder must fail loudly
-    rather than silently skipping the environment."""
+def test_pixi_project_lowers_to_primitive_layers():
+    """The imagebuilder IDL has no pixi layer; PixiProject is lowered into apt / copy /
+    commands / env primitives that both builders' IDL understands."""
+    from flyte._image import Env
+    from flyte._internal.imagebuild.utils import pixi_project_to_primitive_layers
+
+    with tempfile.TemporaryDirectory() as tmp_user:
+        user_folder = Path(tmp_user)
+        manifest = user_folder / "pixi.toml"
+        manifest.write_text("[project]\nname = 'test-project'")
+        pixi_lock = user_folder / "pixi.lock"
+        pixi_lock.write_text("version: 6")
+
+        layer = PixiProject(manifest=manifest.absolute(), pixi_lock=pixi_lock.absolute())
+        lowered = pixi_project_to_primitive_layers(layer)
+
+        apt = [lyr for lyr in lowered if isinstance(lyr, AptPackages)]
+        commands = [cmd for lyr in lowered if isinstance(lyr, Commands) for cmd in lyr.commands]
+        copies = [lyr for lyr in lowered if isinstance(lyr, CopyConfig)]
+        envs = dict(kv for lyr in lowered if isinstance(lyr, Env) for kv in lyr.env_vars)
+
+        assert "curl" in apt[0].packages
+        assert any(f"PIXI_VERSION=v{PIXI_VERSION}" in cmd for cmd in commands)
+        install_cmd = next(cmd for cmd in commands if "pixi install" in cmd)
+        assert "--manifest-path /opt/pixi-project/pixi.toml" in install_cmd
+        assert "--environment default" in install_cmd
+        assert "--locked" in install_cmd
+        assert {c.dst for c in copies} == {"/opt/pixi-project/pixi.toml", "/opt/pixi-project/pixi.lock"}
+        assert envs["VIRTUAL_ENV"] == "/opt/pixi-project/.pixi/envs/default"
+        assert envs["UV_PYTHON"] == "/opt/pixi-project/.pixi/envs/default/bin/python"
+        assert envs["PATH"].startswith("/opt/pixi-project/.pixi/envs/default/bin:")
+
+
+def test_remote_builder_layers_proto_for_pixi_project():
+    """_get_layers_proto expands a PixiProject into IDL-supported layers instead of
+    silently skipping it."""
     from flyte._internal.imagebuild.remote_builder import _get_layers_proto
-    from flyte.errors import ImageBuildError
 
     with tempfile.TemporaryDirectory() as tmp_context, tempfile.TemporaryDirectory() as tmp_user:
         manifest = Path(tmp_user) / "pixi.toml"
@@ -795,8 +827,13 @@ def test_remote_builder_raises_for_pixi_project():
             manifest_file=manifest,
         )
 
-        with pytest.raises(ImageBuildError, match=r"not yet supported by the remote image builder"):
-            _get_layers_proto(img, Path(tmp_context))
+        spec = _get_layers_proto(img, Path(tmp_context))
+        all_commands = [cmd for lyr in spec.layers for cmd in lyr.commands.cmd]
+        assert any("pixi install" in cmd for cmd in all_commands)
+        env_layers = [lyr.env.env_variables for lyr in spec.layers if lyr.WhichOneof("layer") == "env"]
+        assert any(env.get("VIRTUAL_ENV") == "/opt/pixi-project/.pixi/envs/default" for env in env_layers)
+        copy_dsts = {lyr.copy_config.dst for lyr in spec.layers if lyr.WhichOneof("layer") == "copy_config"}
+        assert "/opt/pixi-project/pixi.toml" in copy_dsts
 
 
 def test_get_secret_commands_deduplicates_secrets(monkeypatch):

@@ -41,6 +41,7 @@ from flyte._internal.imagebuild.utils import (
     copy_files_to_context,
     get_and_list_dockerignore,
     get_uv_project_editable_dependencies,
+    pixi_project_to_primitive_layers,
 )
 from flyte._internal.runtime.task_serde import get_security_context
 from flyte._logging import logger
@@ -233,7 +234,16 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
     layers = []
     docker_ignore_patterns = get_and_list_dockerignore(image)
 
+    # The imagebuilder IDL has no pixi layer, so lower each PixiProject into primitive
+    # layers (apt / copy / commands / env) that the remote builder understands.
+    expanded_layers: typing.List[typing.Any] = []
     for layer in image._layers:
+        if isinstance(layer, PixiProject):
+            expanded_layers.extend(pixi_project_to_primitive_layers(layer))
+        else:
+            expanded_layers.append(layer)
+
+    for layer in expanded_layers:
         secret_mounts = None
         pip_options = image_definition_pb2.PipOptions()
 
@@ -374,13 +384,6 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
                 )
             )
             layers.append(uv_layer)
-        elif isinstance(layer, PixiProject):
-            # The image builder protobuf IDL has no PixiProject layer yet, and silently
-            # skipping it would produce an image without the user's environment.
-            raise flyte.errors.ImageBuildError(
-                "Pixi projects are not yet supported by the remote image builder. "
-                'Use the local image builder instead (e.g. flyte.init_from_config(image_builder="local")).'
-            )
         elif isinstance(layer, PoetryProject):
             extra_args = layer.extra_args or ""
             if layer.project_install_mode == "dependencies_only":
@@ -465,7 +468,7 @@ def _get_build_secrets_from_image(image: Image) -> Optional[typing.List[Secret]]
     seen_secrets: typing.Set[typing.Tuple[typing.Optional[str], str]] = set()
     DEFAULT_SECRET_DIR = Path("/etc/flyte/secrets")
     for layer in image._layers:
-        if isinstance(layer, (PipOption, Commands, AptPackages)) and layer.secret_mounts is not None:
+        if isinstance(layer, (PipOption, Commands, AptPackages, PixiProject)) and layer.secret_mounts is not None:
             for secret_mount in layer.secret_mounts:
                 # Mount all the image secrets to a default directory that will be passed to the BuildKit server.
                 if isinstance(secret_mount, Secret):

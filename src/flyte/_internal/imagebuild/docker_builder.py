@@ -45,6 +45,8 @@ from flyte._internal.imagebuild.image_builder import (
     PersistentCacheImageChecker,
 )
 from flyte._internal.imagebuild.utils import (
+    PIXI_PROJECT_DIR,
+    PIXI_VERSION,
     copy_files_to_context,
     get_and_list_dockerignore,
     get_uv_editable_install_mounts,
@@ -110,16 +112,6 @@ RUN --mount=type=cache,sharing=locked,mode=0777,target=/tmp/poetry_cache,id=poet
    $SECRET_MOUNT \
    VIRTUAL_ENV=$${VIRTUAL_ENV-/opt/venv} poetry install $POETRY_INSTALL_ARGS -C /root/.flyte/$PYPROJECT_PATH
 """)
-
-# Pinned pixi binary, copied out of the official pixi image (mirrors the pinned uv stage in
-# DOCKER_FILE_UV_BASE_TEMPLATE below). Note: the ghcr.io/prefix-dev/pixi image tags come from
-# the pixi-docker repo and can lag behind pixi releases.
-PIXI_VERSION = "0.72.2"
-
-# Where the pixi project (manifest, lock, and `.pixi/envs/*`) lives inside the image. Kept
-# stable across pixi layers so a later superset manifest incrementally updates the same
-# environment instead of resolving from scratch.
-PIXI_PROJECT_DIR = "/opt/pixi-project"
 
 PIXI_INSTALL_TEMPLATE = Template("""\
 COPY --from=ghcr.io/prefix-dev/pixi:$PIXI_VERSION /usr/local/bin/pixi /usr/local/bin/pixi
