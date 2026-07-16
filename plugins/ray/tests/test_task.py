@@ -244,35 +244,3 @@ def test_custom_config_rejects_multiple_reuse_replicas(sctx):
     # `replicas` is the number of shared clusters; only 1 is supported for now.
     with pytest.raises(flyte.errors.RuntimeUserError, match="exactly 1 replica"):
         task.custom_config(sctx)
-
-
-def test_custom_config_rejects_concurrency_and_scaledown(sctx):
-    import flyte.errors
-
-    with pytest.raises(flyte.errors.RuntimeUserError, match="concurrency is not supported"):
-        RayFunctionTask(
-            name="t",
-            interface=None,
-            func=lambda: None,
-            plugin_config=RayJobConfig(worker_node_config=[]),
-            reusable=flyte.ReusePolicy(replicas=1, concurrency=2),
-        ).custom_config(sctx)
-
-    with pytest.raises(flyte.errors.RuntimeUserError, match="scaledown_ttl is not supported"):
-        RayFunctionTask(
-            name="t",
-            interface=None,
-            func=lambda: None,
-            plugin_config=RayJobConfig(worker_node_config=[]),
-            reusable=flyte.ReusePolicy(replicas=1, scaledown_ttl=60),
-        ).custom_config(sctx)
-
-    # Defaults pass.
-    custom = RayFunctionTask(
-        name="t",
-        interface=None,
-        func=lambda: None,
-        plugin_config=RayJobConfig(worker_node_config=[]),
-        reusable=flyte.ReusePolicy(replicas=1, idle_ttl=600),
-    ).custom_config(sctx)
-    assert custom["reusePolicy"]["ttl_seconds"] == 600

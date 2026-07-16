@@ -132,9 +132,6 @@ class RayFunctionTask(AsyncFunctionTaskTemplate):
     task_type: str = "ray"
     plugin_config: RayJobConfig
     debuggable: bool = True
-
-    # Ray tasks may declare a ReusePolicy: the job then runs on a shared, reusable RayCluster
-    # (keyed by the hash of the Ray spec) instead of an ephemeral per-task cluster.
     supports_reuse_policy: typing.ClassVar[bool] = True
 
     async def pre(self, *args, **kwargs) -> Dict[str, Any]:
@@ -217,26 +214,8 @@ class RayFunctionTask(AsyncFunctionTaskTemplate):
                     f"Reusable Ray tasks currently support exactly 1 replica (one shared RayCluster); "
                     f"got replicas={self.reusable.replicas}. Use ReusePolicy(replicas=1).",
                 )
-            # concurrency and scaledown_ttl have no meaning for a shared RayCluster (Ray schedules
-            # work on resource availability, and worker scaling belongs to RayJobConfig) — reject
-            # anything other than the ReusePolicy defaults so users aren't silently ignored.
-            if self.reusable.concurrency != 1:
-                raise flyte.errors.RuntimeUserError(
-                    "BadConfiguration",
-                    f"concurrency is not supported for reusable Ray tasks; got "
-                    f"concurrency={self.reusable.concurrency}.",
-                )
-            scaledown_ttl = self.reusable.get_scaledown_ttl()
-            if scaledown_ttl is not None and scaledown_ttl != timedelta(seconds=30):
-                raise flyte.errors.RuntimeUserError(
-                    "BadConfiguration",
-                    f"scaledown_ttl is not supported for reusable Ray tasks; got "
-                    f"scaledown_ttl={scaledown_ttl}.",
-                )
             idle_ttl = self.reusable.idle_ttl
             scaledown_ttl = self.reusable.get_scaledown_ttl()
-            # Same field names as the actor (fast-task) reuse spec, so the backend can share
-            # its parsing.
             custom["reusePolicy"] = {
                 "parallelism": self.reusable.concurrency,
                 "min_replica_count": self.reusable.min_replicas,

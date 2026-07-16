@@ -23,7 +23,7 @@ ray_config = RayJobConfig(
 )
 
 image = (
-    flyte.Image.from_debian_base(name="ray")
+    flyte.Image.from_debian_base(name="flyte")
     .with_apt_packages("wget")
     .with_pip_packages("ray[default]==2.46.0", "flyteplugins-ray", "pip", "mypy")
 )
@@ -33,7 +33,7 @@ ray_env = flyte.TaskEnvironment(
     plugin_config=ray_config,
     image=image,
     resources=flyte.Resources(cpu=(1, 2), memory=("2000Mi", "4000Mi")),
-    reusable=flyte.ReusePolicy(replicas=1, idle_ttl=600),
+    # reusable=flyte.ReusePolicy(replicas=1, idle_ttl=600),
 )
 
 
