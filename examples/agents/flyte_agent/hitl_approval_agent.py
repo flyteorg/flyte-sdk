@@ -1,7 +1,7 @@
 """HITL approval agent — pauses for a human before running sensitive tools.
 
-This example wires :class:`flyte.ai.agents.Agent` to the
-``flyteplugins-hitl`` plugin so that designated tools require explicit human
+This example uses :class:`flyte.ai.agents.Agent` with flyte-native conditions
+(:func:`flyte.new_condition`) so that designated tools require explicit human
 approval before they execute.
 
 Pattern
@@ -10,9 +10,11 @@ Pattern
 1. Mark sensitive tools with ``@tool(requires_approval=True)``.
 2. When the LLM asks the agent to run such a tool, the harness invokes the
    ``approval_callback`` and waits for a boolean decision.
-3. The default callback uses ``flyteplugins.hitl.new_event`` to spin up a
-   human-input web form scoped to the current run. If denied, the agent
-   receives a synthetic tool message explaining the rejection so it can
+3. The default callback registers a run-scoped condition via
+   ``flyte.new_condition`` and blocks until a human signals it — from the
+   Flyte UI, the CLI (``flyte signal condition <run> <action> true``), or
+   programmatically via ``flyte.remote.Condition.signal``. If denied, the
+   agent receives a synthetic tool message explaining the rejection so it can
    recover gracefully.
 
 Deploy::
@@ -26,8 +28,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import flyteplugins.hitl as hitl
-
 import flyte
 from flyte.ai.agents import Agent, tool
 
@@ -36,16 +36,11 @@ env = flyte.TaskEnvironment(
     image=(
         flyte.Image.from_debian_base(python_version=(3, 12), install_flyte=False).with_pip_packages(
             "flyte==2.4.4",
-            "flyteplugins-hitl==2.4.4",
-            "fastapi",
-            "uvicorn",
-            "python-multipart",
             "litellm",
         )
     ),
     resources=flyte.Resources(cpu=1, memory="512Mi"),
     secrets=[flyte.Secret(key="internal-anthropic-api-key", as_env_var="ANTHROPIC_API_KEY")],
-    depends_on=[hitl.env],
 )
 
 
@@ -111,4 +106,11 @@ async def concierge(request: str) -> str:
 
 if __name__ == "__main__":
     flyte.init_from_config()
-    flyte.run(concierge, request="Refund order #12345 to the customer.")
+    run = flyte.run(concierge, request="Refund order #12345 to the customer.")
+    print("run url:", run.url)
+    # The run pauses on an `approve_issue_refund_*` condition. Approve it from
+    # the UI, or programmatically:
+    #
+    #   import flyte.remote as remote
+    #   for condition in remote.Condition.listall(run_name=run.name):
+    #       condition.signal(True)
