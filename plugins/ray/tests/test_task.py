@@ -231,15 +231,16 @@ def test_custom_config_records_reuse_policy(sctx):
     assert "rayCluster" in custom
 
 
-def test_custom_config_rejects_multiple_reuse_replicas(sctx):
-    import flyte.errors
-
+def test_custom_config_reuse_replicas_map_to_worker_scaling(sctx):
     task = RayFunctionTask(
         name="t",
         interface=None,
         func=lambda: None,
         plugin_config=RayJobConfig(worker_node_config=[]),
-        reusable=flyte.ReusePolicy(replicas=(1, 3)),
+        reusable=flyte.ReusePolicy(replicas=(1, 3), scaledown_ttl=60),
     )
-    with pytest.raises(flyte.errors.RuntimeUserError, match="exactly 1 replica"):
-        task.custom_config(sctx)
+    custom = task.custom_config(sctx)
+    # replicas maps to the shared cluster's worker scaling — multiple replicas are allowed.
+    assert custom["reusePolicy"]["min_replica_count"] == 1
+    assert custom["reusePolicy"]["replica_count"] == 3
+    assert custom["reusePolicy"]["scaledown_ttl_seconds"] == 60
