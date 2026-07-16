@@ -211,10 +211,7 @@ def test_pod_template_without_resources_is_unchanged(sctx):
     assert container["resources"]["requests"]["cpu"] == "15000m"
 
 
-def test_apply_reuse_policy_records_policy_in_custom():
-    import flyte
-    from flyteidl2.core import tasks_pb2
-
+def test_custom_config_records_reuse_policy(sctx):
     task = RayFunctionTask(
         name="t",
         interface=None,
@@ -222,22 +219,20 @@ def test_apply_reuse_policy_records_policy_in_custom():
         plugin_config=RayJobConfig(worker_node_config=[]),
         reusable=flyte.ReusePolicy(replicas=1, idle_ttl=600),
     )
-    template = tasks_pb2.TaskTemplate(type="ray")
-    template.custom.update({"rayCluster": {"headGroupSpec": {}}})
-    out = task.apply_reuse_policy(template)
-    # Task type is unchanged; the backend routes on the reusePolicy custom field.
-    assert out.type == "ray"
-    assert out.custom["reusePolicy"]["replicas"] == 1
-    assert out.custom["reusePolicy"]["idleTtlSeconds"] == 600
-    # The Ray spec itself is untouched.
-    assert out.custom["rayCluster"] == {"headGroupSpec": {}}
+    custom = task.custom_config(sctx)
+    assert custom["reusePolicy"] == {
+        "parallelism": 1,
+        "min_replica_count": 1,
+        "replica_count": 1,
+        "ttl_seconds": 600,
+        "scaledown_ttl_seconds": 30,
+    }
+    # The rest of the spec still parses as a RayJob (the extra field is ignored by the proto).
+    assert "rayCluster" in custom
 
 
-def test_apply_reuse_policy_rejects_multiple_replicas():
-    import flyte
+def test_custom_config_rejects_multiple_reuse_replicas(sctx):
     import flyte.errors
-    import pytest
-    from flyteidl2.core import tasks_pb2
 
     task = RayFunctionTask(
         name="t",
@@ -247,4 +242,4 @@ def test_apply_reuse_policy_rejects_multiple_replicas():
         reusable=flyte.ReusePolicy(replicas=(1, 3)),
     )
     with pytest.raises(flyte.errors.RuntimeUserError, match="exactly 1 replica"):
-        task.apply_reuse_policy(tasks_pb2.TaskTemplate(type="ray"))
+        task.custom_config(sctx)

@@ -145,8 +145,6 @@ class TaskEnvironment(Environment):
     def __post_init__(self) -> None:
         super().__post_init__()
         if self.reusable is not None and self.plugin_config is not None:
-            # Plugins opt in to reuse by setting supports_reuse_policy = True on their task class
-            # (e.g. Ray, whose backend runs reusable shared RayClusters).
             from flyte.extend import TaskPluginRegistry
 
             plugin_cls = TaskPluginRegistry.find(type(self.plugin_config))

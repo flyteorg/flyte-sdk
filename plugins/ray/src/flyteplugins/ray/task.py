@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 import flyte
+import flyte.errors
 import yaml
 from flyte import PodTemplate, Resources
 from flyte.extend import (
@@ -136,35 +137,6 @@ class RayFunctionTask(AsyncFunctionTaskTemplate):
     # (keyed by the hash of the Ray spec) instead of an ephemeral per-task cluster.
     supports_reuse_policy: typing.ClassVar[bool] = True
 
-    def apply_reuse_policy(self, task_template):
-        """Validate the environment's ReusePolicy and record it in the task's custom (RayJob)
-        spec. The task type stays "ray": the backend routes the task to a shared, reusable
-        RayCluster when the custom spec carries a reuse policy, and runs an ephemeral cluster
-        otherwise. The extra field is unknown to the RayJob proto and ignored by its
-        unmarshalling."""
-        import flyte.errors
-
-        reuse_policy = self.reusable
-        if reuse_policy is None:
-            return task_template
-        # `replicas` maps to the number of shared clusters; only 1 is supported for now.
-        if reuse_policy.max_replicas != 1:
-            raise flyte.errors.RuntimeUserError(
-                "BadConfiguration",
-                f"Reusable Ray tasks currently support exactly 1 replica (one shared RayCluster); "
-                f"got replicas={reuse_policy.replicas}. Use ReusePolicy(replicas=1).",
-            )
-        idle_ttl = reuse_policy.idle_ttl
-        task_template.custom.update(
-            {
-                "reusePolicy": {
-                    "replicas": reuse_policy.max_replicas,
-                    "idleTtlSeconds": idle_ttl.total_seconds() if idle_ttl else None,  # type: ignore[union-attr]
-                }
-            }
-        )
-        return task_template
-
     async def pre(self, *args, **kwargs) -> Dict[str, Any]:
         init_params = {"address": self.plugin_config.address}
 
@@ -233,7 +205,29 @@ class RayFunctionTask(AsyncFunctionTaskTemplate):
             shutdown_after_job_finishes=cfg.shutdown_after_job_finishes,
         )
 
-        return MessageToDict(ray_job)
+        custom = MessageToDict(ray_job)
+
+        if self.reusable is not None:
+            # `replicas` maps to the number of shared clusters; only 1 is supported for now.
+            if self.reusable.max_replicas != 1:
+                raise flyte.errors.RuntimeUserError(
+                    "BadConfiguration",
+                    f"Reusable Ray tasks currently support exactly 1 replica (one shared RayCluster); "
+                    f"got replicas={self.reusable.replicas}. Use ReusePolicy(replicas=1).",
+                )
+            idle_ttl = self.reusable.idle_ttl
+            scaledown_ttl = self.reusable.get_scaledown_ttl()
+            # Same field names as the actor (fast-task) reuse spec, so the backend can share
+            # its parsing.
+            custom["reusePolicy"] = {
+                "parallelism": self.reusable.concurrency,
+                "min_replica_count": self.reusable.min_replicas,
+                "replica_count": self.reusable.max_replicas,
+                "ttl_seconds": idle_ttl.total_seconds() if idle_ttl else None,  # type: ignore[union-attr]
+                "scaledown_ttl_seconds": scaledown_ttl.total_seconds() if scaledown_ttl else None,
+            }
+
+        return custom
 
 
 TaskPluginRegistry.register(config_type=RayJobConfig, plugin=RayFunctionTask)
