@@ -211,7 +211,7 @@ def test_pod_template_without_resources_is_unchanged(sctx):
     assert container["resources"]["requests"]["cpu"] == "15000m"
 
 
-def test_apply_reuse_policy_retypes_to_fastray():
+def test_apply_reuse_policy_records_policy_in_custom():
     import flyte
     from flyteidl2.core import tasks_pb2
 
@@ -220,11 +220,17 @@ def test_apply_reuse_policy_retypes_to_fastray():
         interface=None,
         func=lambda: None,
         plugin_config=RayJobConfig(worker_node_config=[]),
-        reusable=flyte.ReusePolicy(replicas=1),
+        reusable=flyte.ReusePolicy(replicas=1, idle_ttl=600),
     )
     template = tasks_pb2.TaskTemplate(type="ray")
+    template.custom.update({"rayCluster": {"headGroupSpec": {}}})
     out = task.apply_reuse_policy(template)
-    assert out.type == "fastray"
+    # Task type is unchanged; the backend routes on the reusePolicy custom field.
+    assert out.type == "ray"
+    assert out.custom["reusePolicy"]["replicas"] == 1
+    assert out.custom["reusePolicy"]["idleTtlSeconds"] == 600
+    # The Ray spec itself is untouched.
+    assert out.custom["rayCluster"] == {"headGroupSpec": {}}
 
 
 def test_apply_reuse_policy_rejects_multiple_replicas():
