@@ -289,9 +289,31 @@ class RunArguments:
             )
         },
     )
-    # TODO: add a `--recover-from <run>` option (recover a fresh run from a prior run: reuse its
-    # succeeded actions) once the flyteidl2 RunSpec.recover field + backend support ship. Hidden
-    # options still surface in `flyte gen docs`, so it's omitted entirely for now.
+    recover_from: str | None = field(
+        default=None,
+        metadata={
+            "click.option": click.Option(
+                ["--recover-from"],
+                type=str,
+                default=None,
+                help="Recover a fresh run from a prior run: reuse its succeeded actions and re-run "
+                "only what failed or changed. Remote-only.",
+            )
+        },
+    )
+    force_rerun_action: List[str] = field(
+        default_factory=list,
+        metadata={
+            "click.option": click.Option(
+                ["--force-rerun-action"],
+                type=str,
+                multiple=True,
+                help="With --recover-from: name of an action to re-execute even though it "
+                "succeeded in the prior run. Repeatable. A listed parent re-enqueues its "
+                "children (list them too to force the whole subtree); unknown names are ignored.",
+            )
+        },
+    )
     rerun_from: str | None = field(
         default=None,
         metadata={
@@ -428,6 +450,8 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
                 max_action_concurrency=self.run_args.max_action_concurrency,
                 labels=self.run_args.parsed_labels(),
                 queue=self.run_args.queue,
+                recover=self.run_args.recover_from,
+                recover_force_rerun_actions=self.run_args.force_rerun_action or None,
             )
             if self.run_args.rerun_from:
                 # Re-run a prior run with THIS local code, reusing the prior run's inputs.
@@ -514,6 +538,10 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
         )
         if self.run_args.rerun_from and self.run_args.local:
             raise click.UsageError("--rerun-from requires remote mode (it cannot be combined with --local)")
+        if self.run_args.recover_from and self.run_args.local:
+            raise click.UsageError("--recover-from requires remote mode (it cannot be combined with --local)")
+        if self.run_args.force_rerun_action and not self.run_args.recover_from:
+            raise click.UsageError("--force-rerun-action requires --recover-from")
         self._validate_required_params(ctx)
         if self.run_args.tui:
             if not self.run_args.local:
@@ -666,6 +694,8 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
                 max_action_concurrency=self.run_args.max_action_concurrency,
                 labels=self.run_args.parsed_labels(),
                 queue=self.run_args.queue,
+                recover=self.run_args.recover_from,
+                recover_force_rerun_actions=self.run_args.force_rerun_action or None,
             )
             result = await execution_context.run.aio(task, **ctx.params)
         except Exception as e:

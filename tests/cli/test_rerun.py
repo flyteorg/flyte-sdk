@@ -1,5 +1,6 @@
 """Tests for the `flyte rerun <run>` CLI command."""
 
+import re
 from unittest import mock
 
 from click.testing import CliRunner
@@ -13,12 +14,11 @@ def test_rerun_registered_on_main():
     assert "rerun" in main.commands
 
 
-def test_rerun_takes_run_name_and_no_recover_flag():
+def test_rerun_has_recover_flag():
+    opts = {o for p in rerun.params for o in p.opts}
+    assert "--recover" in opts
     # Takes the run name as a positional argument.
     assert any(p.name == "run_name" for p in rerun.params)
-    # --recover is omitted until the backend ships (see TODO in _rerun.py).
-    opts = {o for p in rerun.params for o in p.opts}
-    assert "--recover" not in opts
 
 
 def test_parse_kv():
@@ -40,10 +40,52 @@ def test_rerun_delegates_to_runner_rerun():
         result = CliRunner().invoke(rerun, ["my-run", "--name", "n", "-e", "K=V"])
 
     assert result.exit_code == 0, result.output
-    # env parsed, name forwarded; recover is not wired on the CLI yet.
+    # recover flag default False, env parsed, name forwarded.
     _, kwargs = wrc.call_args
-    assert "recover" not in kwargs
+    assert kwargs["recover"] is False
     assert kwargs["name"] == "n"
     assert kwargs["env_vars"] == {"K": "V"}
     assert kwargs["mode"] == "remote"
     runner_obj.rerun.aio.assert_awaited_once_with("my-run")
+
+
+def test_rerun_recover_flag_passed_through():
+    runner_obj = mock.MagicMock()
+    runner_obj.rerun.aio = AsyncMock(return_value=mock.MagicMock(name="new", url="http://x"))
+
+    with (
+        mock.patch("flyte.cli._common.initialize_config") as init_cfg,
+        mock.patch("flyte.with_runcontext", return_value=runner_obj) as wrc,
+    ):
+        init_cfg.return_value = mock.MagicMock(output_format="table")
+        result = CliRunner().invoke(rerun, ["my-run", "--recover"])
+
+    assert result.exit_code == 0, result.output
+    assert wrc.call_args.kwargs["recover"] is True
+
+
+def test_rerun_force_rerun_action_requires_recover():
+    with mock.patch("flyte.cli._common.initialize_config"):
+        result = CliRunner().invoke(rerun, ["my-run", "--force-rerun-action", "a1"])
+    assert result.exit_code != 0
+    # rich-click may style the flag names with ANSI codes (e.g. on CI); strip before matching.
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+    assert "--force-rerun-action requires --recover" in plain
+
+
+def test_rerun_force_rerun_action_passed_through():
+    runner_obj = mock.MagicMock()
+    runner_obj.rerun.aio = AsyncMock(return_value=mock.MagicMock(name="new", url="http://x"))
+
+    with (
+        mock.patch("flyte.cli._common.initialize_config") as init_cfg,
+        mock.patch("flyte.with_runcontext", return_value=runner_obj) as wrc,
+    ):
+        init_cfg.return_value = mock.MagicMock(output_format="table")
+        result = CliRunner().invoke(
+            rerun, ["my-run", "--recover", "--force-rerun-action", "a3", "--force-rerun-action", "a7"]
+        )
+
+    assert result.exit_code == 0, result.output
+    assert wrc.call_args.kwargs["recover"] is True
+    assert wrc.call_args.kwargs["recover_force_rerun_actions"] == ("a3", "a7")

@@ -11,6 +11,7 @@ from flyteidl2.common import identifier_pb2, phase_pb2
 from flyteidl2.workflow import state_service_pb2
 
 from flyte._logging import log, logger
+from flyte._utils.helpers import action_phase_name
 
 from ._action import Action
 from ._service_protocol import ActionsService, StateService
@@ -41,13 +42,11 @@ class ActionCache:
         """
         Add an action to the cache if it doesn't exist. This is invoked by the watch.
         """
-        logger.debug(f"Observing phase {phase_pb2.ActionPhase.Name(state.phase)} for {state.action_id.name}")
+        logger.debug(f"Observing phase {action_phase_name(state.phase)} for {state.action_id.name}")
         if state.output_uri:
             logger.debug(f"Output URI: {state.output_uri}")
         else:
-            logger.warning(
-                f"{state.action_id.name} has no output URI, in phase {phase_pb2.ActionPhase.Name(state.phase)}"
-            )
+            logger.warning(f"{state.action_id.name} has no output URI, in phase {action_phase_name(state.phase)}")
         if state.phase == phase_pb2.ACTION_PHASE_FAILED:
             logger.error(
                 f"Action {state.action_id.name} failed with error (msg):"

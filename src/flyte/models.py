@@ -672,6 +672,7 @@ class ActionPhase(str, enum.Enum):
     - Failed: Action failed during execution
     - Aborted: Action was manually aborted
     - Timed out: Action exceeded its timeout limit
+    - Recovered: Action was recovered as-is from a prior run (terminal, success-equivalent)
 
     This enum can be used for filtering runs and checking execution status.
 
@@ -719,12 +720,16 @@ class ActionPhase(str, enum.Enum):
     TIMED_OUT = "timed_out"
     """Action exceeded its timeout limit and was terminated."""
 
+    RECOVERED = "recovered"
+    """Action was recovered as-is from a prior run; it did not execute in this run.
+    Terminal and success-equivalent."""
+
     @property
     def is_terminal(self) -> bool:
         """
         Check if this phase represents a terminal (final) state.
 
-        Terminal phases are: SUCCEEDED, FAILED, ABORTED, TIMED_OUT.
+        Terminal phases are: SUCCEEDED, FAILED, ABORTED, TIMED_OUT, RECOVERED.
         Once an action reaches a terminal phase, it will not transition to any other phase.
 
         Returns:
@@ -735,6 +740,7 @@ class ActionPhase(str, enum.Enum):
             ActionPhase.FAILED,
             ActionPhase.ABORTED,
             ActionPhase.TIMED_OUT,
+            ActionPhase.RECOVERED,
         )
 
     def to_protobuf_name(self) -> str:
@@ -763,6 +769,10 @@ class ActionPhase(str, enum.Enum):
         """
         from flyteidl2.common import phase_pb2
 
+        # Wire values are stable; tolerate bindings that predate a phase (e.g. RECOVERED
+        # landed in flyteidl2 2.0.28) instead of raising on the enum lookup.
+        if self is ActionPhase.RECOVERED:
+            return getattr(phase_pb2, "ACTION_PHASE_RECOVERED", 10)
         return phase_pb2.ActionPhase.Value(self.to_protobuf_name())
 
     @classmethod
@@ -786,7 +796,14 @@ class ActionPhase(str, enum.Enum):
         """
         from flyteidl2.common import phase_pb2
 
-        name = phase_pb2.ActionPhase.Name(pb_phase)
+        try:
+            name = phase_pb2.ActionPhase.Name(pb_phase)
+        except ValueError:
+            # Proto3 enums are open: the server may send a phase these bindings don't
+            # know. RECOVERED's wire value (10) is stable — map it; otherwise re-raise.
+            if pb_phase == 10:
+                return cls.RECOVERED
+            raise
         if name == "ACTION_PHASE_UNSPECIFIED":
             raise ValueError("Cannot convert UNSPECIFIED phase to ActionPhase")
 

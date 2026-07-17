@@ -93,6 +93,10 @@ class RunService(Protocol):
         self, request: run_service_pb2.GetActionDataRequest
     ) -> run_service_pb2.GetActionDataResponse: ...
 
+    async def get_action_data_u_r_is(
+        self, request: run_service_pb2.GetActionDataURIsRequest
+    ) -> run_service_pb2.GetActionDataURIsResponse: ...
+
     async def list_runs(self, request: run_service_pb2.ListRunsRequest) -> run_service_pb2.ListRunsResponse: ...
 
     async def watch_runs(

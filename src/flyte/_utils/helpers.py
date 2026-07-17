@@ -87,3 +87,19 @@ def _selector_policy():
         yield
     finally:
         asyncio.set_event_loop_policy(original_policy)
+
+
+def action_phase_name(phase: int) -> str:
+    """Human-readable name for an ActionPhase wire value.
+
+    Proto3 enums are open: the server may send values these bindings don't know
+    (e.g. ACTION_PHASE_RECOVERED from a newer flyteidl2), and ``Name()`` raises
+    ValueError on them. Never crash on display — fall back to the known name for
+    stable wire values, or a generic one otherwise.
+    """
+    from flyteidl2.common import phase_pb2
+
+    try:
+        return phase_pb2.ActionPhase.Name(phase)
+    except ValueError:
+        return "ACTION_PHASE_RECOVERED" if phase == 10 else f"ACTION_PHASE_{phase}"

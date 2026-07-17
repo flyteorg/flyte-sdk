@@ -7,7 +7,7 @@ import pathlib
 import sys
 import uuid
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Sequence, Tuple, Union, cast
 
 from flyte._context import Context, contextual_run, internal_ctx
 from flyte._environment import Environment
@@ -91,6 +91,25 @@ def _ambient_image_cache() -> ImageCache | None:
     return tctx.compiled_image_cache if tctx else None
 
 
+def _uri_inputs_hash(inputs_uri: str) -> str:
+    """Deterministic stand-in for ``OffloadedInputData.inputs_hash`` when the inputs blob
+    cannot be read client-side (rerun of a source run whose outputs were cleaned up).
+
+    The server computes the real hash as FNV-64a over the marshaled inputs and requires the
+    field to be non-empty (it feeds cache-key computation). Hashing the source inputs URI in
+    the same format is conservative: identical source location -> identical inputs -> same
+    key, while an accidental match with a content-derived hash is a ~2^-64 event — the same
+    collision odds the content hash itself carries. Worst case is a lost cache hit, never a
+    wrong one beyond those odds.
+    """
+    import base64
+
+    h = 0xCBF29CE484222325
+    for b in inputs_uri.encode("utf-8"):
+        h = ((h ^ b) * 0x100000001B3) & 0xFFFFFFFFFFFFFFFF
+    return base64.urlsafe_b64encode(h.to_bytes(8, "big")).decode().rstrip("=")
+
+
 def _to_cache_lookup_scope(scope: CacheLookupScope | None = None):
     """Map the SDK cache-lookup-scope literal onto its RunSpec enum value."""
     from flyteidl2.task import run_pb2
@@ -140,6 +159,8 @@ class _Runner:
         preserve_original_types: bool | None = None,
         debug: bool = False,
         recover: bool | str | None = False,
+        recover_force_rerun_actions: Sequence[str] | None = None,
+        allow_missing_source_outputs: bool = False,
         _tracker: Any = None,
         _bundle_relative_paths: tuple[str, ...] | None = None,
         _bundle_from_dir: pathlib.Path | None = None,
@@ -190,9 +211,17 @@ class _Runner:
         self._debug = debug
         # Recover (reuse a prior run's succeeded actions). `True` = recover from the run being rerun;
         # a run-name string = recover from that named run (the only form valid on a plain run()).
-        # Carried on RunSpec.recover; remote-only; gated in _apply_overrides until the flyteidl2 field
-        # + backend ship. See _resolve_recover_ref.
+        # Carried on RunSpec.relation/recover; remote-only; gated in _apply_overrides until the
+        # flyteidl2 field + backend ship. See _resolve_recover_ref.
         self._recover = recover
+        # Escape hatch: actions that must re-execute in the recovery run even if they succeeded
+        # in the source run (RunSpec.recover.force_rerun_actions). Only valid with recover.
+        self._recover_force_rerun_actions = tuple(recover_force_rerun_actions or ())
+        if self._recover_force_rerun_actions and not self._recover:
+            raise ValueError("recover_force_rerun_actions requires recover to be set")
+        # Opt-in for rerun/recover of a source run whose outputs were cleaned up from storage:
+        # proceed with its inputs URI instead of failing. See the fallback in rerun().
+        self._allow_missing_source_outputs = allow_missing_source_outputs
 
     def _resolve_recover_ref(self, rerun_run_name: str | None) -> str | None:
         """Resolve `self._recover` to the reference run name to recover from (or None).
@@ -512,7 +541,14 @@ class _Runner:
             if notification_rules:
                 run_spec.notification_rules.CopyFrom(notification_rules)
 
-        # recover: gated until flyteidl2 ships RunSpec.recover (+ backend support). One-line set then.
+        # recover: on the wire a recovery run is RunSpec.relation with RELATION_TYPE_RECOVER pointing
+        # at the reference run (resolved in the current org/project/domain); RunSpec.recover carries
+        # only optional extras (force_rerun_actions). Gated on the flyteidl2 build having the new
+        # fields until the backend ships.
+        if "relation" in run_pb2.RunSpec.DESCRIPTOR.fields_by_name:
+            # Never inherit a rerun base's stale (grandparent) pointers.
+            run_spec.ClearField("relation")
+            run_spec.ClearField("recover")
         if recover_ref:
             if "recover" not in run_pb2.RunSpec.DESCRIPTOR.fields_by_name:
                 raise NotImplementedError(
@@ -520,8 +556,25 @@ class _Runner:
                     "(RunSpec.recover is unavailable in this flyteidl2 build)."
                 )
             from flyteidl2.common import identifier_pb2
+            from flyteidl2.common import run_pb2 as common_run_pb2
 
-            run_spec.recover.CopyFrom(run_pb2.Recover(run_id=identifier_pb2.RunIdentifier(name=recover_ref)))
+            cfg = get_init_config()
+            run_spec.relation.CopyFrom(
+                common_run_pb2.Relation(
+                    relation_type=common_run_pb2.RELATION_TYPE_RECOVER,
+                    related_to=identifier_pb2.RunIdentifier(
+                        org=cfg.org or "",
+                        project=self._project or cfg.project or "",
+                        domain=self._domain or cfg.domain or "",
+                        name=recover_ref,
+                    ),
+                )
+            )
+            if self._recover_force_rerun_actions:
+                # Escape hatch: these actions re-execute even though they succeeded in the
+                # source run. A listed parent re-enqueues its children (list them too to force
+                # the whole subtree); unknown names are ignored server-side.
+                run_spec.recover.CopyFrom(run_pb2.Recover(force_rerun_actions=list(self._recover_force_rerun_actions)))
 
         # related_to: implicit provenance (rerun source, or the invoking in-cluster run).
         run_spec.ClearField("related_to")  # never inherit a rerun base's stale (grandparent) pointer
@@ -531,13 +584,24 @@ class _Runner:
         return run_spec
 
     async def _submit_remote(
-        self, *, task_spec: Any, task_id: Any, proto_inputs: Any, run_spec: Any, run_id: Any, project_id: Any
+        self,
+        *,
+        task_spec: Any,
+        task_id: Any,
+        proto_inputs: Any,
+        run_spec: Any,
+        run_id: Any,
+        project_id: Any,
+        offloaded_input_data: Any = None,
     ) -> Run:
         """Upload inputs and create the run. The single network call site for remote submission.
 
         Consumes an already-built ``run_spec`` (see ``_apply_overrides``), raw proto ``inputs``
         (``flyteidl2.task.Inputs``), and a task by reference (``task_id``) or by value
-        (``task_spec``); shared by ``_run_remote`` and ``rerun``.
+        (``task_spec``); shared by ``_run_remote`` and ``rerun``. ``offloaded_input_data``
+        (``flyteidl2.common.OffloadedInputData``) references already-offloaded inputs (e.g. the
+        source run's inputs.pb on a rerun whose inputs can't be re-downloaded) and skips the
+        upload; exactly one of ``proto_inputs`` / ``offloaded_input_data`` is used.
         """
         from connectrpc.code import Code
         from connectrpc.errors import ConnectError
@@ -548,28 +612,30 @@ class _Runner:
         from flyte.remote import Run
 
         try:
-            upload_req = dataproxy_service_pb2.UploadInputsRequest(inputs=proto_inputs)
-            # Pass the explicit run_base_dir so the offloaded inputs are written under the
-            # same base the CreateRun below resolves (RunSpec.run_base_dir, set in _apply_overrides).
-            # When unset the server falls back to settings/cluster default in both paths.
-            if self._run_base_dir:
-                upload_req.base_dir = self._run_base_dir
-            # Reference an already-registered task by id; otherwise upload the full spec.
-            if task_id is not None:
-                upload_req.task_id.CopyFrom(task_id)
-            else:
-                upload_req.task_spec.CopyFrom(task_spec)
-            if run_id is not None:
-                upload_req.run_id.CopyFrom(run_id)
-            else:
-                upload_req.project_id.CopyFrom(project_id)
+            if offloaded_input_data is None:
+                upload_req = dataproxy_service_pb2.UploadInputsRequest(inputs=proto_inputs)
+                # Pass the explicit run_base_dir so the offloaded inputs are written under the
+                # same base the CreateRun below resolves (RunSpec.run_base_dir, set in _apply_overrides).
+                # When unset the server falls back to settings/cluster default in both paths.
+                if self._run_base_dir:
+                    upload_req.base_dir = self._run_base_dir
+                # Reference an already-registered task by id; otherwise upload the full spec.
+                if task_id is not None:
+                    upload_req.task_id.CopyFrom(task_id)
+                else:
+                    upload_req.task_spec.CopyFrom(task_spec)
+                if run_id is not None:
+                    upload_req.run_id.CopyFrom(run_id)
+                else:
+                    upload_req.project_id.CopyFrom(project_id)
 
-            upload_resp = await get_client().dataproxy_service.upload_inputs(upload_req)
+                upload_resp = await get_client().dataproxy_service.upload_inputs(upload_req)
+                offloaded_input_data = upload_resp.offloaded_input_data
 
             create_req = run_service_pb2.CreateRunRequest(
                 run_id=run_id,
                 project_id=project_id,
-                offloaded_input_data=upload_resp.offloaded_input_data,
+                offloaded_input_data=offloaded_input_data,
                 run_spec=run_spec,
             )
             # Reference an already-registered task by id; otherwise send the full spec.
@@ -1099,6 +1165,8 @@ class _Runner:
             version = task_spec.task_template.id.version
 
         # Inputs: reuse the prior raw proto inputs, or convert new native kwargs against the interface.
+        proto_inputs = None
+        offloaded_input_data = None
         if inputs:
             if task_template is not None:
                 iface = task_template.native_interface
@@ -1109,10 +1177,67 @@ class _Runner:
             converted = await convert_from_native_to_inputs(iface, custom_context=self._custom_context, **inputs)
             proto_inputs = converted.proto_inputs
         else:
-            resp = await get_client().dataproxy_service.get_action_data(
-                request=dataproxy_service_pb2.GetActionDataRequest(action_id=action_details.pb2.id)
-            )
-            proto_inputs = resp.inputs
+            # Rerun/recover only need the source run's INPUTS. GetActionData resolves inputs AND
+            # outputs server-side concurrently and 404s wholesale when either blob has been
+            # cleaned up (retention) — and which half the error names is a race. The client has
+            # no RPC to check the inputs blob alone, so a missing-data 404 is a hard error by
+            # default; `allow_missing_source_outputs` opts into proceeding with the inputs URI
+            # (fails at runtime if the inputs turn out to be gone too).
+            from connectrpc.code import Code
+            from connectrpc.errors import ConnectError
+            from flyteidl2.common import run_pb2 as common_run_pb2
+            from flyteidl2.workflow import run_service_pb2
+
+            import flyte.errors
+
+            try:
+                resp = await get_client().dataproxy_service.get_action_data(
+                    request=dataproxy_service_pb2.GetActionDataRequest(action_id=action_details.pb2.id)
+                )
+                proto_inputs = resp.inputs
+            except ConnectError as e:
+                if e.code != Code.NOT_FOUND:
+                    raise
+                if "inputs" in str(e.message):
+                    # The inputs blob itself is gone — nothing to feed the new run; fail
+                    # fast with a clear story instead of the server's raw 404.
+                    raise flyte.errors.RuntimeUserError(
+                        "SourceRunInputsUnavailableError",
+                        f"Source run {run_name}'s inputs are no longer in storage (deleted by "
+                        f"retention/cleanup), so it cannot be rerun or recovered with its "
+                        f"original inputs. Pass new inputs explicitly instead: "
+                        f"flyte.with_runcontext(...).rerun('{run_name}', inputs={{...}}), or "
+                        f"launch fresh local code with `flyte run ... --recover-from {run_name}` "
+                        f"(inputs come from the CLI parameters).",
+                    ) from e
+                if not self._allow_missing_source_outputs:
+                    raise flyte.errors.RuntimeUserError(
+                        "SourceRunOutputsUnavailableError",
+                        f"Source run {run_name}'s outputs are no longer in storage. Rerun/recover "
+                        f"only needs its inputs, but whether those still exist cannot be verified "
+                        f"from the client. If you know the inputs are intact, retry with "
+                        f"--allow-missing-outputs "
+                        f"(with_runcontext(allow_missing_source_outputs=True)); if they were "
+                        f"deleted too, the new run would fail at runtime — pass new inputs "
+                        f"explicitly instead (rerun('{run_name}', inputs={{...}}) or "
+                        f"`flyte run ... --recover-from {run_name}`).",
+                    ) from e
+                uris = await get_client().run_service.get_action_data_u_r_is(
+                    run_service_pb2.GetActionDataURIsRequest(action_id=action_details.pb2.id)
+                )
+                if not uris.inputs_uri:
+                    raise
+                logger.warning(
+                    f"Source run {run_name} outputs are no longer in storage; proceeding with its "
+                    f"inputs at {uris.inputs_uri} (--allow-missing-outputs). If the inputs were "
+                    f"deleted too the new run will fail at runtime, and recovered actions "
+                    f"referencing deleted outputs will fail if consumed "
+                    f"(use --force-rerun-action to re-execute them)."
+                )
+                offloaded_input_data = common_run_pb2.OffloadedInputData(
+                    uri=uris.inputs_uri,
+                    inputs_hash=_uri_inputs_hash(uris.inputs_uri),
+                )
 
         run_id, project_id = self._resolve_run_target(project, domain, cfg.org)
 
@@ -1147,6 +1272,7 @@ class _Runner:
             run_spec=run_spec,
             run_id=run_id,
             project_id=project_id,
+            offloaded_input_data=offloaded_input_data,
         )
 
 
@@ -1184,6 +1310,8 @@ def with_runcontext(
     preserve_original_types: bool = False,
     debug: bool = False,
     recover: bool | str | None = False,
+    recover_force_rerun_actions: Sequence[str] | None = None,
+    allow_missing_source_outputs: bool = False,
     _tracker: Any = None,
 ) -> _Runner:
     """
@@ -1267,8 +1395,16 @@ def with_runcontext(
     :param recover: Recover (reuse a prior run's succeeded actions, re-running only what failed or
         changed). ``True`` recovers from the run being rerun — only valid with ``.rerun(...)``; a
         run-name string recovers from that named run and is the only form valid on ``.run(...)``.
-        Remote-only. Not yet supported by the backend (raises NotImplementedError at submit until
-        flyteidl2 RunSpec.recover ships).
+        Remote-only. Requires a backend with recovery support.
+    :param recover_force_rerun_actions: Optional names of actions that must re-execute in the
+        recovery run even if they succeeded in the source run (escape hatch). A listed parent
+        action re-enqueues its children — list them too to force the whole subtree; a listed
+        condition re-pauses for a new signal. Unknown names are ignored. Only valid with
+        ``recover``.
+    :param allow_missing_source_outputs: Opt-in for ``rerun``/recover when the source run's
+        outputs were cleaned up from storage: proceed using the source inputs URI instead of
+        failing. The client cannot verify the inputs still exist — if they were deleted too,
+        the new run fails at runtime.
     :param _tracker: This is an internal only parameter used by the CLI to render the TUI.
 
     :return: runner
@@ -1319,6 +1455,8 @@ def with_runcontext(
         preserve_original_types=preserve_original_types,
         debug=debug,
         recover=recover,
+        recover_force_rerun_actions=recover_force_rerun_actions,
+        allow_missing_source_outputs=allow_missing_source_outputs,
         _tracker=_tracker,
     )
 

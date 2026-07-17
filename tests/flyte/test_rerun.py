@@ -213,3 +213,81 @@ async def test_rerun_empty_fetched_id_falls_back_to_run_name():
     assert req.run_spec.related_to == identifier_pb2.RunIdentifier(
         org="testorg", project="test", domain="test", name="r1"
     )
+
+
+@pytest.mark.asyncio
+async def test_rerun_missing_source_outputs_opt_in_falls_back_to_inputs_uri():
+    """With allow_missing_source_outputs, deleted source outputs fall back to
+    GetActionDataURIs and the source inputs URI goes straight to CreateRun (no upload)."""
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
+    mock_client, mock_run_service, mock_dataproxy, _ = _mock_client_with_run()
+    mock_dataproxy.get_action_data.side_effect = ConnectError(
+        Code.NOT_FOUND, "object 's3://b/metadata/v2/p/d/r1/a0/1/outputs.pb' not found"
+    )
+    mock_run_service.get_action_data_u_r_is.return_value = run_service_pb2.GetActionDataURIsResponse(
+        inputs_uri="s3://b/metadata/v2/p/d/r1/a0/inputs.pb", outputs_uri=""
+    )
+    await _init_for_testing(client=mock_client, project="test", domain="test")
+
+    with mock.patch("flyte.remote._run.RunDetails") as RD:
+        RD.get.aio = AsyncMock(return_value=_fake_prior_run())
+        run = await flyte.with_runcontext(mode="remote", allow_missing_source_outputs=True).rerun.aio("r1")
+
+    assert run
+    mock_run_service.get_action_data_u_r_is.assert_called_once()
+    mock_dataproxy.upload_inputs.assert_not_called()
+    req: run_service_pb2.CreateRunRequest = mock_run_service.create_run.call_args[0][0]
+    assert req.offloaded_input_data.uri == "s3://b/metadata/v2/p/d/r1/a0/inputs.pb"
+    # The server requires a non-empty inputs_hash (min_len=1); a deterministic URI-derived
+    # stand-in is sent since the inputs blob can't be read client-side.
+    assert len(req.offloaded_input_data.inputs_hash) == 11
+    from flyte._run import _uri_inputs_hash
+
+    assert req.offloaded_input_data.inputs_hash == _uri_inputs_hash("s3://b/metadata/v2/p/d/r1/a0/inputs.pb")
+
+
+@pytest.mark.asyncio
+async def test_rerun_missing_source_inputs_stays_fatal():
+    """A NotFound that points at the inputs themselves is a real error — no fallback."""
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
+    mock_client, mock_run_service, mock_dataproxy, _ = _mock_client_with_run()
+    mock_dataproxy.get_action_data.side_effect = ConnectError(
+        Code.NOT_FOUND, "object 's3://b/metadata/v2/p/d/r1/a0/1/inputs.pb' not found"
+    )
+    await _init_for_testing(client=mock_client, project="test", domain="test")
+
+    import flyte.errors
+
+    with mock.patch("flyte.remote._run.RunDetails") as RD:
+        RD.get.aio = AsyncMock(return_value=_fake_prior_run())
+        with pytest.raises(flyte.errors.RuntimeUserError, match="inputs are no longer in storage"):
+            await flyte.with_runcontext(mode="remote").rerun.aio("r1")
+    mock_run_service.get_action_data_u_r_is.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_rerun_missing_source_outputs_errors_by_default():
+    """Without the opt-in, a missing-outputs 404 is a hard error: the client cannot verify
+    the inputs blob still exists (the GetActionData 404 is a race between the two halves),
+    and silently creating a run with dead inputs strands it at runtime."""
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
+    import flyte.errors
+
+    mock_client, mock_run_service, mock_dataproxy, _ = _mock_client_with_run()
+    mock_dataproxy.get_action_data.side_effect = ConnectError(
+        Code.NOT_FOUND, "object 's3://b/metadata/v2/p/d/r1/a0/1/outputs.pb' not found"
+    )
+    await _init_for_testing(client=mock_client, project="test", domain="test")
+
+    with mock.patch("flyte.remote._run.RunDetails") as RD:
+        RD.get.aio = AsyncMock(return_value=_fake_prior_run())
+        with pytest.raises(flyte.errors.RuntimeUserError, match="allow-missing-outputs"):
+            await flyte.with_runcontext(mode="remote").rerun.aio("r1")
+    mock_run_service.get_action_data_u_r_is.assert_not_called()
+    mock_run_service.create_run.assert_not_called()
