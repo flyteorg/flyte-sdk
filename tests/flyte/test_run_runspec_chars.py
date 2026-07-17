@@ -444,3 +444,39 @@ async def test_runspec_related_to_unset_without_ctx(mock_code_bundler, mock_buil
     """A plain remote run (no task context) carries no provenance pointer."""
     req = await _run_and_capture(mock_build_image_bg, mock_code_bundler, _org="testorg")
     assert not req.run_spec.HasField("related_to")
+
+
+@pytest.mark.asyncio
+async def test_apply_overrides_recover_relation_and_force_rerun():
+    """A recovery RunSpec carries relation (RECOVER + reference run in current scope) and
+    RunSpec.recover only when force_rerun_actions are given."""
+    from flyteidl2.common import run_pb2 as common_run_pb2
+    from flyteidl2.task import run_pb2
+
+    from flyte._run import _Runner
+
+    if "recover" not in run_pb2.RunSpec.DESCRIPTOR.fields_by_name:
+        pytest.skip("RunSpec.recover is unavailable in this flyteidl2 build")
+
+    mock_client, _ = _make_mock_client()
+    await _init_for_testing(client=mock_client, project="test", domain="test")
+
+    # No force list -> relation set, recover message unset.
+    spec = _Runner(force_mode="remote", recover="src-run")._apply_overrides(None, recover_ref="src-run")
+    assert spec.relation.relation_type == common_run_pb2.RELATION_TYPE_RECOVER
+    assert spec.relation.related_to.name == "src-run"
+    assert spec.relation.related_to.project == "test"
+    assert spec.relation.related_to.domain == "test"
+    assert not spec.HasField("recover")
+
+    # Force list -> RunSpec.recover.force_rerun_actions carries it.
+    runner = _Runner(force_mode="remote", recover="src-run", recover_force_rerun_actions=["a3", "a7"])
+    spec = runner._apply_overrides(None, recover_ref="src-run")
+    assert list(spec.recover.force_rerun_actions) == ["a3", "a7"]
+
+
+def test_force_rerun_actions_requires_recover():
+    from flyte._run import _Runner
+
+    with pytest.raises(ValueError, match="recover_force_rerun_actions requires recover"):
+        _Runner(recover_force_rerun_actions=["a1"])

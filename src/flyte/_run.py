@@ -7,7 +7,7 @@ import pathlib
 import sys
 import uuid
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Sequence, Tuple, Union, cast
 
 from flyte._context import Context, contextual_run, internal_ctx
 from flyte._environment import Environment
@@ -140,6 +140,7 @@ class _Runner:
         preserve_original_types: bool | None = None,
         debug: bool = False,
         recover: bool | str | None = False,
+        recover_force_rerun_actions: Sequence[str] | None = None,
         _tracker: Any = None,
         _bundle_relative_paths: tuple[str, ...] | None = None,
         _bundle_from_dir: pathlib.Path | None = None,
@@ -190,9 +191,14 @@ class _Runner:
         self._debug = debug
         # Recover (reuse a prior run's succeeded actions). `True` = recover from the run being rerun;
         # a run-name string = recover from that named run (the only form valid on a plain run()).
-        # Carried on RunSpec.recover; remote-only; gated in _apply_overrides until the flyteidl2 field
-        # + backend ship. See _resolve_recover_ref.
+        # Carried on RunSpec.relation/recover; remote-only; gated in _apply_overrides until the
+        # flyteidl2 field + backend ship. See _resolve_recover_ref.
         self._recover = recover
+        # Escape hatch: actions that must re-execute in the recovery run even if they succeeded
+        # in the source run (RunSpec.recover.force_rerun_actions). Only valid with recover.
+        self._recover_force_rerun_actions = tuple(recover_force_rerun_actions or ())
+        if self._recover_force_rerun_actions and not self._recover:
+            raise ValueError("recover_force_rerun_actions requires recover to be set")
 
     def _resolve_recover_ref(self, rerun_run_name: str | None) -> str | None:
         """Resolve `self._recover` to the reference run name to recover from (or None).
@@ -514,10 +520,12 @@ class _Runner:
 
         # recover: on the wire a recovery run is RunSpec.relation with RELATION_TYPE_RECOVER pointing
         # at the reference run (resolved in the current org/project/domain); RunSpec.recover carries
-        # only optional extras (e.g. force_rerun_actions) and stays unset here. Gated on the flyteidl2
-        # build having the new fields until the backend ships.
+        # only optional extras (force_rerun_actions). Gated on the flyteidl2 build having the new
+        # fields until the backend ships.
         if "relation" in run_pb2.RunSpec.DESCRIPTOR.fields_by_name:
-            run_spec.ClearField("relation")  # never inherit a rerun base's stale (grandparent) pointer
+            # Never inherit a rerun base's stale (grandparent) pointers.
+            run_spec.ClearField("relation")
+            run_spec.ClearField("recover")
         if recover_ref:
             if "recover" not in run_pb2.RunSpec.DESCRIPTOR.fields_by_name:
                 raise NotImplementedError(
@@ -539,6 +547,11 @@ class _Runner:
                     ),
                 )
             )
+            if self._recover_force_rerun_actions:
+                # Escape hatch: these actions re-execute even though they succeeded in the
+                # source run. A listed parent re-enqueues its children (list them too to force
+                # the whole subtree); unknown names are ignored server-side.
+                run_spec.recover.CopyFrom(run_pb2.Recover(force_rerun_actions=list(self._recover_force_rerun_actions)))
 
         # related_to: implicit provenance (rerun source, or the invoking in-cluster run).
         run_spec.ClearField("related_to")  # never inherit a rerun base's stale (grandparent) pointer
@@ -1201,6 +1214,7 @@ def with_runcontext(
     preserve_original_types: bool = False,
     debug: bool = False,
     recover: bool | str | None = False,
+    recover_force_rerun_actions: Sequence[str] | None = None,
     _tracker: Any = None,
 ) -> _Runner:
     """
@@ -1284,8 +1298,12 @@ def with_runcontext(
     :param recover: Recover (reuse a prior run's succeeded actions, re-running only what failed or
         changed). ``True`` recovers from the run being rerun — only valid with ``.rerun(...)``; a
         run-name string recovers from that named run and is the only form valid on ``.run(...)``.
-        Remote-only. Not yet supported by the backend (raises NotImplementedError at submit until
-        flyteidl2 RunSpec.recover ships).
+        Remote-only. Requires a backend with recovery support.
+    :param recover_force_rerun_actions: Optional names of actions that must re-execute in the
+        recovery run even if they succeeded in the source run (escape hatch). A listed parent
+        action re-enqueues its children — list them too to force the whole subtree; a listed
+        condition re-pauses for a new signal. Unknown names are ignored. Only valid with
+        ``recover``.
     :param _tracker: This is an internal only parameter used by the CLI to render the TUI.
 
     :return: runner
@@ -1336,6 +1354,7 @@ def with_runcontext(
         preserve_original_types=preserve_original_types,
         debug=debug,
         recover=recover,
+        recover_force_rerun_actions=recover_force_rerun_actions,
         _tracker=_tracker,
     )
 

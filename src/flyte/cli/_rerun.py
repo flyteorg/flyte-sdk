@@ -49,6 +49,14 @@ def _parse_kv(items: Tuple[str, ...], flag: str) -> Optional[Dict[str, str]]:
     default=False,
     help="Recover from this run: reuse its succeeded actions, re-run only what failed or changed.",
 )
+@click.option(
+    "--force-rerun-action",
+    "force_rerun_action",
+    multiple=True,
+    help="With --recover: name of an action to re-execute even though it succeeded in the "
+    "source run. Repeatable. A listed parent re-enqueues its children (list them too to "
+    "force the whole subtree); unknown names are ignored.",
+)
 @click.pass_context
 def rerun(
     ctx: click.Context,
@@ -60,22 +68,27 @@ def rerun(
     label: Tuple[str, ...],
     follow: bool,
     recover: bool,
+    force_rerun_action: Tuple[str, ...],
 ) -> None:
     """Re-run an existing run RUN_NAME with its original code and inputs.
 
     Fetches the prior run's task + inputs from the platform (no local code needed) and launches a
     new run that returns the same way ``flyte run`` does. ``--recover`` reuses the prior run's
-    succeeded actions (re-running only what failed or changed). To re-run with *new* local code
-    (reusing the prior run's inputs), use ``flyte run <file> <task> --rerun-from <run>``.
+    succeeded actions (re-running only what failed or changed); ``--force-rerun-action`` forces
+    named actions to re-execute anyway. To re-run with *new* local code (reusing the prior run's
+    inputs), use ``flyte run <file> <task> --rerun-from <run>``.
 
     Examples:
 
         $ flyte rerun ul56wcvgqrb9vzhzz5l2
         $ flyte rerun ul56wcvgqrb9vzhzz5l2 --name retry-1 --follow
         $ flyte rerun ul56wcvgqrb9vzhzz5l2 --recover
+        $ flyte rerun ul56wcvgqrb9vzhzz5l2 --recover --force-rerun-action a3 --force-rerun-action a7
     """
+    if force_rerun_action and not recover:
+        raise click.UsageError("--force-rerun-action requires --recover")
     config = common.initialize_config(ctx, project=project, domain=domain)
-    asyncio.run(_execute(run_name, name, env, label, follow, recover, config))
+    asyncio.run(_execute(run_name, name, env, label, follow, recover, force_rerun_action, config))
 
 
 async def _execute(
@@ -85,6 +98,7 @@ async def _execute(
     label: Tuple[str, ...],
     follow: bool,
     recover: bool,
+    force_rerun_action: Tuple[str, ...],
     config: common.CLIConfig,
 ) -> None:
     import flyte
@@ -99,6 +113,7 @@ async def _execute(
             env_vars=_parse_kv(env, "--env"),
             labels=_parse_kv(label, "--label"),
             recover=recover,
+            recover_force_rerun_actions=force_rerun_action or None,
         )
         result = await runner.rerun.aio(run_name)
     except Exception as e:

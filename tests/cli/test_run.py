@@ -1657,3 +1657,15 @@ def test_run_task_with_file_input_and_project(runner):
         raise ve
     finally:
         Path(tmp_path).unlink(missing_ok=True)
+
+
+def test_run_command_has_force_rerun_action_option():
+    option_names = {decl for p in run.params for decl in p.opts}
+    assert "--force-rerun-action" in option_names
+
+
+def test_run_arguments_force_rerun_action_from_dict():
+    from flyte.cli._run import RunArguments
+
+    assert RunArguments.from_dict({"force_rerun_action": ["a1"]}).force_rerun_action == ["a1"]
+    assert RunArguments.from_dict({}).force_rerun_action == []

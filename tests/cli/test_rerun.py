@@ -61,3 +61,28 @@ def test_rerun_recover_flag_passed_through():
 
     assert result.exit_code == 0, result.output
     assert wrc.call_args.kwargs["recover"] is True
+
+
+def test_rerun_force_rerun_action_requires_recover():
+    with mock.patch("flyte.cli._common.initialize_config"):
+        result = CliRunner().invoke(rerun, ["my-run", "--force-rerun-action", "a1"])
+    assert result.exit_code != 0
+    assert "--force-rerun-action requires --recover" in result.output
+
+
+def test_rerun_force_rerun_action_passed_through():
+    runner_obj = mock.MagicMock()
+    runner_obj.rerun.aio = AsyncMock(return_value=mock.MagicMock(name="new", url="http://x"))
+
+    with (
+        mock.patch("flyte.cli._common.initialize_config") as init_cfg,
+        mock.patch("flyte.with_runcontext", return_value=runner_obj) as wrc,
+    ):
+        init_cfg.return_value = mock.MagicMock(output_format="table")
+        result = CliRunner().invoke(
+            rerun, ["my-run", "--recover", "--force-rerun-action", "a3", "--force-rerun-action", "a7"]
+        )
+
+    assert result.exit_code == 0, result.output
+    assert wrc.call_args.kwargs["recover"] is True
+    assert wrc.call_args.kwargs["recover_force_rerun_actions"] == ("a3", "a7")
