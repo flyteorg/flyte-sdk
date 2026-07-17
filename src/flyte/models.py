@@ -769,6 +769,10 @@ class ActionPhase(str, enum.Enum):
         """
         from flyteidl2.common import phase_pb2
 
+        # Wire values are stable; tolerate bindings that predate a phase (e.g. RECOVERED
+        # landed in flyteidl2 2.0.28) instead of raising on the enum lookup.
+        if self is ActionPhase.RECOVERED:
+            return getattr(phase_pb2, "ACTION_PHASE_RECOVERED", 10)
         return phase_pb2.ActionPhase.Value(self.to_protobuf_name())
 
     @classmethod
@@ -792,7 +796,14 @@ class ActionPhase(str, enum.Enum):
         """
         from flyteidl2.common import phase_pb2
 
-        name = phase_pb2.ActionPhase.Name(pb_phase)
+        try:
+            name = phase_pb2.ActionPhase.Name(pb_phase)
+        except ValueError:
+            # Proto3 enums are open: the server may send a phase these bindings don't
+            # know. RECOVERED's wire value (10) is stable — map it; otherwise re-raise.
+            if pb_phase == 10:
+                return cls.RECOVERED
+            raise
         if name == "ACTION_PHASE_UNSPECIFIED":
             raise ValueError("Cannot convert UNSPECIFIED phase to ActionPhase")
 

@@ -114,3 +114,21 @@ class TestActionPhase:
             # Convert back to ActionPhase
             result = ActionPhase.from_protobuf(pb_phase)
             assert result == phase
+
+
+class TestActionPhaseBindingsSkew:
+    """Bindings older than flyteidl2 2.0.28 don't know ACTION_PHASE_RECOVERED; conversions
+    must fall back to the stable wire value (10) instead of raising."""
+
+    def test_from_protobuf_recovered_with_old_bindings(self, monkeypatch):
+        def _raise(_v):
+            raise ValueError("unknown enum value")
+
+        monkeypatch.setattr(phase_pb2.ActionPhase, "Name", _raise)
+        assert ActionPhase.from_protobuf(10) == ActionPhase.RECOVERED
+        with pytest.raises(ValueError):
+            ActionPhase.from_protobuf(99)
+
+    def test_to_protobuf_value_recovered_with_old_bindings(self, monkeypatch):
+        monkeypatch.delattr(phase_pb2, "ACTION_PHASE_RECOVERED")
+        assert ActionPhase.RECOVERED.to_protobuf_value() == 10

@@ -74,3 +74,28 @@ def test_remote_action_done_check_recovered():
     from flyte.remote._action import _action_done_check
 
     assert _action_done_check(phase_pb2.ACTION_PHASE_RECOVERED)
+
+
+def test_recovered_wire_value_constants():
+    """The fallback constants must match the real enum (and the stable wire value 10)."""
+    from flyte._internal.controllers.remote import _action as ctrl_action
+    from flyte.remote import _action as remote_action
+
+    assert ctrl_action._ACTION_PHASE_RECOVERED == 10
+    assert remote_action._ACTION_PHASE_RECOVERED == 10
+    assert phase_pb2.ACTION_PHASE_RECOVERED == 10
+
+
+def test_action_phase_name_skew_tolerant(monkeypatch):
+    """Old bindings raise ValueError from Name() on wire values they don't know;
+    the helper must never crash (it feeds eagerly-evaluated log lines in the watch)."""
+    from flyte._utils.helpers import action_phase_name
+
+    assert action_phase_name(phase_pb2.ACTION_PHASE_SUCCEEDED) == "ACTION_PHASE_SUCCEEDED"
+    assert action_phase_name(99) == "ACTION_PHASE_99"
+
+    def _raise(_v):
+        raise ValueError("unknown enum value")
+
+    monkeypatch.setattr(phase_pb2.ActionPhase, "Name", _raise)
+    assert action_phase_name(10) == "ACTION_PHASE_RECOVERED"
