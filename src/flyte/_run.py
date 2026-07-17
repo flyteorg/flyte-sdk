@@ -512,7 +512,12 @@ class _Runner:
             if notification_rules:
                 run_spec.notification_rules.CopyFrom(notification_rules)
 
-        # recover: gated until flyteidl2 ships RunSpec.recover (+ backend support). One-line set then.
+        # recover: on the wire a recovery run is RunSpec.relation with RELATION_TYPE_RECOVER pointing
+        # at the reference run (resolved in the current org/project/domain); RunSpec.recover carries
+        # only optional extras (e.g. force_rerun_actions) and stays unset here. Gated on the flyteidl2
+        # build having the new fields until the backend ships.
+        if "relation" in run_pb2.RunSpec.DESCRIPTOR.fields_by_name:
+            run_spec.ClearField("relation")  # never inherit a rerun base's stale (grandparent) pointer
         if recover_ref:
             if "recover" not in run_pb2.RunSpec.DESCRIPTOR.fields_by_name:
                 raise NotImplementedError(
@@ -520,8 +525,20 @@ class _Runner:
                     "(RunSpec.recover is unavailable in this flyteidl2 build)."
                 )
             from flyteidl2.common import identifier_pb2
+            from flyteidl2.common import run_pb2 as common_run_pb2
 
-            run_spec.recover.CopyFrom(run_pb2.Recover(run_id=identifier_pb2.RunIdentifier(name=recover_ref)))
+            cfg = get_init_config()
+            run_spec.relation.CopyFrom(
+                common_run_pb2.Relation(
+                    relation_type=common_run_pb2.RELATION_TYPE_RECOVER,
+                    related_to=identifier_pb2.RunIdentifier(
+                        org=cfg.org or "",
+                        project=self._project or cfg.project or "",
+                        domain=self._domain or cfg.domain or "",
+                        name=recover_ref,
+                    ),
+                )
+            )
 
         # related_to: implicit provenance (rerun source, or the invoking in-cluster run).
         run_spec.ClearField("related_to")  # never inherit a rerun base's stale (grandparent) pointer
