@@ -20,10 +20,8 @@ Run:  flyte run google_multi_agent.py research_pipeline --topic "The state of el
 """
 
 import asyncio
-from pathlib import Path
 
 import flyte
-from flyte._image import PythonWheels
 
 from flyteplugins.agents.google import run_agent, tool
 
@@ -31,22 +29,8 @@ env = flyte.TaskEnvironment(
     "google-research",
     resources=flyte.Resources(cpu=1),
     secrets=[flyte.Secret(key="google_api_key", as_env_var="GOOGLE_API_KEY")],
-    image=(
-        flyte.Image.from_debian_base(name="google-research")
-        .clone(
-            addl_layer=PythonWheels(
-                wheel_dir=Path(__file__).parent.parent / "dist",
-                package_name="flyteplugins-agents-core",
-                pre=True,
-            ),
-        )
-        .clone(
-            addl_layer=PythonWheels(
-                wheel_dir=Path(__file__).parent.parent / "dist",
-                package_name="flyteplugins-agents-google",
-                pre=True,
-            ),
-        )
+    image=flyte.Image.from_debian_base(name="google-research").with_local_v2_plugins(
+        ["flyteplugins-agents-core", "flyteplugins-agents-google"]
     ),
 )
 
