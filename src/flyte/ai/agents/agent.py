@@ -332,7 +332,6 @@ class Agent:
 
     _registry: dict[str, AgentTool] = field(init=False, repr=False, default_factory=dict)
     _mcp_loaded: bool = field(init=False, repr=False, default=False)
-    # Placeholder default; always assigned in __post_init__.
     _mcp_loader: _MCPToolLoader = field(init=False, repr=False, default=cast("_MCPToolLoader", None))
     _system_prompt: str = field(init=False, repr=False, default="")
 
