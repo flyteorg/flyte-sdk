@@ -1,5 +1,33 @@
 # Flyte HITL Plugin
 
+> [!WARNING]
+> **Deprecated.** This plugin has been deprecated in favor of flyte-native
+> conditions (`flyte.new_condition`), which are built into the `flyte` SDK and
+> require no extra dependency, no `depends_on=[hitl.env]` app infrastructure,
+> and no web-form serving. Conditions pause a run until they are signaled from
+> the Flyte UI, the CLI (`flyte signal condition <run> <action> <value>`), or
+> programmatically via `flyte.remote.Condition.signal`.
+>
+> Migration is mostly one-to-one — replace `hitl.new_event` with
+> `flyte.new_condition`:
+>
+> ```python
+> # Before
+> event = await hitl.new_event.aio(
+>     "integer_input_event", data_type=int, scope="run", prompt="What should I add to x?"
+> )
+> y = await event.wait.aio()
+>
+> # After
+> condition = await flyte.new_condition.aio(
+>     "integer_input_condition", data_type=int, prompt="What should I add to x?"
+> )
+> y = await condition.wait.aio()
+> ```
+>
+> See `examples/advanced/conditions.py` for markdown prompts, timeouts,
+> webhook notifications, and signaling conditions programmatically.
+
 Human-in-the-Loop (HITL) plugin for Flyte. This plugin provides an event-based API for pausing workflows and waiting for human input.
 
 ## Installation

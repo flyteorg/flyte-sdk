@@ -88,3 +88,6 @@ class ClientSet(Protocol):
     @property
     def actions_service(self: ClientSet) -> ActionsService | None:
         """Unified actions service (replaces QueueService + StateService when available)"""
+
+    def replace_http_client(self) -> None:
+        """Give every service client a fresh HTTP client, abandoning pooled connections."""

@@ -35,9 +35,15 @@ class SessionConfig:
     # This is used to rebuild a `SessionConfig` for a per-cluster endpoint
     # without losing the configured auth mode.
     auth_kwargs: typing.Mapping[str, Any] = field(default_factory=dict)
+    # CA bundle `http_client` was built with; kept so `new_http_client` can build an identical client.
+    tls_ca_cert: typing.Optional[bytes] = None
 
     def connect_kwargs(self) -> dict[str, Any]:
         return {"address": self.endpoint, "interceptors": self.interceptors, "http_client": self.http_client}
+
+    def new_http_client(self) -> Any:
+        """Build a fresh HTTP client identical to `http_client`, with its own connection pool."""
+        return _build_pyqwest_client(self.tls_ca_cert)
 
 
 def normalize_rpc_endpoint(endpoint: str, *, insecure: bool = False) -> str:
@@ -292,4 +298,5 @@ async def create_session_config(
         http_client=http_client,
         api_key=api_key,
         auth_kwargs=captured_auth_kwargs,
+        tls_ca_cert=tls_ca_cert,
     )
