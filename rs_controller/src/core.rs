@@ -753,6 +753,9 @@ impl CoreBaseController {
             run_output_base,
             group,
             subject: String::default(),
+            // Server-side only: set when the action was recovered from a prior run.
+            // Never set by clients on enqueue.
+            recovered_from: None,
             spec: Some(spec),
         };
         Ok(EnqueueRequest {
