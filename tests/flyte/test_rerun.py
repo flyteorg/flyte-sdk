@@ -241,6 +241,12 @@ async def test_rerun_missing_source_outputs_falls_back_to_inputs_uri():
     mock_dataproxy.upload_inputs.assert_not_called()
     req: run_service_pb2.CreateRunRequest = mock_run_service.create_run.call_args[0][0]
     assert req.offloaded_input_data.uri == "s3://b/metadata/v2/p/d/r1/a0/inputs.pb"
+    # The server requires a non-empty inputs_hash (min_len=1); a deterministic URI-derived
+    # stand-in is sent since the inputs blob can't be read client-side.
+    assert len(req.offloaded_input_data.inputs_hash) == 11
+    from flyte._run import _uri_inputs_hash
+
+    assert req.offloaded_input_data.inputs_hash == _uri_inputs_hash("s3://b/metadata/v2/p/d/r1/a0/inputs.pb")
 
 
 @pytest.mark.asyncio

@@ -91,6 +91,25 @@ def _ambient_image_cache() -> ImageCache | None:
     return tctx.compiled_image_cache if tctx else None
 
 
+def _uri_inputs_hash(inputs_uri: str) -> str:
+    """Deterministic stand-in for ``OffloadedInputData.inputs_hash`` when the inputs blob
+    cannot be read client-side (rerun of a source run whose outputs were cleaned up).
+
+    The server computes the real hash as FNV-64a over the marshaled inputs and requires the
+    field to be non-empty (it feeds cache-key computation). Hashing the source inputs URI in
+    the same format is conservative: identical source location -> identical inputs -> same
+    key, while an accidental match with a content-derived hash is a ~2^-64 event — the same
+    collision odds the content hash itself carries. Worst case is a lost cache hit, never a
+    wrong one beyond those odds.
+    """
+    import base64
+
+    h = 0xCBF29CE484222325
+    for b in inputs_uri.encode("utf-8"):
+        h = ((h ^ b) * 0x100000001B3) & 0xFFFFFFFFFFFFFFFF
+    return base64.urlsafe_b64encode(h.to_bytes(8, "big")).decode().rstrip("=")
+
+
 def _to_cache_lookup_scope(scope: CacheLookupScope | None = None):
     """Map the SDK cache-lookup-scope literal onto its RunSpec enum value."""
     from flyteidl2.task import run_pb2
@@ -1183,7 +1202,10 @@ class _Runner:
                     f"inputs at {uris.inputs_uri}. Recovered actions referencing deleted outputs "
                     f"will fail at runtime if consumed (use --force-rerun-action to re-execute them)."
                 )
-                offloaded_input_data = common_run_pb2.OffloadedInputData(uri=uris.inputs_uri)
+                offloaded_input_data = common_run_pb2.OffloadedInputData(
+                    uri=uris.inputs_uri,
+                    inputs_hash=_uri_inputs_hash(uris.inputs_uri),
+                )
 
         run_id, project_id = self._resolve_run_target(project, domain, cfg.org)
 
