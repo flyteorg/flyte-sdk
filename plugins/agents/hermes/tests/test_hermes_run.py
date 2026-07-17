@@ -37,9 +37,7 @@ async def test_run_agent_with_tools_builds_agent(monkeypatch):
 
     monkeypatch.setattr(run_mod, "_AIAgent", _FakeAIAgent)
 
-    result = await run_mod.run_agent(
-        "What's the weather?", tools=[get_weather], model="test-model", name="test-agent"
-    )
+    result = await run_mod.run_agent("What's the weather?", tools=[get_weather], model="test-model", name="test-agent")
     assert result == "The weather is sunny."
     assert captured["model"] == "test-model"
     assert captured["quiet_mode"] is True
