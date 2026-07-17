@@ -16,6 +16,7 @@ class TestActionPhase:
         assert ActionPhase.FAILED.value == "failed"
         assert ActionPhase.ABORTED.value == "aborted"
         assert ActionPhase.TIMED_OUT.value == "timed_out"
+        assert ActionPhase.RECOVERED.value == "recovered"
 
     def test_string_comparison(self):
         """Test that enum can be compared to strings."""
@@ -29,6 +30,7 @@ class TestActionPhase:
         assert ActionPhase.FAILED.is_terminal is True
         assert ActionPhase.ABORTED.is_terminal is True
         assert ActionPhase.TIMED_OUT.is_terminal is True
+        assert ActionPhase.RECOVERED.is_terminal is True
 
         assert ActionPhase.QUEUED.is_terminal is False
         assert ActionPhase.RUNNING.is_terminal is False
@@ -54,6 +56,7 @@ class TestActionPhase:
         assert ActionPhase.ABORTED.to_protobuf_value() == 7
         assert ActionPhase.TIMED_OUT.to_protobuf_value() == 8
         assert ActionPhase.PAUSED.to_protobuf_value() == 9
+        assert ActionPhase.RECOVERED.to_protobuf_value() == 10
 
     def test_from_protobuf(self):
         """Test creation from protobuf enum."""
@@ -64,6 +67,7 @@ class TestActionPhase:
         assert ActionPhase.from_protobuf(phase_pb2.ACTION_PHASE_SUCCEEDED) == ActionPhase.SUCCEEDED
         assert ActionPhase.from_protobuf(phase_pb2.ACTION_PHASE_TIMED_OUT) == ActionPhase.TIMED_OUT
         assert ActionPhase.from_protobuf(phase_pb2.ACTION_PHASE_PAUSED) == ActionPhase.PAUSED
+        assert ActionPhase.from_protobuf(phase_pb2.ACTION_PHASE_RECOVERED) == ActionPhase.RECOVERED
 
     def test_from_protobuf_unspecified_raises(self):
         """Test that UNSPECIFIED phase raises error."""
@@ -71,9 +75,9 @@ class TestActionPhase:
             ActionPhase.from_protobuf(phase_pb2.ACTION_PHASE_UNSPECIFIED)
 
     def test_enum_iteration(self):
-        """Test that all 9 phases are present."""
+        """Test that all 10 phases are present."""
         phases = list(ActionPhase)
-        assert len(phases) == 9
+        assert len(phases) == 10
 
     def test_string_conversion(self):
         """Test that enum values behave as strings."""

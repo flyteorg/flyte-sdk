@@ -87,6 +87,7 @@ _STATUS_COLORS = {
     "initializing": "dodger_blue1",
     "paused": "yellow",
     "succeeded": "green",
+    "recovered": "green",
     "failed": "red",
     "aborted": "red",
     "timed_out": "red",
@@ -101,7 +102,7 @@ _PHASE_FILTER_MAP = {
         ActionPhase.INITIALIZING,
         ActionPhase.PAUSED,
     ),
-    "succeeded": (ActionPhase.SUCCEEDED,),
+    "succeeded": (ActionPhase.SUCCEEDED, ActionPhase.RECOVERED),
     "failed": (
         ActionPhase.FAILED,
         ActionPhase.ABORTED,
@@ -153,7 +154,7 @@ def _format_labels(project) -> str:
 
 
 def _phase_icon(phase: str) -> str:
-    if phase == "succeeded":
+    if phase in ("succeeded", "recovered"):
         return "✓"
     if phase in ("failed", "aborted", "timed_out"):
         return "✗"

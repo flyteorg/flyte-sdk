@@ -145,6 +145,9 @@ impl Action {
                     | ActionPhase::Failed
                     | ActionPhase::Aborted
                     | ActionPhase::TimedOut
+                    // Recovered from a prior run: terminal, success-equivalent; output_uri
+                    // points at the source run's outputs (consume as-is).
+                    | ActionPhase::Recovered
             )
         } else {
             false

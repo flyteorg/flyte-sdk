@@ -64,6 +64,9 @@ class Action:
             phase_pb2.ACTION_PHASE_SUCCEEDED,
             phase_pb2.ACTION_PHASE_ABORTED,
             phase_pb2.ACTION_PHASE_TIMED_OUT,
+            # Recovered from a prior run: terminal and success-equivalent; output_uri points at
+            # the source run's outputs (intentional — consume as-is).
+            phase_pb2.ACTION_PHASE_RECOVERED,
         ]
 
     def increment_retries(self):

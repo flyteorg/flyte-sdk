@@ -81,6 +81,7 @@ def _action_time_phase(
         phase_pb2.ACTION_PHASE_SUCCEEDED,
         phase_pb2.ACTION_PHASE_ABORTED,
         phase_pb2.ACTION_PHASE_TIMED_OUT,
+        phase_pb2.ACTION_PHASE_RECOVERED,
     ]:
         end_time = action.status.end_time.ToDatetime().replace(tzinfo=timezone.utc)
         yield "end_time", end_time.isoformat()
@@ -151,6 +152,8 @@ def _action_done_check(phase: phase_pb2.ActionPhase) -> bool:
         phase_pb2.ACTION_PHASE_SUCCEEDED,
         phase_pb2.ACTION_PHASE_ABORTED,
         phase_pb2.ACTION_PHASE_TIMED_OUT,
+        # Recovered as-is from a prior run — terminal, success-equivalent.
+        phase_pb2.ACTION_PHASE_RECOVERED,
     ]
 
 

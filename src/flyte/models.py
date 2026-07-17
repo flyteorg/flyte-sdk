@@ -672,6 +672,7 @@ class ActionPhase(str, enum.Enum):
     - Failed: Action failed during execution
     - Aborted: Action was manually aborted
     - Timed out: Action exceeded its timeout limit
+    - Recovered: Action was recovered as-is from a prior run (terminal, success-equivalent)
 
     This enum can be used for filtering runs and checking execution status.
 
@@ -719,12 +720,16 @@ class ActionPhase(str, enum.Enum):
     TIMED_OUT = "timed_out"
     """Action exceeded its timeout limit and was terminated."""
 
+    RECOVERED = "recovered"
+    """Action was recovered as-is from a prior run; it did not execute in this run.
+    Terminal and success-equivalent."""
+
     @property
     def is_terminal(self) -> bool:
         """
         Check if this phase represents a terminal (final) state.
 
-        Terminal phases are: SUCCEEDED, FAILED, ABORTED, TIMED_OUT.
+        Terminal phases are: SUCCEEDED, FAILED, ABORTED, TIMED_OUT, RECOVERED.
         Once an action reaches a terminal phase, it will not transition to any other phase.
 
         Returns:
@@ -735,6 +740,7 @@ class ActionPhase(str, enum.Enum):
             ActionPhase.FAILED,
             ActionPhase.ABORTED,
             ActionPhase.TIMED_OUT,
+            ActionPhase.RECOVERED,
         )
 
     def to_protobuf_name(self) -> str:
