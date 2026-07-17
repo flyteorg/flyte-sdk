@@ -14,7 +14,7 @@ class _FakeSave:
 
 
 class _FakeStore:
-    """Minimal stand-in for ``MemoryStore``: a ``messages`` list + a syncified ``save``."""
+    """Minimal stand-in for ``MemoryStore``: a ``messages`` list + a ``save``."""
 
     def __init__(self):
         self.messages = []
