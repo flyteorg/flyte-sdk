@@ -313,6 +313,17 @@ class RunArguments:
             )
         },
     )
+    queue: str | None = field(
+        default=None,
+        metadata={
+            "click.option": click.Option(
+                ["--queue"],
+                type=str,
+                default=None,
+                help="Queue (cluster) to send the run to. Overrides any queue set on the task.",
+            )
+        },
+    )
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> RunArguments:
@@ -425,6 +436,7 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
                 env_vars=self.run_args.parsed_env_vars(),
                 max_action_concurrency=self.run_args.max_action_concurrency,
                 labels=self.run_args.parsed_labels(),
+                queue=self.run_args.queue,
                 recover=self.run_args.recover_from,
             )
             if self.run_args.rerun_from:
@@ -494,6 +506,7 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
                 debug=self.run_args.debug,
                 env_vars=self.run_args.parsed_env_vars(),
                 labels=self.run_args.parsed_labels(),
+                queue=self.run_args.queue,
                 _tracker=tracker,
             )
             return await execution_context.run.aio(self.obj, **ctx.params)
@@ -511,6 +524,8 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
         )
         if self.run_args.rerun_from and self.run_args.local:
             raise click.UsageError("--rerun-from requires remote mode (it cannot be combined with --local)")
+        if self.run_args.recover_from and self.run_args.local:
+            raise click.UsageError("--recover-from requires remote mode (it cannot be combined with --local)")
         self._validate_required_params(ctx)
         if self.run_args.tui:
             if not self.run_args.local:
@@ -662,6 +677,7 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
                 env_vars=self.run_args.parsed_env_vars(),
                 max_action_concurrency=self.run_args.max_action_concurrency,
                 labels=self.run_args.parsed_labels(),
+                queue=self.run_args.queue,
                 recover=self.run_args.recover_from,
             )
             result = await execution_context.run.aio(task, **ctx.params)
@@ -734,7 +750,8 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
             sync_local_sys_paths=not self.run_args.no_sync_local_sys_paths,
         )
 
-        task = flyte.remote.Task.get(self.task_name, auto_version="latest")
+        # Build the input form from the pinned version, exactly like the execution path.
+        task = flyte.remote.Task.get(self.task_name, version=self.version, auto_version="latest")
         task_details = task.fetch()
 
         interface = transform_native_to_typed_interface(task_details.interface)

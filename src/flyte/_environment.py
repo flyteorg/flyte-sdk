@@ -195,7 +195,9 @@ class Environment:
         Get the keyword arguments for the environment.
         """
         kwargs: Dict[str, Any] = {
-            "depends_on": self.depends_on,
+            # Copy the list so a cloned/derived environment doesn't share (and mutate
+            # in place, via `add_dependency`) the parent's `depends_on`.
+            "depends_on": list(self.depends_on),
             "image": self.image,
         }
         if self.resources is not None:

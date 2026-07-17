@@ -67,6 +67,12 @@ def project(cfg: common.CLIConfig, name: str | None = None, archived: bool = Fal
     help="Filter runs by their status.",
 )
 @click.option("--only-mine", is_flag=True, default=False, help="Show only runs created by the current user (you).")
+@click.option(
+    "--paused-only",
+    is_flag=True,
+    default=False,
+    help="Show only runs that have a paused action (waiting on a human in the loop).",
+)
 @click.option("--task-name", type=str, default=None, help="Filter runs by task name.")
 @click.option("--task-version", type=str, default=None, help="Filter runs by task version.")
 @click.option(
@@ -112,6 +118,7 @@ def run(
     limit: int = 100,
     in_phase: str | Tuple[str, ...] | None = None,
     only_mine: bool = False,
+    paused_only: bool = False,
     task_name: str | None = None,
     task_version: str | None = None,
     created_after: dt.datetime | None = None,
@@ -140,6 +147,12 @@ def run(
     ```bash
     $ flyte get run --with-label team=ml --with-label env=prod
     $ flyte get run --with-label-key team
+    ```
+
+    You can show only runs that have a paused action (waiting on a human in the loop):
+
+    ```bash
+    $ flyte get run --paused-only
     ```
     """
 
@@ -196,6 +209,7 @@ def run(
                     updated_at=updated_at,
                     with_labels=parsed_with_labels,
                     with_label_keys=list(with_label_key) or None,
+                    paused_actions_only=paused_only,
                 ),
                 cfg.output_format,
             )

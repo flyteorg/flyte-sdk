@@ -11,7 +11,9 @@ dependencies = [
     "cloudpickle>=3.1.1",
     "docstring_parser>=0.16",
     "fsspec>=2025.3.0",
-    "connectrpc>=0.9.0,<1.0.0",
+    # Cap below 0.11: connectrpc 0.11.0 made RequestContext.request_headers a property
+    # (was a method), breaking the auth interceptor with "'Headers' object is not callable".
+    "connectrpc>=0.9.0,<0.11",
     "obstore>=0.7.3",
     "protobuf>=6.30.1",
     "pydantic>=2.10.6",
@@ -24,10 +26,11 @@ dependencies = [
     "async-lru>=2.0.5",
     "mashumaro",
     "aiolimiter>=1.2.1",
-    "flyteidl2==2.0.24",
+    "flyteidl2==2.0.27",
     "packaging",
     "sentry-sdk>=2.0",
     "pyOpenSSL>=24.0.0",
+    "asyncssh>=2.14",
 ]
 
 [project.scripts]
@@ -200,6 +203,7 @@ exclude-newer = "5 days"
 [tool.uv.exclude-newer-package]
 flyteidl2 = "0 days"
 flyte_controller_base = "0 days"
+flyteplugins-union = "0 days"
 
 [tool.uv.sources]
 flyte_controller_base = { path = "rs_controller" }

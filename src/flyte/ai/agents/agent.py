@@ -23,8 +23,9 @@ Design goals
   letting the agent persist state across runs (e.g. across scheduled wake-ups
   or webhook invocations). Includes opt-in audit log, read-only prefixes, and
   optimistic concurrency for multi-agent / sleep-wake patterns.
-- **HITL**: opt-in per-tool human approval that pauses the loop and waits for a
-  human via the ``flyteplugins-hitl`` plugin before executing the tool.
+- **HITL**: opt-in per-tool human approval that pauses the loop on a
+  flyte-native condition (:func:`flyte.new_condition`) and waits for a human
+  to signal it before executing the tool.
 - **Flyte-native**: implements the :class:`AgentProtocol` so it works
   seamlessly with :class:`~flyte.ai.chat.AgentChatAppEnvironment` and is happy
   to be wrapped in ``@env.task(triggers=...)`` for scheduled or webhook-driven
@@ -52,6 +53,7 @@ from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Literal, Mapping, Sequence
 
 import flyte
+import flyte.report
 from flyte.syncify import syncify
 
 # Internal building blocks. All four ``_``-prefixed tool helpers are used
@@ -60,18 +62,24 @@ from flyte.syncify import syncify
 # from here.
 from ._llm import LLMCallable, LLMMessage, _default_call_llm
 from ._mcp import MCPServerSpec, _MCPToolLoader
+from ._report import build_report_callback
 from ._tools import (
     AgentTool,
-    ToolFn,
     _abbreviate,
+    _bind_tool_invocation_context,
+    _registry_uses_flyte_io,
     _resolve_tools,
     _stringify_tool_result,
     _summarize_signature,
+    invoke_agent_tool,
 )
 from .memory import (
     MemoryStore,
 )
 from .protocol import AgentResult
+
+# Report tab the agent renders its progress timeline into.
+_REPORT_TAB = "Agent"
 
 logger = logging.getLogger(__name__)
 
@@ -88,10 +96,37 @@ agent_progress_cb: contextvars.ContextVar[AgentProgressCallback | None] = contex
 )
 
 
+@dataclass(frozen=True)
+class _RunIdentity:
+    """Identifies the agent run that is emitting events in the current context.
+
+    Set by :meth:`Agent._run_loop` for the duration of a run so that
+    :func:`_emit` can stamp ``agent`` and ``run_id`` onto every event. Stored
+    in a :class:`~contextvars.ContextVar` so concurrent runs in the same
+    process (fan-out via ``asyncio.gather``, sub-agents invoked as tools) each
+    stamp their own identity instead of conflating.
+    """
+
+    agent: str
+    run_id: str
+
+
+_current_run: contextvars.ContextVar[_RunIdentity | None] = contextvars.ContextVar(
+    "agent_current_run",
+    default=None,
+)
+
+
 async def _emit(event: "AgentEvent") -> None:
     cb = agent_progress_cb.get()
     if cb is None:
         return
+    identity = _current_run.get()
+    if identity is not None:
+        if not event.agent:
+            event.agent = identity.agent
+        if not event.run_id:
+            event.run_id = identity.run_id
     try:
         await cb(event)
     except Exception:  # pragma: no cover - progress hooks must never break the loop
@@ -124,10 +159,17 @@ class AgentEvent:
     The agent stays decoupled from any specific UI: subscribe via
     :data:`agent_progress_cb` to forward these to logs, NDJSON streams, websockets,
     Flyte reports, etc.
+
+    ``agent`` and ``run_id`` are stamped automatically on every event so that
+    consumers receiving events from multiple runs in one process (concurrent
+    agents, sub-agents used as tools, parallel runs of the same agent) can
+    attribute each event to the run that produced it.
     """
 
     type: EventType
     data: dict[str, Any] = field(default_factory=dict)
+    agent: str = ""
+    run_id: str = ""
 
 
 # ----------------------------------------------------------------------------
@@ -188,32 +230,33 @@ def _load_skills(skills: Sequence[str | pathlib.Path]) -> str:
 ApprovalCallback = Callable[[AgentTool, dict[str, Any]], Awaitable[bool]]
 
 
-async def _hitl_approval(tool: AgentTool, args: dict[str, Any]) -> bool:
-    """Default HITL approval: ask the user via ``flyteplugins-hitl``.
+async def _condition_approval(tool: AgentTool, args: dict[str, Any]) -> bool:
+    """Default HITL approval: pause the run on a flyte-native condition.
 
-    Returns ``True`` if the user approves the tool call. When the plugin is not
-    installed (or the agent is running outside a Flyte task context), this
-    falls back to denying the call so that the agent can recover by trying a
-    different approach.
+    Registers a condition via :func:`flyte.new_condition` and blocks until a
+    human signals it — from the UI, ``flyte signal condition``, or
+    ``flyte.remote.Condition.signal``. Returns ``True`` if the user approves
+    the tool call. When the agent is running outside a Flyte task context
+    there is no backend to signal the condition, so this falls back to denying
+    the call so that the agent can recover by trying a different approach.
     """
-    try:
-        import flyteplugins.hitl as hitl
-    except ImportError:
+    if not flyte.ctx():
         logger.warning(
-            "Tool %s requires approval but `flyteplugins-hitl` is not installed; denying by default.",
+            "Tool %s requires approval but there is no active Flyte task context "
+            "to register a condition with; denying by default.",
             tool.name,
         )
         return False
 
     pretty_args = json.dumps(args, indent=2, default=str)
-    prompt = f"Approve tool call `{tool.name}`?\n\nArguments:\n{pretty_args}"
-    event = await hitl.new_event.aio(
+    prompt = f"Approve tool call `{tool.name}`?\n\nArguments:\n```json\n{pretty_args}\n```"
+    condition = await flyte.new_condition.aio(
         f"approve_{tool.name}_{uuid.uuid4().hex[:6]}",
-        data_type=bool,
-        scope="run",
         prompt=prompt,
+        prompt_type="markdown",
+        data_type=bool,
     )
-    decision = await event.wait.aio()
+    decision = await condition.wait.aio()
     return bool(decision)
 
 
@@ -256,7 +299,7 @@ class Agent:
     approval_callback:
         Optional async callback ``(tool, args) -> bool`` invoked when a tool
         with ``requires_approval=True`` is about to run. Defaults to a HITL
-        prompt via ``flyteplugins-hitl``.
+        prompt via a flyte-native condition (:func:`flyte.new_condition`).
     parallel_tool_calls:
         When ``True`` (default) tool calls returned in a single assistant
         message are executed concurrently. Set to ``False`` to force strict
@@ -270,10 +313,11 @@ class Agent:
         expression becomes the observation for the next turn; the loop ends when
         the LLM replies with plain text (no code block). This unlocks generated
         control flow (loops, ``flyte_map`` fan-out, intermediate aggregation)
-        while still dispatching ``@env.task`` tools durably on-cluster. Requires
-        ``pydantic-monty`` in the runtime image. Note: per-tool HITL approval is
-        not enforced in code mode, since tools are invoked from inside the
-        sandbox rather than as discrete approved calls.
+        while still dispatching ``@env.task`` tools durably on-cluster. Tools
+        with a ``call_handler`` run through that handler in code mode as well.
+        Requires ``pydantic-monty`` in the runtime image. Note: per-tool HITL
+        approval is not enforced in code mode, since tools are invoked from inside
+        the sandbox rather than as discrete approved calls.
     """
 
     name: str = "flyte-agent"
@@ -284,7 +328,7 @@ class Agent:
     skills: Sequence[str | pathlib.Path] = field(default_factory=tuple)
     max_turns: int = 25
     call_llm: LLMCallable = field(default=_default_call_llm)
-    approval_callback: ApprovalCallback = field(default=_hitl_approval)
+    approval_callback: ApprovalCallback = field(default=_condition_approval)
     parallel_tool_calls: bool = True
     code_mode: bool = False
 
@@ -298,7 +342,10 @@ class Agent:
     # ------------------------------------------------------------------
 
     def __post_init__(self) -> None:
-        self._registry = _resolve_tools(self.tools)
+        self._registry = {
+            name: _bind_tool_invocation_context(tool, call_llm=self.call_llm, model=self.model)
+            for name, tool in _resolve_tools(self.tools).items()
+        }
         self._mcp_loader = _MCPToolLoader(self.mcp_servers)
         if self.code_mode and any(t.requires_approval for t in self._registry.values()):
             logger.warning(
@@ -343,9 +390,9 @@ class Agent:
         for _tool in new.values():
             if _tool.name in self._registry:
                 raise ValueError(f"Duplicate tool name '{_tool.name}'")
-            self._registry[_tool.name] = _tool
+            self._registry[_tool.name] = _bind_tool_invocation_context(_tool, call_llm=self.call_llm, model=self.model)
         self._system_prompt = self._build_system_prompt()
-        return next(iter(new.values()))
+        return _bind_tool_invocation_context(next(iter(new.values())), call_llm=self.call_llm, model=self.model)
 
     # ------------------------------------------------------------------
     # Prompt construction
@@ -366,6 +413,15 @@ class Agent:
             tool_lines.append(f"- {_tool.name}: {_tool.description}")
         tools_block = "\n".join(tool_lines) if tool_lines else "(no tools registered)"
 
+        io_hint = ""
+        if _registry_uses_flyte_io(self._registry):
+            io_hint = (
+                "\n\nWhen a tool returns a flyte.io File, Dir, or DataFrame (a JSON object "
+                "with a `uri` field), pass the **complete** tool-result JSON as the argument "
+                "to downstream tools that accept that type. Continue calling tools until the "
+                "user's request is fully satisfied before giving a final text answer."
+            )
+
         return (
             f"{self.instructions}\n\n"
             f"You have access to the following tools (full JSON schemas are provided "
@@ -373,6 +429,7 @@ class Agent:
             f"{tools_block}\n"
             f"Use tools deliberately. Reply with plain text when you have a final "
             f"answer or do not need a tool."
+            f"{io_hint}"
             f"{skills_block}"
         )
 
@@ -408,24 +465,13 @@ class Agent:
                 return (f"Human reviewer declined tool `{tool.name}`. Try a different approach.", True)
         await _emit(AgentEvent("tool_start", {"tool": tool.name, "args": args}))
         try:
-            if tool.call_handler is not None:
-                bound = ToolFn(
-                    name=tool.name,
-                    description=tool.description,
-                    parameters=tool.parameters,
-                    model=self.model,
-                    target=tool.target,
-                    source=tool.source,
-                    _execute=tool.execute,
-                )
-                result = await tool.call_handler(self.call_llm, bound, **args)
-            else:
-                result = await tool.execute(args)
+            result = await invoke_agent_tool(tool, args, call_llm=self.call_llm, model=self.model)
         except Exception as exc:
             await _emit(AgentEvent("tool_error", {"tool": tool.name, "error": str(exc)}))
             return (f"Error executing tool `{tool.name}`: {exc}", True)
         await _emit(AgentEvent("tool_end", {"tool": tool.name, "result": _abbreviate(result)}))
-        return (_stringify_tool_result(result), False)
+        result_text = await _stringify_tool_result(result)
+        return (result_text, False)
 
     @syncify
     async def run(
@@ -524,7 +570,7 @@ class Agent:
 
         from ._code import build_sandbox_tools, extract_python_code
 
-        sandbox_tools = build_sandbox_tools(self._registry)
+        sandbox_tools = build_sandbox_tools(self._registry, call_llm=self.call_llm, model=self.model)
         last_code = ""
 
         async def step(llm_msg: LLMMessage, messages: list[dict[str, Any]], attempts: int) -> _TurnResult:
@@ -562,7 +608,7 @@ class Agent:
                 await _emit(AgentEvent("turn_end", {"turn": attempts, "had_code": True, "error": True}))
                 return _TurnResult(done=False)
 
-            observation = _stringify_tool_result(result)
+            observation = await _stringify_tool_result(result)
             await _emit(AgentEvent("tool_end", {"tool": "<sandbox>", "result": _abbreviate(result)}))
             messages.append(
                 {
@@ -624,54 +670,69 @@ class Agent:
         to a passed :class:`MemoryStore`) but never saved; persistence is the
         caller's responsibility.
         """
-        await self._ensure_mcp_loaded()
-        start_data: dict[str, Any] = {"name": self.name, "model": self.model}
-        if mode is not None:
-            start_data["mode"] = mode
-        await _emit(AgentEvent("agent_start", start_data))
-        t0 = time.monotonic()
+        run_id = uuid.uuid4().hex[:8]
+        identity_token = _current_run.set(_RunIdentity(agent=self.name, run_id=run_id))
 
-        store, prior_len, messages = self._init_messages(memory, message)
+        # Render the loop's progress into the task report (best-effort; a no-op when
+        # there is no active report), chaining onto any callback the caller installed.
+        prev_cb = agent_progress_cb.get()
+        cb_token = agent_progress_cb.set(build_report_callback(_REPORT_TAB, prev_cb))
+        try:
+            await self._ensure_mcp_loaded()
+            start_data: dict[str, Any] = {"name": self.name, "model": self.model}
+            if mode is not None:
+                start_data["mode"] = mode
+            await _emit(AgentEvent("agent_start", start_data))
+            t0 = time.monotonic()
 
-        attempts = 0
-        last_text = ""
-        error_msg = ""
+            store, prior_len, messages = self._init_messages(memory, message)
 
-        for turn in range(self.max_turns):
-            attempts = turn + 1
-            await _emit(AgentEvent("turn_start", {"turn": attempts, "max_turns": self.max_turns}))
-            try:
-                with flyte.group(f"{self.name}-turn-{attempts}"):
-                    llm_msg = await self.call_llm(
-                        self.model,
-                        self._system_prompt,
-                        list[dict[str, Any]](messages),
-                        tools_schema,
-                    )
-            except Exception as exc:
-                error_msg = f"LLM call failed on turn {attempts}: {exc}"
-                break
+            attempts = 0
+            last_text = ""
+            error_msg = ""
 
-            outcome = await step(llm_msg, messages, attempts)
-            if outcome.done:
-                last_text = outcome.final_text
-                break
-        else:
-            error_msg = f"Reached max_turns={self.max_turns} without producing a final answer."
+            for turn in range(self.max_turns):
+                attempts = turn + 1
+                await _emit(AgentEvent("turn_start", {"turn": attempts, "max_turns": self.max_turns}))
+                try:
+                    with flyte.group(f"{self.name}-turn-{attempts}"):
+                        llm_msg = await self.call_llm(
+                            self.model,
+                            self._system_prompt,
+                            list[dict[str, Any]](messages),
+                            tools_schema,
+                        )
+                except Exception as exc:
+                    error_msg = f"LLM call failed on turn {attempts}: {exc}"
+                    break
 
-        if store is not None:
-            # Append only the in-flight tail back to the store (mutated in place,
-            # returned to the caller, but not persisted here).
-            store.extend(messages[prior_len:])
+                outcome = await step(llm_msg, messages, attempts)
+                if outcome.done:
+                    last_text = outcome.final_text
+                    break
+            else:
+                error_msg = f"Reached max_turns={self.max_turns} without producing a final answer."
 
-        elapsed = int((time.monotonic() - t0) * 1000)
-        await _emit(
-            AgentEvent(
-                "agent_end",
-                {"turns": attempts, "elapsed_ms": elapsed, "error": error_msg, "summary_len": len(last_text)},
+            if store is not None:
+                # Append only the in-flight tail back to the store (mutated in place,
+                # returned to the caller, but not persisted here).
+                store.extend(messages[prior_len:])
+
+            elapsed = int((time.monotonic() - t0) * 1000)
+            await _emit(
+                AgentEvent(
+                    "agent_end",
+                    {"turns": attempts, "elapsed_ms": elapsed, "error": error_msg, "summary_len": len(last_text)},
+                )
             )
-        )
-        return _RunOutcome(attempts=attempts, last_text=last_text, error_msg=error_msg, memory=store)
+            return _RunOutcome(attempts=attempts, last_text=last_text, error_msg=error_msg, memory=store)
+        finally:
+            try:
+                await flyte.report.flush()
+            except Exception:  # pragma: no cover - no active report / local run
+                pass
+            agent_progress_cb.reset(cb_token)
+            _current_run.reset(identity_token)
 
     async def _execute_calls(
         self,

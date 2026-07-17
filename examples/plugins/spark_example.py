@@ -16,7 +16,7 @@ image = (
         extendable=True,
         platform=("linux/amd64", "linux/arm64"),
     )
-    .with_pip_packages("flyteplugins-spark>=2.0.0")
+    .with_pip_packages("flyteplugins-spark>=2.5.0")
 )
 
 task_env = flyte.TaskEnvironment(

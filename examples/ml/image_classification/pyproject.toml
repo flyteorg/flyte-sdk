@@ -12,13 +12,13 @@ dependencies = [
 core = [
     "transformers",
     "torch",
+    "torchvision",
     "pillow",
 ]
 
 # Training dependencies - needed for model fine-tuning
 training = [
     "image-classification-example[core]",
-    "torchvision",
     "datasets",
     "numpy",
     "accelerate",  # For efficient training
