@@ -57,6 +57,15 @@ def _parse_kv(items: Tuple[str, ...], flag: str) -> Optional[Dict[str, str]]:
     "source run. Repeatable. A listed parent re-enqueues its children (list them too to "
     "force the whole subtree); unknown names are ignored.",
 )
+@click.option(
+    "--allow-missing-outputs",
+    "allow_missing_outputs",
+    is_flag=True,
+    default=False,
+    help="Proceed when the source run's outputs were cleaned up from storage, using its inputs "
+    "URI directly. The inputs cannot be verified from the client — if they were deleted too, "
+    "the new run fails at runtime.",
+)
 @click.pass_context
 def rerun(
     ctx: click.Context,
@@ -69,6 +78,7 @@ def rerun(
     follow: bool,
     recover: bool,
     force_rerun_action: Tuple[str, ...],
+    allow_missing_outputs: bool,
 ) -> None:
     """Re-run an existing run RUN_NAME with its original code and inputs.
 
@@ -88,7 +98,9 @@ def rerun(
     if force_rerun_action and not recover:
         raise click.UsageError("--force-rerun-action requires --recover")
     config = common.initialize_config(ctx, project=project, domain=domain)
-    asyncio.run(_execute(run_name, name, env, label, follow, recover, force_rerun_action, config))
+    asyncio.run(
+        _execute(run_name, name, env, label, follow, recover, force_rerun_action, allow_missing_outputs, config)
+    )
 
 
 async def _execute(
@@ -99,6 +111,7 @@ async def _execute(
     follow: bool,
     recover: bool,
     force_rerun_action: Tuple[str, ...],
+    allow_missing_outputs: bool,
     config: common.CLIConfig,
 ) -> None:
     import flyte
@@ -114,6 +127,7 @@ async def _execute(
             labels=_parse_kv(label, "--label"),
             recover=recover,
             recover_force_rerun_actions=force_rerun_action or None,
+            allow_missing_source_outputs=allow_missing_outputs,
         )
         result = await runner.rerun.aio(run_name)
     except Exception as e:

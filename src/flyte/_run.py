@@ -160,6 +160,7 @@ class _Runner:
         debug: bool = False,
         recover: bool | str | None = False,
         recover_force_rerun_actions: Sequence[str] | None = None,
+        allow_missing_source_outputs: bool = False,
         _tracker: Any = None,
         _bundle_relative_paths: tuple[str, ...] | None = None,
         _bundle_from_dir: pathlib.Path | None = None,
@@ -218,6 +219,9 @@ class _Runner:
         self._recover_force_rerun_actions = tuple(recover_force_rerun_actions or ())
         if self._recover_force_rerun_actions and not self._recover:
             raise ValueError("recover_force_rerun_actions requires recover to be set")
+        # Opt-in for rerun/recover of a source run whose outputs were cleaned up from storage:
+        # proceed with its inputs URI instead of failing. See the fallback in rerun().
+        self._allow_missing_source_outputs = allow_missing_source_outputs
 
     def _resolve_recover_ref(self, rerun_run_name: str | None) -> str | None:
         """Resolve `self._recover` to the reference run name to recover from (or None).
@@ -1174,15 +1178,17 @@ class _Runner:
             proto_inputs = converted.proto_inputs
         else:
             # Rerun/recover only need the source run's INPUTS. GetActionData resolves inputs AND
-            # outputs server-side and 404s wholesale when the source outputs.pb has been cleaned
-            # up (retention), even though the inputs still exist. In that case fall back to
-            # GetActionDataURIs (metadata only, no blob fetch) and hand the inputs URI straight
-            # to CreateRun — source outputs are irrelevant to run creation. A NotFound that
-            # points at the inputs themselves stays fatal.
+            # outputs server-side concurrently and 404s wholesale when either blob has been
+            # cleaned up (retention) — and which half the error names is a race. The client has
+            # no RPC to check the inputs blob alone, so a missing-data 404 is a hard error by
+            # default; `allow_missing_source_outputs` opts into proceeding with the inputs URI
+            # (fails at runtime if the inputs turn out to be gone too).
             from connectrpc.code import Code
             from connectrpc.errors import ConnectError
             from flyteidl2.common import run_pb2 as common_run_pb2
             from flyteidl2.workflow import run_service_pb2
+
+            import flyte.errors
 
             try:
                 resp = await get_client().dataproxy_service.get_action_data(
@@ -1195,8 +1201,6 @@ class _Runner:
                 if "inputs" in str(e.message):
                     # The inputs blob itself is gone — nothing to feed the new run; fail
                     # fast with a clear story instead of the server's raw 404.
-                    import flyte.errors
-
                     raise flyte.errors.RuntimeUserError(
                         "SourceRunInputsUnavailableError",
                         f"Source run {run_name}'s inputs are no longer in storage (deleted by "
@@ -1206,6 +1210,18 @@ class _Runner:
                         f"launch fresh local code with `flyte run ... --recover-from {run_name}` "
                         f"(inputs come from the CLI parameters).",
                     ) from e
+                if not self._allow_missing_source_outputs:
+                    raise flyte.errors.RuntimeUserError(
+                        "SourceRunOutputsUnavailableError",
+                        f"Source run {run_name}'s outputs are no longer in storage. Rerun/recover "
+                        f"only needs its inputs, but whether those still exist cannot be verified "
+                        f"from the client. If you know the inputs are intact, retry with "
+                        f"--allow-missing-outputs "
+                        f"(with_runcontext(allow_missing_source_outputs=True)); if they were "
+                        f"deleted too, the new run would fail at runtime — pass new inputs "
+                        f"explicitly instead (rerun('{run_name}', inputs={{...}}) or "
+                        f"`flyte run ... --recover-from {run_name}`).",
+                    ) from e
                 uris = await get_client().run_service.get_action_data_u_r_is(
                     run_service_pb2.GetActionDataURIsRequest(action_id=action_details.pb2.id)
                 )
@@ -1213,8 +1229,10 @@ class _Runner:
                     raise
                 logger.warning(
                     f"Source run {run_name} outputs are no longer in storage; proceeding with its "
-                    f"inputs at {uris.inputs_uri}. Recovered actions referencing deleted outputs "
-                    f"will fail at runtime if consumed (use --force-rerun-action to re-execute them)."
+                    f"inputs at {uris.inputs_uri} (--allow-missing-outputs). If the inputs were "
+                    f"deleted too the new run will fail at runtime, and recovered actions "
+                    f"referencing deleted outputs will fail if consumed "
+                    f"(use --force-rerun-action to re-execute them)."
                 )
                 offloaded_input_data = common_run_pb2.OffloadedInputData(
                     uri=uris.inputs_uri,
@@ -1293,6 +1311,7 @@ def with_runcontext(
     debug: bool = False,
     recover: bool | str | None = False,
     recover_force_rerun_actions: Sequence[str] | None = None,
+    allow_missing_source_outputs: bool = False,
     _tracker: Any = None,
 ) -> _Runner:
     """
@@ -1382,6 +1401,10 @@ def with_runcontext(
         action re-enqueues its children — list them too to force the whole subtree; a listed
         condition re-pauses for a new signal. Unknown names are ignored. Only valid with
         ``recover``.
+    :param allow_missing_source_outputs: Opt-in for ``rerun``/recover when the source run's
+        outputs were cleaned up from storage: proceed using the source inputs URI instead of
+        failing. The client cannot verify the inputs still exist — if they were deleted too,
+        the new run fails at runtime.
     :param _tracker: This is an internal only parameter used by the CLI to render the TUI.
 
     :return: runner
@@ -1433,6 +1456,7 @@ def with_runcontext(
         debug=debug,
         recover=recover,
         recover_force_rerun_actions=recover_force_rerun_actions,
+        allow_missing_source_outputs=allow_missing_source_outputs,
         _tracker=_tracker,
     )
 
