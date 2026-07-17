@@ -382,8 +382,6 @@ class TaskEnvironment(Environment):
             return tmpl
 
         if _func is None:
-            # P/R are bound by the overloads; they are unbound in the implementation body, so
-            # cast through the unparameterized generic here.
             return cast("Callable[[F], AsyncFunctionTaskTemplate]", decorator)
         return cast("AsyncFunctionTaskTemplate", decorator(_func))
 
