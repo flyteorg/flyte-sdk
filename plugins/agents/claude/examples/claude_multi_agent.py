@@ -22,10 +22,8 @@ Run:  flyte run claude_multi_agent.py research_pipeline --topic "The state of el
 """
 
 import asyncio
-from pathlib import Path
 
 import flyte
-from flyte._image import PythonWheels
 
 from flyteplugins.agents.claude import run_agent, tool
 
@@ -33,22 +31,8 @@ env = flyte.TaskEnvironment(
     "claude-research",
     resources=flyte.Resources(cpu=1),
     secrets=[flyte.Secret(key="anthropic_api_key", as_env_var="ANTHROPIC_API_KEY")],
-    image=(
-        flyte.Image.from_debian_base(name="claude-research")
-        .clone(
-            addl_layer=PythonWheels(
-                wheel_dir=Path(__file__).parent.parent / "dist",
-                package_name="flyteplugins-agents-core",
-                pre=True,
-            ),
-        )
-        .clone(
-            addl_layer=PythonWheels(
-                wheel_dir=Path(__file__).parent.parent / "dist",
-                package_name="flyteplugins-agents-claude",
-                pre=True,
-            ),
-        )
+    image=flyte.Image.from_debian_base(name="claude-research").with_local_v2_plugins(
+        ["flyteplugins-agents-core", "flyteplugins-agents-claude"]
     ),
 )
 

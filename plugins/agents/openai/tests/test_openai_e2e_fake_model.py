@@ -26,7 +26,7 @@ except Exception:  # pragma: no cover - shape drift across SDK versions
 
 from agents import RunConfig  # noqa: E402
 
-from flyteplugins.agents.openai import run_agent, tool  # noqa: E402
+from flyteplugins.agents.openai import run_agent, run_agent_sync, tool  # noqa: E402
 
 _env = flyte.TaskEnvironment("agents_e2e")
 
@@ -95,3 +95,26 @@ async def test_run_agent_full_loop_with_tool_call():
     assert "sunny in paris" in out.lower()
     assert fake.turns == 2
     assert executed["count"] == 1
+
+
+def test_run_agent_sync_call():
+    """run_agent_sync drives the loop end to end from synchronous code."""
+
+    class _OneTurnModel(Model):
+        async def get_response(self, *args, **kwargs):
+            return _final("Hello from the sync form.")
+
+        def stream_response(self, *args, **kwargs):  # pragma: no cover
+            raise NotImplementedError
+
+    class _Provider(ModelProvider):
+        def get_model(self, name):
+            return _OneTurnModel()
+
+    out = run_agent_sync(
+        "say hi",
+        durable=False,
+        observability=False,
+        run_config=RunConfig(model_provider=_Provider()),
+    )
+    assert out == "Hello from the sync form."
