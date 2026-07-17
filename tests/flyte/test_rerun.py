@@ -213,3 +213,50 @@ async def test_rerun_empty_fetched_id_falls_back_to_run_name():
     assert req.run_spec.related_to == identifier_pb2.RunIdentifier(
         org="testorg", project="test", domain="test", name="r1"
     )
+
+
+@pytest.mark.asyncio
+async def test_rerun_missing_source_outputs_falls_back_to_inputs_uri():
+    """Deleted source outputs (retention) must not abort a rerun/recover: GetActionData's
+    wholesale NotFound falls back to GetActionDataURIs, and the source inputs URI goes
+    straight to CreateRun as offloaded_input_data (no upload)."""
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
+    mock_client, mock_run_service, mock_dataproxy, _ = _mock_client_with_run()
+    mock_dataproxy.get_action_data.side_effect = ConnectError(
+        Code.NOT_FOUND, "object 's3://b/metadata/v2/p/d/r1/a0/1/outputs.pb' not found"
+    )
+    mock_run_service.get_action_data_u_r_is.return_value = run_service_pb2.GetActionDataURIsResponse(
+        inputs_uri="s3://b/metadata/v2/p/d/r1/a0/inputs.pb", outputs_uri=""
+    )
+    await _init_for_testing(client=mock_client, project="test", domain="test")
+
+    with mock.patch("flyte.remote._run.RunDetails") as RD:
+        RD.get.aio = AsyncMock(return_value=_fake_prior_run())
+        run = await flyte.with_runcontext(mode="remote").rerun.aio("r1")
+
+    assert run
+    mock_run_service.get_action_data_u_r_is.assert_called_once()
+    mock_dataproxy.upload_inputs.assert_not_called()
+    req: run_service_pb2.CreateRunRequest = mock_run_service.create_run.call_args[0][0]
+    assert req.offloaded_input_data.uri == "s3://b/metadata/v2/p/d/r1/a0/inputs.pb"
+
+
+@pytest.mark.asyncio
+async def test_rerun_missing_source_inputs_stays_fatal():
+    """A NotFound that points at the inputs themselves is a real error — no fallback."""
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
+    mock_client, mock_run_service, mock_dataproxy, _ = _mock_client_with_run()
+    mock_dataproxy.get_action_data.side_effect = ConnectError(
+        Code.NOT_FOUND, "object 's3://b/metadata/v2/p/d/r1/a0/1/inputs.pb' not found"
+    )
+    await _init_for_testing(client=mock_client, project="test", domain="test")
+
+    with mock.patch("flyte.remote._run.RunDetails") as RD:
+        RD.get.aio = AsyncMock(return_value=_fake_prior_run())
+        with pytest.raises(ConnectError, match=r"inputs\.pb"):
+            await flyte.with_runcontext(mode="remote").rerun.aio("r1")
+    mock_run_service.get_action_data_u_r_is.assert_not_called()

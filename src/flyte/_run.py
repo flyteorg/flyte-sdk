@@ -561,13 +561,24 @@ class _Runner:
         return run_spec
 
     async def _submit_remote(
-        self, *, task_spec: Any, task_id: Any, proto_inputs: Any, run_spec: Any, run_id: Any, project_id: Any
+        self,
+        *,
+        task_spec: Any,
+        task_id: Any,
+        proto_inputs: Any,
+        run_spec: Any,
+        run_id: Any,
+        project_id: Any,
+        offloaded_input_data: Any = None,
     ) -> Run:
         """Upload inputs and create the run. The single network call site for remote submission.
 
         Consumes an already-built ``run_spec`` (see ``_apply_overrides``), raw proto ``inputs``
         (``flyteidl2.task.Inputs``), and a task by reference (``task_id``) or by value
-        (``task_spec``); shared by ``_run_remote`` and ``rerun``.
+        (``task_spec``); shared by ``_run_remote`` and ``rerun``. ``offloaded_input_data``
+        (``flyteidl2.common.OffloadedInputData``) references already-offloaded inputs (e.g. the
+        source run's inputs.pb on a rerun whose inputs can't be re-downloaded) and skips the
+        upload; exactly one of ``proto_inputs`` / ``offloaded_input_data`` is used.
         """
         from connectrpc.code import Code
         from connectrpc.errors import ConnectError
@@ -578,28 +589,30 @@ class _Runner:
         from flyte.remote import Run
 
         try:
-            upload_req = dataproxy_service_pb2.UploadInputsRequest(inputs=proto_inputs)
-            # Pass the explicit run_base_dir so the offloaded inputs are written under the
-            # same base the CreateRun below resolves (RunSpec.run_base_dir, set in _apply_overrides).
-            # When unset the server falls back to settings/cluster default in both paths.
-            if self._run_base_dir:
-                upload_req.base_dir = self._run_base_dir
-            # Reference an already-registered task by id; otherwise upload the full spec.
-            if task_id is not None:
-                upload_req.task_id.CopyFrom(task_id)
-            else:
-                upload_req.task_spec.CopyFrom(task_spec)
-            if run_id is not None:
-                upload_req.run_id.CopyFrom(run_id)
-            else:
-                upload_req.project_id.CopyFrom(project_id)
+            if offloaded_input_data is None:
+                upload_req = dataproxy_service_pb2.UploadInputsRequest(inputs=proto_inputs)
+                # Pass the explicit run_base_dir so the offloaded inputs are written under the
+                # same base the CreateRun below resolves (RunSpec.run_base_dir, set in _apply_overrides).
+                # When unset the server falls back to settings/cluster default in both paths.
+                if self._run_base_dir:
+                    upload_req.base_dir = self._run_base_dir
+                # Reference an already-registered task by id; otherwise upload the full spec.
+                if task_id is not None:
+                    upload_req.task_id.CopyFrom(task_id)
+                else:
+                    upload_req.task_spec.CopyFrom(task_spec)
+                if run_id is not None:
+                    upload_req.run_id.CopyFrom(run_id)
+                else:
+                    upload_req.project_id.CopyFrom(project_id)
 
-            upload_resp = await get_client().dataproxy_service.upload_inputs(upload_req)
+                upload_resp = await get_client().dataproxy_service.upload_inputs(upload_req)
+                offloaded_input_data = upload_resp.offloaded_input_data
 
             create_req = run_service_pb2.CreateRunRequest(
                 run_id=run_id,
                 project_id=project_id,
-                offloaded_input_data=upload_resp.offloaded_input_data,
+                offloaded_input_data=offloaded_input_data,
                 run_spec=run_spec,
             )
             # Reference an already-registered task by id; otherwise send the full spec.
@@ -1129,6 +1142,8 @@ class _Runner:
             version = task_spec.task_template.id.version
 
         # Inputs: reuse the prior raw proto inputs, or convert new native kwargs against the interface.
+        proto_inputs = None
+        offloaded_input_data = None
         if inputs:
             if task_template is not None:
                 iface = task_template.native_interface
@@ -1139,10 +1154,36 @@ class _Runner:
             converted = await convert_from_native_to_inputs(iface, custom_context=self._custom_context, **inputs)
             proto_inputs = converted.proto_inputs
         else:
-            resp = await get_client().dataproxy_service.get_action_data(
-                request=dataproxy_service_pb2.GetActionDataRequest(action_id=action_details.pb2.id)
-            )
-            proto_inputs = resp.inputs
+            # Rerun/recover only need the source run's INPUTS. GetActionData resolves inputs AND
+            # outputs server-side and 404s wholesale when the source outputs.pb has been cleaned
+            # up (retention), even though the inputs still exist. In that case fall back to
+            # GetActionDataURIs (metadata only, no blob fetch) and hand the inputs URI straight
+            # to CreateRun — source outputs are irrelevant to run creation. A NotFound that
+            # points at the inputs themselves stays fatal.
+            from connectrpc.code import Code
+            from connectrpc.errors import ConnectError
+            from flyteidl2.common import run_pb2 as common_run_pb2
+            from flyteidl2.workflow import run_service_pb2
+
+            try:
+                resp = await get_client().dataproxy_service.get_action_data(
+                    request=dataproxy_service_pb2.GetActionDataRequest(action_id=action_details.pb2.id)
+                )
+                proto_inputs = resp.inputs
+            except ConnectError as e:
+                if e.code != Code.NOT_FOUND or "inputs" in str(e.message):
+                    raise
+                uris = await get_client().run_service.get_action_data_u_r_is(
+                    run_service_pb2.GetActionDataURIsRequest(action_id=action_details.pb2.id)
+                )
+                if not uris.inputs_uri:
+                    raise
+                logger.warning(
+                    f"Source run {run_name} outputs are no longer in storage; proceeding with its "
+                    f"inputs at {uris.inputs_uri}. Recovered actions referencing deleted outputs "
+                    f"will fail at runtime if consumed (use --force-rerun-action to re-execute them)."
+                )
+                offloaded_input_data = common_run_pb2.OffloadedInputData(uri=uris.inputs_uri)
 
         run_id, project_id = self._resolve_run_target(project, domain, cfg.org)
 
@@ -1177,6 +1218,7 @@ class _Runner:
             run_spec=run_spec,
             run_id=run_id,
             project_id=project_id,
+            offloaded_input_data=offloaded_input_data,
         )
 
 
