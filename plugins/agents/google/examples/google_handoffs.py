@@ -92,7 +92,7 @@ async def support(message: str) -> str:
         ),
         sub_agents=[billing, technical],
     )
-    return await run_agent.aio(message, agent=triage)
+    return await run_agent(message, agent=triage)
 
 
 if __name__ == "__main__":

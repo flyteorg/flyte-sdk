@@ -37,7 +37,7 @@ async def chat(message: str, memory_key: str) -> str:
     Because ``memory_key`` is stable across runs, the agent restores the prior
     transcript every time it is called with the same key.
     """
-    return await run_agent.aio(
+    return await run_agent(
         message,
         instructions="You are a friendly assistant. Use the conversation history to stay consistent.",
         model="gemini-3.1-flash-lite",

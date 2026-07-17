@@ -21,7 +21,7 @@ rendered into the Flyte task report. ``memory_key`` persists the conversation
 """
 
 from ._durable import DurableChatModel
-from ._run import run_agent
+from ._run import run_agent, run_agent_sync
 from ._tools import tool
 
-__all__ = ["DurableChatModel", "run_agent", "tool"]
+__all__ = ["DurableChatModel", "run_agent", "run_agent_sync", "tool"]

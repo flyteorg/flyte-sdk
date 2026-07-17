@@ -24,7 +24,7 @@ async def get_weather(city: str) -> str:
 
 @env.task(report=True, retries=3)
 async def city_agent(question: str) -> str:
-    return await run_agent.aio(question, tools=[get_weather], model="gemini-2.0-flash")
+    return await run_agent(question, tools=[get_weather], model="gemini-2.0-flash")
 ```
 
 ## How it maps to Flyte
@@ -52,7 +52,7 @@ Pass `memory_key` (a user/thread id) for cross-run memory — the agent continue
 the same conversation across separate runs:
 
 ```python
-await run_agent.aio(message, model="gemini-2.0-flash", memory_key="user-alice")
+await run_agent(message, model="gemini-2.0-flash", memory_key="user-alice")
 ```
 
 ADK keeps the conversation as a list of `Event`s on the session; we persist those to a

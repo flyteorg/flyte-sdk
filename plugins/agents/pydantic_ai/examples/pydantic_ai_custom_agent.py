@@ -85,7 +85,7 @@ def _build_city_agent():
 async def weather_agent(city: str) -> str:
     """Run the custom-built agent durably on Flyte."""
     agent = _build_city_agent()
-    return await run_agent.aio(
+    return await run_agent(
         f"What's the weather in {city}?",
         agent=agent,
     )
@@ -99,7 +99,7 @@ async def weather_agent(city: str) -> str:
 @env.task(report=True, retries=3)
 async def quick_weather_agent(city: str) -> str:
     """Build and run in one call using run_agent's builder path."""
-    return await run_agent.aio(
+    return await run_agent(
         f"What's the weather in {city}?",
         tools=[get_weather, get_population],
         model="openai:gpt-4o",

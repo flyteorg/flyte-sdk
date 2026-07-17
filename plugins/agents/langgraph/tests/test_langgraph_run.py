@@ -56,7 +56,7 @@ async def test_run_agent_with_tools_builds_default_graph(monkeypatch):
     monkeypatch.setattr(run_mod, "_StateGraph", FakeStateGraph)
     monkeypatch.setattr(run_mod, "_resolve_chat_model", lambda model: _FakeModel())
 
-    result = await run_mod.run_agent.aio("What's the weather?", tools=[get_weather], name="test-agent")
+    result = await run_mod.run_agent("What's the weather?", tools=[get_weather], name="test-agent")
     assert result == "The weather is sunny."
     # The default builder seeds a messages state.
     assert "messages" in fake_agent.calls[0]
@@ -67,27 +67,27 @@ async def test_run_agent_with_prebuilt_agent():
     """run_agent drives a pre-built compiled graph and extracts the final text."""
     fake_agent = _FakeAgent({"messages": [{"content": "Hello!"}]})
 
-    result = await run_mod.run_agent.aio("Hi", agent=fake_agent, name="test-agent")
+    result = await run_mod.run_agent("Hi", agent=fake_agent, name="test-agent")
     assert result == "Hello!"
 
 
-def test_run_agent_is_syncified():
-    """run_agent is callable synchronously, with an `.aio` async variant."""
+def test_run_agent_sync_variant():
+    """run_agent_sync runs the async implementation from synchronous code."""
     fake_agent = _FakeAgent({"messages": [{"content": "Hello!"}]})
-    assert run_mod.run_agent("Hi", agent=fake_agent, name="test-agent") == "Hello!"
+    assert run_mod.run_agent_sync("Hi", agent=fake_agent, name="test-agent") == "Hello!"
 
 
 @pytest.mark.asyncio
 async def test_run_agent_raises_on_both_agent_and_tools():
     with pytest.raises(ValueError, match="Pass either"):
-        await run_mod.run_agent.aio("hi", agent=_FakeAgent({}), tools=[lambda: None])
+        await run_mod.run_agent("hi", agent=_FakeAgent({}), tools=[lambda: None])
 
 
 @pytest.mark.asyncio
 async def test_run_agent_requires_model_on_builder_path():
     """Building the default graph (no `agent=`) without a model is an explicit error."""
     with pytest.raises(ValueError, match="Provide `model=`"):
-        await run_mod.run_agent.aio("hi", tools=[])
+        await run_mod.run_agent("hi", tools=[])
 
 
 def test_resolve_chat_model_passes_instances_through():
@@ -129,9 +129,9 @@ async def test_run_agent_persists_and_resumes_memory(monkeypatch):
             return {"messages": [*msgs, AIMessage(content="reply")]}
 
     agent = _EchoAgent()
-    await run_mod.run_agent.aio("first", agent=agent, memory_key="u1")
+    await run_mod.run_agent("first", agent=agent, memory_key="u1")
     # Second run resumes: the prior transcript is prepended before the new input.
-    await run_mod.run_agent.aio("second", agent=agent, memory_key="u1")
+    await run_mod.run_agent("second", agent=agent, memory_key="u1")
 
     contents = [m.content for m in agent.seen[1]]
     assert contents == ["first", "reply", "second"]

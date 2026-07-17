@@ -66,7 +66,7 @@ async def run_with_agent(question: str, agent_id: str) -> str:
     ``agent_id`` is passed instead of ``model`` — ``run_agent`` drives the existing
     server-side agent and registers our Flyte tasks as its tools.
     """
-    return await run_agent.aio(question, tools=[get_weather, get_population], agent_id=agent_id)
+    return await run_agent(question, tools=[get_weather, get_population], agent_id=agent_id)
 
 
 @env.task(retries=3)

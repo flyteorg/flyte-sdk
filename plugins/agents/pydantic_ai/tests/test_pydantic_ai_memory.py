@@ -109,7 +109,7 @@ async def test_run_agent_seeds_message_history_and_saves(monkeypatch):
 
     monkeypatch.setattr(run_mod, "resolve_memory", fake_resolve)
 
-    result = await run_mod.run_agent.aio(
+    result = await run_mod.run_agent(
         "hi", agent=_FakeAgent(), memory_key="user-123", durable=False, observability=False
     )
     assert result == "new answer"

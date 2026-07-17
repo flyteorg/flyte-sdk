@@ -41,7 +41,7 @@ async def chat(message: str, memory_key: str) -> str:
     (and its prior virtual-filesystem notes) every time it is called with the
     same key.
     """
-    return await run_agent.aio(
+    return await run_agent(
         message,
         instructions="You are a friendly assistant. Use the conversation history to stay consistent.",
         model="anthropic:claude-sonnet-4-6",

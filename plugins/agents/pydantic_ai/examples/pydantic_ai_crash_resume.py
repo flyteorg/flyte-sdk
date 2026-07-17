@@ -99,7 +99,7 @@ async def resilient_agent(question: str) -> str:
 
     # run_agent wraps the model in FlyteModel (durable=True is the default), so
     # each turn is: FlyteModel(durable record/replay) -> _LoggingModel -> OpenAI.
-    answer = await run_agent.aio(
+    answer = await run_agent(
         question,
         tools=[get_weather, get_population],
         instructions="You are a concise city-facts assistant. Use the tools to answer.",

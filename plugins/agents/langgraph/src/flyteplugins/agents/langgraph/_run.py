@@ -19,8 +19,7 @@ from __future__ import annotations
 
 import typing
 
-from flyte.syncify import syncify
-from flyteplugins.agents.core import ReportTimeline, flush_report
+from flyteplugins.agents.core import ReportTimeline, flush_report, sync_variant
 
 from ._nodes import ai_node, tool_node
 from ._tools import _coerce_tool
@@ -95,7 +94,6 @@ def _final_text(result: typing.Any) -> str:
     return str(result) if result is not None else ""
 
 
-@syncify
 async def run_agent(
     input: str | typing.Any,
     *,
@@ -111,8 +109,8 @@ async def run_agent(
 ) -> str:
     """Run a LangGraph graph and return the final text.
 
-    ``run_agent`` is syncified: call it synchronously as ``run_agent(...)`` or
-    asynchronously as ``await run_agent.aio(...)``.
+    Await this from an async task as ``await run_agent(...)``; from a sync task
+    use :func:`run_agent_sync` instead.
 
     Call this from inside an ``@env.task`` — that task is the durable parent.
     Within it, each model turn is recorded via ``flyte.trace`` (replayed on
@@ -193,3 +191,6 @@ async def run_agent(
         await save_messages(store, result["messages"])
 
     return _final_text(result)
+
+
+run_agent_sync = sync_variant(run_agent)

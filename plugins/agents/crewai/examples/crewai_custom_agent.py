@@ -85,7 +85,7 @@ city_agent = _build_city_agent()
 @env.task(report=True, retries=3)
 async def city_agent_task(city: str) -> str:
     """Run the custom-built agent durably on Flyte."""
-    return await run_agent.aio(
+    return await run_agent(
         f"What's the weather and population of {city}?",
         agent=city_agent,
     )
@@ -99,7 +99,7 @@ async def city_agent_task(city: str) -> str:
 @env.task(report=True, retries=3)
 async def quick_city_agent(city: str) -> str:
     """Build and run in one call using run_agent's builder."""
-    return await run_agent.aio(
+    return await run_agent(
         f"What's the weather and population of {city}?",
         tools=[get_weather, get_population],
         instructions="You are a concise city-facts assistant. Use the tools to answer.",

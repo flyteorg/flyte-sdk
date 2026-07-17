@@ -56,7 +56,7 @@ async def resilient_agent(question: str) -> str:
     attempt = flyte.ctx().attempt_number if flyte.ctx() else 0
     print(f"▶ resilient_agent attempt {attempt}", flush=True)
 
-    answer = await run_agent.aio(
+    answer = await run_agent(
         question,
         tools=[get_weather, get_population],
         instructions="You are a concise city-facts assistant. Use the tools to answer.",

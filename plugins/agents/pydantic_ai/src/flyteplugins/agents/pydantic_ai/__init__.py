@@ -18,6 +18,6 @@ rendered into the Flyte task report.
 from flyteplugins.agents.core import tool
 
 from ._durable import FlyteModel
-from ._run import run_agent
+from ._run import run_agent, run_agent_sync
 
-__all__ = ["FlyteModel", "run_agent", "tool"]
+__all__ = ["FlyteModel", "run_agent", "run_agent_sync", "tool"]

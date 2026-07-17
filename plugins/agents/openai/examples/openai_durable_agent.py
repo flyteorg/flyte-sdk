@@ -13,8 +13,8 @@ and Flyte is the runtime underneath.
   recorded only once it succeeds.
 - The agent timeline (turns, tool calls, token usage) is rendered into the task
   report because the task is created with ``report=True``.
-- ``run_agent`` is syncified: ``await run_agent.aio(...)`` from async tasks, plain
-  ``run_agent(...)`` from sync tasks (see ``city_agent_sync``).
+- ``run_agent`` is async: ``await run_agent(...)`` from async tasks, while sync
+  tasks call ``run_agent_sync(...)`` (see ``city_agent_sync``).
 
 Run:  flyte run openai_durable_agent.py city_agent --question "What's the weather and population of Paris?"
       (or drive the sync variant:  flyte run openai_durable_agent.py city_agent_sync --question "...")
@@ -25,7 +25,7 @@ import flyte
 from agents import OpenAIProvider, RunConfig
 from openai import AsyncOpenAI
 
-from flyteplugins.agents.openai import run_agent, tool
+from flyteplugins.agents.openai import run_agent, run_agent_sync, tool
 
 env = flyte.TaskEnvironment(
     "openai-durable-agent",
@@ -57,7 +57,7 @@ async def get_population(city: str) -> int:
 async def city_agent(question: str) -> str:
     """The durable parent: the OpenAI agent loop runs here, on Flyte."""
     client = AsyncOpenAI(max_retries=5, timeout=30)
-    return await run_agent.aio(
+    return await run_agent(
         question,
         tools=[get_weather, get_population],
         instructions="You are a concise city-facts assistant. Use the tools to answer.",
@@ -66,12 +66,12 @@ async def city_agent(question: str) -> str:
     )
 
 
-# ``run_agent`` is syncified: async tasks await ``run_agent.aio(...)`` (above),
-# while sync tasks simply call ``run_agent(...)``.
+# ``run_agent`` is async: async tasks await ``run_agent(...)`` (above),
+# while sync tasks call ``run_agent_sync(...)``.
 @env.task(report=True, retries=3)
 def city_agent_sync(question: str) -> str:
     """The same agent, driven from a sync task via the sync call form."""
-    return run_agent(
+    return run_agent_sync(
         question,
         tools=[get_weather, get_population],
         instructions="You are a concise city-facts assistant. Use the tools to answer.",

@@ -55,7 +55,7 @@ async def issue_refund(account_id: str, amount_usd: float) -> str:
 @env.task(report=True, retries=3)
 async def support_agent(request: str, account_id: str) -> str:
     """A support agent that can issue refunds — but only with human sign-off."""
-    return await run_agent.aio(
+    return await run_agent(
         f"Customer (account {account_id}) says: {request}",
         tools=[lookup_account, issue_refund],
         instructions=(

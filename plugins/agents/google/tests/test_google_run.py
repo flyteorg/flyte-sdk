@@ -82,10 +82,10 @@ def test_default_agent_name_is_natural():
 
 
 def test_run_agent_sync_call():
-    """run_agent is syncified: the plain sync form drives the loop end to end."""
+    """run_agent_sync drives the loop end to end from synchronous code."""
     from unittest.mock import patch
 
-    from flyteplugins.agents.google import run_agent
+    from flyteplugins.agents.google import run_agent_sync
 
     final_event = MagicMock()
     final_event.is_final_response.return_value = True
@@ -98,6 +98,6 @@ def test_run_agent_sync_call():
     fake_runner.run_async = fake_run_async
 
     with patch("google.adk.runners.Runner", return_value=fake_runner):
-        out = run_agent("say hi", model="gemini-2.0-flash", durable=False, observability=False)
+        out = run_agent_sync("say hi", model="gemini-2.0-flash", durable=False, observability=False)
 
     assert out == "Hello from the sync form."

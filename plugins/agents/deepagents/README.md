@@ -35,7 +35,7 @@ async def search_web(query: str) -> str:
 
 @env.task(report=True, retries=3)
 async def research_agent(question: str) -> str:
-    return await run_agent.aio(
+    return await run_agent(
         question,
         tools=[search_web],
         instructions="You are an expert researcher.",

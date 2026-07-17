@@ -159,7 +159,7 @@ async def handle_ticket(ticket: str, crash_first_attempt: bool = False) -> str:
     attempt = flyte.ctx().attempt_number if flyte.ctx() else 0
     print(f"▶ handle_ticket attempt {attempt}: {ticket[:48]}…", flush=True)
 
-    answer = await run_agent.aio(
+    answer = await run_agent(
         ticket,
         agent=triage_agent,
         # Inject the logging provider so the replay is visible (its lines vanish

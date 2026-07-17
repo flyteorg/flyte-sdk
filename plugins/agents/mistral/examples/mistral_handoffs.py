@@ -132,7 +132,7 @@ async def support(message: str, triage_agent_id: str) -> str:
     Registering ``share_details`` here installs its executor for the run; the specialists
     declared it at creation, so a handed-off agent's call is dispatched to it by name.
     """
-    return await run_agent.aio(message, agent_id=triage_agent_id, tools=[share_details])
+    return await run_agent(message, agent_id=triage_agent_id, tools=[share_details])
 
 
 @env.task(retries=3)

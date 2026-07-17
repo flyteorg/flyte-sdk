@@ -28,7 +28,7 @@ async def get_weather(city: str) -> str:
 # The durable parent. retries=3 -> self-healing; report=True -> agent timeline.
 @env.task(report=True, retries=3)
 async def city_agent(question: str) -> str:
-    return await run_agent.aio(
+    return await run_agent(
         question,
         tools=[get_weather],
         instructions="You are a concise assistant. Use the tools to answer.",
@@ -71,7 +71,7 @@ triage = Agent(name="triage", handoffs=[...], input_guardrails=[...])
 
 @env.task(report=True, retries=3)
 async def run(goal: str) -> str:
-    return await run_agent.aio(goal, agent=triage)
+    return await run_agent(goal, agent=triage)
 ```
 
 ### Power-user building blocks
@@ -92,7 +92,7 @@ Pass `memory_key` (a user/thread id) for cross-run memory — the agent continue
 the same conversation across separate runs, workers and restarts:
 
 ```python
-await run_agent.aio(message, model="gpt-4.1", memory_key="user-alice")
+await run_agent(message, model="gpt-4.1", memory_key="user-alice")
 ```
 
 It backs the OpenAI Agents SDK `Session` with a durable, keyed `MemoryStore` (object

@@ -13,7 +13,7 @@ Each tool call runs as a durable Flyte child action, and the run timeline is
 rendered into the Flyte task report.
 """
 
-from ._run import run_agent
+from ._run import run_agent, run_agent_sync
 from ._tools import tool
 
-__all__ = ["run_agent", "tool"]
+__all__ = ["run_agent", "run_agent_sync", "tool"]

@@ -36,8 +36,7 @@ from claude_agent_sdk import (
     query,
 )
 from flyte._task import TaskTemplate
-from flyte.syncify import syncify
-from flyteplugins.agents.core import ReportTimeline, abbrev, flush_report
+from flyteplugins.agents.core import ReportTimeline, abbrev, flush_report, sync_variant
 
 from ._durable import wire_durable_session
 from ._memory import wire_memory_session
@@ -52,7 +51,6 @@ def _coerce_tool(t: typing.Any) -> SdkMcpTool:
     return t
 
 
-@syncify
 async def run_agent(
     input: str,
     *,
@@ -67,6 +65,9 @@ async def run_agent(
     memory_key: str | None = None,
 ) -> str:
     """Run a Claude agent with the given tools and prompt; return the final text.
+
+    Await this from an async task as ``await run_agent(...)``; from a sync task
+    use :func:`run_agent_sync` instead.
 
     Call this from inside an ``@env.task`` — that task is the durable parent,
     and each tool the agent calls runs as a durable Flyte child action. Pass a
@@ -126,6 +127,9 @@ async def run_agent(
     if observability:
         await flush_report()
     return final or ""
+
+
+run_agent_sync = sync_variant(run_agent)
 
 
 def _render_assistant(timeline: ReportTimeline, message: AssistantMessage) -> None:

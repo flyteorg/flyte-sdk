@@ -18,7 +18,7 @@ rendered into the Flyte task report.
 """
 
 from ._nodes import ai_node, tool_node
-from ._run import run_agent
+from ._run import run_agent, run_agent_sync
 from ._tools import tool
 
-__all__ = ["ai_node", "run_agent", "tool", "tool_node"]
+__all__ = ["ai_node", "run_agent", "run_agent_sync", "tool", "tool_node"]

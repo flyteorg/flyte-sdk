@@ -25,7 +25,7 @@ async def get_weather(city: str) -> str:
 
 @env.task(report=True, retries=3)
 async def city_agent(question: str) -> str:
-    return await run_agent.aio(question, tools=[get_weather], model="mistral-large-latest")
+    return await run_agent(question, tools=[get_weather], model="mistral-large-latest")
 ```
 
 ## How it maps to Flyte
@@ -53,7 +53,7 @@ Pass `memory_key` (a user/thread id) for cross-run memory — the agent continue
 the same conversation across separate runs:
 
 ```python
-await run_agent.aio(message, model="mistral-large-latest", memory_key="user-alice")
+await run_agent(message, model="mistral-large-latest", memory_key="user-alice")
 ```
 
 Mistral keeps the transcript server-side, so Flyte durably persists the thread's

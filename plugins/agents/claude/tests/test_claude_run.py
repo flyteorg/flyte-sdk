@@ -1,7 +1,7 @@
-"""Sync-form smoke test for the syncified ``run_agent`` (no CLI subprocess).
+"""Sync-form smoke test for ``run_agent_sync`` (no CLI subprocess).
 
-``run_agent`` is syncified: async callers use ``await run_agent.aio(...)``, sync
-callers use ``run_agent(...)``. This drives the sync form end to end with the
+``run_agent`` is async: async callers use ``await run_agent(...)``, sync callers
+use ``run_agent_sync(...)``. This drives the sync variant end to end with the
 SDK's ``query`` stream stubbed out, so no Claude Code subprocess is spawned.
 """
 
@@ -15,14 +15,13 @@ class _FakeResultMessage:
         self.result = result
 
 
-def test_run_agent_is_syncified():
-    assert callable(run_mod.run_agent)
-    assert callable(run_mod.run_agent.aio)
-    assert inspect.iscoroutinefunction(run_mod.run_agent.fn)
+def test_run_agent_sync_variant():
+    assert inspect.iscoroutinefunction(run_mod.run_agent)
+    assert callable(run_mod.run_agent_sync)
 
 
 def test_run_agent_sync_call(monkeypatch):
-    """The plain sync form drives the query stream and returns the final text."""
+    """The sync variant drives the query stream and returns the final text."""
 
     async def fake_query(*, prompt, options):
         yield _FakeResultMessage("Hello from the sync form.")
@@ -30,5 +29,5 @@ def test_run_agent_sync_call(monkeypatch):
     monkeypatch.setattr(run_mod, "query", fake_query)
     monkeypatch.setattr(run_mod, "ResultMessage", _FakeResultMessage)
 
-    out = run_mod.run_agent("say hi", durable=False, observability=False)
+    out = run_mod.run_agent_sync("say hi", durable=False, observability=False)
     assert out == "Hello from the sync form."

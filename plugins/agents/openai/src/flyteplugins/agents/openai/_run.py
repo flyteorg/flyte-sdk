@@ -6,8 +6,7 @@ import typing
 
 from agents import Agent, RunConfig, Runner
 from flyte._task import TaskTemplate
-from flyte.syncify import syncify
-from flyteplugins.agents.core import flush_report, resolve_memory
+from flyteplugins.agents.core import flush_report, resolve_memory, sync_variant
 
 from ._durable import FlyteModelProvider
 from ._memory import FlyteSession
@@ -23,7 +22,6 @@ def _normalize_tools(tools: typing.Sequence[typing.Any]) -> list[typing.Any]:
     return normalized
 
 
-@syncify
 async def run_agent(
     input: str | list[typing.Any],
     *,
@@ -39,6 +37,9 @@ async def run_agent(
     memory_key: str | None = None,
 ) -> str:
     """Run an OpenAI Agents SDK agent with Flyte providing the runtime.
+
+    Await this from an async task as ``await run_agent(...)``; from a sync task
+    use :func:`run_agent_sync` instead.
 
     Call this from inside an ``@env.task`` — that task is the durable parent.
     Within it, each model turn is recorded via ``flyte.trace`` (replayed on
@@ -99,3 +100,6 @@ async def run_agent(
 
     final = result.final_output
     return final if isinstance(final, str) else str(final)
+
+
+run_agent_sync = sync_variant(run_agent)

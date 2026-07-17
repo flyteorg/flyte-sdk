@@ -8,8 +8,8 @@ Mistral runs the agent's reasoning server-side; Flyte is the runtime underneath:
   call), so a crash/retry replays completed turns + cache-hits tools — Mistral
   gets both per-turn and per-tool durability.
 - The agent timeline renders into the task report (``report=True``).
-- ``run_agent`` is syncified: ``await run_agent.aio(...)`` from async tasks, plain
-  ``run_agent(...)`` from sync tasks (see ``city_agent_sync``).
+- ``run_agent`` is async: ``await run_agent(...)`` from async tasks, while sync
+  tasks call ``run_agent_sync(...)`` (see ``city_agent_sync``).
 
 Run:  flyte run mistral_durable_agent.py city_agent --question "What's the weather and population of Paris?"
       (or drive the sync variant:  flyte run mistral_durable_agent.py city_agent_sync --question "...")
@@ -18,7 +18,7 @@ Run:  flyte run mistral_durable_agent.py city_agent --question "What's the weath
 
 import flyte
 
-from flyteplugins.agents.mistral import run_agent, tool
+from flyteplugins.agents.mistral import run_agent, run_agent_sync, tool
 
 env = flyte.TaskEnvironment(
     "mistral-durable-agent",
@@ -49,7 +49,7 @@ async def get_population(city: str) -> int:
 @env.task(report=True, retries=3)
 async def city_agent(question: str) -> str:
     """The durable parent: the Mistral agent loop runs here, on Flyte."""
-    return await run_agent.aio(
+    return await run_agent(
         question,
         tools=[get_weather, get_population],
         instructions="You are a concise city-facts assistant. Use the tools to answer.",
@@ -57,12 +57,12 @@ async def city_agent(question: str) -> str:
     )
 
 
-# ``run_agent`` is syncified: async tasks await ``run_agent.aio(...)`` (above),
-# while sync tasks simply call ``run_agent(...)``.
+# ``run_agent`` is async: async tasks await ``run_agent(...)`` (above),
+# while sync tasks call ``run_agent_sync(...)``.
 @env.task(report=True, retries=3)
 def city_agent_sync(question: str) -> str:
     """The same agent, driven from a sync task via the sync call form."""
-    return run_agent(
+    return run_agent_sync(
         question,
         tools=[get_weather, get_population],
         instructions="You are a concise city-facts assistant. Use the tools to answer.",

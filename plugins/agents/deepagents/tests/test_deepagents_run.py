@@ -1,5 +1,6 @@
 """Tests for deepagents run_agent (mocked — no network / no controller)."""
 
+import inspect
 from types import SimpleNamespace
 
 import flyte
@@ -42,7 +43,7 @@ async def test_run_agent_with_tools(monkeypatch):
     monkeypatch.setattr(run_mod, "_create_deep_agent", fake_create_deep_agent)
     monkeypatch.setattr(run_mod, "_resolve_chat_model", lambda model: object())
 
-    result = await run_mod.run_agent.aio("What's the weather?", tools=[get_weather], name="test-agent")
+    result = await run_mod.run_agent("What's the weather?", tools=[get_weather], name="test-agent")
     assert result == "The weather is sunny."
     # The bare task was coerced into a LangChain tool.
     assert captured["tools"][0].name == "get_weather"
@@ -53,20 +54,21 @@ async def test_run_agent_with_prebuilt_agent():
     """run_agent drives a pre-built compiled graph and extracts the final text."""
     fake_agent = _FakeAgent({"messages": [SimpleNamespace(content="Hello!")], "files": {}})
 
-    result = await run_mod.run_agent.aio("Hi", agent=fake_agent, name="test-agent")
+    result = await run_mod.run_agent("Hi", agent=fake_agent, name="test-agent")
     assert result == "Hello!"
 
 
-def test_run_agent_is_syncified():
-    """run_agent is callable synchronously, with an `.aio` async variant."""
+def test_run_agent_sync_variant():
+    """run_agent is async; run_agent_sync runs it from synchronous code."""
+    assert inspect.iscoroutinefunction(run_mod.run_agent)
     fake_agent = _FakeAgent({"messages": [SimpleNamespace(content="Hello!")], "files": {}})
-    assert run_mod.run_agent("Hi", agent=fake_agent, name="test-agent") == "Hello!"
+    assert run_mod.run_agent_sync("Hi", agent=fake_agent, name="test-agent") == "Hello!"
 
 
 @pytest.mark.asyncio
 async def test_run_agent_raises_on_both_agent_and_tools():
     with pytest.raises(ValueError, match="Pass either"):
-        await run_mod.run_agent.aio("hi", agent=_FakeAgent({}), tools=[lambda: None])
+        await run_mod.run_agent("hi", agent=_FakeAgent({}), tools=[lambda: None])
 
 
 @pytest.mark.asyncio
@@ -74,7 +76,7 @@ async def test_run_agent_requires_model_on_builder_path(monkeypatch):
     """Building an agent (no `agent=`) without a model is an explicit error."""
     monkeypatch.setattr(run_mod, "_create_deep_agent", lambda **kwargs: _FakeAgent({}))
     with pytest.raises(ValueError, match="Provide `model=`"):
-        await run_mod.run_agent.aio("hi", tools=[])
+        await run_mod.run_agent("hi", tools=[])
 
 
 @pytest.mark.asyncio
@@ -107,7 +109,7 @@ async def test_run_agent_memory_resumes_conversation_and_files(monkeypatch):
             }
 
     agent = _RecordingAgent()
-    result = await run_mod.run_agent.aio("new question", agent=agent, memory_key="user-1")
+    result = await run_mod.run_agent("new question", agent=agent, memory_key="user-1")
     assert result == "final answer"
 
     # Prior conversation and files were seeded into the run.
@@ -138,12 +140,12 @@ async def test_run_agent_wraps_model_when_durable(monkeypatch):
     monkeypatch.setattr(run_mod, "_create_deep_agent", fake_create_deep_agent)
 
     inner = _FakeInner()
-    result = await run_mod.run_agent.aio("hi", tools=[], model=inner, durable=True)
+    result = await run_mod.run_agent("hi", tools=[], model=inner, durable=True)
     assert result == "ok"
     assert isinstance(captured["model"], DurableChatModel)
 
     # durable=False passes the model through unwrapped.
-    await run_mod.run_agent.aio("hi", tools=[], model=inner, durable=False)
+    await run_mod.run_agent("hi", tools=[], model=inner, durable=False)
     assert captured["model"] is inner
 
 
@@ -163,7 +165,7 @@ async def test_run_agent_forwards_deepagents_kwargs(monkeypatch):
     monkeypatch.setattr(run_mod, "_create_deep_agent", fake_create_deep_agent)
 
     subagents = [{"name": "critic", "description": "d", "system_prompt": "p"}]
-    await run_mod.run_agent.aio("hi", tools=[], model=_FakeInner(), subagents=subagents)
+    await run_mod.run_agent("hi", tools=[], model=_FakeInner(), subagents=subagents)
     assert captured["subagents"] == subagents
 
 

@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import flyte
 import pytest
 
-from flyteplugins.agents.mistral import run_agent, tool
+from flyteplugins.agents.mistral import run_agent, run_agent_sync, tool
 from flyteplugins.agents.mistral._run import _final_text, _install_turn_hooks, _render, _UsageSink
 
 
@@ -33,7 +33,7 @@ def test_render_emits_rows_for_tool_calls_and_assistant_messages():
 
 
 def test_run_agent_sync_call(monkeypatch):
-    """run_agent is syncified: the plain sync form drives the loop end to end."""
+    """run_agent_sync drives the loop end to end from synchronous code."""
     monkeypatch.setenv("MISTRAL_API_KEY", "test-key")
 
     result = MagicMock()
@@ -42,7 +42,7 @@ def test_run_agent_sync_call(monkeypatch):
     client.beta.conversations.run_async = AsyncMock(return_value=result)
 
     with patch("mistralai.client.Mistral", return_value=client):
-        out = run_agent("hi", durable=False, observability=False)
+        out = run_agent_sync("hi", durable=False, observability=False)
 
     assert out == "sync answer"
 
@@ -64,7 +64,7 @@ async def test_run_agent_registers_tools_and_returns_final_text(monkeypatch):
     client.beta.conversations.run_async = AsyncMock(return_value=result)
 
     with patch("mistralai.client.Mistral", return_value=client):
-        out = await run_agent.aio("Weather in SF?", tools=[get_weather], durable=False, observability=False)
+        out = await run_agent("Weather in SF?", tools=[get_weather], durable=False, observability=False)
 
     assert out == "It's sunny in SF!"
     # The SDK runner was invoked once with our RunContext.
@@ -81,7 +81,7 @@ async def test_timeout_ms_threads_into_run_async(monkeypatch):
     client.beta.conversations.run_async = AsyncMock(return_value=result)
 
     with patch("mistralai.client.Mistral", return_value=client):
-        await run_agent.aio("hi", timeout_ms=5000, durable=False, observability=False)
+        await run_agent("hi", timeout_ms=5000, durable=False, observability=False)
 
     # The per-turn request timeout is handed to the SDK runner (default None otherwise).
     _, kwargs = client.beta.conversations.run_async.call_args
@@ -92,7 +92,7 @@ async def test_timeout_ms_threads_into_run_async(monkeypatch):
 async def test_missing_api_key_raises(monkeypatch):
     monkeypatch.delenv("MISTRAL_API_KEY", raising=False)
     with pytest.raises(ValueError, match="Mistral API key not found"):
-        await run_agent.aio("hi", durable=False, observability=False)
+        await run_agent("hi", durable=False, observability=False)
 
 
 def test_final_text_concatenates_only_message_outputs():

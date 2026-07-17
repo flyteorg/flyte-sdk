@@ -65,7 +65,7 @@ async def resilient_agent(question: str) -> str:
     # durable=True (the default) makes the builder install a durable LLM: each
     # model turn is recorded via flyte.trace, so on the retry completed turns
     # replay from their records and CrewAI never re-calls the model.
-    answer = await run_agent.aio(
+    answer = await run_agent(
         question,
         tools=[get_weather, get_population],
         instructions="You are a concise city-facts assistant. Use the tools to answer.",

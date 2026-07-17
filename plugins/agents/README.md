@@ -61,11 +61,11 @@ async def get_weather(city: str) -> str:
 # The durable parent: the SDK's agent loop runs here, on Flyte.
 @env.task(report=True, retries=3)
 async def city_agent(question: str) -> str:
-    return await run_agent.aio(question, tools=[get_weather], model="gpt-4.1", memory_key="user-1")
+    return await run_agent(question, tools=[get_weather], model="gpt-4.1", memory_key="user-1")
 ```
 
-`run_agent` is syncified: call it synchronously as `run_agent(...)` from sync
-code, or as `await run_agent.aio(...)` from async code (as above).
+`run_agent` is async: await it as `await run_agent(...)` from async code (as
+above), or call `run_agent_sync(...)` from sync code.
 
 ## Architecture
 

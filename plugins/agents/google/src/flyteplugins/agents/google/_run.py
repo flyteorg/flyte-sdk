@@ -20,8 +20,7 @@ import typing
 import uuid
 
 from flyte._task import AsyncFunctionTaskTemplate
-from flyte.syncify import syncify
-from flyteplugins.agents.core import ReportTimeline, abbrev, flush_report, tool
+from flyteplugins.agents.core import ReportTimeline, abbrev, flush_report, sync_variant, tool
 
 from ._durable import durable_model
 from ._memory import load_memory, save_memory
@@ -104,7 +103,6 @@ class _UsageSink:
         return out
 
 
-@syncify
 async def run_agent(
     input: str,
     *,
@@ -121,6 +119,9 @@ async def run_agent(
     user_id: str = "flyte-user",
 ) -> str:
     """Run a Google ADK agent with the given tools and prompt; return the final text.
+
+    Await this from an async task as ``await run_agent(...)``; from a sync task
+    use :func:`run_agent_sync` instead.
 
     Call this from inside an ``@env.task`` — that task is the durable parent, and each
     tool the agent calls runs as a durable Flyte child action. Provide either a
@@ -199,3 +200,6 @@ async def run_agent(
     if observability:
         await flush_report()
     return final
+
+
+run_agent_sync = sync_variant(run_agent)

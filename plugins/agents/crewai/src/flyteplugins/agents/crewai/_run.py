@@ -17,8 +17,7 @@ from __future__ import annotations
 
 import typing
 
-from flyte.syncify import syncify
-from flyteplugins.agents.core import ReportTimeline, flush_report
+from flyteplugins.agents.core import ReportTimeline, flush_report, sync_variant
 
 from . import _memory
 from ._durable import make_durable_llm
@@ -40,7 +39,6 @@ def _extract_text(result: typing.Any) -> str:
     return str(result)
 
 
-@syncify
 async def run_agent(
     input: str,
     *,
@@ -56,8 +54,8 @@ async def run_agent(
 ) -> str:
     """Run a CrewAI agent with the given tools and prompt; return the final text.
 
-    Syncified: call ``run_agent(...)`` from synchronous code, or
-    ``await run_agent.aio(...)`` from an async task body.
+    Await this from an async task as ``await run_agent(...)``; from a sync task
+    use :func:`run_agent_sync` instead.
 
     Call this from inside an ``@env.task`` — that task is the durable parent.
     Within it, each tool call runs as a durable Flyte child action. Give the
@@ -155,3 +153,6 @@ async def run_agent(
         await flush_report()
 
     return final or ""
+
+
+run_agent_sync = sync_variant(run_agent)

@@ -25,8 +25,7 @@ import os
 import re
 import typing
 
-from flyte.syncify import syncify
-from flyteplugins.agents.core import ReportTimeline, flush_report
+from flyteplugins.agents.core import ReportTimeline, flush_report, sync_variant
 
 from ._memory import load_transcript, resolve_memory, save_transcript
 from ._tools import tool
@@ -61,7 +60,6 @@ def _scoped_toolset(agent_name: str, registered: typing.Sequence[typing.Any]) ->
     return toolset
 
 
-@syncify
 async def run_agent(
     input: str,
     *,
@@ -77,11 +75,13 @@ async def run_agent(
 ) -> str:
     """Run a Hermes agent with the given tools and prompt; return the final text.
 
+    Await this from an async task as ``await run_agent(...)``; from a sync task
+    use :func:`run_agent_sync` instead.
+
     Call this from inside an ``@env.task`` — that task is the durable parent.
     Within it, each tool call runs as a durable Flyte child action. Give the
     enclosing task ``retries=...`` for self-healing and ``report=True`` to see
-    the agent timeline. Sync call ``run_agent(...)``; async call
-    ``await run_agent.aio(...)``.
+    the agent timeline.
 
     Provide either a pre-built ``agent`` (an ``AIAgent`` with its own
     ``enabled_toolsets``) or ``tools`` + ``model`` to have one built for you.
@@ -191,3 +191,6 @@ async def run_agent(
         await flush_report()
 
     return final
+
+
+run_agent_sync = sync_variant(run_agent)

@@ -58,7 +58,7 @@ async def search_web(query: str) -> str:
 @env.task(retries=3)
 async def plan(topic: str) -> list[str]:
     """Planner agent: decompose a topic into focused research subtopics."""
-    text = await run_agent.aio(
+    text = await run_agent(
         f"Break the topic '{topic}' into exactly 3 focused, distinct research subtopics.",
         instructions="Reply with only a comma-separated list of 3 short subtopics. No numbering, no prose.",
         model="mistral-large-latest",
@@ -72,7 +72,7 @@ async def plan(topic: str) -> list[str]:
 @env.task(report=True, retries=3)
 async def research(subtopic: str) -> str:
     """Researcher agent: investigate one subtopic using the search tool."""
-    return await run_agent.aio(
+    return await run_agent(
         f"Research this subtopic and summarize the key findings as 3 concise bullet points:\n{subtopic}",
         tools=[search_web],
         # A clear stop condition matters: this toy ``search_web`` returns the same snippet
@@ -90,7 +90,7 @@ async def research(subtopic: str) -> str:
 async def synthesize(topic: str, findings: list[str]) -> str:
     """Editor agent: synthesize the per-subtopic findings into a briefing."""
     notes = "\n\n".join(f"- {f}" for f in findings)
-    return await run_agent.aio(
+    return await run_agent(
         f"Topic: {topic}\n\nResearch notes:\n{notes}\n\nWrite a tight one-paragraph executive briefing.",
         instructions="You are a sharp editor. Synthesize the notes faithfully; do not invent facts.",
         model="mistral-large-latest",

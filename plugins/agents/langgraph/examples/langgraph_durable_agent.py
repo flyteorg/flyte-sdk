@@ -7,8 +7,8 @@ and Flyte is the runtime underneath.
   container/resources, with retries and caching) when the agent calls it.
 - The agent timeline (tool calls, AI messages) is rendered into the task report
   because the task is created with ``report=True``.
-- ``run_agent`` is syncified: ``await run_agent.aio(...)`` from async tasks, plain
-  ``run_agent(...)`` from sync tasks (see ``city_agent_sync``).
+- ``run_agent`` is async: ``await run_agent(...)`` from async tasks; sync tasks
+  use ``run_agent_sync(...)`` (see ``city_agent_sync``).
 
 Run:  flyte run langgraph_durable_agent.py city_agent --question "What's the weather of Paris?"
       (or drive the sync variant:  flyte run langgraph_durable_agent.py city_agent_sync --question "...")
@@ -17,7 +17,7 @@ Run:  flyte run langgraph_durable_agent.py city_agent --question "What's the wea
 
 import flyte
 
-from flyteplugins.agents.langgraph import run_agent, tool
+from flyteplugins.agents.langgraph import run_agent, run_agent_sync, tool
 
 env = flyte.TaskEnvironment(
     "langgraph-durable-agent",
@@ -50,7 +50,7 @@ async def city_agent(question: str) -> str:
     """The durable parent: the LangGraph agent loop runs here, on Flyte."""
     from langchain_openai import ChatOpenAI
 
-    return await run_agent.aio(
+    return await run_agent(
         question,
         tools=[get_weather, get_population],
         model=ChatOpenAI(model="gpt-4o"),
@@ -59,14 +59,14 @@ async def city_agent(question: str) -> str:
     )
 
 
-# ``run_agent`` is syncified: async tasks await ``run_agent.aio(...)`` (above),
-# while sync tasks simply call ``run_agent(...)``.
+# ``run_agent`` is async (awaited above); sync tasks call ``run_agent_sync(...)``,
+# which runs the same implementation on a dedicated event loop.
 @env.task(report=True, retries=3)
 def city_agent_sync(question: str) -> str:
     """The same agent, driven from a sync task via the sync call form."""
     from langchain_openai import ChatOpenAI
 
-    return run_agent(
+    return run_agent_sync(
         question,
         tools=[get_weather, get_population],
         model=ChatOpenAI(model="gpt-4o"),

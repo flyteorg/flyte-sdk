@@ -44,7 +44,7 @@ async def support(message: str) -> str:
             ),
         },
     )
-    return await run_agent.aio(
+    return await run_agent(
         message,
         instructions=(
             "You are front-desk triage. Delegate to the 'billing' subagent for charges or "

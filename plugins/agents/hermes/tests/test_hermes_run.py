@@ -37,7 +37,7 @@ async def test_run_agent_with_tools_builds_agent(monkeypatch):
 
     monkeypatch.setattr(run_mod, "_AIAgent", _FakeAIAgent)
 
-    result = await run_mod.run_agent.aio(
+    result = await run_mod.run_agent(
         "What's the weather?", tools=[get_weather], model="test-model", name="test-agent"
     )
     assert result == "The weather is sunny."
@@ -51,7 +51,7 @@ async def test_run_agent_with_tools_builds_agent(monkeypatch):
 async def test_run_agent_requires_model_on_builder_path():
     """No default model: the builder path without `model=` is an error."""
     with pytest.raises(ValueError, match="Provide `model=`"):
-        await run_mod.run_agent.aio("hi", tools=[])
+        await run_mod.run_agent("hi", tools=[])
 
 
 @pytest.mark.asyncio
@@ -59,7 +59,7 @@ async def test_run_agent_with_prebuilt_agent():
     """run_agent accepts a pre-built agent; instructions become the system message."""
     agent = _FakeAgent("Hello!")
 
-    result = await run_mod.run_agent.aio("Hi", agent=agent, instructions="Be terse.")
+    result = await run_mod.run_agent("Hi", agent=agent, instructions="Be terse.")
     assert result == "Hello!"
     _, kwargs = agent.calls[0]
     assert kwargs["system_message"] == "Be terse."
@@ -73,19 +73,19 @@ async def test_run_agent_tolerates_plain_string_result():
         def run_conversation(self, user_message, **kwargs):
             return "plain answer"
 
-    assert await run_mod.run_agent.aio("hi", agent=_Bare()) == "plain answer"
+    assert await run_mod.run_agent("hi", agent=_Bare()) == "plain answer"
 
 
 @pytest.mark.asyncio
 async def test_run_agent_raises_on_both_agent_and_tools():
     with pytest.raises(ValueError, match="Pass either"):
-        await run_mod.run_agent.aio("hi", agent=_FakeAgent("x"), tools=[lambda: None])
+        await run_mod.run_agent("hi", agent=_FakeAgent("x"), tools=[lambda: None])
 
 
 @pytest.mark.asyncio
 async def test_run_agent_raises_on_agent_kwargs_with_prebuilt_agent():
     with pytest.raises(ValueError, match="agent_kwargs"):
-        await run_mod.run_agent.aio("hi", agent=_FakeAgent("x"), api_key="sk-test")
+        await run_mod.run_agent("hi", agent=_FakeAgent("x"), api_key="sk-test")
 
 
 @pytest.mark.asyncio
@@ -101,8 +101,8 @@ async def test_run_agent_persists_and_resumes_memory(monkeypatch):
     monkeypatch.setattr(run_mod, "resolve_memory", _resolve)
 
     agent = _FakeAgent("hello there")
-    await run_mod.run_agent.aio("first", agent=agent, memory_key="u1")
-    await run_mod.run_agent.aio("second", agent=agent, memory_key="u1")
+    await run_mod.run_agent("first", agent=agent, memory_key="u1")
+    await run_mod.run_agent("second", agent=agent, memory_key="u1")
 
     # The second run resumes: it receives the first turn's transcript as history.
     _, kwargs = agent.calls[1]
@@ -122,16 +122,15 @@ async def test_run_agent_durable_is_a_noop_for_hermes():
             calls["n"] += 1
             return {"final_response": "answer"}
 
-    assert await run_mod.run_agent.aio("hi", agent=_Once(), durable=True) == "answer"
+    assert await run_mod.run_agent("hi", agent=_Once(), durable=True) == "answer"
     assert calls["n"] == 1
-    assert await run_mod.run_agent.aio("hi", agent=_Once(), durable=False) == "answer"
+    assert await run_mod.run_agent("hi", agent=_Once(), durable=False) == "answer"
 
 
-def test_run_agent_is_syncified():
-    """run_agent is sync-callable with an .aio async variant over a coroutine fn."""
+def test_run_agent_sync_variant():
+    """run_agent is async; run_agent_sync runs it from synchronous code."""
     import inspect
 
-    assert callable(run_mod.run_agent.aio)
-    assert inspect.iscoroutinefunction(run_mod.run_agent.fn)
-    # The sync form actually drives the agent (no event loop in this test).
-    assert run_mod.run_agent("Hi", agent=_FakeAgent("sync!")) == "sync!"
+    assert inspect.iscoroutinefunction(run_mod.run_agent)
+    # The sync variant actually drives the agent (no event loop in this test).
+    assert run_mod.run_agent_sync("Hi", agent=_FakeAgent("sync!")) == "sync!"

@@ -84,7 +84,7 @@ async def resilient_agent(question: str) -> str:
 
     from langchain_openai import ChatOpenAI
 
-    answer = await run_agent.aio(
+    answer = await run_agent(
         question,
         tools=[get_weather, get_population],
         instructions="You are a concise city-facts assistant. Use the tools to answer.",

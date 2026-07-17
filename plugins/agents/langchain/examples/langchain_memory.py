@@ -39,7 +39,7 @@ async def chat(message: str, memory_key: str) -> str:
     """
     from langchain_openai import ChatOpenAI
 
-    return await run_agent.aio(
+    return await run_agent(
         message,
         model=ChatOpenAI(model="gpt-4o"),
         instructions="You are a friendly assistant. Use the conversation history to stay consistent.",

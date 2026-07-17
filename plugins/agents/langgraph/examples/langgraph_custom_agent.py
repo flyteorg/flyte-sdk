@@ -87,7 +87,7 @@ def _build_city_graph():
 @env.task(report=True, retries=3)
 async def city_agent(city: str) -> str:
     """Run the custom-built graph durably on Flyte."""
-    return await run_agent.aio(
+    return await run_agent(
         f"What's the weather and population of {city}?",
         agent=_build_city_graph(),
     )
@@ -103,7 +103,7 @@ async def quick_city_agent(city: str) -> str:
     """Build and run in one call using run_agent's default graph builder."""
     from langchain_openai import ChatOpenAI
 
-    return await run_agent.aio(
+    return await run_agent(
         f"What's the weather and population of {city}?",
         tools=[get_weather, get_population],
         model=ChatOpenAI(model="gpt-4o"),

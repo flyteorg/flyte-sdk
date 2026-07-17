@@ -23,8 +23,7 @@ from __future__ import annotations
 
 import typing
 
-from flyte.syncify import syncify
-from flyteplugins.agents.core import ReportTimeline, flush_report
+from flyteplugins.agents.core import ReportTimeline, flush_report, sync_variant
 
 from ._durable import DurableChatModel
 from ._memory import load_files, load_history, resolve_memory, save_state
@@ -94,7 +93,6 @@ def _result_messages(result: typing.Any) -> list[typing.Any]:
     return []
 
 
-@syncify
 async def run_agent(
     input: str,
     *,
@@ -110,8 +108,8 @@ async def run_agent(
 ) -> str:
     """Run a Deep Agent with the given tools and prompt; return the final text.
 
-    ``run_agent`` is syncified: call it synchronously as ``run_agent(...)`` or
-    asynchronously as ``await run_agent.aio(...)``.
+    Await this from an async task as ``await run_agent(...)``; from a sync task
+    use :func:`run_agent_sync` instead.
 
     Call this from inside an ``@env.task`` — that task is the durable parent.
     Within it, each tool call runs as a durable Flyte child action. Give the
@@ -204,3 +202,6 @@ async def run_agent(
         await flush_report()
 
     return final or ""
+
+
+run_agent_sync = sync_variant(run_agent)

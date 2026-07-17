@@ -18,8 +18,7 @@ import typing
 
 from flyte._logging import logger
 from flyte._task import AsyncFunctionTaskTemplate
-from flyte.syncify import syncify
-from flyteplugins.agents.core import ReportTimeline, flush_report, tool
+from flyteplugins.agents.core import ReportTimeline, flush_report, sync_variant, tool
 
 from ._memory import load_history, resolve_memory, save_history
 
@@ -60,7 +59,6 @@ def _result_text(result: typing.Any) -> str:
     return "" if value is None else str(value)
 
 
-@syncify
 async def run_agent(
     input: str,
     *,
@@ -76,8 +74,8 @@ async def run_agent(
 ) -> str:
     """Run a Pydantic AI agent with the given tools and prompt; return the final text.
 
-    Syncified: call ``run_agent(...)`` from synchronous code, or
-    ``await run_agent.aio(...)`` from an async task body.
+    Await this from an async task as ``await run_agent(...)``; from a sync task
+    use :func:`run_agent_sync` instead.
 
     Call this from inside an ``@env.task`` — that task is the durable parent.
     Within it, each tool call runs as a durable Flyte child action. Give the
@@ -245,3 +243,6 @@ def _durable_model(model: typing.Any) -> typing.Any:
     except Exception:  # pragma: no cover - durability must never break a run
         logger.warning("Could not apply model-turn durability to the built agent; running without it.")
         return model
+
+
+run_agent_sync = sync_variant(run_agent)
