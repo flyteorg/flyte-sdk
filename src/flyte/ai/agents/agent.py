@@ -23,8 +23,9 @@ Design goals
   letting the agent persist state across runs (e.g. across scheduled wake-ups
   or webhook invocations). Includes opt-in audit log, read-only prefixes, and
   optimistic concurrency for multi-agent / sleep-wake patterns.
-- **HITL**: opt-in per-tool human approval that pauses the loop and waits for a
-  human via the ``flyteplugins-hitl`` plugin before executing the tool.
+- **HITL**: opt-in per-tool human approval that pauses the loop on a
+  flyte-native condition (:func:`flyte.new_condition`) and waits for a human
+  to signal it before executing the tool.
 - **Flyte-native**: implements the :class:`AgentProtocol` so it works
   seamlessly with :class:`~flyte.ai.chat.AgentChatAppEnvironment` and is happy
   to be wrapped in ``@env.task(triggers=...)`` for scheduled or webhook-driven
@@ -229,32 +230,33 @@ def _load_skills(skills: Sequence[str | pathlib.Path]) -> str:
 ApprovalCallback = Callable[[AgentTool, dict[str, Any]], Awaitable[bool]]
 
 
-async def _hitl_approval(tool: AgentTool, args: dict[str, Any]) -> bool:
-    """Default HITL approval: ask the user via ``flyteplugins-hitl``.
+async def _condition_approval(tool: AgentTool, args: dict[str, Any]) -> bool:
+    """Default HITL approval: pause the run on a flyte-native condition.
 
-    Returns ``True`` if the user approves the tool call. When the plugin is not
-    installed (or the agent is running outside a Flyte task context), this
-    falls back to denying the call so that the agent can recover by trying a
-    different approach.
+    Registers a condition via :func:`flyte.new_condition` and blocks until a
+    human signals it — from the UI, ``flyte signal condition``, or
+    ``flyte.remote.Condition.signal``. Returns ``True`` if the user approves
+    the tool call. When the agent is running outside a Flyte task context
+    there is no backend to signal the condition, so this falls back to denying
+    the call so that the agent can recover by trying a different approach.
     """
-    try:
-        import flyteplugins.hitl as hitl
-    except ImportError:
+    if not flyte.ctx():
         logger.warning(
-            "Tool %s requires approval but `flyteplugins-hitl` is not installed; denying by default.",
+            "Tool %s requires approval but there is no active Flyte task context "
+            "to register a condition with; denying by default.",
             tool.name,
         )
         return False
 
     pretty_args = json.dumps(args, indent=2, default=str)
-    prompt = f"Approve tool call `{tool.name}`?\n\nArguments:\n{pretty_args}"
-    event = await hitl.new_event.aio(
+    prompt = f"Approve tool call `{tool.name}`?\n\nArguments:\n```json\n{pretty_args}\n```"
+    condition = await flyte.new_condition.aio(
         f"approve_{tool.name}_{uuid.uuid4().hex[:6]}",
-        data_type=bool,
-        scope="run",
         prompt=prompt,
+        prompt_type="markdown",
+        data_type=bool,
     )
-    decision = await event.wait.aio()
+    decision = await condition.wait.aio()
     return bool(decision)
 
 
@@ -297,7 +299,7 @@ class Agent:
     approval_callback:
         Optional async callback ``(tool, args) -> bool`` invoked when a tool
         with ``requires_approval=True`` is about to run. Defaults to a HITL
-        prompt via ``flyteplugins-hitl``.
+        prompt via a flyte-native condition (:func:`flyte.new_condition`).
     parallel_tool_calls:
         When ``True`` (default) tool calls returned in a single assistant
         message are executed concurrently. Set to ``False`` to force strict
@@ -326,7 +328,7 @@ class Agent:
     skills: Sequence[str | pathlib.Path] = field(default_factory=tuple)
     max_turns: int = 25
     call_llm: LLMCallable = field(default=_default_call_llm)
-    approval_callback: ApprovalCallback = field(default=_hitl_approval)
+    approval_callback: ApprovalCallback = field(default=_condition_approval)
     parallel_tool_calls: bool = True
     code_mode: bool = False
 

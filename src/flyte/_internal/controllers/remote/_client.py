@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import cast
+from typing import cast, Any
 
 from flyteidl2.actions.actions_service_connect import ActionsServiceClient
 from flyteidl2.workflow.queue_service_connect import QueueServiceClient
@@ -11,16 +11,76 @@ from flyte.remote._client.auth._session import SessionConfig, create_session_con
 from ._service_protocol import ActionsService, QueueService, StateService, use_actions_service
 
 
+class _SwappableHTTPClient:
+    """HTTP client facade whose underlying client (and its connection pool) can be replaced.
+
+    connectrpc service clients accept an ``http_client`` at construction and invoke a request
+    method on it per RPC. Handing them this stable facade lets the controller abandon a
+    suspected-dead connection pool without reaching into connectrpc internals: ``replace``
+    installs a fresh client for future requests, while requests and streams already in flight
+    keep the old client alive until they finish.
+
+    Methods delegate explicitly (rather than via ``__getattr__``) so that even a bound method
+    captured by a caller resolves the current client at call time.
+    """
+
+    def __init__(self, inner: Any):
+        self._inner = inner
+
+    def replace(self, inner: Any) -> None:
+        self._inner = inner
+
+    def delete(self, *args, **kwargs):
+        return self._inner.delete(*args, **kwargs)
+
+    def execute(self, *args, **kwargs):
+        return self._inner.execute(*args, **kwargs)
+
+    def get(self, *args, **kwargs):
+        return self._inner.get(*args, **kwargs)
+
+    def head(self, *args, **kwargs):
+        return self._inner.head(*args, **kwargs)
+
+    def options(self, *args, **kwargs):
+        return self._inner.options(*args, **kwargs)
+
+    def patch(self, *args, **kwargs):
+        return self._inner.patch(*args, **kwargs)
+
+    def post(self, *args, **kwargs):
+        return self._inner.post(*args, **kwargs)
+
+    def put(self, *args, **kwargs):
+        return self._inner.put(*args, **kwargs)
+
+    def stream(self, *args, **kwargs):
+        return self._inner.stream(*args, **kwargs)
+
+
 class ControllerClient:
     """
     A client for the Controller API.
     """
 
     def __init__(self, session_cfg: SessionConfig):
-        shared = session_cfg.connect_kwargs()
+        self._session_cfg = session_cfg
+        self._http_client = _SwappableHTTPClient(session_cfg.http_client)
+        shared = {**session_cfg.connect_kwargs(), "http_client": self._http_client}
         self._state_service = StateServiceClient(**shared)
         self._queue_service = QueueServiceClient(**shared)
         self._actions_service = ActionsServiceClient(**shared) if use_actions_service() else None
+
+    def replace_http_client(self) -> None:
+        """Abandon pooled connections by installing a fresh HTTP client behind the facade.
+
+        Used when the shared connection pool is suspected dead (e.g. a black-holed TCP flow
+        that times out every request without ever surfacing a transport error). The
+        state/queue/actions service clients — and the informers, which share those same
+        objects — all send requests through the one facade, so the replacement takes effect
+        everywhere on their next call.
+        """
+        self._http_client.replace(self._session_cfg.new_http_client())
 
     @classmethod
     async def for_endpoint(cls, endpoint: str, insecure: bool = False, **kwargs) -> ControllerClient:

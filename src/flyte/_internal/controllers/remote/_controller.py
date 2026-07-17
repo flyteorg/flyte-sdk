@@ -136,7 +136,7 @@ class RemoteController(Controller):
         self,
         client_coro: Awaitable[ClientSet],
         workers: int = 20,
-        max_system_retries: int = 10,
+        max_system_retries: int = 100,
     ):
         """ """
         super().__init__(
