@@ -197,3 +197,35 @@ def test_strip_scheme(raw, expected):
     from flyte.remote._client.auth._keyring import strip_scheme
 
     assert strip_scheme(raw) == expected
+
+
+# `keyring` is a declared dependency, but a broken/slim environment can still be
+# missing it. Token caching is best-effort, so a missing package must degrade
+# gracefully instead of raising ModuleNotFoundError up through the auth flow and
+# crashing SelectCluster/upload/run (see FLYTE-SDK-6N).
+
+
+def test_store_degrades_when_keyring_not_installed():
+    from flyte.remote._client.auth._keyring import Credentials, KeyringStore
+
+    creds = Credentials(access_token="tok", for_endpoint="foo")
+    # Setting a module to None in sys.modules makes `import keyring` raise ImportError.
+    with patch.dict(sys.modules, {"keyring": None}):
+        # Must return the credentials unchanged, not raise.
+        assert KeyringStore.store(creds, disable=False) is creds
+
+
+def test_retrieve_degrades_when_keyring_not_installed():
+    from flyte.remote._client.auth._keyring import KeyringStore
+
+    with patch.dict(sys.modules, {"keyring": None}):
+        # Must return None (no cached tokens), not raise.
+        assert KeyringStore.retrieve("foo", disable=False) is None
+
+
+def test_delete_degrades_when_keyring_not_installed():
+    from flyte.remote._client.auth._keyring import KeyringStore
+
+    with patch.dict(sys.modules, {"keyring": None}):
+        # Must be a no-op, not raise.
+        KeyringStore.delete("foo", disable=False)

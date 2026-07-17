@@ -78,8 +78,12 @@ class KeyringStore:
         if disable:
             logger.debug("Keyring is disabled, skipping token store.")
             return credentials
-        import keyring
-        from keyring.errors import NoKeyringError
+        try:
+            import keyring
+            from keyring.errors import NoKeyringError
+        except ImportError as e:
+            logger.debug(f"keyring package not available, tokens will not be cached. Error: {e}")
+            return credentials
 
         try:
             keyring.set_password(
@@ -114,8 +118,12 @@ class KeyringStore:
         if disable:
             logger.debug("Keyring is disabled, skipping token retrieve.")
             return None
-        import keyring
-        from keyring.errors import NoKeyringError
+        try:
+            import keyring
+            from keyring.errors import NoKeyringError
+        except ImportError as e:
+            logger.debug(f"keyring package not available, tokens will not be cached. Error: {e}")
+            return None
 
         for_endpoint = strip_scheme(for_endpoint)
         try:
@@ -166,8 +174,12 @@ class KeyringStore:
         if disable:
             logger.debug("Keyring is disabled, skipping token delete.")
             return
-        import keyring
-        from keyring.errors import NoKeyringError, PasswordDeleteError
+        try:
+            import keyring
+            from keyring.errors import NoKeyringError, PasswordDeleteError
+        except ImportError as e:
+            logger.debug(f"keyring package not available, skipping token delete. Error: {e}")
+            return
 
         for_endpoint = strip_scheme(for_endpoint)
 
