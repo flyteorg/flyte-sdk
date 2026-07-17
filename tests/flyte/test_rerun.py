@@ -261,8 +261,10 @@ async def test_rerun_missing_source_inputs_stays_fatal():
     )
     await _init_for_testing(client=mock_client, project="test", domain="test")
 
+    import flyte.errors
+
     with mock.patch("flyte.remote._run.RunDetails") as RD:
         RD.get.aio = AsyncMock(return_value=_fake_prior_run())
-        with pytest.raises(ConnectError, match=r"inputs\.pb"):
+        with pytest.raises(flyte.errors.RuntimeUserError, match="inputs are no longer in storage"):
             await flyte.with_runcontext(mode="remote").rerun.aio("r1")
     mock_run_service.get_action_data_u_r_is.assert_not_called()

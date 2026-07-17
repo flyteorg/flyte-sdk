@@ -1190,8 +1190,22 @@ class _Runner:
                 )
                 proto_inputs = resp.inputs
             except ConnectError as e:
-                if e.code != Code.NOT_FOUND or "inputs" in str(e.message):
+                if e.code != Code.NOT_FOUND:
                     raise
+                if "inputs" in str(e.message):
+                    # The inputs blob itself is gone — nothing to feed the new run; fail
+                    # fast with a clear story instead of the server's raw 404.
+                    import flyte.errors
+
+                    raise flyte.errors.RuntimeUserError(
+                        "SourceRunInputsUnavailableError",
+                        f"Source run {run_name}'s inputs are no longer in storage (deleted by "
+                        f"retention/cleanup), so it cannot be rerun or recovered with its "
+                        f"original inputs. Pass new inputs explicitly instead: "
+                        f"flyte.with_runcontext(...).rerun('{run_name}', inputs={{...}}), or "
+                        f"launch fresh local code with `flyte run ... --recover-from {run_name}` "
+                        f"(inputs come from the CLI parameters).",
+                    ) from e
                 uris = await get_client().run_service.get_action_data_u_r_is(
                     run_service_pb2.GetActionDataURIsRequest(action_id=action_details.pb2.id)
                 )
