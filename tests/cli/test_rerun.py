@@ -1,5 +1,6 @@
 """Tests for the `flyte rerun <run>` CLI command."""
 
+import re
 from unittest import mock
 
 from click.testing import CliRunner
@@ -67,7 +68,9 @@ def test_rerun_force_rerun_action_requires_recover():
     with mock.patch("flyte.cli._common.initialize_config"):
         result = CliRunner().invoke(rerun, ["my-run", "--force-rerun-action", "a1"])
     assert result.exit_code != 0
-    assert "--force-rerun-action requires --recover" in result.output
+    # rich-click may style the flag names with ANSI codes (e.g. on CI); strip before matching.
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+    assert "--force-rerun-action requires --recover" in plain
 
 
 def test_rerun_force_rerun_action_passed_through():
