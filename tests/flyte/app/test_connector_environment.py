@@ -96,7 +96,7 @@ def test_connector_environment_container_args_default():
     )
 
     args = conn_env.container_args(ctx)
-    assert args == ["c0", "--port", "8080", "--prometheus_port", "9092"]
+    assert args == ["c0", "--port", "8080", "--connect_port", "8090", "--prometheus_port", "9092"]
 
 
 def test_connector_environment_container_args_custom_port():
@@ -122,7 +122,7 @@ def test_connector_environment_container_args_custom_port():
     )
 
     args = conn_env.container_args(ctx)
-    assert args == ["c0", "--port", "9999", "--prometheus_port", "9092"]
+    assert args == ["c0", "--port", "9999", "--connect_port", "8090", "--prometheus_port", "9092"]
 
 
 def test_connector_environment_container_args_with_custom_args():
@@ -302,7 +302,7 @@ def test_connector_environment_comprehensive_happy_path():
         root_dir=pathlib.Path.cwd(),
     )
     args = conn_env.container_args(ctx)
-    assert args == ["c0", "--port", "8181", "--prometheus_port", "9092"]
+    assert args == ["c0", "--port", "8181", "--connect_port", "8090", "--prometheus_port", "9092"]
 
     # Test container_cmd with code bundle
     ctx_with_bundle = SerializationContext(
@@ -533,7 +533,7 @@ def test_connector_environment_empty_args_vs_none_args():
         image=Image.from_base("python:3.11"),
         args=None,
     )
-    assert conn_none.container_args(ctx) == ["c0", "--port", "8080", "--prometheus_port", "9092"]
+    assert conn_none.container_args(ctx) == ["c0", "--port", "8080", "--connect_port", "8090", "--prometheus_port", "9092"]
 
     # Empty list should return empty list (not connector defaults)
     conn_empty = ConnectorEnvironment(

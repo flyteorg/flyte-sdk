@@ -57,6 +57,7 @@ connector = [
     "grpcio-health-checking",
     "httpx",
     "prometheus-client",
+    "uvicorn",
 ]
 examples-test = [
     # Dependencies for running integration tests on examples
