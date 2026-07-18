@@ -8,6 +8,7 @@ __all__ = [
     "ActionInputs",
     "ActionOutputs",
     "App",
+    "Artifact",
     "Condition",
     "Project",
     "Run",
@@ -26,6 +27,7 @@ __all__ = [
 ]
 
 from ._action import Action, ActionDetails, ActionInputs, ActionOutputs
+from ._artifact import Artifact
 from ._app import App
 from ._auth_metadata import auth_metadata
 from ._common import TimeFilter

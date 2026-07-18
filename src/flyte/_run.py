@@ -54,6 +54,32 @@ CacheLookupScope = Literal["global", "project-domain"]
 _run_mode_var: contextvars.ContextVar[Mode | None] = contextvars.ContextVar("run_mode", default=None)
 
 
+def _unwrap_artifact_value(value: Any) -> Any:
+    """
+    Unwrap a single ``flyte.remote.Artifact`` (or a list containing artifacts) into the
+    underlying ``pb2["data"]`` payload that tasks actually consume. Non-artifact values are
+    returned unchanged.
+    """
+    # Imported lazily so ``import flyte`` does not eagerly pull in the remote package.
+    from flyte.remote import Artifact
+
+    if isinstance(value, Artifact):
+        return value.pb2["data"]
+    if isinstance(value, list) and len(value) > 0:
+        return [item.pb2["data"] if isinstance(item, Artifact) else item for item in value]
+    return value
+
+
+def _unwrap_artifacts(args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> Tuple[Tuple[Any, ...], Dict[str, Any]]:
+    """
+    Unwrap any ``Artifact`` instances passed as positional or keyword arguments into their
+    underlying data payloads. Returns the converted ``(args, kwargs)`` pair.
+    """
+    new_args = tuple(_unwrap_artifact_value(v) for v in args)
+    new_kwargs = {k: _unwrap_artifact_value(v) for k, v in kwargs.items()}
+    return new_args, new_kwargs
+
+
 async def _get_code_bundle_for_run(name: str) -> CodeBundle | None:
     """
     Get the code bundle for the run with the given name.
@@ -924,15 +950,17 @@ class _Runner:
 
         recorder.record_root_start(task_name=obj.name)
 
+        new_args, new_kwargs = _unwrap_artifacts(args, kwargs)
+
         try:
             with ctx.replace_task_context(tctx):
                 # make the local version always runs on a different thread, returns a wrapped future.
                 if obj._call_as_synchronous:
-                    fut = controller.submit_sync(obj, *args, **kwargs)
+                    fut = controller.submit_sync(obj, *new_args, **new_kwargs)
                     awaitable = asyncio.wrap_future(fut)
                     outputs = await awaitable
                 else:
-                    outputs = await controller.submit(obj, *args, **kwargs)
+                    outputs = await controller.submit(obj, *new_args, **new_kwargs)
         except Exception as e:
             recorder.record_root_failure(error=str(e))
             if self._notifications:
