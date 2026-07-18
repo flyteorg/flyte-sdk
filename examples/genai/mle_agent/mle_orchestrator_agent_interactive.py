@@ -1,43 +1,91 @@
-"""MLE Orchestrator Agent — Builds orchestration code using pre-defined tools.
+"""MLE Orchestrator Agent (interactive sandbox) — Builds orchestration code.
+
+This is a port of ``mle_orchestrator_agent.py`` that swaps the Monty
+orchestration sandbox (``flyte.sandbox.orchestrate_local``) for a live
+``union.sandbox`` *interactive sandbox* session (``unionai-sandbox``). The agent
+logic, LLM calls, reporting, and error-injection demonstrations are preserved;
+only the sandbox execution constructs change.
+
+Where the original dispatched to pre-defined Flyte *tasks* from inside the Monty
+sandbox, this version provides the same tools as plain Python functions staged
+into the sandbox work dir, and runs the LLM-generated orchestration code against
+them inside the isolated session.
 
 This agent demonstrates how to:
 1. Use an LLM to generate orchestration code that calls pre-defined tools
-2. Execute that code using the Monty sandbox (orchestrator_from_str)
+2. Execute that code inside an isolated ``union.sandbox`` session
 3. Iteratively fix errors by re-generating orchestration code
 
-The agent takes a user prompt, data, and max_iter budget and outputs
-the orchestration code that fulfills the prompt.
+Prerequisites:
+- Pin ``unionai-sandbox`` to the same version in the agent image and when deploying
+  the sandbox-server (client/server interfaces must match)::
+
+    pip install 'unionai-sandbox[deploy]==0.0.1b10'
+    unionai-sandbox-deploy
+
+Run remotely::
+
+    # 1. Upload a CSV (or use an existing remote path)
+    python -c "
+    import asyncio
+    from pathlib import Path
+    import flyte, flyte.remote as remote
+    async def main():
+        flyte.init_from_config()
+        _, uri = await remote.upload_file.aio(Path('data.csv'), fname='data.csv')
+        print(uri)
+    asyncio.run(main())
+    "
+
+    # 2. Launch the agent (builds image, submits run, follows logs)
+    flyte run --follow examples/genai/mle_agent/mle_orchestrator_agent_interactive.py \\
+        mle_orchestrator_agent \\
+        --prompt "Build a pipeline that loads data, preprocesses it, trains models, and evaluates them." \\
+        --data s3://.../data.csv \\
+        --feature_columns '["feature1","feature2"]' \\
+        --target_column target
+
+Debug with Flyte MCP tools (``uvx --from 'flyte[mcp]' flyte-mcp``) or the CLI::
+
+    flyte get run <run_id> --details
+    flyte get action-logs <run_id> a0
 """
 
+import inspect
 import os
 import re
+from datetime import timedelta
+
+from union import sandbox as sb
 
 import flyte
 import flyte.report
-import flyte.sandbox
 from flyte.io import File
 
-tool_env = flyte.TaskEnvironment(
-    "mle-tools",
-    resources=flyte.Resources(cpu=2, memory="2Gi"),
+agent_env = flyte.TaskEnvironment(
+    "mle-orchestrator-interactive",
+    resources=flyte.Resources(cpu=1, memory="1Gi"),
+    secrets=[flyte.Secret(key="internal-anthropic-api-key", as_env_var="ANTHROPIC_API_KEY")],
     image=(
-        flyte.Image.from_debian_base(name="mle-tools-image").with_pip_packages(
-            "pandas", "scikit-learn", "numpy", "matplotlib"
+        flyte.Image.from_debian_base(name="mle-orchestrator-interactive-image").with_pip_packages(
+            "httpx", "unionai-sandbox[remote]==0.0.1b10"
         )
     ),
 )
 
-agent_env = flyte.TaskEnvironment(
-    "mle-orchestrator",
-    resources=flyte.Resources(cpu=1, memory="1Gi"),
-    secrets=[flyte.Secret(key="internal-anthropic-api-key", as_env_var="ANTHROPIC_API_KEY")],
-    image=(flyte.Image.from_debian_base(name="mle-orchestrator-image").with_pip_packages("httpx", "pydantic-monty")),
-    depends_on=[tool_env],
-)
+# Python packages the tools need; installed into the session venv at runtime.
+TOOL_DEPENDENCIES = ["pandas", "scikit-learn", "numpy", "matplotlib"]
 
 
-@tool_env.task
-async def load_data(data_path: File) -> list:
+# ---------------------------------------------------------------------------
+# Tools — plain Python functions (no Flyte task wrapping). These are both
+# introspected to build the system prompt *and* serialized (via inspect) into a
+# `tools.py` module staged inside the sandbox so the orchestration code can call
+# them directly.
+# ---------------------------------------------------------------------------
+
+
+def load_data(data_path: str) -> list:
     """Load CSV data from a file path and return as a list of dicts.
 
     Args:
@@ -48,13 +96,12 @@ async def load_data(data_path: File) -> list:
     """
     import pandas as pd
 
-    with open(await data_path.download(), "rb") as f:  # noqa: ASYNC230
+    with open(data_path, "rb") as f:
         df = pd.read_csv(f)
     return df.to_dict(orient="records")
 
 
-@tool_env.task(cache="auto")
-async def preprocess_data(data: list, feature_columns: list, target_column: str) -> dict:
+def preprocess_data(data: list, feature_columns: list, target_column: str) -> dict:
     """Preprocess data by extracting features and target.
 
     Args:
@@ -70,8 +117,7 @@ async def preprocess_data(data: list, feature_columns: list, target_column: str)
     return {"X": X, "y": y}
 
 
-@tool_env.task(cache="auto")
-async def train_linear_model(preprocessed: dict) -> dict:
+def train_linear_model(preprocessed: dict) -> dict:
     """Train a linear regression model.
 
     Args:
@@ -99,8 +145,7 @@ async def train_linear_model(preprocessed: dict) -> dict:
     }
 
 
-@tool_env.task(cache="auto")
-async def train_random_forest(preprocessed: dict, n_estimators: int = 100) -> dict:
+def train_random_forest(preprocessed: dict, n_estimators: int = 100) -> dict:
     """Train a random forest regressor.
 
     Args:
@@ -128,8 +173,7 @@ async def train_random_forest(preprocessed: dict, n_estimators: int = 100) -> di
     }
 
 
-@tool_env.task(cache="auto")
-async def evaluate_model(model_result: dict) -> str:
+def evaluate_model(model_result: dict) -> str:
     """Evaluate a model and return a summary.
 
     Args:
@@ -159,9 +203,11 @@ async def evaluate_model(model_result: dict) -> str:
     return summary
 
 
-@tool_env.task(report=True)
-async def create_visualization_report(model_results: list) -> dict:
+def create_visualization_report(model_results: list) -> dict:
     """Create a visualization report comparing multiple model results.
+
+    Writes an HTML report to ``report.html`` in the current working directory
+    (the sandbox work dir). The caller pulls it out and publishes it.
 
     Args:
         model_results: List of model result dicts, each containing at minimum
@@ -174,6 +220,9 @@ async def create_visualization_report(model_results: list) -> dict:
     import base64
     import io
 
+    import matplotlib
+
+    matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
     n_models = len(model_results)
@@ -369,13 +418,26 @@ async def create_visualization_report(model_results: list) -> dict:
 </html>
 """
 
-    await flyte.report.replace.aio(report_html)
-    await flyte.report.flush.aio()
+    with open("report.html", "w") as f:
+        f.write(report_html)
 
     return {
         "num_models": n_models,
         "best_model": best_model,
     }
+
+
+TOOLS = [
+    load_data,
+    preprocess_data,
+    train_linear_model,
+    train_random_forest,
+    evaluate_model,
+    create_visualization_report,
+]
+
+# The tools, serialized to a module that gets staged into the sandbox work dir.
+TOOLS_SOURCE = "\n\n".join(inspect.getsource(tool) for tool in TOOLS)
 
 
 async def _call_llm(
@@ -416,20 +478,29 @@ def _extract_code(text: str) -> str:
     return text.strip()
 
 
+# Describes the interactive-sandbox restrictions to the LLM, replacing the
+# Monty-specific ``flyte.sandbox.ORCHESTRATOR_SYNTAX_PROMPT``.
+SANDBOX_CONSTRAINTS_PROMPT = """\
+CRITICAL — Interactive sandbox restrictions (union.sandbox):
+- Your orchestration code runs inside an isolated, network-blocked sandbox session.
+- The tools listed above are already imported and available; call them directly as functions.
+- Network access is BLOCKED: do not make any outbound network calls.
+- The filesystem is restricted to the sandbox work dir (the current working directory).
+  Do not read or write any paths outside it.
+- The last expression in your code is the return value."""
+
+
 def _build_system_prompt(tools: list) -> str:
     """Build system prompt with tool signatures."""
-    import inspect
-
     tool_docs = []
     for tool in tools:
-        func = tool.func if hasattr(tool, "func") else tool
-        sig = inspect.signature(func)
-        doc = inspect.getdoc(func) or "No documentation"
-        tool_docs.append(f"- {func.__name__}{sig}\n    {doc}")
+        sig = inspect.signature(tool)
+        doc = inspect.getdoc(tool) or "No documentation"
+        tool_docs.append(f"- {tool.__name__}{sig}\n    {doc}")
 
     tools_section = "\n\n".join(tool_docs)
 
-    restrictions = flyte.sandbox.ORCHESTRATOR_SYNTAX_PROMPT.replace("{", "{{").replace("}", "}}")
+    restrictions = SANDBOX_CONSTRAINTS_PROMPT.replace("{", "{{").replace("}", "}}")
 
     return f"""\
 You are an ML pipeline orchestrator. Write Python code to orchestrate ML tools.
@@ -442,8 +513,8 @@ Available tools (call these as functions):
 IMPORTANT RULES:
 - The last expression in your code is the return value
 - You can define helper functions inside your code
-- All tool calls are async but you call them like regular functions
-- The input 'data_path' is a File object (flyte.io.File) that can be passed directly to load_data
+- Call the tools as regular (synchronous) functions
+- The input 'data_path' is the path to a CSV file that can be passed directly to load_data
 
 Example orchestration code:
 ```python
@@ -498,21 +569,98 @@ Error encountered:
 
 Original request: {prompt}
 
-Please fix the orchestration code. Remember the Monty sandbox restrictions.
+Please fix the orchestration code. Remember the interactive sandbox restrictions.
 """
     messages = [{"role": "user", "content": user_content}]
     raw = await _call_llm(model, system, messages)
     return _extract_code(raw)
 
 
-TOOLS = [
-    load_data,
-    preprocess_data,
-    train_linear_model,
-    train_random_forest,
-    evaluate_model,
-    create_visualization_report,
-]
+def _build_driver(code: str, feature_columns: list[str], target_column: str) -> str:
+    """Wrap the orchestration code with tool imports and input bindings."""
+    header = (
+        "import os\n"
+        "import sys\n"
+        "sys.path.insert(0, os.getcwd())\n"
+        "from tools import (\n"
+        "    load_data,\n"
+        "    preprocess_data,\n"
+        "    train_linear_model,\n"
+        "    train_random_forest,\n"
+        "    evaluate_model,\n"
+        "    create_visualization_report,\n"
+        ")\n\n"
+        "data_path = 'data'\n"
+        f"feature_columns = {feature_columns!r}\n"
+        f"target_column = {target_column!r}\n\n"
+        "# --- orchestration code ---\n"
+    )
+    return header + code + "\n"
+
+
+async def _read_file_bytes(data: File) -> bytes:
+    """Download the input file and return its raw bytes for staging into the sandbox."""
+    local_path = await data.download()
+    with open(local_path, "rb") as f:  # noqa: ASYNC230
+        return f.read()
+
+
+async def run_orchestration_in_sandbox(
+    code: str,
+    data_bytes: bytes,
+    feature_columns: list[str],
+    target_column: str,
+) -> None:
+    """Run LLM-generated orchestration code inside an interactive sandbox.
+
+    Raises ``RuntimeError`` if the orchestration code (or dependency install)
+    fails, mirroring the original ``orchestrate_local`` exception behaviour.
+    """
+    driver = _build_driver(code, feature_columns, target_column)
+
+    # Session-level allow-list lets `uv pip install` reach PyPI; the
+    # orchestration run() itself tightens to network_mode="blocked".
+    async with await sb.session(
+        network_mode="allowlist",
+        network_allowlist=sb.PYPI_HOSTS,
+        max_runtime_s=600,
+        timeout=timedelta(minutes=15),
+    ) as sbx:
+        # Stage the input CSV and the tools module into the work dir.
+        await sbx.put_bytes(f"{sbx.work_dir}/data", data_bytes)
+        await sbx.put_bytes(f"{sbx.work_dir}/tools.py", TOOLS_SOURCE.encode())
+
+        # Install the tools' dependencies into the session venv.
+        proc = await sbx.run(
+            f"uv pip install {' '.join(TOOL_DEPENDENCIES)}",
+            stdout=True,
+            stderr=True,
+        )
+        _out, err = await proc.communicate_text()
+        if proc.returncode != 0:
+            raise RuntimeError(f"Dependency install failed:\n{err}")
+
+        # Run the orchestration code with the network blocked.
+        proc = await sbx.run(
+            driver,
+            script_type="python",
+            stdout=True,
+            stderr=True,
+            network_mode="blocked",
+        )
+        out, err = await proc.communicate_text()
+        if proc.returncode != 0:
+            raise RuntimeError(err or out)
+
+        # If the orchestration produced a visualization report, publish it.
+        try:
+            report_bytes = await sbx.get_bytes(f"{sbx.work_dir}/report.html", max_bytes=20 * 1024 * 1024)
+        except Exception:
+            report_bytes = b""
+        if report_bytes:
+            viz_tab = flyte.report.get_tab("Visualization")
+            viz_tab.replace(report_bytes.decode())
+            await flyte.report.flush.aio()
 
 
 async def _build_report(code: str, attempt: int, error: str | None = None) -> str:
@@ -618,7 +766,7 @@ async def mle_orchestrator_agent(
     This agent:
     1. Takes a user prompt describing what ML pipeline to build
     2. Generates orchestration code that calls pre-defined tools
-    3. Executes the code using the Monty sandbox
+    3. Executes the code inside an isolated union.sandbox session
     4. On failure, regenerates code and retries
 
     Args:
@@ -633,6 +781,9 @@ async def mle_orchestrator_agent(
     """
     code = await write_pipeline_code(prompt, TOOLS)
 
+    # Stage the input once; it's pushed into each fresh session's work dir.
+    data_bytes = await _read_file_bytes(data)
+
     for attempt in range(1, max_iter + 1):
         tab = flyte.report.get_tab(f"Attempt {attempt}")
 
@@ -641,24 +792,21 @@ async def mle_orchestrator_agent(
             code = f"1234 / 0\n\n{code}\n"  # division by zero
 
         if attempt == 2:
-            # 🔥 monty sandbox error: try to use imports
-            code = f"import os\nos._exit(1)\n\n{code}\n"  # exit with error
+            # 🔥 sandbox filesystem isolation: writing outside the work dir is denied
+            code = f"open('/root/escape.txt', 'w').write('x')\n\n{code}\n"
 
         if attempt == 3:
-            # 🔥 monty sandbox error: try to use network
-            code = f"import httpx\nhttpx.get('https://www.google.com')\n\n{code}\n"  # network access
+            # 🔥 sandbox network isolation: outbound connections are blocked
+            code = f"import urllib.request\nurllib.request.urlopen('https://www.google.com', timeout=5)\n\n{code}\n"
 
         try:
             tab.replace(await _build_report(code, attempt, error=None))
             await flyte.report.flush.aio()
-            await flyte.sandbox.orchestrate_local(
+            await run_orchestration_in_sandbox(
                 code,
-                inputs={
-                    "data_path": data,
-                    "feature_columns": feature_columns,
-                    "target_column": target_column,
-                },
-                tasks=TOOLS,
+                data_bytes=data_bytes,
+                feature_columns=feature_columns,
+                target_column=target_column,
             )
 
             break
