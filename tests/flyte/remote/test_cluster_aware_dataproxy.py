@@ -35,6 +35,7 @@ def _make_wrapper(
 
     default_client.tail_logs = MagicMock(side_effect=_stream_one)
     default_client.get_action_data = AsyncMock(return_value=dataproxy_service_pb2.GetActionDataResponse())
+    default_client.create_download_link = AsyncMock(return_value=dataproxy_service_pb2.CreateDownloadLinkResponse())
     return (
         ClusterAwareDataProxy(
             cluster_service=cluster_service,
@@ -397,3 +398,44 @@ async def test_get_action_data_routes_by_action_id():
     assert sent.WhichOneof("resource") == "action_id"
     assert sent.action_id == action_id
     default_client.get_action_data.assert_awaited_once_with(req)
+
+
+@pytest.mark.asyncio
+async def test_create_download_link_routes_by_action_attempt_id():
+    wrapper, cluster_service, default_client = _make_wrapper()
+    action_id = identifier_pb2.ActionIdentifier(
+        run=identifier_pb2.RunIdentifier(org="o", project="p", domain="d", name="r"),
+        name="a",
+    )
+    req = dataproxy_service_pb2.CreateDownloadLinkRequest(
+        artifact_type=dataproxy_service_pb2.ARTIFACT_TYPE_REPORT,
+        action_attempt_id=identifier_pb2.ActionAttemptIdentifier(action_id=action_id, attempt=1),
+    )
+
+    await wrapper.create_download_link(req)
+
+    sent = cluster_service.select_cluster.await_args[0][0]
+    assert sent.operation == cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_CREATE_DOWNLOAD_LINK
+    assert sent.WhichOneof("resource") == "action_id"
+    assert sent.action_id == action_id
+    default_client.create_download_link.assert_awaited_once_with(req)
+
+
+@pytest.mark.asyncio
+async def test_create_download_link_routes_by_task_id():
+    from flyteidl2.task import task_definition_pb2
+
+    wrapper, cluster_service, default_client = _make_wrapper()
+    task_id = task_definition_pb2.TaskIdentifier(org="o", project="p", domain="d", name="t", version="v")
+    req = dataproxy_service_pb2.CreateDownloadLinkRequest(
+        artifact_type=dataproxy_service_pb2.ARTIFACT_TYPE_CODE_BUNDLE,
+        task_id=task_id,
+    )
+
+    await wrapper.create_download_link(req)
+
+    sent = cluster_service.select_cluster.await_args[0][0]
+    assert sent.operation == cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_CREATE_DOWNLOAD_LINK
+    assert sent.WhichOneof("resource") == "project_id"
+    assert sent.project_id.name == "p"
+    default_client.create_download_link.assert_awaited_once_with(req)
