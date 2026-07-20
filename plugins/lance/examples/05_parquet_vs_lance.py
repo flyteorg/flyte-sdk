@@ -138,12 +138,16 @@ async def compare(parquet_df: DataFrame, lance_ds: lance.LanceDataset, n_random_
       still buys a real speedup on object storage.
     </div>
 
-    {_section(
-        f"Random access &mdash; deliver {k:,} scattered rows",
-        "Higher is better. Lance stays several times faster on both local disk and object storage "
-        "&mdash; it reads far less data, though scattered reads there pay some per-request latency.",
-        rnd_pq_tps, rnd_lance_tps, " rows/s",
-    )}
+    {
+        _section(
+            f"Random access &mdash; deliver {k:,} scattered rows",
+            "Higher is better. Lance stays several times faster on both local disk and object storage "
+            "&mdash; it reads far less data, though scattered reads there pay some per-request latency.",
+            rnd_pq_tps,
+            rnd_lance_tps,
+            " rows/s",
+        )
+    }
 
     <table style="border-collapse:collapse;font-size:13px;margin-top:14px">
       <tr style="text-align:left;border-bottom:1px solid #ccc">
