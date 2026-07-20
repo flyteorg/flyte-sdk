@@ -1242,7 +1242,10 @@ def with_runcontext(
     :param log_level: Optional Log level to set for the run. If not provided, it will be set to the default log level
         set using `flyte.init()`
     :param log_format: Optional Log format to set for the run. If not provided, it will be set to the default log format
-    :param reset_root_logger: If true, the root logger will be preserved and not modified by Flyte.
+    :param reset_root_logger: If True, wipe the root logger's existing handlers and install Flyte's own
+        handler (JSON or Rich, matching ``log_format``) at the root, so logs from third-party libraries that
+        propagate to the root logger are captured in Flyte's format. Defaults to False, which leaves the root
+        logger's handlers in place, wrapping them so their output carries run/action context.
     :param disable_run_cache: Optional If true, the run cache will be disabled. This is useful for testing purposes.
     :param queue: Optional The queue to use for the run. This is used to specify the cluster to use for the run.
     :param max_action_concurrency: Optional Maximum number of actions that can run concurrently within this run.

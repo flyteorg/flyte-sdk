@@ -234,7 +234,10 @@ async def init(
       defaults to the editable install directory if the cwd is in a Python editable install, else just the cwd.
     :param log_level: Optional logging level for the logger, default is set using the default initialization policies
     :param log_format: Optional logging format for the logger, default is "console"
-    :param reset_root_logger: By default, we clear out root logger handlers and set up our own.
+    :param reset_root_logger: If True, wipe the root logger's existing handlers and install Flyte's own
+        handler (JSON or Rich, matching ``log_format``) at the root, so logs from third-party libraries that
+        propagate to the root logger are captured in Flyte's format. Defaults to False, which leaves the root
+        logger's handlers in place, wrapping them so their output carries run/action context.
     :param api_key: Optional API key for authentication
     :param endpoint: Optional API endpoint URL
     :param headless: Optional Whether to run in headless mode
