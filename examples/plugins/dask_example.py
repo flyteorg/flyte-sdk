@@ -9,7 +9,17 @@ import flyte.remote
 import flyte.storage
 from flyte import Resources
 
-image = flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages("flyteplugins-dask>=2.0.0b54")
+# The scheduler and worker pods inherit this image (Scheduler()/WorkerGroup() below leave
+# image unset), and the Dask K8s operator launches them via the standalone `dask-scheduler`
+# and `dask-worker` commands. Those console scripts were removed from `distributed` in
+# 2026.6.0 (replaced by the `dask scheduler` / `dask worker` subcommands), so a newer
+# dask[distributed] makes the cluster pods crash-loop with
+# "dask-scheduler: executable file not found in $PATH". Pin below 2026.6.0 to keep them.
+image = flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages(
+    "flyteplugins-dask",
+    "dask[distributed]<2026.6.0",
+    "bokeh",
+)
 
 dask_config = Dask(
     scheduler=Scheduler(),
