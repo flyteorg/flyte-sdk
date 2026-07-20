@@ -186,6 +186,13 @@ jobs:
           - "plugins/agents/claude"
           - "plugins/agents/mistral"
           - "plugins/agents/google"
+          - "plugins/agents/crewai"
+          - "plugins/agents/langchain"
+          - "plugins/agents/deepagents"
+          - "plugins/agents/langgraph"
+          - "plugins/agents/pydantic_ai"
+          - "plugins/agents/hermes"
+          - "plugins/lance"
         include:
           - workdir: "plugins/sglang"
             image-type: sglang
