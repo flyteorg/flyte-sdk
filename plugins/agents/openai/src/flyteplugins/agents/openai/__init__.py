@@ -20,7 +20,7 @@ use them directly with ``Runner.run`` and a ``RunConfig``.
 from ._durable import FlyteModel, FlyteModelProvider
 from ._memory import FlyteSession
 from ._observability import FlyteTracingProcessor, install_flyte_tracing
-from ._run import run_agent
+from ._run import run_agent, run_agent_sync
 from ._tools import FunctionTool, tool
 
 __all__ = [
@@ -31,5 +31,6 @@ __all__ = [
     "FunctionTool",
     "install_flyte_tracing",
     "run_agent",
+    "run_agent_sync",
     "tool",
 ]
