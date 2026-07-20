@@ -1,6 +1,5 @@
 """E2E test for the fastray (reusable shared RayCluster) path on dogfood-gcp."""
 
-import asyncio
 import typing
 
 import ray
@@ -33,7 +32,7 @@ ray_env = flyte.TaskEnvironment(
     plugin_config=ray_config,
     image=image,
     resources=flyte.Resources(cpu=(1, 2), memory=("2000Mi", "4000Mi")),
-    # reusable=flyte.ReusePolicy(replicas=1, idle_ttl=600),
+    reusable=flyte.ReusePolicy(replicas=1, idle_ttl=600),
 )
 
 
