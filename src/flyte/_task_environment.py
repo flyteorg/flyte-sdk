@@ -147,7 +147,7 @@ class TaskEnvironment(Environment):
         if self.reusable is not None and self.plugin_config is not None:
             from flyte.extend import TaskPluginRegistry
 
-            plugin_cls = TaskPluginRegistry.find(type(self.plugin_config))
+            plugin_cls: Optional[type] = TaskPluginRegistry.find(type(self.plugin_config))
             if plugin_cls is None or not getattr(plugin_cls, "supports_reuse_policy", False):
                 raise ValueError("Cannot set plugin_config when environment is reusable.")
         if self.reusable and not isinstance(self.reusable, ReusePolicy):

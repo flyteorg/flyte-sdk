@@ -205,7 +205,6 @@ class RayFunctionTask(AsyncFunctionTaskTemplate):
         custom = MessageToDict(ray_job)
 
         if self.reusable is not None:
-
             # `replicas` is the number of shared clusters; only 1 is supported for now.
             if self.reusable.max_replicas != 1:
                 raise flyte.errors.RuntimeUserError(
