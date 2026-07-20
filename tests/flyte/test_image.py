@@ -402,6 +402,123 @@ def test_uv_project_optional_uvlock():
         assert hash1 != hash2
 
 
+def test_with_pixi_project_optional_pixi_lock():
+    """Test that with_pixi_project correctly handles optional pixi_lock."""
+    import tempfile
+
+    from flyte._image import PixiProject
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # Create a pixi.toml but no pixi.lock file
+        manifest_file = Path(tmpdir) / "pixi.toml"
+        manifest_file.write_text("[project]\nname = 'test-project'")
+
+        # Test that with_pixi_project works without a pixi.lock file
+        img = Image.from_debian_base(registry="localhost", name="test-image").with_pixi_project(
+            manifest_file=manifest_file,
+        )
+
+        # Verify the layer is a PixiProject with pixi_lock=None
+        assert isinstance(img._layers[-1], PixiProject)
+        assert img._layers[-1].pixi_lock is None
+        assert img._layers[-1].manifest == manifest_file
+        assert img._layers[-1].environment == "default"
+
+        # Now create a pixi.lock file and verify it gets picked up
+        pixi_lock_file = Path(tmpdir) / "pixi.lock"
+        pixi_lock_file.write_text("lock content")
+
+        img2 = Image.from_debian_base(registry="localhost", name="test-image").with_pixi_project(
+            manifest_file=manifest_file,
+        )
+        # pixi_lock should be set to the default path since it now exists
+        assert img2._layers[-1].pixi_lock == pixi_lock_file
+
+
+def test_with_pixi_project_accepts_project_directory():
+    """with_pixi_project discovers the manifest when given a project directory,
+    preferring pixi.toml over pyproject.toml the same way pixi does."""
+    import tempfile
+
+    from flyte._image import PixiProject
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        project_dir = Path(tmpdir)
+        pyproject_file = project_dir / "pyproject.toml"
+        pyproject_file.write_text("[tool.pixi.workspace]\nchannels = ['conda-forge']")
+
+        # Only pyproject.toml exists — it is discovered
+        img = Image.from_debian_base(registry="localhost", name="test-image").with_pixi_project(
+            manifest_file=project_dir,
+        )
+        assert isinstance(img._layers[-1], PixiProject)
+        assert img._layers[-1].manifest == pyproject_file
+
+        # pixi.toml wins over pyproject.toml when both exist
+        pixi_toml = project_dir / "pixi.toml"
+        pixi_toml.write_text("[project]\nname = 'test-project'")
+        img2 = Image.from_debian_base(registry="localhost", name="test-image").with_pixi_project(
+            manifest_file=project_dir,
+        )
+        assert img2._layers[-1].manifest == pixi_toml
+
+
+def test_pixi_project_validate():
+    """PixiProject.validate() rejects missing files and misnamed manifests."""
+    import tempfile
+
+    from flyte._image import PixiProject
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        missing_manifest = Path(tmpdir) / "pixi.toml"
+        with pytest.raises(FileNotFoundError, match=r"Pixi manifest file .* does not exist"):
+            PixiProject(manifest=missing_manifest).validate()
+
+        # pixi only discovers manifests named pixi.toml or pyproject.toml
+        misnamed = Path(tmpdir) / "environment.toml"
+        misnamed.write_text("[project]\nname = 'test-project'")
+        with pytest.raises(ValueError, match=r"must be named 'pixi.toml' or 'pyproject.toml'"):
+            PixiProject(manifest=misnamed).validate()
+
+        manifest = Path(tmpdir) / "pixi.toml"
+        manifest.write_text("[project]\nname = 'test-project'")
+        missing_lock = Path(tmpdir) / "pixi.lock"
+        with pytest.raises(ValueError, match=r"Pixi lock file .* does not exist"):
+            PixiProject(manifest=manifest, pixi_lock=missing_lock).validate()
+
+        # A well-formed layer validates cleanly
+        PixiProject(manifest=manifest).validate()
+
+
+def test_pixi_project_hash():
+    """PixiProject hashing accounts for the lock file and the selected environment."""
+    import hashlib
+    import tempfile
+
+    from flyte._image import PixiProject
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        manifest = Path(tmpdir) / "pixi.toml"
+        manifest.write_text("[project]\nname = 'test-project'")
+
+        hasher = hashlib.md5()
+        PixiProject(manifest=manifest).update_hash(hasher)
+        hash1 = hasher.hexdigest()
+
+        # Adding a lock file changes the hash
+        pixi_lock = Path(tmpdir) / "pixi.lock"
+        pixi_lock.write_text("lock content")
+        hasher2 = hashlib.md5()
+        PixiProject(manifest=manifest, pixi_lock=pixi_lock).update_hash(hasher2)
+        hash2 = hasher2.hexdigest()
+        assert hash1 != hash2
+
+        # Selecting a different environment changes the hash
+        hasher3 = hashlib.md5()
+        PixiProject(manifest=manifest, pixi_lock=pixi_lock, environment="prod").update_hash(hasher3)
+        assert hasher3.hexdigest() != hash2
+
+
 def test_copy_config_validate_missing_src_raises_image_build_error(tmp_path):
     """A CopyConfig pointing at a non-existent source is a user mistake in the
     image spec, not an SDK bug. validate() must raise ImageBuildError (a
