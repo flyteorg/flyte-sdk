@@ -388,12 +388,20 @@ async def _build_images(
     deployment: DeploymentPlan,
     image_refs: Dict[str, str] | None = None,
     copy_style: "CopyFiles" = "loaded_modules",
+    seed_cache: ImageCache | None = None,
 ) -> ImageCache:
     """
     Build the images for the given deployment plan and update the environment with the built image.
 
     Resolves any ``CodeBundleLayer`` layers first so callers (apply, build_images, serve,
     connectors, run) don't each need to duplicate that step.
+
+    :param seed_cache: Optional ImageCache of environments already built by a prior deploy
+        (e.g. the parent run that launched the current task pod, transported in via the task
+        context). Environments found in the seed reuse the recorded URI directly — skipping
+        hashing, existence checks, and builds. This matters in-cluster, where the resolved
+        URI can differ from the locally-predicted one (the remote builder may push to a
+        backend-assigned system registry) and where there may be no builder available at all.
     """
     from flyte._image import _DEFAULT_IMAGE_REF_NAME, resolve_code_bundle_layer
     from flyte.errors import InvalidImageNameError
@@ -412,6 +420,10 @@ async def _build_images(
     image_identifier_map: Dict[str, str] = {}
     build_run_ids: Dict[str, Any] = {}
     for env_name, env in deployment.envs.items():
+        if seed_cache and env_name in seed_cache.image_lookup:
+            # Already built by a prior deploy — reuse the resolved URI (see docstring).
+            image_identifier_map[env_name] = seed_cache.image_lookup[env_name]
+            continue
         if env.image and not isinstance(env.image, str):
             if env.image._ref_name is not None:
                 if env.image._ref_name in image_refs:
@@ -514,19 +526,27 @@ async def apply(deployment_plan: DeploymentPlan, copy_style: CopyFiles, dryrun: 
 
             import click
 
+            from ._utils import original_std_streams
+
             h = hashlib.md5()
             try:
-                h.update(cloudpickle.dumps(deployment_plan.envs))
-                h.update(code_bundle.computed_version.encode("utf-8"))
-                h.update(cloudpickle.dumps(image_cache))
+                # Pickle with the original std streams in place: a UI spinner (rich Live)
+                # may have swapped sys.stdout/sys.stderr for proxies, which breaks
+                # cloudpickle's identity-based handling of stream references held by
+                # module globals (e.g. loguru's default sink).
+                with original_std_streams():
+                    h.update(cloudpickle.dumps(deployment_plan.envs))
+                    h.update(code_bundle.computed_version.encode("utf-8"))
+                    h.update(cloudpickle.dumps(image_cache))
             except (_pickle.PicklingError, TypeError) as e:
                 raise click.ClickException(
-                    "Failed to compute deployment version: your task or environment captures an "
-                    f"unpicklable object ({type(e).__name__}: {e}). This is usually caused by closing "
-                    "over `sys.stdin` / `sys.stdout` / `sys.stderr`, an open file handle, a thread, "
-                    "or a lock from module-level code. Move the captured value inside the task "
-                    "function, or pass an explicit `version=...` to `flyte.deploy(...)` to skip "
-                    "version derivation."
+                    "Failed to compute deployment version: the deployment captures an "
+                    f"unpicklable object ({type(e).__name__}: {e}). This is usually caused by a "
+                    "reference to `sys.stdin` / `sys.stdout` / `sys.stderr`, an open file handle, "
+                    "a thread, or a lock reachable from module-level code — either in your task "
+                    "module or in a third-party library it imports. If the value is yours, move it "
+                    "inside the task function; otherwise pass an explicit `version=...` to "
+                    "`flyte.deploy(...)` to skip version derivation."
                 ) from e
             version = h.hexdigest()
 
@@ -664,7 +684,11 @@ async def deploy(
 
 
 @syncify
-async def build_images(*envs: Environment, copy_style: "CopyFiles" = "loaded_modules") -> ImageCache:
+async def build_images(
+    *envs: Environment,
+    copy_style: "CopyFiles" = "loaded_modules",
+    seed_cache: ImageCache | None = None,
+) -> ImageCache:
     """
     Build the images for the given environment(s).
     :param envs: One or more environments to build images for. When multiple environments are
@@ -673,6 +697,9 @@ async def build_images(*envs: Environment, copy_style: "CopyFiles" = "loaded_mod
     :param copy_style: Copy style that the eventual deploy will use. Must match the deploy's
         ``--copy-style`` so the image content hashes — and therefore the registry tags — line
         up, letting deploy reuse the pre-built image.
+    :param seed_cache: Optional ImageCache of environments already built by a prior deploy.
+        Seeded environments reuse the recorded URI and skip the build pipeline entirely; see
+        ``_build_images`` for details.
     :return: ImageCache containing the built images.
     """
     from ._internal.imagebuild.image_builder import ImageCache
@@ -680,7 +707,7 @@ async def build_images(*envs: Environment, copy_style: "CopyFiles" = "loaded_mod
     cfg = get_init_config()
     images = cfg.images if cfg else {}
     deployment_plans = plan_deploy(*envs)
-    caches = [await _build_images(plan, images, copy_style) for plan in deployment_plans]
+    caches = [await _build_images(plan, images, copy_style, seed_cache=seed_cache) for plan in deployment_plans]
     if len(caches) == 1:
         return caches[0]
 

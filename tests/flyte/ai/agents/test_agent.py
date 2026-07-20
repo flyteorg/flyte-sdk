@@ -7,7 +7,7 @@ import hashlib
 import json
 import pathlib
 import sys
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -34,7 +34,7 @@ from flyte.ai.agents._tools import (
 )
 from flyte.ai.agents.agent import (
     _abbreviate,
-    _hitl_approval,
+    _condition_approval,
     _resolve_tools,
     _stringify_tool_result,
     _summarize_signature,
@@ -786,6 +786,82 @@ class TestRunLoop:
         assert phases[-1] == "agent_end"
         assert "tool_start" in phases
         assert "tool_end" in phases
+
+    async def test_events_stamped_with_agent_and_run_id(self):
+        def make_agent() -> Agent:
+            llm = _make_llm(
+                [
+                    LLMMessage(
+                        content=None,
+                        tool_calls=[{"id": "c1", "name": "_add", "arguments": {"x": 1, "y": 2}}],
+                    ),
+                    LLMMessage(content="3.", tool_calls=[]),
+                ]
+            )
+            return Agent(name="stamped", instructions="I", tools=[_add], call_llm=llm)
+
+        events: list[AgentEvent] = []
+
+        async def on_event(event: AgentEvent) -> None:
+            events.append(event)
+
+        token = agent_progress_cb.set(on_event)
+        try:
+            await make_agent().run.aio("hi", [])
+            first_run_count = len(events)
+            await make_agent().run.aio("hi again", [])
+        finally:
+            agent_progress_cb.reset(token)
+
+        assert all(e.agent == "stamped" for e in events)
+        first_ids = {e.run_id for e in events[:first_run_count]}
+        second_ids = {e.run_id for e in events[first_run_count:]}
+        assert len(first_ids) == 1 and first_ids != {""}
+        assert len(second_ids) == 1 and second_ids != {""}
+        assert first_ids != second_ids
+
+    async def test_subagent_events_attributed_to_inner_run(self):
+        inner_llm = _make_llm([LLMMessage(content="inner answer", tool_calls=[])])
+        inner = Agent(name="inner", instructions="I", call_llm=inner_llm)
+
+        async def ask_inner(question: str) -> str:
+            """Delegate a question to the inner agent."""
+            result = await inner.run.aio(question, [])
+            return result.summary
+
+        outer_llm = _make_llm(
+            [
+                LLMMessage(
+                    content=None,
+                    tool_calls=[{"id": "c1", "name": "ask_inner", "arguments": {"question": "q"}}],
+                ),
+                LLMMessage(content="outer answer", tool_calls=[]),
+            ]
+        )
+        outer = Agent(name="outer", instructions="I", tools=[ask_inner], call_llm=outer_llm)
+
+        events: list[AgentEvent] = []
+
+        async def on_event(event: AgentEvent) -> None:
+            events.append(event)
+
+        token = agent_progress_cb.set(on_event)
+        try:
+            await outer.run.aio("go", [])
+        finally:
+            agent_progress_cb.reset(token)
+
+        by_agent = {name: [e for e in events if e.agent == name] for name in ("outer", "inner")}
+        assert {e.agent for e in events} == {"outer", "inner"}
+        assert {e.type for e in by_agent["inner"]} >= {"agent_start", "agent_end"}
+        assert len({e.run_id for e in by_agent["outer"]}) == 1
+        assert len({e.run_id for e in by_agent["inner"]}) == 1
+        assert by_agent["outer"][0].run_id != by_agent["inner"][0].run_id
+        # The outer run's identity is restored after the sub-agent finishes:
+        # events emitted after the inner agent_end (tool_end, turn_end,
+        # agent_end) still carry the outer run_id.
+        assert events[-1].agent == "outer"
+        assert events[-1].run_id == by_agent["outer"][0].run_id
 
     async def test_history_is_prepended(self):
         llm = _make_llm([LLMMessage(content="ack", tool_calls=[])])
@@ -1784,23 +1860,54 @@ class TestMemoryPersistenceOnFailure:
 
 
 # ----------------------------------------------------------------------------
-# Default HITL approval callback
+# Default HITL approval callback (flyte-native conditions)
 # ----------------------------------------------------------------------------
 
 
+def _sensitive_tool() -> AgentTool:
+    return AgentTool(
+        name="sensitive",
+        description="d",
+        parameters={"type": "object", "properties": {}},
+        execute=AsyncMock(),
+        requires_approval=True,
+    )
+
+
+def _mock_new_condition(decision: bool) -> MagicMock:
+    """A stand-in for ``flyte.new_condition`` whose condition resolves to *decision*."""
+    condition = MagicMock()
+    condition.wait.aio = AsyncMock(return_value=decision)
+    new_condition = MagicMock()
+    new_condition.aio = AsyncMock(return_value=condition)
+    return new_condition
+
+
 @pytest.mark.asyncio
-class TestDefaultHitlApproval:
-    async def test_denies_when_hitl_plugin_missing(self):
-        t = AgentTool(
-            name="sensitive",
-            description="d",
-            parameters={"type": "object", "properties": {}},
-            execute=AsyncMock(),
-            requires_approval=True,
-        )
-        # Force ``import flyteplugins.hitl`` to raise ImportError.
-        with patch.dict(sys.modules, {"flyteplugins.hitl": None}):
-            approved = await _hitl_approval(t, {"k": "v"})
+class TestDefaultConditionApproval:
+    async def test_denies_outside_task_context(self):
+        # flyte.ctx() is falsy outside a task, so the callback denies without
+        # registering a condition.
+        approved = await _condition_approval(_sensitive_tool(), {"k": "v"})
+        assert approved is False
+
+    async def test_waits_on_condition_and_approves(self):
+        new_condition = _mock_new_condition(decision=True)
+        with patch("flyte.ctx", return_value=MagicMock()), patch("flyte.new_condition", new_condition):
+            approved = await _condition_approval(_sensitive_tool(), {"k": "v"})
+        assert approved is True
+        name = new_condition.aio.call_args.args[0]
+        assert name.startswith("approve_sensitive_")
+        kwargs = new_condition.aio.call_args.kwargs
+        assert kwargs["data_type"] is bool
+        assert kwargs["prompt_type"] == "markdown"
+        assert "`sensitive`" in kwargs["prompt"]
+        assert '"k": "v"' in kwargs["prompt"]
+
+    async def test_waits_on_condition_and_denies(self):
+        new_condition = _mock_new_condition(decision=False)
+        with patch("flyte.ctx", return_value=MagicMock()), patch("flyte.new_condition", new_condition):
+            approved = await _condition_approval(_sensitive_tool(), {"k": "v"})
         assert approved is False
 
 

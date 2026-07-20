@@ -42,6 +42,7 @@ if TYPE_CHECKING:
     from flyte.remote._task import LazyEntity
 
     from ._code_bundle import CopyFiles
+    from ._internal.imagebuild.image_builder import ImageCache
 
 Mode = Literal["local", "remote", "hybrid"]
 CacheLookupScope = Literal["global", "project-domain"]
@@ -72,6 +73,22 @@ async def _get_code_bundle_for_run(name: str) -> CodeBundle | None:
 def _get_main_run_mode() -> Mode | None:
     """Get the current run mode from the context variable."""
     return _run_mode_var.get()
+
+
+def _ambient_image_cache() -> ImageCache | None:
+    """Image cache transported into this process by the run that launched it, if any.
+
+    Inside a task pod, the parent run's deploy already built every environment in its plan
+    and shipped the resolved URIs here (``TaskContext.compiled_image_cache``). A nested
+    ``flyte.run(...)`` submitted from task code seeds image resolution with it so
+    already-built environments are never re-resolved in-cluster — where the predicted URI
+    can differ from where the builder actually pushed (e.g. the remote builder's system
+    registry), and where no builder may be available at all. Same-run child calls already
+    reuse this cache via the controller; this extends that behavior to nested runs.
+    Returns None on the driver (no task context), leaving behavior unchanged there.
+    """
+    tctx = internal_ctx().data.task_context
+    return tctx.compiled_image_cache if tctx else None
 
 
 def _to_cache_lookup_scope(scope: CacheLookupScope | None = None):
@@ -266,7 +283,10 @@ class _Runner:
                 _env.image = resolve_code_bundle_layer(_env.image, self._copy_files, pathlib.Path(cfg.root_dir))
 
         if not self._dry_run:
-            image_cache = await build_images.aio(parent_env)
+            # Seed with the cache transported from the launching run (if we're inside a task
+            # pod) so already-built environments reuse their pushed URIs instead of being
+            # re-resolved in-cluster. No-op on the driver.
+            image_cache = await build_images.aio(parent_env, seed_cache=_ambient_image_cache())
         else:
             image_cache = None
 
@@ -714,7 +734,7 @@ class _Runner:
             if isinstance(_env.image, Image):
                 _env.image = resolve_code_bundle_layer(_env.image, self._copy_files, pathlib.Path(cfg.root_dir))
 
-        image_cache = await build_images.aio(cast(Environment, obj.parent_env()))
+        image_cache = await build_images.aio(cast(Environment, obj.parent_env()), seed_cache=_ambient_image_cache())
 
         code_bundle = None
         if self._name is not None:
