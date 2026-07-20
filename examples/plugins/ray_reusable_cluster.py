@@ -46,7 +46,7 @@ async def hello_fastray(n: int = 3) -> typing.List[int]:
 
 
 if __name__ == "__main__":
-    flyte.init_from_config("/Users/kevin/.flyte/config-dogfood-gcp.yaml", project="flytesnacks", domain="development")
+    flyte.init_from_config()
     run = flyte.run(hello_fastray, n=3)
     print("run url:", run.url)
     run.wait()
