@@ -529,7 +529,6 @@ class AsyncFunctionTaskTemplate(TaskTemplate[P, R, F]):
             await self.post(v)
         return v
 
-    # Parameter is named `serialize_context` (base uses `sctx`); renaming would break keyword callers.
     def container_args(self, serialize_context: SerializationContext) -> List[str]:
         # Always emit the template and let the backend substitute the run's start time at launch.
         # We deliberately do NOT bake a concrete time when serializing the task template: for reusable
