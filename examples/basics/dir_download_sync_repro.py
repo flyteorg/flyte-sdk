@@ -1,7 +1,4 @@
 """
-Reproduction for ENG26-937:
-https://linear.app/unionai/issue/ENG26-937/bug-reading-a-dir-input-from-a-sync-task-via-dirdownload-sync-fails
-
 Reading a ``Dir`` input from a *sync* task via ``Dir.download_sync()`` used to fail with::
 
     Object at location <dir-uri> not found
@@ -54,8 +51,6 @@ async def create_remote_directory() -> Dir:
 def download_directory_sync(d: Dir) -> list[str]:
     """
     The failing path: a *sync* task receives a Dir input and calls ``download_sync()``.
-
-    This is the exact scenario from ENG26-937.
     """
     local_path = d.download_sync()
     print(f"Downloaded dir sync to: {local_path}")
