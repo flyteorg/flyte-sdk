@@ -184,6 +184,40 @@ class TestProcessDefaultInputs:
         assert result[1].value.scalar.primitive.string_value == "default_b"
 
     @pytest.mark.asyncio
+    async def test_collection_default_input(self):
+        """Trigger inputs with a plain Python list must be converted using the
+        task interface's type (List[int]), not type(value) which would be bare
+        `list` and cause TypeEngine to fall back to PickleFile/BINARY."""
+        task_inputs = interface_pb2.VariableMap(
+            variables=[
+                VariableEntry(
+                    key="x_list",
+                    value=interface_pb2.Variable(
+                        type=types_pb2.LiteralType(
+                            collection_type=types_pb2.LiteralType(
+                                simple=types_pb2.SimpleType.INTEGER
+                            )
+                        )
+                    ),
+                )
+            ]
+        )
+
+        default_inputs = {"x_list": list(range(5))}
+
+        result = await process_default_inputs(default_inputs, "test_task", task_inputs, [])
+
+        assert len(result) == 1
+        assert result[0].name == "x_list"
+        # Must be a collection of integer primitives, not a PickleFile scalar
+        assert result[0].value.HasField("collection"), (
+            "Expected collection literal but got scalar (PickleFile); "
+            "trigger_serde must use the task interface type, not type(value)"
+        )
+        assert len(result[0].value.collection.literals) == 5
+        assert result[0].value.collection.literals[0].scalar.primitive.integer == 0
+
+    @pytest.mark.asyncio
     async def test_trigger_defaults_override_task_defaults(self):
         """Test that trigger defaults override task defaults"""
         task_inputs = interface_pb2.VariableMap(

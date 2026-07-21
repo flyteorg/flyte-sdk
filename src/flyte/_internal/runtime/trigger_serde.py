@@ -71,7 +71,13 @@ async def process_default_inputs(
                 f"Available inputs: {list(variables_dict.keys())}"
             )
         else:
-            literal_coros.append(flyte.types.TypeEngine.to_literal(v, type(v), variables_dict[k].type))
+            # Use the task interface's type to derive the Python type so that
+            # generic containers (e.g. plain `list`) are correctly mapped to
+            # their typed equivalents (e.g. `List[int]`).  Using `type(v)`
+            # alone loses the element type, causing TypeEngine to fall back to
+            # PickleFile and then fail the deploy-time type-compatibility check.
+            python_type = flyte.types.TypeEngine.guess_python_type(variables_dict[k].type)
+            literal_coros.append(flyte.types.TypeEngine.to_literal(v, python_type, variables_dict[k].type))
             keys.append(k)
 
     final_literals: list[literals_pb2.Literal] = await asyncio.gather(*literal_coros, return_exceptions=True)
