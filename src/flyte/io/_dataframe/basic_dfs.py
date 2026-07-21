@@ -80,7 +80,7 @@ class CSVToPandasDecodingHandler(DataFrameDecoder):
         flyte_value: literals_pb2.StructuredDataset,
         current_task_metadata: literals_pb2.StructuredDatasetMetadata,
     ) -> "pd.DataFrame":
-        uri = flyte_value.uri
+        uri = proto_value.uri
         columns = None
         kwargs = get_pandas_storage_options(uri=uri)
 
