@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import contextlib
 import pathlib
 import shutil
 import subprocess
+import sys
 import time
 import urllib.request
 
@@ -163,11 +165,25 @@ def _prepare_search_corpus(
     return sdk_examples_path, docs_examples_path, full_docs_path
 
 
-@click.command(help="Serve a Flyte MCP server locally over HTTP (FastMCP + Starlette).")
+@click.command(
+    help=(
+        "Serve a Flyte MCP server locally, over HTTP (FastMCP + Starlette) or over stdio.\n"
+        "\n"
+        "Use --transport stdio when an MCP client launches this as a subprocess; the "
+        "default streamable-http binds --port instead."
+    )
+)
 @click.option("--name", default="flyte-mcp-server", show_default=True, help="App name.")
 @click.option("--title", default=None, help="Optional MCP server title (defaults to --name).")
 @click.option("--instructions", default=None, help="Optional MCP server instructions string.")
-@click.option("--port", type=int, default=8080, show_default=True, help="HTTP port to bind.")
+@click.option(
+    "--transport",
+    type=click.Choice(["stdio", "sse", "streamable-http"]),
+    default="streamable-http",
+    show_default=True,
+    help="MCP transport. 'stdio' speaks JSON-RPC on stdin/stdout and ignores --port/--mcp-mount-path.",
+)
+@click.option("--port", type=int, default=8080, show_default=True, help="HTTP port to bind (HTTP transports only).")
 @click.option("--mcp-mount-path", default="/flyte-mcp", show_default=True, help="Mount path for MCP endpoint.")
 @click.option(
     "--tool-groups",
@@ -212,6 +228,7 @@ def main(
     name: str,
     title: str | None,
     instructions: str | None,
+    transport: str,
     port: int,
     mcp_mount_path: str,
     tool_groups: list[str] | None,
@@ -223,6 +240,62 @@ def main(
     init_from_config: bool,
     requires_auth: bool,
 ) -> None:
+    stdio = transport == "stdio"
+
+    if stdio and requires_auth:
+        click.echo(
+            "warning: --requires-auth has no effect with --transport stdio. The server "
+            "speaks to whichever process launched it and runs with your own credentials.",
+            err=True,
+        )
+
+    # Under stdio, stdout is the JSON-RPC channel: a single stray byte of setup chatter
+    # (click.echo here, a print or progress bar in a dependency) makes the client's first
+    # parse fail. Divert stdout to stderr while building the environment -- but *not*
+    # while running it, since run_stdio() needs the real stdout to answer on.
+    with contextlib.redirect_stdout(sys.stderr) if stdio else contextlib.nullcontext():
+        env = _build_env(
+            name=name,
+            title=title,
+            instructions=instructions,
+            transport=transport,
+            port=port,
+            mcp_mount_path=mcp_mount_path,
+            tool_groups=tool_groups,
+            tools=tools,
+            sdk_examples_path=sdk_examples_path,
+            docs_examples_path=docs_examples_path,
+            full_docs_path=full_docs_path,
+            refresh_cache=refresh_cache,
+            init_from_config=init_from_config,
+            requires_auth=requires_auth,
+        )
+
+    if stdio:
+        env.run_stdio()
+        return
+
+    _serve_http(env, mcp_mount_path)
+
+
+def _build_env(
+    *,
+    name: str,
+    title: str | None,
+    instructions: str | None,
+    transport: str,
+    port: int,
+    mcp_mount_path: str,
+    tool_groups: list[str] | None,
+    tools: list[str] | None,
+    sdk_examples_path: str | None,
+    docs_examples_path: str | None,
+    full_docs_path: str | None,
+    refresh_cache: bool,
+    init_from_config: bool,
+    requires_auth: bool,
+):
+    """Initialize Flyte, materialize the search corpus, and build the app environment."""
     if init_from_config:
         flyte.init_from_config()
 
@@ -254,10 +327,11 @@ def main(
     elif refresh_cache:
         click.echo("--refresh-cache had no effect: no cached corpus assets needed for this configuration.")
 
-    env = FlyteMCPAppEnvironment(
+    return FlyteMCPAppEnvironment(
         name=name,
         title=title,
         instructions=instructions,
+        transport=transport,
         port=port,
         mcp_mount_path=mcp_mount_path,
         tool_groups=tool_groups,
@@ -268,6 +342,9 @@ def main(
         requires_auth=requires_auth,
     )
 
+
+def _serve_http(env, mcp_mount_path: str) -> None:
+    """Serve an HTTP-transport environment locally until interrupted."""
     serve_ctx = flyte.with_servecontext(mode="local")
     app = serve_ctx.serve(env)
 
@@ -275,8 +352,8 @@ def main(
     # and returns immediately; block the foreground here so the CLI process
     # keeps the server alive until the user interrupts.
     app.activate(wait=True)
-    mcp_session_path = f"{mcp_mount_path}/mcp"
-    click.echo(f"MCP server listening at {app.endpoint}{mcp_session_path}")
+    suffix = "/sse" if env.transport == "sse" else "/mcp"
+    click.echo(f"MCP server listening at {app.endpoint}{mcp_mount_path}{suffix}")
     click.echo("Press Ctrl+C to stop.")
     try:
         while not app.is_deactivated():
