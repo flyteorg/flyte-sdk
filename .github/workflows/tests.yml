@@ -45,9 +45,9 @@ jobs:
         id: find
         run: |
           # Auto-discover all plugins that have a tests/ directory, including nested
-          # sub-packages one level deeper (e.g. plugins/agents/core).
-          plugins=$(find plugins -mindepth 1 -maxdepth 2 -type d -exec test -d '{}/tests' \; -print \
-            | sed 's#^plugins/##' | sort | jq -R -s -c 'split("\n") | map(select(. != ""))')
+          # sub-packages up to 3 levels deep (e.g. plugins/agents/core, plugins/agents/langgraph).
+          # Exclude 'agents/hermes' — it requires Python >= 3.11 and has its own dedicated job.
+          plugins=$(find plugins -mindepth 1 -maxdepth 3 -type d -exec test -d '{}/tests' \; -print | sed 's#^plugins/##' | grep -v '^agents/hermes$' | sort | jq -R -s -c 'split("\n") | map(select(. != ""))')
           echo "plugins=$plugins" >> "$GITHUB_OUTPUT"
 
   unit-tests-plugins:
@@ -73,4 +73,28 @@ jobs:
       - name: Run tests
         env:
           FLYTE_PLUGIN: plugins/${{ matrix.plugin }}
+        run: make unit_test_plugins
+
+  unit-tests-hermes:
+    # Hermes agent requires Python >= 3.11
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+      fail-fast: false
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up the environment
+        uses: ./.github/actions/setup-python-env
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Run hermes agent tests
+        env:
+          FLYTE_PLUGIN: plugins/agents/hermes
         run: make unit_test_plugins

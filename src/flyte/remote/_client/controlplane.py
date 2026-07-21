@@ -265,6 +265,32 @@ class ClusterAwareDataProxy:
         )
         return await client.get_action_data(request)
 
+    async def create_download_link(
+        self, request: dataproxy_service_pb2.CreateDownloadLinkRequest
+    ) -> dataproxy_service_pb2.CreateDownloadLinkResponse:
+        which = request.WhichOneof("source")
+        if which == "action_attempt_id":
+            run = request.action_attempt_id.action_id.run
+            client = await self._resolve_by_action(
+                int(cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_CREATE_DOWNLOAD_LINK),
+                run.org,
+                run.project,
+                run.domain,
+                run.name,
+                request.action_attempt_id.action_id.name,
+            )
+        elif which == "task_id":
+            client = await self._resolve(
+                int(cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_CREATE_DOWNLOAD_LINK),
+                request.task_id.org,
+                request.task_id.project,
+                request.task_id.domain,
+            )
+        else:
+            # app_id (or unset): route via the default client.
+            client = self._default_client
+        return await client.create_download_link(request)
+
     def tail_logs(
         self, request: dataproxy_service_pb2.TailLogsRequest
     ) -> AsyncIterator[dataproxy_service_pb2.TailLogsResponse]:

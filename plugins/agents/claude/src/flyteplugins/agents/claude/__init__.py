@@ -12,7 +12,7 @@ The ``claude-agent-sdk`` wheel bundles the native ``claude`` CLI (no separate No
 install needed); set an Anthropic API key in the environment.
 """
 
-from ._run import run_agent
+from ._run import run_agent, run_agent_sync
 from ._tools import tool
 
-__all__ = ["run_agent", "tool"]
+__all__ = ["run_agent", "run_agent_sync", "tool"]

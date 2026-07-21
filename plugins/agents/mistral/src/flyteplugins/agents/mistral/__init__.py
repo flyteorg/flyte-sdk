@@ -11,6 +11,6 @@ the seam below the SDK's loop) for per-turn replay on retry.
 
 from flyteplugins.agents.core import tool
 
-from ._run import run_agent
+from ._run import run_agent, run_agent_sync
 
-__all__ = ["run_agent", "tool"]
+__all__ = ["run_agent", "run_agent_sync", "tool"]

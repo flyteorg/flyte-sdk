@@ -717,7 +717,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "bokeh" },
-    { name = "dask", extras = ["distributed"], specifier = ">=2022.10.2" },
+    { name = "dask", extras = ["distributed"], specifier = ">=2022.10.2,<2026.6.0" },
     { name = "flyte", editable = "../../" },
 ]
 

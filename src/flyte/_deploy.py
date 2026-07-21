@@ -18,6 +18,7 @@ from ._environment import Environment
 from ._image import Image
 from ._initialize import ensure_client, get_client, get_init_config, requires_initialization
 from ._logging import logger
+from ._sentry import track_operation
 from ._status import status
 from ._task import TaskTemplate
 from ._task_environment import TaskEnvironment
@@ -266,20 +267,21 @@ async def _deploy_task(
             # else: no data to offload, or zero trust off — keep the inline inputs to_task_trigger set.
             deployable_triggers.append(task_trigger)
 
-        try:
-            await get_client().task_service.deploy_task(
-                task_service_pb2.DeployTaskRequest(
-                    task_id=task_id,
-                    spec=spec,
-                    triggers=deployable_triggers,
+        with track_operation("deploy_task"):
+            try:
+                await get_client().task_service.deploy_task(
+                    task_service_pb2.DeployTaskRequest(
+                        task_id=task_id,
+                        spec=spec,
+                        triggers=deployable_triggers,
+                    )
                 )
-            )
-            status.success(f"Deployed task {task.name} (version {task_id.version})")
-        except ConnectError as e:
-            if e.code == Code.ALREADY_EXISTS:
-                status.info(f"Task {task.name} already exists, skipping")
-                return DeployedTask(spec, deployable_triggers)
-            raise
+                status.success(f"Deployed task {task.name} (version {task_id.version})")
+            except ConnectError as e:
+                if e.code == Code.ALREADY_EXISTS:
+                    status.info(f"Task {task.name} already exists, skipping")
+                    return DeployedTask(spec, deployable_triggers)
+                raise
 
         return DeployedTask(spec, deployable_triggers)
     except Exception as e:

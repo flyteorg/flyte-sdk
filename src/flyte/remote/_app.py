@@ -13,6 +13,7 @@ from flyteidl2.common import identifier_pb2, list_pb2
 
 from flyte._initialize import ensure_client, get_client, get_init_config
 from flyte._logging import logger
+from flyte._sentry import track_operation
 from flyte.syncify import syncify
 
 from ._common import ToJSONMixin, filtering, sorting
@@ -410,23 +411,24 @@ class App(ToJSONMixin):
     @classmethod
     async def create(cls, app: app_definition_pb2.App) -> App:
         ensure_client()
-        try:
-            resp = await get_client().app_service.create(app_payload_pb2.CreateRequest(app=app))
-            created_app = cls(resp.app)
-            logger.info(f"Deployed app {created_app.name} with revision {created_app.revision}")
-            return created_app
-        except ConnectError as e:
-            if e.code in [Code.ABORTED, Code.ALREADY_EXISTS]:
-                if e.code == Code.ALREADY_EXISTS:
-                    logger.warning(f"App {app.metadata.id.name} already exists, updating...")
-                elif e.code == Code.ABORTED:
-                    logger.warning(f"Create App {app.metadata.id.name} was aborted on server, check state!")
-                return await App.replace.aio(
-                    name=app.metadata.id.name,
-                    labels=app.metadata.labels,
-                    updated_app_spec=app.spec,
-                    reason="User requested serve from sdk",
-                    project=app.metadata.id.project,
-                    domain=app.metadata.id.domain,
-                )
-            raise
+        with track_operation("deploy_app"):
+            try:
+                resp = await get_client().app_service.create(app_payload_pb2.CreateRequest(app=app))
+                created_app = cls(resp.app)
+                logger.info(f"Deployed app {created_app.name} with revision {created_app.revision}")
+                return created_app
+            except ConnectError as e:
+                if e.code in [Code.ABORTED, Code.ALREADY_EXISTS]:
+                    if e.code == Code.ALREADY_EXISTS:
+                        logger.warning(f"App {app.metadata.id.name} already exists, updating...")
+                    elif e.code == Code.ABORTED:
+                        logger.warning(f"Create App {app.metadata.id.name} was aborted on server, check state!")
+                    return await App.replace.aio(
+                        name=app.metadata.id.name,
+                        labels=app.metadata.labels,
+                        updated_app_spec=app.spec,
+                        reason="User requested serve from sdk",
+                        project=app.metadata.id.project,
+                        domain=app.metadata.id.domain,
+                    )
+                raise
