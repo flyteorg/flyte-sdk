@@ -97,8 +97,6 @@ class ControllerClient:
         """
         The state service.
         """
-        # The generated connect client matches the protocol at runtime (parameter names and
-        # streaming return types differ from the hand-written protocol declarations).
         return cast(StateService, self._state_service)
 
     @property
