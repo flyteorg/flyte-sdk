@@ -215,7 +215,7 @@ class TaskTemplate(Generic[P, R, F]):
         """
         return None
 
-    def container_args(self, sctx: SerializationContext) -> List[str]:
+    def container_args(self, serialize_context: SerializationContext) -> List[str]:
         """
         Returns the container args for the task. This is a set of key-value pairs that can be used to
         configure the task execution environment at runtime. This is usually used by plugins.
@@ -530,7 +530,7 @@ class AsyncFunctionTaskTemplate(TaskTemplate[P, R, F]):
         return v
 
     # Parameter is named `serialize_context` (base uses `sctx`); renaming would break keyword callers.
-    def container_args(self, serialize_context: SerializationContext) -> List[str]:  # ty: ignore[invalid-method-override]
+    def container_args(self, serialize_context: SerializationContext) -> List[str]:
         # Always emit the template and let the backend substitute the run's start time at launch.
         # We deliberately do NOT bake a concrete time when serializing the task template: for reusable
         # (actor) containers the args are fixed for the container's lifetime, so a baked time would be
