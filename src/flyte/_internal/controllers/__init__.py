@@ -34,7 +34,6 @@ class TaskCallSequencer:
             name = task_obj.name
 
         sequencer = self._counters[action_key]
-        # `__name__`/`name` are strings in practice; the attributes are accessed dynamically.
         task_id: int | str = cast("int | str", name or id(task_obj))
         seq = sequencer[task_id] + 1
         sequencer[task_id] = seq
