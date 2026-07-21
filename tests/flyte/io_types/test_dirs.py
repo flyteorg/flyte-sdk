@@ -357,6 +357,8 @@ async def test_download_dir_sync_no_local_target(
     assert os.path.isdir(downloaded_path)
     assert os.path.exists(os.path.join(downloaded_path, "root.txt"))
     assert os.path.isdir(os.path.join(downloaded_path, "sibling"))
+    assert os.path.exists(os.path.join(downloaded_path, "sibling", "sibling_file.txt"))
+    assert os.path.exists(os.path.join(downloaded_path, "nested1", "nested2", "file2.txt"))
     suffix = uploaded_dir.path.split("/")[-1]
     assert downloaded_path.endswith(suffix)
 
