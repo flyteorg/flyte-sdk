@@ -210,7 +210,7 @@ class ParquetToArrowDecodingHandler(DataFrameDecoder):
     ) -> "pa.Table":
         import pyarrow.parquet as pq
 
-        path = flyte_value.uri
+        path = proto_value.uri
         if not storage.is_remote(path):
             Path(path).parent.mkdir(parents=True, exist_ok=True)
             _, path = split_protocol(path)
