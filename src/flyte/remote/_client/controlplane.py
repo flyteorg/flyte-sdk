@@ -557,8 +557,6 @@ class ClientSet:
 
     @property
     def app_service(self) -> AppService:
-        # Generated connect clients satisfy the protocols at runtime; the stubs'
-        # streaming-method return annotations differ from the protocol's.
         return cast(AppService, self._app_service)
 
     @property
