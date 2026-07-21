@@ -195,7 +195,7 @@ class ArrowToParquetEncodingHandler(DataFrameEncoder):
         pq.write_table(dataframe.val, strip_protocol(path), filesystem=filesystem)
         return literals_pb2.StructuredDataset(
             uri=uri,
-            metadata=literals_pb2.StructuredDatasetMetadata(structured_dataset_type=structured_dataset_type),
+            metadata=literals_pb2.StructuredDatasetMetadata(structured_dataset_type=dataframe_type),
         )
 
 
