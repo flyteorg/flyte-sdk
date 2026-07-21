@@ -275,7 +275,7 @@ class Dir(BaseModel, Generic[T], SerializableType):
     @classmethod
     def _deserialize(cls, file_dump: Dict[str, Optional[str]]) -> Dir:
         """Internal: Deserialize Dir from dictionary. Not intended for direct use."""
-        return cls.model_validate(value)
+        return cls.model_validate(file_dump)
 
     @classmethod
     def schema_match(cls, incoming: dict):
