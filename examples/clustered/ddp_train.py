@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import flyte
 from flyte._image import DIST_FOLDER, PythonWheels
-from flyte._resources import GPUQuantity, GPUType
 from flyte.clustered import ClusteredTaskEnvironment, ClusterFailurePolicy, TorchRun
 
 # Image carries the LOCAL flyte build (so the container has the `clustered` runtime
@@ -33,9 +32,9 @@ image = (
 
 # --- Knobs ---------------------------------------------------------------------------------------
 USE_GPU = True
-GPU_DEVICE: GPUType = "L4"  # one of flyte._resources.GPUType device names; match the cluster's GPUs
+GPU_DEVICE = "L4"  # one of flyte._resources.GPUType device names; match the cluster's GPUs
 REPLICAS = 2  # pods (== nodes)
-NPROC_PER_NODE: GPUQuantity = 1  # processes (one per GPU) per pod  => world_size = REPLICAS * NPROC_PER_NODE
+NPROC_PER_NODE = 1  # processes (one per GPU) per pod  => world_size = REPLICAS * NPROC_PER_NODE
 
 _BACKEND = "nccl" if USE_GPU else "gloo"
 

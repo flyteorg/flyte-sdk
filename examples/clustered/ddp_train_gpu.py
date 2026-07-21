@@ -19,13 +19,12 @@ from __future__ import annotations
 
 import flyte
 from flyte._image import DIST_FOLDER, PythonWheels
-from flyte._resources import GPUQuantity, GPUType
 from flyte.clustered import ClusteredTaskEnvironment, ClusterFailurePolicy, TorchRun
 
 # --- Knobs ---------------------------------------------------------------------------------------
-GPU_DEVICE: GPUType = "L4"  # one of flyte._resources.GPUType device names; match the cluster's GPUs
+GPU_DEVICE = "L4"  # one of flyte._resources.GPUType device names; match the cluster's GPUs
 REPLICAS = 2  # pods (== nodes). Set to 1 for the 1x1 smoke, 2 for 2x1.
-NPROC_PER_NODE: GPUQuantity = 1  # GPUs (processes) per pod; must be <= the GPU count on the device
+NPROC_PER_NODE = 1  # GPUs (processes) per pod; must be <= the GPU count on the device
 
 # Image carries the LOCAL flyte build (so the container has the `clustered` runtime entrypoint),
 # plus torch. The PyPI `torch` wheel bundles CUDA + NCCL, so this same image runs on GPU nodes —

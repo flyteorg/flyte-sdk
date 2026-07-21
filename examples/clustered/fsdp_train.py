@@ -20,14 +20,13 @@ from __future__ import annotations
 
 import flyte
 from flyte._image import DIST_FOLDER, PythonWheels
-from flyte._resources import GPUQuantity, GPUType
 from flyte.clustered import ClusteredTaskEnvironment, ClusterFailurePolicy, TorchRun
 
 # --- Knobs ---------------------------------------------------------------------------------------
 USE_GPU = True  # FSDP is meant for GPU; CPU/gloo here is only a wiring smoke
-GPU_DEVICE: GPUType = "L4"
+GPU_DEVICE = "L4"
 REPLICAS = 2
-NPROC_PER_NODE: GPUQuantity = 1
+NPROC_PER_NODE = 1
 
 _BACKEND = "nccl" if USE_GPU else "gloo"
 
