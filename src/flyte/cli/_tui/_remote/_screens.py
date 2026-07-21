@@ -763,10 +763,6 @@ class EntityDetailScreen(Screen):
             t = remote.Task.get(name=self._entity_name, version="latest")
             details = t.fetch()
             lines.append(f"name:       {self._entity_name}")
-            # NOTE: `pb2.id` / `pb2.task_template` do not exist on TaskDetails (ty is right);
-            # accessing them raises AttributeError which is caught by the caller's fallback.
-            # Kept as-is to preserve existing runtime behavior; likely intended:
-            # `pb2.task_id.version` and `pb2.spec.task_template.type`.
             lines.append(f"version:    {details.pb2.id.version}")  # ty: ignore[unresolved-attribute]
             lines.append(f"type:       {details.pb2.task_template.type}")  # ty: ignore[unresolved-attribute]
             lines.append(f"deployed:   {details.pb2.metadata.deployed_at.ToDatetime()}")
