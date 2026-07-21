@@ -301,7 +301,7 @@ class Run(ToJSONMixin):
             details = await self.action.details()
             attempt = details.attempts
 
-        expires_in_pb = duration_pb2.Duration()
+        expires_in_pb = duration_pb2.Duration()  # ty: ignore[unresolved-attribute]
         expires_in_pb.FromTimedelta(expires_in)
         resp = await get_client().dataproxy_service.create_download_link(
             dataproxy_service_pb2.CreateDownloadLinkRequest(
