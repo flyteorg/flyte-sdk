@@ -77,7 +77,7 @@ class CSVToPandasDecodingHandler(DataFrameDecoder):
 
     async def decode(
         self,
-        flyte_value: literals_pb2.StructuredDataset,
+        proto_value: literals_pb2.StructuredDataset,
         current_task_metadata: literals_pb2.StructuredDatasetMetadata,
     ) -> "pd.DataFrame":
         uri = proto_value.uri
