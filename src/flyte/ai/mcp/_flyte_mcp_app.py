@@ -121,7 +121,6 @@ def _resolve_tools(tool_groups: list[str] | None, tools: list[str] | None) -> se
 
     enabled: set[str] = set()
     for g in tool_groups:
-        # `g` was validated against ALL_MCP_TOOL_GROUPS above.
         enabled.update(TOOL_GROUP_MAPPING[cast(MCPToolGroup, g)])
     return enabled
 

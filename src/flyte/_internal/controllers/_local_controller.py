@@ -137,7 +137,6 @@ class LocalController(ControllerProtocol):
         with _ctx:
             inputs = await convert.convert_from_native_to_inputs(_task.native_interface, *args, **kwargs)
         inputs_hash = convert.generate_inputs_hash_from_proto(inputs.proto_inputs)
-        # The task always has a native interface, so the typed interface is non-None.
         task_interface = cast(interface_pb2.TypedInterface, transform_native_to_typed_interface(_task.interface))
 
         task_call_seq = self._sequencer.next_seq(_task, tctx.action.name)

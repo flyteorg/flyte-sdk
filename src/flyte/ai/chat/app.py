@@ -606,7 +606,6 @@ class AgentChatAppEnvironment(flyte.app.AppEnvironment):
         import uvicorn
 
         fastapi_app = self.build_fastapi_app()
-        # AppEnvironment.__post_init__ normalizes `port` to a Port instance.
         config = uvicorn.Config(fastapi_app, port=cast(flyte.app.Port, self.port).port)
         await uvicorn.Server(config).serve()
 

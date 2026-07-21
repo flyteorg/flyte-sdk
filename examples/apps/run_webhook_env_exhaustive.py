@@ -562,10 +562,7 @@ if __name__ == "__main__":
             run_name = run_result.response.get("name")
 
             if run_name is not None:
-                # Get run status
                 tester.test_get_run(run_name, expected_success=True)
-
-                # Get run I/O
                 tester.test_get_run_io(run_name, expected_success=True)
 
         # Start a long-running task to test abort

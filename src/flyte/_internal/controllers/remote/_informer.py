@@ -227,7 +227,6 @@ class Informer:
                 logger.error(
                     f"Informer watch failure retries crossed threshold {retries}/{self._max_watch_retries}, exiting!"
                 )
-                # retries only crosses the threshold after a failure, so last_exc is set.
                 raise cast(Exception, last_exc)
             try:
                 if retries >= 1:
@@ -250,13 +249,11 @@ class Informer:
                         headers=headers,
                     )
                 else:
-                    # An informer without an actions client is always constructed with a state client.
                     watcher = cast(StateService, self._client).watch(
                         state_service_pb2.WatchRequest(
                             parent_action_id=parent_action_id,
                         ),
                     )
-                # The connect clients return the async iterator directly (no coroutine to await).
                 async for resp in cast(AsyncIterator, watcher):
                     retries = 0
                     if resp is None:

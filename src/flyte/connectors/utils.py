@@ -150,7 +150,6 @@ def _render_task_template(tt: TaskTemplate, file_prefix: str) -> TaskTemplate:
         tt.container.args[i] = args[i].replace("{{.rawOutputDataPrefix}}", f"{file_prefix}/raw_output")
         tt.container.args[i] = args[i].replace("{{.checkpointOutputPrefix}}", f"{file_prefix}/checkpoint_output")
         tt.container.args[i] = args[i].replace("{{.prevCheckpointPrefix}}", f"{file_prefix}/prev_checkpoint")
-        # ActionID.__post_init__ guarantees run_name is populated.
         tt.container.args[i] = args[i].replace("{{.runName}}", cast(str, ctx.action.run_name) if ctx else "test-run")
         tt.container.args[i] = args[i].replace("{{.actionName}}", "a1")
         tt.container.args[i] = args[i].replace(

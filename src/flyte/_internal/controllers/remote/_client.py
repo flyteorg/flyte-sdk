@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import cast, Any
+from typing import Any, cast
 
 from flyteidl2.actions.actions_service_connect import ActionsServiceClient
 from flyteidl2.workflow.queue_service_connect import QueueServiceClient
@@ -66,7 +66,7 @@ class ControllerClient:
     def __init__(self, session_cfg: SessionConfig):
         self._session_cfg = session_cfg
         self._http_client = _SwappableHTTPClient(session_cfg.http_client)
-        shared = {**session_cfg.connect_kwargs(), "http_client": self._http_client}
+        shared: dict[str, Any] = {**session_cfg.connect_kwargs(), "http_client": self._http_client}
         self._state_service = StateServiceClient(**shared)
         self._queue_service = QueueServiceClient(**shared)
         self._actions_service = ActionsServiceClient(**shared) if use_actions_service() else None

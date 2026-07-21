@@ -901,7 +901,6 @@ class _Runner:
             return
 
         await send_notifications(
-            # Only called when self._notifications is set (see call sites), so never None here.
             cast(Union[_Notification, Tuple[_Notification, ...]], notifications),
             phase=phase,
             task_name=task_name,

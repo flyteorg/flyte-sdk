@@ -268,7 +268,6 @@ class Controller:
         except Exception as e:
             logger.error(f"Controller thread encountered an exception: {e}")
             self._set_exception(e)
-            # The failure event is created before the worker pool runs, so it is set by now.
             cast(Event, self._failure_event).set()
         finally:
             if self._loop and self._loop.is_running():
@@ -595,6 +594,5 @@ class Controller:
     async def _bg_stop(self):
         """Stop the controller"""
         self._running = False
-        # The log-stats task is created when the worker pool starts, before stop can be called.
         cast("asyncio.Task", self._resource_log_task).cancel()
         await self._informers.remove_and_stop_all()

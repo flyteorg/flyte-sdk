@@ -312,7 +312,6 @@ class SshServer:
         )
 
         async def _feed_stdin():
-            # stdin=PIPE above guarantees proc.stdin is a StreamWriter, not None.
             proc_stdin = cast(asyncio.StreamWriter, proc.stdin)
             try:
                 while True:

@@ -117,7 +117,6 @@ class PKCEAuthenticator(Authenticator):
         :raises: May raise authentication-related exceptions if the refresh fails
         """
         await self._initialize_auth_client()
-        # _initialize_auth_client guarantees the client is constructed.
         auth_client = typing.cast("AuthorizationClient", self._auth_client)
         if self._creds:
             """We have an access token so lets try to refresh it"""

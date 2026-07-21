@@ -146,7 +146,6 @@ async def flush():
     report_html = report.get_final_report()
     assert report_html is not None
     assert isinstance(report_html, str)
-    # is_task_context() above guarantees a task context is present.
     task_context = cast("TaskContext", internal_ctx().data.task_context)
     report_path = io.report_path(task_context.output_path)
     content_types = {

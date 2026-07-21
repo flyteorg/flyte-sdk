@@ -69,7 +69,6 @@ class FastAPIAppEnvironment(flyte.app.AppEnvironment):
                 "uvicorn is not installed. Please install 'uvicorn' to use FastAPIAppEnvironment."
             )
 
-        # AppEnvironment.__post_init__ normalizes `port` to a Port instance.
         port = cast(flyte.app.Port, self.port).port
         if self.uvicorn_config is None:
             self.uvicorn_config = uvicorn.Config(self.app, port=port)

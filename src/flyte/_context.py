@@ -54,7 +54,6 @@ class Context:
             raise ValueError("Cannot create a new context without contextdata.")
         self._data = data
         self._id = id(self)  # Immutable unique identifier
-        # Context variable token to restore the previous context
         self._token: Optional[contextvars.Token[Context]] = None
 
     @property

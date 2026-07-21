@@ -99,7 +99,6 @@ async def handle_action_failure(action: Action, task_name: str) -> Exception:
     else:
         logger.error(f"Server reported failure for action {action.action_id.name}, error: {err}")
 
-    # A falsy (None) error is handled inside convert_error_to_native, which returns None for it.
     exc = convert.convert_error_to_native(cast("execution_pb2.ExecutionError | Exception", err))
     if not exc:
         return flyte.errors.RuntimeSystemError("UnableToConvertError", f"Error in task {task_name}: {err}")
@@ -459,7 +458,6 @@ class RemoteController(Controller):
                         TraceInfo(func_name, sub_action_id, _interface, inputs_uri),
                         False,
                     )
-                # Guarded by prev_action.has_error() above, so err is set.
                 exc = convert.convert_error_to_native(cast(execution_pb2.ExecutionError, prev_action.err))
                 return (
                     TraceInfo(func_name, sub_action_id, _interface, inputs_uri, error=exc),

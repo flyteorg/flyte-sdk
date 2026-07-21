@@ -54,7 +54,6 @@ def extract_unique_id_and_image(
     else:
         components += f":{reuse_policy.replicas}"
     if reuse_policy.idle_ttl:
-        # __post_init__ normalizes idle_ttl to a timedelta.
         components += f":{typing.cast(timedelta, reuse_policy.idle_ttl).total_seconds()}"
     if reuse_policy.get_scaledown_ttl() is not None:
         components += f":{reuse_policy.get_scaledown_ttl()}"
@@ -116,7 +115,6 @@ def add_reusable(
             "parallelism": reuse_policy.concurrency,
             "min_replica_count": reuse_policy.min_replicas,
             "replica_count": reuse_policy.max_replicas,
-            # __post_init__ normalizes idle_ttl to a timedelta.
             "ttl_seconds": typing.cast(timedelta, reuse_policy.idle_ttl).total_seconds()
             if reuse_policy.idle_ttl
             else None,

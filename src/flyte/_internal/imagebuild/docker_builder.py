@@ -711,7 +711,6 @@ class DockerImageBuilder(ImageBuilder):
         result = await run_sync_with_loop(
             subprocess.run, ["docker", "buildx", "ls"], capture_output=True, text=True, check=True
         )
-        # `text=True` makes subprocess.run return str output.
         builders = cast(str, result.stdout)
 
         # Check if there's any usable builder with the correct driver options
@@ -723,7 +722,6 @@ class DockerImageBuilder(ImageBuilder):
                 capture_output=True,
                 text=True,
             )
-            # `text=True` makes subprocess.run return str output.
             if inspect_result.returncode == 0 and 'network="host"' in cast(str, inspect_result.stdout):
                 logger.info("Buildx builder already exists with correct config.")
                 return
