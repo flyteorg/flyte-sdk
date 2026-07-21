@@ -1,23 +1,4 @@
-"""
-Reading a ``Dir`` input from a *sync* task via ``Dir.download_sync()`` used to fail with::
-
-    Object at location <dir-uri> not found
-
-even though the directory and its files exist in object storage. The async equivalent,
-``await Dir.download()``, on the same ``Dir`` works. The sync path bypassed the SDK's
-obstore-aware ``storage.get()`` and called the raw fsspec ``fs.get(..., recursive=True)``,
-which the obstore backend resolves as a single-object GET on the directory prefix instead of
-listing + downloading its contents.
-
-IMPORTANT: this bug only manifests against real object storage (S3/GCS/ABFS), i.e. an
-obstore-backed filesystem. Run it against a remote storage config, not the local filesystem::
-
-    flyte run --project <p> --domain <d> examples/basics/dir_download_sync_repro.py main
-
-Expected behavior *after* the fix: ``download_directory_sync`` downloads the directory
-(including the nested subdirectory) and prints the local files. Before the fix, it raised
-``FileNotFoundError: Object at location ... not found``.
-"""
+"""Example to download directory content with Dir.download_sync()"""
 
 import os
 import tempfile
