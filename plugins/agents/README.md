@@ -13,9 +13,15 @@ Each SDK is a separate, co-located package on a shared core:
 | [`flyteplugins.agents.claude`](claude/) | `flyteplugins-agents-claude` | [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-python) |
 | [`flyteplugins.agents.mistral`](mistral/) | `flyteplugins-agents-mistral` | [Mistral Agents](https://docs.mistral.ai/agents/agents_introduction/) (`mistralai` 2.x) |
 | [`flyteplugins.agents.google`](google/) | `flyteplugins-agents-google` | [Google ADK](https://github.com/google/adk-python) |
+| [`flyteplugins.agents.deepagents`](deepagents/) | `flyteplugins-agents-deepagents` | [Deep Agents](https://docs.langchain.com/oss/python/deepagents/overview) (LangChain's agent harness) |
+| [`flyteplugins.agents.langchain`](langchain/) | `flyteplugins-agents-langchain` | [LangChain agents](https://docs.langchain.com/oss/python/langchain/agents) (`create_agent`, 1.x) |
+| [`flyteplugins.agents.langgraph`](langgraph/) | `flyteplugins-agents-langgraph` | [LangGraph](https://langchain-ai.github.io/langgraph/) (bring your own `StateGraph`) |
+| [`flyteplugins.agents.crewai`](crewai/) | `flyteplugins-agents-crewai` | [CrewAI](https://docs.crewai.com/) |
+| [`flyteplugins.agents.pydantic_ai`](pydantic_ai/) | `flyteplugins-agents-pydantic-ai` | [Pydantic AI](https://ai.pydantic.dev/) (2.x) |
+| [`flyteplugins.agents.hermes`](hermes/) | `flyteplugins-agents-hermes` | [Hermes Agent](https://pypi.org/project/hermes-agent/) (Nous Research; Python ≥3.11) |
 
 ```bash
-pip install flyteplugins-agents-openai   # or -claude / -mistral / -google
+pip install flyteplugins-agents-openai   # or -claude / -mistral / -google / -deepagents / -langchain / -langgraph / -crewai / -pydantic-ai
 ```
 
 Each adapter has its own README (linked above) with the SDK-specific details.
@@ -57,6 +63,9 @@ async def get_weather(city: str) -> str:
 async def city_agent(question: str) -> str:
     return await run_agent(question, tools=[get_weather], model="gpt-4.1", memory_key="user-1")
 ```
+
+`run_agent` is async: await it as `await run_agent(...)` from async code (as
+above), or call `run_agent_sync(...)` from sync code.
 
 ## Architecture
 
