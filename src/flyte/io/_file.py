@@ -381,12 +381,6 @@ class File(BaseModel, Generic[T], SerializableType):
         """
         return cls(path=remote_path, hash=file_cache_key)
 
-    # The overloads below are typing-only: they narrow the yielded type by open mode
-    # (read modes yield a readable handle, write modes a writable one) so callers
-    # don't have to discriminate the union themselves. The overloads live on a plain
-    # method delegating to the @asynccontextmanager generator because neither mypy
-    # nor ty reliably matches overloads through that decorator. Runtime behavior is
-    # unchanged: open() still returns the async context manager the generator yields.
     @typing.overload
     def open(
         self,
