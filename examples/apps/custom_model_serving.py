@@ -159,7 +159,6 @@ env = FastAPIAppEnvironment(
 # ---------------------------------------------------------------------------
 
 
-# NOTE: the SDK types on_startup as accepting a sync callable, but async functions are supported at runtime.
 @env.on_startup
 async def startup(model: flyte.io.File):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
