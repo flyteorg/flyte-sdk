@@ -205,7 +205,7 @@ class ParquetToArrowDecodingHandler(DataFrameDecoder):
 
     async def decode(
         self,
-        flyte_value: literals_pb2.StructuredDataset,
+        proto_value: literals_pb2.StructuredDataset,
         current_task_metadata: literals_pb2.StructuredDatasetMetadata,
     ) -> "pa.Table":
         import pyarrow.parquet as pq
