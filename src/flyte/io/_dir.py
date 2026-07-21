@@ -28,6 +28,7 @@ import flyte.storage as storage
 from flyte._context import internal_ctx
 from flyte._logging import logger
 from flyte.io._file import File
+from flyte.syncify import syncify
 from flyte.types import TypeEngine, TypeTransformer, TypeTransformerFailedError
 
 # Type variable for the directory format. Defaults to Any (PEP 696) so that calls that
@@ -598,9 +599,12 @@ class Dir(BaseModel, Generic[T], SerializableType):
                 shutil.copytree(self.path, local_dest, dirs_exist_ok=True)
                 return local_dest
 
-        fs = storage.get_underlying_filesystem(path=self.path)
-        fs.get(self.path, local_dest, recursive=True)
-        return local_dest
+        # Route through the obstore-aware storage.get (via syncify) rather than the raw fsspec
+        # fs.get(..., recursive=True). For obstore-backed filesystems the raw call resolves the
+        # directory prefix as a single-object GET and fails with "Object at location <uri> not
+        # found", whereas storage.get lists + downloads the prefix contents. This mirrors the
+        # async download() above.
+        return syncify(storage.get)(self.path, local_dest, recursive=True)
 
     @classmethod
     async def from_local(
