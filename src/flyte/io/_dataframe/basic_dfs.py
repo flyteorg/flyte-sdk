@@ -176,7 +176,7 @@ class ArrowToParquetEncodingHandler(DataFrameEncoder):
     async def encode(
         self,
         dataframe: DataFrame,
-        structured_dataset_type: types_pb2.StructuredDatasetType,
+        dataframe_type: types_pb2.StructuredDatasetType,
     ) -> literals_pb2.StructuredDataset:
         import pyarrow.parquet as pq
 
