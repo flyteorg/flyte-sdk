@@ -373,20 +373,20 @@ class RemoteController(Controller):
         fut = asyncio.run_coroutine_threadsafe(coro, self._submit_loop)
         return fut
 
-    async def finalize_parent_action(self, action: ActionID):
+    async def finalize_parent_action(self, action_id: ActionID):
         """
         This method is invoked when the parent action is finished. It will finalize the run and upload the outputs
         to the control plane.
         """
         run_id = identifier_pb2.RunIdentifier(
-            name=action.run_name,
-            project=action.project,
-            domain=action.domain,
-            org=action.org,
+            name=action_id.run_name,
+            project=action_id.project,
+            domain=action_id.domain,
+            org=action_id.org,
         )
-        await super()._finalize_parent_action(run_id=run_id, parent_action_name=action.name)
-        self._parent_action_semaphore.pop(unique_action_name(action), None)
-        self._sequencer.clear(unique_action_name(action))
+        await super()._finalize_parent_action(run_id=run_id, parent_action_name=action_id.name)
+        self._parent_action_semaphore.pop(unique_action_name(action_id), None)
+        self._sequencer.clear(unique_action_name(action_id))
 
     async def get_action_outputs(
         self, _interface: NativeInterface, _func: Callable, *args, **kwargs

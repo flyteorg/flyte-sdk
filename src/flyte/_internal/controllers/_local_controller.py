@@ -58,7 +58,7 @@ def _stage_prev_checkpoint_for_local_retry(checkpoint_paths: CheckpointPaths | N
 class ControllerProtocol(Protocol):
     async def submit(self, _task: "TaskTemplate", *args, **kwargs) -> Any: ...
     def submit_sync(self, _task: "TaskTemplate", *args, **kwargs) -> concurrent.futures.Future: ...
-    async def finalize_parent_action(self, action: "ActionID"): ...
+    async def finalize_parent_action(self, action_id: "ActionID"): ...
     async def get_action_outputs(
         self, _interface: "NativeInterface", _func: Callable, *args, **kwargs
     ) -> Tuple["TraceInfo", bool]: ...
@@ -317,7 +317,7 @@ class LocalController(ControllerProtocol):
 
         return self._runner_map[name].get_run_future(coro)
 
-    async def finalize_parent_action(self, action: ActionID):
+    async def finalize_parent_action(self, action_id: ActionID):
         pass
 
     async def stop(self):

@@ -382,7 +382,7 @@ class RemoteController(BaseController):
             self._submit_thread = None
         logger.info("RemoteController stopped.")
 
-    async def finalize_parent_action(self, action: ActionID):
+    async def finalize_parent_action(self, action_id: ActionID):
         """
         This method is invoked when the parent action is finished. It will finalize the run and upload the outputs
         to the control plane.
@@ -390,14 +390,14 @@ class RemoteController(BaseController):
         # translate the ActionID python object to something handleable in pyo3
         # will need to do this after we have multiple informers.
         run_id = identifier_pb2.RunIdentifier(
-            name=action.run_name,
-            project=action.project,
-            domain=action.domain,
-            org=action.org,
+            name=action_id.run_name,
+            project=action_id.project,
+            domain=action_id.domain,
+            org=action_id.org,
         )
-        await super().finalize_parent_action(run_id_bytes=run_id.SerializeToString(), parent_action_name=action.name)
-        self._parent_action_semaphore.pop(unique_action_name(action), None)
-        self._sequencer.clear(unique_action_name(action))
+        await super().finalize_parent_action(run_id_bytes=run_id.SerializeToString(), parent_action_name=action_id.name)
+        self._parent_action_semaphore.pop(unique_action_name(action_id), None)
+        self._sequencer.clear(unique_action_name(action_id))
 
     async def get_action_outputs(
         self, _interface: NativeInterface, _func: Callable, *args, **kwargs

@@ -82,11 +82,11 @@ class Controller(Protocol):
         """
         ...
 
-    async def finalize_parent_action(self, action: ActionID):
+    async def finalize_parent_action(self, action_id: ActionID):
         """
         Finalize the parent action. This can be called to cleanup the action and should be called after the parent
         task completes
-        :param action: Action ID
+        :param action_id: Action ID
         :return:
         """
         ...
