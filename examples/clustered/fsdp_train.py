@@ -24,7 +24,6 @@ from flyte.clustered import ClusteredTaskEnvironment, ClusterFailurePolicy, Torc
 
 # --- Knobs ---------------------------------------------------------------------------------------
 USE_GPU = True  # FSDP is meant for GPU; CPU/gloo here is only a wiring smoke
-GPU_DEVICE = "L4"
 REPLICAS = 2
 NPROC_PER_NODE = 1
 
@@ -37,7 +36,7 @@ image = (
 )
 
 resources = (
-    flyte.Resources(cpu=(2, 4), memory=("4Gi", "8Gi"), gpu=flyte.GPU(GPU_DEVICE, NPROC_PER_NODE))
+    flyte.Resources(cpu=(2, 4), memory=("4Gi", "8Gi"), gpu="L4:1")
     if USE_GPU
     else flyte.Resources(cpu=(1, 2), memory=("2Gi", "4Gi"))
 )

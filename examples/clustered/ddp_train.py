@@ -32,14 +32,13 @@ image = (
 
 # --- Knobs ---------------------------------------------------------------------------------------
 USE_GPU = True
-GPU_DEVICE = "L4"  # one of flyte._resources.GPUType device names; match the cluster's GPUs
 REPLICAS = 2  # pods (== nodes)
 NPROC_PER_NODE = 1  # processes (one per GPU) per pod  => world_size = REPLICAS * NPROC_PER_NODE
 
 _BACKEND = "nccl" if USE_GPU else "gloo"
 
 resources = (
-    flyte.Resources(cpu=(2, 4), memory=("4Gi", "8Gi"), gpu=flyte.GPU(GPU_DEVICE, NPROC_PER_NODE))
+    flyte.Resources(cpu=(2, 4), memory=("4Gi", "8Gi"), gpu="L4:1")
     if USE_GPU
     else flyte.Resources(cpu=(1, 2), memory=("1Gi", "2Gi"))
 )

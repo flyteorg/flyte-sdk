@@ -264,15 +264,10 @@ class Device:
 
 
 def GPU(
-    device: GPUType | str,
-    quantity: GPUQuantity | int,
-    partition: A100Parts | A100_80GBParts | H100Parts | H200Parts | None = None,
+    device: GPUType, quantity: GPUQuantity, partition: A100Parts | A100_80GBParts | H100Parts | H200Parts | None = None
 ) -> Device:
     """
     Create a GPU device instance.
-
-    ``device``/``quantity`` accept the ``GPUType``/``GPUQuantity`` literals or plain ``str``/``int``, so
-    callers can pass values without importing the literal types; invalid values are rejected at runtime.
     :param device: The type of GPU (e.g., "T4", "A100").
     :param quantity: The number of GPUs of this type.
     :param partition: The partition of the GPU (e.g., "1g.5gb", "2g.10gb" for gpus) or ("1x1", ... for tpus).
