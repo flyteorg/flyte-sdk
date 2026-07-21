@@ -64,7 +64,6 @@ async def _start_grpc_server(
 
     print_metadata()
 
-    # grpc/__init__ imports `aio` unconditionally at runtime; the stubs mark it conditional.
     server = grpc.aio.server(futures.ThreadPoolExecutor(max_workers=worker))  # ty: ignore[possibly-missing-attribute]
 
     add_AsyncConnectorServiceServicer_to_server(AsyncConnectorService(), server)
