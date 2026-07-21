@@ -89,9 +89,6 @@ class Resource:
     custom_info: Optional[typing.Dict[str, Any]] = None
 
 
-# The resource-meta type a connector round-trips through create/get/delete. Defaults to
-# ResourceMeta (PEP 696) so unparameterized `class MyConnector(AsyncConnector)` keeps
-# type-checking exactly as before.
 M = TypeVar("M", bound=ResourceMeta, default=ResourceMeta)
 
 
