@@ -48,9 +48,6 @@ class InternalTaskResolver(Resolver):
 
         return builder(**parsed)
 
-    # The `Resolver` protocol names this parameter `t`, but the runtime call site
-    # (flyte._task.TaskTemplate.container_args) passes it as `task=`, so renaming here would
-    # break at runtime. The proper fix is renaming the protocol parameter in common.py.
     def loader_args(self, task: TaskTemplate, root_dir: Optional[Path] = None) -> List[str]:  # ty: ignore[invalid-method-override]
         args = ["task_builder", self._task_builder]
         for key, value in self._kwargs.items():
