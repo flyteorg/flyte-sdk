@@ -725,6 +725,7 @@ dev = [
     { name = "setuptools-scm", specifier = ">=8.2.0" },
     { name = "starlette" },
     { name = "textual", specifier = ">=0.80" },
+    { name = "ty", specifier = ">=0.0.59" },
     { name = "types-aiofiles" },
     { name = "types-pyyaml" },
     { name = "uvicorn" },
