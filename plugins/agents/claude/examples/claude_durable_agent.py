@@ -7,41 +7,27 @@ runtime); Flyte is the runtime underneath:
   container/resources, retries, caching) when Claude calls it.
 - The agent timeline (assistant turns, tool calls, cost) renders into the task
   report because the task is created with ``report=True``.
+- ``run_agent`` is async: ``await run_agent(...)`` from async tasks, while sync
+  tasks call ``run_agent_sync(...)`` (see ``city_agent_sync``).
 
 Per-turn model replay isn't available for Claude (the model loop runs in the
 Claude Code runtime), but tool calls are durable regardless.
 
 Run:  flyte run claude_durable_agent.py city_agent --question "What's the weather and population of Paris?"
+      (or drive the sync variant:  flyte run claude_durable_agent.py city_agent_sync --question "...")
       (add `--local` right after `run` to execute locally instead of on the backend)
 """
 
-from pathlib import Path
-
 import flyte
-from flyte._image import PythonWheels
 
-from flyteplugins.agents.claude import run_agent, tool
+from flyteplugins.agents.claude import run_agent, run_agent_sync, tool
 
 env = flyte.TaskEnvironment(
     "claude-durable-agent",
     resources=flyte.Resources(cpu=1),
     secrets=[flyte.Secret(key="anthropic_api_key", as_env_var="ANTHROPIC_API_KEY")],
-    image=(
-        flyte.Image.from_debian_base(name="claude-durable-agent")
-        .clone(
-            addl_layer=PythonWheels(
-                wheel_dir=Path(__file__).parent.parent / "dist",
-                package_name="flyteplugins-agents-core",
-                pre=True,
-            ),
-        )
-        .clone(
-            addl_layer=PythonWheels(
-                wheel_dir=Path(__file__).parent.parent / "dist",
-                package_name="flyteplugins-agents-claude",
-                pre=True,
-            ),
-        )
+    image=flyte.Image.from_debian_base(name="claude-durable-agent").with_local_v2_plugins(
+        ["flyteplugins-agents-core", "flyteplugins-agents-claude"]
     ),
 )
 
@@ -66,6 +52,19 @@ async def get_population(city: str) -> int:
 async def city_agent(question: str) -> str:
     """The durable parent: the Claude agent loop runs here, on Flyte."""
     return await run_agent(
+        question,
+        tools=[get_weather, get_population],
+        instructions="You are a concise city-facts assistant. Use the tools to answer.",
+        model="claude-sonnet-4-5",
+    )
+
+
+# ``run_agent`` is async: async tasks await ``run_agent(...)`` (above),
+# while sync tasks call ``run_agent_sync(...)``.
+@env.task(report=True, retries=3)
+def city_agent_sync(question: str) -> str:
+    """The same agent, driven from a sync task via the sync call form."""
+    return run_agent_sync(
         question,
         tools=[get_weather, get_population],
         instructions="You are a concise city-facts assistant. Use the tools to answer.",

@@ -139,7 +139,8 @@ class Informer:
         min_watch_backoff: float = 1.0,
         max_watch_backoff: float = 30.0,
         watch_conn_timeout_sec: float = 5.0,
-        max_watch_retries: int = 10,
+        # Consecutive failures; ~20+ min at the 30s backoff cap, same rationale as max_system_retries.
+        max_watch_retries: int = 40,
     ):
         self.name = self.mkname(run_name=run_id.name, parent_action_name=parent_action_name)
         self.parent_action_name = parent_action_name
@@ -288,7 +289,7 @@ class Informer:
                 logger.exception(f"Watch error: {self.name}", exc_info=e)
                 last_exc = e
                 retries += 1
-            backoff = min(self._min_watch_backoff * (2**retries), self._max_watch_backoff)
+            backoff = min(self._min_watch_backoff * (2 ** min(retries, 20)), self._max_watch_backoff)
             logger.warning(f"Watch for {self.name} failed, retrying in {backoff} seconds...")
             await asyncio.sleep(backoff)
 

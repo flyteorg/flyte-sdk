@@ -6,7 +6,12 @@ readme = "README.md"
 authors = [{ name = "Kevin Su", email = "pingsutw@users.noreply.github.com" }]
 requires-python = ">=3.10"
 dependencies = [
-    "dask[distributed]>=2022.10.2",
+    # Cap below 2026.6.0: distributed removed the standalone `dask-scheduler` /
+    # `dask-worker` console scripts in that release (deprecated back in 2022.10.0 in
+    # favor of the `dask scheduler` / `dask worker` subcommands). The Dask K8s operator
+    # still launches cluster pods via the old commands, so a newer distributed makes the
+    # scheduler/worker pods crash-loop with "dask-scheduler: executable file not found".
+    "dask[distributed]>=2022.10.2,<2026.6.0",
     "flyte",
     "bokeh"
 ]

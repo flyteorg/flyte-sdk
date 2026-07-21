@@ -1,4 +1,6 @@
 import asyncio
+import functools
+import inspect
 import os
 import socket
 import typing
@@ -35,9 +37,15 @@ class SessionConfig:
     # This is used to rebuild a `SessionConfig` for a per-cluster endpoint
     # without losing the configured auth mode.
     auth_kwargs: typing.Mapping[str, Any] = field(default_factory=dict)
+    # CA bundle `http_client` was built with; kept so `new_http_client` can build an identical client.
+    tls_ca_cert: typing.Optional[bytes] = None
 
     def connect_kwargs(self) -> dict[str, Any]:
         return {"address": self.endpoint, "interceptors": self.interceptors, "http_client": self.http_client}
+
+    def new_http_client(self) -> Any:
+        """Build a fresh HTTP client identical to `http_client`, with its own connection pool."""
+        return _build_pyqwest_client(self.tls_ca_cert)
 
 
 def normalize_rpc_endpoint(endpoint: str, *, insecure: bool = False) -> str:
@@ -154,22 +162,46 @@ def _use_system_dns() -> bool:
     return os.environ.get(_USE_PYQWEST_DNS_RESOLVER_ENV, "").lower() not in _TRUE_ENV_VALUES
 
 
+@functools.lru_cache(maxsize=1)
+def _supports_system_certs() -> bool:
+    """Whether this pyqwest exposes the opt-in flag for the system trust store.
+
+    pyqwest 0.7.0 added tls_include_system_certs and defaults it to False, so an
+    explicitly constructed HTTPTransport no longer loads any root certificates.
+    Earlier versions have no such flag and always use the system trust store when
+    no CA bundle is supplied. pyqwest does not expose __version__, so detect the
+    parameter rather than comparing versions.
+    """
+    try:
+        return "tls_include_system_certs" in inspect.signature(pyqwest.HTTPTransport).parameters
+    except (TypeError, ValueError):  # pragma: no cover - signature unavailable
+        return False
+
+
 def _build_pyqwest_client(tls_ca_cert: bytes | None = None) -> pyqwest.Client:
     """Build a pyqwest Client with sensible transport defaults."""
     use_system_dns = _use_system_dns()
-    transport = pyqwest.HTTPTransport(
-        tls_ca_cert=tls_ca_cert,
-        timeout=None,
-        connect_timeout=30.0,
-        read_timeout=None,
-        pool_idle_timeout=90.0,
-        tcp_keepalive_interval=30.0,  # was grpc.keepalive_time_ms = 30000
+    kwargs: dict[str, Any] = {
+        "tls_ca_cert": tls_ca_cert,
+        "timeout": None,
+        "connect_timeout": 30.0,
+        "read_timeout": None,
+        "pool_idle_timeout": 90.0,
+        "tcp_keepalive_interval": 30.0,  # was grpc.keepalive_time_ms = 30000
         # Use the OS resolver by default so Flyte matches curl/browser behavior
         # on VPNs, split-DNS setups, captive portals, and broken IPv6 networks.
         # Server deployments can set _FLYTE_USE_PYQWEST_DNS_RESOLVER=true to opt
         # back into pyqwest's bundled resolver for app-owned DNS behavior.
-        use_system_dns=use_system_dns,
-    )
+        "use_system_dns": use_system_dns,
+    }
+    # Ask for the system trust store only when no CA bundle was supplied, which is
+    # the "use system defaults" case described in _resolve_tls_ca_cert. A supplied
+    # bundle keeps meaning "trust exactly this and nothing else" on every pyqwest
+    # version, so requesting system certs alongside it would widen trust for
+    # private-CA and insecure_skip_verify users.
+    if tls_ca_cert is None and _supports_system_certs():
+        kwargs["tls_include_system_certs"] = True
+    transport = pyqwest.HTTPTransport(**kwargs)
     return pyqwest.Client(transport=transport)
 
 
@@ -292,4 +324,5 @@ async def create_session_config(
         http_client=http_client,
         api_key=api_key,
         auth_kwargs=captured_auth_kwargs,
+        tls_ca_cert=tls_ca_cert,
     )
