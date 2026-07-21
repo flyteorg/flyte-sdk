@@ -310,11 +310,10 @@ async def test_download_dir_with_no_local_target(
 @pytest.mark.asyncio
 async def test_download_dir_sync(tmp_path, tmp_dir_structure, ctx_with_test_local_s3_stack_raw_data_path):
     """
-    Regression test for ENG26-937: Dir.download_sync() on an obstore-backed (S3) directory used to
-    fail with "Object at location <dir-uri> not found" because it called the raw fsspec
-    fs.get(..., recursive=True), which obstore resolves as a single-object GET on the directory
-    prefix. It must route through the obstore-aware storage.get and download the prefix contents,
-    matching the async Dir.download().
+    Dir.download_sync() on an obstore-backed (S3) directory must route through the obstore-aware
+    storage.get and download the prefix contents, matching the async Dir.download(). The raw fsspec
+    fs.get(..., recursive=True) resolves the directory prefix as a single-object GET and fails with
+    "Object at location <dir-uri> not found".
     """
     from flyte.storage import S3
 
@@ -343,8 +342,8 @@ async def test_download_dir_sync_no_local_target(
     tmp_path, tmp_dir_structure, ctx_with_test_local_s3_stack_raw_data_path
 ):
     """
-    Regression test for ENG26-937: Dir.download_sync() without a target path should download the
-    directory (recursively) from S3 to a generated temporary location.
+    Dir.download_sync() without a target path should download the directory (recursively) from S3
+    to a generated temporary location.
     """
     from flyte.storage import S3
 
