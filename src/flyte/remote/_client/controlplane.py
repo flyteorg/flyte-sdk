@@ -358,8 +358,6 @@ class ClusterAwareDataProxy:
 
         endpoint = resp.cluster_endpoint
         if not endpoint or endpoint == self._session_config.endpoint:
-            # The generated connect client structurally satisfies the DataProxyService
-            # protocol at runtime; the stubs lag behind the protocol definition.
             return cast(DataProxyService, self._default_client)
 
         # Forward the auth-related kwargs from the parent SessionConfig so the
