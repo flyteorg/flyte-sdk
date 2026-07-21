@@ -197,8 +197,6 @@ class AsyncConnectorService(AsyncConnectorServiceServicer):
             async for msg in result:
                 yield msg
             return
-        # isasyncgen() narrowed away the generator shape at runtime, but mypy can't
-        # follow that check — the remaining shape is the single-response coroutine.
         response = await typing.cast("Coroutine[Any, Any, GetTaskLogsResponse]", result)
         yield response
 
