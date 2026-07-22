@@ -7,10 +7,16 @@ import subprocess
 import sys
 import time
 import urllib.request
+from typing import TYPE_CHECKING
 
 import click
 
 import flyte
+
+if TYPE_CHECKING:
+    # Annotation-only: `from __future__ import annotations` keeps this out of the
+    # runtime import path, so `flyte-mcp --help` still works without the mcp extra.
+    from flyte.ai.mcp._mcp_app import MCPTransport
 
 _FLYTE_SDK_REPO = "https://github.com/flyteorg/flyte-sdk.git"
 _UNIONAI_EXAMPLES_REPO = "https://github.com/unionai/unionai-examples.git"
@@ -228,7 +234,7 @@ def main(
     name: str,
     title: str | None,
     instructions: str | None,
-    transport: str,
+    transport: "MCPTransport",
     port: int,
     mcp_mount_path: str,
     tool_groups: list[str] | None,
@@ -283,7 +289,7 @@ def _build_env(
     name: str,
     title: str | None,
     instructions: str | None,
-    transport: str,
+    transport: "MCPTransport",
     port: int,
     mcp_mount_path: str,
     tool_groups: list[str] | None,

@@ -18,6 +18,10 @@ if TYPE_CHECKING:
     from starlette.applications import Starlette
     from starlette.middleware import Middleware
 
+# Named so the CLI and any other caller can share one definition instead of
+# repeating the literal and letting the two drift apart.
+MCPTransport = Literal["stdio", "sse", "streamable-http"]
+
 
 @dataclass(kw_only=True, repr=True)
 class MCPAppEnvironment(flyte.app.AppEnvironment):
@@ -56,7 +60,7 @@ class MCPAppEnvironment(flyte.app.AppEnvironment):
     mcp: FastMCP
 
     mcp_mount_path: str = "/mcp"
-    transport: Literal["stdio", "sse", "streamable-http"] = "streamable-http"
+    transport: MCPTransport = "streamable-http"
     uvicorn_config: uvicorn.Config | None = None
 
     _starlette_app: Starlette | None = field(init=False, default=None)
@@ -101,8 +105,12 @@ class MCPAppEnvironment(flyte.app.AppEnvironment):
     async def run_stdio_async(self) -> None:
         """Serve MCP over this process's stdin/stdout until the client disconnects.
 
+        Validates the transport and then delegates to the wrapped :class:`FastMCP`,
+        whose method of the same name does the actual serving.
+
         :raises ValueError: if ``transport`` is not ``"stdio"``.
         """
+
         if self.transport != "stdio":
             raise ValueError(
                 f"run_stdio_async() requires transport='stdio', got {self.transport!r}. "

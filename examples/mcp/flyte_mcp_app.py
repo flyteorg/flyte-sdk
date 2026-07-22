@@ -16,12 +16,15 @@ Usage:
 
     $ python examples/mcp/flyte_mcp_app.py
 
-    Or serve locally for development (recommended: `uvx`)
+    Or serve locally for development (recommended: `uvx`). This binds
+    http://localhost:8080/flyte-mcp/mcp; pass `--transport stdio` instead when an
+    MCP client launches the server as a subprocess.
 
     $ uvx --from "flyte[mcp]" flyte-mcp
 
-    If you're running from this repo checkout:
-    $ uvx --from . flyte-mcp
+    If you're running from this repo checkout (note the `[mcp]` extra -- without it
+    the server exits with "mcp is not installed"):
+    $ uvx --from ".[mcp]" flyte-mcp
 
     ------------------------------
     Connect from Claude Code
@@ -31,7 +34,8 @@ Usage:
     configuring Claude Code to launch the server via `uvx` (process-based setup).
 
     Add as a local stdio MCP server:
-    $ claude mcp add --transport stdio flyte-mcp -- uvx --with "flyte[mcp]" flyte-mcp
+    $ claude mcp add --transport stdio flyte-mcp -- \
+      uvx --from "flyte[mcp]" flyte-mcp --transport stdio
 
     If you deploy this app remotely (so it has a public base URL), use that URL instead.
     With default ``transport="streamable-http"`` and ``mcp_mount_path="/flyte-mcp"``, the MCP
@@ -56,7 +60,7 @@ Usage:
       "mcp": {
         "flyte-mcp": {
           "type": "local",
-          "command": ["uvx", "--with", "flyte[mcp]", "flyte-mcp"],
+          "command": ["uvx", "--from", "flyte[mcp]", "flyte-mcp", "--transport", "stdio"],
           "enabled": true
         }
       }
