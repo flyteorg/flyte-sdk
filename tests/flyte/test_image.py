@@ -14,6 +14,7 @@ from flyte._image import (
     Image,
     UVScript,
     _get_base_registry,
+    _get_push_registry,
     resolve_code_bundle_layer,
 )
 from flyte._internal.imagebuild.docker_builder import PipAndRequirementsHandler
@@ -198,8 +199,11 @@ def test_install_flyte_false_builds_full_image():
     img = Image.from_debian_base(install_flyte=False)
     # Should have layers since it's building a full image
     assert len(img._layers) > 0
-    # Tag should not contain a version suffix
-    assert img.uri.startswith("ghcr.io/flyteorg/flyte:py3.")
+    # Tag should be a py3.X preset (no version suffix). The push registry is no longer defaulted
+    # to ghcr.io/flyteorg (that would 403 on push); with no registry configured the uri is
+    # just <name>:<tag>.
+    assert "flyte:py3." in img.uri
+    assert img.registry is None
 
 
 def test_image_from_uv_script():
@@ -1032,6 +1036,46 @@ def test_get_base_registry_falls_back_when_registry_unset(monkeypatch):
         mock_config = _mock_init_config(endpoint="localhost:8090")
         with patch("flyte._initialize._get_init_config", return_value=mock_config):
             assert _get_base_registry() == _LOCALHOST_REGISTRY
+
+
+def test_get_push_registry_returns_none_when_unset(no_ambient_registry):
+    """Unlike _get_base_registry, the push resolver never falls back to ghcr.io/flyteorg:
+    with nothing configured it returns None so callers can fail fast."""
+    with patch("flyte._initialize._get_init_config", return_value=None):
+        assert _get_push_registry() is None
+
+
+def test_get_push_registry_never_defaults_to_base_registry(no_ambient_registry):
+    """A remote endpoint with no registry configured must NOT resolve to the base registry."""
+    mock_config = _mock_init_config(endpoint="dns:///my-cluster.example.com")
+    with patch("flyte._initialize._get_init_config", return_value=mock_config):
+        assert _get_push_registry() is None
+
+
+def test_get_push_registry_precedence_init_over_config(monkeypatch):
+    """Resolution order: init-time image.registry wins over ambient config."""
+    monkeypatch.delenv("FLYTE_IMAGE_REGISTRY", raising=False)
+    mock_config = _mock_init_config(endpoint="localhost:8090", image_registry="init.registry.io/team")
+    with patch("flyte._initialize._get_init_config", return_value=mock_config):
+        with patch("flyte.config._config.ImageConfig.auto") as mock_auto:
+            mock_auto.return_value = MagicMock(registry="cfg.registry.io/team")
+            assert _get_push_registry() == "init.registry.io/team"
+
+
+def test_get_push_registry_uses_config_env(monkeypatch):
+    """Ambient image.registry / FLYTE_IMAGE_REGISTRY is used when init has none."""
+    monkeypatch.delenv("FLYTE_IMAGE_REGISTRY", raising=False)
+    with patch("flyte._initialize._get_init_config", return_value=_mock_init_config()):
+        with patch("flyte.config._config.ImageConfig.auto") as mock_auto:
+            mock_auto.return_value = MagicMock(registry="cfg.registry.io/team")
+            assert _get_push_registry() == "cfg.registry.io/team"
+
+
+def test_get_push_registry_localhost_endpoint(no_ambient_registry):
+    """A localhost endpoint yields the (pushable) localhost dev registry."""
+    mock_config = _mock_init_config(endpoint="dns:///localhost:30080")
+    with patch("flyte._initialize._get_init_config", return_value=mock_config):
+        assert _get_push_registry() == _LOCALHOST_REGISTRY
 
 
 def test_released_default_image_is_not_cloned():
