@@ -273,9 +273,9 @@ class Dir(BaseModel, Generic[T], SerializableType):
         self._lazy_uploader = lazy_uploader
 
     @classmethod
-    def _deserialize(cls, file_dump: Dict[str, Optional[str]]) -> Dir:
+    def _deserialize(cls, value: Dict[str, Optional[str]]) -> Dir:
         """Internal: Deserialize Dir from dictionary. Not intended for direct use."""
-        return cls.model_validate(file_dump)
+        return cls.model_validate(value)
 
     @classmethod
     def schema_match(cls, incoming: dict):
