@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import pathlib
 import sys
 import types
 from dataclasses import replace
@@ -15,6 +16,7 @@ from flyte._deploy import (
     _build_image_bg,
     _build_images,
     _check_duplicate_env,
+    _deploy_task,
     _get_documentation_entity,
     _recursive_discover,
     _update_interface_inputs_and_outputs_docstring,
@@ -25,7 +27,32 @@ from flyte._docstring import Docstring
 from flyte._image import CodeBundleLayer, resolve_code_bundle_layer
 from flyte._internal.imagebuild.image_builder import ImageCache
 from flyte._internal.runtime.types_serde import transform_native_to_typed_interface
-from flyte.models import NativeInterface
+from flyte.models import NativeInterface, SerializationContext
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("sync_local_sys_paths", [True, False])
+async def test_deploy_task_syncs_local_sys_paths(sync_local_sys_paths, monkeypatch):
+    root_dir = pathlib.Path(__file__).parents[2].resolve()
+    monkeypatch.setattr(sys, "path", [str(root_dir / "src"), *sys.path])
+
+    env = flyte.TaskEnvironment(name="test_env", image="python:3.10")
+
+    @env.task()
+    async def task() -> None:
+        pass
+
+    context = SerializationContext(version="v1", root_dir=root_dir)
+    config = Mock(sync_local_sys_paths=sync_local_sys_paths)
+    with patch("flyte._deploy.ensure_client"), patch("flyte._deploy.get_init_config", return_value=config):
+        deployed = await _deploy_task(task, context, dryrun=True)
+
+    runtime_env = {item.key: item.value for item in deployed.deployed_task.task_template.container.env}
+    if sync_local_sys_paths:
+        assert "./src" in runtime_env["_F_SYS_PATH"].split(":")
+    else:
+        assert "_F_SYS_PATH" not in runtime_env
+    assert task.env_vars is None
 
 
 def test_get_description_entity_both_descriptions_truncated():
