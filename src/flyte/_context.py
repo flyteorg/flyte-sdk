@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import contextvars
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional, ParamSpec, Tuple, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional, ParamSpec, Tuple, TypeVar
 
 from flyte._logging import logger
 from flyte.models import GroupData, RawDataPath, TaskContext
@@ -155,7 +155,8 @@ class Context:
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Exit the context, restoring the previous context."""
         try:
-            root_context_var.reset(cast(contextvars.Token["Context"], self._token))
+            assert self._token is not None
+            root_context_var.reset(self._token)
         except Exception as e:
             logger.warning(f"Failed to reset context: {e}")
             raise e
@@ -167,7 +168,8 @@ class Context:
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async version of context exit."""
-        root_context_var.reset(cast(contextvars.Token["Context"], self._token))
+        assert self._token is not None
+        root_context_var.reset(self._token)
 
     def __repr__(self):
         return f"{self.data}"
