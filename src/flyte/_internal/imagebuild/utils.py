@@ -6,9 +6,92 @@ from pathlib import Path, PurePath
 from typing import List, Optional
 
 from flyte._code_bundle._ignore import STANDARD_IGNORE_PATTERNS
-from flyte._image import DockerIgnore, Image
+from flyte._image import (
+    AptPackages,
+    Commands,
+    CopyConfig,
+    DockerIgnore,
+    Env,
+    Image,
+    Layer,
+    PixiProject,
+)
 from flyte._logging import logger
 from flyte.errors import ImageBuildError
+
+# Pinned pixi version used when installing pixi into an image. Note: the
+# ghcr.io/prefix-dev/pixi image tags (used by the local docker builder) come from the
+# pixi-docker repo and can lag behind pixi releases, so bump this only to versions
+# that have a published image tag.
+PIXI_VERSION = "0.72.2"
+
+# Where the pixi binary is installed when it cannot be copied out of the official pixi
+# image (i.e. when a PixiProject is lowered to Commands for the remote builder).
+PIXI_INSTALL_DIR = "/opt/pixi"
+
+# Where the pixi project (manifest, lock, and `.pixi/envs/*`) lives inside the image.
+# Kept stable across pixi layers so a later superset manifest incrementally updates the
+# same environment instead of resolving from scratch.
+PIXI_PROJECT_DIR = "/opt/pixi-project"
+
+
+def pixi_project_to_primitive_layers(layer: PixiProject) -> List[Layer]:
+    """Lower a PixiProject layer into primitive layers (apt / copy / commands / env).
+
+    The remote image builder's protobuf IDL has no pixi layer, but it understands these
+    primitives, so a pixi project is expressed with them: install the pixi binary, copy
+    the manifest (and lock / project) into the image, run ``pixi install``, and re-point
+    the runtime environment at the pixi environment.
+    """
+    manifest_dst = f"{PIXI_PROJECT_DIR}/{layer.manifest.name}"
+    env_dir = f"{PIXI_PROJECT_DIR}/.pixi/envs/{layer.environment}"
+
+    # Idempotent pinned install via the official install script (the primitive layers
+    # cannot express the local builder's `COPY --from=ghcr.io/prefix-dev/pixi`).
+    install_pixi_cmd = (
+        f"if [ ! -x {PIXI_INSTALL_DIR}/bin/pixi ]; then "
+        f"curl -fsSL https://pixi.sh/install.sh | "
+        f"PIXI_HOME={PIXI_INSTALL_DIR} PIXI_VERSION=v{PIXI_VERSION} PIXI_NO_PATH_UPDATE=1 bash; "
+        f"fi"
+    )
+
+    pixi_install_parts = [
+        f"{PIXI_INSTALL_DIR}/bin/pixi install",
+        f"--manifest-path {manifest_dst}",
+        f"--environment {layer.environment}",
+    ]
+    if layer.pixi_lock is not None:
+        pixi_install_parts.append("--locked")
+    if layer.extra_args:
+        pixi_install_parts.append(layer.extra_args)
+
+    layers: List[Layer] = [
+        # git so that manifests referencing git sources (conda or pypi) resolve.
+        AptPackages(packages=("curl", "ca-certificates", "bzip2", "git")),
+        Commands(commands=(install_pixi_cmd,)),
+    ]
+    if layer.project_install_mode == "dependencies_only":
+        layers.append(CopyConfig(path_type=0, src=layer.manifest, dst=manifest_dst))
+        if layer.pixi_lock is not None:
+            layers.append(CopyConfig(path_type=0, src=layer.pixi_lock, dst=f"{PIXI_PROJECT_DIR}/pixi.lock"))
+    else:
+        layers.append(CopyConfig(path_type=1, src=layer.manifest.parent, dst=PIXI_PROJECT_DIR))
+    layers.extend(
+        [
+            Commands(commands=(" ".join(pixi_install_parts),), secret_mounts=layer.secret_mounts),
+            # Make the pixi environment the active runtime for the task entrypoint and
+            # any subsequent uv/pip layers.
+            Env.from_dict(
+                {
+                    "VIRTUAL_ENV": env_dir,
+                    "UV_PYTHON": f"{env_dir}/bin/python",
+                    "PIXI_PROJECT_MANIFEST": manifest_dst,
+                    "PATH": f"{env_dir}/bin:{PIXI_INSTALL_DIR}/bin:$PATH",
+                }
+            ),
+        ]
+    )
+    return layers
 
 
 def copy_files_to_context(src: Path, context_path: Path, ignore_patterns: list[str] = STANDARD_IGNORE_PATTERNS) -> Path:

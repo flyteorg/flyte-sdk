@@ -437,7 +437,7 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
         except Exception as e:
             if isinstance(e, RuntimeSystemError):
                 capture_exception(e)
-                count("flyte.run.error", error_kind="system", error_code=e.code)
+                count("flyte.run.error", tags={"error_kind": "system", "error_code": e.code})
             console.print(common.get_panel("Exception", f"[red]✕ Execution failed:[/red] {e}", config.output_format))
             exit(1)
 

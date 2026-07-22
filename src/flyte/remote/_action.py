@@ -42,6 +42,21 @@ from flyte.syncify import syncify
 
 WaitFor = Literal["terminal", "running", "logs-ready"]
 
+# ActionMetadata.relation is not available until the flyteidl2 pin is bumped past the release
+# that ships common.Relation; gate all access on the descriptor so both versions work.
+_RELATION_SUPPORTED = "relation" in run_definition_pb2.ActionMetadata.DESCRIPTOR.fields_by_name
+
+
+def _relation_repr(metadata: run_definition_pb2.ActionMetadata) -> str:
+    """Human-readable provenance, e.g. ``rerun of my-run``, or empty when unset."""
+    if not _RELATION_SUPPORTED or not metadata.HasField("relation"):
+        return ""
+    from flyteidl2.common import run_pb2 as common_run_pb2
+
+    rel = metadata.relation
+    kind = common_run_pb2.RelationType.Name(rel.relation_type).removeprefix("RELATION_TYPE_").lower()
+    return f"{kind} of {rel.related_to.name}"
+
 
 @rich.repr.auto
 @dataclass
@@ -111,6 +126,7 @@ def _action_rich_repr(action: run_definition_pb2.Action) -> rich.repr.Result:
     yield from _action_time_phase(action)
     yield "group", action.metadata.group
     yield "parent", action.metadata.parent
+    yield "related to", _relation_repr(action.metadata)
     yield "attempts", action.status.attempts
 
 
@@ -140,6 +156,7 @@ def _action_details_rich_repr(
     yield "phase", phase_pb2.ActionPhase.Name(action.status.phase)
     yield "group", action.metadata.group
     yield "parent", action.metadata.parent
+    yield "related to", _relation_repr(action.metadata)
 
 
 def _action_done_check(phase: phase_pb2.ActionPhase) -> bool:
@@ -343,6 +360,17 @@ class Action(ToJSONMixin):
         """
         if self.pb2.metadata.HasField("task") and self.pb2.metadata.task.HasField("id"):
             return self.pb2.metadata.task.id.name
+        return None
+
+    @property
+    def relation(self):
+        """
+        Provenance link (``flyteidl2.common.run_pb2.Relation``: related_to + relation_type) if this
+        run was derived from another (rerun/recover), otherwise None. Only set on root actions;
+        requires a flyteidl2 build that ships ActionMetadata.relation.
+        """
+        if _RELATION_SUPPORTED and self.pb2.metadata.HasField("relation"):
+            return self.pb2.metadata.relation
         return None
 
     @property
@@ -795,6 +823,17 @@ class ActionDetails(ToJSONMixin):
         Get the metadata of the action.
         """
         return self.pb2.metadata
+
+    @property
+    def relation(self):
+        """
+        Provenance link (``flyteidl2.common.run_pb2.Relation``: related_to + relation_type) if this
+        run was derived from another (rerun/recover), otherwise None. Only set on root actions;
+        requires a flyteidl2 build that ships ActionMetadata.relation.
+        """
+        if _RELATION_SUPPORTED and self.pb2.metadata.HasField("relation"):
+            return self.pb2.metadata.relation
+        return None
 
     @property
     def status(self) -> run_definition_pb2.ActionStatus:
