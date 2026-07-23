@@ -244,6 +244,10 @@ jobs:
     if: always() && needs.flyte-pypi.result == 'success' && needs.rs-controller-wheels.result == 'success'
     name: Flyte image for Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
+    # The SDK never defaults the *push* registry to ghcr.io/flyteorg (end users cannot push
+    # there), so this job — which does log in to it below — has to name it explicitly.
+    env:
+      FLYTE_IMAGE_REGISTRY: ghcr.io/flyteorg
     strategy:
       matrix:
         python-version:
@@ -267,8 +271,6 @@ jobs:
           registry: ghcr.io/flyteorg
           username: "${{ secrets.FLYTE_BOT_USERNAME }}"
           password: "${{ secrets.FLYTE_BOT_PAT }}"
-      - name: Fetch the code
-        uses: actions/checkout@v4
       - name: Set up Python ${{ matrix.python-version }}
         uses: ./.github/actions/setup-python-env
         with:
