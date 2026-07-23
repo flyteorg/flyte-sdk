@@ -254,7 +254,16 @@ class Informer:
                             parent_action_id=parent_action_id,
                         ),
                     )
-                async for resp in watcher:
+                established = False
+                watch_iter = watcher.__aiter__()
+                while True:
+                    try:
+                        if established:
+                            resp = await watch_iter.__anext__()
+                        else:
+                            resp = await asyncio.wait_for(watch_iter.__anext__(), timeout=self._watch_conn_timeout_sec)
+                    except StopAsyncIteration:
+                        break
                     retries = 0
                     if resp is None:
                         # gRPC deserialization failure: _transform() caught an
@@ -267,6 +276,7 @@ class Informer:
                     if resp.control_message is not None and resp.control_message.sentinel:
                         logger.info(f"Received Sentinel, for run {self.name}")
                         await self._set_ready()
+                        established = True
                         continue
                     node = await self._action_cache.observe_state(resp.action_update)
                     await self._shared_queue.put(node)
