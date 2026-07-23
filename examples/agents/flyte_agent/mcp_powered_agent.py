@@ -233,13 +233,19 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
+    from flyte.app import DeployedAppEnvironment
+
     flyte.init_from_config()
 
     deployments = flyte.deploy(agent_env)
     print(f"Agent environment deployed: {deployments[0].summary_repr()}")
 
-    slack_endpoint = deployments[0].envs["slack-mcp-stub"].deployed_app.endpoint
-    github_endpoint = deployments[0].envs["github-mcp-stub"].deployed_app.endpoint
+    slack_env = deployments[0].envs["slack-mcp-stub"]
+    github_env = deployments[0].envs["github-mcp-stub"]
+    assert isinstance(slack_env, DeployedAppEnvironment)
+    assert isinstance(github_env, DeployedAppEnvironment)
+    slack_endpoint = slack_env.deployed_app.endpoint
+    github_endpoint = github_env.deployed_app.endpoint
     print(f"Slack MCP app: {slack_endpoint}")
     print(f"GitHub MCP app: {github_endpoint}")
 

@@ -1,6 +1,6 @@
 import base64
 import json
-from typing import Any, Dict, Union
+from typing import Any, Dict, Mapping, Union
 
 import msgpack
 from flyteidl2.core import literals_pb2
@@ -77,7 +77,7 @@ def _literal_string_repr(lit: literals_pb2.Literal) -> Any:
             raise ValueError(f"Unknown literal type {lit}")
 
 
-def _dict_literal_repr(lmd: Dict[str, literals_pb2.Literal]) -> Dict[str, Any]:
+def _dict_literal_repr(lmd: Mapping[str, literals_pb2.Literal]) -> Dict[str, Any]:
     """
     This method is used to convert a literal map to a string representation.
     """

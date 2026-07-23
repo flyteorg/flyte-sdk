@@ -35,6 +35,8 @@ from ._trigger import Trigger
 from .models import MAX_INLINE_IO_BYTES, NativeInterface
 
 if TYPE_CHECKING:
+    from types import FunctionType
+
     from ._task import F, P, R
     from .sandbox._code_task import CodeTaskTemplate
     from .sandbox._task import SandboxedTaskTemplate
@@ -323,8 +325,9 @@ class TaskEnvironment(Environment):
                 raise ValueError("Cannot set pod_template when environment is reusable.")
 
         def decorator(func: F) -> AsyncFunctionTaskTemplate[P, R, F]:
-            short = short_name or func.__name__
-            task_name = self.name + "." + func.__name__
+            func_name = cast("FunctionType", func).__name__
+            short = short_name or func_name
+            task_name = self.name + "." + func_name
 
             if not inspect.iscoroutinefunction(func) and self.reusable is not None:
                 if self.reusable.concurrency > 1:
@@ -372,15 +375,15 @@ class TaskEnvironment(Environment):
                 interruptible=interruptible if interruptible is not None else self.interruptible,
                 entrypoint=entrypoint,
                 triggers=(triggers,) if isinstance(triggers, Trigger) else tuple(triggers),
-                links=tuple(links) if isinstance(links, (list, tuple)) else (links,),
+                links=cast(Tuple[Link, ...], tuple(links)) if isinstance(links, (list, tuple)) else (links,),
                 task_resolver=task_resolver,
             )
             self._tasks[task_name] = tmpl
             return tmpl
 
         if _func is None:
-            return cast(Callable[[F], AsyncFunctionTaskTemplate[P, R, F]], decorator)
-        return cast(AsyncFunctionTaskTemplate[P, R, F], decorator(_func))
+            return cast("Callable[[F], AsyncFunctionTaskTemplate]", decorator)
+        return cast("AsyncFunctionTaskTemplate", decorator(_func))
 
     @property
     def sandbox(self) -> _SandboxNamespace:
@@ -469,6 +472,7 @@ class _SandboxNamespace:
     @overload
     def orchestrator(
         self,
+        /,
         *,
         timeout_ms: int = 30_000,
         max_memory: int = 50 * 1024 * 1024,
@@ -533,7 +537,7 @@ class _SandboxNamespace:
             )
 
             def decorator(func: Callable) -> SandboxedTaskTemplate:
-                task_name = name or (env.name + "." + func.__name__)
+                task_name = name or (env.name + "." + cast("FunctionType", func).__name__)
                 interface = NativeInterface.from_callable(func)
                 tmpl = SandboxedTaskTemplate(
                     func=func,

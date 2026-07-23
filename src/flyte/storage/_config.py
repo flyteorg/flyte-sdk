@@ -141,7 +141,7 @@ class S3(Storage):
         :return:
         """
         kwargs = super()._auto_as_kwargs()
-        final_kwargs = kwargs | {
+        final_kwargs: typing.Dict[str, typing.Any] = kwargs | {
             "endpoint": "http://localhost:4566",
             "access_key_id": "minio",
             "secret_access_key": "miniostorage",

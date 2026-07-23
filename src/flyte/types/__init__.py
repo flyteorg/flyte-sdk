@@ -55,4 +55,4 @@ def _load_custom_type_transformers():
         except Exception as e:
             logger.warning(f"Failed to load type transformer {ep.name} with error: {e}")
 
-    _load_custom_type_transformers._loaded = True  # type: ignore[attr-defined]
+    _load_custom_type_transformers._loaded = True  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]

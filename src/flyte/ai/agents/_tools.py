@@ -346,7 +346,7 @@ def _make_task_tool(task: "TaskTemplate", *, name: str | None = None) -> AgentTo
 
     parameters: dict[str, Any]
     try:
-        parameters = task.json_schema  # type: ignore[attr-defined]
+        parameters = cast(Any, task).json_schema
     except Exception:
         parameters = _json_schema_for_callable(underlying)
 
@@ -368,7 +368,7 @@ def _make_lazy_entity_tool(lazy: "LazyEntity", *, name: str | None = None) -> Ag
     actual_name = name or lazy.name.rsplit("/", maxsplit=1)[-1]
 
     async def execute(args: dict[str, Any]) -> Any:
-        return await lazy.aio(**args)  # type: ignore[attr-defined]
+        return await cast(Any, lazy).aio(**args)
 
     return AgentTool(
         name=actual_name,
@@ -419,7 +419,7 @@ def _resolve_tools(
     """
     items: list[tuple[str | None, Any]]
     if isinstance(tools, Mapping):
-        items = [(k, v) for k, v in tools.items()]
+        items = [(k, v) for k, v in cast("Mapping[str, Any]", tools).items()]
     else:
         items = [(None, v) for v in tools]
 

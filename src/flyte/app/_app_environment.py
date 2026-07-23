@@ -5,7 +5,7 @@ import os
 import re
 import shlex
 from dataclasses import dataclass, field, replace
-from typing import Any, Callable, List, Literal, Optional, Union
+from typing import Any, Callable, List, Literal, Optional, TypeVar, Union
 
 import rich.repr
 
@@ -83,6 +83,11 @@ def _find_user_caller_frame() -> inspect.Traceback | None:
     return inspect.getframeinfo(f)
 
 
+# Hook functions registered via on_startup/server/on_shutdown may be sync or async;
+# the bound TypeVar keeps the decorated function's exact type for callers.
+F = TypeVar("F", bound=Callable[..., Any])
+
+
 @rich.repr.auto
 @dataclass(init=True, repr=True)
 class AppEnvironment(Environment):
@@ -150,9 +155,9 @@ class AppEnvironment(Environment):
     timeouts: Timeouts = field(default_factory=Timeouts)
 
     # private field
-    _server: Callable[[], None] | None = field(init=False, default=None)
-    _on_startup: Callable[[], None] | None = field(init=False, default=None)
-    _on_shutdown: Callable[[], None] | None = field(init=False, default=None)
+    _server: Callable[..., Any] | None = field(init=False, default=None)
+    _on_startup: Callable[..., Any] | None = field(init=False, default=None)
+    _on_shutdown: Callable[..., Any] | None = field(init=False, default=None)
     # Frame of the user code that instantiated this environment. Used by
     # ``flyte._internal.resolvers.app_env.AppEnvResolver`` to locate the module
     # that holds the module-level ``app_env`` binding the deployed container
@@ -223,7 +228,7 @@ class AppEnvironment(Environment):
         serialized_parameters = SerializableParameterCollection.from_parameters(parameter_overrides or self.parameters)
         return serialized_parameters.to_transport
 
-    def on_startup(self, fn: Callable[..., None]) -> Callable[..., None]:
+    def on_startup(self, fn: F) -> F:
         """
         Decorator to define the startup function for the app environment.
 
@@ -236,7 +241,7 @@ class AppEnvironment(Environment):
         self._on_startup = fn
         return self._on_startup
 
-    def server(self, fn: Callable[..., None]) -> Callable[..., None]:
+    def server(self, fn: F) -> F:
         """
         Decorator to define the server function for the app environment.
 
@@ -247,7 +252,7 @@ class AppEnvironment(Environment):
         self._server = fn
         return self._server
 
-    def on_shutdown(self, fn: Callable[..., None]) -> Callable[..., None]:
+    def on_shutdown(self, fn: F) -> F:
         """
         Decorator to define the shutdown function for the app environment.
 

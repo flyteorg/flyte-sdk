@@ -437,7 +437,7 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
         except Exception as e:
             if isinstance(e, RuntimeSystemError):
                 capture_exception(e)
-                count("flyte.run.error", error_kind="system", error_code=e.code)
+                count("flyte.run.error", tags={"error_kind": "system", "error_code": e.code})
             console.print(common.get_panel("Exception", f"[red]✕ Execution failed:[/red] {e}", config.output_format))
             exit(1)
 
@@ -767,13 +767,13 @@ class RemoteEnvGroup(common.GroupBase):
     def list_commands(self, ctx):
         return _list_tasks(ctx, self.run_args.project, self.run_args.domain, by_task_env=self.env)
 
-    def get_command(self, ctx, name):
+    def get_command(self, ctx, cmd_name):
         return RunRemoteTaskCommand(
-            task_name=name,
+            task_name=cmd_name,
             run_args=self.run_args,
-            name=name,
+            name=cmd_name,
             version=None,
-            help=f"Run deployed task '{name}' from the Flyte backend",
+            help=f"Run deployed task '{cmd_name}' from the Flyte backend",
         )
 
 
@@ -812,8 +812,8 @@ class RemoteTaskGroup(common.GroupBase):
         tasks = [*_list_tasks(ctx, self.run_args.project, self.run_args.domain, by_task_name=env)]
         return len(tasks) > 0
 
-    def get_command(self, ctx, name):
-        env, task, version = self._parse_task_name(name)
+    def get_command(self, ctx, cmd_name):
+        env, task, version = self._parse_task_name(cmd_name)
         match env, task, version:
             case env, None, None:
                 if self._env_is_task(ctx, env):
@@ -828,7 +828,7 @@ class RemoteTaskGroup(common.GroupBase):
                     )
                 else:
                     return RemoteEnvGroup(
-                        name=name,
+                        name=cmd_name,
                         run_args=self.run_args,
                         env=env,
                         help=f"Run remote tasks in the `{env}` environment from the Flyte backend",
@@ -881,7 +881,7 @@ class TaskFiles(common.FileGroup):
         ]
         return v
 
-    def get_command(self, ctx, cmd_name):
+    def get_command(self, ctx, cmd_name):  # ty: ignore[invalid-method-override]
         run_args = RunArguments.from_dict(ctx.params)
         # Store run_args on ctx.obj so parameter converters can access run context
         if ctx.obj is not None and hasattr(ctx.obj, "replace"):

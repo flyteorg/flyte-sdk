@@ -289,6 +289,45 @@ class TestTaskDetailsOverrideResources:
         side = next(c for c in spec["containers"] if c["name"] == "sidecar")
         assert not side.get("resources")
 
+    def test_resource_override_on_pod_template_preserves_dra_claims(self):
+        # Regression: a resource override on a pod-template task must not drop a
+        # DRA claim (e.g. a GPU claimed through a ResourceClaimTemplate). The
+        # claim can only be expressed via the pod template; without it the pod
+        # schedules with no device.
+        from flyteidl2.task import task_definition_pb2
+        from google.protobuf import json_format
+
+        from flyte._pod import _PRIMARY_CONTAINER_NAME_FIELD
+
+        pb2 = task_definition_pb2.TaskDetails()
+        tmpl = pb2.spec.task_template
+        tmpl.config[_PRIMARY_CONTAINER_NAME_FIELD] = "primary"
+        spec = {
+            "resourceClaims": [{"name": "gpu", "resourceClaimTemplateName": "flyte-task-gpu-x2"}],
+            "containers": [
+                {
+                    "name": "primary",
+                    "image": "example:latest",
+                    "resources": {
+                        "requests": {"cpu": "1", "memory": "1Gi"},
+                        "claims": [{"name": "gpu"}],
+                    },
+                },
+            ],
+        }
+        json_format.ParseDict(spec, tmpl.k8s_pod.pod_spec)
+        td = TaskDetails(pb2)
+
+        out = td.override(resources=flyte.Resources(cpu="24", memory="490Gi"))
+        tmpl = out.pb2.spec.task_template
+
+        spec = json_format.MessageToDict(tmpl.k8s_pod.pod_spec)
+        primary = next(c for c in spec["containers"] if c["name"] == "primary")
+        resources = primary["resources"]
+        assert resources["claims"] == [{"name": "gpu"}], f"DRA claim dropped: {resources}"
+        assert resources["requests"]["cpu"] == "24"
+        assert resources["requests"]["memory"] == "490Gi"
+
     def test_env_override_on_pod_template_sets_container_env(self):
         # Regression: env_vars overrides on a pod-template task were silently
         # dropped — they were only applied to template.container, which a

@@ -141,10 +141,10 @@ if __name__ == "__main__":
         return sorted(t.model_fields)
 
     lt = PydanticTransformer().get_literal_type(BatchReport)
-    tagged = TypeEngine.guess_python_type(lt)
+    tagged: type = TypeEngine.guess_python_type(lt)
     lt_untagged = copy.deepcopy(lt)
     lt_untagged.ClearField("structure")  # simulate an output produced by a pre-tagging SDK
-    untagged = TypeEngine.guess_python_type(lt_untagged)
+    untagged: type = TypeEngine.guess_python_type(lt_untagged)
 
     expected = ["meta", "name", "status", "summary", "tags"]
     print("tagged  reconstruct:", _field_names(tagged))

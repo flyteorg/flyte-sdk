@@ -16,6 +16,7 @@ Run locally::
 
 import sys
 import tempfile
+from typing import Literal
 
 import flyte
 from flyte.extras import shell
@@ -23,7 +24,7 @@ from flyte.extras.shell import Stdout
 from flyte.io import File
 
 
-def _argv_dump_task(name: str, flag_alias: str | tuple[str, str]):
+def _argv_dump_task(name: str, flag_alias: str | tuple[str, Literal["join", "repeat", "comma"]]):
     return shell.create(
         name=name,
         image="debian:12-slim",
@@ -59,7 +60,7 @@ async def list_mode_demo(parts: list[File]) -> tuple[str, str, str]:
 
 if __name__ == "__main__":
     flyte.init_from_config()
-    mode = "remote" if (len(sys.argv) > 1 and sys.argv[1] == "remote") else "local"
+    mode: Literal["local", "remote"] = "remote" if (len(sys.argv) > 1 and sys.argv[1] == "remote") else "local"
 
     parts: list[File] = []
     for i in range(3):

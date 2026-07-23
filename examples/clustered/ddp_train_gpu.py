@@ -10,7 +10,7 @@ This doubles as the §9 exit-criteria GPU smoke (#1 1x1, #2 2x1): assert a JobSe
 gang lands, ``torchrun`` -> ``clustered`` workers rendezvous over NCCL, ``world_size`` matches, and
 only rank-0 uploads outputs.
 
-Set GPU_DEVICE / REPLICAS / NPROC_PER_NODE to match your cluster's GPU capacity, then run on a GPU
+Set REPLICAS / NPROC_PER_NODE to match your cluster's GPU capacity, then run on a GPU
 cluster (e.g. dogfood, domain=development):
     uv run python examples/clustered/ddp_train_gpu.py
 """
@@ -22,7 +22,6 @@ from flyte._image import DIST_FOLDER, PythonWheels
 from flyte.clustered import ClusteredTaskEnvironment, ClusterFailurePolicy, TorchRun
 
 # --- Knobs ---------------------------------------------------------------------------------------
-GPU_DEVICE = "L4"  # one of flyte._resources.Accelerators device names; match the cluster's GPUs
 REPLICAS = 2  # pods (== nodes). Set to 1 for the 1x1 smoke, 2 for 2x1.
 NPROC_PER_NODE = 1  # GPUs (processes) per pod; must be <= the GPU count on the device
 
@@ -38,7 +37,7 @@ image = (
 env = ClusteredTaskEnvironment(
     name="ddp_gpu_env",
     image=image,
-    resources=flyte.Resources(cpu=(2, 4), memory=("4Gi", "8Gi"), gpu=f"{GPU_DEVICE}:{NPROC_PER_NODE}"),
+    resources=flyte.Resources(cpu=(2, 4), memory=("4Gi", "8Gi"), gpu="L4:1"),
     replicas=REPLICAS,
     nproc_per_node=NPROC_PER_NODE,  # world_size = REPLICAS * NPROC_PER_NODE
     runtime=TorchRun(rdzv_backend="static", max_restarts=0),

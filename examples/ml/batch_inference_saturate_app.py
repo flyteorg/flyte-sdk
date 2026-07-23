@@ -269,15 +269,20 @@ async def main(
             concurrency=max_concurrency,
         )
     ]
-    return dict(zip(task_ids, all_results))
+    results: dict[str, list[str]] = {}
+    for task_id, result in zip(task_ids, all_results):
+        if isinstance(result, Exception):
+            raise result
+        results[task_id] = result
+    return results
 
 
 if __name__ == "__main__":
     flyte.init_from_config()
     # We run the 'main' task from the driver environment with some sample prompts.
-    app = flyte.serve(app_env)
-    print(app.url)
+    app_handle = flyte.serve(app_env)
+    print(app_handle.url)
     print("activating app")
-    app.activate(wait=True)
+    app_handle.activate(wait=True)
     run = flyte.run(main, num_questions=500, chunk_size=25)
     print(run.url)

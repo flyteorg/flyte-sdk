@@ -11,7 +11,7 @@ import subprocess
 import tarfile
 import time
 import typing
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Tuple, Union, cast
 
 import click
 from rich.tree import Tree
@@ -178,7 +178,10 @@ def create_bundle(
     return archive_fname, size_mbs, asize_mbs
 
 
-def compute_digest(source: Union[os.PathLike, List[os.PathLike]], filter: Optional[typing.Callable] = None) -> str:
+def compute_digest(
+    source: Union[str, os.PathLike[str], List[Union[str, os.PathLike[str]]]],
+    filter: Optional[typing.Callable] = None,
+) -> str:
     """
     Walks the entirety of the source dir to compute a deterministic md5 hex digest of the dir contents.
     :param os.PathLike source:
@@ -187,7 +190,7 @@ def compute_digest(source: Union[os.PathLike, List[os.PathLike]], filter: Option
     """
     hasher = hashlib.md5()
 
-    def compute_digest_for_file(path: os.PathLike, rel_path: os.PathLike) -> None:
+    def compute_digest_for_file(path: Union[str, os.PathLike[str]], rel_path: Union[str, os.PathLike[str]]) -> None:
         # Only consider files that exist (e.g. disregard symlinks that point to non-existent files)
         if not os.path.exists(path):
             logger.info(f"Skipping non-existent file {path}")
@@ -205,7 +208,7 @@ def compute_digest(source: Union[os.PathLike, List[os.PathLike]], filter: Option
         _filehash_update(path, hasher)
         _pathhash_update(rel_path, hasher)
 
-    def compute_digest_for_dir(source: os.PathLike) -> None:
+    def compute_digest_for_dir(source: Union[str, os.PathLike[str]]) -> None:
         for root, _, files in os.walk(str(source), topdown=True):
             files.sort()
 
@@ -215,7 +218,7 @@ def compute_digest(source: Union[os.PathLike, List[os.PathLike]], filter: Option
                 compute_digest_for_file(pathlib.Path(abspath), pathlib.Path(relpath))
 
     if isinstance(source, list):
-        for src in source:
+        for src in cast("List[Union[str, os.PathLike[str]]]", source):
             if os.path.isdir(src):
                 compute_digest_for_dir(src)
             else:

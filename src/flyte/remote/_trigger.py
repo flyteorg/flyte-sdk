@@ -13,6 +13,7 @@ from flyteidl2.trigger import trigger_definition_pb2, trigger_service_pb2
 import flyte
 from flyte._initialize import ensure_client, get_client, get_init_config
 from flyte._internal.runtime import trigger_serde
+from flyte._sentry import track_operation
 from flyte.syncify import syncify
 
 from ._common import ToJSONMixin
@@ -179,19 +180,20 @@ class Trigger(ToJSONMixin):
             # Zero trust not enabled on the backend: register with inline inputs (pre-offload flow).
             spec.inputs.CopyFrom(task_trigger.spec.inputs)
 
-        resp = await get_client().trigger_service.deploy_trigger(
-            request=trigger_service_pb2.DeployTriggerRequest(
-                name=identifier_pb2.TriggerName(
-                    name=trigger.name,
-                    task_name=task_name,
-                    org=cfg.org,
-                    project=cfg.project,
-                    domain=cfg.domain,
-                ),
-                spec=spec,
-                automation_spec=task_trigger.automation_spec,
+        with track_operation("deploy_trigger"):
+            resp = await get_client().trigger_service.deploy_trigger(
+                request=trigger_service_pb2.DeployTriggerRequest(
+                    name=identifier_pb2.TriggerName(
+                        name=trigger.name,
+                        task_name=task_name,
+                        org=cfg.org,
+                        project=cfg.project,
+                        domain=cfg.domain,
+                    ),
+                    spec=spec,
+                    automation_spec=task_trigger.automation_spec,
+                )
             )
-        )
 
         details = TriggerDetails(pb2=resp.trigger)
 

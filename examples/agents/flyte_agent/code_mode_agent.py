@@ -91,11 +91,10 @@ async def moving_average(prices: list[float], window: int = 5) -> float:
 
 def _bar_chart_html(title: str, rankings: list[dict[str, Any]]) -> str:
     """Build a self-contained HTML horizontal bar chart (no external deps)."""
-    rows = sorted(
-        ({"ticker": str(r.get("ticker", "?")), "value": float(r.get("value", 0.0))} for r in rankings),
-        key=lambda r: r["value"],
-        reverse=True,
-    )
+    normalized: list[dict[str, Any]] = [
+        {"ticker": str(r.get("ticker", "?")), "value": float(r.get("value", 0.0))} for r in rankings
+    ]
+    rows = sorted(normalized, key=lambda r: r["value"], reverse=True)
     max_value = max((r["value"] for r in rows), default=0.0) or 1.0
 
     bars = []

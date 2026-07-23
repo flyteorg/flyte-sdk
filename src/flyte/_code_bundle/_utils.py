@@ -15,6 +15,7 @@ import tempfile
 import typing
 from datetime import datetime, timezone
 from functools import lru_cache
+from importlib.machinery import ModuleSpec
 from types import ModuleType
 from typing import List, Literal, Optional, Sequence, Tuple, Union
 
@@ -408,7 +409,8 @@ def copy_code_bundle_to_context(
 def import_module_from_file(module_name, file):
     try:
         spec = importlib.util.spec_from_file_location(module_name, file)
-        module = importlib.util.module_from_spec(spec)
+        # A None spec raises inside module_from_spec and is converted to ModuleNotFoundError below.
+        module = importlib.util.module_from_spec(typing.cast(ModuleSpec, spec))
         return module
     except Exception as exc:
         raise ModuleNotFoundError(f"Module from file {file} cannot be loaded") from exc

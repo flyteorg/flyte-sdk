@@ -11,7 +11,7 @@ app_env = flyte.app.AppEnvironment(
     image=image,
     args="streamlit run main.py --server.port 8080",
     port=8080,
-    include=["main.py", "utils.py"],
+    include=("main.py", "utils.py"),
     resources=flyte.Resources(cpu="1", memory="1Gi"),
 )
 

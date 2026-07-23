@@ -71,7 +71,7 @@ class PKCEAuthenticator(Authenticator):
         :param refresh_access_token_params: Parameters to add when refreshing access token
         """
         super().__init__(**kwargs)
-        self._auth_client = None
+        self._auth_client: AuthorizationClient | None = None
 
     async def _initialize_auth_client(self):
         if not self._auth_client:
@@ -117,14 +117,15 @@ class PKCEAuthenticator(Authenticator):
         :raises: May raise authentication-related exceptions if the refresh fails
         """
         await self._initialize_auth_client()
+        auth_client = typing.cast("AuthorizationClient", self._auth_client)
         if self._creds:
             """We have an access token so lets try to refresh it"""
             try:
-                return await self._auth_client.refresh_access_token(self._creds)
+                return await auth_client.refresh_access_token(self._creds)
             except AccessTokenNotFoundError:
                 logger.warning("Logging in...")
 
-        return await self._auth_client.get_creds_from_remote()
+        return await auth_client.get_creds_from_remote()
 
 
 class AuthorizationClient(object):
@@ -201,7 +202,7 @@ class AuthorizationClient(object):
         self._cached_credentials_ts: float | None = None
         self._http_session = http_session
 
-        self._request_auth_code_params = {
+        self._request_auth_code_params: typing.Dict[str, typing.Any] = {
             "client_id": client_id,  # This must match the Client ID of the OAuth application.
             "response_type": "code",  # Indicates the authorization code grant
             "scope": " ".join(s.strip("' ") for s in self._scopes).strip(
@@ -220,7 +221,7 @@ class AuthorizationClient(object):
             # Allow adding additional parameters to the request_auth_code_params
             self._request_auth_code_params.update(request_auth_code_params)
 
-        self._request_access_token_params = request_access_token_params or {}
+        self._request_access_token_params: typing.Dict[str, typing.Any] = request_access_token_params or {}
         self._refresh_access_token_params = refresh_access_token_params or {}
 
         if add_request_auth_code_params_to_request_access_token_params:
@@ -233,7 +234,7 @@ class AuthorizationClient(object):
         )
 
     async def _create_callback_server(self):
-        server_url = _urlparse.urlparse(self._redirect_uri)
+        server_url = _urlparse.urlparse(typing.cast(str, self._redirect_uri))
         server_address = (server_url.hostname, server_url.port)
         queue = Queue()
         handler = OAuthCallbackHandler(queue, self._remote, server_url.path)

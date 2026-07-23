@@ -210,7 +210,7 @@ async def process_table_parallel(
     logger.info(f"Starting parallel processing with {num_partitions} partitions for {len(file_paths)} files")
 
     # Distribute file paths across partitions (round-robin)
-    partition_files = [[] for _ in range(num_partitions)]
+    partition_files: list[list[str]] = [[] for _ in range(num_partitions)]
     for idx, file_path in enumerate(file_paths):
         partition_idx = idx % num_partitions
         partition_files[partition_idx].append(file_path)

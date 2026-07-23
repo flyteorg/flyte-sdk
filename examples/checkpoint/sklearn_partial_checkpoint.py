@@ -44,7 +44,6 @@ def bundle_path(root: pathlib.Path) -> pathlib.Path:
 async def incremental_sgd(chunks: int = 4) -> float:
     assert chunks > RETRIES
     ctx = flyte.ctx()
-    assert ctx is not None
     cp = ctx.checkpoint
     assert cp is not None
 

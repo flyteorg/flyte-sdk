@@ -519,7 +519,11 @@ class DataFrame(BaseModel, SerializableType):
             expected = TypeEngine.to_literal_type(DataFrame)
             await self._set_literal(expected)
 
-        return await flyte_dataset_transformer.open_as(self.literal, self._dataframe_type, self.metadata)
+        return await flyte_dataset_transformer.open_as(
+            typing.cast(literals_pb2.StructuredDataset, self.literal),
+            self._dataframe_type,
+            typing.cast(literals_pb2.StructuredDatasetMetadata, self.metadata),
+        )
 
     def all_sync(self) -> DF:  # type: ignore
         return asyncio.run(self.all())
@@ -560,7 +564,9 @@ class DataFrame(BaseModel, SerializableType):
         if self._dataframe_type is None:
             raise ValueError("No dataframe type set. Use open() to set the local dataframe type you want to use.")
         return await flyte_dataset_transformer.iter_as(
-            self.literal, self._dataframe_type, updated_metadata=self.metadata
+            typing.cast(literals_pb2.StructuredDataset, self.literal),
+            self._dataframe_type,
+            updated_metadata=typing.cast(literals_pb2.StructuredDatasetMetadata, self.metadata),
         )
 
 
@@ -1097,7 +1103,7 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
                 # not user-format. If we directly copy the user-specified format over,
                 # the type hint information will be missing.
                 if sdt.format == GENERIC_FORMAT and format_val != GENERIC_FORMAT:
-                    sdt.format = format_val
+                    sdt.format = typing.cast(str, format_val)
 
                 sd_model = literals_pb2.StructuredDataset(
                     uri=uri,
@@ -1411,9 +1417,9 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
             return get_supported_types()[t]
         origin = getattr(t, "__origin__", None)
         if origin is list:
-            return types_pb2.LiteralType(collection_type=self._get_dataset_column_literal_type(t.__args__[0]))
+            return types_pb2.LiteralType(collection_type=self._get_dataset_column_literal_type(typing.get_args(t)[0]))
         if origin is dict:
-            return types_pb2.LiteralType(map_value_type=self._get_dataset_column_literal_type(t.__args__[1]))
+            return types_pb2.LiteralType(map_value_type=self._get_dataset_column_literal_type(typing.get_args(t)[1]))
         raise AssertionError(f"type {t} is currently not supported by DataFrame")
 
     def _convert_ordered_dict_of_columns_to_list(
@@ -1497,7 +1503,7 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
                 for registered_type in self.DECODERS.keys():
                     type_name = f"{registered_type.__module__}.{registered_type.__qualname__}"
                     if type_name == tag:
-                        return registered_type
+                        return typing.cast(Type[DataFrame], registered_type)
                 # If we couldn't find the type in decoders, log a warning and fall back to DataFrame
                 logger.debug(f"Could not find registered decoder for type tag '{tag}', falling back to DataFrame")
             return DataFrame

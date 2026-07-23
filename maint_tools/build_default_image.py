@@ -93,14 +93,12 @@ async def build_all(registry: str | None = None, name: str | None = None, builde
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Build the default Flyte image.")
-    parser.add_argument("--registry", help="Docker registry to push to")
+    parser.add_argument("--registry", help="Docker registry to push to", default="ghcr.io/flyteorg")
     parser.add_argument("--name", help="Custom image name (without tag)")
     parser.add_argument("--type", choices=["flyte", "connector", "all"], help="Type of image to build")
     parser.add_argument("--builder", choices=["local", "remote"], default="local", help="Image builder to use")
 
     args = parser.parse_args()
-    # can remove this and only specify one in the future
-    assert (args.registry and args.name) or (not args.registry and not args.name)
 
     flyte.init_from_config()
     if args.type == "flyte":

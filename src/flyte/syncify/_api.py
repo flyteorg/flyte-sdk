@@ -161,9 +161,7 @@ class _BackgroundLoop:
         """
         Run the given coroutine in the background loop and return its result.
         """
-        future: concurrent.futures.Future[R_co | AsyncIterator[R_co]] = asyncio.run_coroutine_threadsafe(
-            coro, self.loop
-        )
+        future: concurrent.futures.Future[R_co] = asyncio.run_coroutine_threadsafe(coro, self.loop)
         result = future.result()
         if result is not None and hasattr(result, "__aiter__"):
             # If the result is an async iterator, we need to convert it to a sync iterator
@@ -402,7 +400,7 @@ class Syncify:
         if inspect.isasyncgenfunction(obj):
             wrapper = _SyncWrapper(obj, bg_loop=self._bg_loop)
             functools.update_wrapper(wrapper, obj)
-            return cast(Callable[P, Iterator[R_co]], wrapper)
+            return cast(Callable[P, Iterator[R_co]], wrapper)  # ty: ignore[invalid-type-form]
 
         if inspect.iscoroutinefunction(obj):
             wrapper = _SyncWrapper(obj, bg_loop=self._bg_loop)

@@ -585,7 +585,9 @@ async def _process_layer(
             header = parse_uv_script_file(layer.script)
             if header.dependencies:
                 pip = PipPackages(
-                    packages=_ensure_tuple(header.dependencies) if header.dependencies else None,
+                    packages=cast("tuple[str, ...]", _ensure_tuple(header.dependencies))
+                    if header.dependencies
+                    else None,
                     secret_mounts=layer.secret_mounts,
                     index_url=layer.index_url,
                     extra_args=layer.extra_args,
@@ -777,7 +779,7 @@ class DockerImageBuilder(ImageBuilder):
         result = await run_sync_with_loop(
             subprocess.run, ["docker", "buildx", "ls"], capture_output=True, text=True, check=True
         )
-        builders = result.stdout
+        builders = cast(str, result.stdout)
 
         # Check if there's any usable builder with the correct driver options
         if DockerImageBuilder._builder_name in builders:
@@ -788,7 +790,7 @@ class DockerImageBuilder(ImageBuilder):
                 capture_output=True,
                 text=True,
             )
-            if inspect_result.returncode == 0 and 'network="host"' in inspect_result.stdout:
+            if inspect_result.returncode == 0 and 'network="host"' in cast(str, inspect_result.stdout):
                 logger.info("Buildx builder already exists with correct config.")
                 return
 

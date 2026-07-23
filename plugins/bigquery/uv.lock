@@ -405,7 +405,7 @@ name = "exceptiongroup"
 version = "1.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "python_full_version < '3.11'" },
+    { name = "typing-extensions" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/50/79/66800aadf48771f6b62f7eb014e352e5d06856655206165d775e675a02c9/exceptiongroup-1.3.1.tar.gz", hash = "sha256:8b412432c6055b0b7d14c310000ae93352ed6754f70fa8f7c34141f91c4e3219", size = 30371, upload-time = "2025-11-21T23:01:54.787Z" }
 wheels = [
@@ -463,7 +463,7 @@ requires-dist = [
     { name = "docstring-parser", specifier = ">=0.16" },
     { name = "fastapi", marker = "extra == 'examples-test'" },
     { name = "flyte-controller-base", marker = "extra == 'rust-controller'", directory = "../../rs_controller" },
-    { name = "flyteidl2", specifier = "==2.0.27" },
+    { name = "flyteidl2", specifier = "==2.0.29" },
     { name = "fsspec", specifier = ">=2025.3.0" },
     { name = "grpcio", marker = "extra == 'connector'", specifier = ">=1.71.0" },
     { name = "grpcio-health-checking", marker = "extra == 'connector'" },
@@ -522,6 +522,7 @@ dev = [
     { name = "setuptools-scm", specifier = ">=8.2.0" },
     { name = "starlette" },
     { name = "textual", specifier = ">=0.80" },
+    { name = "ty", specifier = ">=0.0.59" },
     { name = "types-aiofiles" },
     { name = "types-pyyaml" },
     { name = "uvicorn" },
@@ -530,7 +531,7 @@ dev = [
 
 [[package]]
 name = "flyteidl2"
-version = "2.0.27"
+version = "2.0.29"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "googleapis-common-protos" },
@@ -539,7 +540,7 @@ dependencies = [
     { name = "protovalidate" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/00/be/6e8eb2173e544247cade0d4608f10a950e0f623c66574cfdf0792ee8af11/flyteidl2-2.0.27-py3-none-any.whl", hash = "sha256:eb5a8d9df3d190288b23f771d384d094105b0ece98449790329cb5faf1a10bd8", size = 350354, upload-time = "2026-07-03T00:00:44.163Z" },
+    { url = "https://files.pythonhosted.org/packages/8f/3e/5eaa4c72d462c82ec74ce3f43c8997259bad054a4ef3ba7b66a0413e46d8/flyteidl2-2.0.29-py3-none-any.whl", hash = "sha256:92dd4b4dababf72c792ec8d0edb7a2739367ad21917b073ea9dfbe1402dbaa00", size = 352992, upload-time = "2026-07-22T03:35:21.517Z" },
 ]
 
 [[package]]

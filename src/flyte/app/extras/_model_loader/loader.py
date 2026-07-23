@@ -133,7 +133,8 @@ class SafeTensorsStreamer:
         tensor_parallel_size=1,
         store_kwargs=None,
     ):
-        fs = get_underlying_filesystem(path=remote_path)
+        # The obstore-backed fsspec filesystem exposes these private helpers dynamically.
+        fs = typing.cast(typing.Any, get_underlying_filesystem(path=remote_path))
         bucket, prefix = fs._split_path(remote_path)  # pylint: disable=W0212
 
         self._store: ObjectStore = fs._construct_store(bucket)
@@ -278,7 +279,7 @@ class SafeTensorsStreamer:
         start = time.perf_counter()
         counter = 0
         gen = self._get_tensors_async()
-        with asyncio.Runner() as runner:
+        with asyncio.Runner() as runner:  # ty: ignore[unresolved-attribute]
             try:
                 while True:
                     yield runner.run(gen.__anext__())

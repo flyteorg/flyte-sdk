@@ -221,13 +221,13 @@ class Informer:
         """
         # sentinel = False
         retries = 0
-        last_exc = None
+        last_exc: Exception | None = None
         while self._running:
             if retries >= self._max_watch_retries:
                 logger.error(
                     f"Informer watch failure retries crossed threshold {retries}/{self._max_watch_retries}, exiting!"
                 )
-                raise last_exc
+                raise cast(Exception, last_exc)
             try:
                 if retries >= 1:
                     logger.warning(f"Informer watch retrying, attempt {retries}/{self._max_watch_retries}")
@@ -249,12 +249,12 @@ class Informer:
                         headers=headers,
                     )
                 else:
-                    watcher = self._client.watch(
+                    watcher = cast(StateService, self._client).watch(
                         state_service_pb2.WatchRequest(
                             parent_action_id=parent_action_id,
                         ),
                     )
-                async for resp in watcher:
+                async for resp in cast(AsyncIterator, watcher):
                     retries = 0
                     if resp is None:
                         # gRPC deserialization failure: _transform() caught an

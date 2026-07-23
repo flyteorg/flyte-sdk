@@ -40,11 +40,11 @@ class ClusteredTaskTemplate(AsyncFunctionTaskTemplate):
             return {}
         return cast("ClusteredTaskEnvironment", env).to_custom_dict()
 
-    def container_args(self, sctx: SerializationContext) -> List[str]:
+    def container_args(self, serialize_context: SerializationContext) -> List[str]:
         # Replace the `a0` worker command with the `clustered` launcher (sibling console script).
         # The launcher derives the torchrun rendezvous from JobSet env vars and execs `torchrun ... -- a0`,
         # so each worker is the standard `a0` entrypoint (which disables the controller under torchrun).
-        args = super().container_args(sctx)
+        args = super().container_args(serialize_context)
         return ["clustered", *args[1:]] if args and args[0] == "a0" else args
 
 

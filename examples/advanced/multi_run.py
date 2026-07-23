@@ -2,6 +2,7 @@ import asyncio
 from typing import List
 
 import flyte
+from flyte.remote import Run
 
 env = flyte.TaskEnvironment(name="hello_world")
 
@@ -21,12 +22,12 @@ async def double_sync(x: int) -> int:
     return x * 2
 
 
-async def main() -> List[int]:
+async def main() -> List[Run]:
     vals = [
         flyte.run.aio(double, x=1),
         flyte.run.aio(double, x=2),
     ]
-    return await asyncio.gather(*vals)
+    return list(await asyncio.gather(*vals))
 
 
 if __name__ == "__main__":
