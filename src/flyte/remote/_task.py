@@ -79,8 +79,6 @@ def _apply_overrides_to_primary_container(
                 rr["requests"] = requests
             if limits:
                 rr["limits"] = limits
-            # Preserve DRA ``claims`` (e.g. a GPU claimed through a ResourceClaimTemplate)
-            # from the pod template.
             if existing.get("claims"):
                 rr["claims"] = existing["claims"]
             target["resources"] = rr
