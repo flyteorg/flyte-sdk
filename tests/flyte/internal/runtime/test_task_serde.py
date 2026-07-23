@@ -9,10 +9,13 @@ from flyteidl2.core.security_pb2 import Secret as ProtoSecret
 from flyteidl2.core.security_pb2 import SecurityContext
 from flyteidl2.task import common_pb2, environment_pb2
 from kubernetes.client import (
+    CoreV1ResourceClaim,
     V1Container,
     V1EnvVar,
     V1LocalObjectReference,
+    V1PodResourceClaim,
     V1PodSpec,
+    V1ResourceRequirements,
 )
 
 import flyte
@@ -277,6 +280,59 @@ def test_get_proto_k8s_pod_task():
 
     with pytest.raises(ValueError):
         get_proto_task(t2, context)
+
+
+def test_get_k8s_pod_preserves_dra_claims_with_task_resources():
+    """A DRA resource claim on the pod template's primary container must survive
+    even when the task also declares cpu/memory via Resources(...)."""
+    pod_template = PodTemplate(
+        pod_spec=V1PodSpec(
+            resource_claims=[V1PodResourceClaim(name="gpu", resource_claim_template_name="flyte-task-gpu-x2")],
+            containers=[
+                V1Container(
+                    name="primary",
+                    resources=V1ResourceRequirements(claims=[CoreV1ResourceClaim(name="gpu")]),
+                )
+            ],
+        ),
+    )
+
+    env = flyte.TaskEnvironment(
+        name="test_env",
+        image="python:3.10",
+        # Declaring cpu/memory is exactly what used to strip the .claims link.
+        resources=flyte.Resources(cpu="24", memory="490Gi"),
+        pod_template=pod_template,
+    )
+
+    @env.task(short_name="dra_task")
+    async def t1(a: int) -> int:
+        return a
+
+    context = SerializationContext(
+        project="test-project",
+        domain="test-domain",
+        version="test-version",
+        org="test-org",
+        input_path="/tmp/inputs",
+        output_path="/tmp/outputs",
+        image_cache=None,
+        code_bundle=None,
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    from google.protobuf import json_format
+
+    k8s_pod = _get_k8s_pod(_get_urun_container(context, t1), pod_template)
+    pod_spec = json_format.MessageToDict(k8s_pod.pod_spec)
+    primary = next(c for c in pod_spec["containers"] if c["name"] == "primary")
+    resources = primary["resources"]
+
+    # The DRA claim link is preserved...
+    assert resources["claims"] == [{"name": "gpu"}]
+    # ...alongside the task-declared cpu/memory.
+    assert resources["requests"]["cpu"] == "24"
+    assert resources["requests"]["memory"] == "490Gi"
 
 
 @pytest.fixture(scope="module")
