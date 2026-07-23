@@ -738,3 +738,165 @@ async def test_stress_fanout_concurrency(flyte_client):
     from examples.stress.fanout_concurrency import reuse_concurrency
 
     await _run_and_wait(reuse_concurrency, "test_stress_fanout_concurrency")
+
+
+# =============================================================================
+# RUN-ALL ORCHESTRATOR (Tier 1)
+# =============================================================================
+#
+# A single Flyte task that fans out and runs every Tier 1 example task in
+# parallel via asyncio.gather. Useful for end-to-end sanity checks without
+# spinning up pytest: `flyte run examples/integration_tests.py run_all_tier1`.
+#
+# Each sub-task runs in its own pod under its own TaskEnvironment, so the
+# orchestrator only needs minimal resources.
+
+run_all_env = flyte.TaskEnvironment(
+    name="integration_tests_run_all",
+    resources=flyte.Resources(memory="500Mi"),
+)
+
+
+@run_all_env.task
+async def run_all_tier1() -> dict[str, str]:
+    """
+    Run all Tier 1 example tasks concurrently.
+
+    Returns a mapping of example name -> "ok" or a failure message. Exceptions
+    from individual sub-tasks are captured so one failure does not abort the
+    whole fan-out.
+    """
+    import asyncio
+
+    from examples.advanced.cancel_tasks import main as advanced_cancel_tasks
+    from examples.advanced.custom_context import main as advanced_custom_context
+    from examples.advanced.display_names import main as advanced_display_names
+    from examples.advanced.leaky_coroutines import main as advanced_leaky_coroutines
+    from examples.advanced.local_tasks import parallel_main_no_io as advanced_local_tasks
+    from examples.advanced.multi_loops import main as advanced_multi_loops
+    from examples.advanced.udfs import main as advanced_udfs
+    from examples.basics.dir import main as basics_dir
+    from examples.basics.enum_vals import main as basics_enum_vals
+    from examples.basics.file import main as basics_file
+    from examples.basics.frames import main as basics_frames
+    from examples.basics.from_scratch import main as basics_from_scratch
+    from examples.basics.hello import main as basics_hello
+    from examples.basics.hello_polyglot import main as basics_hello_polyglot
+    from examples.basics.map import main as basics_map
+    from examples.basics.no_outputs import main as basics_no_outputs
+    from examples.basics.offloaded_type_basic_usage import main as basics_offloaded_type_basic_usage
+    from examples.basics.overwrite_existing_file import main as basics_overwrite_existing_file
+    from examples.basics.repeated_tasks import main_task as basics_repeated_tasks
+    from examples.basics.report_example import main as basics_report_example
+    from examples.basics.types.dataclass_types import ComplexData, NestedData
+    from examples.basics.types.dataclass_types import main as types_dataclass_types
+    from examples.basics.types.simple_types import main as types_simple_types
+    from examples.caching.content_based_caching import demo_cache_behavior
+    from examples.data_processing.deltalake_example import main as deltalake_main
+    from examples.genai.hello_agent import ResearchState, lead_agent
+    from examples.ml.distributed_random_forest import main as ml_distributed_random_forest
+    from examples.ml.model_training import main as ml_model_training
+    from examples.ml.rfe import rfe as ml_rfe
+    from examples.plugins.dask_example import hello_dask_nested
+    from examples.plugins.ray_example import hello_ray_nested
+    from examples.plugins.spark_example import hello_spark_nested
+    from examples.plugins.torch_example import torch_distributed_train
+    from examples.reports.streaming_reports import training_loss_visualization
+    from examples.reuse.reusable import main as reuse_reusable
+    from examples.streaming.basic_as_completed import streaming_reduce_processing
+    from examples.sync.async_in_sync import call_async
+
+    nested1 = NestedData(name="first", value=10, score=95.5)
+    nested2 = NestedData(name="second", value=20, score=87.3)
+    complex_data = ComplexData(
+        str_field="Hello World!",
+        int_field=42,
+        float_field=3.14,
+        bool_field=True,
+        start_time=datetime.now(),
+        duration=timedelta(hours=1),
+        string_list=["hello", "world"],
+        int_list=[1, 2, 3],
+        float_list=[1.1, 2.2],
+        bool_list=[True, False],
+        nested=nested1,
+        nested_list=[nested1, nested2],
+        optional_str="optional",
+        optional_int=99,
+    )
+
+    # .aio(...) works for both sync and async tasks, giving us a uniform awaitable.
+    coros = {
+        "basics_hello": basics_hello.aio(x_list=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]),
+        "basics_file": basics_file.aio(),
+        "basics_dir": basics_dir.aio(),
+        "basics_map": basics_map.aio(n=5),
+        "basics_enum_vals": basics_enum_vals.aio(),
+        "basics_frames": basics_frames.aio(),
+        "basics_from_scratch": basics_from_scratch.aio(n=5),
+        "basics_no_outputs": basics_no_outputs.aio(),
+        "basics_repeated_tasks": basics_repeated_tasks.aio(),
+        "basics_report_example": basics_report_example.aio(),
+        "basics_hello_polyglot": basics_hello_polyglot.aio(letter="e"),
+        "basics_overwrite_existing_file": basics_overwrite_existing_file.aio(),
+        "basics_offloaded_type_basic_usage": basics_offloaded_type_basic_usage.aio(),
+        "types_simple_types": types_simple_types.aio(
+            str="World",
+            int=42,
+            float=3.14,
+            bool=True,
+            start_time=datetime.now(),
+            duration=timedelta(hours=1),
+        ),
+        "types_dataclass_types": types_dataclass_types.aio(data=complex_data),
+        "advanced_display_names": advanced_display_names.aio(),
+        "advanced_custom_context": advanced_custom_context.aio(x=10),
+        "advanced_cancel_tasks": advanced_cancel_tasks.aio(n=3, f=2.0),
+        "advanced_leaky_coroutines": advanced_leaky_coroutines.aio(seconds=5),
+        "advanced_local_tasks": advanced_local_tasks.aio(q="hello"),
+        "advanced_multi_loops": advanced_multi_loops.aio(n=2),
+        "advanced_udfs": advanced_udfs.aio(),
+        "ml_model_training": ml_model_training.aio(),
+        "ml_rfe": ml_rfe.aio(),
+        "ml_distributed_random_forest": ml_distributed_random_forest.aio(n_estimators=4),
+        "reports_streaming_reports": training_loss_visualization.aio(epochs=5),
+        "streaming_basic_as_completed": streaming_reduce_processing.aio(),
+        "sync_async_in_sync": call_async.aio(),
+        "reuse_reusable": reuse_reusable.aio(n=10),
+        "caching_content_based_caching": demo_cache_behavior.aio(),
+        "genai_hello_agent": lead_agent.aio(state=ResearchState(query="test query"), num_subagents=2),
+        "data_processing_deltalake": deltalake_main.aio(rows=100),
+        "plugins_spark": hello_spark_nested.aio(),
+        "plugins_ray": hello_ray_nested.aio(),
+        "plugins_dask": hello_dask_nested.aio(),
+        "plugins_pytorch": torch_distributed_train.aio(epochs=1),
+    }
+
+    results = await asyncio.gather(*coros.values(), return_exceptions=True)
+
+    summary: dict[str, str] = {}
+    failures: list[str] = []
+    for name, result in zip(coros.keys(), results):
+        if isinstance(result, Exception):
+            msg = f"FAILED: {type(result).__name__}: {result}"
+            summary[name] = msg
+            failures.append(f"{name}: {msg}")
+        else:
+            summary[name] = "ok"
+
+    print("\n[run_all_tier1] summary:")
+    for name, status in summary.items():
+        print(f"  {name}: {status}")
+
+    if failures:
+        raise RuntimeError(f"{len(failures)} sub-task(s) failed:\n" + "\n".join(failures))
+
+    return summary
+
+
+if __name__ == "__main__":
+    flyte.init_from_config()
+    run = flyte.run(run_all_tier1)
+    print(run.name)
+    print(run.url)
+    run.wait()
