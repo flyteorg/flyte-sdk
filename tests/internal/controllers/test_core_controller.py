@@ -1080,9 +1080,9 @@ async def test_enqueue_already_exists_continues_monitoring():
 
 
 @pytest.mark.asyncio
-async def test_enqueue_failed_precondition_retries_then_fails():
-    """FAILED_PRECONDITION signals 'wrong shard / hit limit' — controller retries with backoff
-    until max_system_retries is exhausted, then surfaces a RuntimeSystemError on client_err."""
+async def test_enqueue_failed_precondition_is_non_retryable():
+    """FAILED_PRECONDITION is non-retryable — controller surfaces a RuntimeSystemError immediately
+    on the first attempt without retrying."""
     phases = {
         "subrun-1": [
             (phase_pb2.ACTION_PHASE_SUCCEEDED, None, None),
@@ -1116,8 +1116,8 @@ async def test_enqueue_failed_precondition_retries_then_fails():
         final_node = await c.submit_action(action)
         assert final_node.client_err is not None
         assert isinstance(final_node.client_err, flyte.errors.RuntimeSystemError)
-        # Retried before giving up: 1 initial attempt + max_system_retries.
-        assert service.enqueue_calls >= 3, f"expected retries; got {service.enqueue_calls} attempts"
+        # No retries: exactly 1 attempt since FAILED_PRECONDITION is non-retryable.
+        assert service.enqueue_calls == 1, f"expected no retries; got {service.enqueue_calls} attempts"
         await c._finalize_parent_action(run_id=run_id, parent_action_name="parent_action")
         await c.stop()
 
@@ -1125,8 +1125,9 @@ async def test_enqueue_failed_precondition_retries_then_fails():
 
 
 @pytest.mark.asyncio
-async def test_enqueue_failed_precondition_retries_then_succeeds():
-    """FAILED_PRECONDITION followed by success: controller retries and the action completes."""
+async def test_enqueue_failed_precondition_does_not_retry_on_second_attempt():
+    """FAILED_PRECONDITION is non-retryable — even if the second attempt would succeed,
+    the controller surfaces a RuntimeSystemError immediately without retrying."""
     phases = {
         "subrun-1": [
             (phase_pb2.ACTION_PHASE_RUNNING, None, None),
@@ -1161,10 +1162,11 @@ async def test_enqueue_failed_precondition_retries_then_succeeds():
 
     async def _run():
         final_node = await c.submit_action(action)
-        assert final_node.started
-        assert final_node.phase == phase_pb2.ACTION_PHASE_SUCCEEDED
-        assert final_node.client_err is None
-        assert service.enqueue_calls == 2
+        assert not final_node.started
+        assert final_node.client_err is not None
+        assert isinstance(final_node.client_err, flyte.errors.RuntimeSystemError)
+        # Only 1 attempt — FAILED_PRECONDITION is non-retryable.
+        assert service.enqueue_calls == 1
         await c._finalize_parent_action(run_id=run_id, parent_action_name="parent_action")
         await c.stop()
 
