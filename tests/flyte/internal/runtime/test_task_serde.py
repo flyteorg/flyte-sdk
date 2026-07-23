@@ -287,9 +287,7 @@ def test_get_k8s_pod_preserves_dra_claims_with_task_resources():
     even when the task also declares cpu/memory via Resources(...)."""
     pod_template = PodTemplate(
         pod_spec=V1PodSpec(
-            resource_claims=[
-                V1PodResourceClaim(name="gpu", resource_claim_template_name="flyte-task-gpu-x2")
-            ],
+            resource_claims=[V1PodResourceClaim(name="gpu", resource_claim_template_name="flyte-task-gpu-x2")],
             containers=[
                 V1Container(
                     name="primary",
