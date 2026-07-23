@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
 import os
 import pathlib
@@ -14,6 +15,7 @@ import rich.repr
 from flyte.models import ActionID, NativeInterface, RawDataPath, SerializationContext, TaskContext
 from flyte.syncify import syncify
 
+from ._constants import FLYTE_SYS_PATH
 from ._environment import Environment
 from ._image import Image
 from ._initialize import ensure_client, get_client, get_init_config, requires_initialization
@@ -163,6 +165,23 @@ class Deployment:
         return tuples
 
 
+def _with_local_sys_paths(task: TaskTemplate, root_dir: pathlib.Path) -> TaskTemplate:
+    """Return a task copy whose runtime env mirrors local imports under ``root_dir``."""
+    if not get_init_config().sync_local_sys_paths:
+        return task
+
+    root_dir_abs = pathlib.Path(root_dir).resolve()
+    env_vars = dict(task.env_vars or {})
+    env_vars[FLYTE_SYS_PATH] = ":".join(
+        f"./{pathlib.Path(path).relative_to(root_dir_abs)}"
+        for path in sys.path
+        if pathlib.Path(path).is_relative_to(root_dir_abs)
+    )
+    task_copy = copy.copy(task)
+    task_copy.env_vars = env_vars
+    return task_copy
+
+
 async def _deploy_task(
     task: TaskTemplate, serialization_context: SerializationContext, dryrun: bool = False
 ) -> DeployedTask:
@@ -181,6 +200,8 @@ async def _deploy_task(
     from ._internal.runtime.task_serde import lookup_image_in_cache, translate_task_to_wire
     from ._internal.runtime.trigger_serde import offload_trigger_inputs, to_task_trigger
 
+    assert serialization_context.root_dir is not None
+    task = _with_local_sys_paths(task, serialization_context.root_dir)
     assert task.parent_env_name is not None
     if isinstance(task.image, Image):
         image_uri: str | None = lookup_image_in_cache(serialization_context, task.parent_env_name, task.image)
