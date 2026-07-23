@@ -324,7 +324,7 @@ class AppFiles(common.FileGroup):
         kwargs["params"].extend(ServeArguments.options())
         super().__init__(*args, directory=directory, **kwargs)
 
-    def get_command(self, ctx, cmd_name):
+    def get_command(self, ctx, cmd_name):  # ty: ignore[invalid-method-override]
         serve_args = ServeArguments.from_dict(ctx.params)
 
         fp = Path(cmd_name)

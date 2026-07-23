@@ -8,6 +8,7 @@ from typing import (
     Protocol,
     Tuple,
     Union,
+    cast,
     runtime_checkable,
 )
 
@@ -26,7 +27,7 @@ CacheBehavior = Literal["auto", "override", "disable"]
 # Common user-typed aliases mapped to their canonical CacheBehavior. Keeps
 # code like `cache="enable"` or `cache="off"` working instead of crashing
 # with a ValueError that ends up in Sentry as an SDK error.
-_CACHE_BEHAVIOR_ALIASES = {
+_CACHE_BEHAVIOR_ALIASES: dict[str, CacheBehavior] = {
     "enable": "auto",
     "enabled": "auto",
     "on": "auto",
@@ -177,7 +178,7 @@ class Cache:
         task_hash = ""
         if self.policies is None:
             raise ValueError("Cache policies are not set.")
-        policies = self.policies if isinstance(self.policies, list) else [self.policies]
+        policies = cast(List[CachePolicy], self.policies if isinstance(self.policies, list) else [self.policies])
         for policy in policies:
             try:
                 task_hash += policy.get_version(self.salt, params)

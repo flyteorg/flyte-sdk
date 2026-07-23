@@ -301,7 +301,7 @@ class Run(ToJSONMixin):
             details = await self.action.details()
             attempt = details.attempts
 
-        expires_in_pb = duration_pb2.Duration()
+        expires_in_pb = duration_pb2.Duration()  # ty: ignore[unresolved-attribute]
         expires_in_pb.FromTimedelta(expires_in)
         resp = await get_client().dataproxy_service.create_download_link(
             dataproxy_service_pb2.CreateDownloadLinkRequest(
@@ -407,7 +407,7 @@ class Run(ToJSONMixin):
         )
 
     @syncify
-    async def get_debug_url(self) -> str:
+    async def get_debug_url(self) -> str | None:
         """
         Get the debug URL of the run. Returns `None` if the VS Code
         Debugger log entry is not yet available in the action details.

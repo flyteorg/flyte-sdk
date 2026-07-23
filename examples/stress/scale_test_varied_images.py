@@ -1133,9 +1133,9 @@ async def scale_test_orchestrator(n: int = 100) -> ScaleTestReport:
 
     # Analyze results
     successes: list[WorkerResult] = []
-    failures: list[Exception] = []
+    failures: list[BaseException] = []
     for result in results:
-        if isinstance(result, Exception):
+        if isinstance(result, BaseException):
             failures.append(result)
         else:
             successes.append(result)

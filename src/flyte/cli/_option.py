@@ -1,9 +1,17 @@
-from typing import Set
+from typing import TYPE_CHECKING, Set
 
 from click import Option, UsageError
 
+if TYPE_CHECKING:
+    # Type checkers see the mixins as subclasses of Option so that attribute
+    # access (self.name, super().handle_parse_result, ...) resolves. At runtime
+    # they remain plain mixins combined with Option by the concrete classes.
+    _OptionMixinBase = Option
+else:
+    _OptionMixinBase = object
 
-class RequiresMixin:
+
+class RequiresMixin(_OptionMixinBase):
     """Mixin that enforces that certain options must be present when this option is used."""
 
     def __init__(self, *args, **kwargs):
@@ -22,7 +30,7 @@ class RequiresMixin:
         return super().handle_parse_result(ctx, opts, args)
 
 
-class MutuallyExclusiveMixin:
+class MutuallyExclusiveMixin(_OptionMixinBase):
     def __init__(self, *args, **kwargs):
         self.mutually_exclusive = set(kwargs.pop("mutually_exclusive", []))
         self.error_format = kwargs.pop(

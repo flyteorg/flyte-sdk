@@ -45,7 +45,7 @@ from flyte._internal.imagebuild.utils import (
 )
 from flyte._internal.runtime.task_serde import get_security_context
 from flyte._logging import logger
-from flyte._secret import Secret
+from flyte._secret import Secret, SecretRequest
 from flyte._status import status
 from flyte.remote import ActionOutputs, Run
 
@@ -256,7 +256,7 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
             )
 
         if hasattr(layer, "secret_mounts"):
-            sc = get_security_context(layer.secret_mounts)
+            sc = get_security_context(cast("SecretRequest | None", layer.secret_mounts))
             secret_mounts = sc.secrets if sc else None
 
         if isinstance(layer, AptPackages):
@@ -309,7 +309,7 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
                     for pyproject in header.pyprojects:
                         pyproject_dst = copy_files_to_context(Path(pyproject), context_path, docker_ignore_patterns)
                         uv_lock_path = Path(pyproject) / "uv.lock"
-                        uv_project_kwargs = {
+                        uv_project_kwargs: dict[str, typing.Any] = {
                             "pyproject": str(pyproject_dst.relative_to(context_path)),
                             "options": pip_options,
                             "secret_mounts": secret_mounts,

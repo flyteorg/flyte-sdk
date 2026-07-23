@@ -5,7 +5,7 @@ import os
 import sys
 import threading
 from asyncio import Event
-from typing import Awaitable, Coroutine, Optional
+from typing import Awaitable, Coroutine, Optional, cast
 
 import httpx
 from aiolimiter import AsyncLimiter
@@ -217,7 +217,7 @@ class Controller:
         """Run a coroutine in the controller's event loop and return the result"""
         with self._thread_com_lock:
             loop = self._loop
-            if not self._loop or not self._thread or not self._thread.is_alive():
+            if not loop or not self._thread or not self._thread.is_alive():
                 raise RuntimeError("Controller thread is not running")
 
         assert self._thread.name != threading.current_thread().name, "Cannot run coroutine in the same thread"
@@ -268,7 +268,7 @@ class Controller:
         except Exception as e:
             logger.error(f"Controller thread encountered an exception: {e}")
             self._set_exception(e)
-            self._failure_event.set()
+            cast(Event, self._failure_event).set()
         finally:
             if self._loop and self._loop.is_running():
                 self._loop.close()
@@ -594,5 +594,5 @@ class Controller:
     async def _bg_stop(self):
         """Stop the controller"""
         self._running = False
-        self._resource_log_task.cancel()
+        cast("asyncio.Task", self._resource_log_task).cancel()
         await self._informers.remove_and_stop_all()

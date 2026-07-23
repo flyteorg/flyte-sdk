@@ -44,7 +44,9 @@ WaitFor = Literal["terminal", "running", "logs-ready"]
 
 # ActionMetadata.relation is not available until the flyteidl2 pin is bumped past the release
 # that ships common.Relation; gate all access on the descriptor so both versions work.
-_RELATION_SUPPORTED = "relation" in run_definition_pb2.ActionMetadata.DESCRIPTOR.fields_by_name
+# DESCRIPTOR internals are opaque to checkers; `relation`/`Relation`/`RelationType` are absent from
+# the current flyteidl2 stubs, so every access below is cast through Any (runtime-gated on the descriptor).
+_RELATION_SUPPORTED = "relation" in cast(Any, run_definition_pb2.ActionMetadata).DESCRIPTOR.fields_by_name
 
 
 def _relation_repr(metadata: run_definition_pb2.ActionMetadata) -> str:
@@ -53,8 +55,8 @@ def _relation_repr(metadata: run_definition_pb2.ActionMetadata) -> str:
         return ""
     from flyteidl2.common import run_pb2 as common_run_pb2
 
-    rel = metadata.relation
-    kind = common_run_pb2.RelationType.Name(rel.relation_type).removeprefix("RELATION_TYPE_").lower()
+    rel = cast(Any, metadata).relation
+    kind = cast(Any, common_run_pb2).RelationType.Name(rel.relation_type).removeprefix("RELATION_TYPE_").lower()
     return f"{kind} of {rel.related_to.name}"
 
 
@@ -370,7 +372,7 @@ class Action(ToJSONMixin):
         requires a flyteidl2 build that ships ActionMetadata.relation.
         """
         if _RELATION_SUPPORTED and self.pb2.metadata.HasField("relation"):
-            return self.pb2.metadata.relation
+            return cast(Any, self.pb2.metadata).relation
         return None
 
     @property
@@ -832,7 +834,7 @@ class ActionDetails(ToJSONMixin):
         requires a flyteidl2 build that ships ActionMetadata.relation.
         """
         if _RELATION_SUPPORTED and self.pb2.metadata.HasField("relation"):
-            return self.pb2.metadata.relation
+            return cast(Any, self.pb2.metadata).relation
         return None
 
     @property

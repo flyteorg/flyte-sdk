@@ -54,7 +54,7 @@ def _compute_upload_chunk_size(file_size: int | None) -> int:
     return max(_UPLOAD_CHUNK_FLOOR, needed)
 
 
-def _is_obstore_supported_protocol(protocol: str) -> bool:
+def _is_obstore_supported_protocol(protocol: str | tuple[str, ...]) -> bool:
     """
     Check if the given protocol is supported by obstore.
     :param protocol: Protocol to check.
@@ -163,7 +163,7 @@ def get_underlying_filesystem(
 ) -> fsspec.AbstractFileSystem:
     if protocol is None:
         # If protocol is None, get it from the path
-        protocol = get_protocol(path)
+        protocol = get_protocol(typing.cast(str, path))
 
     configured_kwargs = get_configured_fsspec_kwargs(protocol, anonymous=anonymous)
     configured_kwargs.update(kwargs)
@@ -185,7 +185,8 @@ async def _get_obstore_bypass(
 ) -> str:
     from flyte.storage._parallel_reader import ObstoreParallelReader
 
-    fs = get_underlying_filesystem(path=from_path)
+    # The obstore-backed filesystem is duck-typed (callers guard on hasattr for _split_path/_construct_store).
+    fs = typing.cast(typing.Any, get_underlying_filesystem(path=from_path))
     bucket, prefix = fs._split_path(from_path)  # pylint: disable=W0212
     store: ObjectStore = fs._construct_store(bucket)
 
@@ -311,7 +312,8 @@ async def _put_obstore_bypass(from_path: str, to_path: str, recursive: bool = Fa
     """
     import asyncio
 
-    fs = get_underlying_filesystem(path=to_path)
+    # The obstore-backed filesystem is duck-typed (callers guard on hasattr for _split_path/_construct_store).
+    fs = typing.cast(typing.Any, get_underlying_filesystem(path=to_path))
     bucket, prefix = fs._split_path(to_path)  # pylint: disable=W0212
     store: ObjectStore = fs._construct_store(bucket)
 
@@ -382,7 +384,8 @@ async def _open_obstore_bypass(path: str, mode: str = "rb", **kwargs) -> AsyncRe
     Simple obstore bypass for opening files. No fallbacks, obstore only.
     """
 
-    fs = get_underlying_filesystem(path=path)
+    # The obstore-backed filesystem is duck-typed (callers guard on hasattr for _split_path/_construct_store).
+    fs = typing.cast(typing.Any, get_underlying_filesystem(path=path))
     bucket, file_path = fs._split_path(path)  # pylint: disable=W0212
     store: ObjectStore = fs._construct_store(bucket)
 

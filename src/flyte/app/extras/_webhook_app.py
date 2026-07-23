@@ -1478,7 +1478,8 @@ class FlyteWebhookAppEnvironment(FastAPIAppEnvironment):
 
     title: str | None = None
     type: str = "FlyteWebhookApp"
-    app: "fastapi.FastAPI" = field(default=None, init=False)  # type: ignore[assignment]
+    # Placeholder default; always assigned in __post_init__.
+    app: "fastapi.FastAPI" = field(default=cast("fastapi.FastAPI", None), init=False)
     uvicorn_config: "uvicorn.Config | None" = None
     image: flyte.Image = field(
         default_factory=lambda: flyte.Image.from_debian_base().with_pip_packages("fastapi", "uvicorn")
@@ -1504,11 +1505,12 @@ class FlyteWebhookAppEnvironment(FastAPIAppEnvironment):
                 "uvicorn is not installed. Please install 'uvicorn' to use FlyteWebhookAppEnvironment."
             )
 
+        port = cast(flyte.app.Port, self.port).port
         if self.uvicorn_config is None:
-            self.uvicorn_config = uvicorn.Config(self.app, port=self.port.port)
+            self.uvicorn_config = uvicorn.Config(self.app, port=port)
         elif self.uvicorn_config is not None:
             if self.uvicorn_config.port is None:
-                self.uvicorn_config.port = self.port.port
+                self.uvicorn_config.port = port
 
         await uvicorn.Server(self.uvicorn_config).serve()
 

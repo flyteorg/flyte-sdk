@@ -8,6 +8,7 @@ subdirs.
 import os
 import sys
 import tempfile
+from typing import Literal
 
 import aiofiles
 
@@ -74,7 +75,7 @@ async def verify_nested() -> str:
 
 if __name__ == "__main__":
     flyte.init_from_config()
-    mode = "remote" if (len(sys.argv) > 1 and sys.argv[1] == "remote") else "local"
+    mode: Literal["local", "remote"] = "remote" if (len(sys.argv) > 1 and sys.argv[1] == "remote") else "local"
     run = flyte.with_runcontext(mode=mode).run(verify_nested)
     print(run.url if mode == "remote" else run)
     print(run.outputs())

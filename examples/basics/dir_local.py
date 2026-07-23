@@ -23,8 +23,9 @@ env = flyte.TaskEnvironment(
 @env.task
 async def process_dir(dir: Dir) -> dict[str, str]:
     """Process a directory and return file names with their content previews."""
-    file_contents = {}
+    file_contents: dict[str, str] = {}
     async for file in dir.walk(recursive=False):
+        assert file.name is not None  # name is always set for files from walk
         if file.name.endswith(".py"):
             async with file.open("rb") as f:
                 content = bytes(await f.read())

@@ -83,8 +83,12 @@ STEP_FUNCTIONS: Dict[str, Any | Callable[[Dict[str, Any]], Any]] = {
 @agent_env.task
 async def execute_plan(plan: List[Dict[str, Union[str, List[str]]]]) -> Dict[str, str]:
     step_funcs = STEP_FUNCTIONS
-    results = {}
-    remaining = {step["id"]: step for step in plan}
+    results: Dict[str, str] = {}
+    remaining: Dict[str, Dict[str, Union[str, List[str]]]] = {}
+    for step in plan:
+        step_id = step["id"]
+        assert isinstance(step_id, str)  # plan step ids are always strings
+        remaining[step_id] = step
 
     i = 0
     while remaining:

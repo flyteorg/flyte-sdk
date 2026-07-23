@@ -386,5 +386,5 @@ class ContainerTask(TaskTemplate):
             config.file_input_layout = tasks_pb2.DataLoadingConfig.NAMED_DIR
         return config
 
-    def container_args(self, sctx: SerializationContext) -> List[str]:
+    def container_args(self, serialize_context: SerializationContext) -> List[str]:
         return self._cmd + (self._args or [])

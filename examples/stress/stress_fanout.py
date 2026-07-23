@@ -54,8 +54,8 @@ async def fanout(
 
     if is_last_layer:
         # Spawn leaves
-        coros = [leaf(path=[*path, i], sleep_sec=sleep_sec, jitter_sec=jitter_sec) for i in range(n_children)]
-        await asyncio.gather(*coros)
+        leaf_coros = [leaf(path=[*path, i], sleep_sec=sleep_sec, jitter_sec=jitter_sec) for i in range(n_children)]
+        await asyncio.gather(*leaf_coros)
         print(
             f"Fanout node at layer={layer} | path={path} | all {n_children} leaves completed",
             flush=True,
@@ -63,7 +63,7 @@ async def fanout(
         return n_children
     else:
         # Spawn intermediate fanout nodes
-        coros = [
+        child_coros = [
             fanout(
                 fanout_per_layer=fanout_per_layer,
                 layer=layer + 1,
@@ -73,7 +73,7 @@ async def fanout(
             )
             for i in range(n_children)
         ]
-        results = await asyncio.gather(*coros)
+        results = await asyncio.gather(*child_coros)
         total = n_children + sum(results)
         print(
             f"Fanout node at layer={layer} | path={path} | "

@@ -7,7 +7,8 @@ import threading
 from collections import defaultdict
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, DefaultDict, Tuple, TypeVar
+from types import FunctionType
+from typing import Any, DefaultDict, Tuple, TypeVar, cast
 
 from flyte_controller_base import Action, BaseController
 from flyteidl2.common import identifier_pb2, phase_pb2
@@ -416,7 +417,7 @@ class RemoteController(BaseController):
             raise flyte.errors.RuntimeSystemError("BadContext", "Task context not initialized")
         current_action_id = tctx.action
 
-        func_name = _func.__name__
+        func_name = cast(FunctionType, _func).__name__
         invoke_seq_num = self.generate_task_call_sequence(_func, current_action_id)
         inputs = await convert.convert_from_native_to_inputs(_interface, *args, **kwargs)
         serialized_inputs = inputs.proto_inputs.SerializeToString(deterministic=True)

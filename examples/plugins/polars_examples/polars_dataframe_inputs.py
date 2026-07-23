@@ -197,7 +197,7 @@ if __name__ == "__main__":
     run = flyte.run(process_fdf_to_df, df=flyte_dataframe)
     print(f"   URL: {run.url}")
     run.wait()
-    result: pl.DataFrame = run.outputs()[0]
+    result = run.outputs()[0]  # pl.DataFrame
     print(f"   Result:\n{result}\n")
 
     # Example 3: Polars DataFrame to Flyte DataFrame
@@ -205,7 +205,7 @@ if __name__ == "__main__":
     run = flyte.run(process_df_to_fdf, df=dataframe)
     print(f"   URL: {run.url}")
     run.wait()
-    result: flyte.io.DataFrame = run.outputs()[0]
+    result = run.outputs()[0]  # flyte.io.DataFrame
     print(f"   Result:\n{result}\n")
 
     # Example 4: Flyte DataFrame passthrough
@@ -213,7 +213,7 @@ if __name__ == "__main__":
     run = flyte.run(process_fdf_to_fdf, df=flyte_dataframe)
     print(f"   URL: {run.url}")
     run.wait()
-    result: flyte.io.DataFrame = run.outputs()[0]
+    result = run.outputs()[0]  # flyte.io.DataFrame
     print(f"   Result:\n{result}\n")
 
     # ==========================================================================
@@ -237,7 +237,7 @@ if __name__ == "__main__":
     run = flyte.with_runcontext(preserve_original_types=True).run(process_fdf_to_lf, df=flyte_dataframe_for_lf)
     print(f"   URL: {run.url}")
     run.wait()
-    result: pl.LazyFrame = run.outputs()[0]
+    result = run.outputs()[0]  # pl.LazyFrame
     print(f"   Result (collected):\n{result.collect()}\n")
 
     # Example 7: Polars LazyFrame to Flyte DataFrame
@@ -245,7 +245,7 @@ if __name__ == "__main__":
     run = flyte.with_runcontext(preserve_original_types=True).run(process_lf_to_fdf, lf=lazyframe)
     print(f"   URL: {run.url}")
     run.wait()
-    result: flyte.io.DataFrame = run.outputs()[0]
+    result = run.outputs()[0]  # flyte.io.DataFrame
     print(f"   Result:\n{result}\n")
 
     # ==========================================================================

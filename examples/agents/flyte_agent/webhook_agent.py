@@ -115,11 +115,6 @@ async def review_pr(repo: str, pr_number: int, event: str) -> str:
 # FastAPI app that the webhook calls
 # ---------------------------------------------------------------------------
 
-try:
-    from fastapi import FastAPI
-except ImportError:  # pragma: no cover
-    FastAPI = None  # type: ignore[assignment]
-
 
 @asynccontextmanager
 async def _lifespan(_app):
@@ -131,7 +126,8 @@ async def _lifespan(_app):
 
 
 def _build_app() -> Any:
-    assert FastAPI is not None, "fastapi must be installed to build the webhook app."
+    from fastapi import FastAPI
+
     from flyte.app.extras import FastAPIPassthroughAuthMiddleware
 
     api = FastAPI(title="flyte-agent-webhook", lifespan=_lifespan)
@@ -182,11 +178,14 @@ if __name__ == "__main__":
     import httpx
 
     import flyte.remote as remote
+    from flyte.app import DeployedAppEnvironment
 
     flyte.init_from_config()
     deployments = flyte.deploy(webhook_env)
     print(f"Webhook agent deployed: {deployments[0].summary_repr()}")
-    print(f"Webhook agent URL: {deployments[0].envs['flyte-agent-webhook'].deployed_app.url}")
+    deployed_env = deployments[0].envs["flyte-agent-webhook"]
+    assert isinstance(deployed_env, DeployedAppEnvironment)
+    print(f"Webhook agent URL: {deployed_env.deployed_app.url}")
 
     app_handle = remote.App.get(name="flyte-agent-webhook")
     print(f"Webhook agent endpoint: {app_handle.endpoint}")

@@ -43,7 +43,7 @@ _STUB_RISKS = [
     {"id": "R4", "title": "Tariff exposure on 12% of COGS (stub)", "severity": "medium"},
 ]
 
-_STUB_SOP_STEPS = [
+_STUB_SOP_STEPS: list[dict[str, object]] = [
     {"step": 1, "name": "Data gathering & portfolio review", "outputs_stub": "SKU-level demand history"},
     {"step": 2, "name": "Demand review", "outputs_stub": "Consensus forecast + changes"},
     {"step": 3, "name": "Supply review", "outputs_stub": "Capacity, lead time, constraints"},
@@ -66,7 +66,7 @@ _STUB_PERFECT_ORDER = {
     "composite_perfect_order_pct_stub": 92.4,
 }
 
-_STUB_CARRIERS = [
+_STUB_CARRIERS: list[dict[str, object]] = [
     {"carrier": "BlueFreight", "otif_pct_stub": 95.2, "cost_index_stub": 1.0},
     {"carrier": "RedHaul", "otif_pct_stub": 97.1, "cost_index_stub": 1.08},
 ]
@@ -90,7 +90,7 @@ _STUB_CASH = {
     "note": "Stub working-capital snapshot.",
 }
 
-_STUB_COLLAB_PROGRAMS = [
+_STUB_COLLAB_PROGRAMS: list[dict[str, object]] = [
     {"program": "VMI pilot (stub)", "coverage_skus_stub": 120, "status": "evaluation"},
     {"program": "Consignment packaging (stub)", "coverage_skus_stub": 45, "status": "live"},
 ]

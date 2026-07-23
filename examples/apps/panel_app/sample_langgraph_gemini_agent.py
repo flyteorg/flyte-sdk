@@ -25,9 +25,10 @@ class AgentState(TypedDict):
 
 
 def _geocode_location(location: str) -> tuple[float, float] | None:
+    geocode_params: dict[str, str | int] = {"name": location, "count": 1, "language": "en", "format": "json"}
     geocode_response = requests.get(
         "https://geocoding-api.open-meteo.com/v1/search",
-        params={"name": location, "count": 1, "language": "en", "format": "json"},
+        params=geocode_params,
         timeout=10,
     )
     geocode_response.raise_for_status()
@@ -52,16 +53,17 @@ async def get_weather_forecast(location: str, date: str) -> str:
 
     latitude, longitude = coordinates
     try:
+        forecast_params: dict[str, str | float] = {
+            "latitude": latitude,
+            "longitude": longitude,
+            "hourly": "temperature_2m",
+            "start_date": date,
+            "end_date": date,
+            "timezone": "UTC",
+        }
         forecast_response = requests.get(
             "https://api.open-meteo.com/v1/forecast",
-            params={
-                "latitude": latitude,
-                "longitude": longitude,
-                "hourly": "temperature_2m",
-                "start_date": date,
-                "end_date": date,
-                "timezone": "UTC",
-            },
+            params=forecast_params,
             timeout=10,
         )
         forecast_response.raise_for_status()

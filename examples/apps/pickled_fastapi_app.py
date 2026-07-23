@@ -14,7 +14,7 @@ env = FastAPIAppEnvironment(
     port=8080,
 )
 
-state = {}
+state: dict[str, str] = {}
 
 
 @env.on_startup
@@ -31,5 +31,5 @@ if __name__ == "__main__":
     import logging
 
     flyte.init_from_config(log_level=logging.DEBUG)
-    app = flyte.with_servecontext(interactive_mode=False).serve(env)
-    print(app.url)
+    app_handle = flyte.with_servecontext(interactive_mode=False).serve(env)
+    print(app_handle.url)

@@ -58,7 +58,7 @@ async def rfe():  # -> list[dict[str, float]]:
 
             values = await asyncio.gather(*(runs[feature] for feature in runs))
             scores = dict(zip(runs.keys(), values))
-            best = max(scores, key=scores.get)
+            best = max(scores, key=lambda feature: scores[feature])
 
             print(f"Iteration {i}: Best feature to drop is '{best}' resulting in a score {scores[best]:.4f}")
 

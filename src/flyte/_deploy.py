@@ -7,7 +7,7 @@ import os
 import pathlib
 import sys
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, cast
 
 import cloudpickle
 import rich.repr
@@ -26,6 +26,8 @@ from ._task import TaskTemplate
 from ._task_environment import TaskEnvironment
 
 if TYPE_CHECKING:
+    from types import CodeType
+
     from flyteidl2.core import interface_pb2
     from flyteidl2.task import task_definition_pb2
 
@@ -332,10 +334,10 @@ def _get_documentation_entity(task_template: TaskTemplate) -> task_definition_pb
     if docstring and docstring.long_description:
         long_desc = parse_description(docstring.long_description, 2048)
     if hasattr(task_template, "func") and hasattr(task_template.func, "__code__") and task_template.func.__code__:
-        line_number = (
-            task_template.func.__code__.co_firstlineno + 1
-        )  # The function definition line number is located at the line after @env.task decorator
-        file_path = task_template.func.__code__.co_filename
+        func_code = cast("CodeType", task_template.func.__code__)
+        # The function definition line number is located at the line after @env.task decorator
+        line_number = func_code.co_firstlineno + 1
+        file_path = func_code.co_filename
         git_status = GitStatus.from_current_repo()
         if git_status.is_valid:
             # Build git host url

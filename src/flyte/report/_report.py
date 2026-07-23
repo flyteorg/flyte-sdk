@@ -2,7 +2,7 @@ import html
 import pathlib
 import string
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Dict, List, Union
+from typing import TYPE_CHECKING, Dict, List, Union, cast
 
 from flyte._logging import logger
 from flyte._tools import ipython_check
@@ -10,6 +10,8 @@ from flyte.syncify import syncify
 
 if TYPE_CHECKING:
     from IPython.core.display import HTML
+
+    from flyte.models import TaskContext
 
 _MAIN_TAB_NAME = "main"
 
@@ -144,7 +146,8 @@ async def flush():
     report_html = report.get_final_report()
     assert report_html is not None
     assert isinstance(report_html, str)
-    report_path = io.report_path(internal_ctx().data.task_context.output_path)
+    task_context = cast("TaskContext", internal_ctx().data.task_context)
+    report_path = io.report_path(task_context.output_path)
     content_types = {
         "Content-Type": "text/html",  # For s3
         "content_type": "text/html",  # For gcs

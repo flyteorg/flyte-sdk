@@ -11,7 +11,7 @@ Run remotely:
     flyte run --follow examples/reports/html_template_report.py generate_template_report
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import flyte
@@ -41,7 +41,7 @@ async def generate_template_report() -> str:
     body = template.format(
         title="Hello from a bundled HTML file",
         greeting="This page was rendered from a separate HTML template that was shipped with the task.",
-        generated_at=datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        generated_at=datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
         items=items,
     )
 

@@ -48,7 +48,7 @@ class InternalTaskResolver(Resolver):
 
         return builder(**parsed)
 
-    def loader_args(self, task: TaskTemplate, root_dir: Optional[Path] = None) -> List[str]:
+    def loader_args(self, task: TaskTemplate, root_dir: Optional[Path] = None) -> List[str]:  # ty: ignore[invalid-method-override]
         args = ["task_builder", self._task_builder]
         for key, value in self._kwargs.items():
             if value is not None:

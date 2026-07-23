@@ -39,7 +39,7 @@ def _ensure_tuple(val: Union[T, List[T], Tuple[T, ...]]) -> Tuple[T] | Tuple[T, 
     if isinstance(val, list):
         return tuple(val)
     elif isinstance(val, tuple):
-        return val
+        return typing.cast(Tuple[T, ...], val)
     else:
         return (val,)
 

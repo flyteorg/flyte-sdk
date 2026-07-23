@@ -48,7 +48,7 @@ async def run_sync_with_loop(
     # Check if func is an async function
     if inspect.iscoroutinefunction(func):
         raise TypeError(
-            f"Cannot call run_sync_with_loop with async function '{func.__name__}'. "
+            f"Cannot call run_sync_with_loop with async function '{getattr(func, '__name__')}'. "
             "This utility is for running sync functions from async contexts."
         )
 

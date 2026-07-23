@@ -77,10 +77,10 @@ class CSVToPandasDecodingHandler(DataFrameDecoder):
 
     async def decode(
         self,
-        proto_value: literals_pb2.StructuredDataset,
+        flyte_value: literals_pb2.StructuredDataset,
         current_task_metadata: literals_pb2.StructuredDatasetMetadata,
     ) -> "pd.DataFrame":
-        uri = proto_value.uri
+        uri = flyte_value.uri
         columns = None
         kwargs = get_pandas_storage_options(uri=uri)
 
@@ -176,7 +176,7 @@ class ArrowToParquetEncodingHandler(DataFrameEncoder):
     async def encode(
         self,
         dataframe: DataFrame,
-        dataframe_type: types_pb2.StructuredDatasetType,
+        structured_dataset_type: types_pb2.StructuredDatasetType,
     ) -> literals_pb2.StructuredDataset:
         import pyarrow.parquet as pq
 
@@ -195,7 +195,7 @@ class ArrowToParquetEncodingHandler(DataFrameEncoder):
         pq.write_table(dataframe.val, strip_protocol(path), filesystem=filesystem)
         return literals_pb2.StructuredDataset(
             uri=uri,
-            metadata=literals_pb2.StructuredDatasetMetadata(structured_dataset_type=dataframe_type),
+            metadata=literals_pb2.StructuredDatasetMetadata(structured_dataset_type=structured_dataset_type),
         )
 
 
@@ -205,12 +205,12 @@ class ParquetToArrowDecodingHandler(DataFrameDecoder):
 
     async def decode(
         self,
-        proto_value: literals_pb2.StructuredDataset,
+        flyte_value: literals_pb2.StructuredDataset,
         current_task_metadata: literals_pb2.StructuredDatasetMetadata,
     ) -> "pa.Table":
         import pyarrow.parquet as pq
 
-        path = proto_value.uri
+        path = flyte_value.uri
         if not storage.is_remote(path):
             Path(path).parent.mkdir(parents=True, exist_ok=True)
             _, path = split_protocol(path)

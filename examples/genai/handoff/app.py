@@ -14,6 +14,7 @@ from contextlib import asynccontextmanager
 from typing import List
 
 import flyte
+import flyte.app
 import flyte.remote as remote
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
@@ -135,7 +136,7 @@ env = FastAPIAppEnvironment(
     .with_uv_project(pyproject_file=pathlib.Path(__file__).parent / "pyproject.toml")
     .with_local_v2(),
     resources=flyte.Resources(cpu=1, memory="1Gi"),
-    include=[str(current_file.parent / "static" / "index.html"), str(current_file.parent / "agent_handoff.py")],
+    include=(str(current_file.parent / "static" / "index.html"), str(current_file.parent / "agent_handoff.py")),
     secrets=flyte.Secret(key="EAGER_API_KEY", as_env_var="EAGER_API_KEY"),
     scaling=flyte.app.Scaling(
         replicas=1,
@@ -144,6 +145,6 @@ env = FastAPIAppEnvironment(
 
 if __name__ == "__main__":
     flyte.init_from_config(root_dir=current_file.parent)
-    app = flyte.serve(env)
-    print(f"🚀 Deployed Agent Handoff UI: {app.url}")
-    print(f"🌐 Open in browser: {app.endpoint}")
+    served_app = flyte.serve(env)
+    print(f"🚀 Deployed Agent Handoff UI: {served_app.url}")
+    print(f"🌐 Open in browser: {served_app.endpoint}")

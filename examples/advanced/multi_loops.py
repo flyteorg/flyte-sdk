@@ -44,6 +44,7 @@ async def retry_with_more_mem(x: int) -> int:
                 if i >= len(MEM_OVERRIDES):
                     print("No more memory overrides available, giving up")
                     raise e
+    raise RuntimeError("Unreachable: memory overrides exhausted")
 
 
 @env.task
@@ -56,11 +57,13 @@ async def main(n: int) -> List[int]:
         coros.append(retry_with_more_mem(i))
     result = await asyncio.gather(*coros, return_exceptions=True)
 
+    vals: List[int] = []
     for res in result:
-        if isinstance(res, Exception):
+        if isinstance(res, BaseException):
             print(f"Error encountered: {res}")
             raise res
-    return result
+        vals.append(res)
+    return vals
 
 
 if __name__ == "__main__":

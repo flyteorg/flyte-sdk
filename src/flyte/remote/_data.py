@@ -195,7 +195,7 @@ async def _upload_single_file(
     from flyte._logging import logger
 
     try:
-        expires_in_pb = duration_pb2.Duration()
+        expires_in_pb = duration_pb2.Duration()  # ty: ignore[unresolved-attribute]
         expires_in_pb.FromTimedelta(_UPLOAD_EXPIRES_IN)
         client = get_client()
         resp = await client.dataproxy_service.create_upload_location(  # type: ignore

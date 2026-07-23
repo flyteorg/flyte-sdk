@@ -64,7 +64,7 @@ class MapAsyncIterator(Generic[P, R]):
                 logger.debug(f"Running {base_func.name} with args: {merged_args} and kwargs: {bound_kwargs}")
             return await base_func.aio(*merged_args, **bound_kwargs)
         else:
-            return await self.func.aio(*arg_tuple)  # type: ignore[call-overload]
+            return await self.func.aio(*arg_tuple)  # type: ignore[call-overload]  # ty: ignore[no-matching-overload]
 
     # ------------------------------------------------------------------
     # __anext__ - dispatches to the right path
@@ -308,7 +308,7 @@ class _Mapper(Generic[P, R]):
             import flyte
 
             tctx = flyte.ctx()
-            if tctx is None or tctx.mode == "local":
+            if not tctx or tctx.mode == "local":
                 logger.warning("Running map in local mode, which will run every task sequentially.")
                 for v in zip(*args):
                     try:
@@ -357,7 +357,7 @@ class _Mapper(Generic[P, R]):
             import flyte
 
             tctx = flyte.ctx()
-            if tctx is None or tctx.mode == "local":
+            if not tctx or tctx.mode == "local":
                 logger.warning("Running map in local mode, which will run every task sequentially.")
                 for v in zip(*args):
                     try:

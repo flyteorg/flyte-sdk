@@ -18,6 +18,14 @@ pass_filenames = false
 files = "\\.py$"
 
 [[repos.hooks]]
+id = "ty"
+name = "make ty"
+language = "system"
+entry = "make ty"
+pass_filenames = false
+files = "\\.py$"
+
+[[repos.hooks]]
 id = "uvlock"
 name = "make uvlock"
 language = "system"

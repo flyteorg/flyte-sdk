@@ -54,6 +54,54 @@ CacheLookupScope = Literal["global", "project-domain"]
 _run_mode_var: contextvars.ContextVar[Mode | None] = contextvars.ContextVar("run_mode", default=None)
 
 
+def _wrap_inline_run(outputs: Tuple[Any, ...] | Any, url: str) -> Run:
+    """Wrap natively-computed task outputs in a `Run` so every execution mode returns one.
+
+    Local and hybrid modes execute the task in-process and end up holding the task's
+    native outputs rather than a platform run handle. This wrapper presents those
+    outputs through the same `Run` interface remote mode returns: `wait()` is an
+    immediate no-op (the work already happened) and `outputs()` serves the captured
+    values.
+    """
+    from flyteidl2.common import identifier_pb2
+    from flyteidl2.task import common_pb2
+    from flyteidl2.workflow import run_definition_pb2
+
+    from flyte.remote import ActionOutputs, Run
+
+    class _InlineRun(Run):
+        def __init__(self, outputs: Tuple[Any, ...] | Any):
+            self._outputs = ActionOutputs(common_pb2.Outputs(), outputs if isinstance(outputs, tuple) else (outputs,))
+            super().__init__(
+                pb2=run_definition_pb2.Run(
+                    action=run_definition_pb2.Action(
+                        id=identifier_pb2.ActionIdentifier(
+                            name="a0",
+                            run=identifier_pb2.RunIdentifier(name="dry-run"),
+                        )
+                    )
+                )
+            )
+
+        @property
+        def url(self) -> str:
+            return url
+
+        @syncify
+        async def wait(  # type: ignore[override]
+            self,
+            quiet: bool = False,
+            wait_for: Literal["terminal", "running"] = "terminal",
+        ) -> None:
+            pass
+
+        @syncify
+        async def outputs(self) -> ActionOutputs:  # type: ignore[override]
+            return self._outputs
+
+    return _InlineRun(outputs)
+
+
 async def _get_code_bundle_for_run(name: str) -> CodeBundle | None:
     """
     Get the code bundle for the run with the given name.
@@ -420,6 +468,9 @@ class _Runner:
         from flyteidl2.task import run_pb2
         from google.protobuf import wrappers_pb2
 
+        # google.protobuf ships no type stubs for the dynamically generated wrappers_pb2 module.
+        _bool_value_cls = cast(Any, wrappers_pb2).BoolValue
+
         env = self._build_env_dict()
         if base is not None:
             # Inherit the prior run's env as the floor; runner overrides win.
@@ -452,9 +503,7 @@ class _Runner:
             )
             run_spec = run_pb2.RunSpec(
                 overwrite_cache=self._overwrite_cache,
-                interruptible=wrappers_pb2.BoolValue(value=self._interruptible)
-                if self._interruptible is not None
-                else None,
+                interruptible=_bool_value_cls(value=self._interruptible) if self._interruptible is not None else None,
                 annotations=run_pb2.Annotations(values=self._annotations),
                 labels=run_pb2.Labels(values=self._labels),
                 envs=env_kv,
@@ -479,11 +528,12 @@ class _Runner:
             # Provenance is per-run, never inherited: a rerun of a rerun must point at its immediate
             # parent (set below from `relation`), not the grandparent captured in the prior spec.
             for provenance_field in ("relation", "related_to"):
-                if provenance_field in run_pb2.RunSpec.DESCRIPTOR.fields_by_name:
+                # DESCRIPTOR internals are opaque to checkers; guard for fields absent from the current pin.
+                if provenance_field in cast(Any, run_pb2.RunSpec).DESCRIPTOR.fields_by_name:
                     run_spec.ClearField(provenance_field)
             run_spec.envs.CopyFrom(env_kv)
             if self._interruptible is not None:
-                run_spec.interruptible.CopyFrom(wrappers_pb2.BoolValue(value=self._interruptible))
+                run_spec.interruptible.CopyFrom(_bool_value_cls(value=self._interruptible))
             if self._overwrite_cache:
                 run_spec.overwrite_cache = True
                 run_spec.cache_config.overwrite_cache = True
@@ -515,7 +565,8 @@ class _Runner:
         # on the field, so recover fails loudly without it; rerun/spawn provenance is best-effort.
         if relation:
             ref, kind = relation
-            if "relation" not in run_pb2.RunSpec.DESCRIPTOR.fields_by_name:
+            # google.protobuf ships no stubs for descriptor internals; DESCRIPTOR is opaque to checkers.
+            if "relation" not in cast(Any, run_pb2.RunSpec).DESCRIPTOR.fields_by_name:
                 if kind == "recover":
                     raise NotImplementedError(
                         "recover is not yet supported by this backend "
@@ -524,15 +575,20 @@ class _Runner:
             else:
                 from flyteidl2.common import run_pb2 as common_run_pb2
 
+                # Relation / RELATION_TYPE_* / RunSpec.relation are absent from current flyteidl2 stubs
+                # (runtime-gated by the DESCRIPTOR check above).
+                _relation_pb = cast(Any, common_run_pb2)
                 relation_type = {
-                    "rerun": common_run_pb2.RELATION_TYPE_RERUN,
-                    "recover": common_run_pb2.RELATION_TYPE_RECOVER,
+                    "rerun": _relation_pb.RELATION_TYPE_RERUN,
+                    "recover": _relation_pb.RELATION_TYPE_RECOVER,
                     # SPAWN ships in a later flyteidl2 than RERUN/RECOVER; drop the pointer on
                     # older builds rather than fail run creation.
                     "spawn": getattr(common_run_pb2, "RELATION_TYPE_SPAWN", None),
                 }.get(kind)
                 if relation_type is not None:
-                    run_spec.relation.CopyFrom(common_run_pb2.Relation(related_to=ref, relation_type=relation_type))
+                    cast(Any, run_spec).relation.CopyFrom(
+                        _relation_pb.Relation(related_to=ref, relation_type=relation_type)
+                    )
 
         return run_spec
 
@@ -720,7 +776,7 @@ class _Runner:
 
     @requires_storage
     @requires_initialization
-    async def _run_hybrid(self, obj: TaskTemplate[P, R, F], *args: P.args, **kwargs: P.kwargs) -> R:
+    async def _run_hybrid(self, obj: TaskTemplate[P, R, F], *args: P.args, **kwargs: P.kwargs) -> Run:
         """
         Run a task in hybrid mode. This means that the parent action will be run locally, but the child actions will be
         run in the cluster remotely. This is currently only used for testing,
@@ -844,7 +900,7 @@ class _Runner:
         outputs, err = await contextual_run(_run_task)
         if err:
             raise err
-        return outputs
+        return _wrap_inline_run(outputs, url=output_path)
 
     async def _send_local_notifications(
         self,
@@ -856,6 +912,7 @@ class _Runner:
     ) -> None:
         """Send notifications locally. Never raises — failures are logged."""
         from flyte.notify._notifiers import NamedRule as _NamedRule
+        from flyte.notify._notifiers import Notification as _Notification
         from flyte.notify._sender import send_notifications
 
         notifications = self._notifications
@@ -864,7 +921,7 @@ class _Runner:
             return
 
         await send_notifications(
-            notifications,  # type: ignore[arg-type]
+            cast(Union[_Notification, Tuple[_Notification, ...]], notifications),
             phase=phase,
             task_name=task_name,
             run_name=run_name,
@@ -874,12 +931,9 @@ class _Runner:
         )
 
     async def _run_local(self, obj: TaskTemplate[P, R, F], *args: P.args, **kwargs: P.kwargs) -> Run:
-        from flyteidl2.common import identifier_pb2
-        from flyteidl2.task import common_pb2
 
         from flyte._internal.controllers import create_controller
         from flyte._internal.controllers._local_controller import LocalController
-        from flyte.remote import ActionOutputs, Run
         from flyte.report import Report
 
         controller = cast(LocalController, create_controller("local"))
@@ -962,49 +1016,15 @@ class _Runner:
             if self._notifications:
                 await self._send_local_notifications(phase=ActionPhase.SUCCEEDED, task_name=obj.name, run_name=run_name)
 
-        class _LocalRun(Run):
-            def __init__(self, outputs: Tuple[Any, ...] | Any):
-                from flyteidl2.workflow import run_definition_pb2
-
-                self._outputs = ActionOutputs(
-                    common_pb2.Outputs(), outputs if isinstance(outputs, tuple) else (outputs,)
-                )
-                super().__init__(
-                    pb2=run_definition_pb2.Run(
-                        action=run_definition_pb2.Action(
-                            id=identifier_pb2.ActionIdentifier(
-                                name="a0",
-                                run=identifier_pb2.RunIdentifier(name="dry-run"),
-                            )
-                        )
-                    )
-                )
-
-            @property
-            def url(self) -> str:
-                return str(metadata_path)
-
-            @syncify
-            async def wait(  # type: ignore[override]
-                self,
-                quiet: bool = False,
-                wait_for: Literal["terminal", "running"] = "terminal",
-            ) -> None:
-                pass
-
-            @syncify
-            async def outputs(self) -> ActionOutputs:  # type: ignore[override]
-                return self._outputs
-
-        return _LocalRun(outputs)
+        return _wrap_inline_run(outputs, url=str(metadata_path))
 
     @syncify  # type: ignore[arg-type]
     async def run(
         self,
-        task: TaskTemplate[P, Union[R, Run], F] | LazyEntity,
+        task: TaskTemplate[P, R, F] | LazyEntity,
         *args: P.args,
         **kwargs: P.kwargs,
-    ) -> Union[R, Run]:
+    ) -> Run:
         """
         Run an async `@env.task` or `TaskTemplate` instance. The existing async context will be used.
 
@@ -1024,7 +1044,9 @@ class _Runner:
         :param task: TaskTemplate instance `@env.task` or `TaskTemplate`
         :param args: Arguments to pass to the Task
         :param kwargs: Keyword arguments to pass to the Task
-        :return: Run instance or the result of the task
+        :return: A Run handle in every mode. Remote mode returns the platform run; local and
+            hybrid modes return an in-process wrapper whose `outputs()` serves the task's
+            native results and whose `wait()` is an immediate no-op.
         """
         from flyte.remote._task import LazyEntity, TaskDetails
 

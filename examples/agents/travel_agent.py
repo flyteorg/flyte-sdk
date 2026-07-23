@@ -118,7 +118,7 @@ async def estimate_budget_band_stub(
     }
 
 
-async def get_visa_health_reminders_stub(destination_region: str) -> dict[str, list[str]]:
+async def get_visa_health_reminders_stub(destination_region: str) -> dict[str, str | list[str]]:
     """Return generic reminders (stub; not authoritative)."""
     return {
         "destination_region": destination_region or "general",
@@ -171,7 +171,7 @@ async def get_sustainability_tips_stub() -> list[str]:
 
 async def get_dietary_and_accessibility_preferences_stub(
     prefs: str,
-) -> dict[str, list[str]]:
+) -> dict[str, str | list[str]]:
     """Echo planning dimensions to consider (stub; prefs string is not parsed)."""
     return {
         "user_note": prefs or "(none provided)",

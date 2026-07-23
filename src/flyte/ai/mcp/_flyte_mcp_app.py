@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import pathlib
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal, get_args
+from typing import TYPE_CHECKING, Any, Literal, cast, get_args
 
 import rich.repr
 
@@ -121,7 +121,7 @@ def _resolve_tools(tool_groups: list[str] | None, tools: list[str] | None) -> se
 
     enabled: set[str] = set()
     for g in tool_groups:
-        enabled.update(TOOL_GROUP_MAPPING[g])  # type: ignore[index]
+        enabled.update(TOOL_GROUP_MAPPING[cast(MCPToolGroup, g)])
     return enabled
 
 
@@ -451,7 +451,7 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
             name: str, poll_interval_s: float = 2.0, timeout_s: float | None = None, ctx: MCPContext | None = None
         ) -> dict:
             run = await flyte.remote.Run.get.aio(name=name)
-            watched = await run.watch.aio(interval=poll_interval_s, timeout=timeout_s)  # type: ignore[attr-defined]
+            watched = await cast(Any, run.watch).aio(interval=poll_interval_s, timeout=timeout_s)
             return {"name": watched.name, "phase": watched.phase, "url": watched.url, "done": watched.done()}
 
         @mcp.tool()
@@ -537,7 +537,7 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
             if not _is_trigger_allowed(self.trigger_allowlist, task_name, trigger_name):
                 raise ValueError(f"Trigger {task_name}/{trigger_name} is not allowlisted.")
             t = await flyte.remote.Trigger.get.aio(task_name=task_name, name=trigger_name)
-            activated = await t.activate.aio(wait=True)  # type: ignore[attr-defined]
+            activated = await cast(Any, t).activate.aio(wait=True)
             return (
                 activated.to_dict()
                 if hasattr(activated, "to_dict")
@@ -549,7 +549,7 @@ class FlyteMCPAppEnvironment(MCPAppEnvironment):
             if not _is_trigger_allowed(self.trigger_allowlist, task_name, trigger_name):
                 raise ValueError(f"Trigger {task_name}/{trigger_name} is not allowlisted.")
             t = await flyte.remote.Trigger.get.aio(task_name=task_name, name=trigger_name)
-            deactivated = await t.deactivate.aio(wait=True)  # type: ignore[attr-defined]
+            deactivated = await cast(Any, t).deactivate.aio(wait=True)
             return (
                 deactivated.to_dict()
                 if hasattr(deactivated, "to_dict")

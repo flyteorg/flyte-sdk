@@ -15,7 +15,7 @@ from typing import (
 )
 
 from flyte._logging import logger
-from flyte.models import NativeInterface
+from flyte.models import NativeInterface, TaskContext
 from flyte.syncify import syncify
 
 T = TypeVar("T")
@@ -66,7 +66,7 @@ def trace(func: Callable[..., T]) -> Callable[..., T]:
             logger.debug(f"No existing trace info found for {func}, proceeding to execute.")
 
         start_time = time.time()
-        trace_task_context = ctx.data.task_context.replace(action=info.action)  # type: ignore[union-attr]
+        trace_task_context = cast(TaskContext, ctx.data.task_context).replace(action=info.action)
         trace_data = ctx.data.replace(task_context=trace_task_context, in_trace=True)
         trace_context = Context(trace_data)
 
@@ -117,7 +117,7 @@ def trace(func: Callable[..., T]) -> Callable[..., T]:
             logger.debug(f"No existing trace info found for {func}, proceeding to execute.")
 
         start_time = time.time()
-        trace_task_context = ctx.data.task_context.replace(action=info.action)  # type: ignore[union-attr]
+        trace_task_context = cast(TaskContext, ctx.data.task_context).replace(action=info.action)
         trace_data = ctx.data.replace(task_context=trace_task_context, in_trace=True)
         trace_context = Context(trace_data)
 
@@ -169,7 +169,7 @@ def trace(func: Callable[..., T]) -> Callable[..., T]:
             # Create a new context with the trace's action ID and mark as in_trace
             # so that nested task calls run as pure Python instead of submitting to the controller.
             # Note: ctx.data.task_context is guaranteed to be non-None by is_task_context() check above
-            trace_task_context = ctx.data.task_context.replace(action=info.action)  # type: ignore[union-attr]
+            trace_task_context = cast(TaskContext, ctx.data.task_context).replace(action=info.action)
             trace_data = ctx.data.replace(task_context=trace_task_context, in_trace=True)
             trace_context = Context(trace_data)
 
@@ -235,7 +235,7 @@ def trace(func: Callable[..., T]) -> Callable[..., T]:
             # Create a new context with the trace's action ID and mark as in_trace
             # so that nested task calls run as pure Python instead of submitting to the controller.
             # Note: ctx.data.task_context is guaranteed to be non-None by is_task_context() check above
-            trace_task_context = ctx.data.task_context.replace(action=info.action)  # type: ignore[union-attr]
+            trace_task_context = cast(TaskContext, ctx.data.task_context).replace(action=info.action)
             trace_data = ctx.data.replace(task_context=trace_task_context, in_trace=True)
             trace_context = Context(trace_data)
 
