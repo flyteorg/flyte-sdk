@@ -418,7 +418,15 @@ def _get_k8s_pod(primary_container: tasks_pb2.Container, pod_template: PodTempla
                 existing = container.resources or V1ResourceRequirements()
                 merged_limits = {**(existing.limits or {}), **limits}
                 merged_requests = {**(existing.requests or {}), **requests}
-                container.resources = V1ResourceRequirements(limits=merged_limits, requests=merged_requests)
+                # Preserve ``.claims`` (Dynamic Resource Allocation links, e.g. a GPU
+                # claimed through a ResourceClaimTemplate). These can only be expressed
+                # through the pod template, and rebuilding V1ResourceRequirements without
+                # them would silently drop the claim so the pod schedules with no device.
+                container.resources = V1ResourceRequirements(
+                    limits=merged_limits,
+                    requests=merged_requests,
+                    claims=existing.claims,
+                )
 
             if primary_container.env is not None:
                 container.env = [V1EnvVar(name=e.key, value=e.value) for e in primary_container.env] + (

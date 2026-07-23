@@ -73,11 +73,16 @@ def _apply_overrides_to_primary_container(
         if proto_res is not None:
             requests = {_sanitize_resource_name(e): e.value for e in proto_res.requests}
             limits = {_sanitize_resource_name(e): e.value for e in proto_res.limits}
+            existing = target.get("resources") or {}
             rr: Dict[str, Any] = {}
             if requests:
                 rr["requests"] = requests
             if limits:
                 rr["limits"] = limits
+            # Preserve DRA ``claims`` (e.g. a GPU claimed through a ResourceClaimTemplate)
+            # from the pod template.
+            if existing.get("claims"):
+                rr["claims"] = existing["claims"]
             target["resources"] = rr
 
     if env_vars:
