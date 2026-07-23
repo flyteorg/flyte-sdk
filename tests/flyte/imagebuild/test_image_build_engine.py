@@ -89,65 +89,6 @@ async def test_build_skips_when_image_exists(mock_image_exists, mock_get_builder
     mock_builder.build_image.assert_not_called()
 
 
-@mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine._get_builder")
-@mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine.image_exists", new_callable=mock.AsyncMock)
-@pytest.mark.asyncio
-async def test_build_hard_errors_without_push_registry(mock_image_exists, mock_get_builder):
-    """A cloned image built locally with no push registry must hard-error before building,
-    rather than silently defaulting to (and 403ing against) ghcr.io/flyteorg."""
-    from flyte.errors import ImageBuildError
-
-    ImageBuildEngine.build.cache_clear()
-    mock_image_exists.return_value = None  # image does not already exist -> must build
-    mock_builder = mock.AsyncMock()
-    mock_get_builder.return_value = mock_builder
-
-    img = Image.from_base("ghcr.io/example/base:latest").clone(name="my-app", extendable=True)
-    assert img._is_cloned is True
-    assert img.registry is None
-
-    with pytest.raises(ImageBuildError, match="no container registry is configured"):
-        await ImageBuildEngine.build(image=img)
-
-    # We must fail before invoking the builder / attempting any push.
-    mock_builder.build_image.assert_not_called()
-
-
-@mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine._get_builder")
-@mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine.image_exists", new_callable=mock.AsyncMock)
-@pytest.mark.asyncio
-async def test_build_no_registry_error_when_already_exists(mock_image_exists, mock_get_builder):
-    """If the registry-less image already exists, there's nothing to push — don't hard-error."""
-    ImageBuildEngine.build.cache_clear()
-    mock_image_exists.return_value = "my-app:sometag"  # already present
-    mock_builder = mock.AsyncMock()
-    mock_get_builder.return_value = mock_builder
-
-    img = Image.from_base("ghcr.io/example/base:latest").clone(name="my-app", extendable=True)
-    result = await ImageBuildEngine.build(image=img)
-    assert result.uri == "my-app:sometag"
-    mock_builder.build_image.assert_not_called()
-
-
-@mock.patch("flyte._internal.imagebuild.image_builder._write_image_cache")
-@mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine._get_builder")
-@mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine.image_exists", new_callable=mock.AsyncMock)
-@pytest.mark.asyncio
-async def test_build_remote_builder_allows_missing_registry(mock_image_exists, mock_get_builder, mock_write_cache):
-    """The remote builder resolves the registry server-side, so a missing client-side registry
-    must NOT hard-error there."""
-    ImageBuildEngine.build.cache_clear()
-    mock_image_exists.return_value = None
-    mock_builder = mock.AsyncMock()
-    mock_builder.build_image.return_value = ImageBuild(uri="remote/my-app:tag", remote_run=None)
-    mock_get_builder.return_value = mock_builder
-
-    img = Image.from_base("ghcr.io/example/base:latest").clone(name="my-app", extendable=True)
-    result = await ImageBuildEngine.build(image=img, builder="remote")
-    assert result.uri == "remote/my-app:tag"
-    mock_builder.build_image.assert_called_once()
-
-
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_check():
@@ -167,19 +108,17 @@ async def test_all_image_checkers():
     await ImageBuildEngine.image_exists(img)
 
 
-@mock.patch("flyte._internal.imagebuild.image_builder._write_image_cache")
 @mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine._get_builder")
 @mock.patch("flyte._internal.imagebuild.image_builder.ImageBuildEngine.image_exists", new_callable=mock.AsyncMock)
 @pytest.mark.asyncio
-async def test_force_bypasses_existence_check_and_rebuilds(mock_image_exists, mock_get_builder, mock_write_cache):
+async def test_force_bypasses_existence_check_and_rebuilds(mock_image_exists, mock_get_builder):
     """When force=True, build_image should be called without checking image_exists."""
     ImageBuildEngine.build.cache_clear()
     mock_builder = mock.AsyncMock()
     mock_builder.build_image.return_value = ImageBuild(uri="docker.io/test-image:v1.0", remote_run=None)
     mock_get_builder.return_value = mock_builder
 
-    # A local build needs a push registry; forcing a build of a registry-less image now errors.
-    img = Image.from_debian_base(registry="docker.io/test", name="test-image")
+    img = Image.from_debian_base()
     result = await ImageBuildEngine.build(image=img, force=True)
     assert isinstance(result, ImageBuild)
     # image_exists should NOT have been called

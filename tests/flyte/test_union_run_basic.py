@@ -141,11 +141,7 @@ async def test_task1_remote_union_sync(
         "instance",
         "task1",
     ]
-    # The default image no longer defaults its *push* registry to ghcr.io/flyteorg (end users
-    # cannot push there — it 403s), so a dev-build default image has no registry and its uri is
-    # just <name>:<tag>. Assert the default image's identity instead of a registry it must not
-    # carry. The released image still *pulls* from ghcr.io/flyteorg via its base_image.
-    assert Image.from_debian_base().name == "flyte"
+    assert "ghcr.io/flyteorg/flyte" in Image.from_debian_base().uri
 
 
 @pytest.mark.asyncio
