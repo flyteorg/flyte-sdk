@@ -1,8 +1,8 @@
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from flyteidl2.app import app_definition_pb2
-from flyteidl2.common import identity_pb2
+from flyteidl2.common import identity_pb2, list_pb2
 
 from flyte.remote._app import App
 
@@ -674,3 +674,63 @@ class TestAppDeploymentStatus:
         )
         app = App(app_pb2)
         assert app.deployment_status == app_definition_pb2.Status.DeploymentStatus.DEPLOYMENT_STATUS_ACTIVE
+
+
+class TestAppListallStatusFilter:
+    """Verify that App.listall() forwards status filters to the AppService stub."""
+
+    def _call_listall(self, **kwargs):
+        resp = MagicMock()
+        resp.apps = []
+        resp.token = ""
+        client = MagicMock()
+        client.app_service.list = AsyncMock(return_value=resp)
+        cfg = MagicMock()
+        cfg.org = "test-org"
+        cfg.project = "test-project"
+        cfg.domain = "development"
+        with (
+            patch("flyte.remote._app.ensure_client"),
+            patch("flyte.remote._app.get_client", return_value=client),
+            patch("flyte.remote._app.get_init_config", return_value=cfg),
+        ):
+            list(App.listall(**kwargs))
+        req = client.app_service.list.call_args.kwargs["request"]
+        return list(req.request.filters)
+
+    def test_no_status_sends_no_status_filter(self):
+        filters = self._call_listall()
+        assert all(f.field != "status_phase" for f in filters)
+
+    def test_single_status_uses_equal(self):
+        filters = self._call_listall(in_status="active")
+        assert len(filters) == 1
+        f = filters[0]
+        assert f.field == "status_phase"
+        assert f.function == list_pb2.Filter.Function.EQUAL
+        assert list(f.values) == ["DEPLOYMENT_STATUS_ACTIVE"]
+
+    def test_status_is_case_insensitive(self):
+        filters = self._call_listall(in_status="FaIlEd")
+        assert list(filters[0].values) == ["DEPLOYMENT_STATUS_FAILED"]
+
+    def test_full_prefixed_name_is_accepted(self):
+        filters = self._call_listall(in_status="DEPLOYMENT_STATUS_STOPPED")
+        assert list(filters[0].values) == ["DEPLOYMENT_STATUS_STOPPED"]
+
+    def test_multiple_statuses_use_value_in(self):
+        filters = self._call_listall(in_status=("active", "failed"))
+        assert len(filters) == 1
+        f = filters[0]
+        assert f.field == "status_phase"
+        assert f.function == list_pb2.Filter.Function.VALUE_IN
+        assert list(f.values) == ["DEPLOYMENT_STATUS_ACTIVE", "DEPLOYMENT_STATUS_FAILED"]
+
+    def test_invalid_status_raises(self):
+        with pytest.raises(ValueError):
+            self._call_listall(in_status="bogus")
+
+    def test_status_combines_with_created_by_subject(self):
+        filters = self._call_listall(in_status="active", created_by_subject="user-123")
+        fields = {f.field for f in filters}
+        assert fields == {"status_phase", "created_by"}
