@@ -75,7 +75,7 @@ sandbox = [
     "pydantic-monty==0.0.17",
 ]
 mcp = [
-    "mcp>=1.26.0",
+    "mcp>=1.28.1",
     "starlette",
     "uvicorn",
 ]
@@ -112,7 +112,7 @@ dev = [
     "types-aiofiles",
     "kubernetes",
     "textual>=0.80",
-    "mcp>=1.26.0",
+    "mcp>=1.28.1",
     "starlette",
     "uvicorn",
 ]
