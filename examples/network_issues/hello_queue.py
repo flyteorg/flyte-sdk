@@ -4,14 +4,16 @@ import flyte
 
 # Also using this for basic queue drain testing/draining -> drained
 
-env = flyte.TaskEnvironment(
-    # name="blackhole-test",
-    name="queue-drain-test",
-    env_vars={"LOG_LEVEL": "info"},  # surfaces "Successfully launched action" lines
+env_child = flyte.TaskEnvironment(
+    name="queue-drain-child",
+    # queue="drain-test-a1",
+    queue="drain-test-b4",
 )
 
+env = flyte.TaskEnvironment(name="queue-drain", depends_on=[env_child])
 
-@env.task
+
+@env_child.task
 async def child(i: int) -> int:
     return i
 
@@ -22,6 +24,20 @@ async def parent(n: int = 150, pause_s: float = 5.0) -> int:
     for i in range(n):
         total += await child(i)
         await asyncio.sleep(pause_s)
+    return total
+
+
+@env_child.task
+async def long_running_child(i: int) -> int:
+    await asyncio.sleep(300)
+    return i
+
+
+@env.task
+async def long_running_parent():
+    total = 0
+    for i in range(2):
+        total += await long_running_child(i)
     return total
 
 
