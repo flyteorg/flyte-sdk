@@ -289,6 +289,8 @@ def get_proto_task(
             env = task.parent_env()
             if env is not None:
                 env_name = env.name
+        if getattr(task, "supports_reuse_policy", False):
+            return task_template
         return add_reusable(task_template, task.reusable, serialize_context.code_bundle, env_name)
 
     return task_template

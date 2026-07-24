@@ -9,7 +9,7 @@ from flyteidl2.plugins.ray_pb2 import RayJob
 from google.protobuf.json_format import MessageToDict, ParseDict
 from kubernetes.client import V1Container, V1PodSpec, V1ResourceRequirements
 
-from flyteplugins.ray.task import HeadNodeConfig, RayJobConfig, WorkerNodeConfig
+from flyteplugins.ray.task import HeadNodeConfig, RayFunctionTask, RayJobConfig, WorkerNodeConfig
 
 
 @pytest.fixture
@@ -209,3 +209,38 @@ def test_pod_template_without_resources_is_unchanged(sctx):
     container = _primary_container(ray_job.ray_cluster.worker_group_spec[0].k8s_pod)
     assert container["args"] == ["wut update-aws-credentials-file default"]
     assert container["resources"]["requests"]["cpu"] == "15000m"
+
+
+def test_custom_config_records_reuse_policy(sctx):
+    task = RayFunctionTask(
+        name="t",
+        interface=None,
+        func=lambda: None,
+        plugin_config=RayJobConfig(worker_node_config=[]),
+        reusable=flyte.ReusePolicy(replicas=1, idle_ttl=600),
+    )
+    custom = task.custom_config(sctx)
+    assert custom["reusePolicy"] == {
+        "parallelism": 1,
+        "min_replica_count": 1,
+        "replica_count": 1,
+        "ttl_seconds": 600,
+        "scaledown_ttl_seconds": 30,
+    }
+    # The rest of the spec still parses as a RayJob (the extra field is ignored by the proto).
+    assert "rayCluster" in custom
+
+
+def test_custom_config_rejects_multiple_reuse_replicas(sctx):
+    import flyte.errors
+
+    task = RayFunctionTask(
+        name="t",
+        interface=None,
+        func=lambda: None,
+        plugin_config=RayJobConfig(worker_node_config=[]),
+        reusable=flyte.ReusePolicy(replicas=(1, 3)),
+    )
+    # `replicas` is the number of shared clusters; only 1 is supported for now.
+    with pytest.raises(flyte.errors.RuntimeUserError, match="exactly 1 replica"):
+        task.custom_config(sctx)
