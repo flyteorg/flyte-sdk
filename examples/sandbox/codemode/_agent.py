@@ -15,6 +15,7 @@ from typing import Any, Callable
 
 import flyte
 import flyte.sandbox
+from flyte.syncify import syncify
 
 # ------------------------------------------------------------------
 # LLM call + code extraction (module-level for @flyte.trace compat)
@@ -201,6 +202,7 @@ class CodeModeAgent:
     # Main entry point
     # ------------------------------------------------------------------
 
+    @syncify
     async def run(self, message: str, history: list[dict[str, str]]) -> AgentResult:
         """Generate code, execute in sandbox, retry on failure.
 

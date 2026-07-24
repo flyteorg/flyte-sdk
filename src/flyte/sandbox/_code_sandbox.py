@@ -76,7 +76,7 @@ class _Sandbox:
             return self.name
 
         tctx = flyte.ctx()
-        if tctx is not None:
+        if tctx:
             return f"sandbox-{tctx.action.name}"
 
         return "sandbox"

@@ -87,6 +87,7 @@ async def group_and_aggregate(data: list, group_by: str, agg_column: str, agg_fu
     out: list[dict[str, Any]] = []
     for k, vals in groups.items():
         nums = [v for v in vals if isinstance(v, (int, float))]
+        val: float
         if agg_func == "count":
             val = len(vals)
         elif not nums:

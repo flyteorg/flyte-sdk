@@ -83,6 +83,6 @@ def devbox(ctx: click.Context, image: str | None, dev: bool, gpu: bool):
     if image is None:
         image = _DEFAULT_DEVBOX_GPU_IMAGE if gpu else _DEFAULT_DEVBOX_IMAGE
 
-    count("cli.command", command="start_devbox")
+    count("cli.command", tags={"command": "start_devbox"})
     log_format = getattr(ctx.obj, "log_format", "console") if ctx.obj else "console"
     launch_devbox(image, dev, gpu=gpu, log_format=log_format)

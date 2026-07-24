@@ -1,4 +1,5 @@
 from functools import partial
+from typing import cast
 
 import flyte
 
@@ -31,7 +32,8 @@ def main():
 
     task_with_constant_correct = partial(my_task_correct, constant_param=constant_param, name="daniel")
     # This should work, as batch_id is the first parameter and the only one left for mapping
-    v = list(flyte.map(task_with_constant_correct, compounds, return_exceptions=False))
+    # With return_exceptions=False failures raise, so every element is a str.
+    v = cast(list[str], list(flyte.map(task_with_constant_correct, compounds, return_exceptions=False)))
     print("\n".join(v), flush=True)
 
     try:

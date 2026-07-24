@@ -46,7 +46,7 @@ async def health_check() -> dict[str, str]:
 @env.app.get("/items/{item_id}")
 async def read_item(item_id: int, q: str | None = None) -> dict:
     """Example endpoint with path and query parameters."""
-    result = {"item_id": item_id}
+    result: dict[str, int | str] = {"item_id": item_id}
     if q:
         result["q"] = q
     return result

@@ -7,6 +7,7 @@ import threading
 import typing
 
 import fsspec
+import fsspec.asyn
 import fsspec.callbacks
 import fsspec.utils
 from fsspec.asyn import AsyncFileSystem
@@ -126,7 +127,7 @@ class FlyteFS(AsyncFileSystem):
         """
         raise NotImplementedError("FlyteFS currently doesn't support downloading files.")
 
-    async def _put_file(
+    async def _put_file(  # ty: ignore[invalid-method-override]
         self,
         lpath,
         rpath,
@@ -145,7 +146,7 @@ class FlyteFS(AsyncFileSystem):
         if _PREFIX_KEY in kwargs:
             prefix = kwargs[_PREFIX_KEY]
 
-        native_uri = await remote.upload_dir(pathlib.Path(lpath), prefix=prefix)
+        native_uri = await remote.upload_dir(pathlib.Path(lpath), prefix=prefix)  # ty: ignore[invalid-await]
         return native_uri
 
     @staticmethod
@@ -222,7 +223,7 @@ class FlyteFS(AsyncFileSystem):
             md5_bytes, _, content_length = hash_file(p.resolve())
             return {str(p.absolute()): (md5_bytes, content_length)}
 
-    async def _put(
+    async def _put(  # ty: ignore[invalid-method-override]
         self,
         lpath,
         rpath,
@@ -253,7 +254,7 @@ class FlyteFS(AsyncFileSystem):
     def exists(self, path, **kwargs):
         raise NotImplementedError("flyte file system currently can't check if a file exists.")
 
-    def _open(
+    def _open(  # ty: ignore[invalid-method-override]
         self,
         path,
         mode="wb",

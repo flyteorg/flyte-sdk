@@ -14,7 +14,6 @@ from typing import (
     List,
     Optional,
     Type,
-    TypeVar,
     Union,
 )
 
@@ -23,15 +22,19 @@ from fsspec.asyn import AsyncFileSystem
 from fsspec.utils import get_protocol
 from mashumaro.types import SerializableType
 from pydantic import BaseModel, PrivateAttr, model_validator
+from typing_extensions import TypeVar
 
 import flyte.storage as storage
 from flyte._context import internal_ctx
 from flyte._logging import logger
 from flyte.io._file import File
+from flyte.syncify import syncify
 from flyte.types import TypeEngine, TypeTransformer, TypeTransformerFailedError
 
-# Type variable for the directory format
-T = TypeVar("T")
+# Type variable for the directory format. Defaults to Any (PEP 696) so that calls that
+# cannot bind the format — e.g. `Dir(path=...)` or `Dir.new_remote()` — type-check
+# without an explicit annotation on the assignment target.
+T = TypeVar("T", default=Any)
 
 # Sentinel path stamped onto :class:`EmptyDir` instances. Anything created via ``Dir.empty()``
 # or ``EmptyDir()`` carries this path; ``Dir.is_empty`` detects it. We deliberately use a path
@@ -270,9 +273,9 @@ class Dir(BaseModel, Generic[T], SerializableType):
         self._lazy_uploader = lazy_uploader
 
     @classmethod
-    def _deserialize(cls, file_dump: Dict[str, Optional[str]]) -> Dir:
+    def _deserialize(cls, value: Dict[str, Optional[str]]) -> Dir:
         """Internal: Deserialize Dir from dictionary. Not intended for direct use."""
-        return cls.model_validate(file_dump)
+        return cls.model_validate(value)
 
     @classmethod
     def schema_match(cls, incoming: dict):
@@ -596,9 +599,12 @@ class Dir(BaseModel, Generic[T], SerializableType):
                 shutil.copytree(self.path, local_dest, dirs_exist_ok=True)
                 return local_dest
 
-        fs = storage.get_underlying_filesystem(path=self.path)
-        fs.get(self.path, local_dest, recursive=True)
-        return local_dest
+        # Route through the obstore-aware storage.get (via syncify) rather than the raw fsspec
+        # fs.get(..., recursive=True). For obstore-backed filesystems the raw call resolves the
+        # directory prefix as a single-object GET and fails with "Object at location <uri> not
+        # found", whereas storage.get lists + downloads the prefix contents. This mirrors the
+        # async download() above.
+        return syncify(storage.get)(self.path, local_dest, recursive=True)
 
     @classmethod
     async def from_local(

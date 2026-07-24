@@ -13,7 +13,7 @@ env = flyte.app.AppEnvironment(
     port=8080,
 )
 
-state = {}
+state: dict[str, str] = {}
 
 
 @env.on_startup

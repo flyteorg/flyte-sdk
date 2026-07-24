@@ -30,9 +30,9 @@ def extract_source(func: Callable) -> Tuple[str, List[str]]:
     Raises `TypeError` for generator functions.
     """
     if inspect.isgeneratorfunction(func):
-        raise TypeError(f"Sandboxed tasks cannot be generators: {func.__qualname__}")
+        raise TypeError(f"Sandboxed tasks cannot be generators: {getattr(func, '__qualname__')}")
     if inspect.isasyncgenfunction(func):
-        raise TypeError(f"Sandboxed tasks cannot be async generators: {func.__qualname__}")
+        raise TypeError(f"Sandboxed tasks cannot be async generators: {getattr(func, '__qualname__')}")
 
     source = inspect.getsource(func)
     dedented = textwrap.dedent(source)
@@ -57,7 +57,7 @@ def extract_source(func: Callable) -> Tuple[str, List[str]]:
 
     # Append trailing call: func_name(param1, param2, ...)
     # For async functions, wrap in `await` so Monty drives the coroutine.
-    func_name = func.__name__
+    func_name = getattr(func, "__name__")
     args_str = ", ".join(input_names)
     call = f"{func_name}({args_str})"
     if inspect.iscoroutinefunction(func):

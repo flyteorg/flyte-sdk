@@ -24,8 +24,13 @@ fmt:
 mypy:
 	uv run python -m mypy --config-file pyproject.toml \
 		src/ \
-		examples/basics/hello.py \
-		examples/basics/hello_v2.py
+		examples/
+
+.PHONY: ty
+ty:
+	uv run ty check \
+		src/ \
+		examples/
 
 .PHONY: uvlock
 uvlock:

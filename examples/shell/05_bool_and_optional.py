@@ -14,6 +14,7 @@ Run locally::
 """
 
 import sys
+from typing import Literal
 
 import flyte
 from flyte.extras import shell
@@ -25,13 +26,13 @@ report = shell.create(
     name="report",
     image="debian:12-slim",
     cache="disable",
-    inputs={
+    inputs={  # ty: ignore[invalid-argument-type]  # create() annotates inputs as dict[str, Type]; optionals are supported at runtime
         "title": str,
         # Booleans — emitted only when True.
         "verbose": bool,
         "case_insensitive": bool,
         # Optional scalar — emitted only when set.
-        "threads": int | None,
+        "threads": int | None,  # type: ignore[dict-item]  # create() annotates inputs as dict[str, Type]; optionals are supported at runtime
     },
     outputs={"argv": Stdout(type=str)},
     flag_aliases={
@@ -65,7 +66,7 @@ async def bool_demo() -> tuple[str, str, str]:
 
 if __name__ == "__main__":
     flyte.init_from_config()
-    mode = "remote" if (len(sys.argv) > 1 and sys.argv[1] == "remote") else "local"
+    mode: Literal["local", "remote"] = "remote" if (len(sys.argv) > 1 and sys.argv[1] == "remote") else "local"
     run = flyte.with_runcontext(mode=mode).run(bool_demo)
     print(run.url if mode == "remote" else run)
     print(f"Outputs:\n{run.outputs()}")

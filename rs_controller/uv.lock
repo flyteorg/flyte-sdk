@@ -14,6 +14,7 @@ exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for 
 exclude-newer-span = "P5D"
 
 [options.exclude-newer-package]
+flyteplugins-union = { timestamp = "0001-01-01T00:00:00Z", span = "PT0S" }
 flyteidl2 = { timestamp = "0001-01-01T00:00:00Z", span = "PT0S" }
 flyte-controller-base = { timestamp = "0001-01-01T00:00:00Z", span = "PT0S" }
 
@@ -43,11 +44,11 @@ dependencies = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "flyteidl2", specifier = "==2.0.26" }]
+requires-dist = [{ name = "flyteidl2", specifier = "==2.0.29" }]
 
 [[package]]
 name = "flyteidl2"
-version = "2.0.26"
+version = "2.0.29"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "googleapis-common-protos" },
@@ -56,7 +57,7 @@ dependencies = [
     { name = "protovalidate" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/fb/1a/b89902f358bc243eebcae549da9b11d3964d8f0f2e998f5756c2caccaa47/flyteidl2-2.0.26-py3-none-any.whl", hash = "sha256:7ac8c7e3fabaabb8dbf6db330c3895a97d960aba2edc48ea6b5efbcae56ed7b5", size = 350021, upload-time = "2026-06-24T18:35:01.794Z" },
+    { url = "https://files.pythonhosted.org/packages/8f/3e/5eaa4c72d462c82ec74ce3f43c8997259bad054a4ef3ba7b66a0413e46d8/flyteidl2-2.0.29-py3-none-any.whl", hash = "sha256:92dd4b4dababf72c792ec8d0edb7a2739367ad21917b073ea9dfbe1402dbaa00", size = 352992, upload-time = "2026-07-22T03:35:21.517Z" },
 ]
 
 [[package]]

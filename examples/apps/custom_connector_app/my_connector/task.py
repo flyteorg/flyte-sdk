@@ -42,5 +42,5 @@ class BatchJobTask(AsyncConnectorExecutorMixin, TaskTemplate):
         )
         self.plugin_config = plugin_config
 
-    def custom_config(self, sctx: SerializationContext) -> Optional[Dict[str, Any]]:
+    def custom_config(self, sctx: SerializationContext) -> Dict[str, Any]:
         return {"timeout_seconds": self.plugin_config.timeout_seconds}

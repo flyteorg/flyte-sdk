@@ -6,8 +6,10 @@ import pathlib
 import shutil
 import threading
 from contextlib import nullcontext
-from typing import Any, Callable, Protocol, Tuple, TypeVar
+from types import FunctionType
+from typing import Any, Callable, Protocol, Tuple, TypeVar, cast
 
+from flyteidl2.core import interface_pb2
 from flyteidl2.task import task_definition_pb2
 
 import flyte.errors
@@ -56,7 +58,7 @@ def _stage_prev_checkpoint_for_local_retry(checkpoint_paths: CheckpointPaths | N
 class ControllerProtocol(Protocol):
     async def submit(self, _task: "TaskTemplate", *args, **kwargs) -> Any: ...
     def submit_sync(self, _task: "TaskTemplate", *args, **kwargs) -> concurrent.futures.Future: ...
-    async def finalize_parent_action(self, action: "ActionID"): ...
+    async def finalize_parent_action(self, action_id: "ActionID"): ...
     async def get_action_outputs(
         self, _interface: "NativeInterface", _func: Callable, *args, **kwargs
     ) -> Tuple["TraceInfo", bool]: ...
@@ -135,7 +137,7 @@ class LocalController(ControllerProtocol):
         with _ctx:
             inputs = await convert.convert_from_native_to_inputs(_task.native_interface, *args, **kwargs)
         inputs_hash = convert.generate_inputs_hash_from_proto(inputs.proto_inputs)
-        task_interface = transform_native_to_typed_interface(_task.interface)
+        task_interface = cast(interface_pb2.TypedInterface, transform_native_to_typed_interface(_task.interface))
 
         task_call_seq = self._sequencer.next_seq(_task, tctx.action.name)
         sub_action_id, sub_action_output_path = convert.generate_sub_action_id_and_output_path(
@@ -149,7 +151,7 @@ class LocalController(ControllerProtocol):
         task_cache = cache_from_request(_task.cache)
         cache_enabled = task_cache.is_enabled()
         if isinstance(_task, AsyncFunctionTaskTemplate):
-            version_parameters = VersionParameters(func=_task.func, image=_task.image)
+            version_parameters = VersionParameters(func=cast(Callable, _task.func), image=_task.image)
         else:
             version_parameters = VersionParameters(func=None, image=_task.image)
         cache_version = task_cache.get_version(version_parameters)
@@ -230,7 +232,7 @@ class LocalController(ControllerProtocol):
         )
 
         if out is None:
-            retries = _task.retries.count if hasattr(_task.retries, "count") else int(_task.retries)
+            retries = cast(int, _task.retries.count) if hasattr(_task.retries, "count") else int(_task.retries)
             max_attempts = retries + 1
             err = None
             for attempt_num in range(1, max_attempts + 1):
@@ -315,7 +317,7 @@ class LocalController(ControllerProtocol):
 
         return self._runner_map[name].get_run_future(coro)
 
-    async def finalize_parent_action(self, action: ActionID):
+    async def finalize_parent_action(self, action_id: ActionID):
         pass
 
     async def stop(self):
@@ -347,11 +349,12 @@ class LocalController(ControllerProtocol):
                 converted_inputs = await convert.convert_from_native_to_inputs(_interface, *args, **kwargs)
             assert converted_inputs
 
+        func_name = cast(FunctionType, _func).__name__
         inputs_hash = convert.generate_inputs_hash_from_proto(converted_inputs.proto_inputs)
         invoke_seq_num = self._sequencer.next_seq(_func, tctx.action.name)
         action_id, action_output_path = convert.generate_sub_action_id_and_output_path(
             tctx,
-            _func.__name__,
+            func_name,
             inputs_hash,
             invoke_seq_num,
         )
@@ -369,7 +372,7 @@ class LocalController(ControllerProtocol):
             task_action = tctx.task_action or tctx.action
             self._recorder.record_start(
                 action_id=action_id.name,
-                task_name=_func.__name__,
+                task_name=func_name,
                 parent_id=task_action.name,
                 inputs=native_inputs,
                 output_path=action_output_path,
@@ -377,7 +380,7 @@ class LocalController(ControllerProtocol):
 
         return (
             TraceInfo(
-                name=_func.__name__,
+                name=func_name,
                 action=action_id,
                 interface=_interface,
                 inputs_path=action_output_path,

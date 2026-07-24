@@ -14,6 +14,8 @@
 
 import asyncio
 import tempfile
+from collections.abc import Coroutine
+from typing import Any
 
 import joblib
 import pandas as pd
@@ -152,13 +154,13 @@ async def train_distributed_random_forest(dataset_dir: Dir, n_estimators: int) -
     of trained decision tree models.
     """
 
-    decision_tree_files: list[File] = []
+    decision_tree_coros: list[Coroutine[Any, Any, File]] = []
 
     with flyte.group(f"parallel-training-{n_estimators}-decision-trees"):
         for i in range(n_estimators):
-            decision_tree_files.append(train_decision_tree(dataset_dir, i))
+            decision_tree_coros.append(train_decision_tree(dataset_dir, i))
 
-        decision_tree_files = await asyncio.gather(*decision_tree_files)
+        decision_tree_files = await asyncio.gather(*decision_tree_coros)
 
     decision_trees = await asyncio.gather(*[load_decision_tree(file) for file in decision_tree_files])
 
@@ -178,13 +180,13 @@ async def evaluate_random_forest(
     """Evaluate the random forest one partition of the dataset."""
 
     with random_forest.open_sync() as f:
-        random_forest = joblib.load(f)
+        random_forest_model = joblib.load(f)
 
     data_partition = await get_partition(dataset_dir, dataset_index)
     y = data_partition["target"]
     X = data_partition.drop(columns=["target"])
 
-    predictions = random_forest.predict(X)
+    predictions = random_forest_model.predict(X)
     accuracy = accuracy_score(y, predictions)
     print(f"Accuracy: {accuracy}")
     return accuracy

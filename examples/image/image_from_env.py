@@ -46,6 +46,8 @@ build_env = flyte.TaskEnvironment(
 
 image_env_var = "BASE_IMAGE"
 image_uri = os.getenv(image_env_var)
+if image_uri is None:
+    raise ValueError(f"The {image_env_var} environment variable must be set (see module docstring)")
 
 # This task environment uses the BASE_IMAGE environment variable to set the image.
 env = flyte.TaskEnvironment(

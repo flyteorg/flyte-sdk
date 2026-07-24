@@ -314,6 +314,25 @@ class ImageBuildEngine:
         img_builder = ImageBuildEngine._get_builder(builder)
         logger.debug(f"Using `{img_builder}` image builder to build image.")
 
+        # Fail fast, before any docker build, when a to-be-built image has no push registry.
+        # The default base registry (ghcr.io/flyteorg) is pullable but not pushable by end
+        # users, so silently defaulting to it there produces a 403 on push (or a slow
+        # ImagePullBackOff at run time). Only the local builder pushes from the client; the
+        # remote builder resolves the registry server-side. We reach here only when the image
+        # does not already exist and must actually be built.
+        if str(builder or "local") == "local" and image._is_cloned and not image.registry:
+            from flyte.errors import ImageBuildError
+
+            raise ImageBuildError(
+                f"Cannot build image '{image.name or image.uri}': no container registry is configured to push to. "
+                "The default base registry (ghcr.io/flyteorg) is read-only for pulls and cannot be pushed to. "
+                "Set a push registry via any of:\n"
+                "  - add `registry: <your-registry>` under the `image:` section of your config.yaml\n"
+                "  - re-run `flyte create config` and add `--registry <your-registry>`\n"
+                "  - set the FLYTE_IMAGE_REGISTRY environment variable to <your-registry>\n"
+                "  - flyte.Image(...): pass registry='<your-registry>' (e.g. registry='docker.io/<user>')"
+            )
+
         result = await img_builder.build_image(image, dry_run=dry_run, wait=wait, force=force)
 
         # Persist the freshly built image URI so future runs skip the registry check.

@@ -13,6 +13,7 @@ from flyteidl2.common import identifier_pb2, list_pb2
 
 from flyte._initialize import ensure_client, get_client, get_init_config
 from flyte._logging import logger
+from flyte._sentry import track_operation
 from flyte.syncify import syncify
 
 from ._common import ToJSONMixin, filtering, sorting
@@ -33,6 +34,28 @@ def _is_deactivated(state: app_definition_pb2.Status.DeploymentStatus) -> bool:
         app_definition_pb2.Status.DeploymentStatus.DEPLOYMENT_STATUS_UNASSIGNED,
         app_definition_pb2.Status.DeploymentStatus.DEPLOYMENT_STATUS_STOPPED,
     ]
+
+
+_DEPLOYMENT_STATUS_PREFIX = "DEPLOYMENT_STATUS_"
+# The backend filters apps on this field by enum *name* (e.g. "DEPLOYMENT_STATUS_ACTIVE"),
+# not the integer enum value.
+_STATUS_FILTER_FIELD = "status_phase"
+
+
+def _status_filter(in_status: str | Tuple[str, ...]) -> list_pb2.Filter:
+    statuses = (in_status,) if isinstance(in_status, str) else in_status
+    names = []
+    for s in statuses:
+        name = s.upper()
+        if not name.startswith(_DEPLOYMENT_STATUS_PREFIX):
+            name = f"{_DEPLOYMENT_STATUS_PREFIX}{name}"
+        app_definition_pb2.Status.DeploymentStatus.Value(name)  # raises ValueError on unknown status
+        names.append(name)
+    return list_pb2.Filter(
+        function=list_pb2.Filter.Function.VALUE_IN if len(names) > 1 else list_pb2.Filter.Function.EQUAL,
+        field=_STATUS_FILTER_FIELD,
+        values=names,
+    )
 
 
 class App(ToJSONMixin):
@@ -369,13 +392,25 @@ class App(ToJSONMixin):
         created_by_subject: str | None = None,
         sort_by: Tuple[str, Literal["asc", "desc"]] | None = None,
         limit: int = 100,
+        in_status: str | Tuple[str, ...] | None = None,
     ) -> AsyncIterator[App]:
+        """
+        List all apps, optionally filtered.
+
+        :param created_by_subject: Only return apps created by this subject.
+        :param sort_by: Sorting criteria, in the format (field, order).
+        :param limit: Maximum number of apps to return.
+        :param in_status: Filter apps by one or more deployment statuses, e.g. "active" or
+            ("active", "failed"). Accepts short names (case-insensitive) or full
+            DEPLOYMENT_STATUS_* names.
+        """
         ensure_client()
         cfg = get_init_config()
         i = 0
         token = None
         sort_pb2 = sorting(sort_by)
-        filters = filtering(created_by_subject)
+        extra_filters = [_status_filter(in_status)] if in_status else []
+        filters = filtering(created_by_subject, *extra_filters)
         project = None
         if cfg.project:
             project = identifier_pb2.ProjectIdentifier(
@@ -410,23 +445,24 @@ class App(ToJSONMixin):
     @classmethod
     async def create(cls, app: app_definition_pb2.App) -> App:
         ensure_client()
-        try:
-            resp = await get_client().app_service.create(app_payload_pb2.CreateRequest(app=app))
-            created_app = cls(resp.app)
-            logger.info(f"Deployed app {created_app.name} with revision {created_app.revision}")
-            return created_app
-        except ConnectError as e:
-            if e.code in [Code.ABORTED, Code.ALREADY_EXISTS]:
-                if e.code == Code.ALREADY_EXISTS:
-                    logger.warning(f"App {app.metadata.id.name} already exists, updating...")
-                elif e.code == Code.ABORTED:
-                    logger.warning(f"Create App {app.metadata.id.name} was aborted on server, check state!")
-                return await App.replace.aio(
-                    name=app.metadata.id.name,
-                    labels=app.metadata.labels,
-                    updated_app_spec=app.spec,
-                    reason="User requested serve from sdk",
-                    project=app.metadata.id.project,
-                    domain=app.metadata.id.domain,
-                )
-            raise
+        with track_operation("deploy_app"):
+            try:
+                resp = await get_client().app_service.create(app_payload_pb2.CreateRequest(app=app))
+                created_app = cls(resp.app)
+                logger.info(f"Deployed app {created_app.name} with revision {created_app.revision}")
+                return created_app
+            except ConnectError as e:
+                if e.code in [Code.ABORTED, Code.ALREADY_EXISTS]:
+                    if e.code == Code.ALREADY_EXISTS:
+                        logger.warning(f"App {app.metadata.id.name} already exists, updating...")
+                    elif e.code == Code.ABORTED:
+                        logger.warning(f"Create App {app.metadata.id.name} was aborted on server, check state!")
+                    return await App.replace.aio(
+                        name=app.metadata.id.name,
+                        labels=app.metadata.labels,
+                        updated_app_spec=app.spec,
+                        reason="User requested serve from sdk",
+                        project=app.metadata.id.project,
+                        domain=app.metadata.id.domain,
+                    )
+                raise

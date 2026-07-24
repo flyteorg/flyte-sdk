@@ -62,7 +62,7 @@ def _trackio_run(**decorator_kwargs):
 
     flyte_ctx = flyte.ctx()
 
-    if flyte_ctx is None:
+    if not flyte_ctx:
         run = trackio.init(**decorator_kwargs)
 
         try:

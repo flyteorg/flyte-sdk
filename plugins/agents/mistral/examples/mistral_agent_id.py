@@ -17,10 +17,8 @@ Run:  flyte run mistral_agent_id.py city_agent --question "What's the weather an
 """
 
 import os
-from pathlib import Path
 
 import flyte
-from flyte._image import PythonWheels
 
 from flyteplugins.agents.mistral import run_agent, tool
 
@@ -28,22 +26,8 @@ env = flyte.TaskEnvironment(
     "mistral-agent-id",
     resources=flyte.Resources(cpu=1),
     secrets=[flyte.Secret(key="mistral_api_key", as_env_var="MISTRAL_API_KEY")],
-    image=(
-        flyte.Image.from_debian_base(name="mistral-agent-id")
-        .clone(
-            addl_layer=PythonWheels(
-                wheel_dir=Path(__file__).parent.parent / "dist",
-                package_name="flyteplugins-agents-core",
-                pre=True,
-            ),
-        )
-        .clone(
-            addl_layer=PythonWheels(
-                wheel_dir=Path(__file__).parent.parent / "dist",
-                package_name="flyteplugins-agents-mistral",
-                pre=True,
-            ),
-        )
+    image=flyte.Image.from_debian_base(name="mistral-agent-id").with_local_v2_plugins(
+        ["flyteplugins-agents-core", "flyteplugins-agents-mistral"]
     ),
 )
 

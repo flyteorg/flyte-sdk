@@ -54,7 +54,7 @@ class Context:
             raise ValueError("Cannot create a new context without contextdata.")
         self._data = data
         self._id = id(self)  # Immutable unique identifier
-        self._token = None  # Context variable token to restore the previous context
+        self._token: Optional[contextvars.Token[Context]] = None
 
     @property
     def data(self) -> ContextData:
@@ -155,9 +155,10 @@ class Context:
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Exit the context, restoring the previous context."""
         try:
+            assert self._token is not None
             root_context_var.reset(self._token)
         except Exception as e:
-            logger.warn(f"Failed to reset context: {e}")
+            logger.warning(f"Failed to reset context: {e}")
             raise e
 
     async def __aenter__(self):
@@ -167,6 +168,7 @@ class Context:
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async version of context exit."""
+        assert self._token is not None
         root_context_var.reset(self._token)
 
     def __repr__(self):
@@ -180,15 +182,25 @@ class Context:
 root_context_var = contextvars.ContextVar("root", default=Context(data=ContextData()))
 
 
-def ctx() -> Optional[TaskContext]:
+def ctx() -> TaskContext:
     """
-    Returns flyte.models.TaskContext if within a task context, else None
+    Returns the current flyte.models.TaskContext when running inside a task.
+
+    Outside a task execution it returns a falsy null context whose fields are all None,
+    so task code can read ``flyte.ctx().<field>`` without a None-guard. To detect whether
+    a task context is active, rely on truthiness: ``if flyte.ctx(): ...``.
+
     Note: Only use this in task code and not module level.
 
     Use :attr:`flyte.models.TaskContext.checkpoint` for durable task checkpointing
     (object-store prefixes from the runtime).
     """
-    return internal_ctx().data.task_context
+    from flyte.models import NULL_TASK_CONTEXT
+
+    tctx = internal_ctx().data.task_context
+    if tctx is None:
+        return NULL_TASK_CONTEXT
+    return tctx
 
 
 def internal_ctx() -> Context:

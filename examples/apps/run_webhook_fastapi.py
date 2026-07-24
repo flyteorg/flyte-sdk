@@ -15,11 +15,13 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(level
 
 import os
 from contextlib import asynccontextmanager
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException
 from starlette import status
 
 import flyte
+import flyte.app
 import flyte.errors
 import flyte.remote as remote
 from flyte.app.extras import FastAPIAppEnvironment, FastAPIPassthroughAuthMiddleware
@@ -114,6 +116,7 @@ async def run_task(
     logger.info(f"Running task: {project}/{domain}/{name} version={version}")
 
     try:
+        auto_version: Literal["latest"] | None
         if version is None:
             auto_version = "latest"
         else:

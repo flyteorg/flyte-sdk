@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
 import os
 import pathlib
 import sys
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, cast
 
 import cloudpickle
 import rich.repr
@@ -14,15 +15,19 @@ import rich.repr
 from flyte.models import ActionID, NativeInterface, RawDataPath, SerializationContext, TaskContext
 from flyte.syncify import syncify
 
+from ._constants import FLYTE_SYS_PATH
 from ._environment import Environment
 from ._image import Image
 from ._initialize import ensure_client, get_client, get_init_config, requires_initialization
 from ._logging import logger
+from ._sentry import track_operation
 from ._status import status
 from ._task import TaskTemplate
 from ._task_environment import TaskEnvironment
 
 if TYPE_CHECKING:
+    from types import CodeType
+
     from flyteidl2.core import interface_pb2
     from flyteidl2.task import task_definition_pb2
 
@@ -162,6 +167,23 @@ class Deployment:
         return tuples
 
 
+def _with_local_sys_paths(task: TaskTemplate, root_dir: pathlib.Path) -> TaskTemplate:
+    """Return a task copy whose runtime env mirrors local imports under ``root_dir``."""
+    if not get_init_config().sync_local_sys_paths:
+        return task
+
+    root_dir_abs = pathlib.Path(root_dir).resolve()
+    env_vars = dict(task.env_vars or {})
+    env_vars[FLYTE_SYS_PATH] = ":".join(
+        f"./{pathlib.Path(path).relative_to(root_dir_abs)}"
+        for path in sys.path
+        if pathlib.Path(path).is_relative_to(root_dir_abs)
+    )
+    task_copy = copy.copy(task)
+    task_copy.env_vars = env_vars
+    return task_copy
+
+
 async def _deploy_task(
     task: TaskTemplate, serialization_context: SerializationContext, dryrun: bool = False
 ) -> DeployedTask:
@@ -180,6 +202,8 @@ async def _deploy_task(
     from ._internal.runtime.task_serde import lookup_image_in_cache, translate_task_to_wire
     from ._internal.runtime.trigger_serde import offload_trigger_inputs, to_task_trigger
 
+    assert serialization_context.root_dir is not None
+    task = _with_local_sys_paths(task, serialization_context.root_dir)
     assert task.parent_env_name is not None
     if isinstance(task.image, Image):
         image_uri: str | None = lookup_image_in_cache(serialization_context, task.parent_env_name, task.image)
@@ -264,20 +288,21 @@ async def _deploy_task(
             # else: no data to offload, or zero trust off — keep the inline inputs to_task_trigger set.
             deployable_triggers.append(task_trigger)
 
-        try:
-            await get_client().task_service.deploy_task(
-                task_service_pb2.DeployTaskRequest(
-                    task_id=task_id,
-                    spec=spec,
-                    triggers=deployable_triggers,
+        with track_operation("deploy_task"):
+            try:
+                await get_client().task_service.deploy_task(
+                    task_service_pb2.DeployTaskRequest(
+                        task_id=task_id,
+                        spec=spec,
+                        triggers=deployable_triggers,
+                    )
                 )
-            )
-            status.success(f"Deployed task {task.name} (version {task_id.version})")
-        except ConnectError as e:
-            if e.code == Code.ALREADY_EXISTS:
-                status.info(f"Task {task.name} already exists, skipping")
-                return DeployedTask(spec, deployable_triggers)
-            raise
+                status.success(f"Deployed task {task.name} (version {task_id.version})")
+            except ConnectError as e:
+                if e.code == Code.ALREADY_EXISTS:
+                    status.info(f"Task {task.name} already exists, skipping")
+                    return DeployedTask(spec, deployable_triggers)
+                raise
 
         return DeployedTask(spec, deployable_triggers)
     except Exception as e:
@@ -309,10 +334,10 @@ def _get_documentation_entity(task_template: TaskTemplate) -> task_definition_pb
     if docstring and docstring.long_description:
         long_desc = parse_description(docstring.long_description, 2048)
     if hasattr(task_template, "func") and hasattr(task_template.func, "__code__") and task_template.func.__code__:
-        line_number = (
-            task_template.func.__code__.co_firstlineno + 1
-        )  # The function definition line number is located at the line after @env.task decorator
-        file_path = task_template.func.__code__.co_filename
+        func_code = cast("CodeType", task_template.func.__code__)
+        # The function definition line number is located at the line after @env.task decorator
+        line_number = func_code.co_firstlineno + 1
+        file_path = func_code.co_filename
         git_status = GitStatus.from_current_repo()
         if git_status.is_valid:
             # Build git host url

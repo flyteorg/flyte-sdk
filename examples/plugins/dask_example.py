@@ -9,7 +9,25 @@ import flyte.remote
 import flyte.storage
 from flyte import Resources
 
-image = flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages("flyteplugins-dask>=2.0.0b54")
+# The scheduler and worker pods inherit this image (Scheduler()/WorkerGroup() below leave
+# image unset), and the Dask K8s operator launches them via the standalone `dask-scheduler`
+# and `dask-worker` commands. Those console scripts were removed from `distributed` in
+# 2026.6.0 (replaced by the `dask scheduler` / `dask worker` subcommands), so a newer
+# dask[distributed] makes the cluster pods crash-loop with
+# "dask-scheduler: executable file not found in $PATH". Pin below 2026.6.0 to keep them.
+# (flyteplugins-dask caps this itself as of the next release; the explicit pin here keeps
+# the example working against the currently-published, un-capped plugin.)
+#
+# connectrpc<0.11 keeps the runtime from hitting "'Headers' object is not callable":
+# connectrpc 0.11 turned RequestContext.request_headers into a property, which the flyte
+# auth interceptor (method-call style) can't use. flyte>=2.5.10 caps this too, but pinning
+# here guarantees a clean rebuild picks up a compatible connectrpc.
+image = flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages(
+    "flyteplugins-dask",
+    "dask[distributed]<2026.6.0",
+    "connectrpc<0.11",
+    "bokeh",
+)
 
 dask_config = Dask(
     scheduler=Scheduler(),

@@ -37,7 +37,6 @@ RETRIES = 3
 async def train_linear(epochs: int = 3) -> float:
     assert epochs > RETRIES
     ctx = flyte.ctx()
-    assert ctx is not None
     cp = ctx.checkpoint
     assert cp is not None
 

@@ -377,7 +377,7 @@ async def scale_test_orchestrator(n: int = 100) -> ScaleTestReport:
     failed_workers: list[FailedWorker] = []
 
     for i, result in enumerate(results):
-        if isinstance(result, Exception):
+        if isinstance(result, BaseException):
             failed_workers.append(FailedWorker(worker_id=i, error=str(result)))
             print(f"Worker {i} FAILED: {result}")
         else:

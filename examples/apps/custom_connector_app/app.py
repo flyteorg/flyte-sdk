@@ -11,7 +11,7 @@ connector = flyte.app.ConnectorEnvironment(
     name="batch-job-connector",
     image=image,
     resources=flyte.Resources(cpu="1", memory="1Gi"),
-    include=["my_connector"],
+    include=("my_connector",),
 )
 
 if __name__ == "__main__":
