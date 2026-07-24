@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any, Tuple, Union
 
 import rich_click as click
+from flyteidl2.app import app_definition_pb2
 from rich.pretty import pretty_repr
 
 import flyte.remote as remote
@@ -698,6 +699,19 @@ def trigger(
 @click.argument("name", type=str, required=False)
 @click.option("--limit", type=int, default=100, help="Limit the number of apps to fetch when listing.")
 @click.option("--only-mine", is_flag=True, default=False, help="Show only apps created by the current user (you).")
+@click.option(
+    "--status",
+    type=click.Choice(
+        [
+            n[len("DEPLOYMENT_STATUS_") :].lower()
+            for n in app_definition_pb2.Status.DeploymentStatus.keys()
+            if n != "DEPLOYMENT_STATUS_UNSPECIFIED"
+        ],
+        case_sensitive=False,
+    ),
+    default=None,
+    help="Filter apps by deployment status.",
+)
 @click.pass_obj
 def app(
     cfg: common.CLIConfig,
@@ -706,6 +720,7 @@ def app(
     domain: str | None = None,
     limit: int = 100,
     only_mine: bool = False,
+    status: str | None = None,
 ):
     """
     Get a list of all apps, or details of a specific app by name.
@@ -727,7 +742,7 @@ def app(
         console.print(
             common.format(
                 "Apps",
-                remote.App.listall(limit=limit, created_by_subject=subject),
+                remote.App.listall(limit=limit, created_by_subject=subject, in_status=status),
                 cfg.output_format,
             )
         )
