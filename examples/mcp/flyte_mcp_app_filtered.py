@@ -42,7 +42,8 @@ Usage:
     configuring Claude Code to launch the server via `uvx` (process-based setup).
 
     Add as a local stdio MCP server:
-    $ claude mcp add --transport stdio flyte-mcp-filtered -- uvx --with "flyte[mcp]" flyte-mcp
+    $ claude mcp add --transport stdio flyte-mcp-filtered -- \
+      uvx --from "flyte[mcp]" flyte-mcp --transport stdio
 
     If you deploy this app remotely (so it has a public base URL), use that URL instead.
     With default ``transport="streamable-http"`` and ``mcp_mount_path="/flyte-mcp"``, use the
@@ -67,7 +68,10 @@ Usage:
       "mcp": {
         "flyte-mcp-filtered": {
           "type": "local",
-          "command": ["uvx", "--with", "flyte[mcp]", "flyte-mcp", "--tool-groups", "task,run,search"],
+          "command": [
+            "uvx", "--from", "flyte[mcp]", "flyte-mcp",
+            "--transport", "stdio", "--tool-groups", "task,run,search"
+          ],
           "enabled": true
         }
       }
