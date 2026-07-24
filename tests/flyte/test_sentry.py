@@ -298,9 +298,26 @@ def test_capture_exception_skips_oserror_no_space_left():
     init_mock.assert_not_called()
 
 
+def test_capture_exception_skips_oserror_address_in_use():
+    """FLYTE-SDK-53/57: OSError(EADDRINUSE) from asyncio.start_server in the PKCE
+    authenticator's local OAuth callback server (the redirect-URI port is already
+    bound by a stale/concurrent login or another local process) is a user
+    environment problem, not an SDK bug. It can surface bare or wrapped through
+    RuntimeSystemError('Failed to get signed url...')."""
+    bare = OSError(
+        errno.EADDRINUSE,
+        "error while attempting to bind on address ('127.0.0.1', 53593): address already in use",
+    )
+    wrapped = _wrap_as_upload_system_error(OSError(errno.EADDRINUSE, "address already in use", "127.0.0.1"))
+    for err in (bare, wrapped):
+        with mock.patch.object(_sentry, "init") as init_mock:
+            _sentry.capture_exception(err)
+        init_mock.assert_not_called()
+
+
 def test_capture_exception_still_reports_other_oserror():
-    """OSError with errnos other than ENOSPC may legitimately indicate SDK bugs
-    and should still be reported to Sentry."""
+    """OSError with errnos other than the user-environment set (ENOSPC/EADDRINUSE)
+    may legitimately indicate SDK bugs and should still be reported to Sentry."""
     err = PermissionError(errno.EACCES, "Permission denied", "/some/path")
     with (
         mock.patch.object(_sentry, "init"),
