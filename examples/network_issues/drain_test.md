@@ -18,6 +18,7 @@ flyte -vv -c ~/.flyte/dogfood.staging.yaml update queue drain-test-a1 --activate
 ---
 
 **Drain a queue mid-workload**
+
 Make sure it stays DRAINING until last action completes and finalizes → DRAINED.
 Watch queue_finalizes go 0 last.
 
@@ -37,12 +38,9 @@ flyte -c ~/.flyte/dogfood.staging.yaml run -p flytesnacks -d development network
 https://dogfood.cloud-staging.union.ai/v2/domain/development/project/flytesnacks/runs/uhggbqc946m8h4bt2hws
 Run is created, but is insta-aborted.  This is okay.  I don't expect an immediate run creation failure necessarily.
 
----
-
 There were what claude called "zombie" leases being reported from dogfood-2... set to draining and confirmed that it
-doesn't hit drained even after a long time (10 mins).
-Zombie leases were really old runs that had GPU requirements that were unsatisfiable and were never terminated - lease worker had been trying to execute
-these unsuccessfully for weeks now.
+doesn't hit drained even after a long time (1 hour).
+Zombie leases were really old runs that had GPU requirements that were unsatisfiable and were never terminated - lease worker had been trying to execute these unsuccessfully for weeks now.
 
 After these runs were aborted, dogfood-2 reached drained correctly.
 
