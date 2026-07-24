@@ -17,7 +17,7 @@ flyte -vv -c ~/.flyte/dogfood.staging.yaml update queue drain-test-a1 --activate
 
 ---
 
-** Drain a queue mid-workload**
+**Drain a queue mid-workload**
 Make sure it stays DRAINING until last action completes and finalizes → DRAINED.
 Watch queue_finalizes go 0 last.
 
@@ -49,6 +49,7 @@ After these runs were aborted, dogfood-2 reached drained correctly.
 ## More Racy scenarios
 
 **TTL Finalize respected**
+
 First reduce the finalize ttl from 4 weeks to 5 mins.
 Create a queue
 ```
@@ -64,6 +65,7 @@ Then let the finalize TTL fire → drops logged, finalize_ttl_drops ticks, drain
 ---
 
 **Boot leasor while cluster service down**
+
 First create a bunch of long running actions/leases. Then take down clusters service, and restart leasor.
 Queue CRUD returns nothing at boot time, every queue with leases becomes a placeholder.
 During the placeholder period, run-actions park (skip metric), finalizes still dispatch (they ignore queue state — part 2 PR),
