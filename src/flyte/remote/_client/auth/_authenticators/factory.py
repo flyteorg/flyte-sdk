@@ -163,8 +163,16 @@ def get_async_authenticator(
 
             return PassthroughAuthenticator(endpoint=endpoint, **kwargs)
         case _:
-            raise ValueError(
-                f"Invalid auth mode [{auth_type}] specified. Please update the creds config to use a valid value"
+            # An unrecognized auth mode is a user-config mistake, not an SDK crash.
+            # Raise a typed InitializationError so the Sentry filter (flyte/_sentry.py)
+            # skips it — otherwise it leaks as RuntimeError("SelectCluster failed...")
+            # -> RuntimeSystemError with no actionable signal (FLYTE-SDK-50).
+            from flyte.errors import InitializationError
+
+            raise InitializationError(
+                "InvalidAuthMode",
+                "user",
+                f"Invalid auth mode [{auth_type}] specified. Please update the creds config to use a valid value",
             )
 
 

@@ -250,3 +250,19 @@ def test_concurrent_auth_metadata_contexts_isolated_with_syncify(endpoint):
     # Verify thread3's metadata
     metadata3 = list(results["thread3"].headers.items())
     assert metadata3 == [("user", "charlie"), ("role", "guest")]
+
+
+@pytest.mark.parametrize("auth_type", [None, "Bogus", "pkce"])
+def test_get_async_authenticator_invalid_mode_raises_initialization_error(endpoint, auth_type):
+    """FLYTE-SDK-50: an unrecognized auth mode is a user-config mistake. The factory
+    must raise a typed InitializationError (filtered from Sentry) rather than a bare
+    ValueError that leaks as RuntimeSystemError('SelectCluster failed...')."""
+    from flyte.errors import InitializationError
+    from flyte.remote._client.auth._authenticators.factory import get_async_authenticator
+
+    with pytest.raises(InitializationError) as exc_info:
+        # cfg_store is unused on the invalid-mode branch, so None is fine here.
+        get_async_authenticator(endpoint, None, auth_type=auth_type)
+
+    assert "Invalid auth mode" in str(exc_info.value)
+    assert str(auth_type) in str(exc_info.value)
