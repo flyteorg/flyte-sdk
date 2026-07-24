@@ -14,6 +14,29 @@ from flyte._internal.imagebuild.image_builder import (
 )
 
 
+def test_get_builder_accepts_instance():
+    """A builder instance (e.g. from ``flyte.init(image_builder=MyBuilder())``) is used as-is.
+
+    Regression for FLYTE-SDK-61: passing an instance previously fell through to the
+    entry-point name lookup and raised ``ValueError: Unknown image builder type``.
+    """
+
+    class _CustomBuilder:
+        async def build_image(self, image, dry_run, wait=True, force=False):  # pragma: no cover
+            raise NotImplementedError
+
+        def get_checkers(self):
+            return None
+
+    instance = _CustomBuilder()
+    assert ImageBuildEngine._get_builder(instance) is instance
+
+
+def test_get_builder_unknown_name_still_raises():
+    with pytest.raises(ValueError, match="Unknown image builder type"):
+        ImageBuildEngine._get_builder("does-not-exist")
+
+
 @mock.patch("flyte._internal.imagebuild.image_builder.DockerAPIImageChecker.image_exists")
 @mock.patch("flyte._internal.imagebuild.image_builder.LocalDockerCommandImageChecker.image_exists")
 @mock.patch("flyte._internal.imagebuild.image_builder.PersistentCacheImageChecker.image_exists")
