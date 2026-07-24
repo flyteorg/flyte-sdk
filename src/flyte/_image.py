@@ -1278,7 +1278,17 @@ class Image:
         return self.clone(addl_layer=CodeBundleLayer(copy_style=copy_style, dst=dst))
 
     def with_dockerignore(self, path: Path) -> Image:
-        new_image = self.clone(addl_layer=DockerIgnore(path=str(path)))
+        import flyte.errors
+
+        # Resolve to an absolute path so the file can still be located at build time, which may run
+        # from a different working directory than where the image was defined (e.g. the remote builder).
+        resolved = Path(path).expanduser()
+        if not resolved.is_file():
+            raise flyte.errors.ImageBuildError(
+                f"The .dockerignore file specified via with_dockerignore() was not found at '{path}'. "
+                f"Ensure the path points to an existing file."
+            )
+        new_image = self.clone(addl_layer=DockerIgnore(path=str(resolved.resolve())))
         return new_image
 
     def with_uv_project(
