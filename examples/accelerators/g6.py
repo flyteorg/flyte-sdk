@@ -1,5 +1,6 @@
-import flyte
 from kubernetes.client import V1Container, V1PodSpec, V1Toleration
+
+import flyte
 
 g6_test_template = flyte.PodTemplate(
     primary_container_name="primary",
@@ -22,6 +23,7 @@ env = flyte.TaskEnvironment(
 @env.task
 async def my_gpu_task() -> str:
     import asyncio
+
     print("Running on g6.4xlarge with NVIDIA L4", flush=True)
     await asyncio.sleep(20)
     return "Running on g6.4xlarge with NVIDIA L4"

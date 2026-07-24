@@ -52,9 +52,7 @@ def _gpu_name() -> str:
     """Return the GPU model visible on the node (proves which pool the task landed on)."""
     import subprocess
 
-    out = subprocess.check_output(
-        ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"], text=True
-    )
+    out = subprocess.check_output(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"], text=True)
     return out.strip()
 
 

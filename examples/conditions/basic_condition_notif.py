@@ -37,7 +37,7 @@ async def basic_condition_task(x: int) -> int:
 @env.task
 async def markdown_condition_task(x: int) -> int:
     try:
-        await t0() # fails
+        await t0()  # fails
     except Exception:
         condition = await flyte.new_condition.aio(
             "review",
@@ -58,6 +58,7 @@ async def markdown_condition_task(x: int) -> int:
             return await next_task(x)
         return -1
     return 0
+
 
 # ---------------------------------------------------------------------------
 # 3. Webhook - notify an external system when the condition is created.
@@ -130,16 +131,12 @@ if __name__ == "__main__":
                 [(c.name, c.action_name, c.phase) for c in conditions],
             )
             # Prefer an exact name match; fall back to the only/first condition.
-            condition = next(
-                (c for c in conditions if c.name == CONDITION_NAME), conditions[0]
-            )
+            condition = next((c for c in conditions if c.name == CONDITION_NAME), conditions[0])
         else:
             print("waiting for a condition to be created…")
             time.sleep(5)
 
-    print(
-        f"signaling condition '{condition.name}' (action {condition.action_name}, phase {condition.phase}) with True"
-    )
+    print(f"signaling condition '{condition.name}' (action {condition.action_name}, phase {condition.phase}) with True")
     condition.signal(True)
 
     # Equivalent CLI invocation (once you know the action id from the UI/logs):

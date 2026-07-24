@@ -5,7 +5,6 @@ from datetime import timedelta
 import flyte
 from flyte.extras import Sleep
 
-
 sleep_env = flyte.TaskEnvironment(
     name="queue_drain_sleep_fanout_leaf",
     plugin_config=Sleep(),

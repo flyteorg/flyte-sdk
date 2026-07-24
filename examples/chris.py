@@ -15,9 +15,7 @@ import flyte
 env = flyte.TaskEnvironment(
     name="hello_polyglot",
     resources=flyte.Resources(memory="250Mi"),
-    image=flyte.Image.from_debian_base()
-        .with_pip_packages("polyglot-hello")
-        .with_env_vars({"RANDOM_VARIABLE": "4"}),
+    image=flyte.Image.from_debian_base().with_pip_packages("polyglot-hello").with_env_vars({"RANDOM_VARIABLE": "4"}),
 )
 
 

@@ -14,9 +14,8 @@ driver_env = flyte.TaskEnvironment(
 
 def _gpu_name() -> str:
     import subprocess
-    out = subprocess.check_output(
-        ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"], text=True
-    )
+
+    out = subprocess.check_output(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"], text=True)
     return out.strip()
 
 
@@ -48,9 +47,8 @@ async def on_v100() -> str:
 @driver_env.task
 async def sweep() -> dict[str, str]:
     import asyncio
-    t4, a10g, l4, l40s, v100 = await asyncio.gather(
-        on_t4(), on_a10g(), on_l4(), on_l40s(), on_v100()
-    )
+
+    t4, a10g, l4, l40s, v100 = await asyncio.gather(on_t4(), on_a10g(), on_l4(), on_l40s(), on_v100())
     return {"T4": t4, "A10G": a10g, "L4": l4, "L40s": l40s, "V100": v100}
 
 

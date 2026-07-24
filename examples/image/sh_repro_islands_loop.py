@@ -33,7 +33,7 @@ if __name__ == "__main__":
             if ok == "FAIL":
                 fails += 1
             print(f"[{i:02d}/{N}] {ok} phase={phase} run={name} uri={result.uri.split(':')[-1][:16]}", flush=True)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             fails += 1
             print(f"[{i:02d}/{N}] EXC {type(e).__name__}: {e}", flush=True)
             traceback.print_exc()

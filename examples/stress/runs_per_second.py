@@ -15,7 +15,6 @@ env = flyte.TaskEnvironment(
 downstream_env = flyte.TaskEnvironment(
     name="downstream",
     resources=flyte.Resources(cpu=1, memory="1Gi"),
-
     reusable=flyte.ReusePolicy(
         replicas=(5, 20),
         idle_ttl=60,

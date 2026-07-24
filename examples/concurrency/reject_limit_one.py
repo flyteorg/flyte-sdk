@@ -38,6 +38,6 @@ if __name__ == "__main__":
         run = flyte.with_runcontext(max_action_concurrency=1).run(main, n=N)
         print("UNEXPECTED: submission accepted:", run.url)
         print("FAIL — max_action_concurrency=1 should be rejected (InvalidArgument)")
-    except Exception as e:  # noqa: BLE001 — surface whatever the SDK raises
+    except Exception as e:
         print("OK — submission rejected as expected:")
         print(f"  {type(e).__name__}: {e}")
