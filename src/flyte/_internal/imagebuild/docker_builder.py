@@ -397,7 +397,8 @@ class PixiProjectHandler:
         secret_mounts = _get_secret_mounts_layer(layer.secret_mounts)
 
         install_args = []
-        if layer.pixi_lock is not None:
+        # --frozen and --locked are mutually exclusive. Honour a user-supplied --frozen.
+        if layer.pixi_lock is not None and "--frozen" not in (layer.extra_args or ""):
             install_args.append("--locked")
         if layer.extra_args:
             install_args.append(layer.extra_args)

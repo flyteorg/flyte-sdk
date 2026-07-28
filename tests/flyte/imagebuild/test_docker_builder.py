@@ -735,6 +735,38 @@ async def test_pixi_handler_named_environment_and_extra_args():
 
 
 @pytest.mark.asyncio
+async def test_pixi_handler_frozen_extra_args_suppress_locked():
+    """A user-supplied --frozen replaces the default --locked (mutually exclusive pixi flags),
+    so manifests with editable path deps absent from the context can install with --skip."""
+    with tempfile.TemporaryDirectory() as tmp_context, tempfile.TemporaryDirectory() as tmp_user:
+        context_path = Path(tmp_context)
+        user_folder = Path(tmp_user)
+
+        manifest = user_folder / "pixi.toml"
+        manifest.write_text("[project]\nname = 'test-project'")
+        pixi_lock = user_folder / "pixi.lock"
+        pixi_lock.write_text("version: 6")
+
+        pixi_project = PixiProject(
+            manifest=manifest.absolute(),
+            pixi_lock=pixi_lock.absolute(),
+            extra_args="--frozen --skip my-pkg",
+        )
+
+        result = await PixiProjectHandler.handle(
+            layer=pixi_project,
+            context_path=context_path,
+            dockerfile="FROM python:3.12\n",
+            docker_ignore_patterns=[],
+        )
+
+        assert "--locked" not in result
+        assert "--environment default --frozen --skip my-pkg" in result
+        # The lock file is still copied and honoured by --frozen.
+        assert " /opt/pixi-project/pixi.lock" in result
+
+
+@pytest.mark.asyncio
 async def test_pixi_handler_with_project_install():
     """install_project mode copies the whole project directory, but the manifest and
     lock file survive .dockerignore exclusions."""
@@ -812,6 +844,31 @@ def test_pixi_project_lowers_to_primitive_layers():
         assert envs["VIRTUAL_ENV"] == "/opt/pixi-project/.pixi/envs/default"
         assert envs["UV_PYTHON"] == "/opt/pixi-project/.pixi/envs/default/bin/python"
         assert envs["PATH"].startswith("/opt/pixi-project/.pixi/envs/default/bin:")
+
+
+def test_pixi_project_lowers_frozen_extra_args_suppress_locked():
+    """The primitive-layer lowering honours a user-supplied --frozen the same way the
+    docker builder does."""
+    from flyte._internal.imagebuild.utils import pixi_project_to_primitive_layers
+
+    with tempfile.TemporaryDirectory() as tmp_user:
+        user_folder = Path(tmp_user)
+        manifest = user_folder / "pixi.toml"
+        manifest.write_text("[project]\nname = 'test-project'")
+        pixi_lock = user_folder / "pixi.lock"
+        pixi_lock.write_text("version: 6")
+
+        layer = PixiProject(
+            manifest=manifest.absolute(),
+            pixi_lock=pixi_lock.absolute(),
+            extra_args="--frozen --skip my-pkg",
+        )
+        lowered = pixi_project_to_primitive_layers(layer)
+
+        commands = [cmd for lyr in lowered if isinstance(lyr, Commands) for cmd in lyr.commands]
+        install_cmd = next(cmd for cmd in commands if "pixi install" in cmd)
+        assert "--locked" not in install_cmd
+        assert "--frozen --skip my-pkg" in install_cmd
 
 
 def test_remote_builder_layers_proto_for_pixi_project():

@@ -1396,7 +1396,10 @@ class Image:
         discovered the same way pixi discovers it (`pixi.toml` first, then `pyproject.toml`).
 
         By default, this method copies only the manifest and lock file into the image. When the lock file
-        is present, `pixi install --locked` is used so the build reproduces the lock exactly.
+        is present, `pixi install --locked` is used so the build reproduces the lock exactly. A `--frozen`
+        in `extra_args` replaces that `--locked`, since pixi rejects the two together; use it when the
+        manifest references path dependencies whose sources are not in the build context, which `--locked`
+        would otherwise reject as an out-of-date lock.
 
         If `project_install_mode` is "install_project", the entire directory containing the manifest is
         copied into the image instead. Use this when the manifest installs the project itself, e.g. a
