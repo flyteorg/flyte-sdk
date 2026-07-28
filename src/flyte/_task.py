@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import weakref
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, replace
 from inspect import iscoroutinefunction
 from typing import (
     TYPE_CHECKING,
@@ -451,10 +451,19 @@ class TaskTemplate(Generic[P, R, F]):
             if k == "interface":
                 raise ValueError("Interface cannot be overridden")
 
+        plugin_type: Optional[type] = None
         if plugin_config is not None:
+            from ._task_plugins import TaskPluginRegistry
+
+            plugin_type = TaskPluginRegistry.find(config_type=type(plugin_config))
+            if plugin_type is None:
+                raise ValueError(
+                    f"No task plugin found for config type {type(plugin_config)}. "
+                    f"Please register a plugin using flyte.extend.TaskPluginRegistry.register() api."
+                )
             kwargs["plugin_config"] = plugin_config
 
-        return replace(
+        new_task = replace(
             self,
             short_name=short_name or self.short_name,
             resources=resources,
@@ -472,6 +481,16 @@ class TaskTemplate(Generic[P, R, F]):
             links=links or self.links,
             **kwargs,
         )
+
+        if plugin_type is not None and not isinstance(new_task, plugin_type):
+            # Plugin behavior (task_type, custom config serialization) lives on the template class, which
+            # `replace` cannot change, so rebuild as the plugin's class. task_type is dropped so the
+            # plugin's own default applies.
+            new_task = plugin_type(
+                **{f.name: getattr(new_task, f.name) for f in fields(new_task) if f.init and f.name != "task_type"}
+            )
+
+        return new_task
 
 
 @dataclass(kw_only=True)
