@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import weakref
-from dataclasses import dataclass, field, fields, replace
+from dataclasses import MISSING, dataclass, field, fields, replace
 from inspect import iscoroutinefunction
 from typing import (
     TYPE_CHECKING,
@@ -53,6 +53,34 @@ AsyncFunctionType: TypeAlias = Callable[P, Coroutine[Any, Any, R]]
 SyncFunctionType: TypeAlias = Callable[P, R]
 FunctionTypes: TypeAlias = AsyncFunctionType | SyncFunctionType
 F = TypeVar("F", bound=FunctionTypes)
+
+
+def _rebuild_as(
+    task: TaskTemplate[P, R, F], plugin_task_class: type[AsyncFunctionTaskTemplate[P, R, F]]
+) -> AsyncFunctionTaskTemplate[P, R, F]:
+    """
+    Rebuild `task` as `plugin_task_class`, which is how a plugin's behavior is applied since
+    `dataclasses.replace` cannot change the class.
+
+    A field is carried over unless the plugin class redefines its default (`task_type`,
+    `task_type_version`, `debuggable`, ...) and `task` still holds its own class default, in which
+    case the plugin's default wins. That way a task that never touched a field picks up the
+    plugin's value, while anything explicitly set on the task is preserved.
+    """
+    task_defaults = {f.name: f.default for f in fields(type(task))}
+    plugin_defaults = {f.name: f.default for f in fields(plugin_task_class)}
+
+    carried = {}
+    for f in fields(task):
+        if not f.init:
+            continue
+        value = getattr(task, f.name)
+        default = task_defaults.get(f.name, MISSING)
+        plugin_default = plugin_defaults.get(f.name, MISSING)
+        if plugin_default is not MISSING and plugin_default != default and value == default:
+            continue
+        carried[f.name] = value
+    return plugin_task_class(**carried)
 
 
 @dataclass(kw_only=True)
@@ -486,9 +514,7 @@ class TaskTemplate(Generic[P, R, F]):
             # Plugin behavior (task_type, custom config serialization) lives on the template class, which
             # `replace` cannot change, so rebuild as the plugin's class.
             task_template_class = cast(type[AsyncFunctionTaskTemplate[P, R, F]], task_template_class)
-            new_task = task_template_class(
-                **{f.name: getattr(new_task, f.name) for f in fields(new_task) if f.init and f.name != "task_type"}
-            )
+            new_task = _rebuild_as(new_task, task_template_class)
 
         return new_task
 
