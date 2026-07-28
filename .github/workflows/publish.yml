@@ -154,6 +154,65 @@ jobs:
           done
           exit 1
         shell: bash
+
+  flyte-constraints:
+    # Publish the tested dependency resolution from uv.lock as an optional constraints file.
+    name: Publish dependency constraints
+    needs: flyte-pypi
+    if: always() && needs.flyte-pypi.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: "0"
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.9.21"
+      - name: Export constraints from uv.lock
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            VERSION="${{ github.ref_name }}"; VERSION="${VERSION#v}"
+          else
+            VERSION="0.0.0.dev0"  # non-release runs (e.g. PR validation)
+          fi
+          # Universal lock: one exported file is valid across all Python versions and platforms.
+          uv export \
+            --frozen \
+            --no-dev \
+            --no-emit-project \
+            --no-hashes \
+            --no-annotate \
+            --no-header \
+            -o constraints-body.txt
+          {
+            echo "# Tested dependency versions for flyte==${VERSION}."
+            echo "# Optional: pip install flyte==${VERSION} -c constraints-${VERSION}.txt"
+          } > "constraints-${VERSION}.txt"
+          cat constraints-body.txt >> "constraints-${VERSION}.txt"
+          # Unversioned copy so releases/latest/download/constraints.txt resolves.
+          cp "constraints-${VERSION}.txt" constraints.txt
+          echo "::group::constraints-${VERSION}.txt"
+          cat "constraints-${VERSION}.txt"
+          echo "::endgroup::"
+      - name: Upload constraints as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: flyte-constraints
+          path: constraints*.txt
+          if-no-files-found: error
+      - name: Attach constraints to the GitHub Release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
+          gh release upload "${{ github.ref_name }}" \
+            "constraints-${VERSION}.txt" constraints.txt --clobber
+
   plugin-pypi:
     name: PyPI package
     runs-on: ubuntu-latest
