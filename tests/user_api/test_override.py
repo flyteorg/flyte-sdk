@@ -379,3 +379,14 @@ def test_override_ref_task():
     assert new_td.pb2.spec.task_template.metadata.retries.retries == 5
     assert new_td.pb2.spec.task_template.metadata.timeout.seconds == 100
     assert new_td.pb2.spec.task_template.security_context == get_security_context(secrets)
+
+
+def test_override_plugin_config():
+    assert oomer.plugin_config is None
+
+    overridden = oomer.override(plugin_config={"foo": "bar"})
+    assert overridden.plugin_config == {"foo": "bar"}
+    # original untouched
+    assert oomer.plugin_config is None
+    # omitting it keeps the existing config
+    assert overridden.override(retries=2).plugin_config == {"foo": "bar"}

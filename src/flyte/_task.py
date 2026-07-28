@@ -376,6 +376,7 @@ class TaskTemplate(Generic[P, R, F]):
         interruptible: Optional[bool] = None,
         entrypoint: Optional[bool] = None,
         links: Tuple[Link, ...] = (),
+        plugin_config: Optional[Any] = None,
         **kwargs: Any,
     ) -> TaskTemplate:
         """
@@ -397,6 +398,8 @@ class TaskTemplate(Generic[P, R, F]):
         :param interruptible: Optional override for the interruptible policy for the task.
         :param entrypoint: Optional override for the entrypoint flag for the task.
         :param links: Optional override for the Links associated with the task.
+        :param plugin_config: Optional override for the plugin specific configuration. Only supported by task
+         templates that declare a `plugin_config` field.
         :param kwargs: Additional keyword arguments for further overrides. Some fields like name, image, docs,
          and interface cannot be overridden.
 
@@ -447,6 +450,10 @@ class TaskTemplate(Generic[P, R, F]):
                 raise ValueError("Docs cannot be overridden")
             if k == "interface":
                 raise ValueError("Interface cannot be overridden")
+
+        if plugin_config is not None:
+            # ponytail: only templates declaring the field accept this; replace() raises otherwise
+            kwargs["plugin_config"] = plugin_config
 
         return replace(
             self,
