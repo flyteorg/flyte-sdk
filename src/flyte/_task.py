@@ -452,7 +452,6 @@ class TaskTemplate(Generic[P, R, F]):
                 raise ValueError("Interface cannot be overridden")
 
         if plugin_config is not None:
-            # ponytail: only templates declaring the field accept this; replace() raises otherwise
             kwargs["plugin_config"] = plugin_config
 
         return replace(
