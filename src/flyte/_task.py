@@ -451,12 +451,12 @@ class TaskTemplate(Generic[P, R, F]):
             if k == "interface":
                 raise ValueError("Interface cannot be overridden")
 
-        plugin_type: Optional[type] = None
+        task_template_class: type[AsyncFunctionTaskTemplate[P, R, F]] | None = None
         if plugin_config is not None:
             from ._task_plugins import TaskPluginRegistry
 
-            plugin_type = TaskPluginRegistry.find(config_type=type(plugin_config))
-            if plugin_type is None:
+            task_template_class = TaskPluginRegistry.find(config_type=type(plugin_config))
+            if task_template_class is None:
                 raise ValueError(
                     f"No task plugin found for config type {type(plugin_config)}. "
                     f"Please register a plugin using flyte.extend.TaskPluginRegistry.register() api."
@@ -482,11 +482,12 @@ class TaskTemplate(Generic[P, R, F]):
             **kwargs,
         )
 
-        if plugin_type is not None and not isinstance(new_task, plugin_type):
+        if task_template_class is not None and not isinstance(new_task, task_template_class):
             # Plugin behavior (task_type, custom config serialization) lives on the template class, which
             # `replace` cannot change, so rebuild as the plugin's class. task_type is dropped so the
             # plugin's own default applies.
-            new_task = plugin_type(
+            task_template_class = cast(type[AsyncFunctionTaskTemplate[P, R, F]], task_template_class)
+            new_task = task_template_class(
                 **{f.name: getattr(new_task, f.name) for f in fields(new_task) if f.init and f.name != "task_type"}
             )
 
