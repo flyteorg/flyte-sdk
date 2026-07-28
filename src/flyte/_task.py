@@ -484,8 +484,7 @@ class TaskTemplate(Generic[P, R, F]):
 
         if task_template_class is not None and not isinstance(new_task, task_template_class):
             # Plugin behavior (task_type, custom config serialization) lives on the template class, which
-            # `replace` cannot change, so rebuild as the plugin's class. task_type is dropped so the
-            # plugin's own default applies.
+            # `replace` cannot change, so rebuild as the plugin's class.
             task_template_class = cast(type[AsyncFunctionTaskTemplate[P, R, F]], task_template_class)
             new_task = task_template_class(
                 **{f.name: getattr(new_task, f.name) for f in fields(new_task) if f.init and f.name != "task_type"}
