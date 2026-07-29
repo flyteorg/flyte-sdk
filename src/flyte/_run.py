@@ -210,7 +210,7 @@ class _Runner:
         self._copy_files = copy_style
         self._dry_run = dry_run
         self._copy_bundle_to = copy_bundle_to
-        self._interactive_mode = interactive_mode or ipython_check()
+        self._interactive_mode = interactive_mode if interactive_mode is not None else ipython_check()
         self._raw_data_path = raw_data_path
         self._metadata_path = metadata_path
         self._run_base_dir = run_base_dir
