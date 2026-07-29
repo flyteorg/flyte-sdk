@@ -33,6 +33,30 @@ jobs:
         uses: codecov/codecov-action@v4
         if: ${{ matrix.python-version == '3.11' }}
 
+  # Windows can't run the devbox end-to-end here (GitHub-hosted Windows runners
+  # have no Linux container support), so this guards the host-OS assumptions in
+  # the CLI -- paths, KUBECONFIG separators, POSIX-only syscalls.
+  unit-tests-windows:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+      fail-fast: false
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up the environment
+        uses: ./.github/actions/setup-python-env
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Run CLI tests
+        run: uv run python -m pytest -k "not integration and not sandbox" tests/cli
+
   discover-plugins:
     runs-on: ubuntu-latest
     outputs:
