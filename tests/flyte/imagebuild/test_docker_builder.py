@@ -1463,3 +1463,35 @@ async def test_code_bundle_handler_uses_chown_flyte():
 
             assert "COPY --chown=flyte:flyte" in result
             assert "/home/flyte/code" in result
+
+
+@pytest.mark.asyncio
+async def test_dockerignore_handler_missing_file_raises_image_build_error(tmp_path):
+    """FLYTE-SDK-4Z: a missing .dockerignore must surface as ImageBuildError at build time.
+
+    The raw `shutil.copy` used to raise `FileNotFoundError: '.dockerignore'`, which got
+    crash-reported to Sentry as an SDK bug instead of being shown to the user as the config
+    mistake it is (typically running `flyte deploy` from outside the project root).
+    """
+    from flyte._image import DockerIgnore
+    from flyte._internal.imagebuild.docker_builder import DockerIgnoreHandler
+    from flyte.errors import ImageBuildError
+
+    layer = DockerIgnore(path=str(tmp_path / "does-not-exist" / ".dockerignore"))
+    with pytest.raises(ImageBuildError, match="with_dockerignore"):
+        await DockerIgnoreHandler.handle(layer, tmp_path, "")
+
+
+@pytest.mark.asyncio
+async def test_dockerignore_handler_copies_existing_file(tmp_path):
+    """The happy path is unchanged: an existing .dockerignore is copied into the context."""
+    from flyte._image import DockerIgnore
+    from flyte._internal.imagebuild.docker_builder import DockerIgnoreHandler
+
+    src = tmp_path / ".dockerignore"
+    src.write_text("*.log\n")
+    context = tmp_path / "context"
+    context.mkdir()
+
+    await DockerIgnoreHandler.handle(DockerIgnore(path=str(src)), context, "")
+    assert (context / ".dockerignore").read_text() == "*.log\n"

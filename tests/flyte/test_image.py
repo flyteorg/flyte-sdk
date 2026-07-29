@@ -723,29 +723,22 @@ def test_image_uri_changes_when_dockerignore_content_changes(tmp_path):
     assert uri1 != img2.uri
 
 
-def test_with_dockerignore_missing_file_raises_image_build_error(tmp_path):
-    """A non-existent .dockerignore path must raise a clear ImageBuildError, not a raw FileNotFoundError."""
-    from flyte.errors import ImageBuildError
+def test_with_dockerignore_missing_file_does_not_raise_at_definition_time(tmp_path):
+    """Defining an image must not validate the .dockerignore path.
 
-    missing = tmp_path / ".dockerignore"  # never created
-    with pytest.raises(ImageBuildError, match="with_dockerignore"):
-        Image.from_debian_base(registry="localhost", name="test").with_dockerignore(missing)
-
-
-def test_with_dockerignore_resolves_to_absolute_path(tmp_path, monkeypatch):
-    """with_dockerignore must store an absolute path so the file is locatable from any cwd at build time."""
+    Image definitions are module-level code that also executes inside the container at task
+    runtime, where the developer's .dockerignore does not exist -- validating here would raise
+    spuriously. Validation belongs at build time instead.
+    """
     from flyte._image import DockerIgnore
 
-    di_file = tmp_path / ".dockerignore"
-    di_file.write_text("*.log\n")
-
-    # Reference the file via a relative path from tmp_path, then change cwd to simulate the builder.
-    monkeypatch.chdir(tmp_path)
-    img = Image.from_debian_base(registry="localhost", name="test").with_dockerignore(Path(".dockerignore"))
+    missing = tmp_path / ".dockerignore"  # never created
+    img = Image.from_debian_base(registry="localhost", name="test").with_dockerignore(missing)
 
     layer = next(layer for layer in img._layers if isinstance(layer, DockerIgnore))
-    assert Path(layer.path).is_absolute()
-    assert Path(layer.path).is_file()
+    assert layer.path == str(missing)
+    # The hash must also survive the file being absent (falls back to hashing the path string).
+    assert img.uri
 
 
 def test_ids_for_different_python_version():
