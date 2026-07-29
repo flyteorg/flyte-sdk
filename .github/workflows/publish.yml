@@ -127,7 +127,7 @@ jobs:
           TWINE_USERNAME: ${{ secrets.PYPI_USERNAME }}
           TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
         run: |
-          uv run python -m twine upload --verbose dist/*
+          uvx twine upload --verbose dist/*
       - name: Sleep until pypi is available
         if: ${{ github.event_name == 'release' }}
         id: pypiwait
@@ -296,7 +296,7 @@ jobs:
           TWINE_USERNAME: ${{ secrets.PYPI_USERNAME }}
           TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
         run: |
-          uv run python -m twine upload --verbose dist/*
+          uvx twine upload --verbose dist/*
 
   build-and-push-flyte-docker-images:
     needs: [flyte-pypi, rs-controller-wheels]
