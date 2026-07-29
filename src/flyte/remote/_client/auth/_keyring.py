@@ -66,7 +66,11 @@ def _get_keyring_backend():
         from flyte._keyring.macos import SecurityCliKeyring
 
         return SecurityCliKeyring()
-    import keyring
+    try:
+        import keyring
+    except ImportError as e:
+        logger.debug(f"keyring package not available, tokens will not be cached. Error: {e}")
+        return None
 
     return keyring
 
@@ -99,12 +103,11 @@ class KeyringStore:
         if disable:
             logger.debug("Keyring is disabled, skipping token store.")
             return credentials
-        try:
-            import keyring
-            from keyring.errors import NoKeyringError
-        except ImportError as e:
-            logger.debug(f"keyring package not available, tokens will not be cached. Error: {e}")
+        keyring = _get_keyring_backend()
+        if keyring is None:
+            logger.debug("keyring package not available, tokens will not be cached")
             return credentials
+        from keyring.errors import NoKeyringError
 
         try:
             keyring.set_password(
@@ -139,12 +142,10 @@ class KeyringStore:
         if disable:
             logger.debug("Keyring is disabled, skipping token retrieve.")
             return None
-        try:
-            import keyring
-            from keyring.errors import NoKeyringError
-        except ImportError as e:
-            logger.debug(f"keyring package not available, tokens will not be cached. Error: {e}")
+        keyring = _get_keyring_backend()
+        if keyring is None:
             return None
+        from keyring.errors import NoKeyringError
 
         for_endpoint = strip_scheme(for_endpoint)
         try:
@@ -195,13 +196,11 @@ class KeyringStore:
         if disable:
             logger.debug("Keyring is disabled, skipping token delete.")
             return
-        try:
-            import keyring
-            from keyring.errors import NoKeyringError, PasswordDeleteError
-        except ImportError as e:
-            logger.debug(f"keyring package not available, skipping token delete. Error: {e}")
+        keyring = _get_keyring_backend()
+        if keyring is None:
+            logger.debug(f"keyring package not available, skipping token delete")
             return
-
+        from keyring.errors import NoKeyringError, PasswordDeleteError
         for_endpoint = strip_scheme(for_endpoint)
 
         def _delete_key(key):
