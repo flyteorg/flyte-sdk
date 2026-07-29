@@ -50,6 +50,31 @@ class Credentials(pydantic.BaseModel):
         return self
 
 
+def _get_keyring_backend():
+    """Return the keyring interface flyte uses (the `keyring` module, or a backend instance).
+
+    On macOS, talk to the keychain through flyte's own /usr/bin/security-based
+    class directly instead of `keyring`'s backend discovery: registering a
+    backend via entry points is process-global and would change credential
+    storage for unrelated packages, and `keyring`'s native macOS backend
+    authorizes per interpreter binary, which causes a password prompt for
+    every new venv (ad-hoc-signed uv pythons are each a "different app").
+    """
+    import platform
+
+    if platform.system() == "Darwin":
+        from flyte._keyring.macos import SecurityCliKeyring
+
+        return SecurityCliKeyring()
+    try:
+        import keyring
+    except ImportError as e:
+        logger.debug(f"keyring package not available, tokens will not be cached. Error: {e}")
+        return None
+
+    return keyring
+
+
 class KeyringStore:
     """
     Methods to access Keyring Store.
@@ -78,12 +103,11 @@ class KeyringStore:
         if disable:
             logger.debug("Keyring is disabled, skipping token store.")
             return credentials
-        try:
-            import keyring
-            from keyring.errors import NoKeyringError
-        except ImportError as e:
-            logger.debug(f"keyring package not available, tokens will not be cached. Error: {e}")
+        keyring = _get_keyring_backend()
+        if keyring is None:
+            logger.debug("keyring package not available, tokens will not be cached")
             return credentials
+        from keyring.errors import NoKeyringError
 
         try:
             keyring.set_password(
@@ -118,12 +142,10 @@ class KeyringStore:
         if disable:
             logger.debug("Keyring is disabled, skipping token retrieve.")
             return None
-        try:
-            import keyring
-            from keyring.errors import NoKeyringError
-        except ImportError as e:
-            logger.debug(f"keyring package not available, tokens will not be cached. Error: {e}")
+        keyring = _get_keyring_backend()
+        if keyring is None:
             return None
+        from keyring.errors import NoKeyringError
 
         for_endpoint = strip_scheme(for_endpoint)
         try:
@@ -174,12 +196,11 @@ class KeyringStore:
         if disable:
             logger.debug("Keyring is disabled, skipping token delete.")
             return
-        try:
-            import keyring
-            from keyring.errors import NoKeyringError, PasswordDeleteError
-        except ImportError as e:
-            logger.debug(f"keyring package not available, skipping token delete. Error: {e}")
+        keyring = _get_keyring_backend()
+        if keyring is None:
+            logger.debug("keyring package not available, skipping token delete")
             return
+        from keyring.errors import NoKeyringError, PasswordDeleteError
 
         for_endpoint = strip_scheme(for_endpoint)
 
