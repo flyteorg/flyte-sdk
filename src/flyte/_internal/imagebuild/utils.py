@@ -60,7 +60,8 @@ def pixi_project_to_primitive_layers(layer: PixiProject) -> List[Layer]:
         f"--manifest-path {manifest_dst}",
         f"--environment {layer.environment}",
     ]
-    if layer.pixi_lock is not None:
+    # --frozen and --locked are mutually exclusive. Honour a user-supplied --frozen.
+    if layer.pixi_lock is not None and "--frozen" not in (layer.extra_args or ""):
         pixi_install_parts.append("--locked")
     if layer.extra_args:
         pixi_install_parts.append(layer.extra_args)
