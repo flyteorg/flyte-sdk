@@ -6,7 +6,7 @@ import httpx
 import pytest
 
 from flyte.errors import RuntimeSystemError
-from flyte.remote._data import _UPLOAD_TIMEOUT, _upload_with_retry
+from flyte.remote._data import _UPLOAD_TIMEOUT, _redact_signed_url, _upload_with_retry
 
 
 @pytest.fixture
@@ -252,3 +252,44 @@ async def test_upload_429_without_retry_after_uses_exponential(upload_file):
         assert result.status_code == 200
         # Exponential value for the first retry: min_backoff_sec * 2**0 = 0.01
         mock_sleep.assert_awaited_once_with(0.01)
+
+
+@pytest.mark.parametrize(
+    "url, expected",
+    [
+        ("https://bucket.s3.amazonaws.com/org/key.tar.gz", "https://bucket.s3.amazonaws.com/org/key.tar.gz"),
+        (
+            "https://bucket.s3.amazonaws.com/org/key.tar.gz?X-Amz-Signature=deadbeef&X-Amz-Security-Token=secret",
+            "https://bucket.s3.amazonaws.com/org/key.tar.gz?<redacted>",
+        ),
+        ("https://bucket.s3.amazonaws.com/key?", "https://bucket.s3.amazonaws.com/key?<redacted>"),
+    ],
+)
+def test_redact_signed_url(url, expected):
+    assert _redact_signed_url(url) == expected
+
+
+@pytest.mark.asyncio
+async def test_upload_client_error_message_redacts_signed_url(upload_file):
+    """FLYTE-SDK-6R: the non-retryable-error message must not leak signed-URL credentials."""
+    signed_url = (
+        "https://bucket.s3.us-west-2.amazonaws.com/org/proj/bundle.tar.gz"
+        "?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=ASIAEXAMPLE"
+        "&X-Amz-Security-Token=SUPERSECRETTOKEN&X-Amz-Signature=deadbeef"
+    )
+    with patch("flyte.remote._data.httpx.AsyncClient") as mock_cls:
+        client = AsyncMock()
+        client.put.return_value = httpx.Response(403, text="forbidden")
+        ctx = AsyncMock()
+        ctx.__aenter__.return_value = client
+        ctx.__aexit__.return_value = False
+        mock_cls.return_value = ctx
+
+        with pytest.raises(RuntimeSystemError) as exc_info:
+            await _upload_with_retry(upload_file, signed_url, {}, verify=True, max_retries=0)
+
+    message = str(exc_info.value)
+    assert "SUPERSECRETTOKEN" not in message
+    assert "X-Amz-Signature" not in message
+    # The bucket/key is still there, so the message stays diagnostic.
+    assert "https://bucket.s3.us-west-2.amazonaws.com/org/proj/bundle.tar.gz?<redacted>" in message
