@@ -27,6 +27,11 @@ from ._ignore import Ignore, IgnoreGroup, StandardIgnore
 
 CopyFiles = Literal["loaded_modules", "all", "none", "custom"]
 
+# Ceiling on the `ruff analyze graph` subprocess, not a delay: the call returns as soon as ruff
+# exits, which is under a second for typical repos. Test on Flytekit shows 0.15s over 575 Python files.
+_RUFF_ANALYZE_TIMEOUT_SECONDS = 30.0
+_RUFF_ANALYZE_TIMEOUT_ENV_VAR = "FLYTE_RUFF_ANALYZE_TIMEOUT_SECONDS"
+
 
 def compress_scripts(source_path: str, destination: str, modules: List[ModuleType]):
     """
@@ -382,7 +387,7 @@ def list_imported_modules_as_files_with_ruff(source_path: str, modules: List[Mod
     """
     all_files = list_imported_modules_as_files(source_path, modules)
 
-    graph =  _create_ruff_import_dependency_graph(pathlib.Path(source_path))
+    graph = _create_ruff_import_dependency_graph(pathlib.Path(source_path))
     if graph is None:
         logger.debug(
             "'ruff analyze graph' analysis failed; bundling from sys.modules only. "
@@ -411,12 +416,41 @@ def _ruff_is_available() -> bool:
     return True
 
 
+def _ruff_analyze_timeout_seconds() -> float:
+    """Timeout for the `ruff analyze graph` subprocess, overridable per-environment.
+
+    Falls back to the default when the env var is unset, unparseable, or non-positive, so a bad
+    value degrades to the normal timeout rather than disabling or breaking bundling.
+    """
+    raw = os.environ.get(_RUFF_ANALYZE_TIMEOUT_ENV_VAR)
+    if raw is None:
+        return _RUFF_ANALYZE_TIMEOUT_SECONDS
+
+    try:
+        timeout = float(raw)
+    except ValueError:
+        logger.warning(
+            f"Ignoring {_RUFF_ANALYZE_TIMEOUT_ENV_VAR}={raw!r}: not a number. Using {_RUFF_ANALYZE_TIMEOUT_SECONDS}s."
+        )
+        return _RUFF_ANALYZE_TIMEOUT_SECONDS
+
+    if timeout <= 0:
+        logger.warning(
+            f"Ignoring {_RUFF_ANALYZE_TIMEOUT_ENV_VAR}={raw!r}: must be positive. "
+            f"Using {_RUFF_ANALYZE_TIMEOUT_SECONDS}s."
+        )
+        return _RUFF_ANALYZE_TIMEOUT_SECONDS
+
+    return timeout
+
+
 def _create_ruff_import_dependency_graph(source_path: pathlib.Path) -> Optional[typing.Dict[str, List[str]]]:
     """Build a first-party import dependency graph for `source_path` via `ruff analyze graph`.
 
     Returns a mapping of absolute file path -> absolute paths it imports, or `None` when the
     analysis fails.
     """
+    timeout = _ruff_analyze_timeout_seconds()
     try:
         proc = subprocess.run(
             ["ruff", "analyze", "graph", "--type-checking-imports", "."],
@@ -424,7 +458,16 @@ def _create_ruff_import_dependency_graph(source_path: pathlib.Path) -> Optional[
             capture_output=True,
             text=True,
             check=False,
+            timeout=timeout,
         )
+    except subprocess.TimeoutExpired:
+        # TimeoutExpired is a SubprocessError, not an OSError, so it needs its own handler.
+        logger.warning(
+            f"'ruff analyze graph' timed out after {timeout}s; bundling from sys.modules only. "
+            f"Lazily/conditionally imported local modules may be omitted from the code bundle. "
+            f"Set {_RUFF_ANALYZE_TIMEOUT_ENV_VAR} to raise the limit."
+        )
+        return None
     except OSError as e:
         logger.warning(f"Failed to run 'ruff analyze graph': {e}")
         return None

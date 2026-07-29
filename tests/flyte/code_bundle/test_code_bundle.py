@@ -12,7 +12,16 @@ import pytest
 import flyte
 from flyte._code_bundle._ignore import GitIgnore, IgnoreGroup, StandardIgnore
 from flyte._code_bundle._packaging import create_bundle
-from flyte._code_bundle._utils import list_all_files, list_imported_modules_as_files, ls_files, ls_relative_files
+from flyte._code_bundle._utils import (
+    _RUFF_ANALYZE_TIMEOUT_ENV_VAR,
+    _RUFF_ANALYZE_TIMEOUT_SECONDS,
+    _create_ruff_import_dependency_graph,
+    _ruff_analyze_timeout_seconds,
+    list_all_files,
+    list_imported_modules_as_files,
+    ls_files,
+    ls_relative_files,
+)
 from flyte._code_bundle.bundle import build_pkl_bundle
 from flyte._internal.runtime.entrypoints import load_pkl_task
 from flyte.extras import ContainerTask
@@ -683,6 +692,66 @@ def test_ls_files_loaded_modules_includes_function_level_import():
         names = {pathlib.Path(f).name for f in files}
         assert "entrypoint_mod.py" in names
         assert "helper.py" in names
+
+
+def test_ls_files_loaded_modules_falls_back_when_ruff_times_out():
+    """A hung `ruff analyze graph` must degrade to sys.modules discovery, not propagate.
+
+    subprocess.TimeoutExpired is a SubprocessError rather than an OSError, so it needs its own
+    handler; without one it would escape ls_files and abort bundling entirely.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        source_path = pathlib.Path(tmpdir)
+
+        entry_file = source_path / "entrypoint_mod.py"
+        helper_file = source_path / "helper.py"
+        entry_file.write_text("async def run() -> int:\n    from helper import compute\n    return compute()\n")
+        helper_file.write_text("def compute() -> int:\n    return 42\n")
+
+        entry_mod = ModuleType("entrypoint_mod")
+        entry_mod.__file__ = str(entry_file)
+
+        with patch.dict(sys.modules, {"entrypoint_mod": entry_mod}):
+            with patch(
+                "flyte._code_bundle._utils.subprocess.run",
+                side_effect=subprocess.TimeoutExpired(cmd="ruff", timeout=30.0),
+            ):
+                files, _ = ls_files(source_path, "loaded_modules")
+
+        names = {pathlib.Path(f).name for f in files}
+        # The runtime-discovered seed survives; only the statically-discovered edge is lost.
+        assert "entrypoint_mod.py" in names
+        assert "helper.py" not in names
+
+
+def test_ruff_analyze_timeout_defaults_when_env_var_unset(monkeypatch):
+    """The default timeout applies when the override is absent."""
+    monkeypatch.delenv(_RUFF_ANALYZE_TIMEOUT_ENV_VAR, raising=False)
+    assert _ruff_analyze_timeout_seconds() == _RUFF_ANALYZE_TIMEOUT_SECONDS
+
+
+def test_ruff_analyze_timeout_env_var_override(monkeypatch):
+    """A valid override is honored and reaches the subprocess call."""
+    monkeypatch.setenv(_RUFF_ANALYZE_TIMEOUT_ENV_VAR, "90.5")
+    assert _ruff_analyze_timeout_seconds() == 90.5
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        with patch("flyte._code_bundle._utils.subprocess.run") as mock_run:
+            mock_run.return_value = Mock(returncode=0, stdout="{}", stderr="")
+            _create_ruff_import_dependency_graph(pathlib.Path(tmpdir))
+
+    assert mock_run.call_args.kwargs["timeout"] == 90.5
+
+
+@pytest.mark.parametrize("value", ["not-a-number", "", "0", "-5"])
+def test_ruff_analyze_timeout_ignores_invalid_env_var(monkeypatch, value):
+    """Unparseable or non-positive overrides degrade to the default rather than raising.
+
+    A zero or negative timeout would make subprocess.run trip immediately, silently disabling
+    ruff augmentation on every run.
+    """
+    monkeypatch.setenv(_RUFF_ANALYZE_TIMEOUT_ENV_VAR, value)
+    assert _ruff_analyze_timeout_seconds() == _RUFF_ANALYZE_TIMEOUT_SECONDS
 
 
 def test_ls_files_loaded_modules_includes_type_checking_import():
