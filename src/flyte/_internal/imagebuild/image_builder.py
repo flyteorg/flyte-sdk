@@ -347,10 +347,6 @@ class ImageBuildEngine:
     def _get_builder(cls, builder: ImageBuildEngine.ImageBuilderType | ImageBuilder | None = "local") -> ImageBuilder:
         if builder is None:
             builder = "local"
-        # A caller (e.g. ``flyte.init(image_builder=MyBuilder())``) may hand us an
-        # already-instantiated builder instead of its registered name. Use it as-is
-        # rather than trying to resolve it as an entry-point name, which would raise
-        # ``ValueError: Unknown image builder type: <MyBuilder object ...>`` (FLYTE-SDK-61).
         if not isinstance(builder, str):
             return builder
         if builder == "remote":
