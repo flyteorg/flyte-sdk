@@ -127,20 +127,12 @@ def ls_files(
     # This is --copy auto
     if copy_file_detection == "loaded_modules":
         sys_modules = list(sys.modules.values())
-        all_files = list_imported_modules_as_files(str(source_path), sys_modules)
-        # Augment with a static import graph (ruff) to include lazily/conditionally imported local modules
-        # Falls back to the runtime-only set when ruff is unavailable.
-        graph = _build_import_graph(source_path)
-        if graph is not None:
-            invalid_directories = _build_invalid_directories()
-            all_files = list(
-                _collect_transitive_dependencies(set(all_files), graph, str(source_path), invalid_directories)
-            )
+        # When ruff is available, augment the runtime sys.modules snapshot with a static import
+        # graph so lazily/conditionally imported local modules are bundled too.
+        if _ruff_is_available():
+            all_files = list_imported_modules_as_files_with_ruff(str(source_path), sys_modules)
         else:
-            logger.debug(
-                "ruff not found on PATH or analysis failed; bundling from sys.modules only. "
-                "Lazily/conditionally imported local modules may be omitted from the code bundle."
-            )
+            all_files = list_imported_modules_as_files(str(source_path), sys_modules)
     # this is --copy all (--copy none should never invoke this function)
     else:
         all_files = list_all_files(source_path, deref_symlinks, ignore_group)
@@ -378,15 +370,35 @@ def list_imported_modules_as_files(source_path: str, modules: List[ModuleType]) 
     return list(files)
 
 
-def _build_import_graph(source_path: pathlib.Path) -> Optional[typing.Dict[str, List[str]]]:
-    """Build a first-party import dependency graph for `source_path` via `ruff analyze graph`.
+def list_imported_modules_as_files_with_ruff(source_path: str, modules: List[ModuleType]) -> List[str]:
+    """Same as `list_imported_modules_as_files`, expanded with ruff's static import graph.
 
-    Returns a mapping of absolute file path -> absolute paths it imports, or `None` when ruff is
-    unavailable or the analysis fails (callers fall back to the runtime `sys.modules` discovery).
+    The runtime `sys.modules` files are used as seeds, then every user file reachable from them
+    through `ruff analyze graph`'s import edges is added. This picks up function-level and
+    `if TYPE_CHECKING:` imports, which never execute at bundle time and so are invisible to the
+    `sys.modules` snapshot alone.
 
-    Unlike the runtime snapshot, ruff statically detects imports inside function bodies and
-    `if TYPE_CHECKING:` blocks, so lazily/conditionally imported local modules are discovered even
-    when they were never executed at bundle time.
+    Falls back to the seed set when the ruff analysis fails.
+    """
+    all_files = list_imported_modules_as_files(source_path, modules)
+
+    graph =  _create_ruff_import_dependency_graph(pathlib.Path(source_path))
+    if graph is None:
+        logger.debug(
+            "'ruff analyze graph' analysis failed; bundling from sys.modules only. "
+            "Lazily/conditionally imported local modules may be omitted from the code bundle."
+        )
+        return all_files
+
+    invalid_directories = _build_invalid_directories()
+    return list(_collect_transitive_dependencies(set(all_files), graph, source_path, invalid_directories))
+
+
+def _ruff_is_available() -> bool:
+    """Return True if the `ruff` executable is on PATH.
+
+    ruff is an optional bundling aid: when it is missing we fall back to runtime `sys.modules`
+    discovery alone, which cannot see lazily/conditionally imported local modules.
     """
     if shutil.which("ruff") is None:
         logger.debug(
@@ -394,8 +406,17 @@ def _build_import_graph(source_path: pathlib.Path) -> Optional[typing.Dict[str, 
             "sys.modules discovery. Lazily/conditionally imported local modules may be omitted from the "
             "code bundle."
         )
-        return None
+        return False
 
+    return True
+
+
+def _create_ruff_import_dependency_graph(source_path: pathlib.Path) -> Optional[typing.Dict[str, List[str]]]:
+    """Build a first-party import dependency graph for `source_path` via `ruff analyze graph`.
+
+    Returns a mapping of absolute file path -> absolute paths it imports, or `None` when the
+    analysis fails.
+    """
     try:
         proc = subprocess.run(
             ["ruff", "analyze", "graph", "--type-checking-imports", "."],
