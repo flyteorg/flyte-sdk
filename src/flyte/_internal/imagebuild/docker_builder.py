@@ -61,6 +61,7 @@ _F_IMG_ID = "_F_IMG_ID"
 FLYTE_DOCKER_BUILDER_CACHE_FROM = "FLYTE_DOCKER_BUILDER_CACHE_FROM"
 FLYTE_DOCKER_BUILDER_CACHE_TO = "FLYTE_DOCKER_BUILDER_CACHE_TO"
 FLYTE_DOCKER_BUILDKIT_BUILDER_NAME = "FLYTE_DOCKER_BUILDKIT_BUILDER_NAME"
+FLYTE_DOCKER_BUILD_EXTRA_ARGS = "FLYTE_DOCKER_BUILD_EXTRA_ARGS"
 
 UV_LOCK_WITHOUT_PROJECT_INSTALL_TEMPLATE = Template("""\
 RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
@@ -571,6 +572,12 @@ def _get_secret_mounts_layer(secrets: typing.Tuple[str | Secret, ...] | None) ->
     return " ".join(secret_mounts_layer)
 
 
+def _get_extra_build_args() -> typing.List[str]:
+    """Extra flags to pass to `docker buildx build`, appended to the flags flyte builds itself."""
+    extra_args = os.getenv(FLYTE_DOCKER_BUILD_EXTRA_ARGS)
+    return shlex.split(extra_args) if extra_args else []
+
+
 async def _process_layer(
     layer: Layer, context_path: Path, dockerfile: str, docker_ignore_patterns: list[str] = []
 ) -> str:
@@ -737,6 +744,7 @@ class DockerImageBuilder(ImageBuilder):
             command.append("--load")
 
         command.extend(_get_secret_commands(layers=image._layers))
+        command.extend(_get_extra_build_args())
 
         concat_command = " ".join(command)
         logger.debug(f"Build command: {concat_command}")
@@ -892,6 +900,7 @@ class DockerImageBuilder(ImageBuilder):
                 command.append("--load")
 
             command.extend(_get_secret_commands(layers=image._layers))
+            command.extend(_get_extra_build_args())
             command.append(tmp_dir)
 
             concat_command = " ".join(command)

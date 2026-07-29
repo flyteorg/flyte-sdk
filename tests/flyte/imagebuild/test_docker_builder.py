@@ -1282,6 +1282,102 @@ async def test_build_from_dockerfile_uses_custom_builder_from_env(monkeypatch):
     assert cmd[builder_idx + 1] == "my-custom-builder"
 
 
+def test_get_extra_build_args_splits_with_shell_quoting(monkeypatch):
+    """FLYTE_DOCKER_BUILD_EXTRA_ARGS is split like a shell would, so a quoted value stays one argument."""
+    from flyte._internal.imagebuild.docker_builder import _get_extra_build_args
+
+    monkeypatch.delenv("FLYTE_DOCKER_BUILD_EXTRA_ARGS", raising=False)
+    assert _get_extra_build_args() == []
+
+    monkeypatch.setenv("FLYTE_DOCKER_BUILD_EXTRA_ARGS", "   ")
+    assert _get_extra_build_args() == []
+
+    monkeypatch.setenv("FLYTE_DOCKER_BUILD_EXTRA_ARGS", '--provenance=false --label "my label"')
+    assert _get_extra_build_args() == ["--provenance=false", "--label", "my label"]
+
+
+@pytest.mark.asyncio
+async def test_build_image_appends_extra_build_args(monkeypatch):
+    """Extra args land after the flags flyte generates and before the positional context path."""
+    zstd_output = "--output=type=image,push=true,compression=zstd,oci-mediatypes=true"
+    monkeypatch.setenv("FLYTE_DOCKER_BUILDKIT_BUILDER_NAME", "my-custom-builder")
+    monkeypatch.setenv("FLYTE_DOCKER_BUILD_EXTRA_ARGS", zstd_output)
+
+    calls = []
+
+    def mock_run(cmd, **kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0)
+
+    img = Image.from_debian_base(registry="localhost:30000", name="extra_args_test", install_flyte=False)
+
+    with patch(
+        "flyte._internal.imagebuild.docker_builder.run_sync_with_loop",
+        side_effect=lambda fn, *a, **kw: fn(*a, **kw),
+    ):
+        with patch("subprocess.run", side_effect=mock_run):
+            await DockerImageBuilder()._build_image(img, push=True)
+
+    cmd = next(c for c in calls if isinstance(c, list) and "buildx" in c and "build" in c)
+    assert cmd.index(zstd_output) > cmd.index("--push")
+    assert cmd[-1] != zstd_output, "the build context must stay the last argument"
+
+
+@pytest.mark.asyncio
+async def test_build_image_omits_extra_build_args_when_unset(monkeypatch):
+    """An unset FLYTE_DOCKER_BUILD_EXTRA_ARGS must not add an empty argument to the command."""
+    monkeypatch.setenv("FLYTE_DOCKER_BUILDKIT_BUILDER_NAME", "my-custom-builder")
+    monkeypatch.delenv("FLYTE_DOCKER_BUILD_EXTRA_ARGS", raising=False)
+
+    calls = []
+
+    def mock_run(cmd, **kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0)
+
+    img = Image.from_debian_base(registry="localhost:30000", name="no_extra_args_test", install_flyte=False)
+
+    with patch(
+        "flyte._internal.imagebuild.docker_builder.run_sync_with_loop",
+        side_effect=lambda fn, *a, **kw: fn(*a, **kw),
+    ):
+        with patch("subprocess.run", side_effect=mock_run):
+            await DockerImageBuilder()._build_image(img, push=True)
+
+    cmd = next(c for c in calls if isinstance(c, list) and "buildx" in c and "build" in c)
+    assert all(arg.strip() for arg in cmd)
+
+
+@pytest.mark.asyncio
+async def test_build_from_dockerfile_appends_extra_build_args(monkeypatch):
+    """The from_dockerfile path honours the same extra args as the generated-Dockerfile path."""
+    zstd_output = "--output=type=image,push=true,compression=zstd,oci-mediatypes=true"
+    monkeypatch.setenv("FLYTE_DOCKER_BUILDKIT_BUILDER_NAME", "my-custom-builder")
+    monkeypatch.setenv("FLYTE_DOCKER_BUILD_EXTRA_ARGS", zstd_output)
+
+    calls = []
+
+    def mock_run(cmd, **kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0)
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        dockerfile = Path(tmp_dir) / "Dockerfile"
+        dockerfile.write_text("FROM python:3.12\n")
+
+        img = Image.from_dockerfile(file=dockerfile, registry="localhost:30000", name="extra_args_dockerfile_test")
+
+        with patch(
+            "flyte._internal.imagebuild.docker_builder.run_sync_with_loop",
+            side_effect=lambda fn, *a, **kw: fn(*a, **kw),
+        ):
+            with patch("subprocess.run", side_effect=mock_run):
+                await DockerImageBuilder()._build_from_dockerfile(img, push=True)
+
+    cmd = next(c for c in calls if isinstance(c, list) and "buildx" in c and "build" in c)
+    assert cmd.index(zstd_output) > cmd.index("--push")
+
+
 def test_dockerfile_base_footer_always_applies():
     """The base footer carries the image id and bash shell for every image, but must NOT
     force a runtime user — that is added separately only for images that create it."""
