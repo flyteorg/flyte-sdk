@@ -142,7 +142,7 @@ def _run_container(
         raise click.ClickException(f"Failed to start container:\n{result.stderr.strip()}")
 
 
-def _wait_for_console_ready(url: str, timeout: int = 300, poll_interval: float = 3.0) -> None:
+def _wait_for_console_ready(url: str, timeout: int = 600, poll_interval: float = 3.0) -> None:
     deadline = time.monotonic() + timeout
     while True:
         try:
