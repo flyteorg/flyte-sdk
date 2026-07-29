@@ -4,7 +4,6 @@ import asyncio
 import atexit
 import concurrent.futures
 import functools
-import importlib
 import inspect
 import logging
 import threading
@@ -248,6 +247,8 @@ class _BackgroundLoop:
 
 def _resolve_sync_wrapper_by_name(module: str, qualname: str) -> Any:
     """Reconstructor used by ``_SyncWrapper.__reduce__`` to re-import a module-level wrapper."""
+    import importlib
+
     obj: Any = importlib.import_module(module)
     for part in qualname.split("."):
         obj = getattr(obj, part)
