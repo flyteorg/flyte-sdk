@@ -65,7 +65,7 @@ vllm_app = VLLMAppEnvironment(
         replicas=(0, 1),  # (min_replicas, max_replicas)
         scaledown_after=300,  # Scale down after 5 minutes of inactivity
     ),
-    requires_auth=False,
+    requires_auth=True,
     extra_args=["--max-model-len 8192"],  # Limit context length for smaller GPU memory
 )
 

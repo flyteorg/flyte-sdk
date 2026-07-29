@@ -27,7 +27,7 @@ env = FastAPIAppEnvironment(
     description="A FastAPI app demonstrating UV inline script capabilities.",
     image=flyte.Image.from_uv_script(__file__, name="fastapi-script"),
     resources=flyte.Resources(cpu=1, memory="512Mi"),
-    requires_auth=False,
+    requires_auth=True,
 )
 
 
