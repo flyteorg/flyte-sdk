@@ -57,7 +57,7 @@ def _resolve_run_mode(run_mode: RunMode) -> RunMode:
 def _get_flyte_tags() -> dict[str, str]:
     """Build MLflow tags from Flyte execution context."""
     ctx = flyte.ctx()
-    if ctx is None or ctx.action is None:
+    if not ctx or ctx.action is None:
         return {}
 
     tags = {}

@@ -22,7 +22,7 @@ total in-flight never exceeds 5, not that exactly 3 will always fail.
 """
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from functools import partial
 
 import flyte
@@ -37,10 +37,10 @@ env = flyte.TaskEnvironment(
 # default routing so run creation doesn't trip on cluster validation.
 @env.task(queue="depth-limited")
 async def step(i: int, sleep_seconds: int) -> str:
-    started = datetime.utcnow().isoformat(timespec="seconds")
+    started = datetime.now(timezone.utc).isoformat(timespec="seconds")
     print(f"[depth-limited] step {i} START at {started}", flush=True)
     await asyncio.sleep(sleep_seconds)
-    finished = datetime.utcnow().isoformat(timespec="seconds")
+    finished = datetime.now(timezone.utc).isoformat(timespec="seconds")
     print(f"[depth-limited] step {i} END   at {finished}", flush=True)
     return f"step {i} done"
 

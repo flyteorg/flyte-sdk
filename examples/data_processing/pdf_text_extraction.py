@@ -25,6 +25,7 @@ content present on any PDF layer. The workflow is organized into the following k
 """
 
 import tempfile
+from typing import Any
 
 import flyte
 import flyte.report
@@ -76,7 +77,7 @@ async def extract_all_text(pdf_bytes: bytes) -> dict:
     """
     import pymupdf
 
-    result = {
+    result: dict[str, Any] = {
         "pages": [],
         "metadata": {},
         "raw_text_blocks": [],
@@ -106,7 +107,7 @@ async def extract_all_text(pdf_bytes: bytes) -> dict:
         print(f"Processing PDF with {len(doc)} pages")
 
         for page_num, page in enumerate(doc):
-            page_data = {
+            page_data: dict[str, Any] = {
                 "page_number": page_num + 1,
                 "visible_text": "",
                 "text_blocks": [],
@@ -529,7 +530,7 @@ async def generate_report(extracted_data: dict, source_url: str) -> str:
     # Hidden text section (if any found)
     if hidden_text:
         # Group hidden text by page
-        hidden_by_page = {}
+        hidden_by_page: dict[int, list[str]] = {}
         for h in hidden_text:
             pg = h.get("page", 0)
             if pg not in hidden_by_page:

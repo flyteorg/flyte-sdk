@@ -151,7 +151,7 @@ async def process_primitives(
         "float": f"Received float: {my_float} (type: {type(my_float).__name__})",
         "str": f"Received string: '{my_str}' (length: {len(my_str)})",
         "bool": f"Received boolean: {my_bool} (type: {type(my_bool).__name__})",
-        "bytes": f"Received bytes: {len(my_bytes)} bytes (first 20: {my_bytes[:20]})",
+        "bytes": f"Received bytes: {len(my_bytes)} bytes (first 20: {my_bytes[:20]!r})",
     }
 
 
@@ -276,8 +276,8 @@ async def create_sample_data() -> Tuple[File, Dir, pd.DataFrame, DataFrame, Any,
 
     temp_dir = tempfile.mkdtemp()
     for i in range(3):
-        async with aiofiles.open(os.path.join(temp_dir, f"file_{i}.txt"), "w") as f:
-            await f.write(f"Content of file {i}")
+        async with aiofiles.open(os.path.join(temp_dir, f"file_{i}.txt"), "w") as local_f:
+            await local_f.write(f"Content of file {i}")
 
     sample_dir = await Dir.from_local(temp_dir)
 

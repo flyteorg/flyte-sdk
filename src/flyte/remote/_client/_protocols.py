@@ -125,6 +125,10 @@ class DataProxyService(Protocol):
         self, request: dataproxy_service_pb2.GetActionDataRequest
     ) -> dataproxy_service_pb2.GetActionDataResponse: ...
 
+    async def create_download_link(
+        self, request: dataproxy_service_pb2.CreateDownloadLinkRequest
+    ) -> dataproxy_service_pb2.CreateDownloadLinkResponse: ...
+
     def tail_logs(
         self, request: dataproxy_service_pb2.TailLogsRequest
     ) -> AsyncIterator[dataproxy_service_pb2.TailLogsResponse]: ...

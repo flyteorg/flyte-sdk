@@ -61,10 +61,57 @@ def _action_options(f):
     return f
 
 
+def _wrap_torchrun_worker(env) -> bool:
+    """Whether to re-exec a torchrun worker under the wrapper.
+
+    Clustered/elastic workers (marked by TORCHELASTIC_RUN_ID) are left unwrapped by default, so a
+    profiler never sits in the rendezvous / NCCL path. A wrapper that understands distributed runs
+    opts in with _F_EXEC_WRAPPER_CLUSTERED; even then only the primary worker (global RANK 0) is
+    wrapped, so exactly one process runs under the tool and every other rank is untouched.
+    """
+    if not env.get("_F_EXEC_WRAPPER_CLUSTERED"):
+        return False
+    return env.get("RANK", "0") == "0"
+
+
+def _maybe_reexec_under_wrapper() -> None:
+    """Optionally re-exec this task process under an external wrapper command.
+
+    When the _F_EXEC_WRAPPER environment variable is set, the current process is replaced
+    (via execvp) with `<wrapper tokens> <original argv>`, so the whole task runs as a child
+    of that wrapper. This is how a profiler such as NVIDIA Nsight Systems (`nsys launch ...`)
+    attaches to a task without the user rewriting it as a subprocess: a plugin stamps
+    _F_EXEC_WRAPPER onto the task's container env and the entire task then runs under the tool.
+
+    The value is tokenized with shlex and each token is expanded against the environment, so a
+    wrapper may reference $ACTION_NAME, $RUN_NAME, and similar. _F_EXEC_WRAPPED guards against
+    re-entering the wrapper after the exec. Clustered/torchrun workers (TORCHELASTIC_RUN_ID) are left
+    unwrapped unless the wrapper opts in via _F_EXEC_WRAPPER_CLUSTERED, in which case only the primary
+    worker is wrapped (see _wrap_torchrun_worker). When the variable is unset this is a no-op and the
+    normal startup path is unchanged.
+    """
+    wrapper = os.environ.get("_F_EXEC_WRAPPER")
+    if not wrapper or os.environ.get("_F_EXEC_WRAPPED"):
+        return
+    if "TORCHELASTIC_RUN_ID" in os.environ and not _wrap_torchrun_worker(os.environ):
+        return
+
+    import shlex
+
+    os.environ["_F_EXEC_WRAPPED"] = "1"
+    tokens = [os.path.expandvars(tok) for tok in shlex.split(wrapper)]
+    argv = [*tokens, *sys.argv]
+    os.execvp(argv[0], argv)
+
+
 @_pass_through.command("a0")
 @_action_options
 @click.pass_context
 def main(ctx: click.Context, **params):
+    # Re-exec under an external wrapper (e.g. `nsys launch`) if a plugin requested one. No-op
+    # unless _F_EXEC_WRAPPER is set; must run before the controller and task load so the whole
+    # action is covered by the wrapper.
+    _maybe_reexec_under_wrapper()
     # torchrun workers (clustered tasks) re-exec this `a0` entrypoint; they never enqueue subtasks,
     # so they run with no controller. TORCHELASTIC_RUN_ID is set by torchrun on every worker.
     controller_enabled = "TORCHELASTIC_RUN_ID" not in os.environ

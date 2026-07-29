@@ -149,7 +149,7 @@ def get_trackio_context() -> Optional[_TrackioConfig]:
 
     ctx = flyte.ctx()
 
-    if ctx is None or not ctx.custom_context:
+    if not ctx or not ctx.custom_context:
         return None
 
     prefix = f"{_TRACKIO_CONTEXT_PREFIX}_"
@@ -202,7 +202,7 @@ def set_trackio_run(run) -> None:
 
     ctx = flyte.ctx()
 
-    if ctx is None:
+    if not ctx:
         return
 
     if ctx.data is None:

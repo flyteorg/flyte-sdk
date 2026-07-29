@@ -7,7 +7,7 @@ This example demonstrates how to use W&B with Flyte for experiment tracking.
 import os
 import random
 from dataclasses import dataclass
-from typing import Dict
+from typing import Any, Dict
 
 import wandb
 
@@ -31,6 +31,7 @@ class Wandb(Link):
         parent_action_name: str,
         action_name: str,
         pod_name: str,
+        **kwargs: Any,
     ) -> str:
         return f"https://wandb.ai/{self.entity}/{self.project}/runs/{self.id}"
 

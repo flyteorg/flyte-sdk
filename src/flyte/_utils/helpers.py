@@ -79,11 +79,11 @@ def original_std_streams():
 def _selector_policy():
     import asyncio
 
-    original_policy = asyncio.get_event_loop_policy()
+    original_policy = asyncio.get_event_loop_policy()  # ty: ignore[deprecated]  # kept until 3.16 drops the API
     try:
         if os.name == "nt" and hasattr(asyncio, "WindowsSelectorEventLoopPolicy"):
             asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
         yield
     finally:
-        asyncio.set_event_loop_policy(original_policy)
+        asyncio.set_event_loop_policy(original_policy)  # ty: ignore[deprecated]  # kept until 3.16 drops the API

@@ -101,7 +101,7 @@ def root(from_dir: bool = False) -> dict:
 def from_env_var(from_dir: bool = False) -> dict:
     """Return the contents of the parameter file."""
     data_path = os.environ.get(DATA_DIR_ENV_VAR) if from_dir else os.environ.get(DATA_ENV_VAR)
-    if not os.path.exists(data_path):
+    if data_path is None or not os.path.exists(data_path):
         return {"error": "data file not available", "path": data_path}
     with open(data_path, "rb") as fh:
         contents = fh.read().decode("utf-8")

@@ -24,7 +24,6 @@ from flyte.clustered import ClusteredTaskEnvironment, ClusterFailurePolicy, Torc
 
 # --- Knobs ---------------------------------------------------------------------------------------
 USE_GPU = True
-GPU_DEVICE = "L4"
 REPLICAS = 2  # nodes
 NPROC_PER_NODE = 1  # processes (GPUs) per node
 
@@ -35,7 +34,7 @@ image = (
 )
 
 resources = (
-    flyte.Resources(cpu=(2, 4), memory=("4Gi", "8Gi"), gpu=f"{GPU_DEVICE}:{NPROC_PER_NODE}")
+    flyte.Resources(cpu=(2, 4), memory=("4Gi", "8Gi"), gpu="L4:1")
     if USE_GPU
     else flyte.Resources(cpu=(2, 4), memory=("2Gi", "4Gi"))
 )

@@ -15,6 +15,91 @@ _DEFAULT_CONFIG_PATH = f"~/.docker/{_CONFIG_JSON}"
 _CRED_HELPERS = "credHelpers"
 _CREDS_STORE = "credsStore"
 
+# Docker Hub is stored under a handful of aliases in ~/.docker/config.json; all normalize to
+# the pushable "docker.io" registry host.
+_DOCKER_HUB_REGISTRY = "docker.io"
+_DOCKER_HUB_KEYS = frozenset(
+    {
+        "https://index.docker.io/v1/",
+        "https://index.docker.io/v2/",
+        "index.docker.io",
+        "registry-1.docker.io",
+        "docker.io",
+    }
+)
+
+
+def _normalize_registry(server: str) -> str:
+    """Normalize a Docker config ``auths`` key to a registry hostname usable as a push target.
+
+    Docker Hub is written as a full URL (``https://index.docker.io/v1/``); every Hub alias
+    collapses to ``docker.io``. Other registries are stored as bare hosts and pass through.
+    """
+    host = server
+    if "://" in host:
+        host = host.split("://", 1)[1]
+    host = host.split("/", 1)[0]
+    if server in _DOCKER_HUB_KEYS or host in _DOCKER_HUB_KEYS or host.endswith(".docker.io") or host == "docker.io":
+        return _DOCKER_HUB_REGISTRY
+    return host
+
+
+def infer_registry_from_docker_config(docker_config_path: str | Path | None = None) -> str | None:
+    """Best-effort inference of a push registry from the user's Docker config.
+
+    Enumerates the ``auths`` entries (present even when credentials live in a ``credsStore`` —
+    the entries exist, they're just empty), normalizes Docker Hub's various keys to
+    ``docker.io``, and — for Hub — resolves the namespace (``docker.io/<username>``) via the
+    configured credential helper. If Hub is absent and exactly one other registry is present,
+    that registry is returned instead. Hub is preferred when both are present.
+
+    Returns ``None`` when nothing can be inferred (missing config, no auths, helper
+    unavailable). This never raises: inference is advisory and must never block a command.
+    """
+    try:
+        config = _load_docker_config(docker_config_path)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return None
+
+    auths = config.get("auths", {})
+    if not auths:
+        return None
+
+    hub_keys: list[str] = []
+    non_hub: list[str] = []
+    for server in auths:
+        if _normalize_registry(server) == _DOCKER_HUB_REGISTRY:
+            hub_keys.append(server)
+        else:
+            non_hub.append(_normalize_registry(server))
+
+    # Prefer Docker Hub: resolve the namespace so the candidate is docker.io/<username>.
+    if hub_keys:
+        server = hub_keys[0]
+        helper = _get_credential_helper(config, server)
+        if helper:
+            creds = _get_credentials_from_helper(helper, server)
+            if creds and creds[0]:
+                return f"{_DOCKER_HUB_REGISTRY}/{creds[0]}"
+        # Fall back to a directly-stored auth token's username if present.
+        auth = auths.get(server, {}).get("auth")
+        if auth:
+            try:
+                username = base64.b64decode(auth).decode().split(":", 1)[0]
+                if username:
+                    return f"{_DOCKER_HUB_REGISTRY}/{username}"
+            except Exception:
+                pass
+        # Hub login present but namespace unknown — a bare "docker.io" is not a valid push
+        # target, so decline rather than propose something that will fail.
+        return None
+
+    # No Hub login: if exactly one other registry is configured, use it.
+    unique = list(dict.fromkeys(non_hub))
+    if len(unique) == 1:
+        return unique[0]
+    return None
+
 
 def _load_docker_config(config_path: str | Path | None = None) -> dict[str, Any]:
     """

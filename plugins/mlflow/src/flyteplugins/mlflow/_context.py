@@ -146,7 +146,7 @@ def get_mlflow_context() -> Optional[_MLflowConfig]:
     """
     ctx = flyte.ctx()
 
-    if ctx is None or not ctx.custom_context:
+    if not ctx or not ctx.custom_context:
         return None
 
     has_mlflow_keys = any(k.startswith("mlflow_") for k in ctx.custom_context)

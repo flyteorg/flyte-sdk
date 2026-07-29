@@ -31,6 +31,7 @@ from flyteplugins.agents.core import (
     flush_report,
     jsonable,
     resolve_memory,
+    sync_variant,
     tool,
 )
 
@@ -185,6 +186,9 @@ async def run_agent(
 ) -> str:
     """Run a Mistral agent with the given tools and prompt; return the final text.
 
+    Await this from an async task as ``await run_agent(...)``; from a sync task
+    use :func:`run_agent_sync` instead.
+
     Call this from inside an ``@env.task`` — that task is the durable parent.
     The Mistral SDK runs the agent loop; each tool the agent calls runs as a
     durable Flyte child action, and (with ``durable=True``) each model turn is
@@ -263,3 +267,6 @@ async def run_agent(
             timeline.row(icon="📊", label="usage", meta="model", detail=usage.detail())
         await flush_report()
     return _final_text(output_entries)
+
+
+run_agent_sync = sync_variant(run_agent)

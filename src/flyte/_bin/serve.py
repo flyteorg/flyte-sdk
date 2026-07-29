@@ -248,6 +248,8 @@ async def _serve(
 
     logger.info("Running app via server function")
     assert app_env._server is not None
+    # Bind to a local so the narrowed (non-None) type is visible inside the run_sync closure below.
+    server_fn = app_env._server
 
     loop = asyncio.get_running_loop()
 
@@ -271,17 +273,17 @@ async def _serve(
 
     try:
         logger.info("Running server function")
-        bound_params = _bind_parameters(app_env._server, materialized_parameters)
-        if asyncio.iscoroutinefunction(app_env._server):
+        bound_params = _bind_parameters(server_fn, materialized_parameters)
+        if asyncio.iscoroutinefunction(server_fn):
             # Do not register SIGTERM with signal.signal or call loop.stop(): that races
             # asyncio.run() teardown (RuntimeError: Event loop stopped before Future completed).
             # Async servers (e.g. uvicorn) should install asyncio-safe handlers themselves.
-            await app_env._server(**bound_params)
+            await server_fn(**bound_params)
         else:
             # Run the function on a separate thread, in case the sync function
             # relies on third party libraries that use an event loop internally.
             def run_sync():
-                return app_env._server(**bound_params)
+                return server_fn(**bound_params)
 
             await loop.run_in_executor(None, run_sync)
     finally:

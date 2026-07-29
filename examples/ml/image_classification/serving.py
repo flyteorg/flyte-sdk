@@ -16,7 +16,6 @@ import json
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Optional
 
 import aiofiles
 import torch
@@ -27,6 +26,7 @@ from pydantic import BaseModel
 from transformers import AutoImageProcessor, AutoModelForImageClassification
 
 import flyte
+import flyte.app
 from flyte.app import Parameter
 from flyte.app.extras import FastAPIAppEnvironment
 
@@ -74,9 +74,7 @@ env = FastAPIAppEnvironment(
     description="Serving fine-tuned image classification model",
     image=serving_image,
     resources=flyte.Resources(cpu=2, memory="4Gi"),
-    include=[
-        "index.html",
-    ],
+    include=("index.html",),
     requires_auth=False,
     parameters=[
         Parameter(
@@ -87,11 +85,12 @@ env = FastAPIAppEnvironment(
     ],
 )
 
-# Application state
-app.state.model: Optional[AutoModelForImageClassification] = None
-app.state.processor: Optional[AutoImageProcessor] = None
-app.state.id2label: dict = {}
-app.state.label2id: dict = {}
+# Application state: model is an Optional[AutoModelForImageClassification],
+# processor is an Optional[AutoImageProcessor], the rest are dicts.
+app.state.model = None
+app.state.processor = None
+app.state.id2label = {}
+app.state.label2id = {}
 
 
 # Response models

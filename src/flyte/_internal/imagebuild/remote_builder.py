@@ -28,6 +28,7 @@ from flyte._image import (
     Env,
     PipOption,
     PipPackages,
+    PixiProject,
     PoetryProject,
     PythonWheels,
     Requirements,
@@ -40,10 +41,11 @@ from flyte._internal.imagebuild.utils import (
     copy_files_to_context,
     get_and_list_dockerignore,
     get_uv_project_editable_dependencies,
+    pixi_project_to_primitive_layers,
 )
 from flyte._internal.runtime.task_serde import get_security_context
 from flyte._logging import logger
-from flyte._secret import Secret
+from flyte._secret import Secret, SecretRequest
 from flyte._status import status
 from flyte.remote import ActionOutputs, Run
 
@@ -232,7 +234,16 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
     layers = []
     docker_ignore_patterns = get_and_list_dockerignore(image)
 
+    # The imagebuilder IDL has no pixi layer, so lower each PixiProject into primitive
+    # layers (apt / copy / commands / env) that the remote builder understands.
+    expanded_layers: typing.List[typing.Any] = []
     for layer in image._layers:
+        if isinstance(layer, PixiProject):
+            expanded_layers.extend(pixi_project_to_primitive_layers(layer))
+        else:
+            expanded_layers.append(layer)
+
+    for layer in expanded_layers:
         secret_mounts = None
         pip_options = image_definition_pb2.PipOptions()
 
@@ -245,7 +256,7 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
             )
 
         if hasattr(layer, "secret_mounts"):
-            sc = get_security_context(layer.secret_mounts)
+            sc = get_security_context(cast("SecretRequest | None", layer.secret_mounts))
             secret_mounts = sc.secrets if sc else None
 
         if isinstance(layer, AptPackages):
@@ -298,7 +309,7 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
                     for pyproject in header.pyprojects:
                         pyproject_dst = copy_files_to_context(Path(pyproject), context_path, docker_ignore_patterns)
                         uv_lock_path = Path(pyproject) / "uv.lock"
-                        uv_project_kwargs = {
+                        uv_project_kwargs: dict[str, typing.Any] = {
                             "pyproject": str(pyproject_dst.relative_to(context_path)),
                             "options": pip_options,
                             "secret_mounts": secret_mounts,
@@ -457,7 +468,7 @@ def _get_build_secrets_from_image(image: Image) -> Optional[typing.List[Secret]]
     seen_secrets: typing.Set[typing.Tuple[typing.Optional[str], str]] = set()
     DEFAULT_SECRET_DIR = Path("/etc/flyte/secrets")
     for layer in image._layers:
-        if isinstance(layer, (PipOption, Commands, AptPackages)) and layer.secret_mounts is not None:
+        if isinstance(layer, (PipOption, Commands, AptPackages, PixiProject)) and layer.secret_mounts is not None:
             for secret_mount in layer.secret_mounts:
                 # Mount all the image secrets to a default directory that will be passed to the BuildKit server.
                 if isinstance(secret_mount, Secret):

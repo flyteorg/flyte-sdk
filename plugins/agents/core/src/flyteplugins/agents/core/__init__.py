@@ -23,6 +23,7 @@ from ._durable import durable_step
 from ._fingerprint import fingerprint, jsonable
 from ._memory import resolve_memory
 from ._observability import ReportTimeline, abbrev, duration_ms, flush_report
+from ._sync import run_coro_sync, sync_variant
 from ._tools import ToolTaskResolver, attach_tool_resolver, coerce_tool_args, task_json_schema, tool
 
 __all__ = [
@@ -37,6 +38,8 @@ __all__ = [
     "flush_report",
     "jsonable",
     "resolve_memory",
+    "run_coro_sync",
+    "sync_variant",
     "task_json_schema",
     "tool",
 ]

@@ -73,11 +73,14 @@ def _apply_overrides_to_primary_container(
         if proto_res is not None:
             requests = {_sanitize_resource_name(e): e.value for e in proto_res.requests}
             limits = {_sanitize_resource_name(e): e.value for e in proto_res.limits}
+            existing = target.get("resources") or {}
             rr: Dict[str, Any] = {}
             if requests:
                 rr["requests"] = requests
             if limits:
                 rr["limits"] = limits
+            if existing.get("claims"):
+                rr["claims"] = existing["claims"]
             target["resources"] = rr
 
     if env_vars:
@@ -216,7 +219,7 @@ class TaskDetails(ToJSONMixin):
                     _version = tasks[0].version
                 elif _auto_version == "current":
                     ctx = flyte.ctx()
-                    if ctx is None:
+                    if not ctx:
                         raise ValueError("auto_version=current can only be used within a task context.")
                     _version = ctx.version
             cfg = get_init_config()

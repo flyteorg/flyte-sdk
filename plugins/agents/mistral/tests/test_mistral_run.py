@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import flyte
 import pytest
 
-from flyteplugins.agents.mistral import run_agent, tool
+from flyteplugins.agents.mistral import run_agent, run_agent_sync, tool
 from flyteplugins.agents.mistral._run import _final_text, _install_turn_hooks, _render, _UsageSink
 
 
@@ -30,6 +30,21 @@ def test_render_emits_rows_for_tool_calls_and_assistant_messages():
     labels = [c.kwargs.get("label") for c in timeline.row.call_args_list]
     assert "search_web" in labels  # tool call rendered
     assert "assistant" in labels  # message.output rendered
+
+
+def test_run_agent_sync_call(monkeypatch):
+    """run_agent_sync drives the loop end to end from synchronous code."""
+    monkeypatch.setenv("MISTRAL_API_KEY", "test-key")
+
+    result = MagicMock()
+    result.output_entries = [_message("sync answer")]
+    client = MagicMock()
+    client.beta.conversations.run_async = AsyncMock(return_value=result)
+
+    with patch("mistralai.client.Mistral", return_value=client):
+        out = run_agent_sync("hi", durable=False, observability=False)
+
+    assert out == "sync answer"
 
 
 @pytest.mark.asyncio

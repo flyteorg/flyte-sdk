@@ -241,17 +241,17 @@ parameterized_pipeline = env.sandbox.orchestrator(
 
 
 @env.sandbox.orchestrator
-def orchestrate_etl(category: str) -> dict:
-    csv_file = create_csv_file()
-    row_count = count_csv_rows(csv_file)
+async def orchestrate_etl(category: str) -> dict:
+    csv_file = await create_csv_file()
+    row_count = await count_csv_rows(csv_file)
 
-    products = create_dataframe()
-    filtered = filter_dataframe(products, category)
-    revenue = total_revenue(filtered)
+    products = await create_dataframe()
+    filtered = await filter_dataframe(products, category)
+    revenue = await total_revenue(filtered)
 
-    report_dir = create_report_dir()
-    merged = merge_files_to_dir(csv_file, report_dir)
-    file_count = count_dir_files(merged)
+    report_dir = await create_report_dir()
+    merged = await merge_files_to_dir(csv_file, report_dir)
+    file_count = await count_dir_files(merged)
 
     return {
         "csv_rows": row_count,

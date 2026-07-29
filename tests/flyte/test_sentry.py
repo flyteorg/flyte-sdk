@@ -447,6 +447,39 @@ def test_capture_exception_skips_httpx_transport_errors(httpx_exc_name):
     init_mock.assert_not_called()
 
 
+@pytest.mark.parametrize("pyqwest_exc_name", ["ReadError", "WriteError"])
+def test_capture_exception_skips_pyqwest_transport_errors(pyqwest_exc_name):
+    """pyqwest is the HTTP transport under connectrpc, so control-plane RPCs report
+    socket-level read/write failures as its own errors rather than httpx's."""
+    import pyqwest
+
+    err = _wrap_as_upload_system_error(getattr(pyqwest, pyqwest_exc_name)("boom"))
+    with mock.patch.object(_sentry, "init") as init_mock:
+        _sentry.capture_exception(err)
+    init_mock.assert_not_called()
+
+
+def test_capture_exception_skips_pyqwest_stream_error():
+    """FLYTE-SDK-6H: the HTTP/2 stream carrying a control-plane RPC is reset mid-body
+    ('Error reading content'), surfacing as ConnectError <- pyqwest.StreamError.
+    A stream reset is a transport condition, not an SDK bug."""
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+    from pyqwest import StreamError, StreamErrorCode
+
+    try:
+        try:
+            raise StreamError("Error reading content", StreamErrorCode.INTERNAL_ERROR)
+        except StreamError as stream_err:
+            raise ConnectError(Code.UNKNOWN, "Error reading content") from stream_err
+    except ConnectError as e:
+        err = _wrap_as_upload_system_error(e)
+
+    with mock.patch.object(_sentry, "init") as init_mock:
+        _sentry.capture_exception(err)
+    init_mock.assert_not_called()
+
+
 def test_capture_exception_still_reports_connect_error_internal_in_upload_chain():
     """ConnectError(INTERNAL) — a backend 500 (FLYTE-SDK-43) — is intentionally NOT
     treated as transient: it can be a real backend bug, so it still reaches Sentry."""
@@ -490,3 +523,46 @@ def test_capture_exception_skips_wrapped_invalid_endpoint_error():
     with mock.patch.object(_sentry, "init") as init_mock:
         _sentry.capture_exception(err)
     init_mock.assert_not_called()
+
+
+def test_track_operation_counts_success():
+    with mock.patch.object(_sentry, "count") as count_mock:
+        with _sentry.track_operation("create_run"):
+            pass
+    count_mock.assert_called_once_with("flyte.operation", tags={"operation": "create_run", "status": "success"})
+
+
+def test_track_operation_counts_system_error_and_reraises():
+    with mock.patch.object(_sentry, "count") as count_mock:
+        with pytest.raises(RuntimeError):
+            with _sentry.track_operation("deploy_task"):
+                raise RuntimeError("boom")
+    count_mock.assert_called_once_with(
+        "flyte.operation",
+        tags={
+            "operation": "deploy_task",
+            "status": "error",
+            "error_type": "RuntimeError",
+            "error_kind": "system",
+        },
+    )
+
+
+def test_track_operation_tags_user_errors():
+    from flyte.errors import DeploymentError
+
+    with mock.patch.object(_sentry, "count") as count_mock:
+        with pytest.raises(DeploymentError):
+            with _sentry.track_operation("deploy_app"):
+                raise DeploymentError("bad config")
+    assert count_mock.call_args.kwargs["tags"]["error_kind"] == "user"
+
+
+def test_track_operation_tags_error_code_when_present():
+    from flyte.errors import RuntimeSystemError
+
+    with mock.patch.object(_sentry, "count") as count_mock:
+        with pytest.raises(RuntimeSystemError):
+            with _sentry.track_operation("create_run"):
+                raise RuntimeSystemError("RunCreationError", "Failed to create run")
+    assert count_mock.call_args.kwargs["tags"]["error_code"] == "RunCreationError"

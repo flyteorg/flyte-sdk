@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Literal, Optional
 import rich.box
 import rich.repr
 import rich_click as click
+from click import exceptions as click_exceptions
 from rich.console import Console
 from rich.panel import Panel
 from rich.pretty import pretty_repr
@@ -222,10 +223,10 @@ class InvokeBaseMixin:
             raise click.ClickException(f"Initialization failed. Pass remote config for CLI. (Reason: {e})")
         except flyte.errors.BaseRuntimeError as e:
             raise click.ClickException(f"{e.kind} failure, {e.code}. {e}") from e
-        except click.exceptions.Exit as e:
+        except click_exceptions.Exit as e:
             # This is a normal exit, do nothing
             raise e
-        except click.exceptions.NoArgsIsHelpError:
+        except click_exceptions.NoArgsIsHelpError:
             # Do not raise an error if no arguments are passed, just show the help message.
             # https://github.com/pallets/click/pull/1489
             return None
@@ -348,7 +349,7 @@ class ObjectsPerFileGroup(GroupBase):
     @abstractmethod
     def _get_command_for_obj(self, ctx: click.Context, obj_name: str, obj: Any) -> click.Command: ...
 
-    def get_command(self, ctx, obj_name):
+    def get_command(self, ctx, obj_name):  # ty: ignore[invalid-method-override]
         obj = self.objs[obj_name]
         return self._get_command_for_obj(ctx, obj_name, obj)
 
@@ -398,7 +399,7 @@ class FileGroup(GroupBase):
     def list_commands(self, ctx):
         return self.files
 
-    def get_command(self, ctx, filename):
+    def get_command(self, ctx, filename):  # ty: ignore[invalid-method-override]
         raise NotImplementedError
 
 

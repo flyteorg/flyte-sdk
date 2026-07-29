@@ -18,6 +18,6 @@ Gemini) — wire it as a Flyte secret.
 from flyteplugins.agents.core import tool
 
 from ._durable import FlyteLlm, durable_model
-from ._run import run_agent
+from ._run import run_agent, run_agent_sync
 
-__all__ = ["FlyteLlm", "durable_model", "run_agent", "tool"]
+__all__ = ["FlyteLlm", "durable_model", "run_agent", "run_agent_sync", "tool"]

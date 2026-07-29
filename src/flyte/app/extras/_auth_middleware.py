@@ -37,7 +37,7 @@ Example:
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Any, Callable, cast
 
 if TYPE_CHECKING:
     from fastapi import Request
@@ -136,7 +136,7 @@ class FastAPIPassthroughAuthMiddleware(BaseHTTPMiddleware):
                 if result is not None:
                     auth_tuples.append(result)
             except Exception as e:
-                logger.warning(f"Header extractor {extractor.__name__} failed: {e}")
+                logger.warning(f"Header extractor {cast(Any, extractor).__name__} failed: {e}")
 
         # Require auth headers
         if not auth_tuples:

@@ -43,7 +43,7 @@ app_env = flyte.app.AppEnvironment(
     port=8080,
     resources=flyte.Resources(cpu="1", memory="512Mi"),
     requires_auth=False,
-    include=["settings.py", "urls.py", "wsgi.py"],
+    include=("settings.py", "urls.py", "wsgi.py"),
 )
 
 

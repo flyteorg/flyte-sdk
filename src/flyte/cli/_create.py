@@ -1,3 +1,4 @@
+import sys
 from pathlib import Path
 from typing import Any, Dict, get_args
 
@@ -7,6 +8,18 @@ import flyte
 import flyte.cli._common as common
 from flyte.cli._option import DependentOption, MutuallyExclusiveOption
 from flyte.remote import SecretTypes
+
+
+def _is_interactive() -> bool:
+    """True when stdin is an interactive terminal, so it's safe to prompt the user.
+
+    Prevents `flyte create config` from blocking on a confirmation prompt in non-interactive
+    contexts (CI, piped input, etc.).
+    """
+    try:
+        return sys.stdin.isatty()
+    except (AttributeError, ValueError):
+        return False
 
 
 @click.group(name="create")
@@ -349,6 +362,18 @@ def config(
     image: Dict[str, str] = {}
     if image_builder:
         image["builder"] = image_builder
+    if not registry and image_builder != "remote" and _is_interactive():
+        # No explicit --registry: try to infer a push registry from the user's Docker login and
+        # offer it interactively. We only ever propose here (never at `flyte run` time), only in
+        # an interactive terminal, and only write it on confirmation. The remote builder resolves
+        # the registry server-side, so we never prompt for one there.
+        from flyte._utils.docker_credentials import infer_registry_from_docker_config
+
+        inferred = infer_registry_from_docker_config()
+        if inferred and click.confirm(
+            f"Found a Docker login for '{inferred}'. Use it as your image registry?", default=True
+        ):
+            registry = inferred
     if registry:
         image["registry"] = registry
 

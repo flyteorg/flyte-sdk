@@ -134,8 +134,9 @@ def read_files_in_directory_sync(d: Dir) -> dict[str, str]:
     """
     Demonstrates reading the contents of files in a directory synchronously.
     """
-    file_contents = {}
+    file_contents: dict[str, str] = {}
     for file in d.walk_sync(recursive=False):
+        assert file.name is not None  # name is always set for files from walk
         if file.name.endswith(".txt"):  # Only read text files
             try:
                 with file.open_sync("rb") as f:
@@ -165,8 +166,9 @@ def count_files_by_extension(d: Dir) -> dict[str, int]:
     """
     Demonstrates practical use case: counting files by extension.
     """
-    extension_counts = {}
+    extension_counts: dict[str, int] = {}
     for file in d.walk_sync(recursive=True):
+        assert file.name is not None  # name is always set for files from walk
         _, ext = os.path.splitext(file.name)
         ext = ext.lower() if ext else "no_extension"
         extension_counts[ext] = extension_counts.get(ext, 0) + 1
@@ -183,8 +185,9 @@ def find_largest_files(d: Dir, top_n: int = 3) -> list[tuple[str, int]]:
     """
     Demonstrates practical use case: finding the largest files in a directory.
     """
-    file_sizes = []
+    file_sizes: list[tuple[str, int]] = []
     for file in d.walk_sync(recursive=True):
+        assert file.name is not None  # name is always set for files from walk
         try:
             with file.open_sync("rb") as f:
                 content = f.read()
@@ -210,8 +213,9 @@ def search_files_by_content(d: Dir, search_term: str) -> list[str]:
     """
     Demonstrates practical use case: searching for files containing specific content.
     """
-    matching_files = []
+    matching_files: list[str] = []
     for file in d.walk_sync(recursive=True):
+        assert file.name is not None  # name is always set for files from walk
         if file.name.endswith(".txt"):  # Only search text files
             try:
                 with file.open_sync("rb") as f:
@@ -241,6 +245,7 @@ def create_directory_structure_report(d: Dir) -> dict[str, int]:
 
     # Count files and calculate sizes
     for file in d.walk_sync(recursive=True):
+        assert file.name is not None  # name is always set for files from walk
         report["total_files"] += 1
         if file.name.endswith(".txt"):
             report["text_files"] += 1
@@ -274,8 +279,9 @@ def filter_files_by_size(d: Dir, min_size: int = 0, max_size: int = 1000) -> lis
     """
     Demonstrates practical use case: filtering files by size range.
     """
-    filtered_files = []
+    filtered_files: list[str] = []
     for file in d.walk_sync(recursive=True):
+        assert file.name is not None  # name is always set for files from walk
         try:
             with file.open_sync("rb") as f:
                 content = f.read()
@@ -295,8 +301,9 @@ def backup_text_files_content(d: Dir) -> dict[str, str]:
     """
     Demonstrates practical use case: backing up all text file contents.
     """
-    backup_data = {}
+    backup_data: dict[str, str] = {}
     for file in d.walk_sync(recursive=True):
+        assert file.name is not None  # name is always set for files from walk
         if file.name.endswith(".txt"):
             try:
                 with file.open_sync("rb") as f:

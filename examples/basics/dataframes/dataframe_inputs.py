@@ -73,7 +73,9 @@ def process_df(df: pd.DataFrame) -> pd.DataFrame:
 
 @env.task
 def process_fdf_to_df(df: flyte.io.DataFrame) -> pd.DataFrame:
-    return df
+    # Flyte's type engine converts the offloaded DataFrame to the declared
+    # pandas type at the task boundary.
+    return df  # ty: ignore[invalid-return-type]
 
 
 @env.task
@@ -116,20 +118,20 @@ if __name__ == "__main__":
         run = flyte.with_runcontext(preserve_original_types=True).run(process_fdf_to_df, df=flyte_dataframe)
         print(run.url)
         run.wait()
-        result: pd.DataFrame = run.outputs()[0]
+        result = run.outputs()[0]
         assert isinstance(result, pd.DataFrame)
         print(result)
 
         run = flyte.with_runcontext(preserve_original_types=True).run(process_df_to_fdf, df=dataframe)
         print(run.url)
         run.wait()
-        result: flyte.io.DataFrame = run.outputs()[0]
+        result = run.outputs()[0]
         assert isinstance(result, flyte.io.DataFrame)
         print(result)
 
         run = flyte.with_runcontext(preserve_original_types=True).run(process_fdf_to_fdf, df=flyte_dataframe)
         print(run.url)
         run.wait()
-        result: flyte.io.DataFrame = run.outputs()[0]
+        result = run.outputs()[0]
         assert isinstance(result, flyte.io.DataFrame)
         print(result)

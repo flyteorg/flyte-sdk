@@ -58,16 +58,13 @@ def load_python_modules(
             loaded_modules.append(imported_module)
         except flyte.errors.ModuleLoadError as e:
             failed_paths.append((path, str(e)))
-        except (
-            ImportError,
-            SyntaxError,
-            NameError,
-            AttributeError,
-            TypeError,
-            ValueError,
-            KeyError,
-            RuntimeError,
-        ) as e:
+        except Exception as e:
+            # Anything raised inside ``importlib.import_module(<user-module>)`` is by definition an
+            # error in the user's code or one of its third-party imports (e.g.
+            # ``google.api_core.exceptions.RetryError`` from expired gcloud creds at module top-level
+            # — FLYTE-SDK-39). Wrap as ``ModuleLoadError`` (a ``RuntimeUserError`` that
+            # ``flyte/_sentry.py:_is_user_error`` filters out) so deploy surfaces a clean message
+            # via ``--ignore-load-errors`` instead of crash-reporting to Sentry.
             raise flyte.errors.ModuleLoadError(f"Failed to load {path}: {type(e).__name__}: {e}") from e
 
     elif path.is_dir():
@@ -118,19 +115,13 @@ def load_python_modules(
                         loaded_modules.append(imported_module)
                     except flyte.errors.ModuleLoadError as e:
                         failed_paths.append((file_path, str(e)))
-                    except (
-                        ImportError,
-                        SyntaxError,
-                        NameError,
-                        AttributeError,
-                        TypeError,
-                        ValueError,
-                        KeyError,
-                        RuntimeError,
-                    ) as e:
-                        # User code failed at import time. Record as a load failure
-                        # (consistent with ModuleLoadError above) so deploy can either
-                        # warn or abort via --ignore-load-errors instead of crashing.
+                    except Exception as e:
+                        # Anything raised inside ``importlib.import_module(<user-module>)`` is by
+                        # definition an error in the user's code or one of its third-party imports
+                        # (e.g. ``google.api_core.exceptions.RetryError`` from expired gcloud creds
+                        # at module top-level — FLYTE-SDK-39). Record as a load failure (consistent
+                        # with ``ModuleLoadError`` above) so deploy can either warn or abort via
+                        # ``--ignore-load-errors`` instead of crash-reporting to Sentry.
                         failed_paths.append((file_path, f"{type(e).__name__}: {e}"))
 
                 progress.update(task, current_file="[green]Done[/green]")

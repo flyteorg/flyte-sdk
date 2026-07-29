@@ -28,31 +28,17 @@ Run:  flyte run openai_handoffs.py support_queue --tickets '["Refund $20 on A-10
 
 import asyncio
 import os
-from pathlib import Path
 
 import flyte
 from agents import Agent, RunConfig
 from agents.models.interface import Model, ModelProvider
 from agents.models.multi_provider import MultiProvider
-from flyte._image import PythonWheels
 
 from flyteplugins.agents.openai import run_agent, tool
 
 _secrets = [flyte.Secret(key="openai_api_key", as_env_var="OPENAI_API_KEY")]
-_image = (
-    flyte.Image.from_debian_base(name="openai-handoffs")
-    .clone(
-        addl_layer=PythonWheels(
-            wheel_dir=Path(__file__).parent.parent / "dist",
-            package_name="flyteplugins-agents-core",
-        ),
-    )
-    .clone(
-        addl_layer=PythonWheels(
-            wheel_dir=Path(__file__).parent.parent / "dist",
-            package_name="flyteplugins-agents-openai",
-        ),
-    )
+_image = flyte.Image.from_debian_base(name="openai-handoffs").with_local_v2_plugins(
+    ["flyteplugins-agents-core", "flyteplugins-agents-openai"]
 )
 
 # A higher-compute environment for the heavier tool — same image, more CPU. This

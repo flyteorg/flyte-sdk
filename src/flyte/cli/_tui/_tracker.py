@@ -5,7 +5,10 @@ import threading
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from flyte._internal.runtime.convert import Error
 
 
 class ActionStatus(Enum):
@@ -242,7 +245,7 @@ class ActionTracker:
             node.log_links = log_links
             self._version += 1
 
-    def record_failure(self, *, action_id: str, error: str, end_time: float | None = None) -> None:
+    def record_failure(self, *, action_id: str, error: str | Error, end_time: float | None = None) -> None:
         from flyte._internal.runtime.convert import Error
 
         with self._lock:
@@ -254,7 +257,9 @@ class ActionTracker:
             self._pending_conditions.pop(action_id, None)
             node.status = ActionStatus.FAILED
             if isinstance(error, Error):
-                node.error = error.err
+                # Defensive branch: some recorders hand over the structured Error;
+                # downstream rendering stringifies it.
+                node.error = cast(str, error.err)
             else:
                 node.error = error
             node.end_time = end_time or time.monotonic()

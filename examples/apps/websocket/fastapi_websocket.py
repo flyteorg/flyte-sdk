@@ -30,6 +30,7 @@ from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 import flyte
+import flyte.app
 from flyte.app.extras import FastAPIAppEnvironment
 
 # Create the FastAPI app
@@ -423,5 +424,5 @@ if __name__ == "__main__":
     print("=" * 60)
 
     # Serve the app on remote
-    app = flyte.serve(env)
-    print(f"App serving Deployment Info: {app.url}\n {app.endpoint}")
+    app_handle = flyte.serve(env)
+    print(f"App serving Deployment Info: {app_handle.url}\n {app_handle.endpoint}")

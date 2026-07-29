@@ -939,3 +939,89 @@ async def test_submit_task_reparents_to_task_action_inside_trace():
         # The submit semaphore is keyed by the real task action, not the trace pseudo-action.
         assert unique_action_name(tctx.task_action) in controller._parent_action_semaphore
         assert unique_action_name(tctx.action) not in controller._parent_action_semaphore
+
+
+@pytest.mark.asyncio
+async def test_bg_launch_replaces_connection_after_consecutive_timeouts():
+    """Consecutive enqueue deadline timeouts replace the HTTP client (dead pooled connection);
+    any response from the server resets the streak."""
+    from aiolimiter import AsyncLimiter
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
+    from flyte._internal.controllers.remote._core import _LAUNCH_TIMEOUTS_BEFORE_NEW_CONNECTION
+
+    controller = object.__new__(Controller)
+    controller._rate_limiter = AsyncLimiter(100, 1.0)
+    controller._enqueue_timeout = 0.01
+    controller._consecutive_launch_timeouts = 0
+    controller._client_set = MagicMock()
+    controller._actions_service = AsyncMock()
+    controller._actions_service.enqueue.side_effect = ConnectError(Code.DEADLINE_EXCEEDED, "Request timed out")
+
+    action = Action(
+        parent_action_name="parent",
+        action_id=identifier_pb2.ActionIdentifier(
+            name="child",
+            run=identifier_pb2.RunIdentifier(name="run"),
+        ),
+        type="trace",
+    )
+
+    for i in range(_LAUNCH_TIMEOUTS_BEFORE_NEW_CONNECTION):
+        with pytest.raises(flyte.errors.SlowDownError):
+            await controller._bg_launch(action)
+        if i < _LAUNCH_TIMEOUTS_BEFORE_NEW_CONNECTION - 1:
+            controller._client_set.replace_http_client.assert_not_called()
+
+    controller._client_set.replace_http_client.assert_called_once()
+    assert controller._consecutive_launch_timeouts == 0
+
+    # A response from the server (even an error) proves the connection is alive and resets the streak.
+    controller._actions_service.enqueue.side_effect = ConnectError(Code.DEADLINE_EXCEEDED, "Request timed out")
+    with pytest.raises(flyte.errors.SlowDownError):
+        await controller._bg_launch(action)
+    assert controller._consecutive_launch_timeouts == 1
+
+    controller._actions_service.enqueue.side_effect = ConnectError(Code.ALREADY_EXISTS, "exists")
+    await controller._bg_launch(action)
+    assert controller._consecutive_launch_timeouts == 0
+    controller._client_set.replace_http_client.assert_called_once()
+
+
+def test_swappable_http_client_delegates_to_current_inner(monkeypatch):
+    """The facade handed to connectrpc never changes; replace() only redirects which
+    client serves the next request — even through a bound method captured earlier."""
+    monkeypatch.setenv("_U_USE_ACTIONS", "1")
+    from flyte._internal.controllers.remote._client import ControllerClient, _SwappableHTTPClient
+    from flyte.remote._client.auth._session import SessionConfig
+
+    class FakeInner:
+        def __init__(self):
+            self.posts = 0
+
+        def post(self, *args, **kwargs):
+            self.posts += 1
+            return self
+
+    first, second = FakeInner(), FakeInner()
+    facade = _SwappableHTTPClient(first)
+    bound_post = facade.post  # captured before the swap, like connectrpc might
+    assert bound_post() is first
+    facade.replace(second)
+    assert bound_post() is second
+    assert (first.posts, second.posts) == (1, 1)
+
+    # ControllerClient hands the same facade to all service clients and swaps it in place.
+    cfg = SessionConfig(
+        endpoint="https://example.test",
+        insecure=False,
+        insecure_skip_verify=False,
+        interceptors=(),
+        http_client=first,
+    )
+    cc = ControllerClient(cfg)
+    facade = cc._http_client
+    assert facade._inner is first
+    cc.replace_http_client()
+    assert facade._inner is not first  # fresh real client, same facade object

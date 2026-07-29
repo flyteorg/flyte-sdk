@@ -1,7 +1,7 @@
 import typing
 from typing import Optional, Tuple
 
-from flyte import Image
+from flyte import Image, ImageBuild
 from flyte.extend import Architecture, ImageBuilder, ImageChecker
 
 
@@ -23,8 +23,9 @@ class MyImageBuilder(ImageBuilder):
     async def build_image(
         self,
         image: Image,
-        dry_run: bool = False,
+        dry_run: bool,
         wait: bool = True,
-    ) -> str:
+        force: bool = False,
+    ) -> ImageBuild:
         print("Building image locally...")
-        return image.uri
+        return ImageBuild(uri=image.uri, remote_run=None)
