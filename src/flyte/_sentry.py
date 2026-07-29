@@ -170,6 +170,8 @@ def _is_transient_network_error(exc: BaseException) -> bool:
     - FLYTE-SDK-36: ``httpx.ReadError`` during the signed-URL upload
     - FLYTE-SDK-4M: ``httpx.RemoteProtocolError`` ("Server disconnected without
       sending a response") — the object store dropped the PUT mid-flight
+    - FLYTE-SDK-6H: ``pyqwest.StreamError`` ("Error reading content") — the
+      HTTP/2 stream carrying a control-plane RPC was reset mid-body
 
     Transient ConnectError status codes (DEADLINE_EXCEEDED / UNAVAILABLE) are
     handled by ``_is_user_actionable_connect_error`` and intentionally not
@@ -192,6 +194,22 @@ def _is_transient_network_error(exc: BaseException) -> bool:
         import httpx
 
         if isinstance(exc, (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError)):
+            return True
+    except ImportError:
+        pass
+
+    # pyqwest is the HTTP transport underneath connectrpc, so control-plane RPCs
+    # (SelectCluster, CreateRun, ...) surface transport failures as its errors
+    # rather than httpx's. ReadError/WriteError are the socket-level read/write
+    # failures and StreamError is an HTTP/2 stream reset (RST_STREAM) — every
+    # StreamErrorCode describes a connection/protocol condition between client
+    # and server, never an SDK bug. They are plain Exception subclasses (not
+    # OSError), so they need an explicit check. pyqwest is a transitive
+    # dependency, hence the guarded import.
+    try:
+        import pyqwest
+
+        if isinstance(exc, (pyqwest.ReadError, pyqwest.WriteError, pyqwest.StreamError)):
             return True
     except ImportError:
         pass
