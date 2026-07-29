@@ -1376,7 +1376,7 @@ async def test_convert_upload_default_inputs_with_defaults():
     result = await convert.convert_upload_default_inputs(interface)
 
     # Expect one NamedParameter per default, in signature order
-    assert [p.name for p in result] == ["a", "b"]
+    assert [p.name for p in result] == ["a", "b", "c"]
 
     named = {p.name: p for p in result}
     # a -> integer literal == 10
@@ -1385,6 +1385,9 @@ async def test_convert_upload_default_inputs_with_defaults():
     # b -> string literal == "default"
     assert named["b"].parameter.required is False
     assert named["b"].parameter.default.scalar.primitive.string_value == "default"
+    # c -> optional None literal
+    assert named["c"].parameter.required is False
+    assert named["c"].parameter.default.scalar.union.value.scalar.HasField("none_type")
 
 
 @pytest.mark.asyncio
