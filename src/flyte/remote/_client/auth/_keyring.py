@@ -198,9 +198,10 @@ class KeyringStore:
             return
         keyring = _get_keyring_backend()
         if keyring is None:
-            logger.debug(f"keyring package not available, skipping token delete")
+            logger.debug("keyring package not available, skipping token delete")
             return
         from keyring.errors import NoKeyringError, PasswordDeleteError
+
         for_endpoint = strip_scheme(for_endpoint)
 
         def _delete_key(key):
