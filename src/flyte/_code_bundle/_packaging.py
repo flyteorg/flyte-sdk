@@ -174,9 +174,8 @@ def create_bundle(
             except FileNotFoundError:
                 # The file list (``ls``) is computed by walking the source tree, but a
                 # file can vanish between listing and ``tar.add`` stat-ing it — most
-                # commonly transient artifacts like lock files (e.g.
-                # ".codegraph/codegraph.lock", FLYTE-SDK-52). A disappearing file is an
-                # environment race, not an SDK bug, and shouldn't abort the whole bundle.
+                # commonly transient artifacts like lock files (e.g., codegraph/codegraph.lock).
+                # A disappearing file is an environment race, not an SDK bug, and shouldn't abort the whole bundle.
                 logger.warning(f"Skipping {ws_file}: vanished before it could be added to the code bundle")
                 continue
 
