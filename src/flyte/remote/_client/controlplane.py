@@ -12,6 +12,8 @@ from flyteidl2.cluster.service_connect import ClusterServiceClient
 from flyteidl2.common import identifier_pb2
 from flyteidl2.dataproxy import dataproxy_service_pb2
 from flyteidl2.dataproxy.dataproxy_service_connect import DataProxyServiceClient
+from flyteidl2.imagebuilder import payload_pb2 as image_payload_pb2
+from flyteidl2.imagebuilder.service_connect import ImageServiceClient
 from flyteidl2.project.project_service_connect import ProjectServiceClient
 from flyteidl2.secret import payload_pb2 as secret_payload_pb2
 from flyteidl2.secret.secret_connect import SecretServiceClient
@@ -26,6 +28,7 @@ from ._protocols import (
     ClusterService,
     DataProxyService,
     IdentityService,
+    ImageService,
     ProjectDomainService,
     RunLogsService,
     RunService,
@@ -500,6 +503,84 @@ class ClusterAwareSecretService:
         return SecretServiceClient(**new_cfg.connect_kwargs())
 
 
+class ClusterAwareImageService:
+    """Image service client that routes each call to the correct cluster.
+
+    Same pattern as ClusterAwareDataProxy: uses SelectCluster with
+    OPERATION_GET_IMAGE to discover the cluster endpoint, then dispatches to a
+    per-cluster ImageServiceClient. Clients are cached by project.
+    """
+
+    def __init__(
+        self,
+        cluster_service: ClusterService,
+        session_config: SessionConfig,
+        default_client: ImageServiceClient,
+    ):
+        self._cluster_service = cluster_service
+        self._session_config = session_config
+        self._default_client = default_client
+
+    async def get_image(self, request: image_payload_pb2.GetImageRequest) -> image_payload_pb2.GetImageResponse:
+        org = request.project_id.organization or request.organization
+        client = await self._resolve(org, request.project_id.name, request.project_id.domain)
+        return await client.get_image(request)
+
+    @alru_cache
+    async def _resolve(self, org: str, project: str, domain: str) -> ImageService:
+        """Cached SelectCluster lookup for image reads.
+
+        Routes by ProjectIdentifier when project and domain are set, falling
+        back to OrgIdentifier (the backend then applies its default
+        project/domain for image-builder resources).
+        """
+        req = cluster_payload_pb2.SelectClusterRequest(
+            operation=cluster_payload_pb2.SelectClusterRequest.Operation.OPERATION_GET_IMAGE,
+        )
+        if project and domain:
+            req.project_id.CopyFrom(identifier_pb2.ProjectIdentifier(name=project, domain=domain, organization=org))
+        else:
+            req.org_id.CopyFrom(identifier_pb2.OrgIdentifier(name=org))
+        return await self._select_and_build(req)
+
+    async def _select_and_build(self, req: cluster_payload_pb2.SelectClusterRequest) -> ImageService:
+        """SelectCluster + build the per-cluster Image client.
+
+        Wrapped by the @alru_cache resolver above; @alru_cache deduplicates
+        concurrent callers and only caches successful results, so a transient
+        failure won't poison the entry.
+        """
+        from flyte._logging import logger
+
+        try:
+            resp = await self._cluster_service.select_cluster(req)
+        except Exception as e:
+            raise RuntimeError(f"SelectCluster failed for OPERATION_GET_IMAGE: {e}") from e
+
+        endpoint = resp.cluster_endpoint
+        if not endpoint or endpoint == self._session_config.endpoint:
+            return cast(ImageService, self._default_client)
+
+        # See ``ClusterAwareDataProxy._select_and_build`` for the rationale: we
+        # must propagate the parent session's auth kwargs (notably ``auth_type``)
+        # or per-cluster Image RPCs silently downgrade to PKCE.
+        auth_kwargs = dict(self._session_config.auth_kwargs or {})
+        try:
+            new_cfg = await create_session_config(
+                endpoint,
+                self._session_config.api_key,
+                insecure=self._session_config.insecure,
+                insecure_skip_verify=self._session_config.insecure_skip_verify,
+                auth_endpoint=self._session_config.endpoint,
+                **auth_kwargs,
+            )
+        except Exception as e:
+            raise RuntimeError(f"Failed to create session for cluster endpoint '{endpoint}': {e}") from e
+
+        logger.debug(f"Created ImageService client for cluster endpoint: {endpoint}")
+        return cast(ImageService, ImageServiceClient(**new_cfg.connect_kwargs()))
+
+
 class ClientSet:
     def __init__(self, session_cfg: SessionConfig):
         self._console = Console(session_cfg.endpoint, session_cfg.insecure)
@@ -523,6 +604,11 @@ class ClientSet:
             cluster_service=self._cluster_service,
             session_config=session_cfg,
             default_client=DataProxyServiceClient(**shared),
+        )
+        self._image_service = ClusterAwareImageService(
+            cluster_service=self._cluster_service,
+            session_config=session_cfg,
+            default_client=ImageServiceClient(**shared),
         )
 
     @classmethod
@@ -569,6 +655,15 @@ class ClientSet:
         for the target resource, with per-cluster clients cached.
         """
         return self._dataproxy
+
+    @property
+    def image_service(self) -> ImageService:
+        """Cluster-aware Image client.
+
+        Each call routes to the cluster selected by ClusterService.SelectCluster
+        with OPERATION_GET_IMAGE, with per-cluster clients cached.
+        """
+        return self._image_service
 
     @property
     def logs_service(self) -> RunLogsService:
