@@ -211,7 +211,7 @@ def test_pod_template_without_resources_is_unchanged(sctx):
     assert container["resources"]["requests"]["cpu"] == "15000m"
 
 
-def test_custom_config_records_reuse_policy(sctx):
+def test_custom_config_omits_reuse_policy(sctx):
     task = RayFunctionTask(
         name="t",
         interface=None,
@@ -220,14 +220,9 @@ def test_custom_config_records_reuse_policy(sctx):
         reusable=flyte.ReusePolicy(replicas=1, idle_ttl=600),
     )
     custom = task.custom_config(sctx)
-    assert custom["reusePolicy"] == {
-        "parallelism": 1,
-        "min_replica_count": 1,
-        "replica_count": 1,
-        "ttl_seconds": 600,
-        "scaledown_ttl_seconds": 30,
-    }
-    # The rest of the spec still parses as a RayJob (the extra field is ignored by the proto).
+    # The reuse policy is carried on TaskTemplate.reuse_policy (set during serialization), not in
+    # custom; custom stays a pure RayJob spec.
+    assert "reusePolicy" not in custom
     assert "rayCluster" in custom
 
 

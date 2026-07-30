@@ -212,15 +212,8 @@ class RayFunctionTask(AsyncFunctionTaskTemplate):
                     f"Reusable Ray tasks currently support exactly 1 replica (one shared RayCluster); "
                     f"got replicas={self.reusable.replicas}. Use ReusePolicy(replicas=1).",
                 )
-            idle_ttl = self.reusable.idle_ttl
-            scaledown_ttl = self.reusable.get_scaledown_ttl()
-            custom["reusePolicy"] = {
-                "parallelism": self.reusable.concurrency,
-                "min_replica_count": self.reusable.min_replicas,
-                "replica_count": self.reusable.max_replicas,
-                "ttl_seconds": idle_ttl.total_seconds() if idle_ttl else None,  # type: ignore[union-attr]
-                "scaledown_ttl_seconds": scaledown_ttl.total_seconds() if scaledown_ttl else None,
-            }
+            # The reuse policy itself is carried on TaskTemplate.reuse_policy (populated during
+            # serialization from `task.reusable`), not encoded into `custom`.
 
         return custom
 
