@@ -28,7 +28,7 @@ from ._ignore import Ignore, IgnoreGroup, StandardIgnore
 CopyFiles = Literal["loaded_modules", "all", "none", "custom"]
 
 # Ceiling on the `ruff analyze graph` subprocess, not a delay: the call returns as soon as ruff
-# exits, which is under a second for typical repos. Test on Flytekit shows 0.15s over 575 Python files.
+# exits, which is under a second for typical repos. Test on flyte-sdk shows 0.15s over 575 Python files.
 _RUFF_ANALYZE_TIMEOUT_SECONDS = 30.0
 _RUFF_ANALYZE_TIMEOUT_ENV_VAR = "FLYTE_RUFF_ANALYZE_TIMEOUT_SECONDS"
 
