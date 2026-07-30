@@ -634,6 +634,36 @@ def test_create_bundle_skips_symlinks_pointing_outside_source():
         assert "python_bin" in member_names
 
 
+def test_create_bundle_skips_files_that_vanish_before_add():
+    """
+    Regression FLYTE-SDK-52: the file list is computed by walking the source tree, but a
+    file can disappear between listing and ``tar.add`` stat-ing it — most commonly a
+    transient lock file (e.g. ``.codegraph/codegraph.lock``). Previously this raised a raw
+    ``FileNotFoundError`` and aborted the whole deploy. A vanished file should now be
+    skipped with a warning, and the rest of the bundle should still be produced.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        source = pathlib.Path(tmpdir)
+        output_dir = source / "output"
+        output_dir.mkdir()
+
+        (source / "main.py").write_text("print('hello')")
+        # A path that is in the file list but does not exist on disk — simulates a
+        # lock file that was deleted between listing and bundling.
+        vanished = source / ".codegraph" / "codegraph.lock"
+
+        files = [str(source / "main.py"), str(vanished)]
+
+        # Should succeed despite the missing file rather than raising FileNotFoundError.
+        archive_path, _, _ = create_bundle(source, output_dir, files, "test_digest")
+
+        with tarfile.open(archive_path, "r:gz") as tar:
+            member_names = tar.getnames()
+
+        assert "main.py" in member_names
+        assert ".codegraph/codegraph.lock" not in member_names
+
+
 def test_list_all_files_returns_strings():
     """Test that list_all_files returns string paths (not pathlib.Path objects)."""
     with tempfile.TemporaryDirectory() as tmpdir:
