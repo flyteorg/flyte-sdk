@@ -26,9 +26,7 @@ dependencies = [
     "async-lru>=2.0.5",
     "mashumaro",
     "aiolimiter>=1.2.1",
-    # Temporarily >= while flyteidl2 with OPERATION_GET_IMAGE is unreleased and
-    # sourced from the local flyte2 worktree (see [tool.uv.sources]); re-pin on release.
-    "flyteidl2>=2.0.29",
+    "flyteidl2==2.0.31",
     "packaging",
     "sentry-sdk>=2.0",
     "pyOpenSSL>=24.0.0",
@@ -217,10 +215,6 @@ ty = "0 days"
 
 [tool.uv.sources]
 flyte_controller_base = { path = "rs_controller" }
-# Temporary: OPERATION_GET_IMAGE is not in a released flyteidl2 yet; point at the
-# local flyte2 worktree (branch katrina/eng26-971-getimage-should-use-zero-trust).
-# Remove once flyteidl2 with OPERATION_GET_IMAGE is published and the pin is bumped.
-flyteidl2 = { path = "../flyte2-getimage/gen/python" }
 
 [tool.ty.rules]
 # The codebase is checked by both mypy and ty; `# type: ignore` comments needed by

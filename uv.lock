@@ -21,14 +21,14 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-07-25T11:10:01.534936Z"
+exclude-newer = "2026-07-25T18:51:46.989114Z"
 exclude-newer-span = "P5D"
 
 [options.exclude-newer-package]
-flyteidl2 = { timestamp = "2026-07-30T11:10:01.535173Z", span = "PT0S" }
-flyte-controller-base = { timestamp = "2026-07-30T11:10:01.535407Z", span = "PT0S" }
-ty = { timestamp = "2026-07-30T11:10:01.535409Z", span = "PT0S" }
-flyteplugins-union = { timestamp = "2026-07-30T11:10:01.535408Z", span = "PT0S" }
+flyteidl2 = { timestamp = "2026-07-30T18:51:46.989353Z", span = "PT0S" }
+flyte-controller-base = { timestamp = "2026-07-30T18:51:46.989563Z", span = "PT0S" }
+ty = { timestamp = "2026-07-30T18:51:46.989565Z", span = "PT0S" }
+flyteplugins-union = { timestamp = "2026-07-30T18:51:46.989564Z", span = "PT0S" }
 
 [[package]]
 name = "aiofiles"
@@ -1223,7 +1223,7 @@ requires-dist = [
     { name = "docstring-parser", specifier = ">=0.16" },
     { name = "fastapi", marker = "extra == 'examples-test'" },
     { name = "flyte-controller-base", marker = "extra == 'rust-controller'", directory = "rs_controller" },
-    { name = "flyteidl2", directory = "../flyte2-getimage/gen/python" },
+    { name = "flyteidl2", specifier = "==2.0.31" },
     { name = "fsspec", specifier = ">=2025.3.0" },
     { name = "grpcio", marker = "extra == 'connector'", specifier = ">=1.71.0" },
     { name = "grpcio-health-checking", marker = "extra == 'connector'" },
@@ -1298,24 +1298,20 @@ dependencies = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "flyteidl2", specifier = ">=2.0.29" }]
+requires-dist = [{ name = "flyteidl2", specifier = "==2.0.31" }]
 
 [[package]]
 name = "flyteidl2"
-source = { directory = "../flyte2-getimage/gen/python" }
+version = "2.0.31"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "googleapis-common-protos" },
     { name = "protobuf" },
     { name = "protoc-gen-openapiv2" },
     { name = "protovalidate" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "googleapis-common-protos" },
-    { name = "protobuf", specifier = ">=4.21.1" },
-    { name = "protoc-gen-openapiv2" },
-    { name = "protovalidate", specifier = ">=1.0.0" },
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ea/9b/dec92c854bbb968e3e429eb6d06fa6e8ac433707796c64d9b61f886a2904/flyteidl2-2.0.31-py3-none-any.whl", hash = "sha256:c1df8819c413912377d9336447df04865ca48b2913349ec7e75eb2d3bd1f34c8", size = 353273, upload-time = "2026-07-30T18:30:11.423Z" },
 ]
 
 [[package]]

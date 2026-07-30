@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import AsyncIterator, cast
+from typing import Any, AsyncIterator, ClassVar, cast
 from urllib.parse import urlparse
 
 from async_lru import alru_cache
@@ -175,7 +175,91 @@ class Console:
         return self._insecure
 
 
-class ClusterAwareDataProxy:
+class _ClusterAwareService:
+    """Shared machinery for the cluster-aware service wrappers.
+
+    Each control-plane service below (dataproxy, secrets, images) must route every
+    call to the cluster that ``ClusterService.SelectCluster`` picks for the target
+    resource. The per-subclass part is just *which* connectrpc client class to build
+    and *what* to call it in logs; the SelectCluster call, the same-endpoint
+    short-circuit, and the auth-kwarg-preserving per-cluster session build are
+    identical, so they live here.
+
+    Subclasses provide:
+      * ``_new_client`` — construct the connectrpc ``*ServiceClient`` for a
+        resolved cluster endpoint.
+      * ``_label`` — a human name used in debug logs.
+      * ``_reraise_connect_error`` — when True, a ``ConnectError`` from SelectCluster
+        propagates unwrapped so callers can branch on its gRPC code (the dataproxy
+        ``OPERATION_UPLOAD_TRIGGER`` fallback relies on this); otherwise every
+        failure is wrapped in ``RuntimeError``.
+    """
+
+    _label: ClassVar[str]
+    _reraise_connect_error: ClassVar[bool] = False
+
+    def __init__(
+        self,
+        cluster_service: ClusterService,
+        session_config: SessionConfig,
+        default_client: Any,
+    ):
+        self._cluster_service = cluster_service
+        self._session_config = session_config
+        self._default_client = default_client
+
+    def _new_client(self, **connect_kwargs: Any) -> Any:
+        """Construct a per-cluster connectrpc client. Overridden per service."""
+        raise NotImplementedError
+
+    async def _select_and_build(self, req: cluster_payload_pb2.SelectClusterRequest) -> Any:
+        """SelectCluster + build the per-cluster client.
+
+        Wrapped by the ``@alru_cache`` resolvers on each subclass; ``@alru_cache``
+        deduplicates concurrent callers and only caches successful results, so a
+        transient failure won't poison the entry.
+        """
+        from flyte._logging import logger
+
+        op_name = cluster_payload_pb2.SelectClusterRequest.Operation.Name(req.operation)
+        try:
+            resp = await self._cluster_service.select_cluster(req)
+        except Exception as e:
+            # Preserve the gRPC code (e.g. UNIMPLEMENTED for an unsupported operation)
+            # for callers that branch on it — notably the dataproxy
+            # OPERATION_UPLOAD_TRIGGER fallback to inline inputs.
+            if self._reraise_connect_error and isinstance(e, ConnectError):
+                raise
+            raise RuntimeError(f"SelectCluster failed for {op_name}: {e}") from e
+
+        endpoint = resp.cluster_endpoint
+        if not endpoint or endpoint == self._session_config.endpoint:
+            return self._default_client
+
+        # Forward the auth-related kwargs from the parent SessionConfig so the
+        # per-cluster session preserves the configured ``auth_type`` (Passthrough,
+        # ClientSecret, ExternalCommand, etc.). Without this ``create_session_config``
+        # falls back to the default ``auth_type="Pkce"`` and a Passthrough-only
+        # caller (e.g. a FastAPI app using ``init_passthrough``) trips the PKCE
+        # browser flow as soon as the first cluster-routed call runs.
+        auth_kwargs = dict(self._session_config.auth_kwargs or {})
+        try:
+            new_cfg = await create_session_config(
+                endpoint,
+                self._session_config.api_key,
+                insecure=self._session_config.insecure,
+                insecure_skip_verify=self._session_config.insecure_skip_verify,
+                auth_endpoint=self._session_config.endpoint,
+                **auth_kwargs,
+            )
+        except Exception as e:
+            raise RuntimeError(f"Failed to create session for cluster endpoint '{endpoint}': {e}") from e
+
+        logger.debug(f"Created {self._label} client for cluster endpoint: {endpoint}")
+        return self._new_client(**new_cfg.connect_kwargs())
+
+
+class ClusterAwareDataProxy(_ClusterAwareService):
     """DataProxy client that routes each call to the correct cluster.
 
     Implements the DataProxyService protocol. For every RPC, extracts the target
@@ -185,15 +269,13 @@ class ClusterAwareDataProxy:
     repeated calls against the same resource reuse the same connection.
     """
 
-    def __init__(
-        self,
-        cluster_service: ClusterService,
-        session_config: SessionConfig,
-        default_client: DataProxyServiceClient,
-    ):
-        self._cluster_service = cluster_service
-        self._session_config = session_config
-        self._default_client = default_client
+    _label = "DataProxy"
+    # Preserve ConnectError so callers can branch on the gRPC code (the
+    # OPERATION_UPLOAD_TRIGGER fallback to inline inputs depends on this).
+    _reraise_connect_error = True
+
+    def _new_client(self, **connect_kwargs: Any) -> DataProxyService:
+        return cast(DataProxyService, DataProxyServiceClient(**connect_kwargs))
 
     async def create_upload_location(
         self, request: dataproxy_service_pb2.CreateUploadLocationRequest
@@ -341,52 +423,8 @@ class ClusterAwareDataProxy:
         )
         return await self._select_and_build(req)
 
-    async def _select_and_build(self, req: cluster_payload_pb2.SelectClusterRequest) -> DataProxyService:
-        """SelectCluster + build the per-cluster DataProxy client.
 
-        Wrapped by the @alru_cache resolvers above; @alru_cache deduplicates
-        concurrent callers and only caches successful results, so a transient
-        failure won't poison the entry.
-        """
-        from flyte._logging import logger
-
-        try:
-            resp = await self._cluster_service.select_cluster(req)
-        except ConnectError:
-            # Preserve the gRPC code (e.g. UNIMPLEMENTED for an unsupported operation) so callers
-            # can branch on it — notably the OPERATION_UPLOAD_TRIGGER fallback to inline inputs.
-            raise
-        except Exception as e:
-            raise RuntimeError(f"SelectCluster failed for operation={req.operation}: {e}") from e
-
-        endpoint = resp.cluster_endpoint
-        if not endpoint or endpoint == self._session_config.endpoint:
-            return cast(DataProxyService, self._default_client)
-
-        # Forward the auth-related kwargs from the parent SessionConfig so the
-        # per-cluster session preserves the configured ``auth_type`` (Passthrough,
-        # ClientSecret, ExternalCommand, etc.). Without this ``create_session_config``
-        # falls back to the default ``auth_type="Pkce"`` and a Passthrough-only
-        # caller (e.g. a FastAPI app using ``init_passthrough``) trips the PKCE
-        # browser flow as soon as the first cluster-routed dataproxy call runs.
-        auth_kwargs = dict(self._session_config.auth_kwargs or {})
-        try:
-            new_cfg = await create_session_config(
-                endpoint,
-                self._session_config.api_key,
-                insecure=self._session_config.insecure,
-                insecure_skip_verify=self._session_config.insecure_skip_verify,
-                auth_endpoint=self._session_config.endpoint,
-                **auth_kwargs,
-            )
-        except Exception as e:
-            raise RuntimeError(f"Failed to create session for cluster endpoint '{endpoint}': {e}") from e
-
-        logger.debug(f"Created DataProxy client for cluster endpoint: {endpoint}")
-        return cast(DataProxyService, DataProxyServiceClient(**new_cfg.connect_kwargs()))
-
-
-class ClusterAwareSecretService:
+class ClusterAwareSecretService(_ClusterAwareService):
     """Secret service client that routes each call to the correct cluster.
 
     Same pattern as ClusterAwareDataProxy: uses SelectCluster with
@@ -394,15 +432,10 @@ class ClusterAwareSecretService:
     to a per-cluster SecretServiceClient. Clients are cached by project.
     """
 
-    def __init__(
-        self,
-        cluster_service: ClusterService,
-        session_config: SessionConfig,
-        default_client: SecretServiceClient,
-    ):
-        self._cluster_service = cluster_service
-        self._session_config = session_config
-        self._default_client = default_client
+    _label = "SecretService"
+
+    def _new_client(self, **connect_kwargs: Any) -> SecretService:
+        return cast(SecretService, SecretServiceClient(**connect_kwargs))
 
     async def create_secret(
         self, request: secret_payload_pb2.CreateSecretRequest
@@ -465,45 +498,8 @@ class ClusterAwareSecretService:
             req.org_id.CopyFrom(identifier_pb2.OrgIdentifier(name=org))
         return await self._select_and_build(req)
 
-    async def _select_and_build(self, req: cluster_payload_pb2.SelectClusterRequest) -> SecretService:
-        """SelectCluster + build the per-cluster Secret client.
 
-        Wrapped by the @alru_cache resolvers above; @alru_cache deduplicates
-        concurrent callers and only caches successful results, so a transient
-        failure won't poison the entry.
-        """
-        from flyte._logging import logger
-
-        try:
-            resp = await self._cluster_service.select_cluster(req)
-        except Exception as e:
-            raise RuntimeError(f"SelectCluster failed for OPERATION_USE_SECRETS: {e}") from e
-
-        endpoint = resp.cluster_endpoint
-        if not endpoint or endpoint == self._session_config.endpoint:
-            return self._default_client
-
-        # See ``ClusterAwareDataProxy._select_and_build`` for the rationale: we
-        # must propagate the parent session's auth kwargs (notably ``auth_type``)
-        # or per-cluster Secret RPCs silently downgrade to PKCE.
-        auth_kwargs = dict(self._session_config.auth_kwargs or {})
-        try:
-            new_cfg = await create_session_config(
-                endpoint,
-                self._session_config.api_key,
-                insecure=self._session_config.insecure,
-                insecure_skip_verify=self._session_config.insecure_skip_verify,
-                auth_endpoint=self._session_config.endpoint,
-                **auth_kwargs,
-            )
-        except Exception as e:
-            raise RuntimeError(f"Failed to create session for cluster endpoint '{endpoint}': {e}") from e
-
-        logger.debug(f"Created SecretService client for cluster endpoint: {endpoint}")
-        return SecretServiceClient(**new_cfg.connect_kwargs())
-
-
-class ClusterAwareImageService:
+class ClusterAwareImageService(_ClusterAwareService):
     """Image service client that routes each call to the correct cluster.
 
     Same pattern as ClusterAwareDataProxy: uses SelectCluster with
@@ -511,15 +507,10 @@ class ClusterAwareImageService:
     per-cluster ImageServiceClient. Clients are cached by project.
     """
 
-    def __init__(
-        self,
-        cluster_service: ClusterService,
-        session_config: SessionConfig,
-        default_client: ImageServiceClient,
-    ):
-        self._cluster_service = cluster_service
-        self._session_config = session_config
-        self._default_client = default_client
+    _label = "ImageService"
+
+    def _new_client(self, **connect_kwargs: Any) -> ImageService:
+        return cast(ImageService, ImageServiceClient(**connect_kwargs))
 
     async def get_image(self, request: image_payload_pb2.GetImageRequest) -> image_payload_pb2.GetImageResponse:
         org = request.project_id.organization or request.organization
@@ -542,44 +533,6 @@ class ClusterAwareImageService:
         else:
             req.org_id.CopyFrom(identifier_pb2.OrgIdentifier(name=org))
         return await self._select_and_build(req)
-
-    async def _select_and_build(self, req: cluster_payload_pb2.SelectClusterRequest) -> ImageService:
-        """SelectCluster + build the per-cluster Image client.
-
-        Wrapped by the @alru_cache resolver above; @alru_cache deduplicates
-        concurrent callers and only caches successful results, so a transient
-        failure won't poison the entry.
-        """
-        from flyte._logging import logger
-
-        try:
-            resp = await self._cluster_service.select_cluster(req)
-        except Exception as e:
-            raise RuntimeError(f"SelectCluster failed for OPERATION_GET_IMAGE: {e}") from e
-
-        endpoint = resp.cluster_endpoint
-        if not endpoint or endpoint == self._session_config.endpoint:
-            return cast(ImageService, self._default_client)
-
-        # See ``ClusterAwareDataProxy._select_and_build`` for the rationale: we
-        # must propagate the parent session's auth kwargs (notably ``auth_type``)
-        # or per-cluster Image RPCs silently downgrade to PKCE.
-        auth_kwargs = dict(self._session_config.auth_kwargs or {})
-        try:
-            new_cfg = await create_session_config(
-                endpoint,
-                self._session_config.api_key,
-                insecure=self._session_config.insecure,
-                insecure_skip_verify=self._session_config.insecure_skip_verify,
-                auth_endpoint=self._session_config.endpoint,
-                **auth_kwargs,
-            )
-        except Exception as e:
-            raise RuntimeError(f"Failed to create session for cluster endpoint '{endpoint}': {e}") from e
-
-        logger.debug(f"Created ImageService client for cluster endpoint: {endpoint}")
-        return cast(ImageService, ImageServiceClient(**new_cfg.connect_kwargs()))
-
 
 class ClientSet:
     def __init__(self, session_cfg: SessionConfig):
