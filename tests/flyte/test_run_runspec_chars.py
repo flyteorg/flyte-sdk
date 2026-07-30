@@ -319,7 +319,7 @@ async def test_apply_overrides_inherited_merges_env_and_keys():
             ]
         ),
         labels=run_pb2.Labels(values={"base": "yes"}),
-        cluster="orig-cluster",
+        queue="orig-cluster",
     )
 
     runner = _Runner(force_mode="remote", env_vars={"FOO": "new", "BAR": "2"}, labels={"team": "ml"})
