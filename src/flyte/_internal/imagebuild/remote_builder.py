@@ -59,6 +59,15 @@ IMAGE_TASK_PROJECT = "system"
 IMAGE_TASK_DOMAIN = os.environ.get("FLYTE_IMAGEBUILDER_TASK_DOMAIN", "production")
 
 
+def _custom_repository(repository: str) -> str:
+    # SE-775: for a custom registry override (clone(registry=...)) the image is pushed to a custom
+    # repo; tell GetImage to look there instead of the cluster's default repo. Empty for the default.
+    first_segment = repository.split("/", maxsplit=1)[0]
+    if "." in first_segment and not repository.startswith(f"{_BASE_REGISTRY}/"):
+        return repository
+    return ""
+
+
 class RemoteImageChecker(ImageChecker):
     _images_client = None
 
@@ -92,7 +101,9 @@ class RemoteImageChecker(ImageChecker):
             cfg = _get_init_config()
             if cfg is None:
                 raise ValueError("Init config should not be None")
-            image_id = image_definition__pb2.ImageIdentifier(name=image_name)
+            image_id = image_definition__pb2.ImageIdentifier(
+                name=image_name, repository=_custom_repository(repository)
+            )
             req = image_payload__pb2.GetImageRequest(
                 id=image_id,
                 organization=cfg.org,
