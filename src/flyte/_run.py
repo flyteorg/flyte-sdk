@@ -814,7 +814,7 @@ class _Runner:
                         action=run_definition_pb2.Action(
                             id=identifier_pb2.ActionIdentifier(
                                 name="a0",
-                                run=identifier_pb2.RunIdentifier(name=run_name),
+                                run=identifier_pb2.RunIdentifier(name="dry-run"),
                             )
                         )
                     )

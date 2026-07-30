@@ -139,11 +139,13 @@ class LogCapture:
         return self
 
     def __exit__(self, *exc_info: Any) -> None:
-        for lg in self._loggers:
-            try:
-                lg.removeHandler(self._handler)
-            except Exception:
-                pass
+        handler = self._handler
+        if handler is not None:
+            for lg in self._loggers:
+                try:
+                    lg.removeHandler(handler)
+                except Exception:
+                    pass
         self._loggers.clear()
         self._handler = None
         if self._saved is not None:

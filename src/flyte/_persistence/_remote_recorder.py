@@ -405,7 +405,7 @@ class RemoteRunRecorder:
         try:
             from google.protobuf import struct_pb2
 
-            payload = struct_pb2.Struct()
+            payload = struct_pb2.Struct()  # ty: ignore[unresolved-attribute]
             payload.update(
                 {
                     "local_run": True,
@@ -493,7 +493,7 @@ class RemoteRunRecorder:
             return None
         from google.protobuf import timestamp_pb2
 
-        ts = timestamp_pb2.Timestamp()
+        ts = timestamp_pb2.Timestamp()  # ty: ignore[unresolved-attribute]
         ts.FromMilliseconds(int(epoch_seconds * 1000))
         return ts
 
@@ -736,7 +736,7 @@ class RemoteRunRecorder:
         self,
         *,
         action_name: str,
-        phase: int,
+        phase: Any,
         attempt: int,
         start_time: float | None = None,
         end_time: float | None = None,
@@ -767,7 +767,7 @@ class RemoteRunRecorder:
         *,
         action_name: str,
         attempt: int,
-        phase: int,
+        phase: Any,
         end_time: float | None = None,
         output_uri: str | None = None,
         error: str | None = None,
@@ -793,7 +793,7 @@ class RemoteRunRecorder:
         *,
         action_name: str,
         attempt: int,
-        phase: int,
+        phase: Any,
         end_time: float | None = None,
         output_uri: str | None = None,
         error: str | None = None,
