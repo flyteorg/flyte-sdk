@@ -87,6 +87,10 @@ class TestMergeKubeconfigRetry:
         kubeconfig.write_text("")
 
         with (
+            # Pin the POSIX branch so this runs on Windows agents too; os.getuid is POSIX-only.
+            patch("flyte.cli._devbox._IS_WINDOWS", False),
+            patch("flyte.cli._devbox.os.getuid", create=True, return_value=1000),
+            patch("flyte.cli._devbox.os.getgid", create=True, return_value=1000),
             patch("flyte.cli._devbox._flatten_kubeconfig") as mock_flatten,
             patch("flyte.cli._devbox.subprocess.run") as mock_run,
             patch("flyte.cli._devbox.shutil.move", side_effect=lambda src, dst: Path(dst).touch()),
@@ -111,6 +115,9 @@ class TestMergeKubeconfigRetry:
         kubeconfig.write_text("")
 
         with (
+            patch("flyte.cli._devbox._IS_WINDOWS", False),
+            patch("flyte.cli._devbox.os.getuid", create=True, return_value=1000),
+            patch("flyte.cli._devbox.os.getgid", create=True, return_value=1000),
             patch("flyte.cli._devbox._flatten_kubeconfig") as mock_flatten,
             patch("flyte.cli._devbox.subprocess.run") as mock_run,
             patch("flyte.cli._devbox.shutil.move", side_effect=lambda src, dst: Path(dst).touch()),
@@ -132,6 +139,9 @@ class TestMergeKubeconfigRetry:
         kubeconfig.write_text("")
 
         with (
+            patch("flyte.cli._devbox._IS_WINDOWS", False),
+            patch("flyte.cli._devbox.os.getuid", create=True, return_value=1000),
+            patch("flyte.cli._devbox.os.getgid", create=True, return_value=1000),
             patch("flyte.cli._devbox._flatten_kubeconfig") as mock_flatten,
             patch("flyte.cli._devbox.subprocess.run"),
             patch("flyte.cli._devbox.Path.home", return_value=tmp_path),
@@ -141,6 +151,8 @@ class TestMergeKubeconfigRetry:
 
             with pytest.raises(subprocess.CalledProcessError):
                 _merge_kubeconfig(kubeconfig, "flyte-devbox")
+
+            assert mock_flatten.call_count == 2
 
 
 class TestIsKubectlInstalled:
