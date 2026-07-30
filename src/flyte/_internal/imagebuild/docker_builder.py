@@ -784,7 +784,6 @@ class DockerImageBuilder(ImageBuilder):
         except subprocess.CalledProcessError:
             raise ImageBuildError("Docker buildx is not available. Make sure BuildKit is installed and enabled.")
 
-        # List builders
         try:
             result = await run_sync_with_loop(
                 subprocess.run, ["docker", "buildx", "ls"], capture_output=True, text=True, check=True
@@ -820,9 +819,6 @@ class DockerImageBuilder(ImageBuilder):
         else:
             logger.info("No buildx builder found, creating one...")
 
-        # Create the builder. Wrap subprocess failures in ImageBuildError so a broken or
-        # locked Docker environment surfaces as an actionable user error instead of leaking
-        # as a raw CalledProcessError crash report (FLYTE-SDK-4R).
         try:
             await run_sync_with_loop(
                 subprocess.run,
