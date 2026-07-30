@@ -745,7 +745,7 @@ def test_ruff_analyze_timeout_env_var_override(monkeypatch):
 
 @pytest.mark.parametrize("value", ["not-a-number", "", "0", "-5"])
 def test_ruff_analyze_timeout_ignores_invalid_env_var(monkeypatch, value):
-    """Unparseable or non-positive overrides degrade to the default rather than raising.
+    """Unparsable or non-positive overrides degrade to the default rather than raising.
 
     A zero or negative timeout would make subprocess.run trip immediately, silently disabling
     ruff augmentation on every run.

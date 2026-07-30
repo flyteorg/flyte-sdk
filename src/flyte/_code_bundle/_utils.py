@@ -419,7 +419,7 @@ def _ruff_is_available() -> bool:
 def _ruff_analyze_timeout_seconds() -> float:
     """Timeout for the `ruff analyze graph` subprocess, overridable per-environment.
 
-    Falls back to the default when the env var is unset, unparseable, or non-positive, so a bad
+    Falls back to the default when the env var is unset, unparsable, or non-positive, so a bad
     value degrades to the normal timeout rather than disabling or breaking bundling.
     """
     raw = os.environ.get(_RUFF_ANALYZE_TIMEOUT_ENV_VAR)
