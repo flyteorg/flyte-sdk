@@ -1278,6 +1278,11 @@ class Image:
         return self.clone(addl_layer=CodeBundleLayer(copy_style=copy_style, dst=dst))
 
     def with_dockerignore(self, path: Path) -> Image:
+        # Deliberately no existence check here: image definitions are module-level code that also
+        # runs inside the container at task runtime, where the developer's .dockerignore is absent.
+        # Validating at definition time would raise spuriously there -- note DockerIgnore.update_hash
+        # already tolerates a missing file. The path is validated at build time instead, where the
+        # file genuinely has to exist (see remote_builder._get_layers_proto / DockerIgnoreHandler).
         new_image = self.clone(addl_layer=DockerIgnore(path=str(path)))
         return new_image
 
