@@ -4,15 +4,18 @@ import glob
 import gzip
 import hashlib
 import importlib.util
+import json
 import os
 import pathlib
 import shutil
 import site
 import stat
+import subprocess
 import sys
 import tarfile
 import tempfile
 import typing
+from collections import deque
 from datetime import datetime, timezone
 from functools import lru_cache
 from importlib.machinery import ModuleSpec
@@ -24,6 +27,11 @@ from flyte._logging import logger
 from ._ignore import Ignore, IgnoreGroup, StandardIgnore
 
 CopyFiles = Literal["loaded_modules", "all", "none", "custom"]
+
+# Ceiling on the `ruff analyze graph` subprocess, not a delay: the call returns as soon as ruff
+# exits, which is under a second for typical repos. Test on flyte-sdk shows 0.15s over 575 Python files.
+_RUFF_ANALYZE_TIMEOUT_SECONDS = 30.0
+_RUFF_ANALYZE_TIMEOUT_ENV_VAR = "FLYTE_RUFF_ANALYZE_TIMEOUT_SECONDS"
 
 
 def compress_scripts(source_path: str, destination: str, modules: List[ModuleType]):
@@ -125,7 +133,12 @@ def ls_files(
     # This is --copy auto
     if copy_file_detection == "loaded_modules":
         sys_modules = list(sys.modules.values())
-        all_files = list_imported_modules_as_files(str(source_path), sys_modules)
+        # When ruff is available, augment the runtime sys.modules snapshot with a static import
+        # graph so lazily/conditionally imported local modules are bundled too.
+        if _ruff_is_available():
+            all_files = list_imported_modules_as_files_with_ruff(str(source_path), sys_modules)
+        else:
+            all_files = list_imported_modules_as_files(str(source_path), sys_modules)
     # this is --copy all (--copy none should never invoke this function)
     else:
         all_files = list_all_files(source_path, deref_symlinks, ignore_group)
@@ -285,6 +298,43 @@ def _file_is_in_directory(file: str, directory: str) -> bool:
         return False
 
 
+def _build_invalid_directories() -> List[str]:
+    """Directories whose files are installed packages or stdlib modules, never user source.
+
+    A file under any of these is an installed dependency that the remote worker provisions from
+    the image/requirements, so it must not be shipped in the code bundle.
+    """
+    import flyte
+
+    flyte_root = os.path.dirname(flyte.__file__)
+    return [flyte_root, sys.prefix, sys.base_prefix, site.getusersitepackages(), *site.getsitepackages()]
+
+
+def _is_user_file(file_path: str, source_path: str, invalid_directories: List[str]) -> bool:
+    """Return True if ``file_path`` is a user source file worth bundling.
+
+    A file qualifies only when it is
+    (1) not inside an installed-package/stdlib directory
+    (2) inside `source_path`
+    (3) an actual file on disk.
+    """
+    if any(_file_is_in_directory(file_path, directory) for directory in invalid_directories):
+        return False
+
+    if not _file_is_in_directory(file_path, source_path):
+        # print log line for files that have common ancestor with source_path, but not in it.
+        logger.debug(f"{file_path} is not in {source_path}")
+        return False
+
+    if not pathlib.Path(file_path).is_file():
+        # Some modules have a __file__ attribute that are relative to the base package. Let's skip these,
+        # can add more rigorous logic to really pull out the correct file location if we need to.
+        logger.debug(f"Skipping {file_path} because it is not a file")
+        return False
+
+    return True
+
+
 def list_imported_modules_as_files(source_path: str, modules: List[ModuleType]) -> List[str]:
     """Lists the files of modules that have been loaded.  The files are only included if:
 
@@ -293,15 +343,13 @@ def list_imported_modules_as_files(source_path: str, modules: List[ModuleType]) 
     3. Shares a common path with the source_path.
     """
 
-    import flyte
     from flyte._utils.lazy_module import is_imported
 
     files = set()
-    flyte_root = os.path.dirname(flyte.__file__)
 
     # These directories contain installed packages or modules from the Python standard library.
     # If a module is from these directories, then they are not user files.
-    invalid_directories = [flyte_root, sys.prefix, sys.base_prefix, site.getusersitepackages(), *site.getsitepackages()]
+    invalid_directories = _build_invalid_directories()
 
     for mod in modules:
         # Be careful not to import a module with the .__file__ call if not yet imported.
@@ -322,24 +370,156 @@ def list_imported_modules_as_files(source_path: str, modules: List[ModuleType]) 
         if mod_file is None or not isinstance(mod_file, str):
             continue
 
-        if any(_file_is_in_directory(mod_file, directory) for directory in invalid_directories):
-            continue
-
-        if not _file_is_in_directory(mod_file, source_path):
-            # Only upload files where the module file in the source directory
-            # print log line for files that have common ancestor with source_path, but not in it.
-            logger.debug(f"{mod_file} is not in {source_path}")
-            continue
-
-        if not pathlib.Path(mod_file).is_file():
-            # Some modules have a __file__ attribute that are relative to the base package. Let's skip these,
-            # can add more rigorous logic to really pull out the correct file location if we need to.
-            logger.debug(f"Skipping {mod_file} from {mod.__name__} because it is not a file")
-            continue
-
-        files.add(mod_file)
+        if _is_user_file(mod_file, source_path, invalid_directories):
+            files.add(mod_file)
 
     return list(files)
+
+
+def list_imported_modules_as_files_with_ruff(source_path: str, modules: List[ModuleType]) -> List[str]:
+    """Same as `list_imported_modules_as_files`, expanded with ruff's static import graph.
+
+    The runtime `sys.modules` files are used as seeds, then every user file reachable from them
+    through `ruff analyze graph`'s import edges is added. This picks up function-level and
+    `if TYPE_CHECKING:` imports, which never execute at bundle time and so are invisible to the
+    `sys.modules` snapshot alone.
+
+    Falls back to the seed set when the ruff analysis fails.
+    """
+    all_files = list_imported_modules_as_files(source_path, modules)
+
+    graph = _create_ruff_import_dependency_graph(pathlib.Path(source_path))
+    if graph is None:
+        logger.debug(
+            "'ruff analyze graph' analysis failed; bundling from sys.modules only. "
+            "Lazily/conditionally imported local modules may be omitted from the code bundle."
+        )
+        return all_files
+
+    invalid_directories = _build_invalid_directories()
+    return list(_collect_transitive_dependencies(set(all_files), graph, source_path, invalid_directories))
+
+
+def _ruff_is_available() -> bool:
+    """Return True if the `ruff` executable is on PATH.
+
+    ruff is an optional bundling aid: when it is missing we fall back to runtime `sys.modules`
+    discovery alone, which cannot see lazily/conditionally imported local modules.
+    """
+    if shutil.which("ruff") is None:
+        logger.debug(
+            "ruff not found on PATH; skipping static import graph analysis and falling back to runtime "
+            "sys.modules discovery. Lazily/conditionally imported local modules may be omitted from the "
+            "code bundle."
+        )
+        return False
+
+    return True
+
+
+def _ruff_analyze_timeout_seconds() -> float:
+    """Timeout for the `ruff analyze graph` subprocess, overridable per-environment.
+
+    Falls back to the default when the env var is unset, unparsable, or non-positive, so a bad
+    value degrades to the normal timeout rather than disabling or breaking bundling.
+    """
+    raw = os.environ.get(_RUFF_ANALYZE_TIMEOUT_ENV_VAR)
+    if raw is None:
+        return _RUFF_ANALYZE_TIMEOUT_SECONDS
+
+    try:
+        timeout = float(raw)
+    except ValueError:
+        logger.warning(
+            f"Ignoring {_RUFF_ANALYZE_TIMEOUT_ENV_VAR}={raw!r}: not a number. Using {_RUFF_ANALYZE_TIMEOUT_SECONDS}s."
+        )
+        return _RUFF_ANALYZE_TIMEOUT_SECONDS
+
+    if timeout <= 0:
+        logger.warning(
+            f"Ignoring {_RUFF_ANALYZE_TIMEOUT_ENV_VAR}={raw!r}: must be positive. "
+            f"Using {_RUFF_ANALYZE_TIMEOUT_SECONDS}s."
+        )
+        return _RUFF_ANALYZE_TIMEOUT_SECONDS
+
+    return timeout
+
+
+def _create_ruff_import_dependency_graph(source_path: pathlib.Path) -> Optional[typing.Dict[str, List[str]]]:
+    """Build a first-party import dependency graph for `source_path` via `ruff analyze graph`.
+
+    Returns a mapping of absolute file path -> absolute paths it imports, or `None` when the
+    analysis fails.
+    """
+    timeout = _ruff_analyze_timeout_seconds()
+    try:
+        proc = subprocess.run(
+            ["ruff", "analyze", "graph", "--type-checking-imports", "."],
+            cwd=str(source_path),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        # TimeoutExpired is a SubprocessError, not an OSError, so it needs its own handler.
+        logger.warning(
+            f"'ruff analyze graph' timed out after {timeout}s; bundling from sys.modules only. "
+            f"Lazily/conditionally imported local modules may be omitted from the code bundle. "
+            f"Set {_RUFF_ANALYZE_TIMEOUT_ENV_VAR} to raise the limit."
+        )
+        return None
+    except OSError as e:
+        logger.warning(f"Failed to run 'ruff analyze graph': {e}")
+        return None
+
+    if proc.returncode != 0:
+        logger.warning(f"'ruff analyze graph' exited with {proc.returncode}: {proc.stderr.strip()}")
+        return None
+
+    try:
+        raw_graph = json.loads(proc.stdout)
+    except json.JSONDecodeError as e:
+        logger.warning(f"Failed to parse 'ruff analyze graph' output: {e}")
+        return None
+
+    # ruff emits paths relative to its working directory (source_path), POSIX-style. Resolve them to
+    # absolute paths so they line up with the runtime-discovered seed paths.
+    graph: typing.Dict[str, List[str]] = {}
+    for file, deps in raw_graph.items():
+        abs_file = str(source_path / file)
+        graph[abs_file] = [str(source_path / dep) for dep in deps]
+    return graph
+
+
+def _collect_transitive_dependencies(
+    seeds: typing.Set[str],
+    graph: typing.Dict[str, List[str]],
+    source_path: str,
+    invalid_directories: List[str],
+) -> typing.Set[str]:
+    """
+    Collect every user file reachable from `seeds` by following `graph`'s import edges.
+
+    Iteratively traverses the import graph (a queue-based walk; order is irrelevant since the
+    output is a set) starting from `seeds`, returning the seeds plus everything transitively
+    imported from them.
+    """
+    queue: deque[str] = deque(s for s in seeds if _is_user_file(s, source_path, invalid_directories))
+    visited: typing.Set[str] = set(queue)
+    result: typing.Set[str] = set()
+
+    while queue:
+        current = queue.popleft()
+        result.add(current)
+        for dep in graph.get(current, []):
+            if dep in visited:
+                continue
+            visited.add(dep)
+            if _is_user_file(dep, source_path, invalid_directories):
+                queue.append(dep)
+
+    return result
 
 
 def add_imported_modules_from_source(source_path: str, destination: str, modules: List[ModuleType]):
