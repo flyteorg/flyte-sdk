@@ -314,9 +314,9 @@ class DataFrame(BaseModel, SerializableType):
         if not ctx.has_raw_data and remote_destination is None:
 
             async def _lazy_uploader() -> DataFrame:
-                from flyte._run import _get_main_run_mode
+                from flyte._run import local_uploads_suppressed
 
-                if _get_main_run_mode() == "local":
+                if local_uploads_suppressed():
                     logger.debug("Local run mode detected, dataframe will be returned without uploading.")
                     return df
 
@@ -403,9 +403,9 @@ class DataFrame(BaseModel, SerializableType):
         if not ctx.has_raw_data and remote_destination is None:
 
             async def _lazy_uploader() -> DataFrame:
-                from flyte._run import _get_main_run_mode
+                from flyte._run import local_uploads_suppressed
 
-                if _get_main_run_mode() == "local":
+                if local_uploads_suppressed():
                     logger.debug("Local run mode detected, dataframe will be returned without uploading.")
                     return df
 
@@ -1073,10 +1073,10 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
                     raise ValueError(f"If dataframe is not specified, then the uri should be specified. {python_val}")
                 if not storage.is_remote(uri):
                     from flyte._context import internal_ctx
-                    from flyte._run import _get_main_run_mode
+                    from flyte._run import offloading_to_storage
 
                     ctx = internal_ctx()
-                    if not ctx.has_raw_data and _get_main_run_mode() == "remote":
+                    if not ctx.has_raw_data and offloading_to_storage():
                         # handle case where the flyte.io.DataFrame was created in a local task (typically in the context
                         # of a if __name__ == "__main__" block) and needs to be uploaded to remote storage.
                         import flyte.remote as remote

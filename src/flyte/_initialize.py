@@ -41,6 +41,7 @@ class CommonInit:
     source_config_path: Optional[Path] = None  # Only used for documentation
     sync_local_sys_paths: bool = True
     local_persistence: bool = False
+    local_publish: bool = False
 
 
 @dataclass(init=True, kw_only=True, repr=True, eq=True, frozen=True)
@@ -223,6 +224,7 @@ async def init(
     sync_local_sys_paths: bool = True,
     load_plugin_type_transformers: bool = True,
     local_persistence: bool = False,
+    local_publish: bool = False,
 ) -> None:
     """
     Initialize the Flyte system with the given configuration. This method should be called before any other Flyte
@@ -268,6 +270,9 @@ async def init(
     :param load_plugin_type_transformers: If enabled (default True), load the type transformer plugins registered under
       the "flyte.plugins.types" entry point group.
     :param local_persistence: Whether to enable SQLite persistence for local run metadata (default: False).
+    :param local_publish: Whether local runs report themselves to the control plane so they appear in
+        the console like remote runs (default: False). Equivalent to ``local.publish`` in config.yaml
+        or passing ``publish=True`` to a single ``flyte.with_runcontext``.
     :param disable_keyring: Disable storage of tokens in local keyring.
     :return: None
     """
@@ -327,6 +332,7 @@ async def init(
             source_config_path=source_config_path,
             sync_local_sys_paths=sync_local_sys_paths,
             local_persistence=local_persistence,
+            local_publish=local_publish,
         )
 
         logger.info(f"Flyte initialized with config: {_init_config}")
@@ -347,11 +353,14 @@ async def init_from_config(
     image_builder: ImageBuildEngine.ImageBuilderType | None = None,
     images: tuple[str, ...] | None = None,
     sync_local_sys_paths: bool = True,
+    local_publish: bool | None = None,
 ) -> None:
     """
     Initialize the Flyte system using a configuration file or Config object. This method should be called before any
     other Flyte remote API methods are called. Thread-safe implementation.
 
+    :param local_publish: Overrides ``local.publish`` from the config file. When true, local runs
+        report themselves to the control plane so they appear in the console like remote runs.
     :param path_or_config: Path to the configuration file or Config object
     :param org: Org name, this will override the org in the configuration file when non-empty
     :param project: Project name, this will override any project names in the configuration file
@@ -418,6 +427,7 @@ async def init_from_config(
         source_config_path=cfg_path,
         sync_local_sys_paths=sync_local_sys_paths,
         local_persistence=cfg.local.persistence,
+        local_publish=cfg.local.publish if local_publish is None else local_publish,
         # disable_keyring is threaded outside _platform_to_client_kwargs
         # because the helper output is also spread into
         # create_remote_controller from init_in_cluster, and the
@@ -725,6 +735,14 @@ def is_persistence_enabled() -> bool:
     if cfg is None:
         return False
     return cfg.local_persistence
+
+
+def is_publish_enabled() -> bool:
+    """Check if local runs should publish themselves to the control plane."""
+    cfg = _get_init_config()
+    if cfg is None:
+        return False
+    return cfg.local_publish
 
 
 def initialize_in_cluster() -> None:

@@ -671,9 +671,9 @@ class Dir(BaseModel, Generic[T], SerializableType):
         if not ctx.has_raw_data and remote_destination is None:
 
             async def _lazy_uploader() -> tuple[str | None, str]:
-                from flyte._run import _get_main_run_mode
+                from flyte._run import local_uploads_suppressed
 
-                if _get_main_run_mode() == "local":
+                if local_uploads_suppressed():
                     return None, local_path_str
 
                 import flyte.remote as remote
@@ -763,9 +763,9 @@ class Dir(BaseModel, Generic[T], SerializableType):
         if not ctx.has_raw_data and remote_destination is None:
 
             async def _lazy_uploader() -> tuple[str | None, str]:
-                from flyte._run import _get_main_run_mode
+                from flyte._run import local_uploads_suppressed
 
-                if _get_main_run_mode() == "local":
+                if local_uploads_suppressed():
                     return None, local_path_str
 
                 import flyte.remote as remote

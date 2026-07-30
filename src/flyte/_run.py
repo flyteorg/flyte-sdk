@@ -6,6 +6,8 @@ import os
 import pathlib
 import sys
 import uuid
+from contextlib import nullcontext
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union, cast
 
@@ -52,9 +54,13 @@ CacheLookupScope = Literal["global", "project-domain"]
 # This allows offloaded types (files, directories, dataframes) to be aware of the run mode
 # for controlling auto-uploading behavior (only enabled in remote mode).
 _run_mode_var: contextvars.ContextVar[Mode | None] = contextvars.ContextVar("run_mode", default=None)
+# Set for the duration of a local run that is publishing itself to the control plane. Offloaded
+# types consult this (via `local_uploads_suppressed`) so their data lands in configured storage
+# rather than local temp, which is what makes the published run's I/O resolvable from the console.
+_publish_var: contextvars.ContextVar[bool] = contextvars.ContextVar("run_publish", default=False)
 
 
-def _wrap_inline_run(outputs: Tuple[Any, ...] | Any, url: str) -> Run:
+def _wrap_inline_run(outputs: Tuple[Any, ...] | Any, url: str, run_name: str = "dry-run") -> Run:
     """Wrap natively-computed task outputs in a `Run` so every execution mode returns one.
 
     Local and hybrid modes execute the task in-process and end up holding the task's
@@ -62,6 +68,10 @@ def _wrap_inline_run(outputs: Tuple[Any, ...] | Any, url: str) -> Run:
     outputs through the same `Run` interface remote mode returns: `wait()` is an
     immediate no-op (the work already happened) and `outputs()` serves the captured
     values.
+
+    ``run_name`` is the real run name when the run was published, so ``run.name`` matches what
+    the console shows; it stays a placeholder for an unpublished local run, which has no run on
+    the platform to name.
     """
     from flyteidl2.common import identifier_pb2
     from flyteidl2.task import common_pb2
@@ -77,7 +87,7 @@ def _wrap_inline_run(outputs: Tuple[Any, ...] | Any, url: str) -> Run:
                     action=run_definition_pb2.Action(
                         id=identifier_pb2.ActionIdentifier(
                             name="a0",
-                            run=identifier_pb2.RunIdentifier(name="dry-run"),
+                            run=identifier_pb2.RunIdentifier(name=run_name),
                         )
                     )
                 )
@@ -123,6 +133,22 @@ def _get_main_run_mode() -> Mode | None:
     return _run_mode_var.get()
 
 
+def local_uploads_suppressed() -> bool:
+    """True when offloaded types (File/Dir/DataFrame) should stay on local disk.
+
+    A plain local run keeps offloaded values where they are, so iterating offline is fast and
+    needs no blob store. A *published* local run must materialize them to configured storage
+    instead, otherwise the console would link to paths that only exist on the developer's
+    machine.
+    """
+    return _run_mode_var.get() == "local" and not _publish_var.get()
+
+
+def offloading_to_storage() -> bool:
+    """True when offloaded types must be materialized to configured storage."""
+    return _run_mode_var.get() == "remote" or _publish_var.get()
+
+
 def _ambient_image_cache() -> ImageCache | None:
     """Image cache transported into this process by the run that launched it, if any.
 
@@ -151,6 +177,16 @@ def _to_cache_lookup_scope(scope: CacheLookupScope | None = None):
         return run_pb2.CacheLookupScope.CACHE_LOOKUP_SCOPE_UNSPECIFIED
     else:
         raise ValueError(f"Unknown cache lookup scope: {scope}")
+
+
+@dataclass
+class _PublishContext:
+    """Everything a local run needs in order to report itself to the control plane."""
+
+    recorder: Any
+    version: str
+    capture: Any
+    console_url: str | None = None
 
 
 class _Runner:
@@ -188,6 +224,7 @@ class _Runner:
         preserve_original_types: bool | None = None,
         debug: bool = False,
         recover: bool | str | None = False,
+        publish: bool = False,
         _tracker: Any = None,
         _bundle_relative_paths: tuple[str, ...] | None = None,
         _bundle_from_dir: pathlib.Path | None = None,
@@ -199,8 +236,14 @@ class _Runner:
         self._bundle_from_dir = _bundle_from_dir
         init_config = _get_init_config()
         client = init_config.client if init_config else None
+        # `local.publish` in config.yaml (or flyte.init(local_publish=True)) turns publishing on
+        # for every local run, so a plain `python my_script.py` publishes without threading a
+        # flag through each call site.
+        publish = publish or bool(init_config and init_config.local_publish)
         if not force_mode and client is not None:
-            force_mode = "remote"
+            # Publishing runs the task locally and reports it to the platform, so a configured
+            # client must not flip it to remote execution the way it otherwise would.
+            force_mode = "local" if publish else "remote"
         force_mode = force_mode or "local"
         logger.debug(f"Effective run mode: `{force_mode}`, client configured: `{client is not None}`")
         self._mode = force_mode
@@ -236,6 +279,7 @@ class _Runner:
             preserve_original_types if preserve_original_types is not None else self._interactive_mode
         )
         self._debug = debug
+        self._publish = publish
         # Recover (reuse a prior run's succeeded actions). `True` = recover from the run being rerun;
         # a run-name string = recover from that named run (the only form valid on a plain run()).
         # Carried on RunSpec.relation with RELATION_TYPE_RECOVER; remote-only; gated in
@@ -293,7 +337,9 @@ class _Runner:
             return None
         return identifier_pb2.RunIdentifier(org=org, project=project, domain=domain, name=name)
 
-    async def _build_task_spec_from_template(self, obj: TaskTemplate[P, R, F]) -> Tuple[Any, Any, str]:
+    async def _build_task_spec_from_template(
+        self, obj: TaskTemplate[P, R, F], *, skip_image_build: bool = False
+    ) -> Tuple[Any, Any, str]:
         """Build ``(task_spec, code_bundle, version)`` from a local ``TaskTemplate``.
 
         Shared by ``_run_remote`` (local-task branch) and ``rerun`` with substitute code, so both
@@ -325,7 +371,12 @@ class _Runner:
             if isinstance(_env.image, Image):
                 _env.image = resolve_code_bundle_layer(_env.image, self._copy_files, pathlib.Path(cfg.root_dir))
 
-        if not self._dry_run:
+        if skip_image_build:
+            # A published local run executes in this process, so no image is ever pulled and
+            # building one is pure cost. Without a cache, `lookup_image_in_cache` falls back to
+            # the image's predicted URI, which is all the spec needs for display.
+            image_cache = None
+        elif not self._dry_run:
             # Seed with the cache transported from the launching run (if we're inside a task
             # pod) so already-built environments reuse their pushed URIs instead of being
             # re-resolved in-cluster. No-op on the driver.
@@ -763,7 +814,7 @@ class _Runner:
                         action=run_definition_pb2.Action(
                             id=identifier_pb2.ActionIdentifier(
                                 name="a0",
-                                run=identifier_pb2.RunIdentifier(name="dry-run"),
+                                run=identifier_pb2.RunIdentifier(name=run_name),
                             )
                         )
                     )
@@ -943,19 +994,29 @@ class _Runner:
         else:
             action = ActionID(name=self._name)
 
-        metadata_path = self._metadata_path
+        from flyte.storage import join as storage_join
+
+        # Publishing needs the run's artifacts to live somewhere the control plane can read, and
+        # the task spec (with its uploaded code bundle) so the console can show the source. Build
+        # both before anything runs so a setup failure surfaces before the task does work.
+        publish_ctx = await self._prepare_publish(obj, action) if self._publish else None
+
+        # Publishing does not need remote paths: inputs, outputs, the report and the code
+        # bundle all go to backend-chosen locations via signed URLs. `run_base_dir` is honored
+        # when given (it still positions offloaded File/Dir/DataFrame data), but a plain local
+        # run's temp paths are a fine default.
+        metadata_path: Any = self._run_base_dir or self._metadata_path
         if metadata_path is None:
             metadata_path = pathlib.Path("/") / "tmp" / "flyte" / "metadata" / action.name
+            output_path: Any = metadata_path / "a0"
         else:
-            metadata_path = pathlib.Path(metadata_path) / action.name
-        output_path = metadata_path / "a0"
+            metadata_path = storage_join(str(metadata_path), action.name)
+            output_path = storage_join(metadata_path, "a0")
         if self._raw_data_path is None:
-            path = pathlib.Path("/") / "tmp" / "flyte" / "raw_data" / action.name
-            raw_data_path = RawDataPath(path=str(path))
+            raw_data_path = RawDataPath(path=str(pathlib.Path("/") / "tmp" / "flyte" / "raw_data" / action.name))
         else:
             raw_data_path = RawDataPath(path=self._raw_data_path)
-
-        from flyte.storage import join as storage_join
+        version = publish_ctx.version if publish_ctx else "na"
 
         ctx = internal_ctx()
         rd_base = raw_data_path.path
@@ -968,7 +1029,7 @@ class _Runner:
             code_bundle=None,
             output_path=str(output_path),
             run_base_dir=str(metadata_path),
-            version="na",
+            version=version,
             raw_data_path=raw_data_path,
             compiled_image_cache=None,
             report=Report(name=action.name),
@@ -990,22 +1051,31 @@ class _Runner:
         if persist:
             RunRecorder.initialize_persistence()
 
-        recorder = RunRecorder(tracker=self._tracker, persist=persist, run_name=run_name)
+        recorder = RunRecorder(
+            tracker=self._tracker,
+            persist=persist,
+            run_name=run_name,
+            remote=publish_ctx.recorder if publish_ctx else None,
+            version=version,
+        )
         controller.set_recorder(recorder)
 
         recorder.record_root_start(task_name=obj.name)
 
+        capture = publish_ctx.capture if publish_ctx else None
         try:
-            with ctx.replace_task_context(tctx):
-                # make the local version always runs on a different thread, returns a wrapped future.
-                if obj._call_as_synchronous:
-                    fut = controller.submit_sync(obj, *args, **kwargs)
-                    awaitable = asyncio.wrap_future(fut)
-                    outputs = await awaitable
-                else:
-                    outputs = await controller.submit(obj, *args, **kwargs)
+            with capture if capture is not None else nullcontext():
+                with ctx.replace_task_context(tctx):
+                    # make the local version always runs on a different thread, returns a wrapped future.
+                    if obj._call_as_synchronous:
+                        fut = controller.submit_sync(obj, *args, **kwargs)
+                        awaitable = asyncio.wrap_future(fut)
+                        outputs = await awaitable
+                    else:
+                        outputs = await controller.submit(obj, *args, **kwargs)
         except Exception as e:
             recorder.record_root_failure(error=str(e))
+            await self._finalize_publish(recorder, publish_ctx)
             if self._notifications:
                 await self._send_local_notifications(
                     phase=ActionPhase.FAILED, task_name=obj.name, run_name=run_name, error=str(e)
@@ -1013,10 +1083,98 @@ class _Runner:
             raise
         else:
             recorder.record_root_complete()
+            await self._finalize_publish(recorder, publish_ctx)
             if self._notifications:
                 await self._send_local_notifications(phase=ActionPhase.SUCCEEDED, task_name=obj.name, run_name=run_name)
 
+        if publish_ctx is not None:
+            return _wrap_inline_run(outputs, url=publish_ctx.console_url or str(metadata_path), run_name=run_name)
         return _wrap_inline_run(outputs, url=str(metadata_path))
+
+    async def _prepare_publish(self, obj: TaskTemplate[P, R, F], action: ActionID) -> "_PublishContext":
+        """Validate publishing preconditions and build everything the run needs to report itself."""
+        import flyte.errors
+        from flyte._persistence._log_publisher import LogCapture
+        from flyte._persistence._remote_recorder import RemoteRunRecorder
+
+        # get_client() raises a generic initialization error, so check first to give a message
+        # that names publishing as the reason a client is needed.
+        init_config = _get_init_config()
+        if init_config is None or init_config.client is None:
+            raise flyte.errors.InitializationError(
+                "ClientNotInitializedError",
+                "user",
+                "Publishing a local run requires a configured endpoint. Call flyte.init_from_config() "
+                "(or set FLYTE_API_KEY) before using publish=True.",
+            )
+        cfg = get_init_config()
+        client = get_client()
+
+        project = self._project or cfg.project
+        domain = self._domain or cfg.domain
+        if not project or not domain:
+            raise ValueError("Publishing a local run requires both a project and a domain.")
+
+        # No image build: the task runs in this process. This is still called for its code
+        # bundle, which is uploaded and referenced by every action's spec -- that is what makes
+        # the source browsable. If it fails (e.g. a ref-name image that only resolves against a
+        # real image cache), publish without specs rather than failing the user's run.
+        s_ctx: Any = None
+        try:
+            _spec, code_bundle, version = await self._build_task_spec_from_template(obj, skip_image_build=True)
+            # Reused to serialize each action's own spec, so the console has an interface to
+            # render its inputs and outputs against.
+            s_ctx = SerializationContext(
+                code_bundle=code_bundle, version=version, image_cache=None, root_dir=cfg.root_dir
+            )
+        except Exception as e:
+            logger.warning(
+                f"Could not build the task spec for publishing ({type(e).__name__}: {e}). "
+                "The run will be published without browsable source."
+            )
+            version = self._version or "local"
+
+        recorder = RemoteRunRecorder(
+            run_name=action.run_name or action.name,
+            project=project,
+            domain=domain,
+            org=cfg.org,
+            session_config=client.session_config,
+            serialization_context=s_ctx,
+        )
+
+        console_url = None
+        try:
+            console_url = client.console.run_url(project, domain, action.run_name or action.name)
+        except Exception:  # pragma: no cover - URL building is cosmetic
+            pass
+
+        return _PublishContext(
+            recorder=recorder,
+            version=version,
+            capture=LogCapture(),
+            console_url=console_url,
+        )
+
+    @staticmethod
+    async def _finalize_publish(
+        recorder: Any,
+        publish_ctx: Optional["_PublishContext"],
+    ) -> None:
+        """Publish the captured output as the run's report, then flush the backlog."""
+        if publish_ctx is None:
+            return
+        from flyte._persistence._log_publisher import publish_report
+
+        uri = await publish_report(text=publish_ctx.capture.render())
+        recorder.record_root_artifacts(report_uri=uri)
+
+        stats = recorder.close_remote()
+        if stats is not None and not stats.ok:
+            logger.warning(
+                f"Published run with {stats.failed} failed and {stats.dropped} dropped update(s). "
+                f"First error: {stats.first_error}"
+            )
 
     @syncify  # type: ignore[arg-type]
     async def run(
@@ -1061,9 +1219,13 @@ class _Runner:
         if self._recover and self._mode != "remote":
             raise ValueError("recover is only supported in remote mode")
 
+        if self._publish and self._mode != "local":
+            raise ValueError(f"publish executes the task locally and cannot be combined with mode={self._mode!r}")
+
         # Set the run mode in the context variable so that offloaded types (files, directories, dataframes)
         # can check the mode for controlling auto-uploading behavior (only enabled in remote mode).
         _run_mode_var.set(self._mode)
+        _publish_var.set(self._publish)
 
         try:
             if self._mode == "remote":
@@ -1079,6 +1241,7 @@ class _Runner:
                 return await self._run_local(task, *args, **kwargs)
         finally:
             _run_mode_var.set(None)
+            _publish_var.set(False)
 
     @syncify  # type: ignore[arg-type]
     async def rerun(
@@ -1224,6 +1387,7 @@ def with_runcontext(
     preserve_original_types: bool = False,
     debug: bool = False,
     recover: bool | str | None = False,
+    publish: bool = False,
     _tracker: Any = None,
 ) -> _Runner:
     """
@@ -1309,6 +1473,10 @@ def with_runcontext(
         run-name string recovers from that named run and is the only form valid on ``.run(...)``.
         Remote-only. Not yet supported by the backend (raises NotImplementedError at submit until
         flyteidl2 RunSpec.relation ships).
+    :param publish: Optional If true, execute the task locally but report the run to the control
+        plane so it appears in the console like a remote run — task tree, inputs/outputs, code
+        bundle and a report holding the captured output. Requires a configured endpoint. Nothing
+        is scheduled in the cluster; execution stays local.
     :param _tracker: This is an internal only parameter used by the CLI to render the TUI.
 
     :return: runner
@@ -1359,6 +1527,7 @@ def with_runcontext(
         preserve_original_types=preserve_original_types,
         debug=debug,
         recover=recover,
+        publish=publish,
         _tracker=_tracker,
     )
 
