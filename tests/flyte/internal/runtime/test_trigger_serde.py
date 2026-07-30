@@ -339,7 +339,7 @@ class TestToTaskTrigger:
 
         result = await to_task_trigger(trigger, "test_task", task_inputs, task_default_inputs)
 
-        assert result.spec.run_spec.cluster == "gpu-queue"
+        assert result.spec.run_spec.queue == "gpu-queue"
 
     @pytest.mark.asyncio
     async def test_trigger_with_max_action_concurrency(self):
@@ -523,7 +523,7 @@ class TestToTaskTrigger:
         assert result.spec.active is False
         assert result.spec.run_spec.overwrite_cache is True
         assert result.spec.run_spec.interruptible.value is False
-        assert result.spec.run_spec.cluster == "default"
+        assert result.spec.run_spec.queue == "default"
         assert result.spec.run_spec.labels.values == {"team": "ml"}
         assert result.spec.run_spec.annotations.values == {"owner": "data-team"}
         env_dict = {kv.key: kv.value for kv in result.spec.run_spec.envs.values}
@@ -678,7 +678,7 @@ async def test_task_with_trigger_all_options():
     assert result.spec.run_spec.interruptible.value is True
 
     # Validate run_spec - queue
-    assert result.spec.run_spec.cluster == "ml-queue"
+    assert result.spec.run_spec.queue == "ml-queue"
 
     # Validate run_spec - labels
     assert result.spec.run_spec.labels is not None
@@ -807,7 +807,7 @@ class TestTriggerWithCustomContext:
         assert result.spec.active is False
         assert result.spec.run_spec.overwrite_cache is True
         assert result.spec.run_spec.interruptible.value is True
-        assert result.spec.run_spec.cluster == "ml-queue"
+        assert result.spec.run_spec.queue == "ml-queue"
         assert result.spec.run_spec.labels.values == {"team": "ml"}
         assert result.spec.run_spec.annotations.values == {"owner": "data-team"}
 
@@ -935,7 +935,7 @@ class TestTriggerWithNotifications:
         assert result.spec.active is False
         assert result.spec.run_spec.overwrite_cache is True
         assert result.spec.run_spec.interruptible.value is True
-        assert result.spec.run_spec.cluster == "ml-queue"
+        assert result.spec.run_spec.queue == "ml-queue"
         assert result.spec.run_spec.labels.values == {"team": "ml"}
         assert result.spec.run_spec.annotations.values == {"owner": "data-team"}
         env_dict = {kv.key: kv.value for kv in result.spec.run_spec.envs.values}
