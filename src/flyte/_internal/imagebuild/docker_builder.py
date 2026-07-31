@@ -61,6 +61,7 @@ _F_IMG_ID = "_F_IMG_ID"
 FLYTE_DOCKER_BUILDER_CACHE_FROM = "FLYTE_DOCKER_BUILDER_CACHE_FROM"
 FLYTE_DOCKER_BUILDER_CACHE_TO = "FLYTE_DOCKER_BUILDER_CACHE_TO"
 FLYTE_DOCKER_BUILDKIT_BUILDER_NAME = "FLYTE_DOCKER_BUILDKIT_BUILDER_NAME"
+FLYTE_DOCKER_BUILD_EXTRA_ARGS = "FLYTE_DOCKER_BUILD_EXTRA_ARGS"
 
 UV_LOCK_WITHOUT_PROJECT_INSTALL_TEMPLATE = Template("""\
 RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
@@ -397,7 +398,8 @@ class PixiProjectHandler:
         secret_mounts = _get_secret_mounts_layer(layer.secret_mounts)
 
         install_args = []
-        if layer.pixi_lock is not None:
+        # --frozen and --locked are mutually exclusive. Honour a user-supplied --frozen.
+        if layer.pixi_lock is not None and "--frozen" not in (layer.extra_args or ""):
             install_args.append("--locked")
         if layer.extra_args:
             install_args.append(layer.extra_args)
@@ -481,6 +483,13 @@ class PoetryProjectHandler:
 class DockerIgnoreHandler:
     @staticmethod
     async def handle(layer: DockerIgnore, context_path: Path, _: str):
+        if not Path(layer.path).is_file():
+            from flyte.errors import ImageBuildError
+
+            raise ImageBuildError(
+                f"The .dockerignore file specified via with_dockerignore() was not found at '{layer.path}'. "
+                f"Ensure the path points to an existing file."
+            )
         shutil.copy(layer.path, context_path)
 
 
@@ -568,6 +577,12 @@ def _get_secret_mounts_layer(secrets: typing.Tuple[str | Secret, ...] | None) ->
             secret_mounts_layer.append(f"--mount=type=secret,id={secret_id},env={secret_default_env_key}")
 
     return " ".join(secret_mounts_layer)
+
+
+def _get_extra_build_args() -> typing.List[str]:
+    """Extra flags to pass to `docker buildx build`, appended to the flags flyte builds itself."""
+    extra_args = os.getenv(FLYTE_DOCKER_BUILD_EXTRA_ARGS)
+    return shlex.split(extra_args) if extra_args else []
 
 
 async def _process_layer(
@@ -736,6 +751,7 @@ class DockerImageBuilder(ImageBuilder):
             command.append("--load")
 
         command.extend(_get_secret_commands(layers=image._layers))
+        command.extend(_get_extra_build_args())
 
         concat_command = " ".join(command)
         logger.debug(f"Build command: {concat_command}")
@@ -775,10 +791,16 @@ class DockerImageBuilder(ImageBuilder):
         except subprocess.CalledProcessError:
             raise ImageBuildError("Docker buildx is not available. Make sure BuildKit is installed and enabled.")
 
-        # List builders
-        result = await run_sync_with_loop(
-            subprocess.run, ["docker", "buildx", "ls"], capture_output=True, text=True, check=True
-        )
+        try:
+            result = await run_sync_with_loop(
+                subprocess.run, ["docker", "buildx", "ls"], capture_output=True, text=True, check=True
+            )
+        except subprocess.CalledProcessError as e:
+            raise ImageBuildError(
+                f"Failed to list docker buildx builders: {(e.stderr or '').strip() or e}. "
+                "Ensure the Docker daemon is running, or use the remote image builder by setting "
+                "`image_builder='remote'` on your `flyte.Image`."
+            ) from e
         builders = cast(str, result.stdout)
 
         # Check if there's any usable builder with the correct driver options
@@ -804,21 +826,36 @@ class DockerImageBuilder(ImageBuilder):
         else:
             logger.info("No buildx builder found, creating one...")
 
-        await run_sync_with_loop(
-            subprocess.run,
-            [
-                "docker",
-                "buildx",
-                "create",
-                "--name",
-                DockerImageBuilder._builder_name,
-                "--platform",
-                "linux/amd64,linux/arm64",
-                "--driver-opt",
-                "network=host",
-            ],
-            check=True,
-        )
+        try:
+            await run_sync_with_loop(
+                subprocess.run,
+                [
+                    "docker",
+                    "buildx",
+                    "create",
+                    "--name",
+                    DockerImageBuilder._builder_name,
+                    "--platform",
+                    "linux/amd64,linux/arm64",
+                    "--driver-opt",
+                    "network=host",
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        except subprocess.CalledProcessError as e:
+            stderr = (e.stderr or "").strip()
+            # A concurrent build may have created the builder between our `ls` check and now;
+            # if it already exists we can just reuse it instead of failing.
+            if "already exists" in stderr.lower():
+                logger.info(f"Buildx builder {DockerImageBuilder._builder_name!r} already exists, reusing it.")
+                return
+            raise ImageBuildError(
+                f"Failed to create docker buildx builder {DockerImageBuilder._builder_name!r}: {stderr or e}. "
+                f"Try removing it with `docker buildx rm {DockerImageBuilder._builder_name}`, or use the remote "
+                "image builder by setting `image_builder='remote'` on your `flyte.Image`."
+            ) from e
 
     async def _build_image(self, image: Image, *, push: bool = True, dry_run: bool = False, wait: bool = True) -> str:
         """
@@ -891,6 +928,7 @@ class DockerImageBuilder(ImageBuilder):
                 command.append("--load")
 
             command.extend(_get_secret_commands(layers=image._layers))
+            command.extend(_get_extra_build_args())
             command.append(tmp_dir)
 
             concat_command = " ".join(command)

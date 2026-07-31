@@ -163,8 +163,13 @@ def get_async_authenticator(
 
             return PassthroughAuthenticator(endpoint=endpoint, **kwargs)
         case _:
-            raise ValueError(
-                f"Invalid auth mode [{auth_type}] specified. Please update the creds config to use a valid value"
+            # An unrecognized auth mode is a user-config mistake, not an SDK crash.
+            from flyte.errors import InitializationError
+
+            raise InitializationError(
+                "InvalidAuthMode",
+                "user",
+                f"Invalid auth mode [{auth_type}] specified. Please update the creds config to use a valid value",
             )
 
 

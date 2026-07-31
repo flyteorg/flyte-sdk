@@ -1,17 +1,27 @@
 import os
 import pathlib
 import subprocess
+import sys
 import tarfile
 import tempfile
 from types import ModuleType
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 
 import flyte
 from flyte._code_bundle._ignore import GitIgnore, IgnoreGroup, StandardIgnore
 from flyte._code_bundle._packaging import create_bundle
-from flyte._code_bundle._utils import list_all_files, list_imported_modules_as_files, ls_files, ls_relative_files
+from flyte._code_bundle._utils import (
+    _RUFF_ANALYZE_TIMEOUT_ENV_VAR,
+    _RUFF_ANALYZE_TIMEOUT_SECONDS,
+    _create_ruff_import_dependency_graph,
+    _ruff_analyze_timeout_seconds,
+    list_all_files,
+    list_imported_modules_as_files,
+    ls_files,
+    ls_relative_files,
+)
 from flyte._code_bundle.bundle import build_pkl_bundle
 from flyte._internal.runtime.entrypoints import load_pkl_task
 from flyte.extras import ContainerTask
@@ -634,6 +644,36 @@ def test_create_bundle_skips_symlinks_pointing_outside_source():
         assert "python_bin" in member_names
 
 
+def test_create_bundle_skips_files_that_vanish_before_add():
+    """
+    Regression FLYTE-SDK-52: the file list is computed by walking the source tree, but a
+    file can disappear between listing and ``tar.add`` stat-ing it — most commonly a
+    transient lock file (e.g. ``.codegraph/codegraph.lock``). Previously this raised a raw
+    ``FileNotFoundError`` and aborted the whole deploy. A vanished file should now be
+    skipped with a warning, and the rest of the bundle should still be produced.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        source = pathlib.Path(tmpdir)
+        output_dir = source / "output"
+        output_dir.mkdir()
+
+        (source / "main.py").write_text("print('hello')")
+        # A path that is in the file list but does not exist on disk — simulates a
+        # lock file that was deleted between listing and bundling.
+        vanished = source / ".codegraph" / "codegraph.lock"
+
+        files = [str(source / "main.py"), str(vanished)]
+
+        # Should succeed despite the missing file rather than raising FileNotFoundError.
+        archive_path, _, _ = create_bundle(source, output_dir, files, "test_digest")
+
+        with tarfile.open(archive_path, "r:gz") as tar:
+            member_names = tar.getnames()
+
+        assert "main.py" in member_names
+        assert ".codegraph/codegraph.lock" not in member_names
+
+
 def test_list_all_files_returns_strings():
     """Test that list_all_files returns string paths (not pathlib.Path objects)."""
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -652,3 +692,132 @@ def test_list_all_files_returns_strings():
             assert isinstance(f, str), f"Expected str, got {type(f)}: {f}"
             # Paths should be absolute
             assert os.path.isabs(f), f"Expected absolute path, got: {f}"
+
+
+def test_ls_files_loaded_modules_includes_function_level_import():
+    """Test that ls_files(copy_style="loaded_modules") bundles a local module that is only
+    imported inside a function body.
+
+    `from helper import compute` inside `async def run()` never executes at bundle time, so
+    `helper` is absent from sys.modules. Static ruff analysis recovers the import edge from the
+    entrypoint, so helper.py is bundled — otherwise the task fails on the cluster with
+    ModuleNotFoundError.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        source_path = pathlib.Path(tmpdir)
+
+        entry_file = source_path / "entrypoint_mod.py"
+        helper_file = source_path / "helper.py"
+        entry_file.write_text("async def run() -> int:\n    from helper import compute\n    return compute()\n")
+        helper_file.write_text("def compute() -> int:\n    return 42\n")
+
+        # Seed sys.modules with the entrypoint only (without executing it, so the function-level
+        # import never runs) — mirrors the real bundle-time interpreter state.
+        entry_mod = ModuleType("entrypoint_mod")
+        entry_mod.__file__ = str(entry_file)
+
+        with patch.dict(sys.modules, {"entrypoint_mod": entry_mod}):
+            files, _ = ls_files(source_path, "loaded_modules")
+
+        names = {pathlib.Path(f).name for f in files}
+        assert "entrypoint_mod.py" in names
+        assert "helper.py" in names
+
+
+def test_ls_files_loaded_modules_falls_back_when_ruff_times_out():
+    """A hung `ruff analyze graph` must degrade to sys.modules discovery, not propagate.
+
+    subprocess.TimeoutExpired is a SubprocessError rather than an OSError, so it needs its own
+    handler; without one it would escape ls_files and abort bundling entirely.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        source_path = pathlib.Path(tmpdir)
+
+        entry_file = source_path / "entrypoint_mod.py"
+        helper_file = source_path / "helper.py"
+        entry_file.write_text("async def run() -> int:\n    from helper import compute\n    return compute()\n")
+        helper_file.write_text("def compute() -> int:\n    return 42\n")
+
+        entry_mod = ModuleType("entrypoint_mod")
+        entry_mod.__file__ = str(entry_file)
+
+        with patch.dict(sys.modules, {"entrypoint_mod": entry_mod}):
+            with patch(
+                "flyte._code_bundle._utils.subprocess.run",
+                side_effect=subprocess.TimeoutExpired(cmd="ruff", timeout=30.0),
+            ):
+                files, _ = ls_files(source_path, "loaded_modules")
+
+        names = {pathlib.Path(f).name for f in files}
+        # The runtime-discovered seed survives; only the statically-discovered edge is lost.
+        assert "entrypoint_mod.py" in names
+        assert "helper.py" not in names
+
+
+def test_ruff_analyze_timeout_defaults_when_env_var_unset(monkeypatch):
+    """The default timeout applies when the override is absent."""
+    monkeypatch.delenv(_RUFF_ANALYZE_TIMEOUT_ENV_VAR, raising=False)
+    assert _ruff_analyze_timeout_seconds() == _RUFF_ANALYZE_TIMEOUT_SECONDS
+
+
+def test_ruff_analyze_timeout_env_var_override(monkeypatch):
+    """A valid override is honored and reaches the subprocess call."""
+    monkeypatch.setenv(_RUFF_ANALYZE_TIMEOUT_ENV_VAR, "90.5")
+    assert _ruff_analyze_timeout_seconds() == 90.5
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        with patch("flyte._code_bundle._utils.subprocess.run") as mock_run:
+            mock_run.return_value = Mock(returncode=0, stdout="{}", stderr="")
+            _create_ruff_import_dependency_graph(pathlib.Path(tmpdir))
+
+    assert mock_run.call_args.kwargs["timeout"] == 90.5
+
+
+@pytest.mark.parametrize("value", ["not-a-number", "", "0", "-5"])
+def test_ruff_analyze_timeout_ignores_invalid_env_var(monkeypatch, value):
+    """Unparsable or non-positive overrides degrade to the default rather than raising.
+
+    A zero or negative timeout would make subprocess.run trip immediately, silently disabling
+    ruff augmentation on every run.
+    """
+    monkeypatch.setenv(_RUFF_ANALYZE_TIMEOUT_ENV_VAR, value)
+    assert _ruff_analyze_timeout_seconds() == _RUFF_ANALYZE_TIMEOUT_SECONDS
+
+
+def test_ls_files_loaded_modules_includes_type_checking_import():
+    """Test that ls_files(copy_style="loaded_modules") bundles a local module imported only
+    inside an `if TYPE_CHECKING:` guard.
+
+    typing.TYPE_CHECKING is always False at runtime, so the guarded import never executes and
+    `helper` never appears in sys.modules. Static ruff analysis (with --type-checking-imports)
+    recovers the edge, so helper.py is bundled and runtime annotation evaluation on the cluster
+    does not fail with ImportError.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        source_path = pathlib.Path(tmpdir)
+
+        entry_file = source_path / "entrypoint_mod.py"
+        helper_file = source_path / "helper.py"
+        entry_file.write_text(
+            "from __future__ import annotations\n"
+            "from typing import TYPE_CHECKING\n"
+            "\n"
+            "if TYPE_CHECKING:\n"
+            "    from helper import Helper\n"
+            "\n"
+            "def process(x: Helper) -> None:\n"
+            "    pass\n"
+        )
+        helper_file.write_text("class Helper:\n    pass\n")
+
+        # Seed sys.modules with the entrypoint only; helper was never imported (TYPE_CHECKING
+        # is False at runtime).
+        entry_mod = ModuleType("entrypoint_mod")
+        entry_mod.__file__ = str(entry_file)
+
+        with patch.dict(sys.modules, {"entrypoint_mod": entry_mod}):
+            files, _ = ls_files(source_path, "loaded_modules")
+
+        names = {pathlib.Path(f).name for f in files}
+        assert "entrypoint_mod.py" in names
+        assert "helper.py" in names

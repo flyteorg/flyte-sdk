@@ -19,7 +19,7 @@ from flyte._initialize import (
     requires_initialization,
     requires_storage,
 )
-from flyte._logging import LogFormat, logger
+from flyte._logging import LogFormat, logger, user_logger
 from flyte._task import F, P, R, TaskTemplate
 from flyte.models import (
     ActionID,
@@ -210,7 +210,7 @@ class _Runner:
         self._copy_files = copy_style
         self._dry_run = dry_run
         self._copy_bundle_to = copy_bundle_to
-        self._interactive_mode = interactive_mode or ipython_check()
+        self._interactive_mode = interactive_mode if interactive_mode is not None else ipython_check()
         self._raw_data_path = raw_data_path
         self._metadata_path = metadata_path
         self._run_base_dir = run_base_dir
@@ -417,8 +417,8 @@ class _Runner:
         if env.get("LOG_LEVEL") is None:
             env["LOG_LEVEL"] = str(self._log_level) if self._log_level else str(logger.getEffectiveLevel())
         env["LOG_FORMAT"] = self._log_format
-        if self._user_log_level is not None:
-            env["USER_LOG_LEVEL"] = str(self._user_log_level)
+        if env.get("USER_LOG_LEVEL") is None:
+            env["USER_LOG_LEVEL"] = str(self._user_log_level or user_logger.getEffectiveLevel())
         if self._reset_root_logger:
             env["FLYTE_RESET_ROOT_LOGGER"] = "1"
         if self._debug:
@@ -507,7 +507,7 @@ class _Runner:
                 annotations=run_pb2.Annotations(values=self._annotations),
                 labels=run_pb2.Labels(values=self._labels),
                 envs=env_kv,
-                cluster=self._queue or (task.queue if task is not None else ""),
+                queue=self._queue or (task.queue if task is not None else ""),
                 max_action_concurrency=self._max_action_concurrency or 0,
                 raw_data_storage=raw_data_storage,
                 run_base_dir=self._run_base_dir or "",
@@ -548,8 +548,7 @@ class _Runner:
             if self._max_action_concurrency:
                 run_spec.max_action_concurrency = self._max_action_concurrency
             if self._queue:
-                # TODO: cluster is being renamed to queue
-                run_spec.cluster = self._queue
+                run_spec.queue = self._queue
             if self._service_account:
                 run_spec.security_context.CopyFrom(
                     security_pb2.SecurityContext(

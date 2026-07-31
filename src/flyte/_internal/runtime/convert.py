@@ -119,7 +119,7 @@ async def convert_upload_default_inputs(
     vars = []
     literal_coros = []
     for input_name, (input_type, default_value) in interface.inputs.items():
-        if default_value is not None and default_value is not inspect.Parameter.empty:
+        if default_value is not inspect.Parameter.empty:
             if isinstance(default_value, _trigger_time):
                 raise ValueError(
                     f"Input '{input_name}' uses flyte.TriggerTime as its default value. "

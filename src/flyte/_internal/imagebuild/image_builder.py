@@ -344,9 +344,11 @@ class ImageBuildEngine:
         return result
 
     @classmethod
-    def _get_builder(cls, builder: ImageBuildEngine.ImageBuilderType | None = "local") -> ImageBuilder:
+    def _get_builder(cls, builder: ImageBuildEngine.ImageBuilderType | ImageBuilder | None = "local") -> ImageBuilder:
         if builder is None:
             builder = "local"
+        if not isinstance(builder, str):
+            return builder
         if builder == "remote":
             from flyte._internal.imagebuild.remote_builder import RemoteImageBuilder
 
