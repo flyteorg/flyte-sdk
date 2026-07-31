@@ -57,9 +57,12 @@ async def upload_metadata_artifact(
     if (action_id is None) == (action_attempt_id is None):
         raise ValueError("Exactly one of action_id or action_attempt_id must be provided")
 
+    # Callers pass the artifact type as a plain int; the generated constructor accepts
+    # the enum name form, keeping both checkers typed.
+    artifact_name = dataproxy_service_pb2.ArtifactType.Name(artifact_type)
     md5_bytes = hashlib.md5(data).digest()
     req = dataproxy_service_pb2.UploadMetadataRequest(
-        artifact_type=artifact_type,  # type: ignore[arg-type]
+        artifact_type=artifact_name,
         content_md5=md5_bytes,
         content_length=len(data),
         add_content_md5_metadata=True,
@@ -69,8 +72,6 @@ async def upload_metadata_artifact(
         req.action_id.CopyFrom(action_id)
     else:
         req.action_attempt_id.CopyFrom(action_attempt_id)
-
-    artifact_name = dataproxy_service_pb2.ArtifactType.Name(artifact_type)
     try:
         resp = await dataproxy.upload_metadata(req)
     except ConnectError as e:
