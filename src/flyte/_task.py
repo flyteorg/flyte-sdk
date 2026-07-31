@@ -142,6 +142,7 @@ class TaskTemplate(Generic[P, R, F]):
     queue: Optional[str] = None
     debuggable: bool = False
     entrypoint: bool = False
+    produces_artifacts: bool = False
 
     parent_env: Optional[weakref.ReferenceType[TaskEnvironment]] = None
     parent_env_name: Optional[str] = None
@@ -403,6 +404,7 @@ class TaskTemplate(Generic[P, R, F]):
         queue: Optional[str] = None,
         interruptible: Optional[bool] = None,
         entrypoint: Optional[bool] = None,
+        produces_artifacts: Optional[bool] = None,
         links: Tuple[Link, ...] = (),
         plugin_config: Optional[Any] = None,
         **kwargs: Any,
@@ -425,6 +427,7 @@ class TaskTemplate(Generic[P, R, F]):
         :param queue: Optional override for the queue to use for the task.
         :param interruptible: Optional override for the interruptible policy for the task.
         :param entrypoint: Optional override for the entrypoint flag for the task.
+        :param produces_artifacts: Optional override for the produces_artifacts flag for the task.
         :param links: Optional override for the Links associated with the task.
         :param plugin_config: Optional override for the plugin specific configuration. Only supported by task
          templates that declare a `plugin_config` field.
@@ -468,6 +471,7 @@ class TaskTemplate(Generic[P, R, F]):
 
         interruptible = interruptible if interruptible is not None else self.interruptible
         entrypoint = entrypoint if entrypoint is not None else self.entrypoint
+        produces_artifacts = produces_artifacts if produces_artifacts is not None else self.produces_artifacts
 
         for k, v in kwargs.items():
             if k == "name":
@@ -505,6 +509,7 @@ class TaskTemplate(Generic[P, R, F]):
             pod_template=pod_template or self.pod_template,
             interruptible=interruptible,
             entrypoint=entrypoint,
+            produces_artifacts=produces_artifacts,
             queue=queue or self.queue,
             links=links or self.links,
             **kwargs,

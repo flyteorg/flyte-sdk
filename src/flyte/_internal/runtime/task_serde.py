@@ -264,6 +264,7 @@ def get_proto_task(
             generates_deck=BoolValue(value=task.report),
             debuggable=task.debuggable if task.reusable is None else False,
             is_entrypoint=task.entrypoint,
+            produces_artifacts=task.produces_artifacts,
             log_links=log_links,
             image_build_run=image_build_run,
             code_bundle_uri=serialize_context.code_bundle.tgz if serialize_context.code_bundle else None,

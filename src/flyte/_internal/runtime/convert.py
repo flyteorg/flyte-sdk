@@ -291,13 +291,26 @@ async def convert_from_native_to_outputs(o: Any, interface: NativeInterface, tas
         assert len(o) == len(interface.outputs), (
             f"Received {len(o)} outputs but return annotation has {len(interface.outputs)} outputs specified. "
         )
+    from flyte._constants import ARTIFACT_PRODUCED_KEY
+    from flyte.artifacts._metadata import to_compact_json
+    from flyte.artifacts._wrapper import ArtifactWrapper
+
     named = []
     for (output_name, python_type), v in zip(interface.outputs.items(), o):
+        # Preserve artifact metadata attached via flyte.artifacts.new(...): capture it
+        # before to_literal unwraps the wrapper (and would otherwise discard it), then
+        # stamp it onto the produced literal so the backend can extract generated
+        # artifacts when the task declares produces_artifacts. Top-level outputs only;
+        # wrapped values nested inside collections are not stamped.
+        produced_md = v.get_flyte_metadata() if isinstance(v, ArtifactWrapper) else None
+
         # Expose the output slot name to transformers for the duration of this
         # single conversion (see ``current_output_name``), then always clear it.
         tok = _output_name_var.set(output_name)
         try:
             lit = await TypeEngine.to_literal(v, python_type, TypeEngine.to_literal_type(python_type))
+            if produced_md is not None:
+                lit.metadata[ARTIFACT_PRODUCED_KEY] = to_compact_json(produced_md)
             named.append(common_pb2.NamedLiteral(name=output_name, value=lit))
         except TypeTransformerFailedError as e:
             raise flyte.errors.RuntimeDataValidationError(output_name, e, task_name)

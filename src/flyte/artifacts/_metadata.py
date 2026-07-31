@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import json
 import typing
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Optional, Tuple, cast
 
-from ._card import Card
+from ._card import Card, CardFormat, CardType
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -52,3 +53,41 @@ class Metadata:
             },
             card=card,
         )
+
+
+def to_compact_json(md: Metadata) -> str:
+    """
+    Serialize a `Metadata` to compact, deterministic JSON for stamping into a literal's
+    metadata map (under `flyte._constants.ARTIFACT_PRODUCED_KEY`). None fields are omitted
+    and keys are sorted, so equal metadata always yields byte-identical JSON. The backend
+    reader (leaseworker) parses exactly this shape — keep the two in sync.
+    """
+    payload: dict[str, typing.Any] = {"name": md.name}
+    if md.version is not None:
+        payload["version"] = md.version
+    if md.description is not None:
+        payload["description"] = md.description
+    if md.data is not None:
+        payload["data"] = dict(md.data)
+    if md.card is not None:
+        payload["card"] = {"uri": md.card.uri, "format": md.card.format, "type": md.card.card_type}
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+
+
+def from_compact_json(s: str) -> Metadata:
+    """Inverse of `to_compact_json`."""
+    payload = json.loads(s)
+    card = None
+    if "card" in payload:
+        card = Card(
+            uri=payload["card"]["uri"],
+            format=cast(CardFormat, payload["card"]["format"]),
+            card_type=cast(CardType, payload["card"]["type"]),
+        )
+    return Metadata(
+        name=payload["name"],
+        version=payload.get("version"),
+        description=payload.get("description"),
+        data=payload.get("data"),
+        card=card,
+    )
