@@ -175,12 +175,14 @@ class LocalConfig(object):
     """Configuration for local execution settings."""
 
     persistence: bool = False
+    report_to_backend: bool = False
 
     @classmethod
     def auto(cls, config_file: typing.Optional[typing.Union[str, ConfigFile]] = None) -> "LocalConfig":
         config_file = get_config_file(config_file)
         kwargs: typing.Dict[str, typing.Any] = {}
         kwargs = set_if_exists(kwargs, "persistence", _internal.Local.PERSISTENCE.read(config_file))
+        kwargs = set_if_exists(kwargs, "report_to_backend", _internal.Local.REPORT_TO_BACKEND.read(config_file))
         return LocalConfig(**kwargs)
 
 

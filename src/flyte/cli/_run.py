@@ -191,6 +191,18 @@ class RunArguments:
             )
         },
     )
+    report: bool = field(
+        default=False,
+        metadata={
+            "click.option": click.Option(
+                ["--report"],
+                is_flag=True,
+                default=False,
+                help="Report local run state to the Flyte control plane so the run shows up in the "
+                "console (only valid with --local). Requires a configured endpoint, project and domain.",
+            )
+        },
+    )
     image: List[str] = field(
         default_factory=list,
         metadata={
@@ -428,6 +440,7 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
                 max_action_concurrency=self.run_args.max_action_concurrency,
                 labels=self.run_args.parsed_labels(),
                 queue=self.run_args.queue,
+                report=self.run_args.report,
             )
             if self.run_args.rerun_from:
                 # Re-run a prior run with THIS local code, reusing the prior run's inputs.
@@ -497,6 +510,7 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
                 env_vars=self.run_args.parsed_env_vars(),
                 labels=self.run_args.parsed_labels(),
                 queue=self.run_args.queue,
+                report=self.run_args.report,
                 _tracker=tracker,
             )
             return await execution_context.run.aio(self.obj, **ctx.params)
@@ -514,6 +528,8 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
         )
         if self.run_args.rerun_from and self.run_args.local:
             raise click.UsageError("--rerun-from requires remote mode (it cannot be combined with --local)")
+        if self.run_args.report and not self.run_args.local:
+            raise click.UsageError("--report can only be used with --local (remote runs are already reported)")
         self._validate_required_params(ctx)
         if self.run_args.tui:
             if not self.run_args.local:

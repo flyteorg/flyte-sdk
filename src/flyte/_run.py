@@ -188,6 +188,7 @@ class _Runner:
         preserve_original_types: bool | None = None,
         debug: bool = False,
         recover: bool | str | None = False,
+        report: bool = False,
         _tracker: Any = None,
         _bundle_relative_paths: tuple[str, ...] | None = None,
         _bundle_from_dir: pathlib.Path | None = None,
@@ -241,6 +242,9 @@ class _Runner:
         # Carried on RunSpec.relation with RELATION_TYPE_RECOVER; remote-only; gated in
         # _apply_overrides until the flyteidl2 field + backend ship. See _resolve_recover_ref.
         self._recover = recover
+        # Report local run state to the control plane (LocalRunService). Local-only; also
+        # enabled via the `local.report_to_backend` config key / flyte.init(local_report_to_backend=...).
+        self._report = report
 
     def _resolve_recover_ref(self, rerun_run_name: str | None) -> str | None:
         """Resolve `self._recover` to the reference run name to recover from (or None).
@@ -929,6 +933,37 @@ class _Runner:
             domain=self._domain or "",
         )
 
+    def _resolve_local_report_scope(self) -> Tuple[str | None, str, str] | None:
+        """Resolve (org, project, domain) for local-run reporting, or None when reporting
+        should be skipped (with a single warning). Raises with a clear message when
+        reporting is requested but project/domain are not configured."""
+        import flyte.errors
+        from flyte._initialize import is_local_report_enabled
+
+        if not (self._report or is_local_report_enabled()):
+            return None
+
+        init_config = _get_init_config()
+        if init_config is None or init_config.client is None:
+            logger.warning(
+                "Local run reporting was requested but no Flyte client is initialized; "
+                "running without reporting. Call flyte.init() with a valid endpoint/api-key "
+                "or flyte.init_from_config() to enable reporting."
+            )
+            return None
+
+        project = self._project or init_config.project
+        domain = self._domain or init_config.domain
+        if not project or not domain:
+            raise flyte.errors.InitializationError(
+                "ProjectDomainNotConfigured",
+                "user",
+                "Local run reporting requires a project and domain. Set them in the 'task' section "
+                "of your config file, pass them to flyte.init(project=..., domain=...), or use "
+                "flyte run --project/--domain.",
+            )
+        return init_config.org, project, domain
+
     async def _run_local(self, obj: TaskTemplate[P, R, F], *args: P.args, **kwargs: P.kwargs) -> Run:
 
         from flyte._internal.controllers import create_controller
@@ -937,16 +972,26 @@ class _Runner:
 
         controller = cast(LocalController, create_controller("local"))
 
-        if self._name is None:
+        report_scope = self._resolve_local_report_scope()
+        if report_scope is not None:
+            from flyte._persistence._remote_reporter import generate_local_run_name, validate_local_run_name
+
+            org, project, domain = report_scope
+            if self._name is not None:
+                validate_local_run_name(self._name)
+                run_name = self._name
+            else:
+                run_name = generate_local_run_name()
+            action = ActionID(name=run_name, project=project, domain=domain, org=org)
+        elif self._name is None:
             action = ActionID.create_random()
         else:
             action = ActionID(name=self._name)
 
-        metadata_path = self._metadata_path
-        if metadata_path is None:
+        if self._metadata_path is None:
             metadata_path = pathlib.Path("/") / "tmp" / "flyte" / "metadata" / action.name
         else:
-            metadata_path = pathlib.Path(metadata_path) / action.name
+            metadata_path = pathlib.Path(self._metadata_path) / action.name
         output_path = metadata_path / "a0"
         if self._raw_data_path is None:
             path = pathlib.Path("/") / "tmp" / "flyte" / "raw_data" / action.name
@@ -958,6 +1003,7 @@ class _Runner:
 
         ctx = internal_ctx()
         rd_base = raw_data_path.path
+        run_start_time = self._run_start_time or datetime.now(timezone.utc)
         tctx = TaskContext(
             action=action,
             checkpoint_paths=CheckpointPaths(
@@ -974,7 +1020,7 @@ class _Runner:
             mode="local",
             custom_context=self._custom_context,
             disable_run_cache=self._disable_run_cache,
-            run_start_time=self._run_start_time or datetime.now(timezone.utc),
+            run_start_time=run_start_time,
         )
 
         if self._tracker is not None:
@@ -989,7 +1035,32 @@ class _Runner:
         if persist:
             RunRecorder.initialize_persistence()
 
-        recorder = RunRecorder(tracker=self._tracker, persist=persist, run_name=run_name)
+        reporter = None
+        run_url = str(metadata_path)
+        if report_scope is not None:
+            from flyte._persistence._remote_reporter import start_local_run_reporting
+
+            org, project, domain = report_scope
+            init_config = get_init_config()
+            reporter = await start_local_run_reporting(
+                client=get_client(),
+                task=obj,
+                run_name=run_name,
+                org=org,
+                project=project,
+                domain=domain,
+                run_spec=self._apply_overrides(None, task=obj),
+                labels=self._labels,
+                run_start_time=run_start_time,
+                args=args,
+                kwargs=kwargs,
+                root_dir=init_config.root_dir,
+            )
+            if reporter is not None:
+                run_url = get_client().console.local_run_url(project=project, domain=domain, run_name=run_name)
+                logger.info(f"Reporting local run to the control plane: {run_url}")
+
+        recorder = RunRecorder(tracker=self._tracker, persist=persist, run_name=run_name, reporter=reporter)
         controller.set_recorder(recorder)
 
         recorder.record_root_start(task_name=obj.name)
@@ -1005,6 +1076,9 @@ class _Runner:
                     outputs = await controller.submit(obj, *args, **kwargs)
         except Exception as e:
             recorder.record_root_failure(error=str(e))
+            if reporter is not None:
+                # Bounded flush so the terminal state lands before the process exits.
+                await reporter.aclose()
             if self._notifications:
                 await self._send_local_notifications(
                     phase=ActionPhase.FAILED, task_name=obj.name, run_name=run_name, error=str(e)
@@ -1012,10 +1086,12 @@ class _Runner:
             raise
         else:
             recorder.record_root_complete()
+            if reporter is not None:
+                await reporter.aclose()
             if self._notifications:
                 await self._send_local_notifications(phase=ActionPhase.SUCCEEDED, task_name=obj.name, run_name=run_name)
 
-        return _wrap_inline_run(outputs, url=str(metadata_path))
+        return _wrap_inline_run(outputs, url=run_url)
 
     @syncify  # type: ignore[arg-type]
     async def run(
@@ -1059,6 +1135,11 @@ class _Runner:
         # ignoring it in local/hybrid mode.
         if self._recover and self._mode != "remote":
             raise ValueError("recover is only supported in remote mode")
+
+        # report mirrors a local run onto the control plane — local-only. Fail fast rather than
+        # silently ignoring it in remote/hybrid mode (remote runs are already reported).
+        if self._report and self._mode != "local":
+            raise ValueError("report is only supported in local mode (use --local with --report)")
 
         # Set the run mode in the context variable so that offloaded types (files, directories, dataframes)
         # can check the mode for controlling auto-uploading behavior (only enabled in remote mode).
@@ -1223,6 +1304,7 @@ def with_runcontext(
     preserve_original_types: bool = False,
     debug: bool = False,
     recover: bool | str | None = False,
+    report: bool = False,
     _tracker: Any = None,
 ) -> _Runner:
     """
@@ -1308,6 +1390,10 @@ def with_runcontext(
         run-name string recovers from that named run and is the only form valid on ``.run(...)``.
         Remote-only. Not yet supported by the backend (raises NotImplementedError at submit until
         flyteidl2 RunSpec.relation ships).
+    :param report: Local-only. If true, report local run state (actions, attempts, outputs, reports)
+        to the Flyte control plane via LocalRunService so the run shows up in the console. Requires
+        an initialized client and a configured project/domain. Can also be enabled globally with the
+        `local.report_to_backend` config key. Reporting is best-effort and never fails the local run.
     :param _tracker: This is an internal only parameter used by the CLI to render the TUI.
 
     :return: runner
@@ -1358,6 +1444,7 @@ def with_runcontext(
         preserve_original_types=preserve_original_types,
         debug=debug,
         recover=recover,
+        report=report,
         _tracker=_tracker,
     )
 
