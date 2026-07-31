@@ -45,6 +45,12 @@ _PHASE_FAILED = 6
 _PHASE_ABORTED = 7
 _TERMINAL_PHASES = (_PHASE_SUCCEEDED, _PHASE_FAILED, _PHASE_ABORTED)
 
+# flyteidl2.core.CatalogCacheStatus values (plain ints, same reasoning as the phases).
+_CACHE_DISABLED = 0
+_CACHE_MISS = 1
+_CACHE_HIT = 2
+_CACHE_POPULATED = 3
+
 _SEND_MAX_RETRIES = 3
 _SEND_BACKOFF_SEC = 0.5
 _DEFAULT_FLUSH_TIMEOUT_SEC = 30.0
@@ -135,6 +141,8 @@ class _Event:
     output_path: str | None = None
     has_report: bool = False
     start_time: datetime | None = None
+    # core.CatalogCacheStatus for this event (0 = CACHE_DISABLED, the proto default).
+    cache_status: int = _CACHE_DISABLED
 
 
 @dataclass
@@ -160,6 +168,8 @@ class _ActionInfo:
     attempt: int = 1
     last_phase: int | None = None
     started: bool = False
+    # core.CatalogCacheStatus for this action (CACHE_HIT / CACHE_MISS / CACHE_DISABLED).
+    cache_status: int = _CACHE_DISABLED
     # Monotonic event-version counter per attempt.
     versions: dict[int, int] = field(default_factory=dict)
 
@@ -253,6 +263,9 @@ class RemoteRunReporter:
         output_path: str | None = None,
         has_report: bool = False,
         group: str | None = None,
+        cache_enabled: bool = False,
+        cache_hit: bool = False,
+        disable_run_cache: bool = False,
         **_: Any,
     ) -> None:
         self._raise_if_failed()
@@ -286,6 +299,10 @@ class RemoteRunReporter:
                         self._driver_mapped = True
                         action_name = ROOT_ACTION_NAME
                         info = root_info
+                if cache_enabled and not disable_run_cache:
+                    cache_status = _CACHE_HIT if cache_hit else _CACHE_MISS
+                else:
+                    cache_status = _CACHE_DISABLED
                 first = info is None
                 if info is None:
                     # The root has no parent; every other action defaults to nesting under it.
@@ -298,15 +315,18 @@ class RemoteRunReporter:
                         output_path=output_path,
                         has_report=has_report,
                         started=True,
+                        cache_status=cache_status,
                     )
                     self._actions[action_name] = info
                 else:
-                    # Mapped driver start: fold its terminal-artifact metadata into the
-                    # pre-registered root info so outputs/report upload under a0.
+                    # Mapped driver start: fold its terminal-artifact and cache metadata
+                    # into the pre-registered root info so they report under a0.
                     if output_path:
                         info.output_path = output_path
                     if has_report:
                         info.has_report = True
+                    if cache_status != _CACHE_DISABLED:
+                        info.cache_status = cache_status
                 ev = self._make_event(
                     action_name,
                     info,
@@ -536,6 +556,9 @@ class RemoteRunReporter:
         version = info.versions.get(info.attempt, 0)
         info.versions[info.attempt] = version + 1
         info.last_phase = phase
+        if phase == _PHASE_SUCCEEDED and info.cache_status == _CACHE_MISS:
+            # A succeeding cache-enabled action stores its outputs in the local cache.
+            info.cache_status = _CACHE_POPULATED
         return _Event(
             action_name=action_id,
             phase=phase,
@@ -554,6 +577,7 @@ class RemoteRunReporter:
             output_path=info.output_path,
             has_report=info.has_report,
             start_time=info.start_time,
+            cache_status=info.cache_status,
         )
 
     def _task_spec_bytes(self, task: Any) -> bytes | None:
@@ -778,6 +802,8 @@ class RemoteRunReporter:
         )
         event.reported_time.FromDatetime(ev.timestamp)
         event.updated_time.FromDatetime(ev.timestamp)
+        if ev.cache_status:
+            event.cache_status = ev.cache_status  # type: ignore[assignment]
         if ev.error:
             event.error_info.message = ev.error
             event.error_info.kind = run_definition_pb2.ErrorInfo.KIND_USER
@@ -787,6 +813,8 @@ class RemoteRunReporter:
 
         update = local_run_service_pb2.LocalActionUpdate(event=event)
         status = run_definition_pb2.ActionStatus(phase=ev.phase, attempts=ev.attempt)  # type: ignore[arg-type]
+        if ev.cache_status:
+            status.cache_status = ev.cache_status  # type: ignore[assignment]
         if ev.start_time is not None:
             status.start_time.FromDatetime(ev.start_time)
         if ev.phase in _TERMINAL_PHASES:

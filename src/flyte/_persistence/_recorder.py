@@ -145,6 +145,9 @@ class RunRecorder:
                 output_path=output_path,
                 has_report=bool(has_report),
                 group=group,
+                cache_enabled=cache_enabled,
+                cache_hit=cache_hit,
+                disable_run_cache=disable_run_cache,
             )
 
     def record_complete(self, *, action_id: str, outputs: Any = None) -> None:
