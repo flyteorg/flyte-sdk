@@ -129,6 +129,16 @@ async def file_roundtrip(f: "File") -> "File":
     return f
 
 
+@env.task
+async def file_producer() -> "File":
+    import tempfile
+
+    with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".txt") as tmp:
+        tmp.write("produced-locally")
+        path = tmp.name
+    return await File.from_local(path)
+
+
 def _make_fake_client():
     """A stateful fake ClientSet mirroring the server's UploadMetadata contract.
 
@@ -392,6 +402,80 @@ def test_empty_string_output_reported(fake_client):
     assert outs.literals[0].name == "o0"
     assert outs.literals[0].value.scalar.primitive.WhichOneof("value") == "string_value"
     assert outs.literals[0].value.scalar.primitive.string_value == ""
+
+
+def test_cache_hit_reports_outputs_and_cache_status(fake_client):
+    """Both the cache-miss and the cache-hit run report full trees with uploaded
+    outputs, and events/status carry core.CatalogCacheStatus (MISS -> POPULATED on
+    the storing run, HIT on the cached run)."""
+    import random
+
+    cache_env = flyte.TaskEnvironment(name="reporter_cache_test", cache=flyte.Cache("auto", version_override="v1"))
+
+    @cache_env.task
+    def cached_add(a: int, b: int) -> int:
+        return a + b
+
+    a = random.randint(10**6, 10**8)  # unique inputs so run 1 is always a miss
+    run1 = flyte.with_runcontext(mode="local", report=True).run(cached_add, a=a, b=3)
+    run2 = flyte.with_runcontext(mode="local", report=True).run(cached_add, a=a, b=3)
+    assert run1.outputs()[0] == run2.outputs()[0] == a + 3
+
+    per_run: dict[str, list] = {}
+    for call in fake_client.local_run_service.report_actions.await_args_list:
+        req = call[0][0]
+        per_run.setdefault(req.run_id.name, []).extend(req.updates)
+    assert len(per_run) == 2
+    r1_updates, r2_updates = list(per_run.values())
+
+    # Run 1 (miss): driver RUNNING carries CACHE_MISS; the storing terminal carries
+    # CACHE_POPULATED on both the event and the status rollup.
+    r1 = [u.event for u in r1_updates]
+    assert [e.phase for e in r1] == [_PHASE_RUNNING, _PHASE_RUNNING, _PHASE_SUCCEEDED]
+    assert r1[1].cache_status == 1  # CACHE_MISS
+    assert r1[2].cache_status == 3  # CACHE_POPULATED
+    assert r1_updates[2].status.cache_status == 3
+    assert r1[2].outputs.output_uri.endswith("a0/1/outputs.pb")
+
+    # Run 2 (hit): no attempt executed, but the tree is complete, outputs are
+    # uploaded, and CACHE_HIT is carried on the running + terminal events.
+    r2 = [u.event for u in r2_updates]
+    assert [e.phase for e in r2] == [_PHASE_RUNNING, _PHASE_RUNNING, _PHASE_SUCCEEDED]
+    assert r2[1].cache_status == 2  # CACHE_HIT
+    assert r2[2].cache_status == 2
+    assert r2_updates[2].status.cache_status == 2
+    assert r2[2].outputs.output_uri.endswith("a0/1/outputs.pb")
+
+    # Outputs were uploaded by BOTH runs (the hit run serves cache-sourced outputs).
+    outputs_uploads = [u for u in fake_client.uploads if u[0] == dataproxy_service_pb2.ARTIFACT_TYPE_OUTPUTS]
+    assert [(a_, att) for _, a_, att, _ in outputs_uploads] == [(ROOT_ACTION_NAME, 1), (ROOT_ACTION_NAME, 1)]
+    payload = fake_client.put_payloads[outputs_uploads[1][3]]
+    outs = task_common_pb2.Outputs.FromString(payload)
+    assert outs.literals[0].value.scalar.primitive.integer == a + 3
+
+
+def test_file_output_keeps_local_uri(fake_client):
+    """A task RETURNING a File reports an outputs.pb whose blob literal keeps its
+    local URI — no rewrite, no raw-byte upload."""
+    run = flyte.with_runcontext(mode="local", report=True).run(file_producer)
+    out_path = str(run.outputs()[0].path)
+    assert not out_path.startswith(("s3://", "gs://", "abfs://"))
+
+    root_out = _uploaded_bytes(fake_client, dataproxy_service_pb2.ARTIFACT_TYPE_OUTPUTS, ROOT_ACTION_NAME, 1)
+    assert root_out is not None
+    outs = task_common_pb2.Outputs.FromString(root_out)
+    uri = outs.literals[0].value.scalar.blob.uri
+    assert not uri.startswith(("s3://", "gs://", "abfs://"))
+    assert out_path in uri or uri in out_path
+
+    # Only metadata artifact kinds ever uploaded; every PUT maps to an UploadMetadata.
+    kinds = {t for t, *_ in fake_client.uploads}
+    assert kinds <= {
+        dataproxy_service_pb2.ARTIFACT_TYPE_INPUTS,
+        dataproxy_service_pb2.ARTIFACT_TYPE_OUTPUTS,
+        dataproxy_service_pb2.ARTIFACT_TYPE_REPORT,
+    }
+    assert set(fake_client.put_payloads) == {md5 for *_, md5 in fake_client.uploads}
 
 
 def test_report_upload_sets_html_content_type(fake_client):
