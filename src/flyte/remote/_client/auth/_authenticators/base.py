@@ -17,6 +17,27 @@ class AuthHeaders:
     headers: dict[str, str]
 
 
+def is_usable_access_token(access_token: typing.Optional[str]) -> bool:
+    """
+    Return True if ``access_token`` can be sent verbatim in an ``Authorization`` header.
+
+    A bearer token is a single opaque string. Anything else — an empty value, an
+    interactive prompt captured from a helper command's stdout, a multi-line blob, a
+    stray control character — makes the header invalid, and the HTTP transport rejects
+    it with an opaque ``ValueError: Invalid header value`` far from the real cause.
+
+    :param access_token: The candidate access token
+    :return: True if the token is usable as a header value
+    """
+    if not access_token:
+        return False
+    try:
+        access_token.encode("latin-1")
+    except UnicodeEncodeError:
+        return False
+    return not any(c.isspace() or ord(c) < 0x20 or ord(c) == 0x7F for c in access_token)
+
+
 class Authenticator(object):
     """
     Base authenticator for all authentication flows
@@ -134,6 +155,20 @@ class Authenticator(object):
         """
         creds = self.get_credentials()
         if creds:
+            if not is_usable_access_token(creds.access_token):
+                # A malformed token can reach us from the keyring, where it was cached by
+                # an earlier run before it was ever used in a request. Treating it as "no
+                # credentials" lets the normal unauthenticated path trigger a refresh,
+                # which re-runs the auth flow and surfaces a real error, instead of
+                # wedging the user until they clear the keyring by hand.
+                from flyte._logging import logger
+
+                logger.warning(
+                    f"Ignoring cached credentials for {self._endpoint}: the stored access token cannot be sent"
+                    f" as an Authorization header. Re-authenticating."
+                )
+                return None
+
             header_key = self._default_header_key
             if self._resolved_config is not None:
                 # We only resolve the config during authentication flow, to avoid unnecessary network calls
