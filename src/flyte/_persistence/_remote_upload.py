@@ -31,6 +31,7 @@ async def upload_metadata_artifact(
     action_attempt_id: identifier_pb2.ActionAttemptIdentifier | None = None,
     verify: bool = True,
     max_retries: int = 3,
+    content_type: str | None = None,
 ) -> str:
     """Upload one local-run metadata artifact and return its native (storage) URL.
 
@@ -42,6 +43,9 @@ async def upload_metadata_artifact(
     :param action_attempt_id: Target action attempt (required for OUTPUTS / REPORT).
     :param verify: Whether to verify TLS certificates on the signed PUT.
     :param max_retries: Maximum retry attempts for the signed PUT.
+    :param content_type: Optional Content-Type stored as object metadata (e.g. ``text/html``
+        for reports so browsers render instead of download them). The dataproxy's presigned
+        URLs do not sign the content type, so sending the header is safe.
     :return: The native storage URL (e.g. ``s3://...``) of the uploaded artifact.
     """
     from connectrpc.code import Code
@@ -89,6 +93,8 @@ async def upload_metadata_artifact(
             "Content-MD5": b64encode(md5_bytes).decode("utf-8"),
         }
     )
+    if content_type:
+        headers["Content-Type"] = content_type
     await _put_bytes_with_retry(
         data,
         signed_url=resp.signed_url,
