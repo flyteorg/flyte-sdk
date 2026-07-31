@@ -189,6 +189,7 @@ class _Runner:
         debug: bool = False,
         recover: bool | str | None = False,
         report: bool = False,
+        report_strict: bool = False,
         _tracker: Any = None,
         _bundle_relative_paths: tuple[str, ...] | None = None,
         _bundle_from_dir: pathlib.Path | None = None,
@@ -245,6 +246,9 @@ class _Runner:
         # Report local run state to the control plane (LocalRunService). Local-only; also
         # enabled via the `local.report_to_backend` config key / flyte.init(local_report_to_backend=...).
         self._report = report
+        # Strict reporting (debugging): any reporting failure fails the run loudly instead of
+        # being swallowed. Also enabled via the `local.report_strict` config key.
+        self._report_strict = report_strict
 
     def _resolve_recover_ref(self, rerun_run_name: str | None) -> str | None:
         """Resolve `self._recover` to the reference run name to recover from (or None).
@@ -936,15 +940,30 @@ class _Runner:
     def _resolve_local_report_scope(self) -> Tuple[str | None, str, str] | None:
         """Resolve (org, project, domain) for local-run reporting, or None when reporting
         should be skipped (with a single warning). Raises with a clear message when
-        reporting is requested but project/domain are not configured."""
+        reporting is requested but project/domain are not configured, or — in strict
+        mode — when no client is initialized."""
         import flyte.errors
-        from flyte._initialize import is_local_report_enabled
+        from flyte._initialize import is_local_report_enabled, is_local_report_strict
 
         if not (self._report or is_local_report_enabled()):
+            # An explicit strict request without reporting is a caller error; a config-only
+            # `local.report_strict` with reporting disabled is simply inert.
+            if self._report_strict:
+                raise ValueError(
+                    "Strict local-run reporting (report_strict) requires reporting to be enabled: "
+                    "pass report=True / --report or set local.report_to_backend in your config."
+                )
             return None
 
         init_config = _get_init_config()
         if init_config is None or init_config.client is None:
+            if self._report_strict or is_local_report_strict():
+                raise flyte.errors.InitializationError(
+                    "ClientNotInitializedError",
+                    "user",
+                    "Strict local-run reporting requires an initialized client. Call flyte.init() "
+                    "with a valid endpoint/api-key or flyte.init_from_config().",
+                )
             logger.warning(
                 "Local run reporting was requested but no Flyte client is initialized; "
                 "running without reporting. Call flyte.init() with a valid endpoint/api-key "
@@ -1038,6 +1057,7 @@ class _Runner:
         reporter = None
         run_url = str(metadata_path)
         if report_scope is not None:
+            from flyte._initialize import is_local_report_strict
             from flyte._persistence._remote_reporter import start_local_run_reporting
 
             org, project, domain = report_scope
@@ -1055,6 +1075,7 @@ class _Runner:
                 args=args,
                 kwargs=kwargs,
                 root_dir=init_config.root_dir,
+                strict=self._report_strict or is_local_report_strict(),
             )
             if reporter is not None:
                 run_url = get_client().console.local_run_url(project=project, domain=domain, run_name=run_name)
@@ -1078,16 +1099,25 @@ class _Runner:
             recorder.record_root_failure(error=str(e))
             if reporter is not None:
                 # Bounded flush so the terminal state lands before the process exits.
-                await reporter.aclose()
+                # Even in strict mode, a reporting failure must never mask the task's
+                # own error — log it instead of raising over `e`.
+                try:
+                    await reporter.aclose()
+                except Exception as flush_err:
+                    logger.warning(f"Local-run reporting failed during shutdown: {flush_err}")
             if self._notifications:
                 await self._send_local_notifications(
                     phase=ActionPhase.FAILED, task_name=obj.name, run_name=run_name, error=str(e)
                 )
             raise
         else:
-            recorder.record_root_complete()
-            if reporter is not None:
-                await reporter.aclose()
+            try:
+                recorder.record_root_complete()
+            finally:
+                # Bounded flush barrier; in strict mode this re-raises the first
+                # captured reporting failure so the run exits loudly.
+                if reporter is not None:
+                    await reporter.aclose()
             if self._notifications:
                 await self._send_local_notifications(phase=ActionPhase.SUCCEEDED, task_name=obj.name, run_name=run_name)
 
@@ -1305,6 +1335,7 @@ def with_runcontext(
     debug: bool = False,
     recover: bool | str | None = False,
     report: bool = False,
+    report_strict: bool = False,
     _tracker: Any = None,
 ) -> _Runner:
     """
@@ -1394,6 +1425,10 @@ def with_runcontext(
         to the Flyte control plane via LocalRunService so the run shows up in the console. Requires
         an initialized client and a configured project/domain. Can also be enabled globally with the
         `local.report_to_backend` config key. Reporting is best-effort and never fails the local run.
+    :param report_strict: Local-only, for debugging reporting itself. When true (with ``report``),
+        the first reporting failure — registration, an artifact upload, a rejected or undeliverable
+        ReportActions update, or a flush timeout — fails the run loudly instead of being logged and
+        swallowed. Can also be enabled globally with the `local.report_strict` config key.
     :param _tracker: This is an internal only parameter used by the CLI to render the TUI.
 
     :return: runner
@@ -1445,6 +1480,7 @@ def with_runcontext(
         debug=debug,
         recover=recover,
         report=report,
+        report_strict=report_strict,
         _tracker=_tracker,
     )
 

@@ -9,7 +9,6 @@ runtime holds inputs/outputs protos in memory and reports are small HTML files.
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import typing
 from base64 import b64encode
@@ -113,66 +112,19 @@ async def _put_bytes_with_retry(
 ) -> None:
     """PUT in-memory bytes to a signed URL with exponential backoff retry.
 
-    Mirrors ``flyte.remote._data._upload_with_retry`` (retryable status codes,
-    Retry-After handling, signed-URL redaction in errors) for a bytes payload.
+    Thin wrapper over ``flyte.remote._data._put_signed_url_with_retry`` (shared with
+    file uploads: retryable status codes, Retry-After handling, signed-URL redaction).
     Raises ``RuntimeSystemError`` when the upload ultimately fails.
     """
-    import httpx
+    from flyte.remote._data import _put_signed_url_with_retry
 
-    from flyte._logging import logger
-    from flyte.errors import RuntimeSystemError
-    from flyte.remote._data import _UPLOAD_TIMEOUT, _parse_retry_after, _redact_signed_url
-
-    retry_attempt = 0
-    last_error: str | None = None
-    next_backoff_override: float | None = None
-
-    while retry_attempt <= max_retries:
-        next_backoff_override = None
-        try:
-            async with httpx.AsyncClient(verify=verify, timeout=_UPLOAD_TIMEOUT) as aclient:
-                put_resp = await aclient.put(signed_url, headers=extra_headers, content=data)
-
-                if put_resp.status_code in [200, 201, 204]:
-                    if retry_attempt > 0:
-                        logger.info(f"Metadata upload succeeded after {retry_attempt} retries")
-                    return
-
-                last_error = f"status {put_resp.status_code}: {put_resp.text}"
-
-                if put_resp.status_code in [408, 429, 500, 502, 503, 504]:
-                    if retry_attempt >= max_retries:
-                        raise RuntimeSystemError(
-                            "UploadFailed",
-                            f"Failed to upload metadata artifact after {max_retries} retries: {last_error}",
-                        )
-                    if put_resp.status_code in (429, 503):
-                        next_backoff_override = _parse_retry_after(
-                            put_resp.headers.get("Retry-After"), retry_after_cap_sec
-                        )
-                else:
-                    raise RuntimeSystemError(
-                        "UploadFailed",
-                        f"Failed to upload metadata artifact to {_redact_signed_url(signed_url)}, {last_error}",
-                    )
-        except RuntimeSystemError:
-            raise
-        except (httpx.TimeoutException, httpx.NetworkError, OSError) as e:
-            last_error = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
-            if retry_attempt >= max_retries:
-                raise RuntimeSystemError(
-                    "UploadFailed",
-                    f"Failed to upload metadata artifact after {max_retries} retries: {last_error}",
-                ) from e
-
-        retry_attempt += 1
-        if retry_attempt <= max_retries:
-            if next_backoff_override is not None:
-                backoff_delay = next_backoff_override
-            else:
-                backoff_delay = min(min_backoff_sec * (2 ** (retry_attempt - 1)), max_backoff_sec)
-            logger.warning(
-                f"Metadata upload failed, backing off for {backoff_delay:.2f}s "
-                f"[retry {retry_attempt}/{max_retries}]: {last_error}"
-            )
-            await asyncio.sleep(backoff_delay)
+    await _put_signed_url_with_retry(
+        data,
+        signed_url,
+        extra_headers,
+        verify,
+        max_retries=max_retries,
+        min_backoff_sec=min_backoff_sec,
+        max_backoff_sec=max_backoff_sec,
+        retry_after_cap_sec=retry_after_cap_sec,
+    )

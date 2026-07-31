@@ -80,6 +80,9 @@ class RunRecorder:
         parent_id: str | None = None,
         short_name: str | None = None,
         inputs: dict | None = None,
+        proto_inputs: Any = None,
+        task: Any = None,
+        trace_interface: Any = None,
         output_path: str | None = None,
         has_report: bool = False,
         cache_enabled: bool = False,
@@ -128,10 +131,17 @@ class RunRecorder:
             )
 
         if self._reporter is not None:
+            # The reporter needs the raw proto inputs (when available) so it can
+            # offload the action's inputs.pb, and the task template / trace interface
+            # so the reported spec carries a typed interface (the console gates I/O
+            # rendering on it).
             self._reporter.record_start(
                 action_id=action_id,
                 task_name=task_name,
                 parent_id=parent_id,
+                proto_inputs=proto_inputs,
+                task=task,
+                trace_interface=trace_interface,
                 output_path=output_path,
                 has_report=bool(has_report),
                 group=group,

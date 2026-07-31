@@ -203,6 +203,18 @@ class RunArguments:
             )
         },
     )
+    report_strict: bool = field(
+        default=False,
+        metadata={
+            "click.option": click.Option(
+                ["--report-strict"],
+                is_flag=True,
+                default=False,
+                help="Strict local-run reporting for debugging (only valid with --local --report): "
+                "any reporting failure fails the run loudly instead of being logged and swallowed.",
+            )
+        },
+    )
     image: List[str] = field(
         default_factory=list,
         metadata={
@@ -441,6 +453,7 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
                 labels=self.run_args.parsed_labels(),
                 queue=self.run_args.queue,
                 report=self.run_args.report,
+                report_strict=self.run_args.report_strict,
             )
             if self.run_args.rerun_from:
                 # Re-run a prior run with THIS local code, reusing the prior run's inputs.
@@ -511,6 +524,7 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
                 labels=self.run_args.parsed_labels(),
                 queue=self.run_args.queue,
                 report=self.run_args.report,
+                report_strict=self.run_args.report_strict,
                 _tracker=tracker,
             )
             return await execution_context.run.aio(self.obj, **ctx.params)
@@ -530,6 +544,8 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
             raise click.UsageError("--rerun-from requires remote mode (it cannot be combined with --local)")
         if self.run_args.report and not self.run_args.local:
             raise click.UsageError("--report can only be used with --local (remote runs are already reported)")
+        if self.run_args.report_strict and not self.run_args.report:
+            raise click.UsageError("--report-strict requires --report (and --local)")
         self._validate_required_params(ctx)
         if self.run_args.tui:
             if not self.run_args.local:

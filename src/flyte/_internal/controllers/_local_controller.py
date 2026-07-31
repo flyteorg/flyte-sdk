@@ -221,6 +221,8 @@ class LocalController(ControllerProtocol):
             short_name=_task.short_name if _task.short_name != _task.name else None,
             parent_id=parent_id,
             inputs=native_inputs,
+            proto_inputs=inputs.proto_inputs,
+            task=_task,
             output_path=sub_action_output_path,
             has_report=_task.report,
             cache_enabled=cache_enabled,
@@ -375,6 +377,8 @@ class LocalController(ControllerProtocol):
                 task_name=func_name,
                 parent_id=task_action.name,
                 inputs=native_inputs,
+                proto_inputs=converted_inputs.proto_inputs,
+                trace_interface=_interface,
                 output_path=action_output_path,
             )
 
