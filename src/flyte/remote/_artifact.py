@@ -42,6 +42,12 @@ class Artifact(ToJSONMixin):
     def version(self) -> str:
         return self.pb2.artifact_id.version
 
+    @property
+    def tracker(self) -> str:
+        """The artifact's id as a tracking string: org/project/domain/name@version."""
+        n = self.pb2.artifact_id.name
+        return f"{n.org}/{n.project}/{n.domain}/{n.name}@{self.version}"
+
     def __rich_repr__(self) -> rich.repr.Result:
         """
         Rich representation of the Artifact object for pretty printing.

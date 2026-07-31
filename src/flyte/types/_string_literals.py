@@ -63,18 +63,28 @@ def _literal_string_repr(lit: literals_pb2.Literal) -> Any:
     This method is used to convert a literal to a string representation. This is useful in places, where we need to
     use a shortened string representation of a literal, especially a FlyteFile, FlyteDirectory, or StructuredDataset.
     """
+    from flyte._constants import ARTIFACT_TRACKER_KEY
+
+    rendered: Any
     match lit.WhichOneof("value"):
         case "scalar":
-            return _scalar_to_string(lit.scalar)
+            rendered = _scalar_to_string(lit.scalar)
         case "collection":
-            return [literal_string_repr(i) for i in lit.collection.literals]
+            rendered = [literal_string_repr(i) for i in lit.collection.literals]
         case "map":
-            return {k: literal_string_repr(v) for k, v in lit.map.literals.items()}
+            rendered = {k: literal_string_repr(v) for k, v in lit.map.literals.items()}
         case "offloaded_metadata":
             # TODO: load literal from offloaded literal?
-            return f"Offloaded literal metadata: {lit.offloaded_metadata}"
+            rendered = f"Offloaded literal metadata: {lit.offloaded_metadata}"
         case _:
             raise ValueError(f"Unknown literal type {lit}")
+
+    # Surface artifact provenance stamped on the literal (e.g. by flyte.run when an input
+    # came from a published artifact) so `flyte get io` shows where the value came from.
+    tracker = lit.metadata.get(ARTIFACT_TRACKER_KEY) if lit.metadata else None
+    if tracker:
+        return f"{rendered} (artifact: {tracker})"
+    return rendered
 
 
 def _dict_literal_repr(lmd: Mapping[str, literals_pb2.Literal]) -> Dict[str, Any]:

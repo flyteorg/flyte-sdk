@@ -54,30 +54,78 @@ CacheLookupScope = Literal["global", "project-domain"]
 _run_mode_var: contextvars.ContextVar[Mode | None] = contextvars.ContextVar("run_mode", default=None)
 
 
-async def _unwrap_artifact_value(value: Any) -> Any:
+# A "source" records where an unwrapped value came from: the artifact tracker string for a
+# plain artifact argument, or (element_index, tracker) pairs for artifacts inside a list.
+_ArtifactSource = Union[str, List[Tuple[int, str]]]
+
+
+async def _unwrap_artifact_value(value: Any) -> Tuple[Any, _ArtifactSource | None]:
     """
     Unwrap a single ``flyte.remote.Artifact`` (or a list containing artifacts) into the
     python value stored in its literal, which is what tasks actually consume.
-    Non-artifact values are returned unchanged.
+    Non-artifact values are returned unchanged. Also returns the artifact source (tracker
+    string, or per-element trackers for lists) so callers can record provenance.
     """
     # Imported lazily so ``import flyte`` does not eagerly pull in the remote package.
     from flyte.remote import Artifact
 
     if isinstance(value, Artifact):
-        return await value.to_python()
+        return await value.to_python(), value.tracker
     if isinstance(value, list) and len(value) > 0:
-        return [await item.to_python() if isinstance(item, Artifact) else item for item in value]
-    return value
+        trackers = [(i, item.tracker) for i, item in enumerate(value) if isinstance(item, Artifact)]
+        if trackers:
+            unwrapped = [await item.to_python() if isinstance(item, Artifact) else item for item in value]
+            return unwrapped, trackers
+    return value, None
 
 
-async def _unwrap_artifacts(args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> Tuple[Tuple[Any, ...], Dict[str, Any]]:
+async def _unwrap_artifacts(
+    args: Tuple[Any, ...], kwargs: Dict[str, Any]
+) -> Tuple[Tuple[Any, ...], Dict[str, Any], Dict[Union[int, str], _ArtifactSource]]:
     """
     Unwrap any ``Artifact`` instances passed as positional or keyword arguments into their
-    underlying python values. Returns the converted ``(args, kwargs)`` pair.
+    underlying python values. Returns the converted ``(args, kwargs)`` pair plus the artifact
+    sources keyed by positional index or keyword name.
     """
-    new_args = tuple([await _unwrap_artifact_value(v) for v in args])
-    new_kwargs = {k: await _unwrap_artifact_value(v) for k, v in kwargs.items()}
-    return new_args, new_kwargs
+    sources: Dict[Union[int, str], _ArtifactSource] = {}
+    new_args = []
+    for i, v in enumerate(args):
+        unwrapped, source = await _unwrap_artifact_value(v)
+        new_args.append(unwrapped)
+        if source is not None:
+            sources[i] = source
+    new_kwargs = {}
+    for k, v in kwargs.items():
+        unwrapped, source = await _unwrap_artifact_value(v)
+        new_kwargs[k] = unwrapped
+        if source is not None:
+            sources[k] = source
+    return tuple(new_args), new_kwargs, sources
+
+
+def _stamp_artifact_inputs(
+    inputs: Any, input_names: List[str], sources: Dict[Union[int, str], _ArtifactSource]
+) -> None:
+    """
+    Record artifact provenance on converted run inputs: for every input value that came from a
+    published artifact, stamp the artifact's tracker string into the bound literal's metadata
+    (under ``ARTIFACT_TRACKER_KEY``, mirroring the v1 artifact service's tracking key). List
+    inputs are stamped per element inside the collection literal.
+    """
+    from ._constants import ARTIFACT_TRACKER_KEY
+
+    by_name = {(input_names[key] if isinstance(key, int) else key): source for key, source in sources.items()}
+    for named_literal in inputs.proto_inputs.literals:
+        source = by_name.get(named_literal.name)
+        if source is None:
+            continue
+        if isinstance(source, str):
+            named_literal.value.metadata[ARTIFACT_TRACKER_KEY] = source
+        else:
+            elements = named_literal.value.collection.literals
+            for idx, tracker in source:
+                if idx < len(elements):
+                    elements[idx].metadata[ARTIFACT_TRACKER_KEY] = tracker
 
 
 def _wrap_inline_run(outputs: Tuple[Any, ...] | Any, url: str) -> Run:
@@ -705,7 +753,9 @@ class _Runner:
         # Artifacts bind as normal inputs: materialize each one to its python value
         # before conversion. Offloaded types (File/Dir/DataFrame) reconstructed from a
         # remote uri pass that uri straight through to_literal without re-uploading.
-        args, kwargs = await _unwrap_artifacts(args, kwargs)
+        # The artifact ids are stamped onto the converted input literals below so the
+        # run's inputs record which artifact each value came from.
+        args, kwargs, artifact_sources = await _unwrap_artifacts(args, kwargs)
 
         task: TaskTemplate[P, R, F] | TaskDetails
         task_id = None
@@ -723,6 +773,7 @@ class _Runner:
             inputs = await convert_from_native_to_inputs(
                 task.interface, *args, custom_context=self._custom_context, **kwargs
             )
+            input_names = list(task.interface.inputs.keys())
             version = task.pb2.task_id.version
             code_bundle = None
         elif isinstance(obj, TaskTemplate):
@@ -731,8 +782,12 @@ class _Runner:
             inputs = await convert_from_native_to_inputs(
                 obj.native_interface, *args, custom_context=self._custom_context, **kwargs
             )
+            input_names = list(obj.native_interface.inputs.keys())
         else:
             raise ValueError(f"Not supported Task Type: {type(task)}")
+
+        if artifact_sources:
+            _stamp_artifact_inputs(inputs, input_names, artifact_sources)
 
         if not self._dry_run:
             if get_client() is None:
@@ -1025,7 +1080,7 @@ class _Runner:
 
         recorder.record_root_start(task_name=obj.name)
 
-        new_args, new_kwargs = await _unwrap_artifacts(args, kwargs)
+        new_args, new_kwargs, _ = await _unwrap_artifacts(args, kwargs)
 
         try:
             with ctx.replace_task_context(tctx):
