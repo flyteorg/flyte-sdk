@@ -477,7 +477,7 @@ name = "exceptiongroup"
 version = "1.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "python_full_version < '3.12'" },
+    { name = "typing-extensions" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/50/79/66800aadf48771f6b62f7eb014e352e5d06856655206165d775e675a02c9/exceptiongroup-1.3.1.tar.gz", hash = "sha256:8b412432c6055b0b7d14c310000ae93352ed6754f70fa8f7c34141f91c4e3219", size = 30371, upload-time = "2025-11-21T23:01:54.787Z" }
 wheels = [
@@ -561,6 +561,7 @@ requires-dist = [
     { name = "pyopenssl", specifier = ">=24.0.0" },
     { name = "pyyaml", specifier = ">=6.0.2" },
     { name = "rich-click", specifier = "==1.8.9" },
+    { name = "ruff", marker = "extra == 'import-analysis'", specifier = ">=0.11.0" },
     { name = "scikit-learn", marker = "extra == 'examples-test'" },
     { name = "sentry-sdk", specifier = ">=2.0" },
     { name = "starlette", marker = "extra == 'mcp'" },
@@ -569,7 +570,7 @@ requires-dist = [
     { name = "uvicorn", marker = "extra == 'examples-test'" },
     { name = "uvicorn", marker = "extra == 'mcp'" },
 ]
-provides-extras = ["aiosqlite", "connector", "examples-test", "sandbox", "mcp", "tui", "rust-controller"]
+provides-extras = ["aiosqlite", "import-analysis", "connector", "examples-test", "sandbox", "mcp", "tui", "rust-controller"]
 
 [package.metadata.requires-dev]
 dev = [

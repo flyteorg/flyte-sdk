@@ -737,6 +737,7 @@ requires-dist = [
     { name = "pyopenssl", specifier = ">=24.0.0" },
     { name = "pyyaml", specifier = ">=6.0.2" },
     { name = "rich-click", specifier = "==1.8.9" },
+    { name = "ruff", marker = "extra == 'import-analysis'", specifier = ">=0.11.0" },
     { name = "scikit-learn", marker = "extra == 'examples-test'" },
     { name = "sentry-sdk", specifier = ">=2.0" },
     { name = "starlette", marker = "extra == 'mcp'" },
@@ -745,7 +746,7 @@ requires-dist = [
     { name = "uvicorn", marker = "extra == 'examples-test'" },
     { name = "uvicorn", marker = "extra == 'mcp'" },
 ]
-provides-extras = ["aiosqlite", "connector", "examples-test", "sandbox", "mcp", "tui", "rust-controller"]
+provides-extras = ["aiosqlite", "import-analysis", "connector", "examples-test", "sandbox", "mcp", "tui", "rust-controller"]
 
 [package.metadata.requires-dev]
 dev = [
