@@ -23,7 +23,8 @@ What this example wires together:
   other code change. Every tool reports ``elapsed_ms`` and ``engine`` so you can
   see what each mode actually costs.
 
-Deploy the chat UI::
+Deploy the chat UI (set ANTHROPIC_SECRET_NAME if your cluster names the
+Anthropic key something other than ``internal-anthropic-api-key``)::
 
     uv run python examples/agents/lightpanda_browser_agent.py
 
@@ -62,6 +63,10 @@ MODE = os.environ.get("LIGHTPANDA_MODE", "local").strip().lower()
 CLOUD_REGION = os.environ.get("LIGHTPANDA_CLOUD_REGION", "euwest")
 
 LIGHTPANDA_BIN = os.environ.get("LIGHTPANDA_BIN", "/usr/local/bin/lightpanda")
+
+# Whatever your cluster calls the Anthropic key; it is always mounted as
+# ANTHROPIC_API_KEY, which is what litellm reads.
+ANTHROPIC_SECRET = os.environ.get("ANTHROPIC_SECRET_NAME", "internal-anthropic-api-key")
 CDP_HOST = "127.0.0.1"
 CDP_PORT = int(os.environ.get("LIGHTPANDA_PORT", "9222"))
 
@@ -95,7 +100,7 @@ browser_env = flyte.TaskEnvironment(
     ),
     resources=flyte.Resources(cpu=1, memory="2Gi"),
     secrets=[
-        flyte.Secret(key="internal-anthropic-api-key", as_env_var="ANTHROPIC_API_KEY"),
+        flyte.Secret(key=ANTHROPIC_SECRET, as_env_var="ANTHROPIC_API_KEY"),
         # For LIGHTPANDA_MODE=cloud, add your Lightpanda Cloud token here:
         # flyte.Secret(key="lightpanda-cloud-token", as_env_var="LPD_TOKEN"),
     ],
@@ -462,7 +467,7 @@ env = AgentChatAppEnvironment(
     depends_on=[browser_env],
     image=(flyte.Image.from_debian_base().with_pip_packages("litellm", "fastapi", "uvicorn")),
     resources=flyte.Resources(cpu=1, memory="2Gi"),
-    secrets=flyte.Secret("internal-anthropic-api-key", as_env_var="ANTHROPIC_API_KEY"),
+    secrets=flyte.Secret(ANTHROPIC_SECRET, as_env_var="ANTHROPIC_API_KEY"),
 )
 
 
