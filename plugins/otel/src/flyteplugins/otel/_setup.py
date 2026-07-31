@@ -71,8 +71,10 @@ def _resolve_protocol(protocol: Optional[str]) -> str:
     that is what people type. Ignoring OTEL_EXPORTER_OTLP_PROTOCOL would mean a backend
     configured entirely through the standard variables silently got the wrong transport.
     """
-    raw = protocol or os.environ.get("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL") or os.environ.get(
-        "OTEL_EXPORTER_OTLP_PROTOCOL"
+    raw = (
+        protocol
+        or os.environ.get("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL")
+        or os.environ.get("OTEL_EXPORTER_OTLP_PROTOCOL")
     )
     value = (raw or "http/protobuf").strip().lower()
     if value == "grpc":

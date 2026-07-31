@@ -63,12 +63,19 @@ class _Integration:
 SUPPORTED_FRAMEWORKS: tuple[_Integration, ...] = (
     _Integration("langchain", "agento11y_langchain", "with_agento11y_langchain_callbacks", True, True),
     _Integration("langgraph", "agento11y_langgraph", "with_agento11y_langgraph_callbacks", True, True),
-    _Integration("openai", "agento11y_openai_agents", "with_agento11y_openai_agents_hooks", True,
-                 conversation_via_context=True),
+    _Integration(
+        "openai", "agento11y_openai_agents", "with_agento11y_openai_agents_hooks", True, conversation_via_context=True
+    ),
     _Integration("claude", "agento11y_claude_agent", "agento11y_query", False, call_wrapper="agento11y_query"),
     _Integration("google", "agento11y_google_adk", "with_agento11y_google_adk_plugins", True),
-    _Integration("pydantic_ai", "agento11y_pydantic_ai", "with_agento11y_pydantic_ai_capability", False,
-                 conversation_via_metadata=True, payload_is_run_kwargs="capabilities"),
+    _Integration(
+        "pydantic_ai",
+        "agento11y_pydantic_ai",
+        "with_agento11y_pydantic_ai_capability",
+        False,
+        conversation_via_metadata=True,
+        payload_is_run_kwargs="capabilities",
+    ),
 )
 
 

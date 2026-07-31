@@ -206,9 +206,7 @@ async def test_a_caller_config_survives_instrumentation():
     agent = _Recording()
     register_instrumentor("langchain", append_handler)
     try:
-        await run_mod.run_agent(
-            "hi", agent=agent, observability=False, config={"callbacks": ["MINE"], "tags": ["t"]}
-        )
+        await run_mod.run_agent("hi", agent=agent, observability=False, config={"callbacks": ["MINE"], "tags": ["t"]})
     finally:
         unregister_instrumentor("langchain")
 

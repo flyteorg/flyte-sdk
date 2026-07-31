@@ -101,9 +101,7 @@ async def run_agent(
         # RunHooks rather than replacing it, which it cannot do if handed nothing. With
         # neither supplied nor registered this stays empty and nothing extra is passed.
         run_options = apply_instrumentation("openai", {"hooks": hooks} if hooks is not None else {})
-        result = await Runner.run(
-            agent, input, max_turns=max_turns, run_config=config, session=session, **run_options
-        )
+        result = await Runner.run(agent, input, max_turns=max_turns, run_config=config, session=session, **run_options)
     finally:
         if observability:
             await flush_report()
