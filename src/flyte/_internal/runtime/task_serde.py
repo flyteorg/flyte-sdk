@@ -291,13 +291,10 @@ def get_proto_task(
                 env_name = env.name
         # Carry the reuse policy as a first-class field on the task template.
         task_template.reuse_policy.CopyFrom(reuse_policy_to_pb(task.reusable))
-        if getattr(task, "supports_reuse_policy", False):
-            # e.g. ray: the structured reuse_policy field is the source of truth; nothing is
-            # written into `custom`.
-            return task_template
-        # actor: also keep the "actor" spec in `custom` for backward compatibility with readers
-        # that predate the reuse_policy field.
-        return add_reusable(task_template, task.reusable, serialize_context.code_bundle, env_name)
+        if task.task_type == TaskTemplate.task_type:
+            # actor: keep the "actor" spec in `custom` for backward compatibility with readers
+            # that predate the reuse_policy field.
+            return add_reusable(task_template, task.reusable, serialize_context.code_bundle, env_name)
 
     return task_template
 
