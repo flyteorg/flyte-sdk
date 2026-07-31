@@ -78,6 +78,15 @@ def validate_local_run_name(name: str) -> None:
         )
 
 
+class LocalRunReportingError(RuntimeError):
+    """A local-run reporting operation failed while strict reporting is enabled.
+
+    Under the default (best-effort) policy reporting failures are logged and
+    swallowed; strict mode surfaces the first failure loudly so reporting problems
+    can be debugged instead of silently degrading.
+    """
+
+
 class _Stop:
     """Sentinel enqueued by ``close`` to stop the worker after a final drain."""
 
@@ -98,6 +107,11 @@ class _Event:
     # Serialized ``flyteidl2.task.Outputs`` bytes; serialized at enqueue time so the
     # worker never touches protos shared with the caller thread.
     outputs_bytes: bytes | None = None
+    # Serialized ``flyteidl2.task.Inputs`` bytes, carried on the action's first report.
+    inputs_bytes: bytes | None = None
+    # Serialized ``flyteidl2.task.TaskSpec`` bytes for the action's first report. Must
+    # carry a typed interface — the console gates I/O rendering on it.
+    spec_bytes: bytes | None = None
     # First-report-only metadata.
     first_report: bool = False
     parent_name: str = ""
@@ -136,11 +150,20 @@ class RemoteRunReporter:
         *,
         flush_timeout_sec: float = _DEFAULT_FLUSH_TIMEOUT_SEC,
         verify_ssl: bool = True,
+        root_dir: Any = None,
+        strict: bool = False,
     ) -> None:
         self._client = client
         self._run_id = run_id
         self._flush_timeout = flush_timeout_sec
         self._verify_ssl = verify_ssl
+        # Needed by translate_task_to_wire's default task resolver (no code bundle locally).
+        self._root_dir = root_dir
+        # Strict mode: the first reporting failure is captured and re-raised on
+        # subsequent recorder calls and at the terminal flush barrier, so debugging
+        # sessions fail loudly instead of silently degrading.
+        self._strict = strict
+        self._failure: LocalRunReportingError | None = None
         self._queue: queue.SimpleQueue = queue.SimpleQueue()
         self._lock = threading.Lock()
         self._actions: dict[str, _ActionInfo] = {}
@@ -148,6 +171,13 @@ class RemoteRunReporter:
         self._done = threading.Event()
         # Artifacts (outputs/report) already uploaded, keyed by (action, attempt, kind).
         self._uploaded: set[tuple[str, int, str]] = set()
+        # Latest terminal outputs of a top-level (parent == a0) action. The local runner
+        # executes the driver task as a child action of the synthetic root, so these are
+        # also the root's outputs and are re-uploaded for a0 on record_root_complete.
+        self._root_outputs_bytes: bytes | None = None
+        # Serialized TaskSpec cache keyed by task name, so a fanout over the same task
+        # translates it once.
+        self._spec_cache: dict[str, bytes] = {}
         self._worker = threading.Thread(
             target=self._worker_main,
             daemon=True,
@@ -165,19 +195,50 @@ class RemoteRunReporter:
         with self._lock:
             return self._actions.get(action_id)
 
+    def _note_failure(self, operation: str, action: str, err: Any) -> None:
+        """Capture the first reporting failure (acted upon only in strict mode)."""
+        with self._lock:
+            if self._failure is None:
+                self._failure = LocalRunReportingError(
+                    f"Local-run reporting failed during {operation} for action {action!r}: {err}"
+                )
+
+    def _raise_if_failed(self) -> None:
+        """Strict mode: re-raise the first captured reporting failure."""
+        if not self._strict:
+            return
+        with self._lock:
+            failure = self._failure
+        if failure is not None:
+            raise failure
+
     def record_start(
         self,
         *,
         action_id: str,
         task_name: str,
         parent_id: str | None = None,
+        proto_inputs: Any = None,
+        task: Any = None,
+        trace_interface: Any = None,
         output_path: str | None = None,
         has_report: bool = False,
         group: str | None = None,
         **_: Any,
     ) -> None:
+        self._raise_if_failed()
         try:
             now = datetime.now(timezone.utc)
+            # Serialize at enqueue time so the worker never touches protos shared with
+            # the caller thread. Actions without proto inputs (conditions) skip offload.
+            inputs_bytes = proto_inputs.SerializeToString() if proto_inputs is not None else None
+            # Full spec (with typed interface) for the first report; cached per task
+            # name so a fanout translates each task once. Computed outside the lock.
+            spec_bytes: bytes | None = None
+            if task is not None:
+                spec_bytes = self._task_spec_bytes(task)
+            elif trace_interface is not None:
+                spec_bytes = self._trace_spec_bytes(task_name, trace_interface)
             with self._lock:
                 info = self._actions.get(action_id)
                 first = info is None
@@ -194,18 +255,30 @@ class RemoteRunReporter:
                         started=True,
                     )
                     self._actions[action_id] = info
-                ev = self._make_event(action_id, info, _PHASE_RUNNING, now, first_report=first)
+                ev = self._make_event(
+                    action_id,
+                    info,
+                    _PHASE_RUNNING,
+                    now,
+                    inputs_bytes=inputs_bytes if first else None,
+                    spec_bytes=spec_bytes if first else None,
+                    first_report=first,
+                )
             self._put(ev)
         except Exception as e:
             logger.debug(f"Local-run reporter failed to record start for {action_id}: {e}")
 
     def record_complete(self, *, action_id: str, outputs: Any = None) -> None:
+        self._raise_if_failed()
         self._record_terminal(action_id, _PHASE_SUCCEEDED, outputs=outputs)
 
     def record_failure(self, *, action_id: str, error: str) -> None:
+        # No strict fast-raise here: the action is already failing, and a reporting
+        # error must never mask the task's own error.
         self._record_terminal(action_id, _PHASE_FAILED, error=error)
 
     def record_attempt_start(self, *, action_id: str, attempt_num: int) -> None:
+        self._raise_if_failed()
         try:
             now = datetime.now(timezone.utc)
             with self._lock:
@@ -222,6 +295,7 @@ class RemoteRunReporter:
             logger.debug(f"Local-run reporter failed to record attempt start for {action_id}: {e}")
 
     def record_attempt_complete(self, *, action_id: str, attempt_num: int, outputs: Any = None) -> None:
+        self._raise_if_failed()
         self._record_terminal(action_id, _PHASE_SUCCEEDED, outputs=outputs, attempt_num=attempt_num)
 
     def record_attempt_failure(self, *, action_id: str, attempt_num: int, error: str) -> None:
@@ -237,6 +311,7 @@ class RemoteRunReporter:
         self.record_start(action_id=ROOT_ACTION_NAME, task_name=task_name, parent_id="")
 
     def record_root_complete(self) -> None:
+        self._raise_if_failed()
         self._record_terminal(ROOT_ACTION_NAME, _PHASE_SUCCEEDED)
 
     def record_root_failure(self, *, error: str) -> None:
@@ -247,20 +322,30 @@ class RemoteRunReporter:
     # ------------------------------------------------------------------
 
     def close(self, timeout: float | None = None) -> None:
-        """Flush all pending events and stop the worker. Bounded wait; never raises."""
+        """Flush all pending events and stop the worker. Bounded wait.
+
+        Never raises under the default policy. In strict mode, a flush timeout or any
+        previously captured reporting failure is re-raised as
+        :class:`LocalRunReportingError` so the run exits loudly.
+        """
+        timed_out = False
         try:
-            if self._closed.is_set():
-                self._done.wait(timeout if timeout is not None else self._flush_timeout)
-                return
-            self._closed.set()
-            self._queue.put(_STOP)
-            if not self._done.wait(timeout if timeout is not None else self._flush_timeout):
+            if not self._closed.is_set():
+                self._closed.set()
+                self._queue.put(_STOP)
+            timed_out = not self._done.wait(timeout if timeout is not None else self._flush_timeout)
+            if timed_out and not self._strict:
                 logger.warning(
                     "Timed out flushing local-run reports to the control plane; "
                     "the reported run state may be incomplete."
                 )
         except Exception as e:
             logger.warning(f"Failed to flush local-run reports: {e}")
+        if self._strict and timed_out:
+            raise LocalRunReportingError(
+                "Timed out flushing local-run reports to the control plane; the reported run state may be incomplete."
+            )
+        self._raise_if_failed()
 
     async def aclose(self, timeout: float | None = None) -> None:
         """Async wrapper around :meth:`close` so callers on an event loop don't block it."""
@@ -268,6 +353,8 @@ class RemoteRunReporter:
 
         try:
             await asyncio.to_thread(self.close, timeout)
+        except LocalRunReportingError:
+            raise
         except Exception as e:
             logger.warning(f"Failed to flush local-run reports: {e}")
 
@@ -308,6 +395,13 @@ class RemoteRunReporter:
                 if terminal and info.last_phase == phase:
                     # e.g. record_complete right after record_attempt_complete — already reported.
                     return
+                if outputs_bytes is not None and phase == _PHASE_SUCCEEDED and info.parent_name == ROOT_ACTION_NAME:
+                    # A succeeding top-level action IS the driver task the synthetic root
+                    # wraps; remember its outputs so record_root_complete can offload them
+                    # for a0 as well.
+                    self._root_outputs_bytes = outputs_bytes
+                if outputs_bytes is None and action_id == ROOT_ACTION_NAME and phase == _PHASE_SUCCEEDED:
+                    outputs_bytes = self._root_outputs_bytes
                 ev = self._make_event(
                     action_id,
                     info,
@@ -329,6 +423,8 @@ class RemoteRunReporter:
         *,
         error: str | None = None,
         outputs_bytes: bytes | None = None,
+        inputs_bytes: bytes | None = None,
+        spec_bytes: bytes | None = None,
         first_report: bool = False,
     ) -> _Event:
         """Build the event under the caller's lock, advancing the per-attempt version."""
@@ -343,6 +439,8 @@ class RemoteRunReporter:
             timestamp=now,
             error=error,
             outputs_bytes=outputs_bytes,
+            inputs_bytes=inputs_bytes,
+            spec_bytes=spec_bytes,
             first_report=first_report,
             parent_name=info.parent_name,
             group=info.group,
@@ -351,6 +449,60 @@ class RemoteRunReporter:
             has_report=info.has_report,
             start_time=info.start_time,
         )
+
+    def _task_spec_bytes(self, task: Any) -> bytes | None:
+        """Serialized full TaskSpec (typed interface included) for a task action's
+        first report. Cached per task name; never raises."""
+        try:
+            name = getattr(task, "name", "") or ""
+            with self._lock:
+                cached = self._spec_cache.get(name)
+            if cached is not None:
+                return cached
+            spec = _build_task_spec(
+                task,
+                org=self._run_id.org,
+                project=self._run_id.project,
+                domain=self._run_id.domain,
+                root_dir=self._root_dir,
+            )
+            data = spec.SerializeToString()
+            with self._lock:
+                self._spec_cache[name] = data
+            return data
+        except Exception as e:
+            logger.debug(f"Failed to serialize task spec for local-run reporting: {e}")
+            return None
+
+    def _trace_spec_bytes(self, name: str, native_interface: Any) -> bytes | None:
+        """Serialized TaskSpec for a trace pseudo-action, carrying its typed interface.
+
+        Traces are reported as task actions: the local-run backend currently discards
+        ``TraceAction.spec`` (it only records the action type), so a TraceSpec cannot
+        surface the interface the console needs. Never raises.
+        """
+        try:
+            cache_key = f"trace/{name}"
+            with self._lock:
+                cached = self._spec_cache.get(cache_key)
+            if cached is not None:
+                return cached
+            from flyte._internal.runtime.types_serde import transform_native_to_typed_interface
+
+            spec = _interface_task_spec(
+                name,
+                org=self._run_id.org,
+                project=self._run_id.project,
+                domain=self._run_id.domain,
+                typed_interface=transform_native_to_typed_interface(native_interface),
+            )
+            data = spec.SerializeToString()
+            with self._lock:
+                self._spec_cache[cache_key] = data
+            return data
+        except Exception as e:
+            logger.debug(f"Failed to serialize trace spec for local-run reporting: {e}")
+            return None
 
     def _put(self, ev: _Event) -> None:
         if self._closed.is_set():
@@ -397,18 +549,48 @@ class RemoteRunReporter:
             self._done.set()
 
     async def _process_batch(self, events: list[_Event]) -> None:
+        """Turn a drained batch of events into ReportActions calls + artifact uploads.
+
+        Ordering matters: the control plane only creates an action when its first
+        report is acked, and ``UploadMetadata(OUTPUTS/REPORT)`` requires the target
+        action to already exist. So before uploading terminal artifacts for an event,
+        any accumulated updates (which include that action's earlier reports) are
+        flushed first. INPUTS uploads have no existence requirement (the root's are
+        uploaded before CreateRun) and are resolved by deterministic path, so they
+        need neither ordering nor a URI on the event.
+        """
         from flyteidl2.workflow import local_run_service_pb2
 
-        updates = []
+        if self._strict:
+            # After the first strict failure, drop further work fast so close() never
+            # waits on doomed batches (the captured failure is what gets surfaced).
+            with self._lock:
+                if self._failure is not None:
+                    return
+
+        pending: list = []
+
+        async def _flush() -> None:
+            nonlocal pending
+            if pending:
+                req = local_run_service_pb2.ReportLocalActionsRequest(run_id=self._run_id, updates=pending)
+                pending = []
+                await self._send_with_retries(req)
+
         for ev in events:
             try:
-                updates.append(await self._build_update(ev))
+                output_uri = report_uri = ""
+                if ev.phase in _TERMINAL_PHASES and (
+                    ev.outputs_bytes is not None or (ev.has_report and ev.output_path)
+                ):
+                    await _flush()
+                    output_uri, report_uri = await self._upload_terminal_artifacts(ev)
+                pending.append(self._build_update(ev, output_uri=output_uri, report_uri=report_uri))
+                if ev.inputs_bytes is not None:
+                    await self._upload_inputs(ev)
             except Exception as e:
                 logger.warning(f"Skipping local-run report for action {ev.action_name}: {e}")
-        if not updates:
-            return
-        req = local_run_service_pb2.ReportLocalActionsRequest(run_id=self._run_id, updates=updates)
-        await self._send_with_retries(req)
+        await _flush()
 
     async def _send_with_retries(self, req: local_run_service_pb2.ReportLocalActionsRequest) -> None:
         import asyncio
@@ -424,6 +606,7 @@ class RemoteRunReporter:
                             f"Control plane rejected local-run report for action {action!r}: "
                             f"{status.message} (code={status.code})"
                         )
+                        self._note_failure("ReportActions", action, f"{status.message} (code={status.code})")
                 return
             except Exception as e:
                 last_err = e
@@ -432,8 +615,16 @@ class RemoteRunReporter:
         logger.warning(
             f"Dropping {len(req.updates)} local-run report(s) after {_SEND_MAX_RETRIES} attempts: {last_err}"
         )
+        first_action = req.updates[0].event.id.name if req.updates else "?"
+        self._note_failure(
+            "ReportActions",
+            first_action,
+            f"dropped {len(req.updates)} report(s) after {_SEND_MAX_RETRIES} attempts: {last_err}",
+        )
 
-    async def _build_update(self, ev: _Event) -> local_run_service_pb2.LocalActionUpdate:
+    def _build_update(
+        self, ev: _Event, *, output_uri: str = "", report_uri: str = ""
+    ) -> local_run_service_pb2.LocalActionUpdate:
         from flyteidl2.common import identifier_pb2
         from flyteidl2.task import common_pb2 as task_common_pb2
         from flyteidl2.workflow import local_run_service_pb2, run_definition_pb2
@@ -450,10 +641,6 @@ class RemoteRunReporter:
             event.error_info.message = ev.error
             event.error_info.kind = run_definition_pb2.ErrorInfo.KIND_USER
 
-        output_uri = ""
-        report_uri = ""
-        if ev.phase in _TERMINAL_PHASES:
-            output_uri, report_uri = await self._upload_terminal_artifacts(ev)
         if output_uri or report_uri:
             event.outputs.CopyFrom(task_common_pb2.OutputReferences(output_uri=output_uri, report_uri=report_uri))
 
@@ -468,8 +655,41 @@ class RemoteRunReporter:
             update.parent_name = ev.parent_name
             update.group = ev.group
             if ev.action_name != ROOT_ACTION_NAME:
-                update.task.CopyFrom(self._minimal_task_action(ev.task_name))
+                if ev.spec_bytes:
+                    from flyteidl2.task import task_definition_pb2
+
+                    update.task.CopyFrom(
+                        run_definition_pb2.TaskAction(spec=task_definition_pb2.TaskSpec.FromString(ev.spec_bytes))
+                    )
+                else:
+                    # Last resort (e.g. condition pseudo-actions, which have no
+                    # interface): identifier-only spec so the console can still name
+                    # the action.
+                    update.task.CopyFrom(self._minimal_task_action(ev.task_name))
         return update
+
+    async def _upload_inputs(self, ev: _Event) -> None:
+        """Offload an action's inputs.pb. The control plane resolves inputs by their
+        deterministic path, so no URI is attached to the reported event. Failures
+        never fail reporting."""
+        from flyteidl2.common import identifier_pb2
+        from flyteidl2.dataproxy import dataproxy_service_pb2
+
+        from flyte._persistence._remote_upload import upload_metadata_artifact
+
+        if ev.inputs_bytes is None:
+            return
+        try:
+            await upload_metadata_artifact(
+                self._client.dataproxy_service,
+                artifact_type=int(dataproxy_service_pb2.ARTIFACT_TYPE_INPUTS),
+                data=ev.inputs_bytes,
+                action_id=identifier_pb2.ActionIdentifier(run=self._run_id, name=ev.action_name),
+                verify=self._verify_ssl,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to upload inputs for local-run action {ev.action_name}: {e}")
+            self._note_failure("inputs upload", ev.action_name, e)
 
     async def _upload_terminal_artifacts(self, ev: _Event) -> tuple[str, str]:
         """Upload outputs.pb / report.html for a terminal event, returning their native URLs.
@@ -501,6 +721,7 @@ class RemoteRunReporter:
                 self._uploaded.add((ev.action_name, ev.attempt, "outputs"))
             except Exception as e:
                 logger.warning(f"Failed to upload outputs for local-run action {ev.action_name}: {e}")
+                self._note_failure("outputs upload", ev.action_name, e)
 
         if ev.has_report and ev.output_path and (ev.action_name, ev.attempt, "report") not in self._uploaded:
             try:
@@ -516,6 +737,7 @@ class RemoteRunReporter:
                     self._uploaded.add((ev.action_name, ev.attempt, "report"))
             except Exception as e:
                 logger.warning(f"Failed to upload report for local-run action {ev.action_name}: {e}")
+                self._note_failure("report upload", ev.action_name, e)
 
         return output_uri, report_uri
 
@@ -571,13 +793,15 @@ async def start_local_run_reporting(
     kwargs: dict,
     root_dir: Any = None,
     verify_ssl: bool = True,
+    strict: bool = False,
 ) -> RemoteRunReporter | None:
     """Register a local run with the control plane and return its reporter sink.
 
     Uploads the root inputs (when present), calls ``LocalRunService.CreateRun`` and,
     on success, constructs the :class:`RemoteRunReporter` that streams subsequent
     action state. Returns ``None`` (with a warning) on any failure — reporting must
-    never fail or block the local run.
+    never fail or block the local run — unless ``strict`` is set, in which case
+    bootstrap failures raise :class:`LocalRunReportingError`.
     """
     from flyteidl2.common import identifier_pb2
     from flyteidl2.common import run_pb2 as common_run_pb2
@@ -590,7 +814,7 @@ async def start_local_run_reporting(
     run_id = identifier_pb2.RunIdentifier(org=org or "", project=project, domain=domain, name=run_name)
 
     try:
-        task_spec = _build_root_task_spec(task, org=org, project=project, domain=domain, root_dir=root_dir)
+        task_spec = _build_task_spec(task, org=org, project=project, domain=domain, root_dir=root_dir)
 
         offloaded: common_run_pb2.OffloadedInputData | None = None
         inputs = await convert.convert_from_native_to_inputs(task.native_interface, *args, **kwargs)
@@ -620,21 +844,24 @@ async def start_local_run_reporting(
         req.run_start_time.FromDatetime(run_start_time)
         await client.local_run_service.create_run(req)
     except Exception as e:
+        if strict:
+            raise LocalRunReportingError(
+                f"Failed to register local run {run_name!r} with the control plane: {e}"
+            ) from e
         logger.warning(f"Failed to register local run {run_name!r} with the control plane; running unreported: {e}")
         return None
 
-    return RemoteRunReporter(client, run_id, verify_ssl=verify_ssl)
+    return RemoteRunReporter(client, run_id, verify_ssl=verify_ssl, root_dir=root_dir, strict=strict)
 
 
-def _build_root_task_spec(
-    task: TaskTemplate, *, org: str | None, project: str, domain: str, root_dir: Any = None
-) -> Any:
-    """Build the TaskSpec sent on CreateRun for the root task.
+def _build_task_spec(task: TaskTemplate, *, org: str | None, project: str, domain: str, root_dir: Any = None) -> Any:
+    """Build the full TaskSpec for a locally-executed task (root or sub-action).
 
     Prefers a full ``translate_task_to_wire`` serialization (no code bundle / image
     cache — image references resolve to their locally computed URIs). Some local-only
     task shapes cannot be serialized that way, so this falls back to a minimal spec
-    carrying the identifier and typed interface.
+    that still carries the typed interface — the console gates I/O rendering on the
+    spec's interface, so an interface-less spec would blank the action's I/O panels.
     """
     from flyte.models import SerializationContext
 
@@ -652,6 +879,35 @@ def _build_root_task_spec(
     except Exception as e:
         logger.debug(f"Falling back to a minimal task spec for local-run reporting: {e}")
 
+    typed_interface = None
+    try:
+        from flyte._internal.runtime.types_serde import transform_native_to_typed_interface
+
+        typed_interface = transform_native_to_typed_interface(task.interface)
+    except Exception:
+        pass
+    return _interface_task_spec(
+        task.name,
+        org=org,
+        project=project,
+        domain=domain,
+        typed_interface=typed_interface,
+        task_type=getattr(task, "task_type", "python-task") or "python-task",
+        short_name=task.short_name[:63],
+    )
+
+
+def _interface_task_spec(
+    name: str,
+    *,
+    org: str | None,
+    project: str,
+    domain: str,
+    typed_interface: Any = None,
+    task_type: str = "python-task",
+    short_name: str | None = None,
+) -> Any:
+    """A minimal TaskSpec: identifier plus (when available) the typed interface."""
     from flyteidl2.core import identifier_pb2 as core_identifier_pb2
     from flyteidl2.core import tasks_pb2
     from flyteidl2.task import task_definition_pb2
@@ -662,17 +918,11 @@ def _build_root_task_spec(
             org=org or "",
             project=project,
             domain=domain,
-            name=task.name,
+            name=name,
             version=_LOCAL_TASK_VERSION,
         ),
-        type=getattr(task, "task_type", "python-task") or "python-task",
+        type=task_type,
     )
-    try:
-        from flyte._internal.runtime.types_serde import transform_native_to_typed_interface
-
-        iface = transform_native_to_typed_interface(task.interface)
-        if iface is not None:
-            template.interface.CopyFrom(iface)
-    except Exception:
-        pass
-    return task_definition_pb2.TaskSpec(task_template=template, short_name=task.short_name[:63])
+    if typed_interface is not None:
+        template.interface.CopyFrom(typed_interface)
+    return task_definition_pb2.TaskSpec(task_template=template, short_name=short_name or name[:63])

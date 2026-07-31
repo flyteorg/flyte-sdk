@@ -1670,3 +1670,22 @@ def test_run_report_rejects_remote(runner):
         raise
     assert result.exit_code != 0
     assert "--local" in result.output
+
+
+def test_run_command_has_report_strict_option():
+    """--report-strict is a visible option on `flyte run`."""
+    opt_names = {decl for p in run.params for decl in p.opts}
+    assert "--report-strict" in opt_names
+
+
+def test_run_report_strict_requires_report(runner):
+    """--report-strict cannot be used without --report."""
+    cmd = ["--local", "--report-strict", str(HELLO_WORLD_PY), "say_hello"]
+    try:
+        result = runner.invoke(run, cmd)
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise
+    assert result.exit_code != 0
+    assert "--report" in result.output

@@ -176,6 +176,7 @@ class LocalConfig(object):
 
     persistence: bool = False
     report_to_backend: bool = False
+    report_strict: bool = False
 
     @classmethod
     def auto(cls, config_file: typing.Optional[typing.Union[str, ConfigFile]] = None) -> "LocalConfig":
@@ -183,6 +184,7 @@ class LocalConfig(object):
         kwargs: typing.Dict[str, typing.Any] = {}
         kwargs = set_if_exists(kwargs, "persistence", _internal.Local.PERSISTENCE.read(config_file))
         kwargs = set_if_exists(kwargs, "report_to_backend", _internal.Local.REPORT_TO_BACKEND.read(config_file))
+        kwargs = set_if_exists(kwargs, "report_strict", _internal.Local.REPORT_STRICT.read(config_file))
         return LocalConfig(**kwargs)
 
 
