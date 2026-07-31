@@ -41,7 +41,7 @@ import struct
 import sys
 from contextlib import suppress
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, cast
 
 if TYPE_CHECKING:
     import asyncssh
@@ -49,6 +49,8 @@ if TYPE_CHECKING:
 from flyte._debug.constants import (
     DEFAULT_SSH_USER,
     DEFAULT_UP_SECONDS,
+    FLYTE_ENABLE_SSH_KEY,
+    FLYTE_ENABLE_VSCODE_KEY,
     FLYTE_SSH_PUBKEY_KEY,
     FLYTE_SSH_USER_KEY,
     SSH_DEBUG_DIR,
@@ -310,6 +312,7 @@ class SshServer:
         )
 
         async def _feed_stdin():
+            proc_stdin = cast(asyncio.StreamWriter, proc.stdin)
             try:
                 while True:
                     try:
@@ -318,13 +321,13 @@ class SshServer:
                         continue
                     if not data:
                         break
-                    proc.stdin.write(data)
-                    await proc.stdin.drain()
+                    proc_stdin.write(data)
+                    await proc_stdin.drain()
             except (asyncssh.ConnectionLost, BrokenPipeError, ConnectionResetError, OSError):
                 pass
             finally:
                 with suppress(Exception):
-                    proc.stdin.close()
+                    proc_stdin.close()
 
         async def _pump(src_reader, dst_writer):
             try:
@@ -404,6 +407,11 @@ def _write_debug_helpers(ctx) -> Optional[str]:
             "#!/usr/bin/env bash\n"
             "# Run the task entrypoint under pdb. Set a breakpoint() in your task,\n"
             "# or step from the top. Same args VS Code's 'Interactive Debugging' uses.\n"
+            "#\n"
+            "# Unset the debug-mode env vars: they are still set in the pod env, and\n"
+            "# without this the entrypoint would re-enter ssh/vscode debug mode and try\n"
+            "# to bind a second server on the already-in-use debug port.\n"
+            f"unset {FLYTE_ENABLE_SSH_KEY} {FLYTE_ENABLE_VSCODE_KEY}\n"
             f"exec {_sys.executable} -m pdb {program} {quoted}\n"
         )
         script.chmod(0o755)

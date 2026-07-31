@@ -13,6 +13,7 @@ Flytekit DataFrame
 """
 
 import functools
+import typing
 
 from flyte._logging import logger
 from flyte._utils.lazy_module import is_imported
@@ -39,26 +40,26 @@ def register_csv_handlers():
 def register_pandas_handlers():
     import pandas as pd
 
-    from flyte.types._renderer import TopFrameRenderer
+    from flyte.types._renderer import Renderable, TopFrameRenderer
 
     from .basic_dfs import PandasToParquetEncodingHandler, ParquetToPandasDecodingHandler
 
     DataFrameTransformerEngine.register(PandasToParquetEncodingHandler(), default_format_for_type=True)
     DataFrameTransformerEngine.register(ParquetToPandasDecodingHandler(), default_format_for_type=True)
-    DataFrameTransformerEngine.register_renderer(pd.DataFrame, TopFrameRenderer())
+    DataFrameTransformerEngine.register_renderer(pd.DataFrame, typing.cast(Renderable, TopFrameRenderer()))
 
 
 @functools.lru_cache(maxsize=None)
 def register_arrow_handlers():
     import pyarrow as pa
 
-    from flyte.types._renderer import ArrowRenderer
+    from flyte.types._renderer import ArrowRenderer, Renderable
 
     from .basic_dfs import ArrowToParquetEncodingHandler, ParquetToArrowDecodingHandler
 
     DataFrameTransformerEngine.register(ArrowToParquetEncodingHandler(), default_format_for_type=True)
     DataFrameTransformerEngine.register(ParquetToArrowDecodingHandler(), default_format_for_type=True)
-    DataFrameTransformerEngine.register_renderer(pa.Table, ArrowRenderer())
+    DataFrameTransformerEngine.register_renderer(pa.Table, typing.cast(Renderable, ArrowRenderer()))
 
 
 def lazy_import_dataframe_handler():

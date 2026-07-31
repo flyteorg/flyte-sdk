@@ -1,5 +1,6 @@
 import os
 import string
+import sys
 import typing
 from contextlib import contextmanager
 from pathlib import Path
@@ -53,14 +54,36 @@ def base36_encode(byte_data: bytes) -> str:
 
 
 @contextmanager
+def original_std_streams():
+    """
+    Temporarily rebind ``sys.stdout`` / ``sys.stderr`` to the interpreter's original streams.
+
+    cloudpickle only pickles the standard streams by reference when the object it encounters
+    *is* the current ``sys.stdout`` / ``sys.stderr``; any other write-mode file raises
+    ``PicklingError``. UI layers such as rich's Live/status spinner rebind those names to
+    proxies for their duration, so cloudpickling an object graph that holds the real stderr
+    (e.g. loguru's default sink, captured at import time) fails while a spinner is active.
+    Wrap ``cloudpickle.dumps`` of user-supplied object graphs in this context so the identity
+    check sees the original streams again.
+    """
+    captured_stdout, captured_stderr = sys.stdout, sys.stderr
+    sys.stdout = sys.__stdout__ if sys.__stdout__ is not None else captured_stdout
+    sys.stderr = sys.__stderr__ if sys.__stderr__ is not None else captured_stderr
+    try:
+        yield
+    finally:
+        sys.stdout, sys.stderr = captured_stdout, captured_stderr
+
+
+@contextmanager
 def _selector_policy():
     import asyncio
 
-    original_policy = asyncio.get_event_loop_policy()
+    original_policy = asyncio.get_event_loop_policy()  # ty: ignore[deprecated]  # kept until 3.16 drops the API
     try:
         if os.name == "nt" and hasattr(asyncio, "WindowsSelectorEventLoopPolicy"):
             asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
         yield
     finally:
-        asyncio.set_event_loop_policy(original_policy)
+        asyncio.set_event_loop_policy(original_policy)  # ty: ignore[deprecated]  # kept until 3.16 drops the API

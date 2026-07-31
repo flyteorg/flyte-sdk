@@ -8,9 +8,11 @@ from collections import defaultdict
 from collections.abc import Callable
 from contextlib import nullcontext
 from pathlib import Path
-from typing import Any, Awaitable, DefaultDict, Tuple, TypeVar
+from types import FunctionType
+from typing import Any, Awaitable, DefaultDict, Tuple, TypeVar, cast
 
 from flyteidl2.common import identifier_pb2, phase_pb2
+from flyteidl2.core import execution_pb2
 
 import flyte
 import flyte.errors
@@ -34,6 +36,19 @@ from flyte.remote._task import TaskDetails
 R = TypeVar("R")
 
 MAX_TRACE_BYTES = MAX_INLINE_IO_BYTES
+
+
+def _trace_error_is_recoverable(err: execution_pb2.ExecutionError | None) -> bool:
+    """Whether a recorded trace error should be re-run (recoverable) rather than replayed.
+
+    Recoverability rides on ``ExecutionError.recoverability`` (``ContainerError.Kind``), set
+    when the error is recorded (see ``record_trace`` -> ``io.upload_error``). The enum defaults
+    to ``NON_RECOVERABLE`` (0), so an error carrying no explicit recoverability — or no error
+    proto at all — is treated as non-recoverable and replayed, matching prior behavior.
+    """
+    if err is None:
+        return False
+    return err.recoverability == execution_pb2.ContainerError.RECOVERABLE
 
 
 async def upload_inputs_with_retry(serialized_inputs: bytes, inputs_uri: str, max_bytes: int) -> None:
@@ -84,7 +99,7 @@ async def handle_action_failure(action: Action, task_name: str) -> Exception:
     else:
         logger.error(f"Server reported failure for action {action.action_id.name}, error: {err}")
 
-    exc = convert.convert_error_to_native(err)
+    exc = convert.convert_error_to_native(cast("execution_pb2.ExecutionError | Exception", err))
     if not exc:
         return flyte.errors.RuntimeSystemError("UnableToConvertError", f"Error in task {task_name}: {err}")
     return exc
@@ -120,7 +135,7 @@ class RemoteController(Controller):
         self,
         client_coro: Awaitable[ClientSet],
         workers: int = 20,
-        max_system_retries: int = 10,
+        max_system_retries: int = 100,
     ):
         """ """
         super().__init__(
@@ -393,7 +408,7 @@ class RemoteController(Controller):
             raise flyte.errors.RuntimeSystemError("BadContext", "Task action not initialized")
         current_action_id = tctx.action
 
-        func_name = _func.__name__
+        func_name = cast(FunctionType, _func).__name__
         invoke_seq_num = self.generate_task_call_sequence(_func, current_action_id)
 
         _ctx = ctx.new_in_driver_literal_conversion(True) if ctx.is_task_context() else nullcontext()
@@ -429,14 +444,28 @@ class RemoteController(Controller):
 
         if prev_action.phase == phase_pb2.ACTION_PHASE_FAILED:
             if prev_action.has_error():
-                exc = convert.convert_error_to_native(prev_action.err)
+                # Replay a recorded failure only when it is non-recoverable — re-running
+                # it would fail identically. Recoverable failures (a 429, a network blip, a
+                # worker crash mid-turn) must re-run so the task can self-heal; replaying the
+                # stale error would poison every retry. The completed-successful turns before
+                # this one still replay, so only the failed turn is retried.
+                if _trace_error_is_recoverable(prev_action.err):
+                    logger.info(
+                        f"Trace {prev_action.action_id.name} recorded a recoverable error; "
+                        f"re-running instead of replaying."
+                    )
+                    return (
+                        TraceInfo(func_name, sub_action_id, _interface, inputs_uri),
+                        False,
+                    )
+                exc = convert.convert_error_to_native(cast(execution_pb2.ExecutionError, prev_action.err))
                 return (
                     TraceInfo(func_name, sub_action_id, _interface, inputs_uri, error=exc),
                     True,
                 )
             else:
                 logger.warning(f"Action {prev_action.action_id.name} failed, but no error was found, re-running trace!")
-        elif prev_action.realized_outputs_uri is not None:
+        elif prev_action.realized_outputs_uri:
             o = await io.load_outputs(prev_action.realized_outputs_uri, max_bytes=MAX_TRACE_BYTES)
             _ctx = ctx.new_in_driver_literal_conversion(True) if ctx.is_task_context() else nullcontext()
             with _ctx:
@@ -464,11 +493,16 @@ class RemoteController(Controller):
         current_action_id = tctx.action
         sub_run_output_path = storage.join(tctx.run_base_dir, info.action.name)
         outputs_file_path: str = ""
+        error_proto: execution_pb2.ExecutionError | None = None
 
         if info.interface.has_outputs():
             if info.error:
                 err = convert.convert_from_native_to_error(info.error)
-                await io.upload_error(err.err, sub_run_output_path)
+                error_proto = err.err
+                # Carry recoverability into error.pb (ContainerError.kind) so a later replay
+                # can distinguish a transient failure (RECOVERABLE -> re-run) from a
+                # deterministic one (NON_RECOVERABLE -> replay terminally).
+                await io.upload_error(err.err, sub_run_output_path, recoverable=err.recoverable)
             else:
                 _ctx = ctx.new_in_driver_literal_conversion(True) if ctx.is_task_context() else nullcontext()
                 with _ctx:
@@ -498,6 +532,7 @@ class RemoteController(Controller):
             start_time=info.start_time,
             end_time=info.end_time,
             typed_interface=typed_interface or None,
+            error=error_proto,
         )
 
         async with self._parent_action_semaphore[unique_action_name(task_action)]:

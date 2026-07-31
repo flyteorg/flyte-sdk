@@ -18,7 +18,7 @@ when many tasks are submitted in a burst.
 """
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from functools import partial
 
 import flyte
@@ -36,10 +36,10 @@ env = flyte.TaskEnvironment(
 async def step(i: int, sleep_seconds: int) -> str:
     """One unit of serialized work. Prints start/end so you can read the log
     timestamps and confirm no two steps overlap."""
-    started = datetime.utcnow().isoformat(timespec="seconds")
+    started = datetime.now(timezone.utc).isoformat(timespec="seconds")
     print(f"[serial-1] step {i} START at {started}", flush=True)
     await asyncio.sleep(sleep_seconds)
-    finished = datetime.utcnow().isoformat(timespec="seconds")
+    finished = datetime.now(timezone.utc).isoformat(timespec="seconds")
     print(f"[serial-1] step {i} END   at {finished}", flush=True)
     return f"step {i} done"
 

@@ -141,14 +141,14 @@ async def process_image_batch(
     model, processor, id2label = load_model(str(model_path))
 
     # Lists to build DataFrame columns
-    df_image_paths = []
-    df_top_labels = []
-    df_top_confidences = []
-    df_second_labels = []
-    df_second_confidences = []
-    df_third_labels = []
-    df_third_confidences = []
-    df_errors = []
+    df_image_paths: list[str] = []
+    df_top_labels: list[str | None] = []
+    df_top_confidences: list[float | None] = []
+    df_second_labels: list[str | None] = []
+    df_second_confidences: list[float | None] = []
+    df_third_labels: list[str | None] = []
+    df_third_confidences: list[float | None] = []
+    df_errors: list[str | None] = []
 
     # Process images in mini-batches for GPU efficiency
     for i in range(0, len(image_files), batch_size):
@@ -321,8 +321,8 @@ async def batch_inference_pipeline(
     completed_count = 0
 
     # Process results as they complete
-    for task in asyncio.as_completed(tasks):
-        result_df = await task
+    for completed_task in asyncio.as_completed(tasks):
+        result_df = await completed_task
         accumulated_dfs.append(result_df)
         completed_count += 1
 

@@ -50,7 +50,7 @@ class PanderaPySparkSqlDataFrameTransformer(PanderaDataFrameTransformer[pt.DataF
     ) -> psql.DataFrame:
         schema = _schema_from_pandera_type(pandera_type)
         tctx = flyte.ctx()
-        emit_report = tctx is None or not tctx.in_driver_literal_conversion
+        emit_report = not tctx or not tctx.in_driver_literal_conversion
         validated = schema.validate(data, lazy=True)
         errors = validated.pandera.errors
         if errors:

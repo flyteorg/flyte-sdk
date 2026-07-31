@@ -16,6 +16,12 @@ from mock.mock import AsyncMock, MagicMock
 import flyte
 from flyte._initialize import _init_for_testing
 
+# RunSpec.relation (provenance: related_to + relation_type) ships in a flyteidl2 release newer
+# than the current pin; relation-bearing assertions are gated on the installed build.
+_RELATION_SUPPORTED = "relation" in run_pb2.RunSpec.DESCRIPTOR.fields_by_name
+
+needs_relation = pytest.mark.skipif(not _RELATION_SUPPORTED, reason="flyteidl2 build lacks RunSpec.relation")
+
 
 def _mock_client_with_run():
     """Mock client whose create_run captures the request and get_action_data returns prior inputs."""
@@ -43,14 +49,19 @@ def _mock_client_with_run():
     return mock_client, mock_run_service, mock_dataproxy, prior_inputs
 
 
-def _fake_prior_run(base_envs=None):
-    """A stand-in RunDetails: prior RunSpec + a root action carrying a task spec."""
-    base_run_spec = run_pb2.RunSpec(
-        envs=run_pb2.Envs(values=[literals_pb2.KeyValuePair(key="KEEP", value="1")] + (base_envs or [])),
-        cluster="orig",
-    )
+def _fake_prior_run(base_envs=None, action_id=None, base_run_spec=None):
+    """A stand-in RunDetails: prior RunSpec + a root action carrying a task spec.
+
+    ``action_id`` optionally carries the prior run's full ActionIdentifier (as the real
+    fetch would); ``base_run_spec`` optionally substitutes the prior RunSpec wholesale.
+    """
+    if base_run_spec is None:
+        base_run_spec = run_pb2.RunSpec(
+            envs=run_pb2.Envs(values=[literals_pb2.KeyValuePair(key="KEEP", value="1")] + (base_envs or [])),
+            cluster="orig",
+        )
     task_spec = run_definition_pb2.ActionDetails(
-        id=run_definition_pb2.ActionDetails().id,
+        id=action_id,
         task=_task_spec_with_string_input(),
     )
     action_details = SimpleNamespace(pb2=task_spec)
@@ -124,6 +135,66 @@ async def test_rerun_changed_inputs_converts_against_fetched_interface():
     assert upload_req.inputs.literals[0].value.scalar.primitive.string_value == "changed"
 
 
+@needs_relation
+@pytest.mark.asyncio
+async def test_rerun_records_rerun_relation_and_clears_inherited_provenance():
+    from flyteidl2.common import identifier_pb2
+
+    mock_client, mock_run_service, _mock_dataproxy, _ = _mock_client_with_run()
+    await _init_for_testing(client=mock_client, project="test", domain="test")
+
+    # The prior run was itself derived from a grandparent; that link must not be inherited.
+    prior = _fake_prior_run()
+    prior.pb2.run_spec.relation.CopyFrom(
+        common_run_pb2.Relation(
+            related_to=identifier_pb2.RunIdentifier(name="grandparent"),
+            relation_type=common_run_pb2.RELATION_TYPE_RERUN,
+        )
+    )
+
+    with mock.patch("flyte.remote._run.RunDetails") as RD:
+        RD.get.aio = AsyncMock(return_value=prior)
+        await flyte.with_runcontext(mode="remote").rerun.aio("r1")
+
+    req: run_service_pb2.CreateRunRequest = mock_run_service.create_run.call_args[0][0]
+    assert req.run_spec.HasField("relation")
+    assert req.run_spec.relation.related_to.name == "r1"
+    # The identifier must be fully qualified (server validates org/project/domain min_len=1).
+    assert req.run_spec.relation.related_to.project == "test"
+    assert req.run_spec.relation.related_to.domain == "test"
+    assert req.run_spec.relation.relation_type == common_run_pb2.RELATION_TYPE_RERUN
+
+
+@needs_relation
+@pytest.mark.asyncio
+async def test_rerun_with_recover_records_recover_relation():
+    mock_client, mock_run_service, _mock_dataproxy, _ = _mock_client_with_run()
+    await _init_for_testing(client=mock_client, project="test", domain="test")
+
+    with mock.patch("flyte.remote._run.RunDetails") as RD:
+        RD.get.aio = AsyncMock(return_value=_fake_prior_run())
+        await flyte.with_runcontext(mode="remote", recover=True).rerun.aio("r1")
+
+    req: run_service_pb2.CreateRunRequest = mock_run_service.create_run.call_args[0][0]
+    assert req.run_spec.relation.related_to.name == "r1"
+    assert req.run_spec.relation.related_to.project == "test"
+    assert req.run_spec.relation.related_to.domain == "test"
+    assert req.run_spec.relation.relation_type == common_run_pb2.RELATION_TYPE_RECOVER
+
+
+@pytest.mark.skipif(_RELATION_SUPPORTED, reason="only applies to flyteidl2 builds without RunSpec.relation")
+@pytest.mark.asyncio
+async def test_recover_raises_without_relation_field():
+    """On old flyteidl2, plain rerun still works (provenance skipped) but recover fails loudly."""
+    mock_client, _mock_run_service, _mock_dataproxy, _ = _mock_client_with_run()
+    await _init_for_testing(client=mock_client, project="test", domain="test")
+
+    with mock.patch("flyte.remote._run.RunDetails") as RD:
+        RD.get.aio = AsyncMock(return_value=_fake_prior_run())
+        with pytest.raises(NotImplementedError, match="recover is not yet supported"):
+            await flyte.with_runcontext(mode="remote", recover=True).rerun.aio("r1")
+
+
 @pytest.mark.asyncio
 async def test_rerun_rejects_non_remote_mode():
     await flyte.init.aio()
@@ -134,3 +205,9 @@ async def test_rerun_rejects_non_remote_mode():
 def test_replay_is_removed():
     """flyte.replay was deleted in favor of flyte.rerun."""
     assert not hasattr(flyte, "replay")
+
+
+# Provenance for rerun/recover is asserted on RunSpec.relation by
+# test_rerun_records_rerun_relation_and_clears_inherited_provenance and
+# test_rerun_with_recover_records_recover_relation (both gated on flyteidl2 shipping the field).
+# The former related_to-based rerun tests were removed with that migration.

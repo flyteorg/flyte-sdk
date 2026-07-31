@@ -12,7 +12,7 @@ from flyteidl2.workflow import (
     run_definition_pb2,
     state_service_pb2,
 )
-from google.protobuf import timestamp_pb2
+from google.protobuf.timestamp_pb2 import Timestamp
 
 from flyte.models import GroupData
 
@@ -204,19 +204,26 @@ class Action:
         run_output_base: str,
         report_uri: str | None = None,
         typed_interface: interface_pb2.TypedInterface | None = None,
+        error: execution_pb2.ExecutionError | None = None,
     ) -> Action:
         """
         This creates a new action for tracing purposes. It is used to track the execution of a trace.
+
+        When ``error`` is set the trace recorded a failure and the action is marked FAILED
+        (not SUCCEEDED): recording an errored step as a success — with an empty ``outputs_uri`` —
+        both hides the failure and, on replay, sends that empty URI into ``load_outputs``.
         """
-        st = timestamp_pb2.Timestamp()
+        st = Timestamp()
         st.FromSeconds(int(start_time))
         st.nanos = int((start_time % 1) * 1e9)
 
-        et = timestamp_pb2.Timestamp()
+        et = Timestamp()
         et.FromSeconds(int(end_time))
         et.nanos = int((end_time % 1) * 1e9)
 
         spec = task_definition_pb2.TraceSpec(interface=typed_interface) if typed_interface else None
+
+        phase = phase_pb2.ACTION_PHASE_FAILED if error is not None else phase_pb2.ACTION_PHASE_SUCCEEDED
 
         return cls(
             action_id=action_id,
@@ -226,11 +233,12 @@ class Action:
             group=group_data,
             inputs_uri=inputs_uri,
             realized_outputs_uri=outputs_uri,
-            phase=phase_pb2.ACTION_PHASE_SUCCEEDED,
+            phase=phase,
+            err=error,
             run_output_base=run_output_base,
             trace=run_definition_pb2.TraceAction(
                 name=friendly_name,
-                phase=phase_pb2.ACTION_PHASE_SUCCEEDED,
+                phase=phase,
                 start_time=st,
                 end_time=et,
                 outputs=common_pb2.OutputReferences(
@@ -242,7 +250,7 @@ class Action:
         )
 
     # Mapping from Python types to flyteidl SimpleType enum values (class var, not a dataclass field)
-    _DATA_TYPE_TO_SIMPLE: ClassVar[dict[builtins.type, int]] = {
+    _DATA_TYPE_TO_SIMPLE: ClassVar[dict[builtins.type, types_pb2.SimpleType]] = {
         bool: types_pb2.BOOLEAN,
         int: types_pb2.INTEGER,
         float: types_pb2.FLOAT,
@@ -250,7 +258,7 @@ class Action:
     }
 
     # Mapping from condition prompt-type strings to flyteidl ConditionPromptType enum values
-    _PROMPT_TYPE_TO_ENUM: ClassVar[dict[str, int]] = {
+    _PROMPT_TYPE_TO_ENUM: ClassVar[dict[str, run_definition_pb2.ConditionPromptType]] = {
         "text": run_definition_pb2.CONDITION_PROMPT_TYPE_TEXT,
         "markdown": run_definition_pb2.CONDITION_PROMPT_TYPE_MARKDOWN,
     }

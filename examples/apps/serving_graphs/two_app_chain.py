@@ -66,7 +66,7 @@ async def greeting_proxy(name: str) -> typing.Any:
 
 
 @app2.get("/app1-url")
-async def get_app1_url() -> str:
+async def get_app1_url() -> str | None:
     return os.getenv("APP1_URL")
 
 

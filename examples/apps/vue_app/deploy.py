@@ -7,7 +7,7 @@ env = AppEnvironment(
     args="sh start.sh",
     port=8080,
     resources=flyte.Resources(cpu=2, memory="2Gi"),
-    include=["App.vue", "main.js", "index.html", "package.json", "vite.config.js", "start.sh"],
+    include=("App.vue", "main.js", "index.html", "package.json", "vite.config.js", "start.sh"),
     requires_auth=False,
 )
 

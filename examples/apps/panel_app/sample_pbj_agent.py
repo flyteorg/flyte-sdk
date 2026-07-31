@@ -1,5 +1,5 @@
 import asyncio
-from typing import Any, Callable, Dict, List, Union
+from typing import Any, Callable, Dict, List, Union, cast
 
 import flyte
 
@@ -73,8 +73,9 @@ STEP_FUNCTIONS: Dict[str, Any | Callable[[Dict[str, Any]], Any]] = {
 @agent_env.task
 async def execute_plan(plan: List[Dict[str, Union[str, List[str]]]]) -> Dict[str, str]:
     step_funcs = STEP_FUNCTIONS
-    results = {}
-    remaining = {step["id"]: step for step in plan}
+    results: Dict[str, str] = {}
+    # Step ids are always strings; the Union in the plan type covers the "deps" lists.
+    remaining = {cast(str, step["id"]): step for step in plan}
 
     i = 0
     while remaining:

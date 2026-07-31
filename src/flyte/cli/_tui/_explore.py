@@ -12,12 +12,13 @@ from textual.events import Resize
 from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Header, Input, Label, OptionList, Select, TabbedContent, TabPane
 
-from ._app import (
+from ._app import ActionTreeWidget, DetailPanel
+from ._theme import (
     _FLYTE_PURPLE,
     _FLYTE_PURPLE_DARK,
     _FLYTE_PURPLE_LIGHT,
-    ActionTreeWidget,
-    DetailPanel,
+    BASE_CSS,
+    TREE_DETAIL_CSS,
 )
 from ._tracker import ActionTracker
 
@@ -374,87 +375,42 @@ class RunDetailScreen(Screen):
 class ExploreTUIApp(App[None]):
     """Standalone TUI app for browsing past local runs."""
 
-    CSS = f"""
-    Screen {{
-        background: {_FLYTE_PURPLE_DARK};
-    }}
-    Header {{
-        background: {_FLYTE_PURPLE};
-        color: {_FLYTE_PURPLE_LIGHT};
-    }}
-    Footer {{
-        background: {_FLYTE_PURPLE};
-        color: {_FLYTE_PURPLE_LIGHT};
-    }}
-    RunDetailScreen Horizontal {{
-        height: 1fr;
-    }}
-    ActionTreeWidget {{
-        width: 1fr;
-        min-width: 30;
-        border: solid {_FLYTE_PURPLE};
-        border-title-color: {_FLYTE_PURPLE_LIGHT};
-        background: {_FLYTE_PURPLE_DARK};
-        color: {_FLYTE_PURPLE_LIGHT};
-    }}
-    #right-tabs {{
-        width: 2fr;
-    }}
-    DetailPanel {{
-        background: {_FLYTE_PURPLE_DARK};
-    }}
-    TabPane {{
-        padding: 0;
-    }}
-    Tabs {{
-        background: {_FLYTE_PURPLE_DARK};
-        color: {_FLYTE_PURPLE_LIGHT};
-    }}
-    Tab {{
-        background: {_FLYTE_PURPLE_DARK};
-        color: {_FLYTE_PURPLE_LIGHT};
-    }}
-    Tab.-active {{
-        background: {_FLYTE_PURPLE};
-        color: {_FLYTE_PURPLE_LIGHT};
-    }}
-    Underline {{
-        color: {_FLYTE_PURPLE};
-    }}
-    _DetailBox {{
-        border: solid {_FLYTE_PURPLE};
-        border-title-color: {_FLYTE_PURPLE_LIGHT};
-        padding: 0 1;
-        margin-bottom: 1;
-        height: auto;
-        color: {_FLYTE_PURPLE_LIGHT};
-    }}
-    #filter-bar {{
-        height: 3;
-        padding: 0 1;
-        background: {_FLYTE_PURPLE_DARK};
-    }}
-    #filter-bar Label {{
-        padding: 1 1 0 0;
-        color: {_FLYTE_PURPLE_LIGHT};
-        width: auto;
-    }}
-    #status-filter {{
-        width: 16;
-    }}
-    #task-filter {{
-        width: 1fr;
-    }}
-    RunsTable {{
-        height: 1fr;
-        background: {_FLYTE_PURPLE_DARK};
-        color: {_FLYTE_PURPLE_LIGHT};
-    }}
-    DataTable > .datatable--cursor {{
-        background: {_FLYTE_PURPLE};
-        color: {_FLYTE_PURPLE_LIGHT};
-    }}
-    """
+    CSS = (
+        BASE_CSS
+        + """
+RunDetailScreen Horizontal {
+    height: 1fr;
+}
+"""
+        + TREE_DETAIL_CSS
+        + f"""
+#filter-bar {{
+    height: 3;
+    padding: 0 1;
+    background: {_FLYTE_PURPLE_DARK};
+}}
+#filter-bar Label {{
+    padding: 1 1 0 0;
+    color: {_FLYTE_PURPLE_LIGHT};
+    width: auto;
+}}
+#status-filter {{
+    width: 16;
+}}
+#task-filter {{
+    width: 1fr;
+}}
+RunsTable {{
+    height: 1fr;
+    background: {_FLYTE_PURPLE_DARK};
+    color: {_FLYTE_PURPLE_LIGHT};
+}}
+DataTable > .datatable--cursor {{
+    background: {_FLYTE_PURPLE};
+    color: {_FLYTE_PURPLE_LIGHT};
+}}
+"""
+    )
 
     def on_mount(self) -> None:
         self.title = "Flyte Explore"

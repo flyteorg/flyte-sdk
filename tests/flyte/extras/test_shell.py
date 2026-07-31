@@ -199,8 +199,10 @@ def _render_full(script, inputs, outputs=None, flag_aliases=None):
 
 class TestRenderCommand:
     def test_file_input_to_path(self):
+        # A single File stages into a per-input dir (NAMED_DIR) under its original
+        # basename, so it is referenced via a glob just like list[File].
         out = _render("cat {inputs.a}", {"a": File})
-        assert "/var/inputs/a" in out
+        assert "/var/inputs/a/*" in out
 
     def test_dir_input_to_path(self):
         out = _render("ls {inputs.d}", {"d": Dir})
@@ -314,16 +316,14 @@ class TestRenderCommand:
 
     def test_optional_file_flag_guarded(self):
         # Optional File flag must be guarded — if the caller didn't supply the
-        # file, the tool must not receive the flag. The backend materializes a
-        # 4-byte "null" sentinel FILE at /var/inputs/<name> for a declared-but-
-        # unset optional File, so `-e`/`-s`/`-f` are all true. Gate on a regular,
-        # non-empty file whose first bytes aren't that sentinel.
+        # file, the tool must not receive the flag. A File stages into a
+        # per-input directory, so a glob over it with `nullglob` yields no args
+        # (and the flag is assembled only when the glob matched something) when
+        # nothing was staged. No explicit existence/sentinel check is needed.
         out = _render("tool {flags.sites}", {"sites": File | None})
-        assert "[ -f /var/inputs/sites ]" in out
-        assert "[ -s /var/inputs/sites ]" in out
-        assert '[ "$(head -c 4 /var/inputs/sites)" != "null" ]' in out
-        assert "_FLAG_sites=-sites /var/inputs/sites" in out or "_FLAG_sites='-sites /var/inputs/sites'" in out
-        assert '_FLAG_sites=""' in out  # else branch
+        assert "shopt -s nullglob" in out
+        assert "/var/inputs/sites/*" in out
+        assert 'if [ "${#_FLAG_sites[@]}" -gt 0 ]' in out
 
     def test_optional_dir_flag_guarded(self):
         # Same conditional emission for optional Dir flags, gated on the

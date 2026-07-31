@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
 import os
 import pathlib
 import sys
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, cast
 
 import cloudpickle
 import rich.repr
@@ -14,15 +15,19 @@ import rich.repr
 from flyte.models import ActionID, NativeInterface, RawDataPath, SerializationContext, TaskContext
 from flyte.syncify import syncify
 
+from ._constants import FLYTE_SYS_PATH
 from ._environment import Environment
 from ._image import Image
 from ._initialize import ensure_client, get_client, get_init_config, requires_initialization
 from ._logging import logger
+from ._sentry import track_operation
 from ._status import status
 from ._task import TaskTemplate
 from ._task_environment import TaskEnvironment
 
 if TYPE_CHECKING:
+    from types import CodeType
+
     from flyteidl2.core import interface_pb2
     from flyteidl2.task import task_definition_pb2
 
@@ -162,6 +167,23 @@ class Deployment:
         return tuples
 
 
+def _with_local_sys_paths(task: TaskTemplate, root_dir: pathlib.Path) -> TaskTemplate:
+    """Return a task copy whose runtime env mirrors local imports under ``root_dir``."""
+    if not get_init_config().sync_local_sys_paths:
+        return task
+
+    root_dir_abs = pathlib.Path(root_dir).resolve()
+    env_vars = dict(task.env_vars or {})
+    env_vars[FLYTE_SYS_PATH] = ":".join(
+        f"./{pathlib.Path(path).relative_to(root_dir_abs)}"
+        for path in sys.path
+        if pathlib.Path(path).is_relative_to(root_dir_abs)
+    )
+    task_copy = copy.copy(task)
+    task_copy.env_vars = env_vars
+    return task_copy
+
+
 async def _deploy_task(
     task: TaskTemplate, serialization_context: SerializationContext, dryrun: bool = False
 ) -> DeployedTask:
@@ -180,6 +202,8 @@ async def _deploy_task(
     from ._internal.runtime.task_serde import lookup_image_in_cache, translate_task_to_wire
     from ._internal.runtime.trigger_serde import offload_trigger_inputs, to_task_trigger
 
+    assert serialization_context.root_dir is not None
+    task = _with_local_sys_paths(task, serialization_context.root_dir)
     assert task.parent_env_name is not None
     if isinstance(task.image, Image):
         image_uri: str | None = lookup_image_in_cache(serialization_context, task.parent_env_name, task.image)
@@ -264,20 +288,21 @@ async def _deploy_task(
             # else: no data to offload, or zero trust off — keep the inline inputs to_task_trigger set.
             deployable_triggers.append(task_trigger)
 
-        try:
-            await get_client().task_service.deploy_task(
-                task_service_pb2.DeployTaskRequest(
-                    task_id=task_id,
-                    spec=spec,
-                    triggers=deployable_triggers,
+        with track_operation("deploy_task"):
+            try:
+                await get_client().task_service.deploy_task(
+                    task_service_pb2.DeployTaskRequest(
+                        task_id=task_id,
+                        spec=spec,
+                        triggers=deployable_triggers,
+                    )
                 )
-            )
-            status.success(f"Deployed task {task.name} (version {task_id.version})")
-        except ConnectError as e:
-            if e.code == Code.ALREADY_EXISTS:
-                status.info(f"Task {task.name} already exists, skipping")
-                return DeployedTask(spec, deployable_triggers)
-            raise
+                status.success(f"Deployed task {task.name} (version {task_id.version})")
+            except ConnectError as e:
+                if e.code == Code.ALREADY_EXISTS:
+                    status.info(f"Task {task.name} already exists, skipping")
+                    return DeployedTask(spec, deployable_triggers)
+                raise
 
         return DeployedTask(spec, deployable_triggers)
     except Exception as e:
@@ -309,10 +334,10 @@ def _get_documentation_entity(task_template: TaskTemplate) -> task_definition_pb
     if docstring and docstring.long_description:
         long_desc = parse_description(docstring.long_description, 2048)
     if hasattr(task_template, "func") and hasattr(task_template.func, "__code__") and task_template.func.__code__:
-        line_number = (
-            task_template.func.__code__.co_firstlineno + 1
-        )  # The function definition line number is located at the line after @env.task decorator
-        file_path = task_template.func.__code__.co_filename
+        func_code = cast("CodeType", task_template.func.__code__)
+        # The function definition line number is located at the line after @env.task decorator
+        line_number = func_code.co_firstlineno + 1
+        file_path = func_code.co_filename
         git_status = GitStatus.from_current_repo()
         if git_status.is_valid:
             # Build git host url
@@ -388,12 +413,20 @@ async def _build_images(
     deployment: DeploymentPlan,
     image_refs: Dict[str, str] | None = None,
     copy_style: "CopyFiles" = "loaded_modules",
+    seed_cache: ImageCache | None = None,
 ) -> ImageCache:
     """
     Build the images for the given deployment plan and update the environment with the built image.
 
     Resolves any ``CodeBundleLayer`` layers first so callers (apply, build_images, serve,
     connectors, run) don't each need to duplicate that step.
+
+    :param seed_cache: Optional ImageCache of environments already built by a prior deploy
+        (e.g. the parent run that launched the current task pod, transported in via the task
+        context). Environments found in the seed reuse the recorded URI directly — skipping
+        hashing, existence checks, and builds. This matters in-cluster, where the resolved
+        URI can differ from the locally-predicted one (the remote builder may push to a
+        backend-assigned system registry) and where there may be no builder available at all.
     """
     from flyte._image import _DEFAULT_IMAGE_REF_NAME, resolve_code_bundle_layer
     from flyte.errors import InvalidImageNameError
@@ -412,6 +445,10 @@ async def _build_images(
     image_identifier_map: Dict[str, str] = {}
     build_run_ids: Dict[str, Any] = {}
     for env_name, env in deployment.envs.items():
+        if seed_cache and env_name in seed_cache.image_lookup:
+            # Already built by a prior deploy — reuse the resolved URI (see docstring).
+            image_identifier_map[env_name] = seed_cache.image_lookup[env_name]
+            continue
         if env.image and not isinstance(env.image, str):
             if env.image._ref_name is not None:
                 if env.image._ref_name in image_refs:
@@ -514,19 +551,27 @@ async def apply(deployment_plan: DeploymentPlan, copy_style: CopyFiles, dryrun: 
 
             import click
 
+            from ._utils import original_std_streams
+
             h = hashlib.md5()
             try:
-                h.update(cloudpickle.dumps(deployment_plan.envs))
-                h.update(code_bundle.computed_version.encode("utf-8"))
-                h.update(cloudpickle.dumps(image_cache))
+                # Pickle with the original std streams in place: a UI spinner (rich Live)
+                # may have swapped sys.stdout/sys.stderr for proxies, which breaks
+                # cloudpickle's identity-based handling of stream references held by
+                # module globals (e.g. loguru's default sink).
+                with original_std_streams():
+                    h.update(cloudpickle.dumps(deployment_plan.envs))
+                    h.update(code_bundle.computed_version.encode("utf-8"))
+                    h.update(cloudpickle.dumps(image_cache))
             except (_pickle.PicklingError, TypeError) as e:
                 raise click.ClickException(
-                    "Failed to compute deployment version: your task or environment captures an "
-                    f"unpicklable object ({type(e).__name__}: {e}). This is usually caused by closing "
-                    "over `sys.stdin` / `sys.stdout` / `sys.stderr`, an open file handle, a thread, "
-                    "or a lock from module-level code. Move the captured value inside the task "
-                    "function, or pass an explicit `version=...` to `flyte.deploy(...)` to skip "
-                    "version derivation."
+                    "Failed to compute deployment version: the deployment captures an "
+                    f"unpicklable object ({type(e).__name__}: {e}). This is usually caused by a "
+                    "reference to `sys.stdin` / `sys.stdout` / `sys.stderr`, an open file handle, "
+                    "a thread, or a lock reachable from module-level code — either in your task "
+                    "module or in a third-party library it imports. If the value is yours, move it "
+                    "inside the task function; otherwise pass an explicit `version=...` to "
+                    "`flyte.deploy(...)` to skip version derivation."
                 ) from e
             version = h.hexdigest()
 
@@ -664,7 +709,11 @@ async def deploy(
 
 
 @syncify
-async def build_images(*envs: Environment, copy_style: "CopyFiles" = "loaded_modules") -> ImageCache:
+async def build_images(
+    *envs: Environment,
+    copy_style: "CopyFiles" = "loaded_modules",
+    seed_cache: ImageCache | None = None,
+) -> ImageCache:
     """
     Build the images for the given environment(s).
     :param envs: One or more environments to build images for. When multiple environments are
@@ -673,6 +722,9 @@ async def build_images(*envs: Environment, copy_style: "CopyFiles" = "loaded_mod
     :param copy_style: Copy style that the eventual deploy will use. Must match the deploy's
         ``--copy-style`` so the image content hashes — and therefore the registry tags — line
         up, letting deploy reuse the pre-built image.
+    :param seed_cache: Optional ImageCache of environments already built by a prior deploy.
+        Seeded environments reuse the recorded URI and skip the build pipeline entirely; see
+        ``_build_images`` for details.
     :return: ImageCache containing the built images.
     """
     from ._internal.imagebuild.image_builder import ImageCache
@@ -680,7 +732,7 @@ async def build_images(*envs: Environment, copy_style: "CopyFiles" = "loaded_mod
     cfg = get_init_config()
     images = cfg.images if cfg else {}
     deployment_plans = plan_deploy(*envs)
-    caches = [await _build_images(plan, images, copy_style) for plan in deployment_plans]
+    caches = [await _build_images(plan, images, copy_style, seed_cache=seed_cache) for plan in deployment_plans]
     if len(caches) == 1:
         return caches[0]
 

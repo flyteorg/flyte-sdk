@@ -49,8 +49,8 @@ class _Condition(Generic[ConditionType]):
 
     @env.task
     async def my_task() -> Optional[int]:
-        condition = await flyte.new_condition(name="my_condition", prompt="Is it ok to continue?", data_type=bool)
-        result = await condition.wait()
+        condition = await flyte.new_condition.aio(name="my_condition", prompt="Is it ok to continue?", data_type=bool)
+        result = await condition.wait.aio()
         if result:
             return 42
         else:
@@ -61,7 +61,7 @@ class _Condition(Generic[ConditionType]):
     name: str
     prompt: str = "Approve?"
     prompt_type: PromptType = "text"
-    data_type: Type[ConditionType] = bool  # type: ignore[assignment]
+    data_type: Type[ConditionType] = bool  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
     description: str = ""
     timeout: Union[timedelta, int, float, None] = None
     webhook: Optional[ConditionWebhook] = None
@@ -124,7 +124,7 @@ async def new_condition(
     /,
     prompt: str = "Approve?",
     prompt_type: PromptType = "text",
-    data_type: Type[ConditionType] = bool,  # type: ignore[assignment]
+    data_type: Type[ConditionType] = bool,  # type: ignore[assignment]  # ty: ignore[invalid-parameter-default]
     description: str = "",
     timeout: Union[timedelta, int, float, None] = None,
     webhook: Optional[ConditionWebhook] = None,

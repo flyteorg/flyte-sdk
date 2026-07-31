@@ -267,6 +267,11 @@ class _ShellContainerTask(ContainerTask):
             env_vars=shell.env_vars,
             secrets=shell.secrets,
             local_logs=shell.local_logs,
+            # Shell tasks reference inputs through a glob (/var/inputs/<name>/*),
+            # so File inputs must stage into a per-input directory under their
+            # original basename — preserving the extension for tools that sniff
+            # format by extension.
+            file_input_layout="NAMED_DIR",
         )
 
     async def _get_output(self, output_directory: pathlib.Path) -> Tuple[Any, ...]:  # type: ignore[override]

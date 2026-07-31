@@ -499,6 +499,69 @@ async def test_record_trace_with_error():
         mock_convert_error.assert_called_once_with(test_error)
         mock_upload_error.assert_called_once()
         mock_submit_and_wait.assert_called_once()
+        # The recorded errored trace must carry recoverability into error.pb so a replay can
+        # distinguish a transient failure (re-run) from a deterministic one (replay).
+        assert "recoverable" in mock_upload_error.call_args.kwargs
+
+
+def test_from_trace_success_is_succeeded():
+    """A trace with no error records SUCCEEDED (unchanged behavior)."""
+    action_id = identifier_pb2.ActionIdentifier(name="t", run=identifier_pb2.RunIdentifier(name="r"))
+    a = Action.from_trace(
+        parent_action_name="parent",
+        action_id=action_id,
+        friendly_name="fn",
+        group_data=None,
+        inputs_uri="in://x",
+        outputs_uri="out://x",
+        start_time=0.0,
+        end_time=1.0,
+        run_output_base="base://x",
+    )
+    assert a.phase == phase_pb2.ACTION_PHASE_SUCCEEDED
+    assert a.trace.phase == phase_pb2.ACTION_PHASE_SUCCEEDED
+    assert a.err is None
+
+
+def test_from_trace_error_is_failed():
+    """A trace that recorded an error must be FAILED, not SUCCEEDED — recording it as a
+    success with an empty outputs_uri both hides the failure and, on replay, sends the empty
+    URI into load_outputs (the reproduced IsADirectoryError crash)."""
+    action_id = identifier_pb2.ActionIdentifier(name="t", run=identifier_pb2.RunIdentifier(name="r"))
+    err = execution_pb2.ExecutionError(
+        code="429", message="rate limited", recoverability=execution_pb2.ContainerError.RECOVERABLE
+    )
+    a = Action.from_trace(
+        parent_action_name="parent",
+        action_id=action_id,
+        friendly_name="fn",
+        group_data=None,
+        inputs_uri="in://x",
+        outputs_uri="",
+        start_time=0.0,
+        end_time=1.0,
+        run_output_base="base://x",
+        error=err,
+    )
+    assert a.phase == phase_pb2.ACTION_PHASE_FAILED
+    assert a.trace.phase == phase_pb2.ACTION_PHASE_FAILED
+    assert a.err is err
+    assert a.has_error()
+
+
+def test_trace_error_is_recoverable_helper():
+    """Recoverability gates replay-vs-rerun: RECOVERABLE re-runs, everything else replays."""
+    from flyte._internal.controllers.remote._controller import _trace_error_is_recoverable
+
+    recoverable = execution_pb2.ExecutionError(recoverability=execution_pb2.ContainerError.RECOVERABLE)
+    non_recoverable = execution_pb2.ExecutionError(recoverability=execution_pb2.ContainerError.NON_RECOVERABLE)
+    unset = execution_pb2.ExecutionError(code="x", message="no recoverability set")
+
+    assert _trace_error_is_recoverable(recoverable) is True
+    assert _trace_error_is_recoverable(non_recoverable) is False
+    # Defaults to NON_RECOVERABLE (0) when unset or absent -> replay, matching prior behavior.
+    assert _trace_error_is_recoverable(unset) is False
+    assert _trace_error_is_recoverable(None) is False
 
 
 @pytest.mark.asyncio
@@ -876,3 +939,89 @@ async def test_submit_task_reparents_to_task_action_inside_trace():
         # The submit semaphore is keyed by the real task action, not the trace pseudo-action.
         assert unique_action_name(tctx.task_action) in controller._parent_action_semaphore
         assert unique_action_name(tctx.action) not in controller._parent_action_semaphore
+
+
+@pytest.mark.asyncio
+async def test_bg_launch_replaces_connection_after_consecutive_timeouts():
+    """Consecutive enqueue deadline timeouts replace the HTTP client (dead pooled connection);
+    any response from the server resets the streak."""
+    from aiolimiter import AsyncLimiter
+    from connectrpc.code import Code
+    from connectrpc.errors import ConnectError
+
+    from flyte._internal.controllers.remote._core import _LAUNCH_TIMEOUTS_BEFORE_NEW_CONNECTION
+
+    controller = object.__new__(Controller)
+    controller._rate_limiter = AsyncLimiter(100, 1.0)
+    controller._enqueue_timeout = 0.01
+    controller._consecutive_launch_timeouts = 0
+    controller._client_set = MagicMock()
+    controller._actions_service = AsyncMock()
+    controller._actions_service.enqueue.side_effect = ConnectError(Code.DEADLINE_EXCEEDED, "Request timed out")
+
+    action = Action(
+        parent_action_name="parent",
+        action_id=identifier_pb2.ActionIdentifier(
+            name="child",
+            run=identifier_pb2.RunIdentifier(name="run"),
+        ),
+        type="trace",
+    )
+
+    for i in range(_LAUNCH_TIMEOUTS_BEFORE_NEW_CONNECTION):
+        with pytest.raises(flyte.errors.SlowDownError):
+            await controller._bg_launch(action)
+        if i < _LAUNCH_TIMEOUTS_BEFORE_NEW_CONNECTION - 1:
+            controller._client_set.replace_http_client.assert_not_called()
+
+    controller._client_set.replace_http_client.assert_called_once()
+    assert controller._consecutive_launch_timeouts == 0
+
+    # A response from the server (even an error) proves the connection is alive and resets the streak.
+    controller._actions_service.enqueue.side_effect = ConnectError(Code.DEADLINE_EXCEEDED, "Request timed out")
+    with pytest.raises(flyte.errors.SlowDownError):
+        await controller._bg_launch(action)
+    assert controller._consecutive_launch_timeouts == 1
+
+    controller._actions_service.enqueue.side_effect = ConnectError(Code.ALREADY_EXISTS, "exists")
+    await controller._bg_launch(action)
+    assert controller._consecutive_launch_timeouts == 0
+    controller._client_set.replace_http_client.assert_called_once()
+
+
+def test_swappable_http_client_delegates_to_current_inner(monkeypatch):
+    """The facade handed to connectrpc never changes; replace() only redirects which
+    client serves the next request — even through a bound method captured earlier."""
+    monkeypatch.setenv("_U_USE_ACTIONS", "1")
+    from flyte._internal.controllers.remote._client import ControllerClient, _SwappableHTTPClient
+    from flyte.remote._client.auth._session import SessionConfig
+
+    class FakeInner:
+        def __init__(self):
+            self.posts = 0
+
+        def post(self, *args, **kwargs):
+            self.posts += 1
+            return self
+
+    first, second = FakeInner(), FakeInner()
+    facade = _SwappableHTTPClient(first)
+    bound_post = facade.post  # captured before the swap, like connectrpc might
+    assert bound_post() is first
+    facade.replace(second)
+    assert bound_post() is second
+    assert (first.posts, second.posts) == (1, 1)
+
+    # ControllerClient hands the same facade to all service clients and swaps it in place.
+    cfg = SessionConfig(
+        endpoint="https://example.test",
+        insecure=False,
+        insecure_skip_verify=False,
+        interceptors=(),
+        http_client=first,
+    )
+    cc = ControllerClient(cfg)
+    facade = cc._http_client
+    assert facade._inner is first
+    cc.replace_http_client()
+    assert facade._inner is not first  # fresh real client, same facade object

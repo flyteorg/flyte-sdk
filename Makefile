@@ -24,8 +24,13 @@ fmt:
 mypy:
 	uv run python -m mypy --config-file pyproject.toml \
 		src/ \
-		examples/basics/hello.py \
-		examples/basics/hello_v2.py
+		examples/
+
+.PHONY: ty
+ty:
+	uv run ty check \
+		src/ \
+		examples/
 
 .PHONY: uvlock
 uvlock:
@@ -93,7 +98,7 @@ unit_test_plugins:
 	@for plugin in $${FLYTE_PLUGIN:-plugins/*}; do \
 		if [ -d "$$plugin/tests" ]; then \
 			echo "🚀 Testing plugin: $$plugin..."; \
-			cd "$$plugin" && uv run python -m pytest tests/ && cd ../..; \
+			( cd "$$plugin" && uv run python -m pytest tests/ ); \
 		fi \
 	done
 

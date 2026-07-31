@@ -42,6 +42,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 import flyte
+import flyte.app
 from flyte.app.extras import FastAPIAppEnvironment
 
 # ---------------------------------------------------------------------------

@@ -112,7 +112,7 @@ class FormattedResponse(TypedDict):
 # Knowledge bases — structured data the agent's tools can look up
 # ---------------------------------------------------------------------------
 
-_UNION_OVERVIEW = {
+_UNION_OVERVIEW: dict[str, OverviewInfo | list[str]] = {
     "overview": {
         "name": "Union",
         "tagline": "The AI orchestration platform built on Flyte",
@@ -149,7 +149,7 @@ _UNION_OVERVIEW = {
     ],
 }
 
-_FLYTE_OVERVIEW = {
+_FLYTE_OVERVIEW: dict[str, OverviewInfo | list[str] | dict[str, str]] = {
     "overview": {
         "name": "Flyte",
         "tagline": "The open-source AI & data orchestration platform",
@@ -198,7 +198,7 @@ _FLYTE_OVERVIEW = {
     },
 }
 
-_COMPETITOR_PROFILES: dict[str, dict] = {
+_COMPETITOR_PROFILES: dict[str, CompetitorProfile] = {
     "airflow": {
         "name": "Apache Airflow",
         "category": "Workflow orchestration",
@@ -351,7 +351,7 @@ _COMPETITOR_PROFILES: dict[str, dict] = {
     },
 }
 
-_WHY_FLYTE_UNION: dict[str, dict] = {
+_WHY_FLYTE_UNION: dict[str, WhyFlyteDimension] = {
     "on_prem_and_hybrid": {
         "dimension": "On-Prem & Hybrid Deployment",
         "summary": (
@@ -468,7 +468,7 @@ _WHY_FLYTE_UNION: dict[str, dict] = {
     },
 }
 
-_SALES_FUNNEL_GUIDANCE = {
+_SALES_FUNNEL_GUIDANCE: dict[str, FunnelStage] = {
     "top_of_funnel": {
         "stage": "Awareness / Research",
         "description": "Prospect is exploring AI orchestration options",
@@ -570,7 +570,7 @@ async def lookup_flyte_info(
 
 async def compare_with_competitor(
     competitor: Literal["airflow", "prefect", "dagster", "ray", "kubeflow", "modal"],
-) -> dict[str, CompetitorProfile]:
+) -> dict[str, CompetitorProfile | str]:
     """Get a detailed comparison of Flyte/Union vs a specific competitor.
 
     Returns dict keyed by competitor name:
@@ -584,7 +584,7 @@ async def compare_with_competitor(
     if profile is None:
         available = ", ".join(sorted(_COMPETITOR_PROFILES.keys()))
         return {"error": f"Unknown competitor '{competitor}'. Available: {available}"}
-    return {key: dict(profile)}
+    return {key: profile.copy()}
 
 
 async def list_competitors() -> list[CompetitorSummary]:
@@ -606,7 +606,7 @@ async def lookup_why_flyte(
         "cost_efficiency",
         "all",
     ],
-) -> dict[str, WhyFlyteDimension]:
+) -> dict[str, WhyFlyteDimension | str]:
     """Look up a specific technical reason for choosing Flyte/Union.
 
     Returns dict keyed by *dimension*:
@@ -616,12 +616,12 @@ async def lookup_why_flyte(
     Access: result = lookup_why_flyte("ml_native"); info = result["ml_native"]
     """
     if dimension == "all":
-        return _WHY_FLYTE_UNION
+        return dict(_WHY_FLYTE_UNION)
     entry = _WHY_FLYTE_UNION.get(dimension)
     if entry is None:
         available = ", ".join(sorted(_WHY_FLYTE_UNION.keys()))
         return {"error": f"Unknown dimension '{dimension}'. Available: {available}"}
-    return {dimension: dict(entry)}
+    return {dimension: entry.copy()}
 
 
 async def list_why_flyte_dimensions() -> list[WhyFlyteSummary]:
@@ -637,7 +637,7 @@ async def list_why_flyte_dimensions() -> list[WhyFlyteSummary]:
 
 async def get_sales_funnel_guidance(
     stage: Literal["top_of_funnel", "mid_funnel", "bottom_funnel", "all"],
-) -> dict[str, FunnelStage]:
+) -> dict[str, FunnelStage | str]:
     """Get guidance on how to respond based on the prospect's funnel stage.
 
     Returns dict keyed by *stage*:
@@ -652,7 +652,7 @@ async def get_sales_funnel_guidance(
     if entry is None:
         available = ", ".join(sorted(_SALES_FUNNEL_GUIDANCE.keys()))
         return {"error": f"Unknown stage '{stage}'. Available: {available}"}
-    return {stage: dict(entry)}
+    return {stage: entry.copy()}
 
 
 async def get_resource_links(
@@ -668,7 +668,7 @@ async def get_resource_links(
 
     Access: result = get_resource_links("all"); docs = result["docs"]
     """
-    _links = {
+    _links: dict[str, LinkGroup] = {
         "websites": {
             "union": "https://www.union.ai/",
             "flyte": "https://flyte.org/",

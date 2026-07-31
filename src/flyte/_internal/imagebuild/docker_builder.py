@@ -26,6 +26,7 @@ from flyte._image import (
     Layer,
     PipOption,
     PipPackages,
+    PixiProject,
     PoetryProject,
     PythonWheels,
     Requirements,
@@ -44,6 +45,8 @@ from flyte._internal.imagebuild.image_builder import (
     PersistentCacheImageChecker,
 )
 from flyte._internal.imagebuild.utils import (
+    PIXI_PROJECT_DIR,
+    PIXI_VERSION,
     copy_files_to_context,
     get_and_list_dockerignore,
     get_uv_editable_install_mounts,
@@ -58,6 +61,7 @@ _F_IMG_ID = "_F_IMG_ID"
 FLYTE_DOCKER_BUILDER_CACHE_FROM = "FLYTE_DOCKER_BUILDER_CACHE_FROM"
 FLYTE_DOCKER_BUILDER_CACHE_TO = "FLYTE_DOCKER_BUILDER_CACHE_TO"
 FLYTE_DOCKER_BUILDKIT_BUILDER_NAME = "FLYTE_DOCKER_BUILDKIT_BUILDER_NAME"
+FLYTE_DOCKER_BUILD_EXTRA_ARGS = "FLYTE_DOCKER_BUILD_EXTRA_ARGS"
 
 UV_LOCK_WITHOUT_PROJECT_INSTALL_TEMPLATE = Template("""\
 RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
@@ -108,6 +112,22 @@ RUN --mount=type=cache,sharing=locked,mode=0777,target=/tmp/poetry_cache,id=poet
    --mount=type=bind,target=/root/.flyte/$PYPROJECT_PATH,src=$PYPROJECT_PATH,rw \
    $SECRET_MOUNT \
    VIRTUAL_ENV=$${VIRTUAL_ENV-/opt/venv} poetry install $POETRY_INSTALL_ARGS -C /root/.flyte/$PYPROJECT_PATH
+""")
+
+PIXI_INSTALL_TEMPLATE = Template("""\
+COPY --from=ghcr.io/prefix-dev/pixi:$PIXI_VERSION /usr/local/bin/pixi /usr/local/bin/pixi
+$MANIFEST_COPY_LINES
+RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/rattler,id=pixi \
+   $SECRET_MOUNT \
+   pixi install --manifest-path $PIXI_PROJECT_DIR/$MANIFEST_NAME \
+    --environment $PIXI_ENVIRONMENT $PIXI_INSTALL_ARGS
+
+# Make the pixi environment the active runtime: the task entrypoint and any subsequent
+# uv/pip layers resolve into it instead of the original virtualenv.
+ENV VIRTUAL_ENV=$PIXI_ENV_DIR \
+   UV_PYTHON=$PIXI_ENV_DIR/bin/python \
+   PIXI_PROJECT_MANIFEST=$PIXI_PROJECT_DIR/$MANIFEST_NAME \
+   PATH=$PIXI_ENV_DIR/bin:$$PATH
 """)
 
 UV_PACKAGE_INSTALL_COMMAND_TEMPLATE = Template("""\
@@ -370,6 +390,56 @@ class UVProjectHandler:
         return dockerfile
 
 
+class PixiProjectHandler:
+    @staticmethod
+    async def handle(
+        layer: PixiProject, context_path: Path, dockerfile: str, docker_ignore_patterns: list[str] = []
+    ) -> str:
+        secret_mounts = _get_secret_mounts_layer(layer.secret_mounts)
+
+        install_args = []
+        # --frozen and --locked are mutually exclusive. Honour a user-supplied --frozen.
+        if layer.pixi_lock is not None and "--frozen" not in (layer.extra_args or ""):
+            install_args.append("--locked")
+        if layer.extra_args:
+            install_args.append(layer.extra_args)
+
+        if layer.project_install_mode == "dependencies_only":
+            # Only copy the manifest and pixi.lock (if present).
+            manifest_dst = copy_files_to_context(layer.manifest, context_path)
+            copy_lines = [f"COPY {manifest_dst.relative_to(context_path)} {PIXI_PROJECT_DIR}/{layer.manifest.name}"]
+            if layer.pixi_lock is not None:
+                lock_dst = copy_files_to_context(layer.pixi_lock, context_path)
+                copy_lines.append(f"COPY {lock_dst.relative_to(context_path)} {PIXI_PROJECT_DIR}/pixi.lock")
+        else:
+            # Copy the entire project.
+            project_dst = copy_files_to_context(layer.manifest.parent, context_path, docker_ignore_patterns)
+
+            # Make sure the manifest and pixi.lock files are not removed by docker ignore
+            manifest_context_path = project_dst / layer.manifest.name
+            pixi_lock_context_path = project_dst / "pixi.lock"
+            if not manifest_context_path.exists():
+                shutil.copy(layer.manifest, project_dst)
+            if layer.pixi_lock is not None and not pixi_lock_context_path.exists():
+                shutil.copy(layer.pixi_lock, project_dst)
+
+            copy_lines = [f"COPY {project_dst.relative_to(context_path)} {PIXI_PROJECT_DIR}"]
+
+        delta = PIXI_INSTALL_TEMPLATE.substitute(
+            PIXI_VERSION=PIXI_VERSION,
+            MANIFEST_COPY_LINES="\n".join(copy_lines),
+            MANIFEST_NAME=layer.manifest.name,
+            PIXI_PROJECT_DIR=PIXI_PROJECT_DIR,
+            PIXI_ENVIRONMENT=layer.environment,
+            PIXI_ENV_DIR=f"{PIXI_PROJECT_DIR}/.pixi/envs/{layer.environment}",
+            PIXI_INSTALL_ARGS=" ".join(install_args),
+            SECRET_MOUNT=secret_mounts,
+        )
+
+        dockerfile += delta
+        return dockerfile
+
+
 class PoetryProjectHandler:
     @staticmethod
     async def handle(
@@ -413,6 +483,13 @@ class PoetryProjectHandler:
 class DockerIgnoreHandler:
     @staticmethod
     async def handle(layer: DockerIgnore, context_path: Path, _: str):
+        if not Path(layer.path).is_file():
+            from flyte.errors import ImageBuildError
+
+            raise ImageBuildError(
+                f"The .dockerignore file specified via with_dockerignore() was not found at '{layer.path}'. "
+                f"Ensure the path points to an existing file."
+            )
         shutil.copy(layer.path, context_path)
 
 
@@ -473,7 +550,7 @@ def _get_secret_commands(layers: typing.Tuple[Layer, ...]) -> typing.List[str]:
         return ["--secret", f"id={secret_id},src={secret_file_path}"]
 
     for layer in layers:
-        if isinstance(layer, (PipOption, AptPackages, Commands)):
+        if isinstance(layer, (PipOption, AptPackages, Commands, PixiProject)):
             if layer.secret_mounts:
                 for secret_mount in layer.secret_mounts:
                     secret = Secret(key=secret_mount) if isinstance(secret_mount, str) else secret_mount
@@ -502,6 +579,12 @@ def _get_secret_mounts_layer(secrets: typing.Tuple[str | Secret, ...] | None) ->
     return " ".join(secret_mounts_layer)
 
 
+def _get_extra_build_args() -> typing.List[str]:
+    """Extra flags to pass to `docker buildx build`, appended to the flags flyte builds itself."""
+    extra_args = os.getenv(FLYTE_DOCKER_BUILD_EXTRA_ARGS)
+    return shlex.split(extra_args) if extra_args else []
+
+
 async def _process_layer(
     layer: Layer, context_path: Path, dockerfile: str, docker_ignore_patterns: list[str] = []
 ) -> str:
@@ -517,7 +600,9 @@ async def _process_layer(
             header = parse_uv_script_file(layer.script)
             if header.dependencies:
                 pip = PipPackages(
-                    packages=_ensure_tuple(header.dependencies) if header.dependencies else None,
+                    packages=cast("tuple[str, ...]", _ensure_tuple(header.dependencies))
+                    if header.dependencies
+                    else None,
                     secret_mounts=layer.secret_mounts,
                     index_url=layer.index_url,
                     extra_args=layer.extra_args,
@@ -559,9 +644,9 @@ async def _process_layer(
             # Handle Poetry project
             dockerfile = await PoetryProjectHandler.handle(layer, context_path, dockerfile, docker_ignore_patterns)
 
-        case PoetryProject():
-            # Handle Poetry project
-            dockerfile = await PoetryProjectHandler.handle(layer, context_path, dockerfile, docker_ignore_patterns)
+        case PixiProject():
+            # Handle pixi project
+            dockerfile = await PixiProjectHandler.handle(layer, context_path, dockerfile, docker_ignore_patterns)
 
         case CopyConfig():
             # Handle local files and folders
@@ -666,6 +751,7 @@ class DockerImageBuilder(ImageBuilder):
             command.append("--load")
 
         command.extend(_get_secret_commands(layers=image._layers))
+        command.extend(_get_extra_build_args())
 
         concat_command = " ".join(command)
         logger.debug(f"Build command: {concat_command}")
@@ -705,11 +791,17 @@ class DockerImageBuilder(ImageBuilder):
         except subprocess.CalledProcessError:
             raise ImageBuildError("Docker buildx is not available. Make sure BuildKit is installed and enabled.")
 
-        # List builders
-        result = await run_sync_with_loop(
-            subprocess.run, ["docker", "buildx", "ls"], capture_output=True, text=True, check=True
-        )
-        builders = result.stdout
+        try:
+            result = await run_sync_with_loop(
+                subprocess.run, ["docker", "buildx", "ls"], capture_output=True, text=True, check=True
+            )
+        except subprocess.CalledProcessError as e:
+            raise ImageBuildError(
+                f"Failed to list docker buildx builders: {(e.stderr or '').strip() or e}. "
+                "Ensure the Docker daemon is running, or use the remote image builder by setting "
+                "`image_builder='remote'` on your `flyte.Image`."
+            ) from e
+        builders = cast(str, result.stdout)
 
         # Check if there's any usable builder with the correct driver options
         if DockerImageBuilder._builder_name in builders:
@@ -720,7 +812,7 @@ class DockerImageBuilder(ImageBuilder):
                 capture_output=True,
                 text=True,
             )
-            if inspect_result.returncode == 0 and 'network="host"' in inspect_result.stdout:
+            if inspect_result.returncode == 0 and 'network="host"' in cast(str, inspect_result.stdout):
                 logger.info("Buildx builder already exists with correct config.")
                 return
 
@@ -734,21 +826,36 @@ class DockerImageBuilder(ImageBuilder):
         else:
             logger.info("No buildx builder found, creating one...")
 
-        await run_sync_with_loop(
-            subprocess.run,
-            [
-                "docker",
-                "buildx",
-                "create",
-                "--name",
-                DockerImageBuilder._builder_name,
-                "--platform",
-                "linux/amd64,linux/arm64",
-                "--driver-opt",
-                "network=host",
-            ],
-            check=True,
-        )
+        try:
+            await run_sync_with_loop(
+                subprocess.run,
+                [
+                    "docker",
+                    "buildx",
+                    "create",
+                    "--name",
+                    DockerImageBuilder._builder_name,
+                    "--platform",
+                    "linux/amd64,linux/arm64",
+                    "--driver-opt",
+                    "network=host",
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        except subprocess.CalledProcessError as e:
+            stderr = (e.stderr or "").strip()
+            # A concurrent build may have created the builder between our `ls` check and now;
+            # if it already exists we can just reuse it instead of failing.
+            if "already exists" in stderr.lower():
+                logger.info(f"Buildx builder {DockerImageBuilder._builder_name!r} already exists, reusing it.")
+                return
+            raise ImageBuildError(
+                f"Failed to create docker buildx builder {DockerImageBuilder._builder_name!r}: {stderr or e}. "
+                f"Try removing it with `docker buildx rm {DockerImageBuilder._builder_name}`, or use the remote "
+                "image builder by setting `image_builder='remote'` on your `flyte.Image`."
+            ) from e
 
     async def _build_image(self, image: Image, *, push: bool = True, dry_run: bool = False, wait: bool = True) -> str:
         """
@@ -821,6 +928,7 @@ class DockerImageBuilder(ImageBuilder):
                 command.append("--load")
 
             command.extend(_get_secret_commands(layers=image._layers))
+            command.extend(_get_extra_build_args())
             command.append(tmp_dir)
 
             concat_command = " ".join(command)

@@ -255,6 +255,72 @@ def test_copy_files_to_context_skips_files_that_vanish_mid_walk():
         assert (dst / "keep.txt").exists()
 
 
+def test_copy_files_to_context_falls_back_when_copy2_permission_denied():
+    """``shutil.copy2`` also copies file metadata, which raises ``PermissionError`` ([Errno 1]
+    Operation not permitted) on macOS for flag/SIP-protected files (e.g. ``.git`` internals). The
+    build should fall back to copying just the file contents rather than crashing (FLYTE-SDK-6F).
+    """
+    with tempfile.TemporaryDirectory() as src_root, tempfile.TemporaryDirectory() as ctx_root:
+        src = Path(src_root)
+        keep = src / "keep.txt"
+        keep.write_text("kept\n")
+        protected = src / "protected.txt"
+        protected.write_text("payload\n")
+
+        real_copyfile = shutil.copyfile
+
+        def fragile_copy2(s, d, *args, **kwargs):
+            # Simulate copystat failing on a metadata-protected file while data is readable.
+            if Path(s).name == "protected.txt":
+                raise PermissionError(1, "Operation not permitted", str(s))
+            return real_copyfile(s, d)
+
+        import shutil as _shutil_mod
+
+        with patch.object(_shutil_mod, "copy2", side_effect=fragile_copy2):
+            # Should not raise — protected file falls back to copyfile, keep file copies normally.
+            dst = copy_files_to_context(src, Path(ctx_root))
+
+        assert (dst / "keep.txt").exists()
+        assert (dst / "protected.txt").read_text() == "payload\n"
+
+
+def test_copy_files_to_context_skips_when_data_unreadable():
+    """If even the file contents cannot be read (permission denied on the data itself), the entry
+    is skipped with a warning and the rest of the build continues (FLYTE-SDK-6F).
+    """
+    with tempfile.TemporaryDirectory() as src_root, tempfile.TemporaryDirectory() as ctx_root:
+        src = Path(src_root)
+        keep = src / "keep.txt"
+        keep.write_text("kept\n")
+        unreadable = src / "unreadable.txt"
+        unreadable.write_text("secret\n")
+
+        real_copyfile = shutil.copyfile
+
+        def fragile_copy2(s, d, *args, **kwargs):
+            if Path(s).name == "unreadable.txt":
+                raise PermissionError(1, "Operation not permitted", str(s))
+            return real_copyfile(s, d)
+
+        def fragile_copyfile(s, d, *args, **kwargs):
+            if Path(s).name == "unreadable.txt":
+                raise PermissionError(1, "Operation not permitted", str(s))
+            return real_copyfile(s, d, *args, **kwargs)
+
+        import shutil as _shutil_mod
+
+        with (
+            patch.object(_shutil_mod, "copy2", side_effect=fragile_copy2),
+            patch.object(_shutil_mod, "copyfile", side_effect=fragile_copyfile),
+        ):
+            # Should not raise — unreadable file is skipped, kept file is copied.
+            dst = copy_files_to_context(src, Path(ctx_root))
+
+        assert (dst / "keep.txt").exists()
+        assert not (dst / "unreadable.txt").exists()
+
+
 import shutil  # noqa: E402  (kept at bottom so the new tests own the import)
 
 

@@ -16,10 +16,12 @@ from typing import (
     Any,
     AsyncGenerator,
     Callable,
+    Dict,
     Generator,
     Literal,
     Optional,
     Protocol,
+    cast,
     runtime_checkable,
 )
 
@@ -116,7 +118,7 @@ def _signal_handler(signum: int, frame) -> None:
     # (e.g. KeyboardInterrupt for SIGINT).
     original = _ORIGINAL_SIGINT_HANDLER if signum == signal.SIGINT else _ORIGINAL_SIGTERM_HANDLER
     if callable(original):
-        original(signum, frame)
+        cast(Callable[..., Any], original)(signum, frame)
     elif original == signal.SIG_DFL:
         # Re-raise with default disposition
         signal.signal(signum, signal.SIG_DFL)
@@ -498,20 +500,24 @@ class _Serve:
             asyncio.set_event_loop(loop)
             local_app._thread_loop = loop
             try:
+                # _bind_parameters accepts dict[str, str | File | Dir]; dict is invariant, hence the cast.
+                params = cast(Dict[str, Any], materialized_parameters)
+
                 # Run on_startup if defined
                 if app_env._on_startup is not None:
-                    bound_params = _bind_parameters(app_env._on_startup, materialized_parameters)
+                    bound_params = _bind_parameters(app_env._on_startup, params)
                     if asyncio.iscoroutinefunction(app_env._on_startup):
                         loop.run_until_complete(app_env._on_startup(**bound_params))
                     else:
                         app_env._on_startup(**bound_params)
 
-                # Run the server function
-                bound_params = _bind_parameters(app_env._server, materialized_parameters)
-                if asyncio.iscoroutinefunction(app_env._server):
-                    loop.run_until_complete(app_env._server(**bound_params))
+                # Run the server function (asserted non-None before the thread was started).
+                server = cast(Callable[..., Any], app_env._server)
+                bound_params = _bind_parameters(server, params)
+                if asyncio.iscoroutinefunction(server):
+                    loop.run_until_complete(server(**bound_params))
                 else:
-                    app_env._server(**bound_params)
+                    server(**bound_params)
             except RuntimeError as e:
                 # When deactivate() stops the event loop via loop.stop(),
                 # run_until_complete raises "Event loop stopped before Future
@@ -668,11 +674,18 @@ class _Serve:
         elif app_deployment.version:
             version = app_deployment.version
         else:
+            from ._utils import original_std_streams
+
             h = hashlib.md5()
-            h.update(cloudpickle.dumps(app_deployment.envs))
-            if code_bundle:
-                h.update(code_bundle.computed_version.encode("utf-8"))
-            h.update(cloudpickle.dumps(image_cache))
+            # Pickle with the original std streams in place: a UI spinner (rich Live)
+            # may have swapped sys.stdout/sys.stderr for proxies, which breaks
+            # cloudpickle's identity-based handling of stream references held by
+            # module globals (e.g. loguru's default sink).
+            with original_std_streams():
+                h.update(cloudpickle.dumps(app_deployment.envs))
+                if code_bundle:
+                    h.update(code_bundle.computed_version.encode("utf-8"))
+                h.update(cloudpickle.dumps(image_cache))
             version = h.hexdigest()
 
         # Create serialization context

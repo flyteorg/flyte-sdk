@@ -3,7 +3,7 @@ from pathlib import Path
 
 # Where the code-server tar and plugins are downloaded to
 EXECUTABLE_NAME = "code-server"
-DOWNLOAD_DIR = Path.home() / ".code-server"
+DOWNLOAD_DIR = Path.cwd() / ".code-server"
 HOURS_TO_SECONDS = 60 * 60
 DEFAULT_UP_SECONDS = 10 * HOURS_TO_SECONDS  # 10 hours
 DEFAULT_CODE_SERVER_REMOTE_PATHS = {
@@ -55,6 +55,8 @@ EXIT_CODE_SUCCESS = 0
 # sshd key-auth gates *the shell*.
 # ---------------------------------------------------------------------------
 
+# Env var that flips the a0 entrypoint into code-server (VS Code) debug mode.
+FLYTE_ENABLE_VSCODE_KEY = "_F_E_VS"
 # Env var (parallel to _F_E_VS) that flips the a0 entrypoint into ssh-debug mode.
 FLYTE_ENABLE_SSH_KEY = "_F_E_SSH"
 # Env var carrying the user's SSH *public* key contents to authorize for login.

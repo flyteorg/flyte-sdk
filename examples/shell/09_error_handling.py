@@ -23,6 +23,7 @@ Run locally::
 """
 
 import sys
+from typing import Literal
 
 import flyte
 from flyte.extras import shell
@@ -84,7 +85,7 @@ async def inspect_debug_dump(msg: str) -> tuple[str, str]:
 
 if __name__ == "__main__":
     flyte.init_from_config()
-    mode = "remote" if (len(sys.argv) > 1 and sys.argv[1] == "remote") else "local"
+    mode: Literal["local", "remote"] = "remote" if (len(sys.argv) > 1 and sys.argv[1] == "remote") else "local"
 
     print("\n--- inspect_streams ---")
     run = flyte.with_runcontext(mode=mode).run(inspect_streams, "hello")

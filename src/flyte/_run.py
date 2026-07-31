@@ -19,7 +19,7 @@ from flyte._initialize import (
     requires_initialization,
     requires_storage,
 )
-from flyte._logging import LogFormat, logger
+from flyte._logging import LogFormat, logger, user_logger
 from flyte._task import F, P, R, TaskTemplate
 from flyte.models import (
     ActionID,
@@ -42,6 +42,7 @@ if TYPE_CHECKING:
     from flyte.remote._task import LazyEntity
 
     from ._code_bundle import CopyFiles
+    from ._internal.imagebuild.image_builder import ImageCache
 
 Mode = Literal["local", "remote", "hybrid"]
 CacheLookupScope = Literal["global", "project-domain"]
@@ -79,6 +80,54 @@ def _unwrap_artifacts(args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> Tuple[Tu
     return new_args, new_kwargs
 
 
+def _wrap_inline_run(outputs: Tuple[Any, ...] | Any, url: str) -> Run:
+    """Wrap natively-computed task outputs in a `Run` so every execution mode returns one.
+
+    Local and hybrid modes execute the task in-process and end up holding the task's
+    native outputs rather than a platform run handle. This wrapper presents those
+    outputs through the same `Run` interface remote mode returns: `wait()` is an
+    immediate no-op (the work already happened) and `outputs()` serves the captured
+    values.
+    """
+    from flyteidl2.common import identifier_pb2
+    from flyteidl2.task import common_pb2
+    from flyteidl2.workflow import run_definition_pb2
+
+    from flyte.remote import ActionOutputs, Run
+
+    class _InlineRun(Run):
+        def __init__(self, outputs: Tuple[Any, ...] | Any):
+            self._outputs = ActionOutputs(common_pb2.Outputs(), outputs if isinstance(outputs, tuple) else (outputs,))
+            super().__init__(
+                pb2=run_definition_pb2.Run(
+                    action=run_definition_pb2.Action(
+                        id=identifier_pb2.ActionIdentifier(
+                            name="a0",
+                            run=identifier_pb2.RunIdentifier(name="dry-run"),
+                        )
+                    )
+                )
+            )
+
+        @property
+        def url(self) -> str:
+            return url
+
+        @syncify
+        async def wait(  # type: ignore[override]
+            self,
+            quiet: bool = False,
+            wait_for: Literal["terminal", "running"] = "terminal",
+        ) -> None:
+            pass
+
+        @syncify
+        async def outputs(self) -> ActionOutputs:  # type: ignore[override]
+            return self._outputs
+
+    return _InlineRun(outputs)
+
+
 async def _get_code_bundle_for_run(name: str) -> CodeBundle | None:
     """
     Get the code bundle for the run with the given name.
@@ -98,6 +147,22 @@ async def _get_code_bundle_for_run(name: str) -> CodeBundle | None:
 def _get_main_run_mode() -> Mode | None:
     """Get the current run mode from the context variable."""
     return _run_mode_var.get()
+
+
+def _ambient_image_cache() -> ImageCache | None:
+    """Image cache transported into this process by the run that launched it, if any.
+
+    Inside a task pod, the parent run's deploy already built every environment in its plan
+    and shipped the resolved URIs here (``TaskContext.compiled_image_cache``). A nested
+    ``flyte.run(...)`` submitted from task code seeds image resolution with it so
+    already-built environments are never re-resolved in-cluster — where the predicted URI
+    can differ from where the builder actually pushed (e.g. the remote builder's system
+    registry), and where no builder may be available at all. Same-run child calls already
+    reuse this cache via the controller; this extends that behavior to nested runs.
+    Returns None on the driver (no task context), leaving behavior unchanged there.
+    """
+    tctx = internal_ctx().data.task_context
+    return tctx.compiled_image_cache if tctx else None
 
 
 def _to_cache_lookup_scope(scope: CacheLookupScope | None = None):
@@ -171,7 +236,7 @@ class _Runner:
         self._copy_files = copy_style
         self._dry_run = dry_run
         self._copy_bundle_to = copy_bundle_to
-        self._interactive_mode = interactive_mode or ipython_check()
+        self._interactive_mode = interactive_mode if interactive_mode is not None else ipython_check()
         self._raw_data_path = raw_data_path
         self._metadata_path = metadata_path
         self._run_base_dir = run_base_dir
@@ -199,8 +264,8 @@ class _Runner:
         self._debug = debug
         # Recover (reuse a prior run's succeeded actions). `True` = recover from the run being rerun;
         # a run-name string = recover from that named run (the only form valid on a plain run()).
-        # Carried on RunSpec.recover; remote-only; gated in _apply_overrides until the flyteidl2 field
-        # + backend ship. See _resolve_recover_ref.
+        # Carried on RunSpec.relation with RELATION_TYPE_RECOVER; remote-only; gated in
+        # _apply_overrides until the flyteidl2 field + backend ship. See _resolve_recover_ref.
         self._recover = recover
 
     def _resolve_recover_ref(self, rerun_run_name: str | None) -> str | None:
@@ -221,6 +286,38 @@ class _Runner:
                 )
             return rerun_run_name
         return r  # explicit run-name string
+
+    def _resolve_spawn_parent(self) -> Any | None:
+        """Resolve the implicit *spawn* provenance parent (``Relation.related_to``, ``SPAWN``).
+
+        When a fresh run is created from inside a running remote task container
+        (``TaskContext.is_in_cluster()``), the invoking run is the parent that spawned it. The
+        pointer is stamped only when the invoking run's scope equals the new run's target scope
+        exactly and all four id fields are non-empty (the server requires min_len=1 on each, and
+        ``Relation.related_to`` is same-org/project/domain as the new run by contract). Returns
+        None otherwise — provenance must never fail run creation. Pure resolution, no I/O.
+        """
+        from flyteidl2.common import identifier_pb2
+
+        tctx = internal_ctx().data.task_context
+        if tctx is None or not tctx.is_in_cluster():
+            return None
+        action = tctx.action
+        org, project, domain, name = action.org or "", action.project or "", action.domain or "", action.run_name
+
+        cfg = get_init_config()
+        org = org or cfg.org or ""
+        project = project or cfg.project or ""
+        domain = domain or cfg.domain or ""
+
+        target = (cfg.org or "", self._project or cfg.project or "", self._domain or cfg.domain or "")
+        if (org, project, domain) != target:
+            logger.debug(f"Skipping spawn relation: source scope {(org, project, domain)} != target {target}")
+            return None
+        if not (org and project and domain and name):
+            logger.debug("Skipping spawn relation: incomplete source run identifier")
+            return None
+        return identifier_pb2.RunIdentifier(org=org, project=project, domain=domain, name=name)
 
     async def _build_task_spec_from_template(self, obj: TaskTemplate[P, R, F]) -> Tuple[Any, Any, str]:
         """Build ``(task_spec, code_bundle, version)`` from a local ``TaskTemplate``.
@@ -255,7 +352,10 @@ class _Runner:
                 _env.image = resolve_code_bundle_layer(_env.image, self._copy_files, pathlib.Path(cfg.root_dir))
 
         if not self._dry_run:
-            image_cache = await build_images.aio(parent_env)
+            # Seed with the cache transported from the launching run (if we're inside a task
+            # pod) so already-built environments reuse their pushed URIs instead of being
+            # re-resolved in-cluster. No-op on the driver.
+            image_cache = await build_images.aio(parent_env, seed_cache=_ambient_image_cache())
         else:
             image_cache = None
 
@@ -343,8 +443,8 @@ class _Runner:
         if env.get("LOG_LEVEL") is None:
             env["LOG_LEVEL"] = str(self._log_level) if self._log_level else str(logger.getEffectiveLevel())
         env["LOG_FORMAT"] = self._log_format
-        if self._user_log_level is not None:
-            env["USER_LOG_LEVEL"] = str(self._user_log_level)
+        if env.get("USER_LOG_LEVEL") is None:
+            env["USER_LOG_LEVEL"] = str(self._user_log_level or user_logger.getEffectiveLevel())
         if self._reset_root_logger:
             env["FLYTE_RESET_ROOT_LOGGER"] = "1"
         if self._debug:
@@ -379,18 +479,23 @@ class _Runner:
             )
         return None, identifier_pb2.ProjectIdentifier(name=project, domain=domain, organization=org)
 
-    def _apply_overrides(self, base: Any, *, task: Any = None, recover_ref: str | None = None) -> Any:
+    def _apply_overrides(self, base: Any, *, task: Any = None, relation: Tuple[Any, str] | None = None) -> Any:
         """Build the ``RunSpec`` for ``create_run``.
 
         ``base is None`` -> a fresh spec from runner config (the run / recover path).
         ``base`` set     -> deep-copy a prior run's ``RunSpec`` and merge runner overrides by key
         (the rerun path: env merge + explicitly-set field overrides). Pure proto assembly, no I/O.
-        This is the single place runner config maps onto a ``RunSpec``. ``recover_ref`` is the already-
-        resolved reference run to recover from (see ``_resolve_recover_ref``), or None.
+        This is the single place runner config maps onto a ``RunSpec``. ``relation`` is the provenance
+        link to record on ``RunSpec.relation``: ``(parent RunIdentifier, "rerun" | "recover" | "spawn")``,
+        or None. The identifier must be fully qualified (org/project/domain/name) — the server rejects
+        partial ones.
         """
         from flyteidl2.core import literals_pb2, security_pb2
         from flyteidl2.task import run_pb2
         from google.protobuf import wrappers_pb2
+
+        # google.protobuf ships no type stubs for the dynamically generated wrappers_pb2 module.
+        _bool_value_cls = cast(Any, wrappers_pb2).BoolValue
 
         env = self._build_env_dict()
         if base is not None:
@@ -424,9 +529,7 @@ class _Runner:
             )
             run_spec = run_pb2.RunSpec(
                 overwrite_cache=self._overwrite_cache,
-                interruptible=wrappers_pb2.BoolValue(value=self._interruptible)
-                if self._interruptible is not None
-                else None,
+                interruptible=_bool_value_cls(value=self._interruptible) if self._interruptible is not None else None,
                 annotations=run_pb2.Annotations(values=self._annotations),
                 labels=run_pb2.Labels(values=self._labels),
                 envs=env_kv,
@@ -448,9 +551,15 @@ class _Runner:
             # Deep-copy the fetched spec (it is shared/cached on the RunDetails); never mutate in place.
             run_spec = run_pb2.RunSpec()
             run_spec.CopyFrom(base)
+            # Provenance is per-run, never inherited: a rerun of a rerun must point at its immediate
+            # parent (set below from `relation`), not the grandparent captured in the prior spec.
+            for provenance_field in ("relation", "related_to"):
+                # DESCRIPTOR internals are opaque to checkers; guard for fields absent from the current pin.
+                if provenance_field in cast(Any, run_pb2.RunSpec).DESCRIPTOR.fields_by_name:
+                    run_spec.ClearField(provenance_field)
             run_spec.envs.CopyFrom(env_kv)
             if self._interruptible is not None:
-                run_spec.interruptible.CopyFrom(wrappers_pb2.BoolValue(value=self._interruptible))
+                run_spec.interruptible.CopyFrom(_bool_value_cls(value=self._interruptible))
             if self._overwrite_cache:
                 run_spec.overwrite_cache = True
                 run_spec.cache_config.overwrite_cache = True
@@ -478,16 +587,34 @@ class _Runner:
             if notification_rules:
                 run_spec.notification_rules.CopyFrom(notification_rules)
 
-        # recover: gated until flyteidl2 ships RunSpec.recover (+ backend support). One-line set then.
-        if recover_ref:
-            if "recover" not in run_pb2.RunSpec.DESCRIPTOR.fields_by_name:
-                raise NotImplementedError(
-                    "recover is not yet supported by this backend "
-                    "(RunSpec.recover is unavailable in this flyteidl2 build)."
-                )
-            from flyteidl2.common import identifier_pb2
+        # relation: gated until the flyteidl2 pin includes RunSpec.relation. Recover semantics depend
+        # on the field, so recover fails loudly without it; rerun/spawn provenance is best-effort.
+        if relation:
+            ref, kind = relation
+            # google.protobuf ships no stubs for descriptor internals; DESCRIPTOR is opaque to checkers.
+            if "relation" not in cast(Any, run_pb2.RunSpec).DESCRIPTOR.fields_by_name:
+                if kind == "recover":
+                    raise NotImplementedError(
+                        "recover is not yet supported by this backend "
+                        "(RunSpec.relation is unavailable in this flyteidl2 build)."
+                    )
+            else:
+                from flyteidl2.common import run_pb2 as common_run_pb2
 
-            run_spec.recover.CopyFrom(run_pb2.Recover(run_id=identifier_pb2.RunIdentifier(name=recover_ref)))
+                # Relation / RELATION_TYPE_* / RunSpec.relation are absent from current flyteidl2 stubs
+                # (runtime-gated by the DESCRIPTOR check above).
+                _relation_pb = cast(Any, common_run_pb2)
+                relation_type = {
+                    "rerun": _relation_pb.RELATION_TYPE_RERUN,
+                    "recover": _relation_pb.RELATION_TYPE_RECOVER,
+                    # SPAWN ships in a later flyteidl2 than RERUN/RECOVER; drop the pointer on
+                    # older builds rather than fail run creation.
+                    "spawn": getattr(common_run_pb2, "RELATION_TYPE_SPAWN", None),
+                }.get(kind)
+                if relation_type is not None:
+                    cast(Any, run_spec).relation.CopyFrom(
+                        _relation_pb.Relation(related_to=ref, relation_type=relation_type)
+                    )
 
         return run_spec
 
@@ -629,7 +756,23 @@ class _Runner:
                 if task_spec.task_template.id.version == "":
                     task_spec.task_template.id.version = version
 
-            run_spec = self._apply_overrides(None, task=task, recover_ref=self._resolve_recover_ref(None))
+            # Provenance for a fresh run: an explicit recover target wins; otherwise, when launched
+            # from inside a running remote task, record a spawn link to the invoking run.
+            recover_ref = self._resolve_recover_ref(None)
+            relation: Tuple[Any, str] | None
+            if recover_ref:
+                from flyteidl2.common import identifier_pb2
+
+                # Relation identifiers must be fully qualified; the parent is scoped to the same
+                # org/project/domain as the new run.
+                relation = (
+                    identifier_pb2.RunIdentifier(org=cfg.org, project=project, domain=domain, name=recover_ref),
+                    "recover",
+                )
+            else:
+                spawn_parent = self._resolve_spawn_parent()
+                relation = (spawn_parent, "spawn") if spawn_parent is not None else None
+            run_spec = self._apply_overrides(None, task=task, relation=relation)
             return await self._submit_remote(
                 task_spec=task_spec,
                 task_id=task_id,
@@ -659,7 +802,7 @@ class _Runner:
 
     @requires_storage
     @requires_initialization
-    async def _run_hybrid(self, obj: TaskTemplate[P, R, F], *args: P.args, **kwargs: P.kwargs) -> R:
+    async def _run_hybrid(self, obj: TaskTemplate[P, R, F], *args: P.args, **kwargs: P.kwargs) -> Run:
         """
         Run a task in hybrid mode. This means that the parent action will be run locally, but the child actions will be
         run in the cluster remotely. This is currently only used for testing,
@@ -690,7 +833,7 @@ class _Runner:
             if isinstance(_env.image, Image):
                 _env.image = resolve_code_bundle_layer(_env.image, self._copy_files, pathlib.Path(cfg.root_dir))
 
-        image_cache = await build_images.aio(cast(Environment, obj.parent_env()))
+        image_cache = await build_images.aio(cast(Environment, obj.parent_env()), seed_cache=_ambient_image_cache())
 
         code_bundle = None
         if self._name is not None:
@@ -783,7 +926,7 @@ class _Runner:
         outputs, err = await contextual_run(_run_task)
         if err:
             raise err
-        return outputs
+        return _wrap_inline_run(outputs, url=output_path)
 
     async def _send_local_notifications(
         self,
@@ -795,6 +938,7 @@ class _Runner:
     ) -> None:
         """Send notifications locally. Never raises — failures are logged."""
         from flyte.notify._notifiers import NamedRule as _NamedRule
+        from flyte.notify._notifiers import Notification as _Notification
         from flyte.notify._sender import send_notifications
 
         notifications = self._notifications
@@ -803,7 +947,7 @@ class _Runner:
             return
 
         await send_notifications(
-            notifications,  # type: ignore[arg-type]
+            cast(Union[_Notification, Tuple[_Notification, ...]], notifications),
             phase=phase,
             task_name=task_name,
             run_name=run_name,
@@ -813,12 +957,9 @@ class _Runner:
         )
 
     async def _run_local(self, obj: TaskTemplate[P, R, F], *args: P.args, **kwargs: P.kwargs) -> Run:
-        from flyteidl2.common import identifier_pb2
-        from flyteidl2.task import common_pb2
 
         from flyte._internal.controllers import create_controller
         from flyte._internal.controllers._local_controller import LocalController
-        from flyte.remote import ActionOutputs, Run
         from flyte.report import Report
 
         controller = cast(LocalController, create_controller("local"))
@@ -903,49 +1044,15 @@ class _Runner:
             if self._notifications:
                 await self._send_local_notifications(phase=ActionPhase.SUCCEEDED, task_name=obj.name, run_name=run_name)
 
-        class _LocalRun(Run):
-            def __init__(self, outputs: Tuple[Any, ...] | Any):
-                from flyteidl2.workflow import run_definition_pb2
-
-                self._outputs = ActionOutputs(
-                    common_pb2.Outputs(), outputs if isinstance(outputs, tuple) else (outputs,)
-                )
-                super().__init__(
-                    pb2=run_definition_pb2.Run(
-                        action=run_definition_pb2.Action(
-                            id=identifier_pb2.ActionIdentifier(
-                                name="a0",
-                                run=identifier_pb2.RunIdentifier(name="dry-run"),
-                            )
-                        )
-                    )
-                )
-
-            @property
-            def url(self) -> str:
-                return str(metadata_path)
-
-            @syncify
-            async def wait(  # type: ignore[override]
-                self,
-                quiet: bool = False,
-                wait_for: Literal["terminal", "running"] = "terminal",
-            ) -> None:
-                pass
-
-            @syncify
-            async def outputs(self) -> ActionOutputs:  # type: ignore[override]
-                return self._outputs
-
-        return _LocalRun(outputs)
+        return _wrap_inline_run(outputs, url=str(metadata_path))
 
     @syncify  # type: ignore[arg-type]
     async def run(
         self,
-        task: TaskTemplate[P, Union[R, Run], F] | LazyEntity,
+        task: TaskTemplate[P, R, F] | LazyEntity,
         *args: P.args,
         **kwargs: P.kwargs,
-    ) -> Union[R, Run]:
+    ) -> Run:
         """
         Run an async `@env.task` or `TaskTemplate` instance. The existing async context will be used.
 
@@ -965,7 +1072,9 @@ class _Runner:
         :param task: TaskTemplate instance `@env.task` or `TaskTemplate`
         :param args: Arguments to pass to the Task
         :param kwargs: Keyword arguments to pass to the Task
-        :return: Run instance or the result of the task
+        :return: A Run handle in every mode. Remote mode returns the platform run; local and
+            hybrid modes return an in-process wrapper whose `outputs()` serves the task's
+            native results and whose `wait()` is an immediate no-op.
         """
         from flyte.remote._task import LazyEntity, TaskDetails
 
@@ -1018,7 +1127,9 @@ class _Runner:
 
         The prior run's `RunSpec` is inherited and merged with this context's overrides
         (`with_runcontext(env_vars=..., interruptible=..., recover=...)` etc.), so debug/recover
-        compose with rerun. Currently remote-only.
+        compose with rerun. Provenance is recorded on `RunSpec.relation` — RERUN pointing at
+        `run_name`, or RECOVER when recovering (when the flyteidl2 build supports it). Currently
+        remote-only.
 
         :param run_name: Name of the prior run to re-run.
         :param action_name: Action within the prior run to source the task + inputs from (default `a0`).
@@ -1086,7 +1197,17 @@ class _Runner:
             if tt_id.version == "":
                 tt_id.version = version
 
-        run_spec = self._apply_overrides(base_run_spec, recover_ref=self._resolve_recover_ref(run_name))
+        # Every rerun records provenance to the run being rerun; recover upgrades it to RECOVER.
+        # Relation identifiers must be fully qualified; the parent is scoped to the same
+        # org/project/domain as the new run.
+        from flyteidl2.common import identifier_pb2
+
+        recover_ref = self._resolve_recover_ref(run_name)
+        relation = (
+            identifier_pb2.RunIdentifier(org=cfg.org, project=project, domain=domain, name=recover_ref or run_name),
+            "recover" if recover_ref else "rerun",
+        )
+        run_spec = self._apply_overrides(base_run_spec, relation=relation)
         return await self._submit_remote(
             task_spec=task_spec,
             task_id=None,
@@ -1215,7 +1336,7 @@ def with_runcontext(
         changed). ``True`` recovers from the run being rerun — only valid with ``.rerun(...)``; a
         run-name string recovers from that named run and is the only form valid on ``.run(...)``.
         Remote-only. Not yet supported by the backend (raises NotImplementedError at submit until
-        flyteidl2 RunSpec.recover ships).
+        flyteidl2 RunSpec.relation ships).
     :param _tracker: This is an internal only parameter used by the CLI to render the TUI.
 
     :return: runner

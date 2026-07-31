@@ -1,3 +1,4 @@
+import inspect
 import sys
 import textwrap
 from os import getcwd
@@ -171,7 +172,7 @@ def _render_command(
 
     if cmd.help:
         output.append("")
-        output.append(f"{dedent(cmd.help)}")
+        output.append(_format_command_help(cmd.help))
 
     if not cmd.params:
         return output
@@ -187,13 +188,11 @@ def _render_command(
             if len(all_opts) == 1:
                 opts = f"`{all_opts[0]}`"
             else:
-                opts = "".join(
-                    [
-                        "{{< multiline >}}",
-                        "\n".join([f"`{opt}`" for opt in all_opts]),
-                        "{{< /multiline >}}",
-                    ]
-                )
+                # Render aliases inline. The multiline shortcode emits raw
+                # <div>/<br/> HTML, which fails Hugo's build inside a
+                # {{< markdown >}} block (plugin commands) under goldmark
+                # unsafe=false + --panicOnWarning.
+                opts = " ".join(f"`{opt}`" for opt in all_opts)
             default_value = ""
             if param.default is not None:
                 default_value = f"`{param.default}`"
@@ -450,3 +449,33 @@ def dedent(text: str) -> str:
     Remove leading whitespace from a string.
     """
     return textwrap.dedent(text).strip("\n")
+
+
+def _format_command_help(text: str) -> str:
+    """Render a command's help text as Markdown.
+
+    click help strings put the first line on the opening triple-quote (column 0)
+    and indent the rest, which ``textwrap.dedent`` cannot normalize;
+    ``inspect.cleandoc`` handles that. Any remaining indented blocks (e.g.
+    ``Examples:`` command listings) are wrapped in fenced code blocks rather than
+    left as indentation-based code blocks — indented code does not survive the
+    ``{{< markdown >}}`` shortcode's ``RenderString`` and renders inconsistently.
+    """
+    lines = inspect.cleandoc(text).split("\n")
+    out: list[str] = []
+    i = 0
+    while i < len(lines):
+        if lines[i].startswith("    "):
+            block: list[str] = []
+            while i < len(lines) and (lines[i].startswith("    ") or lines[i].strip() == ""):
+                block.append(lines[i])
+                i += 1
+            while block and block[-1].strip() == "":
+                block.pop()
+            out.append("```bash")
+            out.extend(textwrap.dedent("\n".join(block)).split("\n"))
+            out.append("```")
+        else:
+            out.append(lines[i])
+            i += 1
+    return "\n".join(out)

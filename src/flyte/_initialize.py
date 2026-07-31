@@ -15,6 +15,8 @@ from flyte.syncify import syncify
 from ._logging import LogFormat, initialize_logger, logger
 
 if TYPE_CHECKING:
+    from types import FunctionType
+
     from flyte._internal.imagebuild import ImageBuildEngine
     from flyte.config import Config
     from flyte.config._config import PlatformConfig
@@ -47,6 +49,7 @@ class _InitConfig(CommonInit):
     storage: Optional[Storage] = None
     image_builder: "ImageBuildEngine.ImageBuilderType" = "local"
     images: typing.Dict[str, str] = field(default_factory=dict)
+    image_registry: str | None = None
 
     def replace(self, **kwargs) -> _InitConfig:
         return replace(self, **kwargs)
@@ -215,6 +218,7 @@ async def init(
     batch_size: int = 1000,
     image_builder: ImageBuildEngine.ImageBuilderType = "local",
     images: typing.Dict[str, str] | None = None,
+    image_registry: str | None = None,
     source_config_path: Optional[Path] = None,
     sync_local_sys_paths: bool = True,
     load_plugin_type_transformers: bool = True,
@@ -256,6 +260,8 @@ async def init(
       batch_size will be split into multiple requests.
     :param image_builder: Optional image builder configuration, if not provided, the default image builder will be used.
     :param images: Optional dict of images that can be used by referencing the image name.
+    :param image_registry: Optional container registry to push built images to, overriding the
+      built-in default base registry. Equivalent to the ``image.registry`` config entry.
     :param source_config_path: Optional path to the source configuration file (This is only used for documentation)
     :param sync_local_sys_paths: Whether to include and synchronize local sys.path entries under the root directory
       into the remote container (default: True).
@@ -317,6 +323,7 @@ async def init(
             batch_size=batch_size,
             image_builder=image_builder,
             images=images or {},
+            image_registry=image_registry,
             source_config_path=source_config_path,
             sync_local_sys_paths=sync_local_sys_paths,
             local_persistence=local_persistence,
@@ -406,6 +413,7 @@ async def init_from_config(
         image_builder=image_builder or cfg.image.builder or "local",
         batch_size=batch_size,
         images=cfg.image.image_refs,
+        image_registry=cfg.image.registry,
         storage=storage,
         source_config_path=cfg_path,
         sync_local_sys_paths=sync_local_sys_paths,
@@ -737,7 +745,8 @@ def ensure_client():
     Ensure that the client is initialized. If not, raise an InitializationError.
     This function is used to check if the client is initialized before executing any Flyte remote API methods.
     """
-    if _get_init_config() is None or _get_init_config().client is None:
+    cfg = _get_init_config()
+    if cfg is None or cfg.client is None:
         raise InitializationError(
             "ClientNotInitializedError",
             "user",
@@ -757,11 +766,12 @@ def requires_storage(func: T) -> T:
 
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
-        if _get_init_config() is None or _get_init_config().storage is None:
+        cfg = _get_init_config()
+        if cfg is None or cfg.storage is None:
             raise InitializationError(
                 "StorageNotInitializedError",
                 "user",
-                f"Function '{func.__name__}' requires storage to be initialized. "
+                f"Function '{typing.cast('FunctionType', func).__name__}' requires storage to be initialized. "
                 "Call flyte.init() with a valid storage configuration before using this function."
                 "or Call flyte.init_from_config() with a valid path to the config file",
             )
@@ -788,7 +798,7 @@ def requires_upload_location(func: T) -> T:
             raise InitializationError(
                 "No upload path configured",
                 "user",
-                f"Function '{func.__name__}' requires client to be initialized. "
+                f"Function '{typing.cast('FunctionType', func).__name__}' requires client to be initialized. "
                 "Call flyte.init() with storage configuration before using this function."
                 "or Call flyte.init_from_config() with a valid path to the config file.",
             )
@@ -812,7 +822,8 @@ def requires_initialization(func: T) -> T:
             raise InitializationError(
                 "NotInitConfiguredError",
                 "user",
-                f"Function '{func.__name__}' requires initialization. Call flyte.init() before using this function"
+                f"Function '{typing.cast('FunctionType', func).__name__}' requires initialization. "
+                "Call flyte.init() before using this function"
                 " or Call flyte.init_from_config() with a valid path to the config file.",
             )
         return func(*args, **kwargs)
@@ -858,6 +869,7 @@ async def _init_for_testing(
     root_dir: Path | None = None,
     log_level: int | None = None,
     client: ClientSet | None = None,
+    org: str | None = None,
 ):
     global _init_config  # noqa: PLW0603
 
@@ -871,6 +883,7 @@ async def _init_for_testing(
             project=project,
             domain=domain,
             client=client,
+            org=org,
         )
 
 
@@ -878,7 +891,7 @@ def replace_client(client):
     global _init_config  # noqa: PLW0603
 
     with _init_lock:
-        _init_config = _init_config.replace(client=client)
+        _init_config = typing.cast(_InitConfig, _init_config).replace(client=client)
 
 
 def current_domain() -> str:
@@ -894,7 +907,7 @@ def current_domain() -> str:
     from ._context import ctx
 
     tctx = ctx()
-    if tctx is not None:
+    if tctx:
         domain = tctx.action.domain
         if domain is not None:
             return domain
@@ -923,7 +936,7 @@ def current_project() -> str:
     from ._context import ctx
 
     tctx = ctx()
-    if tctx is not None:
+    if tctx:
         project = tctx.action.project
         if project is not None:
             return project

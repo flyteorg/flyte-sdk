@@ -18,7 +18,7 @@ Usage:
 """
 
 import asyncio
-from typing import Callable, List, Optional, TypeVar
+from typing import Any, Callable, Coroutine, List, Optional, TypeVar
 
 T = TypeVar("T")
 R = TypeVar("R")
@@ -29,7 +29,7 @@ class CircuitBreakerError(Exception):
 
 
 async def circuit_breaker_execute(
-    task_fn: Callable[[T], R], items: List[T], max_failures: int = 3
+    task_fn: Callable[[T], Coroutine[Any, Any, R]], items: List[T], max_failures: int = 3
 ) -> List[Optional[R]]:
     """
     Execute tasks in parallel with circuit breaker protection.
@@ -52,7 +52,7 @@ async def circuit_breaker_execute(
 
     # Start all tasks
     tasks = [asyncio.create_task(task_fn(item)) for item in items]
-    results = [None] * len(items)
+    results: List[Optional[R]] = [None] * len(items)
     failures = 0
     pending = set(tasks)
 

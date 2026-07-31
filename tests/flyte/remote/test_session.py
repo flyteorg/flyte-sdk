@@ -9,6 +9,7 @@ from flyte.remote._client.auth._session import (
     _bootstrap_ssl_from_server,
     _build_pyqwest_client,
     _resolve_tls_ca_cert,
+    _supports_system_certs,
     create_session_config,
 )
 
@@ -239,6 +240,38 @@ class TestBuildPyqwestClient:
         _build_pyqwest_client(None)
 
         assert mock_transport.call_args.kwargs["use_system_dns"] is True
+
+    def test_detects_system_cert_support_from_signature(self):
+        import inspect
+
+        expected = "tls_include_system_certs" in inspect.signature(pyqwest.HTTPTransport).parameters
+        assert _supports_system_certs() is expected
+
+    @patch("flyte.remote._client.auth._session._supports_system_certs", return_value=True)
+    @patch("flyte.remote._client.auth._session.pyqwest.Client")
+    @patch("flyte.remote._client.auth._session.pyqwest.HTTPTransport")
+    def test_requests_system_certs_when_no_ca_supplied(self, mock_transport, mock_client, _mock_supported):
+        _build_pyqwest_client(None)
+
+        assert mock_transport.call_args.kwargs["tls_include_system_certs"] is True
+
+    @patch("flyte.remote._client.auth._session._supports_system_certs", return_value=True)
+    @patch("flyte.remote._client.auth._session.pyqwest.Client")
+    @patch("flyte.remote._client.auth._session.pyqwest.HTTPTransport")
+    def test_does_not_widen_trust_when_ca_supplied(self, mock_transport, mock_client, _mock_supported):
+        # A supplied bundle means "trust exactly this", so the system store must stay out.
+        _build_pyqwest_client(_make_valid_cert_pem())
+
+        assert "tls_include_system_certs" not in mock_transport.call_args.kwargs
+
+    @patch("flyte.remote._client.auth._session._supports_system_certs", return_value=False)
+    @patch("flyte.remote._client.auth._session.pyqwest.Client")
+    @patch("flyte.remote._client.auth._session.pyqwest.HTTPTransport")
+    def test_omits_flag_on_older_pyqwest(self, mock_transport, mock_client, _mock_supported):
+        # Versions before 0.7.0 have no such parameter and would raise TypeError.
+        _build_pyqwest_client(None)
+
+        assert "tls_include_system_certs" not in mock_transport.call_args.kwargs
 
 
 _SESSION_MOD = "flyte.remote._client.auth._session"

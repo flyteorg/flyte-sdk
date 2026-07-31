@@ -196,7 +196,7 @@ WORKLOADS: Dict[str, Tuple[WorkloadFn, Dict[str, object]]] = {
 }
 
 # Workloads that manage their own Volume (skip the cell-level mount/commit).
-SELF_MANAGED: Dict[str, Tuple[Callable[..., Awaitable[Dict[str, float]]], Dict[str, object]]] = {
+SELF_MANAGED: Dict[str, Tuple[Callable[..., Awaitable[Tuple[ROVolume, Dict[str, float]]]], Dict[str, object]]] = {
     "cold_fork": (_cold_fork, {"k": 25, "base_files": 100, "base_bytes": 1024}),
 }
 
@@ -227,8 +227,8 @@ async def run_cell(workload: str, engine: str, writeback: bool) -> Tuple[ROVolum
     in the Flyte UI alongside the timing numbers.
     """
     if workload in SELF_MANAGED:
-        fn, params = SELF_MANAGED[workload]
-        return await fn(engine=engine, writeback=writeback, **params)
+        self_managed_fn, self_managed_params = SELF_MANAGED[workload]
+        return await self_managed_fn(engine=engine, writeback=writeback, **self_managed_params)
 
     fn, params = WORKLOADS[workload]
     suffix = uuid.uuid4().hex[:6]
@@ -327,6 +327,10 @@ async def run_dataset_cell(workload: str, engine: str, n: int) -> Tuple[ROVolume
 # ---------------------------------------------------------------------------
 # Rendering
 # ---------------------------------------------------------------------------
+
+
+# One result row: workload/engine/writeback identifiers plus numeric measurements.
+Row = Dict[str, str | bool | int | float]
 
 
 def _cell_label(engine: str, writeback: bool) -> str:
@@ -478,10 +482,10 @@ def _line_svg(
     return "".join(parts)
 
 
-def _render_workload(name: str, rows: List[Dict[str, object]]) -> str:
+def _render_workload(name: str, rows: List[Row]) -> str:
     engine_order = {e: i for i, e in enumerate(ENGINES)}
 
-    def sort_key(r: Dict[str, object]) -> Tuple[int, int]:
+    def sort_key(r: Row) -> Tuple[int, int]:
         return (engine_order.get(str(r["engine"]), 99), 0 if r["writeback"] else 1)
 
     rows = sorted(rows, key=sort_key)
@@ -534,7 +538,7 @@ def _render_workload(name: str, rows: List[Dict[str, object]]) -> str:
     return f'<h2>{name}</h2>{table}<div style="display:flex;flex-wrap:wrap;gap:16px;margin-top:12px">{chart_html}</div>'
 
 
-def _render_overview(rows: List[Dict[str, object]], workloads: List[str]) -> str:
+def _render_overview(rows: List[Row], workloads: List[str]) -> str:
     body = "".join(
         "<tr>"
         f"<td>{r['workload']}</td>"
@@ -564,12 +568,12 @@ def _render_overview(rows: List[Dict[str, object]], workloads: List[str]) -> str
 
 
 def _render_dataset_sweep(
-    small_rows: List[Dict[str, object]],
-    big_rows: List[Dict[str, object]],
+    small_rows: List[Row],
+    big_rows: List[Row],
 ) -> str:
     """Two side-by-side line plots: small_files vs big_files, one line per engine."""
 
-    def _by_engine(rows: List[Dict[str, object]]) -> Dict[str, List[Tuple[float, float]]]:
+    def _by_engine(rows: List[Row]) -> Dict[str, List[Tuple[float, float]]]:
         by: Dict[str, List[Tuple[float, float]]] = {}
         for r in rows:
             by.setdefault(str(r["engine"]), []).append((float(r["n"]), float(r["workload_ms"])))
@@ -588,7 +592,7 @@ def _render_dataset_sweep(
         y_label="workload_ms",
     )
 
-    def _table(rows: List[Dict[str, object]]) -> str:
+    def _table(rows: List[Row]) -> str:
         rows = sorted(rows, key=lambda r: (str(r["engine"]), int(r["n"])))
         head = "<tr><th>engine</th><th>n</th><th>workload_ms</th><th>mount_ms</th><th>commit_ms</th></tr>"
         body = "".join(
@@ -676,11 +680,11 @@ async def volume_benchmark_driver(
     matrix_results = raw[: len(coros)]
     ds_results = raw[len(coros) :]
 
-    rows: List[Dict[str, object]] = []
+    rows: List[Row] = []
     for (wname, engine, wb), (_vol, stats) in zip(keys, matrix_results):
         rows.append({"workload": wname, "engine": engine, "writeback": wb, **stats})
 
-    ds_rows: List[Dict[str, object]] = []
+    ds_rows: List[Row] = []
     for (wname, engine, n), (_vol, stats) in zip(ds_keys, ds_results):
         ds_rows.append({"workload": wname, "engine": engine, "n": n, **stats})
 

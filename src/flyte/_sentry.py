@@ -5,9 +5,11 @@ Initializes Sentry with a hardcoded DSN to report errors from CLI commands
 (e.g., `flyte start demo`). Users can opt out by setting FLYTE_DISABLE_SENTRY=true.
 """
 
+import atexit
 import errno
 import logging
 import os
+from contextlib import contextmanager
 
 from flyte._logging import logger
 
@@ -55,6 +57,8 @@ def init() -> None:
             release=_get_version(),
             default_integrations=False,
         )
+        # count() doesn't flush per call, flush everything once at exit.
+        atexit.register(lambda: sentry_sdk.flush(timeout=2))
     except ImportError:
         pass
     except Exception:
@@ -166,6 +170,8 @@ def _is_transient_network_error(exc: BaseException) -> bool:
     - FLYTE-SDK-36: ``httpx.ReadError`` during the signed-URL upload
     - FLYTE-SDK-4M: ``httpx.RemoteProtocolError`` ("Server disconnected without
       sending a response") — the object store dropped the PUT mid-flight
+    - FLYTE-SDK-6H: ``pyqwest.StreamError`` ("Error reading content") — the
+      HTTP/2 stream carrying a control-plane RPC was reset mid-body
 
     Transient ConnectError status codes (DEADLINE_EXCEEDED / UNAVAILABLE) are
     handled by ``_is_user_actionable_connect_error`` and intentionally not
@@ -188,6 +194,22 @@ def _is_transient_network_error(exc: BaseException) -> bool:
         import httpx
 
         if isinstance(exc, (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError)):
+            return True
+    except ImportError:
+        pass
+
+    # pyqwest is the HTTP transport underneath connectrpc, so control-plane RPCs
+    # (SelectCluster, CreateRun, ...) surface transport failures as its errors
+    # rather than httpx's. ReadError/WriteError are the socket-level read/write
+    # failures and StreamError is an HTTP/2 stream reset (RST_STREAM) — every
+    # StreamErrorCode describes a connection/protocol condition between client
+    # and server, never an SDK bug. They are plain Exception subclasses (not
+    # OSError), so they need an explicit check. pyqwest is a transitive
+    # dependency, hence the guarded import.
+    try:
+        import pyqwest
+
+        if isinstance(exc, (pyqwest.ReadError, pyqwest.WriteError, pyqwest.StreamError)):
             return True
     except ImportError:
         pass
@@ -272,7 +294,7 @@ def capture_errors(func):
     return wrapper
 
 
-def count(key: str, value: int = 1, **tags: str) -> None:
+def count(key: str, value: int = 1, tags: dict[str, str] | None = None) -> None:
     """Emit a counter metric to Sentry."""
     try:
         init()
@@ -280,11 +302,34 @@ def count(key: str, value: int = 1, **tags: str) -> None:
 
         if sentry_sdk.is_initialized():
             sentry_sdk.metrics.count(key, value, attributes=tags or None)
-            sentry_sdk.flush(timeout=2)
     except ImportError:
         pass
     except Exception:
         pass
+
+
+@contextmanager
+def track_operation(operation: str):
+    """Count success/failure of a key SDK operation."""
+    try:
+        yield
+    except BaseException as e:
+        tags = {
+            "operation": operation,
+            "status": "error",
+            "error_type": type(e).__name__,
+            "error_kind": "user" if _is_user_error(e) else "system",
+        }
+        # .code is a stable, low-cardinality failure mode (unlike str(e)).
+        code = getattr(e, "code", None)
+        if code is not None:
+            # ConnectError.code is an enum (use .name); flyte BaseRuntimeError.code
+            # is a str (no .name, fall back to str()).
+            tags["error_code"] = getattr(code, "name", None) or str(code)
+        count("flyte.operation", tags=tags)
+        raise
+    else:
+        count("flyte.operation", tags={"operation": operation, "status": "success"})
 
 
 def _get_version() -> str | None:

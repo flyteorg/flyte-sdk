@@ -2,6 +2,7 @@
 
 import logging
 import os
+from dataclasses import replace
 from unittest.mock import MagicMock, patch
 
 import flyte
@@ -1976,7 +1977,7 @@ class TestWrapTaskDistributed:
             return "result"
 
         # Apply the plugin config
-        test_task_with_elastic = test_task.override(plugin_config=mock_elastic)
+        test_task_with_elastic = replace(test_task, plugin_config=mock_elastic)
 
         # Apply wandb_init with worker scope
         decorated = wandb_init(project="test", rank_scope="worker")(test_task_with_elastic)
@@ -2005,7 +2006,7 @@ class TestWrapTaskDistributed:
             return "result"
 
         # Apply the plugin config
-        test_task_with_elastic = test_task.override(plugin_config=mock_elastic)
+        test_task_with_elastic = replace(test_task, plugin_config=mock_elastic)
 
         # Apply wandb_init with global scope (default)
         decorated = wandb_init(project="test", rank_scope="global")(test_task_with_elastic)
@@ -2030,7 +2031,7 @@ class TestWrapTaskDistributed:
         async def test_task():
             return "result"
 
-        test_task_with_elastic = test_task.override(plugin_config=mock_elastic)
+        test_task_with_elastic = replace(test_task, plugin_config=mock_elastic)
         decorated = wandb_init(project="test")(test_task_with_elastic)
 
         assert len(decorated.links) == 1
@@ -2073,7 +2074,7 @@ class TestTaskWrappingStrategy:
         async def test_task():
             return "result"
 
-        test_task_with_elastic = test_task.override(plugin_config=mock_elastic)
+        test_task_with_elastic = replace(test_task, plugin_config=mock_elastic)
         original_func = test_task_with_elastic.func
 
         decorated = wandb_init(project="test")(test_task_with_elastic)
@@ -2097,7 +2098,7 @@ class TestTaskWrappingStrategy:
         async def test_task():
             return "result"
 
-        test_task_with_elastic = test_task.override(plugin_config=mock_elastic)
+        test_task_with_elastic = replace(test_task, plugin_config=mock_elastic)
         original_func = test_task_with_elastic.func
 
         decorated = wandb_init(project="test")(test_task_with_elastic)
@@ -2148,7 +2149,7 @@ class TestDownloadLogs:
         async def test_task():
             return "result"
 
-        test_task_with_elastic = test_task.override(plugin_config=mock_elastic)
+        test_task_with_elastic = replace(test_task, plugin_config=mock_elastic)
 
         with caplog.at_level(logging.WARNING):
             wandb_init(project="test", download_logs=True)(test_task_with_elastic)

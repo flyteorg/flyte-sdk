@@ -24,6 +24,7 @@ Run locally::
 
 import sys
 import tempfile
+from typing import Literal
 
 import flyte
 from flyte.extras import shell
@@ -59,7 +60,7 @@ async def split_concatenated(parts: list[File], chunk_lines: int) -> list[File]:
 
 if __name__ == "__main__":
     flyte.init_from_config()
-    mode = "remote" if (len(sys.argv) > 1 and sys.argv[1] == "remote") else "local"
+    mode: Literal["local", "remote"] = "remote" if (len(sys.argv) > 1 and sys.argv[1] == "remote") else "local"
 
     parts: list[File] = []
     for i in range(3):

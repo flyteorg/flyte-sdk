@@ -1,5 +1,6 @@
 import asyncio
 import os
+import sys
 import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -34,6 +35,50 @@ def test_a0_disables_controller_under_torchrun(monkeypatch):
     monkeypatch.delenv("TORCHELASTIC_RUN_ID", raising=False)
     assert CliRunner().invoke(main, base_args).exit_code == 0
     assert captured["controller_enabled"] is True
+
+
+def test_reexec_under_wrapper(monkeypatch):
+    """`_F_EXEC_WRAPPER` re-execs the task under a wrapper (e.g. `nsys launch`), once.
+
+    The wrapper string is tokenized and env-expanded, then prepended to the original argv. The
+    _F_EXEC_WRAPPED guard and TORCHELASTIC_RUN_ID (clustered workers) both short-circuit it, and an
+    unset variable is a no-op so the normal startup path is untouched.
+    """
+    import flyte._bin.runtime as runtime
+
+    argv = ["/opt/venv/bin/a0", "--inputs", "x"]
+
+    def call(env):
+        for k in ("_F_EXEC_WRAPPER", "_F_EXEC_WRAPPED", "TORCHELASTIC_RUN_ID", "_F_EXEC_WRAPPER_CLUSTERED", "RANK"):
+            monkeypatch.delenv(k, raising=False)
+        for k, v in env.items():
+            monkeypatch.setenv(k, v)
+        with patch.object(sys, "argv", list(argv)), patch.object(os, "execvp") as ex:
+            runtime._maybe_reexec_under_wrapper()
+        return ex.call_args
+
+    # No wrapper -> no re-exec.
+    assert call({}) is None
+
+    # Wrapper set -> exec `nsys ... <expanded> <original argv>`; $ACTION_NAME is expanded.
+    ca = call({"_F_EXEC_WRAPPER": "nsys launch --session-new=flyte-$ACTION_NAME", "ACTION_NAME": "a7"})
+    assert ca.args == (
+        "nsys",
+        ["nsys", "launch", "--session-new=flyte-a7", "/opt/venv/bin/a0", "--inputs", "x"],
+    )
+
+    # Already wrapped -> no second re-exec.
+    assert call({"_F_EXEC_WRAPPER": "nsys launch", "_F_EXEC_WRAPPED": "1"}) is None
+
+    # Clustered/torchrun worker -> left unwrapped by default.
+    assert call({"_F_EXEC_WRAPPER": "nsys launch", "TORCHELASTIC_RUN_ID": "run-xyz"}) is None
+
+    # Clustered opt-in (_F_EXEC_WRAPPER_CLUSTERED): only the primary worker is wrapped. RANK 0 (or
+    # unset, which defaults to primary) re-execs; any other rank is left unwrapped.
+    w = {"_F_EXEC_WRAPPER": "nsys launch", "TORCHELASTIC_RUN_ID": "run-xyz", "_F_EXEC_WRAPPER_CLUSTERED": "1"}
+    assert call(w) is not None
+    assert call({**w, "RANK": "0"}) is not None
+    assert call({**w, "RANK": "3"}) is None
 
 
 def test_runtime_task_coroutine_exception():

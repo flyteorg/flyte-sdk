@@ -11,6 +11,7 @@ class TestActionPhase:
         assert ActionPhase.WAITING_FOR_RESOURCES.value == "waiting_for_resources"
         assert ActionPhase.INITIALIZING.value == "initializing"
         assert ActionPhase.RUNNING.value == "running"
+        assert ActionPhase.PAUSED.value == "paused"
         assert ActionPhase.SUCCEEDED.value == "succeeded"
         assert ActionPhase.FAILED.value == "failed"
         assert ActionPhase.ABORTED.value == "aborted"
@@ -31,6 +32,7 @@ class TestActionPhase:
 
         assert ActionPhase.QUEUED.is_terminal is False
         assert ActionPhase.RUNNING.is_terminal is False
+        assert ActionPhase.PAUSED.is_terminal is False
         assert ActionPhase.INITIALIZING.is_terminal is False
         assert ActionPhase.WAITING_FOR_RESOURCES.is_terminal is False
 
@@ -51,6 +53,7 @@ class TestActionPhase:
         assert ActionPhase.FAILED.to_protobuf_value() == 6
         assert ActionPhase.ABORTED.to_protobuf_value() == 7
         assert ActionPhase.TIMED_OUT.to_protobuf_value() == 8
+        assert ActionPhase.PAUSED.to_protobuf_value() == 9
 
     def test_from_protobuf(self):
         """Test creation from protobuf enum."""
@@ -60,6 +63,7 @@ class TestActionPhase:
         )
         assert ActionPhase.from_protobuf(phase_pb2.ACTION_PHASE_SUCCEEDED) == ActionPhase.SUCCEEDED
         assert ActionPhase.from_protobuf(phase_pb2.ACTION_PHASE_TIMED_OUT) == ActionPhase.TIMED_OUT
+        assert ActionPhase.from_protobuf(phase_pb2.ACTION_PHASE_PAUSED) == ActionPhase.PAUSED
 
     def test_from_protobuf_unspecified_raises(self):
         """Test that UNSPECIFIED phase raises error."""
@@ -67,9 +71,9 @@ class TestActionPhase:
             ActionPhase.from_protobuf(phase_pb2.ACTION_PHASE_UNSPECIFIED)
 
     def test_enum_iteration(self):
-        """Test that all 8 phases are present."""
+        """Test that all 9 phases are present."""
         phases = list(ActionPhase)
-        assert len(phases) == 8
+        assert len(phases) == 9
 
     def test_string_conversion(self):
         """Test that enum values behave as strings."""

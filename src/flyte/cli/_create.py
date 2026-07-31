@@ -1,3 +1,4 @@
+import sys
 from pathlib import Path
 from typing import Any, Dict, get_args
 
@@ -7,6 +8,18 @@ import flyte
 import flyte.cli._common as common
 from flyte.cli._option import DependentOption, MutuallyExclusiveOption
 from flyte.remote import SecretTypes
+
+
+def _is_interactive() -> bool:
+    """True when stdin is an interactive terminal, so it's safe to prompt the user.
+
+    Prevents `flyte create config` from blocking on a confirmation prompt in non-interactive
+    contexts (CI, piped input, etc.).
+    """
+    try:
+        return sys.stdin.isatty()
+    except (AttributeError, ValueError):
+        return False
 
 
 @click.group(name="create")
@@ -268,6 +281,17 @@ def secret(
     show_default=True,
 )
 @click.option(
+    "--registry",
+    type=str,
+    default=None,
+    required=False,
+    help=(
+        "Container registry to use as the base registry when building images (e.g. 'ghcr.io/my-org'). "
+        "When set, this overrides the built-in default base registry. Equivalent to the 'image.registry' "
+        "config entry or the FLYTE_IMAGE_REGISTRY environment variable."
+    ),
+)
+@click.option(
     "--auth-type",
     type=click.Choice(common.ALL_AUTH_OPTIONS, case_sensitive=False),
     default=None,
@@ -291,6 +315,7 @@ def config(
     domain: str | None = None,
     force: bool = False,
     image_builder: str | None = None,
+    registry: str | None = None,
     auth_type: str | None = None,
     local_persistence: bool = False,
 ):
@@ -337,6 +362,20 @@ def config(
     image: Dict[str, str] = {}
     if image_builder:
         image["builder"] = image_builder
+    if not registry and image_builder != "remote" and _is_interactive():
+        # No explicit --registry: try to infer a push registry from the user's Docker login and
+        # offer it interactively. We only ever propose here (never at `flyte run` time), only in
+        # an interactive terminal, and only write it on confirmation. The remote builder resolves
+        # the registry server-side, so we never prompt for one there.
+        from flyte._utils.docker_credentials import infer_registry_from_docker_config
+
+        inferred = infer_registry_from_docker_config()
+        if inferred and click.confirm(
+            f"Found a Docker login for '{inferred}'. Use it as your image registry?", default=True
+        ):
+            registry = inferred
+    if registry:
+        image["registry"] = registry
 
     local: Dict[str, Any] = {}
     if local_persistence:

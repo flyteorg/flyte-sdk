@@ -1,11 +1,12 @@
 import asyncio
-from typing import Optional, Union
+from typing import Optional, Union, cast
 
 from flyteidl2.common import identifier_pb2
 from flyteidl2.common import run_pb2 as common_run_pb2
 from flyteidl2.core import interface_pb2, literals_pb2
 from flyteidl2.task import common_pb2, run_pb2, task_definition_pb2
-from google.protobuf import timestamp_pb2, wrappers_pb2
+from google.protobuf.timestamp_pb2 import Timestamp
+from google.protobuf.wrappers_pb2 import BoolValue
 
 import flyte.types
 from flyte import Cron, FixedRate, Trigger, TriggerTime
@@ -28,7 +29,7 @@ def _to_schedule(m: Union[Cron, FixedRate], kickoff_arg_name: str | None = None)
     elif isinstance(m, FixedRate):
         start_time = None
         if m.start_time is not None:
-            start_time = timestamp_pb2.Timestamp()
+            start_time = Timestamp()
             start_time.FromDatetime(m.start_time)
 
         return common_pb2.Schedule(
@@ -74,7 +75,9 @@ async def process_default_inputs(
             literal_coros.append(flyte.types.TypeEngine.to_literal(v, type(v), variables_dict[k].type))
             keys.append(k)
 
-    final_literals: list[literals_pb2.Literal] = await asyncio.gather(*literal_coros, return_exceptions=True)
+    final_literals: list[literals_pb2.Literal] = cast(
+        "list[literals_pb2.Literal]", await asyncio.gather(*literal_coros, return_exceptions=True)
+    )
 
     # Check for exceptions in the gathered results
     for k, lit in zip(keys, final_literals):
@@ -134,7 +137,7 @@ async def to_task_trigger(
     run_spec = run_pb2.RunSpec(
         overwrite_cache=t.overwrite_cache,
         envs=env,
-        interruptible=wrappers_pb2.BoolValue(value=t.interruptible) if t.interruptible is not None else None,
+        interruptible=BoolValue(value=t.interruptible) if t.interruptible is not None else None,
         cluster=t.queue,
         max_action_concurrency=t.max_action_concurrency or 0,
         labels=labels,

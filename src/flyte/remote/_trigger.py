@@ -13,10 +13,42 @@ from flyteidl2.trigger import trigger_definition_pb2, trigger_service_pb2
 import flyte
 from flyte._initialize import ensure_client, get_client, get_init_config
 from flyte._internal.runtime import trigger_serde
+from flyte._sentry import track_operation
 from flyte.syncify import syncify
 
 from ._common import ToJSONMixin
 from ._task import Task, TaskDetails
+
+
+def _describe_automation(automation: common_pb2.TriggerAutomationSpec) -> str:
+    """
+    Render a trigger's automation specification as a single human-readable line.
+
+    One line (rather than one field per automation kind) keeps the columns aligned when a list of
+    triggers with differing automations is formatted as a table.
+    """
+    if automation.type == common_pb2.TriggerAutomationSpecType.TYPE_NONE:
+        return "none"
+    if automation.type != common_pb2.TriggerAutomationSpecType.TYPE_SCHEDULE:
+        return common_pb2.TriggerAutomationSpecType.Name(automation.type)
+
+    schedule = automation.schedule
+    # `schedule` is a message, so its sub-messages are never None; the oneof tag is what says
+    # which kind of schedule was actually set.
+    match schedule.WhichOneof("expression"):
+        case "cron":
+            return f"cron: {schedule.cron.expression} ({schedule.cron.timezone or 'UTC'})"
+        case "cron_expression":
+            return f"cron: {schedule.cron_expression}"
+        case "rate":
+            rate = schedule.rate
+            unit = common_pb2.FixedRateUnit.Name(rate.unit).removeprefix("FIXED_RATE_UNIT_").lower()
+            if rate.value != 1:
+                unit += "s"
+            start = rate.start_time.ToDatetime() if rate.HasField("start_time") else "now"
+            return f"every {rate.value} {unit} starting at {start}"
+        case _:
+            return "schedule: unset"
 
 
 @dataclass
@@ -179,19 +211,20 @@ class Trigger(ToJSONMixin):
             # Zero trust not enabled on the backend: register with inline inputs (pre-offload flow).
             spec.inputs.CopyFrom(task_trigger.spec.inputs)
 
-        resp = await get_client().trigger_service.deploy_trigger(
-            request=trigger_service_pb2.DeployTriggerRequest(
-                name=identifier_pb2.TriggerName(
-                    name=trigger.name,
-                    task_name=task_name,
-                    org=cfg.org,
-                    project=cfg.project,
-                    domain=cfg.domain,
-                ),
-                spec=spec,
-                automation_spec=task_trigger.automation_spec,
+        with track_operation("deploy_trigger"):
+            resp = await get_client().trigger_service.deploy_trigger(
+                request=trigger_service_pb2.DeployTriggerRequest(
+                    name=identifier_pb2.TriggerName(
+                        name=trigger.name,
+                        task_name=task_name,
+                        org=cfg.org,
+                        project=cfg.project,
+                        domain=cfg.domain,
+                    ),
+                    spec=spec,
+                    automation_spec=task_trigger.automation_spec,
+                )
             )
-        )
 
         details = TriggerDetails(pb2=resp.trigger)
 
@@ -365,20 +398,7 @@ class Trigger(ToJSONMixin):
         """
         Generate rich representation fields for the automation specification.
         """
-        if automation.type == common_pb2.TriggerAutomationSpec.type.TYPE_NONE:
-            yield "none", None
-        elif automation.type == common_pb2.TriggerAutomationSpec.type.TYPE_SCHEDULE:
-            if automation.schedule.cron is not None:
-                yield "cron", automation.schedule.cron
-            elif automation.schedule.rate is not None:
-                r = automation.schedule.rate
-                yield (
-                    "fixed_rate",
-                    (
-                        f"Every [{r.value}] {r.unit} starting at "
-                        f"{r.start_time.ToDatetime() if automation.HasField('start_time') else 'now'}"
-                    ),
-                )
+        yield "automation", _describe_automation(automation)
 
     def __rich_repr__(self):
         """

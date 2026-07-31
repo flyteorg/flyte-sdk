@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import pathlib
 import sys
 import types
 from dataclasses import replace
@@ -15,6 +16,7 @@ from flyte._deploy import (
     _build_image_bg,
     _build_images,
     _check_duplicate_env,
+    _deploy_task,
     _get_documentation_entity,
     _recursive_discover,
     _update_interface_inputs_and_outputs_docstring,
@@ -25,7 +27,32 @@ from flyte._docstring import Docstring
 from flyte._image import CodeBundleLayer, resolve_code_bundle_layer
 from flyte._internal.imagebuild.image_builder import ImageCache
 from flyte._internal.runtime.types_serde import transform_native_to_typed_interface
-from flyte.models import NativeInterface
+from flyte.models import NativeInterface, SerializationContext
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("sync_local_sys_paths", [True, False])
+async def test_deploy_task_syncs_local_sys_paths(sync_local_sys_paths, monkeypatch):
+    root_dir = pathlib.Path(__file__).parents[2].resolve()
+    monkeypatch.setattr(sys, "path", [str(root_dir / "src"), *sys.path])
+
+    env = flyte.TaskEnvironment(name="test_env", image="python:3.10")
+
+    @env.task()
+    async def task() -> None:
+        pass
+
+    context = SerializationContext(version="v1", root_dir=root_dir)
+    config = Mock(sync_local_sys_paths=sync_local_sys_paths)
+    with patch("flyte._deploy.ensure_client"), patch("flyte._deploy.get_init_config", return_value=config):
+        deployed = await _deploy_task(task, context, dryrun=True)
+
+    runtime_env = {item.key: item.value for item in deployed.deployed_task.task_template.container.env}
+    if sync_local_sys_paths:
+        assert "./src" in runtime_env["_F_SYS_PATH"].split(":")
+    else:
+        assert "_F_SYS_PATH" not in runtime_env
+    assert task.env_vars is None
 
 
 def test_get_description_entity_both_descriptions_truncated():
@@ -526,3 +553,55 @@ async def test_apply_unpicklable_env_raises_click_exception():
             await apply(plan, copy_style="loaded_modules", dryrun=True)
     assert "unpicklable" in excinfo.value.message
     assert "version=" in excinfo.value.message
+
+
+@pytest.mark.asyncio
+async def test_apply_version_derivation_under_redirected_std_streams():
+    """Regression test for https://github.com/flyteorg/flyte/issues/7660.
+
+    The CLI runs apply() inside a rich status spinner, which rebinds sys.stdout/sys.stderr
+    to FileProxy objects. cloudpickle only pickles streams by reference via an identity
+    check against the *current* sys.stdout/sys.stderr, so an env graph holding the real
+    stderr (like loguru's default sink does) raised PicklingError. Version derivation must
+    restore the original streams around cloudpickle.dumps.
+    """
+    import io
+    import pathlib
+
+    from flyte._deploy import apply
+
+    class _StderrSink:
+        """Mimics loguru's default handler: captures the real stderr at import time."""
+
+        def __init__(self):
+            self._stream = sys.__stderr__
+
+    plan = DeploymentPlan(envs={"e": _StderrSink()}, version=None)  # type: ignore[dict-item]
+
+    fake_bundle = Mock()
+    fake_bundle.computed_version = "test-bundle-version"
+
+    fake_cfg = Mock()
+    fake_cfg.root_dir = pathlib.Path("/tmp")
+    fake_cfg.images = {}
+    fake_cfg.project = "p"
+    fake_cfg.domain = "d"
+    fake_cfg.org = "o"
+
+    deployed_env = Mock()
+    deployed_env.get_name.return_value = "e"
+
+    with (
+        patch("flyte._initialize.is_initialized", return_value=True),
+        patch("flyte._deploy.get_init_config", return_value=fake_cfg),
+        patch("flyte._deploy._build_images", new=AsyncMock(return_value={})),
+        patch("flyte._code_bundle._includes.collect_env_include_files", return_value=[]),
+        patch("flyte._code_bundle.build_code_bundle", new=AsyncMock(return_value=fake_bundle)),
+        patch("flyte._deployer.get_deployer", return_value=AsyncMock(return_value=deployed_env)),
+        # Simulate rich's Live display swapping the std streams for proxies.
+        patch.object(sys, "stdout", io.StringIO()),
+        patch.object(sys, "stderr", io.StringIO()),
+    ):
+        deployment = await apply(plan, copy_style="loaded_modules", dryrun=True)
+
+    assert "e" in deployment.envs

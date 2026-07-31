@@ -162,6 +162,23 @@ async def test_simple_transformer():
     assert pv is None
 
 
+@pytest.mark.asyncio
+async def test_float_transformer_coerces_int():
+    """An int passed where a float is declared (e.g. a JSON/LLM integer ``42`` for an
+    ``amount_usd: float`` parameter) is coerced to float instead of being rejected during
+    input conversion. Mirrors the read side, which already accepts an integer literal."""
+    lit = await FloatTransformer.to_literal(42, float, LiteralType(simple=SimpleType.FLOAT))
+    assert lit.scalar.primitive.HasField("float_value")
+    assert lit.scalar.primitive.float_value == pytest.approx(42.0)
+
+
+@pytest.mark.asyncio
+async def test_float_transformer_still_rejects_bool():
+    """``bool`` subclasses ``int`` but must NOT be silently coerced to ``1.0``/``0.0``."""
+    with pytest.raises(TypeTransformerFailedError):
+        await FloatTransformer.to_literal(True, float, LiteralType(simple=SimpleType.FLOAT))
+
+
 # def test_file_formats_getting_literal_type():
 #     transformer = TypeEngine.get_transformer(File)
 #

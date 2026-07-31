@@ -8,13 +8,25 @@ import pytest
 import pytest_asyncio
 
 from flyte import Secret
-from flyte._image import AptPackages, Commands, Image, PipPackages, PoetryProject, PythonWheels, Requirements, UVProject
+from flyte._image import (
+    AptPackages,
+    Commands,
+    Image,
+    PipPackages,
+    PixiProject,
+    PoetryProject,
+    PythonWheels,
+    Requirements,
+    UVProject,
+)
 from flyte._internal.imagebuild.docker_builder import (
     DOCKER_FILE_UV_BASE_TEMPLATE,
+    PIXI_VERSION,
     CopyConfig,
     CopyConfigHandler,
     DockerImageBuilder,
     PipAndRequirementsHandler,
+    PixiProjectHandler,
     PoetryProjectHandler,
     PythonWheelHandler,
     UVProjectHandler,
@@ -635,6 +647,252 @@ async def test_uvproject_handler_without_uvlock():
         assert "--mount=type=bind,target=pyproject.toml" in result
 
 
+@pytest.mark.asyncio
+async def test_pixi_handler_dependencies_only():
+    with tempfile.TemporaryDirectory() as tmp_context, tempfile.TemporaryDirectory() as tmp_user:
+        context_path = Path(tmp_context)
+        user_folder = Path(tmp_user)
+
+        manifest = user_folder / "pixi.toml"
+        manifest.write_text("[project]\nname = 'test-project'")
+        pixi_lock = user_folder / "pixi.lock"
+        pixi_lock.write_text("version: 6")
+
+        pixi_project = PixiProject(manifest=manifest.absolute(), pixi_lock=pixi_lock.absolute())
+
+        initial_dockerfile = "FROM python:3.12\n"
+        result = await PixiProjectHandler.handle(
+            layer=pixi_project,
+            context_path=context_path,
+            dockerfile=initial_dockerfile,
+            docker_ignore_patterns=[],
+        )
+
+        assert result.startswith(initial_dockerfile)
+        # The pinned pixi binary is copied out of the official pixi image
+        assert f"COPY --from=ghcr.io/prefix-dev/pixi:{PIXI_VERSION} /usr/local/bin/pixi /usr/local/bin/pixi" in result
+        # Only the manifest and lock file are copied into the image
+        assert " /opt/pixi-project/pixi.toml" in result
+        assert " /opt/pixi-project/pixi.lock" in result
+        assert "--mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/rattler,id=pixi" in result
+        assert "pixi install --manifest-path /opt/pixi-project/pixi.toml" in result
+        # A lock file means a reproducible install
+        assert "--environment default --locked" in result
+        # The pixi environment becomes the runtime env for the entrypoint and later uv/pip layers
+        assert "VIRTUAL_ENV=/opt/pixi-project/.pixi/envs/default" in result
+        assert "UV_PYTHON=/opt/pixi-project/.pixi/envs/default/bin/python" in result
+        assert "PIXI_PROJECT_MANIFEST=/opt/pixi-project/pixi.toml" in result
+        assert "PATH=/opt/pixi-project/.pixi/envs/default/bin:$PATH" in result
+
+
+@pytest.mark.asyncio
+async def test_pixi_handler_without_lock():
+    """Without a pixi.lock, the environment is resolved at build time (no --locked)."""
+    with tempfile.TemporaryDirectory() as tmp_context, tempfile.TemporaryDirectory() as tmp_user:
+        context_path = Path(tmp_context)
+        user_folder = Path(tmp_user)
+
+        manifest = user_folder / "pixi.toml"
+        manifest.write_text("[project]\nname = 'test-project'")
+
+        pixi_project = PixiProject(manifest=manifest.absolute(), pixi_lock=None)
+
+        initial_dockerfile = "FROM python:3.12\n"
+        result = await PixiProjectHandler.handle(
+            layer=pixi_project,
+            context_path=context_path,
+            dockerfile=initial_dockerfile,
+            docker_ignore_patterns=[],
+        )
+
+        assert "pixi install --manifest-path /opt/pixi-project/pixi.toml" in result
+        assert "--locked" not in result
+        assert "/opt/pixi-project/pixi.lock" not in result
+
+
+@pytest.mark.asyncio
+async def test_pixi_handler_named_environment_and_extra_args():
+    with tempfile.TemporaryDirectory() as tmp_context, tempfile.TemporaryDirectory() as tmp_user:
+        context_path = Path(tmp_context)
+        user_folder = Path(tmp_user)
+
+        manifest = user_folder / "pixi.toml"
+        manifest.write_text("[project]\nname = 'test-project'")
+
+        pixi_project = PixiProject(manifest=manifest.absolute(), environment="prod", extra_args="--verbose")
+
+        initial_dockerfile = "FROM python:3.12\n"
+        result = await PixiProjectHandler.handle(
+            layer=pixi_project,
+            context_path=context_path,
+            dockerfile=initial_dockerfile,
+            docker_ignore_patterns=[],
+        )
+
+        assert "--environment prod --verbose" in result
+        assert "VIRTUAL_ENV=/opt/pixi-project/.pixi/envs/prod" in result
+        assert "PATH=/opt/pixi-project/.pixi/envs/prod/bin:$PATH" in result
+
+
+@pytest.mark.asyncio
+async def test_pixi_handler_frozen_extra_args_suppress_locked():
+    """A user-supplied --frozen replaces the default --locked (mutually exclusive pixi flags),
+    so manifests with editable path deps absent from the context can install with --skip."""
+    with tempfile.TemporaryDirectory() as tmp_context, tempfile.TemporaryDirectory() as tmp_user:
+        context_path = Path(tmp_context)
+        user_folder = Path(tmp_user)
+
+        manifest = user_folder / "pixi.toml"
+        manifest.write_text("[project]\nname = 'test-project'")
+        pixi_lock = user_folder / "pixi.lock"
+        pixi_lock.write_text("version: 6")
+
+        pixi_project = PixiProject(
+            manifest=manifest.absolute(),
+            pixi_lock=pixi_lock.absolute(),
+            extra_args="--frozen --skip my-pkg",
+        )
+
+        result = await PixiProjectHandler.handle(
+            layer=pixi_project,
+            context_path=context_path,
+            dockerfile="FROM python:3.12\n",
+            docker_ignore_patterns=[],
+        )
+
+        assert "--locked" not in result
+        assert "--environment default --frozen --skip my-pkg" in result
+        # The lock file is still copied and honoured by --frozen.
+        assert " /opt/pixi-project/pixi.lock" in result
+
+
+@pytest.mark.asyncio
+async def test_pixi_handler_with_project_install():
+    """install_project mode copies the whole project directory, but the manifest and
+    lock file survive .dockerignore exclusions."""
+    with tempfile.TemporaryDirectory() as tmp_context, tempfile.TemporaryDirectory() as tmp_user:
+        context_path = Path(tmp_context)
+        user_folder = Path(tmp_user)
+
+        # A pyproject.toml-based pixi project that installs the project itself
+        manifest = user_folder / "pyproject.toml"
+        manifest.write_text("[project]\nname = 'test-project'\nversion='0.1.0'\n[tool.pixi.workspace]")
+        pixi_lock = user_folder / "pixi.lock"
+        pixi_lock.write_text("version: 6")
+        (user_folder / "main.py").write_text("print('hello')")
+        (user_folder / "memo.txt").write_text("memo")
+
+        pixi_project = PixiProject(
+            manifest=manifest.absolute(),
+            pixi_lock=pixi_lock.absolute(),
+            project_install_mode="install_project",
+        )
+
+        initial_dockerfile = "FROM python:3.12\n"
+        result = await PixiProjectHandler.handle(
+            layer=pixi_project,
+            context_path=context_path,
+            dockerfile=initial_dockerfile,
+            docker_ignore_patterns=["*.txt", "pyproject.toml", "*.toml", "pixi.lock", "*.lock"],
+        )
+
+        assert "pixi install --manifest-path /opt/pixi-project/pyproject.toml" in result
+        assert "--environment default --locked" in result
+        assert "PIXI_PROJECT_MANIFEST=/opt/pixi-project/pyproject.toml" in result
+
+        # Calculate expected destination path
+        src_absolute = user_folder.absolute()
+        rel_path = PurePath(*src_absolute.parts[1:])
+        expected_dst_path = context_path / "_flyte_abs_context" / rel_path
+
+        assert f"COPY {expected_dst_path.relative_to(context_path)} /opt/pixi-project" in result
+        assert expected_dst_path.is_dir(), "Project directory should be copied into the context"
+        assert (expected_dst_path / "main.py").exists(), "main.py should be included"
+        assert (expected_dst_path / "pyproject.toml").exists(), "the manifest should survive dockerignore"
+        assert (expected_dst_path / "pixi.lock").exists(), "pixi.lock should survive dockerignore"
+        assert not (expected_dst_path / "memo.txt").exists(), "memo.txt should be excluded"
+
+
+def test_pixi_project_lowers_to_primitive_layers():
+    """The imagebuilder IDL has no pixi layer; PixiProject is lowered into apt / copy /
+    commands / env primitives that both builders' IDL understands."""
+    from flyte._image import Env
+    from flyte._internal.imagebuild.utils import pixi_project_to_primitive_layers
+
+    with tempfile.TemporaryDirectory() as tmp_user:
+        user_folder = Path(tmp_user)
+        manifest = user_folder / "pixi.toml"
+        manifest.write_text("[project]\nname = 'test-project'")
+        pixi_lock = user_folder / "pixi.lock"
+        pixi_lock.write_text("version: 6")
+
+        layer = PixiProject(manifest=manifest.absolute(), pixi_lock=pixi_lock.absolute())
+        lowered = pixi_project_to_primitive_layers(layer)
+
+        apt = [lyr for lyr in lowered if isinstance(lyr, AptPackages)]
+        commands = [cmd for lyr in lowered if isinstance(lyr, Commands) for cmd in lyr.commands]
+        copies = [lyr for lyr in lowered if isinstance(lyr, CopyConfig)]
+        envs = dict(kv for lyr in lowered if isinstance(lyr, Env) for kv in lyr.env_vars)
+
+        assert "curl" in apt[0].packages
+        assert any(f"PIXI_VERSION=v{PIXI_VERSION}" in cmd for cmd in commands)
+        install_cmd = next(cmd for cmd in commands if "pixi install" in cmd)
+        assert "--manifest-path /opt/pixi-project/pixi.toml" in install_cmd
+        assert "--environment default" in install_cmd
+        assert "--locked" in install_cmd
+        assert {c.dst for c in copies} == {"/opt/pixi-project/pixi.toml", "/opt/pixi-project/pixi.lock"}
+        assert envs["VIRTUAL_ENV"] == "/opt/pixi-project/.pixi/envs/default"
+        assert envs["UV_PYTHON"] == "/opt/pixi-project/.pixi/envs/default/bin/python"
+        assert envs["PATH"].startswith("/opt/pixi-project/.pixi/envs/default/bin:")
+
+
+def test_pixi_project_lowers_frozen_extra_args_suppress_locked():
+    """The primitive-layer lowering honours a user-supplied --frozen the same way the
+    docker builder does."""
+    from flyte._internal.imagebuild.utils import pixi_project_to_primitive_layers
+
+    with tempfile.TemporaryDirectory() as tmp_user:
+        user_folder = Path(tmp_user)
+        manifest = user_folder / "pixi.toml"
+        manifest.write_text("[project]\nname = 'test-project'")
+        pixi_lock = user_folder / "pixi.lock"
+        pixi_lock.write_text("version: 6")
+
+        layer = PixiProject(
+            manifest=manifest.absolute(),
+            pixi_lock=pixi_lock.absolute(),
+            extra_args="--frozen --skip my-pkg",
+        )
+        lowered = pixi_project_to_primitive_layers(layer)
+
+        commands = [cmd for lyr in lowered if isinstance(lyr, Commands) for cmd in lyr.commands]
+        install_cmd = next(cmd for cmd in commands if "pixi install" in cmd)
+        assert "--locked" not in install_cmd
+        assert "--frozen --skip my-pkg" in install_cmd
+
+
+def test_remote_builder_layers_proto_for_pixi_project():
+    """_get_layers_proto expands a PixiProject into IDL-supported layers instead of
+    silently skipping it."""
+    from flyte._internal.imagebuild.remote_builder import _get_layers_proto
+
+    with tempfile.TemporaryDirectory() as tmp_context, tempfile.TemporaryDirectory() as tmp_user:
+        manifest = Path(tmp_user) / "pixi.toml"
+        manifest.write_text("[project]\nname = 'test-project'")
+
+        img = Image.from_debian_base(registry="localhost", name="test-image").with_pixi_project(
+            manifest_file=manifest,
+        )
+
+        spec = _get_layers_proto(img, Path(tmp_context))
+        all_commands = [cmd for lyr in spec.layers for cmd in lyr.commands.cmd]
+        assert any("pixi install" in cmd for cmd in all_commands)
+        env_layers = [lyr.env.env_variables for lyr in spec.layers if lyr.WhichOneof("layer") == "env"]
+        assert any(env.get("VIRTUAL_ENV") == "/opt/pixi-project/.pixi/envs/default" for env in env_layers)
+        copy_dsts = {lyr.copy_config.dst for lyr in spec.layers if lyr.WhichOneof("layer") == "copy_config"}
+        assert "/opt/pixi-project/pixi.toml" in copy_dsts
+
+
 def test_get_secret_commands_deduplicates_secrets(monkeypatch):
     """Test that _get_secret_commands does not add duplicate secrets."""
     monkeypatch.setenv("GITHUB_TOKEN", "test-value")
@@ -909,6 +1167,78 @@ async def test_ensure_buildx_builder_recreates_when_network_host_missing():
 
 
 @pytest.mark.asyncio
+async def test_ensure_buildx_builder_wraps_create_failure_as_image_build_error():
+    """When `docker buildx create` fails, the raw CalledProcessError should not bubble out.
+
+    Previously this leaked into Sentry as a RuntimeSystem/CalledProcessError crash report
+    (FLYTE-SDK-4R). It should be wrapped in an actionable ImageBuildError, which is filtered.
+    """
+    from flyte.errors import ImageBuildError
+
+    def mock_run(cmd, **kwargs):
+        result = subprocess.CompletedProcess(cmd, 0)
+        if cmd == ["docker", "buildx", "ls"]:
+            result.stdout = "default"
+            result.stderr = ""
+            return result
+        if "create" in cmd:
+            raise subprocess.CalledProcessError(returncode=1, cmd=cmd, stderr="ERROR: failed to find driver")
+        return result
+
+    with patch(
+        "flyte._internal.imagebuild.docker_builder.run_sync_with_loop", side_effect=lambda fn, *a, **kw: fn(*a, **kw)
+    ):
+        with patch("subprocess.run", side_effect=mock_run):
+            with pytest.raises(ImageBuildError, match="Failed to create docker buildx builder"):
+                await DockerImageBuilder._ensure_buildx_builder()
+
+
+@pytest.mark.asyncio
+async def test_ensure_buildx_builder_reuses_existing_on_already_exists():
+    """If `docker buildx create` fails because the builder already exists (e.g. a concurrent
+    build created it), it should be reused rather than raising."""
+
+    def mock_run(cmd, **kwargs):
+        result = subprocess.CompletedProcess(cmd, 0)
+        if cmd == ["docker", "buildx", "ls"]:
+            result.stdout = "default"
+            result.stderr = ""
+            return result
+        if "create" in cmd:
+            raise subprocess.CalledProcessError(
+                returncode=1,
+                cmd=cmd,
+                stderr=f'ERROR: existing instance for "{DockerImageBuilder._builder_name}" already exists',
+            )
+        return result
+
+    with patch(
+        "flyte._internal.imagebuild.docker_builder.run_sync_with_loop", side_effect=lambda fn, *a, **kw: fn(*a, **kw)
+    ):
+        with patch("subprocess.run", side_effect=mock_run):
+            # Should not raise.
+            await DockerImageBuilder._ensure_buildx_builder()
+
+
+@pytest.mark.asyncio
+async def test_ensure_buildx_builder_wraps_ls_failure_as_image_build_error():
+    """When `docker buildx ls` fails, surface an actionable ImageBuildError instead of a crash."""
+    from flyte.errors import ImageBuildError
+
+    def mock_run(cmd, **kwargs):
+        if cmd == ["docker", "buildx", "ls"]:
+            raise subprocess.CalledProcessError(returncode=1, cmd=cmd, stderr="Cannot connect to the Docker daemon")
+        return subprocess.CompletedProcess(cmd, 0)
+
+    with patch(
+        "flyte._internal.imagebuild.docker_builder.run_sync_with_loop", side_effect=lambda fn, *a, **kw: fn(*a, **kw)
+    ):
+        with patch("subprocess.run", side_effect=mock_run):
+            with pytest.raises(ImageBuildError, match="Failed to list docker buildx builders"):
+                await DockerImageBuilder._ensure_buildx_builder()
+
+
+@pytest.mark.asyncio
 async def test_build_image_uses_custom_builder_from_env(monkeypatch):
     """When FLYTE_DOCKER_BUILDKIT_BUILDER_NAME is set, _build_image should use it and skip _ensure_buildx_builder."""
     from flyte._internal.imagebuild import docker_builder as db
@@ -1024,6 +1354,102 @@ async def test_build_from_dockerfile_uses_custom_builder_from_env(monkeypatch):
     assert cmd[builder_idx + 1] == "my-custom-builder"
 
 
+def test_get_extra_build_args_splits_with_shell_quoting(monkeypatch):
+    """FLYTE_DOCKER_BUILD_EXTRA_ARGS is split like a shell would, so a quoted value stays one argument."""
+    from flyte._internal.imagebuild.docker_builder import _get_extra_build_args
+
+    monkeypatch.delenv("FLYTE_DOCKER_BUILD_EXTRA_ARGS", raising=False)
+    assert _get_extra_build_args() == []
+
+    monkeypatch.setenv("FLYTE_DOCKER_BUILD_EXTRA_ARGS", "   ")
+    assert _get_extra_build_args() == []
+
+    monkeypatch.setenv("FLYTE_DOCKER_BUILD_EXTRA_ARGS", '--provenance=false --label "my label"')
+    assert _get_extra_build_args() == ["--provenance=false", "--label", "my label"]
+
+
+@pytest.mark.asyncio
+async def test_build_image_appends_extra_build_args(monkeypatch):
+    """Extra args land after the flags flyte generates and before the positional context path."""
+    zstd_output = "--output=type=image,push=true,compression=zstd,oci-mediatypes=true"
+    monkeypatch.setenv("FLYTE_DOCKER_BUILDKIT_BUILDER_NAME", "my-custom-builder")
+    monkeypatch.setenv("FLYTE_DOCKER_BUILD_EXTRA_ARGS", zstd_output)
+
+    calls = []
+
+    def mock_run(cmd, **kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0)
+
+    img = Image.from_debian_base(registry="localhost:30000", name="extra_args_test", install_flyte=False)
+
+    with patch(
+        "flyte._internal.imagebuild.docker_builder.run_sync_with_loop",
+        side_effect=lambda fn, *a, **kw: fn(*a, **kw),
+    ):
+        with patch("subprocess.run", side_effect=mock_run):
+            await DockerImageBuilder()._build_image(img, push=True)
+
+    cmd = next(c for c in calls if isinstance(c, list) and "buildx" in c and "build" in c)
+    assert cmd.index(zstd_output) > cmd.index("--push")
+    assert cmd[-1] != zstd_output, "the build context must stay the last argument"
+
+
+@pytest.mark.asyncio
+async def test_build_image_omits_extra_build_args_when_unset(monkeypatch):
+    """An unset FLYTE_DOCKER_BUILD_EXTRA_ARGS must not add an empty argument to the command."""
+    monkeypatch.setenv("FLYTE_DOCKER_BUILDKIT_BUILDER_NAME", "my-custom-builder")
+    monkeypatch.delenv("FLYTE_DOCKER_BUILD_EXTRA_ARGS", raising=False)
+
+    calls = []
+
+    def mock_run(cmd, **kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0)
+
+    img = Image.from_debian_base(registry="localhost:30000", name="no_extra_args_test", install_flyte=False)
+
+    with patch(
+        "flyte._internal.imagebuild.docker_builder.run_sync_with_loop",
+        side_effect=lambda fn, *a, **kw: fn(*a, **kw),
+    ):
+        with patch("subprocess.run", side_effect=mock_run):
+            await DockerImageBuilder()._build_image(img, push=True)
+
+    cmd = next(c for c in calls if isinstance(c, list) and "buildx" in c and "build" in c)
+    assert all(arg.strip() for arg in cmd)
+
+
+@pytest.mark.asyncio
+async def test_build_from_dockerfile_appends_extra_build_args(monkeypatch):
+    """The from_dockerfile path honours the same extra args as the generated-Dockerfile path."""
+    zstd_output = "--output=type=image,push=true,compression=zstd,oci-mediatypes=true"
+    monkeypatch.setenv("FLYTE_DOCKER_BUILDKIT_BUILDER_NAME", "my-custom-builder")
+    monkeypatch.setenv("FLYTE_DOCKER_BUILD_EXTRA_ARGS", zstd_output)
+
+    calls = []
+
+    def mock_run(cmd, **kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0)
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        dockerfile = Path(tmp_dir) / "Dockerfile"
+        dockerfile.write_text("FROM python:3.12\n")
+
+        img = Image.from_dockerfile(file=dockerfile, registry="localhost:30000", name="extra_args_dockerfile_test")
+
+        with patch(
+            "flyte._internal.imagebuild.docker_builder.run_sync_with_loop",
+            side_effect=lambda fn, *a, **kw: fn(*a, **kw),
+        ):
+            with patch("subprocess.run", side_effect=mock_run):
+                await DockerImageBuilder()._build_from_dockerfile(img, push=True)
+
+    cmd = next(c for c in calls if isinstance(c, list) and "buildx" in c and "build" in c)
+    assert cmd.index(zstd_output) > cmd.index("--push")
+
+
 def test_dockerfile_base_footer_always_applies():
     """The base footer carries the image id and bash shell for every image, but must NOT
     force a runtime user — that is added separately only for images that create it."""
@@ -1109,3 +1535,35 @@ async def test_code_bundle_handler_uses_chown_flyte():
 
             assert "COPY --chown=flyte:flyte" in result
             assert "/home/flyte/code" in result
+
+
+@pytest.mark.asyncio
+async def test_dockerignore_handler_missing_file_raises_image_build_error(tmp_path):
+    """FLYTE-SDK-4Z: a missing .dockerignore must surface as ImageBuildError at build time.
+
+    The raw `shutil.copy` used to raise `FileNotFoundError: '.dockerignore'`, which got
+    crash-reported to Sentry as an SDK bug instead of being shown to the user as the config
+    mistake it is (typically running `flyte deploy` from outside the project root).
+    """
+    from flyte._image import DockerIgnore
+    from flyte._internal.imagebuild.docker_builder import DockerIgnoreHandler
+    from flyte.errors import ImageBuildError
+
+    layer = DockerIgnore(path=str(tmp_path / "does-not-exist" / ".dockerignore"))
+    with pytest.raises(ImageBuildError, match="with_dockerignore"):
+        await DockerIgnoreHandler.handle(layer, tmp_path, "")
+
+
+@pytest.mark.asyncio
+async def test_dockerignore_handler_copies_existing_file(tmp_path):
+    """The happy path is unchanged: an existing .dockerignore is copied into the context."""
+    from flyte._image import DockerIgnore
+    from flyte._internal.imagebuild.docker_builder import DockerIgnoreHandler
+
+    src = tmp_path / ".dockerignore"
+    src.write_text("*.log\n")
+    context = tmp_path / "context"
+    context.mkdir()
+
+    await DockerIgnoreHandler.handle(DockerIgnore(path=str(src)), context, "")
+    assert (context / ".dockerignore").read_text() == "*.log\n"

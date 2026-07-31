@@ -139,7 +139,8 @@ class Informer:
         min_watch_backoff: float = 1.0,
         max_watch_backoff: float = 30.0,
         watch_conn_timeout_sec: float = 5.0,
-        max_watch_retries: int = 10,
+        # Consecutive failures; ~20+ min at the 30s backoff cap, same rationale as max_system_retries.
+        max_watch_retries: int = 40,
     ):
         self.name = self.mkname(run_name=run_id.name, parent_action_name=parent_action_name)
         self.parent_action_name = parent_action_name
@@ -220,13 +221,13 @@ class Informer:
         """
         # sentinel = False
         retries = 0
-        last_exc = None
+        last_exc: Exception | None = None
         while self._running:
             if retries >= self._max_watch_retries:
                 logger.error(
                     f"Informer watch failure retries crossed threshold {retries}/{self._max_watch_retries}, exiting!"
                 )
-                raise last_exc
+                raise cast(Exception, last_exc)
             try:
                 if retries >= 1:
                     logger.warning(f"Informer watch retrying, attempt {retries}/{self._max_watch_retries}")
@@ -248,12 +249,12 @@ class Informer:
                         headers=headers,
                     )
                 else:
-                    watcher = self._client.watch(
+                    watcher = cast(StateService, self._client).watch(
                         state_service_pb2.WatchRequest(
                             parent_action_id=parent_action_id,
                         ),
                     )
-                async for resp in watcher:
+                async for resp in cast(AsyncIterator, watcher):
                     retries = 0
                     if resp is None:
                         # gRPC deserialization failure: _transform() caught an
@@ -288,7 +289,7 @@ class Informer:
                 logger.exception(f"Watch error: {self.name}", exc_info=e)
                 last_exc = e
                 retries += 1
-            backoff = min(self._min_watch_backoff * (2**retries), self._max_watch_backoff)
+            backoff = min(self._min_watch_backoff * (2 ** min(retries, 20)), self._max_watch_backoff)
             logger.warning(f"Watch for {self.name} failed, retrying in {backoff} seconds...")
             await asyncio.sleep(backoff)
 
