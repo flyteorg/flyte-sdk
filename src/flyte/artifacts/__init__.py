@@ -19,7 +19,7 @@ Launching with known artifacts:
 flyte.run(main, x=flyte.remote.Artifact.get("name", version="1.0"))
 ```
 
-Retireve a set of artifacts and pass them as a list
+Retrieve a set of artifacts and pass them as a list
 ```python
 from flyte.remote import Artifact
 flyte.run(main, x=[Artifact.get("name1", version="1.0"), Artifact.get("name2", version="2.0")])

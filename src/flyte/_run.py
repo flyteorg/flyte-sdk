@@ -755,7 +755,8 @@ class _Runner:
         # remote uri pass that uri straight through to_literal without re-uploading.
         # The artifact ids are stamped onto the converted input literals below so the
         # run's inputs record which artifact each value came from.
-        args, kwargs, artifact_sources = await _unwrap_artifacts(args, kwargs)
+        # New names: mypy rejects reassigning P.args/P.kwargs-typed parameters.
+        uargs, ukwargs, artifact_sources = await _unwrap_artifacts(args, kwargs)
 
         task: TaskTemplate[P, R, F] | TaskDetails
         task_id = None
@@ -771,7 +772,7 @@ class _Runner:
             # spec path.
             task_id = None if task.overridden else task.pb2.task_id
             inputs = await convert_from_native_to_inputs(
-                task.interface, *args, custom_context=self._custom_context, **kwargs
+                task.interface, *uargs, custom_context=self._custom_context, **ukwargs
             )
             input_names = list(task.interface.inputs.keys())
             version = task.pb2.task_id.version
@@ -780,7 +781,7 @@ class _Runner:
             task = cast(TaskTemplate[P, R, F], obj)
             task_spec, code_bundle, version = await self._build_task_spec_from_template(obj)
             inputs = await convert_from_native_to_inputs(
-                obj.native_interface, *args, custom_context=self._custom_context, **kwargs
+                obj.native_interface, *uargs, custom_context=self._custom_context, **ukwargs
             )
             input_names = list(obj.native_interface.inputs.keys())
         else:

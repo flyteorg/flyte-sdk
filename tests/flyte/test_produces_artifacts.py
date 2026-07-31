@@ -145,9 +145,7 @@ class TestArtifactAnnotationDisplay:
             producing_task.native_interface,
             "t",
         )
-        assert literal_string_repr(outputs.proto_outputs) == {
-            "o0": "model-bytes (produced artifact: my-model@1.0)"
-        }
+        assert literal_string_repr(outputs.proto_outputs) == {"o0": "model-bytes (produced artifact: my-model@1.0)"}
 
     @pytest.mark.asyncio
     async def test_string_repr_omits_version_when_unset(self):
