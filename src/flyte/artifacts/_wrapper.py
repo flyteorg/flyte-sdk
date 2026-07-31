@@ -1,4 +1,4 @@
-from typing import Any, Protocol, TypeVar, runtime_checkable
+from typing import Any, Protocol, TypeVar, cast, runtime_checkable
 
 from typing_extensions import ParamSpec
 
@@ -113,4 +113,4 @@ def new(obj: T, metadata: Metadata) -> T:
         but carries additional Flyte metadata accessible via get_flyte_metadata()
     """
     wrapper = ArtifactWrapper(obj, metadata)
-    return wrapper  # type: ignore[return-value]
+    return cast(T, wrapper)
