@@ -107,7 +107,7 @@ async def test_runspec_labels_and_annotations(mock_code_bundler, mock_build_imag
 
 @pytest.mark.asyncio
 @_patch_build
-async def test_runspec_queue_to_cluster(mock_code_bundler, mock_build_image_bg):
+async def test_runspec_queue(mock_code_bundler, mock_build_image_bg):
     """queue= maps to RunSpec.queue."""
     req = await _run_and_capture(mock_build_image_bg, mock_code_bundler, queue="gpu-queue")
     assert req.run_spec.queue == "gpu-queue"
@@ -319,7 +319,7 @@ async def test_apply_overrides_inherited_merges_env_and_keys():
             ]
         ),
         labels=run_pb2.Labels(values={"base": "yes"}),
-        queue="orig-cluster",
+        queue="orig-queue",
     )
 
     runner = _Runner(force_mode="remote", env_vars={"FOO": "new", "BAR": "2"}, labels={"team": "ml"})
@@ -331,7 +331,7 @@ async def test_apply_overrides_inherited_merges_env_and_keys():
     assert envs["BAR"] == "2"  # new key added
     assert out.labels.values["base"] == "yes"  # prior label preserved
     assert out.labels.values["team"] == "ml"  # runner label merged
-    assert out.queue == "orig-cluster"  # queue not set on runner -> inherited queue kept
+    assert out.queue == "orig-queue"  # queue not set on runner -> inherited queue kept
 
     # base is not mutated (deep copy).
     assert {kv.key: kv.value for kv in base.envs.values} == {"KEEP": "1", "FOO": "old"}
