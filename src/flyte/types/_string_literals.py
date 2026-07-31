@@ -58,13 +58,42 @@ def _scalar_to_string(scalar: literals_pb2.Scalar) -> Any:
             raise ValueError(f"Unknown scalar type {scalar}")
 
 
+def artifact_annotation(lit: literals_pb2.Literal) -> str | None:
+    """
+    Human-readable artifact annotation for a literal, or None when the literal carries no
+    artifact markers. Two markers exist:
+
+    - consumed provenance (`ARTIFACT_TRACKER_KEY`): the value came from a published artifact,
+      stamped by flyte.run as ``org/project/domain/name@version``.
+    - produced metadata (`ARTIFACT_PRODUCED_KEY`): the task attached artifact metadata via
+      ``flyte.artifacts.new(...)``; the platform extracts it as a generated artifact.
+    """
+    if not lit.metadata:
+        return None
+
+    from flyte._constants import ARTIFACT_PRODUCED_KEY, ARTIFACT_TRACKER_KEY
+
+    if tracker := lit.metadata.get(ARTIFACT_TRACKER_KEY):
+        return f"artifact: {tracker}"
+    if produced := lit.metadata.get(ARTIFACT_PRODUCED_KEY):
+        import json
+
+        try:
+            md = json.loads(produced)
+            name = md.get("name", "")
+            if version := md.get("version"):
+                name = f"{name}@{version}"
+            return f"produced artifact: {name}" if name else None
+        except (ValueError, TypeError):
+            return None
+    return None
+
+
 def _literal_string_repr(lit: literals_pb2.Literal) -> Any:
     """
     This method is used to convert a literal to a string representation. This is useful in places, where we need to
     use a shortened string representation of a literal, especially a FlyteFile, FlyteDirectory, or StructuredDataset.
     """
-    from flyte._constants import ARTIFACT_TRACKER_KEY
-
     rendered: Any
     match lit.WhichOneof("value"):
         case "scalar":
@@ -79,11 +108,10 @@ def _literal_string_repr(lit: literals_pb2.Literal) -> Any:
         case _:
             raise ValueError(f"Unknown literal type {lit}")
 
-    # Surface artifact provenance stamped on the literal (e.g. by flyte.run when an input
-    # came from a published artifact) so `flyte get io` shows where the value came from.
-    tracker = lit.metadata.get(ARTIFACT_TRACKER_KEY) if lit.metadata else None
-    if tracker:
-        return f"{rendered} (artifact: {tracker})"
+    # Surface artifact markers stamped on the literal (consumed provenance or produced
+    # metadata) so `flyte get io` shows the artifact linkage alongside the value.
+    if annotation := artifact_annotation(lit):
+        return f"{rendered} ({annotation})"
     return rendered
 
 

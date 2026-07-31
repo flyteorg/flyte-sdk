@@ -133,3 +133,45 @@ class TestOutputStamping:
         )
         (nl,) = outputs.proto_outputs.literals
         assert "version" not in json.loads(nl.value.metadata[ARTIFACT_PRODUCED_KEY])
+
+
+class TestArtifactAnnotationDisplay:
+    @pytest.mark.asyncio
+    async def test_string_repr_annotates_produced_output(self):
+        from flyte.types import literal_string_repr
+
+        outputs = await convert_from_native_to_outputs(
+            artifacts.new("model-bytes", Metadata(name="my-model", version="1.0")),
+            producing_task.native_interface,
+            "t",
+        )
+        assert literal_string_repr(outputs.proto_outputs) == {
+            "o0": "model-bytes (produced artifact: my-model@1.0)"
+        }
+
+    @pytest.mark.asyncio
+    async def test_string_repr_omits_version_when_unset(self):
+        from flyte.types import literal_string_repr
+
+        outputs = await convert_from_native_to_outputs(
+            artifacts.new("v", Metadata(name="unversioned")), producing_task.native_interface, "t"
+        )
+        assert literal_string_repr(outputs.proto_outputs) == {"o0": "v (produced artifact: unversioned)"}
+
+    @pytest.mark.asyncio
+    async def test_action_outputs_repr_annotates(self):
+        from flyte.remote import ActionOutputs
+
+        outputs = await convert_from_native_to_outputs(
+            artifacts.new("model-bytes", Metadata(name="my-model")), producing_task.native_interface, "t"
+        )
+        ao = ActionOutputs(outputs.proto_outputs, ("model-bytes",))
+        assert repr(ao) == 'ActionOutputs(o0="model-bytes" (produced artifact: my-model))'
+
+    @pytest.mark.asyncio
+    async def test_action_outputs_repr_plain(self):
+        from flyte.remote import ActionOutputs
+
+        outputs = await convert_from_native_to_outputs("plain", plain_task.native_interface, "t")
+        ao = ActionOutputs(outputs.proto_outputs, ("plain",))
+        assert repr(ao) == 'ActionOutputs(o0="plain")'

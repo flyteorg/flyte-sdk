@@ -26,7 +26,7 @@ from flyte._logging import logger
 from ._interface import guess_interface
 from ._pickle import FlytePickle
 from ._renderer import Renderable
-from ._string_literals import literal_string_repr
+from ._string_literals import artifact_annotation, literal_string_repr
 from ._type_engine import TypeEngine, TypeTransformer, TypeTransformerFailedError
 
 __all__ = [
@@ -35,6 +35,7 @@ __all__ = [
     "TypeEngine",
     "TypeTransformer",
     "TypeTransformerFailedError",
+    "artifact_annotation",
     "guess_interface",
     "literal_string_repr",
 ]
