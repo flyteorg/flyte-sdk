@@ -1223,7 +1223,7 @@ requires-dist = [
     { name = "docstring-parser", specifier = ">=0.16" },
     { name = "fastapi", marker = "extra == 'examples-test'" },
     { name = "flyte-controller-base", marker = "extra == 'rust-controller'", directory = "rs_controller" },
-    { name = "flyteidl2", editable = "../cloud/flyte2/gen/python" },
+    { name = "flyteidl2", specifier = "==2.0.33" },
     { name = "fsspec", specifier = ">=2025.3.0" },
     { name = "grpcio", marker = "extra == 'connector'", specifier = ">=1.71.0" },
     { name = "grpcio-health-checking", marker = "extra == 'connector'" },
@@ -1298,24 +1298,20 @@ dependencies = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "flyteidl2", specifier = ">=2.0.31" }]
+requires-dist = [{ name = "flyteidl2", specifier = "==2.0.33" }]
 
 [[package]]
 name = "flyteidl2"
-source = { editable = "../cloud/flyte2/gen/python" }
+version = "2.0.33"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "googleapis-common-protos" },
     { name = "protobuf" },
     { name = "protoc-gen-openapiv2" },
     { name = "protovalidate" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "googleapis-common-protos" },
-    { name = "protobuf", specifier = ">=4.21.1" },
-    { name = "protoc-gen-openapiv2" },
-    { name = "protovalidate", specifier = ">=1.0.0" },
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a7/99/ed84578659ad6c6273a6a2aa4966df537511237bc16dfffc8cbd7c2c23f5/flyteidl2-2.0.33-py3-none-any.whl", hash = "sha256:977652838b79a856ca39fa9d4dfffee77be406eb33b6c31f27676d57df1a620b", size = 364392, upload-time = "2026-07-31T22:57:54.557Z" },
 ]
 
 [[package]]

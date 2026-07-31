@@ -9,7 +9,7 @@ description = "Rust controller for Union"
 requires-python = ">=3.10"
 classifiers = ["Programming Language :: Python", "Programming Language :: Rust"]
 dependencies = [
-    "flyteidl2>=2.0.31",  # DEV-ONLY: restore == pin before merging (local artifact-service protos)
+    "flyteidl2==2.0.33",
 ]
 [tool.maturin]
 module-name = "flyte_controller_base"
