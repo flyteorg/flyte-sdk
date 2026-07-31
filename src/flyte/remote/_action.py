@@ -30,7 +30,6 @@ from flyteidl2.dataproxy import dataproxy_service_pb2
 from flyteidl2.task import common_pb2
 from flyteidl2.workflow import run_definition_pb2, run_service_pb2
 from flyteidl2.workflow.run_service_pb2 import WatchActionDetailsResponse
-from google.protobuf import duration_pb2
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
@@ -473,7 +472,7 @@ class Action(ToJSONMixin):
                 yield formatted.plain
 
     @syncify
-    async def get_report(self, attempt: int | None = None, expires_in: timedelta = timedelta(hours=1)) -> str:
+    async def get_report(self, attempt: int | None = None) -> str:
         """
         Get the HTML report associated with this action.
 
@@ -481,7 +480,6 @@ class Action(ToJSONMixin):
         then downloads the report from that URL and returns its contents as an HTML string.
 
         :param attempt: The attempt number to fetch the report for. Defaults to the latest attempt.
-        :param expires_in: How long the signed download link should remain valid. Defaults to 1 hour.
         :return: The report contents as an HTML string.
         """
         ensure_client()
@@ -490,8 +488,6 @@ class Action(ToJSONMixin):
             details = await self.details()
             attempt = details.attempts
 
-        expires_in_pb = duration_pb2.Duration()  # ty: ignore[unresolved-attribute]
-        expires_in_pb.FromTimedelta(expires_in)
         resp = await get_client().dataproxy_service.create_download_link(
             dataproxy_service_pb2.CreateDownloadLinkRequest(
                 artifact_type=dataproxy_service_pb2.ARTIFACT_TYPE_REPORT,
@@ -499,7 +495,6 @@ class Action(ToJSONMixin):
                     action_id=self.action_id,
                     attempt=attempt,
                 ),
-                expires_in=expires_in_pb,
             )
         )
 

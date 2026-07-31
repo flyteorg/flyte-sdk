@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import timedelta
 from typing import Any, AsyncGenerator, AsyncIterator, Callable, Dict, Literal, Tuple
 
 import rich.repr
@@ -281,7 +280,7 @@ class Run(ToJSONMixin):
             yield line
 
     @syncify
-    async def get_report(self, attempt: int | None = None, expires_in: timedelta = timedelta(hours=1)) -> str:
+    async def get_report(self, attempt: int | None = None) -> str:
         """
         Get the HTML report associated with this run's root action.
 
@@ -293,10 +292,9 @@ class Run(ToJSONMixin):
         iterating ``Action.listall``.
 
         :param attempt: The attempt number to fetch the report for. Defaults to the latest attempt.
-        :param expires_in: How long the signed download link should remain valid. Defaults to 1 hour.
         :return: The report contents as an HTML string.
         """
-        return await self.action.get_report.aio(attempt=attempt, expires_in=expires_in)
+        return await self.action.get_report.aio(attempt=attempt)
 
     @syncify
     async def details(self) -> RunDetails:
