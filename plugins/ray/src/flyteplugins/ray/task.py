@@ -132,6 +132,7 @@ class RayFunctionTask(AsyncFunctionTaskTemplate):
     task_type: str = "ray"
     plugin_config: RayJobConfig
     debuggable: bool = True
+    supports_reuse_policy: typing.ClassVar[bool] = True
 
     def __post_init__(self):
         super().__post_init__()
