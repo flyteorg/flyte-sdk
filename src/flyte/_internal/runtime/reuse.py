@@ -20,10 +20,12 @@ def reuse_policy_to_pb(reuse_policy: ReusePolicy) -> tasks_pb2.ReusePolicy:
     ``ReusePolicy.__post_init__`` normalizes ``replicas`` to a (min, max) tuple and both TTLs to
     ``timedelta``, so the accessors used here are always well-defined.
     """
+    scope = tasks_pb2.ReusePolicy.RUN if reuse_policy.scope == "run" else tasks_pb2.ReusePolicy.GLOBAL
     pb = tasks_pb2.ReusePolicy(
         min_replicas=reuse_policy.min_replicas,
         max_replicas=reuse_policy.max_replicas,
         concurrency=reuse_policy.concurrency,
+        scope=scope,
     )
     idle_ttl = reuse_policy.idle_ttl
     if isinstance(idle_ttl, timedelta):
