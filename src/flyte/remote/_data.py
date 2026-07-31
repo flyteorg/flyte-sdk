@@ -196,7 +196,12 @@ async def _upload_with_retry(
 
 @require_project_and_domain
 async def _upload_single_file(
-    cfg: CommonInit, fp: Path, verify: bool = True, basedir: str | None = None, fname: str | None = None
+    cfg: CommonInit,
+    fp: Path,
+    verify: bool = True,
+    basedir: str | None = None,
+    fname: str | None = None,
+    content_type: str | None = None,
 ) -> Tuple[str, str]:
     """
     Upload a single file to remote storage using a signed URL.
@@ -206,6 +211,9 @@ async def _upload_single_file(
     :param verify: Whether to verify SSL certificates.
     :param basedir: Optional base directory prefix for the remote path.
     :param fname: Optional file name for the remote path.
+    :param content_type: Optional MIME type to store with the object. Without it the store
+        serves the object as a generic blob, which makes a browser download it rather than
+        render it -- so anything meant to be viewed in place (HTML reports) must set it.
     :return: Tuple of (MD5 digest hex string, remote native URL).
     """
     md5_bytes, str_digest, _ = hash_file(fp)
@@ -268,6 +276,8 @@ async def _upload_single_file(
 
     # Update headers with MD5 and content length
     extra_headers.update({"Content-Length": str(content_length), "Content-MD5": encoded_md5.decode("utf-8")})
+    if content_type:
+        extra_headers["Content-Type"] = content_type
 
     await _upload_with_retry(
         fp=fp,

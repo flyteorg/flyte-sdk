@@ -191,6 +191,19 @@ class RunArguments:
             )
         },
     )
+    publish: bool = field(
+        default=False,
+        metadata={
+            "click.option": click.Option(
+                ["--publish"],
+                is_flag=True,
+                default=False,
+                help="Execute locally but report the run to the platform so it appears in the UI like a "
+                "remote run: task tree, inputs/outputs, code and a report of the captured output. "
+                "Requires --local.",
+            )
+        },
+    )
     image: List[str] = field(
         default_factory=list,
         metadata={
@@ -420,6 +433,7 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
                 mode="local" if self.run_args.local else "remote",
                 name=self.run_args.name,
                 raw_data_path=self.run_args.raw_data_path,
+                publish=self.run_args.publish,
                 service_account=self.run_args.service_account,
                 log_format=config.log_format,
                 reset_root_logger=config.reset_root_logger,
@@ -448,10 +462,17 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
             await self._render_remote_success(console, result, config)
 
     def _render_local_success(self, console, result, config):
+        # With --publish, result.url is the published run's console URL rather than a local path.
+        label = "URL" if self.run_args.publish else "Path"
         if config.output_format in ("json", "table-simple"):
-            content = f"Completed Local Run\nPath: {result.url}\nOutputs: {result.outputs()}"
+            content = f"Completed Local Run\n{label}: {result.url}\nOutputs: {result.outputs()}"
         else:
-            content = f"[green]Completed Local Run[/green]\nPath: {result.url}\n➡️  Outputs: {result.outputs()}"
+            location = (
+                f"[blue bold][link={result.url}]{result.url}[/link][/blue bold]"
+                if self.run_args.publish
+                else str(result.url)
+            )
+            content = f"[green]Completed Local Run[/green]\n{label}: {location}\n➡️  Outputs: {result.outputs()}"
         console.print(common.get_panel("Local Success", content, config.output_format))
 
     async def _render_remote_success(self, console, result, config):
@@ -490,6 +511,7 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
                 mode="local",
                 name=self.run_args.name,
                 raw_data_path=self.run_args.raw_data_path,
+                publish=self.run_args.publish,
                 service_account=self.run_args.service_account,
                 log_format=config.log_format,
                 reset_root_logger=config.reset_root_logger,
@@ -515,6 +537,9 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
         if self.run_args.rerun_from and self.run_args.local:
             raise click.UsageError("--rerun-from requires remote mode (it cannot be combined with --local)")
         self._validate_required_params(ctx)
+        if self.run_args.publish:
+            if not self.run_args.local:
+                raise click.UsageError("--publish executes the task locally and requires --local")
         if self.run_args.tui:
             if not self.run_args.local:
                 raise click.UsageError("--tui can only be used with --local")
@@ -679,10 +704,17 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
             await self._render_remote_success(console, result, config)
 
     def _render_local_success(self, console, result, config):
+        # With --publish, result.url is the published run's console URL rather than a local path.
+        label = "URL" if self.run_args.publish else "Path"
         if config.output_format in ("json", "table-simple"):
-            content = f"Completed Local Run\nPath: {result.url}\nOutputs: {result.outputs()}"
+            content = f"Completed Local Run\n{label}: {result.url}\nOutputs: {result.outputs()}"
         else:
-            content = f"[green]Completed Local Run[/green]\nPath: {result.url}\n➡️  Outputs: {result.outputs()}"
+            location = (
+                f"[blue bold][link={result.url}]{result.url}[/link][/blue bold]"
+                if self.run_args.publish
+                else str(result.url)
+            )
+            content = f"[green]Completed Local Run[/green]\n{label}: {location}\n➡️  Outputs: {result.outputs()}"
         console.print(common.get_panel("Local Success", content, config.output_format))
 
     async def _render_remote_success(self, console, result, config):

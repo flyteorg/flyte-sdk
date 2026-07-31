@@ -4,8 +4,8 @@ from typing import Any
 
 
 class RunRecorder:
-    """Unified proxy that delegates recording events to the TUI tracker and/or
-    the SQLite persistence layer (RunStore).
+    """Unified proxy that delegates recording events to the TUI tracker, the SQLite
+    persistence layer (RunStore), and/or the control plane (RemoteRunRecorder).
 
     The controller only talks to this single object — no more interleaved
     `if tracker` / `if persist` conditionals.
@@ -19,21 +19,38 @@ class RunRecorder:
         tracker: Any | None = None,
         persist: bool = False,
         run_name: str | None = None,
+        remote: Any | None = None,
+        version: str = "na",
     ) -> None:
         self._tracker = tracker
         self._persist = persist and run_name is not None
         self._run_name: str = run_name or ""
+        self._remote = remote
+        self._version = version
 
     @property
     def is_active(self) -> bool:
         """True if at least one recording backend is enabled."""
-        return self._tracker is not None or self._persist
+        return self._tracker is not None or self._persist or self._remote is not None
 
     def get_action(self, action_id: str) -> Any:
         """Delegate to the tracker, or return None when tracker is absent."""
         if self._tracker is not None:
             return self._tracker.get_action(action_id)
         return None
+
+    def has_action(self, action_id: str) -> bool:
+        """True when any backend has already recorded *action_id*.
+
+        Used to decide whether a call nests under the running action or is top-level. Asking the
+        tracker alone would answer False whenever the TUI is off, flattening the whole tree onto
+        the root -- which is wrong for the SQLite and publishing backends too.
+        """
+        if self._tracker is not None and self._tracker.get_action(action_id) is not None:
+            return True
+        if self._remote is not None:
+            return self._remote.has_action(action_id)
+        return False
 
     # ------------------------------------------------------------------
     # Condition waiting (called by LocalController for TUI interaction)
@@ -82,6 +99,8 @@ class RunRecorder:
         context: dict | None = None,
         group: str | None = None,
         log_links: list[tuple[str, str]] | None = None,
+        inputs_proto: Any = None,
+        task_template: Any = None,
     ) -> None:
         if self._tracker is not None:
             self._tracker.record_start(
@@ -121,6 +140,21 @@ class RunRecorder:
                 log_links=log_links,
             )
 
+        if self._remote is not None:
+            # `parent_id` is passed through as-is: the publishing backend maps the first
+            # top-level action onto "a0" so the run's shape matches a remote one, rather than
+            # sitting under a synthetic extra root.
+            self._remote.record_action_start(
+                action_name=action_id,
+                task_name=task_name,
+                version=self._version,
+                parent=parent_id,
+                group=group,
+                inputs=inputs_proto,
+                task_template=task_template,
+                log_links=log_links,
+            )
+
     def record_complete(self, *, action_id: str, outputs: Any = None) -> None:
         # Convert outputs to a display representation once, so both backends
         # receive the same pre-formatted data.
@@ -139,6 +173,11 @@ class RunRecorder:
                 action_name=action_id,
                 outputs=repr(display) if display is not None else None,
             )
+
+        if self._remote is not None:
+            # Pass the raw Outputs, not `display`: publishing uploads the actual proto so the
+            # console can render outputs, since a local run never writes outputs.pb itself.
+            self._remote.record_action_success(action_name=action_id, outputs=outputs)
 
     @staticmethod
     def _to_display(outputs: Any) -> Any:
@@ -173,6 +212,9 @@ class RunRecorder:
                 error=error,
             )
 
+        if self._remote is not None:
+            self._remote.record_action_failure(action_name=action_id, error=error)
+
     def record_attempt_start(self, *, action_id: str, attempt_num: int) -> None:
         if self._tracker is not None and hasattr(self._tracker, "record_attempt_start"):
             self._tracker.record_attempt_start(action_id=action_id, attempt_num=attempt_num)
@@ -185,6 +227,9 @@ class RunRecorder:
                 action_name=action_id,
                 attempt_num=attempt_num,
             )
+
+        if self._remote is not None:
+            self._remote.record_attempt(action_name=action_id, attempt=attempt_num)
 
     def record_attempt_complete(self, *, action_id: str, attempt_num: int, outputs: Any = None) -> None:
         display: Any = None
@@ -227,10 +272,15 @@ class RunRecorder:
             )
 
     # ------------------------------------------------------------------
-    # Root "a0" action (called by _run.py — persistence only)
+    # Root "a0" action (called by _run.py — persistence and publishing)
     # ------------------------------------------------------------------
 
     def record_root_start(self, *, task_name: str) -> None:
+        """Record the synthetic root for the local backends.
+
+        Publishing deliberately skips this: on the backend the run *is* its root task action,
+        which the controller records with its real spec and I/O.
+        """
         if self._persist:
             from flyte._persistence._run_store import RunStore
 
@@ -259,6 +309,21 @@ class RunRecorder:
                 action_name="a0",
                 error=error,
             )
+
+    # ------------------------------------------------------------------
+    # Publishing lifecycle
+    # ------------------------------------------------------------------
+
+    def record_root_artifacts(self, *, report_uri: str | None = None) -> None:
+        """Attach the run report to the root action."""
+        if self._remote is not None:
+            self._remote.record_run_artifacts(action_name="a0", report_uri=report_uri)
+
+    def close_remote(self) -> Any:
+        """Flush the publishing backlog. Returns ``PublishStats``, or None when not publishing."""
+        if self._remote is None:
+            return None
+        return self._remote.close()
 
     # ------------------------------------------------------------------
     # Static helpers

@@ -144,9 +144,15 @@ class LocalController(ControllerProtocol):
             tctx, _task.name, inputs_hash, task_call_seq
         )
         sub_action_raw_data_path = tctx.raw_data_path
-        # Make sure the output path exists
-        pathlib.Path(sub_action_output_path).mkdir(parents=True, exist_ok=True)
-        pathlib.Path(sub_action_raw_data_path.path).mkdir(parents=True, exist_ok=True)
+        # Make sure the output path exists. Only meaningful for local filesystem paths -- a
+        # published run points these at blob storage, where `mkdir` would otherwise create a
+        # literal "./s3:/bucket/..." directory tree next to the user's code.
+        from flyte.storage import is_remote
+
+        if not is_remote(sub_action_output_path):
+            pathlib.Path(sub_action_output_path).mkdir(parents=True, exist_ok=True)
+        if not is_remote(sub_action_raw_data_path.path):
+            pathlib.Path(sub_action_raw_data_path.path).mkdir(parents=True, exist_ok=True)
 
         task_cache = cache_from_request(_task.cache)
         cache_enabled = task_cache.is_enabled()
@@ -192,8 +198,8 @@ class LocalController(ControllerProtocol):
             # Nest under the real running task (task_action), not the @trace pseudo-action that @trace
             # may have swapped into `action`; identical for a regular task. Mirrors the remote controller.
             task_action = tctx.task_action or tctx.action
-            # If the parent action isn't tracked yet, this is the top-level call
-            parent_id = task_action.name if self._recorder.get_action(task_action.name) else None
+            # If the parent action isn't recorded yet, this is the top-level call
+            parent_id = task_action.name if self._recorder.has_action(task_action.name) else None
 
             # Render log links for this action, replacing template placeholders
             # with concrete local values (see task_serde.py for remote equivalents).
@@ -229,6 +235,8 @@ class LocalController(ControllerProtocol):
             context=tctx.custom_context or None,
             group=tctx.group_data.name if tctx.group_data else None,
             log_links=rendered_links,
+            inputs_proto=inputs,
+            task_template=_task,
         )
 
         if out is None:
@@ -376,6 +384,7 @@ class LocalController(ControllerProtocol):
                 parent_id=task_action.name,
                 inputs=native_inputs,
                 output_path=action_output_path,
+                inputs_proto=converted_inputs,
             )
 
         return (

@@ -10,7 +10,7 @@ from flyteidl2.secret import payload_pb2
 from flyteidl2.settings import settings_service_pb2
 from flyteidl2.task import task_service_pb2
 from flyteidl2.trigger import trigger_service_pb2
-from flyteidl2.workflow import run_logs_service_pb2, run_service_pb2
+from flyteidl2.workflow import internal_run_service_pb2, run_logs_service_pb2, run_service_pb2
 
 
 class ProjectDomainService(Protocol):
@@ -139,6 +139,30 @@ class RunLogsService(Protocol):
     def tail_logs(
         self, request: run_logs_service_pb2.TailLogsRequest
     ) -> AsyncIterator[run_logs_service_pb2.TailLogsResponse]: ...
+
+
+class InternalRunService(Protocol):
+    """Action-recording surface used to publish externally-driven runs.
+
+    The platform's own executor reports action lifecycle through these RPCs. The SDK
+    uses them to publish local runs (see ``flyte._persistence._remote_recorder``), so a
+    ``flyte run --local --publish`` execution shows up in the console like a remote one.
+
+    Unlike most services here, these RPCs report failures in the response ``status``
+    field rather than raising, so callers must inspect it.
+    """
+
+    async def record_action(
+        self, request: internal_run_service_pb2.RecordActionRequest
+    ) -> internal_run_service_pb2.RecordActionResponse: ...
+
+    async def update_action_status(
+        self, request: internal_run_service_pb2.UpdateActionStatusRequest
+    ) -> internal_run_service_pb2.UpdateActionStatusResponse: ...
+
+    async def record_action_events(
+        self, request: internal_run_service_pb2.RecordActionEventsRequest
+    ) -> internal_run_service_pb2.RecordActionEventsResponse: ...
 
 
 class SecretService(Protocol):

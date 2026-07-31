@@ -85,12 +85,12 @@ async def _invoke_lazy_uploaders(obj: typing.Any) -> None:
         return
 
     from flyte._context import internal_ctx
-    from flyte._run import _get_main_run_mode
+    from flyte._run import local_uploads_suppressed
     from flyte.io import DataFrame, Dir, File
 
     ctx = internal_ctx()
     is_remote_ctx = ctx.has_raw_data
-    is_local_ctx_local_run_mode = not ctx.has_raw_data and _get_main_run_mode() == "local"
+    is_local_ctx_local_run_mode = not ctx.has_raw_data and local_uploads_suppressed()
 
     if is_remote_ctx:
         # skip invoking the lazy uploader when in a remote context

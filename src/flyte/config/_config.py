@@ -175,12 +175,14 @@ class LocalConfig(object):
     """Configuration for local execution settings."""
 
     persistence: bool = False
+    publish: bool = False
 
     @classmethod
     def auto(cls, config_file: typing.Optional[typing.Union[str, ConfigFile]] = None) -> "LocalConfig":
         config_file = get_config_file(config_file)
         kwargs: typing.Dict[str, typing.Any] = {}
         kwargs = set_if_exists(kwargs, "persistence", _internal.Local.PERSISTENCE.read(config_file))
+        kwargs = set_if_exists(kwargs, "publish", _internal.Local.PUBLISH.read(config_file))
         return LocalConfig(**kwargs)
 
 

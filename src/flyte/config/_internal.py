@@ -67,6 +67,7 @@ class Task(object):
 
 class Local(object):
     PERSISTENCE = ConfigEntry(YamlConfigEntry("local.persistence", bool))
+    PUBLISH = ConfigEntry(YamlConfigEntry("local.publish", bool))
 
 
 class Image(object):
