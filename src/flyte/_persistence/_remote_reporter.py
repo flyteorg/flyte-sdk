@@ -790,20 +790,26 @@ class RemoteRunReporter:
     def _build_update(
         self, ev: _Event, *, output_uri: str = "", report_uri: str = ""
     ) -> local_run_service_pb2.LocalActionUpdate:
-        from flyteidl2.common import identifier_pb2
+        from flyteidl2.common import identifier_pb2, phase_pb2
+        from flyteidl2.core import catalog_pb2
         from flyteidl2.task import common_pb2 as task_common_pb2
         from flyteidl2.workflow import local_run_service_pb2, run_definition_pb2
+
+        # The events carry plain-int phase/cache-status values (this module avoids
+        # importing protos at module scope); resolve them to enum names here — the
+        # generated constructors accept the name form, keeping both checkers typed.
+        phase_name = phase_pb2.ActionPhase.Name(ev.phase)
+        cache_status_name = catalog_pb2.CatalogCacheStatus.Name(ev.cache_status)
 
         event = run_definition_pb2.ActionEvent(
             id=identifier_pb2.ActionIdentifier(run=self._run_id, name=ev.action_name),
             attempt=ev.attempt,
-            phase=ev.phase,  # type: ignore[arg-type]
+            phase=phase_name,
             version=ev.version,
+            cache_status=cache_status_name,
         )
         event.reported_time.FromDatetime(ev.timestamp)
         event.updated_time.FromDatetime(ev.timestamp)
-        if ev.cache_status:
-            event.cache_status = ev.cache_status  # type: ignore[assignment]
         if ev.error:
             event.error_info.message = ev.error
             event.error_info.kind = run_definition_pb2.ErrorInfo.KIND_USER
@@ -812,9 +818,7 @@ class RemoteRunReporter:
             event.outputs.CopyFrom(task_common_pb2.OutputReferences(output_uri=output_uri, report_uri=report_uri))
 
         update = local_run_service_pb2.LocalActionUpdate(event=event)
-        status = run_definition_pb2.ActionStatus(phase=ev.phase, attempts=ev.attempt)  # type: ignore[arg-type]
-        if ev.cache_status:
-            status.cache_status = ev.cache_status  # type: ignore[assignment]
+        status = run_definition_pb2.ActionStatus(phase=phase_name, attempts=ev.attempt, cache_status=cache_status_name)
         if ev.start_time is not None:
             status.start_time.FromDatetime(ev.start_time)
         if ev.phase in _TERMINAL_PHASES:
