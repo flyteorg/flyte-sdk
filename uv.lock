@@ -1298,7 +1298,7 @@ dependencies = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "flyteidl2", specifier = ">=2.0.29" }]
+requires-dist = [{ name = "flyteidl2", specifier = ">=2.0.31" }]
 
 [[package]]
 name = "flyteidl2"
