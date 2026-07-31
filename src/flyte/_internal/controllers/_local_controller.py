@@ -410,7 +410,8 @@ class LocalController(ControllerProtocol):
             self._recorder.record_failure(action_id=info.action.name, error=str(info.error))
         else:
             converted_outputs = None
-            if info.interface.outputs and info.output:
+            # Presence, not truthiness: falsy results (0, "", [], False) are real outputs.
+            if info.interface.outputs and info.output is not None:
                 _ctx = ctx.new_in_driver_literal_conversion(True) if ctx.is_task_context() else nullcontext()
                 with _ctx:
                     converted_outputs = await convert.convert_from_native_to_outputs(

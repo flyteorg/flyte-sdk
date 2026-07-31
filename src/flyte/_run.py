@@ -1086,6 +1086,27 @@ class _Runner:
 
         recorder.record_root_start(task_name=obj.name)
 
+        # When reporting is active, catch SIGTERM for the duration of the run so an
+        # external termination reports ABORTED like Ctrl+C does. SIGINT is left to the
+        # interpreter's KeyboardInterrupt / asyncio cancellation flow.
+        interrupt_signal: List[str] = []
+        sigterm_installed = False
+        prev_sigterm: Any = None
+        if reporter is not None:
+            import signal
+            import threading
+
+            def _on_sigterm(signum: int, frame: Any) -> None:
+                interrupt_signal.append("SIGTERM")
+                raise KeyboardInterrupt
+
+            if threading.current_thread() is threading.main_thread():
+                try:
+                    prev_sigterm = signal.signal(signal.SIGTERM, _on_sigterm)
+                    sigterm_installed = True
+                except (ValueError, OSError):  # non-main interpreter contexts
+                    sigterm_installed = False
+
         try:
             with ctx.replace_task_context(tctx):
                 # make the local version always runs on a different thread, returns a wrapped future.
@@ -1095,6 +1116,20 @@ class _Runner:
                     outputs = await awaitable
                 else:
                     outputs = await controller.submit(obj, *args, **kwargs)
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            # Interrupted (Ctrl+C / SIGTERM / cancellation): report every in-flight
+            # action — the root included — as ABORTED with a short, bounded flush,
+            # then re-raise so conventional signal semantics are preserved.
+            if reporter is not None:
+                signal_name = interrupt_signal[0] if interrupt_signal else "SIGINT"
+                reporter.abort_all(reason=f"aborted by user ({signal_name})")
+                try:
+                    # Blocking is fine here — the process is exiting. A reporting
+                    # failure (even strict) must never replace the interrupt.
+                    reporter.close(timeout=5.0)
+                except Exception as flush_err:
+                    logger.warning(f"Local-run abort reporting incomplete: {flush_err}")
+            raise
         except Exception as e:
             recorder.record_root_failure(error=str(e))
             if reporter is not None:
@@ -1120,6 +1155,14 @@ class _Runner:
                     await reporter.aclose()
             if self._notifications:
                 await self._send_local_notifications(phase=ActionPhase.SUCCEEDED, task_name=obj.name, run_name=run_name)
+        finally:
+            if sigterm_installed:
+                import signal
+
+                try:
+                    signal.signal(signal.SIGTERM, prev_sigterm)
+                except (ValueError, OSError):
+                    pass
 
         return _wrap_inline_run(outputs, url=run_url)
 

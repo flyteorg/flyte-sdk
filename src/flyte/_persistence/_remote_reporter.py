@@ -42,7 +42,8 @@ _RESERVED_RUN_NAME_PREFIXES = ("u", "r")
 _PHASE_RUNNING = 4
 _PHASE_SUCCEEDED = 5
 _PHASE_FAILED = 6
-_TERMINAL_PHASES = (_PHASE_SUCCEEDED, _PHASE_FAILED)
+_PHASE_ABORTED = 7
+_TERMINAL_PHASES = (_PHASE_SUCCEEDED, _PHASE_FAILED, _PHASE_ABORTED)
 
 _SEND_MAX_RETRIES = 3
 _SEND_BACKOFF_SEC = 0.5
@@ -93,6 +94,17 @@ class _Stop:
 
 _STOP = _Stop()
 
+# The reporter of the currently running reported local run, consulted by
+# ``flyte.report.flush()`` for live report write-through. A single slot: local runs
+# execute one at a time within a process; a second concurrent reported run would
+# simply not get live report mirroring (its terminal upload still lands).
+_active_reporter: "RemoteRunReporter | None" = None
+
+
+def get_active_reporter() -> "RemoteRunReporter | None":
+    """The reporter of the currently running reported local run, if any."""
+    return _active_reporter
+
 
 @dataclass
 class _Event:
@@ -109,9 +121,11 @@ class _Event:
     outputs_bytes: bytes | None = None
     # Serialized ``flyteidl2.task.Inputs`` bytes, carried on the action's first report.
     inputs_bytes: bytes | None = None
-    # Serialized ``flyteidl2.task.TaskSpec`` bytes for the action's first report. Must
+    # Serialized spec bytes for the action's first report: a ``flyteidl2.task.TaskSpec``
+    # (spec_kind "task") or a ``flyteidl2.task.TraceSpec`` (spec_kind "trace"). Must
     # carry a typed interface — the console gates I/O rendering on it.
     spec_bytes: bytes | None = None
+    spec_kind: str = "task"
     # First-report-only metadata.
     first_report: bool = False
     parent_name: str = ""
@@ -121,6 +135,16 @@ class _Event:
     output_path: str | None = None
     has_report: bool = False
     start_time: datetime | None = None
+
+
+@dataclass
+class _ReportFlush:
+    """A live `flyte.report.flush()` mirror: upload the current report HTML for a
+    running attempt. Strictly report-scoped — raw file/directory data never uploads."""
+
+    action_name: str
+    attempt: int
+    html: bytes
 
 
 @dataclass
@@ -171,10 +195,13 @@ class RemoteRunReporter:
         self._done = threading.Event()
         # Artifacts (outputs/report) already uploaded, keyed by (action, attempt, kind).
         self._uploaded: set[tuple[str, int, str]] = set()
-        # Latest terminal outputs of a top-level (parent == a0) action. The local runner
-        # executes the driver task as a child action of the synthetic root, so these are
-        # also the root's outputs and are re-uploaded for a0 on record_root_complete.
-        self._root_outputs_bytes: bytes | None = None
+        # Local-name aliases. The local runner executes the run's driver task as a
+        # regular sub-action with a random deterministic id, but platform semantics
+        # have no separate root: the root action a0 IS the driver execution. The
+        # driver's local id is mapped onto a0 here, and every enqueue path resolves
+        # action ids and parent references through this map.
+        self._alias: dict[str, str] = {}
+        self._driver_mapped = False
         # Serialized TaskSpec cache keyed by task name, so a fanout over the same task
         # translates it once.
         self._spec_cache: dict[str, bytes] = {}
@@ -184,6 +211,8 @@ class RemoteRunReporter:
             name=f"flyte-local-run-reporter-{run_id.name}",
         )
         self._worker.start()
+        global _active_reporter  # noqa: PLW0603
+        _active_reporter = self
 
     # ------------------------------------------------------------------
     # RunRecorder-facing surface (synchronous, never raises, never blocks)
@@ -193,7 +222,7 @@ class RemoteRunReporter:
         """Return a truthy marker when the action was already reported (used by the
         recorder for parent-chain detection when no TUI tracker is attached)."""
         with self._lock:
-            return self._actions.get(action_id)
+            return self._actions.get(self._alias.get(action_id, action_id))
 
     def _note_failure(self, operation: str, action: str, err: Any) -> None:
         """Capture the first reporting failure (acted upon only in strict mode)."""
@@ -235,16 +264,32 @@ class RemoteRunReporter:
             # Full spec (with typed interface) for the first report; cached per task
             # name so a fanout translates each task once. Computed outside the lock.
             spec_bytes: bytes | None = None
+            spec_kind = "task"
             if task is not None:
                 spec_bytes = self._task_spec_bytes(task)
             elif trace_interface is not None:
                 spec_bytes = self._trace_spec_bytes(task_name, trace_interface)
+                spec_kind = "trace"
             with self._lock:
-                info = self._actions.get(action_id)
+                action_name = self._alias.get(action_id, action_id)
+                resolved_parent = self._alias.get(parent_id, parent_id) if parent_id else parent_id
+                info = self._actions.get(action_name)
+                if info is None and task is not None and not resolved_parent and not self._driver_mapped:
+                    # The first top-level task action IS the run's driver: platform
+                    # semantics have no separate root, so map it onto a0 (created by
+                    # CreateRun with the full task spec) instead of reporting a
+                    # duplicate action. Established here — before the driver executes —
+                    # so every child's parent reference resolves through the alias.
+                    root_info = self._actions.get(ROOT_ACTION_NAME)
+                    if root_info is None or root_info.task_name == task_name:
+                        self._alias[action_id] = ROOT_ACTION_NAME
+                        self._driver_mapped = True
+                        action_name = ROOT_ACTION_NAME
+                        info = root_info
                 first = info is None
                 if info is None:
                     # The root has no parent; every other action defaults to nesting under it.
-                    parent = "" if action_id == ROOT_ACTION_NAME else (parent_id or ROOT_ACTION_NAME)
+                    parent = "" if action_name == ROOT_ACTION_NAME else (resolved_parent or ROOT_ACTION_NAME)
                     info = _ActionInfo(
                         task_name=task_name,
                         parent_name=parent,
@@ -254,14 +299,22 @@ class RemoteRunReporter:
                         has_report=has_report,
                         started=True,
                     )
-                    self._actions[action_id] = info
+                    self._actions[action_name] = info
+                else:
+                    # Mapped driver start: fold its terminal-artifact metadata into the
+                    # pre-registered root info so outputs/report upload under a0.
+                    if output_path:
+                        info.output_path = output_path
+                    if has_report:
+                        info.has_report = True
                 ev = self._make_event(
-                    action_id,
+                    action_name,
                     info,
                     _PHASE_RUNNING,
                     now,
                     inputs_bytes=inputs_bytes if first else None,
                     spec_bytes=spec_bytes if first else None,
+                    spec_kind=spec_kind,
                     first_report=first,
                 )
             self._put(ev)
@@ -282,14 +335,15 @@ class RemoteRunReporter:
         try:
             now = datetime.now(timezone.utc)
             with self._lock:
-                info = self._actions.get(action_id)
+                action_name = self._alias.get(action_id, action_id)
+                info = self._actions.get(action_name)
                 if info is None:
                     return
                 info.attempt = max(attempt_num, 1)
                 if attempt_num <= 1:
                     # record_start already reported RUNNING for attempt 1.
                     return
-                ev = self._make_event(action_id, info, _PHASE_RUNNING, now)
+                ev = self._make_event(action_name, info, _PHASE_RUNNING, now)
             self._put(ev)
         except Exception as e:
             logger.debug(f"Local-run reporter failed to record attempt start for {action_id}: {e}")
@@ -312,10 +366,61 @@ class RemoteRunReporter:
 
     def record_root_complete(self) -> None:
         self._raise_if_failed()
+        # Fallback-only synthesis: when the driver action (mapped onto a0) already
+        # delivered the root's terminal event — with its real outputs — the last_phase
+        # dedupe in _record_terminal makes this a no-op. It only materializes a
+        # terminal event when no driver action ever reported.
         self._record_terminal(ROOT_ACTION_NAME, _PHASE_SUCCEEDED)
 
     def record_root_failure(self, *, error: str) -> None:
+        # Fallback-only synthesis — see record_root_complete. A driver that already
+        # reported FAILED dedupes this; a pre-dispatch failure still lands on a0.
         self._record_terminal(ROOT_ACTION_NAME, _PHASE_FAILED, error=error)
+
+    # -- Live report write-through and aborts ------------------------------
+
+    def report_flushed(self, action_id: str, html: bytes) -> None:
+        """Mirror a mid-run ``flyte.report.flush()`` to the control plane.
+
+        Uploads the current report HTML for the action's running attempt so the report
+        is visible while the run executes (the backend allows re-uploading reports);
+        the upload at attempt completion remains the final authoritative write.
+        Strictly report-scoped — raw file/directory data never uploads.
+        """
+        if self._closed.is_set():
+            return
+        self._raise_if_failed()
+        try:
+            with self._lock:
+                action_name = self._alias.get(action_id, action_id)
+                info = self._actions.get(action_name)
+                if info is None:
+                    # Unknown action (e.g. the run-level context outside any task) —
+                    # nothing to attribute the report to.
+                    return
+                attempt = info.attempt
+            self._put(_ReportFlush(action_name=action_name, attempt=attempt, html=html))
+        except Exception as e:
+            logger.debug(f"Local-run reporter failed to enqueue report flush for {action_id}: {e}")
+
+    def abort_all(self, reason: str) -> None:
+        """Synthesize ABORTED events for every tracked non-terminal action (root
+        included). Called when the local run is interrupted (Ctrl+C / SIGTERM); the
+        caller follows up with a bounded ``close`` to flush them."""
+        try:
+            now = datetime.now(timezone.utc)
+            with self._lock:
+                events = [
+                    self._make_event(name, info, _PHASE_ABORTED, now, error=reason)
+                    for name, info in self._actions.items()
+                    if info.last_phase not in _TERMINAL_PHASES
+                ]
+            # Children first so the root's abort is the last transition observed.
+            events.sort(key=lambda e: e.action_name == ROOT_ACTION_NAME)
+            for ev in events:
+                self._put(ev)
+        except Exception as e:
+            logger.warning(f"Failed to record local-run abort: {e}")
 
     # ------------------------------------------------------------------
     # Flush / shutdown
@@ -328,6 +433,9 @@ class RemoteRunReporter:
         previously captured reporting failure is re-raised as
         :class:`LocalRunReportingError` so the run exits loudly.
         """
+        global _active_reporter  # noqa: PLW0603
+        if _active_reporter is self:
+            _active_reporter = None
         timed_out = False
         try:
             if not self._closed.is_set():
@@ -379,31 +487,27 @@ class RemoteRunReporter:
             if proto_outputs is not None:
                 outputs_bytes = proto_outputs.SerializeToString()
             with self._lock:
-                info = self._actions.get(action_id)
+                action_name = self._alias.get(action_id, action_id)
+                info = self._actions.get(action_name)
                 if info is None:
                     # Terminal report for an action we never saw start; register it so
                     # the event still references a known parent chain.
                     info = _ActionInfo(
-                        task_name=action_id,
-                        parent_name="" if action_id == ROOT_ACTION_NAME else ROOT_ACTION_NAME,
+                        task_name=action_name,
+                        parent_name="" if action_name == ROOT_ACTION_NAME else ROOT_ACTION_NAME,
                         group="",
                         start_time=now,
                     )
-                    self._actions[action_id] = info
+                    self._actions[action_name] = info
                 if attempt_num is not None:
                     info.attempt = max(attempt_num, 1)
                 if terminal and info.last_phase == phase:
-                    # e.g. record_complete right after record_attempt_complete — already reported.
+                    # e.g. record_complete right after record_attempt_complete, or a
+                    # synthesized record_root_* after the driver (mapped onto a0)
+                    # already delivered the root's terminal event — already reported.
                     return
-                if outputs_bytes is not None and phase == _PHASE_SUCCEEDED and info.parent_name == ROOT_ACTION_NAME:
-                    # A succeeding top-level action IS the driver task the synthetic root
-                    # wraps; remember its outputs so record_root_complete can offload them
-                    # for a0 as well.
-                    self._root_outputs_bytes = outputs_bytes
-                if outputs_bytes is None and action_id == ROOT_ACTION_NAME and phase == _PHASE_SUCCEEDED:
-                    outputs_bytes = self._root_outputs_bytes
                 ev = self._make_event(
-                    action_id,
+                    action_name,
                     info,
                     phase,
                     now,
@@ -425,6 +529,7 @@ class RemoteRunReporter:
         outputs_bytes: bytes | None = None,
         inputs_bytes: bytes | None = None,
         spec_bytes: bytes | None = None,
+        spec_kind: str = "task",
         first_report: bool = False,
     ) -> _Event:
         """Build the event under the caller's lock, advancing the per-attempt version."""
@@ -441,6 +546,7 @@ class RemoteRunReporter:
             outputs_bytes=outputs_bytes,
             inputs_bytes=inputs_bytes,
             spec_bytes=spec_bytes,
+            spec_kind=spec_kind,
             first_report=first_report,
             parent_name=info.parent_name,
             group=info.group,
@@ -475,27 +581,19 @@ class RemoteRunReporter:
             return None
 
     def _trace_spec_bytes(self, name: str, native_interface: Any) -> bytes | None:
-        """Serialized TaskSpec for a trace pseudo-action, carrying its typed interface.
-
-        Traces are reported as task actions: the local-run backend currently discards
-        ``TraceAction.spec`` (it only records the action type), so a TraceSpec cannot
-        surface the interface the console needs. Never raises.
-        """
+        """Serialized ``flyteidl2.task.TraceSpec`` for a trace pseudo-action, carrying
+        its typed interface (reported via the ``trace`` oneof). Never raises."""
         try:
             cache_key = f"trace/{name}"
             with self._lock:
                 cached = self._spec_cache.get(cache_key)
             if cached is not None:
                 return cached
+            from flyteidl2.task import task_definition_pb2
+
             from flyte._internal.runtime.types_serde import transform_native_to_typed_interface
 
-            spec = _interface_task_spec(
-                name,
-                org=self._run_id.org,
-                project=self._run_id.project,
-                domain=self._run_id.domain,
-                typed_interface=transform_native_to_typed_interface(native_interface),
-            )
+            spec = task_definition_pb2.TraceSpec(interface=transform_native_to_typed_interface(native_interface))
             data = spec.SerializeToString()
             with self._lock:
                 self._spec_cache[cache_key] = data
@@ -504,7 +602,7 @@ class RemoteRunReporter:
             logger.debug(f"Failed to serialize trace spec for local-run reporting: {e}")
             return None
 
-    def _put(self, ev: _Event) -> None:
+    def _put(self, ev: _Event | _ReportFlush) -> None:
         if self._closed.is_set():
             logger.debug(f"Local-run reporter already closed; dropping event for {ev.action_name}")
             return
@@ -522,7 +620,7 @@ class RemoteRunReporter:
             stop = False
             while not stop:
                 item = self._queue.get()
-                batch: list[_Event] = []
+                batch: list[Any] = []
                 if isinstance(item, _Stop):
                     stop = True
                 else:
@@ -548,16 +646,17 @@ class RemoteRunReporter:
             loop.close()
             self._done.set()
 
-    async def _process_batch(self, events: list[_Event]) -> None:
-        """Turn a drained batch of events into ReportActions calls + artifact uploads.
+    async def _process_batch(self, items: list[Any]) -> None:
+        """Turn a drained batch of events / live report flushes into ReportActions
+        calls + artifact uploads.
 
         Ordering matters: the control plane only creates an action when its first
         report is acked, and ``UploadMetadata(OUTPUTS/REPORT)`` requires the target
-        action to already exist. So before uploading terminal artifacts for an event,
-        any accumulated updates (which include that action's earlier reports) are
-        flushed first. INPUTS uploads have no existence requirement (the root's are
-        uploaded before CreateRun) and are resolved by deterministic path, so they
-        need neither ordering nor a URI on the event.
+        action to already exist. So before uploading terminal artifacts (or a live
+        report) for an item, any accumulated updates (which include that action's
+        earlier reports) are flushed first. INPUTS uploads have no existence
+        requirement (the root's are uploaded before CreateRun) and are resolved by
+        deterministic path, so they need neither ordering nor a URI on the event.
         """
         from flyteidl2.workflow import local_run_service_pb2
 
@@ -568,6 +667,19 @@ class RemoteRunReporter:
                 if self._failure is not None:
                     return
 
+        # Only the newest live report flush per (action, attempt) in this batch needs
+        # uploading — earlier ones are already stale.
+        newest_flush: set[tuple[str, int]] = set()
+        collapsed: list[Any] = []
+        for item in reversed(items):
+            if isinstance(item, _ReportFlush):
+                key = (item.action_name, item.attempt)
+                if key in newest_flush:
+                    continue
+                newest_flush.add(key)
+            collapsed.append(item)
+        collapsed.reverse()
+
         pending: list = []
 
         async def _flush() -> None:
@@ -577,7 +689,12 @@ class RemoteRunReporter:
                 pending = []
                 await self._send_with_retries(req)
 
-        for ev in events:
+        for item in collapsed:
+            if isinstance(item, _ReportFlush):
+                await _flush()
+                await self._upload_live_report(item)
+                continue
+            ev = item
             try:
                 output_uri = report_uri = ""
                 if ev.phase in _TERMINAL_PHASES and (
@@ -591,6 +708,30 @@ class RemoteRunReporter:
             except Exception as e:
                 logger.warning(f"Skipping local-run report for action {ev.action_name}: {e}")
         await _flush()
+
+    async def _upload_live_report(self, item: _ReportFlush) -> None:
+        """Upload a mid-run report snapshot for a running attempt. Best-effort."""
+        from flyteidl2.common import identifier_pb2
+        from flyteidl2.dataproxy import dataproxy_service_pb2
+
+        from flyte._persistence._remote_upload import upload_metadata_artifact
+
+        try:
+            attempt_id = identifier_pb2.ActionAttemptIdentifier(
+                action_id=identifier_pb2.ActionIdentifier(run=self._run_id, name=item.action_name),
+                attempt=item.attempt,
+            )
+            await upload_metadata_artifact(
+                self._client.dataproxy_service,
+                artifact_type=int(dataproxy_service_pb2.ARTIFACT_TYPE_REPORT),
+                data=item.html,
+                action_attempt_id=attempt_id,
+                verify=self._verify_ssl,
+                content_type="text/html",
+            )
+        except Exception as e:
+            logger.warning(f"Failed live report upload for local-run action {item.action_name}: {e}")
+            self._note_failure("report upload", item.action_name, e)
 
     async def _send_with_retries(self, req: local_run_service_pb2.ReportLocalActionsRequest) -> None:
         import asyncio
@@ -655,7 +796,16 @@ class RemoteRunReporter:
             update.parent_name = ev.parent_name
             update.group = ev.group
             if ev.action_name != ROOT_ACTION_NAME:
-                if ev.spec_bytes:
+                if ev.spec_bytes and ev.spec_kind == "trace":
+                    from flyteidl2.task import task_definition_pb2
+
+                    update.trace.CopyFrom(
+                        run_definition_pb2.TraceAction(
+                            name=ev.task_name,
+                            spec=task_definition_pb2.TraceSpec.FromString(ev.spec_bytes),
+                        )
+                    )
+                elif ev.spec_bytes:
                     from flyteidl2.task import task_definition_pb2
 
                     update.task.CopyFrom(
@@ -733,6 +883,7 @@ class RemoteRunReporter:
                         data=report_bytes,
                         action_attempt_id=attempt_id,
                         verify=self._verify_ssl,
+                        content_type="text/html",
                     )
                     self._uploaded.add((ev.action_name, ev.attempt, "report"))
             except Exception as e:
