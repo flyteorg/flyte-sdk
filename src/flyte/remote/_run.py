@@ -4,15 +4,12 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any, AsyncGenerator, AsyncIterator, Callable, Dict, Literal, Tuple
 
-import httpx
 import rich.repr
 from connectrpc.code import Code
 from connectrpc.errors import ConnectError
 from flyteidl2.common import identifier_pb2, list_pb2, phase_pb2
 from flyteidl2.core import literals_pb2
-from flyteidl2.dataproxy import dataproxy_service_pb2
 from flyteidl2.workflow import run_definition_pb2, run_service_pb2
-from google.protobuf import duration_pb2
 
 from flyte._initialize import ensure_client, get_client, get_init_config
 from flyte._logging import logger
@@ -291,37 +288,15 @@ class Run(ToJSONMixin):
         This first requests a signed download link from the data proxy for the report artifact,
         then downloads the report from that URL and returns its contents as an HTML string.
 
+        To fetch the report for a specific action nested inside the run (rather than the root
+        action), use :meth:`Action.get_report` on that action, e.g. via ``Action.get`` or by
+        iterating ``Action.listall``.
+
         :param attempt: The attempt number to fetch the report for. Defaults to the latest attempt.
         :param expires_in: How long the signed download link should remain valid. Defaults to 1 hour.
         :return: The report contents as an HTML string.
         """
-        ensure_client()
-
-        if attempt is None:
-            details = await self.action.details()
-            attempt = details.attempts
-
-        expires_in_pb = duration_pb2.Duration()  # ty: ignore[unresolved-attribute]
-        expires_in_pb.FromTimedelta(expires_in)
-        resp = await get_client().dataproxy_service.create_download_link(
-            dataproxy_service_pb2.CreateDownloadLinkRequest(
-                artifact_type=dataproxy_service_pb2.ARTIFACT_TYPE_REPORT,
-                action_attempt_id=identifier_pb2.ActionAttemptIdentifier(
-                    action_id=self.action.action_id,
-                    attempt=attempt,
-                ),
-                expires_in=expires_in_pb,
-            )
-        )
-
-        signed_urls = list(resp.pre_signed_urls.signed_url)
-        if not signed_urls:
-            raise RuntimeError(f"No report is available for run '{self.name}' (attempt {attempt}).")
-
-        async with httpx.AsyncClient() as client:
-            download = await client.get(signed_urls[0])
-            download.raise_for_status()
-            return download.text
+        return await self.action.get_report.aio(attempt=attempt, expires_in=expires_in)
 
     @syncify
     async def details(self) -> RunDetails:
