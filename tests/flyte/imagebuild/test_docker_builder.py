@@ -204,9 +204,14 @@ async def test_python_wheel_handler_forces_local_wheel_last():
         layer = PythonWheels(wheel_dir=Path(wheel_dir), package_name="flyte")
         docker_update = await PythonWheelHandler.handle(layer=layer, context_path=context_path, dockerfile="")
 
-        # Both install steps target the local wheel via --find-links /dist.
+        # Both install steps target the local wheel via --find-links /dist. The force step names
+        # the exact wheel files so every wheel in the dir (e.g. a locally built flyteidl2 next to
+        # the SDK wheel) wins over its PyPI release, not just the layer's package.
         dep_step = "uv pip install --python $UV_PYTHON --find-links /dist flyte"
-        force_step = "uv pip install --python $UV_PYTHON --find-links /dist --no-deps --no-index --reinstall flyte"
+        force_step = (
+            "uv pip install --python $UV_PYTHON --find-links /dist --no-deps --no-index --reinstall "
+            "/dist/flyte-2.5.2.dev1-py3-none-any.whl"
+        )
         assert dep_step in docker_update
         assert force_step in docker_update
 
