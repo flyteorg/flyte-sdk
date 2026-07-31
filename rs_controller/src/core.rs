@@ -678,7 +678,7 @@ impl CoreBaseController {
                 .cache_key
                 .as_ref()
                 .map(|ck| StringValue { value: ck.clone() }),
-            cluster: action.queue.clone().unwrap_or("".to_string()),
+            queue: action.queue.clone().unwrap_or("".to_string()),
         })
     }
 

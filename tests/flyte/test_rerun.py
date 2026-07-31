@@ -58,7 +58,7 @@ def _fake_prior_run(base_envs=None, action_id=None, base_run_spec=None):
     if base_run_spec is None:
         base_run_spec = run_pb2.RunSpec(
             envs=run_pb2.Envs(values=[literals_pb2.KeyValuePair(key="KEEP", value="1")] + (base_envs or [])),
-            cluster="orig",
+            queue="orig",
         )
     task_spec = run_definition_pb2.ActionDetails(
         id=action_id,
@@ -113,7 +113,7 @@ async def test_rerun_same_inputs_inherits_runspec_and_reuses_prior_inputs():
     envs = {kv.key: kv.value for kv in req.run_spec.envs.values}
     assert envs["KEEP"] == "1"  # inherited from prior run
     assert envs["X"] == "1"  # runner override merged in
-    assert req.run_spec.cluster == "orig"  # inherited (queue not overridden)
+    assert req.run_spec.queue == "orig"  # inherited (queue not overridden)
     assert req.WhichOneof("task") == "task_spec"
     assert req.task_spec.task_template.id.name == "test.task1"
 
