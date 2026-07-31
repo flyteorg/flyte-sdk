@@ -54,29 +54,29 @@ CacheLookupScope = Literal["global", "project-domain"]
 _run_mode_var: contextvars.ContextVar[Mode | None] = contextvars.ContextVar("run_mode", default=None)
 
 
-def _unwrap_artifact_value(value: Any) -> Any:
+async def _unwrap_artifact_value(value: Any) -> Any:
     """
     Unwrap a single ``flyte.remote.Artifact`` (or a list containing artifacts) into the
-    underlying ``pb2["data"]`` payload that tasks actually consume. Non-artifact values are
-    returned unchanged.
+    python value stored in its literal, which is what tasks actually consume.
+    Non-artifact values are returned unchanged.
     """
     # Imported lazily so ``import flyte`` does not eagerly pull in the remote package.
     from flyte.remote import Artifact
 
     if isinstance(value, Artifact):
-        return value.pb2["data"]
+        return await value.to_python()
     if isinstance(value, list) and len(value) > 0:
-        return [item.pb2["data"] if isinstance(item, Artifact) else item for item in value]
+        return [await item.to_python() if isinstance(item, Artifact) else item for item in value]
     return value
 
 
-def _unwrap_artifacts(args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> Tuple[Tuple[Any, ...], Dict[str, Any]]:
+async def _unwrap_artifacts(args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> Tuple[Tuple[Any, ...], Dict[str, Any]]:
     """
     Unwrap any ``Artifact`` instances passed as positional or keyword arguments into their
-    underlying data payloads. Returns the converted ``(args, kwargs)`` pair.
+    underlying python values. Returns the converted ``(args, kwargs)`` pair.
     """
-    new_args = tuple(_unwrap_artifact_value(v) for v in args)
-    new_kwargs = {k: _unwrap_artifact_value(v) for k, v in kwargs.items()}
+    new_args = tuple([await _unwrap_artifact_value(v) for v in args])
+    new_kwargs = {k: await _unwrap_artifact_value(v) for k, v in kwargs.items()}
     return new_args, new_kwargs
 
 
@@ -533,7 +533,7 @@ class _Runner:
                 annotations=run_pb2.Annotations(values=self._annotations),
                 labels=run_pb2.Labels(values=self._labels),
                 envs=env_kv,
-                cluster=self._queue or (task.queue if task is not None else ""),
+                queue=self._queue or (task.queue if task is not None else ""),
                 max_action_concurrency=self._max_action_concurrency or 0,
                 raw_data_storage=raw_data_storage,
                 run_base_dir=self._run_base_dir or "",
@@ -574,8 +574,7 @@ class _Runner:
             if self._max_action_concurrency:
                 run_spec.max_action_concurrency = self._max_action_concurrency
             if self._queue:
-                # TODO: cluster is being renamed to queue
-                run_spec.cluster = self._queue
+                run_spec.queue = self._queue
             if self._service_account:
                 run_spec.security_context.CopyFrom(
                     security_pb2.SecurityContext(
@@ -702,6 +701,11 @@ class _Runner:
         cfg = get_init_config()
         project = self._project or cfg.project
         domain = self._domain or cfg.domain
+
+        # Artifacts bind as normal inputs: materialize each one to its python value
+        # before conversion. Offloaded types (File/Dir/DataFrame) reconstructed from a
+        # remote uri pass that uri straight through to_literal without re-uploading.
+        args, kwargs = await _unwrap_artifacts(args, kwargs)
 
         task: TaskTemplate[P, R, F] | TaskDetails
         task_id = None
@@ -1021,7 +1025,7 @@ class _Runner:
 
         recorder.record_root_start(task_name=obj.name)
 
-        new_args, new_kwargs = _unwrap_artifacts(args, kwargs)
+        new_args, new_kwargs = await _unwrap_artifacts(args, kwargs)
 
         try:
             with ctx.replace_task_context(tctx):

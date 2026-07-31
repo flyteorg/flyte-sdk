@@ -62,20 +62,25 @@ async def use_multiple_artifacts(v: list[str]) -> str:
 
 
 if __name__ == "__main__":
-    flyte.init()
-    v = flyte.run(call_artifact)
-    print(v.outputs())
+    flyte.init_from_config()
 
     from flyte.remote import Artifact
 
+    # Publish an artifact from the local machine: the value is converted to a
+    # typed literal (offloaded data uploads first) and stored in the artifact service.
+    metadata = artifacts.Metadata(name="my_artifact", version="1.0", description="Published from local")
+    published = Artifact.create(artifacts.new("This is my artifact content", metadata))
+    print(f"published {published.name}@{published.version}")
+
+    # Consume the published artifact in flyte.run: it binds like a normal input.
     artifact_instance = Artifact.get("my_artifact", version="1.0")
     v2 = flyte.run(use_artifact, v=artifact_instance)
     print(v2.outputs())
 
-    artifact_list = [Artifact.get("my_artifact", version="1.0"), Artifact.get("my_artifact", version="1.0")]
+    artifact_list = [Artifact.get("my_artifact", version="1.0"), Artifact.get("my_artifact")]
     v3 = flyte.run(use_multiple_artifacts, v=artifact_list)
     print(v3.outputs())
 
-    artifact_list_via_prefix = list(Artifact.listall("my_artifact", version="1.0"))
-    v4 = flyte.run(use_multiple_artifacts, v=artifact_list_via_prefix)
+    all_versions = list(Artifact.listall("my_artifact"))
+    v4 = flyte.run(use_multiple_artifacts, v=all_versions)
     print(v4.outputs())

@@ -138,7 +138,7 @@ async def to_task_trigger(
         overwrite_cache=t.overwrite_cache,
         envs=env,
         interruptible=BoolValue(value=t.interruptible) if t.interruptible is not None else None,
-        cluster=t.queue,
+        queue=t.queue,
         max_action_concurrency=t.max_action_concurrency or 0,
         labels=labels,
         annotations=annotations,

@@ -26,7 +26,7 @@ dependencies = [
     "async-lru>=2.0.5",
     "mashumaro",
     "aiolimiter>=1.2.1",
-    "flyteidl2==2.0.29",
+    "flyteidl2>=2.0.29",  # DEV-ONLY: restore == pin before merging (local artifact-service protos)
     "packaging",
     "sentry-sdk>=2.0",
     "pyOpenSSL>=24.0.0",
@@ -215,6 +215,9 @@ ty = "0 days"
 
 [tool.uv.sources]
 flyte_controller_base = { path = "rs_controller" }
+# DEV-ONLY override for the in-progress artifact service protos; remove before
+# merging and bump the flyteidl2 pin once the upstream release ships.
+flyteidl2 = { path = "../cloud/flyte2/gen/python", editable = true }
 
 [tool.ty.rules]
 # The codebase is checked by both mypy and ty; `# type: ignore` comments needed by

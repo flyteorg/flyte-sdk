@@ -1,6 +1,7 @@
 from typing import AsyncIterator, Protocol
 
 from flyteidl2.app import app_payload_pb2
+from flyteidl2.artifact import artifact_service_pb2
 from flyteidl2.auth import identity_pb2
 from flyteidl2.cluster import payload_pb2 as cluster_payload_pb2
 from flyteidl2.dataproxy import dataproxy_service_pb2
@@ -38,6 +39,20 @@ class TaskService(Protocol):
     ) -> task_service_pb2.GetTaskDetailsResponse: ...
 
     async def list_tasks(self, request: task_service_pb2.ListTasksRequest) -> task_service_pb2.ListTasksResponse: ...
+
+
+class ArtifactService(Protocol):
+    async def create_artifact(
+        self, request: artifact_service_pb2.CreateArtifactRequest
+    ) -> artifact_service_pb2.CreateArtifactResponse: ...
+
+    async def get_artifact(
+        self, request: artifact_service_pb2.GetArtifactRequest
+    ) -> artifact_service_pb2.GetArtifactResponse: ...
+
+    async def list_artifacts(
+        self, request: artifact_service_pb2.ListArtifactsRequest
+    ) -> artifact_service_pb2.ListArtifactsResponse: ...
 
 
 class AppService(Protocol):
