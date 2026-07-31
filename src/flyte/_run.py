@@ -507,7 +507,7 @@ class _Runner:
                 annotations=run_pb2.Annotations(values=self._annotations),
                 labels=run_pb2.Labels(values=self._labels),
                 envs=env_kv,
-                cluster=self._queue or (task.queue if task is not None else ""),
+                queue=self._queue or (task.queue if task is not None else ""),
                 max_action_concurrency=self._max_action_concurrency or 0,
                 raw_data_storage=raw_data_storage,
                 run_base_dir=self._run_base_dir or "",
@@ -548,8 +548,7 @@ class _Runner:
             if self._max_action_concurrency:
                 run_spec.max_action_concurrency = self._max_action_concurrency
             if self._queue:
-                # TODO: cluster is being renamed to queue
-                run_spec.cluster = self._queue
+                run_spec.queue = self._queue
             if self._service_account:
                 run_spec.security_context.CopyFrom(
                     security_pb2.SecurityContext(
