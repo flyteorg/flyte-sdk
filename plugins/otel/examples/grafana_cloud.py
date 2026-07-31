@@ -40,8 +40,8 @@ env = flyte.TaskEnvironment(
     name="otel_grafana",
     image=image,
     secrets=[
-        flyte.Secret(key="sam_otlp_endpoint", as_env_var="OTEL_EXPORTER_OTLP_ENDPOINT"),
-        flyte.Secret(key="sam_otlp_headers", as_env_var="OTEL_EXPORTER_OTLP_HEADERS"),
+        flyte.Secret(key="otlp_endpoint", as_env_var="OTEL_EXPORTER_OTLP_ENDPOINT"),
+        flyte.Secret(key="otlp_headers", as_env_var="OTEL_EXPORTER_OTLP_HEADERS"),
     ],
 )
 

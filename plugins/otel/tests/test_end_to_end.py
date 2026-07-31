@@ -190,3 +190,34 @@ async def test_sync_tasks_and_sync_traces_are_recorded(spans):
     assert [s.name for s in steps].count("sync_stream") == 1
     assert {s.parent.span_id for s in steps} == {task.context.span_id}
     assert len({s.context.trace_id for s in recorded}) == 1
+
+
+@pytest.mark.asyncio
+async def test_an_unobserved_run_never_describes_its_steps(monkeypatch):
+    """With nothing registered, a traced step must not be described for nobody to read.
+
+    _step used to be evaluated as an argument to observe_step, so every traced call built a
+    StepInfo even when no observer existed to receive it. Guarding that is only worth
+    anything for as long as it stays guarded, and the cost is invisible in output — no span
+    is produced either way — so nothing else would catch the regression.
+
+    Deliberately takes no spans fixture: that fixture is what registers an observer.
+    """
+    import flyte._trace as trace
+
+    assert not observe.has_observers(), "another test left an observer registered"
+
+    calls = 0
+    real_step = trace._step
+
+    def counting_step(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return real_step(*args, **kwargs)
+
+    monkeypatch.setattr(trace, "_step", counting_step)
+
+    await flyte.init.aio()
+    flyte.run(agent, n=2)
+
+    assert calls == 0, f"described {calls} steps with no observer registered"

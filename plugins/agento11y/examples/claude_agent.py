@@ -66,14 +66,14 @@ env = flyte.TaskEnvironment(
     # export comes back 401. Grafana Cloud uses Basic with the instance id as the username.
     env_vars={"AGENTO11Y_AUTH_MODE": "basic"},
     secrets=[
-        flyte.Secret(key="sam_anthropic_api_key", as_env_var="ANTHROPIC_API_KEY"),
-        flyte.Secret(key="sam_agento11y_endpoint", as_env_var="AGENTO11Y_ENDPOINT"),
-        flyte.Secret(key="sam_agento11y_token", as_env_var="AGENTO11Y_AUTH_TOKEN"),
-        flyte.Secret(key="sam_agento11y_tenant_id", as_env_var="AGENTO11Y_AUTH_TENANT_ID"),
+        flyte.Secret(key="anthropic_api_key", as_env_var="ANTHROPIC_API_KEY"),
+        flyte.Secret(key="agento11y_endpoint", as_env_var="AGENTO11Y_ENDPOINT"),
+        flyte.Secret(key="agento11y_token", as_env_var="AGENTO11Y_AUTH_TOKEN"),
+        flyte.Secret(key="agento11y_tenant_id", as_env_var="AGENTO11Y_AUTH_TENANT_ID"),
         # Spans go to Tempo over OTLP; generations go to Agent Observability over their own
         # channel. Both are needed for the two links on the task to resolve.
-        flyte.Secret(key="sam_otlp_endpoint", as_env_var="OTEL_EXPORTER_OTLP_ENDPOINT"),
-        flyte.Secret(key="sam_otlp_headers", as_env_var="OTEL_EXPORTER_OTLP_HEADERS"),
+        flyte.Secret(key="otlp_endpoint", as_env_var="OTEL_EXPORTER_OTLP_ENDPOINT"),
+        flyte.Secret(key="otlp_headers", as_env_var="OTEL_EXPORTER_OTLP_HEADERS"),
     ],
 )
 

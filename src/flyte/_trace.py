@@ -1,6 +1,7 @@
 import functools
 import inspect
 import time
+from contextlib import AbstractContextManager, nullcontext
 from typing import (
     Any,
     AsyncGenerator,
@@ -15,7 +16,7 @@ from typing import (
 )
 
 from flyte._logging import logger
-from flyte._observe import StepInfo, has_observers, observe_step
+from flyte._observe import Recorder, StepInfo, has_observers, observe_step
 from flyte.models import NativeInterface, TaskContext
 from flyte.syncify import syncify
 
@@ -31,6 +32,18 @@ def _step(info: Any, ctx: Any, *, replayed: bool = False) -> StepInfo:
         task_action=tctx.task_action if tctx else None,
         replayed=replayed,
     )
+
+
+def _observe(info: Any, ctx: Any) -> AbstractContextManager[Recorder]:
+    """Observe this trace step describing it only when something is listening.
+
+    Every traced call reaches this, so the unobserved path must not pay for the observed
+    one: without the guard the ``StepInfo`` would be built as an argument, before
+    ``observe_step`` ever gets the chance to do nothing with it.
+    """
+    if not has_observers():
+        return nullcontext(Recorder())
+    return observe_step(_step(info, ctx))
 
 
 def _observe_replayed(info: Any, ctx: Any) -> None:
@@ -107,7 +120,7 @@ def trace(func: Callable[..., T]) -> Callable[..., T]:
         error = None
         results = None
 
-        with observe_step(_step(info, ctx)) as recorder, trace_context:
+        with _observe(info, ctx) as recorder, trace_context:
             try:
                 results = func(*args, **kwargs)
                 info.add_outputs(results, start_time=start_time, end_time=time.time())
@@ -160,7 +173,7 @@ def trace(func: Callable[..., T]) -> Callable[..., T]:
         error = None
         items: list[Any] = []
 
-        with observe_step(_step(info, ctx)) as recorder, trace_context:
+        with _observe(info, ctx) as recorder, trace_context:
             result = func(*args, **kwargs)
             if inspect.isgenerator(result) or is_sync_iterable(result):
                 try:
@@ -215,7 +228,7 @@ def trace(func: Callable[..., T]) -> Callable[..., T]:
             error = None
             results = None
 
-            with observe_step(_step(info, ctx)) as recorder:
+            with _observe(info, ctx) as recorder:
                 async with trace_context:
                     # Cast to Awaitable to satisfy mypy
                     coroutine_result = cast(Awaitable[Any], func(*args, **kwargs))
@@ -284,7 +297,7 @@ def trace(func: Callable[..., T]) -> Callable[..., T]:
             error = None
             items = []
 
-            with observe_step(_step(info, ctx)) as recorder:
+            with _observe(info, ctx) as recorder:
                 async with trace_context:
                     result = func(*args, **kwargs)
                     # TODO ideally we should use streaming into the type-engine so that it stream uploads large blocks
