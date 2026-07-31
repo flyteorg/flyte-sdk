@@ -275,12 +275,16 @@ class PythonWheelHandler:
         )
         dockerfile += delta1
 
-        # Second install (last): force the exact local wheel on top of whatever the dependency step
-        # installed. --no-index + --reinstall guarantees the local wheel wins and nothing re-resolves
-        # it to a published release afterwards. This must run after the dependency step: a full resolve
-        # can otherwise discard the local wheel in favor of a stable PyPI release -- e.g. when one of
-        # the local wheel's dependencies can't be satisfied, uv backtracks to the published version
-        # (silently swapping a `with_local_v2()` build back to the released package).
+        # Second install (last): force the exact local wheels on top of whatever the dependency step
+        # installed. --no-index + --reinstall guarantees the local wheels win and nothing re-resolves
+        # them to published releases afterwards. This must run after the dependency step: a full resolve
+        # can otherwise discard a local wheel in favor of a stable PyPI release -- e.g. when the local
+        # wheel is a dev version or one of its dependencies can't be satisfied, uv backtracks to the
+        # published version (silently swapping a `with_local_v2()` build back to the released package).
+        # Every wheel in the dir is forced (not just layer.package_name) so sibling wheels -- e.g. a
+        # locally built flyteidl2 that the local SDK depends on -- also win over their PyPI releases;
+        # the layer hash already covers all wheels in the dir.
+        wheel_paths = sorted(f"/dist/{wheel.name}" for wheel in layer.wheel_dir.glob("*.whl") if wheel.is_file())
         pip_install_args_no_deps = [
             *pip_install_args,
             *[
@@ -289,7 +293,7 @@ class PythonWheelHandler:
                 "--no-deps",
                 "--no-index",
                 "--reinstall",
-                layer.package_name,
+                *(wheel_paths or [layer.package_name]),
             ],
         ]
         delta2 = UV_WHEEL_INSTALL_COMMAND_TEMPLATE.substitute(

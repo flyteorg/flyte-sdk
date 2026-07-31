@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Literal, Mapping, Type
 
+import rich.repr
 from flyteidl2.artifact import artifact_pb2, artifact_service_pb2
 from flyteidl2.common import identifier_pb2, list_pb2
 
@@ -40,6 +41,18 @@ class Artifact(ToJSONMixin):
     @property
     def version(self) -> str:
         return self.pb2.artifact_id.version
+
+    def __rich_repr__(self) -> rich.repr.Result:
+        """
+        Rich representation of the Artifact object for pretty printing.
+        """
+        yield "project", self.pb2.artifact_id.name.project or "-"
+        yield "domain", self.pb2.artifact_id.name.domain or "-"
+        yield "name", self.name
+        yield "version", self.version
+        yield "description", self.pb2.spec.description or "-"
+        yield "created_at", self.pb2.created_at.ToDatetime().isoformat()
+        yield "created_by", self.pb2.created_by or "-"
 
     async def to_python(self, python_type: Type | None = None) -> Any:
         """

@@ -61,6 +61,59 @@ def project(cfg: common.CLIConfig, name: str | None = None, archived: bool = Fal
 
 @get.command(cls=common.CommandBase)
 @click.argument("name", type=str, required=False)
+@click.argument("version", type=str, required=False)
+@click.option("--all-versions", is_flag=True, default=False, help="List every version of the named artifact.")
+@click.option("--limit", type=int, default=100, help="Limit the number of artifacts to fetch when listing.")
+@click.option(
+    "--created-after",
+    type=_params.DateTimeType(),
+    default=None,
+    help="Show artifacts created at or after this datetime (UTC). Accepts ISO dates, 'now', 'today', or 'now - 1 day'.",
+)
+@click.pass_obj
+def artifact(
+    cfg: common.CLIConfig,
+    name: str | None = None,
+    version: str | None = None,
+    all_versions: bool = False,
+    limit: int = 100,
+    created_after: dt.datetime | None = None,
+    project: str | None = None,
+    domain: str | None = None,
+):
+    """
+    Get a list of all artifacts, or details of a specific artifact by name and version.
+
+    \b
+    Example usage:
+
+    ```bash
+    flyte get artifact                       # list artifacts in the project/domain
+    flyte get artifact my_artifact           # details of the latest version
+    flyte get artifact my_artifact 1.0       # details of a pinned version
+    flyte get artifact my_artifact --all-versions   # list every version of my_artifact
+    ```
+    """
+    cfg.init(project=project, domain=domain)
+
+    console = common.get_console()
+    if name and not all_versions:
+        a = remote.Artifact.get(name, version=version or "latest", project=project, domain=domain)
+        console.print(common.format("Artifact", [a], "json"))
+    else:
+        console.print(
+            common.format(
+                "Artifacts",
+                remote.Artifact.listall(
+                    name=name, created_after=created_after, limit=limit, project=project, domain=domain
+                ),
+                cfg.output_format,
+            )
+        )
+
+
+@get.command(cls=common.CommandBase)
+@click.argument("name", type=str, required=False)
 @click.option("--limit", type=int, default=100, help="Limit the number of runs to fetch when listing.")
 @click.option(
     "--in-phase",  # multiple=True, TODO support multiple phases once values in works

@@ -66,6 +66,88 @@ def project(cfg: common.CLIConfig, id: str, name: str, description: str, label: 
 @click.argument("name", type=str, required=True)
 @click.option(
     "--value",
+    help="Inline string value to publish as the artifact.",
+    cls=MutuallyExclusiveOption,
+    mutually_exclusive=["from_file"],
+)
+@click.option(
+    "--from-file",
+    type=click.Path(exists=True),
+    help="Publish a local file as a File artifact (contents upload to blob storage).",
+    cls=MutuallyExclusiveOption,
+    mutually_exclusive=["value"],
+)
+@click.option("--version", type=str, default=None, help="Version to publish. Defaults to a random version.")
+@click.option("--description", type=str, default=None, help="Human readable description.")
+@click.option(
+    "--data",
+    multiple=True,
+    callback=common.key_value_callback,
+    help="Free-form user metadata as key=value pairs. Can be specified multiple times.",
+)
+@click.pass_obj
+def artifact(
+    cfg: common.CLIConfig,
+    name: str,
+    value: str | None = None,
+    from_file: str | None = None,
+    version: str | None = None,
+    description: str | None = None,
+    data: dict[str, str] | None = None,
+    project: str | None = None,
+    domain: str | None = None,
+):
+    """
+    Publish an artifact from the local machine.
+
+    The value is stored in the artifact service as a typed literal. Provide either an
+    inline string value or a local file (uploaded to blob storage and stored as a File).
+
+    \b
+    Example usage:
+
+    ```bash
+    flyte create artifact my_artifact --value "hello world" --version 1.0
+    flyte create artifact my_model --from-file model.pt -d framework=torch
+    ```
+    """
+    from flyte.remote import Artifact
+
+    if value is None and from_file is None:
+        raise click.ClickException("Provide either --value or --from-file.")
+
+    cfg.init(project=project, domain=domain)
+    console = common.get_console()
+
+    publish_value: Any
+    python_type: type
+    if from_file is not None:
+        from flyte.io import File
+
+        publish_value = File.from_local_sync(from_file)
+        python_type = File
+    else:
+        publish_value = value
+        python_type = str
+
+    with console.status(f"Publishing artifact {name}..."):
+        result = Artifact.create(
+            publish_value,
+            name=name,
+            version=version,
+            description=description,
+            data=data or None,
+            python_type=python_type,
+            project=project,
+            domain=domain,
+        )
+    console.print(f"[bold green]Published artifact {result.name}@{result.version}[/bold green]")
+
+
+@create.command(cls=common.CommandBase)
+@click.argument("name", type=str, required=True)
+@click.option(
+    "--value",
     help="Secret value",
     prompt="Enter secret value",
     hide_input=True,
