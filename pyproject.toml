@@ -204,7 +204,7 @@ mypy_path = ["src"]
 [tool.uv]
 exclude-newer = "5 days"
 # TEMPORARY: relax the flyteidl2 pin graph-wide (flyte + rs_controller both pin ==2.0.31)
-# so the local path source below (which setuptools_scm versions as 2.0.32.devN) resolves.
+# so the git source below (which setuptools_scm versions as 2.0.32.devN) resolves.
 # Remove together with the [tool.uv.sources] flyteidl2 entry once a released flyteidl2
 # carrying LocalRunService / DataProxyService.UploadMetadata is pinned.
 override-dependencies = ["flyteidl2>=2.0.31"]
@@ -220,9 +220,10 @@ ty = "0 days"
 
 [tool.uv.sources]
 flyte_controller_base = { path = "rs_controller" }
-# TEMPORARY: use the locally generated flyteidl2 that carries LocalRunService and
-# DataProxyService.UploadMetadata. Swap for a released flyteidl2 pin before merge.
-flyteidl2 = { path = "/Users/haytham/src/github.com/unionai/cloud/flyte2/gen/python", editable = true }
+# TEMPORARY: use the flyteidl2 generated on the flyte repo branch, which carries
+# LocalRunService and DataProxyService.UploadMetadata, so CI can resolve it.
+# Swap for a released flyteidl2 pin before merge.
+flyteidl2 = { git = "https://github.com/flyteorg/flyte.git", subdirectory = "gen/python", rev = "390e9573d6643bd44c192b72265eaf058b2a1e2a" }
 
 [tool.ty.rules]
 # The codebase is checked by both mypy and ty; `# type: ignore` comments needed by
