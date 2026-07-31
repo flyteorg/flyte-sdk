@@ -10,7 +10,7 @@ from flyteidl2.secret import payload_pb2
 from flyteidl2.settings import settings_service_pb2
 from flyteidl2.task import task_service_pb2
 from flyteidl2.trigger import trigger_service_pb2
-from flyteidl2.workflow import run_logs_service_pb2, run_service_pb2
+from flyteidl2.workflow import local_run_service_pb2, run_logs_service_pb2, run_service_pb2
 
 
 class ProjectDomainService(Protocol):
@@ -109,6 +109,37 @@ class RunService(Protocol):
     ) -> AsyncIterator[run_service_pb2.WatchActionsResponse]: ...
 
 
+class LocalRunService(Protocol):
+    """Runs orchestrated outside the platform (e.g. on a user's machine) whose state is
+    reported to the control plane. The read surface mirrors RunService."""
+
+    async def create_run(
+        self, request: local_run_service_pb2.CreateLocalRunRequest
+    ) -> run_service_pb2.CreateRunResponse: ...
+
+    async def report_actions(
+        self, request: local_run_service_pb2.ReportLocalActionsRequest
+    ) -> local_run_service_pb2.ReportLocalActionsResponse: ...
+
+    async def get_run_details(
+        self, request: run_service_pb2.GetRunDetailsRequest
+    ) -> run_service_pb2.GetRunDetailsResponse: ...
+
+    async def watch_run_details(
+        self, request: run_service_pb2.WatchRunDetailsRequest
+    ) -> AsyncIterator[run_service_pb2.WatchRunDetailsResponse]: ...
+
+    async def get_action_details(
+        self, request: run_service_pb2.GetActionDetailsRequest
+    ) -> run_service_pb2.GetActionDetailsResponse: ...
+
+    async def list_runs(self, request: run_service_pb2.ListRunsRequest) -> run_service_pb2.ListRunsResponse: ...
+
+    async def watch_actions(
+        self, request: run_service_pb2.WatchActionsRequest
+    ) -> AsyncIterator[run_service_pb2.WatchActionsResponse]: ...
+
+
 class DataProxyService(Protocol):
     async def create_upload_location(
         self, request: dataproxy_service_pb2.CreateUploadLocationRequest
@@ -129,6 +160,10 @@ class DataProxyService(Protocol):
     async def create_download_link(
         self, request: dataproxy_service_pb2.CreateDownloadLinkRequest
     ) -> dataproxy_service_pb2.CreateDownloadLinkResponse: ...
+
+    async def upload_metadata(
+        self, request: dataproxy_service_pb2.UploadMetadataRequest
+    ) -> dataproxy_service_pb2.CreateUploadLocationResponse: ...
 
     def tail_logs(
         self, request: dataproxy_service_pb2.TailLogsRequest

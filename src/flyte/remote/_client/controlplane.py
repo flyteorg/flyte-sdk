@@ -20,6 +20,7 @@ from flyteidl2.secret.secret_connect import SecretServiceClient
 from flyteidl2.settings.settings_service_connect import SettingsServiceClient
 from flyteidl2.task.task_service_connect import TaskServiceClient
 from flyteidl2.trigger.trigger_service_connect import TriggerServiceClient
+from flyteidl2.workflow.local_run_service_connect import LocalRunServiceClient
 from flyteidl2.workflow.run_logs_service_connect import RunLogsServiceClient
 from flyteidl2.workflow.run_service_connect import RunServiceClient
 
@@ -29,6 +30,7 @@ from ._protocols import (
     DataProxyService,
     IdentityService,
     ImageService,
+    LocalRunService,
     ProjectDomainService,
     RunLogsService,
     RunService,
@@ -120,6 +122,21 @@ class Console:
             Console URL for the run
         """
         return self._resource_url(project, domain, "runs", run_name)
+
+    def local_run_url(self, project: str, domain: str, run_name: str) -> str:
+        """
+        Build console URL for a local run (a run orchestrated on the user's machine
+        whose state is reported to the control plane via LocalRunService).
+
+        Args:
+            project: Project name
+            domain: Domain name
+            run_name: Run identifier
+
+        Returns:
+            Console URL for the local run
+        """
+        return self._resource_url(project, domain, "local-runs", run_name)
 
     def app_url(self, project: str, domain: str, app_name: str) -> str:
         """
@@ -376,6 +393,17 @@ class ClusterAwareDataProxy(_ClusterAwareService):
             client = self._default_client
         return await client.create_download_link(request)
 
+    async def upload_metadata(
+        self, request: dataproxy_service_pb2.UploadMetadataRequest
+    ) -> dataproxy_service_pb2.CreateUploadLocationResponse:
+        """Signed upload URL for a local run's metadata artifact (inputs.pb / outputs.pb / report.html).
+
+        Local runs are tracked exclusively by the control plane and never involve a
+        dataplane, so this deliberately bypasses SelectCluster routing and always
+        calls the control-plane dataproxy directly.
+        """
+        return await self._default_client.upload_metadata(request)
+
     def tail_logs(
         self, request: dataproxy_service_pb2.TailLogsRequest
     ) -> AsyncIterator[dataproxy_service_pb2.TailLogsResponse]:
@@ -544,6 +572,7 @@ class ClientSet:
         self._task_service = TaskServiceClient(**shared)
         self._app_service = AppServiceClient(**shared)
         self._run_service = RunServiceClient(**shared)
+        self._local_run_service = LocalRunServiceClient(**shared)
         self._log_service = RunLogsServiceClient(**shared)
         self._identity_service = IdentityServiceClient(**shared)
         self._trigger_service = TriggerServiceClient(**shared)
@@ -600,6 +629,14 @@ class ClientSet:
     @property
     def run_service(self) -> RunService:
         return cast(RunService, self._run_service)
+
+    @property
+    def local_run_service(self) -> LocalRunService:
+        """Client for runs orchestrated outside the platform (local runs).
+
+        Local-run RPCs are control-plane only and never route to a dataplane cluster.
+        """
+        return cast(LocalRunService, self._local_run_service)
 
     @property
     def dataproxy_service(self) -> DataProxyService:

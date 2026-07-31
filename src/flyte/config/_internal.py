@@ -67,6 +67,7 @@ class Task(object):
 
 class Local(object):
     PERSISTENCE = ConfigEntry(YamlConfigEntry("local.persistence", bool))
+    REPORT_TO_BACKEND = ConfigEntry(YamlConfigEntry("local.report_to_backend", bool))
 
 
 class Image(object):

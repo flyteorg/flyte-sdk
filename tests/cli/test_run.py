@@ -1651,3 +1651,22 @@ def test_run_task_with_file_input_and_project(runner):
         raise ve
     finally:
         Path(tmp_path).unlink(missing_ok=True)
+
+
+def test_run_command_has_report_option():
+    """--report is a visible option on `flyte run` (report a local run to the control plane)."""
+    opt_names = {decl for p in run.params for decl in p.opts}
+    assert "--report" in opt_names
+
+
+def test_run_report_rejects_remote(runner):
+    """--report can only be combined with --local (remote runs are already reported)."""
+    cmd = ["--report", str(HELLO_WORLD_PY), "say_hello"]
+    try:
+        result = runner.invoke(run, cmd)
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise
+    assert result.exit_code != 0
+    assert "--local" in result.output
