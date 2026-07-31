@@ -48,6 +48,19 @@ class Artifact(ToJSONMixin):
         n = self.pb2.artifact_id.name
         return f"{n.org}/{n.project}/{n.domain}/{n.name}@{self.version}"
 
+    @property
+    def created_by(self) -> str:
+        """Best-effort display string for the creating identity (EnrichedIdentity)."""
+        identity = self.pb2.created_by
+        which = identity.WhichOneof("principal")
+        if which == "user":
+            user = identity.user
+            return user.spec.email or user.id.subject
+        if which == "application":
+            app = identity.application
+            return app.spec.name or app.id.subject
+        return ""
+
     def __rich_repr__(self) -> rich.repr.Result:
         """
         Rich representation of the Artifact object for pretty printing.
@@ -58,7 +71,7 @@ class Artifact(ToJSONMixin):
         yield "version", self.version
         yield "description", self.pb2.spec.description or "-"
         yield "created_at", self.pb2.created_at.ToDatetime().isoformat()
-        yield "created_by", self.pb2.created_by or "-"
+        yield "created_by", self.created_by or "-"
 
     async def to_python(self, python_type: Type | None = None) -> Any:
         """
