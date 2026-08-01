@@ -27,6 +27,8 @@ from flyte.io import DataFrame, Dir, File
 env = flyte.TaskEnvironment(
     name="artifact_example",
     image=flyte.Image.from_debian_base().with_pip_packages("pandas", "pyarrow"),
+    # pandas + pyarrow need more than the default task memory.
+    resources=flyte.Resources(cpu=1, memory="1Gi"),
 )
 
 
@@ -117,28 +119,6 @@ async def produce_all() -> tuple[File, Dir, DataFrame, TrainedModel, EvalReport]
         await produce_dataclass(),
         await produce_pydantic(),
     )
-
-
-# --- Not allowed -------------------------------------------------------------
-#
-# Primitives cannot be artifacts:
-#
-#     artifacts.new("a string", artifacts.Metadata(name="nope"))
-#     # TypeError: values of type 'str' cannot be artifacts; use a File, Dir,
-#     # DataFrame, dataclass, or pydantic model instead
-#
-# Artifacts must be top-level task outputs. Nesting a wrapped value inside
-# another model fails when the output serializes:
-#
-#     class Bundle(BaseModel):
-#         model_config = {"arbitrary_types_allowed": True}
-#         weights: object
-#
-#     @env.task(produces_artifacts=True)
-#     async def bad() -> Bundle:
-#         return Bundle(weights=artifacts.new(file, artifacts.Metadata(name="nested")))
-#         # PydanticSerializationError: Unable to serialize unknown type:
-#         # <class 'flyte.artifacts._wrapper.ArtifactWrapper'>
 
 
 if __name__ == "__main__":
