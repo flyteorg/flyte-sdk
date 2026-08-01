@@ -191,15 +191,16 @@ class RunArguments:
             )
         },
     )
-    report: bool = field(
+    local_traced: bool = field(
         default=False,
         metadata={
             "click.option": click.Option(
-                ["--report"],
+                ["--local-traced"],
                 is_flag=True,
                 default=False,
-                help="Report local run state to the Flyte control plane so the run shows up in the "
-                "console (only valid with --local). Requires a configured endpoint, project and domain.",
+                help="Run the task locally (implies --local) while reporting run state to the Flyte "
+                "control plane so the run shows up in the console. Requires a configured endpoint, "
+                "project and domain.",
             )
         },
     )
@@ -210,7 +211,7 @@ class RunArguments:
                 ["--report-strict"],
                 is_flag=True,
                 default=False,
-                help="Strict local-run reporting for debugging (only valid with --local --report): "
+                help="Strict local-run reporting for debugging (only valid with --local-traced): "
                 "any reporting failure fails the run loudly instead of being logged and swallowed.",
             )
         },
@@ -452,7 +453,7 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
                 max_action_concurrency=self.run_args.max_action_concurrency,
                 labels=self.run_args.parsed_labels(),
                 queue=self.run_args.queue,
-                report=self.run_args.report,
+                report=self.run_args.local_traced,
                 report_strict=self.run_args.report_strict,
             )
             if self.run_args.rerun_from:
@@ -523,7 +524,7 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
                 env_vars=self.run_args.parsed_env_vars(),
                 labels=self.run_args.parsed_labels(),
                 queue=self.run_args.queue,
-                report=self.run_args.report,
+                report=self.run_args.local_traced,
                 report_strict=self.run_args.report_strict,
                 _tracker=tracker,
             )
@@ -540,12 +541,16 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
             tuple(self.run_args.image) or None,
             not self.run_args.no_sync_local_sys_paths,
         )
+        if self.run_args.local_traced:
+            # --local-traced is --local plus control-plane reporting; normalize so every
+            # downstream local/remote branch sees a plain local run.
+            self.run_args.local = True
         if self.run_args.rerun_from and self.run_args.local:
-            raise click.UsageError("--rerun-from requires remote mode (it cannot be combined with --local)")
-        if self.run_args.report and not self.run_args.local:
-            raise click.UsageError("--report can only be used with --local (remote runs are already reported)")
-        if self.run_args.report_strict and not self.run_args.report:
-            raise click.UsageError("--report-strict requires --report (and --local)")
+            raise click.UsageError(
+                "--rerun-from requires remote mode (it cannot be combined with --local/--local-traced)"
+            )
+        if self.run_args.report_strict and not self.run_args.local_traced:
+            raise click.UsageError("--report-strict requires --local-traced")
         self._validate_required_params(ctx)
         if self.run_args.tui:
             if not self.run_args.local:
@@ -753,6 +758,8 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
             images=tuple(self.run_args.image) or None,
             sync_local_sys_paths=not self.run_args.no_sync_local_sys_paths,
         )
+        if self.run_args.local_traced or self.run_args.report_strict:
+            raise click.UsageError("--local-traced/--report-strict are not supported for deployed tasks")
         self._validate_required_params(ctx)
         # Main entry point remains very thin
         asyncio.run(self._execute_and_render(ctx, config))

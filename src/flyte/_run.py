@@ -951,7 +951,7 @@ class _Runner:
             if self._report_strict:
                 raise ValueError(
                     "Strict local-run reporting (report_strict) requires reporting to be enabled: "
-                    "pass report=True / --report or set local.report_to_backend in your config."
+                    "pass report=True / --local-traced or set local.report_to_backend in your config."
                 )
             return None
 
@@ -1212,7 +1212,7 @@ class _Runner:
         # report mirrors a local run onto the control plane — local-only. Fail fast rather than
         # silently ignoring it in remote/hybrid mode (remote runs are already reported).
         if self._report and self._mode != "local":
-            raise ValueError("report is only supported in local mode (use --local with --report)")
+            raise ValueError("report is only supported in local mode (use --local-traced)")
 
         # Set the run mode in the context variable so that offloaded types (files, directories, dataframes)
         # can check the mode for controlling auto-uploading behavior (only enabled in remote mode).
