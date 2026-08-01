@@ -18,20 +18,41 @@ if TYPE_CHECKING:
     from starlette.applications import Starlette
     from starlette.middleware import Middleware
 
+# Named so the CLI and any other caller can share one definition instead of
+# repeating the literal and letting the two drift apart.
+MCPTransport = Literal["stdio", "sse", "streamable-http"]
+
 
 @dataclass(kw_only=True, repr=True)
 class MCPAppEnvironment(flyte.app.AppEnvironment):
-    """Serve a FastMCP server over HTTP (Starlette + Uvicorn).
+    """Serve a FastMCP server over HTTP (Starlette + Uvicorn) or over stdio.
 
     Pass a configured ``FastMCP`` instance and optional HTTP layout settings.
     Install extras with ``pip install 'flyte[mcp]'``.
 
-    **HTTP layout**
+    **HTTP layout** (``transport="streamable-http"`` or ``"sse"``)
 
     - ``GET /health`` — liveness/readiness JSON ``{"status": "healthy"}``.
     - The MCP ASGI app is mounted at ``mcp_mount_path`` (default ``/mcp``). With
       ``transport="streamable-http"``, the session endpoint is ``{mcp_mount_path}/mcp``.
       SSE transport uses ``{mcp_mount_path}/sse`` instead.
+
+    **stdio** (``transport="stdio"``)
+
+    Speaks JSON-RPC over the current process's stdin/stdout, for MCP clients that
+    launch the server as a subprocess. There is no HTTP surface at all: no Starlette
+    app, no ``/health`` route, no links, and ``mcp_mount_path`` is unused.
+
+    stdio is a *local* transport and cannot be deployed or served via
+    :func:`flyte.serve` — that path runs the server on a background thread and polls
+    an HTTP health check, neither of which applies to a process-bound stdio stream.
+    Run it directly instead::
+
+        env = MCPAppEnvironment(name="my-mcp", mcp=mcp, transport="stdio")
+        env.run_stdio()
+
+    Anything written to stdout corrupts the JSON-RPC stream, so route logging and
+    diagnostics to stderr.
     """
 
     type: str = "MCPApp"
@@ -39,7 +60,7 @@ class MCPAppEnvironment(flyte.app.AppEnvironment):
     mcp: FastMCP
 
     mcp_mount_path: str = "/mcp"
-    transport: Literal["stdio", "sse", "streamable-http"] = "streamable-http"
+    transport: MCPTransport = "streamable-http"
     uvicorn_config: uvicorn.Config | None = None
 
     _starlette_app: Starlette | None = field(init=False, default=None)
@@ -58,6 +79,13 @@ class MCPAppEnvironment(flyte.app.AppEnvironment):
         if not isinstance(self.mcp_mount_path, str) or not self.mcp_mount_path.startswith("/"):
             raise ValueError("mcp_mount_path must be an absolute path starting with '/'.")
 
+        if self.transport == "stdio":
+            # No HTTP surface exists for stdio, so build no Starlette app and advertise
+            # no links. ``_server`` stays ``None``: flyte.serve() would run it on a
+            # background thread and wait on an HTTP health check that never comes up, so
+            # we let serve() fail fast rather than hang. Callers use run_stdio().
+            return
+
         self._starlette_app = self._create_starlette_app()
 
         mcp_link = self.mcp_mount_path
@@ -73,6 +101,28 @@ class MCPAppEnvironment(flyte.app.AppEnvironment):
         ]
 
         self._server = self._starlette_app_server
+
+    async def run_stdio_async(self) -> None:
+        """Serve MCP over this process's stdin/stdout until the client disconnects.
+
+        Validates the transport and then delegates to the wrapped :class:`FastMCP`,
+        whose method of the same name does the actual serving.
+
+        :raises ValueError: if ``transport`` is not ``"stdio"``.
+        """
+
+        if self.transport != "stdio":
+            raise ValueError(
+                f"run_stdio_async() requires transport='stdio', got {self.transport!r}. "
+                "Serve HTTP transports with flyte.serve() instead."
+            )
+        await self.mcp.run_stdio_async()
+
+    def run_stdio(self) -> None:
+        """Blocking wrapper around :meth:`run_stdio_async`, for use as a process entry point."""
+        import anyio
+
+        anyio.run(self.run_stdio_async)
 
     @property
     def _mcp_server(self) -> FastMCP:

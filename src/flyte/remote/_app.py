@@ -36,6 +36,28 @@ def _is_deactivated(state: app_definition_pb2.Status.DeploymentStatus) -> bool:
     ]
 
 
+_DEPLOYMENT_STATUS_PREFIX = "DEPLOYMENT_STATUS_"
+# The backend filters apps on this field by enum *name* (e.g. "DEPLOYMENT_STATUS_ACTIVE"),
+# not the integer enum value.
+_STATUS_FILTER_FIELD = "status_phase"
+
+
+def _status_filter(in_status: str | Tuple[str, ...]) -> list_pb2.Filter:
+    statuses = (in_status,) if isinstance(in_status, str) else in_status
+    names = []
+    for s in statuses:
+        name = s.upper()
+        if not name.startswith(_DEPLOYMENT_STATUS_PREFIX):
+            name = f"{_DEPLOYMENT_STATUS_PREFIX}{name}"
+        app_definition_pb2.Status.DeploymentStatus.Value(name)  # raises ValueError on unknown status
+        names.append(name)
+    return list_pb2.Filter(
+        function=list_pb2.Filter.Function.VALUE_IN if len(names) > 1 else list_pb2.Filter.Function.EQUAL,
+        field=_STATUS_FILTER_FIELD,
+        values=names,
+    )
+
+
 class App(ToJSONMixin):
     pb2: app_definition_pb2.App
 
@@ -370,13 +392,25 @@ class App(ToJSONMixin):
         created_by_subject: str | None = None,
         sort_by: Tuple[str, Literal["asc", "desc"]] | None = None,
         limit: int = 100,
+        in_status: str | Tuple[str, ...] | None = None,
     ) -> AsyncIterator[App]:
+        """
+        List all apps, optionally filtered.
+
+        :param created_by_subject: Only return apps created by this subject.
+        :param sort_by: Sorting criteria, in the format (field, order).
+        :param limit: Maximum number of apps to return.
+        :param in_status: Filter apps by one or more deployment statuses, e.g. "active" or
+            ("active", "failed"). Accepts short names (case-insensitive) or full
+            DEPLOYMENT_STATUS_* names.
+        """
         ensure_client()
         cfg = get_init_config()
         i = 0
         token = None
         sort_pb2 = sorting(sort_by)
-        filters = filtering(created_by_subject)
+        extra_filters = [_status_filter(in_status)] if in_status else []
+        filters = filtering(created_by_subject, *extra_filters)
         project = None
         if cfg.project:
             project = identifier_pb2.ProjectIdentifier(

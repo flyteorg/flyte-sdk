@@ -60,8 +60,6 @@ IMAGE_TASK_DOMAIN = os.environ.get("FLYTE_IMAGEBUILDER_TASK_DOMAIN", "production
 
 
 class RemoteImageChecker(ImageChecker):
-    _images_client = None
-
     @classmethod
     async def image_exists(
         cls, repository: str, tag: str, arch: Tuple[Architecture, ...] = ("linux/amd64",)
@@ -85,24 +83,23 @@ class RemoteImageChecker(ImageChecker):
             from flyteidl2.common.identifier_pb2 import ProjectIdentifier
             from flyteidl2.imagebuilder import definition_pb2 as image_definition__pb2
             from flyteidl2.imagebuilder import payload_pb2 as image_payload__pb2
-            from flyteidl2.imagebuilder.service_connect import ImageServiceClient
 
             from flyte._initialize import _get_init_config
 
             cfg = _get_init_config()
             if cfg is None:
                 raise ValueError("Init config should not be None")
+            if cfg.client is None:
+                raise ValueError("remote client should not be None")
             image_id = image_definition__pb2.ImageIdentifier(name=image_name)
             req = image_payload__pb2.GetImageRequest(
                 id=image_id,
                 organization=cfg.org,
                 project_id=ProjectIdentifier(organization=cfg.org, domain=cfg.domain, name=cfg.project),
             )
-            if cls._images_client is None:
-                if cfg.client is None:
-                    raise ValueError("remote client should not be None")
-                cls._images_client = ImageServiceClient(**cfg.client.session_config.connect_kwargs())
-            resp = await cls._images_client.get_image(req)
+            # Route through the cluster-aware client so zero-trust backends resolve
+            # the image lookup to the owning dataplane via SelectCluster.
+            resp = await cfg.client.image_service.get_image(req)
             logger.debug(f"Image {resp.image.fqin} found in remote registry")
             return resp.image.fqin
         except Exception:
@@ -413,6 +410,11 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
             )
             layers.append(commands_layer)
         elif isinstance(layer, DockerIgnore):
+            if not Path(layer.path).is_file():
+                raise flyte.errors.ImageBuildError(
+                    f"The .dockerignore file specified via with_dockerignore() was not found at '{layer.path}'. "
+                    f"Ensure the path points to an existing file."
+                )
             shutil.copy(layer.path, context_path)
         elif isinstance(layer, CodeBundleLayer):
             if layer.root_dir is None:

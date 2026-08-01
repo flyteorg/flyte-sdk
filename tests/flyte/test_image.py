@@ -723,6 +723,24 @@ def test_image_uri_changes_when_dockerignore_content_changes(tmp_path):
     assert uri1 != img2.uri
 
 
+def test_with_dockerignore_missing_file_does_not_raise_at_definition_time(tmp_path):
+    """Defining an image must not validate the .dockerignore path.
+
+    Image definitions are module-level code that also executes inside the container at task
+    runtime, where the developer's .dockerignore does not exist -- validating here would raise
+    spuriously. Validation belongs at build time instead.
+    """
+    from flyte._image import DockerIgnore
+
+    missing = tmp_path / ".dockerignore"  # never created
+    img = Image.from_debian_base(registry="localhost", name="test").with_dockerignore(missing)
+
+    layer = next(layer for layer in img._layers if isinstance(layer, DockerIgnore))
+    assert layer.path == str(missing)
+    # The hash must also survive the file being absent (falls back to hashing the path string).
+    assert img.uri
+
+
 def test_ids_for_different_python_version():
     ex_11 = Image.from_debian_base(python_version=(3, 11), install_flyte=False).with_source_file(Path(__file__))
     ex_12 = Image.from_debian_base(python_version=(3, 12), install_flyte=False).with_source_file(Path(__file__))

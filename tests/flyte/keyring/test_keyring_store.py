@@ -56,13 +56,30 @@ def test_credentials_model_works_without_keyring():
     assert "keyring" not in sys.modules
 
 
+def _mock_get_keyring_backend():
+    """Patch KeyringStore's backend selection so tests never touch a real keychain."""
+    return patch("flyte.remote._client.auth._keyring._get_keyring_backend")
+
+
+def test_backend_selection_by_platform():
+    from flyte._keyring.macos import SecurityCliKeyring
+    from flyte.remote._client.auth import _keyring
+
+    with patch("platform.system", return_value="Darwin"):
+        assert isinstance(_keyring._get_keyring_backend(), SecurityCliKeyring)
+    with patch("platform.system", return_value="Linux"):
+        import keyring as keyring_module
+
+        assert _keyring._get_keyring_backend() is keyring_module
+
+
 def test_store_skips_when_disabled():
     from flyte.remote._client.auth._keyring import Credentials, KeyringStore
 
     creds = Credentials(access_token="tok", for_endpoint="foo")
-    with patch("keyring.set_password") as mock_set:
+    with _mock_get_keyring_backend() as mock_backend:
         result = KeyringStore.store(creds, disable=True)
-    mock_set.assert_not_called()
+    mock_backend.assert_not_called()
     assert result is creds
 
 
@@ -73,9 +90,10 @@ def test_store_writes_single_keychain_item():
     from flyte.remote._client.auth._keyring import Credentials, KeyringStore
 
     creds = Credentials(access_token="tok", for_endpoint="foo", refresh_token="rtok")
-    with patch("keyring.set_password") as mock_set:
+    with _mock_get_keyring_backend() as mock_backend:
         KeyringStore.store(creds, disable=False)
 
+    mock_set = mock_backend.return_value.set_password
     assert mock_set.call_count == 1
     assert mock_set.call_args.args[1] == "tokens"
     assert json.loads(mock_set.call_args.args[2]) == {"access_token": "tok", "refresh_token": "rtok"}
@@ -87,7 +105,8 @@ def test_store_swallows_no_keyring_error():
     from flyte.remote._client.auth._keyring import Credentials, KeyringStore
 
     creds = Credentials(access_token="tok", for_endpoint="foo")
-    with patch("keyring.set_password", side_effect=NoKeyringError("no backend")):
+    with _mock_get_keyring_backend() as mock_backend:
+        mock_backend.return_value.set_password.side_effect = NoKeyringError("no backend")
         # Should not raise; keyring unavailability is non-fatal.
         result = KeyringStore.store(creds, disable=False)
     assert result is creds
@@ -96,18 +115,19 @@ def test_store_swallows_no_keyring_error():
 def test_retrieve_skips_when_disabled():
     from flyte.remote._client.auth._keyring import KeyringStore
 
-    with patch("keyring.get_password") as mock_get:
+    with _mock_get_keyring_backend() as mock_backend:
         result = KeyringStore.retrieve("foo", disable=True)
-    mock_get.assert_not_called()
+    mock_backend.assert_not_called()
     assert result is None
 
 
 def test_retrieve_returns_none_when_no_tokens_stored():
     from flyte.remote._client.auth._keyring import KeyringStore
 
-    with patch("keyring.get_password", return_value=None) as mock_get:
+    with _mock_get_keyring_backend() as mock_backend:
+        mock_backend.return_value.get_password.return_value = None
         result = KeyringStore.retrieve("foo", disable=False)
-    assert mock_get.called
+    assert mock_backend.return_value.get_password.called
     assert result is None
 
 
@@ -117,11 +137,12 @@ def test_retrieve_returns_credentials_when_access_token_present():
     from flyte.remote._client.auth._keyring import KeyringStore
 
     stored = json.dumps({"access_token": "a", "refresh_token": "r"})
-    with patch("keyring.get_password", return_value=stored) as mock_get:
+    with _mock_get_keyring_backend() as mock_backend:
+        mock_backend.return_value.get_password.return_value = stored
         creds = KeyringStore.retrieve("https://flyte.example.com", disable=False)
 
     # Exactly one keychain read = exactly one macOS keychain prompt.
-    assert mock_get.call_count == 1
+    assert mock_backend.return_value.get_password.call_count == 1
     assert creds is not None
     assert creds.access_token == "a"
     assert creds.refresh_token == "r"
@@ -131,18 +152,20 @@ def test_retrieve_returns_credentials_when_access_token_present():
 def test_retrieve_returns_none_on_unparseable_tokens():
     from flyte.remote._client.auth._keyring import KeyringStore
 
-    with patch("keyring.get_password", return_value="not-json"):
+    with _mock_get_keyring_backend() as mock_backend:
+        mock_backend.return_value.get_password.return_value = "not-json"
         assert KeyringStore.retrieve("foo", disable=False) is None
 
 
 def test_retrieve_strips_scheme_before_lookup():
     from flyte.remote._client.auth._keyring import KeyringStore
 
-    with patch("keyring.get_password", return_value=None) as mock_get:
+    with _mock_get_keyring_backend() as mock_backend:
+        mock_backend.return_value.get_password.return_value = None
         KeyringStore.retrieve("https://flyte.example.com/path", disable=False)
 
     # Ensure the endpoint passed to keyring has no scheme.
-    for call in mock_get.call_args_list:
+    for call in mock_backend.return_value.get_password.call_args_list:
         assert call.args[0] == "flyte.example.com/path"
 
 
@@ -151,7 +174,8 @@ def test_retrieve_handles_no_keyring_error():
 
     from flyte.remote._client.auth._keyring import KeyringStore
 
-    with patch("keyring.get_password", side_effect=NoKeyringError("no backend")):
+    with _mock_get_keyring_backend() as mock_backend:
+        mock_backend.return_value.get_password.side_effect = NoKeyringError("no backend")
         result = KeyringStore.retrieve("foo", disable=False)
     assert result is None
 
@@ -159,18 +183,18 @@ def test_retrieve_handles_no_keyring_error():
 def test_delete_skips_when_disabled():
     from flyte.remote._client.auth._keyring import KeyringStore
 
-    with patch("keyring.delete_password") as mock_del:
+    with _mock_get_keyring_backend() as mock_backend:
         KeyringStore.delete("foo", disable=True)
-    mock_del.assert_not_called()
+    mock_backend.assert_not_called()
 
 
 def test_delete_removes_tokens_and_legacy_keys_when_enabled():
     from flyte.remote._client.auth._keyring import KeyringStore
 
-    with patch("keyring.delete_password") as mock_del:
+    with _mock_get_keyring_backend() as mock_backend:
         KeyringStore.delete("https://flyte.example.com", disable=False)
 
-    keys_deleted = {call.args[1] for call in mock_del.call_args_list}
+    keys_deleted = {call.args[1] for call in mock_backend.return_value.delete_password.call_args_list}
     assert keys_deleted == {"tokens", "access_token", "refresh_token"}
 
 
@@ -179,7 +203,8 @@ def test_delete_swallows_password_delete_error():
 
     from flyte.remote._client.auth._keyring import KeyringStore
 
-    with patch("keyring.delete_password", side_effect=PasswordDeleteError("missing")):
+    with _mock_get_keyring_backend() as mock_backend:
+        mock_backend.return_value.delete_password.side_effect = PasswordDeleteError("missing")
         # Should not raise even if both deletes fail.
         KeyringStore.delete("foo", disable=False)
 

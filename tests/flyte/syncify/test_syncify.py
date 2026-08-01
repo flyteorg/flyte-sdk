@@ -417,3 +417,34 @@ async def test_syncify_generator_exception():
         assert len(tb_list) == 3, (
             f"traceback should contain two frames: one for the exception and one for the function, got {tb_list}"
         )
+
+
+def test_module_level_sync_wrapper_is_cloudpickleable():
+    """
+    Regression test for FLYTE-SDK-38: cloudpickle could not serialize functions that
+    captured a module-level syncify-wrapped helper because the helper transitively held
+    an asyncio loop / SimpleQueue. Pickling by reference avoids that.
+    """
+    import cloudpickle
+
+    from flyte._trace import _fetch_action_outputs
+
+    payload = cloudpickle.dumps(_fetch_action_outputs)
+    restored = cloudpickle.loads(payload)
+    assert restored is _fetch_action_outputs
+
+
+def test_module_level_sync_wrapper_pickleable_via_closure():
+    """
+    Functions that close over a module-level syncify wrapper should also pickle cleanly.
+    """
+    import cloudpickle
+
+    from flyte._trace import _fetch_action_outputs
+
+    def closes_over_wrapper():
+        return _fetch_action_outputs
+
+    payload = cloudpickle.dumps(closes_over_wrapper)
+    restored = cloudpickle.loads(payload)
+    assert restored() is _fetch_action_outputs

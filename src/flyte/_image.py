@@ -1278,6 +1278,11 @@ class Image:
         return self.clone(addl_layer=CodeBundleLayer(copy_style=copy_style, dst=dst))
 
     def with_dockerignore(self, path: Path) -> Image:
+        # Deliberately no existence check here: image definitions are module-level code that also
+        # runs inside the container at task runtime, where the developer's .dockerignore is absent.
+        # Validating at definition time would raise spuriously there -- note DockerIgnore.update_hash
+        # already tolerates a missing file. The path is validated at build time instead, where the
+        # file genuinely has to exist (see remote_builder._get_layers_proto / DockerIgnoreHandler).
         new_image = self.clone(addl_layer=DockerIgnore(path=str(path)))
         return new_image
 
@@ -1396,7 +1401,10 @@ class Image:
         discovered the same way pixi discovers it (`pixi.toml` first, then `pyproject.toml`).
 
         By default, this method copies only the manifest and lock file into the image. When the lock file
-        is present, `pixi install --locked` is used so the build reproduces the lock exactly.
+        is present, `pixi install --locked` is used so the build reproduces the lock exactly. A `--frozen`
+        in `extra_args` replaces that `--locked`, since pixi rejects the two together; use it when the
+        manifest references path dependencies whose sources are not in the build context, which `--locked`
+        would otherwise reject as an out-of-date lock.
 
         If `project_install_mode` is "install_project", the entire directory containing the manifest is
         copied into the image instead. Use this when the manifest installs the project itself, e.g. a

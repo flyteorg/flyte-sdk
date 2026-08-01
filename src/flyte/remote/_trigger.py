@@ -20,6 +20,37 @@ from ._common import ToJSONMixin
 from ._task import Task, TaskDetails
 
 
+def _describe_automation(automation: common_pb2.TriggerAutomationSpec) -> str:
+    """
+    Render a trigger's automation specification as a single human-readable line.
+
+    One line (rather than one field per automation kind) keeps the columns aligned when a list of
+    triggers with differing automations is formatted as a table.
+    """
+    if automation.type == common_pb2.TriggerAutomationSpecType.TYPE_NONE:
+        return "none"
+    if automation.type != common_pb2.TriggerAutomationSpecType.TYPE_SCHEDULE:
+        return common_pb2.TriggerAutomationSpecType.Name(automation.type)
+
+    schedule = automation.schedule
+    # `schedule` is a message, so its sub-messages are never None; the oneof tag is what says
+    # which kind of schedule was actually set.
+    match schedule.WhichOneof("expression"):
+        case "cron":
+            return f"cron: {schedule.cron.expression} ({schedule.cron.timezone or 'UTC'})"
+        case "cron_expression":
+            return f"cron: {schedule.cron_expression}"
+        case "rate":
+            rate = schedule.rate
+            unit = common_pb2.FixedRateUnit.Name(rate.unit).removeprefix("FIXED_RATE_UNIT_").lower()
+            if rate.value != 1:
+                unit += "s"
+            start = rate.start_time.ToDatetime() if rate.HasField("start_time") else "now"
+            return f"every {rate.value} {unit} starting at {start}"
+        case _:
+            return "schedule: unset"
+
+
 @dataclass
 class TriggerDetails(ToJSONMixin):
     pb2: trigger_definition_pb2.TriggerDetails
@@ -352,8 +383,7 @@ class Trigger(ToJSONMixin):
         Get detailed information about this trigger.
         """
         if not self.details:
-            details = await TriggerDetails.get.aio(name=self.pb2.id.name.name)
-            self.details = details
+            self.details = await TriggerDetails.get.aio(name=self.name, task_name=self.task_name)
         return self.details
 
     @property
@@ -367,20 +397,7 @@ class Trigger(ToJSONMixin):
         """
         Generate rich representation fields for the automation specification.
         """
-        if automation.type == common_pb2.TriggerAutomationSpec.type.TYPE_NONE:
-            yield "none", None
-        elif automation.type == common_pb2.TriggerAutomationSpec.type.TYPE_SCHEDULE:
-            if automation.schedule.cron is not None:
-                yield "cron", automation.schedule.cron
-            elif automation.schedule.rate is not None:
-                r = automation.schedule.rate
-                yield (
-                    "fixed_rate",
-                    (
-                        f"Every [{r.value}] {r.unit} starting at "
-                        f"{r.start_time.ToDatetime() if automation.HasField('start_time') else 'now'}"
-                    ),
-                )
+        yield "automation", _describe_automation(automation)
 
     def __rich_repr__(self):
         """
