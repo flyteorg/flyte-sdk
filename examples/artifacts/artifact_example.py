@@ -68,12 +68,94 @@ class TrainedModel:
     labels: list[str]
 
 
+def _model_card_html(model: TrainedModel, metrics: dict[str, float]) -> str:
+    """Render a self-contained HTML model card from real training results."""
+    label_chips = "".join(f'<span class="chip">{label}</span>' for label in model.labels)
+    metric_rows = "".join(
+        f"""<div class="metric">
+              <div class="metric-head"><span>{name}</span><span class="mono">{value:.1%}</span></div>
+              <div class="bar"><div class="bar-fill" style="width:{value * 100:.0f}%"></div></div>
+            </div>"""
+        for name, value in metrics.items()
+    )
+    return f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+  :root {{ --purple: #7652a2; --purple-light: #a98fd1; --ink: #171020; --paper: #f7f5fd; }}
+  * {{ margin: 0; box-sizing: border-box; }}
+  body {{ font-family: -apple-system, 'Segoe UI', Roboto, sans-serif; background: var(--ink);
+         color: var(--paper); padding: 32px; }}
+  .card {{ max-width: 860px; margin: 0 auto; }}
+  .hero {{ background: linear-gradient(135deg, var(--purple) 0%, #4a3070 100%);
+           border-radius: 16px; padding: 28px 32px; }}
+  .hero h1 {{ font-size: 26px; letter-spacing: -0.5px; }}
+  .hero .sub {{ margin-top: 6px; opacity: 0.85; font-size: 14px; }}
+  .badges {{ margin-top: 16px; display: flex; gap: 8px; flex-wrap: wrap; }}
+  .badge {{ background: rgba(255,255,255,0.16); border: 1px solid rgba(255,255,255,0.25);
+            border-radius: 999px; padding: 4px 12px; font-size: 12px; }}
+  .grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }}
+  section {{ background: #221a33; border: 1px solid #372a4f; border-radius: 12px; padding: 20px; }}
+  section.wide {{ grid-column: 1 / -1; }}
+  h2 {{ font-size: 13px; text-transform: uppercase; letter-spacing: 1.2px;
+        color: var(--purple-light); margin-bottom: 14px; }}
+  dl {{ display: grid; grid-template-columns: auto 1fr; gap: 8px 16px; font-size: 14px; }}
+  dt {{ opacity: 0.6; }}
+  dd {{ text-align: right; }}
+  .mono {{ font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 13px; }}
+  .chip {{ display: inline-block; background: #372a4f; border-radius: 6px; padding: 3px 10px;
+           margin: 0 6px 6px 0; font-size: 13px; }}
+  .metric {{ margin-bottom: 14px; font-size: 14px; }}
+  .metric-head {{ display: flex; justify-content: space-between; margin-bottom: 6px; }}
+  .bar {{ height: 8px; background: #372a4f; border-radius: 4px; overflow: hidden; }}
+  .bar-fill {{ height: 100%; background: linear-gradient(90deg, var(--purple), var(--purple-light));
+               border-radius: 4px; }}
+  .note {{ font-size: 13px; line-height: 1.6; opacity: 0.8; }}
+</style></head><body><div class="card">
+  <div class="hero">
+    <h1>{model.architecture.upper()} Image Classifier</h1>
+    <div class="sub">A convolutional network fine-tuned for binary pet classification.</div>
+    <div class="badges">
+      <span class="badge">PyTorch</span><span class="badge">Image Classification</span>
+      <span class="badge">Vision</span><span class="badge">.pt</span>
+    </div>
+  </div>
+  <div class="grid">
+    <section>
+      <h2>Details</h2>
+      <dl>
+        <dt>Architecture</dt><dd class="mono">{model.architecture}</dd>
+        <dt>Parameters</dt><dd class="mono">25.6M</dd>
+        <dt>Input</dt><dd class="mono">224 x 224 RGB</dd>
+        <dt>Classes</dt><dd class="mono">{len(model.labels)}</dd>
+      </dl>
+    </section>
+    <section>
+      <h2>Evaluation</h2>
+      {metric_rows}
+    </section>
+    <section>
+      <h2>Classes</h2>
+      {label_chips}
+    </section>
+    <section>
+      <h2>Intended Use</h2>
+      <div class="note">Demo classifier for the Flyte artifacts example. Distinguishes
+      household pets in natural photos; not suitable for production use.</div>
+    </section>
+    <section class="wide">
+      <h2>Limitations</h2>
+      <div class="note">Trained on a toy dataset: accuracy degrades on low-light images,
+      uncommon breeds, and anything that is neither a cat nor a dog. Evaluate on your own
+      data before relying on predictions.</div>
+    </section>
+  </div>
+</div></body></html>"""
+
+
 @env.task(produces_artifacts=True)
 async def produce_dataclass() -> TrainedModel:
     model = TrainedModel(architecture="resnet50", accuracy=0.92, labels=["cat", "dog"])
-    card = artifacts.Card.create_from(
-        content="<h1>Model Card</h1><p>ResNet50 toy classifier.</p>", format="html", card_type="model"
-    )
+    metrics = {"Accuracy": model.accuracy, "Precision": 0.94, "Recall": 0.89, "F1": 0.915}
+    card = artifacts.Card.create_from(content=_model_card_html(model, metrics), format="html", card_type="model")
     metadata = artifacts.Metadata.create_model_metadata(
         name="trained-model",
         description="A toy classifier",
