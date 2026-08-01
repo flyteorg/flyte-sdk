@@ -107,6 +107,105 @@ class TestCreate:
         with p1, p2, p3, pytest.raises(ValueError, match="name is required"):
             await Artifact.create.aio("v")
 
+    @pytest.mark.asyncio
+    async def test_create_with_external_ref_source(self):
+        client = MagicMock()
+        client.artifact_service.create_artifact = AsyncMock(
+            return_value=artifact_service_pb2.CreateArtifactResponse(artifact=await _stored_artifact("v"))
+        )
+
+        p1, p2, p3 = _patched(client)
+        with p1, p2, p3:
+            await Artifact.create.aio("v", name="imported", external_ref="hf://meta-llama/Meta-Llama-3-8B")
+
+        req = client.artifact_service.create_artifact.await_args[0][0]
+        assert req.spec.source.WhichOneof("source") == "external_ref"
+        assert req.spec.source.external_ref == "hf://meta-llama/Meta-Llama-3-8B"
+
+    @pytest.mark.asyncio
+    async def test_create_outside_task_has_no_source(self):
+        client = MagicMock()
+        client.artifact_service.create_artifact = AsyncMock(
+            return_value=artifact_service_pb2.CreateArtifactResponse(artifact=await _stored_artifact("v"))
+        )
+
+        p1, p2, p3 = _patched(client)
+        with p1, p2, p3:
+            await Artifact.create.aio("v", name="manual")
+
+        req = client.artifact_service.create_artifact.await_args[0][0]
+        assert req.spec.source.WhichOneof("source") is None
+
+    @pytest.mark.asyncio
+    async def test_create_in_task_stamps_task_action_source(self):
+        from flyte._context import internal_ctx
+        from flyte.models import ActionID
+
+        client = MagicMock()
+        client.artifact_service.create_artifact = AsyncMock(
+            return_value=artifact_service_pb2.CreateArtifactResponse(artifact=await _stored_artifact("v"))
+        )
+
+        tctx = MagicMock()
+        tctx.action = ActionID(name="a0", run_name="r1", project="proj", domain="dev", org="test-org")
+        tctx.attempt_number = 3
+
+        ctx = internal_ctx()
+        p1, p2, p3 = _patched(client)
+        with p1, p2, p3, ctx.replace_task_context(tctx):
+            await Artifact.create.aio("v", name="produced")
+
+        req = client.artifact_service.create_artifact.await_args[0][0]
+        source = req.spec.source
+        assert source.WhichOneof("source") == "task_action"
+        # Scope fields are left empty; the server inherits the artifact's scope.
+        assert source.task_action.run.name == "r1"
+        assert source.task_action.name == "a0"
+        assert source.attempt == 3
+
+    @pytest.mark.asyncio
+    async def test_external_ref_wins_over_task_context(self):
+        from flyte._context import internal_ctx
+        from flyte.models import ActionID
+
+        client = MagicMock()
+        client.artifact_service.create_artifact = AsyncMock(
+            return_value=artifact_service_pb2.CreateArtifactResponse(artifact=await _stored_artifact("v"))
+        )
+
+        tctx = MagicMock()
+        tctx.action = ActionID(name="a0", run_name="r1")
+        tctx.attempt_number = 0
+
+        ctx = internal_ctx()
+        p1, p2, p3 = _patched(client)
+        with p1, p2, p3, ctx.replace_task_context(tctx):
+            await Artifact.create.aio("v", name="imported", external_ref="s3://elsewhere/model")
+
+        req = client.artifact_service.create_artifact.await_args[0][0]
+        assert req.spec.source.WhichOneof("source") == "external_ref"
+
+
+class TestSourceDisplay:
+    @pytest.mark.asyncio
+    async def test_source_property_task_action(self):
+        pb2 = await _stored_artifact("v")
+        pb2.spec.source.task_action.run.name = "r1"
+        pb2.spec.source.task_action.name = "a0"
+        pb2.spec.source.attempt = 2
+        assert Artifact(pb2=pb2).source == "run r1/a0 (attempt 2)"
+
+    @pytest.mark.asyncio
+    async def test_source_property_external_ref(self):
+        pb2 = await _stored_artifact("v")
+        pb2.spec.source.external_ref = "hf://org/model"
+        assert Artifact(pb2=pb2).source == "hf://org/model"
+
+    @pytest.mark.asyncio
+    async def test_source_property_empty(self):
+        pb2 = await _stored_artifact("v")
+        assert Artifact(pb2=pb2).source == ""
+
 
 class TestGet:
     @pytest.mark.asyncio

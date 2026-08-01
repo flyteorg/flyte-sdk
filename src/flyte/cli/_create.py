@@ -85,6 +85,12 @@ def project(cfg: common.CLIConfig, id: str, name: str, description: str, label: 
     callback=common.key_value_callback,
     help="Free-form user metadata as key=value pairs. Can be specified multiple times.",
 )
+@click.option(
+    "--external-ref",
+    type=str,
+    default=None,
+    help="Opaque reference into an external system (a URI, model id, ...) recorded as the artifact's source.",
+)
 @click.pass_obj
 def artifact(
     cfg: common.CLIConfig,
@@ -94,6 +100,7 @@ def artifact(
     version: str | None = None,
     description: str | None = None,
     data: dict[str, str] | None = None,
+    external_ref: str | None = None,
     project: str | None = None,
     domain: str | None = None,
 ):
@@ -109,6 +116,7 @@ def artifact(
     ```bash
     flyte create artifact my_artifact --value "hello world" --version 1.0
     flyte create artifact my_model --from-file model.pt -d framework=torch
+    flyte create artifact llama3 --value "s3://models/llama3" --external-ref hf://meta-llama/Meta-Llama-3-8B
     ```
     """
     from flyte.remote import Artifact
@@ -140,6 +148,7 @@ def artifact(
             python_type=python_type,
             project=project,
             domain=domain,
+            external_ref=external_ref,
         )
     console.print(f"[bold green]Published artifact {result.name}@{result.version}[/bold green]")
 
