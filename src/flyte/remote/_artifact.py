@@ -320,8 +320,88 @@ class Artifact(ToJSONMixin):
                 return
 
     @syncify
+    @classmethod
+    async def list_names(
+        cls,
+        search: str | None = None,
+        limit: int = -1,
+        *,
+        project: str | None = None,
+        domain: str | None = None,
+    ) -> AsyncIterator[ArtifactGroup]:
+        """
+        List distinct artifact names, one entry per name carrying the latest
+        version and the total version count, newest activity first.
+
+        :param search: Substring match on the artifact name.
+        :param limit: The maximum number of names to return. -1 for no limit.
+        :param project: Project to list in; defaults to the init configuration.
+        :param domain: Domain to list in; defaults to the init configuration.
+        :return: An async iterator of artifact groups.
+        """
+        ensure_client()
+        cfg = get_init_config()
+
+        filters = []
+        if search:
+            filters.append(list_pb2.Filter(function=list_pb2.Filter.CONTAINS, field="name", values=[search]))
+
+        token = ""
+        remaining = limit if limit >= 0 else None
+        while remaining is None or remaining > 0:
+            page_size = _LIST_PAGE_SIZE if remaining is None else min(_LIST_PAGE_SIZE, remaining)
+            request = artifact_service_pb2.ListArtifactNamesRequest(
+                request=list_pb2.ListRequest(limit=page_size, token=token, filters=filters),
+                project_id=identifier_pb2.ProjectIdentifier(
+                    organization=cfg.org or "",
+                    domain=domain or cfg.domain or "",
+                    name=project or cfg.project or "",
+                ),
+            )
+            resp = await get_client().artifact_service.list_artifact_names(request)
+            for group in resp.groups:
+                yield ArtifactGroup(pb2=group)
+                if remaining is not None:
+                    remaining -= 1
+                    if remaining == 0:
+                        return
+            token = resp.token
+            if not token:
+                return
+
+    @syncify
     async def delete(self) -> None:
         """
         Delete this artifact from the remote system.
         """
         raise NotImplementedError("Artifact deletion not yet implemented.")
+
+
+@dataclass
+class ArtifactGroup(ToJSONMixin):
+    """One distinct artifact name: the latest version plus the total version count."""
+
+    pb2: artifact_service_pb2.ArtifactGroup
+
+    @property
+    def name(self) -> str:
+        return self.pb2.latest.artifact_id.name.name
+
+    @property
+    def versions(self) -> int:
+        """Total number of versions published under this name."""
+        return self.pb2.versions
+
+    @property
+    def latest(self) -> Artifact:
+        """The most recently created version of the artifact."""
+        return Artifact(pb2=self.pb2.latest)
+
+    def __rich_repr__(self) -> rich.repr.Result:
+        latest = self.latest
+        yield "name", self.name
+        yield "versions", self.versions
+        yield "latest_version", latest.version
+        yield "description", self.pb2.latest.spec.description or "-"
+        yield "created_at", self.pb2.latest.created_at.ToDatetime().isoformat()
+        yield "source", latest.source or "-"

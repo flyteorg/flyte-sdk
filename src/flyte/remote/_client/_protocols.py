@@ -55,6 +55,10 @@ class ArtifactService(Protocol):
         self, request: artifact_service_pb2.ListArtifactsRequest
     ) -> artifact_service_pb2.ListArtifactsResponse: ...
 
+    async def list_artifact_names(
+        self, request: artifact_service_pb2.ListArtifactNamesRequest
+    ) -> artifact_service_pb2.ListArtifactNamesResponse: ...
+
 
 class AppService(Protocol):
     async def create(self, request: app_payload_pb2.CreateRequest) -> app_payload_pb2.CreateResponse: ...

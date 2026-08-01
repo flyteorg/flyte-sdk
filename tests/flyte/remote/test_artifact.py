@@ -366,3 +366,59 @@ class TestToPython:
     async def test_round_trip_guesses_type(self):
         artifact = Artifact(pb2=await _stored_artifact("round-trip"))
         assert await artifact.to_python() == "round-trip"
+
+
+class TestListNames:
+    @pytest.mark.asyncio
+    async def test_groups_paginate_and_wrap(self):
+        stored = await _stored_artifact("v", name="model-a", version="v3")
+        group = artifact_service_pb2.ArtifactGroup(latest=stored, versions=3)
+        client = MagicMock()
+        client.artifact_service.list_artifact_names = AsyncMock(
+            side_effect=[
+                artifact_service_pb2.ListArtifactNamesResponse(groups=[group], token="1"),
+                artifact_service_pb2.ListArtifactNamesResponse(groups=[group], token=""),
+            ]
+        )
+
+        p1, p2, p3 = _patched(client)
+        with p1, p2, p3:
+            groups = [g async for g in Artifact.list_names.aio()]
+
+        assert len(groups) == 2
+        assert groups[0].name == "model-a"
+        assert groups[0].versions == 3
+        assert groups[0].latest.version == "v3"
+        assert client.artifact_service.list_artifact_names.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_search_filter(self):
+        client = MagicMock()
+        client.artifact_service.list_artifact_names = AsyncMock(
+            return_value=artifact_service_pb2.ListArtifactNamesResponse(groups=[], token="")
+        )
+
+        p1, p2, p3 = _patched(client)
+        with p1, p2, p3:
+            _ = [g async for g in Artifact.list_names.aio(search="model")]
+
+        req = client.artifact_service.list_artifact_names.await_args[0][0]
+        assert len(req.request.filters) == 1
+        assert req.request.filters[0].field == "name"
+        assert req.request.filters[0].function == list_pb2.Filter.CONTAINS
+        assert req.request.filters[0].values == ["model"]
+
+    @pytest.mark.asyncio
+    async def test_limit_stops_early(self):
+        stored = await _stored_artifact("v", name="m")
+        groups_page = [artifact_service_pb2.ArtifactGroup(latest=stored, versions=1) for _ in range(3)]
+        client = MagicMock()
+        client.artifact_service.list_artifact_names = AsyncMock(
+            return_value=artifact_service_pb2.ListArtifactNamesResponse(groups=groups_page, token="t")
+        )
+
+        p1, p2, p3 = _patched(client)
+        with p1, p2, p3:
+            got = [g async for g in Artifact.list_names.aio(limit=2)]
+
+        assert len(got) == 2
