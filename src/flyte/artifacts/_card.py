@@ -38,10 +38,12 @@ class Card(object):
         :param card_type: Type of the card (e.g., 'model', 'data', 'generic').
         """
         if content:
+            # Close (and thereby flush) the temp file before uploading — reading
+            # it inside the with block would see an empty, unflushed file.
             with tempfile.NamedTemporaryFile(mode="w", suffix=f".{format}", delete=False) as temp_file:
                 temp_file.write(content)
                 temp_path = pathlib.Path(temp_file.name)
-                return await _upload_card_from_local(temp_path, format=format, card_type=card_type)
+            return await _upload_card_from_local(temp_path, format=format, card_type=card_type)
         if local_path:
             return await _upload_card_from_local(local_path, format=format, card_type=card_type)
         raise ValueError("Either content or local_path must be provided to upload a card.")
