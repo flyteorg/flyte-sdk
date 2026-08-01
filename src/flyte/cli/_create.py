@@ -65,17 +65,10 @@ def project(cfg: common.CLIConfig, id: str, name: str, description: str, label: 
 @create.command(cls=common.CommandBase)
 @click.argument("name", type=str, required=True)
 @click.option(
-    "--value",
-    help="Inline string value to publish as the artifact.",
-    cls=MutuallyExclusiveOption,
-    mutually_exclusive=["from_file"],
-)
-@click.option(
     "--from-file",
     type=click.Path(exists=True),
+    required=True,
     help="Publish a local file as a File artifact (contents upload to blob storage).",
-    cls=MutuallyExclusiveOption,
-    mutually_exclusive=["value"],
 )
 @click.option("--version", type=str, default=None, help="Version to publish. Defaults to a random version.")
 @click.option("--description", type=str, default=None, help="Human readable description.")
@@ -95,8 +88,7 @@ def project(cfg: common.CLIConfig, id: str, name: str, description: str, label: 
 def artifact(
     cfg: common.CLIConfig,
     name: str,
-    value: str | None = None,
-    from_file: str | None = None,
+    from_file: str,
     version: str | None = None,
     description: str | None = None,
     data: dict[str, str] | None = None,
@@ -107,36 +99,26 @@ def artifact(
     """
     Publish an artifact from the local machine.
 
-    The value is stored in the artifact service as a typed literal. Provide either an
-    inline string value or a local file (uploaded to blob storage and stored as a File).
+    The file is uploaded to blob storage and stored in the artifact service as a
+    File artifact. Primitive values (strings, numbers) are not allowed as
+    artifacts: an artifact is an addressable asset, not a scalar.
 
     \b
     Example usage:
 
     ```bash
-    flyte create artifact my_artifact --value "hello world" --version 1.0
     flyte create artifact my_model --from-file model.pt -d framework=torch
-    flyte create artifact llama3 --value "s3://models/llama3" --external-ref hf://meta-llama/Meta-Llama-3-8B
+    flyte create artifact llama3 --from-file weights.bin --external-ref hf://meta-llama/Meta-Llama-3-8B
     ```
     """
+    from flyte.io import File
     from flyte.remote import Artifact
-
-    if value is None and from_file is None:
-        raise click.ClickException("Provide either --value or --from-file.")
 
     cfg.init(project=project, domain=domain)
     console = common.get_console()
 
-    publish_value: Any
-    python_type: type
-    if from_file is not None:
-        from flyte.io import File
-
-        publish_value = File.from_local_sync(from_file)
-        python_type = File
-    else:
-        publish_value = value
-        python_type = str
+    publish_value: Any = File.from_local_sync(from_file)
+    python_type: type = File
 
     with console.status(f"Publishing artifact {name}..."):
         result = Artifact.create(

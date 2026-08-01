@@ -12,7 +12,7 @@ from flyteidl2.common import identifier_pb2, list_pb2
 from flyte._initialize import ensure_client, get_client, get_init_config
 from flyte.artifacts._card import Card as CoreCard
 from flyte.artifacts._metadata import Metadata
-from flyte.artifacts._wrapper import ArtifactWrapper
+from flyte.artifacts._wrapper import ArtifactWrapper, ensure_artifactable
 from flyte.remote._common import ToJSONMixin
 from flyte.syncify import syncify
 
@@ -179,6 +179,7 @@ class Artifact(ToJSONMixin):
             raise ValueError(
                 "An artifact name is required: pass name= or publish a value wrapped by flyte.artifacts.new()"
             )
+        ensure_artifactable(obj)
 
         pt = python_type or type(obj)
         lt = TypeEngine.to_literal_type(pt)
