@@ -70,6 +70,16 @@ def project(cfg: common.CLIConfig, name: str | None = None, archived: bool = Fal
     default=None,
     help="Show artifacts created at or after this datetime (UTC). Accepts ISO dates, 'now', 'today', or 'now - 1 day'.",
 )
+@click.option("--source-run", type=str, default=None, help="Only artifacts produced by this run.")
+@click.option(
+    "--source-action",
+    type=str,
+    default=None,
+    help="Only artifacts produced by this action; usually combined with --source-run.",
+)
+@click.option(
+    "--source-external-ref", type=str, default=None, help="Only artifacts imported from this external reference."
+)
 @click.pass_obj
 def artifact(
     cfg: common.CLIConfig,
@@ -78,6 +88,9 @@ def artifact(
     all_versions: bool = False,
     limit: int = 100,
     created_after: dt.datetime | None = None,
+    source_run: str | None = None,
+    source_action: str | None = None,
+    source_external_ref: str | None = None,
     project: str | None = None,
     domain: str | None = None,
 ):
@@ -92,12 +105,14 @@ def artifact(
     flyte get artifact my_artifact           # details of the latest version
     flyte get artifact my_artifact 1.0       # details of a pinned version
     flyte get artifact my_artifact --all-versions   # list every version of my_artifact
+    flyte get artifact --source-run my_run          # everything produced by a run
+    flyte get artifact --source-external-ref hf://meta-llama/Meta-Llama-3-8B
     ```
     """
     cfg.init(project=project, domain=domain)
 
     console = common.get_console()
-    if name and not all_versions:
+    if name and not all_versions and not (source_run or source_action or source_external_ref):
         a = remote.Artifact.get(name, version=version or "latest", project=project, domain=domain)
         console.print(common.format("Artifact", [a], "json"))
     else:
@@ -105,7 +120,14 @@ def artifact(
             common.format(
                 "Artifacts",
                 remote.Artifact.listall(
-                    name=name, created_after=created_after, limit=limit, project=project, domain=domain
+                    name=name,
+                    created_after=created_after,
+                    limit=limit,
+                    project=project,
+                    domain=domain,
+                    source_run=source_run,
+                    source_action=source_action,
+                    source_external_ref=source_external_ref,
                 ),
                 cfg.output_format,
             )

@@ -159,9 +159,9 @@ class TestCreate:
         source = req.spec.source
         assert source.WhichOneof("source") == "task_action"
         # Scope fields are left empty; the server inherits the artifact's scope.
-        assert source.task_action.run.name == "r1"
-        assert source.task_action.name == "a0"
-        assert source.attempt == 3
+        assert source.task_action.action.run.name == "r1"
+        assert source.task_action.action.name == "a0"
+        assert source.task_action.attempt == 3
 
     @pytest.mark.asyncio
     async def test_external_ref_wins_over_task_context(self):
@@ -190,9 +190,9 @@ class TestSourceDisplay:
     @pytest.mark.asyncio
     async def test_source_property_task_action(self):
         pb2 = await _stored_artifact("v")
-        pb2.spec.source.task_action.run.name = "r1"
-        pb2.spec.source.task_action.name = "a0"
-        pb2.spec.source.attempt = 2
+        pb2.spec.source.task_action.action.run.name = "r1"
+        pb2.spec.source.task_action.action.name = "a0"
+        pb2.spec.source.task_action.attempt = 2
         assert Artifact(pb2=pb2).source == "run r1/a0 (attempt 2)"
 
     @pytest.mark.asyncio
@@ -304,6 +304,42 @@ class TestListall:
         assert f.field == "created_at"
         assert f.function == list_pb2.Filter.GREATER_THAN
         assert f.values == ["2026-01-01T00:00:00Z"]
+
+    @pytest.mark.asyncio
+    async def test_source_filters(self):
+        client = MagicMock()
+        client.artifact_service.list_artifacts = AsyncMock(
+            return_value=artifact_service_pb2.ListArtifactsResponse(artifacts=[], token="")
+        )
+
+        p1, p2, p3 = _patched(client)
+        with p1, p2, p3:
+            _ = [a async for a in Artifact.listall.aio(source_run="r1", source_action="a0")]
+
+        req = client.artifact_service.list_artifacts.await_args[0][0]
+        got = {f.field: (f.function, list(f.values)) for f in req.request.filters}
+        assert got == {
+            "source_run": (list_pb2.Filter.EQUAL, ["r1"]),
+            "source_action": (list_pb2.Filter.EQUAL, ["a0"]),
+        }
+
+    @pytest.mark.asyncio
+    async def test_source_external_ref_filter(self):
+        client = MagicMock()
+        client.artifact_service.list_artifacts = AsyncMock(
+            return_value=artifact_service_pb2.ListArtifactsResponse(artifacts=[], token="")
+        )
+
+        p1, p2, p3 = _patched(client)
+        with p1, p2, p3:
+            _ = [a async for a in Artifact.listall.aio(source_external_ref="hf://org/model")]
+
+        req = client.artifact_service.list_artifacts.await_args[0][0]
+        assert len(req.request.filters) == 1
+        f = req.request.filters[0]
+        assert f.field == "source_external_ref"
+        assert f.function == list_pb2.Filter.EQUAL
+        assert f.values == ["hf://org/model"]
 
 
 class TestToPython:

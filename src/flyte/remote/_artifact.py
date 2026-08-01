@@ -39,11 +39,13 @@ def _current_task_source() -> artifact_pb2.ArtifactSource | None:
         return None
     action = tctx.action
     return artifact_pb2.ArtifactSource(
-        task_action=identifier_pb2.ActionIdentifier(
-            run=identifier_pb2.RunIdentifier(name=action.run_name or ""),
-            name=action.name,
+        task_action=artifact_pb2.TaskActionSource(
+            action=identifier_pb2.ActionIdentifier(
+                run=identifier_pb2.RunIdentifier(name=action.run_name or ""),
+                name=action.name,
+            ),
+            attempt=tctx.attempt_number,
         ),
-        attempt=tctx.attempt_number,
     )
 
 
@@ -76,8 +78,8 @@ class Artifact(ToJSONMixin):
         src = self.pb2.spec.source
         which = src.WhichOneof("source")
         if which == "task_action":
-            action = src.task_action
-            return f"run {action.run.name}/{action.name} (attempt {src.attempt})"
+            ta = src.task_action
+            return f"run {ta.action.run.name}/{ta.action.name} (attempt {ta.attempt})"
         if which == "external_ref":
             return src.external_ref
         return ""
@@ -253,6 +255,9 @@ class Artifact(ToJSONMixin):
         *,
         project: str | None = None,
         domain: str | None = None,
+        source_run: str | None = None,
+        source_action: str | None = None,
+        source_external_ref: str | None = None,
     ) -> AsyncIterator[Artifact]:
         """
         List artifacts, newest first.
@@ -262,12 +267,22 @@ class Artifact(ToJSONMixin):
         :param limit: The maximum number of artifacts to return. -1 for no limit.
         :param project: Project to list in; defaults to the init configuration.
         :param domain: Domain to list in; defaults to the init configuration.
+        :param source_run: Only artifacts produced by this run.
+        :param source_action: Only artifacts produced by this action; usually combined with source_run.
+        :param source_external_ref: Only artifacts imported from this external reference.
         :return: An async iterator of artifacts.
         """
         ensure_client()
         cfg = get_init_config()
 
         filters = []
+        for field, value in (
+            ("source_run", source_run),
+            ("source_action", source_action),
+            ("source_external_ref", source_external_ref),
+        ):
+            if value is not None:
+                filters.append(list_pb2.Filter(function=list_pb2.Filter.EQUAL, field=field, values=[value]))
         if created_after is not None:
             ts = created_after if created_after.tzinfo else created_after.replace(tzinfo=timezone.utc)
             filters.append(
