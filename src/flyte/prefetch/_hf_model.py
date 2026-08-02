@@ -645,7 +645,11 @@ def hf_model(
         secrets=[Secret(key=hf_token_key, as_env_var="HF_TOKEN")] if hf_token_key else None,
     )
     prefetch_task = env.task(report=True, produces_artifacts=True)(store_hf_model_task)
-    run = flyte.with_runcontext(interactive_mode=True, disable_run_cache=disable_run_cache).run(
-        prefetch_task, info.model_dump_json(), raw_data_path
-    )
+    # Label the run with the model being prefetched so runs are searchable by model.
+    model_label = artifact_name or repo.rsplit("/", maxsplit=1)[-1].replace(".", "-")
+    run = flyte.with_runcontext(
+        interactive_mode=True,
+        disable_run_cache=disable_run_cache,
+        labels={"model": model_label},
+    ).run(prefetch_task, info.model_dump_json(), raw_data_path)
     return typing.cast(Run, run)

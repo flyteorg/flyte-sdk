@@ -520,7 +520,11 @@ def test_wrap_as_model_artifact_metadata():
     with patch("flyte.artifacts.Card.create_from", return_value=fake_card) as mock_card:
         wrapped = _wrap_as_model_artifact(result_dir, info, "Llama-2-7b-hf", "abc123", "# Llama 2")
 
-    mock_card.assert_called_once_with(content="# Llama 2", format="md", card_type="model")
+    kwargs = mock_card.call_args.kwargs
+    assert kwargs["card_type"] == "model"
+    # html when the markdown package is importable, md otherwise.
+    assert kwargs["format"] in ("md", "html")
+    assert "Llama 2" in kwargs["content"]
     md = wrapped.get_flyte_metadata()
     assert md.name == "Llama-2-7b-hf"
     assert md.version == "abc123"
