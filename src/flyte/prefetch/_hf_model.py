@@ -291,7 +291,7 @@ def _shard_model(
     repo: str,
     commit: str,
     shard_config: ShardConfig,
-    token: str,
+    token: str | None,
     model_path: str,
     output_dir: str,
 ) -> tuple[str, str | None]:
