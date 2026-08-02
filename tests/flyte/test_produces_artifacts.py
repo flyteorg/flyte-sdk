@@ -124,6 +124,16 @@ class TestMetadataCompactJson:
         md = Metadata(name="n", data={"b": "2", "a": "1"})
         assert to_compact_json(md) == to_compact_json(Metadata(name="n", data={"a": "1", "b": "2"}))
 
+    def test_model_metadata_merges_extra_data(self):
+        md = Metadata.create_model_metadata(
+            name="m",
+            framework="torch",
+            data={"source_repo": "org/model", "framework": "should-lose"},
+        )
+        assert md.data["source_repo"] == "org/model"
+        # Model-specific keys win on conflict.
+        assert md.data["framework"] == "torch"
+
 
 class TestOutputStamping:
     @pytest.mark.asyncio

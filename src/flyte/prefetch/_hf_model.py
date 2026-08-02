@@ -328,6 +328,48 @@ def _shard_model(
     return output_dir, card
 
 
+def _wrap_as_model_artifact(
+    result_dir: Dir,
+    info: HuggingFaceModelInfo,
+    artifact_name: str,
+    commit: str,
+    card_md: str | None,
+) -> Dir:
+    """
+    Wrap the stored model Dir with artifact metadata so the platform records a
+    model artifact when the task succeeds: name is the artifact name, version is
+    the HuggingFace commit (re-prefetching the same commit republishes the same
+    version), and the repo README becomes the model card.
+    """
+    import flyte.artifacts as artifacts
+
+    card = None
+    if card_md:
+        try:
+            card = artifacts.Card.create_from(content=card_md, format="md", card_type="model")
+        except Exception as e:
+            logger.warning(f"Could not upload model card: {e}")
+
+    data = {"source_repo": info.repo, "source_commit": commit}
+    if info.shard_config is not None:
+        data["sharding"] = f"{info.shard_config.engine}-tp{info.shard_config.args.tensor_parallel_size}"
+
+    metadata = artifacts.Metadata.create_model_metadata(
+        name=artifact_name,
+        version=commit,
+        description=info.short_description or f"HuggingFace model {info.repo}",
+        card=card,
+        framework="huggingface",
+        model_type=info.model_type,
+        architecture=info.architecture,
+        task=info.task,
+        modality=info.modality,
+        serial_format=info.serial_format or "safetensors",
+        data=data,
+    )
+    return artifacts.new(result_dir, metadata)
+
+
 # NOTE: the info argument is a json string instead of a HuggingFaceModelInfo
 # object because the type engine cannot handle nested pydantic or dataclass
 # objects when run in interactive mode.
@@ -423,7 +465,7 @@ def store_hf_model_task(info: str, raw_data_path: str | None = None) -> Dir:
         flyte.report.flush()
 
     logger.info(f"Model stored successfully at {result_dir.path}")
-    return result_dir
+    return _wrap_as_model_artifact(result_dir, _info, artifact_name, commit, card)
 
 
 def hf_model(
@@ -452,6 +494,13 @@ def hf_model(
     1. If the model isn't being sharded, stream files directly to remote storage.
     2. If streaming fails, fall back to downloading a snapshot and uploading.
     3. If sharding is configured, download locally, shard with vLLM, then upload.
+
+    On success the platform records a **model artifact** for the stored Dir:
+    the artifact name is `artifact_name` (default: the repo name), the version
+    is the HuggingFace commit id, the searchable metadata carries the model
+    facts (framework/architecture/task/modality/serial_format plus the source
+    repo and commit), and the repo's README is attached as the model card.
+    Retrieve it later with `flyte.remote.Artifact.get(artifact_name)`.
 
     Example usage:
 
@@ -556,7 +605,7 @@ def hf_model(
         resources=resources,
         secrets=[Secret(key=hf_token_key, as_env_var="HF_TOKEN")],
     )
-    prefetch_task = env.task(report=True)(store_hf_model_task)
+    prefetch_task = env.task(report=True, produces_artifacts=True)(store_hf_model_task)
     run = flyte.with_runcontext(interactive_mode=True, disable_run_cache=disable_run_cache).run(
         prefetch_task, info.model_dump_json(), raw_data_path
     )
